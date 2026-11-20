@@ -346,14 +346,20 @@ impl StepUp {
     }
 
     /// Its sign-in kept for `vault`, read and never refreshed: the file,
-    /// when it reads, holds the tier the step-up asks and was made at the
-    /// vault. The bridge that sends with it refreshes it when due, within
-    /// its own deadline. `None` when there is none.
+    /// when it reads, holds the tier the step-up asks, was made at the vault
+    /// and is the client of `vault`'s recall sign-in now, so a new `hosted
+    /// login` that registered another client never goes on as the old one.
+    /// The bridge that sends with it refreshes it when due, within its own
+    /// deadline. `None` when there is none.
     pub(super) fn held(self, vault: &HostedVault) -> Option<PathBuf> {
         let file = self.file(&vault.origin)?;
         let held = OAuthSignIn::read(&file).ok()?;
+        let recall = OAuthSignIn::read(&vault.credential_file).ok()?;
         let mcp = reqwest::Url::parse(&format!("{}/mcp", vault.origin)).ok()?;
-        (held.scope == self.scope() && held.made_at(&file, &mcp).is_ok()).then_some(file)
+        (held.scope == self.scope()
+            && held.client_id == recall.client_id
+            && held.made_at(&file, &mcp).is_ok())
+        .then_some(file)
     }
 
     /// Its sign-in that stands for `vault`: one [`StepUp::held`] that
@@ -368,11 +374,15 @@ impl StepUp {
     }
 
     /// Runs the step-up for the OAuth selection `vault`, waiting up to
-    /// `timeout` for the owner's answer by `delivery`, and keeps the sign-in it makes in
-    /// its file in place of any earlier one, which is revoked. Refused for a
-    /// selection signed in another way, and when the owner allowed a tier
-    /// other than the one asked: that sign-in is signed out again and
-    /// nothing is kept.
+    /// `timeout` for the owner's answer by `delivery`, and keeps the sign-in
+    /// it makes in its file in place of any earlier one, which is revoked.
+    /// Refused for a
+    /// selection signed in another way; when the owner allowed a tier other
+    /// than the one asked; and when, by the time it is kept, `vault` is no
+    /// longer recorded with that recall sign-in (a `hosted logout`, or a new
+    /// `hosted login`, while the owner had not yet answered). Such a sign-in
+    /// is signed out again and nothing is kept. The check and the keeping
+    /// run under the file's refresh lock, which a sign-out takes too.
     pub(super) fn run(
         self,
         vault: &HostedVault,
@@ -408,18 +418,50 @@ impl StepUp {
                 self.scope()
             );
         }
-        take_place(&staged, &file)?;
-        Ok(file)
+        let still_recorded = || {
+            recorded_recall(vault).is_some_and(|recall_now| recall_now.client_id == made.client_id)
+        };
+        match OAuthSignIn::take_place_while(&staged, &file, still_recorded) {
+            Ok(replaced) => {
+                if let Some(replaced) = replaced {
+                    revoke(&replaced);
+                }
+                Ok(file)
+            }
+            Err(error) => {
+                let _ = sign_out(&staged);
+                Err(error)
+            }
+        }
     }
 
-    /// Signs out its sign-in kept for `origin`, if there is one: revoked at
-    /// the vault, best effort, and its file removed.
+    /// Signs out its sign-in kept for `origin`: revoked at the vault, best
+    /// effort, and its file removed. It takes the file's refresh lock even
+    /// when there is no file yet, so a step-up whose owner answers later
+    /// finds its vault forgotten and keeps nothing ([`StepUp::run`]).
     pub(super) fn sign_out(self, origin: &str) -> anyhow::Result<()> {
         match self.file(origin) {
-            Some(file) if std::fs::symlink_metadata(&file).is_ok() => sign_out(&file),
+            Some(file) if file.parent().is_some_and(Path::is_dir) => sign_out(&file),
             _ => Ok(()),
         }
     }
+}
+
+/// The recall sign-in `vault` is recorded with now: its record in the
+/// selection (the same origin, vault id, OAuth mode and file) and the
+/// sign-in that file holds. `None` once a logout forgot it.
+fn recorded_recall(vault: &HostedVault) -> Option<OAuthSignIn> {
+    let selection = hosted_selection::read().ok()?;
+    selection
+        .vaults
+        .iter()
+        .find(|recorded| {
+            recorded.origin == vault.origin
+                && recorded.vault_id == vault.vault_id
+                && recorded.auth_mode == HostedAuthMode::OAuth
+                && recorded.credential_file == vault.credential_file
+        })
+        .and_then(|recorded| OAuthSignIn::read(&recorded.credential_file).ok())
 }
 
 /// A session on the sign-in in `file`, for requests to `door` under

@@ -400,7 +400,7 @@ fn sign_out(vaults: &[HostedVault]) {
             hosted_sign_in::sign_out(&vault.credential_file),
             StepUp::Continue.sign_out(&vault.origin),
             StepUp::HandOver.sign_out(&vault.origin),
-            hand_over_queue::clear(&vault.origin),
+            hand_over_queue::clear(vault),
             hand_over_ask::forget(&vault.origin),
         ] {
             if let Err(error) = signed_out {

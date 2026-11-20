@@ -227,19 +227,19 @@ impl Served {
 
     /// [`Served::hand_over_asks`], once there is one.
     async fn hand_over_asks_soon(&self) -> Vec<EntityId> {
-        let deadline = tokio::time::Instant::now() + STEP_TIMEOUT;
-        loop {
-            let asks = self.hand_over_asks();
-            if !asks.is_empty() {
-                return asks;
+        let asked = async {
+            loop {
+                let asks = self.hand_over_asks();
+                if !asks.is_empty() {
+                    return asks;
+                }
+                // testkit-lint: allow(sleep) polls for a request a detached child process files; no event marks it.
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "no hand-over sign-in request reached the owner's inbox"
-            );
-            // testkit-lint: allow(sleep) polls for a request a detached child process files; no event marks it.
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        };
+        tokio::time::timeout(STEP_TIMEOUT, asked)
+            .await
+            .expect("no hand-over sign-in request reached the owner's inbox")
     }
 
     /// The owner's answer to the request `request_ref`, in his inbox: the
@@ -355,23 +355,23 @@ impl Scratch {
     /// when `run` ended before it opened one.
     async fn opened_url(&self, run: &Run) -> Option<reqwest::Url> {
         let file = self.path("opened.txt");
-        let deadline = tokio::time::Instant::now() + STEP_TIMEOUT;
-        loop {
-            if let Ok(text) = std::fs::read_to_string(&file)
-                && let Some(line) = text.lines().next()
-            {
-                return Some(reqwest::Url::parse(line).expect("the opened URL parses"));
+        let opened = async {
+            loop {
+                if let Ok(text) = std::fs::read_to_string(&file)
+                    && let Some(line) = text.lines().next()
+                {
+                    return Some(reqwest::Url::parse(line).expect("the opened URL parses"));
+                }
+                if run.is_finished() {
+                    return None;
+                }
+                // testkit-lint: allow(sleep) polls a file the child process writes; no event marks it.
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
-            if run.is_finished() {
-                return None;
-            }
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "the binary opened no URL in a browser"
-            );
-            // testkit-lint: allow(sleep) polls a file the child process writes; no event marks it.
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        };
+        tokio::time::timeout(STEP_TIMEOUT, opened)
+            .await
+            .expect("the binary opened no URL in a browser")
     }
 
     /// Runs `args`, which open a sign-in, and plays the browser and the
@@ -473,12 +473,15 @@ impl Scratch {
     /// Waits until `done` holds, which a detached child process brings
     /// about.
     async fn until(&self, what: &str, done: impl Fn(&Self) -> bool) {
-        let deadline = tokio::time::Instant::now() + STEP_TIMEOUT;
-        while !done(self) {
-            assert!(tokio::time::Instant::now() < deadline, "{what}");
-            // testkit-lint: allow(sleep) polls files a detached child process writes; no event marks them.
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        let reached = async {
+            while !done(self) {
+                // testkit-lint: allow(sleep) polls files a detached child process writes; no event marks them.
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        };
+        tokio::time::timeout(STEP_TIMEOUT, reached)
+            .await
+            .unwrap_or_else(|_| panic!("{what}"));
     }
 
     /// The queued logs' files: each `.json` in the vault's hand-over queue
@@ -950,6 +953,80 @@ fn the_queued_logs_land_at_the_next_session_end_once_the_hand_over_sign_in_stand
         // A later end lands only what is new.
         scratch.session_end(NEXT_SESSION, &next).await;
         assert_eq!(served.landed(), both);
+    });
+}
+
+/// A new plain `hosted login` registers another client, and the hand-over
+/// sign-in of the old one is no longer used: the next session end lands
+/// nothing on it and its log waits, so no session lands as an agent the
+/// recall sign-in no longer is.
+#[test]
+fn a_new_recall_login_stops_the_old_hand_over_sign_in() {
+    run_on_engine_stack("hosted-hand-over-relogin", || async {
+        let served = Served::start().await;
+        let scratch = Scratch::new();
+        let recall = scratch.login(&served, &[]).await;
+        served.grant_import(recall.agent);
+        scratch.login(&served, &["--hand-over"]).await;
+        let first = scratch.session_log(FIRST_SESSION);
+        scratch.session_start(&served, FIRST_SESSION, &first).await;
+        scratch.session_end(FIRST_SESSION, &first).await;
+        assert_eq!(served.landed(), kept(FIRST_SESSION), "FIXTURE: it lands");
+
+        let again = scratch.login(&served, &[]).await;
+        assert_ne!(again.agent, recall.agent, "FIXTURE: another client");
+        let next = scratch.session_log(NEXT_SESSION);
+        scratch.session_start(&served, NEXT_SESSION, &next).await;
+        scratch.session_end(NEXT_SESSION, &next).await;
+        assert_eq!(
+            served.landed(),
+            kept(FIRST_SESSION),
+            "nothing lands on the old client's hand-over sign-in"
+        );
+        assert_eq!(scratch.queued().len(), 1, "the next log waits");
+    });
+}
+
+/// A hand-over sign-in the vault no longer takes (revoked there) leaves the
+/// log waiting, with a word on stderr; once a new hand-over sign-in stands,
+/// the next session end lands it with its own.
+#[test]
+fn a_hand_over_the_vault_refuses_leaves_the_log_waiting() {
+    run_on_engine_stack("hosted-hand-over-revoked", || async {
+        let served = Served::start().await;
+        let scratch = Scratch::new();
+        let recall = scratch.login(&served, &[]).await;
+        served.grant_import(recall.agent);
+        scratch.login(&served, &["--hand-over"]).await;
+        let held = read_json(&scratch.hand_over_file());
+        let revoked = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("client")
+            .post(format!("{}/oauth/revoke", served.origin))
+            .form(&[
+                ("token", held["refresh_token"].as_str().expect("refresh")),
+                ("token_type_hint", "refresh_token"),
+                ("client_id", held["client_id"].as_str().expect("client")),
+            ])
+            .send()
+            .await
+            .expect("revoke at the vault");
+        assert!(revoked.status().is_success(), "FIXTURE: revoked");
+        let first = scratch.session_log(FIRST_SESSION);
+        scratch.session_start(&served, FIRST_SESSION, &first).await;
+
+        let said = scratch.session_end(FIRST_SESSION, &first).await;
+        assert_eq!(served.landed(), 0, "nothing landed on the revoked sign-in");
+        assert_eq!(scratch.queued().len(), 1, "the log waits: {said}");
+        assert!(said.contains("did not land"), "{said}");
+
+        scratch.login(&served, &["--hand-over"]).await;
+        let next = scratch.session_log(NEXT_SESSION);
+        scratch.session_start(&served, NEXT_SESSION, &next).await;
+        scratch.session_end(NEXT_SESSION, &next).await;
+        assert_eq!(served.landed(), kept(FIRST_SESSION) + kept(NEXT_SESSION));
+        assert!(scratch.queued().is_empty(), "the queue is empty");
     });
 }
 
