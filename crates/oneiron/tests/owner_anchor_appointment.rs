@@ -62,24 +62,29 @@
 //! an appointment holds while it renews the slot. Red with those readers
 //! taking no lock: both answer between the renewal's delete and its create,
 //! and the rest read finds no key.
+//!
+//! REVIEW-9678 P1: the hold lets the slot lock go before it holds the key,
+//! since a hold asks every signer held for its root, and a signer's answer
+//! may read where the owner key rests. Red with the lock held through the
+//! hold: the hold never ends.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test owner_anchor_appointment`.
 #![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, mpsc};
+use std::sync::{Arc, Mutex, PoisonError, Weak, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AppointmentVerdict,
-    AuthorityAttestation, AuthorityEntryHash, AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry,
-    AuthorityOp, AuthoritySignature, AuthorityTier, DeviceAuthority, HostSlipIssuer,
-    MachineOwnership, MachineRole, OwnerKeyEnrollment, ROLE_ADMIN, ROLE_AGENT, ROLE_OWNER,
-    ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND, RecoveryRootId, RootAppointment, RootChange,
-    authority_entry_hash, authority_transcript, decode_authority_log_entry_body,
+    AuthorityAttestation, AuthorityEntryHash, AuthorityFold, AuthorityFoldIssue, AuthorityKey,
+    AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityTier, CheckpointRootSigner,
+    DeviceAuthority, HostSlipIssuer, MachineOwnership, MachineRole, OwnerKeyEnrollment, ROLE_ADMIN,
+    ROLE_AGENT, ROLE_OWNER, ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND, RecoveryRootId, RootAppointment,
+    RootChange, authority_entry_hash, authority_transcript, decode_authority_log_entry_body,
     encode_authority_log_entry_body, root_appointment_challenge,
 };
 use oneiron::consent::AuthenticatedOwner;
@@ -112,6 +117,8 @@ const UNRELATED_SEED: u8 = 35;
 const SUCCESSOR_SEED: u8 = 36;
 /// The seed of the agent key a successor's row enrols.
 const AGENT_SEED: u8 = 37;
+/// The seed of the root signer whose root reads where the owner key rests.
+const REST_READER_SEED: u8 = 38;
 
 /// The device PIN a test sets.
 const PIN: &[u8] = b"271828";
@@ -1116,6 +1123,84 @@ fn a_read_of_the_owner_signing_slot_waits_for_its_renewal() {
         renewed, receipt.successor,
         "the slot holds the successor the roster names live"
     );
+}
+
+/// A root signer whose root reads where this install's owner signing key
+/// rests, as a host's own signer may: that read takes the vault's owner
+/// signing slot lock.
+struct RestReadingSigner {
+    vault: Weak<Vault>,
+    key: SigningKey,
+}
+
+impl CheckpointRootSigner for RestReadingSigner {
+    fn root(&self) -> AuthorityKey {
+        if let Some(vault) = self.vault.upgrade() {
+            let _rest = vault.device_owner_key_rest();
+        }
+        key_of(&self.key)
+    }
+
+    fn sign_checkpoint_statement(
+        &self,
+        _vault: &Vault,
+        statement: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
+        Ok(self.key.sign(statement).to_bytes().to_vec())
+    }
+
+    fn sign_owner_proof(
+        &self,
+        _vault: &Vault,
+        _fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
+        Ok(self.key.sign(transcript).to_bytes().to_vec())
+    }
+
+    fn sign_ask_word_proof(
+        &self,
+        _vault: &Vault,
+        _fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
+        Ok(self.key.sign(transcript).to_bytes().to_vec())
+    }
+}
+
+/// REVIEW-9678 P1: the install holds a root signer whose root reads where
+/// the install's owner signing key rests. A hold of that key asks every
+/// signer held for its root, so it lets the owner signing slot lock go
+/// first: the hold ends, and the key the roster names live is held.
+#[test]
+fn a_hold_lets_the_owner_signing_slot_lock_go_before_it_holds_the_key() {
+    let owned = owned();
+    let owner_key = owned
+        .vault
+        .device_owner_signing_key()
+        .expect("the install's owner signing key")
+        .public_key();
+    assert!(
+        owned.live(&AuthorityKey::Ed25519(owner_key)),
+        "the roster names the install's owner signing key live"
+    );
+    let Owned { _dir, vault, .. } = owned;
+    let vault = Arc::new(vault);
+    vault.hold_checkpoint_root_signer(Arc::new(RestReadingSigner {
+        vault: Arc::downgrade(&vault),
+        key: signing(REST_READER_SEED),
+    }));
+
+    let (hold_ended, hold_heard) = mpsc::channel();
+    let holding = Arc::clone(&vault);
+    // Not joined: a hold that never ends would keep the test waiting.
+    let _hold = thread::spawn(move || {
+        let _heard = hold_ended.send(holding.hold_device_owner_signer_logged());
+    });
+    let held = hold_heard
+        .recv_timeout(PAUSE_WAIT)
+        .expect("the hold ends: it asks the signers held for their roots after the slot lock");
+    assert!(held, "the install's live owner signing key is held");
 }
 
 /// The owner's second install: enrolled as his through the hosted console,
