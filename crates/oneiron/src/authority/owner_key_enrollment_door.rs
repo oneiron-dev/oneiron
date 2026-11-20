@@ -38,6 +38,9 @@ pub(crate) use revoke_device::EntrySigner;
 
 mod owner_authority_closure;
 
+mod owner_key_binding;
+pub use owner_key_binding::{OwnerKeyBindingReceipt, PreparedOwnerKeyBinding};
+
 mod recovery_authority;
 pub(crate) use recovery_authority::ActivationPredecessor;
 pub use recovery_authority::WaysBack;
@@ -428,7 +431,9 @@ impl Vault {
     /// entry, which the predecessor signs too (OWNER-ENROL: an added Owner of
     /// a shared vault binds with their first owner key). The host root binds
     /// its embedded owner there already, so that owner's keys bind no one. A
-    /// hosted or relay root binds no one (`host_actor`).
+    /// hosted or relay root binds no one (`host_actor`): there the owner's
+    /// device binds them with the key it enrolled, which signs the binding
+    /// itself ([`Self::prepare_owner_key_binding_as`]).
     ///
     /// # Errors
     /// [`RecordError::AuthorityRefused`] for an agent's act, an install that
