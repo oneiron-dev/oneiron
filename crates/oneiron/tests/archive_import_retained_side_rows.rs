@@ -366,6 +366,17 @@ pub(crate) fn rows_for(
         .collect()
 }
 
+/// `rows` without the birth rows of `test.born_depth` (setting stage 7c-2): every vault writes
+/// one at its root project when it opens, so each whole-vault archive carries its own.
+pub(crate) fn without_birth_rows(
+    rows: &[(String, Vec<u8>, Vec<u8>)],
+) -> Vec<(String, Vec<u8>, Vec<u8>)> {
+    rows.iter()
+        .filter(|(name, key, _)| !(name == "SETTING" && key.starts_with(b"test.born_depth\0")))
+        .cloned()
+        .collect()
+}
+
 #[test]
 fn whole_vault_archive_retains_rows_and_declares_omitted_tables() {
     let source = source_with_rows();
@@ -389,9 +400,10 @@ fn whole_vault_archive_retains_rows_and_declares_omitted_tables() {
     );
     // Full count accounting, separately: minting the grant also appends its
     // gate receipt, a plain claim-free GATE_DECISION_LEDGER row the secret
-    // scan keeps (ids and code strings only), so the archive holds three
-    // retained rows in all. No export-audit row is in this first export: the
-    // audit row lands after the snapshot it audits.
+    // scan keeps (ids and code strings only), and the vault's root project
+    // holds its birth row of `test.born_depth` (SETTING, setting stage 7c-2),
+    // so the archive holds four retained rows in all. No export-audit row is
+    // in this first export: the audit row lands after the snapshot it audits.
     let gate = rows_for(&rows, "GATE_DECISION_LEDGER");
     assert_eq!(
         gate.len(),
@@ -399,9 +411,14 @@ fn whole_vault_archive_retains_rows_and_declares_omitted_tables() {
         "the grant's gate receipt travels as one retained GATE_DECISION_LEDGER row: {rows:?}"
     );
     assert_eq!(
+        rows.len() - without_birth_rows(&rows).len(),
+        1,
+        "the source archive holds the root project's birth row: {rows:?}"
+    );
+    assert_eq!(
         rows.len(),
-        3,
-        "the source archive holds three retained rows in all: {rows:?}"
+        4,
+        "the source archive holds four retained rows in all: {rows:?}"
     );
     // The manifest declares every omitted table, zero-row tables included.
     let omissions = side_table_omissions(&source.archive);
@@ -519,9 +536,10 @@ fn each_import_door_carries_the_rows_and_only_the_owner_door_installs_the_settin
             "the {door} destination re-carries the grant tuple byte for byte"
         );
         // Full count accounting: the owner door writes its own restore
-        // receipt, a live gate row its next export carries beside the three
+        // receipt, a live gate row its next export carries beside the
         // retained copies; the other doors write none, so their archive
-        // equals the source's tuple for tuple.
+        // equals the source's tuple for tuple, but for the birth rows: each
+        // vault's archive carries its own root's (setting stage 7c-2).
         let source_gate = rows_for(&source_rows, "GATE_DECISION_LEDGER");
         let dest_gate = rows_for(&dest_rows, "GATE_DECISION_LEDGER");
         if door == "owner" {
@@ -538,7 +556,8 @@ fn each_import_door_carries_the_rows_and_only_the_owner_door_installs_the_settin
             }
         } else {
             assert_eq!(
-                dest_rows, source_rows,
+                without_birth_rows(&dest_rows),
+                without_birth_rows(&source_rows),
                 "the {door} destination holds exactly the source tuples: {dest_rows:?}"
             );
         }

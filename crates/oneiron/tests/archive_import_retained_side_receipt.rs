@@ -2,10 +2,12 @@
 //! The whole-vault import receipt's retained-rows summary (SIDE-2a).
 //!
 //! The owner import of the retained-rows fixture installs the snapshot bounds
-//! live and reports two inert inserted rows (the standing grant and the
-//! grant's gate receipt) plus one installed row; it names each table's counts
-//! and the manifest's 23 omitted tables. A repeat import reports nothing
-//! inserted, two inert unchanged rows and one unchanged live row. The fixture
+//! live and reports three inert inserted rows (the standing grant, the
+//! grant's gate receipt, and the source root's birth row of `test.born_depth`,
+//! whose scope this vault maps onto its own root) plus one installed row; it
+//! names each table's counts and the manifest's 23 omitted tables. A repeat
+//! import reports nothing inserted, three inert unchanged rows and one
+//! unchanged live row. The fixture
 //! is shared from `archive_import_retained_side_rows.rs`, whose tests also
 //! run in this binary.
 //!
@@ -62,10 +64,13 @@ fn the_import_receipt_counts_retained_rows_and_names_omitted_tables() {
             "the summary counts {table} unchanged rows"
         );
     }
-    // Full inert accounting: every admitted retained row, not just the two targets.
+    // Full inert accounting: every admitted retained row, not just the two
+    // targets. The third is the source root's birth row of `test.born_depth`
+    // (setting stage 7c-2): its scope names the source root, which this vault
+    // maps onto its own, so it stays inert as missing_live_entity.
     assert_eq!(
-        summary.inserted_rows, 2,
-        "the summary counts two inert inserted rows: {summary:?}"
+        summary.inserted_rows, 3,
+        "the summary counts three inert inserted rows: {summary:?}"
     );
     assert_eq!(
         summary.unchanged_rows, 0,
@@ -121,8 +126,8 @@ fn the_import_receipt_counts_retained_rows_and_names_omitted_tables() {
         repeat.retained_side_rows
     );
     assert_eq!(
-        repeat.retained_side_rows.unchanged_rows, 2,
-        "a repeat import leaves two inert rows unchanged: {:?}",
+        repeat.retained_side_rows.unchanged_rows, 3,
+        "a repeat import leaves three inert rows unchanged: {:?}",
         repeat.retained_side_rows
     );
     let repeat_json =
