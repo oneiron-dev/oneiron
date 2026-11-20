@@ -136,6 +136,20 @@ impl SyncClient {
         window: &WindowKey,
         item: EntityId,
     ) -> Result<(), TransportError> {
+        self.fetch_item_with(window, item, |_| Ok(())).await
+    }
+
+    /// [`Self::fetch_item`], with `finish` run in the transaction that keeps
+    /// the copy: an owner's open directive records its result there, so no
+    /// copy commits once its directive no longer counts (row
+    /// SEQ-FLOOR-S-WITHHELD-COSIGN). A promoted window keeps no copy, and
+    /// `finish` runs alone.
+    pub(crate) async fn fetch_item_with(
+        &mut self,
+        window: &WindowKey,
+        item: EntityId,
+        finish: impl FnOnce(&mut heed::RwTxn<'_>) -> crate::error::Result<()> + Send,
+    ) -> Result<(), TransportError> {
         if self.config.residence_mode != SyncResidenceMode::Opened {
             return Err(refused());
         }
@@ -156,7 +170,9 @@ impl SyncClient {
                 .is_some()
             {
                 self.catch_up_promoted_pads(window, Some(item)).await;
-                Ok(())
+                self.vault
+                    .with_write_txn_grouped(finish)
+                    .map_err(|e| TransportError::Storage(e.to_string()))
             } else {
                 Err(TransportError::InvalidPayload(
                     "promoted item needs window resync",
@@ -257,7 +273,7 @@ impl SyncClient {
                     )? {
                         return Err(crate::Error::InvalidKey);
                     }
-                    return Ok(());
+                    return finish(txn);
                 }
                 // A copy of an item erased here, or of a NOTE that cites one,
                 // is not kept: the home may not have erased it yet (FIX 18400).
@@ -306,7 +322,7 @@ impl SyncClient {
                     item,
                     &blob,
                 )?;
-                Ok(())
+                finish(txn)
             })
             .map_err(|e| TransportError::Storage(e.to_string()))?;
         Ok(())
@@ -326,14 +342,29 @@ impl SyncClient {
         window: &WindowKey,
         item: EntityId,
     ) -> Result<OpenedItem, TransportError> {
+        self.open_item_with(window, item, |_| Ok(())).await
+    }
+
+    /// [`Self::open_item`], with `finish` run in the transaction that stamps
+    /// or keeps the copy, or alone when the row is resident: an owner's open
+    /// directive records its result there, so nothing it opened commits once
+    /// its directive no longer counts (row SEQ-FLOOR-S-WITHHELD-COSIGN).
+    pub(crate) async fn open_item_with(
+        &mut self,
+        window: &WindowKey,
+        item: EntityId,
+        finish: impl FnOnce(&mut heed::RwTxn<'_>) -> crate::error::Result<()> + Send,
+    ) -> Result<OpenedItem, TransportError> {
         let storage = |e: crate::Error| TransportError::Storage(e.to_string());
         if let Some(cached) = self.thin_item(item)?
             && &cached.window == window
         {
-            crate::sync::residence::record_item_touch(&self.vault, item).map_err(storage)?;
+            crate::sync::residence::record_item_touch_with(&self.vault, item, finish)
+                .map_err(storage)?;
             return Ok(OpenedItem::Thin(cached));
         }
         if let Some(raw) = self.vault.get_raw(&item).map_err(storage)? {
+            self.vault.with_write_txn_grouped(finish).map_err(storage)?;
             return Ok(OpenedItem::Resident {
                 entity_id: item,
                 window: window.clone(),
@@ -343,7 +374,7 @@ impl SyncClient {
         if self.config.residence_mode != SyncResidenceMode::Opened {
             return Err(TransportError::InvalidPayload("item not yet synced"));
         }
-        self.fetch_item(window, item).await?;
+        self.fetch_item_with(window, item, finish).await?;
         self.thin_item(item)?
             .map(OpenedItem::Thin)
             .ok_or_else(refused)

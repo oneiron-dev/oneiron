@@ -17,9 +17,7 @@ mod projection;
 mod stories;
 pub use projection::{DocxGroupEvents, DocxProjection};
 use projection::{apply_built, group_ops, native};
-use std::collections::HashMap;
-use stemma::edit::EditTransaction;
-use stemma::view::{BlockRole, BlockView, DocumentView, SegmentView, TextMark, TrackStatus};
+use stemma::view::{BlockRole, BlockView, SegmentView, TextMark, TrackStatus};
 pub use stories::{
     DocxHeaderFooterBand, DocxRead, DocxStory, DocxStoryScope, read_docx_body,
     read_docx_scoped_blocks, story_anchor_blocks,

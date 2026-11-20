@@ -14,6 +14,18 @@
 //! opened read caches go, as an owner's switch to All drops them, since the
 //! full windows supersede them. On the way back the held windows and the
 //! queue stay; the opened lane's own grant path takes them.
+//!
+//! L7-47: this machine's full-copy mark follows the same resolution. A
+//! refresh that resolves sync opened withdraws the mark before it publishes
+//! the mode, the first refresh included, so a lost election that falls back
+//! to the owner's stored sync-opened choice withdraws it as an owner's
+//! switch does. Every mark written outside a switch resolves the stored mode
+//! in its own transaction ([`Vault::declare_full_copy_as_resolved`]).
+//!
+//! FIX RESIDENCE-REFRESH-LOST-HOME-WINDOWS-UNGRANTED: a refresh that brings
+//! a former home to sync opened hands its held windows to the residence
+//! upkeep's grants, as a switch does for the windows it asked no grant for
+//! ([`SyncConnection::mark_held_windows_for_grants`]).
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -22,6 +34,7 @@ use tokio::sync::mpsc;
 
 use super::SyncConnection;
 use crate::Vault;
+use crate::authority::AuthorityEntryHash;
 use crate::sync::client::{SyncEvent, SyncResidenceMode};
 
 /// CALLS renegotiate at once: a residence-mode change reconnects with the
@@ -31,10 +44,11 @@ pub(super) const RENEGOTIATE_AT_ONCE: bool = true;
 
 impl SyncConnection {
     /// Resolves the mode at start, then on each wake whose committed home
-    /// moved this machine in or out of the home, for the connection's whole
-    /// life. A federation or member lane keeps its configured mode and runs none
-    /// (H8-SHARED-ENV-LANE = B). Each
-    /// change holds the host's admission, a pause waited out (FIX 12036).
+    /// moved this machine in or out of the home, or whose store resolves to
+    /// a mode other than the one this connection runs, for the connection's
+    /// whole life. A federation or member lane keeps its configured mode and
+    /// runs none (H8-SHARED-ENV-LANE = B). Each change holds the host's
+    /// admission, a pause waited out (FIX 12036).
     pub(super) async fn run_residence_mode(
         &self,
         events: mpsc::UnboundedSender<SyncEvent>,
@@ -47,7 +61,7 @@ impl SyncConnection {
         let mut home = None;
         loop {
             match crate::sync::residence::local_is_elected_home(&vault) {
-                Ok(is_home) if home != Some(is_home) => {
+                Ok(is_home) if home != Some(is_home) || self.running_mode_is_stale(&vault) => {
                     // `follow_home` resolves the mode afresh past a pause.
                     let _change = self.admit_round().await;
                     if let Err(error) = self.follow_home(&vault) {
@@ -71,34 +85,188 @@ impl SyncConnection {
         }
     }
 
+    /// Whether the store resolves to a mode other than the one this
+    /// connection runs. An owner's switch publishes the mode its recording
+    /// transaction resolved, and two elections around that transaction can
+    /// leave the home where the refresh last read it while the store
+    /// resolves otherwise; the refresh runs on this too (FIX
+    /// RESIDENCE-SWITCH-STALE-HOME). A resolution that fails reads as
+    /// current: the refresh would fail on it as well.
+    fn running_mode_is_stale(&self, vault: &Vault) -> bool {
+        let configured = self.config.client_config.residence_mode;
+        crate::sync::residence::resolve_residence_mode(vault, configured)
+            .is_ok_and(|resolved| resolved != *self.mode.borrow())
+    }
+
     /// Publishes the mode the committed home and the owner's stored choice
     /// resolve to now, when it differs from the one this connection runs.
     /// A change to All publishes first and then drops the opened read
     /// caches, so no reader sees Thin with its caches gone (FIX 11114).
+    /// Under sync opened it first withdraws this install's full-copy mark,
+    /// changed or not (L7-47). It holds [`SyncConnection::mode_publish`]
+    /// from its first resolution to its last publish, so an owner's switch
+    /// records and publishes before or after it, never in between (FIX
+    /// RESIDENCE-SWITCH-STALE-HOME). An election can still commit while the
+    /// refresh runs, so the refresh resolves once more after it publishes
+    /// and repeats until the mode stands: the mode it leaves is the one the
+    /// store resolves to, and a refresh that ends on sync opened withdrew
+    /// the mark under that resolution.
     fn follow_home(&self, vault: &Vault) -> crate::error::Result<()> {
         if self.config.client_config.residence_mode_is_fixed() {
             return Ok(());
         }
-        let mode = crate::sync::residence::resolve_residence_mode(
-            vault,
-            self.config.client_config.residence_mode,
-        )?;
-        if mode == *self.mode.borrow() {
+        let _publish = self
+            .mode_publish
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let configured = self.config.client_config.residence_mode;
+        let mut mode = crate::sync::residence::resolve_residence_mode(vault, configured)?;
+        loop {
+            if mode == SyncResidenceMode::Opened {
+                // Before the mark goes and the mode publishes: the mark tells
+                // a former home that starts under sync opened.
+                self.mark_held_windows_for_grants(vault, configured)?;
+                // L7-47: a machine that runs sync opened holds no full-copy
+                // mark. A lost election is no switch, so the switch's
+                // withdrawal never ran (FIX FULL-COPY-MARK-ELECTION-OPENED).
+                // A mark that is not withdrawn never fails the refresh.
+                if let Err(error) = vault.declare_full_copy_as_resolved(configured, false) {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "the full-copy mark was not withdrawn; a later residence refresh withdraws it"
+                    );
+                }
+            }
+            if mode != *self.mode.borrow() {
+                self.mode.send_if_modified(|running| {
+                    let changed = *running != mode;
+                    *running = mode;
+                    changed
+                });
+                if mode == SyncResidenceMode::All
+                    && let Err(error) = crate::sync::residence::prune_thin_items(vault, u64::MAX)
+                {
+                    tracing::warn!(
+                        %error,
+                        "residence mode is All with its opened read caches left; the next switch drops them"
+                    );
+                }
+            }
+            // An election that committed after the first resolution; an
+            // owner's switch waits for `mode_publish`.
+            let resolved = crate::sync::residence::resolve_residence_mode(vault, configured)?;
+            if resolved == mode {
+                return Ok(());
+            }
+            mode = resolved;
+        }
+    }
+
+    /// FIX RESIDENCE-REFRESH-LOST-HOME-WINDOWS-UNGRANTED: a machine that
+    /// comes to sync opened with no switch holds windows in full that the
+    /// home never granted: it ran sync all and lost the election, or it lost
+    /// the election while it was down and still holds its full-copy mark.
+    /// Under sync opened a window syncs only once granted (`rp:w:`), so each
+    /// held window the home has not granted is marked for the residence
+    /// upkeep to ask the home to retain
+    /// ([`crate::sync::client::retry_refused_retains`]), as a switch marks
+    /// the held windows it asked no grant for. The marks land only while the
+    /// store still resolves to sync opened
+    /// ([`Vault::mark_ungranted_windows_as_resolved`]). A machine that ran
+    /// sync opened already and holds no mark has nothing to hand over.
+    fn mark_held_windows_for_grants(
+        &self,
+        vault: &Vault,
+        configured: SyncResidenceMode,
+    ) -> crate::error::Result<()> {
+        let ran_all = *self.mode.borrow() == SyncResidenceMode::All;
+        if !ran_all && !vault.holds_own_full_copy()? {
             return Ok(());
         }
-        self.mode.send_if_modified(|running| {
-            let changed = *running != mode;
-            *running = mode;
-            changed
-        });
-        if mode == SyncResidenceMode::All
-            && let Err(error) = crate::sync::residence::prune_thin_items(vault, u64::MAX)
-        {
-            tracing::warn!(
-                %error,
-                "residence mode is All with its opened read caches left; the next switch drops them"
-            );
-        }
+        let held = crate::sync::residence::discover_local_window_keys(vault)?;
+        vault.mark_ungranted_windows_as_resolved(configured, held)?;
         Ok(())
+    }
+}
+
+impl Vault {
+    /// L7-47: the full-copy mark a home session's first round earns once it
+    /// completes under sync all: held, written only while the owner's stored
+    /// choice and the committed home still resolve to sync all
+    /// ([`Self::declare_full_copy_as_resolved`]). The round ran the mode its
+    /// connect took; an owner's switch to sync opened that lands during the
+    /// round wins (FIX FULL-COPY-MARK-FIRST-ROUND-RACE). `configured` is the
+    /// host's configured mode.
+    ///
+    /// # Errors
+    /// As [`Self::declare_full_copy_as_resolved`].
+    pub(crate) fn mark_first_round_full_copy(
+        &self,
+        configured: SyncResidenceMode,
+    ) -> crate::error::Result<Option<AuthorityEntryHash>> {
+        self.declare_full_copy_as_resolved(configured, true)
+    }
+
+    /// Writes this install's full-copy mark saying `held` only when the mode
+    /// the owner's stored choice and the committed home resolve to in the
+    /// mark's own transaction agrees: held under sync all, withdrawn under
+    /// sync opened; else nothing (`Ok(None)`). A switch records the owner's
+    /// choice and withdraws the mark in one transaction, and LMDB runs one
+    /// write transaction at a time, so a mark written here never lands after
+    /// a switch it disagrees with. `configured` is the host's configured
+    /// mode. `Ok(Some(hash))` when a mark was written and committed.
+    ///
+    /// # Errors
+    /// As [`Self::declare_full_copy_in_txn`]; storage errors.
+    pub(crate) fn declare_full_copy_as_resolved(
+        &self,
+        configured: SyncResidenceMode,
+        held: bool,
+    ) -> crate::error::Result<Option<AuthorityEntryHash>> {
+        self.load_install_signing_if_minted()?;
+        self.with_write_txn_grouped(|txn| {
+            let mode = self.resolve_residence_mode_in_txn(txn, configured)?;
+            if held != (mode == SyncResidenceMode::All) {
+                return Ok(None);
+            }
+            self.declare_full_copy_in_txn(txn, held)
+        })
+    }
+
+    /// Marks each of `windows` that the home has not granted for the
+    /// residence upkeep's grants
+    /// ([`crate::sync::client::mark_ungranted_windows_in_txn`]) when the
+    /// owner's stored choice and the committed home resolve to sync opened
+    /// in the marks' own transaction; else marks none. `configured` is the
+    /// host's configured mode. Answers the windows it marked.
+    ///
+    /// # Errors
+    /// Storage errors.
+    pub(crate) fn mark_ungranted_windows_as_resolved(
+        &self,
+        configured: SyncResidenceMode,
+        windows: Vec<crate::sync::types::WindowKey>,
+    ) -> crate::error::Result<Vec<crate::sync::types::WindowKey>> {
+        self.with_write_txn_grouped(|txn| {
+            if self.resolve_residence_mode_in_txn(txn, configured)? != SyncResidenceMode::Opened {
+                return Ok(Vec::new());
+            }
+            crate::sync::client::mark_ungranted_windows_in_txn(self, txn, windows)
+        })
+    }
+
+    /// Whether this install's own newest full-copy mark says held (L7-47);
+    /// an install with no machine id holds none.
+    ///
+    /// # Errors
+    /// Storage and authority fold errors.
+    fn holds_own_full_copy(&self) -> crate::error::Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let Some(machine) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
+            return Ok(false);
+        };
+        Ok(self
+            .authority_view_readonly_in_txn(&txn)?
+            .holds_full_copy(machine))
     }
 }

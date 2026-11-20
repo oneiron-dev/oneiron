@@ -456,8 +456,10 @@ impl Drop for UncapturedSteps {
     }
 }
 
-/// Whether a live [`UncapturedSteps`] guard holds `attempt` of `vault`.
-fn steps_uncaptured(vault: &Vault, attempt: AttemptId) -> bool {
+/// Whether a live [`UncapturedSteps`] guard holds `attempt` of `vault`: the
+/// one fact both the request capture's skip and the kept reply's filter
+/// (`llm::step`, FIX CLAIM-RECHECK-REPLY-PARTS) read.
+pub(crate) fn steps_uncaptured(vault: &Vault, attempt: AttemptId) -> bool {
     UNCAPTURED
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)

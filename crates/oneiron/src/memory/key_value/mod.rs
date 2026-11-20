@@ -11,7 +11,7 @@ mod tests;
 mod types;
 mod writes;
 
-use super::support::{json_to_rmpv, verify_actor_binding_in_txn};
+use super::support::{json_to_msgpack_value, verify_actor_binding_in_txn};
 use super::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::batch::EntityMetadataHeader;
 use crate::claim::{
@@ -150,7 +150,7 @@ impl Memory<'_> {
     }
 
     fn key_value_scope(&self, address: &KeyValueAddress) -> rmpv::Value {
-        json_to_rmpv(
+        json_to_msgpack_value(
             &serde_json::json!({"key_value": {"version": 1, "actor_class": self.actor_class.gate_actor_class(), "namespace": address.namespace, "key": address.key}}),
         )
     }

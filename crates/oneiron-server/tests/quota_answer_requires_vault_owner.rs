@@ -16,6 +16,12 @@
 //! answer is taken (204) and the fallback is set: the first test is red
 //! there and green with the owner door. The owner cases pass on both.
 //!
+//! Restriction wave 11 lets an agent the owner names answer through its own
+//! path (`models.quota.agent_may_answer`). An agent holding a full-vault slip
+//! is still an agent (Engine ANSWER STACK-8013-QUOTA-ANSWER-SPLIT = A): with
+//! the owner's item on at its row it answers through that path, and with the
+//! item at its default (off) it is refused, as the first test shows.
+//!
 //! Deterministic: one in-process vault, server and router per case
 //! (`oneshot`, no ports, no model configured, no model called). The quota
 //! question is the row the runtime keeps when an offer parks, written as
@@ -40,11 +46,14 @@ use engine_stack::run_on_engine_stack;
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole};
 use oneiron::llm::SpentKind;
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingScope};
+use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::ai_host::AiHost;
 use oneiron_server::models::{QuotaChoice, QuotaFallback, QuotaQuestion};
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
+use serde::Deserialize;
 use serde_json::json;
 use tower::ServiceExt;
 
@@ -56,6 +65,10 @@ const QUESTION: &str = "faaf460e714b9cd903038e250f3987e9c0e0576d2c13c8c75e7c5488
 const QUESTION_KEY_PREFIX: &str = "models:offer-cooldown:v1:ask:";
 /// The model on another provider the question offers as the fallback.
 const FALLBACK_MODEL: &str = "cloud/big@1";
+
+/// The owner's Setting key that lets an agent answer a quota question, one
+/// item per answer (restriction wave 11).
+const QUOTA_KEY: &str = "models.quota.agent_may_answer";
 
 /// A distinct slip id for each credential a case mints.
 fn next_slip_id() -> [u8; 32] {
@@ -331,6 +344,90 @@ fn owner_host_root_slip_selects_owner_model_fallback() {
         assert!(
             !question_open(&fx.vault),
             "the owner's answer closes the question"
+        );
+    });
+}
+
+/// The part of a question's answer row this file reads: who answered.
+#[derive(Debug, Deserialize)]
+struct AnswerRow {
+    answered_by: AnsweredBy,
+}
+
+/// Who gave an answer, as its answer row keeps it.
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AnsweredBy {
+    Owner,
+    Agent(EntityId),
+}
+
+/// Who answered [`QUESTION`], when its answer row is kept.
+fn answered_by(vault: &Vault) -> Option<AnsweredBy> {
+    vault
+        .sync_state_get(&format!("models:offer-cooldown:v1:answer:{QUESTION}"))
+        .expect("read the answer row")
+        .map(|bytes| {
+            rmp_serde::from_slice::<AnswerRow>(&bytes)
+                .expect("decode the answer row")
+                .answered_by
+        })
+}
+
+/// The owner turns `agent`'s `use_fallback` item of [`QUOTA_KEY`] on,
+/// through the engine's owner door.
+fn let_agent_use_fallback(fx: &Fixture, agent: EntityId) {
+    let owner = fx
+        .vault
+        .authenticate_owner(fx.owner, &fx.owner.to_hex(), true, GateDecisionId::now())
+        .expect("the authenticated owner");
+    let request = SetSetting {
+        item: Some("use_fallback".to_owned()),
+        scope: SettingScope::Agent(agent),
+        ..SetSetting::vault_value(QUOTA_KEY, json!(true))
+    };
+    match fx
+        .vault
+        .set_setting(SettingCaller::Owner(&owner), request)
+        .expect("the owner sets the row")
+    {
+        SetSettingOutcome::Applied { .. } => {}
+        outcome => panic!("the owner's row applies: {outcome:?}"),
+    }
+}
+
+/// An agent holding a live full-vault slip is judged by the owner's key, as
+/// any agent is (Engine ANSWER STACK-8013-QUOTA-ANSWER-SPLIT = A): with its
+/// `use_fallback` item on, its answer takes the agent path (204, the
+/// fallback set, the question closed, the answer row naming the agent). The
+/// owner door refuses it as the owner; its grade gives it no owner path.
+#[test]
+fn agent_full_scope_slip_answers_through_the_agent_path_the_owner_opened() {
+    run_on_engine_stack("quota-answer-agent-full-slip", || async {
+        let fx = setup().await;
+        let agent = fx
+            .vault
+            .ensure_agent_principal("quota-answer-agent")
+            .expect("a registered agent principal");
+        let_agent_use_fallback(&fx, agent);
+        let key = SigningKey::from_bytes(&[0x52; 32]);
+        let slip = full_slip(&fx, agent, "agent", &key);
+        let binding = holder_binding(&fx, &slip, &key);
+        let (status, body) = answer_use_fallback(&fx, &slip, binding).await;
+        assert_eq!(
+            status,
+            StatusCode::NO_CONTENT,
+            "the agent the owner lets answer answers with its full-vault slip: {body}"
+        );
+        assert_eq!(fallback(&fx.vault).as_deref(), Some(FALLBACK_MODEL));
+        assert!(
+            !question_open(&fx.vault),
+            "the agent's answer closes the question"
+        );
+        assert_eq!(
+            answered_by(&fx.vault),
+            Some(AnsweredBy::Agent(agent)),
+            "the answer row names the agent, not the owner"
         );
     });
 }

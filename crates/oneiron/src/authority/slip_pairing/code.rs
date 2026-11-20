@@ -112,8 +112,8 @@ pub fn parse_pinned_pairing_link(
     let pin = match (parts.next(), parts.next(), parts.next()) {
         (None, None, None) => None,
         (Some(challenge), Some(digest), None) => Some(PairingPinRef {
-            challenge: hex32(challenge).ok_or_else(invalid_authority)?,
-            digest: hex32(digest).ok_or_else(invalid_authority)?,
+            challenge: oneiron_hex::decode(challenge).ok_or_else(invalid_authority)?,
+            digest: oneiron_hex::decode(digest).ok_or_else(invalid_authority)?,
         }),
         _ => return Err(invalid_authority()),
     };
@@ -127,21 +127,6 @@ pub fn parse_pinned_pairing_link(
         holder_ref.to_owned(),
         pin,
     ))
-}
-/// 64 lower-case hex characters as 32 bytes.
-fn hex32(value: &str) -> Option<[u8; 32]> {
-    if value.len() != 64
-        || !value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
-        return None;
-    }
-    let mut out = [0; 32];
-    for (slot, pair) in out.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
-        *slot = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-    }
-    Some(out)
 }
 pub(super) fn draw_code() -> String {
     use rand_core::{OsRng, RngCore};

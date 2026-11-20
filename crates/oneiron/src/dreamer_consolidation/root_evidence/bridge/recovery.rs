@@ -1,4 +1,6 @@
 //! Native grant proofs select retained source revisions, never copied bodies.
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::*;
 use crate::WriteActor;
 use crate::claim::{ClaimReadStatus, ScopedReadActorKey, ScopedReadResult};
@@ -159,7 +161,7 @@ impl RootBinding {
             .ok_or_else(|| invalid_consolidation("root original revision has no header"))?;
         let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
         if header.entity_type != ENTITY_TYPE_CLAIM
-            || self.source_hash(id)? != Some(*blake3::hash(body).as_bytes())
+            || self.source_hash(id)? != Some(*ContentHash::of(body).as_bytes())
         {
             return Err(invalid_consolidation(
                 "root original source revision changed",

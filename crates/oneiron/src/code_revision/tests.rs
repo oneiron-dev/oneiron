@@ -96,6 +96,7 @@ fn put_claim_entity_with_source_and_approval(
         ClaimLifecycleStatus::Active,
     )?;
     let mut body = body;
+    crate::test_util::stamp_vault_default_facet(vault, &mut body);
     body.source = source;
     let data = encode_claim_body(&body)?;
     if approval != ClaimApprovalStatus::Auto {
@@ -126,6 +127,7 @@ fn put_claim_entity_unchecked(
             end: learned_at,
         },
         learned_at,
+        0,
         data,
     );
 

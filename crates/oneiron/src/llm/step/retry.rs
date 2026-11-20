@@ -205,8 +205,11 @@ pub(super) async fn generate_with_retry(
                 return Err(error);
             }
             // Nothing went out: its count is given back, and no attempt is
-            // spent (FIX 11226).
-            Err(LlmError::Retryable(error @ RetryableLlmError::HealthRest { .. })) => {
+            // spent (FIX 11226; outside every rung's hours, UNBUILT-14).
+            Err(LlmError::Retryable(
+                error @ (RetryableLlmError::HealthRest { .. }
+                | RetryableLlmError::OutsideHours { .. }),
+            )) => {
                 let _kept = plan.count_sends(sent);
                 let wait = health_rest_wait(&error, unix_now_ms());
                 if rested.saturating_add(wait) > plan.rest_wait {
@@ -227,14 +230,19 @@ pub(super) async fn generate_with_retry(
 }
 
 /// How long, from `now_ms` (Unix milliseconds), until the offer a health
-/// rest names is back: to the start of the first second it states still
-/// ahead, at least [`HEALTH_REST_POLL_MS`]. A probation request's end, which
-/// no clock states, is asked for each [`HEALTH_REST_POLL_MS`].
+/// rest names is back, or the first rung's hours a refusal outside them
+/// names open: to the start of the first second it states still ahead, at
+/// least [`HEALTH_REST_POLL_MS`]. A probation request's end, which no clock
+/// states, is asked for each [`HEALTH_REST_POLL_MS`].
 fn health_rest_wait(error: &RetryableLlmError, now_ms: u64) -> Duration {
-    let RetryableLlmError::HealthRest {
+    let (RetryableLlmError::HealthRest {
         retry_after,
         resets_at,
-    } = error
+    }
+    | RetryableLlmError::OutsideHours {
+        retry_after,
+        resets_at,
+    }) = error
     else {
         return Duration::from_millis(HEALTH_REST_POLL_MS);
     };

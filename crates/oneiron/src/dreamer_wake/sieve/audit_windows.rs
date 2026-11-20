@@ -27,11 +27,12 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::super::recipes::WakeRecipePolicy;
-use super::chunks::{self, Admission, Chunk, ChunkRef};
+use super::chunks::{self, Admission, Chunk, ChunkRef, chunk_digest};
 use super::{CONTINUE, OWED, READ, RUNG_ATTEMPT};
 use crate::attempt_queue::AttemptId;
 use crate::claim::ScopedReadActorKey;
@@ -277,14 +278,13 @@ fn ceil_boundary(text: &str, mut at: usize) -> usize {
     at
 }
 
+/// Deterministic audit draws keep their bytes (K, PLAN-UC-04 stage 7).
 fn draw_rank(domain: &[u8], seed: AttemptId, id: &[u8]) -> [u8; 32] {
-    *blake3::Hasher::new()
-        .update(b"oneiron:sieve:audit-window-sample:v1")
-        .update(domain)
-        .update(seed.as_bytes())
-        .update(id)
-        .finalize()
-        .as_bytes()
+    LegacyDigest::new(purposes::dreamer_wake::AUDIT_WINDOW_SAMPLE)
+        .raw(domain)
+        .raw(seed.as_bytes())
+        .raw(id)
+        .finish()
 }
 
 /// Whether `rank` falls in the first `percent` of draws, as the flagged
@@ -418,15 +418,6 @@ fn source_scope_in_txn(
     Ok(Some(scope))
 }
 
-/// The digest a chunk's text versions its offsets with.
-fn chunk_digest(text: &str) -> [u8; 32] {
-    *blake3::Hasher::new()
-        .update(b"oneiron:dreamer-sieve:chunk:v1")
-        .update(text.as_bytes())
-        .finalize()
-        .as_bytes()
-}
-
 /// Keeps the finding as `attempt`'s audit receipt while the window reads as
 /// its call read it; `false` when it no longer does, for the audit to read
 /// it again.
@@ -462,4 +453,9 @@ pub(crate) fn finish_window_audit(
         )?;
         Ok(true)
     })
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn draw_rank_for_test(domain: &[u8], seed: AttemptId, id: &[u8]) -> [u8; 32] {
+    draw_rank(domain, seed, id)
 }

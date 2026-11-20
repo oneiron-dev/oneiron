@@ -41,9 +41,7 @@ use crate::{EntityId, Error, Result, Vault};
 use oneiron_model::llm::{ContentPart, LlmRequest, LlmResponse};
 
 #[doc(hidden)]
-use oneiron_records::dreamer_runner::maintenance::compaction_check::conversation::{
-    CONVERSATION_DECLARATION_KEY, hex32,
-};
+use oneiron_records::dreamer_runner::maintenance::compaction_check::conversation::CONVERSATION_DECLARATION_KEY;
 
 /// Why a check waits: a turn of its span is away from this replica.
 const SPAN_NOT_RESIDENT: &str = "a turn of the checked span is not resident here";
@@ -132,7 +130,7 @@ impl ConversationCheckDeclaration {
     fn pins(&self) -> Option<Vec<(EntityId, [u8; 32])>> {
         self.turns
             .iter()
-            .map(|span| Some((span.turn, hex32(&span.fingerprint)?)))
+            .map(|span| Some((span.turn, span.pinned_fingerprint()?)))
             .collect()
     }
 

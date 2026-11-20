@@ -1,0 +1,205 @@
+//! Lends a prepared pass's resources to one extraction attempt's bound calls.
+//!
+//! Verdict reads and generation steps share the original attempt's guard and charge tally.
+//! Every lent read lists for the destination bound the pass stated, the bound its wake's
+//! listings were read for.
+
+use std::sync::{Arc, Mutex};
+
+use oneiron::dreamer_consolidation::{
+    ConsolidationDecisions, DREAMER_EXTRACTION_ROLE, DREAMER_VERDICT_ROLE, RoleBackends, RoleCall,
+    StepChargeTally,
+};
+use oneiron::dreamer_runner::{DreamerDecisionLender, ExtractionDecisionLoan, ExtractionStepLoan};
+use oneiron::dreamer_wake::{WakeAttemptContext, WakePassDeadline};
+use oneiron::llm::decision::{DecisionBandPolicy, DecisionLadder, TypedDecision};
+use oneiron::llm::model_step::ModelStepReceipt;
+use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding};
+use oneiron::memory::MemoryResult;
+use oneiron::settings::ReadDestination;
+use oneiron::verbs::AiVerdict;
+use oneiron::{BudgetGuard, Error, LlmBackend, ModelId, Result};
+use tokio::runtime::Handle;
+
+/// Rechecks the host's live permission before each extraction loan.
+pub trait ExtractionDecisionGate: Send + Sync {
+    /// Admits the prepared verdict route without selecting another model or run.
+    ///
+    /// # Errors
+    ///
+    /// Returns failures while reading the host's live admission policy.
+    fn admits(&self) -> Result<bool>;
+
+    /// Admits the prepared extraction route for one bound generation step.
+    ///
+    /// The default refuses so a gate written for verdict reads never admits generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns failures while reading the host's live admission policy.
+    fn admits_step(&self) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// Admits the prepared narrative route for one bound psych profile step.
+    ///
+    /// The default refuses so a gate written for extraction never admits a
+    /// profile step.
+    ///
+    /// # Errors
+    ///
+    /// Returns failures while reading the host's live admission policy.
+    fn admits_narrative_step(&self) -> Result<bool> {
+        Ok(false)
+    }
+}
+
+/// Owns the native resources shared by bound verdict reads and generation steps in one pass.
+///
+/// Cloned guards share the pass's spend state. The runtime must remain independently
+/// driven while the engine joins its scoped read thread.
+pub struct ExtractionDecisionResources {
+    /// Holds the pass's ladder, dial, learned bands, checker and wording.
+    pub decisions: ConsolidationDecisions,
+    /// Holds the pass's prepared role backends and their existing runs.
+    pub roles: RoleBackends,
+    /// Holds the fallback backend used by native role resolution.
+    pub backend: Arc<dyn LlmBackend>,
+    /// Names the fallback model used by native role resolution.
+    pub model: ModelId,
+    /// Holds the fallback host attestation used by native role resolution.
+    pub binding: HostInferenceBinding,
+    /// Holds the pass's selected-model extraction permission predicate.
+    pub extraction_egress: Option<Arc<dyn ExtractionEgressPredicate>>,
+    /// Shares the admitted pass's own budget state.
+    pub guard: BudgetGuard,
+    /// Rechecks the prepared verdict or extraction route's live host permission at every loan.
+    pub gate: Arc<dyn ExtractionDecisionGate>,
+    /// Drives the engine's bound verdict reads and generation steps on an independent runtime.
+    pub runtime: Handle,
+}
+
+/// Owns one extraction attempt's clock and charge sink for verdict reads and generation steps.
+pub struct ExtractionAttemptLender {
+    /// Retains the prepared pass resources for every borrowed callback.
+    resources: Arc<ExtractionDecisionResources>,
+    /// Preserves the admitted attempt's original clock and finalize window.
+    deadline: WakePassDeadline,
+    /// Preserves the admitted attempt's frozen Unix time in milliseconds.
+    now_ms: u64,
+    /// Retains the material this wake's admitted pre-hooks already added.
+    material: Vec<String>,
+    /// Retains the destination bound this wake's pass stated, which its listings were read for.
+    destination_bound: Option<ReadDestination>,
+    /// Retains all terminal generation charges until the job hands off its outcome.
+    charges: Mutex<StepChargeTally>,
+}
+
+impl ExtractionAttemptLender {
+    /// Retains the admitted attempt's own context and registers its shared pass meter.
+    ///
+    /// The extraction job must retain this lender across verdict reads and generation steps
+    /// and hand its charge sink to the same attempt's outcome, including paid failure prefixes.
+    #[must_use]
+    pub fn new(
+        resources: Arc<ExtractionDecisionResources>,
+        context: &WakeAttemptContext<'_>,
+    ) -> Self {
+        context.meter_run_line(&resources.guard);
+        Self {
+            resources,
+            deadline: context.deadline.clone(),
+            now_ms: context.now_ms,
+            material: context.hook_material().to_vec(),
+            destination_bound: context.destination_bound().cloned(),
+            charges: Mutex::new(StepChargeTally::new()),
+        }
+    }
+
+    /// Borrows the tally shared by bound verdict reads and generation steps for outcome handoff.
+    #[must_use]
+    pub fn charges(&self) -> &Mutex<StepChargeTally> {
+        &self.charges
+    }
+}
+
+impl DreamerDecisionLender for ExtractionAttemptLender {
+    /// Refuses settlement because its existing host lender remains separate.
+    fn lend(
+        &self,
+        _decide: &mut dyn FnMut(&DecisionLadder<'_>, &DecisionBandPolicy) -> Result<TypedDecision>,
+    ) -> Result<TypedDecision> {
+        Err(Error::InvalidConfig(
+            "the extraction lender does not lend conflict settlement decisions".into(),
+        ))
+    }
+
+    /// States the bound of the wake this attempt's context was prepared for, the same value
+    /// at every call.
+    ///
+    /// The engine rebuilds each lent extraction listing for it, so the lent reads list for
+    /// the destination the pass's native extraction read for. A context without a prepared
+    /// wake states none.
+    fn destination_bound(&self) -> Option<ReadDestination> {
+        self.destination_bound.clone()
+    }
+
+    /// Rechecks the gate and lends the admitted attempt's native read resources once.
+    fn lend_extraction(
+        &self,
+        decide: &mut dyn FnMut(ExtractionDecisionLoan<'_>) -> MemoryResult<AiVerdict>,
+    ) -> MemoryResult<Option<AiVerdict>> {
+        let resources = &self.resources;
+        if !resources.gate.admits()? {
+            return Ok(None);
+        }
+        let call = RoleCall::resolve(
+            &resources.roles,
+            DREAMER_VERDICT_ROLE,
+            resources.backend.as_ref(),
+            &resources.model,
+            &resources.binding,
+            resources.extraction_egress.as_deref(),
+        );
+        decide(ExtractionDecisionLoan {
+            decisions: &resources.decisions,
+            call,
+            guard: &resources.guard,
+            deadline: &self.deadline,
+            now_ms: self.now_ms,
+            charges: &self.charges,
+            runtime: &resources.runtime,
+        })
+        .map(Some)
+    }
+
+    /// Rechecks the step gate and lends the admitted attempt's native extraction resources once.
+    fn lend_extraction_step(
+        &self,
+        step: &mut dyn FnMut(ExtractionStepLoan<'_>) -> MemoryResult<ModelStepReceipt>,
+    ) -> MemoryResult<Option<ModelStepReceipt>> {
+        let resources = &self.resources;
+        if !resources.gate.admits_step()? {
+            return Ok(None);
+        }
+        let call = RoleCall::resolve(
+            &resources.roles,
+            DREAMER_EXTRACTION_ROLE,
+            resources.backend.as_ref(),
+            &resources.model,
+            &resources.binding,
+            resources.extraction_egress.as_deref(),
+        );
+        step(ExtractionStepLoan {
+            call,
+            prompt: &resources.decisions.extraction_prompt,
+            material: &self.material,
+            guard: &resources.guard,
+            deadline: &self.deadline,
+            now_ms: self.now_ms,
+            charges: &self.charges,
+            runtime: &resources.runtime,
+        })
+        .map(Some)
+    }
+}

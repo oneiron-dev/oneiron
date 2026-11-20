@@ -47,13 +47,38 @@ pub struct ScopedReadActorKey {
     /// standing Grants again, so a lane held past a revoke or a lapse narrows
     /// with it (REVIEW-7051 P1). See [`Self::bound_by_live_agent_grants`].
     agent_grant_holder: Option<EntityId>,
+    /// The credentials saved lanes froze, carried with no proof (OF-506):
+    /// each serving txn reads nothing unless every one still holds there;
+    /// see [`Self::bound_by_saved_credential`].
+    pub(super) saved_credentials: Vec<super::frozen::SavedCredential>,
+    /// Set only on a key rebuilt under a saved lane's grant basis (FIX
+    /// 14344, Sol F3 on #8065): its reader's own owner authority never
+    /// stands beside it, as it never stood beside the saved key; the basis
+    /// keeps the owner standing that key held. See
+    /// [`Self::within_native_basis`].
+    owner_authority_withheld: bool,
+    /// Set only on a key rebuilt under a saved lane's floor basis (blind
+    /// review round 1 P1 on #8065): the saved key held the owner's floor,
+    /// so the lane's owner alternative, which judges a row under the
+    /// owner's floor and this key's own gate, stands beside it while its
+    /// reader is a live owner. The reader's ungated owner authority stays
+    /// withheld ([`Self::owner_authority_withheld`]).
+    rebuilt_under_floor_basis: bool,
     /// A host-bound channel on a channel-aware read door, never a grant.
     pub(super) channel: Option<String>,
     /// Set only on the vault owner's own key; see [`Self::vault_owner`].
     owner: Option<EntityId>,
+    /// Set only on a key a saved lane's basis took the owner's floor from;
+    /// see [`Self::owner_binding_ref`].
+    withdrawn_floor_owner: Option<EntityId>,
     /// Set only on a narrower credential of the owner's; see
     /// [`Self::exempt_while_owner`].
     pub(super) owner_exemption: Option<EntityId>,
+    /// Set only on a key a saved lane's basis lifted the relationship gate
+    /// of on this owner's live binding alone, with no owner exemption beside
+    /// it; see [`Self::within_native_basis`] and
+    /// [`Self::relationship_gate_lift_owner`].
+    pub(super) relationship_gate_owner: Option<EntityId>,
     /// The room turn this key reads inside, when a host bound one.
     pub(super) room_turn: Option<Box<RoomTurnCeiling>>,
     /// Every phone call this key reads inside; each is an independent ceiling.
@@ -92,12 +117,29 @@ pub struct ScopedReadActorKey {
     /// owner nor one of its own agents reading on its own; see
     /// [`Self::homed_unnamed`].
     home_unnamed: bool,
+    /// Set only on a Connect guest's key at its own envelope fetch; see
+    /// [`Self::home_cleared_to_connect_ceiling`].
+    connect_home_ceiling: Option<crate::federation::SensitivityCeiling>,
     /// The room such a key's reader was found standing in when the key came
     /// to read inside it; see [`Self::standing_in_room_in`].
     pub(super) standing_room: Option<EntityId>,
 }
 
 pub use crate::settings::CallerLocality;
+
+/// Where a key a saved lane is rebuilt over took its actor class from
+/// (Sol F1 on #8134): it decides whether the key may read as the class the
+/// lane was saved under ([`ScopedReadActorKey::within_saved_actor_class`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum KeyClassOrigin {
+    /// A caller's own key: its class bounds what it reads, so a lane saved
+    /// under another class has no meet with it.
+    Caller,
+    /// A key the rebuild built from its principal's row, or from the actor
+    /// a saved declaration stored: its class is the row's, not one any live
+    /// key was proved as, so a key with no proof reads as the saved class.
+    PrincipalRow,
+}
 
 /// A room turn's read ceiling (ARCH-0067 §8). It travels with the key, so
 /// every lane built from it reads inside the room's Scope and roster.
@@ -350,6 +392,13 @@ pub(crate) fn meet_clearance(
 }
 
 impl ScopedReadActorKey {
+    /// The principal whose access grants and relationship memberships a
+    /// read under this key loads: what a forwarded search's answer is judged
+    /// again under where it leaves (SELECTOR-RELEASE-POINT = B).
+    pub(crate) fn access_principal(&self) -> Option<EntityId> {
+        self.principal_ref
+    }
+
     #[must_use]
     pub fn new(actor_ref: impl Into<String>) -> Option<Self> {
         Self::from_parts(actor_ref.into(), None)
@@ -404,9 +453,14 @@ impl ScopedReadActorKey {
             authority: None,
             grant_alternatives: None,
             agent_grant_holder: None,
+            saved_credentials: Vec::new(),
+            owner_authority_withheld: false,
+            rebuilt_under_floor_basis: false,
             channel: None,
             owner: None,
+            withdrawn_floor_owner: None,
             owner_exemption: None,
+            relationship_gate_owner: None,
             room_turn: None,
             phone_lines: Vec::new(),
             room_facets: None,
@@ -419,6 +473,7 @@ impl ScopedReadActorKey {
             system_agent,
             judges_write_target: false,
             home_unnamed: false,
+            connect_home_ceiling: None,
             standing_room: None,
         })
     }
@@ -451,9 +506,14 @@ impl ScopedReadActorKey {
             authority: None,
             grant_alternatives: None,
             agent_grant_holder: None,
+            saved_credentials: Vec::new(),
+            owner_authority_withheld: false,
+            rebuilt_under_floor_basis: false,
             channel: None,
             owner: Some(owner),
+            withdrawn_floor_owner: None,
             owner_exemption: None,
+            relationship_gate_owner: None,
             room_turn: None,
             phone_lines: Vec::new(),
             room_facets: None,
@@ -466,6 +526,7 @@ impl ScopedReadActorKey {
             system_agent: None,
             judges_write_target: false,
             home_unnamed: false,
+            connect_home_ceiling: None,
             standing_room: None,
         }
     }
@@ -489,6 +550,31 @@ impl ScopedReadActorKey {
     /// ([`Self::vault_owner_by_census`]).
     pub(crate) fn owner_by_census(&self) -> bool {
         self.owner_by_census
+    }
+
+    /// Whether this key's reader's own owner authority is withheld: a key
+    /// rebuilt under a saved lane's grant basis
+    /// ([`Self::within_native_basis`]).
+    pub(crate) fn owner_authority_withheld(&self) -> bool {
+        self.owner_authority_withheld
+    }
+
+    /// Whether this key was rebuilt under a saved lane's floor basis, so the
+    /// lane's owner alternative stands beside it
+    /// ([`Self::within_native_basis`]).
+    pub(crate) fn rebuilt_under_floor_basis(&self) -> bool {
+        self.rebuilt_under_floor_basis
+    }
+
+    /// Whether the owner's floor may stand beside this key for a reader that
+    /// is a live owner: beside every key not rebuilt under a saved lane's
+    /// grant basis, and beside one rebuilt under a floor's basis and held to
+    /// no named records, held to this key's own bounds (blind review rounds
+    /// 1 and 2 on #8065). The owner's key keeps no records bound, so a key
+    /// held to one keeps it off.
+    pub(crate) fn admits_owner_alternative(&self) -> bool {
+        !self.owner_authority_withheld
+            || (self.rebuilt_under_floor_basis && self.record_bound.is_none())
     }
 
     /// This key, held to the host action it was built for (FIX 2222): every
@@ -559,6 +645,17 @@ impl ScopedReadActorKey {
         self.owner
     }
 
+    /// The owner whose binding every read under this key proves again in
+    /// its own snapshot: the vault owner's, on the owner's own key, and on a
+    /// key a saved lane's basis took that floor from
+    /// ([`Self::within_native_basis`]), which reads no more than the floor
+    /// key it was rebuilt over: nothing once that binding lapses (FIX
+    /// SAVED-LANE-MEET-DROPS-OWNER-LIVENESS). Only the liveness is kept;
+    /// the floor's reach and owner authority are not.
+    pub(super) fn owner_binding_ref(&self) -> Option<EntityId> {
+        self.owner.or(self.withdrawn_floor_owner)
+    }
+
     /// Whether this key reads past every facet bound in `txn` (owner ruling
     /// FACET-READ = A): the vault owner's own key, and a narrower credential
     /// of the owner's while its holder is still the bound owner there. A
@@ -580,6 +677,33 @@ impl ScopedReadActorKey {
                 refusal,
             )))
         })
+    }
+
+    /// Whether this key's actor is a live owner of the vault in `txn`: the
+    /// key reads past every facet there ([`Self::facets_owner_exempt_in`]),
+    /// or it is a person's key whose actor is one of the vault's live owners
+    /// (a co-Owner with no owner binding among them). A saved lane that
+    /// keeps no grant basis reads as its principal's own only for such an
+    /// actor, and a lane of any other freezes with its basis (FIX
+    /// SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS).
+    ///
+    /// # Errors
+    /// A store failure reading the owner binding or the live-owner census.
+    pub(super) fn actor_is_live_owner_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> crate::error::Result<bool> {
+        if self.facets_owner_exempt_in(vault, txn)? {
+            return Ok(true);
+        }
+        if !matches!(self.actor_class.as_deref(), None | Some("human")) {
+            return Ok(false);
+        }
+        match EntityId::from_hex(&self.actor_ref) {
+            Ok(actor) => crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor),
+            Err(_) => Ok(false),
+        }
     }
 
     /// Whether this is the vault owner's own key, which reads all of the
@@ -709,6 +833,38 @@ impl ScopedReadActorKey {
     pub fn homed_unnamed(mut self) -> Self {
         self.home_unnamed = true;
         self
+    }
+
+    /// This key, homed in no conversation of this vault
+    /// ([`Self::homed_unnamed`]), reading a CLAIM stamped up to `ceiling`
+    /// as the Connect export reads it (ANSWER FED-CONNECT-STAMPED-HOME = A,
+    /// Engine 19 Nov 05:05: a Connect grant reads stamped claims up to its
+    /// own ceiling). Only the guest envelope fetch builds it, for the holder
+    /// of the live Connect guest grant it serves, with that grant's ceiling,
+    /// so the fetch reads the rows the export selected under the same grant.
+    /// Every other check the key makes still runs, and every other door
+    /// keeps the home.
+    #[must_use]
+    pub(crate) fn home_cleared_to_connect_ceiling(
+        mut self,
+        ceiling: crate::federation::SensitivityCeiling,
+    ) -> Self {
+        self.connect_home_ceiling = Some(ceiling);
+        self
+    }
+
+    /// Whether this key reads a CLAIM stamped `band` past its conversation
+    /// home: only under the Connect ceiling
+    /// [`Self::home_cleared_to_connect_ceiling`] set, and only up to it.
+    pub(crate) fn home_clears_band(&self, band: crate::disclosure::DisclosureBand) -> bool {
+        self.connect_home_ceiling
+            .is_some_and(|ceiling| ceiling.permits(band.sensitivity()))
+    }
+
+    /// The Connect ceiling [`Self::home_cleared_to_connect_ceiling`] set, if
+    /// any: what a key fingerprint keeps of it.
+    pub(crate) fn connect_home_ceiling(&self) -> Option<crate::federation::SensitivityCeiling> {
+        self.connect_home_ceiling
     }
 
     /// Whether this key withholds stamped claims ([`Self::homed_unnamed`]):
@@ -908,6 +1064,182 @@ impl ScopedReadActorKey {
         }
     }
 
+    /// The owner whose live binding lifts this key's relationship gate: a
+    /// narrower credential's owner exemption ([`Self::exempt_while_owner`]),
+    /// or the owner a saved lane's rebuild lifted the gate on alone, with no
+    /// exemption beside it ([`Self::within_native_basis`]). Each read proves
+    /// that binding again in its own snapshot
+    /// ([`Self::relationship_gated_in`]).
+    pub(super) fn relationship_gate_lift_owner(&self) -> Option<EntityId> {
+        self.owner_exemption.or(self.relationship_gate_owner)
+    }
+
+    /// The grant basis this key reads under, as a saved lane keeps it beside
+    /// its frozen Scope (FIX 14344): its owner standing (the vault owner's
+    /// floor, a narrower credential's owner exemption, or neither; each
+    /// proved again at every read), its grant gate (none, the
+    /// relationship-only gate, or the access gate), the principal that
+    /// gate admitted rows on the grants of, and the actor class it reads as.
+    /// A key rebuilt under a floor's basis holds the floor its owner
+    /// alternative reads under, so a lane frozen again from it keeps that
+    /// standing (blind review round 2 P1 on #8065). A key whose gate a saved
+    /// lane's basis lifted on its owner's live binding alone reads as no
+    /// gate binds it while that binding holds, so it names no gate and no
+    /// owner standing, as that lane's basis did (blind review P1 on #9716).
+    pub(super) fn native_read_basis(&self) -> super::frozen::NativeReadBasis {
+        use super::frozen::{NativeGrantGate, NativeOwnerStanding};
+        let owner_standing = if self.owner.is_some() || self.rebuilt_under_floor_basis {
+            NativeOwnerStanding::Floor
+        } else if self.owner_exemption.is_some() {
+            NativeOwnerStanding::Exemption
+        } else {
+            NativeOwnerStanding::Absent
+        };
+        let grant_gate = if !self.enforce_access_grants || self.relationship_gate_owner.is_some() {
+            NativeGrantGate::Ungated
+        } else if self.unscoped_rows_open {
+            NativeGrantGate::Relationship
+        } else {
+            NativeGrantGate::Access
+        };
+        super::frozen::NativeReadBasis {
+            owner_standing,
+            grant_gate,
+            grant_principal: self
+                .principal_ref
+                .filter(|_| grant_gate != NativeGrantGate::Ungated),
+            actor_class: self.actor_class.clone(),
+            classless: self.actor_class.is_none(),
+        }
+    }
+
+    /// This key read as `class`, the actor class a saved lane's live key
+    /// read as (FIX SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS): policy rows
+    /// match on class, so a rebuild under another class reads what its live
+    /// key's row refused. A key with no proof that a rebuild built from its
+    /// principal's row ([`KeyClassOrigin::PrincipalRow`]) takes `class`.
+    /// Any other key of another class has no meet with it, a caller's own
+    /// key with no proof among them (Sol F1 on #8134): the answer reads
+    /// nothing, as [`Self::read_nothing`] keys it. A lane whose live key
+    /// named no class (`classless`) is saved under no class: such a key built
+    /// from its principal's row reads with none, as that live key did, and
+    /// any other key that names one reads nothing (round 2 review P1 of
+    /// #9590). A lane saved before the class was kept (`class` is `None`,
+    /// `classless` unset) leaves this key's own class, as every rebuild read
+    /// before the class was kept: taking no class there would free a key
+    /// built from its principal's row from each row bound to the row's
+    /// class, and that lane's frozen Scope would stand as read authority its
+    /// live key lacked (Astra F1/F2 on #8134). `None` only for a blank actor
+    /// ref, which no key holds.
+    #[must_use]
+    pub(super) fn within_saved_actor_class(
+        self,
+        class: Option<&str>,
+        classless: bool,
+        origin: KeyClassOrigin,
+    ) -> Option<Self> {
+        if class.is_none() && !classless {
+            return Some(self);
+        }
+        if self.actor_class.as_deref() == class {
+            return Some(self);
+        }
+        if self.proof.is_some() || origin == KeyClassOrigin::Caller {
+            return Self::read_nothing(self.actor_ref, self.actor_class.unwrap_or_default());
+        }
+        Some(Self {
+            actor_class: class.map(str::to_owned),
+            ..self
+        })
+    }
+
+    /// This key held to `basis`, the grant basis a saved lane's live key
+    /// read under (FIX 14344, Astra F2 on #8029): the meet of the two on
+    /// each axis, so the rebuilt key reads no row either one refused (Sol
+    /// R1/R2 on #8061).
+    /// - It keeps the owner's floor only under a floor's basis. A floor it
+    ///   takes leaves its owner's binding to prove at every read
+    ///   ([`Self::owner_binding_ref`], FIX
+    ///   SAVED-LANE-MEET-DROPS-OWNER-LIVENESS).
+    /// - It keeps an owner exemption, or turns a floor it loses into one,
+    ///   only under a basis with an owner standing (Sol F1 on #8061), and
+    ///   only where each key's gate let every row through while the owner
+    ///   binding held: unbound, or lifted by an exemption. A floor's basis
+    ///   records no exemption, so no exemption lifts a gate it read under.
+    /// - Where each gate let every row through but no exemption stands
+    ///   beside the meet, as under an ungated basis with no owner standing,
+    ///   the key's gate stays lifted on the owner binding that lifted it,
+    ///   and on nothing else ([`Self::relationship_gate_owner`]): no
+    ///   exemption, so no facet read past, and no floor (blind review P1 on
+    ///   #9716).
+    /// - Its gate binds unless neither key's did (Sol F7 on #8061), with the
+    ///   owner as principal where an ungated key held the floor, and it
+    ///   closes unscoped rows where either gate closed them. A key a gate
+    ///   already binds keeps its own principal, or none (Astra F1 on #8061).
+    /// - Under the saved key's gate it reads on the grants of that gate's
+    ///   principal alone, and on none where the two keys' principals differ
+    ///   or the saved gate was bound to none (Sol F5 on #8065).
+    /// - Its reader's own owner authority never stands beside it
+    ///   ([`Self::owner_authority_withheld`], Sol F3 on #8065). Under a
+    ///   floor's basis the lane's owner alternative still does, as the
+    ///   saved key held the floor: it judges a row under the owner's floor
+    ///   and this key's gate ([`Self::rebuilt_under_floor_basis`], blind
+    ///   review round 1 P1 on #8065).
+    ///
+    /// A key no gate bound held no exemption to keep: its lane, rebuilt over
+    /// a key a gate binds, reads only the relationship rows its principal's
+    /// grants admit, unless an owner's live binding lifts that key's gate.
+    #[must_use]
+    pub(super) fn within_native_basis(mut self, basis: super::frozen::NativeReadBasis) -> Self {
+        use super::frozen::{NativeGrantGate, NativeOwnerStanding};
+        // What each gate let through: an unbound gate, every row; one an
+        // owner's live binding lifts, every row while that binding holds; a
+        // binding gate, an unscoped row only while it leaves them open.
+        let key_ungated = !self.enforce_access_grants;
+        let key_lift_owner = self.relationship_gate_lift_owner();
+        let key_lifted = key_ungated || key_lift_owner.is_some();
+        let key_unscoped_open = key_ungated || self.unscoped_rows_open;
+        let saved_ungated = basis.grant_gate == NativeGrantGate::Ungated;
+        let saved_lifted = saved_ungated || basis.owner_standing == NativeOwnerStanding::Exemption;
+        let saved_unscoped_open = basis.grant_gate != NativeGrantGate::Access;
+        let floor_owner = self.owner;
+        let lost_floor = if basis.owner_standing == NativeOwnerStanding::Floor {
+            None
+        } else {
+            self.owner.take()
+        };
+        self.withdrawn_floor_owner = self.withdrawn_floor_owner.or(lost_floor);
+        let exemption_owner = match basis.owner_standing {
+            NativeOwnerStanding::Absent => None,
+            NativeOwnerStanding::Exemption | NativeOwnerStanding::Floor => {
+                self.owner_exemption.or(lost_floor)
+            }
+        };
+        let neither_gated = key_ungated && saved_ungated;
+        if key_ungated && (lost_floor.is_some() || !neither_gated) {
+            self.principal_ref = self.principal_ref.or(floor_owner);
+        }
+        if !saved_ungated && self.principal_ref != basis.grant_principal {
+            self.principal_ref = None;
+        }
+        self.owner_authority_withheld = true;
+        self.rebuilt_under_floor_basis = basis.owner_standing == NativeOwnerStanding::Floor;
+        if neither_gated {
+            self.owner_exemption = exemption_owner;
+            return self;
+        }
+        self.enforce_access_grants = true;
+        self.unscoped_rows_open = key_unscoped_open && saved_unscoped_open;
+        let lifted = key_lifted && saved_lifted;
+        self.owner_exemption = if lifted { exemption_owner } else { None };
+        self.relationship_gate_owner = if lifted && self.owner_exemption.is_none() {
+            key_lift_owner
+        } else {
+            None
+        };
+        self
+    }
+
     /// Constructs a read capability only from a log/MAC/holder-verified slip.
     #[must_use]
     pub fn from_verified_slip(proof: &crate::authority::VerifiedSlip) -> Option<Self> {
@@ -1084,6 +1416,23 @@ impl ScopedReadActorKey {
     /// binds it.
     pub(crate) fn agent_grant_holder(&self) -> Option<EntityId> {
         self.agent_grant_holder
+    }
+
+    /// This key's rows also held, in each serving txn, to `credential`, the
+    /// credential a saved lane froze (OF-506): the key reads nothing in a
+    /// snapshot where it no longer holds, as the key's rebuild judged it, so
+    /// a key rebuilt while it held and kept past its withdrawal reads no
+    /// more (FIX OWN-DEVICE-GRANT-NOT-RECHECKED). It only narrows: each
+    /// credential bound before still binds beside it.
+    #[must_use]
+    pub(super) fn bound_by_saved_credential(
+        mut self,
+        credential: super::frozen::SavedCredential,
+    ) -> Self {
+        if !self.saved_credentials.contains(&credential) {
+            self.saved_credentials.push(credential);
+        }
+        self
     }
 
     /// The worlds this read asked for, as a world-only ceiling; `None` when

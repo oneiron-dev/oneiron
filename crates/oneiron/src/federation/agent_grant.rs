@@ -90,6 +90,7 @@ const ALREADY_EXPIRED: &str = "an agent grant's expires_at must be later than no
 const RESERVED_GIT_PUSH: &str =
     "an agent grant never lists git_push: only vault.repo.git_push.mint grants raw git push";
 const BAD_WALLET: &str = "an agent grant's wallet_ref names a nonempty issuer and id";
+const ACT_GRANT_WITHOUT_READ: &str = "an act Grant also lists read: a Grant whose verbs name an act an agent's Grant may carry confers, and so carries that act, only with read among its verbs";
 const BAD_WORKING_VIEW: &str = "an agent grant's working_view_bounds name a live owner working view of its repo_bounds repo, made by the minting owner in that account";
 /// The one verb of the read Grant pairing a named agent mints (Engine RULING
 /// PAIR-GRANT-DESIGN Q4): the Grant spelling, not the slip's `core:read`.
@@ -169,7 +170,8 @@ impl Vault {
     ///
     /// # Errors
     /// An owner refusal; `InvalidConfig` for a verb set and class set both
-    /// empty, a verb set over every verb, an invalid class name, a wallet
+    /// empty, a verb set over every verb, a verb set that names an act an
+    /// agent's Grant may carry but not `read`, an invalid class name, a wallet
     /// with an empty part, a working view bound without repo bounds or on
     /// no live owner view of their repo in the owner's account, a member
     /// that is no live agent principal, an expiry already passed or repo
@@ -254,6 +256,16 @@ impl Vault {
             .contains(&super::GIT_PUSH_VERB.to_owned())
         {
             return Err(Error::InvalidConfig(RESERVED_GIT_PUSH.into()));
+        }
+        // The act judge asks the Grant to confer, which needs `read` (Engine
+        // ANSWER AGENT-GRANTABLE-ACT-GRANT-NEEDS-READ-VERB = A).
+        if !authority_scope
+            .verbs
+            .contains(&super::agent_verb_class::CONFERRING_VERB.to_owned())
+            && crate::authority::agent_grantable_act_verbs()
+                .any(|verb| authority_scope.verbs.contains(&verb.to_owned()))
+        {
+            return Err(Error::InvalidConfig(ACT_GRANT_WITHOUT_READ.into()));
         }
         if !self.is_agent_principal_in_txn(txn, agent)? {
             return Err(Error::InvalidConfig(NOT_AN_AGENT.into()));

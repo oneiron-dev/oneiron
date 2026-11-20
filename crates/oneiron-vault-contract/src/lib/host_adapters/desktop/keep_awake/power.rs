@@ -11,7 +11,7 @@
 
 use super::{AwakeState, Held, release};
 use std::io::{BufRead, BufReader};
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdout, Stdio};
 use std::sync::{Arc, Weak};
 use std::thread::JoinHandle;
 
@@ -41,7 +41,7 @@ impl PowerObserver {
     /// through the host's notice.
     pub(super) fn start(state: &Arc<AwakeState>, generation: u64) {
         let (program, args) = state.watch;
-        let mut child = Command::new(program)
+        let mut child = oneiron_spawn::command(program)
             .args(args)
             .env_clear()
             .stdin(Stdio::null())
@@ -163,10 +163,12 @@ fn is_current(held: &Held, generation: u64) -> bool {
     held.holders > 0 && held.generation == generation
 }
 
-/// A machine with no battery counts as plugged in.
-fn on_mains_power() -> bool {
+/// Whether the machine runs on mains power now. A machine with no battery
+/// counts as plugged in. The wake assertion follows it, and the host's
+/// capacity probe records it (CROSS-ARCH-0024 #my-network 05).
+pub fn on_mains_power() -> bool {
     if cfg!(target_os = "macos") {
-        return Command::new("/usr/bin/pmset")
+        return oneiron_spawn::command("/usr/bin/pmset")
             .args(["-g", "batt"])
             .env_clear()
             .stderr(Stdio::null())

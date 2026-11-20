@@ -11,6 +11,9 @@ use serde::Deserialize;
 use serde::Serialize;
 use utoipa::ToSchema;
 
+mod replay;
+pub(super) use replay::room_pins_admitted;
+
 /// MEMORIES per-slot row caps. An unknown slot (such as the retired
 /// `companions`) is refused, not ignored.
 #[derive(Debug, Default, Deserialize, ToSchema)]
@@ -422,7 +425,7 @@ pub(crate) fn board_pins_projection<'a>(
         interlocutors,
         disclosure,
         ..
-    } = super::super::resolve_core_audience(vault, auth, read, room_id)?;
+    } = super::super::resolve_core_audience(vault, auth, read, room_id, None)?;
     let mut section =
         oneiron::MemoriesSection::pins_only(disclosure.as_ref().map(|ctx| ctx.assembly(0)));
     section
@@ -534,7 +537,7 @@ pub(crate) async fn board_room_pins(
             interlocutors,
             disclosure,
             ..
-        } = super::super::resolve_core_audience(&server.vault, auth, read, Some(room))?;
+        } = super::super::resolve_core_audience(&server.vault, auth, read, Some(room), None)?;
         let had_section = memories.is_some();
         let mut section = memories.unwrap_or_else(|| {
             oneiron::MemoriesSection::pins_only(disclosure.as_ref().map(|ctx| ctx.assembly(0)))

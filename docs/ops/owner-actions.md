@@ -266,6 +266,22 @@ reaches the other's keys. If the directory cannot be synced after the swap,
 the restore still reports success, with a `durability_warning` that names the previous vault:
 the swap is done, but a crash before the disk flushes may undo it.
 
+A restore where no vault is makes a new machine of the vault, marked with the backup it came
+from. It carries nothing until it joins: a machine of the vault that has joined pairs it. When
+no such machine is left, say so on the restored install:
+
+```sh
+# stop `oneiron serve` first
+oneiron restore --join
+```
+
+The configured host root, your owner key on a self-host vault, files this install's enrolment
+and signs your word that no other machine is left. The output names the machine (`machine`),
+the backup's checkpoint image (`restored_from`), its role (`unanswered` until you answer whose
+machine it is) and the revision. On an install that has joined it changes nothing. It refuses,
+and writes nothing, on an install no restore made, on a vault that is not self-hosted, and
+where this install holds no host root: pair the install from a machine of the vault instead.
+
 A restore refuses, and changes nothing, when:
 
 - the vault is in use (stop `serve`);
@@ -704,6 +720,21 @@ moved since is refused. One is also refused while the repository has a push or p
 in flight; retry once it drains. After the cutover, a push here runs under this host's lease when
 it is the writer. Otherwise the push gets 403 naming the epoch: at a mirror (`"mirror": true`),
 or when another host writes the repository. Reads still serve. Only a live owner can cut over.
+
+Name the writer's git door as well, and this copy sends pushes there:
+
+```sh
+oneiron api raw POST /v1/owner/origin-authority \
+  --data '{"repo": "demo", "expected_epoch": 3, "residence": "cloud-vault",
+           "writer": "<the new host machine id>", "writer_door": "https://cloud.example/git"}'
+```
+
+`writer_door` is the writer host's door base: `https://<host>/git` (HTTP only on loopback), with
+no userinfo, query or fragment. A pusher who may push to the repository is then redirected (307)
+to `https://cloud.example/git/demo.git`, and stock git follows the redirect for the whole push.
+Git asks for credentials for the new host. A push request that does not start with the ref
+advertisement, or that is bound to a checkout lease on this host, gets the 403 with that URL
+added. A caller without the `git_push` grant gets its usual 403 and never learns the URL.
 
 ## Mirror a served repository outward
 
@@ -1980,15 +2011,22 @@ nothing, and the question goes up the ladder again.
 owner-grade credential, as before: your top-scope slip with its holder
 proof, or your managed vault's attested owner. The page reads the PDF and
 the geography pack from your own files; it reads no private PDF from the
-vault and stores nothing there. Export saves the pack as a local download.
+vault. Export saves the pack as a local download.
 
-Each time the page loads it gets a fresh editor token, kept only in the
-page's memory. It sends the token with its two computations, page geometry
-(`POST /sign/geometry`) and field layout (`POST /sign/layout`). The server
-keeps only the token's digest. The token admits new computations for an
-hour; one already running finishes. After that hour, or after the server
-restarts, the page says the session has ended: reload the editor and carry
-on.
+"Save fields to the draft" writes the pack's fields to a document still in
+draft, named by its 32-hex document reference (`POST /sign/fields`). It runs
+`vault.esign.fields.place` as the credential that loaded the page, with that
+verb's own checks. A document already sent keeps its fields: its content is
+frozen, and the save answers 400.
+
+Each time the page loads it gets two fresh editor tokens, kept only in the
+page's memory. The first goes with its two computations, page geometry
+(`POST /sign/geometry`) and field layout (`POST /sign/layout`); the second
+goes only with a save to a draft. Neither token opens the other's doors.
+The server keeps only each token's digest. A token admits new requests for
+an hour; one already running finishes. After that hour, after the server
+restarts, or once the credential that loaded the page is revoked, the page
+says the session has ended: reload the editor and carry on.
 
 - No ceiling on the PDF, the pack or a select field's choices. A larger PDF
   spools to disk and is inspected whole; only the vault's disk floor
@@ -2138,7 +2176,17 @@ the same steps at `GET` and `PUT /v1/owner/vault-key/recovery-preset` with
 preset only while its own device wrap stays (add it with `POST /device` first): if the answer is
 lost, that wrap reopens the key, and `standard` then `nobody_but_me` again issues a new sheet. On a
 maximum-tier vault, `mirror_pending: true` says the change stands but the page-seal mirror was not
-rewritten; the next sealed open repairs it.
+rewritten; the next sealed open repairs it. Once a recovery kit is confirmed, entering the preset
+from `standard` also replaces the root's authority key that the recovery box could release, so it
+needs that kit: `--piece` (two piece files, or one and `--secret-file`) on the command, and
+`"kit": {"pieces": [...], "passphrase": ...}` in the body; without it the switch is refused while
+that key is live. `recovery-kit issue-vault-key --any-two-pieces` takes the kit the same way
+(`--piece`, and `--kit-secret-file` with one piece). `box_release_pending: true` says the switch
+back to `standard` stands but the recovery box still holds the vault as kit-only.
+`box_recovery_needs_new_kit: true` says the switch back left the recovery box with no seed of a
+live root authority key (entering the preset replaced the key whose seed it held): signing in with
+the recovery PIN restores no owner control until a new kit is confirmed, which deposits its seed.
+The kit itself still restores the vault, and the switch back changes no key on the roster.
 
 On a new host, the sheet restores the vault:
 
@@ -2197,6 +2245,43 @@ the kit stays usable. The old sheet opens nothing written after either change.
 A sheet, passkey or capsule handed out before the change still opens the backups written before it:
 the data key does not rotate. A backup names the preset it was written under, so a capsule, or a key
 an escrow recipient opened from an earlier backup, opens nothing written after the change.
+
+### A new data-key generation
+
+A new data-key generation replaces the vault's data key: everything written after it is sealed under
+a fresh key, and everything written before still opens with the old one, reached through the link
+chain. Each way you present gets a wrap of the new key; every other wrap of the old key is removed
+only when you confirmed its removal by id. This install's device wrap always gets one. Only you
+start it; an agent may ask you to, and its ask waits in your inbox.
+
+First the preview names, in plain words, every wrap the act would remove:
+
+```sh
+oneiron vault-key new-generation --preview --keep-password
+```
+
+Then present each way you keep, or confirm its removal, and start the act:
+
+```sh
+printf %s "$PASSWORD" | oneiron vault-key new-generation --keep-password --confirm-removal passkey:old-key
+```
+
+`--keep-password` reads the password from stdin or `--secret-file`. `--keep-passkey NAME=FILE` and
+`--keep-escrow LABEL=FILE` keep a passkey or an escrow: FILE is an owner-only file holding the
+passkey's PRF output, or the file holding the recipient's hybrid public key bytes, as
+`reseal-capsule --recipient-file` reads it. `--confirm-removal ID` confirms one wrap's removal; a
+way neither presented nor confirmed refuses the act and changes nothing. A running server takes the
+same steps at `POST /v1/owner/vault-key/generation/preview` with `{"password": true,
+"passkeys": [...], "escrows": [...]}` and `POST /v1/owner/vault-key/generation` with
+`{"password": "...", "passkeys": [{"credential": "...", "prf": "..."}], "escrows": [{"label": "...",
+"recipient": "..."}], "confirmed_removals": [...]}`: a PRF output is 32 bytes, hex or base64url, and
+a recipient is the hybrid public key's bytes, base64url without padding.
+
+Under any recovery preset but `standard` the act runs from the recovery preset switch instead, and
+here the engine refuses it. On a page-sealed vault the act stands, and the answer says so: its
+`notice` reads "this device's stored copy keeps its old key until it is re-keyed"
+(`pages_keep_earlier_key` is true), and `mirror_pending` true means the page-seal mirror is
+rewritten at the vault's next sealed open.
 
 ### Maximum tier
 
@@ -2339,6 +2424,13 @@ Another install's root changes through your request and its target install:
   claim. Read who asked from `carrier_role` and `carrier_is_yours`: when `carrier_role` is
   absent, this install's records tie that machine to no key they read, so treat the asker as
   unknown.
+- A waiting pin also carries the question to show you (`prompt`) and the code of the root it
+  names (`root_code`). The question is three lines: what happens, the kit's code, and who asked
+  by the same reading: one of your devices, a device that is not yours (a server Oneiron hosts,
+  for one), or no device your vault knows. Compare the code with your kit's before you confirm:
+  `oneiron recovery-kit issue` prints it as `root_code`, and a machine that pins the kit shows it
+  as `pinned_code` at `GET /v1/owner/roots`. The code is 26 letters and digits; the fingerprint in
+  full stays in `root`.
 - `GET /v1/owner/owner-work/{request}` reads where any owner work request stands.
 - A pin needs no kit. A pin of the root the target already pins runs on its own. A pin of any
   other root waits on the target for your confirm there: `GET /v1/owner/roots` shows that root as
@@ -2494,13 +2586,17 @@ contact offer.
   `once` discloses this once and keeps nothing. `standing` clears the contact for that Scope
   until you narrow or revoke it. `deny` refuses. An offer settles once. It is refused when it
   expired, when the delta differs from what you were shown, when the contact's clearance changed
-  since it was filed, or when the credential line that filed it tries to settle it.
+  since it was filed, or when the credential line that filed it tries to settle it. A confirm
+  of an offer that is missing, settled, expired or changed answers 409 with the
+  `consent_widen_proposal` state, as the core widen accept does.
 - `POST /v1/owner/disclosure/narrow` with `{"contact": "<hex>", "scope": {...}}` narrows a
   standing clearance to a Scope inside the current one.
 - `POST /v1/owner/disclosure/revoke` with `{"contact": "<hex>"}` is
   `consent.revoke_contact_disclosure`. The row stays, revoked, and admits nothing.
 - `POST /v1/owner/disclosure/preclear` with `{"set_name": "...", "contacts": [...], "scope": {...}}`
-  clears a named trusted set in advance, 1 to 256 contacts, one receipt each.
+  clears a named trusted set in advance, 1 to 256 contacts, one receipt each. A refused narrow or
+  trusted set (a Scope wider than the current clearance, an inactive contact, a contact named
+  twice) answers 409 with the `refused` state in the engine's words, as a refused entry answer does.
 - `GET` and `PUT /v1/owner/disclosure/mode` read and set the mode: `always_ask` (the companion
   never offers), `auto` (the default) or `always_yes` (pre-clear trusted sets; offers stay
   allowed). No mode clears anyone by itself.

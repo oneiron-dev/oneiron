@@ -10,6 +10,7 @@ use super::super::OwnDeviceImport;
 use super::super::base::{ITEM11_UNREADABLE_HOME_PROMOTION, SyncClient, home_reads_window};
 use super::super::types::{SyncClientConfig, SyncResidenceMode};
 use crate::EntityId;
+use crate::side_table::{self, Raw, SideTable};
 use crate::sync::selector::encode_sync_selector;
 use crate::sync::transport::TransportError;
 use crate::sync::types::WindowKey;
@@ -60,10 +61,20 @@ fn import_promotion_snapshot_with(
 }
 
 /// Sync-state prefix of a window this machine holds in full whose retain the
-/// home refused ([`SyncClient::retain_window`]). The residence upkeep asks
-/// again, so a grant that changed since lets the window sync without waiting
-/// for a first edit to promote it.
+/// home refused ([`SyncClient::retain_window`]), or that a switch to sync
+/// opened did not ask the home to retain ([`mark_ungranted_windows_in_txn`]).
+/// The residence upkeep asks again, so a grant that changed since lets the
+/// window sync without waiting for a first edit to promote it.
 const RETAIN_REFUSED_PREFIX: &str = "rr:w:";
+
+/// The rows under [`RETAIN_REFUSED_PREFIX`]. Key: the window key. Value: `[1]`.
+const RETAIN_REFUSED_WINDOW: SideTable<String, [u8; 1], Raw> =
+    SideTable::new(&side_table::SYNC_RESIDENCE_RETAIN_REFUSED_WINDOW);
+
+/// A window promoted from thin to canonical residence (`rp:w:`): the home
+/// granted it, and reconnect replays it. Key: the window key. Value: `[1]`.
+const PROMOTED_WINDOW: SideTable<String, [u8; 1], Raw> =
+    SideTable::new(&side_table::SYNC_RESIDENCE_PROMOTED_WINDOW);
 
 /// Asks the home again to retain each window it refused, on an opened
 /// machine; returns how many it retains now. Off the live sync loop, on the
@@ -97,6 +108,30 @@ pub(crate) async fn retry_refused_retains(
         }
     }
     Ok(retained)
+}
+
+/// Marks each of `windows` that the home has not granted (`rp:w:`) in `txn`
+/// for the residence upkeep to ask the home to retain
+/// ([`retry_refused_retains`]), and answers the windows it marked. Under sync
+/// opened a window syncs only once granted, so a switch that records sync
+/// opened without asking the home to grant its held windows again (an
+/// election moved the home while it planned, FIX
+/// RESIDENCE-SWITCH-STALE-HOME) leaves them to the upkeep this way.
+pub(crate) fn mark_ungranted_windows_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    windows: Vec<WindowKey>,
+) -> crate::error::Result<Vec<WindowKey>> {
+    let mut marked = Vec::new();
+    for window in windows {
+        let key = window.to_string();
+        if PROMOTED_WINDOW.contains(vault, txn, &key)? {
+            continue;
+        }
+        RETAIN_REFUSED_WINDOW.put(vault, txn, &key, &[1])?;
+        marked.push(window);
+    }
+    Ok(marked)
 }
 
 impl SyncClient {
@@ -356,14 +391,9 @@ impl SyncClient {
             .map_err(|e| TransportError::Storage(e.to_string()))?;
         self.vault
             .with_write_txn_grouped(|txn| {
-                self.vault
-                    .store
-                    .sync_state
-                    .delete(txn, &format!("{RETAIN_REFUSED_PREFIX}{window}"))?;
-                self.vault
-                    .store
-                    .sync_state
-                    .put(txn, &format!("rp:w:{window}"), &[1])
+                let key = window.to_string();
+                RETAIN_REFUSED_WINDOW.delete(&*self.vault, txn, &key)?;
+                PROMOTED_WINDOW.put(&*self.vault, txn, &key, &[1])
             })
             .map_err(|e| TransportError::Storage(e.to_string()))?;
         super::promoted_pads::land_pads(&self.vault, window, pads);
@@ -417,10 +447,7 @@ impl SyncClient {
         self.vault
             .with_write_txn_grouped(|txn| {
                 drop_thin_rows_in(&self.vault, txn, window)?;
-                self.vault
-                    .store
-                    .sync_state
-                    .put(txn, &format!("rp:w:{window}"), &[1])?;
+                PROMOTED_WINDOW.put(&*self.vault, txn, &window.to_string(), &[1])?;
                 Ok(())
             })
             .map_err(|e| TransportError::Storage(e.to_string()))?;
@@ -436,11 +463,7 @@ impl SyncClient {
     fn mark_retain_refused(&self, window: &WindowKey) -> Result<(), TransportError> {
         self.vault
             .with_write_txn_grouped(|txn| {
-                self.vault.store.sync_state.put(
-                    txn,
-                    &format!("{RETAIN_REFUSED_PREFIX}{window}"),
-                    &[1],
-                )
+                RETAIN_REFUSED_WINDOW.put(&*self.vault, txn, &window.to_string(), &[1])
             })
             .map_err(|e| TransportError::Storage(e.to_string()))
     }

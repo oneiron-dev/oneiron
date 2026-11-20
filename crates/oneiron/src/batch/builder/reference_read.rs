@@ -171,6 +171,7 @@ pub(in crate::batch) fn check_staged_references(
 fn gated_claims(store: &Store, txn: &RoTxn<'_>, ops: &[BatchOp]) -> Result<Vec<GatedClaim>> {
     let mut claims = Vec::new();
     let mut default_facet = None;
+    let mut birth_facets = crate::batch::claim_candidate_apply::BatchBirthFacets::new(ops);
     for op in ops {
         match op {
             BatchOp::Put {
@@ -197,7 +198,10 @@ fn gated_claims(store: &Store, txn: &RoTxn<'_>, ops: &[BatchOp]) -> Result<Vec<G
                 internal_lexical_query_hint,
                 ..
             } if !*internal_lexical_query_hint => {
-                let facet = facet_in(store, txn, &mut default_facet)?;
+                // At the facet the apply stores it at, as the preflight
+                // derives it (PREFLIGHT-FACET-REPUT-REPLAY-MISMATCH,
+                // PREFLIGHT-SAME-BATCH-BIRTH-FACET).
+                let facet = birth_facets.birth_facet(store, txn, id)?;
                 claims.push(GatedClaim {
                     id: *id,
                     body: (**candidate).clone().into_claim_body(envelope, facet)?,
@@ -216,6 +220,7 @@ fn gated_claims(store: &Store, txn: &RoTxn<'_>, ops: &[BatchOp]) -> Result<Vec<G
             }
             _ => {}
         }
+        birth_facets.note(store, txn, op)?;
     }
     Ok(claims)
 }

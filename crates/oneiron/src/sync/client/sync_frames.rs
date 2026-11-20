@@ -39,6 +39,9 @@ impl SyncClient {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
         self.follows_refused.clear();
+        if self.peer_session.is_none() && self.config.federation_peer.is_none() {
+            self.manager.clear_follows_refused();
+        }
         self.followed_windows_landed.clear();
         self.replacements_installed.clear();
     }

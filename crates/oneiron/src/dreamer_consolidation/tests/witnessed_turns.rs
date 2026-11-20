@@ -8,6 +8,7 @@ use crate::dreamer_promotion::{DreamerRunContext, PromotionWriterSink};
 use crate::dreamer_wake::{DreamerWakeDriver, RunWakePass, WakeCancellation, WakeTrigger};
 use crate::llm::ScopeResource;
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+use crate::registry::ENTITY_TYPE_RELATIONSHIP;
 use crate::vault_cleanup::{CleanupKind, zero_live_members};
 
 const SAID: &str = "call me Owen";
@@ -31,7 +32,7 @@ impl RecordingBackend {
             .iter()
             .flat_map(|message| &message.content)
             .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect()
@@ -112,6 +113,7 @@ pub(super) fn grant_messages(vault: &Vault, space: EntityId, expires_at: u64) ->
             revoked_at: None,
             expires_at: Some(expires_at),
             authority_scope: crate::federation::scope_codec::read_preset(),
+            companion_bounds: None,
         },
     )?;
     Ok(grant)
@@ -152,7 +154,12 @@ fn head_scope(
     admitted: &crate::dreamer_runner::DreamerAdmittedAttempt,
     head: EntityId,
 ) -> Result<(ConsolidationPartitionKey, Vec<EntityId>, crate::llm::Scope)> {
-    let (partition, turns, _) = decode_partition_payload(&admitted.status.payload.input)?;
+    let queued = decode_partition_payload(&admitted.status.payload.input)?;
+    let [part] = queued.parts.as_slice() else {
+        return Err(Error::InvalidConfig("a one-part branch".into()));
+    };
+    let partition = queued.part_key(part.conversation_ref);
+    let turns = part.turns.clone();
     let mut scope = BranchResources::open(
         vault,
         vault.dreamer_authority()?,
@@ -220,9 +227,11 @@ pub(super) fn message(
         author,
         message_type: "dialogue".to_owned(),
         content: content.to_owned(),
+        parts: None,
         metadata: None,
         is_visible,
         order,
+        quote: None,
     }
 }
 
@@ -243,8 +252,11 @@ pub(super) fn witness(
         .witness(&WitnessTurn {
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(turn.to_hex()),
+            thread_audience: None,
+            project: None,
             messages,
             occurred_at: 10,
+            assertions: Default::default(),
         })
         .expect("witnessed turn");
     (turn, conversation)
@@ -304,6 +316,7 @@ fn executor<'a>(
         sink,
         inference: test_inference_host(),
         scope,
+        decisions: ConsolidationDecisions::shipped()?,
     })
 }
 
@@ -327,10 +340,13 @@ fn execute_direct(
         &mut WakeAttemptContext {
             vault,
             deadline: &deadline,
+            cancel: None,
+            device_cancel: None,
             budget_id: "wake",
             now_ms: 21_000,
             prepared_wake: None,
             prepared_attempt: None,
+            spend_meter: None,
         },
     ))
 }
@@ -376,6 +392,17 @@ fn cite(turn: EntityId, (start, end): (usize, usize)) -> serde_json::Value {
     serde_json::json!({"source_id": turn.to_hex(), "byte_range": [start, end]})
 }
 
+/// A bound-wire quote citation of the single-turn transcript's words.
+fn cite_quote(quote: &str) -> serde_json::Value {
+    serde_json::json!({"source": "T1", "quote": quote})
+}
+
+/// A PERSON body carrying the name "Owen": a turn saying Owen lists this
+/// person by its identity hint (the `named_fixture` pattern).
+fn owen_body() -> Result<Vec<u8>> {
+    super::super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))
+}
+
 fn candidate_locators(
     vault: &Vault,
     claim: &EntityId,
@@ -417,12 +444,12 @@ fn witnessed_user_turn_reaches_extraction_and_lands_its_message_evidence() -> Re
         let actor = vault.dreamer_authority()?;
         super::prior_heads::policy(&vault, actor.entity_ref(), true)?;
         let subject = EntityId::now();
-        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, &owen_body()?)?;
         let attempt = queue_micro(&vault)?;
         let backend = RecordingBackend::new(vec![Ok(text_response(
             serde_json::json!({"candidates": [{
-                "subject": subject.to_hex(), "predicate": "profile.name", "value": "Owen",
-                "confidence": 0.8, "evidence_refs": [cite(turn, name_range())],
+                "subject": "P2", "predicate": "profile.name", "value": "Owen",
+                "confidence": 0.8, "evidence_refs": [cite_quote("Owen")],
             }]})
             .to_string(),
         ))]);
@@ -448,7 +475,7 @@ fn witnessed_user_turn_reaches_extraction_and_lands_its_message_evidence() -> Re
         assert!(
             backend
                 .request_text(0)
-                .contains(&format!("[{} user] {SAID}\n", turn.to_hex())),
+                .contains(&format!("[T1 user] {SAID}\n")),
             "the extraction model reads the witnessed words"
         );
         let [claim] = sink.outcome.landed.as_slice() else {
@@ -499,7 +526,7 @@ fn branch_reads_only_the_turns_visible_words_and_cites_them_exactly() -> Result<
     let text = "I met Casey\nand ☕ after";
     assert_eq!(
         branch.transcript(branch.scope(), &[turn])?,
-        format!("[{} assistant] {text}\n", turn.to_hex())
+        format!("[T1 assistant] {text}\n")
     );
     let cup = text.find('☕').expect("multibyte span");
     let range = |end: usize| SwarmEvidenceRef {
@@ -545,7 +572,7 @@ fn branch_reads_only_the_turns_visible_words_and_cites_them_exactly() -> Result<
     let branch = BranchResources::open(&vault, actor, partition, &[turn], AttemptId::now(), None)?;
     assert_eq!(
         branch.transcript(branch.scope(), &[turn])?,
-        format!("[{} assistant] \n", turn.to_hex())
+        "[T1 assistant] \n".to_owned()
     );
     Ok(())
 }
@@ -629,22 +656,33 @@ fn message_drift_after_preparation_refuses_new_claims_and_attachments() -> Resul
         let actor = vault.dreamer_authority()?;
         super::prior_heads::policy(&vault, actor.entity_ref(), true)?;
         let subject = EntityId::now();
-        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+        let named = owen_body()?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, &named)?;
         let head = put_head(&vault, subject)?;
         queue_micro(&vault)?;
         let admitted = admit(&vault)?;
-        let (_, turns, scope) = head_scope(&vault, &admitted, head)?;
+        let (_, turns, mut scope) = head_scope(&vault, &admitted, head)?;
+        scope.readable.insert(document_version(subject, &named));
         assert_eq!(turns, vec![turn]);
         let row = |predicate: &str| {
             serde_json::json!({
-                "subject": subject.to_hex(), "predicate": predicate, "value": "Owen",
-                "confidence": 0.8, "evidence_refs": [cite(turn, name_range())],
+                "subject": "P1", "predicate": predicate, "value": "Owen",
+                "confidence": 0.8, "evidence_refs": [cite_quote("Owen")],
             })
         };
-        let backend = ScriptedBackend::new(vec![Ok(text_response(
-            serde_json::json!({"candidates": [row("profile.name"), row("profile.nickname")]})
+        let backend = ScriptedBackend::new(vec![
+            Ok(text_response(
+                serde_json::json!({"candidates": [row("profile.name"), row("profile.nickname")]})
+                    .to_string(),
+            )),
+            Ok(text_response(
+                serde_json::json!({
+                    "Q1": {"none": 1.0, "C1": 0.0},
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
                 .to_string(),
-        ))]);
+            )),
+        ]);
         let mut sink = DriftSink {
             inner: PromotionWriterSink::new(&vault, run_context(actor, &admitted)),
             change,
@@ -697,6 +735,17 @@ fn private_or_ungranted_relationship_messages_never_reach_consolidation() -> Res
     let related = || serde_json::json!({"rel": space.to_hex()});
     for case in ["private", "no grant", "revoked grant", "expired grant"] {
         let (_dir, vault, clock) = open_clocked_vault();
+        // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+        // (MESSAGE-REL-NAMES = A).
+        vault
+            .put_entity(
+                &space,
+                ENTITY_TYPE_RELATIONSHIP,
+                occurred(1),
+                1,
+                b"relationship",
+            )
+            .expect("put the relationship space");
         let metadata = if case == "private" {
             serde_json::json!({"scope": {"private": true}})
         } else {
@@ -758,6 +807,17 @@ fn private_or_ungranted_relationship_messages_never_reach_consolidation() -> Res
     // the grant was live, commits only if the grant still holds when written.
     for expire in [false, true] {
         let (_dir, vault, clock) = open_clocked_vault();
+        // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+        // (MESSAGE-REL-NAMES = A).
+        vault
+            .put_entity(
+                &space,
+                ENTITY_TYPE_RELATIONSHIP,
+                occurred(1),
+                1,
+                b"relationship",
+            )
+            .expect("put the relationship space");
         let (turn, _) = witness(
             &vault,
             0x6d,
@@ -793,7 +853,7 @@ fn private_or_ungranted_relationship_messages_never_reach_consolidation() -> Res
             &facts.value,
             facts.world,
             facts.facet,
-            facts.rel,
+            facts.rel.as_ref(),
             facts.project,
             facts.topic.as_deref(),
         )?;
@@ -831,6 +891,17 @@ fn gap_queue_refuses_a_text_gap_whose_message_changed_after_the_scan() -> Result
     for case in ["deleted row", "expired grant"] {
         let (_dir, vault, clock) = open_clocked_vault();
         let space = EntityId::now();
+        // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+        // (MESSAGE-REL-NAMES = A).
+        vault
+            .put_entity(
+                &space,
+                ENTITY_TYPE_RELATIONSHIP,
+                occurred(1),
+                1,
+                b"relationship",
+            )
+            .expect("put the relationship space");
         let said = WitnessMessage {
             metadata: (case == "expired grant").then(|| serde_json::json!({"rel": space.to_hex()})),
             ..message(0, WitnessAuthor::User, "I'll call Casey tomorrow", true)
@@ -1017,10 +1088,47 @@ fn land(
     Ok(sink.outcome)
 }
 
+/// Runs the queued micro attempt with `rows` as the model's candidates and
+/// `pack` as the correction pack's answer, returning the promotion outcome.
+fn land_packed(
+    vault: &Vault,
+    rows: Vec<serde_json::Value>,
+    pack: serde_json::Value,
+    scope: impl FnOnce(
+        &crate::dreamer_runner::DreamerAdmittedAttempt,
+    ) -> Result<Option<crate::llm::Scope>>,
+) -> Result<crate::dreamer_promotion::PromotionOutcome> {
+    let actor = vault.dreamer_authority()?;
+    queue_micro(vault)?;
+    let admitted = admit(vault)?;
+    let scope = scope(&admitted)?;
+    let backend = ScriptedBackend::new(vec![
+        Ok(text_response(
+            serde_json::json!({ "candidates": rows }).to_string(),
+        )),
+        Ok(text_response(pack.to_string())),
+    ]);
+    let mut sink = PromotionWriterSink::new(vault, run_context(actor, &admitted));
+    assert!(matches!(
+        execute_direct(vault, &admitted, &backend, &mut sink, scope)?,
+        DreamerAttemptExecution::Completed { .. }
+    ));
+    Ok(sink.outcome)
+}
+
 fn nickname(subject: EntityId, turn: EntityId, range: (usize, usize)) -> serde_json::Value {
     serde_json::json!({
         "subject": subject.to_hex(), "predicate": "profile.nickname", "value": "Owen",
         "confidence": 0.8, "evidence_refs": [cite(turn, range)],
+    })
+}
+
+/// A `profile.nickname = Owen` candidate about the labelled subject, citing
+/// `quote` from the single-turn transcript.
+fn nickname_quote(subject: &str, quote: &str) -> serde_json::Value {
+    serde_json::json!({
+        "subject": subject, "predicate": "profile.nickname", "value": "Owen",
+        "confidence": 0.8, "evidence_refs": [cite_quote(quote)],
     })
 }
 
@@ -1036,19 +1144,29 @@ fn stored_citation_names_its_message_through_a_prefix_deletion() -> Result<()> {
     let prefix = message(0, WitnessAuthor::User, "hi", true);
     let words = message(1, WitnessAuthor::User, SAID, true);
     let (prefix_id, cited) = (id_of(&prefix), id_of(&words));
-    let (turn, _) = witness(&vault, 0x71, vec![prefix, words]);
+    let (_turn, _) = witness(&vault, 0x71, vec![prefix, words]);
     super::prior_heads::policy(&vault, vault.dreamer_authority()?.entity_ref(), true)?;
     let subject = EntityId::now();
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    let subject_body = owen_body()?;
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, &subject_body)?;
     let head = put_head(&vault, subject)?;
     let (start, end) = name_range();
-    let projected = (start + "hi\n".len(), end + "hi\n".len());
-    let mut name = nickname(subject, turn, projected);
+    let mut name = nickname_quote("P1", "Owen");
     name["predicate"] = "profile.name".into();
-    let outcome = land(
+    let outcome = land_packed(
         &vault,
-        vec![name, nickname(subject, turn, projected)],
-        |admitted| Ok(Some(head_scope(&vault, admitted, head)?.2)),
+        vec![name, nickname_quote("P1", "Owen")],
+        serde_json::json!({
+            "Q1": {"none": 1.0, "C1": 0.0},
+            "Q2": {"none": 1.0, "C1": 0.0},
+        }),
+        |admitted| {
+            let (_, _, mut scope) = head_scope(&vault, admitted, head)?;
+            scope
+                .readable
+                .insert(document_version(subject, &subject_body));
+            Ok(Some(scope))
+        },
     )?;
     assert_eq!(outcome.landed.len(), 2, "{outcome:?}");
     let [claim] = claims_with(&vault, "profile.nickname")?[..] else {
@@ -1120,14 +1238,7 @@ pub(super) fn stream_turn(
     text: &str,
     ending: &str,
 ) -> Result<(EntityId, EntityId, EntityId, WitnessTurn)> {
-    let person = EntityId::from_bytes([seed; 16])?;
-    vault.put_entity(
-        &person,
-        ENTITY_TYPE_PERSON,
-        occurred(1),
-        1,
-        b"stream writer",
-    )?;
+    let person = vault.ensure_embedded_owner_actor().expect("owner");
     // A continuation stream needs its human writer's live owner binding.
     crate::test_util::bind_test_owner(vault, person);
     let conversation = EntityId::from_bytes([seed + 1; 16])?;
@@ -1135,8 +1246,11 @@ pub(super) fn stream_turn(
     let input = WitnessTurn {
         conversation_ref: conversation.to_hex(),
         turn_ref: Some(turn.to_hex()),
+        thread_audience: None,
+        project: None,
         messages: vec![message(0, WitnessAuthor::User, "", true)],
         occurred_at: 10,
+        assertions: Default::default(),
     };
     end_stream(vault, person, &input, text, ending);
     Ok((turn, conversation, id_of(&input.messages[0]), input))
@@ -1196,12 +1310,12 @@ fn only_finalized_stream_text_reaches_the_branch() -> Result<()> {
             byte_range: Some(name_range()),
         }]);
         if ending == "finalize" {
-            assert_eq!(transcript, format!("[{} user] {SAID}\n", turn.to_hex()));
+            assert_eq!(transcript, format!("[T1 user] {SAID}\n"));
             assert_eq!(cited?[0].content_hash, swarm_evidence_content_hash(b"Owen"));
         } else {
             assert_eq!(
                 transcript,
-                format!("[{} user] \n", turn.to_hex()),
+                "[T1 user] \n".to_owned(),
                 "{ending}: audit text is not transcript"
             );
             assert!(cited.is_err(), "{ending}: audit text is not evidence");
@@ -1233,7 +1347,7 @@ fn a_cancelled_continuation_turns_its_final_message_into_audit_text() -> Result<
     assert!(branch.transcript(branch.scope(), &[turn])?.contains(SAID));
     end_stream(
         &vault,
-        EntityId::from_bytes([0x77; 16])?,
+        vault.ensure_embedded_owner_actor().expect("owner"),
         &input,
         "",
         "cancel",
@@ -1245,7 +1359,7 @@ fn a_cancelled_continuation_turns_its_final_message_into_audit_text() -> Result<
     let reopened = open()?;
     assert_eq!(
         reopened.transcript(reopened.scope(), &[turn])?,
-        format!("[{} user] \n", turn.to_hex())
+        "[T1 user] \n".to_owned()
     );
     Ok(())
 }
@@ -1316,7 +1430,7 @@ fn a_finalized_continuation_brings_its_consumed_turn_back() -> Result<()> {
     let [consumed] = <[WorkingSetTurn; 1]>::try_from(dirty(&vault)?).expect("one dirty turn");
     advance_watermark_to_turn(&vault, scope, &consumed)?;
     assert!(dirty(&vault)?.is_empty(), "the round consumed the turn");
-    let writer = EntityId::from_bytes([0x7b; 16])?;
+    let writer = vault.ensure_embedded_owner_actor().expect("owner");
     let memory = vault.memory(writer, EdgeActorClass::Human);
     let handle = memory
         .begin_message_stream(&input, Some(crate::memory::MessageWriteMode::Atomic))
@@ -1338,7 +1452,7 @@ fn a_finalized_continuation_brings_its_consumed_turn_back() -> Result<()> {
     )?;
     assert_eq!(
         branch.transcript(branch.scope(), &[turn])?,
-        format!("[{} user] call me Owen\n", turn.to_hex())
+        "[T1 user] call me Owen\n".to_owned()
     );
     Ok(())
 }
@@ -1356,7 +1470,7 @@ fn a_continuation_in_a_dag_conversation_still_finalizes() -> Result<()> {
     );
     end_stream(
         &vault,
-        EntityId::from_bytes([0x81; 16])?,
+        vault.ensure_embedded_owner_actor().expect("owner"),
         &input,
         " Owen",
         "finalize",
@@ -1386,6 +1500,7 @@ fn stored_rows_join_by_order_then_id_and_a_foreign_bucket_refuses() -> Result<()
             author,
             message_type: "dialogue",
             content: text,
+            parts: None,
             metadata: None,
             is_visible,
             order,
@@ -1418,7 +1533,7 @@ fn stored_rows_join_by_order_then_id_and_a_foreign_bucket_refuses() -> Result<()
     let branch = open()?;
     assert_eq!(
         branch.transcript(branch.scope(), &[turn])?,
-        format!("[{} user] \na\nb\n", turn.to_hex())
+        "[T1 user] \na\nb\n".to_owned()
     );
     let at = |start, end| SwarmEvidenceRef {
         source_id: turn,
@@ -1440,11 +1555,10 @@ fn stored_rows_join_by_order_then_id_and_a_foreign_bucket_refuses() -> Result<()
 
 fn branch_gap_rows(
     vault: &Vault,
-    partition: &ConsolidationPartitionKey,
+    branch: &ConsolidationBranchPlan<EntityId>,
     scope: &crate::llm::Scope,
 ) -> Result<usize> {
-    let ScopeResource::Projection { key } =
-        super::super::gap::branch_gap_projection(partition, scope)
+    let ScopeResource::Projection { key } = super::super::gap::branch_gap_projection(branch, scope)
     else {
         panic!("branch gap identity is a projection")
     };
@@ -1465,6 +1579,17 @@ fn branch_gap_write_refuses_evidence_that_moved_after_the_read() -> Result<()> {
     for case in ["none", "deleted row", "expired grant"] {
         let (_dir, vault, clock) = open_clocked_vault();
         let space = EntityId::now();
+        // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+        // (MESSAGE-REL-NAMES = A).
+        vault
+            .put_entity(
+                &space,
+                ENTITY_TYPE_RELATIONSHIP,
+                occurred(1),
+                1,
+                b"relationship",
+            )
+            .expect("put the relationship space");
         let said = WitnessMessage {
             metadata: Some(serde_json::json!({"rel": space.to_hex()})),
             ..message(0, WitnessAuthor::User, SAID, true)
@@ -1506,15 +1631,26 @@ fn branch_gap_write_refuses_evidence_that_moved_after_the_read() -> Result<()> {
             "expired grant" => clock.set(200),
             _ => {}
         }
+        let queued_branch: ConsolidationBranchPlan<EntityId> = ConsolidationBranchPlan {
+            world_ref: partition.world_ref,
+            facet_ref: partition.facet_ref,
+            thing: None,
+            parts: vec![ConversationPart {
+                conversation_ref: partition.conversation_ref,
+                turns: vec![turn],
+                watermark_last_learned_at: 0,
+                line: 0,
+            }],
+        };
         let written = super::super::gap::upsert_branch_gap_queue(
             &vault,
             branch.scope(),
-            &partition,
+            &queued_branch,
             &fence,
             vec![gap],
             2_000,
         );
-        let rows = branch_gap_rows(&vault, &partition, branch.scope())?;
+        let rows = branch_gap_rows(&vault, &queued_branch, branch.scope())?;
         if case == "none" {
             assert_eq!(written?.created, 1);
             assert_eq!(rows, 1);

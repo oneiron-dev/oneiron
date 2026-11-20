@@ -28,6 +28,12 @@ pub(super) fn score_query_terms(
     let mut avgdl_cache: HashMap<u16, f64> = HashMap::new();
     let mut field_length_cache: HashMap<EntityId, HashMap<u16, u32>> = HashMap::new();
     let mut scores: HashMap<EntityId, f64> = HashMap::new();
+    // A posting for a row kept under a use limit, or a live hint for one,
+    // scores nothing in any caller's ranking, before its cut and before the
+    // hints collapse onto their claims (FIX USE-LIMIT-NOT-ASKED-BY-SERVING-DOORS).
+    // A vault with no limit asks no posting.
+    let limited = crate::store::legal_hold::any_record_use_limit_in_txn(store, rtxn)?;
+    let mut use_limited: HashMap<EntityId, bool> = HashMap::new();
 
     for query_term in query_terms {
         let Some(dups) = store
@@ -73,6 +79,19 @@ pub(super) fn score_query_terms(
             let id = entry.id;
             if !accept(&id)? {
                 continue;
+            }
+            if limited {
+                let kept = match use_limited.get(&id) {
+                    Some(kept) => *kept,
+                    None => {
+                        let kept = scores_for_use_limited(store, rtxn, &id)?;
+                        use_limited.insert(id, kept);
+                        kept
+                    }
+                };
+                if kept {
+                    continue;
+                }
             }
 
             // Enforce row-existence for every scored entry, not only those

@@ -8,14 +8,14 @@
       "streamed": false
     },
     {
-      "digest": "78d9143fe540c8d87f9f1c3807d66bd8622baf605aaa7e445e123a51655ea334",
+      "digest": "fd552e2249e1dc35060cbe0e05fb6a177cc1603fe5cf9d108e5b310003db8796",
       "model": "oneiron-testkit/scripted@1",
       "route": "generate oneiron-testkit/scripted@1",
       "step": "golden-day-1-1",
       "streamed": false
     }
   ],
-  "schema_version": 1,
+  "schema_version": 2,
   "script": "golden-day-1",
   "steps": [
     {
@@ -317,7 +317,7 @@
             "confidence": 1.0,
             "facet": null,
             "hedge_bucket": "confident",
-            "kind": "MACHINE",
+            "kind": "NOTIFICATION",
             "predicate": null,
             "project_ref": null,
             "provenance": {
@@ -329,13 +329,39 @@
             },
             "record": {
               "id": "record#2",
-              "kind": "MACHINE",
+              "kind": "NOTIFICATION",
               "label": "label#6",
               "short_id": "short#5"
             },
             "salience": null,
             "short_id": "short#5",
             "source_revision_ref": "revision#3",
+            "value_text": "{\"kind\":\"finding\",\"source\":{\"producer\":\"dreamer.finding\",\"event\":\"claim#1\"},\"subject_refs\":[\"claim#1\",\"owner\"],\"created_at\":1800000060}",
+            "world": null
+          },
+          {
+            "confidence": 1.0,
+            "facet": null,
+            "hedge_bucket": "confident",
+            "kind": "MACHINE",
+            "predicate": null,
+            "project_ref": null,
+            "provenance": {
+              "evidence_turn_ids": [],
+              "source": "record",
+              "source_revision_ids": [
+                "record#3"
+              ]
+            },
+            "record": {
+              "id": "record#3",
+              "kind": "MACHINE",
+              "label": "label#7",
+              "short_id": "short#6"
+            },
+            "salience": null,
+            "short_id": "short#6",
+            "source_revision_ref": "revision#4",
             "value_text": "{}",
             "world": null
           },
@@ -375,34 +401,8 @@
             },
             "salience": null,
             "short_id": "short#1",
-            "source_revision_ref": "revision#4",
-            "value_text": "I moved to Lisbon last March, and my sister Ana lives two streets away.",
-            "world": null
-          },
-          {
-            "confidence": 1.0,
-            "facet": null,
-            "hedge_bucket": "confident",
-            "kind": "NOTIFICATION",
-            "predicate": null,
-            "project_ref": null,
-            "provenance": {
-              "evidence_turn_ids": [],
-              "source": "record",
-              "source_revision_ids": [
-                "record#3"
-              ]
-            },
-            "record": {
-              "id": "record#3",
-              "kind": "NOTIFICATION",
-              "label": "label#7",
-              "short_id": "short#6"
-            },
-            "salience": null,
-            "short_id": "short#6",
             "source_revision_ref": "revision#5",
-            "value_text": "{\"kind\":\"finding\",\"source\":{\"producer\":\"dreamer.finding\",\"event\":\"claim#1\"},\"subject_refs\":[\"claim#1\",\"owner\"],\"created_at\":1800000060000}",
+            "value_text": "I moved to Lisbon last March, and my sister Ana lives two streets away.",
             "world": null
           }
         ],
@@ -710,7 +710,7 @@
             "record": {
               "id": "claim#1",
               "kind": "CLAIM",
-              "label": "label#5",
+              "label": "label#8",
               "short_id": "short#4"
             },
             "salience": null,
@@ -723,7 +723,7 @@
             "confidence": 1.0,
             "facet": null,
             "hedge_bucket": "confident",
-            "kind": "MACHINE",
+            "kind": "NOTIFICATION",
             "predicate": null,
             "project_ref": null,
             "provenance": {
@@ -735,13 +735,39 @@
             },
             "record": {
               "id": "record#2",
-              "kind": "MACHINE",
+              "kind": "NOTIFICATION",
               "label": "label#6",
               "short_id": "short#5"
             },
             "salience": null,
             "short_id": "short#5",
             "source_revision_ref": "revision#3",
+            "value_text": "{\"kind\":\"finding\",\"source\":{\"producer\":\"dreamer.finding\",\"event\":\"claim#1\"},\"subject_refs\":[\"claim#1\",\"owner\"],\"created_at\":1800000060}",
+            "world": null
+          },
+          {
+            "confidence": 1.0,
+            "facet": null,
+            "hedge_bucket": "confident",
+            "kind": "MACHINE",
+            "predicate": null,
+            "project_ref": null,
+            "provenance": {
+              "evidence_turn_ids": [],
+              "source": "record",
+              "source_revision_ids": [
+                "record#3"
+              ]
+            },
+            "record": {
+              "id": "record#3",
+              "kind": "MACHINE",
+              "label": "label#7",
+              "short_id": "short#6"
+            },
+            "salience": null,
+            "short_id": "short#6",
+            "source_revision_ref": "revision#4",
             "value_text": "{}",
             "world": null
           },
@@ -780,78 +806,43 @@
             },
             "salience": null,
             "short_id": "short#1",
-            "source_revision_ref": "revision#4",
-            "value_text": "I moved to Lisbon last March, and my sister Ana lives two streets away.",
-            "world": null
-          },
-          {
-            "confidence": 1.0,
-            "facet": null,
-            "hedge_bucket": "confident",
-            "kind": "NOTIFICATION",
-            "predicate": null,
-            "project_ref": null,
-            "provenance": {
-              "evidence_turn_ids": [],
-              "source": "record",
-              "source_revision_ids": [
-                "record#3"
-              ]
-            },
-            "record": {
-              "id": "record#3",
-              "kind": "NOTIFICATION",
-              "label": "label#7",
-              "short_id": "short#6"
-            },
-            "salience": null,
-            "short_id": "short#6",
             "source_revision_ref": "revision#5",
-            "value_text": "{\"kind\":\"finding\",\"source\":{\"producer\":\"dreamer.finding\",\"event\":\"claim#1\"},\"subject_refs\":[\"claim#1\",\"owner\"],\"created_at\":1800000060000}",
+            "value_text": "I moved to Lisbon last March, and my sister Ana lives two streets away.",
             "world": null
           }
         ],
         "narrowing": {
           "actor_ceiling": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
           "applied": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
           "narrowed_axes": [
-            "entity_types",
-            "max_sensitivity_band",
-            "min_confidence",
-            "min_salience",
-            "deny_all"
+            "row_authority"
           ],
           "replan_hint": [
-            "entity_types",
-            "max_sensitivity_band",
-            "min_confidence",
-            "min_salience",
-            "deny_all",
-            "grant_scope"
+            "row_authority"
           ],
           "requested": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
-          "suppressed_count": 0
+          "suppressed_count": 6
         },
         "pack_version": 1,
         "rendered": null,
@@ -883,43 +874,30 @@
       "answer": {
         "narrowing": {
           "actor_ceiling": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
           "applied": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
-          "narrowed_axes": [
-            "entity_types",
-            "max_sensitivity_band",
-            "min_confidence",
-            "min_salience",
-            "deny_all"
-          ],
-          "replan_hint": [
-            "entity_types",
-            "max_sensitivity_band",
-            "min_confidence",
-            "min_salience",
-            "deny_all",
-            "grant_scope"
-          ],
+          "narrowed_axes": [],
+          "replan_hint": [],
           "requested": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
           "suppressed_count": 0
         },
@@ -951,35 +929,30 @@
       "answer": {
         "narrowing": {
           "actor_ceiling": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
           "applied": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
-          "narrowed_axes": [
-            "deny_all"
-          ],
-          "replan_hint": [
-            "deny_all",
-            "grant_scope"
-          ],
+          "narrowed_axes": [],
+          "replan_hint": [],
           "requested": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
           "suppressed_count": 0
         },
@@ -1029,35 +1002,30 @@
       "answer": {
         "narrowing": {
           "actor_ceiling": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
           "applied": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
-          "narrowed_axes": [
-            "deny_all"
-          ],
-          "replan_hint": [
-            "deny_all",
-            "grant_scope"
-          ],
+          "narrowed_axes": [],
+          "replan_hint": [],
           "requested": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
           "suppressed_count": 0
         },
@@ -1341,12 +1309,12 @@
       "pages": [
         {
           "order": "entry_ref_ascending",
-          "scanned": 26
+          "scanned": 30
         }
       ],
       "rows": [
         {
-          "advisory_ts": "<measured>",
+          "advisory_ts": 1800000000,
           "cosigner_keys": [
             "key#2"
           ],
@@ -1354,16 +1322,16 @@
           "entry_ref": "entry#1",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 11,
           "signer_key": "key#1",
           "source_op": "bind_actor",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
+          "advisory_ts": 1800000000,
           "cosigner_keys": [
             "key#3"
           ],
@@ -1371,16 +1339,16 @@
           "entry_ref": "entry#2",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 13,
           "signer_key": "key#1",
           "source_op": "bind_actor",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
+          "advisory_ts": 1800000000,
           "cosigner_keys": [
             "key#4"
           ],
@@ -1388,16 +1356,16 @@
           "entry_ref": "entry#3",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 15,
           "signer_key": "key#1",
           "source_op": "bind_actor",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
+          "advisory_ts": 1800000000,
           "cosigner_keys": [
             "key#5"
           ],
@@ -1405,16 +1373,16 @@
           "entry_ref": "entry#4",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 17,
           "signer_key": "key#1",
           "source_op": "bind_actor",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
+          "advisory_ts": 1800000000,
           "cosigner_keys": [
             "key#6"
           ],
@@ -1422,16 +1390,16 @@
           "entry_ref": "entry#5",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 19,
           "signer_key": "key#1",
           "source_op": "bind_actor",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
+          "advisory_ts": 1800000000,
           "cosigner_keys": [
             "key#7"
           ],
@@ -1439,16 +1407,16 @@
           "entry_ref": "entry#6",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 21,
           "signer_key": "key#1",
           "source_op": "bind_actor",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
+          "advisory_ts": 1800000000,
           "cosigner_keys": [
             "key#8"
           ],
@@ -1456,16 +1424,16 @@
           "entry_ref": "entry#7",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 23,
           "signer_key": "key#1",
           "source_op": "bind_actor",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
+          "advisory_ts": 1800000000,
           "cosigner_keys": [
             "key#9"
           ],
@@ -1473,16 +1441,16 @@
           "entry_ref": "entry#8",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
-          "seq": 5,
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
+          "seq": 25,
           "signer_key": "key#1",
           "source_op": "bind_actor",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
+          "advisory_ts": 1800000000,
           "cosigner_keys": [
             "key#10"
           ],
@@ -1490,16 +1458,16 @@
           "entry_ref": "entry#9",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
-          "seq": 7,
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
+          "seq": 27,
           "signer_key": "key#1",
           "source_op": "bind_actor",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
+          "advisory_ts": 1800000000,
           "cosigner_keys": [
             "key#11"
           ],
@@ -1507,60 +1475,59 @@
           "entry_ref": "entry#10",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
+          "seq": 5,
+          "signer_key": "key#1",
+          "source_op": "bind_actor",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": 1800000000,
+          "cosigner_keys": [
+            "key#12"
+          ],
+          "entry_hash": "entry_hash#11",
+          "entry_ref": "entry#11",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
+          "seq": 7,
+          "signer_key": "key#1",
+          "source_op": "bind_actor",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": 1800000000,
+          "cosigner_keys": [
+            "key#13"
+          ],
+          "entry_hash": "entry_hash#12",
+          "entry_ref": "entry#12",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 9,
           "signer_key": "key#1",
           "source_op": "bind_actor",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
-          "detail": "mint; withdrawn",
-          "entry_hash": "act#1",
-          "entry_ref": "entry#11",
-          "event_kind": "grant",
-          "fold_valid": true,
-          "grant_ref": "grant",
-          "holder_ref": "agent",
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
-          "seq": 1,
-          "signer_key": "key#12",
-          "source_op": "agent_grant_act",
-          "subject_ref": "owner",
-          "vault_ref": "vault#1"
-        },
-        {
-          "advisory_ts": "<measured>",
-          "detail": "revoke",
-          "entry_hash": "act#2",
-          "entry_ref": "entry#12",
-          "event_kind": "revoke",
-          "fold_valid": true,
-          "grant_ref": "grant",
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
-          "seq": 2,
-          "signer_key": "key#12",
-          "source_op": "agent_grant_act",
-          "subject_ref": "owner",
-          "vault_ref": "vault#1"
-        },
-        {
-          "advisory_ts": "<measured>",
-          "entry_hash": "entry_hash#11",
+          "advisory_ts": 1800000000,
+          "entry_hash": "entry_hash#13",
           "entry_ref": "entry#13",
           "event_kind": "grant",
-          "expires_at": "<measured>",
+          "expires_at": 2115360000,
           "fold_valid": true,
           "holder_ref": "actor#1",
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 1,
           "signer_key": "key#1",
           "source_op": "slip_mint",
@@ -1568,184 +1535,247 @@
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
+          "advisory_ts": 1800000000,
           "entry_hash": "vault#1",
           "entry_ref": "entry#14",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 0,
           "signer_key": "key#1",
           "source_op": "genesis"
         },
         {
-          "advisory_ts": "<measured>",
-          "entry_hash": "entry_hash#12",
+          "advisory_ts": 1800000000,
+          "entry_hash": "entry_hash#14",
           "entry_ref": "entry#15",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 10,
           "signer_key": "key#1",
           "source_op": "enroll_device",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
-          "entry_hash": "entry_hash#13",
+          "advisory_ts": 1800000000,
+          "entry_hash": "entry_hash#15",
           "entry_ref": "entry#16",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 12,
           "signer_key": "key#1",
           "source_op": "enroll_device",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
-          "entry_hash": "entry_hash#14",
+          "advisory_ts": 1800000000,
+          "entry_hash": "entry_hash#16",
           "entry_ref": "entry#17",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 14,
           "signer_key": "key#1",
           "source_op": "enroll_device",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
-          "entry_hash": "entry_hash#15",
+          "advisory_ts": 1800000000,
+          "entry_hash": "entry_hash#17",
           "entry_ref": "entry#18",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 16,
           "signer_key": "key#1",
           "source_op": "enroll_device",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
-          "entry_hash": "entry_hash#16",
+          "advisory_ts": 1800000000,
+          "entry_hash": "entry_hash#18",
           "entry_ref": "entry#19",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 18,
           "signer_key": "key#1",
           "source_op": "enroll_device",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
-          "entry_hash": "entry_hash#17",
+          "advisory_ts": 1800000000,
+          "entry_hash": "entry_hash#19",
           "entry_ref": "entry#20",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 2,
           "signer_key": "key#1",
           "source_op": "bind_actor",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
-          "entry_hash": "entry_hash#18",
+          "advisory_ts": 1800000000,
+          "entry_hash": "entry_hash#20",
           "entry_ref": "entry#21",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 20,
           "signer_key": "key#1",
           "source_op": "enroll_device",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
-          "entry_hash": "entry_hash#19",
+          "advisory_ts": 1800000000,
+          "entry_hash": "entry_hash#21",
           "entry_ref": "entry#22",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 22,
           "signer_key": "key#1",
           "source_op": "enroll_device",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
-          "entry_hash": "entry_hash#20",
+          "advisory_ts": 1800000000,
+          "entry_hash": "entry_hash#22",
           "entry_ref": "entry#23",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
+          "seq": 24,
+          "signer_key": "key#1",
+          "source_op": "enroll_device",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": 1800000000,
+          "entry_hash": "entry_hash#23",
+          "entry_ref": "entry#24",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
+          "seq": 26,
+          "signer_key": "key#1",
+          "source_op": "enroll_device",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": 1800000000,
+          "entry_hash": "entry_hash#24",
+          "entry_ref": "entry#25",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 3,
           "signer_key": "key#1",
           "source_op": "machine_profile",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
-          "entry_hash": "entry_hash#21",
-          "entry_ref": "entry#24",
+          "advisory_ts": 1800000000,
+          "entry_hash": "entry_hash#25",
+          "entry_ref": "entry#26",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 4,
           "signer_key": "key#1",
           "source_op": "enroll_device",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
-          "entry_hash": "entry_hash#22",
-          "entry_ref": "entry#25",
+          "advisory_ts": 1800000000,
+          "entry_hash": "entry_hash#26",
+          "entry_ref": "entry#27",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 6,
           "signer_key": "key#1",
           "source_op": "enroll_device",
           "vault_ref": "vault#1"
         },
         {
-          "advisory_ts": "<measured>",
-          "entry_hash": "entry_hash#23",
-          "entry_ref": "entry#26",
+          "advisory_ts": 1800000000,
+          "entry_hash": "entry_hash#27",
+          "entry_ref": "entry#28",
           "event_kind": "other",
           "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
+          "learned_at": 1800000000,
+          "occurred_end": 1800000000,
+          "occurred_start": 1800000000,
           "seq": 8,
           "signer_key": "key#1",
           "source_op": "enroll_device",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": 1800000180,
+          "detail": "mint; withdrawn",
+          "entry_hash": "act#1",
+          "entry_ref": "entry#29",
+          "event_kind": "grant",
+          "fold_valid": true,
+          "grant_ref": "grant",
+          "holder_ref": "agent",
+          "learned_at": 1800000180,
+          "occurred_end": 1800000180,
+          "occurred_start": 1800000180,
+          "seq": 1,
+          "signer_key": "key#14",
+          "source_op": "agent_grant_act",
+          "subject_ref": "owner",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": 1800000720,
+          "detail": "revoke",
+          "entry_hash": "act#2",
+          "entry_ref": "entry#30",
+          "event_kind": "revoke",
+          "fold_valid": true,
+          "grant_ref": "grant",
+          "learned_at": 1800000720,
+          "occurred_end": 1800000720,
+          "occurred_start": 1800000720,
+          "seq": 2,
+          "signer_key": "key#14",
+          "source_op": "agent_grant_act",
+          "subject_ref": "owner",
           "vault_ref": "vault#1"
         }
       ]
@@ -1801,7 +1831,7 @@
           "claim": {
             "id": "claim#1",
             "kind": "CLAIM",
-            "label": "label#9",
+            "label": "label#10",
             "short_id": null
           },
           "claim_ref": "claim#1",
@@ -1831,7 +1861,7 @@
           "claim": {
             "id": "claim#2",
             "kind": "CLAIM",
-            "label": "label#8",
+            "label": "label#9",
             "short_id": null
           },
           "claim_ref": "claim#2",
@@ -1858,7 +1888,7 @@
           "claim": {
             "id": "claim#3",
             "kind": "CLAIM",
-            "label": "label#8",
+            "label": "label#9",
             "short_id": null
           },
           "claim_ref": "claim#3",
@@ -1885,7 +1915,7 @@
           "claim": {
             "id": "claim:remembered",
             "kind": "CLAIM",
-            "label": "label#8",
+            "label": "label#9",
             "short_id": null
           },
           "claim_ref": "claim:remembered",
@@ -1950,7 +1980,7 @@
           "claim": {
             "id": "claim#2",
             "kind": "CLAIM",
-            "label": "label#8",
+            "label": "label#9",
             "short_id": null
           },
           "claim_ref": "claim#2",
@@ -1969,7 +1999,7 @@
           "claim": {
             "id": "claim#3",
             "kind": "CLAIM",
-            "label": "label#8",
+            "label": "label#9",
             "short_id": null
           },
           "claim_ref": "claim#3",
@@ -1988,7 +2018,7 @@
           "claim": {
             "id": "claim#1",
             "kind": "CLAIM",
-            "label": "label#9",
+            "label": "label#10",
             "short_id": null
           },
           "claim_ref": "claim#1",
@@ -2007,7 +2037,7 @@
           "claim": {
             "id": "claim:remembered",
             "kind": "CLAIM",
-            "label": "label#8",
+            "label": "label#9",
             "short_id": null
           },
           "claim_ref": "claim:remembered",

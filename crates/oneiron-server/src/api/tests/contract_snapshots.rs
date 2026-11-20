@@ -320,11 +320,13 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
         "text": [{ "field": "body", "value": "turn contract envelope" }]
     });
     let turns_path = format!("/v1/core/conversations/{conversation_id}/turns");
+    // FIX 5939: a turn write is held to the read auth's lane, so the
+    // credential grants read as well as write.
     let (status, body) = core_json(
         server.clone(),
         "POST",
         &turns_path,
-        "core:write",
+        "core:read,core:write",
         Some(&turn_request),
     )
     .await;
@@ -333,7 +335,7 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
         "create_core_conversation_turn",
         "POST",
         &turns_path,
-        Some("core:write"),
+        Some("core:read,core:write"),
         Some(turn_request),
         status,
         body,
@@ -377,12 +379,19 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
         },
         "annotated_at": 1_782_357_900_u64
     });
-    let (status, body) = core_json(
+    // A write names the principal it writes as (`core:write+principal_ref`,
+    // FIX 7959/8154/8222): the vault's owner, as the list above reads.
+    let (status, body) = route_json(
         server.clone(),
-        "POST",
-        "/v1/core/turns/annotate",
-        "core:write",
-        Some(&annotate_request),
+        core_request_with_authz(
+            "POST",
+            "/v1/core/turns/annotate",
+            test_bearer(&format!(
+                "scope=core:write;principal_ref={};actor_class=human",
+                owner.to_hex()
+            )),
+            Some(&annotate_request),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);

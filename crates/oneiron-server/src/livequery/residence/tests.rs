@@ -31,7 +31,8 @@ fn reply_with_cache(
         &mut None,
         &mut None,
     )
-    .unwrap();
+    .unwrap()
+    .0;
     test_wire::reply(&answer.queued(0))
 }
 

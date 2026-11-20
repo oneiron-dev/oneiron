@@ -47,6 +47,13 @@ pub enum NotificationKind {
     /// event id and `source.detail` who asked, which consent it was, and
     /// the agent and Grant that logged it.
     VoiceRecognitionWithdrawn,
+    /// An agent logged a counterparty's spoken voice-recognition consent on a
+    /// call, under its Grant that lets it log that consent
+    /// (VOICE-CONSENT-LOG-WHO = A): told to each live owner. It enrols no
+    /// print. `source.result` names the consent's event id and
+    /// `source.detail` who agreed, for which purposes, and the agent and
+    /// Grant that logged it.
+    VoiceRecognitionConsented,
     /// The vault's Owner or an Admin walked into a private thread, reading
     /// from now on (FIX 6381, 6466): told to the thread's members alone.
     /// `source.result` names the thread's root and `source.detail` the op.
@@ -68,6 +75,11 @@ pub enum NotificationKind {
     /// run, is its revert, the owner's own act
     /// (`Vault::revert_model_pack_change_as_owner`).
     ModelPackChanged,
+    /// A GPU job used 95 percent of the maximum the customer set for it
+    /// (CROSS-ARCH-0023 C2 02): `source.result` names the job and
+    /// `source.detail` how much of its maximum it used. The job stops at its
+    /// maximum only after this notice and a checkpoint taken after it.
+    GpuJobWarning,
 }
 
 impl NotificationKind {

@@ -90,7 +90,12 @@ impl CoreContextPackResponse {
                 .filter_map(|stamp| oneiron::EntityId::from_hex(&stamp.speaker).ok()),
         );
         for signal in &self.signals {
-            for id in [&signal.reaction, &signal.message, &signal.by] {
+            // A signal that names no reactor reads no PERSON row.
+            let reactor = signal.by.as_ref();
+            for id in [Some(&signal.reaction), Some(&signal.message), reactor]
+                .into_iter()
+                .flatten()
+            {
                 let Ok(id) = oneiron::EntityId::from_hex(id) else {
                     return Ok(None);
                 };

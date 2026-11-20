@@ -32,7 +32,7 @@ fn cite_message(vault: &Vault, turn: EntityId) -> Result<EntityId> {
 fn an_owner_purge_keeps_the_message_version_a_live_claim_cites() -> Result<()> {
     let (_dir, vault) = open_vault();
     let (turn, _, cited, input) = stream_turn(&vault, 0x81, SAID, "finalize")?;
-    let writer = EntityId::from_bytes([0x81; 16])?;
+    let writer = vault.ensure_embedded_owner_actor().expect("owner");
     let read_at = vault.entity_text_anchor(&cited, 0, 0)?.frontier().to_vec();
     let claim = cite_message(&vault, turn)?;
     end_stream(&vault, writer, &input, ", thanks", "finalize");
@@ -94,7 +94,7 @@ fn in_place_recovery_keeps_cited_history_unless_the_value_differs() -> Result<()
     let read_at = vault.entity_text_anchor(&cited, 0, 0)?.frontier().to_vec();
     let claim = cite_message(&vault, turn)?;
     let older = capture_message(&vault, cited)?;
-    let writer = EntityId::from_bytes([0x83; 16])?;
+    let writer = vault.ensure_embedded_owner_actor().expect("owner");
     end_stream(&vault, writer, &input, ", thanks", "finalize");
     let latest = vault.entity_text_frontier(&cited)?;
     let recover = |snapshot: &CanonicalSnapshot, manifest: &str| {
@@ -147,7 +147,7 @@ fn a_recovery_over_a_lost_head_keeps_the_cited_history() -> Result<()> {
     let (turn, _, cited, input) = stream_turn(&vault, 0x85, SAID, "finalize")?;
     let read_at = vault.entity_text_anchor(&cited, 0, 0)?.frontier().to_vec();
     let claim = cite_message(&vault, turn)?;
-    let writer = EntityId::from_bytes([0x85; 16])?;
+    let writer = vault.ensure_embedded_owner_actor().expect("owner");
     end_stream(&vault, writer, &input, ", thanks", "finalize");
     let snapshot = capture_message(&vault, cited)?;
     let put_back = crate::entity_doc::lose_head_for_test(&vault, &cited)?;

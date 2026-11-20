@@ -57,14 +57,17 @@
 //!   while holding the materializer lock.
 
 mod document_api;
+mod follow_refusals;
 mod live_mirror;
 mod pending_mirror;
 mod promotion;
+pub(crate) mod publication_window;
 mod ready;
 mod recovery_commits;
 mod replacement;
 
 pub(crate) use self::live_mirror::import_scope;
+pub(crate) use self::publication_window::PublicationWindow;
 // FIX 19634: each connection asks for the windows a policy wake readied.
 pub use self::ready::{READY_WINDOWS_PER_PASS, ReadyProgress};
 // FIX 14534: a world eviction waits for, or on the owner's word discards, the
@@ -123,6 +126,10 @@ pub struct WindowManager {
     /// Window promotion notices for the one live sync socket. Markers remain
     /// durable when there is no receiver; reconnect replays them from rp:w:.
     promotions: tokio::sync::broadcast::Sender<WindowKey>,
+    /// The followed windows the home refused on the one live sync socket
+    /// (FOLLOWED-TOMBSTONE-HELD-WINDOW-REFUSED-LIVE): the residence upkeep
+    /// asks for their tombstone id sets again, held here or not.
+    follows_refused: Mutex<std::collections::HashSet<WindowKey>>,
     /// Rows local commits wrote, on their way into the loaded windows.
     live_mirror: Arc<live_mirror::LiveMirror>,
     /// Test-only handle-issue pause slot (ONE-1608), owned by THIS manager.
@@ -171,6 +178,7 @@ impl WindowManager {
             transition: super::sweep_fence::SweepFence::default(),
             outbound: Arc::new(OutboundSink::new()),
             promotions: tokio::sync::broadcast::channel(64).0,
+            follows_refused: Mutex::default(),
             live_mirror: Arc::default(),
             #[cfg(test)]
             handle_issue_pause: Mutex::new(None),
@@ -277,7 +285,7 @@ impl WindowManager {
         // attach mutex, never the registry lock.
         self.attach_to_vault();
         let mut registry = self.lock_registry_settled(key);
-        // A window a sweep holds closed opens once the sweep is done.
+        // A window a sweep or a publication holds closed opens once it is released.
         while self.sweep_fence.holds(key) {
             drop(registry);
             self.sweep_fence.wait_until_open(key);
@@ -297,6 +305,8 @@ impl WindowManager {
             // (Observer B's NOTE scrub, FIX 12128).
             if !super::quarantine::pending_remat_entities(&self.vault, key.as_str())?.is_empty() {
                 forward_rematerialize(&self.vault, &existing.doc, &self.materializer, key)?;
+                // ROOM-PINS-LWW-MERGE: a room body it merged owes the window.
+                self.wake_for_owed_rows(key);
             }
             return Ok((existing, false));
         }
@@ -390,6 +400,11 @@ impl WindowManager {
         self.track_issued_handle(key, &window);
         drop(opening);
         drop(registry);
+        // ROOM-PINS-LWW-MERGE: a room body the forward pass merged with the
+        // pin records held here left a merged-carrier marker; the live
+        // mirror's next pass writes the merged carrier over the doc's, so the
+        // other machine learns them without waiting for another write.
+        self.wake_for_owed_rows(key);
         // FIX 12129: a window closed while a NOTE was deleted keeps that
         // NOTE's review-bundle attachments; scrub what this vault deleted.
         if let Err(error) =
@@ -458,8 +473,8 @@ impl WindowManager {
     /// The window is marked closed under the registry lock, so no open of it
     /// is under way, and an open that comes during `f` waits and then reads
     /// what `f` wrote, rather than registering the history `f` drops. Opens
-    /// of other windows go through. A window another sweep holds closed is
-    /// left to it, so the mark is released only by the sweep that made it.
+    /// of other windows go through. A window another sweep or a publication
+    /// holds closed is left to it, so the mark is released only by its holder.
     pub(crate) fn while_window_closed<T>(
         &self,
         key: &WindowKey,

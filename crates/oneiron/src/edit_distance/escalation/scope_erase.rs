@@ -9,6 +9,7 @@
 
 use super::storage::{
     ESCALATION, STANDING_POLICY, ScopeTriggerKey, StoredStandingPolicy, scope_key,
+    standing_policy_row,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -92,6 +93,39 @@ fn erase_policy_scopes_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, hex: &s
         STANDING_POLICY.put(&vault.store, wtxn, &new, &row)?;
     }
     Ok(())
+}
+
+/// The records a stored standing-policy row's value bytes name, as
+/// [`erase_policy_scopes_in_txn`] matches an erased holder: every id whose
+/// lower-case hex its scope spells (a remembered consult policy governs
+/// `consult:<actor hex>:<brief>`), and its answering holder, in the row and in
+/// every row it supersedes; `None` for bytes that do not read as a row. The
+/// whole-vault export withholds a row that names a record it keeps out
+/// (REVIEW-9739 round 2 P1-3).
+pub(crate) fn standing_policy_records(value: &[u8]) -> Option<Vec<EntityId>> {
+    let row = standing_policy_row(value).ok()?;
+    let mut records = Vec::new();
+    collect_policy_records(&row, &mut records);
+    Some(records)
+}
+
+/// Adds to `records` what [`standing_policy_records`] reads from `row` and the
+/// rows it supersedes.
+fn collect_policy_records(row: &StoredStandingPolicy, records: &mut Vec<EntityId>) {
+    records.extend(
+        row.scope
+            .as_bytes()
+            .windows(32)
+            .filter_map(|window| EntityId::from_lower_hex(std::str::from_utf8(window).ok()?).ok()),
+    );
+    records.extend(
+        row.accepted_by
+            .as_deref()
+            .and_then(|holder| EntityId::from_lower_hex(holder).ok()),
+    );
+    for superseded in &row.superseded {
+        collect_policy_records(superseded, records);
+    }
 }
 
 /// Scrubs one standing-policy row: its scope's erased hex, and its answerer

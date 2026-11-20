@@ -237,6 +237,13 @@ impl DecisionModel for LocalVisionModel {
             self.vault
                 .model_call_keeps_no_record_for(caller.session.as_deref(), Some(caller.principal))
         });
+        // A caller whose off-record session keeps no model-call record: the
+        // run names none of the evidence rows, nor their worlds (census L5-25).
+        let run = if no_record_at_arrival {
+            run.off_record()
+        } else {
+            run
+        };
         let record_request = admitted.request.clone();
         // Cooling waits also keep the vault's limit; sends keep the full work time.
         // Retain the actual answering binding through the same rung/fallback traversal.
