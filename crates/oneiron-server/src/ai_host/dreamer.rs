@@ -216,7 +216,7 @@ pub(super) fn dream_windows(models: &ModelsConfig) -> BTreeMap<ModelId, u64> {
 /// ceiling reserves nothing here; the Dreamer's extraction reserve stays in
 /// [`dream_windows`].
 pub(super) fn reader_windows(models: &ModelsConfig) -> BTreeMap<ModelId, u64> {
-    rung_windows(models, |provider| provider.max_output_tokens.unwrap_or(0))
+    dream_windows(models)
 }
 
 /// Each rung model's provider context less the output `reserve` names for
