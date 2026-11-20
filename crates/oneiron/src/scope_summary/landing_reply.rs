@@ -11,6 +11,7 @@ use crate::registry::{
 };
 use crate::store::{ManifestDbs, Store};
 use crate::{EntityId, Error, Result};
+use oneiron_contracts::fingerprint::ContentHash;
 
 /// Verdict of [`validate_landing_reply_in`]: `Bound` admits the reply under
 /// its signed landing, `Waits` defers it until a later replay delivers the
@@ -38,7 +39,7 @@ fn reply_text_is_summarys(
     }
     Ok(
         crate::entity_doc::summary_generated_text_hash_in(dbs, txn, summary)?
-            .is_some_and(|generated| blake3::hash(text.as_bytes()).as_bytes() == &generated),
+            .is_some_and(|generated| ContentHash::of(text.as_bytes()).as_bytes() == &generated),
     )
 }
 
