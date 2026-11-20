@@ -284,10 +284,10 @@ pub fn source_rows_withdrawn(vault: &Vault, sources: &[EntityId]) -> bool {
     let Ok(txn) = vault.store.env.read_txn() else {
         return true;
     };
-    sources.iter().any(|source| {
-        vault.is_deleted_shell_in_txn(&txn, source).unwrap_or(true)
-            || crate::ports::stale_in_txn(&vault.store, &txn, source).unwrap_or(true)
-    })
+    // SCRATCH RED (not for merge): deleted shells only, no stale mark.
+    sources
+        .iter()
+        .any(|source| vault.is_deleted_shell_in_txn(&txn, source).unwrap_or(true))
 }
 
 /// A live fork its run's driver admitted (FIX 4465 C): the one Frontier-tier
