@@ -689,6 +689,18 @@ pub(crate) fn erase_house_link_actor_in_txn(
     Ok(())
 }
 
+/// The records a stored house link receipt's value bytes name, as
+/// [`erase_house_link_actor_in_txn`] matches them: its binder, its house and
+/// its org, whose erase drops the receipt; `None` for bytes that do not read
+/// as a receipt. The whole-vault export withholds a receipt that names a
+/// record it keeps out (REVIEW-9739 P1-1).
+pub(crate) fn house_link_receipt_records(value: &[u8]) -> Option<Vec<EntityId>> {
+    RECEIPTS
+        .decode_value(value)
+        .ok()
+        .map(|receipt| vec![receipt.binder, receipt.house, receipt.org])
+}
+
 /// The org `house` ran at `at`, read from its receipts alone: the org of the
 /// latest bind still open at `at` ([`open_links_at_in_txn`]). Nothing about a
 /// statement is stored for this, so an unbind never changes how a statement

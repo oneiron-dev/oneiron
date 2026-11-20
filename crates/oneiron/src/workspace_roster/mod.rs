@@ -102,6 +102,7 @@ use companion_bind::*;
 use steps::*;
 
 pub(crate) use self::codec::companion_principal_in_txn;
+pub(crate) use self::house_link::house_link_receipt_records;
 pub(crate) use self::house_link::seat_house_owner_by_act_in_txn;
 pub use self::house_link::{DEFAULT_HOUSE_ROLE, parse_house_role};
 pub(crate) use self::house_link::{

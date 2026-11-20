@@ -11,6 +11,9 @@ use oneiron_records::batch::export::archive_side_tables::byte_values;
 use serde::{Deserialize, Serialize};
 
 use super::archive_index::{IndexedArchive, Loc, Tag};
+use super::archive_retained_room_ledgers::{
+    note_ledger_envelope, retained_row_room, withhold_room_ledger,
+};
 use super::archive_retained_subjects::{RetainedSubjectRule, retained_subject_rule};
 use super::archive_side_dispositions::{omitted_decls, retained_decl, retained_decls};
 use super::{
@@ -134,26 +137,6 @@ pub(crate) fn retained_envelope_source_table(value: &[u8]) -> Option<String> {
         .map(|envelope| envelope.source_table)
 }
 
-/// The room a room-keyed retained row belongs to: the membership ledger, its revision and the
-/// room role grants are keyed by their room first.
-fn retained_row_room(source_table: &str, source_key: &[u8]) -> Option<EntityId> {
-    use crate::side_table::{
-        CONVERSATION_MEMBERSHIP_ROW, CONVERSATION_MEMBERSHIP_SEQ, CONVERSATION_ROLE_GRANT,
-    };
-    if [
-        &CONVERSATION_MEMBERSHIP_ROW,
-        &CONVERSATION_MEMBERSHIP_SEQ,
-        &CONVERSATION_ROLE_GRANT,
-    ]
-    .iter()
-    .any(|decl| decl.name == source_table)
-    {
-        <EntityId as SideKey>::decode_key(source_key.get(..16)?)
-    } else {
-        None
-    }
-}
-
 /// Whether the whole-vault export keeps record `id` out, as its record pass does: the egress door
 /// keeps it out (off the record, or use-limited by a customer hold that refused its privacy
 /// erase), or it is an epoch summary one of whose transitive sources the door keeps out, or whose
@@ -219,59 +202,6 @@ fn retained_row_withheld(
     Ok(!exported)
 }
 
-/// Withholds the whole ledger of the room a withheld ledger envelope belongs to, when its key
-/// still names one: the ledger goes whole or not at all ([`note_ledger_envelope`]), so a row the
-/// export withholds, a malformed one among them, takes its room's other rows and revision along.
-fn withhold_room_ledger(
-    envelope: &ArchiveRetainedSideRow,
-    withheld_ledgers: &mut BTreeSet<EntityId>,
-) {
-    if crate::conversation::archive_restore::is_ledger_table(&envelope.source_table)
-        && let Some(room) = retained_row_room(&envelope.source_table, &envelope.source_key)
-    {
-        withheld_ledgers.insert(room);
-    }
-}
-
-/// Notes room ledger envelope `envelope`'s room under its identity, and withholds that room's
-/// whole ledger when the envelope is a ledger row that names an entity the export keeps out, or
-/// does not read as a ledger row (REVIEW-9446 round 2 P1-2). The ledger goes whole or not at
-/// all: a restore needs its one revision and every row, and each envelope's bytes are its
-/// identity, so no row is trimmed or rewritten.
-fn note_ledger_envelope(
-    store: &Store,
-    rtxn: &RoTxn<'_>,
-    envelope: &ArchiveRetainedSideRow,
-    identity: [u8; 32],
-    ledger_rooms: &mut BTreeMap<[u8; 32], EntityId>,
-    withheld_ledgers: &mut BTreeSet<EntityId>,
-) -> Result<()> {
-    if !crate::conversation::archive_restore::is_ledger_table(&envelope.source_table) {
-        return Ok(());
-    }
-    let Some(room) = retained_row_room(&envelope.source_table, &envelope.source_key) else {
-        return Ok(());
-    };
-    ledger_rooms.insert(identity, room);
-    if envelope.source_table != crate::side_table::CONVERSATION_MEMBERSHIP_ROW.name
-        || withheld_ledgers.contains(&room)
-    {
-        return Ok(());
-    }
-    let Some(named) = crate::conversation::membership_row_named_entities(&envelope.source_value)
-    else {
-        withheld_ledgers.insert(room);
-        return Ok(());
-    };
-    for id in &named {
-        if super::export_egress::whole_vault_export_excludes_entity_in_txn(store, rtxn, id)? {
-            withheld_ledgers.insert(room);
-            break;
-        }
-    }
-    Ok(())
-}
-
 /// Every retained row this export carries, in physical key order: the live rows of the
 /// retained source tables read raw and marked `source_live`, unioned with the inert envelopes
 /// already stored, deduplicated by [`retained_side_row_key`] with the live row kept. A row about
@@ -297,18 +227,20 @@ pub(crate) fn collect_retained_side_rows_in_txn(
                 source_live: true,
             };
             if retained_row_withheld(store, rtxn, rule, &envelope)? {
-                withhold_room_ledger(&envelope, &mut withheld_ledgers);
+                withhold_room_ledger(rule, &envelope, &mut withheld_ledgers);
                 continue;
             }
             let key = retained_side_row_key(&envelope);
-            note_ledger_envelope(
+            if !note_ledger_envelope(
                 store,
                 rtxn,
                 &envelope,
                 key,
                 &mut ledger_rooms,
                 &mut withheld_ledgers,
-            )?;
+            )? {
+                continue;
+            }
             let value = RETAINED_SIDE_ROWS.encode_value(&envelope)?;
             rows.entry(key).or_insert(SideRowBytes {
                 family: ArchiveSideFamily::RetainedSideRow,
@@ -329,18 +261,20 @@ pub(crate) fn collect_retained_side_rows_in_txn(
         let envelope = RETAINED_SIDE_ROWS.decode_value(&value)?;
         let rule = retained_subject_rule(&envelope.source_table);
         if retained_row_withheld(store, rtxn, rule, &envelope)? {
-            withhold_room_ledger(&envelope, &mut withheld_ledgers);
+            withhold_room_ledger(rule, &envelope, &mut withheld_ledgers);
             continue;
         }
         let identity = retained_side_row_key(&envelope);
-        note_ledger_envelope(
+        if !note_ledger_envelope(
             store,
             rtxn,
             &envelope,
             identity,
             &mut ledger_rooms,
             &mut withheld_ledgers,
-        )?;
+        )? {
+            continue;
+        }
         rows.entry(identity).or_insert(SideRowBytes {
             family: ArchiveSideFamily::RetainedSideRow,
             key,

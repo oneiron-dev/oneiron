@@ -14,6 +14,8 @@ mod archive_index;
 pub(crate) use archive_index::{IndexedArchive, Tag};
 mod archive_project;
 mod archive_read;
+/// The room ledgers a whole-vault export carries or withholds whole.
+mod archive_retained_room_ledgers;
 /// Inert copies of source side-table rows carried by whole-vault archives.
 pub(crate) mod archive_retained_side_rows;
 /// The records each retained side table's rows are about.

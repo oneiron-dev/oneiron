@@ -97,8 +97,8 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("HOOKS_GRANT", ONE_ID),
     ("HOOKS_RECEIPT", NoRecord),
     ("HOOKS_REGEN_RECEIPT", NoRecord),
-    // The house, then the receipt id.
-    ("HOUSE_LINK_RECEIPT", ID_AND_SIDE_ID),
+    // The house, then the receipt id; the value names the binder, the house and the org.
+    ("HOUSE_LINK_RECEIPT", Value(house_link_receipt_records)),
     ("INQUIRY_RECEIPT", NoRecord),
     ("LEARNING_SETTING", ParsedKey(learning_setting_key_records)),
     ("LEGAL_HOLD_ERASE_LINK", Evidence),
@@ -248,6 +248,11 @@ fn learning_setting_key_records(key: &[u8]) -> Option<Vec<EntityId>> {
 /// The NOTE a stored landing receipt moved the head of.
 fn note_receipt_records(value: &[u8]) -> Option<Vec<EntityId>> {
     crate::note::landing_receipt_note(value).map(|note| vec![note])
+}
+
+/// The binder, house and org a stored house link receipt names.
+fn house_link_receipt_records(value: &[u8]) -> Option<Vec<EntityId>> {
+    crate::workspace_roster::house_link_receipt_records(value)
 }
 
 /// The voice subject a stored render decision is about.
