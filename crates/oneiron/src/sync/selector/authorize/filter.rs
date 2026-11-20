@@ -624,7 +624,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
         facets,
         band_filter(scope_position),
         worlds,
-        note_world::selector_world_axis(selector.world),
+        selector.world,
     );
     let ttxn = vault.store.env.read_txn()?;
     // The window's bodies of each tombstoned row, under every hex casing of
