@@ -220,7 +220,9 @@ fn a_clamped_vector_search_reads_alike_with_a_hidden_proposed_claim() {
 }
 
 /// Guard: a proposed claim the contact may read still counts as suppressed
-/// in the clamped pack, as in the owner's, on both paths of both searches.
+/// in the clamped pack, and its empty reason is the owner's, on both paths
+/// of both searches. (An empty clamped pack's candidates in scope are the
+/// rows it surfaced, never the pre-clamp count the owner's reports.)
 #[test]
 fn a_clamped_search_counts_a_proposed_claim_its_audience_may_read() {
     for (search, claims_only) in [
@@ -231,12 +233,15 @@ fn a_clamped_search_counts_a_proposed_claim_its_audience_may_read() {
     ] {
         let fixture = fixture();
         put_matching_claim(&fixture, ClaimApprovalStatus::Proposed, false);
-        let owner = pack_says(&fixture, search, claims_only, false);
+        let reason_and_suppressed =
+            |(empty, suppressed): PackSays| (empty.map(|(reason, _)| reason), suppressed);
+        let owner = reason_and_suppressed(pack_says(&fixture, search, claims_only, false));
         assert_eq!(owner.1, 1, "FIXTURE: the owner's gate refuses the claim");
         assert_eq!(
-            pack_says(&fixture, search, claims_only, true),
+            reason_and_suppressed(pack_says(&fixture, search, claims_only, true)),
             owner,
-            "the clamped pack says what the owner's does of a claim its audience may read"
+            "the clamped pack's empty reason and suppressed claims are the owner's for a claim \
+             its audience may read"
         );
     }
 }
