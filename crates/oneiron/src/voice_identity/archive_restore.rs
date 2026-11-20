@@ -94,8 +94,9 @@ fn land_archived_voice_consent_row_in_txn(
 
 /// Lands one archived void of a grant (FIX [VOICE-WITHDRAWAL-BACKDATED-LEAVES-GRANT]) for a live
 /// person subject. The key must be the subject and the digest of the (grant, withdrawal) pair it
-/// holds. It lands as written: a void acts only through its withdrawal's row, which the read
-/// takes from the consent log, so a void whose withdrawal stays out voids nothing.
+/// holds. It lands as written: a void acts only on the exact grant and withdrawal rows it
+/// fingerprints, which the read takes from the consent log, so a void whose events stay out, or
+/// are held here under the same ids with other content, voids nothing.
 fn land_archived_voice_consent_void_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
