@@ -1,6 +1,9 @@
 //! Door for `tests/run_brief_roster_off_device.rs`: the PEOPLE roster a
 //! pumped run's self brief reads, built as the run's host door builds it,
-//! with nothing delivered or recorded.
+//! and the rows a held brief's recheck finds fallen, with nothing delivered
+//! or recorded.
+
+use std::collections::BTreeSet;
 
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
@@ -24,4 +27,27 @@ pub fn run_brief_about_lines(
         .iter()
         .map(|row| (row.person, row.about.clone()))
         .collect())
+}
+
+/// The rows of a brief agent `agent`'s run holds past its boundary, which
+/// showed `sources` with `resident` on its roster, that no longer stand
+/// now: the recheck the run's self-brief port makes before the held prefix
+/// goes again.
+///
+/// # Errors
+///
+/// A read failed; the text is the gateway error.
+pub fn run_brief_fallen_rows(
+    server: &SyncServer,
+    agent: EntityId,
+    sources: &[EntityId],
+    resident: &BTreeSet<EntityId>,
+) -> Result<BTreeSet<EntityId>, String> {
+    crate::api::run_brief_fallen_rows(
+        server,
+        WriteActor::new(agent, EdgeActorClass::Agent),
+        sources,
+        resident,
+    )
+    .map_err(|error| error.to_string())
 }

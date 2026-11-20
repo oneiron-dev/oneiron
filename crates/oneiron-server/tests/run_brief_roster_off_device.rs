@@ -10,6 +10,13 @@
 //! pass. The fixed head reads off-device and judges every contributor under
 //! the run key's own floor, so all three pass.
 //!
+//! A brief the run holds past its boundary goes again only while its rows
+//! stand (BRIEF-PREFIX-STALE-PAST-REVOKE). The fourth test (review round 2
+//! of #10015) stages the line while its world reads everywhere, then
+//! narrows the world to this install: the held brief's recheck must find
+//! the line's fact fallen. Red at the merge head 9e680d1e9fc, whose recheck
+//! judges only withdrawn rows and the roster's PERSONs.
+//!
 //! The owner gives this uncredentialed run key one policy read row. An agent
 //! Grant alone is not its own floor. The name ceiling is opened separately,
 //! so name masking cannot explain an absent line. Each fixture first proves
@@ -24,6 +31,7 @@
 #[path = "support/engine_stack.rs"]
 mod engine_stack;
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use engine_stack::on_engine_stack;
@@ -42,7 +50,7 @@ use oneiron::test_doors::derive::{About, Derived, Named, about_facts, commit};
 use oneiron::test_doors::steward::{dreamer, owner as owner_proof};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
-use oneiron_server::test_doors::run_brief_people::run_brief_about_lines;
+use oneiron_server::test_doors::run_brief_people::{run_brief_about_lines, run_brief_fallen_rows};
 use oneiron_server::{config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
 
@@ -299,6 +307,20 @@ impl Fixture {
     }
 
     fn widen_world(&self) -> TestResult {
+        self.set_world_read(ReadLocation::Everywhere)
+    }
+
+    fn narrow_world_to_this_install(&self) -> TestResult {
+        let machine = self
+            .server
+            .vault()
+            .local_machine()?
+            .ok_or("this install has no machine")?
+            .id;
+        self.set_world_read(ReadLocation::OneMachine(machine))
+    }
+
+    fn set_world_read(&self, read: ReadLocation) -> TestResult {
         let vault = self.server.vault();
         let proof = owner_proof(vault)?;
         vault.set_world_privacy_as(
@@ -306,13 +328,43 @@ impl Fixture {
             ActSurface::ThisInstall,
             self.world.ok_or("the fixture has no second world")?,
             WorldPrivacy {
-                read: ReadLocation::Everywhere,
+                read,
                 sealed: SealedCopies::Off,
                 models: ModelOrder::Inherit,
             },
             None,
         )?;
         Ok(())
+    }
+
+    /// The rows a run brief staged now shows of the PERSON: the PERSON and
+    /// the facts of the line its roster picks at the run key's band.
+    fn staged_rows(&self) -> TestResult<Vec<EntityId>> {
+        let key = ScopedReadActorKey::with_actor_class(
+            self.agent.to_hex(),
+            EdgeActorClass::Agent.gate_actor_class(),
+        )
+        .ok_or("the run key did not build")?
+        .at(CallerLocality::OffDevice);
+        let vault = self.server.vault();
+        let applied = vault.scoped_read(key).read_receipt(None, 0)?.applied;
+        let ceiling = (!applied.deny_all).then_some(applied.max_sensitivity_band);
+        let (_, facts) = vault
+            .person_about_sourced(self.person, ceiling)?
+            .ok_or("FIXTURE: the run key's band shows a line")?;
+        Ok(std::iter::once(self.person).chain(facts).collect())
+    }
+
+    /// The rows the run's recheck finds fallen in a held brief that showed
+    /// `shown`, the PERSON on its roster.
+    fn held_brief_fallen(&self, shown: &[EntityId]) -> TestResult<BTreeSet<EntityId>> {
+        Ok(run_brief_fallen_rows(
+            &self.server,
+            self.agent,
+            shown,
+            &BTreeSet::from([self.person]),
+        )
+        .map_err(|error| format!("the held brief's recheck failed: {error}"))?)
     }
 
     fn brief_about(&self) -> TestResult<Option<String>> {
@@ -396,6 +448,46 @@ fn run_brief_shows_about_line_once_the_world_reads_everywhere() -> TestResult {
             "FIXTURE: widening only the read location admits the same fact off-device"
         );
         assert_eq!(fixture.brief_about()?.as_deref(), Some(LINE));
+        Ok(())
+    })
+}
+
+#[test]
+fn held_run_brief_drops_its_about_line_once_the_world_reads_on_this_install_only() -> TestResult {
+    on_engine_stack(|| async {
+        let fixture = Fixture::new(FactWorld::ThisInstall)?;
+        fixture.widen_world()?;
+        assert_eq!(
+            fixture.brief_about()?.as_deref(),
+            Some(LINE),
+            "FIXTURE: the run brief shows the line while its world reads everywhere"
+        );
+        let shown = fixture.staged_rows()?;
+        assert!(
+            shown.contains(&fixture.claim),
+            "FIXTURE: the line the brief shows stands on the fact: {shown:?}"
+        );
+        assert_eq!(
+            fixture.held_brief_fallen(&shown)?,
+            BTreeSet::new(),
+            "FIXTURE: a held brief whose rows all stand goes again"
+        );
+
+        fixture.narrow_world_to_this_install()?;
+        assert!(
+            !fixture.reads(fixture.claim, CallerLocality::OffDevice)?
+                && fixture.reads(fixture.person, CallerLocality::OffDevice)?,
+            "FIXTURE: the narrowed world keeps the fact, not the PERSON, off-device"
+        );
+        assert!(
+            fixture.held_brief_fallen(&shown)?.contains(&fixture.claim),
+            "the held brief's about line no longer stands once its fact reads on this install only"
+        );
+        assert_eq!(
+            fixture.brief_about()?,
+            None,
+            "the brief staged afresh shows no line"
+        );
         Ok(())
     })
 }
