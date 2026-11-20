@@ -54,6 +54,23 @@ pub fn append_prediction(
     parent: EntityId,
     set: &PredictedResidenceSet,
 ) -> crate::error::Result<EntityId> {
+    append_prediction_dated(vault, issuer, machine, parent, set, vault.now_recorded_at())
+}
+
+/// [`append_prediction`] dated `issued_at`, as another home's clock dates the predictions it
+/// signs. This home holds no body for it.
+///
+/// # Errors
+///
+/// As [`append_prediction`].
+pub fn append_prediction_dated(
+    vault: &Vault,
+    issuer: &HostSlipIssuer,
+    machine: EntityId,
+    parent: EntityId,
+    set: &PredictedResidenceSet,
+    issued_at: u64,
+) -> crate::error::Result<EntityId> {
     let owner = SyncConnection::directives_naming_machine(vault, machine)?
         .into_iter()
         .find_map(|directive| (directive.id == parent).then_some(directive.owner))
@@ -70,7 +87,7 @@ pub fn append_prediction(
         id,
         machine,
         owner,
-        issued_at: vault.now_recorded_at(),
+        issued_at,
         act: ResidenceAct::Predicted {
             parent,
             set_digest: set.digest()?,

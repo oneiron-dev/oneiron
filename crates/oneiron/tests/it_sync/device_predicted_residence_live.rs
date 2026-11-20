@@ -26,7 +26,7 @@ use oneiron::sync::{
 };
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::predicted_residence::{
-    append_prediction, apply_residence_directives, run_predicted_pass,
+    append_prediction, append_prediction_dated, apply_residence_directives, run_predicted_pass,
 };
 use oneiron::{Vault, VaultConfig};
 
@@ -1148,6 +1148,173 @@ fn a_prediction_without_its_live_parent_is_refused() {
             assert_eq!(
                 result_of(&device, newer),
                 Some(ResidenceResultStatus::Applied)
+            );
+        },
+    );
+}
+
+/// A prediction dated ahead by another home's clock (the home moved, or its clock runs fast)
+/// replaces no later prediction while this machine's own clock has not reached its date: this
+/// home's next prediction, dated before it, still applies (FIX PREDICTED-FUTURE-DATED-BLOCKS-LATER).
+#[test]
+fn a_prediction_dated_ahead_replaces_none_before_its_date() {
+    run_async(
+        "a_prediction_dated_ahead_replaces_none_before_its_date",
+        || async {
+            let predicted = Arc::new(PredictedHome::default());
+            let (url, _seen) = start_home(Arc::clone(&predicted)).await;
+            let device = Device::open();
+            let connection = device_connection(&device, url);
+            let parent = issue(
+                &device,
+                ResidenceAct::SyncPredicted {
+                    window_budget: 8,
+                    document_budget: 16,
+                },
+            );
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the level applies"),
+                1
+            );
+            let ahead_set = predicted_set(&[WindowKey::for_world(now_secs(), device.founder)], &[]);
+            serve(&predicted, &ahead_set);
+            let ahead = append_prediction_dated(
+                &device.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &ahead_set,
+                now_secs() + 86_400,
+            )
+            .expect("the prediction dated a day ahead");
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the prediction dated ahead runs"),
+                1
+            );
+            assert_eq!(
+                result_of(&device, ahead),
+                Some(ResidenceResultStatus::Applied)
+            );
+
+            let due_set = predicted_set(
+                &[
+                    WindowKey::for_world(now_secs(), device.founder),
+                    WindowKey::for_world(now_secs(), device.granted),
+                ],
+                &[],
+            );
+            serve(&predicted, &due_set);
+            let due = append_prediction(
+                &device.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &due_set,
+            )
+            .expect("the prediction dated now");
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the prediction dated now runs"),
+                1
+            );
+            assert_eq!(
+                reason_of(&device, due),
+                None,
+                "a prediction dated ahead replaces nothing before its date"
+            );
+            assert_eq!(
+                result_of(&device, due),
+                Some(ResidenceResultStatus::Applied)
+            );
+            assert_eq!(count_of(&device, due), 2, "the set dated now is adopted");
+        },
+    );
+}
+
+/// A prediction under a predicted level the owner has since replaced applies nowhere, so it
+/// replaces none under the live level, even when it sorts after one: the live one applies and the
+/// stale one is refused (FIX PREDICTED-FUTURE-DATED-BLOCKS-LATER).
+#[test]
+fn a_prediction_under_a_replaced_parent_replaces_none() {
+    run_async(
+        "a_prediction_under_a_replaced_parent_replaces_none",
+        || async {
+            let predicted = Arc::new(PredictedHome::default());
+            let (url, _seen) = start_home(Arc::clone(&predicted)).await;
+            let device = Device::open();
+            let connection = device_connection(&device, url);
+            let replaced = issue(
+                &device,
+                ResidenceAct::SyncPredicted {
+                    window_budget: 8,
+                    document_budget: 16,
+                },
+            );
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the first level applies"),
+                1
+            );
+            let live = issue(
+                &device,
+                ResidenceAct::SyncPredicted {
+                    window_budget: 8,
+                    document_budget: 16,
+                },
+            );
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the live level applies"),
+                1
+            );
+            let set = predicted_set(&[WindowKey::for_world(now_secs(), device.founder)], &[]);
+            serve(&predicted, &set);
+            let current = append_prediction(
+                &device.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                live,
+                &set,
+            )
+            .expect("the prediction under the live level");
+            let stale = append_prediction(
+                &device.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                replaced,
+                &set,
+            )
+            .expect("the prediction under the replaced level, sorting after");
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("both predictions run"),
+                2
+            );
+            assert_eq!(
+                reason_of(&device, current),
+                None,
+                "a prediction under a replaced level replaces none under the live one"
+            );
+            assert_eq!(
+                result_of(&device, current),
+                Some(ResidenceResultStatus::Applied)
+            );
+            assert_eq!(
+                result_of(&device, stale),
+                Some(ResidenceResultStatus::Refused)
+            );
+            let reason = reason_of(&device, stale).expect("a refusal reason");
+            assert!(
+                reason.contains("under the owner's live predicted level"),
+                "the parent reason: {reason}"
             );
         },
     );
