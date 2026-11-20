@@ -42,6 +42,7 @@ pub(crate) use deletion::{
 };
 pub use live_speakers::{LiveSpeakerCall, RoomLiveSpeakerEntries};
 pub(crate) use live_speakers::{LiveSpeakers, RequiredSpeaker, required_live_speakers};
+pub(crate) use membership::membership_row_named_entities;
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub(crate) use membership_index::rebuild_membership_index_in_txn;
 #[cfg(oneiron_test_support)]
