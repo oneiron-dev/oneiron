@@ -5,7 +5,10 @@
 //! holds the erased body, which only a compaction drops. So the writer that
 //! makes an update durable owes the erasure sweep a compaction of its window,
 //! in the same transaction, when an insert it carries names a row
-//! hard-deleted here ([`UpdateInserts::owe_in_txn`]).
+//! hard-deleted here ([`UpdateInserts::owe_in_txn`]). An edge insert names
+//! both its ends: an edge holds no body, but the sweep drops one with an
+//! erased end as residue, so its re-put owes the same compaction
+//! (HELD-ENTITY-DOCUMENT-DEFERRED).
 
 use std::collections::BTreeSet;
 
@@ -18,8 +21,9 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 
 /// The entity ids an update's history inserts into its window's entities
-/// map: every insert, one a later operation of the same update deletes
-/// included. Admission reads them for an update it admits
+/// map, and both ends of each edge it inserts into its edges map: every
+/// insert, one a later operation of the same update deletes included.
+/// Admission reads them for an update it admits
 /// ([`super::admit_window_update_residence_with_vault`]).
 #[derive(Debug, Default)]
 pub struct UpdateInserts {
@@ -53,15 +57,24 @@ impl UpdateInserts {
             .flat_map(|change| &change.ops)
             .try_fold(0_usize, |total, op| total.checked_add(op.content.op_len()));
         let entities = ContainerID::new_root("entities", ContainerType::Map);
+        let edges = ContainerID::new_root("edges", ContainerType::Map);
         let ids = operations
             .changes
             .iter()
             .flat_map(|change| &change.ops)
-            .filter(|op| op.container == entities)
-            .filter_map(|op| match &op.content {
-                JsonOpContent::Map(MapOp::Insert { key, .. }) => EntityId::from_hex(key).ok(),
-                _ => None,
+            .flat_map(|op| match &op.content {
+                JsonOpContent::Map(MapOp::Insert { key, .. }) if op.container == entities => {
+                    [EntityId::from_hex(key).ok(), None]
+                }
+                JsonOpContent::Map(MapOp::Insert { key, .. }) if op.container == edges => {
+                    crate::sync::bridge::parse_edge_key(key)
+                        .map_or([None, None], |(source, _, target)| {
+                            [Some(source), Some(target)]
+                        })
+                }
+                _ => [None, None],
             })
+            .flatten()
             .collect();
         Self {
             ids,

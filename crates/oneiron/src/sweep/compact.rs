@@ -194,8 +194,10 @@ pub(super) fn compact_all_windows(
                 }
             };
             // A held document keeps its bytes and its history, erased or not
-            // (OF-470, FIX 10160): it waits, as a live one does. Its writer
-            // checks the hold again, and a hold placed since defers it too.
+            // (OF-470, FIX 10160): it waits. Its writer checks the hold
+            // again, and a hold placed since defers it too. A live one does
+            // not wait: it is compacted under its writer lock, and defers
+            // only while that writer is busy (HELD-ENTITY-DOCUMENT-DEFERRED).
             if super::holds::document_held(vault, id, erase)? {
                 super::holds::defer_held(run, &mut state);
                 continue;

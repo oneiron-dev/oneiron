@@ -999,9 +999,9 @@ impl Vault {
     }
 
     /// Shallow-compact `id`'s document row during a sweep. Returns whether the
-    /// compaction ran: an attached manager decides for its own live handles,
-    /// and an attached-but-dropped manager defers rather than rewriting a row a
-    /// live document may still persist over.
+    /// compaction ran: an attached manager compacts under its own live
+    /// handle's writer lock, and an attached-but-dropped manager defers rather
+    /// than rewriting a row a live document may still persist over.
     #[cfg(feature = "sync")]
     pub(crate) fn compact_document_for_sweep(
         &self,
@@ -1012,7 +1012,7 @@ impl Vault {
             crate::Error::InvariantViolation("document manager attachment poisoned")
         })?;
         match manager.upgrade() {
-            Some(manager) => manager.compact_closed_document(id, erased),
+            Some(manager) => manager.compact_document_for_sweep(id, erased),
             None if self
                 .live_window_manager_attached
                 .load(std::sync::atomic::Ordering::Acquire) =>
