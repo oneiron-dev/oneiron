@@ -255,6 +255,7 @@ fn transition_entry(
             conversation_training_vault:
                 super::conversation_training_vault::ConversationTrainingVaultState::default(),
             policy_settings: super::policy_setting_choice::PolicySettingChoiceState::default(),
+            setting_copy_names: PersistentMap::new(),
             refused_export_acts: PersistentSet::new(),
             agent_carried_acts: PersistentMap::new(),
             home_candidacy: super::home_candidacy::HomeCandidacyState::default(),
