@@ -42,35 +42,28 @@ pub(super) async fn create_link(
         // A link the owner makes records them: a holder that can propose has
         // the OpenAI proxy admitted under that owner when it redeems. A named
         // agent's link mints its default read Grant, an owner act from this
-        // request's surface (PAIR-GRANT-DESIGN Q3/Q4).
-        None => match super::owner_routes::owner(&auth, &server).ok() {
-            Some(owner) => {
-                let surface = super::owner_routes::machine_routes::act_surface_admitted(
-                    &server,
-                    &auth,
-                    &parts.headers,
-                    &parts.extensions,
-                );
-                with_issuer(&server, |issuer| {
-                    server.vault().issue_owner_pairing_link_from_surface(
-                        issuer,
-                        &owner,
-                        surface,
-                        request.scope,
-                        request.lifetime_secs,
-                        request.principal,
-                    )
-                })?
-            }
-            None => with_issuer(&server, |issuer| {
-                server.vault().issue_pairing_link_for_principal(
+        // request's surface (PAIR-GRANT-DESIGN Q3/Q4). A link mints a slip,
+        // so only the owner makes one: a full-scope slip someone else holds
+        // is refused (OWNER-GRADE-IS-NOT-OWNERSHIP).
+        None => {
+            let owner = super::owner_routes::owner(&auth, &server)?;
+            let surface = super::owner_routes::machine_routes::act_surface_admitted(
+                &server,
+                &auth,
+                &parts.headers,
+                &parts.extensions,
+            );
+            with_issuer(&server, |issuer| {
+                server.vault().issue_owner_pairing_link_from_surface(
                     issuer,
+                    &owner,
+                    surface,
                     request.scope,
                     request.lifetime_secs,
                     request.principal,
                 )
-            })?,
-        },
+            })?
+        }
         // Only the owner answers for a machine, from any surface where he is
         // authenticated (the mesh ruling, 10-19): the owner proof comes from
         // this request's auth, verified once above, with no second prompt.
@@ -701,11 +694,39 @@ pub(super) async fn revoke(
     State(server): State<Arc<SyncServer>>,
     Json(request): Json<RevokeSlip>,
 ) -> Result<Json<serde_json::Value>, EnvelopedApiError> {
-    super::scoped_auth::check_request_owner_act(&parts, &server)?;
-    with_issuer(&server, |issuer| {
-        server
-            .vault()
-            .revoke_capability_slip(issuer, request.slip_id)
-    })?;
+    let auth = super::scoped_auth::check_request_owner_act(&parts, &server)?;
+    // Owner or self (FIX 8216, lead ruling FIX-8216-PAIRING-OWNER-ACT = A):
+    // the vault owner revokes any slip; a full-scope slip someone else holds
+    // is not ownership (OWNER-GRADE-IS-NOT-OWNERSHIP), so its holder revokes
+    // only the slips its own logged mints name. A host slip names no person
+    // and revokes nothing but as the owner its host action names.
+    match super::owner_routes::owner(&auth, &server) {
+        Ok(owner) => with_issuer(&server, |issuer| {
+            server
+                .vault()
+                .revoke_capability_slip_as_owner(issuer, &owner, request.slip_id)
+        })?,
+        Err(refusal) => {
+            // The request's own slip rides into the revoking transaction and
+            // is judged live there (Sol review of #8342, P2).
+            let credential = auth
+                .principal_ref()
+                .and(auth.verified_slip())
+                .ok_or(refusal)?;
+            let issuer = server.host_issuer().ok_or_else(ApiError::unauthorized)?;
+            server
+                .vault()
+                .revoke_capability_slip_held_by(issuer, credential, request.slip_id)
+                // A lapsed credential, or a host that is not this vault's
+                // root, is a 401; another holder's slip is a 403. Any other
+                // error is the engine's own, so a storage fault never tells
+                // a client to drop a good credential (REVIEW2 #8342, P3-1).
+                .map_err(|error| match error.kind() {
+                    oneiron::ErrorKind::AuthorityRefused => ApiError::forbidden_scope("owner"),
+                    oneiron::ErrorKind::InvalidAuthorityLogBody => ApiError::unauthorized(),
+                    _ => super::core_engine_error("slip revoke failed", error),
+                })?
+        }
+    };
     Ok(Json(serde_json::json!({"revoked":true})))
 }
