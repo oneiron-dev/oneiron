@@ -43,6 +43,7 @@ mod ledger_pages;
 mod limits;
 mod managed_backup;
 mod managed_holder;
+mod owner_key_change;
 mod owner_signing_recovery;
 /// Private, lease-bound live process ports.
 pub mod preview;
@@ -130,6 +131,10 @@ pub use self::managed_holder::{
     ManagedOwnerRequest, ManagedOwnerTranscript, ManagedPersonAction, ManagedVoiceBody,
     ManagedWidenAction, ManagedWidenTranscript, embedded_owner_holder_hex, managed_voice_body,
     managed_voice_nonce,
+};
+pub use self::owner_key_change::{
+    OWNER_KEY_CHANGE_AT_MAX, OWNER_KEY_CHANGE_OP, OWNER_KEY_CHANGE_REFUSAL_MAX,
+    OwnerKeyChangeReport, OwnerKeyChangeReportAck, valid_owner_key_change_refusal_code,
 };
 pub use self::owner_signing_recovery::{
     OWNER_SIGNING_CHALLENGE_LEN, OWNER_SIGNING_RECOVERY_OP, OwnerSigningRecovery,
