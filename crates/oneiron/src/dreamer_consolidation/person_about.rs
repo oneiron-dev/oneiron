@@ -43,11 +43,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod claim_hooks;
 mod sources;
+pub(crate) use sources::ShownAboutLine;
 
 pub(crate) use claim_hooks::{
     erase_person_about_in_txn, mark_person_about_dropped_in_txn, mark_person_about_moved_in_txn,
 };
-pub(crate) use sources::ShownAboutLine;
 
 /// The four sensitivity bands, public (0) to restricted (3).
 const TOP_BAND: u8 = 3;

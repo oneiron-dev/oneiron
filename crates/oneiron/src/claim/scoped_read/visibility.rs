@@ -227,7 +227,7 @@ impl<'v> ScopedRead<'v> {
     /// policy and its own floor (ARCH-0006a); a request's narrowing applies
     /// to the row, not to what it was written from. Each source is judged by
     /// its own row admission; a body whose sources no longer resolve refuses.
-    pub(super) fn derived_sources_readable_in(
+    fn derived_sources_readable_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
@@ -568,6 +568,21 @@ impl<'v> ScopedRead<'v> {
         };
         let admitted = asset_text::sources_admitted_in(&self.store_read(), rtxn, id, admit)?;
         Ok(admitted.unwrap_or(true))
+    }
+
+    /// Whether this reader reads what the row `raw` of `id` was written
+    /// from, as the row gate judges it once the row's own admission holds
+    /// ([`Self::derived_sources_readable_in`]): for a check that judges the
+    /// row's own admission under one live Grant alone (`agent_grants`).
+    pub(super) fn written_from_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        raw: &[u8],
+        authority: &HeldAuthority,
+    ) -> Result<bool> {
+        self.derived_sources_readable_in(rtxn, policy, id, raw, authority)
     }
 
     /// The row's own admission, before what it was written from: today's

@@ -483,7 +483,7 @@ impl ScopedRead<'_> {
         };
         Ok(
             self.own_row_under_grant_in(rtxn, policy, id, &raw, request.as_ref(), held, grant)?
-                && self.derived_sources_readable_in(rtxn, policy, id, &raw, held)?,
+                && self.written_from_readable_in(rtxn, policy, id, &raw, held)?,
         )
     }
 

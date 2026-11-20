@@ -123,11 +123,12 @@ pub use partition::*;
 pub use persistence::close_persistent_conflict;
 pub(crate) use persistence::conflict_close_candidate;
 pub(crate) use persistence::on_axes_of;
+pub(crate) use person_about::ShownAboutLine;
 pub use person_about::{PERSON_ABOUT_INSTRUCTION, PersonAboutExecutor};
 pub(crate) use person_about::{
-    ShownAboutLine, about_facts_in, about_revision_in, enqueue_person_about_on_wake,
-    erase_person_about_in_txn, mark_person_about_dropped_in_txn, mark_person_about_moved_in_txn,
-    person_of_about_input, publish_person_about_in_txn,
+    about_facts_in, about_revision_in, enqueue_person_about_on_wake, erase_person_about_in_txn,
+    mark_person_about_dropped_in_txn, mark_person_about_moved_in_txn, person_of_about_input,
+    publish_person_about_in_txn,
 };
 pub use provenance::*;
 pub(crate) use provenance::{
