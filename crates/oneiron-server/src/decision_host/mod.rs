@@ -22,8 +22,10 @@
 //! The head, precision and escalation rungs are the `decision_head`,
 //! `decision_band` and `decision_escalation` roles of the vault's model
 //! manifest ([`ManifestBoundRung`]). A manifest that binds one of them to a
-//! model other than its rung's holds that rung: it abstains, unspent, and the
-//! ladder steps on. A role the manifest leaves unbound keeps its rung.
+//! model other than its rung's, or to a route narrower than its rung's calls
+//! take (a remote seat under an on-device pin), holds that rung: it is sent
+//! nothing, it abstains unspent, and the ladder steps on. A role the manifest
+//! leaves unbound keeps its rung.
 //!
 //! Every model rung blocks on the server's runtime: run a ladder call on a
 //! blocking thread.

@@ -145,6 +145,10 @@ impl DecisionProvider for Shown<'_> {
         self.rung.leaves_host()
     }
 
+    fn held(&self) -> Result<bool> {
+        self.rung.held()
+    }
+
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         let Some(shown) = self.shown(call.question) else {
             return self.rung.decide(call);
