@@ -33,7 +33,7 @@ use oneiron::test_doors::steward::{
     receive_steward_grant_row, stand_steward_grant, steward_grant_rows,
 };
 use oneiron::test_doors::untangle_regressions::seed_named_person;
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
 use serde_json::json;
 
 const READER: &str = "reader";
@@ -933,6 +933,208 @@ fn a_derived_keep_the_revert_took_back_stages_afresh_on_the_next_keep() {
     assert!(
         marker_is_open(),
         "the marker stays open beside the new proposal"
+    );
+}
+
+/// A plain retraction after owner approval makes the staged Keep's alternative keepable again.
+/// FIX KEEP-HISTORY-APPROVED-THEN-RETRACTED-STAGED-KEEP-BLOCKS-ALTERNATIVE;
+/// lead ruling 21 Nov, INTENT-17 row 5 = B.
+#[test]
+fn a_staged_keep_the_owner_approved_and_then_retracted_leaves_its_alternative_keepable() {
+    let fixture = fixture();
+    let first = landed_claim(&fixture, "an oat milk flat white");
+    let (marker, alternative) =
+        open_conflict_with_imported_alternative(&fixture.vault, first, "a cortado")
+            .expect("FIXTURE: an open conflict with an imported alternative");
+    let keep = |run: &str| {
+        let committed = commit(
+            &fixture.vault,
+            fixture.dreamer,
+            EdgeActorClass::System,
+            run,
+            &[Derived::Settle(Settle {
+                local: "keep_imported",
+                marker: Named::Stored(marker),
+                settlement: Settlement::Keep(Named::Stored(alternative)),
+            })],
+        )
+        .expect("commit the Keep batch");
+        batch_items(&fixture.vault, committed.batch)
+            .expect("read")
+            .expect("the batch record")
+    };
+    let read_open_marker = || {
+        fixture
+            .vault
+            .memory(fixture.dreamer, EdgeActorClass::System)
+            .open_conflicts(None, Some(fixture.person), usize::MAX)
+            .expect("read the person's open conflicts")
+            .into_iter()
+            .find(|conflict| conflict.marker == marker)
+    };
+
+    let recorded = keep("run-keep-imported");
+    let [first_try] = recorded.as_slice() else {
+        panic!("FIXTURE: one Keep item: {recorded:?}");
+    };
+    assert!(
+        first_try.landed,
+        "FIXTURE: the imported Keep stages: {first_try:?}"
+    );
+    let [staged, recorded_marker] = first_try.rows.as_slice() else {
+        panic!("FIXTURE: the staged proposal and the marker: {first_try:?}");
+    };
+    assert_eq!(
+        *recorded_marker, marker,
+        "FIXTURE: the marker follows the staged proposal: {first_try:?}"
+    );
+    assert_eq!(
+        *staged, alternative,
+        "FIXTURE: the first Keep uses the selector's id"
+    );
+    let staged_body = fixture
+        .vault
+        .get_claim(staged)
+        .expect("read")
+        .expect("FIXTURE: the staged Keep");
+    assert_eq!(
+        staged_body.approval,
+        ClaimApprovalStatus::Proposed,
+        "FIXTURE: the first Keep waits for approval"
+    );
+    assert_eq!(
+        staged_body.lifecycle,
+        ClaimLifecycleStatus::Active,
+        "FIXTURE: the first Keep is active"
+    );
+
+    let owner_id = fixture
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the owner");
+    fixture
+        .vault
+        .approve_machine_claim_as(*staged, WriteActor::new(owner_id, EdgeActorClass::Human))
+        .expect("FIXTURE: the owner approves the staged Keep without settling the conflict");
+    let approved = fixture
+        .vault
+        .get_claim(staged)
+        .expect("read")
+        .expect("FIXTURE: the approved Keep");
+    assert_eq!(
+        approved.approval,
+        ClaimApprovalStatus::Approved,
+        "FIXTURE: the owner's approval stands"
+    );
+    assert_eq!(
+        approved.lifecycle,
+        ClaimLifecycleStatus::Active,
+        "FIXTURE: the approved Keep is still active"
+    );
+    let conflict = read_open_marker().expect("FIXTURE: approval leaves the marker open");
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, first).expect("read"),
+        Some("active".to_owned()),
+        "FIXTURE: approval does not supersede the first claim"
+    );
+    assert!(
+        !conflict
+            .alternatives
+            .iter()
+            .any(|entry| entry.id == alternative),
+        "FIXTURE: the standing approved Keep represents its alternative"
+    );
+
+    fixture
+        .vault
+        .memory(owner_id, EdgeActorClass::Human)
+        .claim_retract(&staged.to_hex())
+        .expect("FIXTURE: the owner retracts the approved Keep");
+    let retracted = fixture
+        .vault
+        .get_claim(staged)
+        .expect("read")
+        .expect("FIXTURE: the retracted Keep remains stored");
+    assert_eq!(
+        retracted.lifecycle,
+        ClaimLifecycleStatus::Retracted,
+        "FIXTURE: the plain retraction closes the approved Keep"
+    );
+    assert_eq!(
+        retracted.approval,
+        ClaimApprovalStatus::Approved,
+        "FIXTURE: retraction preserves the owner's approval"
+    );
+
+    let conflict = read_open_marker().expect("the plain retraction leaves the marker open");
+    assert_eq!(
+        conflict
+            .alternatives
+            .iter()
+            .filter(|entry| entry.id == alternative)
+            .count(),
+        1,
+        "the alternative is keepable again after its approved staged Keep was retracted"
+    );
+
+    let recorded = keep("run-keep-imported-again");
+    let [second_try] = recorded.as_slice() else {
+        panic!("one Keep item: {recorded:?}");
+    };
+    assert!(
+        second_try.landed,
+        "a Keep after the retraction is accepted: {second_try:?}"
+    );
+    let [restaged, recorded_marker] = second_try.rows.as_slice() else {
+        panic!("the staged proposal and the marker: {second_try:?}");
+    };
+    assert_eq!(
+        *recorded_marker, marker,
+        "the marker follows the new proposal: {second_try:?}"
+    );
+    assert_ne!(restaged, staged, "the next Keep stages at a fresh id");
+    assert_eq!(
+        second_try.approval.as_deref(),
+        Some("proposed"),
+        "the new proposal waits for review: {second_try:?}"
+    );
+    let restaged_body = fixture
+        .vault
+        .get_claim(restaged)
+        .expect("read")
+        .expect("the new Keep");
+    assert_eq!(
+        restaged_body.approval,
+        ClaimApprovalStatus::Proposed,
+        "the restaged claim waits for approval"
+    );
+    assert_eq!(
+        restaged_body.lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the new proposal is live"
+    );
+    assert_eq!(
+        restaged_body.source,
+        Some(ClaimSource::Imported),
+        "the words are still imported"
+    );
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, *staged).expect("read"),
+        Some("retracted".to_owned()),
+        "the first Keep stays retracted"
+    );
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, first).expect("read"),
+        Some("active".to_owned()),
+        "the new proposal does not supersede the first claim"
+    );
+    let conflict = read_open_marker().expect("the marker stays open beside the new proposal");
+    assert!(
+        !conflict
+            .alternatives
+            .iter()
+            .any(|entry| entry.id == alternative),
+        "the new pending Keep represents the alternative again"
     );
 }
 
