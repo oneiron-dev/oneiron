@@ -18,12 +18,18 @@
 //! only from the verified `tasks.create` / `cancel` / `tasks.update` write
 //! transactions; the generic raw TASK doors refuse role 6 outright
 //! (`habit::reject_public_streak_fields`), so no caller can mint the proof of
-//! its own ownership. The own-device replication/replay door admits role 6
-//! exactly like any other TASK row. A federation peer's fact is refused at
-//! admission, and an export to another vault withholds every fact, until a
-//! fact carries its carrier's signature (pass 28 R5; FIX
-//! TASK-FACT-FROM-FEDERATION-PEER). The ask records share role 6 under their
-//! own subkinds and proofs, and still cross.
+//! its own ownership.
+//!
+//! A fact proves itself to another machine (Fable pass 28 R5). The own-device
+//! replication/replay door still admits role 6 like any other TASK row, but a
+//! row is not a fact because it arrived: the fold counts a fact this install's
+//! own door wrote, and any other only when its carrier's signature verifies and
+//! the fold admitted the carrier ([`fact_proof`]). A row that proves nothing is
+//! skipped, never an error, so a sender that proves nothing cannot cancel a
+//! task, make itself its owner, or fail its read. A federation peer's fact is
+//! refused at admission, and an export to another vault withholds every fact
+//! (FIX TASK-FACT-FROM-FEDERATION-PEER). The ask records share role 6 under
+//! their own subkinds and proofs, and still cross.
 
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
@@ -33,13 +39,14 @@ use crate::ports::EdgeStoreRead;
 use rmpv::Value;
 
 use crate::Vault;
+use crate::authority::CarrierSignature;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::scan_check::ScanCount;
-use crate::side_table::{self, SideTable};
+use crate::side_table::{self, SideKey, SideTable};
 use crate::store::EngineScan;
 #[cfg(test)]
 use crate::temporal::TimeRange;
@@ -51,11 +58,14 @@ pub(crate) use crate::store::task_authority_guard::{
 
 mod binding_generation;
 mod consult_executor;
+mod fact_proof;
 pub use binding_generation::{BindingGeneration, BindingId};
 
-/// Strict body schema for authority facts. Version 1 is the only shape ever
-/// written; a row naming any other version is refused rather than guessed at.
-pub const TASK_AUTHORITY_FACT_SCHEMA_VERSION: u8 = 1;
+/// Strict body schema for authority facts. Version 2 is version 1 plus the
+/// carrier signature, all three of its keys or none; it is the only shape
+/// written, and a row naming any other version is refused rather than guessed
+/// at. Version 1 rows do not survive the launch reset.
+pub const TASK_AUTHORITY_FACT_SCHEMA_VERSION: u8 = 2;
 /// Subkind naming this body shape, alongside the role byte — the same
 /// role-plus-subkind discrimination every other TASK body carries.
 pub const TASK_AUTHORITY_FACT_SUBKIND: &str = "tasks.authority_fact";
@@ -71,12 +81,17 @@ const BODY_KEY_ACTOR_GENERATION: &str = "actor_generation";
 const BODY_KEY_ASSIGNED_GENERATION: &str = "assigned_generation";
 const BODY_KEY_OCCURRED_AT: &str = "occurred_at";
 const BODY_KEY_ANSWERED_HEADS: &str = "answered_heads";
+const BODY_KEY_CARRIER_MACHINE: &str = "carrier_machine";
+const BODY_KEY_CARRIER_KEY: &str = "carrier_key";
+const BODY_KEY_CARRIER_SIGNATURE: &str = "carrier_signature";
 
-/// Base v1 key count. HumanAssigned carries one additional assigned_ref;
-/// ConsultAssignee carries each of assigned_ref and the two generations when
-/// it has one; an Acked fact carries answered_heads when it was written with
-/// them.
+/// Base key count, without a carrier. HumanAssigned carries one additional
+/// assigned_ref; ConsultAssignee carries each of assigned_ref and the two
+/// generations when it has one; an Acked fact carries answered_heads when it
+/// was written with them.
 const FACT_BODY_KEY_COUNT: usize = 7;
+/// The keys a carried fact adds: its carrier's machine, key and signature.
+const CARRIER_KEY_COUNT: usize = 3;
 
 /// Hex digits of one answered head: an attempt id's 16 bytes.
 const ANSWERED_HEAD_HEX_LEN: usize = 32;
@@ -468,6 +483,13 @@ pub(crate) fn put_task_authority_fact_in_txn(
     fact: TaskAuthorityFact,
 ) -> Result<EntityId> {
     let fact_ref = vault.store.clock.entity_id()?;
+    // The carrier signs the fact's own bytes under its own row id, so its
+    // signature proves this fact on this row and on no other.
+    let unsigned = encode_task_authority_fact_body(&fact);
+    let body = match fact_proof::carrier_signature_in_txn(vault, &*wtxn, &fact_ref, &unsigned)? {
+        Some(carrier) => encode_carried_fact_body(&fact, &carrier),
+        None => unsigned,
+    };
     // The fact is born under its TASK's facet (UNBUILT item 10), so a reader
     // outside that facet reads none of the facts about it. A TASK at its own
     // substrate facet, which no FACET row holds, leaves the vault default.
@@ -478,11 +500,7 @@ pub(crate) fn put_task_authority_fact_in_txn(
     vault
         .batch_in()
         .mask(mask)
-        .put_task_fact(
-            &fact_ref,
-            &encode_task_authority_fact_body(&fact),
-            fact.occurred_at,
-        )
+        .put_task_fact(&fact_ref, &body, fact.occurred_at)
         .edge(
             &fact_ref,
             EdgeKind::ScopedTo,
@@ -491,13 +509,47 @@ pub(crate) fn put_task_authority_fact_in_txn(
         )
         .apply(wtxn)?;
     crate::federation::record_scope::stamp_task_fact(&vault.store, wtxn, fact_ref, fact.task_ref)?;
+    fact_proof::record_written_fact_in_txn(&vault.store, wtxn, &fact_ref, &body)?;
     Ok(fact_ref)
 }
 
-/// Serializes one fact under schema v1. Writing MessagePack into a `Vec` is
-/// infallible, so this returns bytes directly — the same shape
-/// `task_verb::wire_encode` uses for the primary TASK body.
+/// Serializes one fact under the current schema, without a carrier: the body
+/// an unsigned fact stores, and the canonical bytes its carrier signs. Writing
+/// MessagePack into a `Vec` is infallible, so this returns bytes directly —
+/// the same shape `task_verb::wire_encode` uses for the primary TASK body.
 pub(crate) fn encode_task_authority_fact_body(fact: &TaskAuthorityFact) -> Vec<u8> {
+    encode_fact_body_entries(fact_body_entries(fact))
+}
+
+/// [`encode_task_authority_fact_body`] with its carrier's three keys after
+/// the fact's own.
+fn encode_carried_fact_body(fact: &TaskAuthorityFact, carrier: &CarrierSignature) -> Vec<u8> {
+    let mut entries = fact_body_entries(fact);
+    entries.extend([
+        (
+            Value::from(BODY_KEY_CARRIER_MACHINE),
+            Value::from(carrier.machine.to_hex()),
+        ),
+        (
+            Value::from(BODY_KEY_CARRIER_KEY),
+            Value::Binary(carrier.key.to_vec()),
+        ),
+        (
+            Value::from(BODY_KEY_CARRIER_SIGNATURE),
+            Value::Binary(carrier.signature.to_vec()),
+        ),
+    ]);
+    encode_fact_body_entries(entries)
+}
+
+fn encode_fact_body_entries(entries: Vec<(Value, Value)>) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Value::Map(entries))
+        .expect("writing msgpack into a Vec is infallible");
+    bytes
+}
+
+fn fact_body_entries(fact: &TaskAuthorityFact) -> Vec<(Value, Value)> {
     let mut entries = vec![
         (
             Value::from(BODY_KEY_ROLE),
@@ -553,18 +605,13 @@ pub(crate) fn encode_task_authority_fact_body(fact: &TaskAuthorityFact) -> Vec<u
             ),
         ));
     }
-    let value = Value::Map(entries);
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &value)
-        .expect("writing msgpack into a Vec is infallible");
-    bytes
+    entries
 }
 
 /// Whether a TASK body is a task authority fact, well-formed or not: role 6
 /// with a `subkind` member naming [`TASK_AUTHORITY_FACT_SUBKIND`]. These are
 /// the rows the task fold can believe. The ask records share role 6 under
 /// their own subkinds and carry their own proofs, so they are not facts here.
-#[cfg(feature = "sync")]
 pub(crate) fn is_task_authority_fact_body(body: &[u8]) -> bool {
     if !matches!(task_role_from_body_bytes(body), Ok(TaskRole::AuthorityFact)) {
         return false;
@@ -579,13 +626,26 @@ pub(crate) fn is_task_authority_fact_body(body: &[u8]) -> bool {
     )
 }
 
-/// Decodes one fact body STRICTLY: exactly the v1 key set, no trailing bytes,
-/// no unknown keys, no duplicates, pinned version and subkind.
+/// One stored fact and the carrier that signed its row, if one did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CarriedTaskAuthorityFact {
+    fact: TaskAuthorityFact,
+    carrier: Option<CarrierSignature>,
+}
+
+/// [`decode_carried_task_authority_fact_body`]'s fact, whoever carried it.
+pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthorityFact> {
+    decode_carried_task_authority_fact_body(bytes).map(|carried| carried.fact)
+}
+
+/// Decodes one fact body STRICTLY: exactly the current key set, with the
+/// three carrier keys or none, no trailing bytes, no unknown keys, no
+/// duplicates, pinned version and subkind.
 ///
 /// Strictness is the authority boundary. A body that two decoders could read
 /// differently is a body an attacker can aim at one of them, so anything that
-/// is not exactly a v1 fact is refused rather than partially understood.
-pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthorityFact> {
+/// is not exactly a current fact is refused rather than partially understood.
+fn decode_carried_task_authority_fact_body(bytes: &[u8]) -> Result<CarriedTaskAuthorityFact> {
     let mut cursor = bytes;
     let value = rmpv::decode::read_value(&mut cursor)
         .map_err(|_| Error::Record(RecordError::InvalidTaskBody("task authority fact body")))?;
@@ -601,9 +661,17 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
         )))?;
     // The key set is EXACT: a base fact has seven keys, HumanAssigned
     // carries exactly one additional agent id, ConsultAssignee carries
-    // exactly the optional party and generation keys it has, and Acked
-    // carries its answered heads when it was written with them, so no unread
-    // field can ride along in a body two decoders would disagree about.
+    // exactly the optional party and generation keys it has, Acked carries
+    // its answered heads when it was written with them, and a carried fact
+    // exactly the three carrier keys more, so no unread field can ride along
+    // in a body two decoders would disagree about.
+    let carrier = carrier_fields(entries)?;
+    let own_keys = entries.len()
+        - if carrier.is_some() {
+            CARRIER_KEY_COUNT
+        } else {
+            0
+        };
     let byte = |key| {
         fact_body_field(entries, key)?
             .as_u64()
@@ -646,7 +714,7 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
     };
     let (assigned_ref, actor_generation, assigned_generation, answered_heads) = match kind {
         TaskAuthorityFactKind::HumanAssigned | TaskAuthorityFactKind::Assigned => {
-            if entries.len() != FACT_BODY_KEY_COUNT + 1 {
+            if own_keys != FACT_BODY_KEY_COUNT + 1 {
                 return Err(Error::Record(RecordError::InvalidTaskBody(
                     "task human assignment key set",
                 )));
@@ -655,7 +723,7 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
         }
         TaskAuthorityFactKind::Accepted => {
             let actor_generation = generation(BODY_KEY_ACTOR_GENERATION)?;
-            if entries.len() != FACT_BODY_KEY_COUNT + usize::from(actor_generation.is_some()) {
+            if own_keys != FACT_BODY_KEY_COUNT + usize::from(actor_generation.is_some()) {
                 return Err(Error::Record(RecordError::InvalidTaskBody(
                     "task acceptance key set",
                 )));
@@ -673,7 +741,7 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
                 actor_generation.is_some(),
                 assigned_generation.is_some(),
             ];
-            if entries.len() != FACT_BODY_KEY_COUNT + present.iter().filter(|key| **key).count()
+            if own_keys != FACT_BODY_KEY_COUNT + present.iter().filter(|key| **key).count()
                 || (assigned_generation.is_some() && assigned_ref.is_none())
             {
                 return Err(Error::Record(RecordError::InvalidTaskBody(
@@ -686,7 +754,7 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
             let answered_heads = optional_fact_body_field(entries, BODY_KEY_ANSWERED_HEADS)?
                 .map(decode_answered_heads)
                 .transpose()?;
-            if entries.len() != FACT_BODY_KEY_COUNT + usize::from(answered_heads.is_some()) {
+            if own_keys != FACT_BODY_KEY_COUNT + usize::from(answered_heads.is_some()) {
                 return Err(Error::Record(RecordError::InvalidTaskBody(
                     "task acknowledgement key set",
                 )));
@@ -696,7 +764,7 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
         TaskAuthorityFactKind::Owner
         | TaskAuthorityFactKind::Cancelled
         | TaskAuthorityFactKind::ConsentRequired => {
-            if entries.len() != FACT_BODY_KEY_COUNT {
+            if own_keys != FACT_BODY_KEY_COUNT {
                 return Err(Error::Record(RecordError::InvalidTaskBody(
                     "task authority fact key set",
                 )));
@@ -704,7 +772,7 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
             (None, None, None, None)
         }
     };
-    Ok(TaskAuthorityFact {
+    let fact = TaskAuthorityFact {
         task_ref: entity_ref(BODY_KEY_TASK_REF)?,
         kind,
         actor_ref: entity_ref(BODY_KEY_ACTOR_REF)?,
@@ -717,7 +785,41 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
             .ok_or(Error::Record(RecordError::InvalidTaskBody(
                 "task authority fact timestamp",
             )))?,
-    })
+    };
+    Ok(CarriedTaskAuthorityFact { fact, carrier })
+}
+
+/// The carrier a fact body names: its machine (hex) and its key and
+/// signature (binary, exact lengths). All three keys or none; any other mix,
+/// or a value of another shape, is refused.
+fn carrier_fields(entries: &[(Value, Value)]) -> Result<Option<CarrierSignature>> {
+    let invalid = || Error::Record(RecordError::InvalidTaskBody("task authority fact carrier"));
+    let fields = (
+        optional_fact_body_field(entries, BODY_KEY_CARRIER_MACHINE)?,
+        optional_fact_body_field(entries, BODY_KEY_CARRIER_KEY)?,
+        optional_fact_body_field(entries, BODY_KEY_CARRIER_SIGNATURE)?,
+    );
+    match fields {
+        (None, None, None) => Ok(None),
+        (Some(machine), Some(key), Some(signature)) => Ok(Some(CarrierSignature {
+            machine: machine
+                .as_str()
+                .and_then(|hex| EntityId::from_hex(hex).ok())
+                .ok_or_else(invalid)?,
+            key: exact_binary(key).ok_or_else(invalid)?,
+            signature: exact_binary(signature).ok_or_else(invalid)?,
+        })),
+        _ => Err(invalid()),
+    }
+}
+
+/// A MessagePack binary of exactly `N` bytes; a string of the same bytes is
+/// not one.
+fn exact_binary<const N: usize>(value: &Value) -> Option<[u8; N]> {
+    match value {
+        Value::Binary(bytes) => <[u8; N]>::try_from(bytes.as_slice()).ok(),
+        _ => None,
+    }
 }
 
 /// An Acked fact's answered heads, STRICTLY: an array of attempt ids, each
@@ -773,11 +875,29 @@ fn optional_fact_body_field<'a>(
 const SUPPRESSED: SideTable<EntityId, [u8; 1], side_table::Raw> =
     SideTable::new(&side_table::TASK_FACT_SUPPRESSED);
 
+/// A refused fact's task, then its row id: one task's pending facts are one
+/// key prefix.
+#[derive(SideKey)]
+struct PendingFactKey {
+    task: EntityId,
+    fact: EntityId,
+}
+
+/// Refused facts that carry a carrier this vault had not admitted when they
+/// came, each with its whole body. A carrier's profile can arrive after its
+/// fact, and the refused row is gone by then, so the task's read proves the
+/// kept body again ([`fact_suppressed_in`]).
+const SUPPRESSION_PENDING: SideTable<PendingFactKey, Vec<u8>, side_table::Raw> =
+    SideTable::new(&side_table::TASK_FACT_SUPPRESSION_PENDING);
+
 /// A replicated row `id` refused because it was deleted here: when it is a
-/// task authority fact this vault does not hold, its task is marked, so the
-/// task's facts read as a refusal. A tombstone that reached this vault before
-/// a fact would otherwise make a cancellation or a consent requirement read
-/// as never made.
+/// task authority fact this vault does not hold and the fact proves itself
+/// here, its task is marked, so the task's facts read as a refusal. A
+/// tombstone that reached this vault before a fact would otherwise make a
+/// cancellation or a consent requirement read as never made. A row that
+/// proves nothing marks nothing, so it cannot fail its task's read either.
+/// A carried fact whose carrier the fold has not admitted yet is kept as
+/// pending: it marks its task once its carrier's profile arrives.
 pub(crate) fn note_suppressed_fact_in_txn(
     store: &crate::store::Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -785,13 +905,28 @@ pub(crate) fn note_suppressed_fact_in_txn(
     entity_type: u8,
     body: &[u8],
 ) -> Result<()> {
-    if entity_type != ENTITY_TYPE_TASK || is_task_authority_fact_in(store, wtxn, id)? {
+    if entity_type != ENTITY_TYPE_TASK
+        || !is_task_authority_fact_body(body)
+        || is_task_authority_fact_in(store, wtxn, id)?
+    {
         return Ok(());
     }
-    let Ok(fact) = decode_task_authority_fact_body(body) else {
+    let Ok(carried) = decode_carried_task_authority_fact_body(body) else {
         return Ok(());
     };
-    SUPPRESSED.put(store, wtxn, &fact.task_ref, &[1])
+    let task = carried.fact.task_ref;
+    if proved_fact(&fact_proof::FactProof::in_txn(store, wtxn)?, id, body, task).is_some() {
+        return SUPPRESSED.put(store, wtxn, &task, &[1]);
+    }
+    if carried.carrier.is_some() {
+        SUPPRESSION_PENDING.put(
+            store,
+            wtxn,
+            &PendingFactKey { task, fact: *id },
+            &body.to_vec(),
+        )?;
+    }
+    Ok(())
 }
 
 /// [`note_suppressed_fact_in_txn`] for a window document's entity carrier,
@@ -854,13 +989,29 @@ pub(crate) fn note_fenced_fact_in_txn(
     Ok(())
 }
 
-/// Whether `task` is marked as holding an authority fact this vault refused.
+/// Whether `task` holds an authority fact this vault refused: it is marked,
+/// or a pending fact of it proves itself now that the fold admitted its
+/// carrier.
 pub(crate) fn fact_suppressed_in(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     task: &EntityId,
 ) -> Result<bool> {
-    SUPPRESSED.contains(store, txn, task)
+    if SUPPRESSED.contains(store, txn, task)? {
+        return Ok(true);
+    }
+    let mut proof = None;
+    for row in SUPPRESSION_PENDING.iter_from(store, txn, task.as_bytes())? {
+        let (key, body) = row?;
+        let proof = match &mut proof {
+            Some(proof) => proof,
+            None => proof.insert(fact_proof::FactProof::in_txn(store, txn)?),
+        };
+        if proved_fact(proof, &key.fact, &body, *task).is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Marks the tasks a recovered canonical window names as holding a fact its
@@ -881,7 +1032,99 @@ fn fact_suppressed() -> Error {
     Error::InvariantViolation("task authority fact suppressed")
 }
 
+/// The fact `body` on row `fact_ref` states about `task_ref`, when it proves
+/// itself here: it decodes, names `task_ref`, and carries a signature that
+/// `proof` accepts over its canonical bytes. `None` for a row that proves
+/// nothing: malformed, about another task, unsigned, or signed by a key the
+/// fold never admitted.
+fn proved_fact(
+    proof: &fact_proof::FactProof,
+    fact_ref: &EntityId,
+    body: &[u8],
+    task_ref: EntityId,
+) -> Option<TaskAuthorityFact> {
+    let carried = decode_carried_task_authority_fact_body(body).ok()?;
+    let carrier = carried.carrier?;
+    (carried.fact.task_ref == task_ref
+        && proof.proves(
+            fact_ref,
+            &encode_task_authority_fact_body(&carried.fact),
+            &carrier,
+        ))
+    .then_some(carried.fact)
+}
+
 impl Vault {
+    /// Adopts the facts this install's doors wrote unsigned, before the vault's root or with
+    /// no signer loaded. Each gets a twin: the same fact on a new row, which this install's
+    /// carrier signs. The unsigned row leaves the written-here index. So the fact counts on
+    /// every device of the vault, and still counts here (Engine RULING 16 Nov 03:18,
+    /// TASK-FACT-RULING-CROSSED-OPTION-D = B). The fold absorbs a twin as a set duplicate of
+    /// its fact, so no task changes meaning.
+    ///
+    /// Each root door calls it once the root is minted with this install's signer loaded, and
+    /// every later open that profiles this install calls it again, so a root whose adoption
+    /// failed or was cut off adopts at the next start. With no root, no signer or nothing to
+    /// adopt it writes nothing. It runs in one transaction, so a failure leaves no twin, and a
+    /// second call finds nothing left to adopt. Returns how many twins it wrote.
+    pub fn adopt_unsigned_task_facts(&self) -> Result<usize> {
+        {
+            let rtxn = self.store.env.read_txn()?;
+            if self.unsigned_task_facts_to_adopt_in(&rtxn)?.is_empty() {
+                return Ok(0);
+            }
+        }
+        self.with_write_txn(|wtxn| {
+            let mut adopted = 0;
+            for (fact_ref, fact) in self.unsigned_task_facts_to_adopt_in(wtxn)? {
+                put_task_authority_fact_in_txn(self, wtxn, fact)?;
+                fact_proof::forget_written_fact_in_txn(&self.store, wtxn, &fact_ref)?;
+                adopted += 1;
+            }
+            Ok(adopted)
+        })
+    }
+
+    /// The unsigned facts [`Self::adopt_unsigned_task_facts`] gives a twin: this install's
+    /// doors wrote them, their rows still hold the bodies written, and their task is still a
+    /// live TASK. A deleted task's delete took the fact's link to it and left the fact, so a
+    /// twin of it would link the deleted task again. None when this install signs nothing.
+    fn unsigned_task_facts_to_adopt_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<(EntityId, TaskAuthorityFact)>> {
+        if !fact_proof::signs_in_txn(self, txn)? {
+            return Ok(Vec::new());
+        }
+        let mut facts = Vec::new();
+        for (fact_ref, _) in fact_proof::facts_written_here_in(&self.store, txn)? {
+            let Some(raw) = self.get_raw_in(txn, &fact_ref)? else {
+                continue;
+            };
+            if EntityMetadataHeader::parse(&raw)
+                .is_none_or(|header| header.entity_type != ENTITY_TYPE_TASK)
+            {
+                continue;
+            }
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            if !fact_proof::written_here_in(&self.store, txn, &fact_ref, body)? {
+                continue;
+            }
+            let carried = decode_carried_task_authority_fact_body(body)?;
+            if carried.carrier.is_some() {
+                continue;
+            }
+            if crate::vault::live_entity_row_in_txn(&self.store, txn, &carried.fact.task_ref)?
+                .live_type()
+                != Some(ENTITY_TYPE_TASK)
+            {
+                continue;
+            }
+            facts.push((fact_ref, carried.fact));
+        }
+        Ok(facts)
+    }
+
     /// The authority one TASK's replicated facts prove.
     ///
     /// `Ok(None)` means NO Owner fact exists, and direct authority therefore
@@ -947,13 +1190,14 @@ impl Vault {
         }))
     }
 
-    /// Folds every authority fact scoped to `task_ref`.
+    /// Folds every authority fact scoped to `task_ref` that counts here.
     ///
     /// Inbound `ScopedTo` is a shared structural relation, so identification is
-    /// LENIENT — anything that is not a role-6 TASK entity is simply not a fact
-    /// and is skipped — while validation is STRICT: a row that claims to be a
-    /// fact and is malformed, or whose body names a different subject than the
-    /// edge it was reached through, fails the read closed.
+    /// LENIENT — anything that is not a TASK row of the fact subkind is simply
+    /// not a fact and is skipped. A fact this install's own door wrote is read
+    /// STRICTLY: malformed, or naming a different subject than the edge it was
+    /// reached through, it fails the read closed. Any other row counts only
+    /// when it proves itself ([`proved_fact`]), and is skipped otherwise.
     pub(crate) fn task_authority_facts_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -961,10 +1205,11 @@ impl Vault {
     ) -> Result<TaskAuthorityFacts> {
         // A fact this vault never admitted is not a fact never made: no
         // cancellation, consent requirement or party is guessed past it.
-        if SUPPRESSED.contains(&self.store, rtxn, &task_ref)? {
+        if fact_suppressed_in(&self.store, rtxn, &task_ref)? {
             return Err(fact_suppressed());
         }
         let mut facts = TaskAuthorityFacts::default();
+        let mut proof = None;
         // Rule 5: every inbound edge is read and every fact absorbed, however
         // many; past its threshold row the fold asks, and never refuses.
         let mut scanned = ScanCount::start(
@@ -992,18 +1237,33 @@ impl Vault {
                 continue;
             }
             let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-            if !matches!(task_role_from_body_bytes(body), Ok(TaskRole::AuthorityFact)) {
+            // An ask record shares role 6 under its own subkind and proves
+            // itself by its own rules: it is not a fact.
+            if !is_task_authority_fact_body(body) {
                 continue;
             }
-            let fact = decode_task_authority_fact_body(body)?;
-            // The edge is the index; the body is the claim. A fact reachable
-            // from one task while naming another would let a proof minted for
-            // a task the actor owns be re-pointed at one they do not.
-            if fact.task_ref != task_ref {
-                return Err(Error::Record(RecordError::InvalidTaskBody(
-                    "task authority fact subject",
-                )));
-            }
+            let fact = if fact_proof::written_here_in(&self.store, rtxn, &fact_ref, body)? {
+                let fact = decode_task_authority_fact_body(body)?;
+                // The edge is the index; the body is the claim. A fact
+                // reachable from one task while naming another would let a
+                // proof minted for a task the actor owns be re-pointed at
+                // one they do not.
+                if fact.task_ref != task_ref {
+                    return Err(Error::Record(RecordError::InvalidTaskBody(
+                        "task authority fact subject",
+                    )));
+                }
+                fact
+            } else {
+                let proof = match &mut proof {
+                    Some(proof) => proof,
+                    None => proof.insert(fact_proof::FactProof::in_txn(&self.store, rtxn)?),
+                };
+                match proved_fact(proof, &fact_ref, body, task_ref) {
+                    Some(fact) => fact,
+                    None => continue,
+                }
+            };
             facts.absorb(&fact)?;
         }
         scanned.finish(self);
