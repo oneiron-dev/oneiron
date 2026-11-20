@@ -9,8 +9,9 @@
 //! Bounds: one upload holds at most [`HOOK_TRANSCRIPT_STAGED_MAX_BYTES`] of
 //! text, at most [`UPLOADS_MAX`] are open at once, and one that took no part
 //! for [`UPLOAD_IDLE`], or opened [`UPLOAD_LIFETIME`] ago, is dropped at the
-//! next part any upload takes. Only the owner who opened an upload adds to
-//! it or ends it; to anyone else it is not there.
+//! next part any upload takes. An upload is its owner's: it is named by the
+//! owner and its id, so only the owner who opened it adds to it or ends it,
+//! and to anyone else it is not there, even when they open one of that id.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
@@ -68,16 +69,15 @@ const HINT_OFFSET: &str = "Send the part that starts where the last answer's sta
 const HINT_PAST_CAP: &str =
     "Import the session on the machine it ran on: oneiron import <source> <log>.";
 
-/// The uploads open in this server, by id.
+/// The uploads open in this server, by the owner who opened each and its
+/// id.
 #[derive(Default)]
 pub(crate) struct HookTranscriptUploads {
-    open: Mutex<HashMap<String, StagedUpload>>,
+    open: Mutex<HashMap<(EntityId, String), StagedUpload>>,
 }
 
 /// One open upload.
 struct StagedUpload {
-    /// The owner who opened it.
-    owner: EntityId,
     /// The request's JSON text its parts carried, in order.
     text: String,
     opened: Instant,
@@ -126,7 +126,8 @@ impl HookTranscriptUploads {
     /// # Errors
     ///
     /// An id that is not 32 lowercase hex digits or a part with no text; a
-    /// first part naming an open upload, or while [`UPLOADS_MAX`] are open;
+    /// first part naming an upload `owner` holds open, or while
+    /// [`UPLOADS_MAX`] are open;
     /// a later part naming no upload `owner` holds, or not starting where
     /// its text ends; text past [`HOOK_TRANSCRIPT_STAGED_MAX_BYTES`], which
     /// also drops the upload.
@@ -142,10 +143,11 @@ impl HookTranscriptUploads {
         if part.text.is_empty() {
             return Err(MemoryError::bad_request(ERR_EMPTY_PART));
         }
+        let key = (owner, part.upload.clone());
         let mut open = self.open.lock().unwrap_or_else(PoisonError::into_inner);
         open.retain(|_, upload| upload.live(now));
         if part.offset == 0 {
-            if open.contains_key(&part.upload) {
+            if open.contains_key(&key) {
                 return Err(invalid_state(ERR_OPEN_TWICE, HINT_RESEND));
             }
             if open.len() >= UPLOADS_MAX {
@@ -155,19 +157,15 @@ impl HookTranscriptUploads {
                 return Err(past_cap());
             }
             open.insert(
-                part.upload.clone(),
+                key.clone(),
                 StagedUpload {
-                    owner,
                     text: String::new(),
                     opened: now,
                     touched: now,
                 },
             );
         }
-        let Some(upload) = open
-            .get_mut(&part.upload)
-            .filter(|upload| upload.owner == owner)
-        else {
+        let Some(upload) = open.get_mut(&key) else {
             return Err(MemoryError::new(
                 MEMORY_CODE_NOT_FOUND,
                 ERR_NO_UPLOAD,
@@ -178,14 +176,14 @@ impl HookTranscriptUploads {
             return Err(invalid_state(ERR_OFFSET, HINT_OFFSET));
         }
         if upload.text.len().saturating_add(part.text.len()) > HOOK_TRANSCRIPT_STAGED_MAX_BYTES {
-            open.remove(&part.upload);
+            open.remove(&key);
             return Err(past_cap());
         }
         upload.text.push_str(&part.text);
         upload.touched = now;
         let staged = u64::try_from(upload.text.len()).unwrap_or(u64::MAX);
         if part.last
-            && let Some(upload) = open.remove(&part.upload)
+            && let Some(upload) = open.remove(&key)
         {
             return Ok(Staged::Whole(upload.text));
         }
