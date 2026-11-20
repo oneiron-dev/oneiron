@@ -524,10 +524,12 @@ fn owner_restore_holds_back_setting_rows_that_fail_their_key_checks() {
         .expect("the owner import succeeds");
     let summary =
         serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    // The second row is the source root's birth row of `test.born_depth` (stage 7c-2): the
+    // import maps the source root onto this vault's own root, so that row's scope is not live.
     assert_eq!(
         held_back_for_table(&summary, "SETTING"),
-        Some(serde_json::json!([{ "reason": "missing_live_entity", "rows": 1 }])),
-        "the owner import holds back one SETTING row as missing_live_entity; an absent field means it counted no held-back outcome: {summary}"
+        Some(serde_json::json!([{ "reason": "missing_live_entity", "rows": 2 }])),
+        "the owner import holds back the absent entity's SETTING row and the source root's birth row as missing_live_entity; an absent field means it counted no held-back outcome: {summary}"
     );
     let (value, from, _) = owner_number(&dest, &[SettingScope::Project(absent)]);
     assert_eq!(
@@ -753,10 +755,15 @@ fn owner_restore_passes_an_absent_row_through_its_keys_change_hook() {
         Some(1),
         "the owner import reports one kept-live SETTING row; an absent field means it counted no live outcome: {second_summary}"
     );
+    // The missing_live_entity row is the source root's birth row of `test.born_depth` (stage
+    // 7c-2): the import maps the source root onto this vault's own root.
     assert_eq!(
         held_back_for_table(&second_summary, "SETTING"),
-        Some(serde_json::json!([{ "reason": "invalid_value", "rows": 1 }])),
-        "the owner import holds back one SETTING row as invalid_value; an absent field means it counted no held-back outcome: {second_summary}"
+        Some(serde_json::json!([
+            { "reason": "invalid_value", "rows": 1 },
+            { "reason": "missing_live_entity", "rows": 1 }
+        ])),
+        "the owner import holds back one SETTING row as invalid_value and the source root's birth row as missing_live_entity; an absent field means it counted no held-back outcome: {second_summary}"
     );
     let (after_count, _) = setting_at_vault(&second, "booking.emergency.max_proposals");
     assert_eq!(
