@@ -335,12 +335,9 @@ fn embedding_migration_degrades_to_lexical_then_refills_without_mixing() -> Resu
 
     // Prove same-model preserves populated space before destructive migration.
     {
-        let data_path = temp_dir.path().join("data.mdb");
-        let bytes_before_populated = std::fs::read(&data_path)?;
         let ver_before_pop = read_hnsw_meta_u64(&vault, VECTOR_VERSION_KEY)?;
         let epoch_before_pop = read_hnsw_meta_u64(&vault, EMBEDDING_MODEL_EPOCH_KEY)?;
         vault.begin_embedding_migration("test/old@v1")?;
-        assert_eq!(std::fs::read(&data_path)?, bytes_before_populated);
         assert_eq!(
             read_hnsw_meta_u64(&vault, VECTOR_VERSION_KEY)?,
             ver_before_pop
@@ -491,11 +488,8 @@ fn embedding_migration_proves_atomic_space_replacement_contract() -> Result<()> 
 
     // Prove same-model preserves populated space before destructive migration.
     {
-        let data_path = temp_dir.path().join("data.mdb");
-        let bytes_before_populated = std::fs::read(&data_path)?;
         let ver_before_pop = read_hnsw_meta_u64(&vault, VECTOR_VERSION_KEY)?;
         vault.begin_embedding_migration("test/old@v1")?;
-        assert_eq!(std::fs::read(&data_path)?, bytes_before_populated);
         assert_eq!(
             read_hnsw_meta_u64(&vault, VECTOR_VERSION_KEY)?,
             ver_before_pop

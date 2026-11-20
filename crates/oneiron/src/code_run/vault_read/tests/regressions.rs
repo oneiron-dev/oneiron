@@ -316,6 +316,7 @@ fn trace_candidates(
 }
 
 fn provisional_context_pack_run(vault: &Vault) -> (Vec<u8>, RetrievalRunRecord) {
+    vault.store.wait_for_deferred_commits();
     let rtxn = vault.store.env.read_txn().expect("read provisional row");
     let rows = vault
         .store
