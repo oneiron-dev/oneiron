@@ -17,7 +17,7 @@ use super::failure_rules::{self, Stage};
 use super::partition::decode_partition_payload;
 use super::resources::{BranchResources, ExtractionSlice, FallbackOutputPin};
 use super::roles::DREAMER_EXTRACTION_ROLE;
-use super::sieve_ports::{NeighbourhoodExtraction, SliceCall, SliceStep};
+use super::sieve_ports::{NeighbourhoodExtraction, SliceStep};
 use super::stage_log::{PartitionStages, ms_since};
 use super::step_charge::{SliceFate, StepChargeTally, tally_slice_outcome};
 use super::thing_agent::{ThingPass, ThingPassEnd};
@@ -164,8 +164,8 @@ impl ConsolidationExecutor<'_> {
             resources.known(),
         )?;
         let config = ctx.vault.consolidation_selection()?;
-        let (slices, serial_width) =
-            resources.extraction_slices(&turn_ids, config.extraction_turns_per_child)?;
+        let bound = self.extraction_bound(ctx.vault, &config)?;
+        let (slices, serial_width) = resources.extraction_slices(&turn_ids, bound)?;
         // The attempt's read set: every row its slices' calls read and
         // every row its branch pinned, which every later read of this branch
         // reads within (FIX 7019).
@@ -269,15 +269,7 @@ impl ConsolidationExecutor<'_> {
                 guard: self.guard,
                 call,
                 prompt: &self.decisions.extraction_prompt,
-                slices: slices
-                    .iter()
-                    .map(|slice| SliceCall {
-                        transcript: &slice.transcript,
-                        labels: &slice.labels,
-                        scope: &slice.scope,
-                        sources: &slice.sources,
-                    })
-                    .collect(),
+                slices: slices.iter().map(ExtractionSlice::call).collect(),
                 namespace: namespace.clone(),
                 rules: rules.as_ref(),
                 citations,
