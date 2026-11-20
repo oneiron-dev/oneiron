@@ -2982,3 +2982,132 @@ fn the_changes_list_names_a_passkeys_removal() {
         "the removal's line names the passkey's carrier"
     );
 }
+
+/// The three removals of a ring: each one's entry, the key it removes, and
+/// its name.
+type RemovalRing = [(AuthorityEntryHash, [u8; 32], &'static str); 3];
+
+/// From one past, A removes B, B removes C and C removes A, each on a branch
+/// that never saw the others, landed in one batch. Each removal's fence holds
+/// the next one's signer, so the three fence one another round a cycle and no
+/// two of them cross directly. The guards: the fold counts none of the three,
+/// refused each for its signer alone, and all three keys ended.
+fn land_removal_ring(removal_vault: &RemovalVault) -> RemovalRing {
+    let install = removal_vault.install();
+    let [a, b, c] = [95, 96, 97].map(signing);
+    let [a_key, b_key, c_key] = [&a, &b, &c].map(|signing_key| {
+        removal_vault
+            .enrol_owner_key_on_machine(install, signing_key)
+            .0
+    });
+    let parents = removal_vault.authority_heads();
+    assert!(
+        !parents.is_empty(),
+        "the three removals have their common past"
+    );
+    let sequence = |signing_key: &SigningKey| {
+        removal_vault.next_sequence_for(&AuthorityKey::Ed25519(
+            signing_key.verifying_key().to_bytes(),
+        ))
+    };
+    let now = removal_vault.clock.now();
+    let (a_removes_b, a_removes_b_hash) =
+        removal_vault.sibling_revoke_row(parents.clone(), sequence(&a), &a, b_key, now);
+    let (b_removes_c, b_removes_c_hash) =
+        removal_vault.sibling_revoke_row(parents.clone(), sequence(&b), &b, c_key, now);
+    let (c_removes_a, c_removes_a_hash) =
+        removal_vault.sibling_revoke_row(parents, sequence(&c), &c, a_key, now);
+    let batch: Vec<(AuthorityLogEntry, TimeRange, u64)> = [a_removes_b, b_removes_c, c_removes_a]
+        .into_iter()
+        .map(|entry| {
+            (
+                entry,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )
+        })
+        .collect();
+    removal_vault
+        .vault
+        .put_authority_log_entries(&batch)
+        .expect("the three removals land in one batch");
+    let ring = [
+        (a_removes_b_hash, b_key, "A's removal of B"),
+        (b_removes_c_hash, c_key, "B's removal of C"),
+        (c_removes_a_hash, a_key, "C's removal of A"),
+    ];
+    let fold = removal_vault
+        .vault
+        .authority_fold()
+        .expect("authority fold");
+    for (removal, _, row) in ring {
+        assert!(
+            !fold.valid_entries.contains(&removal),
+            "guard: the fold counts none of the three removals: {row}"
+        );
+        assert!(
+            fold.issues
+                .contains(&AuthorityFoldIssue::RetiredSigner(removal)),
+            "guard: the fold refused {row} for its signer alone: {:?}",
+            fold.issues
+        );
+    }
+    let enrolled_keys = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys");
+    for (key, name) in [(a_key, "A"), (b_key, "B"), (c_key, "C")] {
+        assert!(
+            !enrolled_keys
+                .iter()
+                .find(|enrolled| enrolled.public_key == key)
+                .expect("the key is enrolled")
+                .live,
+            "guard: the ring ends key {name}"
+        );
+    }
+    ring
+}
+
+/// A ring of removals ends every key in it, and the changes list names each
+/// one (row OWNER-KEY-CHANGES-RING-CROSSING-UNLISTED): their fences close
+/// together, so the fold counts none of the three entries, and all three
+/// keys end ([`land_removal_ring`]). A later counted row does not drop them
+/// from the list.
+#[test]
+fn a_ring_of_three_removals_shows_each_removal_in_the_changes_list() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let ring = land_removal_ring(&removal_vault);
+    let assert_ring_listed = |when: &str| {
+        let changes = removal_vault
+            .vault
+            .owner_key_changes(&removal_vault.owner)
+            .expect("the owner reads the key changes");
+        for (removal, key, row) in ring {
+            assert!(
+                changes.iter().any(|change| change.entry == removal
+                    && change.public_key == AuthorityKey::Ed25519(key)
+                    && change.change == OwnerKeyChangeKind::RemovedByEndedKey),
+                "each removal of a ring that ended its key shows as RemovedByEndedKey {when}: \
+                 {row}: {changes:?}"
+            );
+        }
+    };
+    assert_ring_listed("once the ring lands");
+    let (_, later) =
+        removal_vault.enrol_owner_key_on_machine(removal_vault.install(), &signing(98));
+    assert!(
+        removal_vault
+            .vault
+            .authority_fold()
+            .expect("authority fold")
+            .valid_entries
+            .contains(&later),
+        "guard: a later enrolment counts"
+    );
+    assert_ring_listed("after a later counted row");
+}
