@@ -196,7 +196,7 @@ fn verify_owner_binding_in_txn(
     };
     if bound {
         let owner = match row {
-            OwnerRow::Live => crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?,
+            OwnerRow::Live => true,
             OwnerRow::DeletingItself => {
                 vault.is_vault_owner_deleting_own_person_in_txn(txn, &actor)?
             }
