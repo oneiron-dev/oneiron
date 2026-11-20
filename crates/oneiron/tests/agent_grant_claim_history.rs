@@ -3,13 +3,16 @@
 //! on vault.get. The timeline's anchor and record checks took the agent
 //! key's own floor alone, which reads nothing, so the history listed no
 //! revision (FIX-LIST SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS, part 2b). The
-//! history's receipt also reports that Grant's reach, not deny_all. After the
-//! owner revokes the Grant the history lists no revision.
+//! history's receipt also reports that Grant's reach, not deny_all, and so
+//! does `ScopedRead::memory_timeline` on the agent's own key, a lane that
+//! never opted in. After the owner revokes the Grant neither lists a
+//! revision.
 //!
 //! Public paths only: the embedded owner's door, where the owner's second
 //! vault.remember of one subject and predicate supersedes the first (a
 //! predicate the registry does not declare keeps one head, ARCH-0044 S3),
-//! and the agent's own `Vault::memory` handle.
+//! the agent's own `Vault::memory` handle and `Vault::scoped_read` of its
+//! key.
 //!
 //! Fleet: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test agent_grant_claim_history`
 
@@ -233,5 +236,52 @@ fn an_agents_claim_history_under_a_live_read_grant_lists_both_revisions() {
                 "the agent still reads the history after the revoke: {after:#}"
             );
         }
+    }
+}
+
+#[test]
+fn an_agents_memory_timeline_under_a_live_read_grant_reads_both_revisions() {
+    let fixture = Fixture::open();
+    let reader = fixture.reader();
+    let timeline = || {
+        let key = reader.read_key().expect("the agent's read key");
+        fixture
+            .vault
+            .scoped_read(key)
+            .memory_timeline(&fixture.correction)
+    };
+    let read = timeline().expect("the agent's memory timeline");
+    let mut listed: Vec<EntityId> = read.value.records.iter().map(|record| record.id).collect();
+    listed.sort_unstable();
+    let mut both = vec![fixture.first, fixture.correction];
+    both.sort_unstable();
+    assert_eq!(
+        listed, both,
+        "the live Grant admits both revisions, yet the timeline misses them"
+    );
+    let receipt = read.receipt;
+    for (scope, read) in [
+        ("requested", &receipt.requested),
+        ("actor_ceiling", &receipt.actor_ceiling),
+        ("applied", &receipt.applied),
+    ] {
+        assert!(
+            !read.deny_all,
+            "the {scope} scope of the timeline's receipt denies all under the live Grant: \
+             {receipt:?}"
+        );
+    }
+    assert!(
+        !receipt.narrowed_axes.iter().any(|axis| axis == "deny_all")
+            && !receipt.replan_hint.iter().any(|hint| hint == "deny_all"),
+        "the timeline's receipt names deny_all under the live Grant: {receipt:?}"
+    );
+
+    fixture.revoke();
+    if let Ok(after) = timeline() {
+        assert!(
+            after.value.records.is_empty(),
+            "the agent still reads the timeline after the revoke"
+        );
     }
 }
