@@ -26,7 +26,6 @@ pub(super) struct RerankLadderInputs<'a> {
     /// reranker is configured.
     pub(super) ladder_scores: Option<&'a HashMap<EntityId, f32>>,
     pub(super) blend_access_factors: &'a HashMap<EntityId, f32>,
-    pub(super) blend_components: &'a HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     pub(super) filter_config: PipelineFilterConfig<'a>,
     pub(super) rerank_query: Option<&'a str>,
     pub(super) capture_retrieval_trace: bool,
@@ -37,7 +36,10 @@ pub(super) struct RerankLadderInputs<'a> {
 /// empty, when it did not run.
 #[derive(Default)]
 pub(super) struct RerankApplied {
-    pub(super) merged_components: Option<HashMap<EntityId, Vec<RetrievalScoreComponent>>>,
+    /// The block's own rerank components, by entity. A reader appends an
+    /// entity's after its blend components (the pinned merge order: no
+    /// dedup, no re-sort), so the stage never copies the blend map.
+    pub(super) rerank_components: Option<HashMap<EntityId, Vec<RetrievalScoreComponent>>>,
     pub(super) reranked_trace_scores: Option<Vec<ScoredEntity>>,
     /// For a reranker that binds words, the revision of the words each block
     /// candidate was scored at, and each TURN a scored MESSAGE folds into.
@@ -173,7 +175,7 @@ impl PipelineBuilder<'_> {
         claim_gate: &mut ClaimStatusGateCache,
         inputs: RerankLadderInputs<'_>,
     ) -> Result<RerankApplied> {
-        let mut rerank_merged_components = None;
+        let mut applied_rerank_components = None;
         let mut reranked_trace_scores = None;
         let mut words_revisions = HashMap::new();
         let mut block = RerankedBlock::default();
@@ -311,13 +313,13 @@ impl PipelineBuilder<'_> {
             cap_unscored(reranked, set_aside, past);
             block = RerankedBlock(block_ids.into_iter().collect());
 
-            // Rerank components append AFTER the blend components in each
-            // entity's vector (pinned merge order; no dedup, no re-sort).
-            let mut merged = inputs.blend_components.clone();
-            for (id, components) in rerank_components {
-                merged.entry(id).or_default().extend(components);
-            }
-            rerank_merged_components = Some(merged);
+            // Readers append these AFTER each entity's blend components
+            // (pinned merge order; no dedup, no re-sort).
+            #[cfg(oneiron_test_support)]
+            crate::test_doors::blend_component_work::record_rerank_component_rows(
+                rerank_components.len(),
+            );
+            applied_rerank_components = Some(rerank_components);
 
             if inputs.capture_retrieval_trace {
                 reranked_trace_scores = Some(retrieval_trace_top_scores(
@@ -327,7 +329,7 @@ impl PipelineBuilder<'_> {
             }
         }
         Ok(RerankApplied {
-            merged_components: rerank_merged_components,
+            rerank_components: applied_rerank_components,
             reranked_trace_scores,
             words_revisions,
             block,

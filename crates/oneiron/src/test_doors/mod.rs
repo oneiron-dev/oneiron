@@ -33,6 +33,7 @@ pub mod authority_signed_branch;
 pub mod authority_stored_damage;
 pub mod authority_view_grant;
 pub mod authority_world_undo;
+pub mod blend_component_work;
 pub mod board_child_done;
 pub mod board_task_wakes;
 pub mod booking_anti_abuse_manifest;
