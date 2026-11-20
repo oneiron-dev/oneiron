@@ -26,6 +26,12 @@ pub trait Clock: Send + Sync {
     /// the default, measures with the host's monotonic clock. A test clock
     /// that moves only when its test moves it returns its own time, so the
     /// elapsed time the vault measures is the time the test advanced.
+    ///
+    /// A source gives a reading on every call or on none: a store clock
+    /// picks its clock domain once, from the source's answer when the store
+    /// clock is made ([`StoreClock::new`]). In the source's domain a call
+    /// that gives none reads as no time passed; in the host's, a reading the
+    /// source gives later is never read.
     fn monotonic_now(&self) -> Option<Duration> {
         None
     }
@@ -73,11 +79,22 @@ pub struct StoreClock {
     /// `None` for any other open. It closes with the store.
     lease_journal: Arc<Mutex<Option<Arc<LeaseJournal>>>>,
     last_id: Arc<Mutex<u128>>,
-    /// The host monotonic instant [`Self::monotonic_now`] measures from.
-    monotonic_origin: Instant,
-    /// The highest reading [`Self::monotonic_now`] took from a source that
-    /// gives its own ([`Clock::monotonic_now`]).
+    /// Where [`Self::monotonic_now`] reads, chosen once when this store
+    /// clock is made.
+    monotonic_domain: MonotonicDomain,
+    /// The highest reading [`Self::monotonic_now`] took in the source's
+    /// domain ([`MonotonicDomain::Source`]).
     monotonic_floor: Arc<Mutex<Duration>>,
+}
+/// The clock domain a [`StoreClock`] reads elapsed time in. Only the
+/// difference between two readings in one domain means anything, so a store
+/// clock keeps the one it was made with.
+#[derive(Clone, Copy)]
+enum MonotonicDomain {
+    /// The host's monotonic clock, measured from this instant.
+    Host(Instant),
+    /// The source's own reading ([`Clock::monotonic_now`]).
+    Source,
 }
 impl std::fmt::Debug for StoreClock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -98,7 +115,14 @@ impl Default for StoreClock {
     }
 }
 impl StoreClock {
+    /// A store clock over `source` and `ids`. Its elapsed-time clock reads
+    /// the source's own monotonic reading when the source gives one now,
+    /// else the host's, for the store clock's whole life.
     pub fn new(source: Arc<dyn Clock>, ids: Arc<dyn IdGen>) -> Self {
+        let monotonic_domain = match source.monotonic_now() {
+            Some(_) => MonotonicDomain::Source,
+            None => MonotonicDomain::Host(Instant::now()),
+        };
         Self {
             system: false,
             source,
@@ -109,7 +133,7 @@ impl StoreClock {
             renewal: Arc::new(AtomicBool::new(false)),
             lease_journal: Arc::new(Mutex::new(None)),
             last_id: Arc::new(Mutex::new(0)),
-            monotonic_origin: Instant::now(),
+            monotonic_domain,
             monotonic_floor: Arc::new(Mutex::new(Duration::ZERO)),
         }
     }
@@ -241,21 +265,27 @@ impl StoreClock {
         self.source.now_recorded_ms()
     }
     /// Monotonic time for the vault's elapsed-time clock (the authority
-    /// log's observation clock): the source's own reading
+    /// log's observation clock), in the domain this store clock was made
+    /// with ([`Self::new`]): the source's own reading
     /// ([`Clock::monotonic_now`]), held at the highest this store clock has
-    /// read, so a source set back never moves it back; else the host's
-    /// monotonic time since this store clock was made. Only the difference
-    /// between two readings of one store clock means anything.
+    /// read, so a source set back, or one that gives no reading on a call,
+    /// never moves it back; or the host's monotonic time since this store
+    /// clock was made. Only the difference between two readings of one store
+    /// clock means anything.
     pub fn monotonic_now(&self) -> Duration {
-        let Some(reading) = self.source.monotonic_now() else {
-            return self.monotonic_origin.elapsed();
-        };
-        let mut floor = self
-            .monotonic_floor
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *floor = (*floor).max(reading);
-        *floor
+        match self.monotonic_domain {
+            MonotonicDomain::Host(origin) => origin.elapsed(),
+            MonotonicDomain::Source => {
+                let mut floor = self
+                    .monotonic_floor
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some(reading) = self.source.monotonic_now() {
+                    *floor = (*floor).max(reading);
+                }
+                *floor
+            }
+        }
     }
     /// Nondecreasing seconds, not one fictitious second for each write.
     /// Transactions persist this floor before commit.
