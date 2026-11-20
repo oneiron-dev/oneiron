@@ -18,6 +18,13 @@
 //! (`WindowManager::window`): a window the test opened itself would take the
 //! row at that open and show nothing.
 //!
+//! The pass forgets that it owes a window a row only once that window is
+//! stored with the row and made ready, so every connection asks its peer to
+//! exchange it: a row that only a live channel took is not lost with a
+//! machine that stops. And a window the pass opened is unloaded again once
+//! more than four such windows are loaded; an unload a held handle refused
+//! is tried again on each later pass.
+//!
 //! The tests count decisions: admission rows, queued or refused. Whether the
 //! program then runs is the admission's own judgment and out of scope here,
 //! as in `turn_program_sync`.
@@ -37,7 +44,7 @@ use oneiron::federation::ScopeAxis;
 use oneiron::registry::ENTITY_TYPE_TURN;
 use oneiron::store::housekeeping_schedule::HousekeepingBudget;
 use oneiron::sync::bridge::Materializer;
-use oneiron::sync::manager::WindowManager;
+use oneiron::sync::manager::{ReadyProgress, WindowManager};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::forward_rematerialize;
 use oneiron::temporal::TimeRange;
@@ -104,6 +111,22 @@ impl Machine {
     fn decisions(&self, turn: EntityId, registration: EntityId) -> usize {
         doors::wake_decisions_here(&self.vault, turn, registration).unwrap()
     }
+
+    /// Whether window `key` is loaded here, read without a handle to it.
+    fn loaded(&self, key: &WindowKey) -> bool {
+        self.manager.loaded_keys().contains(key)
+    }
+
+    /// Window `key`'s ready generation as a new connection reads it: 0 while
+    /// no connection is asked to exchange the window.
+    fn ready_generation(&self, key: &WindowKey) -> u64 {
+        ReadyProgress::default()
+            .due(&self.manager, usize::MAX, |_| true)
+            .unwrap()
+            .into_iter()
+            .find(|(ready, _)| ready == key)
+            .map_or(0, |(_, generation)| generation)
+    }
 }
 
 /// Each machine elects `home` as the MACRO home.
@@ -165,6 +188,11 @@ fn agent_slip(
 /// A row at `id`, learned at [`T0`], so it lands in [`WINDOW`]: a TURN, or
 /// the record an arming pins arriving on `machine`.
 fn put_row(machine: &Machine, id: EntityId) {
+    put_row_at(machine, id, T0);
+}
+
+/// A row at `id`, learned at `at`, so it lands in that month's base window.
+fn put_row_at(machine: &Machine, id: EntityId, at: u64) {
     let body =
         rmp_serde::to_vec_named(&std::collections::BTreeMap::from([("role", "user")])).unwrap();
     machine
@@ -172,8 +200,8 @@ fn put_row(machine: &Machine, id: EntityId) {
         .put_entity(
             &id,
             ENTITY_TYPE_TURN,
-            TimeRange { start: T0, end: T0 },
-            T0,
+            TimeRange { start: at, end: at },
+            at,
             &body,
         )
         .unwrap();
@@ -413,4 +441,168 @@ fn a_pass_that_owes_no_row_opens_no_window() {
     );
     assert!(recorder.owes(turn, registration));
     assert_eq!(recorder.decisions(turn, registration), 0);
+}
+
+/// The home's window is loaded when its pass owes the release. The pass
+/// writes the release, stores the window and makes it ready: a connection
+/// made after it, on a machine that stopped before a live channel sent the
+/// row, asks its peer to exchange the window all the same.
+#[test]
+fn a_window_stored_with_an_owed_row_is_ready_for_every_connection() {
+    let home = Machine::open("machine-home");
+    let recorder = Machine::open("machine-recorder");
+    let Taken {
+        turn,
+        registration,
+        doc_home,
+        doc_recorder,
+    } = home_takes_the_carried_wake(&[&home, &recorder], &home, &recorder);
+    let window = WindowKey::new(WINDOW);
+
+    // The recorder withholds the TURN and retracts the wake; the home takes
+    // the retraction as an import does and keeps the release. Its window
+    // stays loaded.
+    assert!(doors::withhold_turn(&recorder.vault, turn).unwrap());
+    recorder.housekeeping();
+    exchange(&doc_home, &doc_recorder);
+    forward_rematerialize(&home.vault, &doc_home, &Materializer::new(), &window).unwrap();
+    assert!(
+        !home.owes(turn, registration),
+        "fixture: the home did not take the retraction"
+    );
+    assert!(
+        home.loaded(&window),
+        "fixture: the home's window is not loaded"
+    );
+    let before = home.ready_generation(&window);
+
+    home.housekeeping();
+    assert!(
+        home.ready_generation(&window) > before,
+        "the home's pass did not make the window it owed the release ready"
+    );
+
+    // The release is in the window: the recorder decides the wake once.
+    exchange(&doc_home, &doc_recorder);
+    recorder.housekeeping();
+    assert_eq!(
+        recorder.decisions(turn, registration),
+        1,
+        "the release the home's pass wrote did not reach the recorder"
+    );
+    assert_eq!(home.decisions(turn, registration), 0);
+}
+
+const DAY: u64 = 86_400;
+/// The 15th of March, April, May, June and July 2026, 00:00 UTC: one time in
+/// each of five base windows.
+const MONTHS: [u64; 5] = [
+    T0,
+    T0 + 31 * DAY,
+    T0 + 61 * DAY,
+    T0 + 92 * DAY,
+    T0 + 122 * DAY,
+];
+
+/// The pass keeps four of the windows it opened loaded and unloads the one
+/// opened longest ago. A handle another caller holds refuses that unload;
+/// once the handle is gone a later pass unloads the window, though it owes
+/// no window a row by then.
+#[test]
+fn an_unload_a_held_handle_refused_is_tried_again_on_a_later_pass() {
+    let home = Machine::open("machine-home");
+    let recorder = Machine::open("machine-recorder");
+    for machine in [&home, &recorder] {
+        doors::node_id(&machine.vault).unwrap();
+    }
+    elect(&[&home, &recorder], doors::node_id(&home.vault).unwrap());
+
+    // On the recorder: five TURNs, one a month, each owing a program armed
+    // in its own conversation. Each month's window opens, carries its wake,
+    // and closes.
+    let (agent, slip, instrument) = agent_slip(&recorder);
+    let mut wakes = Vec::new();
+    for (n, at) in (0u8..).zip(MONTHS) {
+        let turn = EntityId::from_bytes([0x71 + n; 16]).unwrap();
+        put_row_at(&recorder, turn, at);
+        let registration = doors::plant_slip_wake(
+            &recorder.vault,
+            agent,
+            &slip,
+            &instrument,
+            EntityId::from_bytes([0x81 + n; 16]).unwrap(),
+            turn,
+            at - 60,
+            at,
+        )
+        .unwrap();
+        put_row_at(&recorder, registration, at);
+        let window = WindowKey::from_timestamp(at);
+        drop(recorder.manager.open_window(&window).unwrap());
+        wakes.push((turn, registration, window));
+    }
+    recorder.housekeeping();
+    for (turn, registration, window) in &wakes {
+        assert!(
+            recorder.owes(*turn, *registration),
+            "fixture: the recorder no longer owes a riding wake"
+        );
+        assert!(
+            recorder.manager.unload_window(window).unwrap(),
+            "fixture: a month's window was not loaded"
+        );
+    }
+
+    // The first four TURNs are withheld: the pass opens their four windows
+    // for the retractions and keeps them loaded.
+    for (turn, _, _) in &wakes[..4] {
+        assert!(doors::withhold_turn(&recorder.vault, *turn).unwrap());
+    }
+    recorder.housekeeping();
+    for (_, _, window) in &wakes[..4] {
+        assert!(
+            recorder.loaded(window),
+            "fixture: the pass left a window that owes a retraction closed"
+        );
+    }
+
+    // Another caller holds the window opened first while the fifth TURN is
+    // withheld: the pass opens the fifth window, and the unload of the first
+    // is refused.
+    let (first, fifth) = (&wakes[0].2, &wakes[4].2);
+    let held = recorder
+        .manager
+        .window(first)
+        .expect("fixture: the first window is not loaded");
+    assert!(doors::withhold_turn(&recorder.vault, wakes[4].0).unwrap());
+    recorder.housekeeping();
+    assert!(
+        recorder.loaded(fifth),
+        "fixture: the pass left the fifth window closed"
+    );
+    assert!(
+        recorder.loaded(first),
+        "fixture: a held window was unloaded"
+    );
+
+    // The handle goes. No window is owed a row now; a later pass unloads the
+    // first window all the same. Three passes are allowed: a handle the
+    // mirror thread holds for a moment refuses one unload as a caller's does.
+    drop(held);
+    for _ in 0..3 {
+        recorder.housekeeping();
+        if !recorder.loaded(first) {
+            break;
+        }
+    }
+    assert!(
+        !recorder.loaded(first),
+        "a window whose unload was refused once stayed loaded after its handle was gone"
+    );
+    for (_, _, window) in &wakes[1..] {
+        assert!(
+            recorder.loaded(window),
+            "one of the four windows opened last was unloaded"
+        );
+    }
 }
