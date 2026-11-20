@@ -46,6 +46,12 @@ purposes! {
     /// `setting_pack_head::setting_pack_target`; stage 7c-3a): one frontier per pack. Parts: the
     /// pack's name. The target is the first 16 bytes.
     PACK_TARGET = "oneiron.setting.pack_target.v1";
+
+    /// The target the owner's yes to a pack's held defaults names (`oneiron-authority`,
+    /// `setting_pack_head::setting_pack_accept_target`; stage 7c-3c): one frontier per pack and
+    /// table, apart from the pack's heads, so no pack door's head replaces a yes. Parts: the
+    /// pack's name, then the table's digest. The target is the first 16 bytes.
+    PACK_ACCEPT_TARGET = "oneiron.setting.pack_accept_target.v1";
 }
 
 legacy_purposes! {}

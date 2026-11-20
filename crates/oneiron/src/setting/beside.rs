@@ -29,9 +29,16 @@
 //! a row named there, or of any row whose body is a value beside an act, notes that pass, whatever
 //! the row's body ([`notes_projection_pass_in_txn`]), and so does an erase of a row named there,
 //! which also takes the value out of the setting history (`change::erase_setting_entity_in_txn`).
+//!
+//! A pack's table of defaults travels beside its head act the same way (stage 7c-3c; DESIGN 1.6,
+//! "Packs across machines": "The table's bytes travel beside the act"): one ASSET row per pack
+//! and table digest ([`pack_table_row_id`]), its body [`PACK_TABLE_TAG`] and then the table's
+//! bytes, which the pack's reader checks against the digest the head names
+//! ([`pack_table_read_in_txn`]). Its put notes the projection pass too.
 
 use oneiron_authority::authority::{
-    AuthorityEntryHash, POLICY_SETTING_INLINE_MAX, setting_slot_target, setting_value_digest,
+    AuthorityEntryHash, POLICY_SETTING_INLINE_MAX, setting_pack_target, setting_slot_target,
+    setting_value_digest,
 };
 use oneiron_setting_contract::RowKey;
 use serde::{Deserialize, Serialize};
@@ -54,6 +61,10 @@ const WATCH: SideTable<EntityId, EntityId, Named> =
 
 /// What a beside row's body starts with; the value's JSON bytes follow it.
 const BESIDE_VALUE_TAG: &[u8] = b"oneiron.setting.beside_value.v1\n";
+
+/// What the body of a pack's table beside its head starts with; the table's bytes follow it
+/// (stage 7c-3c).
+const PACK_TABLE_TAG: &[u8] = b"oneiron.setting.pack_table.v1\n";
 
 /// How the owner's change of a key reaches the vault's other machines, as `vault.settings.list`
 /// shows it (DESIGN 1.6, "What travels"). The build derives it from the key's value type and
@@ -138,7 +149,7 @@ pub(super) fn put_beside_value_in_txn(
     json: &[u8],
 ) -> Result<()> {
     let row = beside_row_id(slot, &setting_value_digest(json), act)?;
-    put_beside_row_in_txn(vault, txn, row, json)
+    put_beside_body_in_txn(vault, txn, row, (BESIDE_VALUE_TAG, json))
 }
 
 /// Names in [`WATCH`] the rows beside acts `rows` that the projection of `target` read, in
@@ -208,17 +219,74 @@ pub(crate) fn beside_row_watched_in_txn(
     WATCH.contains(dbs, txn, id)
 }
 
-/// Puts the ASSET row `id` holding the JSON bytes `json` beside an act, in `txn`.
-fn put_beside_row_in_txn(
+/// The id of the row that holds `pack`'s table of defaults whose digest is `digest`, beside its
+/// head acts (stage 7c-3c): derived from the pack's target and the digest.
+///
+/// # Errors
+///
+/// A derived id in the reserved range (never in practice).
+pub(super) fn pack_table_row_id(pack: &str, digest: &[u8; 32]) -> Result<EntityId> {
+    let target = setting_pack_target(pack)?;
+    Ok(EntityId::derive(
+        SETTING_BESIDE_VALUE,
+        &[target.as_bytes().as_slice(), digest.as_slice()],
+    )?)
+}
+
+/// Puts `pack`'s table `table` (its bytes), whose digest is `digest`, beside its head acts in
+/// `txn`, unless a row of it is here already (stage 7c-3c).
+///
+/// # Errors
+///
+/// Storage errors, and the put's refusal.
+pub(super) fn put_pack_table_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    (pack, digest): (&str, &[u8; 32]),
+    table: &[u8],
+) -> Result<()> {
+    let row = pack_table_row_id(pack, digest)?;
+    if beside_body_in_txn(vault, txn, row)?.is_none() {
+        put_beside_body_in_txn(vault, txn, row, (PACK_TABLE_TAG, table))?;
+    }
+    Ok(())
+}
+
+/// What the row of `pack`'s table whose digest is `digest` holds here (stage 7c-3c): its bytes
+/// where `matches` takes them as that table, else unreadable; absent where no row is here and
+/// none was erased here.
+///
+/// # Errors
+///
+/// Storage and filesystem errors.
+pub(super) fn pack_table_read_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    (pack, digest): (&str, &[u8; 32]),
+    matches: impl FnOnce(&[u8]) -> bool,
+) -> Result<BesideRead> {
+    let row = pack_table_row_id(pack, digest)?;
+    Ok(match beside_body_in_txn(vault, txn, row)? {
+        Some(body) => match body.strip_prefix(PACK_TABLE_TAG) {
+            Some(table) if matches(table) => BesideRead::Here(table.to_vec()),
+            _ => BesideRead::Unreadable,
+        },
+        None if erased_in_txn(vault, txn, row)? => BesideRead::Unreadable,
+        None => BesideRead::Absent,
+    })
+}
+
+/// Puts the ASSET row `id` holding `tag` and then `bytes` beside an act, in `txn`.
+fn put_beside_body_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
-    json: &[u8],
+    (tag, bytes): (&[u8], &[u8]),
 ) -> Result<()> {
     let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-    let mut body = Vec::with_capacity(BESIDE_VALUE_TAG.len() + json.len());
-    body.extend_from_slice(BESIDE_VALUE_TAG);
-    body.extend_from_slice(json);
+    let mut body = Vec::with_capacity(tag.len() + bytes.len());
+    body.extend_from_slice(tag);
+    body.extend_from_slice(bytes);
     vault
         .batch_in()
         .put(
@@ -290,10 +358,11 @@ pub(super) fn beside_row_read_in_txn(
     })
 }
 
-/// Whether `body`, an ASSET row's, holds a setting value beside its act: a put of it notes the
-/// setting projection pass ([`notes_projection_pass_in_txn`]).
+/// Whether `body`, an ASSET row's, holds a setting value beside its act, or a pack's table
+/// beside its head (stage 7c-3c): a put of it notes the setting projection pass
+/// ([`notes_projection_pass_in_txn`]).
 fn is_beside_value_body(body: &[u8]) -> bool {
-    body.starts_with(BESIDE_VALUE_TAG)
+    body.starts_with(BESIDE_VALUE_TAG) || body.starts_with(PACK_TABLE_TAG)
 }
 
 /// The readable body of the ASSET row `id`; `None` where none is here.
@@ -371,7 +440,7 @@ pub(crate) fn land_beside_row(
 ) -> Result<()> {
     vault.with_write_txn_grouped(|txn| {
         if tagged {
-            return put_beside_row_in_txn(vault, txn, row, held);
+            return put_beside_body_in_txn(vault, txn, row, (BESIDE_VALUE_TAG, held));
         }
         let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         vault
@@ -388,6 +457,44 @@ pub(crate) fn land_beside_row(
             )
             .apply(txn)
     })
+}
+
+/// Puts, in a write of its own, the row of `pack`'s table whose digest is `digest` holding `held`
+/// (the table's bytes, or other bytes: a row that does not match its digest), as a peer's row
+/// lands: through the batch door, whose commit runs the setting projection (stage 7c-3c tests).
+///
+/// # Errors
+///
+/// Storage errors, and the put's refusal.
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) fn land_pack_table(
+    vault: &Vault,
+    (pack, digest): (&str, &[u8; 32]),
+    held: &[u8],
+) -> Result<()> {
+    let id = pack_table_row_id(pack, digest)?;
+    vault.with_write_txn_grouped(|txn| {
+        put_beside_body_in_txn(vault, txn, id, (PACK_TABLE_TAG, held))
+    })
+}
+
+/// The bytes the row of `pack`'s table whose digest is `digest` holds here after its tag; `None`
+/// when no row is here (stage 7c-3c tests).
+///
+/// # Errors
+///
+/// Storage and filesystem errors.
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) fn pack_table_bytes(
+    vault: &Vault,
+    (pack, digest): (&str, &[u8; 32]),
+) -> Result<Option<Vec<u8>>> {
+    let txn = vault.store.env.read_txn()?;
+    let body = beside_body_in_txn(vault, &txn, pack_table_row_id(pack, digest)?)?;
+    Ok(body.map(|body| match body.strip_prefix(PACK_TABLE_TAG) {
+        Some(table) => table.to_vec(),
+        None => body,
+    }))
 }
 
 /// The JSON bytes the row `row` beside an act holds here after the value tag; `None` when no

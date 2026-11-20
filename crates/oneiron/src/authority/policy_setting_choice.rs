@@ -49,7 +49,9 @@
 //! bounds and never drops one. The projection reads what it names
 //! ([`Vault::setting_slot_head_in_txn`]).
 //!
-//! A pack's head is one `SettingPackHead` engine act (stage 7c-3a), with no owner act.
+//! A pack's head is one `SettingPackHead` engine act (stage 7c-3a), with no owner act. The
+//! owner's yes to held defaults is the same record with his act (stage 7c-3c): it lands as his
+//! act on its own target, one per pack and table, proved as every setting act is.
 //!
 //! What a head counts for (stage 7b-2): the view gives each act a reader of
 //! a row meets its count here ([`ChoiceCounts`]): in full, or as a safe
@@ -338,9 +340,12 @@ fn birth_names_source_heads(state: &FoldState, row: &SettingCopyRow) -> Result<b
 
 /// The `SettingPackHead` transition (stage 7c-3a): the head lands on its pack's target as an
 /// engine statement ([`choice_landing`] with no owner), its choice the entry's own hash, its
-/// `seen` judged against the target's live revision. `needs_proof_off_the_line` is the owner
-/// key's line's mark on the entry ([`super::owner_key_line`]), which marks no pack head yet, as
-/// no setting copy (FIX SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
+/// `seen` judged against the target's live revision. The owner's yes (stage 7c-3c) lands as his
+/// act on its own target ([`SettingPackHead::target`]): his liveness and his proof are tested as
+/// for every setting act, and one that waits for his proof is in no frontier.
+/// `needs_proof_off_the_line` is the owner key's line's mark on the entry
+/// ([`super::owner_key_line`]), which marks no pack head yet, his yes included, as no setting
+/// copy (FIX SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
 pub(super) fn apply_setting_pack_head(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -356,7 +361,7 @@ pub(super) fn apply_setting_pack_head(
     let at = ChoiceAt {
         target,
         seen: head.seen,
-        owner: None,
+        owner: head.accept.as_ref().map(|accept| accept.act.owner),
         machine: head.machine,
         choice: Some(&hash),
         context: POLICY_SETTING_REVISION_CONTEXT,
@@ -568,10 +573,47 @@ impl Vault {
         digest: [u8; 32],
         held: Vec<String>,
     ) -> Result<AuthorityEntryHash> {
+        self.append_pack_head_in_txn(txn, (pack, version, digest, held), None)
+    }
+
+    /// Appends the owner `owner`'s yes to `pack`'s held defaults `accepted`, from `surface`, as
+    /// one signed `SettingPackHead` with his act, in the yes's write `txn` (stage 7c-3c): the
+    /// version and the digest of the table it names, the keys still held, and the `seen` of the
+    /// yes's target ([`setting_pack_accept_target`]), read in `txn`. Not best effort: whatever
+    /// stops it fails the call, and its savepoint is rolled back. The entry's hash.
+    ///
+    /// # Errors
+    ///
+    /// The typed refusal of the append ([`super::carried_act`]), or a storage error.
+    pub(crate) fn append_setting_pack_accept_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        head: (&str, &str, [u8; 32], Vec<String>),
+        (owner, surface): (EntityId, ActSurface),
+        accepted: Vec<String>,
+    ) -> Result<AuthorityEntryHash> {
+        self.append_pack_head_in_txn(txn, head, Some((owner, surface, accepted)))
+    }
+
+    /// [`Self::append_setting_pack_head_in_txn`], and with `accept` the owner's yes.
+    fn append_pack_head_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        (pack, version, digest, held): (&str, &str, [u8; 32], Vec<String>),
+        accept: Option<(EntityId, ActSurface, Vec<String>)>,
+    ) -> Result<AuthorityEntryHash> {
+        let target = match &accept {
+            None => setting_pack_target(pack)?,
+            Some(_) => setting_pack_accept_target(pack, &digest)?,
+        };
         let seen = {
             let view = self.authority_view_readonly_in_txn(txn)?;
-            view.policy_settings.revision(setting_pack_target(pack)?)
+            view.policy_settings.revision(target)
         };
+        let accept = accept.map(|(owner, surface, accepted)| SettingPackAccept {
+            act: OwnerAct::by_owner(owner, OwnerActKind::PolicySetting, target, surface, seen),
+            accepted,
+        });
         self.append_carried_act_in_savepoint(txn, |machine| {
             AuthorityOp::SettingPackHead(SettingPackHead {
                 machine,
@@ -580,6 +622,7 @@ impl Vault {
                 digest,
                 held,
                 seen,
+                accept,
             })
         })
     }
@@ -591,7 +634,26 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         pack: &str,
     ) -> Result<Vec<(AuthorityEntryHash, SettingPackHead)>> {
-        let target = setting_pack_target(pack)?;
+        self.pack_target_acts_in_txn(txn, setting_pack_target(pack)?)
+    }
+
+    /// The owner's live yeses to defaults of `pack`'s table `digest` in `txn`, read back from the
+    /// log, with the hash of each (stage 7c-3c). Empty when none names that table.
+    pub(crate) fn setting_pack_accepts_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        pack: &str,
+        digest: &[u8; 32],
+    ) -> Result<Vec<(AuthorityEntryHash, SettingPackHead)>> {
+        self.pack_target_acts_in_txn(txn, setting_pack_accept_target(pack, digest)?)
+    }
+
+    /// The live `SettingPackHead` acts on `target` in `txn`, with the hash of each.
+    fn pack_target_acts_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        target: EntityId,
+    ) -> Result<Vec<(AuthorityEntryHash, SettingPackHead)>> {
         let mut heads = Vec::new();
         for hash in self.setting_slot_live_in_txn(txn, target)? {
             if let Some(head) = self.setting_slot_head_in_txn(txn, target, hash)?.pack {
@@ -716,6 +778,31 @@ impl Vault {
                 .unwrap_or_default(),
             asking,
         }))
+    }
+
+    /// Whether `target`'s acts are a pack's head acts (stage 7c-3c): a pack
+    /// door's heads, or the owner's yeses to one of its tables. One live
+    /// head, read back from the log, decides: every act on a target is of
+    /// one op, since each op derives its targets apart. `false` with no live
+    /// head, or none stored here.
+    pub(crate) fn setting_target_is_pack_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        target: EntityId,
+    ) -> Result<bool> {
+        let view = self.authority_view_readonly_in_txn(txn)?;
+        let Some(hash) = view
+            .policy_settings
+            .targets
+            .get(&target)
+            .and_then(|folded| folded.live.keys().next().copied())
+        else {
+            return Ok(false);
+        };
+        Ok(self
+            .setting_slot_head_in_txn(txn, target, hash)?
+            .pack
+            .is_some())
     }
 
     /// Whether the fold in `txn` holds the setting act `hash` as waiting for
@@ -1076,7 +1163,21 @@ impl Vault {
 
     /// The frontier of `pack`'s head acts now (stage 7c-3a).
     pub(crate) fn setting_pack_frontier(&self, pack: &str) -> Result<SettingFrontier> {
-        let target = setting_pack_target(pack)?;
+        self.setting_target_frontier(setting_pack_target(pack)?)
+    }
+
+    /// The frontier of the owner's yeses to defaults of `pack`'s table `digest` now (stage
+    /// 7c-3c).
+    pub(crate) fn setting_pack_accept_frontier(
+        &self,
+        pack: &str,
+        digest: &[u8; 32],
+    ) -> Result<SettingFrontier> {
+        self.setting_target_frontier(setting_pack_accept_target(pack, digest)?)
+    }
+
+    /// The frontier of `target`'s acts now.
+    fn setting_target_frontier(&self, target: EntityId) -> Result<SettingFrontier> {
         let fold = self.authority_fold()?;
         let mut parents = fold.append_heads.clone();
         if let Some(folded) = fold.policy_settings.targets.get(&target) {
@@ -1087,20 +1188,31 @@ impl Vault {
     }
 
     /// A pack's head, as the machine `machine`'s own pack door signs it with its install key
-    /// `key`, on `frontier`, at `ts` (stage 7c-3a tests). A pack `frontier` did not read names
-    /// `seen` zero.
+    /// `key`, on `frontier`, at `ts` (stage 7c-3a tests); with `accept`, the owner's yes to the
+    /// keys it names, decided on that machine (stage 7c-3c tests). A pack `frontier` did not read
+    /// names `seen` zero.
     pub(crate) fn sign_setting_pack_head_as(
         &self,
         (machine, key): (EntityId, &ed25519_dalek::SigningKey),
         frontier: &SettingFrontier,
         (pack, version, digest, held): (&str, &str, [u8; 32], Vec<String>),
-        ts: u64,
+        (accept, ts): (Option<(EntityId, Vec<String>)>, u64),
     ) -> Result<AuthorityLogEntry> {
-        let seen = frontier
-            .seen
-            .get(&setting_pack_target(pack)?)
-            .copied()
-            .unwrap_or([0; 32]);
+        let target = match &accept {
+            None => setting_pack_target(pack)?,
+            Some(_) => setting_pack_accept_target(pack, &digest)?,
+        };
+        let seen = frontier.seen.get(&target).copied().unwrap_or([0; 32]);
+        let accept = accept.map(|(owner, accepted)| SettingPackAccept {
+            act: OwnerAct::by_owner(
+                owner,
+                OwnerActKind::PolicySetting,
+                target,
+                ActSurface::ThisInstall,
+                seen,
+            ),
+            accepted,
+        });
         let op = AuthorityOp::SettingPackHead(SettingPackHead {
             machine,
             pack: pack.to_owned(),
@@ -1108,6 +1220,7 @@ impl Vault {
             digest,
             held,
             seen,
+            accept,
         });
         self.sign_on_frontier_as(key, frontier, op, ts, 0)
     }

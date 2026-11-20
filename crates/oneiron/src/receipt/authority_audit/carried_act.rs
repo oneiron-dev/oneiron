@@ -7,7 +7,9 @@
 //! a byte of the copy: the record keeps only their digests.
 //!
 //! A move's setting copy (stage 7a-4) names its carrier as subject, and its
-//! detail how many carried rows it lists and how many acts they name.
+//! detail how many carried rows it lists and how many acts they name. A pack's
+//! head (stage 7c-3a) names its carrier; the owner's yes to held defaults
+//! (stage 7c-3c) names the pack's target, and counts the keys it accepts.
 
 use super::{AuthorityAuditEventKind, OpFields};
 use oneiron_authority::authority::{
@@ -77,21 +79,34 @@ pub(super) fn classify_setting_copy(
     )
 }
 
-/// The class, op name and fields of one pack's head.
+/// The class, op name and fields of one pack's head: a pack door's (stage 7c-3a), whose subject
+/// is its carrier, or the owner's yes to held defaults (stage 7c-3c), whose subject is the
+/// pack's target, as a setting act's is, and whose detail counts the keys it accepts.
 pub(super) fn classify_setting_pack_head(
     head: &SettingPackHead,
 ) -> (AuthorityAuditEventKind, &'static str, OpFields) {
+    let held = head.held.len();
+    let (detail, subject) = match &head.accept {
+        None => (
+            format!("{} {}, {held} held keys", head.pack, head.version),
+            head.machine,
+        ),
+        Some(accept) => (
+            format!(
+                "{} {}, {} accepted keys, {held} held keys",
+                head.pack,
+                head.version,
+                accept.accepted.len()
+            ),
+            accept.act.target,
+        ),
+    };
     (
         AuthorityAuditEventKind::Other,
         "setting_pack_head",
         OpFields {
-            detail: Some(format!(
-                "{} {}, {} held keys",
-                head.pack,
-                head.version,
-                head.held.len()
-            )),
-            subject_ref: Some(head.machine.to_hex()),
+            detail: Some(detail),
+            subject_ref: Some(subject.to_hex()),
             ..OpFields::default()
         },
     )

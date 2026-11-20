@@ -57,7 +57,8 @@ pub struct SettingChange {
     /// reads it). Absent on every other change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<ActSurface>,
-    /// The main-log entry that signed the change, a `PolicySettingSet` (stage 7a-1). Absent where
+    /// The main-log entry that signed the change, a `PolicySettingSet` (stage 7a-1), or the owner's
+    /// yes to a pack's defaults whose landing the change is (stage 7c-3c). Absent where
     /// none was appended: the change named no act surface, or its record could not be signed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signed: Option<AuthorityEntryHash>,
