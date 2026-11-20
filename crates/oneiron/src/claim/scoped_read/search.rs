@@ -387,17 +387,59 @@ impl ScopedRead<'_> {
     }
 
     /// This key's read filter under `policy`, narrowed by `requested`; with
-    /// no request, the key's own ceiling.
-    fn filter_under(
+    /// no request, the key's own ceiling. A filter from the binding-only
+    /// floor names its talk ([`Self::own_retrieval_floor`]) whatever the
+    /// request left of its kinds, so a request that names none of them
+    /// reads nothing and never falls back to the deny-all floor's
+    /// work-talk exception.
+    pub(super) fn filter_under(
         &self,
         policy: &PolicyManifestResolution,
         requested: Option<&RetrievalFilter>,
     ) -> Result<ResolvedRetrievalFilter> {
-        Ok(crate::gate::narrow_retrieval_filter(
-            &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
-            requested,
-        )?
-        .under_credential_of(&self.actor_key))
+        let (floor, work_talk_room) = self.own_retrieval_floor(policy);
+        let mut filter = crate::gate::narrow_retrieval_filter(&floor, requested)?
+            .under_credential_of(&self.actor_key);
+        filter.work_talk_room = work_talk_room;
+        Ok(filter)
+    }
+
+    /// This key's own retrieval floor under `policy`, with the work-talk
+    /// room it reads under that room's binding alone, if any
+    /// (WORK-TALK-BINDING-RECALL-FLOOR). A reader on a room turn of a work
+    /// talk whose binding names it ([`RoomTurnCeiling::work_talk`]) and
+    /// whose own floor is deny-all takes the talk's row kinds in its place:
+    /// no policy row admits it, it carries no credential or proof Scope,
+    /// and the policy has not failed closed. Each row those kinds let
+    /// through must sit in that one talk, under a binding that still admits
+    /// the reader in the row's snapshot (`own_row_readable_in`), so the
+    /// floor finds only what the reader's binding reads by id on this turn.
+    /// Every other key keeps its own floor exactly.
+    pub(super) fn own_retrieval_floor(
+        &self,
+        policy: &PolicyManifestResolution,
+    ) -> (crate::gate::RetrievalPolicyFloor, Option<EntityId>) {
+        let floor = policy.retrieval_floor_for_actor(Some(&self.actor_key));
+        let room = self
+            .actor_key
+            .room_turn
+            .as_ref()
+            .filter(|turn| turn.work_talk && turn.branch.is_none())
+            .map(|turn| turn.room)
+            .filter(|_| {
+                floor.deny_all
+                    && self.actor_key.vault_owner_ref().is_none()
+                    && self.actor_key.authority_scope().is_none()
+                    && !policy.is_fail_closed()
+                    && !policy.diagnostics().loaded_manifest_forces_fail_closed()
+            });
+        match room {
+            Some(room) => (
+                crate::gate::RetrievalPolicyFloor::work_talk_rows(),
+                Some(room),
+            ),
+            None => (floor, None),
+        }
     }
 
     #[expect(

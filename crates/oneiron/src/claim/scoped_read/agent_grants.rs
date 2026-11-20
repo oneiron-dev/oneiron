@@ -156,8 +156,12 @@ impl ScopedRead<'_> {
         let request = match asked {
             AskedFilter::Known(request) => request.clone(),
             // B's own filter, met with the Grant's floor: never wider than
-            // the caller asked. One that reads nothing leaves A nothing.
-            AskedFilter::Unknown if filter.deny_all => return false,
+            // the caller asked. One that reads nothing leaves A nothing, and
+            // so does a binding-only floor, whose kinds are its talk's and
+            // no request's (WORK-TALK-BINDING-RECALL-FLOOR).
+            AskedFilter::Unknown if filter.deny_all || filter.work_talk_room.is_some() => {
+                return false;
+            }
             AskedFilter::Unknown => Some(as_request(filter)),
         };
         let grants = authority.grants().of(reader, || {
@@ -269,7 +273,7 @@ impl ScopedRead<'_> {
             Some(held) => held.grants().of(reader, load),
             None => load().into(),
         };
-        let mut ceiling = policy.retrieval_floor_for_actor(Some(&self.actor_key));
+        let (mut ceiling, _) = self.own_retrieval_floor(policy);
         // A static boundary holds when the key's own floor has one and so
         // does each live Grant, each judged whole: by its own Scope, or by
         // the policy rows that still cap a read carrying it (gate/grants.rs

@@ -527,16 +527,33 @@ impl ScopedRead<'_> {
         id: &EntityId,
         kind: u8,
     ) -> bool {
-        match kind {
-            ENTITY_TYPE_CONVERSATION => self.work_talk_conversation_admits_in(txn, id),
+        self.work_talk_row_room_in(txn, id, kind).is_some()
+    }
+
+    /// The work-talk conversation whose binding admits this lane's reader
+    /// to the row `id` of `kind` ([`Self::work_talk_row_readable_in`]):
+    /// the conversation itself, or the one room of a TURN or MESSAGE.
+    /// `None` when no binding admits it there. A binding-only floor reads a
+    /// row only when this is the talk its filter names
+    /// (WORK-TALK-BINDING-RECALL-FLOOR).
+    pub(super) fn work_talk_row_room_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        kind: u8,
+    ) -> Option<EntityId> {
+        let room = match kind {
+            ENTITY_TYPE_CONVERSATION => *id,
             ENTITY_TYPE_TURN | ENTITY_TYPE_MESSAGE => {
-                matches!(
-                    crate::conversation::room_for_record_in(self.vault, txn, *id),
-                    Ok(Some(room)) if self.work_talk_conversation_admits_in(txn, &room)
-                )
+                match crate::conversation::room_for_record_in(self.vault, txn, *id) {
+                    Ok(Some(room)) => room,
+                    _ => return None,
+                }
             }
-            _ => false,
-        }
+            _ => return None,
+        };
+        self.work_talk_conversation_admits_in(txn, &room)
+            .then_some(room)
     }
 
     /// Whether `conversation` carries a work-talk binding that admits this

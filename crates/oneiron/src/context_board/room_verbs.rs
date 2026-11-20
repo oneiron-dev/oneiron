@@ -315,6 +315,7 @@ impl Memory<'_> {
         Ok(Some(RoomTurnCeiling {
             terms: turn.terms.clone(),
             personal: turn.personal,
+            work_talk: turn.work_talk && now.work_talk,
             ..now
         }))
     }
@@ -603,5 +604,25 @@ pub(crate) fn room_ceiling_in(
     let mut ceiling =
         ceiling::room_turn_ceiling_in(vault, txn, room, caller, &members, speakers.as_ref())?;
     ceiling.roster = live_audience::with_entries(members, &live);
+    ceiling.work_talk = work_talk_binds_caller_in(vault, txn, room, caller);
     Ok(Some(ceiling))
+}
+
+/// Whether `room` is a work talk whose registered binding names `caller`:
+/// one of its two PERSONs or one of its two actors
+/// ([`RoomTurnCeiling::work_talk`]). A binding that fails to read names no
+/// one, so the caller reads under its own floor alone.
+fn work_talk_binds_caller_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    caller: EntityId,
+) -> bool {
+    crate::workspace_roster::work_talk_binding_in_txn(vault, txn, room).is_ok_and(|binding| {
+        binding.is_some_and(|binding| {
+            binding.admits(caller)
+                || caller == binding.member_person
+                || caller == binding.companion_person
+        })
+    })
 }

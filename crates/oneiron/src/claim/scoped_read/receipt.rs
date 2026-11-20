@@ -32,7 +32,9 @@ impl ScopedRead<'_> {
         applied: &ResolvedRetrievalFilter,
         suppressed_count: usize,
     ) -> ScopedReadReceipt {
-        let floor = policy.retrieval_floor_for_actor(Some(&self.actor_key));
+        // A binding-only floor reports its talk's kinds as the key's ceiling
+        // (WORK-TALK-BINDING-RECALL-FLOOR), the filter it read under.
+        let (floor, _) = self.own_retrieval_floor(policy);
         let grant_scope = floor.has_grant_scope_bound(self.actor_key.authority_scope())
             || policy.scoped_read_grants_all_bounded(&self.actor_key);
         self.receipt_under(requested, floor, grant_scope, applied, suppressed_count)
