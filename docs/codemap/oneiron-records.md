@@ -192,11 +192,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_sandbox/egress/receipt.rs` | src | s | 1 struct | EgressReceipt | Moved from `crates/oneiron/src/code_sandbox/egress/receipt.rs` (lib split R1: record types below the lib) |
 | `src/code_sandbox/mod.rs` | src | s | 1 mod · 21 re-export | — | — |
 | `src/compaction/check_material.rs` | src | s | 1 struct · 1 fn | CompactionCheckMaterialRef | Moved from `crates/oneiron/src/compaction/check_material.rs` (lib split R2: record types below the lib) |
-| `src/compaction/conversation.rs` | src | s | 2 struct | ConversationEvidence, ConversationTurnSpan | Moved from `crates/oneiron/src/compaction/conversation.rs` (lib split R2: record types below the lib) |
+| `src/compaction/conversation.rs` | src | s | 2 struct · 1 fn | ConversationEvidence, ConversationTurnSpan | Moved from `crates/oneiron/src/compaction/conversation.rs` (lib split R2: record types below the lib) |
 | `src/compaction/folds.rs` | src | s | 5 struct · 1 enum · 4 fn · 1 const · 10 re-export | FoldCompactAsk, FoldCompactAsked, FoldMark, FoldMarked, FoldUnfolded, SelfFoldCall | Moved from `crates/oneiron/src/compaction/folds.rs` (lib split R2: record types below the lib) |
 | `src/compaction/mod.rs` | src | s | 5 mod · 41 re-export | — | — |
 | `src/compaction/output.rs` | src | s | 2 struct · 2 enum · 4 fn · 1 const | OutputAffordance, OutputContextView, OutputRef, OutputTier | Moved from `crates/oneiron/src/compaction/output.rs` (lib split R2: record types below the lib) |
-| `src/compaction/self_writer.rs` | src | s | 4 struct · 2 enum · 3 fn · 1 const | CompactionCall, CompactionEvidence, CompactionHomeRef, CompactionLanding, CompactionStepRef, CompactionUsage | Moved from `crates/oneiron/src/compaction/self_writer.rs` (lib split R1: record types below the lib) |
+| `src/compaction/self_writer.rs` | src | s | 4 struct · 2 enum · 2 fn · 1 const | CompactionCall, CompactionEvidence, CompactionHomeRef, CompactionLanding, CompactionStepRef, CompactionUsage | Moved from `crates/oneiron/src/compaction/self_writer.rs` (lib split R1: record types below the lib) |
 | `src/companion/mod.rs` | src | s | 1 mod · 8 re-export | — | — |
 | `src/companion/persona.rs` | src | s | 2 struct · 6 fn | PersonaInputBasis, PersonaMadeBy | Moved from `crates/oneiron/src/companion/persona.rs` (lib split R1: record types below the lib) |
 | `src/connector_key/credential_binding.rs` | src | s | 3 struct · 1 enum · 1 fn · 1 re-export | ConnectorBindingDependent, ConnectorCredentialBinding, ConnectorIssuerTransition, ConnectorIssuerTransitionState | Moved from `crates/oneiron/src/connector_key/credential_binding.rs` (lib split R1: record types below the lib) |
@@ -313,7 +313,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/code_fix/publisher.rs` | src | s | 4 enum · 2 fn | EngineAdmission, EngineArm, EngineCallUsage, PublisherCandidateKind | Moved from `crates/oneiron/src/dreamer_runner/maintenance/code_fix/publisher.rs` (lib split R2: record types… |
 | `src/dreamer_runner/maintenance/code_fix/publisher_refs.rs` | src | s | 1 struct · 1 enum · 1 fn | PublisherCandidateInput, PublisherCandidateRef | Moved from `crates/oneiron/src/dreamer_runner/maintenance/code_fix/publisher_refs.rs` (lib split R2: record… |
 | `src/dreamer_runner/maintenance/compaction_check.rs` | src | s | 2 const · 1 mod | — | Moved from `crates/oneiron/src/dreamer_runner/maintenance/compaction_check.rs` (lib split R2: record types… |
-| `src/dreamer_runner/maintenance/compaction_check/conversation.rs` | src | s | 1 fn · 1 const | — | Moved from `crates/oneiron/src/dreamer_runner/maintenance/compaction_check/conversation.rs` (lib split R2… |
+| `src/dreamer_runner/maintenance/compaction_check/conversation.rs` | src | s | 1 const | — | Moved from `crates/oneiron/src/dreamer_runner/maintenance/compaction_check/conversation.rs` (lib split R2… |
 | `src/dreamer_runner/maintenance/curator.rs` | src | s | 1 struct | CuratorQuestions | Moved from `crates/oneiron/src/dreamer_runner/maintenance/curator.rs` (lib split R2: record types below the… |
 | `src/dreamer_runner/maintenance/digest/mod.rs` | src | s | 2 mod · 12 re-export | — | — |
 | `src/dreamer_runner/maintenance/digest/policy.rs` | src | s | 2 const | — | Moved from `crates/oneiron/src/dreamer_runner/maintenance/digest/policy.rs` (lib split R2: record types… |
