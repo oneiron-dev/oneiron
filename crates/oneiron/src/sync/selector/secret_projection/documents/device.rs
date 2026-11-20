@@ -559,9 +559,11 @@ mod text_diff_budget_tests {
     use super::merged;
     use std::time::{Duration, Instant};
 
-    /// Before the diff budget this ran for many minutes.
+    /// Before the diff budget this ran for many minutes. Past the budget the
+    /// merge is refused: a coarse replacement would lose the other copy's
+    /// concurrent edits inside the replaced span.
     #[test]
-    fn an_unrelated_merge_of_a_large_copy_ends_within_the_budget() {
+    fn an_unrelated_merge_of_a_large_copy_is_refused_within_the_budget() {
         let base = format!("{} tail \u{2713}", "x".repeat(1 << 20));
         let ours = "\u{e9}dited tail \u{2713}";
         let started = Instant::now();
@@ -571,7 +573,7 @@ mod text_diff_budget_tests {
             elapsed < Duration::from_secs(60),
             "the copy merge took {elapsed:?}"
         );
-        assert_eq!(result.unwrap(), ours);
+        assert!(result.is_err(), "the merge is refused past the budget");
     }
 
     #[test]

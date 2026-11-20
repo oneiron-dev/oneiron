@@ -1,11 +1,14 @@
-//! A large deck paragraph synced to unrelated runs holds to the whole-text diff budget.
+//! A large deck paragraph synced to unrelated runs is refused within the whole-text diff
+//! budget.
 
 use super::{LoroDoc, NodeId, PARAS, Paragraph, Run, TEXT, TEXTS, configure, sync_paragraph};
 use std::time::{Duration, Instant};
 
-/// Before the diff budget this ran for many minutes.
+/// Before the diff budget this ran for many minutes. Past the budget the
+/// paragraph keeps the text it held.
 #[test]
-fn syncing_a_large_paragraph_to_unrelated_runs_ends_within_the_budget() {
+fn syncing_a_large_paragraph_to_unrelated_runs_is_refused_within_the_budget() {
+    let old = format!("{} tail \u{2713}", "x".repeat(1 << 20));
     let doc = LoroDoc::new();
     configure(&doc);
     let entry = doc.get_map(TEXTS).ensure_mergeable_map("1").unwrap();
@@ -15,7 +18,7 @@ fn syncing_a_large_paragraph_to_unrelated_runs_ends_within_the_budget() {
         id: NodeId(2),
         level: 0,
         runs: vec![Run {
-            text: format!("{} tail \u{2713}", "x".repeat(1 << 20)),
+            text: old.clone(),
             bold: None,
             italic: None,
             size: None,
@@ -33,6 +36,6 @@ fn syncing_a_large_paragraph_to_unrelated_runs_ends_within_the_budget() {
         elapsed < Duration::from_secs(60),
         "syncing the paragraph took {elapsed:?}"
     );
-    result.unwrap();
-    assert_eq!(para.ensure_mergeable_text(TEXT).unwrap().to_string(), new);
+    assert!(result.is_err(), "the sync is refused past the budget");
+    assert_eq!(para.ensure_mergeable_text(TEXT).unwrap().to_string(), old);
 }

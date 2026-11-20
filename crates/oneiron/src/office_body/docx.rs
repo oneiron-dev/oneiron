@@ -666,9 +666,10 @@ mod text_diff_budget_tests {
     use oneiron_docedit::docx_body::{DocxBlock, DocxBlockKind, DocxCell};
     use std::time::{Duration, Instant};
 
-    /// Before the diff budget this ran for many minutes.
+    /// Before the diff budget this ran for many minutes. Past the budget
+    /// the paragraph keeps the text it held.
     #[test]
-    fn an_unrelated_set_text_of_a_large_paragraph_ends_within_the_budget() {
+    fn an_unrelated_set_text_of_a_large_paragraph_is_refused_within_the_budget() {
         let old = format!("{} tail \u{2713}", "x".repeat((1 << 20) - 16));
         let new = "\u{e9}dited tail \u{2713}";
         let doc = LoroDoc::new();
@@ -678,7 +679,7 @@ mod text_diff_budget_tests {
                 id: "p1".to_string(),
                 kind: DocxBlockKind::Paragraph,
                 role: None,
-                text: old,
+                text: old.clone(),
                 runs: Vec::new(),
                 cells: Vec::new(),
                 locked: None,
@@ -698,13 +699,14 @@ mod text_diff_budget_tests {
             elapsed < Duration::from_secs(60),
             "the replacement took {elapsed:?}"
         );
-        result.unwrap();
-        assert_eq!(read(&doc).unwrap().blocks[0].text, new);
+        assert!(result.is_err(), "the set is refused past the budget");
+        assert_eq!(read(&doc).unwrap().blocks[0].text, old);
     }
 
-    /// Before the diff budget this ran for many minutes.
+    /// Before the diff budget this ran for many minutes. Past the budget
+    /// the cell keeps the text it held.
     #[test]
-    fn an_unrelated_set_cell_of_a_large_table_cell_ends_within_the_budget() {
+    fn an_unrelated_set_cell_of_a_large_table_cell_is_refused_within_the_budget() {
         let old = format!("{} tail \u{2713}", "x".repeat((1 << 20) - 16));
         let new = "\u{e9}dited tail \u{2713}";
         let doc = LoroDoc::new();
@@ -719,7 +721,7 @@ mod text_diff_budget_tests {
                 cells: vec![DocxCell {
                     row: 0,
                     col: 0,
-                    text: old,
+                    text: old.clone(),
                     paragraphs: Vec::new(),
                 }],
                 locked: None,
@@ -741,7 +743,7 @@ mod text_diff_budget_tests {
             elapsed < Duration::from_secs(60),
             "the replacement took {elapsed:?}"
         );
-        result.unwrap();
-        assert_eq!(read(&doc).unwrap().blocks[0].cells[&(0, 0)], new);
+        assert!(result.is_err(), "the set is refused past the budget");
+        assert_eq!(read(&doc).unwrap().blocks[0].cells[&(0, 0)], old);
     }
 }

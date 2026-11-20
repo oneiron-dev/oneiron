@@ -289,9 +289,10 @@ mod text_diff_budget_tests {
     };
     use std::time::{Duration, Instant};
 
-    /// Before the diff budget this ran for many minutes.
+    /// Before the diff budget this ran for many minutes. Past the budget
+    /// the story cell paragraph keeps the text it held.
     #[test]
-    fn an_unrelated_set_text_of_a_large_story_cell_paragraph_ends_within_the_budget() {
+    fn an_unrelated_set_text_of_a_large_story_cell_paragraph_is_refused_within_the_budget() {
         let old = format!("{} tail \u{2713}", "x".repeat((1 << 20) - 16));
         let new = "\u{e9}dited tail \u{2713}";
         let scope = DocxStoryScope::Footnote {
@@ -315,7 +316,7 @@ mod text_diff_budget_tests {
                         paragraphs: vec![DocxCellParagraph {
                             id: "p1".to_string(),
                             guard: String::new(),
-                            text: old,
+                            text: old.clone(),
                             locked: None,
                         }],
                     }],
@@ -331,10 +332,10 @@ mod text_diff_budget_tests {
             elapsed < Duration::from_secs(60),
             "the replacement took {elapsed:?}"
         );
-        result.unwrap();
+        assert!(result.is_err(), "the set is refused past the budget");
         assert_eq!(
             stories::read(&doc).unwrap()[0].tables[0].cells[0].paragraphs[0].text,
-            new
+            old
         );
     }
 }
