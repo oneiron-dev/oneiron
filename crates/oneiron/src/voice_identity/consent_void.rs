@@ -135,3 +135,25 @@ pub(super) fn grant_withdrawn_for(
     }
     Ok(false)
 }
+
+/// Whether `withdrawal` voided `grant` when it was recorded: a void row names both events as
+/// they are stored now. A grant it voided is no decision after it, so its subject may still
+/// disown it ([`crate::Vault::voice_withdrawal_open_to_disown_in_txn`]).
+pub(super) fn grant_voided_by(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    grant: &VoiceConsentEventV1,
+    withdrawal: &VoiceConsentEventV1,
+) -> Result<bool> {
+    let grant_fingerprint = consent_event_fingerprint(grant)?;
+    let withdrawal_fingerprint = consent_event_fingerprint(withdrawal)?;
+    Ok(CONSENT_VOID
+        .scan_from(store, rtxn, grant.subject_ref.as_bytes())?
+        .into_iter()
+        .any(|(_, void)| {
+            void.grant_event_id == grant.event_id
+                && void.grant_fingerprint == grant_fingerprint
+                && void.withdrawal_event_id == withdrawal.event_id
+                && void.withdrawal_fingerprint == withdrawal_fingerprint
+        }))
+}

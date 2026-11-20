@@ -807,9 +807,10 @@ impl Vault {
     /// `subject`'s withdrawal `event_id` while they may still disown it
     /// (VOICE-WITHDRAW-UNDO-SHAPE = B): a withdrawal someone else recorded
     /// for them that is still their latest decision, dated before this
-    /// vault's clock. No grant of theirs is dated after it and no other
-    /// withdrawal at or after it; a grant in its own second loses to it, as
-    /// enrolment and recognition order a tie.
+    /// vault's clock. No grant of theirs is dated after it, apart from a
+    /// grant it voided as recorded before it ([`super::consent_void`]), and no
+    /// other withdrawal at or after it; a grant in its own second loses to
+    /// it, as enrolment and recognition order a tie.
     /// Their "that wasn't me" logs a grant dated one second after it, which
     /// the consent door then accepts, and which reverses only that
     /// withdrawal: a later one still voids it. It restores consent only; the
@@ -829,16 +830,27 @@ impl Vault {
         {
             return Ok(None);
         }
-        let decided_since = read_consent_events(&self.store, txn, &subject)?
-            .iter()
-            .any(|other| {
-                other.event_id != withdrawal.event_id
-                    && match other.state {
-                        VoiceConsentState::Granted => other.occurred_at > withdrawal.occurred_at,
-                        VoiceConsentState::Withdrawn => other.occurred_at >= withdrawal.occurred_at,
-                    }
-            });
-        Ok((!decided_since).then_some(withdrawal))
+        for other in read_consent_events(&self.store, txn, &subject)? {
+            if other.event_id == withdrawal.event_id {
+                continue;
+            }
+            let decided_since = match other.state {
+                VoiceConsentState::Granted => {
+                    other.occurred_at > withdrawal.occurred_at
+                        && !super::consent_void::grant_voided_by(
+                            &self.store,
+                            txn,
+                            &other,
+                            &withdrawal,
+                        )?
+                }
+                VoiceConsentState::Withdrawn => other.occurred_at >= withdrawal.occurred_at,
+            };
+            if decided_since {
+                return Ok(None);
+            }
+        }
+        Ok(Some(withdrawal))
     }
 
     /// The withdrawal transaction: `admit` runs first inside it, so a
