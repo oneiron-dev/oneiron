@@ -272,6 +272,23 @@ impl<'vault> OffRecordSession<'vault> {
         Ok(Some(self.check_saver(saver)))
     }
 
+    /// The first step of a base write on `route`, a route taken earlier, in
+    /// a write transaction another module's writer opens (a searched mail's
+    /// landing, ARCH-0063 #searched-mail), as [`Landing::in_txn`] runs it: a
+    /// run's participant is still in the room, `saver` (this route's
+    /// [`Self::saver_check_for`]) still holds, and `route` still stands. A
+    /// stretch that went off record while the write waited keeps nothing of
+    /// it in base.
+    pub(crate) fn base_write_in_txn(
+        &self,
+        route: &SessionWriteRoute,
+        saver: Option<&SaverCheck<'_, '_>>,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<()> {
+        self.participant_and_saver_in_txn(saver, txn)?;
+        route.revalidate()
+    }
+
     /// The [`Landing`] a base write on `route`, a route taken earlier, runs
     /// first in its transaction.
     pub(super) fn landing<'r>(

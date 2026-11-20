@@ -159,6 +159,28 @@ pub(super) fn occurrence_key(source: EntityId, provider_id: &str) -> (EntityId, 
     (source, *blake3::hash(provider_id.as_bytes()).as_bytes())
 }
 
+/// The rows the occurrence of `provider_id` in `source` names as `dbs` hold
+/// it, its CONVERSATION, its TURN and each revision's MESSAGE; `None` when
+/// `dbs` hold no occurrence of it. A door for
+/// `tests/mail_search_off_record.rs`, which reads base and a session's
+/// composed view alike.
+#[cfg(oneiron_test_support)]
+pub(crate) fn occurrence_rows_in(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    source: EntityId,
+    provider_id: &str,
+) -> Result<Option<Vec<EntityId>>> {
+    Ok(OCCURRENCES
+        .get(dbs, txn, &occurrence_key(source, provider_id))?
+        .map(|occurrence| {
+            [occurrence.conversation, occurrence.turn]
+                .into_iter()
+                .chain(occurrence.messages)
+                .collect()
+        }))
+}
+
 /// The key a thread's epoch is kept under.
 pub(super) fn thread_hash(thread_key: &str) -> [u8; 32] {
     *blake3::hash(thread_key.as_bytes()).as_bytes()
