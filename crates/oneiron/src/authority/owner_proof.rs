@@ -148,8 +148,12 @@ pub(super) fn machine_answer_needs_proof(
 /// proves only itself, and so does an admin-only key. A revoke of a key the
 /// parents do not hold needs the same proof: the roster merge keeps a
 /// revocation on every branch, so a revoke parented before a key's
-/// enrolment would otherwise end that owner key unproved. Every other op
-/// passes.
+/// enrolment would otherwise end that owner key unproved. A `RotateKey`
+/// revokes its `old_key` (`op_apply.rs`), so it is judged as a `RevokeDevice`
+/// of that key (FIX [ROTATEKEY-OLD-OWNER-KEY-UNPROVEN]): a rotation the
+/// custodial root signs alone never ends an owner key, and an owner key's
+/// rotation of itself counts, since its signer is its own proof. Every other
+/// op passes.
 ///
 /// The act rule (A0, `act_rule.rs`) takes this over in one line: the
 /// participants' reading is `AnyMove` when one proves for the owner and
@@ -160,8 +164,10 @@ pub(super) fn owner_key_revoke_proved(
     op: &AuthorityOp,
     participants: &BTreeSet<AuthorityKey>,
 ) -> bool {
-    let AuthorityOp::RevokeDevice { revoked_key } = op else {
-        return true;
+    let revoked_key = match op {
+        AuthorityOp::RevokeDevice { revoked_key } => revoked_key,
+        AuthorityOp::RotateKey { old_key, .. } => old_key,
+        _ => return true,
     };
     let ends_owner_key =
         proves_for_the_owner(state, revoked_key) || !state.roster.contains_key(revoked_key);

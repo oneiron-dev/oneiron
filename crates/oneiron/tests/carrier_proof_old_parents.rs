@@ -1874,3 +1874,99 @@ fn an_owner_key_line_lets_a_second_enrolment_of_its_key_fold() {
         fold.issues
     );
 }
+
+const ROTATION_SUCCESSOR_SEED: u8 = 68;
+const COSIGNED_ROTATION_SUCCESSOR_SEED: u8 = 69;
+
+/// A rotation of `old_key` onto a fresh agent key of `seed`.
+fn rotation_of(old_key: AuthorityKey, seed: u8) -> AuthorityOp {
+    AuthorityOp::RotateKey {
+        old_key,
+        new_device: DeviceAuthority {
+            key: key_of(&signing(seed)),
+            transport_key_binding: [7; 32],
+            attestation: AuthorityAttestation {
+                kind: "SoftwareArgon2id".to_owned(),
+                evidence: vec![1, 2, 3],
+            },
+            tier: AuthorityTier::Software,
+            roles: ROLE_AGENT,
+        },
+    }
+}
+
+/// Test 25, for row ROTATEKEY-OLD-OWNER-KEY-UNPROVEN (FIX-LIST 28274): a
+/// rotation ends its old key as a revoke of it does, so a rotation of an
+/// owner key needs an owner key's proof (row HOSTED-ROOT-REVOKES-OWNER-KEY;
+/// the lead, 15 Nov 20:41: "a revoke of an owner key needs an owner key's
+/// signature, never only the custodial root"). E enrols K (holder M); the
+/// custodial root alone signs a rotation R of K on E, and two forked
+/// handoffs on R (H1, H2) close their fences and install nothing, so R
+/// stands as the row both handoffs rest on, as in test 20. Main: R counts
+/// and K is revoked.
+#[test]
+fn a_rotation_of_an_owner_key_the_root_signs_alone_does_not_end_it() {
+    let mut vault = OldParents::new();
+    let enrolment = vault.enrol_owner_key();
+    let key = vault.owner_authority_key();
+    let rotation = vault.push_root_row(
+        vec![enrolment],
+        rotation_of(key.clone(), ROTATION_SUCCESSOR_SEED),
+    );
+    let first = vault.push_root_row(vec![rotation], re_root_op(NEW_ROOT_SEED));
+    let second = vault.push_root_row(vec![rotation], re_root_op(FORK_ROOT_SEED));
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&enrolment),
+        "the enrolment counts: {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold.valid_entries.contains(&rotation),
+        "the root's unproved rotation of the owner key is refused: {:?}",
+        fold.issues
+    );
+    assert!(
+        live_owner(&fold, &key),
+        "a rotation the root signs alone never ends the owner key: {key:?} {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold.valid_entries.contains(&first) && !fold.valid_entries.contains(&second),
+        "neither forked handoff installs: {:?}",
+        fold.issues
+    );
+}
+
+/// Test 26, the guard of test 25: the same rotation with K's own cosign is
+/// the owner's proof, so it counts and ends K, on main and on the fix alike.
+#[test]
+fn a_rotation_of_an_owner_key_it_cosigns_still_ends_it() {
+    let mut vault = OldParents::new();
+    let enrolment = vault.enrol_owner_key();
+    let key = vault.owner_authority_key();
+    vault.root_seq += 1;
+    let row = signed(
+        Some(vault.vault_id()),
+        vault.root_seq,
+        vec![enrolment],
+        rotation_of(key.clone(), COSIGNED_ROTATION_SUCCESSOR_SEED),
+        &vault.root,
+        &[&vault.owner_key],
+    );
+    let rotation = hash(&row);
+    vault.rows.push(row);
+    vault.push_root_row(vec![rotation], re_root_op(NEW_ROOT_SEED));
+    vault.push_root_row(vec![rotation], re_root_op(FORK_ROOT_SEED));
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&rotation),
+        "the rotation K cosigns counts: {:?}",
+        fold.issues
+    );
+    assert!(
+        !live_owner(&fold, &key),
+        "the cosigned rotation ends the owner key: {key:?} {:?}",
+        fold.issues
+    );
+}
