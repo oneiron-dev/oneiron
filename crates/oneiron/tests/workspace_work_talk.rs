@@ -233,6 +233,7 @@ fn witness_text(
             conversation_ref: conversation.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author,
@@ -962,6 +963,7 @@ fn a_held_tag_witness_by_the_companion_needs_the_content_grant() -> TestResult {
         conversation_ref: talk.to_hex(),
         turn_ref: Some(turn_id.to_hex()),
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: None,
             author: WitnessAuthor::Companion,
