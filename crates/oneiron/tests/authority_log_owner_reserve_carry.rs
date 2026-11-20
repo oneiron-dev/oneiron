@@ -21,6 +21,15 @@
 //! import of A's removal refuses with `AuthorityLogFull`, and A's setting act
 //! either is not counted at A or waits at B. The second test passes there too:
 //! it shows the act A carries unproven waits at B.
+//!
+//! Row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS: thirteen more carried ops
+//! refused any cosign, at shape or in their own fold, so no proof could
+//! land them past B's reserve. One rule now takes one cosign on each, judged
+//! once at the merge as a live owner key's proof. The last three tests: a
+//! proven world edit A carries lands and counts at B (red on main c8e2f038:
+//! the world edit's fold refused the cosign), a stranger's cosign counts at
+//! neither install (passes on main too), and the shape takes one cosign on
+//! a carried cancel or install join, never two (red on main: refused).
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test authority_log_owner_reserve_carry`.
 
@@ -38,7 +47,12 @@ use oneiron::authority::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::settings::undo_send::UndoSendSetting;
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::adopted_owner_work::this_install_machine_key;
+use oneiron::test_doors::host_root_row_signature::cosign_authority_row_as_host_root;
 use oneiron::{EntityId, ErrorKind, TimeRange, Vault, VaultConfig};
+use oneiron_authority::authority::{
+    FrontierJoin, FrontierJoinFamily, FrontierJoinScope, OwnerWorkCancel,
+};
 
 /// The test's memory floor on B, 4 MiB: A's history folds well under it
 /// (asserted), and about ninety chained rows pass it, as in
@@ -458,5 +472,258 @@ fn the_owners_setting_another_install_proves_lands_past_this_installs_reserve() 
         entry.cosigns.len(),
         1,
         "A signed the setting act with one owner key's proof beside its install key"
+    );
+}
+
+/// The cosign a test puts beside A's install key on a row A carries.
+enum Cosign {
+    /// The owner key A holds: the test host root.
+    OwnerKey,
+    /// A key no roster holds.
+    Stranger(SigningKey),
+}
+
+fn signature_slot(key: AuthorityKey) -> AuthoritySignature {
+    AuthoritySignature {
+        suite: key.suite(),
+        public_key: key,
+        signature: vec![0; 64],
+    }
+}
+
+/// The heads of A's history: every row no other row names as a parent.
+fn heads_of_a(rooted: &Rooted) -> Vec<AuthorityEntryHash> {
+    let rows: Vec<AuthorityLogEntry> = stored_history(&rooted.vault)
+        .iter()
+        .map(|body| decode_authority_log_entry_body(body).expect("a stored row"))
+        .collect();
+    let named: Vec<AuthorityEntryHash> = rows
+        .iter()
+        .flat_map(|row| row.parent_hashes.iter().copied())
+        .collect();
+    let mut heads: Vec<AuthorityEntryHash> = rows
+        .iter()
+        .map(|row| authority_entry_hash(row).expect("hash"))
+        .filter(|hash| !named.contains(hash))
+        .collect();
+    heads.sort_unstable();
+    heads
+}
+
+/// A world edit install A carries for the owner under its install key, on
+/// the heads of A's history, at the next sequence of that key there, cosigned as
+/// `cosign` says: a row of the carried ops whose own fold reads no owner
+/// proof (row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS). The test signs it,
+/// as A's world edit door signs one, since that door attaches no proof yet.
+fn world_edit_a_carries(rooted: &Rooted, cosign: Cosign) -> AuthorityLogEntry {
+    let install = this_install_machine_key(&rooted.vault).expect("A's install key");
+    let machine = rooted
+        .vault
+        .local_machine()
+        .expect("install A")
+        .expect("install A's machine")
+        .id;
+    let key = AuthorityKey::Ed25519(install.verifying_key().to_bytes());
+    let seq = stored_history(&rooted.vault)
+        .iter()
+        .map(|body| decode_authority_log_entry_body(body).expect("a stored row"))
+        .filter(|row| *row.signer_key() == key)
+        .map(|row| row.seq)
+        .max()
+        .unwrap_or(0)
+        + 1;
+    let world = EntityId::now();
+    let op = AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
+        world,
+        act: OwnerAct::by_owner(
+            rooted.owner,
+            OwnerActKind::WorldPrivacy,
+            world,
+            ActSurface::ThisInstall,
+            [0; 32],
+        ),
+        machine,
+        settings: WorldPrivacy::default(),
+    });
+    let cosigner = match &cosign {
+        Cosign::OwnerKey => oneiron::test_support::test_host_issuer().public_key(),
+        Cosign::Stranger(signing) => AuthorityKey::Ed25519(signing.verifying_key().to_bytes()),
+    };
+    let mut entry = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(rooted.vault_id),
+        seq,
+        parent_hashes: heads_of_a(rooted),
+        op,
+        signer: signature_slot(key),
+        cosigns: vec![signature_slot(cosigner)],
+        ts: seq + 1,
+    };
+    let transcript = authority_transcript(&entry).expect("transcript");
+    entry.signer.signature = install.sign(&transcript).to_bytes().to_vec();
+    match cosign {
+        Cosign::OwnerKey => cosign_authority_row_as_host_root(
+            &oneiron::test_support::test_host_issuer(),
+            &mut entry,
+        )
+        .expect("the owner key's proof"),
+        Cosign::Stranger(signing) => {
+            entry.cosigns[0].signature = signing.sign(&transcript).to_bytes().to_vec();
+        }
+    }
+    entry
+}
+
+/// Row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS: a world edit A carries
+/// with the proof of the owner key it holds lands past B's owner reserve and
+/// B's fold counts it. The merge judges the one cosign once, at the edit's
+/// parent state, as a live owner key's proof. Red on main c8e2f038: the
+/// world edit's own transition refuses any cosign, so B does not count it.
+#[test]
+fn a_world_edit_another_install_proves_lands_past_this_installs_reserve() {
+    let rooted = rooted();
+    hold_owner_key(&rooted);
+    let flooder = admit_flooder(&rooted);
+    let second = second_install_at_its_reserve(&rooted, &flooder);
+    let edit = world_edit_a_carries(&rooted, Cosign::OwnerKey);
+    let hash = authority_entry_hash(&edit).expect("hash");
+    second
+        .vault
+        .put_authority_log_entry(&edit, AT, 1)
+        .expect("B lands the world edit A carries with the owner key's proof past its reserve");
+    let fold = second.vault.authority_fold().expect("B's fold");
+    assert!(
+        fold.valid_entries.contains(&hash),
+        "B's fold counts the proven world edit"
+    );
+    assert!(
+        !fold.authority_log_past_bound() && !fold.vault_root_is_conflicted(),
+        "B's fold stays under its floor and its root stands"
+    );
+}
+
+/// The control: a cosign by a key no roster holds is no proof. Past B's
+/// reserve the edit is not the owner's work, so it waits at B's door; at A,
+/// with no reserve in play, the fold refuses it as a forged proof. Passes
+/// on main too.
+#[test]
+fn a_world_edit_cosigned_by_no_owner_key_counts_at_neither_install() {
+    let rooted = rooted();
+    hold_owner_key(&rooted);
+    let flooder = admit_flooder(&rooted);
+    let second = second_install_at_its_reserve(&rooted, &flooder);
+    let stranger = SigningKey::from_bytes(&[0x5C; 32]);
+    let edit = world_edit_a_carries(&rooted, Cosign::Stranger(stranger));
+    let hash = authority_entry_hash(&edit).expect("hash");
+    let at_b = second.vault.put_authority_log_entry(&edit, AT, 1);
+    assert!(
+        at_b.as_ref()
+            .is_err_and(|error| error.kind() == ErrorKind::AuthorityLogFull),
+        "B's door holds the edit a stranger cosigned at its reserve: {at_b:?}"
+    );
+    assert!(
+        !second
+            .vault
+            .authority_fold()
+            .expect("B's fold")
+            .valid_entries
+            .contains(&hash),
+        "B does not count it"
+    );
+    let at_a = rooted.vault.put_authority_log_entry(&edit, AT, 1);
+    assert!(
+        !rooted
+            .vault
+            .authority_fold()
+            .expect("A's fold")
+            .valid_entries
+            .contains(&hash),
+        "A's fold refuses the edit a stranger cosigned ({at_a:?})"
+    );
+}
+
+/// A carried entry of an op whose shape refused any cosign, an owner work
+/// cancel or an install's frontier join, now takes its carrier's install
+/// key beside one cosign, which the fold judges; never two. An anchor's
+/// join stays signed alone. Red on main c8e2f038 for the one-cosign shapes:
+/// owner work and frontier joins refused any cosign at shape.
+#[test]
+fn a_carried_cancel_or_install_join_takes_one_cosign_by_shape() {
+    let carrier = SigningKey::from_bytes(&[0xA1; 32]);
+    let first = SigningKey::from_bytes(&[0xA2; 32]);
+    let second = SigningKey::from_bytes(&[0xA3; 32]);
+    let machine = EntityId::now();
+    let request = [0x11; 32];
+    let cancel = AuthorityOp::OwnerWorkCancel(OwnerWorkCancel {
+        carrier: machine,
+        act: OwnerAct::by_owner(
+            EntityId::now(),
+            OwnerActKind::RootRequest,
+            machine,
+            ActSurface::ThisInstall,
+            OwnerWorkCancel::seen_for(request),
+        ),
+        request,
+    });
+    let join = |family| {
+        AuthorityOp::FrontierJoin(FrontierJoin {
+            family,
+            scope: FrontierJoinScope::Main,
+        })
+    };
+    let entry = |op: AuthorityOp, cosigners: &[&SigningKey]| {
+        let mut keys: Vec<AuthorityKey> = cosigners
+            .iter()
+            .map(|cosigner| AuthorityKey::Ed25519(cosigner.verifying_key().to_bytes()))
+            .collect();
+        keys.sort();
+        let mut row = AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some([0x7A; 32]),
+            seq: 1,
+            parent_hashes: vec![[0x01; 32], [0x02; 32]],
+            op,
+            signer: signature_slot(AuthorityKey::Ed25519(carrier.verifying_key().to_bytes())),
+            cosigns: keys.into_iter().map(signature_slot).collect(),
+            ts: 1,
+        };
+        let transcript = authority_transcript(&row).expect("transcript");
+        row.signer.signature = carrier.sign(&transcript).to_bytes().to_vec();
+        for cosign in &mut row.cosigns {
+            let signing = [&first, &second]
+                .into_iter()
+                .find(|key| {
+                    AuthorityKey::Ed25519(key.verifying_key().to_bytes()) == cosign.public_key
+                })
+                .expect("a cosigner");
+            cosign.signature = signing.sign(&transcript).to_bytes().to_vec();
+        }
+        row
+    };
+    for (name, op) in [
+        ("an owner work cancel", cancel),
+        (
+            "an install's frontier join",
+            join(FrontierJoinFamily::Install(machine)),
+        ),
+    ] {
+        assert!(
+            entry(op.clone(), &[]).validate_shape().is_ok(),
+            "{name} signed alone keeps its shape"
+        );
+        assert!(
+            entry(op.clone(), &[&first]).validate_shape().is_ok(),
+            "{name} takes one cosign beside its carrier"
+        );
+        assert!(
+            entry(op, &[&first, &second]).validate_shape().is_err(),
+            "{name} never takes two"
+        );
+    }
+    assert!(
+        entry(join(FrontierJoinFamily::Anchor), &[&first])
+            .validate_shape()
+            .is_err(),
+        "an anchor's join stays signed alone"
     );
 }
