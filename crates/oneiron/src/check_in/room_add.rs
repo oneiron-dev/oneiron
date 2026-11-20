@@ -160,13 +160,14 @@ pub(crate) fn room_add_check_in_in_txn(
 /// `judged`, the add's check-in, unless the call names a `check_in_ref`
 /// that the add did not spend: an add that goes at once, or that is not
 /// judged, spends no check-in, so the one it names would stay unspent while
-/// the add lands.
+/// the add lands. A door that judges no add, as a thread audience's self
+/// re-add (REVIEW-9839 P1), passes `None`.
 ///
 /// # Errors
 ///
 /// `BAD_REQUEST` naming `check_in_ref` ([`named_check_in_at_once`]) for
 /// such a `check_in_ref`.
-fn refuse_unspent_check_in_ref(
+pub(crate) fn refuse_unspent_check_in_ref(
     judged: Option<DoorCheckIn>,
     check_in_ref: Option<&EntityId>,
 ) -> MemoryResult<Option<DoorCheckIn>> {
