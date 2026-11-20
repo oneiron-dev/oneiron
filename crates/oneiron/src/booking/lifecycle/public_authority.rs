@@ -1,6 +1,6 @@
 //! Transactional public authority check for all four lifecycle mutations.
 use super::claim::{read_booking_facts, read_booking_facts_to_cancel};
-use super::door::refuse_frozen_booking_rows_in_txn;
+use super::door::refuse_off_home_booking_write_in_txn;
 use super::storage::{
     HOLD, booking_writer, confirm_receipt_key, engine_failure, read_receipt, refused,
 };
@@ -19,8 +19,9 @@ pub(super) fn booking_writer_with_publication<T>(
 ) -> Result<T, BookingError> {
     booking_writer(vault, |txn| {
         // FIX [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]: an attempt the door let
-        // through before a freeze writes nothing after it.
-        refuse_frozen_booking_rows_in_txn(vault, txn)?;
+        // through before a freeze, or before the election moved the home, writes
+        // nothing after it.
+        refuse_off_home_booking_write_in_txn(vault, txn)?;
         check_publication_in_writer(vault, txn, authority, request, now)?;
         let result = apply(txn)?;
         // Include time spent solving and staging the mutation. A refusal here

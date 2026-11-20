@@ -13,8 +13,8 @@
 //! the native question, label and state build over the already checked rows, with the
 //! lent wording applied exactly as native applies it. Evidence versions come from the
 //! rows the rebuild already pinned, in native evidence order, through the shared plain
-//! body hash. The bound read sends unsourced, since the extraction call source rows are
-//! unknown.
+//! body hash. The bound read sends under the rows its input was read from where the
+//! operand check knows them ([`ReadSources`]), and unsourced otherwise.
 
 use super::super::ConsolidationDecisions;
 use super::super::KeptDecision;
@@ -32,10 +32,13 @@ use super::super::executor::{
     label_questions_with,
 };
 use super::super::support::invalid_consolidation;
+use super::correction_listing::CorrectionListed;
+use super::read_sources::ReadSources;
 use super::reads::{
-    BuiltConflict, CheckedCandidate, CheckedPack, CorrectionListed, correction_evidence,
-    correction_page_entries, correction_project,
+    BuiltConflict, CheckedCandidate, CheckedPack, correction_evidence, correction_page_entries,
+    correction_project,
 };
+use super::step_records::OperandBound;
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::ExtractionDecisionLoan;
@@ -65,6 +68,8 @@ pub(crate) struct CheckedExtractionRead {
     project: Option<EntityId>,
     /// Names the ask correlation of this read in this attempt.
     correlation: EntityId,
+    /// Holds whose recorded rows the read sends under.
+    sources: ReadSources,
     /// Holds the read specific owned rows the lent execution renders.
     kind: CheckedReadKind,
 }
@@ -142,6 +147,7 @@ impl CheckedExtractionRead {
             scope,
             project,
             correlation,
+            sources: ReadSources::over_correction(),
             kind: CheckedReadKind::Correction {
                 rows: checked.rows,
                 pairs: checked.pairs,
@@ -171,6 +177,7 @@ impl CheckedExtractionRead {
             scope,
             project,
             correlation,
+            sources: ReadSources::over_correction(),
             kind: CheckedReadKind::CorrectionFinal {
                 rows: checked.rows,
                 listed: checked.listed,
@@ -187,6 +194,7 @@ impl CheckedExtractionRead {
         let subject = built.identity.subject;
         let project = Some(built.identity.project);
         Self {
+            sources: ReadSources::over_conflict(&built.member_positions, &built.candidate_ids),
             evidence: built.evidence,
             subject,
             scope,
@@ -210,6 +218,7 @@ impl CheckedExtractionRead {
         let subject = built.identity.subject;
         let project = Some(built.identity.project);
         Self {
+            sources: ReadSources::over_conflict(&built.member_positions, &built.candidate_ids),
             evidence: built.evidence,
             subject,
             scope,
@@ -233,6 +242,7 @@ impl CheckedExtractionRead {
         let subject = built.identity.subject;
         let project = Some(built.identity.project);
         Self {
+            sources: ReadSources::over_conflict(&built.member_positions, &built.candidate_ids),
             evidence: built.evidence,
             subject,
             scope,
@@ -245,6 +255,13 @@ impl CheckedExtractionRead {
                 round,
             },
         }
+    }
+
+    /// Takes each pack candidate's rows as the shared operand check fixed them in
+    /// `bounds`, by pack position. A read built without them sends unsourced.
+    pub(super) fn with_candidate_sources(mut self, bounds: &[OperandBound]) -> Self {
+        self.sources = self.sources.with_candidates(bounds);
+        self
     }
 
     /// Returns the native evidence in native order.
@@ -273,11 +290,9 @@ impl CheckedExtractionRead {
     }
 
     /// Builds this read's native questions, call labels and state with the held
-    /// native wording.
-    fn build_read(
-        &self,
-        decisions: &ConsolidationDecisions,
-    ) -> Result<(Vec<DecisionQuestion>, CallLabelMap, serde_json::Value)> {
+    /// native wording, with the pack positions of the candidates that own its
+    /// questions.
+    fn build_read(&self, decisions: &ConsolidationDecisions) -> Result<BuiltRead> {
         match &self.kind {
             CheckedReadKind::Correction {
                 rows,
@@ -308,6 +323,16 @@ impl CheckedExtractionRead {
     }
 }
 
+/// One built read: its native questions, call labels and state, then the pack
+/// positions of the candidates that own its questions, which a correction read names
+/// and a read over a conflict leaves empty.
+type BuiltRead = (
+    Vec<DecisionQuestion>,
+    CallLabelMap,
+    serde_json::Value,
+    Vec<usize>,
+);
+
 /// Groups the execution context one checked read runs with.
 pub(crate) struct ExtractionReadExecution<'a> {
     /// Borrows the vault the read runs in.
@@ -334,7 +359,8 @@ pub(crate) struct ExtractionReadExecution<'a> {
 /// lent wording, scope, route and evidence versions. The durable step uses the
 /// admitted attempt, its recorded run, the caller actor and execution subject, the lent
 /// pass deadline and frozen clock, no spend scope, and the pass bound guard.
-/// The read sends unsourced, since the extraction call source rows are unknown.
+/// The read sends under the rows its input was read from where they are known
+/// ([`ReadSources`]), and unsourced otherwise.
 pub(crate) async fn execute_checked_read(
     ctx: ExtractionReadExecution<'_>,
 ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
@@ -349,7 +375,11 @@ pub(crate) async fn execute_checked_read(
         spend_scope: None,
         wake_pass_bound: true,
     };
-    let (questions, labels, state) = ctx.execution.build_read(ctx.loan.decisions)?;
+    let (questions, labels, state, owners) = ctx.execution.build_read(ctx.loan.decisions)?;
+    let sources = ctx
+        .execution
+        .sources
+        .rows(&owners, ctx.execution.evidence(), &labels);
     let to = ask_route_for(ctx.vault, ctx.actor.entity_ref(), ctx.execution.project())?;
     let read = VerdictRead {
         step: &step,
@@ -367,7 +397,7 @@ pub(crate) async fn execute_checked_read(
         evidence: ctx.execution.evidence(),
         state: &state,
         labels: &labels,
-        sources: None,
+        sources,
         deadline_ms: ctx.deadline_ms,
         ceiling: ctx.ceiling,
     };
@@ -383,7 +413,7 @@ fn build_correction_read(
     listed: &[CorrectionListed],
     part: ExtractionPart,
     decisions: &ConsolidationDecisions,
-) -> Result<(Vec<DecisionQuestion>, CallLabelMap, serde_json::Value)> {
+) -> Result<BuiltRead> {
     let pages = correction_page_entries(rows, pairs, listed);
     let (entries, page, mark) = match part {
         ExtractionPart::Whole => {
@@ -455,7 +485,8 @@ fn build_correction_read(
     );
     let state =
         correction_execution_state(rows, listed, &asks, &questions, &shown, mark, &mut labels);
-    Ok((questions, labels, state))
+    let owners = asks.iter().map(|(position, _)| *position).collect();
+    Ok((questions, labels, state, owners))
 }
 
 /// Builds the correction final target round over its checked rows: the one based
@@ -468,7 +499,7 @@ fn build_correction_final_read(
     shortlist: &[EntityId],
     round: usize,
     decisions: &ConsolidationDecisions,
-) -> Result<(Vec<DecisionQuestion>, CallLabelMap, serde_json::Value)> {
+) -> Result<BuiltRead> {
     let base = [DecisionKeyPart::Number(position)];
     let mut labels = CallLabelMap::default();
     let mut questions = Vec::new();
@@ -507,7 +538,7 @@ fn build_correction_final_read(
         PartMark::Final,
         &mut labels,
     );
-    Ok((questions, labels, state))
+    Ok((questions, labels, state, vec![position]))
 }
 
 /// Renders the correction state over its asked candidates and shown listed claims
@@ -560,7 +591,7 @@ fn build_resolution_read(
     across: bool,
     part: ExtractionPart,
     decisions: &ConsolidationDecisions,
-) -> Result<(Vec<DecisionQuestion>, CallLabelMap, serde_json::Value)> {
+) -> Result<BuiltRead> {
     let pages = rows.pages();
     let (shown, page, state_part) = match part {
         ExtractionPart::Whole => {
@@ -635,7 +666,7 @@ fn build_resolution_read(
         &questions,
     );
     let state = rows.state(shown, state_part, &mut labels);
-    Ok((questions, labels, state))
+    Ok((questions, labels, state, Vec::new()))
 }
 
 /// Builds the resolution final choice over its conflict rows with the checked page
@@ -644,7 +675,7 @@ fn build_resolution_final_read(
     rows: &ConflictRows,
     page_answers: &[Option<String>],
     decisions: &ConsolidationDecisions,
-) -> Result<(Vec<DecisionQuestion>, CallLabelMap, serde_json::Value)> {
+) -> Result<BuiltRead> {
     let spec = resolution_final_prep(page_answers);
     let owned: Vec<Vec<u8>> = spec.key.iter().map(key_part_bytes).collect();
     let key: Vec<&[u8]> = owned.iter().map(Vec::as_slice).collect();
@@ -667,7 +698,7 @@ fn build_resolution_final_read(
     if let serde_json::Value::Object(fields) = &mut state {
         fields.insert("page_answers".to_owned(), serde_json::json!(page_answers));
     }
-    Ok((questions, labels, state))
+    Ok((questions, labels, state, Vec::new()))
 }
 
 /// Builds the conflict identity final target round over its conflict rows: the one
@@ -678,7 +709,7 @@ fn build_identity_final_read(
     shortlist: &[EntityId],
     round: usize,
     decisions: &ConsolidationDecisions,
-) -> Result<(Vec<DecisionQuestion>, CallLabelMap, serde_json::Value)> {
+) -> Result<BuiltRead> {
     let base = [DecisionKeyPart::Text("identity")];
     let mut labels = CallLabelMap::default();
     let mut questions = Vec::new();
@@ -704,5 +735,5 @@ fn build_identity_final_read(
         &questions,
     );
     let state = rows.state(&rows.indexes(shortlist), StatePart::Final, &mut labels);
-    Ok((questions, labels, state))
+    Ok((questions, labels, state, Vec::new()))
 }

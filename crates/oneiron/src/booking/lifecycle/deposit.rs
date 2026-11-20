@@ -45,9 +45,20 @@ use crate::booking::{BookingError, DepositTerms, EventTypeKey};
 use crate::side_table::{self, SideTable, VersionedNamed};
 use crate::{EntityId, Vault};
 
+mod held;
+mod home_fence;
 mod refund;
 mod settle;
 
+pub(crate) use self::held::note_unattributed_cancel_in_txn;
+pub(super) use self::held::{
+    HeldDeposit, HeldDepositKind, held_deposit_in_txn, unattributed_cancel_sequence_in_txn,
+};
+pub use self::home_fence::check_deposit_checkout_admitted;
+use self::home_fence::{
+    CHECKOUT_MOVING, SettleStanding, admits_deposits_here, awaits_carried_deposits, put_deposit,
+    settle_standing_in_txn,
+};
 pub(super) use self::refund::{
     cap_refund_on_visitor_reschedule_in_writer, refund_on_host_cancel_in_writer,
     refund_on_visitor_cancel_in_writer,
@@ -58,10 +69,7 @@ pub(super) use self::settle::queue_carried_settle_in_txn;
 pub use self::settle::{
     BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND, BookingDepositSettlementDrain, DepositProviderFailure,
     DepositSettleMove, DepositSettleRequest, DepositSettleStep, DepositSettlementPort,
-    check_deposit_checkout_admitted, run_booking_deposit_settlement, settle_booking_deposit,
-};
-use self::settle::{
-    CHECKOUT_MOVING, admits_deposits_here, awaits_carried_deposits, settles_deposits_here,
+    run_booking_deposit_settlement, settle_booking_deposit,
 };
 
 /// The checkout window a deposit's lease opens: the hold lives this long
@@ -158,7 +166,28 @@ pub(super) struct DepositRow {
     /// owed: once that refund settles, the balance is owed as well.
     #[serde(default)]
     balance_owed_after_refund: bool,
+    /// The owner's cancelled calendar write whose replay read a stored copy
+    /// with no write marker as the owner's own while this deposit was held
+    /// (BK-ECHO-UNMARKED-SAME-SHAPE-COPY = C): a host's cancel at its
+    /// SEQUENCE would read the same, so the owner's line names it as a
+    /// cancel Oneiron cannot attribute. Unset on every other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unattributed_cancel: Option<UnattributedCancel>,
     updated_at: u64,
+}
+
+/// The first replay that read an unmarked stored copy as the owner's
+/// cancelled write while a deposit was held
+/// ([`note_unattributed_cancel_in_txn`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnattributedCancel {
+    /// The write's staged SEQUENCE.
+    sequence: u32,
+    /// When the replay's proof was written. The owner's held-deposit row
+    /// dates the unattributed cancel by it, so a row marked done before
+    /// then comes back (review round 1 of #10028).
+    noted_at: u64,
 }
 
 /// A booking's deposit. Key: hash32 (the booking digest).
@@ -324,6 +353,7 @@ pub fn begin_deposit_checkout(
                 captured_minor: None,
                 refunded_minor: 0,
                 balance_owed_after_refund: false,
+                unattributed_cancel: None,
                 updated_at: now_utc,
             },
         };
@@ -352,25 +382,6 @@ pub fn begin_deposit_checkout(
         enqueue_settle(vault, wtxn, &key, "expiry", now_utc)?;
         Ok(DepositCheckoutLease { lease, expires_at })
     })
-}
-
-/// Writes one deposit row. Every deposit write comes here, so it asks the
-/// home-move fence first ([`settles_deposits_here`]): a node that froze its
-/// booking rows for a home move writes no deposit, whichever writer asks.
-fn put_deposit(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    key: &[u8; 32],
-    row: &DepositRow,
-) -> Result<(), BookingError> {
-    if !settles_deposits_here(vault, &*wtxn)? {
-        return Err(refused(
-            "this node froze its booking rows for a home move: the new home holds the deposit",
-        ));
-    }
-    DEPOSIT
-        .put(&vault.store, wtxn, key, row)
-        .map_err(|error| engine_failure("meta write", error))
 }
 
 /// The payload of one [`BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND`] row: the
@@ -451,11 +462,13 @@ pub enum DepositProviderEventOutcome {
     /// The authorized amount or currency is not the deposit's terms; the
     /// deposit stays unauthorized, and its window's end voids it.
     TermsMismatch,
-    /// This node cannot apply it now, and nothing changed: it froze its
-    /// booking rows for a home move, so the new home holds the deposit, or
-    /// it waits for the move that carries its deposits here and knows no
-    /// deposit of this payment yet. The provider must deliver it again.
+    /// Not applied now, and nothing changed: it froze its booking rows for a
+    /// home move its target has not acknowledged, or it awaits the move that
+    /// carries its deposits here. The provider must deliver it again.
     Deferred,
+    /// Not this node's to apply: it froze its booking rows for a move its
+    /// target acknowledged. The new home asks the provider before a confirm.
+    MovedAway,
 }
 
 /// Applies one verified provider event to its deposit, once.
@@ -465,11 +478,11 @@ pub enum DepositProviderEventOutcome {
 /// open for a retry on the same payment. A cancellation closes any deposit
 /// not yet captured.
 ///
-/// During a home move it answers [`DepositProviderEventOutcome::Deferred`]
-/// and writes nothing, on the old home once it froze its booking rows and on
-/// the new home for a payment it does not know before the move lands (FIX
-/// [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]): the event is then applied
-/// where the deposit lands, never acknowledged as no deposit's.
+/// During a home move it writes nothing (FIX [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]):
+/// [`DepositProviderEventOutcome::Deferred`] on the old home until its move is
+/// acknowledged, and on the new home for a payment it does not know before the
+/// move lands, never acknowledged as no deposit's; then
+/// [`DepositProviderEventOutcome::MovedAway`] on the old home.
 ///
 /// # Errors
 ///
@@ -486,8 +499,10 @@ pub fn record_deposit_provider_event(
     let key = deposit_key(&event.payment_id);
     let event_key = provider_event_key(&event.event_id);
     booking_writer(vault, |wtxn| {
-        if !settles_deposits_here(vault, &*wtxn)? {
-            return Ok(DepositProviderEventOutcome::Deferred);
+        match settle_standing_in_txn(vault, &*wtxn)? {
+            SettleStanding::Settles => {}
+            SettleStanding::MoveUnacknowledged => return Ok(DepositProviderEventOutcome::Deferred),
+            SettleStanding::MovedAway => return Ok(DepositProviderEventOutcome::MovedAway),
         }
         if DEPOSIT_PROVIDER_EVENT
             .get(&vault.store, &*wtxn, &event_key)

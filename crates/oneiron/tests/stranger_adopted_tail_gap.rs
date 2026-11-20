@@ -24,10 +24,15 @@
 //! before the fix, which read it `InvalidAncestry`).
 //! The stranger-row setup mirrors `stranger_parent_settled.rs`; the adoption
 //! runs the public checkpoint path (build, host-attest, pin, bundle, adopt) on
-//! the vault's own image, so no test door is needed.
+//! the vault's own image, so no test door is needed there.
+//! `batch_enrolled_signer` holds the batch-belief case of review round 2
+//! (FIX [ADOPTED-PENDING-BATCH-BELIEF-RED-TEST]): one granting batch whose
+//! host-signed enrolment of a key sits above a withheld parent, which only
+//! the test door `host_signed_row` signs.
 //!
 //! Run: `cargo test --locked -p oneiron --all-features --test
-//! stranger_adopted_tail_gap`.
+//! stranger_adopted_tail_gap`; with `RUSTFLAGS="--cfg oneiron_test_support"`
+//! for `batch_enrolled_signer` too.
 
 #![cfg(all(feature = "sync", feature = "test-support"))]
 
@@ -198,6 +203,7 @@ impl ServedVault {
             device_class,
             encryption_key,
             machine_proof,
+            restored_from: None,
         }
     }
 
@@ -322,6 +328,7 @@ fn strangers_gapped_revision(
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     };
     let withheld = signed(
         vault_id,
@@ -770,4 +777,142 @@ fn adopted_dropped_row_with_scope_fault_keeps_invalid_entry() {
         "a dropped row with a parent-scope fault must not be InvalidAncestry: {:?}",
         fold.issues
     );
+}
+
+/// The batch-belief case of #9476 review round 2 (finding 1; FIX
+/// [ADOPTED-PENDING-BATCH-BELIEF-RED-TEST]). Its admin enrolment is a row the
+/// host root signs above a withheld parent, which only the test door
+/// `host_signed_row` builds, so this module compiles only under `--cfg
+/// oneiron_test_support`.
+#[cfg(oneiron_test_support)]
+mod batch_enrolled_signer {
+    use oneiron::authority::{
+        AuthorityAttestation, AuthorityTier, DeviceAuthority, ROLE_ADMIN, ROLE_AGENT,
+    };
+    use oneiron::error::RecordError;
+    use oneiron::test_doors::authority_adopted_fold::host_signed_row;
+
+    use super::*;
+
+    /// The seed of the admin key K the batch's first row enrols.
+    const ADMIN_SEED: u8 = 0x61;
+    /// The seed of the agent key K's row enrols.
+    const AGENT_SEED: u8 = 0x62;
+
+    fn device(key: AuthorityKey, roles: u16) -> DeviceAuthority {
+        DeviceAuthority {
+            key,
+            transport_key_binding: [7; 32],
+            attestation: AuthorityAttestation {
+                kind: "SoftwareArgon2id".to_owned(),
+                evidence: vec![1, 2, 3],
+            },
+            tier: AuthorityTier::Software,
+            roles,
+        }
+    }
+
+    /// One granting batch on an adopted vault: E, the host root's enrolment
+    /// of an admin key K above a withheld parent Q, and C, K's enrolment of an
+    /// agent key above a withheld parent X. C does not rest on E, so the
+    /// pending probe folds C alone; only a belief that counts the whole batch
+    /// takes K as vouched for (E enrols it), and so C's gap X as refusing. The
+    /// batch errs history-required naming Q and X and stays pending: no row
+    /// stored, the fold reads, and the vault's history request, whose pending
+    /// part folds the pending rows as arriving rows outside any probe, names
+    /// Q and X. RED with the staged batch left out of the belief (the batch
+    /// stores, and the live fold refuses for Q), and RED with the arriving
+    /// rows left out of it (the vault's request misses X); GREEN at main
+    /// 436c6e52.
+    #[test]
+    fn adopted_granting_batch_with_batch_enrolled_signer_stays_pending() {
+        let served = ServedVault::self_host();
+        adopt_own_checkpoint(&served);
+        assert!(
+            served.vault.authority_fold().is_ok(),
+            "setup: the adopted vault's fold reads before the batch"
+        );
+        let vault_id = served.vault_id();
+        let withheld_q: AuthorityEntryHash = [0x5A; 32];
+        let withheld_x: AuthorityEntryHash = [0x5B; 32];
+        for parent in [withheld_q, withheld_x] {
+            assert!(
+                matches!(
+                    served
+                        .vault
+                        .authority_log_entry_status(&parent)
+                        .expect("setup: a withheld parent's status reads"),
+                    AuthorityEntryStatus::Unknown
+                ),
+                "setup: each withheld parent is unknown, so each batch row names a missing parent"
+            );
+        }
+        let admin = signing(ADMIN_SEED);
+        let enrol_admin = host_signed_row(
+            &served.issuer,
+            vault_id,
+            1_000,
+            vec![withheld_q],
+            AuthorityOp::EnrollDevice {
+                device: device(key_of(&admin), ROLE_ADMIN),
+            },
+        )
+        .expect("setup: the host root signs E");
+        let enrol_agent = signed(
+            vault_id,
+            1,
+            vec![withheld_x],
+            AuthorityOp::EnrollDevice {
+                device: device(key_of(&signing(AGENT_SEED)), ROLE_AGENT),
+            },
+            &admin,
+        );
+        let batch = vec![
+            (enrol_admin.clone(), AT, 2u64),
+            (enrol_agent.clone(), AT, 2u64),
+        ];
+        let put = served.vault.put_authority_log_entries(&batch);
+        let Err(oneiron::Error::Record(RecordError::AuthorityHistoryRequired { missing, .. })) =
+            &put
+        else {
+            panic!(
+                "a granting batch whose every row needs history must err history-required \
+                 and stay pending, not store: {put:?}"
+            );
+        };
+        assert!(
+            missing.contains(&withheld_q) && missing.contains(&withheld_x),
+            "the refusal must name Q and X, the gaps E and C rest on: {missing:?}"
+        );
+        for row in [&enrol_admin, &enrol_agent] {
+            let id = authority_log_entity_id(row).expect("the row's content id");
+            assert!(
+                served
+                    .vault
+                    .get_authority_log_entry(&id)
+                    .expect("the row reads back")
+                    .is_none(),
+                "a pending batch row must not be stored"
+            );
+        }
+        assert!(
+            served.vault.authority_fold().is_ok(),
+            "a pending granting batch must leave the adopted fold reading"
+        );
+        let request = served
+            .vault
+            .authority_missing_history()
+            .expect("the history read");
+        assert!(
+            request.missing.contains(&withheld_q),
+            "the vault's history request must name Q, E's gap: {:?}",
+            request.missing
+        );
+        assert!(
+            request.missing.contains(&withheld_x),
+            "the vault's history request must name X: the pending rows' fold believes C, \
+             which a key a pending row enrols signs: {:?}",
+            request.missing
+        );
+    }
 }

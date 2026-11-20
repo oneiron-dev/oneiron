@@ -16,8 +16,8 @@ pub(in crate::dreamer_consolidation) use super::decisions::{
     page_or_whole,
 };
 pub(in crate::dreamer_consolidation) use super::merge_resolution::{
-    ESCALATE, RESOLUTIONS, conflict_identity_specs, resolution_choice_spec, resolution_final_prep,
-    resolution_spans_predicates,
+    ESCALATE, RESOLUTIONS, conflict_identity_specs, conflict_source_rows, resolution_choice_spec,
+    resolution_final_prep, resolution_spans_predicates,
 };
 
 mod cited;

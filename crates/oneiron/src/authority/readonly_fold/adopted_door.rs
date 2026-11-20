@@ -73,6 +73,25 @@ pub fn fold_past_overflow_prefix_image(
     fold_past_built_image(vault, covered, true)
 }
 
+/// `op` over `parents`, signed by `issuer`'s host key as the host signs its
+/// own authority rows, and not stored: a test builds a row the roster
+/// believes above a withheld parent, which no public act signs, since each
+/// signs over the vault's held heads (FIX
+/// [ADOPTED-PENDING-BATCH-BELIEF-RED-TEST]).
+///
+/// # Errors
+///
+/// The row's transcript does not encode.
+pub fn host_signed_row(
+    issuer: &crate::authority::HostSlipIssuer,
+    vault_id: AuthorityVaultId,
+    seq: u64,
+    parents: Vec<AuthorityEntryHash>,
+    op: AuthorityOp,
+) -> Result<AuthorityLogEntry> {
+    issuer.sign_entry(Some(vault_id), seq, parents, op, 1)
+}
+
 /// [`fold_past_prefix_image`], with the image's residence bodies dropped
 /// where `overflow` asks.
 fn fold_past_built_image(
@@ -193,4 +212,14 @@ fn fold_past_built_image(
 fn as_decoded(fold: &AuthorityFold) -> Result<AuthorityFold> {
     let bytes = rmp_serde::to_vec_named(fold).map_err(|_| invalid_authority())?;
     rmp_serde::from_slice(&bytes).map_err(|_| invalid_authority())
+}
+
+/// Whether the adopted-fold gate's covered-row check passes for `image`'s
+/// covered row summaries, over every signer (FIX
+/// [ADOPTED-FOLD-GATE-SIGNER-COST]): each signer's covered rows in each
+/// sequence scope form one chain. The check reads `image.rows` alone, so a
+/// test may replace them.
+#[must_use]
+pub fn covered_rows_unfloored(image: &AuthorityCheckpointV2) -> bool {
+    crate::authority::adopted_fold::covered_rows_unfloored_for_door(image)
 }

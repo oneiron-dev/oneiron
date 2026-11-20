@@ -197,9 +197,10 @@ impl Vault {
             crate::channel_identity_autonomy::graduation_offer_inbox_items(self, &receipts)?,
         );
         // Each booking committed or cancelled since the start of its owner's
-        // day, for the owners (ARCH-0062:155).
+        // day, for the owners (ARCH-0062:155); a held deposit's own row joins
+        // only the own slice of a host selected at the booking's confirmation.
         items.extend(crate::booking::lifecycle::booking_owner_card_inbox_items(
-            self,
+            self, own_reader,
         )?);
         // A comm widen ask waiting on its recipient (FIX 3901).
         items.extend(self.comm_widen_inbox_items()?);

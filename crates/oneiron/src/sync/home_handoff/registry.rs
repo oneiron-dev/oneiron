@@ -17,7 +17,7 @@
 
 use heed::RoTxn;
 
-use super::{HomeTableRegistration, HomeWrite, guard_in_txn, store};
+use super::{HandoffStatus, HomeTableRegistration, HomeWrite, guard_in_txn, store};
 use crate::Vault;
 use crate::error::{Error, Result};
 use crate::side_table::SideTableDbs;
@@ -85,24 +85,65 @@ pub(crate) fn takes_home_write_in_txn(
 }
 
 /// FIX [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]: whether this node's election named it the
-/// target of a move from another node that has not landed here: no adoption answered it and no
-/// record says it carried nothing. The rows that move carries are not here yet, so a domain
-/// that keys its rows by a provider's id (a deposit's payment) refuses to open one, or to
-/// answer an unknown one, until they are: the guard ([`guard_in_txn`]) lets such a node write.
-pub(crate) fn awaits_incoming_move_in_txn(
+/// target of a move from another node that no adoption here has answered, while that node can
+/// still hand its state over: its machine still stands as one of the owner's
+/// ([`super::delivery::candidate_machine`]), so a handoff from it can still open and land here.
+/// A recorded outcome does not end the wait (review round 2 of #10058): `NotArrived` and every
+/// other reason leave the move able to land later ([`super::adopt`] admits it), so a row this node
+/// opened meanwhile under a key the move also carries would make the whole adoption conflict.
+/// The rows that move carries are not here yet: a domain that keeps its rows on the home alone
+/// (booking) admits none of them, and answers no unknown provider id, until they are. The guard
+/// ([`guard_in_txn`]) lets such a node write.
+pub(crate) fn awaits_incoming_move_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<bool> {
+    let head = store::head_in_txn(vault, txn)?;
+    let node = crate::identity::read_client_id_from(vault, txn)?;
+    let (
+        Some(store::MoveRequest {
+            from: Some(from),
+            to: Some(to),
+        }),
+        Some(node),
+    ) = (head.request, node)
+    else {
+        return Ok(false);
+    };
+    if to != node || from == node {
+        return Ok(false);
+    }
+    let fold = vault.authority_view_readonly_in_txn(txn)?;
+    Ok(super::delivery::candidate_machine(&fold, from).is_some())
+}
+
+/// Whether this node froze its home state for a move whose target has not acknowledged it
+/// (review round 2 of #10058): `Some(false)` while the frozen handoff stands unacknowledged, so
+/// its source can still cancel it and take the state back ([`super::cancel_frozen`]);
+/// `Some(true)` once its target's ack landed, when the state is the new home's for good; `None`
+/// while this node holds its state.
+pub(crate) fn frozen_move_acknowledged_in_txn(
     dbs: &impl SideTableDbs,
     txn: &RoTxn<'_>,
-) -> Result<bool> {
+) -> Result<Option<bool>> {
     let head = store::head_in_txn(dbs, txn)?;
-    let node = crate::identity::read_client_id_from(dbs, txn)?;
-    Ok(match (head.request, node) {
-        (
-            Some(store::MoveRequest {
-                from: Some(from),
-                to: Some(to),
-            }),
-            Some(node),
-        ) => to == node && from != node && head.incomplete.is_none(),
-        _ => false,
-    })
+    if head.holds_state() {
+        return Ok(None);
+    }
+    let Some(floor) = head.floor else {
+        return Ok(None);
+    };
+    Ok(Some(
+        store::transfer_in_txn(dbs, txn, &floor.handoff)?
+            .is_some_and(|transfer| transfer.status != HandoffStatus::Frozen),
+    ))
+}
+
+/// Whether this node's own election names another node the vault's MACRO home, read in the
+/// caller's writer (review round 2 of #10058): a domain whose rows only the home writes refuses
+/// a write the door let through before the election moved. No designation, or no sync node id
+/// here, answers `false`: the door refuses a node with no designation before any writer.
+pub(crate) fn elected_home_elsewhere_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<bool> {
+    let node = crate::identity::read_client_id_from(vault, txn)?;
+    let home = crate::dreamer_runner::DreamerRunnerStore::new(vault)
+        .home_node_designation_in_txn(txn)?
+        .map(|home| home.node_id);
+    Ok(matches!((node, home), (Some(node), Some(home)) if node != home))
 }

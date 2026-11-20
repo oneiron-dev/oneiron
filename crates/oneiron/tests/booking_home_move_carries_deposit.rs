@@ -291,7 +291,7 @@ fn a_capture_owed_at_the_move_is_asked_by_the_new_home_alone() {
 
     assert!(
         drained_moves(&old_home, NOW + 50).is_empty(),
-        "the old home's queued capture ends with no provider call after the freeze"
+        "the old home's queued capture asks no provider call after the freeze"
     );
     assert_eq!(state_of(&old_home, "pi_move_capture"), capture_due);
     assert_eq!(

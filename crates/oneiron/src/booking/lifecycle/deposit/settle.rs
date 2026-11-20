@@ -9,6 +9,7 @@
 use super::super::door::attempt_failure_reason;
 use super::super::storage::{booking_writer, engine_failure, read_txn, refused};
 use super::super::token::hex_lower;
+use super::home_fence::{SettleStanding, settle_standing_in_txn};
 use super::{
     DEPOSIT, DEPOSIT_BOOKING, DepositSettlePayload, DepositState, MAX_FAILURE_BYTES, booking_key,
     bounded, enqueue_settle, put_deposit,
@@ -46,68 +47,17 @@ const DEPOSIT_SETTLE_OWED_RECHECK_SECONDS: u64 = 3_600;
 /// it asks again.
 const DEPOSIT_SETTLE_PENDING_RECHECK_SECONDS: u64 = 3_600;
 
-/// FIX [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE] (BK-HOME-MOVE-CARRIES-BOOKINGS = A,
-/// lead 21 Nov 06:2x: "Money follows the home"): whether this node still settles its
-/// deposits, by the home-move fence (`sync::home_handoff::guard_in_txn`). A node that froze
-/// its booking rows for a move does not: its deposit rows are history, the new home holds
-/// them and owes their moves, so the old home moves no money. A node draining toward a move
-/// still settles the deposits it admitted, so its settle rows can end before it freezes.
-#[cfg(feature = "sync")]
-pub(super) fn settles_deposits_here(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-) -> Result<bool, BookingError> {
-    crate::sync::home_handoff::takes_home_write_in_txn(
-        vault,
-        txn,
-        crate::sync::home_handoff::HomeWrite::Settle,
-    )
-    .map_err(|error| engine_failure("home move fence read", error))
-}
-
-/// Without the home handoff no move ever freezes a deposit.
-#[cfg(not(feature = "sync"))]
-pub(super) fn settles_deposits_here(
-    _vault: &Vault,
-    _txn: &heed::RoTxn<'_>,
-) -> Result<bool, BookingError> {
-    Ok(true)
-}
-
-/// Whether this node admits a new deposit checkout, by the home-move fence: not while it
-/// drains its booking rows toward a move, nor once it froze them, nor while it waits for the
-/// move that carries them here. The visitor starts the checkout on the new home once it holds
-/// them: a destination that opened one first would store the payment the old home opened under
-/// the same provider key as a second row, and that row would refuse the carried one.
-#[cfg(feature = "sync")]
-pub(super) fn admits_deposits_here(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-) -> Result<bool, BookingError> {
-    Ok(crate::sync::home_handoff::takes_home_write_in_txn(
-        vault,
-        txn,
-        crate::sync::home_handoff::HomeWrite::Admit,
-    )
-    .map_err(|error| engine_failure("home move fence read", error))?
-        && !awaits_carried_deposits(vault, txn)?)
-}
-
-/// Without the home handoff no move ever drains a node.
-#[cfg(not(feature = "sync"))]
-pub(super) fn admits_deposits_here(
-    _vault: &Vault,
-    _txn: &heed::RoTxn<'_>,
-) -> Result<bool, BookingError> {
-    Ok(true)
-}
+/// How long a settle row waits before it asks again while this node froze its
+/// booking rows for a home move its target has not acknowledged: the move can
+/// still be cancelled, and then this node owes the deposit's move again.
+const DEPOSIT_SETTLE_MOVE_RECHECK_SECONDS: u64 = 300;
 
 /// FIX [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]: queues, in the writer that adopts a
 /// home move, the settle row a deposit the move carried here still owes: a checkout still
 /// open (its window's end voids it unconfirmed), or a capture, void or refund due. The old
-/// home asks none of them once it froze ([`plan_settle`]), and its queued settle rows stayed
-/// there, so the new home queues every owed move itself, one row per deposit and move: the
-/// cause names the move's generation.
+/// home asks none of them once it froze ([`plan_settle`]): its queued settle rows stay there,
+/// dormant until the move is acknowledged, so the new home queues every owed move itself, one
+/// row per deposit and move: the cause names the move's generation.
 #[cfg(feature = "sync")]
 pub(in crate::booking::lifecycle) fn queue_carried_settle_in_txn(
     vault: &Vault,
@@ -139,49 +89,6 @@ pub(in crate::booking::lifecycle) fn queue_carried_settle_in_txn(
     }
     Ok(())
 }
-
-/// Whether this node waits for a home move that carries its deposits here
-/// (`sync::home_handoff::awaits_incoming_move_in_txn`): a payment it does not know may be one
-/// that move carries.
-#[cfg(feature = "sync")]
-pub(super) fn awaits_carried_deposits(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-) -> Result<bool, BookingError> {
-    crate::sync::home_handoff::awaits_incoming_move_in_txn(vault, txn)
-        .map_err(|error| engine_failure("home move state read", error))
-}
-
-/// Without the home handoff no move ever carries a deposit.
-#[cfg(not(feature = "sync"))]
-pub(super) fn awaits_carried_deposits(
-    _vault: &Vault,
-    _txn: &heed::RoTxn<'_>,
-) -> Result<bool, BookingError> {
-    Ok(false)
-}
-
-/// Whether this node opens a deposit checkout now, asked before the server
-/// creates the provider's payment: a node that drains its booking rows
-/// toward a home move, froze them, or waits for the move that carries them
-/// here opens none (FIX [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]), and
-/// [`begin_deposit_checkout`](super::begin_deposit_checkout) asks the same
-/// again in its writer.
-///
-/// # Errors
-///
-/// [`BookingError::InvalidConstraint`] where this node opens no checkout
-/// now; [`BookingError::SlotOracle`] on a store failure.
-pub fn check_deposit_checkout_admitted(vault: &Vault) -> Result<(), BookingError> {
-    if !admits_deposits_here(vault, &read_txn(vault)?)? {
-        return Err(refused(CHECKOUT_MOVING));
-    }
-    Ok(())
-}
-
-/// The refusal of a checkout on a node a home move is leaving or reaching.
-pub(super) const CHECKOUT_MOVING: &str =
-    "this node is moving its booking rows to a new home: the checkout starts there";
 
 /// One provider move a deposit owes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -272,10 +179,15 @@ pub trait DepositSettlementPort {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DepositSettleStep {
     /// Nothing is owed here: no such deposit, it stands settled, or this
-    /// node froze it for a home move and the new home owes its moves.
+    /// node froze it for a home move its target acknowledged, and the new
+    /// home owes its moves.
     Nothing,
     /// Still in its checkout window; due again at this instant.
     Wait { due_at: u64 },
+    /// This node froze its booking rows for a home move its target has not
+    /// acknowledged, and moved or recorded nothing: the move can still be
+    /// cancelled and the deposit come back here. Due again at this instant.
+    HomeMoving { due_at: u64 },
     /// The provider did this move, and the deposit recorded it.
     Moved(DepositSettleMove),
     /// The provider did not.
@@ -287,6 +199,9 @@ enum SettlePlan {
     Wait {
         due_at: u64,
     },
+    HomeMoving {
+        due_at: u64,
+    },
     Move {
         payment_id: String,
         movement: DepositSettleMove,
@@ -294,6 +209,16 @@ enum SettlePlan {
         /// move.
         refunded_before: u64,
     },
+}
+
+/// What [`record_settled`] did with a provider's answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettleRecord {
+    /// Recorded, or nothing here was the answer's to record.
+    Done,
+    /// Recorded nothing: this node froze its booking rows for a home move its
+    /// target has not acknowledged. Due again at this instant.
+    HomeMoving { due_at: u64 },
 }
 
 /// One provider answer to record: the move asked, what the provider moved,
@@ -309,14 +234,22 @@ struct SettledMove {
 /// checkout window has ended turns void-due here, so no confirm can take it
 /// after the decision.
 ///
-/// A node that froze its booking rows for a home move plans nothing: the new
-/// home holds the deposit and its owed move (FIX
-/// [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]), so the old home's settle row
-/// ends with no provider call.
+/// A node that froze its booking rows for a home move plans no provider call:
+/// the new home holds the deposit and its owed move (FIX
+/// [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]). Once the move's target
+/// acknowledged it, the old home's settle row ends; before that the row stays
+/// queued, dormant ([`SettleStanding::MoveUnacknowledged`]), so a move that is
+/// cancelled and gives the rows back strands no owed move here.
 fn plan_settle(vault: &Vault, key: &[u8; 32], now_utc: u64) -> Result<SettlePlan, BookingError> {
     booking_writer(vault, |wtxn| {
-        if !settles_deposits_here(vault, &*wtxn)? {
-            return Ok(SettlePlan::Nothing);
+        match settle_standing_in_txn(vault, &*wtxn)? {
+            SettleStanding::Settles => {}
+            SettleStanding::MovedAway => return Ok(SettlePlan::Nothing),
+            SettleStanding::MoveUnacknowledged => {
+                return Ok(SettlePlan::HomeMoving {
+                    due_at: now_utc.saturating_add(DEPOSIT_SETTLE_MOVE_RECHECK_SECONDS),
+                });
+            }
         }
         let Some(mut row) = DEPOSIT
             .get(&vault.store, &*wtxn, key)
@@ -381,27 +314,36 @@ fn plan_settle(vault: &Vault, key: &[u8; 32], now_utc: u64) -> Result<SettlePlan
 /// A node that froze its booking rows for a home move while the call ran
 /// records nothing: the new home holds the deposit as it stood at the freeze,
 /// owes this same move, and asks it under the same idempotency key, which the
-/// provider answers as the move already done.
+/// provider answers as the move already done. While the move's target has not
+/// acknowledged it, the row stays queued ([`SettleRecord::HomeMoving`]): a
+/// cancelled move gives the deposit back, and the row then asks the same move
+/// again under the same key and records its answer.
 fn record_settled(
     vault: &Vault,
     key: &[u8; 32],
     planned: SettledMove,
     now_utc: u64,
-) -> Result<(), BookingError> {
+) -> Result<SettleRecord, BookingError> {
     let SettledMove {
         movement,
         moved,
         refunded_before,
     } = planned;
     booking_writer(vault, |wtxn| {
-        if !settles_deposits_here(vault, &*wtxn)? {
-            return Ok(());
+        match settle_standing_in_txn(vault, &*wtxn)? {
+            SettleStanding::Settles => {}
+            SettleStanding::MovedAway => return Ok(SettleRecord::Done),
+            SettleStanding::MoveUnacknowledged => {
+                return Ok(SettleRecord::HomeMoving {
+                    due_at: now_utc.saturating_add(DEPOSIT_SETTLE_MOVE_RECHECK_SECONDS),
+                });
+            }
         }
         let Some(mut row) = DEPOSIT
             .get(&vault.store, &*wtxn, key)
             .map_err(|error| engine_failure("meta read", error))?
         else {
-            return Ok(());
+            return Ok(SettleRecord::Done);
         };
         let next = match (row.state, movement) {
             (DepositState::CaptureDue { .. }, DepositSettleMove::Capture { .. }) if moved == 0 => {
@@ -453,7 +395,7 @@ fn record_settled(
             // The deposit moved on while the call ran (a provider
             // cancellation, a refund recorded on another home); its own row
             // settles what is left.
-            _ => return Ok(()),
+            _ => return Ok(SettleRecord::Done),
         };
         let refund_owed = matches!(next, DepositState::RefundDue { .. });
         row.state = next;
@@ -467,7 +409,7 @@ fn record_settled(
             };
             enqueue_settle(vault, wtxn, key, cause, now_utc)?;
         }
-        Ok(())
+        Ok(SettleRecord::Done)
     })
 }
 
@@ -482,6 +424,7 @@ fn settle_deposit_key<P: DepositSettlementPort>(
     let (payment_id, movement, refunded_before) = match plan_settle(vault, key, now_utc)? {
         SettlePlan::Nothing => return Ok(DepositSettleStep::Nothing),
         SettlePlan::Wait { due_at } => return Ok(DepositSettleStep::Wait { due_at }),
+        SettlePlan::HomeMoving { due_at } => return Ok(DepositSettleStep::HomeMoving { due_at }),
         SettlePlan::Move {
             payment_id,
             movement,
@@ -513,8 +456,8 @@ fn settle_deposit_key<P: DepositSettlementPort>(
         movement,
         idempotency_key: &idempotency_key,
     }) {
-        Ok(moved) => {
-            record_settled(
+        Ok(moved) => Ok(
+            match record_settled(
                 vault,
                 key,
                 SettledMove {
@@ -523,9 +466,11 @@ fn settle_deposit_key<P: DepositSettlementPort>(
                     refunded_before,
                 },
                 now_utc,
-            )?;
-            Ok(DepositSettleStep::Moved(movement))
-        }
+            )? {
+                SettleRecord::Done => DepositSettleStep::Moved(movement),
+                SettleRecord::HomeMoving { due_at } => DepositSettleStep::HomeMoving { due_at },
+            },
+        ),
         Err(failure) => Ok(DepositSettleStep::Failed(failure)),
     }
 }
@@ -562,7 +507,8 @@ pub struct BookingDepositSettlementDrain {
     pub voided: u32,
     pub refunded: u32,
     /// Rows of a deposit still in its checkout window, queued again for its
-    /// end.
+    /// end, and rows this node holds dormant while a home move it froze its
+    /// booking rows for stands unacknowledged.
     pub waiting: u32,
     /// Rows that owed nothing any more.
     pub settled_nothing: u32,
@@ -641,6 +587,10 @@ pub fn run_booking_deposit_settlement<P: DepositSettlementPort>(
             }
             Ok(DepositSettleStep::Wait { due_at }) => {
                 settle.requeue("deposit checkout window still open", due_at)?;
+                drain.waiting += 1;
+            }
+            Ok(DepositSettleStep::HomeMoving { due_at }) => {
+                settle.requeue("deposit home move not acknowledged yet", due_at)?;
                 drain.waiting += 1;
             }
             Ok(DepositSettleStep::Moved(movement)) => {

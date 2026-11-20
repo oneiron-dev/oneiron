@@ -167,6 +167,7 @@ pub mod fingerprint_keep_store_digests;
 pub mod fingerprint_keep_sync_digests;
 pub mod fingerprint_keep_synced_keys;
 pub mod fingerprint_keep_typed_feeds;
+pub mod foldpast;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
 pub mod free_time_handoff;
@@ -184,6 +185,7 @@ pub mod held_program;
 pub mod hex_input_policy;
 pub mod hex_sign_digit;
 pub mod history_import_rows;
+pub mod holder_export_requests;
 pub mod holder_slip_revoke;
 #[cfg(feature = "sync")]
 pub mod home_handoff_retire;

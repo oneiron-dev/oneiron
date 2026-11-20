@@ -35,7 +35,7 @@ use std::sync::Arc;
 use heed::RwTxn;
 
 use super::super::{REASON_DETECTED, SecretScanMode, is_container, secret_scan_mode_in_txn};
-use super::side_row::{SidePart, admit_decided_parts};
+use super::side_row::{CustodyDoor, SidePart, admit_decided_parts};
 use crate::Vault;
 use crate::error::{Error, GateError, Result};
 use crate::secret_record::CustodyWrite;
@@ -342,7 +342,8 @@ pub(crate) fn admit_spool_in_txn<'s>(
         });
     }
     let mut parts = [SidePart::Body(spool.whole()?)];
-    let placed = match admit_decided_parts(custody.base, custody.door(), wtxn, at, &mut parts) {
+    let door = custody.door().map(CustodyDoor::Vault);
+    let placed = match admit_decided_parts(custody.base, door, wtxn, at, &mut parts) {
         Ok(placed) => placed,
         Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
             let reason = reason_codes.last().copied().unwrap_or(REASON_DETECTED);

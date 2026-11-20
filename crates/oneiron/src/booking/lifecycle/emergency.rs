@@ -8,7 +8,7 @@ use super::claim::{
     supersede_exact_claim,
 };
 use super::door::{
-    BookingLifecycleConsumerInput, froze_booking_rows_in_txn, refuse_frozen_booking_rows_in_txn,
+    BookingLifecycleConsumerInput, holds_booking_rows_in_txn, refuse_off_home_booking_write_in_txn,
 };
 use super::occurrence::{inclusive_occurrence, offers_slot};
 use super::passport::{outbound_passport_in, supersede_outbound_passport};
@@ -66,13 +66,15 @@ fn require_emergency_home(
         ));
     }
     // FIX [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]: as the lifecycle door
-    // (`door::home_node_refusal`), a home that froze its booking rows for a
-    // move and adopted none since is not their home yet, even where its
-    // election names it again; each writer below asks the same again.
-    if froze_booking_rows_in_txn(vault, &txn)? {
+    // (`door::home_node_refusal`), a home that does not hold the booking rows
+    // is not their home yet, even where its election names it: it froze them
+    // for a move and adopted none since, or awaits the move that carries them
+    // here. Each writer below asks the same again, and also refuses once the
+    // election names another node.
+    if !holds_booking_rows_in_txn(vault, &txn)? {
         return Err(BookingError::InvalidConfig(
-            "emergency transition requires the lifecycle home node: this node froze its \
-             booking rows for a home move"
+            "emergency transition requires the lifecycle home node: this node does not hold \
+             the booking rows during a home move"
                 .to_owned(),
         ));
     }
@@ -103,7 +105,7 @@ pub(in crate::booking) fn commit_emergency_item(
     };
     require_emergency_home(vault, input)?;
     booking_writer(vault, |txn| {
-        refuse_frozen_booking_rows_in_txn(vault, &*txn)?;
+        refuse_off_home_booking_write_in_txn(vault, &*txn)?;
         if crate::identity::read_client_id_in_txn(vault, &*txn)
             .map_err(|error| engine_failure("local identity read", error))?
             != Some(input.local_node_id)
@@ -429,7 +431,7 @@ pub(in crate::booking) fn pick_emergency_item(
     use crate::booking::emergency_reschedule as emergency;
     require_emergency_home(vault, input)?;
     booking_writer(vault, |txn| {
-        refuse_frozen_booking_rows_in_txn(vault, &*txn)?;
+        refuse_off_home_booking_write_in_txn(vault, &*txn)?;
         if crate::identity::read_client_id_in_txn(vault, &*txn)
             .map_err(|error| engine_failure("local identity read", error))?
             != Some(input.local_node_id)
@@ -595,7 +597,7 @@ pub(in crate::booking) fn admit_emergency_pick(
     use crate::booking::emergency_reschedule as emergency;
     require_emergency_home(vault, input)?;
     booking_writer(vault, |txn| {
-        refuse_frozen_booking_rows_in_txn(vault, &*txn)?;
+        refuse_off_home_booking_write_in_txn(vault, &*txn)?;
         if crate::identity::read_client_id_in_txn(vault, &*txn)
             .map_err(|error| engine_failure("local identity read", error))?
             != Some(input.local_node_id)

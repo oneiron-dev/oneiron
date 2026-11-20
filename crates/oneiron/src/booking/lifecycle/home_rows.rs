@@ -4,7 +4,7 @@
 //! carries, as adapters on the home handoff carrier (`crate::sync::home_handoff`). The
 //! lifecycle writes on the home alone (`door::home_node_refusal`), so the new home holds every
 //! booking row the old home did, and the old home's fence stops its deposit writes and its
-//! settle drain once it froze them (`deposit::settle::settles_deposits_here`).
+//! settle drain once it froze them (`deposit::home_fence::settles_deposits_here`).
 //!
 //! - `booking.token.v1:` ([`BookingTokenRows`]): the visitors' action tokens and checkout
 //!   leases, the deposits with their booking links and applied provider events, and the
