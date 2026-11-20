@@ -1,14 +1,16 @@
 //! `oneiron hook --host <host> hand-over` with a hosted vault selected (H41,
 //! ARCH-0028 `#plugin-first-run` step 3; FIX-LIST
-//! HOOK-HOSTED-HAND-OVER-TRANSCRIPT; REVIEW-9834). Where the session's own
-//! `session-start` bound the selected hosted vault, and it is still the one
-//! selected, a Claude Code session's log and its subagents' logs, a workflow
-//! run's included, go to that vault through `vault.imports.hook_transcript`,
-//! over `oneiron mcp` as the credential the selection names, in its own auth
-//! mode, read below Claude Code's `projects` folder through no link. A
-//! session that bound a pin or another hosted vault, a session with no
-//! start, a running local vault, a config named and a host whose log the
-//! verb does not read each keep the local queue, as before.
+//! HOOK-HOSTED-HAND-OVER-TRANSCRIPT; REVIEW-9834). Where every
+//! `session-start` of the session bound the selected hosted vault, and it is
+//! still the one selected, a Claude Code session's log and its subagents'
+//! logs, a workflow run's included, go to that vault through
+//! `vault.imports.hook_transcript`, over `oneiron mcp` as the credential the
+//! selection names, in its own auth mode, read below Claude Code's
+//! `projects` folder through no link, in calls the sign-in's carrier takes.
+//! A session that bound a pin, a session with no start, a config named and
+//! a host whose log the verb does not read each keep the local queue, as
+//! before. A session whose starts bound a hosted vault no longer selected,
+//! or more than one vault, sends its log nowhere (review round 2).
 //!
 //! The shipped binary runs the hook. The `oneiron` it runs for the bridge
 //! and the import is a stand-in that records its arguments and, as `oneiron
@@ -52,18 +54,32 @@ const CONVERSATION: &str = "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0";
 
 /// The bridge and import a hook runs, stood in by a script that writes its
 /// arguments to `@RECORD@/argv` and, as `oneiron mcp`, answers the
-/// handshake and one import and writes the `tools/call` it was sent to
-/// `@RECORD@/call`.
+/// handshake and each import, and writes each `tools/call` it was sent to
+/// `@RECORD@/call-<id>` and the last to `@RECORD@/call`.
 const STAND_IN: &str = r#"#!/bin/sh
 printf '%s\n' "$@" > '@RECORD@/argv'
 [ "$1" = mcp ] || exit 0
 read -r line
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"stand-in","version":"1"}}}'
 read -r line
+id=1
+while read -r line; do
+    id=$((id + 1))
+    printf '%s\n' "$line" > "@RECORD@/call-$id"
+    printf '%s\n' "$line" > '@RECORD@/call'
+    printf '{"jsonrpc":"2.0","id":%s,"result":{"structuredContent":{"output":{"conversation":"@CONVERSATION@","conversations":[]}}}}\n' "$id"
+done
+"#;
+
+/// A bridge that answers the handshake, writes its pid to `@RECORD@/pid`,
+/// then stops reading (suspended, say) for a minute.
+const STALLED_STAND_IN: &str = r#"#!/bin/sh
+printf '%s\n' "$@" > '@RECORD@/argv'
+printf '%s\n' "$$" > '@RECORD@/pid'
 read -r line
-printf '%s\n' "$line" > '@RECORD@/call'
-printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"structuredContent":{"output":{"conversation":"@CONVERSATION@","conversations":[]}}}}'
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"stand-in","version":"1"}}}'
 read -r line
+sleep 60
 "#;
 
 /// A home with nothing in it but what a test writes, so no hook sees the
@@ -82,22 +98,28 @@ impl Bench {
             std::fs::create_dir(bench.path(dir)).expect("test fixture");
         }
         std::fs::create_dir_all(bench.projects()).expect("test fixture");
-        let script = STAND_IN
+        bench.write_stand_in(STAND_IN);
+        bench
+    }
+
+    /// Makes `script` the `oneiron` the hooks run.
+    fn write_stand_in(&self, script: &str) {
+        let script = script
             .replace(
                 "@RECORD@",
-                bench.path("record").to_str().expect("UTF-8 path"),
+                self.path("record").to_str().expect("UTF-8 path"),
             )
             .replace("@CONVERSATION@", CONVERSATION);
+        let _ = std::fs::remove_file(self.stand_in());
         // A child writes the script, so this process never holds it open for
         // writing while another test's child starts (ETXTBSY).
         let written = Command::new("sh")
             .args(["-c", r#"printf '%s' "$1" > "$2" && chmod 755 "$2""#, "sh"])
             .arg(&script)
-            .arg(bench.stand_in())
+            .arg(self.stand_in())
             .status()
             .expect("run sh");
         assert!(written.success(), "write the stand-in");
-        bench
     }
 
     fn path(&self, name: &str) -> PathBuf {
@@ -234,6 +256,13 @@ impl Bench {
     /// Starts the Claude Code session whose log is at `log`, with `args`
     /// and no recall: the vault it binds, as its first line names it.
     fn session_start(&self, args: &[&str], log: &Path) -> String {
+        self.session_start_from("startup", args, log)
+    }
+
+    /// Starts the Claude Code session whose log is at `log` as Claude Code
+    /// does for `source` (`startup`, `resume`, `compact`), with `args` and
+    /// no recall: the vault it binds, as its first line names it.
+    fn session_start_from(&self, source: &str, args: &[&str], log: &Path) -> String {
         let mut event = vec!["session-start", "--query", ""];
         event.extend(args);
         let payload = json!({
@@ -241,9 +270,23 @@ impl Bench {
             "session_id": SESSION,
             "transcript_path": log,
             "cwd": "/tmp/heron-lantern",
-            "source": "startup",
+            "source": source,
         });
         self.hook("claude-code", &event, &[], &payload)
+    }
+
+    /// Forgets what the stand-in recorded, so a later look sees only what
+    /// ran after.
+    fn forget_runs(&self) {
+        for entry in std::fs::read_dir(self.path("record")).expect("test fixture") {
+            std::fs::remove_file(entry.expect("test fixture").path()).expect("test fixture");
+        }
+    }
+
+    /// Whether no `oneiron` ran since [`Bench::forget_runs`]: no bridge, no
+    /// import queued.
+    fn ran_nothing(&self) -> bool {
+        !self.path("record").join("argv").exists()
     }
 
     /// What the stand-in wrote to `name`.
@@ -265,7 +308,13 @@ impl Bench {
     /// The `vault.imports.hook_transcript` spec the stand-in bridge was
     /// sent.
     fn sent_spec(&self) -> Value {
-        let call: Value = serde_json::from_str(&self.recorded("call")).expect("one JSON-RPC call");
+        self.spec_in("call")
+    }
+
+    /// The `vault.imports.hook_transcript` spec of the call the stand-in
+    /// wrote to `name`.
+    fn spec_in(&self, name: &str) -> Value {
+        let call: Value = serde_json::from_str(&self.recorded(name)).expect("one JSON-RPC call");
         assert_eq!(call["params"]["name"], "vault.imports.hook_transcript");
         call["params"]["arguments"]["arguments"]["spec"].clone()
     }
@@ -388,6 +437,50 @@ fn words(argv: &[&str]) -> Vec<String> {
     argv.iter().map(|word| (*word).to_owned()).collect()
 }
 
+/// `len` characters gzip barely shrinks: a base64 rendering of a xorshift
+/// stream from `seed`, so a log's encoded length is about its own.
+fn noise(len: usize, seed: u64) -> String {
+    let mut state = seed | 1;
+    let mut bytes = Vec::with_capacity(len);
+    while bytes.len() * 4 / 3 < len + 8 {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        bytes.extend_from_slice(&state.to_le_bytes());
+    }
+    let mut text = base64::engine::general_purpose::STANDARD.encode(bytes);
+    text.truncate(len);
+    text
+}
+
+/// One whole Claude Code log line, a user turn of the session saying
+/// `len` characters of [`noise`] from `seed`.
+fn noisy_turn(len: usize, seed: u64) -> String {
+    let user = json!({
+        "parentUuid": null,
+        "isSidechain": false,
+        "userType": "external",
+        "cwd": "/tmp/heron-lantern",
+        "sessionId": SESSION,
+        "version": "2.1.0",
+        "type": "user",
+        "uuid": "d2000000-0000-4000-8000-000000000003",
+        "timestamp": "2026-11-20T01:00:00.000Z",
+        "message": {"role": "user", "content": noise(len, seed)},
+    });
+    format!("{user}\n")
+}
+
+/// The stems of the subagent logs a spec carries.
+fn stems(spec: &Value) -> Vec<String> {
+    spec["subagents"]
+        .as_array()
+        .expect("subagent logs")
+        .iter()
+        .map(|subagent| subagent["stem"].as_str().expect("a stem").to_owned())
+        .collect()
+}
+
 #[test]
 fn a_claude_code_hand_over_sends_its_log_to_the_selected_hosted_vault_in_its_own_auth_mode() {
     for (mode, flags) in [
@@ -462,8 +555,8 @@ fn a_pin_a_running_local_vault_a_named_config_or_another_hosts_log_keeps_the_loc
     let log_arg = log.to_str().expect("UTF-8 path");
     let local_queue = words(&["import", "claude-code", log_arg, "--queue"]);
 
-    // A session with no start that bound the hosted vault: its log goes to
-    // no vault the session did not bind.
+    // A session whose start recorded nothing (it started before the
+    // record): the local queue, as every hand-over did before.
     bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
     assert_eq!(bench.argv(), local_queue, "no session start");
 
@@ -559,27 +652,31 @@ fn a_session_that_bound_a_pin_or_another_hosted_vault_never_sends_its_log_to_the
     assert_eq!(bench.argv(), local_queue, "a session that bound a pin");
 
     // A session that bound one hosted vault, which another selection then
-    // replaced: its log goes to neither.
+    // replaced: its log goes to neither, and to no local vault that starts
+    // running after (review round 2, bind.rs:255).
     let bench = Bench::new();
     let credential = bench.path("slip-credential");
     bench.select_hosted(&answering_vault(), VAULT_ID, "slip", &credential);
     let log = bench.session_log();
-    let log_arg = log.to_str().expect("UTF-8 path");
     let said = bench.session_start(&[], &log);
     assert!(
         said.contains("uses your hosted vault"),
         "the session binds the selected hosted vault: {said}"
     );
     bench.select_hosted(&answering_vault(), OTHER_VAULT_ID, "slip", &credential);
+    bench.forget_runs();
     bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
     assert!(
-        !bench.called(),
-        "the session's log went to a hosted vault it did not bind"
+        bench.ran_nothing(),
+        "the log of a session whose hosted vault is no longer selected went somewhere: {:?}",
+        bench.recorded("argv")
     );
-    assert_eq!(
-        bench.argv(),
-        words(&["import", "claude-code", log_arg, "--queue"]),
-        "a session whose hosted vault is no longer selected"
+    bench.running_local_vault(&bench.path("running.toml"));
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    assert!(
+        bench.ran_nothing(),
+        "a hosted session's log was queued to a local vault it never bound: {:?}",
+        bench.recorded("argv")
     );
 }
 
@@ -665,5 +762,284 @@ fn a_hand_over_sends_a_workflow_runs_subagent_logs_and_follows_no_link() {
         spec["subagents"],
         json!([]),
         "a log behind a link went with the session"
+    );
+}
+
+#[test]
+fn a_session_whose_starts_bound_different_vaults_sends_its_log_nowhere() {
+    // Review round 2, hook.rs:144: a session started on hosted A, then
+    // resumed or compacted with hosted B selected, holds turns from A: its
+    // log goes to neither, even once A is selected again.
+    for source in ["resume", "compact"] {
+        let bench = Bench::new();
+        let credential = bench.path("slip-credential");
+        let first = answering_vault();
+        bench.select_hosted(&first, VAULT_ID, "slip", &credential);
+        let log = bench.session_log();
+        bench.session_start(&[], &log);
+        let second = answering_vault();
+        bench.select_hosted(&second, OTHER_VAULT_ID, "slip", &credential);
+        let said = bench.session_start_from(source, &[], &log);
+        assert!(
+            said.contains("uses your hosted vault") && said.contains(&second),
+            "{source}: the start binds the vault selected now: {said}"
+        );
+        bench.forget_runs();
+        bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+        assert!(
+            bench.ran_nothing(),
+            "{source}: turns from the first vault went with the log: {:?}",
+            bench.recorded("argv")
+        );
+        bench.select_hosted(&first, VAULT_ID, "slip", &credential);
+        bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+        assert!(
+            bench.ran_nothing(),
+            "{source}: turns from the second vault went with the log: {:?}",
+            bench.recorded("argv")
+        );
+    }
+
+    // A resumed session with no record of its earlier turns: their vault is
+    // not known, so its log goes nowhere.
+    let bench = Bench::new();
+    bench.select_hosted(
+        &answering_vault(),
+        VAULT_ID,
+        "slip",
+        &bench.path("slip-credential"),
+    );
+    let log = bench.session_log();
+    bench.session_start_from("resume", &[], &log);
+    bench.forget_runs();
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    assert!(
+        bench.ran_nothing(),
+        "a resumed session's earlier turns went to a vault: {:?}",
+        bench.recorded("argv")
+    );
+
+    // A session compacted and resumed with the one vault it started on still
+    // selected sends its log there.
+    let bench = Bench::new();
+    let origin = answering_vault();
+    bench.select_hosted(&origin, VAULT_ID, "slip", &bench.path("slip-credential"));
+    let log = bench.session_log();
+    bench.session_start(&[], &log);
+    bench.session_start_from("compact", &[], &log);
+    bench.session_start_from("resume", &[], &log);
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    assert_eq!(
+        bench.argv().get(..3),
+        Some(&words(&["mcp", "--url", &origin])[..]),
+        "a session that bound one vault throughout sends its log there"
+    );
+    assert_eq!(bench.sent_spec()["session"], SESSION);
+}
+
+#[test]
+fn a_hand_over_sends_only_the_log_of_its_own_session() {
+    // Review round 2, hook.rs:278: an event of the session that bound the
+    // vault, naming another session's log, sends nothing.
+    let bench = Bench::new();
+    bench.select_hosted(
+        &answering_vault(),
+        VAULT_ID,
+        "slip",
+        &bench.path("slip-credential"),
+    );
+    let log = bench.session_log();
+    bench.session_start(&[], &log);
+    let other = log.with_file_name("1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b.jsonl");
+    std::fs::write(&other, turns(false)).expect("test fixture");
+    bench.forget_runs();
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&other));
+    assert!(
+        bench.ran_nothing(),
+        "another session's log went where this session bound: {:?}",
+        bench.recorded("argv")
+    );
+}
+
+#[test]
+fn a_hand_over_sends_only_calls_the_sign_ins_carrier_takes() {
+    // Review round 2, continue_command.rs:441: the owner's calls go over the
+    // vault's socket alone, whose frame is about 8 MiB. A session log whose
+    // encoding is longer is not sent at all: no bridge starts.
+    let long_log = |bench: &Bench| {
+        let log = bench.session_log();
+        std::fs::write(&log, noisy_turn(9 * 1024 * 1024, 7)).expect("test fixture");
+        log
+    };
+    let bench = Bench::new();
+    bench.select_hosted(
+        &answering_vault(),
+        VAULT_ID,
+        "owner",
+        &bench.path("owner-credential"),
+    );
+    let log = long_log(&bench);
+    bench.session_start(&[], &log);
+    bench.forget_runs();
+    bench.hand_over(
+        "claude-code",
+        &["--timeout", "120"],
+        &[],
+        &claude_code_stop(&log),
+    );
+    assert!(
+        bench.ran_nothing(),
+        "a log too long for the owner's socket was sent: {:?}",
+        bench.recorded("argv")
+    );
+
+    // A slip's calls go over HTTP past the socket's frame: the same log goes
+    // in one call.
+    let bench = Bench::new();
+    bench.select_hosted(
+        &answering_vault(),
+        VAULT_ID,
+        "slip",
+        &bench.path("slip-credential"),
+    );
+    let log = long_log(&bench);
+    bench.session_start(&[], &log);
+    bench.hand_over(
+        "claude-code",
+        &["--timeout", "120"],
+        &[],
+        &claude_code_stop(&log),
+    );
+    let spec = bench.spec_in("call-2");
+    assert_eq!(
+        inflated(&spec["transcript_gzip_base64"]),
+        std::fs::read(&log).expect("the session log"),
+        "the slip's call carries the whole log"
+    );
+    assert!(!bench.path("record").join("call-3").exists(), "one call");
+
+    // Subagents' logs that do not fit one owner's call with the session's
+    // log go in further calls, in name order, each with the session's log.
+    let bench = Bench::new();
+    bench.select_hosted(
+        &answering_vault(),
+        VAULT_ID,
+        "owner",
+        &bench.path("owner-credential"),
+    );
+    let log = bench.session_log();
+    let subagents = log.with_extension("").join("subagents");
+    for (stem, seed) in [("agent-noise1", 11), ("agent-noise2", 13)] {
+        std::fs::write(
+            subagents.join(format!("{stem}.jsonl")),
+            noisy_turn(4_400_000, seed),
+        )
+        .expect("test fixture");
+    }
+    bench.session_start(&[], &log);
+    bench.hand_over(
+        "claude-code",
+        &["--timeout", "120"],
+        &[],
+        &claude_code_stop(&log),
+    );
+    let first = bench.spec_in("call-2");
+    let second = bench.spec_in("call-3");
+    assert!(!bench.path("record").join("call-4").exists(), "two calls");
+    assert_eq!(stems(&first), [SUBAGENT, "agent-noise1"], "the first call");
+    assert_eq!(stems(&second), ["agent-noise2"], "the second call");
+    for spec in [&first, &second] {
+        assert_eq!(spec["session"], SESSION);
+        assert_eq!(
+            inflated(&spec["transcript_gzip_base64"]),
+            std::fs::read(&log).expect("the session log"),
+            "each call carries the session's log"
+        );
+    }
+    assert_eq!(
+        inflated(&second["subagents"][0]["transcript_gzip_base64"]),
+        std::fs::read(subagents.join("agent-noise2.jsonl")).expect("the subagent log"),
+    );
+}
+
+#[test]
+fn a_bridge_that_stops_reading_is_ended_at_the_deadline() {
+    // Review round 2, continue_command.rs:441: a bridge that answered its
+    // handshake, then stopped reading, never holds the hand-over past its
+    // deadline; the bridge is ended and reaped.
+    let bench = Bench::new();
+    bench.write_stand_in(STALLED_STAND_IN);
+    bench.select_hosted(
+        &answering_vault(),
+        VAULT_ID,
+        "slip",
+        &bench.path("slip-credential"),
+    );
+    let log = bench.session_log();
+    // More than a pipe holds, so the write itself waits on the bridge.
+    std::fs::write(&log, noisy_turn(1024 * 1024, 17)).expect("test fixture");
+    bench.session_start(&[], &log);
+    let began = std::time::Instant::now();
+    bench.hand_over(
+        "claude-code",
+        &["--timeout", "3"],
+        &[],
+        &claude_code_stop(&log),
+    );
+    let took = began.elapsed();
+    assert!(
+        took < std::time::Duration::from_secs(30),
+        "the hand-over outlived its 3 s deadline by far: {took:?}"
+    );
+    let pid = bench.recorded("pid");
+    let alive = Command::new("kill")
+        .args(["-0", pid.trim()])
+        .stderr(Stdio::null())
+        .status()
+        .expect("run kill");
+    assert!(!alive.success(), "the stalled bridge {pid} still runs");
+}
+
+#[test]
+fn a_start_never_undoes_another_starts_record() {
+    // Review round 2, session_binding.rs:122: a start whose record fails
+    // never removes the record another start of the session made. Here the
+    // other start's staging file holds the name a shared staging path would
+    // use.
+    let bench = Bench::new();
+    let origin = answering_vault();
+    bench.select_hosted(&origin, VAULT_ID, "slip", &bench.path("slip-credential"));
+    let log = bench.session_log();
+    bench.session_start(&[], &log);
+    std::fs::create_dir(
+        bench
+            .run_dir()
+            .join("hook-sessions")
+            .join(format!(".{SESSION}.json.tmp")),
+    )
+    .expect("test fixture");
+    bench.session_start_from("compact", &[], &log);
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    assert_eq!(
+        bench.argv().get(..3),
+        Some(&words(&["mcp", "--url", &origin])[..]),
+        "the session's record went with a failed start"
+    );
+
+    // Starts of one session at once each leave the record.
+    let bench = Bench::new();
+    let origin = answering_vault();
+    bench.select_hosted(&origin, VAULT_ID, "slip", &bench.path("slip-credential"));
+    let log = bench.session_log();
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            scope.spawn(|| bench.session_start(&[], &log));
+        }
+    });
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    assert_eq!(
+        bench.argv().get(..3),
+        Some(&words(&["mcp", "--url", &origin])[..]),
+        "starts at once removed the session's record"
     );
 }
