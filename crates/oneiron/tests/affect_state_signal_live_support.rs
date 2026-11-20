@@ -1,11 +1,13 @@
 //! A state signal (`state.engagement`, `state.goal_velocity`) is an aggregate
 //! number, not a quotation of the records it counted (FIX
 //! AFFECT-SIGNAL-HEX-REFS-FAIL-LIVE-SUPPORT; Engine AFFECT-SIGNAL-REFS-CITATION
-//! = B). Its evidence lists those records under `counted_refs`, an audit list,
-//! so the read-time live-support test asks nothing of it: the signals the
-//! production refresh writes are served like any Auto Observed claim, and stay
-//! served after every record they counted is deleted, as the composite index
-//! that carries the same numbers does.
+//! = B). Its evidence holds the count it divides by its target and names no
+//! record it counted, so the read-time live-support test asks nothing of it:
+//! the signals the production refresh writes are served like any Auto Observed
+//! claim, and stay served after every record they counted is deleted, as the
+//! composite index that carries the same numbers does. A served signal spells
+//! no counted TASK or turn id, which a reader of the substrate facet may not
+//! read (REVIEW-9816 P1).
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -167,9 +169,9 @@ fn owned_task(vault: &Vault, owner: EntityId) -> EntityId {
         .expect("the TASK creation took effect")
 }
 
-/// The hex ids a signal's evidence lists under `key`, or `None` when the
+/// The value a signal's evidence holds under `key`, or `None` when the
 /// evidence holds no such key.
-fn evidence_list(vault: &Vault, signal: &EntityId, key: &str) -> Option<Vec<String>> {
+fn evidence_field(vault: &Vault, signal: &EntityId, key: &str) -> Option<Value> {
     let body = vault
         .get_claim(signal)
         .expect("signal read")
@@ -180,20 +182,26 @@ fn evidence_list(vault: &Vault, signal: &EntityId, key: &str) -> Option<Vec<Stri
     fields
         .iter()
         .find(|(name, _)| name.as_str() == Some(key))
-        .map(|(_, value)| {
-            value
-                .as_array()
-                .expect("a ref list")
-                .iter()
-                .map(|item| item.as_str().expect("a hex ref").to_owned())
-                .collect()
-        })
+        .map(|(_, value)| value.clone())
+}
+
+/// Whether the stored bytes of `row` spell `id`, as its hex text or its 16
+/// raw bytes: a door that serves the row's bytes would hand the id on.
+fn row_spells_id(vault: &Vault, row: &EntityId, id: &EntityId) -> bool {
+    let bytes = vault
+        .get(row)
+        .expect("row read")
+        .expect("the row is stored");
+    let hex = id.to_hex();
+    [hex.as_bytes(), id.as_bytes().as_slice()]
+        .iter()
+        .any(|needle| bytes.windows(needle.len()).any(|window| window == *needle))
 }
 
 /// The owner speaks one annotated turn and owns one TASK; the production
 /// refresh writes both signals and the composite. Each signal has live
-/// support, lists what it counted under `counted_refs`, and keeps live support
-/// once the turn and the TASK are both deleted.
+/// support, holds its count, spells neither the turn's nor the TASK's id, and
+/// keeps live support once the turn and the TASK are both deleted.
 /// Red on main: the signals list their counted records under `refs`, which
 /// the live-support test reads as a malformed consolidation envelope, so no
 /// read door serves either signal.
@@ -235,20 +243,27 @@ fn a_state_signal_keeps_live_support_after_every_counted_record_is_deleted() {
              Auto Observed claim the read doors serve"
         );
         assert_eq!(
-            evidence_list(&vault, &signal, "refs"),
+            evidence_field(&vault, &signal, "refs"),
             None,
             "the {name} signal holds no consolidation-envelope key"
         );
+        for (counted, kind) in [(turn, "turn"), (task, "TASK")] {
+            assert!(
+                !row_spells_id(&vault, &signal, &counted),
+                "FAILBEFORE REVIEW-9816-P1: the {name} signal spells the {kind} id it read, \
+                 which a reader of the substrate facet may not read"
+            );
+        }
     }
     assert_eq!(
-        evidence_list(&vault, &engagement, "counted_refs"),
-        Some(vec![turn.to_hex()]),
-        "the engagement signal lists the turn it counted"
+        evidence_field(&vault, &engagement, "count"),
+        Some(Value::from(1_u64)),
+        "the engagement signal counts the one day the owner spoke"
     );
     assert_eq!(
-        evidence_list(&vault, &goal_velocity, "counted_refs"),
-        Some(vec![task.to_hex()]),
-        "with no completion in the window, the goal-velocity signal lists the TASK it owns"
+        evidence_field(&vault, &goal_velocity, "count"),
+        Some(Value::from(0_u64)),
+        "the goal-velocity signal counts no completion in the window"
     );
     assert_eq!(
         claim_has_live_support(&vault, &composite).expect("read"),

@@ -76,16 +76,11 @@ impl Vault {
                 predicate: GOAL_VELOCITY,
                 value: ratio(completed.len(), window.expected_goal_completions),
                 target: window.expected_goal_completions,
-                refs: if completed.is_empty() {
-                    &owned
-                } else {
-                    &completed
-                },
+                count: completed.len(),
             },
             range,
             valid_to,
         )?;
-        let spoken: Vec<EntityId> = turns.iter().map(|(_, turn)| *turn).collect();
         let engagement = put_signal_in_txn(
             self,
             txn,
@@ -94,7 +89,7 @@ impl Vault {
                 predicate: ENGAGEMENT,
                 value: ratio(days.len(), window.expected_engaged_days),
                 target: window.expected_engaged_days,
-                refs: &spoken,
+                count: days.len(),
             },
             range,
             valid_to,
@@ -228,17 +223,20 @@ struct Signal<'a> {
     predicate: &'a str,
     value: f32,
     target: u32,
-    refs: &'a [EntityId],
+    /// What `value` divides by `target`: completions or engaged days.
+    count: usize,
 }
 
 /// One measured signal as an observed claim, keyed by its own bytes: the
-/// same measurement twice is one claim. `counted_refs` lists every record it
-/// counted, as hex: an audit list, not a citation. A signal is an aggregate
-/// number, so it stays served after the records it counted are deleted, as
-/// the composite index that carries the same numbers does; a `refs` key would
-/// read as a consolidation envelope and fail live support (Engine
-/// AFFECT-SIGNAL-REFS-CITATION = B). Past `limits.maintenance_row_items` it
-/// asks and still lists them all.
+/// same measurement twice is one claim. Its evidence holds the window, the
+/// target and the count, and names no record it counted. A signal is an
+/// aggregate number, not a quotation of those records, so it stays served
+/// after they are deleted, as the composite index that carries the same
+/// numbers does (Engine AFFECT-SIGNAL-REFS-CITATION = B); a `refs` key would
+/// read as a consolidation envelope and fail live support. It lists no id
+/// either: a reader of the subject's substrate facet may not read a counted
+/// TASK or turn, and an id must not reach such a reader by any door
+/// (REVIEW-9816 P1).
 fn put_signal_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -247,7 +245,6 @@ fn put_signal_in_txn(
     window: TimeRange,
     valid_to: u64,
 ) -> Result<EntityId> {
-    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, signal.refs.len() as u64);
     let mut body = ClaimBody::new(
         signal.predicate,
         ClaimSubject::Entity(*subject),
@@ -263,16 +260,7 @@ fn put_signal_in_txn(
         (Value::from("window_start"), Value::from(window.start)),
         (Value::from("window_end"), Value::from(window.end)),
         (Value::from("target"), Value::from(signal.target)),
-        (
-            Value::from("counted_refs"),
-            Value::Array(
-                signal
-                    .refs
-                    .iter()
-                    .map(|id| Value::from(id.to_hex()))
-                    .collect(),
-            ),
-        ),
+        (Value::from("count"), Value::from(signal.count as u64)),
     ]));
     let bytes = encode_claim_body(&body)?;
     let id =
