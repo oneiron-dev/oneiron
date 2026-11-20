@@ -4,10 +4,13 @@
 //! compacts on, each built as a run gets it. And for
 //! `tests/live_fork_refuses_erased_prefix_source.rs` (FIX-LIST
 //! ERASE-SERVED-KV-CACHE-OUTLIVES-SOURCE): a breakpoint's live fork bind,
-//! and the request one call of a live flight sends, on the house route.
+//! and the request one call of a live flight sends, on the house route;
+//! and (FIX-LIST ERASE-SERVED-KV-CACHE-REVIEW-RETRY-TEST) a server whose
+//! `key_secret` providers send through the credential broker, as serve's do.
 //! Compiled only under `--cfg oneiron_test_support`; never API.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use oneiron::code_run::{LiveCompactionFork, LiveForkRung, bind_compaction_caller};
 use oneiron::compaction::{CompactionBackend, CompactionRequest};
@@ -20,7 +23,8 @@ use super::live_fork::{LiveBind, bind_live_compaction_fork};
 use super::{
     AnsweringRungSlot, CodeModeCompaction, LiveAdmission, LiveCompaction, ServedCompactionBackend,
 };
-use crate::models::{AnsweringRung, RoleCall, RoleRefusal};
+use crate::config::models::BrokerConfig;
+use crate::models::{AnsweringRung, BrokerContext, KeyDoor, RoleCall, RoleRefusal};
 use crate::server::SyncServer;
 
 /// What one pass answered.
@@ -241,6 +245,27 @@ pub fn house_live_fork_request(
         .fork_request(&fork, request, None)
         .map_err(|refusal| format!("{refusal:?}"))?;
     serde_json::to_string(&call).map_err(|error| error.to_string())
+}
+
+/// The longest one send runs in a door server's broker.
+const BROKER_SEND: Duration = Duration::from_secs(60);
+
+/// `server` with a credential-broker context as serve sets one once its
+/// vault opens: the broker `broker` names, each `key_secret` provider's key
+/// read at `keys` (serve's is the vault's own custody door). Give it before
+/// the model attach, whose `key_secret` providers then send through it.
+///
+/// # Panics
+///
+/// Outside a tokio runtime.
+#[must_use]
+pub fn serve_broker(
+    server: SyncServer,
+    broker: &BrokerConfig,
+    keys: Arc<dyn KeyDoor>,
+) -> SyncServer {
+    let broker = BrokerContext::new(keys, broker, BROKER_SEND, tokio::runtime::Handle::current());
+    server.with_broker(Some(broker))
 }
 
 /// A run with no live call to fork: a flight on the retained turns, or on
