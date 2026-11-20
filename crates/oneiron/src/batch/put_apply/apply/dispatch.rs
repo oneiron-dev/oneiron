@@ -143,6 +143,7 @@ pub(super) fn dispatch_put_type(
                     fixed.options.gate_write_mode(),
                     fixed.options.decision.preflight,
                     fixed.options.decision.pre_mask_diff,
+                    &mut dispatch.owner_revision_amendment,
                 );
                 match verdict {
                     Err(Error::Gate(crate::error::GateError::GateWriteRejected {

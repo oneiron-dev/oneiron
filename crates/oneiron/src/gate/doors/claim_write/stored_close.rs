@@ -110,7 +110,11 @@ pub(super) fn stored_claim_is_machine_born(
 }
 
 /// The stored row's claim body, when it decodes.
-fn stored_claim_body(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Option<ClaimBody> {
+pub(super) fn stored_claim_body(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Option<ClaimBody> {
     let raw = store.port_entity_record(txn, id).ok().flatten()?.encode();
     decode_claim_body(raw.get(ENTITY_METADATA_HEADER_LEN..)?, true).ok()
 }

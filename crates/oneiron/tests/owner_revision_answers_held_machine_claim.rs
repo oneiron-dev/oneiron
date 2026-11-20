@@ -10,6 +10,10 @@
 //! approve-with-edit records. On main the owner's Allow write redeemed the
 //! row against its own body and was refused `Gate(GateConsentStale)`.
 //!
+//! The amended approval also records its Δ, from the body the row showed to
+//! the owner's revision, as the inbox's does (FIX
+//! [OWNER-REVISION-AMEND-DELTA-UNCAPTURED]).
+//!
 //! Only the owner's own write answers. A human the host key binds who is not
 //! the vault's owner, and an agent, still land nothing, and the machine's
 //! question stays open.
@@ -234,6 +238,15 @@ fn an_owner_revision_of_a_held_machine_claim_lands_as_the_owners_amended_approva
         amended[0].diff_handle, held,
         "the amended approval answers the row the machine's birth held"
     );
+    let receipt_id = format!("gate:{}", amended[0].decision_id.to_hex());
+    let delta = oneiron::edit_distance::delta::amendment_delta(&seeded.vault, &receipt_id)
+        .expect("amendment delta read")
+        .expect("the amended approval records its Δ to the owner's revision");
+    assert_ne!(
+        delta.proposed_ref, delta.final_ref,
+        "the Δ runs from the revision the row showed to the owner's revision"
+    );
+    assert!(delta.d_norm > 0.0, "the owner rewrote the note: {delta:?}");
 }
 
 #[test]
