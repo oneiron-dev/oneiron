@@ -1,6 +1,7 @@
 //! Lends a prepared pass's resources to one extraction attempt's bound calls.
 //!
 //! Verdict reads and generation steps share the original attempt's guard and charge tally.
+//! Every lent read lists for the destination bound the pass stated, as the pass's wake did.
 
 use std::sync::{Arc, Mutex};
 
@@ -14,6 +15,7 @@ use oneiron::llm::decision::{DecisionBandPolicy, DecisionLadder, TypedDecision};
 use oneiron::llm::model_step::ModelStepReceipt;
 use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding};
 use oneiron::memory::MemoryResult;
+use oneiron::settings::ReadDestination;
 use oneiron::verbs::AiVerdict;
 use oneiron::{BudgetGuard, Error, LlmBackend, ModelId, Result};
 use tokio::runtime::Handle;
@@ -74,6 +76,8 @@ pub struct ExtractionAttemptLender {
     now_ms: u64,
     /// Retains the material this wake's admitted pre-hooks already added.
     material: Vec<String>,
+    /// Retains the destination bound this wake's pass stated, which its listings were read for.
+    destination_bound: Option<ReadDestination>,
     /// Retains all terminal generation charges until the job hands off its outcome.
     charges: Mutex<StepChargeTally>,
 }
@@ -94,6 +98,7 @@ impl ExtractionAttemptLender {
             deadline: context.deadline.clone(),
             now_ms: context.now_ms,
             material: context.hook_material().to_vec(),
+            destination_bound: context.destination_bound().cloned(),
             charges: Mutex::new(StepChargeTally::new()),
         }
     }
@@ -114,6 +119,14 @@ impl DreamerDecisionLender for ExtractionAttemptLender {
         Err(Error::InvalidConfig(
             "the extraction lender does not lend conflict settlement decisions".into(),
         ))
+    }
+
+    /// States the bound of the wake this attempt's context was prepared for.
+    ///
+    /// The engine rebuilds every lent extraction listing for it, so the lent job lists
+    /// what the pass's native extraction lists. A context without a prepared wake states none.
+    fn destination_bound(&self) -> Option<ReadDestination> {
+        self.destination_bound.clone()
     }
 
     /// Rechecks the gate and lends the admitted attempt's native read resources once.

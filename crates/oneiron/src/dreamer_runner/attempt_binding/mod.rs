@@ -35,6 +35,7 @@ use crate::derive::{
 use crate::edge::EdgeActorClass;
 use crate::federation::{grant_scope, steward_reach_in};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_LEASE_REQUIRED, MemoryError, MemoryResult};
+use crate::settings::ReadDestination;
 use crate::write_envelope::{SourceLineage, WriteActor};
 use crate::{EntityId, Result, Vault};
 
@@ -147,6 +148,16 @@ impl DreamerAttemptBinding {
     #[must_use]
     pub(crate) fn attempt(&self) -> EntityId {
         EntityId::from_bytes_unchecked(*self.lease.attempt().as_bytes())
+    }
+
+    /// The destination bound of the pass that lends this attempt its
+    /// resources (FIX 12735), as its lender states it. `None` with no
+    /// lender, or where that pass stated none: the attempt's listings are
+    /// then read for a destination nobody proved.
+    pub(crate) fn destination_bound(&self) -> Option<ReadDestination> {
+        self.lender
+            .as_ref()
+            .and_then(|lender| lender.destination_bound())
     }
 
     /// Proves the binding in `txn`: the lease holds at its owner and

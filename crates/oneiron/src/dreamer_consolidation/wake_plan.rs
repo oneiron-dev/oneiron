@@ -452,6 +452,13 @@ impl PreparedWake {
             .unwrap_or_else(super::neighbourhood::listing_destination)
     }
 
+    /// The destination bound this wake's pass stated (FIX 12735), or `None`
+    /// where none was stated. A lent extraction read rebuilds its listing
+    /// for it, as [`Self::listing_destination`] read the wake's own.
+    pub(crate) fn destination_bound(&self) -> Option<&ReadDestination> {
+        self.destination_bound.as_ref()
+    }
+
     /// Only work known at the wake's single revision may execute on it.
     pub(crate) fn contains_attempt(&self, id: AttemptId) -> bool {
         self.attempts.contains(id.as_bytes())
