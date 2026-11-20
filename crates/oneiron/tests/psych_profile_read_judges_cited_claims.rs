@@ -15,9 +15,15 @@
 //!   customer hold refuses the privacy erase of the cited claim, which keeps it stored and
 //!   use-limited (C6 storage-only). The owner's `vault.get` of the profile served it before and
 //!   answers it as absent after (FIX 1496 S8); a profile of another claim still reads.
+//! * `a_reader_missing_the_message_a_cited_intent_quotes_is_withheld_the_profile` (review round 1
+//!   of #9923): the cited claim is an owner's stated intent, which quotes the MESSAGE its
+//!   consolidation envelope cites, so it reads only while that MESSAGE does. The reader names the
+//!   profile, its PERSON and the intent but not the MESSAGE: it is withheld the intent, and the
+//!   profile carrying the intent's words too. A profile of an intent citing no MESSAGE still reads.
 //!
-//! Both run red at main 0aedc807c52, whose `word_sources_in` reads a PSYCH_PROFILE as its own,
-//! and green at the fix.
+//! The first two run red at main 0aedc807c52, whose `word_sources_in` reads a PSYCH_PROFILE as its
+//! own, and green at the fix; the third runs red at 84d76fc72e3, which judged each cited claim by
+//! its own row alone, and green at the fix.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test psych_profile_read_judges_cited_claims`
 #![cfg(oneiron_test_support)]
 
@@ -26,7 +32,13 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use oneiron::authority::{HostSlipIssuer, VerifiedSlip};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::LegalHoldTarget;
-use oneiron::memory::{EraseOptions, EraseReason, Memory};
+use oneiron::dreamer_consolidation::{
+    ConsolidationEvidenceEnvelope, encode_consolidation_evidence,
+};
+use oneiron::memory::{
+    EraseOptions, EraseReason, Memory, WitnessAssertions, WitnessAuthor, WitnessMessage,
+    WitnessTurn,
+};
 use oneiron::psych_profile::{
     PsychProfile, PsychProfileConfidence, PsychProfileSource, PsychProfileSourceWords,
 };
@@ -310,6 +322,107 @@ fn a_use_limited_cited_claim_withholds_the_profile_from_the_owner() -> TestResul
     assert_withheld(
         &read,
         "the owner's read of a profile citing a use-limited claim",
+    );
+    assert!(
+        !read.to_string().contains(PROFILE_TEXT),
+        "the withheld read carries none of the profile's words: {read}"
+    );
+    Ok(())
+}
+
+/// The words of the owner's stated intent, as the MESSAGE it cites holds them.
+const INTENT_WORDS: &str = "I'll call the landlord about the lease.";
+
+/// Witnesses `words` as the owner's one MESSAGE in a fresh TURN of a fresh conversation.
+fn witness_owner_words(fixture: &Fixture, words: &str) -> TestResult<EntityId> {
+    let message = EntityId::now();
+    fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::now().to_hex(),
+            turn_ref: Some(EntityId::now().to_hex()),
+            thread_audience: None,
+            project: None,
+            messages: vec![WitnessMessage {
+                id: Some(message.to_hex()),
+                author: WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: words.to_owned(),
+                parts: None,
+                metadata: None,
+                is_visible: true,
+                order: 0,
+                quote: None,
+            }],
+            occurred_at: AT,
+            assertions: WitnessAssertions::default(),
+        })?;
+    Ok(message)
+}
+
+/// Lands the owner's stated intent `words` as an Approved, UserStated `profile.intent` about the
+/// owner, its consolidation envelope citing `message` when one is given, as intent landing stores
+/// it (`dreamer_consolidation::gap::intent`).
+fn put_intent(fixture: &Fixture, words: &str, message: Option<EntityId>) -> TestResult<EntityId> {
+    let mut body = ClaimBody::new(
+        "profile.intent",
+        ClaimSubject::Entity(fixture.owner),
+        MsgValue::from(words),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )?;
+    body.source = Some(oneiron::claim::ClaimSource::UserStated);
+    if let Some(message) = message {
+        body.evidence = Some(encode_consolidation_evidence(
+            &ConsolidationEvidenceEnvelope {
+                refs: vec![message],
+                chain: Vec::new(),
+                source_meet: oneiron::claim::ClaimSource::UserStated,
+            },
+        ));
+    }
+    let id = EntityId::now();
+    fixture.vault.put_claim(&id, &body, range(), AT)?;
+    Ok(id)
+}
+
+#[test]
+fn a_reader_missing_the_message_a_cited_intent_quotes_is_withheld_the_profile() -> TestResult {
+    let fixture = open()?;
+    let message = witness_owner_words(&fixture, INTENT_WORDS)?;
+    let intent = put_intent(&fixture, INTENT_WORDS, Some(message))?;
+    let profile = put_profile_from(&fixture.vault, fixture.person, intent)?;
+    let open_intent = put_intent(&fixture, "I will water the plants.", None)?;
+    let open_profile = put_profile_from(&fixture.vault, fixture.person, open_intent)?;
+    let reader = narrowed_owner(
+        &fixture,
+        &[
+            fixture.owner,
+            fixture.person,
+            intent,
+            profile,
+            open_intent,
+            open_profile,
+        ],
+    );
+    // The setup: the reader reads the profile of an intent citing no MESSAGE, and is withheld
+    // the intent quoting the MESSAGE its caveat leaves out.
+    assert_served(
+        &get(&reader, &open_profile),
+        &open_profile,
+        "FIXTURE: the reader reads the profile of an intent citing no MESSAGE",
+    );
+    assert_withheld(
+        &get(&reader, &intent),
+        "FIXTURE: the reader's read of the intent quoting a MESSAGE its caveat leaves out",
+    );
+    // The promise.
+    let read = get(&reader, &profile);
+    assert_withheld(
+        &read,
+        "the reader, who does not read the MESSAGE the cited intent quotes, reading the profile",
     );
     assert!(
         !read.to_string().contains(PROFILE_TEXT),
