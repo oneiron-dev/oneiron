@@ -63,7 +63,7 @@ fn event(
         bytes[1] = seed;
         bytes[2] = index;
         let claim = EntityId::from_bytes(bytes).expect("claim id");
-        let body = ClaimBody::new(
+        let mut body = ClaimBody::new(
             *predicate,
             ClaimSubject::Entity(id),
             value.clone(),
@@ -72,6 +72,7 @@ fn event(
             ClaimLifecycleStatus::Active,
         )
         .expect("claim body");
+        crate::test_util::stamp_vault_default_facet(vault, &mut body);
         vault
             .put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)
             .expect("put calendar claim");

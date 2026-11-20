@@ -49,13 +49,16 @@ pub(crate) fn claim_access_axes(body: &ClaimBody) -> (RelationshipScope, bool) {
 /// admission refuses it, and what the read asked of its rows (FIX 7462).
 /// The fourth holds, for the same serving txn, each reader's verdict on each
 /// CLAIM access class it judged (FIX 11915). The fifth is set on the row
-/// checks of a record an `edge.provenance` or `core.coreference.status`
-/// Claim names ([`Self::judge_cited`]): the provenance rule is not re-entered.
-/// The sixth names the status claim whose endpoints a worklist judges
+/// checks of a record an `edge.provenance` or coreference (status or share
+/// consent) Claim names ([`Self::judge_cited`]): the provenance rule is not
+/// re-entered. The sixth names the coreference claim whose endpoints a
+/// worklist judges
 /// ([`Self::judge_cited_coreference`]); only that row leaves its endpoint
 /// check to the walk. The seventh holds each room's admission of a
 /// retrieval hit for this read in this serving txn ([`Self::room_verdicts`],
-/// L9-52); no other row checks share it.
+/// L9-52); no other row checks share it. The eighth names the one record a
+/// named read judges through its cleanup archive
+/// ([`Self::reading_archive_of`]).
 #[derive(Default)]
 pub(super) struct HeldAuthority(
     RefCell<Option<AccessContextSnapshot>>,
@@ -65,6 +68,7 @@ pub(super) struct HeldAuthority(
     bool,
     Option<EntityId>,
     RoomVerdicts,
+    Option<EntityId>,
 );
 
 impl HeldAuthority {
@@ -79,6 +83,7 @@ impl HeldAuthority {
             false,
             None,
             RoomVerdicts::default(),
+            None,
         )
     }
 
@@ -94,6 +99,7 @@ impl HeldAuthority {
             self.4,
             self.5,
             RoomVerdicts::default(),
+            self.7,
         )
     }
 
@@ -111,13 +117,14 @@ impl HeldAuthority {
             self.4,
             self.5,
             RoomVerdicts::default(),
+            self.7,
         )
     }
 
     /// A peer's row checks in this read's serving txn: its own relationship
-    /// authority and legal non-use conjunct, under its own floor alone, and
-    /// this read's Grants and class verdicts, where it reads its own actor's
-    /// entry and its own reader's verdicts.
+    /// authority, legal non-use conjunct and archive conjunct, under its own
+    /// floor alone, and this read's Grants and class verdicts, where it reads
+    /// its own actor's entry and its own reader's verdicts.
     pub(super) fn for_peer(&self) -> Self {
         Self(
             RefCell::default(),
@@ -127,22 +134,36 @@ impl HeldAuthority {
             self.4,
             self.5,
             RoomVerdicts::default(),
+            None,
         )
     }
 
+    /// These row checks for a named read of `id` through its cleanup archive
+    /// (ARCH-0055 section 10, archive-visible: "The archive stays visible to
+    /// the resolver"): `id`'s row lifts only the archive's own conjuncts, so
+    /// a removal, a stale mark, a legal-hold use limit, a stale body and a
+    /// withdrawn source still refuse it, and every other gate of the lane
+    /// judges it as before. Every other row, each source `id` was written
+    /// from and every peer's check included, keeps the archive conjunct.
+    pub(super) fn reading_archive_of(mut self, id: EntityId) -> Self {
+        self.7 = Some(id);
+        self
+    }
+
     /// `judge` over the row checks of a record an `edge.provenance` or
-    /// `core.coreference.status` Claim names, in this serving txn: this read's
+    /// coreference Claim names, in this serving txn: this read's
     /// relationship authority, Grants and class verdicts, under the key's own
     /// floor alone, with no row's legal non-use conjunct asked. The provenance
-    /// rule is not re-entered; a status claim still meets its endpoint rule.
+    /// rule is not re-entered; a coreference claim still meets its endpoint
+    /// rule.
     /// The relationship authority is lent to `judge` and taken back after it,
     /// whatever it answers.
     pub(super) fn judge_cited<T>(&self, judge: impl FnOnce(&Self) -> Result<T>) -> Result<T> {
         self.judge_cited_with_coreference(None, judge)
     }
 
-    /// [`Self::judge_cited`] for the status claim `id` whose endpoints the
-    /// worklist judges: its ordinary admission leaves only that row's
+    /// [`Self::judge_cited`] for the coreference claim `id` whose endpoints
+    /// the worklist judges: its ordinary admission leaves only that row's
     /// endpoint check to the walk.
     pub(super) fn judge_cited_coreference<T>(
         &self,
@@ -165,6 +186,7 @@ impl HeldAuthority {
             true,
             id,
             RoomVerdicts::default(),
+            None,
         );
         let judged = judge(&cited);
         *self.0.borrow_mut() = cited.0.into_inner();
@@ -172,13 +194,13 @@ impl HeldAuthority {
     }
 
     /// Whether these row checks judge a record an `edge.provenance` or
-    /// `core.coreference.status` Claim names ([`Self::judge_cited`]). This
-    /// skips only the provenance rule, not a status claim's endpoint rule.
+    /// coreference Claim names ([`Self::judge_cited`]). This skips only the
+    /// provenance rule, not a coreference claim's endpoint rule.
     pub(super) fn judges_cited(&self) -> bool {
         self.4
     }
 
-    /// Whether a worklist judges the endpoints of the status claim `id`,
+    /// Whether a worklist judges the endpoints of the coreference claim `id`,
     /// leaving only that row's endpoint check out of its ordinary admission.
     pub(super) fn judges_coreference_endpoints_of(&self, id: &EntityId) -> bool {
         self.5.as_ref() == Some(id)
@@ -188,6 +210,12 @@ impl HeldAuthority {
     /// read that asks it on its own.
     pub(super) fn asks_use_of(&self, id: &EntityId) -> bool {
         self.1.as_ref() == Some(id)
+    }
+
+    /// Whether the read judges `id` through its cleanup archive
+    /// ([`Self::reading_archive_of`]).
+    pub(super) fn reads_archive_of(&self, id: &EntityId) -> bool {
+        self.7.as_ref() == Some(id)
     }
 
     /// The Grants this serving txn holds, by reader.
@@ -232,7 +260,10 @@ impl ScopedReadActorKey {
     /// Whether a read under this key meets the relationship gate in `txn`. A
     /// narrower credential of the owner's is exempt only while its holder
     /// still exists and is the vault's owner in this snapshot (Astra
-    /// #1413-003, Sol R5-007).
+    /// #1413-003, Sol R5-007), and so is a key a saved lane's basis lifted
+    /// the gate of on that owner's binding alone
+    /// ([`ScopedReadActorKey::relationship_gate_lift_owner`], blind review
+    /// P1 on #9716).
     pub(super) fn relationship_gated_in(
         &self,
         vault: &crate::Vault,
@@ -241,7 +272,7 @@ impl ScopedReadActorKey {
         if !self.enforce_access_grants {
             return Ok(false);
         }
-        let Some(owner) = self.owner_exemption else {
+        let Some(owner) = self.relationship_gate_lift_owner() else {
             return Ok(true);
         };
         crate::memory::owner_exemption_holds_in_txn(vault, txn, owner)
@@ -415,7 +446,8 @@ impl ScopedRead<'_> {
     /// relationship grant admits, is read on a `ConversationMessages` grant
     /// over its conversation, found on this read's content as the
     /// transcript finds it (the MESSAGE PartOf a TURN, the TURN ChildOf the
-    /// conversation). The grant stands in for the relationship check alone;
+    /// conversation; over a room stretch, its shell is its room). The grant
+    /// stands in for the relationship check alone;
     /// every other check on the row still binds. Edges that do not read
     /// admit nothing.
     fn conversation_message_granted_in(
@@ -443,6 +475,9 @@ impl ScopedRead<'_> {
                 self.edge_targets_in(txn, turn, EdgeKind::ChildOf, ENTITY_TYPE_CONVERSATION)
             })
             .any(|conversation| {
+                let conversation = self
+                    .stretch
+                    .map_or(conversation, |stretch| stretch.room_of(conversation));
                 context.allows_conversation_message_at_snapshot(conversation, record)
             })
     }
@@ -740,7 +775,7 @@ where
 /// relationship nor a private scope is the vault's own and decides readable.
 /// `store` is the content the row is read on, where its position is looked
 /// up: base, or a room's union (WILL L11-01).
-fn relationship_read_keyed<S>(
+pub(super) fn relationship_read_keyed<S>(
     store: &S,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,

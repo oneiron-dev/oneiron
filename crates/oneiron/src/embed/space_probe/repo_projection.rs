@@ -17,6 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::ContentHash;
 
 use super::super::media::{MediaEmbedReport, text_document_of};
 use super::super::repo_projection::{
@@ -51,7 +52,7 @@ fn probe_proof_in(
     }
     let mut hasher = blake3::Hasher::new_derive_key(PROBE_COPY_PROOF_CONTEXT);
     hasher.update(id);
-    hasher.update(blake3::hash(probe.query.as_bytes()).as_bytes());
+    hasher.update(ContentHash::of(probe.query.as_bytes()).as_bytes());
     let mut marked = false;
     let mut sources = Vec::new();
     for source in probe.query_sources() {

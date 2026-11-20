@@ -5,6 +5,8 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::receipt::{ReceiptKind, ReceiptRecord, hex_lower};
 use crate::runtime_hooks::body::{
     HookBodyRun, HookBodyUsage, HookBudgetOverrun, HookPreparation, HookRunContext,
@@ -329,7 +331,7 @@ fn record_with_derivation(
         input_json: (input.len() <= MAX_PINNED_INPUT).then(|| input.to_owned()),
         named_rows: store::rows_named_by_fact(input),
         history_erased: false,
-        input_hash: blake3::hash(input.as_bytes()).to_hex().to_string(),
+        input_hash: ContentHash::of(input.as_bytes()).to_hex(),
         reads,
         verdicts: verdicts.pins,
         verdicts_complete: verdicts.complete,

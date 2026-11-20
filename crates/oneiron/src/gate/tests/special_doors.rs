@@ -317,15 +317,28 @@ fn default_manifest_system_rows_pin_the_derived_engine_actors() {
         })
         .collect::<Vec<_>>();
 
+    // Manifest order: the projector, the seal (ARCH-0064), the mirror
+    // (OF-372), the scope-summary landing writer, the fit install writer,
+    // the commitment lapse writer, then the Dreamer warm by default
+    // (ARCH-0026).
     let derived_actor_refs = [
         crate::commitment_schedule::commitment_projection_actor()
             .unwrap()
             .entity_ref()
             .to_hex(),
+        EntityId::derive(crate::entity_id::derived_domains::ESIGN_SEAL_ACTOR, &[])
+            .unwrap()
+            .to_hex(),
         crate::reaction::conversation_mirror_actor_id()
             .unwrap()
             .to_hex(),
-        // ARCH-0026: the Dreamer is warm by default.
+        crate::scope_summary::landing_writer_id().unwrap().to_hex(),
+        crate::context_board::fit_install_writer_id()
+            .unwrap()
+            .to_hex(),
+        crate::housekeeping::commitment_lapse_writer_id()
+            .unwrap()
+            .to_hex(),
         crate::dreamer_runner::authority::dreamer_actor_id()
             .unwrap()
             .to_hex(),
@@ -387,10 +400,15 @@ fn default_manifest_generated_source_trust_row_is_bound_to_the_projection_actor(
     let derived_actor_ref = crate::commitment_schedule::commitment_projection_actor()?
         .entity_ref()
         .to_hex();
-    // The projector, and the Dreamer warm by default (ARCH-0026): each permit
-    // names exactly one derived engine actor, and none is class-wide.
+    // Manifest order: the projector, the seal (ARCH-0064), the
+    // scope-summary landing writer, the fit install writer, then the Dreamer
+    // warm by default (ARCH-0026). Each permit names exactly one derived
+    // engine actor, and none is class-wide.
     let bound_to = [
         derived_actor_ref.clone(),
+        EntityId::derive(crate::entity_id::derived_domains::ESIGN_SEAL_ACTOR, &[])?.to_hex(),
+        crate::scope_summary::landing_writer_id()?.to_hex(),
+        crate::context_board::fit_install_writer_id()?.to_hex(),
         crate::dreamer_runner::authority::dreamer_actor_id()?.to_hex(),
     ];
     assert_eq!(permits.len(), bound_to.len());

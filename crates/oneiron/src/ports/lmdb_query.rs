@@ -79,6 +79,9 @@ impl<T: ManifestDbs> EntityStoreRead for T {
     fn port_entity_count(&self, txn: &RoTxn<'_>) -> Result<u64> {
         self.entities().len(txn)
     }
+    fn port_entity_count_at_most(&self, txn: &RoTxn<'_>, cap: u64) -> Result<u64> {
+        self.entities().len_at_most(txn, cap)
+    }
     fn port_entity_ids_by_type_descending<'a>(
         &self,
         txn: &'a RoTxn<'_>,
@@ -234,6 +237,9 @@ impl EntityStoreRead for Vault {
     }
     fn port_entity_count(&self, txn: &RoTxn<'_>) -> Result<u64> {
         self.store.port_entity_count(txn)
+    }
+    fn port_entity_count_at_most(&self, txn: &RoTxn<'_>, cap: u64) -> Result<u64> {
+        self.store.port_entity_count_at_most(txn, cap)
     }
     fn port_entity_ids_by_type_descending<'a>(
         &self,

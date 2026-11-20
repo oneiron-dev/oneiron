@@ -53,18 +53,23 @@ pub mod judge_label_rechecks;
 mod layout_suggestions;
 pub(crate) mod optimize;
 pub use optimize::{CoachLiveSlice, CoachSkillOptimizer};
+pub mod conflict_settle;
 mod person_threshold;
 mod proposals;
+pub mod psych_profile;
 pub mod strength;
 pub use applied::{
     AppliedMaintenance, IDENTITY_PROVISIONAL_KIND, MAINTENANCE_APPLY_KIND, MAINTENANCE_REVERT_KIND,
     MaintenanceRevert, MaintenanceTarget,
 };
 pub use calibration_asks::COACH_CALIBRATION_ASKS_FACET;
+pub use conflict_settle::CONFLICT_SETTLE_FACET;
 pub use idle_return_tables::COACH_IDLE_RETURN_TABLES_FACET;
+pub use psych_profile::PSYCH_PROFILE_FACET;
 pub use strength::CONSOLIDATION_STRENGTH_FACET;
 pub mod representation;
 mod retrieval_policy;
+pub mod retrieval_skill_review;
 mod room_upkeep;
 pub mod seal_checks;
 pub(crate) mod setting_keys;
@@ -85,10 +90,13 @@ use super::{
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::side_table::{LegacyJson, SideTable};
 use crate::{Error, Result, Vault};
+#[cfg(oneiron_test_support)]
+pub(crate) use applied::claim_revision_in_txn;
 pub(crate) use curator::PROPOSAL_PREDICATE as CURATOR_PROPOSAL_PREDICATE;
 pub use curator::approved::apply_after_consent as apply_curator_after_consent;
 pub(crate) use curator::curator_slot_in_txn;
 pub(crate) use curator::finding_lifts_restriction_in as curator_finding_lifts_restriction_in;
+pub(crate) use curator::proposal_lifts_restriction_in as curator_proposal_lifts_restriction_in;
 pub use curator::{CuratorQuestions, CuratorRubric, CuratorTrigger};
 pub use evaluation::{
     DREAMER_TUNING_CONFIG_MEDIA_TYPE, DreamerTuningConfig, HarnessEvaluation,
@@ -273,6 +281,8 @@ pub(crate) fn execute(
         // RULING S69C-DESIGN item 8): the wake driver hands it to the host's
         // executor, so here it can only wait for one.
         CONSOLIDATION_STRENGTH_FACET => return Ok(strength::unlent()),
+        CONFLICT_SETTLE_FACET => return Ok(conflict_settle::unlent()),
+        PSYCH_PROFILE_FACET => return Ok(psych_profile::unlent()),
         CURATOR_FACET => {
             curator::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
@@ -295,7 +305,7 @@ pub(crate) fn execute(
             action_mode::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
         super::COACH_RETRIEVAL_TUNE_FACET => {
-            retrieval_policy::run(ctx.vault)?;
+            retrieval_policy::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
         honesty::HONESTY_AUDIT_FACET => {
             let _ = honesty::run(ctx.vault, ctx.now_ms / 1000)?;
@@ -438,3 +448,9 @@ fn require_active_person_in_txn(
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::agent_health::call_receipt_accepts_masked;
 pub(crate) use self::curator::dreamer_curator_rubric_accepts_masked;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    coach_environment::grant_terms_digest_for_test, fold_suggestions::suggestion_state_for_test,
+    room_upkeep::source_state_for_test,
+};

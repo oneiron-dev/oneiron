@@ -152,3 +152,45 @@ fn a_page_full_write_error_is_traced_with_its_sizes_and_other_errors_are_not() {
         "only PAGE_FULL is traced"
     );
 }
+
+/// A composed view counts its merged rows up to a cap, the same rows `len`
+/// counts: a session recall's temporal bound needs the entity count only up
+/// to its widening bound, and `len` walks every merged row (UNBUILT3-06;
+/// Engine ANSWER 20 Nov 17:18 PPR-NARROWED-CACHE-DESIGN).
+#[test]
+fn composed_len_at_most_counts_merged_rows_up_to_the_cap() -> Result<()> {
+    let (_dir, env, base) = env_with_db(DatabaseFlags::empty());
+    let mut wtxn = env.write_txn()?;
+    for key in [b"a", b"b", b"c", b"d"] {
+        base.put(&mut wtxn, key, b"base")?;
+    }
+    wtxn.commit()?;
+    // The session replaces one base row, deletes one and adds two: five rows.
+    let overlay = SessionOverlay::new(4096);
+    let segment = overlay.install_txn_segment()?;
+    overlay.put(OverlayKeyspace::Entities, b"a", b"session")?;
+    overlay.delete(OverlayKeyspace::Entities, b"b")?;
+    overlay.put(OverlayKeyspace::Entities, b"e", b"session")?;
+    overlay.put(OverlayKeyspace::Entities, b"f", b"session")?;
+    segment.commit()?;
+    let view = OverlayDb::composed(
+        base,
+        overlay.clone(),
+        Arc::new(overlay.snapshot()?),
+        OverlayKeyspace::Entities,
+    );
+    let canonical = OverlayDb::canonical(base);
+    let rtxn = env.read_txn()?;
+    assert_eq!(view.len(&rtxn)?, 5, "FIXTURE: five merged rows");
+    assert_eq!(canonical.len(&rtxn)?, 4, "FIXTURE: four base rows");
+    for (cap, merged, plain) in [(0, 0, 0), (1, 1, 1), (4, 4, 4), (5, 5, 4), (6, 5, 4)] {
+        assert_eq!(view.len_at_most(&rtxn, cap)?, merged, "composed, cap {cap}");
+        assert_eq!(
+            canonical.len_at_most(&rtxn, cap)?,
+            plain,
+            "canonical, cap {cap}"
+        );
+    }
+    assert_eq!(view.len_at_most(&rtxn, u64::MAX)?, 5, "composed, no cap");
+    Ok(())
+}

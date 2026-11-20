@@ -1,14 +1,16 @@
 //! The four durable memory writes, search, and the off-record policy that refuses them.
 
+mod claim_put;
+
 use rmpv::Value;
 
 use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::code_run::consent;
 use crate::code_run::storage::{ExecutorStorage, require_facet_placement_in, unplaceable};
 use crate::code_run::types::{
-    SelfCall, SelfDispatchOutcome, SelfEffect, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
-    SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
-    SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
+    SelfCall, SelfDispatchOutcome, SelfEffect, SelfMemoryEdgeWriteResult, SelfMemoryPutEdgeCall,
+    SelfMemorySearchCall, SelfMemorySearchResult, SelfMemorySupersedeClaimCall,
+    SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
 };
 use crate::error::{Error, Result};
 use crate::{ClaimSubject, EdgeActorClass, EdgeKind, EntityId, ScoredEntity, Vault};
@@ -340,150 +342,6 @@ impl HostSelfDispatcher<'_> {
 
         Ok(SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult {
             id: call.id,
-        }))
-    }
-
-    pub(super) fn dispatch_memory_put_claim(
-        &self,
-        call: SelfMemoryPutClaimCall,
-        read_as: Option<ScopedReadActorKey>,
-    ) -> Result<SelfDispatchOutcome> {
-        self.dispatch_memory_put_claim_requesting(
-            call,
-            read_as,
-            crate::claim::ClaimApprovalStatus::Proposed,
-            false,
-        )
-    }
-
-    /// The claim put asking `approval` of the gates: code mode asks
-    /// Proposed; a caller's live run asks Auto first (FIX 3983).
-    /// `checker_review`: the put is a caller's live-run put, which names
-    /// itself to the gate whatever it asks, so the host's auto checker
-    /// reviews its Auto request and its Proposed resubmission keeps that
-    /// review's hold as a pending review (review 6908 P1).
-    pub(crate) fn dispatch_memory_put_claim_requesting(
-        &self,
-        call: SelfMemoryPutClaimCall,
-        read_as: Option<ScopedReadActorKey>,
-        approval: crate::claim::ClaimApprovalStatus,
-        checker_review: bool,
-    ) -> Result<SelfDispatchOutcome> {
-        // A position-narrowed slip places no row in core (FIX 10666).
-        self.refuse_narrowed_program_write()?;
-        let admission = self.code_emission_admission()?;
-        let candidate = match admission
-            .as_ref()
-            .and_then(|admission| admission.candidate_evidence.clone())
-        {
-            Some(evidence) => (*call.candidate).clone().with_evidence(evidence),
-            None => *call.candidate,
-        };
-        // A live run's put names itself to the gate, whose auto checker reviews it as it reviews a Dreamer
-        // write (FIX 3983, review 6881 P1). Its Proposed resubmission carries the same marker, so a checker
-        // hold parks it with a pending review instead of landing it unreviewed (review 6908 P1). Code mode
-        // carries no marker.
-        let producer = if checker_review {
-            vec![(
-                rmpv::Value::from(crate::gate::CHECKED_PRODUCER_PROVENANCE_KEY),
-                rmpv::Value::from(crate::gate::LIVE_RUN_CLAIM_PUT_PRODUCER),
-            )]
-        } else {
-            Vec::new()
-        };
-        let envelope = self
-            .write_envelope_with(SelfEffect::MemoryPutClaim, admission.as_ref(), producer)?
-            .with_approval(approval);
-        // The write gate reads no facet; the stored body takes the vault
-        // default when the write applies.
-        let gate_body = candidate.clone().into_claim_body(
-            &envelope,
-            crate::claim::substrate_facet_id(envelope.actor().entity_ref())?,
-        )?;
-        let authored_rules = crate::dreamer_consolidation::prepare_authored_claim(
-            &gate_body.predicate,
-            &gate_body.value,
-        )?;
-        if authored_rules.is_some()
-            && (gate_body.subject != ClaimSubject::Entity(self.actor.entity_ref())
-                || self.actor.actor_class() != crate::EdgeActorClass::Agent)
-        {
-            return Err(Error::InvalidConfig(
-                "Dreamer rule author is not the bound resident".into(),
-            ));
-        }
-        // The subject it names resolves for its writer (OF-063, FIX 1214).
-        let subject = match gate_body.subject {
-            ClaimSubject::Entity(id) => vec![("/subject", id)],
-            ClaimSubject::Edge { source, target, .. } => {
-                vec![("/subject", source), ("/subject", target)]
-            }
-        };
-        if let Some(refused) = self.refused_write_reference(
-            SelfEffect::MemoryPutClaim,
-            "vault.claims.put",
-            read_as.as_ref(),
-            &subject,
-        )? {
-            return Ok(refused);
-        }
-        self.check_write_gate(call.id, &gate_body, &envelope, true)?;
-        let actual_id = match &self.storage {
-            ExecutorStorage::Canonical(vault) => vault
-                .put_claim_candidate_with_landing_returning_actual(
-                    &call.id,
-                    candidate,
-                    &envelope,
-                    call.occurred,
-                    call.learned_at,
-                    |_| Ok(()),
-                )?,
-            ExecutorStorage::Session(binding) => binding.session.executor_put_claim_candidate(
-                &binding.route,
-                &call.id,
-                candidate,
-                &envelope,
-                call.occurred,
-                call.learned_at,
-            )?,
-        };
-
-        if let Some(json) = authored_rules {
-            let admitted = match &self.storage {
-                ExecutorStorage::Canonical(vault) => {
-                    crate::dreamer_consolidation::admitted_authored_claim(
-                        vault, &actual_id, self.actor,
-                    )?
-                }
-                ExecutorStorage::Session(binding) => binding.session.admitted_executor_claim(
-                    &binding.route,
-                    &actual_id,
-                    self.actor,
-                )?,
-            };
-            if !admitted {
-                return Err(Error::InvalidConfig(
-                    "Dreamer rules require an admitted resident claim".into(),
-                ));
-            }
-            let record =
-                crate::dreamer_consolidation::resident_record(self.actor, &json, Some(&actual_id))?;
-            match &self.storage {
-                ExecutorStorage::Canonical(vault) => {
-                    vault.set_claimed_dreamer_failure_rules(self.actor, &json, &actual_id)?;
-                }
-                ExecutorStorage::Session(binding) => {
-                    binding.session.side_table_put_routed(
-                        &binding.route,
-                        &crate::dreamer_consolidation::DREAMER_FAILURE_RULES,
-                        &(),
-                        &record,
-                    )?;
-                }
-            }
-        }
-        Ok(SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult {
-            id: actual_id,
         }))
     }
 

@@ -134,6 +134,14 @@ pub(crate) fn burn_fields(
     };
     let font_name = resource(resources, b"Font", font, limits)?;
     let mut ops = Vec::new();
+    let mut target = leaf::BurnTarget {
+        out,
+        resources,
+        crop,
+        font_name: &font_name,
+        rasters,
+        images,
+    };
     for field in fields.iter().filter(|f| f.geometry.page == page) {
         let value = match values.get(&field.id) {
             None => None,
@@ -150,10 +158,8 @@ pub(crate) fn burn_fields(
             width_percent: field.geometry.width_percent,
             height_percent: field.geometry.height_percent,
         };
-        leaf::burn_field(
-            &mut ops, out, resources, crop, &font_name, &geometry, value, rasters, images, &admit,
-        )
-        .map_err(|err| map_leaf(Some(limits), err))?;
+        leaf::burn_field(&mut ops, &mut target, &geometry, value, &admit)
+            .map_err(|err| map_leaf(Some(limits), err))?;
     }
     if rejected {
         leaf::stamp_rejected(&mut ops, &font_name, crop, &admit).map_err(WorkError::Memory)?;

@@ -348,7 +348,7 @@ impl ScopedRead<'_> {
             requested,
             |row| row.occurred.start <= as_of && row.learned_at <= as_of,
             |_, _| Ok(false),
-            |_, rows| Ok::<_, Error>(rows),
+            |_, _, rows| Ok::<_, Error>(rows),
         )
     }
 
@@ -377,6 +377,28 @@ impl ScopedRead<'_> {
         let _bodies = self.prepare_point_read::<E>()?;
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         self.read_projected_opaque_in_txn(&txn, reads, requested, opaque, project)
+    }
+
+    /// [`Self::read_projected`], whose projection also takes the authority
+    /// the rows' gate held in the read's snapshot, so a receipt it builds
+    /// there reports the Grants that judged them (the retrieval loop's,
+    /// FIX-LIST GRANT-RECEIPT-OTHER-READ-LANES).
+    pub(super) fn read_projected_held<T>(
+        &self,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        project: impl FnOnce(&heed::RoTxn<'_>, &HeldAuthority, Vec<Option<ReadRow>>) -> Result<T>,
+    ) -> Result<ScopedReadResult<T>> {
+        let _bodies = self.prepare_point_read::<Error>()?;
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        self.read_kept_projected_opaque_in_txn(
+            &txn,
+            reads,
+            requested,
+            |_| true,
+            |_, _| Ok(false),
+            project,
+        )
     }
 
     /// Prepare grant time and pin point-read bodies before opening a snapshot.
@@ -411,13 +433,21 @@ impl ScopedRead<'_> {
         opaque: impl FnMut(&heed::RoTxn<'_>, &EntityId) -> std::result::Result<bool, E>,
         project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
     ) -> std::result::Result<ScopedReadResult<T>, E> {
-        self.read_kept_projected_opaque_in_txn(txn, reads, requested, |_| true, opaque, project)
+        self.read_kept_projected_opaque_in_txn(
+            txn,
+            reads,
+            requested,
+            |_| true,
+            opaque,
+            |txn, _, rows| project(txn, rows),
+        )
     }
 
     /// [`Self::read_projected_opaque_in_txn`], where `keep` is the caller's own
     /// selection: an admitted row it refuses answers as `None`, as a missing
     /// one does, adds no suppression count, and is neither projected nor
-    /// charged to the reader's read exposure (L8-65).
+    /// charged to the reader's read exposure (L8-65). `project` also takes
+    /// the authority the rows' gate held.
     fn read_kept_projected_opaque_in_txn<T, E: From<Error>>(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -425,7 +455,11 @@ impl ScopedRead<'_> {
         requested: Option<&RetrievalFilter>,
         keep: impl Fn(&ReadRow) -> bool,
         mut opaque: impl FnMut(&heed::RoTxn<'_>, &EntityId) -> std::result::Result<bool, E>,
-        project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
+        project: impl FnOnce(
+            &heed::RoTxn<'_>,
+            &HeldAuthority,
+            Vec<Option<ReadRow>>,
+        ) -> std::result::Result<T, E>,
     ) -> std::result::Result<ScopedReadResult<T>, E> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, requested)?;
         // One serving txn, one held authority: the reader's relationship
@@ -460,10 +494,17 @@ impl ScopedRead<'_> {
             suppressed += withheld;
             value.push(row.filter(&keep));
         }
-        let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
+        let receipt = self.receipt_in(
+            txn,
+            requested,
+            &policy,
+            &filter,
+            suppressed,
+            Some(&authority),
+        );
         self.charge_served(value.iter().flatten().map(|row| row.id));
         Ok(ScopedReadResult {
-            value: project(txn, value)?,
+            value: project(txn, &authority, value)?,
             receipt,
         })
     }

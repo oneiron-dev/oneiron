@@ -16,6 +16,13 @@
 //! again, with no source label. The fence pins it to that check, never to a
 //! labelled one; tests/turn_retry_regenerated_turn.rs drives it.
 //!
+//! A plan run's result filed into its sub-session holds no words, only the
+//! typed refs of the result the engine observed, so it is labelled observed
+//! (FIX PLAN-RUN-RESULT-NOT-FILED-IN-OWNER-ROOM): a generated label pends a
+//! person's filing on source trust. Generated words never launder into
+//! observed (ARCH-0040), so a fence pins the observed check to that filing;
+//! tests/plan_mode_subsession.rs drives it.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test dag_append_composed_source`.
 #![cfg(oneiron_test_support)]
 
@@ -34,6 +41,9 @@ const COMPOSED_ENTRY: &str = "append_composed_in_txn";
 
 /// The Retry TURN's transcript-gate entry point, called as `name(`.
 const REGENERATED_TURN_ENTRY: &str = "append_regenerated_turn_at_in_txn";
+
+/// The observed check's entry point, called as `name(`.
+const OBSERVED_ENTRY: &str = "append_observed_at_in_txn";
 
 /// Whether `code` calls `name`: `name(` with no identifier byte before it.
 fn calls(code: &str, name: &str) -> bool {
@@ -99,5 +109,26 @@ fn the_summary_reply_takes_the_composed_check_and_the_retry_turn_the_transcript_
             "conversation_dag/writes.rs".to_owned(),
         ]),
         "only the Retry's turn, and the append door that defines it, use the transcript check"
+    );
+}
+
+/// A plan run's filed result reaches the observed check, and no other
+/// production path does: a record with words never takes the observed label.
+#[test]
+fn only_a_plan_runs_filed_result_takes_the_observed_check() {
+    let tree = SourceTree::read(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
+    let mut observing = BTreeSet::new();
+    for (path, source) in tree.production_sources() {
+        if calls(&production_source(source), OBSERVED_ENTRY) {
+            observing.insert(tree.relative(path));
+        }
+    }
+    assert_eq!(
+        observing,
+        BTreeSet::from([
+            "agent_dispatch/resident/result.rs".to_owned(),
+            "conversation_dag/writes.rs".to_owned(),
+        ]),
+        "only a plan run's filed result, and the append door that defines it, use the observed check"
     );
 }

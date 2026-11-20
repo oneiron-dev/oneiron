@@ -77,11 +77,14 @@ impl ScopedRead<'_> {
             let had_l2_base = pack.l2_base.is_some();
             let mut auxiliary_suppressed = 0;
             if let Some(summary) = pack.l2_base.as_ref() {
-                let visibility = self.retrieval_visibility_in(&rtxn, None)?;
+                // The L2 evidence takes the rows' held authority, so the
+                // Grants that admit it are the ones the receipt reports: a
+                // timed Grant that lapses mid-read cannot leave evidence
+                // under a deny-all receipt.
                 let mut admitted = true;
                 for id in summary.evidence_ids() {
                     let evidence = self.admit_in(&rtxn, id, || {
-                        crate::ports::PprNodeVisibility::ppr_node_visible(&visibility, &rtxn, id)
+                        self.is_entity_retrievable_held_in(&rtxn, &policy, &filter, id, &held)
                             .map(|visible| visible.then_some(()))
                     })?;
                     if !evidence.visible() {
@@ -208,8 +211,14 @@ impl ScopedRead<'_> {
             );
             // The pack's receipt reports the candidates its search ranked,
             // the key's own rows and its own live Grants' (FIX 7528).
-            let candidates = self.candidate_filter_in(&rtxn, &policy, &filter, None);
-            Ok(self.receipt_for(None, &policy, &candidates, suppressed))
+            let candidates = self.receipt_candidates_in(
+                &rtxn,
+                &policy,
+                &filter,
+                None,
+                self.receipts_include_live_grants,
+            );
+            Ok(self.receipt_in(&rtxn, None, &policy, &candidates, suppressed, Some(&held)))
         })();
         self.end_recall_plan()?;
         result
@@ -418,9 +427,11 @@ impl ScopedRead<'_> {
         if entity.entity_type != crate::registry::ENTITY_TYPE_TURN {
             return Ok(true);
         }
+        let store = self.store_read();
         if let Some(clamp) = disclosure
-            && !clamp.admits_in(
+            && !clamp.admits_in_from(
                 self.vault,
+                &store,
                 rtxn,
                 &entity.id,
                 crate::registry::ENTITY_TYPE_TURN,
@@ -437,7 +448,6 @@ impl ScopedRead<'_> {
             .map_or(crate::vault::ReadMode::Live, |revision| {
                 crate::vault::ReadMode::Pinned(crate::vault::RevisionRef(revision))
             });
-        let store = self.store_read();
         let Some(served) = crate::vault::entity_revision::served_turn_text_in_txn(
             self.vault, &store, rtxn, &entity.id, mode, true,
         )?

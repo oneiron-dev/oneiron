@@ -53,7 +53,7 @@ impl HumanDecisionQueue for NoPerson {
 /// The host's AUTO decisions with `local` as the one rung that answers the
 /// fan-out ask (0a4d98d5f0c, #1575: the ask is a typed decision through the
 /// host's ladder, which replaced `FanoutAskClassifier`).
-fn decisions<'a>(
+pub(super) fn decisions<'a>(
     local: &'a dyn DecisionProvider,
     principal: EntityId,
     deadline: &'a RetrievalDeadline,
@@ -86,7 +86,7 @@ fn decisions<'a>(
 }
 
 /// The call's clock for one AUTO ruling.
-fn decision_deadline() -> RetrievalDeadline {
+pub(super) fn decision_deadline() -> RetrievalDeadline {
     RetrievalDeadline::hard(
         std::time::Instant::now(),
         std::time::Duration::from_secs(3600),
@@ -282,14 +282,9 @@ fn fanout_approve_policy_deny_resume_exact_digest_and_gate_receipts() {
 fn fanout_rulings_use_the_vault_id_source_and_replay_the_same_receipt() {
     let clock = crate::ports::ManualClock::new(100);
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(
-        dir.path(),
-        VaultConfig {
-            store_clock: clock.bundle(),
-            ..VaultConfig::default()
-        },
-    )
-    .expect("open vault");
+    let mut config = VaultConfig::default();
+    config.store_clock = clock.bundle();
+    let vault = Vault::open(dir.path(), config).expect("open vault");
     let actor = own_agent(&vault);
     let human = owner(&vault);
     let mut input = plan(&vault, 26);
@@ -463,6 +458,17 @@ fn fanout_rulings_use_the_vault_id_source_and_replay_the_same_receipt() {
             .expect("replayed policy"),
         Some(standing)
     );
+}
+
+pub(super) struct AllowClassifier;
+impl DecisionProvider for AllowClassifier {
+    fn pin(&self) -> ProviderPin {
+        local_pin()
+    }
+
+    fn decide(&self, _: &DecisionCall<'_>) -> Result<ProviderDecision> {
+        Ok(answer(FanoutAskVerdict::Allow))
+    }
 }
 
 struct HistoryClassifier;
@@ -656,8 +662,10 @@ fn fanout_missing_manifest_threshold_uses_shipped_row_and_malformed_refuses() {
         facade.get_consult_fanout_policy().unwrap(),
         ConsultFanOutPolicy::default()
     );
+    let deadline = decision_deadline();
+    let allowed = decisions(&AllowClassifier, actor, &deadline);
     let admitted = facade
-        .fan_out_counted_consults(&input, "research")
+        .fan_out_counted_consults_with_classifier(&input, "research", Some(&allowed))
         .expect("the shipped threshold row governs the missing one");
     assert_eq!(admitted.task_refs.len(), 1);
     assert_eq!(
@@ -704,7 +712,7 @@ mod foreign_owner_proof {
                 &foreign,
             )
             .expect_err("another vault's proof releases nothing");
-        assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+        assert_eq!(refused.code, crate::memory::MEMORY_CODE_FORBIDDEN);
         assert_eq!(task_entity_census(&vault), 0);
         let released = facade
             .resume_fan_out_consults(
@@ -719,14 +727,23 @@ mod foreign_owner_proof {
 }
 
 /// Rule 5: an actor's fan-out requests are counted, never refused for rate.
-/// A burst of 200 from one actor under the shipped policy lands whole; main
-/// refused the eleventh in a minute.
+/// A burst of 200 from one actor under the shipped request-rate row lands
+/// whole when launch is authorized; main refused the eleventh in a minute.
 #[test]
 fn an_actor_burst_of_200_fan_outs_lands_whole() {
     let (_dir, vault) = open_vault();
     let actor = own_agent(&vault);
     let input = plan(&vault, 1);
     let facade = vault.memory(actor, EdgeActorClass::Agent);
+    facade
+        .set_consult_fanout_policy(
+            &owner(&vault),
+            &ConsultFanOutPolicy {
+                mode: CheckInMode::NeverAsk,
+                ..ConsultFanOutPolicy::default()
+            },
+        )
+        .unwrap();
     for request in 1..=200 {
         let receipt = facade
             .fan_out_consults(&input)
@@ -759,6 +776,7 @@ fn fan_outs_past_the_owner_row_land_and_leave_one_typed_check() {
         .set_consult_fanout_policy(
             &owner(&vault),
             &ConsultFanOutPolicy {
+                mode: CheckInMode::NeverAsk,
                 create_rate: row,
                 ..ConsultFanOutPolicy::default()
             },
@@ -796,6 +814,7 @@ fn fan_outs_across_scopes_count_in_one_window_against_the_vault_row() {
     let input = plan(&vault, 1);
     let facade = vault.memory(actor, EdgeActorClass::Agent);
     let row = |limit, window_seconds| ConsultFanOutPolicy {
+        mode: CheckInMode::NeverAsk,
         create_rate: TaskCreateRateLimit {
             limit,
             window_seconds,
@@ -866,10 +885,8 @@ impl DecisionProvider for InterleavingClassifier<'_> {
 fn a_fan_out_held_across_a_window_counts_in_the_window_it_lands_in() {
     let dir = tempfile::tempdir().expect("tempdir");
     let clock = crate::ports::ManualClock::new(599);
-    let config = VaultConfig {
-        store_clock: clock.bundle(),
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::default();
+    config.store_clock = clock.bundle();
     let vault = Vault::open(dir.path(), config).expect("open vault");
     let actor = own_agent(&vault);
     let facade = vault.memory(actor, EdgeActorClass::Agent);

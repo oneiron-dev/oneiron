@@ -390,3 +390,6 @@ fn slot(
         drafts.len() - 1
     })
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::topics::topic_of_for_test;

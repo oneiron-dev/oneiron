@@ -450,6 +450,56 @@ pub fn grant_derive_rows(vault: &Vault, agents: &[EntityId]) -> Result<()> {
     )
 }
 
+/// [`grant_derive_rows`], each agent's `core:read` grant also naming
+/// `actor_class` beside its actor ref: a read row only a key of that class
+/// matches (ARRIVAL-READER-KEY-CLASSLESS).
+///
+/// # Errors
+///
+/// The vault's, or a shipped policy body that does not decode as a map of
+/// scoped grant rows.
+pub fn grant_derive_rows_with_read_class(
+    vault: &Vault,
+    agents: &[EntityId],
+    actor_class: &str,
+) -> Result<()> {
+    use rmpv::Value;
+    let malformed = || crate::Error::InvariantViolation("shipped policy scoped grants");
+    let mut body = crate::gate::default_policy_manifest()?;
+    for agent in agents {
+        body = crate::gate::body_with_agent_derive_rows(&body, &agent.to_hex())?;
+    }
+    let mut policy = rmpv::decode::read_value(&mut body.as_slice()).map_err(|_| malformed())?;
+    let refs: Vec<String> = agents.iter().map(EntityId::to_hex).collect();
+    let Value::Map(entries) = &mut policy else {
+        return Err(malformed());
+    };
+    let Some((_, Value::Array(rows))) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("scoped_grants"))
+    else {
+        return Err(malformed());
+    };
+    for row in rows {
+        let Value::Map(fields) = row else {
+            return Err(malformed());
+        };
+        if fields.iter().any(|(key, value)| {
+            key.as_str() == Some("actor_ref")
+                && value.as_str().is_some_and(|r| refs.iter().any(|a| a == r))
+        }) {
+            fields.push((Value::from("actor_class"), Value::from(actor_class)));
+        }
+    }
+    let mut named = Vec::new();
+    rmpv::encode::write_value(&mut named, &policy).map_err(|_| malformed())?;
+    crate::test_fixtures::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &named,
+    )
+}
+
 /// Holds the Steward grant `grant` to `project`, leaving its verbs and
 /// every other data axis unchanged.
 ///
@@ -815,6 +865,7 @@ pub fn commit_in_attempt(
                             facet: None,
                             world: None,
                             profile: whole_record_profile(profile.subject, profile.document)?,
+                            cites: Vec::new(),
                         })
                     }
                 })
@@ -1528,4 +1579,20 @@ pub fn derive_item_receipts(vault: &Vault, claim: &EntityId) -> Result<Vec<Deriv
 pub fn derive_frontier(vault: &Vault) -> Result<[u8; 32]> {
     let txn = vault.store.env.read_txn()?;
     crate::gate::resolve_policy_manifest(&vault.store, &txn)?.read_frontier_hash()
+}
+
+/// Whether the stored claim `claim` has live support in the vault's own read
+/// now: the read-time test (`claim::has_live_support_in_txn`) a scoped read,
+/// a recall and the model channel apply. `None` when no claim is stored
+/// under the id.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn claim_has_live_support(vault: &Vault, claim: &EntityId) -> Result<Option<bool>> {
+    let txn = vault.store.env.read_txn()?;
+    let Some(body) = vault.get_claim_in_txn(&txn, claim)? else {
+        return Ok(None);
+    };
+    crate::claim::has_live_support_in_txn(&vault.store, &txn, &body).map(Some)
 }

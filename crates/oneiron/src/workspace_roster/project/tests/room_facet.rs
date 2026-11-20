@@ -6,7 +6,7 @@ use super::super::*;
 use super::authority::{FIXTURE_HOST, sign_project};
 use crate::authority::HostSlipIssuer;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::edge::EdgeActorClass;
 use crate::federation::{ScopeAxis, ScopeId};
 use crate::memory::ClaimInput;
 use crate::pipeline::{
@@ -14,7 +14,7 @@ use crate::pipeline::{
 };
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON};
 
-fn note(subject: EntityId, value: &str) -> ClaimInput {
+fn note(subject: EntityId, value: &str, facet: EntityId) -> ClaimInput {
     ClaimInput {
         id: None,
         predicate: "note.topic".into(),
@@ -24,12 +24,13 @@ fn note(subject: EntityId, value: &str) -> ClaimInput {
         source: "user_stated".into(),
         world_ref: None,
         relationship_ref: None,
-        scope: None,
+        scope: Some(serde_json::json!({"facet": facet.to_hex()})),
         valid_from: None,
         valid_to: None,
         occurred_at: None,
         learned_at: None,
         salience: None,
+        confidence_details: None,
     }
 }
 
@@ -76,14 +77,14 @@ fn a_room_turn_keeps_the_facet_it_opened_with() -> Result<()> {
     vault.bind_host_actor_for_test(&issuer, agent, "agent")?;
     let host = vault.memory(owner, EdgeActorClass::Human);
     let noted = |value: &str, facet: EntityId| -> Result<String> {
-        let receipt = host.claim_upsert(&note(room, value)).expect("note");
+        // The facet is stamped at birth (FIX 7757): a later restamp is refused (FIX 9596).
+        let receipt = host.claim_upsert(&note(room, value, facet)).expect("note");
         let hex = host
             .get_entity(&receipt.claim_short_id)
             .expect("note read")
             .value
             .expect("the owner reads the note")
             .id_hex;
-        vault.put_edge(&EntityId::from_hex(&hex)?, EdgeKind::FacetOf, &facet, 1.0)?;
         Ok(hex)
     };
     let (at_work, at_home) = (noted("lantern desk", work)?, noted("lantern porch", home)?);

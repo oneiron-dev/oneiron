@@ -8,7 +8,8 @@
 //! instead for the rest of its life; so does `--transport http`. A socket that
 //! drops fails the requests in flight on it with a typed error, and a later
 //! request opens a fresh one, after a backoff while opens keep failing; a
-//! request that never reached the socket goes over HTTP meanwhile.
+//! request that never reached the socket goes over HTTP meanwhile, as does
+//! one too long for the server's socket frame.
 //!
 //! Neither changes what a request is. Each still carries the slip and a holder
 //! proof signed for it alone, which the server's binding door verifies and
@@ -21,7 +22,8 @@
 //! In owner mode (FIX 5540) the socket is the only carrier: each upgrade
 //! carries the owner's sign-in, read afresh from its file, in place of the
 //! slip and its proof; his calls name no proof; and a request the socket
-//! cannot take gets a typed auth or unavailable error, never HTTP.
+//! cannot take gets a typed auth, unavailable or frame-too-large error,
+//! never HTTP.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -30,7 +32,7 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 use tokio::time::timeout_at;
@@ -44,7 +46,7 @@ use oneiron_vault_contract::BINDING_HEADER;
 
 mod replies;
 
-use replies::{ReplyWaiter, route};
+use replies::{ReplyWaiter, SocketAnswer, route};
 
 /// How long opening the socket may take, inside the request's own deadline.
 /// A server that cannot be reached in this time gets this request over HTTP,
@@ -95,6 +97,8 @@ pub(super) enum Cut {
     /// The server offers the owner no MCP socket, and owner mode has no
     /// other carrier.
     Unavailable(String),
+    /// Too long for the server's socket, and owner mode has no other carrier.
+    FrameTooLarge,
 }
 
 /// The bounds on one request.
@@ -424,7 +428,7 @@ impl SocketLink {
             Credential::Owner { .. } | Credential::OAuth { .. } => None,
         };
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let frame = request_frame(id, surface, binding.as_deref(), body).map_err(Carried::Cut)?;
+        let frame = request_frame(id, surface, binding.as_deref(), body).map_err(unsent)?;
         let (chunks, mut answer) = mpsc::unbounded_channel();
         if session
             .outbound
@@ -741,6 +745,7 @@ async fn drive(mut socket: Socket, mut requests: mpsc::UnboundedReceiver<Outboun
 /// One request as an app RPC frame: the server's `mcp` method, carrying the
 /// message as the client wrote it and, for a slip, this request's own proof.
 /// The owner's socket takes no `binding` field at all, not even an empty one.
+/// A frame past [`super::SOCKET_MAX_OUTBOUND_FRAME`] is refused unsent.
 fn request_frame(
     id: u64,
     surface: McpSurface,
@@ -786,12 +791,7 @@ fn request_frame(
     request
         .serialize(&mut rmp_serde::Serializer::new(&mut frame).with_struct_map())
         .map_err(|error| Cut::Failed(format!("could not frame the request: {error}")))?;
-    Ok(frame)
-}
-
-/// The HTTP answer a socket call carries back.
-#[derive(Deserialize)]
-struct SocketAnswer {
-    status: u16,
-    body: String,
+    (frame.len() <= super::SOCKET_MAX_OUTBOUND_FRAME)
+        .then_some(frame)
+        .ok_or(Cut::FrameTooLarge)
 }
