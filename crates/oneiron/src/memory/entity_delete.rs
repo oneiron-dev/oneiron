@@ -222,8 +222,9 @@ impl Memory<'_> {
     /// # Errors
     ///
     /// `authority`'s refusal; `BAD_REQUEST` for a `check_in_ref` an Owner's
-    /// or an agent's delete names, or a person's that goes at once; a person
-    /// with no membership grant; as [`check_in::person_door_check_in_in_txn`].
+    /// or an agent's delete names, or a person's that goes at once
+    /// ([`check_in::named_check_in_at_once`]); a person with no membership
+    /// grant; as [`check_in::person_door_check_in_in_txn`].
     pub(super) fn role_delete_check_in(
         &self,
         target: &DeleteTarget,
@@ -254,14 +255,9 @@ impl Memory<'_> {
                         verb,
                         check_in_ref,
                     )? {
-                        // A delete that goes at once spends no check-in, so
-                        // the one it names is refused, never left unspent
-                        // while another record goes (REVIEW-9810 P1).
-                        DoorCheckIn::Go(decision)
-                            if check_in_ref.is_some() && decision.check_in.is_none() =>
-                        {
-                            return Err(spends_no_check_in_at_once());
-                        }
+                        // A delete that goes at once comes back with no
+                        // check-in: the judge refuses a `check_in_ref` it
+                        // names ([`check_in::named_check_in_at_once`]).
                         DoorCheckIn::Go(decision) => Some(decision),
                         DoorCheckIn::Wait(check_in) => {
                             return Ok(RoleDeleteCheckIn::Waits(check_in));
@@ -627,15 +623,6 @@ pub(super) fn spends_no_check_in() -> MemoryError {
     MemoryError::bad_request(
         "check_in_ref names a person's waiting delete; an Owner's or an agent's delete waits on \
          none",
-    )
-}
-
-/// The refusal of a `check_in_ref` a person's delete names when their role
-/// lets it go at once (their own item, or an Admin's or a Deputy's in
-/// scope): that delete spends no check-in (2k5).
-fn spends_no_check_in_at_once() -> MemoryError {
-    MemoryError::bad_request(
-        "check_in_ref names a waiting delete; this person's delete goes at once and spends none",
     )
 }
 
