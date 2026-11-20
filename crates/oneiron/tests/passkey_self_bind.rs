@@ -713,8 +713,31 @@ mod door {
     use oneiron::error::RecordError;
     use oneiron::test_doors::host_node_seals::copy_authority_log;
     use oneiron::test_doors::steward;
+    use oneiron_authority::authority::{
+        AuthorityLogEntry, authority_transcript, decode_entry_value, encode_value, entry_value,
+    };
 
     use super::*;
+
+    /// The unsigned entry `bytes` encode, as prepare answered it.
+    fn entry_of(bytes: &[u8]) -> AuthorityLogEntry {
+        let value = rmpv::decode::read_value(&mut &bytes[..]).expect("one MessagePack value");
+        decode_entry_value(&value).expect("the prepared entry decodes")
+    }
+
+    /// `prepared`'s entry at `seq` in its one encoding, with the challenge
+    /// the passkey's assertion of it names.
+    fn at_sequence(
+        prepared: &PreparedOwnerPasskeyBinding,
+        seq: u64,
+    ) -> PreparedOwnerPasskeyBinding {
+        let mut entry = entry_of(&prepared.entry);
+        entry.seq = seq;
+        PreparedOwnerPasskeyBinding {
+            entry: encode_value(&entry_value(&entry, true)).expect("the entry encodes"),
+            challenge: webauthn_challenge(&authority_transcript(&entry).expect("its transcript")),
+        }
+    }
 
     impl HostedVault {
         fn prepare(&self, credential_id: &[u8]) -> oneiron::Result<PreparedOwnerPasskeyBinding> {
@@ -894,6 +917,34 @@ mod door {
         hosted
             .land(&prepared, FLAGS_PRESENT_VERIFIED)
             .expect("the prepared binding still lands with the passkey's assertion");
+    }
+
+    /// Blind review #10043 P1: prepare names the passkey's next sequence,
+    /// and a binding the passkey signs above it is none prepare built.
+    /// Landed, it would move the passkey's next sequence to its own; at
+    /// `u64::MAX` the passkey would have no sequence left to sign at.
+    #[test]
+    fn the_door_lands_no_binding_signed_above_the_prepared_sequence() {
+        let hosted = HostedVault::open();
+        host_enrols_passkey(&hosted);
+        let prepared = hosted
+            .prepare(CREDENTIAL_ID)
+            .expect("the binding is prepared");
+        let prepared_seq = entry_of(&prepared.entry).seq;
+        for seq in [prepared_seq + 1, u64::MAX] {
+            assert_invalid(
+                hosted.land(&at_sequence(&prepared, seq), FLAGS_PRESENT_VERIFIED),
+                &format!("a binding signed at sequence {seq}, above the prepared {prepared_seq}"),
+            );
+        }
+        assert_eq!(
+            hosted.binding_of(&passkey_key()),
+            None,
+            "nothing was written"
+        );
+        hosted
+            .land(&prepared, FLAGS_PRESENT_VERIFIED)
+            .expect("the prepared binding still lands at its own sequence");
     }
 
     #[test]

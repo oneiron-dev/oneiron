@@ -228,10 +228,16 @@ impl Vault {
             return Err(not_valid(NOT_PREPARED_BINDING));
         }
         self.refuse_owner_key_binding_in_txn(&txn, &fold, actor, &key)?;
-        if entry.seq < next_sequence(&fold, &key)?
-            || epoch != self.next_binding_epoch_in_txn(&txn, &fold, &key)?
-        {
+        let next = next_sequence(&fold, &key)?;
+        if entry.seq < next || epoch != self.next_binding_epoch_in_txn(&txn, &fold, &key)? {
             return Err(not_valid(PREPARED_BINDING_STALE));
+        }
+        // Prepare names the key's next sequence, which only grows: an entry
+        // above it is none prepare built. Landed, it would move the key's
+        // next sequence to its own, at `u64::MAX` past every one it could
+        // sign (blind review #10043 P1).
+        if entry.seq > next {
+            return Err(not_valid(NOT_PREPARED_BINDING));
         }
         if !signs_strictly(&public_key, &authority_transcript(&entry)?, &signature) {
             return Err(not_valid(NOT_KEYS_SIGNATURE));

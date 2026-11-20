@@ -1124,6 +1124,13 @@ impl Vault {
         {
             return Err(not_valid(PREPARED_ENTRY_STALE));
         }
+        // Prepare names the predecessor's next sequence, which only grows: an
+        // entry above it is none prepare built. Landed, it would move the
+        // predecessor's next sequence to its own, at `u64::MAX` past every one
+        // it could sign (blind review #10043 P1).
+        if entry.seq > next_sequence(&fold, predecessor)? {
+            return Err(not_valid(NOT_PREPARED));
+        }
         self.refuse_prepared_owner_binding_in_txn(&txn, &actor)?;
         verify_unsigned(&entry)?;
         entry.signer.signature = predecessor_signature;
