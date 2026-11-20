@@ -88,10 +88,7 @@ use super::beside::{
 };
 use super::born::is_born_value_slot;
 use super::change::{record_change_in_txn, record_receipt_in_txn, record_signed_entry_in_txn};
-use super::pack::{
-    fold_layer, layer_default_in_txn, pack_targets_in_txn, project_pack_in_txn,
-    proved_pack_row_in_txn,
-};
+use super::pack::{fold_layer, layer_default_in_txn, project_pack_in_txn, proved_pack_row_in_txn};
 use super::read::{StoredRow, table_of};
 use super::{
     EncodedValue, Setter, SettingChange, SettingMode, SettingScope, SettingSpec, SettingSync,
@@ -1758,7 +1755,6 @@ impl Vault {
                 return Ok(SettingsProjected::default());
             }
             let mut moved = Vec::new();
-            let packs = pack_targets_in_txn(&self.store, &txn)?;
             for target in self.policy_setting_revisions_in_txn(&txn)? {
                 let fallback = (target.conflict, target.in_force);
                 let counts = (&target.counts, &target.name_counts);
@@ -1769,20 +1765,26 @@ impl Vault {
                         None => true,
                     };
                 if moved_here {
-                    moved.push(target.target);
+                    // The packs first (stage 7c-3c): a birth read in this pass reads the layer
+                    // rows an owner's yes lands. A target is a pack's by its acts, read in this
+                    // snapshot, so a yes to a table this install has not weighed yet goes first
+                    // too (stage 7c-3c review).
+                    let later = !self.setting_target_is_pack_in_txn(&txn, target.target)?;
+                    moved.push((later, target.target));
                 }
             }
-            // The packs first (stage 7c-3c): a birth read in this pass reads the layer rows an
-            // owner's yes lands.
-            moved.sort_by_key(|target| !packs.contains(target));
+            moved.sort_by_key(|(later, _)| *later);
             moved
+                .into_iter()
+                .map(|(_, target)| target)
+                .collect::<Vec<EntityId>>()
         };
         if moved.is_empty() {
             return Ok(SettingsProjected::default());
         }
         let changed = self.with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            let mut changed = Vec::new();
+            let mut changed: Vec<&'static SettingSpec> = Vec::new();
             for target in &moved {
                 changed.extend(project_target_in_txn(self, txn, *target, now)?.changed);
             }

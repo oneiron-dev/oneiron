@@ -239,10 +239,17 @@ impl Vault {
         }
         let now = self.instant_in_txn(txn)?.secs();
         let op = op(machine);
-        // Only a setting act lands through the gate that reads an owner
-        // key's proof (row CARRIER-OWNER-PROOF); an export act's fold still
-        // refuses any cosign.
-        let proof = matches!(op, AuthorityOp::PolicySettingSet(_))
+        // Only the owner's setting act lands through the gate that reads an
+        // owner key's proof (row CARRIER-OWNER-PROOF): a setting set, or his
+        // yes to a pack's defaults (stage 7c-3c). An engine statement (a
+        // copy, a pack door's head) is never his act, so his key does not
+        // cosign it; an export act's fold still refuses any cosign.
+        let owners_setting_act = match &op {
+            AuthorityOp::PolicySettingSet(_) => true,
+            AuthorityOp::SettingPackHead(head) => head.accept.is_some(),
+            _ => false,
+        };
+        let proof = owners_setting_act
             .then(|| self.owner_proof_signer(&fold))
             .flatten();
         let entry =

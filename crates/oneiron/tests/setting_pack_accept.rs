@@ -17,6 +17,13 @@
 //!   and the door's head then holds nothing back;
 //! - a vault with no authority root is one machine: its yes appends nothing.
 //!
+//! Review fixes (stage 7c-3c review):
+//! - on an install that is not the owner's machine, his yes carries the owner key's proof the
+//!   install holds, so it stands, where without it the yes would wait and be refused;
+//! - a yes to the rest of a table keeps the keys an earlier yes to it accepted: it replaces that
+//!   yes;
+//! - a yes a later entry holds back gives back the rows it landed, and its default waits again.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test
 //! setting_pack_accept`.
 
@@ -24,7 +31,7 @@
 
 use std::sync::Arc;
 
-use oneiron::authority::{HostSlipIssuer, MachineRole};
+use oneiron::authority::{HostSlipIssuer, MachineOwnership, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::Memory;
 use oneiron::setting::{ENGINE_PACK, ENGINE_PACK_VERSION, PackApplied, Setter};
@@ -32,9 +39,10 @@ use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::setting::{
     EnrolledMachine, PackHeadView, apply_pack_defaults_at, enroll_machine_with_key,
-    land_pack_table, land_setting_pack_accept_from, pack_head_digest, pack_head_version,
-    pack_row_revision, pack_table_here, pack_table_of, setting_change,
-    setting_pack_accept_frontier_of, setting_pack_accepts, setting_pack_heads,
+    land_pack_table, land_setting_pack_accept_from, land_setting_pack_head_from, pack_head_digest,
+    pack_head_version, pack_row_revision, pack_table_here, pack_table_of, setting_change,
+    setting_pack_accept_frontier_of, setting_pack_accepts, setting_pack_frontier_of,
+    setting_pack_heads,
 };
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
@@ -54,7 +62,7 @@ struct Fixture {
     vault: Vault,
     _clock: Arc<ManualClock>,
     _dir: tempfile::TempDir,
-    issuer: Option<HostSlipIssuer>,
+    issuer: Option<Arc<HostSlipIssuer>>,
     owner: EntityId,
     owner_proof: AuthenticatedOwner,
 }
@@ -85,8 +93,22 @@ impl Fixture {
         }
     }
 
-    /// A rooted vault whose install carries acts.
+    /// A rooted vault whose install, the owner's own machine, carries acts: its engine acts
+    /// stand with no owner key's proof (row CARRIER-OWNER-PROOF).
     fn rooted() -> Self {
+        Self::rooted_as(MachineRole::Owned(MachineOwnership::Yours))
+    }
+
+    /// A rooted vault whose install carries acts as a machine that is not the owner's, and holds
+    /// the root's key, which proves the owner's acts, as a serving host holds its own.
+    fn rooted_not_mine() -> Self {
+        let fx = Self::rooted_as(MachineRole::Unanswered);
+        let issuer = Arc::clone(fx.issuer.as_ref().expect("a rooted vault"));
+        fx.vault.hold_checkpoint_root_signer(issuer);
+        fx
+    }
+
+    fn rooted_as(role: MachineRole) -> Self {
         let mut fx = Self::unrooted();
         let issuer = fx.vault.bootstrap_host_slip_issuer().expect("host issuer");
         fx.vault.ensure_host_root_slip(&issuer).expect("host root");
@@ -94,9 +116,9 @@ impl Fixture {
             .provision_engine_machine_identities(&issuer)
             .expect("engine machine identities");
         fx.vault
-            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .ensure_serving_install_profile(&issuer, role)
             .expect("serving install profile");
-        fx.issuer = Some(issuer);
+        fx.issuer = Some(Arc::new(issuer));
         fx
     }
 
@@ -191,12 +213,22 @@ fn entry(memory: &Memory<'_>, key: &str) -> Value {
         .unwrap_or_else(|| panic!("the list names {key}"))
 }
 
-/// The digest of the proposal that waits for `CAP`'s new default.
-fn waiting_proposal(memory: &Memory<'_>) -> String {
-    entry(memory, CAP)["proposed_default"]["proposal"]
+/// The digest of the proposal that waits for `key`'s new default.
+fn waiting_proposal(memory: &Memory<'_>, key: &str) -> String {
+    entry(memory, key)["proposed_default"]["proposal"]
         .as_str()
         .expect("a proposal waits")
         .to_owned()
+}
+
+/// The change row that wrote `key`'s row in the engine pack's layer.
+fn layer_change(fx: &Fixture, key: &str) -> oneiron::setting::SettingChange {
+    let revision = pack_row_revision(&fx.vault, key, ENGINE_PACK)
+        .expect("the layer reads")
+        .expect("a readable layer row");
+    setting_change(&fx.vault, revision)
+        .expect("the change stream reads")
+        .expect("the change stands")
 }
 
 #[test]
@@ -212,7 +244,7 @@ fn the_owners_yes_on_a_rooted_vault_appends_one_head_act_naming_its_table_and_ke
     let accepted = call(
         &owner,
         ACCEPT,
-        json!({ "pack": ENGINE_PACK, "proposal": waiting_proposal(&owner) }),
+        json!({ "pack": ENGINE_PACK, "proposal": waiting_proposal(&owner, CAP) }),
     );
     assert_eq!(accepted, json!({ "keys": [CAP] }));
     assert_eq!(value(&owner, CAP), json!(20));
@@ -221,6 +253,11 @@ fn the_owners_yes_on_a_rooted_vault_appends_one_head_act_naming_its_table_and_ke
     let yeses = fx.accepts(&table);
     assert_eq!(yeses.len(), 1, "{yeses:?}");
     assert_eq!(yeses[0].owner, Some(fx.owner));
+    assert_eq!(
+        layer_change(&fx, CAP).signed,
+        Some(yeses[0].act),
+        "the change row names the yes"
+    );
     assert_eq!(yeses[0].accepted, vec![CAP.to_owned()]);
     assert_eq!(yeses[0].held, Vec::<String>::new());
     assert_eq!(yeses[0].digest, table);
@@ -258,14 +295,16 @@ fn a_peers_yes_to_the_table_this_install_weighed_lands_its_key_as_the_owners() {
     let listed = entry(&owner, CAP);
     assert_eq!(listed["accepted_default"], json!(20));
     assert!(listed.get("proposed_default").is_none(), "{listed}");
-    let revision = pack_row_revision(&fx.vault, CAP, ENGINE_PACK)
-        .expect("the layer reads")
-        .expect("a readable layer row");
-    let change = setting_change(&fx.vault, revision)
-        .expect("the change stream reads")
-        .expect("the change stands");
+    let change = layer_change(&fx, CAP);
     assert_eq!(change.setter, Setter::Pack);
     assert_eq!(change.by, Some(fx.owner));
+    let yeses = fx.accepts(&fx.digest());
+    assert_eq!(yeses.len(), 1, "{yeses:?}");
+    assert_eq!(
+        change.signed,
+        Some(yeses[0].act),
+        "the change row names the yes"
+    );
 }
 
 #[test]
@@ -397,9 +436,113 @@ fn an_unrooted_vaults_yes_appends_nothing_and_lands_here() {
     let accepted = call(
         &owner,
         ACCEPT,
-        json!({ "pack": ENGINE_PACK, "proposal": waiting_proposal(&owner) }),
+        json!({ "pack": ENGINE_PACK, "proposal": waiting_proposal(&owner, CAP) }),
     );
     assert_eq!(accepted, json!({ "keys": [CAP] }));
     assert_eq!(value(&owner, CAP), json!(20));
     assert_eq!(fx.heads(), Vec::new());
+}
+
+#[test]
+fn the_owners_yes_on_an_install_that_is_not_his_machine_carries_the_proof_it_holds() {
+    let fx = Fixture::rooted_not_mine();
+    let owner = fx.as_owner();
+    fx.update_at(ENGINE_PACK_VERSION, &[(CAP, json!(20))])
+        .expect("new defaults");
+    let table = fx.digest();
+
+    let accepted = call(
+        &owner,
+        ACCEPT,
+        json!({ "pack": ENGINE_PACK, "proposal": waiting_proposal(&owner, CAP) }),
+    );
+    assert_eq!(accepted, json!({ "keys": [CAP] }));
+    assert_eq!(value(&owner, CAP), json!(20));
+    let yeses = fx.accepts(&table);
+    assert_eq!(yeses.len(), 1, "his proved yes stands: {yeses:?}");
+    assert_eq!(yeses[0].owner, Some(fx.owner));
+    assert_eq!(yeses[0].accepted, vec![CAP.to_owned()]);
+}
+
+#[test]
+fn a_yes_to_the_rest_of_a_table_keeps_the_keys_an_earlier_yes_accepted() {
+    let fx = Fixture::rooted();
+    let owner = fx.as_owner();
+    let other = fx.second_machine(7);
+    fx.update_at(
+        ENGINE_PACK_VERSION,
+        &[(CAP, json!(20)), (BUDGET, json!(20))],
+    )
+    .expect("new defaults");
+    let table = fx.digest();
+
+    // The other machine's yes accepts the cap alone; the budget still waits here.
+    assert!(
+        fx.yes_from(&other, (ENGINE_PACK_VERSION, &table), &[CAP]),
+        "counted"
+    );
+    assert_eq!(value(&owner, CAP), json!(20));
+    assert_eq!(value(&owner, BUDGET), json!(10));
+
+    // The owner's yes to the budget here replaces that yes, so it accepts the cap too.
+    let accepted = call(
+        &owner,
+        ACCEPT,
+        json!({ "pack": ENGINE_PACK, "proposal": waiting_proposal(&owner, BUDGET) }),
+    );
+    assert_eq!(accepted, json!({ "keys": [BUDGET] }));
+    let yeses = fx.accepts(&table);
+    assert_eq!(yeses.len(), 1, "{yeses:?}");
+    assert_eq!(yeses[0].accepted, vec![CAP.to_owned(), BUDGET.to_owned()]);
+    assert_eq!(value(&owner, CAP), json!(20));
+    assert_eq!(value(&owner, BUDGET), json!(20));
+}
+
+#[test]
+fn a_yes_a_later_entry_holds_back_gives_back_the_rows_it_landed() {
+    let fx = Fixture::rooted();
+    let owner = fx.as_owner();
+    let other = fx.second_machine(7);
+    fx.update_at(ENGINE_PACK_VERSION, &[(CAP, json!(20))])
+        .expect("new defaults");
+    let table = fx.digest();
+    let before_yes = setting_pack_frontier_of(&fx.vault, ENGINE_PACK).expect("frontier");
+
+    assert!(
+        fx.yes_from(&other, (ENGINE_PACK_VERSION, &table), &[CAP]),
+        "counted"
+    );
+    assert_eq!(value(&owner, CAP), json!(20), "the yes counts in full");
+
+    // The same machine signs a later entry on parents that exclude its yes: the yes now counts
+    // only as a safe move, which gives no more than the row it replaced.
+    assert!(
+        land_setting_pack_head_from(
+            &fx.vault,
+            &other,
+            &before_yes,
+            (ENGINE_PACK, ENGINE_PACK_VERSION, &table, &[]),
+            T0,
+        )
+        .expect("the entry lands"),
+        "the later entry counts"
+    );
+    fx.vault
+        .project_settings()
+        .expect("the pass reads the yes again");
+    assert_eq!(value(&owner, CAP), json!(10), "the row the yes replaced");
+    assert_eq!(
+        entry(&owner, CAP)["proposed_default"]["value"],
+        json!(20),
+        "the default waits again"
+    );
+
+    // A yes that counts in full lands it again.
+    let accepted = call(
+        &owner,
+        ACCEPT,
+        json!({ "pack": ENGINE_PACK, "proposal": waiting_proposal(&owner, CAP) }),
+    );
+    assert_eq!(accepted, json!({ "keys": [CAP] }));
+    assert_eq!(value(&owner, CAP), json!(20));
 }

@@ -31,21 +31,22 @@
 //! a newer table of the `engine` pack, the yes proves that table, and the door weighs it from the
 //! bytes beside it first, as a build that ships it would, so an older build reads the newer
 //! defaults at once. A yes to an older table changes nothing: that machine's own proposal waits
-//! for a holder. A door that weighs a table lands the yeses to it that came first.
+//! for a holder. A door that weighs a table lands the yeses to it that came first. A row a yes
+//! landed stands while a yes that counts in full here names its key; once none does (a later
+//! entry held it back), the row it replaced stands again ([`revert_landings_in_txn`]).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use oneiron_authority::authority::{
     ActSurface, AuthorityEntryHash, SettingPackHead, setting_pack_accept_target,
-    setting_pack_target,
 };
 use oneiron_contracts::fingerprint::{ContentHash, Fingerprint, Fingerprinter, purposes};
 use oneiron_setting_contract::{ChangeDirection, Order, RowKey};
 
 use super::beside::{BesideRead, pack_table_read_in_txn, put_pack_table_in_txn};
-use super::change::record_change_in_txn;
+use super::change::{record_change_in_txn, record_signed_entry_in_txn};
 use super::project::{UNREADABLE_VALUE, rooted_in_txn};
 use super::read::{StoredRow, table_of};
 use super::{
@@ -84,6 +85,30 @@ pub(super) struct PackHead {
     /// reads as the oldest.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     version: String,
+    /// The layer rows an owner's yes wrote here, oldest first (stage 7c-3c review): what a pass
+    /// puts back once no yes that counts in full here names their key ([`revert_landings_in_txn`]).
+    /// Empty in a head written before them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    landed: Vec<YesLanding>,
+}
+
+/// One layer row an owner's yes wrote here (stage 7c-3c review; the read-on-proofs rule: an act
+/// that counts only as a safe move gives no more than what it replaced).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct YesLanding {
+    /// The key whose row the yes wrote.
+    key: String,
+    /// The digest (hex) of the table the yes names: its yeses' target holds it.
+    table: String,
+    /// The row it replaced; `None` where the pack held no row. A row that did not decode is kept
+    /// as one that reads unreadable.
+    prior: Option<StoredRow>,
+    /// The digest of the row it wrote ([`row_digest`]).
+    wrote: String,
+    /// The waiting default it took, and the digest (hex) of the table the head named then: it
+    /// waits again where the head still names that table.
+    proposed: Option<(String, ProposedDefault)>,
 }
 
 /// The loose defaults of one update, proposed together to the holders.
@@ -708,6 +733,7 @@ fn weigh_in_txn(
                 direction,
                 why: format!("pack `{pack}` defaults {}", &digest[..16]),
                 at: now,
+                signed: None,
             },
         )?;
         accepted.insert(name.clone());
@@ -726,6 +752,7 @@ fn weigh_in_txn(
             accepted: accepted.into_iter().collect(),
             proposal,
             version: version.to_owned(),
+            landed: head.landed,
         },
     )?;
     // The owner's yeses to this table that count here land now (stage 7c-3c): a yes another
@@ -775,16 +802,20 @@ struct LayerWrite<'a> {
     direction: ChangeDirection,
     why: String,
     at: u64,
+    /// The owner's yes that made the write, a peer's (stage 7c-3c review): the change row names
+    /// it. A local yes names its act once it is appended ([`record_signed_entry_in_txn`]).
+    signed: Option<AuthorityEntryHash>,
 }
 
-/// Writes `spec`'s row in `pack`'s layer, with its change row and the key's `on_change`.
+/// Writes `spec`'s row in `pack`'s layer, with its change row and the key's `on_change`, and
+/// answers the change row.
 fn write_layer_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     spec: &'static SettingSpec,
     pack: &str,
     write: LayerWrite<'_>,
-) -> Result<()> {
+) -> Result<SettingChange> {
     let recorded = record_change_in_txn(
         &vault.store,
         txn,
@@ -804,7 +835,7 @@ fn write_layer_row_in_txn(
             weight_runs: None,
             direction: Some(write.direction),
             surface: None,
-            signed: None,
+            signed: write.signed,
             with: Vec::new(),
             standing: None,
         },
@@ -823,7 +854,21 @@ fn write_layer_row_in_txn(
     if let Some(on_change) = spec.on_change {
         on_change(vault, txn, &recorded)?;
     }
-    Ok(())
+    Ok(recorded)
+}
+
+/// The digest of `spec`'s row in `pack`'s layer as stored now ([`row_digest`]); `None` with no
+/// row.
+fn layer_row_digest_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    spec: &SettingSpec,
+    pack: &str,
+) -> Result<Option<String>> {
+    Ok(table_of(spec)
+        .get_bytes(&vault.store, txn, &pack_row_key(spec.name, pack))?
+        .as_deref()
+        .map(row_digest))
 }
 
 /// The waiting defaults of every pack, by key: what `vault.settings.list` shows.
@@ -975,22 +1020,23 @@ fn accept_pack_defaults_in_txn(
         }
         let prior = current
             .as_deref()
-            .and_then(|bytes| rmp_serde::from_slice::<StoredRow>(bytes).ok())
-            .map(|row| row.value);
+            .and_then(|bytes| rmp_serde::from_slice::<StoredRow>(bytes).ok());
         checked.push((spec, prior));
     }
     let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
     let mut accepted: BTreeSet<String> = head.accepted.iter().cloned().collect();
     let mut keys = Vec::with_capacity(checked.len());
+    let mut changes = Vec::with_capacity(checked.len());
+    let mut landings = Vec::with_capacity(checked.len());
     for (proposed, (spec, prior)) in waiting.defaults.iter().zip(checked) {
-        write_layer_row_in_txn(
+        changes.push(write_layer_row_in_txn(
             vault,
             txn,
             spec,
             pack,
             LayerWrite {
                 value: &proposed.value,
-                prior,
+                prior: prior.as_ref().map(|row| row.value.clone()),
                 by: Some(by),
                 direction: proposed.direction,
                 why: format!(
@@ -998,15 +1044,31 @@ fn accept_pack_defaults_in_txn(
                     &proposal[..proposal.len().min(16)]
                 ),
                 at: now,
+                signed: None,
             },
-        )?;
+        )?);
+        landings.push(YesLanding {
+            key: proposed.key.clone(),
+            table: head.digest.clone(),
+            prior,
+            wrote: layer_row_digest_in_txn(vault, txn, spec, pack)?.unwrap_or_default(),
+            proposed: Some((head.digest.clone(), proposed.clone())),
+        });
         accepted.insert(proposed.key.clone());
         keys.push(proposed.key.clone());
     }
     head.accepted = accepted.into_iter().collect();
     HEADS.put(&vault.store, txn, &pack.as_bytes().to_vec(), &head)?;
-    if rooted_in_txn(vault, txn)? {
-        append_yes_in_txn(vault, txn, (pack, &head), (by, keys.clone()))?;
+    // The yes that travels is the act its change rows name, and what keeps its rows here: a pass
+    // puts them back once no yes that counts in full names their keys (stage 7c-3c review).
+    if rooted_in_txn(vault, txn)?
+        && let Some(signed) = append_yes_in_txn(vault, txn, (pack, &head), (by, keys.clone()))?
+    {
+        for change in &changes {
+            record_signed_entry_in_txn(&vault.store, txn, change, signed)?;
+        }
+        head.landed.extend(landings);
+        HEADS.put(&vault.store, txn, &pack.as_bytes().to_vec(), &head)?;
     }
     Ok(keys)
 }
@@ -1018,7 +1080,11 @@ fn accept_pack_defaults_in_txn(
 /// or a yes that would wait for his proof, refuses the yes, as an owner's change of a row that
 /// travels is refused (ruling CARRIER-CHOICE-DOOR-WAIT-OR-REFUSE = B). A head from before
 /// versions names no version an act carries: that yes stays on this install, as such a head's
-/// birth does (logged).
+/// birth does (logged). The yes accepts `accepted` and every key a live yes to the same table
+/// that counts in full here accepts (stage 7c-3c review): it replaces those yeses, so the keys
+/// the owner accepted there stay accepted; a yes that counts only as a safe move is not carried,
+/// so a new yes never makes it count in full. Answers the appended act; `None` where the yes
+/// stays on this install.
 ///
 /// # Errors
 ///
@@ -1029,7 +1095,7 @@ fn append_yes_in_txn(
     txn: &mut heed::RwTxn<'_>,
     (pack, head): (&str, &PackHead),
     (owner, mut accepted): (EntityId, Vec<String>),
-) -> Result<()> {
+) -> Result<Option<AuthorityEntryHash>> {
     let Some(digest) = oneiron_hex::decode::<32>(&head.digest) else {
         return Err(Error::CorruptedIndex(
             "a pack head's digest is not 64 hex digits",
@@ -1040,13 +1106,12 @@ fn append_yes_in_txn(
             pack,
             "the owner's yes names a pack head from before versions: it stays on this install"
         );
-        return Ok(());
+        return Ok(None);
     }
     if let Some(table) = shipped_table(pack, &digest)? {
         put_pack_table_in_txn(vault, txn, (pack, &digest), &table)?;
     }
-    accepted.sort_unstable();
-    accepted.dedup();
+    accepted.extend(counted_accepts_in_txn(vault, txn, pack, &digest)?.unwrap_or_default());
     let held: BTreeSet<String> = head
         .proposal
         .iter()
@@ -1057,6 +1122,9 @@ fn append_yes_in_txn(
                 .map(|proposed| proposed.key.clone())
         })
         .collect();
+    accepted.retain(|key| !held.contains(key));
+    accepted.sort_unstable();
+    accepted.dedup();
     let signed = vault.append_setting_pack_accept_in_txn(
         txn,
         (pack, &head.version, digest, held.into_iter().collect()),
@@ -1066,42 +1134,52 @@ fn append_yes_in_txn(
     if vault.setting_act_waits_in_txn(txn, signed)? {
         return Err(Error::Record(RecordError::OwnerKeyRequired));
     }
-    Ok(())
+    Ok(Some(signed))
 }
 
-/// The targets of the packs whose door ran here, and of the owner's yeses to the table each
-/// head names (stage 7c-3c): a projection pass reads them before every other target, so a birth
-/// read in the same pass reads the rows a yes landed.
+/// The keys the live yeses to `pack`'s table `digest` that count in full here accept (stage
+/// 7c-3c review); `None` where such a yes is not stored here (an adopted image covers it), so its
+/// keys cannot be read.
 ///
 /// # Errors
 ///
-/// Storage errors.
-pub(super) fn pack_targets_in_txn(
-    dbs: &impl SideTableDbs,
+/// A target that does not encode; storage errors.
+fn counted_accepts_in_txn(
+    vault: &Vault,
     txn: &heed::RoTxn<'_>,
-) -> Result<BTreeSet<EntityId>> {
-    let mut targets = BTreeSet::new();
-    for row in HEADS.iter_raw_from(dbs, txn, &[])? {
-        let (pack, bytes) = row?;
-        let Ok(pack) = std::str::from_utf8(&pack) else {
-            continue;
-        };
-        targets.insert(setting_pack_target(pack)?);
-        if let Some(digest) = rmp_serde::from_slice::<PackHead>(&bytes)
-            .ok()
-            .and_then(|head| oneiron_hex::decode::<32>(&head.digest))
-        {
-            targets.insert(setting_pack_accept_target(pack, &digest)?);
-        }
+    pack: &str,
+    digest: &[u8; 32],
+) -> Result<Option<BTreeSet<String>>> {
+    let target = setting_pack_accept_target(pack, digest)?;
+    let Some(fold) = vault.setting_slot_fold_in_txn(txn, target)? else {
+        return Ok(Some(BTreeSet::new()));
+    };
+    let unread = fold.live.iter().any(|head| {
+        head.pack.is_none()
+            && fold
+                .counts
+                .get(&head.act)
+                .is_some_and(|counted| counted.count == ChoiceCount::Full)
+    });
+    if unread {
+        return Ok(None);
     }
-    Ok(targets)
+    Ok(Some(
+        fold.live
+            .iter()
+            .filter_map(|head| counted_yes(&fold, head))
+            .filter_map(|yes| yes.accept.as_ref())
+            .flat_map(|accept| accept.accepted.iter().cloned())
+            .collect(),
+    ))
 }
 
 /// Reads `fold`, the acts on a pack's target or on the target of the owner's yeses to one of its
 /// tables, in `txn` (stage 7c-3c; DESIGN 1.6 "Packs across machines"). A pack door's head changes
 /// nothing here: this install's own door weighs its own build's defaults (stage 7c-3a). Each
 /// owner's yes that counts in full here lands ([`land_yes_in_txn`]); one that does not changes
-/// nothing, as a proposal or a safe move that would loosen changes nothing.
+/// nothing, as a proposal or a safe move that would loosen changes nothing. First, each row a yes
+/// landed that no yes counted in full names any more is put back ([`revert_landings_in_txn`]).
 ///
 /// # Errors
 ///
@@ -1113,7 +1191,7 @@ pub(super) fn project_pack_in_txn(
     now: u64,
 ) -> Result<PackRead> {
     let mut read = PackRead {
-        moved: Vec::new(),
+        moved: revert_landings_in_txn(vault, txn, now)?,
         awaiting: false,
     };
     for head in &fold.live {
@@ -1210,7 +1288,9 @@ fn land_yes_in_txn(
         let table = match read {
             BesideRead::Absent => return Ok(None),
             BesideRead::Unreadable => {
-                return quarantine_in_txn(vault, txn, pack, &accept.accepted, now).map(Some);
+                let table = oneiron_hex::encode(&yes.digest);
+                return quarantine_in_txn(vault, txn, (pack, &table), &accept.accepted, now)
+                    .map(Some);
             }
             BesideRead::Here(bytes) => table_of_bytes(pack, &yes.digest, &bytes).ok_or(
                 Error::InvariantViolation("a pack table that matched reads again"),
@@ -1291,8 +1371,7 @@ fn take_accepted_in_txn(
         }
         let prior = current
             .as_deref()
-            .and_then(|bytes| rmp_serde::from_slice::<StoredRow>(bytes).ok())
-            .map(|row| row.value);
+            .and_then(|bytes| rmp_serde::from_slice::<StoredRow>(bytes).ok());
         write_layer_row_in_txn(
             vault,
             txn,
@@ -1300,7 +1379,7 @@ fn take_accepted_in_txn(
             pack,
             LayerWrite {
                 value: &proposed.value,
-                prior,
+                prior: prior.as_ref().map(|row| row.value.clone()),
                 by: Some(owner),
                 direction: proposed.direction,
                 why: format!(
@@ -1309,8 +1388,16 @@ fn take_accepted_in_txn(
                     &oneiron_hex::encode(&act)[..16]
                 ),
                 at: now,
+                signed: Some(act),
             },
         )?;
+        head.landed.push(YesLanding {
+            key: proposed.key.clone(),
+            table: head.digest.clone(),
+            prior,
+            wrote: layer_row_digest_in_txn(vault, txn, spec, pack)?.unwrap_or_default(),
+            proposed: Some((head.digest.clone(), proposed.clone())),
+        });
         landed.insert(proposed.key.clone());
         moved.push(spec);
     }
@@ -1330,7 +1417,9 @@ fn take_accepted_in_txn(
 /// takes it out of the pack's waiting proposal (stage 7c-3c): the owner accepted its default of a
 /// table whose bytes here are not that table, or were erased here, so it reads the key's
 /// strictest value, unreadable, as a lost row does (DESIGN 1.6, "Fold states"). No change row and
-/// no hook: no value was read. Answers the keys whose row moved.
+/// no hook: no value was read. Each row it writes is a landing of the yes to `table` (hex), put
+/// back once no yes that counts in full names its key (stage 7c-3c review). Answers the keys whose
+/// row moved.
 ///
 /// # Errors
 ///
@@ -1338,7 +1427,7 @@ fn take_accepted_in_txn(
 fn quarantine_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    pack: &str,
+    (pack, table): (&str, &str),
     keys: &[String],
     now: u64,
 ) -> Result<Vec<&'static SettingSpec>> {
@@ -1349,17 +1438,27 @@ fn quarantine_in_txn(
         let Ok(spec) = spec_named(key) else {
             continue;
         };
-        let row = StoredRow {
-            value: EncodedValue(vec![UNREADABLE_VALUE]),
-            by: None,
-            setter: Setter::Pack,
-            set_at: now,
-            change: 0,
-            weight_runs: None,
-            local: None,
-            seeded: false,
-        };
-        table_of(spec).put(&vault.store, txn, &pack_row_key(spec.name, pack), &row)?;
+        let at = pack_row_key(spec.name, pack);
+        let prior = table_of(spec)
+            .get_bytes(&vault.store, txn, &at)?
+            .map(|bytes| {
+                rmp_serde::from_slice::<StoredRow>(&bytes).unwrap_or_else(|_| unreadable_row(now))
+            });
+        table_of(spec).put(&vault.store, txn, &at, &unreadable_row(now))?;
+        let proposed = head.proposal.as_ref().and_then(|proposal| {
+            proposal
+                .defaults
+                .iter()
+                .find(|proposed| proposed.key == spec.name)
+                .map(|proposed| (head.digest.clone(), proposed.clone()))
+        });
+        head.landed.push(YesLanding {
+            key: spec.name.to_owned(),
+            table: table.to_owned(),
+            prior,
+            wrote: layer_row_digest_in_txn(vault, txn, spec, pack)?.unwrap_or_default(),
+            proposed,
+        });
         accepted.insert(spec.name.to_owned());
         moved.push(spec);
     }
@@ -1377,6 +1476,203 @@ fn quarantine_in_txn(
     head.accepted = accepted.into_iter().collect();
     HEADS.put(&vault.store, txn, &pack.as_bytes().to_vec(), &head)?;
     Ok(moved)
+}
+
+/// A layer row that reads its key's strictest value, unreadable ([`quarantine_in_txn`]).
+fn unreadable_row(now: u64) -> StoredRow {
+    StoredRow {
+        value: EncodedValue(vec![UNREADABLE_VALUE]),
+        by: None,
+        setter: Setter::Pack,
+        set_at: now,
+        change: 0,
+        weight_runs: None,
+        local: None,
+        seeded: false,
+    }
+}
+
+/// Puts back each layer row an owner's yes wrote here that no live yes counted in full here
+/// names any more (stage 7c-3c review; DESIGN's read-on-proofs rule: an act that counts only as a
+/// safe move gives no more than what it replaced). Per key, latest landing first: while the row
+/// is still the one it wrote and no yes to its table that counts in full names the key, the row
+/// it replaced stands again (none: the row goes), with a change row and the key's `on_change`,
+/// and its default waits again in the head's proposal where the head still names the table it
+/// was proposed under; a landing a later yes still keeps stays, with those under it. A landing
+/// whose row another write replaced since is dropped, with those under it: that write decides
+/// the row. A later yes that counts in full lands the key again. Answers the keys whose row
+/// moved.
+///
+/// # Errors
+///
+/// A key's `on_change` refusal; storage errors.
+fn revert_landings_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    now: u64,
+) -> Result<Vec<&'static SettingSpec>> {
+    let mut heads = Vec::new();
+    for row in HEADS.iter_raw_from(&vault.store, txn, &[])? {
+        let (pack, bytes) = row?;
+        let (Ok(pack), Ok(head)) = (
+            String::from_utf8(pack),
+            rmp_serde::from_slice::<PackHead>(&bytes),
+        ) else {
+            continue;
+        };
+        if !head.landed.is_empty() {
+            heads.push((pack, head));
+        }
+    }
+    let mut moved = Vec::new();
+    for (pack, mut head) in heads {
+        let mut by_key: BTreeMap<String, Vec<YesLanding>> = BTreeMap::new();
+        for landing in std::mem::take(&mut head.landed) {
+            by_key.entry(landing.key.clone()).or_default().push(landing);
+        }
+        let mut counted: BTreeMap<String, Option<BTreeSet<String>>> = BTreeMap::new();
+        let mut kept = Vec::new();
+        let mut changed = false;
+        for (key, mut landings) in by_key {
+            let Ok(spec) = spec_named(&key) else {
+                changed = true;
+                continue;
+            };
+            while let Some(landing) = landings.pop() {
+                let current =
+                    table_of(spec).get_bytes(&vault.store, txn, &pack_row_key(spec.name, &pack))?;
+                if current.as_deref().map(row_digest).as_deref() != Some(landing.wrote.as_str()) {
+                    landings.clear();
+                    changed = true;
+                    break;
+                }
+                if yes_names_in_txn(vault, txn, (&pack, &landing.table), &key, &mut counted)? {
+                    landings.push(landing);
+                    break;
+                }
+                revert_landing_in_txn(vault, txn, (spec, &pack), (&mut head, landing), now)?;
+                moved.push(spec);
+                changed = true;
+            }
+            kept.extend(landings);
+        }
+        if changed {
+            head.landed = kept;
+            HEADS.put(&vault.store, txn, &pack.as_bytes().to_vec(), &head)?;
+        }
+    }
+    Ok(moved)
+}
+
+/// Whether a live yes to `pack`'s table `table` (hex) that counts in full here accepts `key`,
+/// or may: one not stored here keeps every row ([`counted_accepts_in_txn`]). Each table's yeses
+/// are read once per pass (`counted`).
+///
+/// # Errors
+///
+/// A target that does not encode; storage errors.
+fn yes_names_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    (pack, table): (&str, &str),
+    key: &str,
+    counted: &mut BTreeMap<String, Option<BTreeSet<String>>>,
+) -> Result<bool> {
+    if !counted.contains_key(table) {
+        let keys = match oneiron_hex::decode::<32>(table) {
+            Some(digest) => counted_accepts_in_txn(vault, txn, pack, &digest)?,
+            None => Some(BTreeSet::new()),
+        };
+        counted.insert(table.to_owned(), keys);
+    }
+    Ok(counted
+        .get(table)
+        .is_none_or(|keys| keys.as_ref().is_none_or(|keys| keys.contains(key))))
+}
+
+/// Puts back the row `landing` replaced in `pack`'s layer ([`revert_landings_in_txn`]): the row
+/// it replaced (none: the row goes), a change row by no one from the yes's value back, the key's
+/// `on_change`, and its default waiting again in `head`'s proposal where `head` still names the
+/// table it was proposed under. A key the pack held no row of before leaves `head`'s accepted
+/// keys.
+///
+/// # Errors
+///
+/// A key's `on_change` refusal; storage errors.
+fn revert_landing_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    (spec, pack): (&'static SettingSpec, &str),
+    (head, landing): (&mut PackHead, YesLanding),
+    now: u64,
+) -> Result<()> {
+    let at = pack_row_key(spec.name, pack);
+    let readable = |row: &StoredRow| spec.kind.decodes(&row.value).then(|| row.value.clone());
+    let was = table_of(spec)
+        .get_bytes(&vault.store, txn, &at)?
+        .and_then(|bytes| rmp_serde::from_slice::<StoredRow>(&bytes).ok())
+        .and_then(|row| readable(&row));
+    let back = landing.prior.as_ref().and_then(readable);
+    let direction = match (&back, &was) {
+        (Some(after), Some(before)) => Some(layer_direction(spec, after, before)),
+        _ => None,
+    };
+    let recorded = record_change_in_txn(
+        &vault.store,
+        txn,
+        SettingChange {
+            id: vault.store.clock.entity_id()?,
+            sequence: 0,
+            key: spec.name.to_owned(),
+            item: None,
+            scope: SettingScope::Pack(pack.to_owned()),
+            mode: SettingMode::Value,
+            by: None,
+            setter: Setter::Pack,
+            prior: was,
+            value: back,
+            at: now,
+            why: Some(format!(
+                "the owner's yes to defaults {} of pack `{pack}` no longer counts in full here: \
+                 the row it replaced stands again",
+                &landing.table[..landing.table.len().min(16)]
+            )),
+            weight_runs: None,
+            direction,
+            surface: None,
+            signed: None,
+            with: Vec::new(),
+            standing: None,
+        },
+    )?;
+    match &landing.prior {
+        Some(row) => table_of(spec).put(&vault.store, txn, &at, row)?,
+        None => {
+            table_of(spec).delete(&vault.store, txn, &at)?;
+            head.accepted.retain(|name| name != spec.name);
+        }
+    }
+    if let Some(on_change) = spec.on_change {
+        on_change(vault, txn, &recorded)?;
+    }
+    if let Some((of, proposed)) = landing.proposed
+        && of == head.digest
+    {
+        let mut defaults = head
+            .proposal
+            .take()
+            .map(|proposal| proposal.defaults)
+            .unwrap_or_default();
+        if defaults.iter().all(|waiting| waiting.key != proposed.key) {
+            defaults.push(proposed);
+            defaults.sort_by(|a, b| a.key.cmp(&b.key));
+        }
+        head.proposal = Some(PackProposal {
+            digest: proposal_digest(pack, &head.digest, &defaults),
+            defaults,
+        });
+    }
+    Ok(())
 }
 
 /// Runs the `after_commit` of each key in `keys` once.

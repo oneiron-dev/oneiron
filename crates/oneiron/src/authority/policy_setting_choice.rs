@@ -766,6 +766,31 @@ impl Vault {
         }))
     }
 
+    /// Whether `target`'s acts are a pack's head acts (stage 7c-3c): a pack
+    /// door's heads, or the owner's yeses to one of its tables. One live
+    /// head, read back from the log, decides: every act on a target is of
+    /// one op, since each op derives its targets apart. `false` with no live
+    /// head, or none stored here.
+    pub(crate) fn setting_target_is_pack_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        target: EntityId,
+    ) -> Result<bool> {
+        let view = self.authority_view_readonly_in_txn(txn)?;
+        let Some(hash) = view
+            .policy_settings
+            .targets
+            .get(&target)
+            .and_then(|folded| folded.live.keys().next().copied())
+        else {
+            return Ok(false);
+        };
+        Ok(self
+            .setting_slot_head_in_txn(txn, target, hash)?
+            .pack
+            .is_some())
+    }
+
     /// Whether the fold in `txn` holds the setting act `hash` as waiting for
     /// the owner's proof (row CARRIER-OWNER-PROOF): stored, in no frontier,
     /// a proposal that changes nothing (stage 7b-3).

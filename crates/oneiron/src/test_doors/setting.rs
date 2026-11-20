@@ -928,8 +928,6 @@ pub fn land_setting_pack_head_from(
     (pack, version, digest, held): (&str, &str, &str, &[&str]),
     ts: u64,
 ) -> Result<bool> {
-    let digest = oneiron_hex::decode_any_case::<32>(digest)
-        .ok_or_else(|| Error::InvalidConfig("a pack digest must be 64 hex digits".into()))?;
     land_pack_head_from(
         vault,
         (signer, frontier),
@@ -1042,6 +1040,8 @@ pub fn pack_table_here(vault: &Vault, (pack, digest): (&str, &str)) -> Result<Op
 #[cfg(feature = "test-support")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackHeadView {
+    /// The head act's entry (stage 7c-3c review): what a change row a yes landed names.
+    pub act: oneiron_authority::authority::AuthorityEntryHash,
     /// The carrier whose pack door weighed the defaults.
     pub machine: EntityId,
     /// The version of the pack the door's build ships.
@@ -1093,7 +1093,8 @@ fn pack_head_views(
 ) -> Result<Vec<PackHeadView>> {
     let mut heads: Vec<_> = heads
         .into_iter()
-        .map(|(_, head)| PackHeadView {
+        .map(|(act, head)| PackHeadView {
+            act,
             machine: head.machine,
             version: head.version,
             digest: oneiron_hex::encode(&head.digest),
