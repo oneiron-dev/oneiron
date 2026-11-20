@@ -35,19 +35,11 @@ impl<'vault> ScopedRead<'vault> {
         })
     }
 
-    /// The same final retrieval predicate for direct hits and graph nodes.
-    pub(super) fn is_entity_retrievable_with_policy_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        policy: &PolicyManifestResolution,
-        filter: &ResolvedRetrievalFilter,
-        id: &EntityId,
-    ) -> Result<bool> {
-        self.is_entity_retrievable_held_in(txn, policy, filter, id, &HeldAuthority::default())
-    }
-
-    /// [`Self::is_entity_retrievable_with_policy_in`] under the authority one
-    /// serving txn holds for all its rows (FIX 7462).
+    /// The same final retrieval predicate for direct hits and graph nodes,
+    /// under the authority one serving txn holds for all its rows (FIX 7462).
+    /// Every caller holds the key's own floor and its live Grants
+    /// (`held_for`), never the unknown request (FIX-LIST
+    /// SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS).
     pub(super) fn is_entity_retrievable_held_in(
         &self,
         txn: &heed::RoTxn<'_>,
