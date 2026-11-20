@@ -188,7 +188,9 @@ impl Memory<'_> {
         refs: &[String],
         mode: crate::vault::ReadMode,
     ) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
         let targets = refs
             .iter()
             .map(|reference| self.read_target(reference, mode))
@@ -224,7 +226,9 @@ impl Memory<'_> {
         refs: &[String],
         whole_body: bool,
     ) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
         let targets = refs
             .iter()
             .map(|reference| match reference.rsplit_once('@') {
