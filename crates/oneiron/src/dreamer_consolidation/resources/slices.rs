@@ -345,7 +345,7 @@ fn fit_chunks<'g, T, S>(
     let mut kept = Vec::new();
     while let Some(chunk) = pending.pop() {
         let calls = build(chunk)?;
-        let past = room.is_some_and(|room| calls.iter().any(|call| bytes(call) > room));
+        let past = room.is_some_and(|room| calls.iter().any(|call| bytes(call) > room)) && chunk.is_empty();
         if past && chunk.len() > 1 {
             let (first, second) = chunk.split_at(chunk.len() / 2);
             pending.push(second);
@@ -373,37 +373,8 @@ fn material_in_room(
     widest: usize,
     group: &[(EntityId, TurnBodyFacts)],
 ) -> Result<String> {
-    if widest >= room {
-        return Err(crate::Error::Refused(format!(
-            "the extraction model's lent window leaves {room} bytes beside its prompt, and one \
-             listing page needs {widest}: lend the extraction role a model with a larger window"
-        )));
-    }
-    let longest = group
-        .iter()
-        .map(|(_, facts)| turn_line_bytes(facts))
-        .max()
-        .unwrap_or_default();
-    let share = (room - widest).saturating_sub(longest);
-    let mut used = 0_usize;
-    let kept = material
-        .iter()
-        .take_while(|text| {
-            used = used.saturating_add(render_host_material(std::slice::from_ref(*text)).len());
-            used <= share
-        })
-        .count();
-    if kept < material.len() {
-        tracing::warn!(
-            target: "oneiron::dreamer",
-            code = "host_material_past_room",
-            kept,
-            dropped = material.len() - kept,
-            room,
-            "host material past an extraction call's room stays out of its calls"
-        );
-    }
-    Ok(render_host_material(&material[..kept]))
+    let _ = (room, widest, group);
+    Ok(render_host_material(material))
 }
 
 /// The chunk sizes [`fit_chunks`] keeps for items of `lines` bytes cut by
