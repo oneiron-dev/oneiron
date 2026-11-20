@@ -124,7 +124,7 @@ fn incomplete_receipt_facts_leave_no_evidence_and_corrected_capture_is_durable_a
     );
     for (_, row) in &committed {
         assert_eq!(row.receipt_ref, receipt);
-        assert_eq!(row.actor, actor);
+        assert_eq!(row.actor, Some(actor));
         assert_eq!(row.outcome, AttemptOutcome::Failed);
         assert_eq!(row.followed_state, Some(FollowedState::Followed));
         assert_eq!(row.skill_covered_step, Some(true));
@@ -136,7 +136,7 @@ fn incomplete_receipt_facts_leave_no_evidence_and_corrected_capture_is_durable_a
             .iter()
             .map(|row| row.subject)
             .collect::<std::collections::BTreeSet<_>>(),
-        std::collections::BTreeSet::from([first, second])
+        std::collections::BTreeSet::from([Some(first), Some(second)])
     );
     for row in &judgments {
         assert_eq!(row.verdict, AttributionVerdict::SkillDefect);

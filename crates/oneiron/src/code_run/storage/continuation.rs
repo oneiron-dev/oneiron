@@ -143,7 +143,7 @@ pub(crate) fn seed_continuation_run(
     seed_continuation_compaction_in_txn(vault, txn, source, child, compaction)?;
     let generation = child.generation()?;
     let child = fence_replay_in_txn(vault, txn, Cow::Borrowed(child))?;
-    replay_rows::put(vault, txn, &child.run_id, &child)?;
+    replay_rows::put_fenced(vault, txn, &child)?;
     Ok(generation)
 }
 

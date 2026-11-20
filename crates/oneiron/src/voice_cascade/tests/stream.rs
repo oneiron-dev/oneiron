@@ -1,7 +1,8 @@
 use super::*;
 use crate::llm::{
     ContentPart, FinishReason, LlmEventBus, LlmMessage, LlmMessageRole, LlmResponse, LlmResult,
-    LlmStream, LlmStreamEvent, LlmUsage, TerminalSink, VoiceChunkPolicy,
+    LlmStream, LlmStreamEvent, LlmUsage, ModelLocality, ReplyAssertions, TerminalSink,
+    VoiceChunkPolicy,
 };
 use futures_core::Stream;
 use std::future::Future;
@@ -62,7 +63,10 @@ fn both_hosted_adapters_keep_two_chunks_from_one_delta_and_end_while_responses_w
     use crate::voice_cascade::hosted_tts::{
         HostedProvider, HostedTransport, HostedTtsAdapter, HostedWork,
     };
-    use crate::voice_identity::ref_bank::{VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip};
+    use crate::voice_identity::ref_bank::{
+        VoiceRefOrigin, VoiceRefPack, VoiceRefSubjectKind, VoiceRegisterClip, VoiceRenderDecision,
+    };
+    use crate::voice_identity::{VoiceConsentBasis, VoiceConsentState};
     #[derive(Clone)]
     struct Capture(Arc<Mutex<Vec<HostedWork>>>);
     impl HostedTransport for Capture {
@@ -75,12 +79,28 @@ fn both_hosted_adapters_keep_two_chunks_from_one_delta_and_end_while_responses_w
         let _dir = tempfile::tempdir().expect("temporary vault");
         let vault = crate::Vault::open(_dir.path(), crate::VaultConfig::device())
             .expect("open seeded vault");
+        let owner = crate::EntityId::now();
+        vault.record_voice_render_consent(&VoiceRenderDecision {
+            event_id: "grant-owner-stream-voice".into(),
+            voice_id: "owner-stream-voice".into(),
+            subject: owner,
+            subject_kind: VoiceRefSubjectKind::Person,
+            recorded_by: owner,
+            occurred_at: 1,
+            reach: ModelLocality::ThirdParty,
+            basis: Some(VoiceConsentBasis::ConversationalNotice {
+                notice: "grant".into(),
+            }),
+            state: VoiceConsentState::Granted,
+        })?;
         let pack = VoiceRefPack {
             version: 1,
             id: "owner-stream".into(),
             voice_id: "owner-stream-voice".into(),
-            owner: crate::EntityId::now(),
-            origin: VoiceRefOrigin::Captured,
+            owner,
+            origin: VoiceRefOrigin::Captured {
+                consent_event_ref: "grant-owner-stream-voice".into(),
+            },
             clips: vec![VoiceRegisterClip {
                 register: "neutral".into(),
                 media_type: "audio/wav".into(),
@@ -89,8 +109,13 @@ fn both_hosted_adapters_keep_two_chunks_from_one_delta_and_end_while_responses_w
             }],
         };
         vault.store_voice_ref_pack(&pack)?;
-        let request = vault.prepare_voice_clone(&pack.voice_id, provider.target(), false)?;
-        vault.record_voice_target_clone(&request, "provisioned", 1)?;
+        let request = vault.prepare_voice_clone(
+            &pack.voice_id,
+            provider.target(),
+            false,
+            ModelLocality::ThirdParty,
+        )?;
+        vault.record_voice_target_clone(&request, "provisioned", 1, false)?;
         let generation = GenerationEpoch {
             session: uuid::Uuid::new_v4(),
             value: 1,
@@ -118,10 +143,12 @@ fn both_hosted_adapters_keep_two_chunks_from_one_delta_and_end_while_responses_w
                     role: LlmMessageRole::Assistant,
                     content: vec![ContentPart::Text {
                         text: "Hello. World.".into(),
+                        signature: None,
                     }],
                 },
                 usage: LlmUsage::zero(),
                 finish_reason: FinishReason::Stop,
+                reply_assertions: ReplyAssertions::default(),
             },
         ];
         {
@@ -159,13 +186,7 @@ fn both_hosted_adapters_keep_two_chunks_from_one_delta_and_end_while_responses_w
                     panic!("normal delta cancelled")
                 };
                 assert_eq!(request.generation, generation);
-                request.body[match provider {
-                    HostedProvider::Cartesia => "transcript",
-                    HostedProvider::ElevenLabsFlash => "text",
-                }]
-                .as_str()
-                .unwrap()
-                .to_owned()
+                request.text.clone()
             })
             .collect();
         assert_eq!(texts, ["Hello.", " World."]);

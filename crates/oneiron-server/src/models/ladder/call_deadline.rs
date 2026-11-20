@@ -3,7 +3,10 @@
 //! fallback share it. A caller with a deadline of its own ends the call
 //! there: a send still out is dropped, every permit admitted is settled (a
 //! dispatched one keeps its reservation as spend) and the call ends with a
-//! timeout, never a rate refusal. A raw or media call names no deadline but
+//! timeout, never a rate refusal. A raw call or a chat turn that names its
+//! own `deadline_ms` sends no rung past it and waits for offers back only
+//! within it, while an offer resting past it stays the call's rate refusal
+//! (census L9-23). A raw or media call that names no deadline has none but
 //! its caller's presence: it waits for offers back until one is back, and a
 //! caller that leaves ends it. Every other call keeps the vault's longest
 //! wait as the bound of its waits alone.
@@ -40,6 +43,12 @@ pub enum CallDeadline {
     /// The bound of the call's waits for offers back alone, the vault's
     /// longest wait or a caller's wait budget; sends are not bounded.
     Waits(Instant),
+    /// A raw call's or a chat turn's own `deadline_ms` (census L9-23,
+    /// RULING CALLER-DEADLINE-WIRE = B): as [`Self::Caller`], sends, waits
+    /// and fallbacks all end by it, and no rung goes out once it has passed
+    /// (review round 2 of #7831). A call whose every usable offer rests past
+    /// it ends with that rest's rate refusal, not a timeout.
+    SendsUntil(Instant),
 }
 
 impl CallDeadline {
@@ -81,6 +90,7 @@ impl CallDeadline {
             Self::Open => u64::MAX,
             Self::Caller(at)
             | Self::Waits(at)
+            | Self::SendsUntil(at)
             | Self::CallerWithWaitCap {
                 waits_until: at, ..
             } => at.saturating_duration_since(Instant::now()).as_secs(),
@@ -90,9 +100,9 @@ impl CallDeadline {
     /// Whether the caller's own deadline has passed. Only it ends a call.
     pub(super) fn expired(self) -> bool {
         match self {
-            Self::Caller(at) | Self::CallerWithWaitCap { caller_at: at, .. } => {
-                Instant::now() >= at
-            }
+            Self::Caller(at)
+            | Self::SendsUntil(at)
+            | Self::CallerWithWaitCap { caller_at: at, .. } => Instant::now() >= at,
             Self::Open | Self::Waits(_) => false,
         }
     }
@@ -100,7 +110,9 @@ impl CallDeadline {
     /// `work`, up to the caller's deadline: `None` once it passed first.
     pub(super) async fn bound<T>(self, work: impl Future<Output = T>) -> Option<T> {
         match self {
-            Self::Caller(at) | Self::CallerWithWaitCap { caller_at: at, .. } => {
+            Self::Caller(at)
+            | Self::SendsUntil(at)
+            | Self::CallerWithWaitCap { caller_at: at, .. } => {
                 tokio::time::timeout_at(at, work).await.ok()
             }
             Self::Open | Self::Waits(_) => Some(work.await),
@@ -128,13 +140,17 @@ impl OfferLadder {
     /// The call's end with no answer: past a caller's deadline, or with a
     /// caller's deadline before any offer it waits for is back, a timeout
     /// once the owner is asked about the parked offers; otherwise
-    /// [`Self::unanswered`].
+    /// [`Self::unanswered`]. A [`CallDeadline::SendsUntil`] call ends with a
+    /// timeout only once its deadline has passed.
     pub(super) fn ended(&self, call: Call<'_>, walk: Walk) -> LlmError {
-        if matches!(
-            call.deadline,
-            CallDeadline::Caller(_) | CallDeadline::CallerWithWaitCap { .. }
-        ) && (call.deadline.expired() || walk.limited())
-        {
+        let timed_out = match call.deadline {
+            CallDeadline::Caller(_) | CallDeadline::CallerWithWaitCap { .. } => {
+                call.deadline.expired() || walk.limited()
+            }
+            CallDeadline::SendsUntil(_) => call.deadline.expired(),
+            CallDeadline::Open | CallDeadline::Waits(_) => false,
+        };
+        if timed_out {
             self.ask_parked(&walk, call.needs, call.run.principal());
             return CallDeadline::expiry();
         }

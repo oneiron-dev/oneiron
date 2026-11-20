@@ -145,6 +145,7 @@ pub(super) fn apply_origin_cut(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     if state
         .origin_cut
@@ -162,6 +163,7 @@ pub(super) fn apply_origin_cut(
         machine: cut.machine,
         choice: Some(&choice),
         context: ORIGIN_CUT_REVISION_CONTEXT,
+        needs_proof_off_the_line,
         persons_own_narrowing: false,
     };
     let landing = owner_choice_landing(
@@ -277,12 +279,20 @@ impl Vault {
         for repo in repos {
             let target = origin_cut_target(repo)?;
             let fold = self.authority_view_readonly_in_txn(txn)?;
-            if !super::owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+            if !super::owner_act_signer_admits(
+                fold.machine(machine),
+                &fold.roster,
+                &public_key,
+                fold.pinned_root.as_ref(),
+            ) {
                 return Err(authority_refused(NO_CARRIER));
             }
             let seen = fold.origin_cuts.revision(target);
             // FIX 7908: join a frontier wider than one entry names.
-            let joiner = FrontierSigner::Install(machine, &key);
+            // The owner key this install holds proves the act and its joins
+            // (row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS).
+            let proof = self.owner_proof_signer(&fold);
+            let joiner = FrontierSigner::install(machine, &key, proof.as_ref());
             let fold = self
                 .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
                 .unwrap_or(fold);
@@ -306,7 +316,7 @@ impl Vault {
                     writer,
                 }),
                 now,
-                self.owner_proof_signer(&fold).as_deref(),
+                proof.as_ref(),
             )?;
             acts.push((target, authority_entry_hash(&entry)?));
             let at = TimeRange {

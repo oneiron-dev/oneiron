@@ -21,6 +21,16 @@ pub struct RestoreInboxGroup {
     /// The open members whose approval would supersede a live head. Accept-all
     /// leaves them waiting, for the owner to settle one by one.
     pub replaces_live_head: u64,
+    /// The archived hook grants this restore brought, which an accept-all that
+    /// leaves no member open installs; the owner's client shows the count
+    /// before the accept. Left out when zero.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub hook_grants: u64,
+}
+
+/// Whether `value` is zero: a group that brought no hook grant leaves the count out.
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 /// What became of one member of a restore group.
@@ -87,6 +97,9 @@ pub struct RestoreInboxResolution {
     /// of the settled members or any part of them, when a member settled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revert_handle: Option<String>,
+    /// Each hook binding (32 hex) whose archived owner grant this accept installed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub installed_hook_grants: Vec<String>,
     /// The work still owed after the answer committed (FIX 7600); empty when
     /// none is.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

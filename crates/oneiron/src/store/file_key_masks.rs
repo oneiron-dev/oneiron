@@ -182,6 +182,39 @@ pub(crate) fn drop_masked_key_in_txn(
     MASKED_FILE.put(store, txn, hash, &file)
 }
 
+/// Rebinds each key the custody record `from` holds, in every stored file's
+/// mark, to the record `to` (FILE-CUSTODY-MERGE-AFTER-REWRAP): each span,
+/// its kind and its place stay; only the record that holds the key
+/// changes. Returns how many files' marks changed.
+pub(crate) fn rebind_masked_key_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    from: &EntityId,
+    to: &EntityId,
+) -> Result<usize> {
+    // Read whole before the first write: no cursor is held across a put.
+    let files = MASKED_FILE.scan(store, txn)?;
+    let mut changed = 0;
+    for (hash, mut file) in files {
+        let mut moved = false;
+        let members = file
+            .members
+            .iter_mut()
+            .flat_map(|member| member.keys.iter_mut());
+        for key in file.keys.iter_mut().chain(members) {
+            if key.custody == *from {
+                key.custody = *to;
+                moved = true;
+            }
+        }
+        if moved {
+            MASKED_FILE.put(store, txn, &hash, &file)?;
+            changed += 1;
+        }
+    }
+    Ok(changed)
+}
+
 /// `bytes`, read from the store, as `sight` reads them. A file the write
 /// door kept no keys in is served as it is, once a container's members and
 /// the bytes no reader shows read clean to the write door, and once a plain

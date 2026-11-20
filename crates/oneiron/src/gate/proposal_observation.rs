@@ -18,40 +18,40 @@ const RECEIPT: SideTable<ProposalKey, ProposalSubmissionReceipt, Named> =
 const HISTORY: SideTable<HistoryKey, ProposalSubmissionReceipt, Named> =
     SideTable::new(&side_table::PROPOSAL_RECEIPT_HISTORY);
 
+#[derive(SideKey)]
+#[side_key(sep = b':')]
 struct ProposalKey {
     actor: EntityId,
+    #[side_key(rest)]
     proposal_ref: String,
 }
-impl SideKey for ProposalKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.actor.as_bytes());
-        out.push(b':');
-        out.extend_from_slice(self.proposal_ref.as_bytes());
-    }
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let actor = EntityId::from_bytes(bytes.get(..16)?.try_into().ok()?).ok()?;
-        (bytes.get(16) == Some(&b':')).then_some(Self {
-            actor,
-            proposal_ref: String::from_utf8(bytes.get(17..)?.to_vec()).ok()?,
-        })
-    }
+
+/// One [`ProposalKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn proposal_key_pin_for_test(
+    actor: EntityId,
+    proposal_ref: &str,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&ProposalKey {
+        actor,
+        proposal_ref: proposal_ref.to_owned(),
+    })
 }
+
+#[derive(SideKey)]
+#[side_key(sep = b':')]
 struct HistoryKey {
     actor: EntityId,
     count: u64,
 }
-impl SideKey for HistoryKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.actor.as_bytes());
-        out.push(b':');
-        out.extend_from_slice(&self.count.to_be_bytes());
-    }
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        (bytes.len() == 25 && bytes[16] == b':').then_some(Self {
-            actor: EntityId::from_bytes(bytes[..16].try_into().ok()?).ok()?,
-            count: u64::from_be_bytes(bytes[17..].try_into().ok()?),
-        })
-    }
+
+/// One [`HistoryKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn history_key_pin_for_test(
+    actor: EntityId,
+    count: u64,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&HistoryKey { actor, count })
 }
 
 pub use oneiron_store::proposal_observation_record::ProposalPolicySource;

@@ -24,7 +24,9 @@ use heed::{RoTxn, RwTxn};
 
 use super::super::{SecretScanMode, scan_payload, secret_scan_mode_in_txn};
 use super::secret_spans;
-use super::side_row::{SidePart, admit_seeded_parts, plan_seeded_parts};
+use super::side_row::{
+    SidePart, TextReplacements, admit_seeded_parts, admit_tracked_seeded_parts, plan_seeded_parts,
+};
 use super::wipe::{PlanValues, replace_wiped, wipe_part};
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -68,6 +70,27 @@ pub(crate) fn admit_parts_in_txn(
     lifted: &mut Lifted,
 ) -> Result<bool> {
     admit_parts_with(vault, wtxn, record, parts, lifted, None)
+}
+
+/// [`admit_parts_in_txn`], tracked (FIX 6144): the same admission, which
+/// also returns where each handle went in each text part it masked, by the
+/// BLAKE3 of the text as given, for a writer that puts the handles into its
+/// own copy of the text at their spans rather than diffing the masked text
+/// against it (a NOTE's live body, FIX
+/// LORO-TEXT-UPDATE-UNBOUNDED-DIFF-CALLERS). `None` when no part changed.
+pub(crate) fn admit_tracked_parts_in_txn(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    record: EntityId,
+    parts: &mut [(&str, Part<'_>)],
+    lifted: &mut Lifted,
+) -> Result<Option<TextReplacements>> {
+    let mut traced = None;
+    let placed = admit_copy(record, parts, |origins, copy| {
+        traced = admit_tracked_seeded_parts(vault, wtxn, origins, copy, lifted)?;
+        Ok(traced.is_some())
+    })?;
+    Ok(traced.filter(|_| placed))
 }
 
 /// [`admit_parts_in_txn`] as its plan alone (FIX 21363), for a replay that

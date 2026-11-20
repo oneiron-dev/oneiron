@@ -6,9 +6,10 @@
  * oneiron_*_free function from this header. Do not pass Rust-owned pointers
  * to free(), and do not free the same value twice.
  *
- * Boundary validation: EntityId inputs must be exactly 16 bytes. Text queries
- * are capped at 8 KiB; dimensions are the vault's configured width with no
- * ceiling; a search limit is served whole.
+ * Boundary validation: EntityId inputs must be exactly 16 bytes. A text query
+ * is served whole at any length; past the vault's [limits] recall_query_bytes
+ * row it asks the installed limit port, if any. Dimensions are the vault's
+ * configured width with no ceiling; a search limit is served whole.
  *
  * Intentionally absent: start_sync and stop_sync are not exported while sync
  * remains disabled pre-launch.
@@ -453,6 +454,23 @@ enum OneironStatus oneiron_engine_reply_free(struct OneironReply reply);
  * during the call.
  */
 enum OneironStatus oneiron_engine_wake(struct OneironEngine *engine);
+
+/**
+ * What the app shell observes about fetching predictions on this machine:
+ * `unmetered` is 1 on an unmetered network and `powered` is 1 on power (any
+ * other non-zero value counts as 1). A phone at the predicted level asks and
+ * fetches only while both hold, closed until the app reports; the report
+ * holds across `oneiron_engine_stop`, `oneiron_engine_wake` and every
+ * reconnect. Report again on each change the app's monitors see.
+ *
+ * # Safety
+ *
+ * `engine` is null or a live handle from `oneiron_engine_start`, not freed
+ * during the call.
+ */
+enum OneironStatus oneiron_engine_set_fetch_conditions(struct OneironEngine *engine,
+                                                       uint8_t unmetered,
+                                                       uint8_t powered);
 
 /**
  * The app is backgrounding: stop taking requests, drain, stop every worker

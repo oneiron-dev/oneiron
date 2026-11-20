@@ -55,6 +55,9 @@ pub(super) struct ConnState {
     pub(super) residence_touch: Option<crate::livequery::ResidenceTouchStage>,
     /// Tracked durable-work attachments, independent of the verb-RPC gate.
     pub(super) residence_work: crate::livequery::ResidenceWorkState,
+    /// Each selector answer this socket queued, with what it was made under,
+    /// judged again as it leaves (SELECTOR-RELEASE-POINT = B).
+    pub(super) selector_answers: crate::selector_release::SelectorAnswers,
     /// The authority entry this socket's machine appends in parts, held
     /// until it is whole; it goes with the socket (FIX 8246).
     pub(super) authority_append_stage: Option<oneiron::sync::residence::AuthorityAppendStage>,
@@ -94,6 +97,9 @@ pub(super) struct ConnState {
     /// lets the release door and the fan-out, which read the state shared,
     /// take a copy once and notice a change once.
     pub(super) peer_exports: std::sync::Mutex<super::peer_serve::PeerExports>,
+    /// The lane every selector this socket sends is checked on (MEMBER-SYNC
+    /// D2): the owner's own device, or a member lane fixed at the upgrade.
+    pub(super) selector_lane: super::selector_scope::SelectorLane,
 }
 
 impl ConnState {
@@ -117,6 +123,7 @@ impl ConnState {
             residence_index: None,
             residence_touch: None,
             residence_work: Default::default(),
+            selector_answers: Default::default(),
             authority_append_stage: None,
             countersigned: false,
             proven_machine: oneiron::authority::PeerMachine::Unknown,
@@ -129,6 +136,7 @@ impl ConnState {
             sealed_updates_live: false,
             peer_served: false,
             peer_exports: std::sync::Mutex::default(),
+            selector_lane: super::selector_scope::SelectorLane::OwnDevice,
         }
     }
 

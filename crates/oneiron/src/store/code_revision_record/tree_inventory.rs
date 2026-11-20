@@ -5,6 +5,7 @@ use crate::error::{ArtifactError, Error, Result};
 use crate::git_wire::{GitOid, git_path_bytes};
 use crate::store::code_document_values::CodeDocumentFrontier;
 use crate::store::code_tree_blob::{CodeTreeBlob, MODE_GITLINK};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A captured complete tree: documents by id with their modes, and blobs
@@ -62,55 +63,52 @@ impl CodeTreeInventory {
 
     /// The one digest of `revision`'s complete inventory: every document's
     /// path, id, frontier and mode, and every blob's path, object, hash,
-    /// size and mode.
+    /// size and mode (`purposes::store::CODE_TREE_INVENTORY`).
     ///
     /// # Errors
     /// An encoding failure.
     pub(crate) fn digest(revision: &CodeRevision) -> Result<[u8; 32]> {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"oneiron:code-tree-inventory:v1");
+        let mut hasher = LegacyDigest::new(purposes::store::CODE_TREE_INVENTORY);
         let documents: BTreeMap<&str, &CodeDocumentFrontier> = revision
             .file_frontiers
             .values()
             .map(|frontier| (frontier.path.as_str(), frontier))
             .collect();
-        hasher.update(&(documents.len() as u64).to_be_bytes());
+        hasher.len_u64_be(documents.len());
         for (path, frontier) in documents {
             let encoded = rmp_serde::to_vec_named(frontier)
                 .map_err(|_| invalid("tested tree document encode"))?;
             for part in [path.as_bytes(), encoded.as_slice()] {
-                hasher.update(&(part.len() as u64).to_be_bytes());
-                hasher.update(part);
+                hasher.len_u64_be(part.len()).raw(part);
             }
-            hasher.update(&document_mode(revision, &frontier.document_id).to_be_bytes());
+            hasher.raw(&document_mode(revision, &frontier.document_id).to_be_bytes());
         }
         hash_blobs(&mut hasher, &revision.blob_frontiers);
-        Ok(*hasher.finalize().as_bytes())
+        Ok(hasher.finish())
     }
 
     /// [`Self::digest`] of a tree with no documents and exactly `blobs`:
     /// the same bytes, so an import manifest and the checked baseline it
     /// matches name one digest (G4 PR1).
     pub(crate) fn blob_digest(blobs: &BTreeMap<String, CodeTreeBlob>) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"oneiron:code-tree-inventory:v1");
-        hasher.update(&0_u64.to_be_bytes());
+        let mut hasher = LegacyDigest::new(purposes::store::CODE_TREE_INVENTORY);
+        hasher.raw(&0_u64.to_be_bytes());
         hash_blobs(&mut hasher, blobs);
-        *hasher.finalize().as_bytes()
+        hasher.finish()
     }
 }
 
 /// Folds every blob's path, object, hash, size and mode, in path order.
-fn hash_blobs(hasher: &mut blake3::Hasher, blobs: &BTreeMap<String, CodeTreeBlob>) {
-    hasher.update(&(blobs.len() as u64).to_be_bytes());
+fn hash_blobs(hasher: &mut LegacyDigest, blobs: &BTreeMap<String, CodeTreeBlob>) {
+    hasher.len_u64_be(blobs.len());
     for (path, blob) in blobs {
         for part in [path.as_bytes(), blob.git_oid.as_bytes()] {
-            hasher.update(&(part.len() as u64).to_be_bytes());
-            hasher.update(part);
+            hasher.len_u64_be(part.len()).raw(part);
         }
-        hasher.update(&blob.content_hash);
-        hasher.update(&blob.size_bytes.to_be_bytes());
-        hasher.update(&blob.mode.to_be_bytes());
+        hasher
+            .raw(&blob.content_hash)
+            .raw(&blob.size_bytes.to_be_bytes())
+            .raw(&blob.mode.to_be_bytes());
     }
 }
 

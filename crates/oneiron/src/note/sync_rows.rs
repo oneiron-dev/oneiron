@@ -74,6 +74,51 @@ pub enum NoteRequestReceiptErase {
 pub const ACTOR_ERASE_NOTE_REQUEST_RECEIPT: NoteRequestReceiptErase =
     NoteRequestReceiptErase::KeepReceiptEraseActor;
 
+/// Puts a fork-authority mark for the checkpoint-pins door. `mark` stands
+/// for the BLAKE3 of the fork's document that the downlink writes; the
+/// capture holds a mark whole under its NOTE and never checks it against a
+/// document, so the door passes fixed bytes.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_fork_authority_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    note: &EntityId,
+    fork: &EntityId,
+    mark: [u8; 32],
+) -> Result<()> {
+    NOTE_FORK_AUTHORITY.put(
+        store,
+        txn,
+        &HexPair(
+            crate::side_table::HexId(*note),
+            crate::side_table::HexId(*fork),
+        ),
+        &mark.to_vec(),
+    )
+}
+
+/// Puts an operation receipt for the checkpoint-pins door: `request`'s
+/// receipt beside the actor that gave the command.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_receipt_by_request_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    note: &EntityId,
+    request: &EntityId,
+    by: NoteActor,
+    receipt: &NoteOperationReceipt,
+) -> Result<()> {
+    NOTE_RECEIPT_BY_REQUEST.put(
+        store,
+        txn,
+        &HexPair(
+            crate::side_table::HexId(*note),
+            crate::side_table::HexId(*request),
+        ),
+        &(by, receipt.clone()),
+    )
+}
+
 impl Vault {
     /// Erasing `actor` from the NOTE command receipts (FIX 3879): each
     /// receipt of a command it gave keeps its key, its command hash and its

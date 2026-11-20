@@ -25,7 +25,7 @@ const MAX_PACKAGE_UNCOMPRESSED: u64 = 1024 * 1024 * 1024;
 
 /// Reads an OPC package from ZIP bytes via the central directory.
 ///
-/// Returns [`ArtifactError::EditRoundtripFailed`](oneiron_contracts::error::ArtifactError::EditRoundtripFailed) for anything that is not a package
+/// Returns [`ArtifactError::EditRoundtripFailed`] for anything that is not a package
 /// this pipeline can safely reason about — a missing/blank EOCD, a truncated
 /// entry, or an unsupported compression method. Corruption checks upstream
 /// rely on this failing loudly rather than guessing.

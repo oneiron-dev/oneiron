@@ -12,6 +12,7 @@ use super::{
     MeetingFollowUpDraftPayload,
 };
 use crate::Vault;
+use crate::analyzer::normalize;
 use crate::claim::{ScopedRead, ScopedReadActorKey, ScopedReadReceipt};
 use crate::disclosure::DisclosureBand;
 use crate::entity_id::EntityId;
@@ -53,7 +54,8 @@ pub struct MeetingFollowUpRecipient {
     /// ceiling a handle prints, never a stand-in and never a drop (canon
     /// ARCH-0069 S9).
     pub name: String,
-    /// The words the transcript named the PERSON by, casefolded: nothing the
+    /// The words the transcript named the PERSON by, in the folded form
+    /// names are matched in (NFKC, then full case folding): nothing the
     /// transcript did not say.
     pub heard: String,
 }
@@ -353,7 +355,7 @@ fn owner_names_in_txn(
     for owner in owners {
         for (name, _) in person_names_in_txn(vault, txn, *owner)? {
             if name.trim() != crate::vault::EMBEDDED_OWNER_ACTOR_NAME {
-                names.push(casefold(&name));
+                names.push(match_form(&name));
             }
         }
     }
@@ -372,7 +374,7 @@ fn listed_recipients_in_txn(
     turns: &[MeetingFollowUpTurn],
     owners: &[EntityId],
 ) -> Result<ListedRecipients> {
-    let heard_text = casefold(
+    let heard_text = match_form(
         &turns
             .iter()
             .map(|turn| format!("{}\n{}", turn.speaker, turn.text))
@@ -630,7 +632,7 @@ fn named_persons_in_txn(
 /// word when the name has several, as a whole word, with the form it says
 /// there (the whole name when both start at that place).
 fn first_heard(heard_text: &str, name: &str) -> Option<(usize, String)> {
-    let name = casefold(name);
+    let name = match_form(name);
     let mut forms = vec![name.as_str()];
     forms.extend(first_word_form(&name));
     forms
@@ -685,7 +687,7 @@ fn is_unspaced_script(c: char) -> bool {
 /// Whether a TURN's speaker label is one of the owner's casefolded names:
 /// the whole name, or its first word by [`first_word_form`]'s rule.
 fn speaker_is_owner(speaker: &str, owner_names: &[String]) -> bool {
-    let speaker = casefold(speaker);
+    let speaker = match_form(speaker);
     if speaker.chars().count() < MIN_NAME_CHARS {
         return false;
     }
@@ -706,11 +708,17 @@ fn speaker_label(body: &[u8]) -> Option<String> {
     })
 }
 
-fn casefold(text: &str) -> String {
-    text.split_whitespace()
+/// `text` casefolded for a name match, the one form both sides of every
+/// match take (owner names and speaker labels; PERSON names and the heard
+/// transcript): NFKC, so a name stored composed matches it heard decomposed
+/// and a full-width name its plain form; then full Unicode case folding, so
+/// "Straße" and "STRASSE" fold alike; then whitespace collapsed to single
+/// spaces. Extracted people's name spans fold by the same rule.
+fn match_form(text: &str) -> String {
+    normalize::casefold(&normalize::nfkc(text))
+        .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
-        .to_lowercase()
 }
 
 fn one_line(text: &str) -> String {

@@ -211,8 +211,8 @@ impl Hosted {
 /// The co-Owner holds an owner key on a device of theirs, and this hosted
 /// install holds none. Removing them would end that key under the custodial
 /// root alone, so the move is refused before it writes, as the owner-key
-/// refusal, with the next step and the member as reason codes, and the key
-/// stays live. Once the owner enrols an owner key on this install, the same
+/// refusal, with the next step, the member and the act as reason codes, and
+/// the key stays live. Once the owner enrols an owner key on this install, the same
 /// act runs, and the co-Owner's key ends.
 #[test]
 fn a_hosted_removal_is_refused_until_this_install_holds_an_owner_key() {
@@ -226,14 +226,17 @@ fn a_hosted_removal_is_refused_until_this_install_holds_an_owner_key() {
 
     assert_eq!(refusal.kind(), ErrorKind::OwnerKeyRequired, "{refusal}");
     let reply = oneiron::memory::MemoryError::from(refusal);
+    // The owner holds no owner key yet, so they enrol one on a device
+    // first; the act waits (row HOSTED-OWNER-MOVE-TWO-PHASE).
     assert_eq!(
         reply.reason_codes,
         vec![
             "owner_key_required".to_owned(),
-            "next_step:owner_device_proof_unavailable".to_owned(),
+            "next_step:enrol_owner_device".to_owned(),
             format!("member:{}", hosted.co_owner.to_hex()),
+            format!("act:{act}"),
         ],
-        "the refusal names its next step and the member: {reply:?}"
+        "the refusal names its next step, the member and the act: {reply:?}"
     );
     assert!(
         hosted.key_is_live(key),
