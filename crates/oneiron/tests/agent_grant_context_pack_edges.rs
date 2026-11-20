@@ -6,7 +6,9 @@
 //! its neighbors under the agent key's own floor alone, which reads nothing:
 //! the anchor stayed while its edge and its neighbor went (FIX-LIST
 //! SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS, part 2c). After the owner revokes
-//! the Grant the filter keeps none of them.
+//! the Grant the filter keeps none of them. A neighbor stays only across an
+//! edge kind the pack walk itself follows: the anchor's `BlockedBy` edge
+//! never makes a neighbor reachable (review round 1 of #9849).
 //!
 //! Public paths only: the embedded owner's door, `Vault::put_edge`,
 //! `Vault::context_pack`, the agent's own `Vault::memory` handle and
@@ -26,6 +28,9 @@ const RECORDED_AT: u64 = 1_700_000_000;
 
 /// The anchor's words, which the neighbor's value does not share.
 const ANCHOR_QUERY: &str = "harbour survey lantern";
+
+/// A second claim the anchor's words find, which supports the peer.
+const BRIDGE_VALUE: &str = "The harbour survey lantern was polished on Monday.";
 
 /// Runs `verb` as `caller`, panicking with its refusal.
 fn call(caller: &Memory<'_>, verb: &str, input: Value) -> Value {
@@ -49,6 +54,9 @@ struct Fixture {
     vault: Vault,
     anchor: EntityId,
     peer: EntityId,
+    /// A claim the anchor's words also find, supporting `peer`
+    /// ([`Self::open_bridged`] only).
+    bridge: Option<EntityId>,
     agent: EntityId,
     grant: String,
     _dir: tempfile::TempDir,
@@ -56,6 +64,17 @@ struct Fixture {
 
 impl Fixture {
     fn open() -> Self {
+        Self::build(EdgeKind::Supports, false)
+    }
+
+    /// The anchor `BlockedBy` the peer, and a bridge claim the anchor's
+    /// words find supporting the peer: the walk reaches the peer across the
+    /// bridge alone.
+    fn open_bridged() -> Self {
+        Self::build(EdgeKind::BlockedBy, true)
+    }
+
+    fn build(anchor_kind: EdgeKind, bridged: bool) -> Self {
         let dir = tempfile::tempdir().expect("temporary vault directory");
         let vault = Vault::open_owned(dir.path(), VaultConfig::device()).expect("fresh vault");
         oneiron_testkit::dreamer::attach_test_host(&vault).expect("the test host");
@@ -80,8 +99,15 @@ impl Fixture {
         let anchor = remember("The harbour survey needs a brass lantern.");
         let peer = remember("Thursday brings the tide tables.");
         vault
-            .put_edge(&anchor, EdgeKind::Supports, &peer, 0.9)
+            .put_edge(&anchor, anchor_kind, &peer, 0.9)
             .expect("the owner's edge between the two claims");
+        let bridge = bridged.then(|| {
+            let bridge = remember(BRIDGE_VALUE);
+            vault
+                .put_edge(&bridge, EdgeKind::Supports, &peer, 0.9)
+                .expect("the owner's edge from the bridge to the peer");
+            bridge
+        });
 
         let agent = vault.new_entity_id().expect("an agent id");
         call(
@@ -121,6 +147,7 @@ impl Fixture {
             vault,
             anchor,
             peer,
+            bridge,
             agent,
             grant,
             _dir: dir,
@@ -265,5 +292,46 @@ fn an_agents_pack_without_edges_under_a_live_read_grant_keeps_the_reachable_neig
         "the live Grant admits both claims, yet the agent's pack finds the neighbor \
          unreachable from the anchor: neighbors {:?}",
         ids(&pack.neighbors),
+    );
+}
+
+#[test]
+fn an_agents_pack_keeps_no_neighbor_across_an_edge_the_walk_never_follows() {
+    let fixture = Fixture::open_bridged();
+    let bridge = fixture.bridge.expect("the bridged fixture's bridge claim");
+    let mut pack = fixture
+        .vault
+        .context_pack()
+        .search_text(ANCHOR_QUERY, 10)
+        .filter_types(&[ENTITY_TYPE_CLAIM])
+        .include_edges(false)
+        .edge_hop(1)
+        .max_neighbors(10)
+        .run()
+        .expect("the assembled pack");
+    assert!(
+        row(&pack.results, &fixture.anchor).is_some()
+            && row(&pack.results, &bridge).is_some()
+            && row(&pack.neighbors, &fixture.peer).is_some(),
+        "FIXTURE: the walk finds the anchor and the bridge and reaches the peer across the \
+         bridge: results {:?}, neighbors {:?}",
+        ids(&pack.results),
+        ids(&pack.neighbors),
+    );
+    // The bridge leaves the results, as a row this reader may not read
+    // leaves them: only the anchor's BlockedBy edge still names the peer.
+    pack.results.retain(|result| result.id != bridge);
+
+    let filtered = fixture.filtered_for_agent(pack);
+    assert!(
+        row(&filtered.results, &fixture.anchor).is_some(),
+        "the agent's filter keeps the anchor row under the live Grant: results {:?}",
+        ids(&filtered.results),
+    );
+    assert!(
+        row(&filtered.neighbors, &fixture.peer).is_none(),
+        "the agent's pack keeps the peer across the anchor's BlockedBy edge, which the pack \
+         walk never follows: neighbors {:?}",
+        ids(&filtered.neighbors),
     );
 }
