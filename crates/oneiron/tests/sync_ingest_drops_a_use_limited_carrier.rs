@@ -16,10 +16,14 @@
 //! * `the_hub_recovers_a_window_that_carries_a_device_edit_of_the_kept_row`: the hub persists and
 //!   recovers that window, whose entities map now carries the device's edit; the recovery's
 //!   forward rematerialization passes, and the kept copy stays as it is.
+//! * `a_device_edit_dropped_under_a_restriction_stays_out_after_the_lift`: a cooperative review
+//!   restricts the row instead, and the device's edit arrives while it stands. The review lifts
+//!   the restriction without rewriting the row, and the hub recovers the window, whose entities
+//!   map still carries the dropped edit: the hub keeps its stored copy (REVIEW-9881 round 1).
 //!
-//! Both run red at main 6f0800329f2, whose ingest hands the carrier to the put door, and green
-//! at the fix. A cooperative review restriction asks the same question
-//! (`Store::use_restricted_in_txn`) and is not staged here.
+//! The first two run red at main 6f0800329f2, whose ingest hands the carrier to the put door, and
+//! green at the fix. The third runs red at ca7a0807956, whose ingest drops the carrier only while
+//! the restriction stands, so the recovery after the lift puts it, and green at the round-1 fix.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test sync_ingest_drops_a_use_limited_carrier`.
 
 #![cfg(all(feature = "sync", feature = "test-support", oneiron_test_support))]
@@ -34,6 +38,7 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, WindowExport};
+use oneiron::test_doors::campaign_member_index::{lift_restriction, restrict_record};
 use oneiron::test_doors::media_vector_replica::stored_row;
 use oneiron::{EdgeActorClass, EntityId, HostingPrivacyPosture, Vault, VaultConfig};
 
@@ -113,9 +118,15 @@ fn keep_use_limited(vault: &Vault, record: EntityId) {
     );
 }
 
-/// A hosted hub and an own device whose shared window carries a row the hub then keeps under a
-/// use limit, and the device's edit of that row, sent with a new row in one delta before the
-/// hub answered the device again.
+/// Restricts `record` under a cooperative review, in the row the cooperative-deletion answer
+/// writes: the hub takes no named change to it until the review lifts the restriction.
+fn restrict(vault: &Vault, record: EntityId) {
+    restrict_record(vault, record).expect("FIXTURE: restrict the record");
+}
+
+/// A hosted hub and an own device whose shared window carries a row the hub then limits, and
+/// the device's edit of that row, sent with a new row in one delta before the hub answered the
+/// device again.
 struct Sent {
     hub: TestNode,
     kept: EntityId,
@@ -124,6 +135,11 @@ struct Sent {
 }
 
 fn device_edit_sent_after_the_keep() -> Sent {
+    device_edit_sent_after(keep_use_limited)
+}
+
+/// [`Sent`], with `limit` placed on the hub's row before the device edits it.
+fn device_edit_sent_after(limit: fn(&Vault, EntityId)) -> Sent {
     let mut hub = TestNode::with_config("hub", 2, hosted_config());
     mint_machine_id(&hub.vault);
     hub.open_window(WINDOW);
@@ -146,12 +162,12 @@ fn device_edit_sent_after_the_keep() -> Sent {
         "FIXTURE: the device holds the row before the keep"
     );
 
-    keep_use_limited(&hub.vault, kept);
+    limit(&hub.vault, kept);
     let kept_copy = stored_row(&hub.vault, &kept)
         .expect("FIXTURE: read the hub's stored row")
         .expect("FIXTURE: the hub stores the kept row");
 
-    // The device has not heard of the keep: it edits the row and meets a new person, in one
+    // The device has not heard of the limit: it edits the row and meets a new person, in one
     // commit, so both travel in one delta.
     let new_row = EntityId::now();
     let entities = device.doc(WINDOW).get_map("entities");
@@ -254,4 +270,48 @@ fn the_hub_recovers_a_window_that_carries_a_device_edit_of_the_kept_row() {
         "the recovered window's new row stands on the hub"
     );
     assert_kept_copy_stays(&hub, &kept, &kept_copy);
+}
+
+#[test]
+fn a_device_edit_dropped_under_a_restriction_stays_out_after_the_lift() {
+    let Sent {
+        mut hub,
+        kept,
+        kept_copy,
+        new_row,
+    } = device_edit_sent_after(restrict);
+    assert!(
+        hub.vault
+            .get_raw(&new_row)
+            .expect("read the hub's new row")
+            .is_some(),
+        "FIXTURE: the new row the device sent beside its edit of the restricted row lands"
+    );
+    assert_eq!(
+        stored_row(&hub.vault, &kept)
+            .expect("read the hub's stored row")
+            .as_deref(),
+        Some(kept_copy.as_slice()),
+        "FIXTURE: while the restriction stands the hub keeps its stored copy"
+    );
+
+    // The review lifts the restriction and does not rewrite the row; the hub's next open
+    // rematerializes the window, whose entities map still carries the dropped edit.
+    lift_restriction(&hub.vault, kept).expect("FIXTURE: lift the restriction");
+    hub.recover(WINDOW);
+
+    assert_eq!(
+        stored_row(&hub.vault, &kept)
+            .expect("read the hub's stored row")
+            .as_deref(),
+        Some(kept_copy.as_slice()),
+        "an edit the hub dropped while the record was restricted does not land once the restriction lifts"
+    );
+    assert!(
+        hub.vault
+            .get_raw(&new_row)
+            .expect("read the hub's new row")
+            .is_some(),
+        "the recovered window's new row stands on the hub"
+    );
 }
