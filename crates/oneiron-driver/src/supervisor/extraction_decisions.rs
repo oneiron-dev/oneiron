@@ -37,6 +37,18 @@ pub trait ExtractionDecisionGate: Send + Sync {
     fn admits_step(&self) -> Result<bool> {
         Ok(false)
     }
+
+    /// Admits the prepared narrative route for one bound psych profile step.
+    ///
+    /// The default refuses so a gate written for extraction never admits a
+    /// profile step.
+    ///
+    /// # Errors
+    ///
+    /// Returns failures while reading the host's live admission policy.
+    fn admits_narrative_step(&self) -> Result<bool> {
+        Ok(false)
+    }
 }
 
 /// Owns the native resources shared by bound verdict reads and generation steps in one pass.

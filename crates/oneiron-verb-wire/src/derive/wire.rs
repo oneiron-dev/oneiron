@@ -95,6 +95,34 @@ pub struct DeriveStrengthSignals {
     pub diversity: f64,
 }
 
+/// A Psych Mirror profile of one key: a PERSON, a facet and a world. It
+/// cites the stored claims it was written from, each named in the request's
+/// `sources`; the engine reads their exact words in the commit and stores
+/// them with the profile. No field carries words of a source.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DerivePsychProfileInput {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The PERSON the profile describes.
+    pub person: EntityId,
+    /// The facet the cited claims were born in; absent for the vault's
+    /// default.
+    #[serde(default)]
+    pub facet: Option<EntityId>,
+    /// The WORLD the cited claims lie in; absent for world-free claims.
+    #[serde(default)]
+    pub world: Option<EntityId>,
+    pub compact: String,
+    pub text: String,
+    pub narrative: String,
+    /// Each tier's confidence, in `[0, 1]`; a number outside it is refused.
+    #[schemars(range(min = 0.0, max = 1.0))]
+    pub confidence: f64,
+    /// The stored claims the profile was written from.
+    pub claims: Vec<EntityId>,
+}
+
 /// A reversible archive of the caller's own weak claim.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
