@@ -50,7 +50,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/owner_work/permit_piece.rs` | src | s | 1 struct · 2 fn · 1 const · 3 crate-vis | CustodyPermitPiece | One numbered piece of a custody request's permit set, and its wire codec (FIX 11866) |
 | `src/authority/owner_work/result.rs` | src | m | 2 struct · 4 enum · 9 fn · 3 crate-vis | CustodyRegisterCheck, CustodyUncheckedReason, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkResult, SealedWorkOutput | An executor's result for one owner work request, and its wire codec: the work was enacted, or refused for a… |
 | `src/authority/owner_work/root_basis.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | RootRevisionBasis | A root request's revision basis (FIX 5551): the heads its `seen` is the revision of, as the recorder folded… |
-| `src/authority/policy_setting.rs` | src | s | 1 struct · 1 enum · 8 fn · 2 const · 2 crate-vis | PolicySetting, PolicySettingSet | The owner's act on a vault setting as a signed op (FIX 4624, FIX 5660), and its wire codec |
+| `src/authority/policy_setting.rs` | src | m | 1 struct · 1 enum · 10 fn · 3 const · 2 crate-vis | PolicySetting, PolicySettingSet | The owner's act on a vault setting as a signed op (FIX 4624, FIX 5660), and its wire codec |
 | `src/authority/recovery_ceremony.rs` | src | s | 1 enum · 4 fn · 1 const | GenesisRecoveryStep | Explicit genesis recovery-secret acknowledgement and its visible fragile flag |
 | `src/authority/residence.rs` | src | m | 3 struct · 2 enum · 10 fn · 7 const · 5 crate-vis | PredictedResidenceSet, ResidenceAct, ResidenceDirective, ResidenceResult, ResidenceResultStatus | The owner's residence directives to one of their machines, and each machine's result for one (OF-534) |
 | `src/authority/restored_machine_join.rs` | src | s | 1 struct · 1 enum · 3 fn · 3 const · 3 crate-vis | RestoredJoinEnrolment, RestoredMachineJoin | The owner's word that no other machine of the vault is left, which joins one machine born of a restore (row… |
@@ -90,5 +90,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/authority_register_names.rs` | test | s | — | — | The names of 5 name lists in `oneiron-authority`, one line per row, generated from… |
 | `tests/carrier_signature.rs` | test | s | — | — | The carrier signature of a row act (`oneiron_authority::authority::CarrierSignature`, Fable pass 28 DESIGN… |
 | `tests/passkey_owner_signature.rs` | test | m | — | — | A browser passkey signs as an owner root (row WEB-PASSKEY-OWNER-KEY; lead ruling CARRIER-HOSTED-WEB-ACTS =… |
+| `tests/policy_setting_name.rs` | test | s | — | — | The setting an owner act names is its wire text (stage 7a-1, RULING SETTING-7A-SIGNED-ACT-BASE = A): any… |
 | `tests/predicted_residence_act.rs` | test | s | — | — | The predicted residence acts (census L7-46 + L10-14; ARCH-0023b #predicted-residence) |
 | `tests/widened_seams.rs` | test | m | — | — | Direct calls into the authority-log checks `oneiron-authority` made `pub` so `oneiron`'s fold and checkpoint… |
