@@ -317,9 +317,11 @@ impl MemberCopy<'_> {
             )
             .made_by(&copy, birth)
             // The copy's words are the member's: it derives from the member,
-            // so it reads, travels and is held only where the member is, a
-            // use limit on the member binds it, and it is withdrawn with
-            // the member's row (review round 1 of #10048).
+            // so it reads, travels and is held only where the member is, and
+            // it is withdrawn when the member's row is purged or erased
+            // (review round 1 of #10048). A use limit placed on the member
+            // later does not reach a copy that already stands (FIX
+            // REVERT-COPY-NOT-BOUND-BY-LATER-USE-LIMIT-ON-ITS-MEMBER).
             .edge(&copy, EdgeKind::DerivedFrom, &self.loser, 1.0)
             .apply(txn)?;
         // The copy stands the member's claim again: about a PERSON under a

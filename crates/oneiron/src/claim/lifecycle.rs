@@ -972,7 +972,10 @@ impl Vault {
         self.apply_lifecycle_materialization(wtxn, ops, binding, transition, false)?;
         // The lifecycle applies past the batch door, which is what tells a
         // write's owner of the rows it wrote: the closed claim is queued
-        // here for the live windows' post-commit mirror.
+        // here for the live windows' post-commit mirror. A write with no
+        // post-commit owner drops the queue, as the public retract door's
+        // raw transaction still does (FIX
+        // CLAIM-LIFECYCLE-DOORS-QUEUE-NO-LIVE-WINDOW-ROWS).
         crate::batch::queue_committed_rows(self, wtxn, std::collections::BTreeSet::from([*id]));
         // A retract parked for the holder has nothing left to close.
         self.drop_parked_retract_in_txn(wtxn, id)?;
