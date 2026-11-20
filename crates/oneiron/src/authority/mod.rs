@@ -453,8 +453,8 @@ pub use observation_policy::*;
 pub(crate) use origin_cut::OriginCutStanding;
 pub use owner_act::{ActAuthority, GrantedAct, KeyWork};
 pub(crate) use owner_act::{
-    GrantStanding, authority_refusal_as, authority_refused, grant_omission, grant_standing_in_txn,
-    owner_act_signer_admits,
+    GrantStanding, agent_grantable_act_verbs, authority_refusal_as, authority_refused,
+    grant_omission, grant_standing_in_txn, owner_act_signer_admits,
 };
 pub use owner_choice::OwnerChoiceHead;
 pub(crate) use owner_delegate::{
@@ -633,6 +633,7 @@ use machine_profile::{
     KeyClaim, MachineChain, MarkProof, apply_anchor_profile, apply_machine_profile,
     merge_machine_maps,
 };
+pub(crate) use machine_write::authority_heads_with_ancestor_counts;
 pub(crate) use machine_write::{
     MACHINE_SIGNATURE_KEY, evidence_without_machine_signature, history_control_read_admitted,
     machine_claim_needs_history, machine_claim_needs_history_observing,

@@ -5487,7 +5487,7 @@
      "path": "src/authority/machine_write.rs",
      "purpose": "MACHINE origin signatures for claim writes; enrollment is `machine_enroll`",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 4
      }
     },
@@ -5607,7 +5607,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 84,
+      "crate-vis": 85,
       "mod": 2,
       "re-export": 93
      }
@@ -5753,7 +5753,7 @@
      "path": "src/authority/owner_act.rs",
      "purpose": "The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "enum": 1,
       "fn": 4,
       "re-export": 1,
@@ -17376,7 +17376,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 33,
       "fn": 1
      }
     },
@@ -17973,7 +17973,7 @@
      "path": "src/claim/scoped_read/visibility.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 4
      }
     },
@@ -33429,7 +33429,7 @@
      "path": "src/dreamer_consolidation/wake_plan.rs",
      "purpose": "One frozen read revision and exact preparation of queued consolidation work",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 29,
       "struct": 2
      }
     },
@@ -33984,7 +33984,7 @@
      "path": "src/dreamer_runner/attempt_binding/mod.rs",
      "purpose": "The native Dreamer attempt binding (untangle 6.9c, RULING S69C-DESIGN item 5): the in-process credential a…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4,
       "re-export": 4,
       "struct": 1
@@ -35719,7 +35719,7 @@
      "purpose": "Background identity checks (OF-123; owner ruling: ask rule B)",
      "surface": {
       "const": 4,
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 2,
       "re-export": 4,
@@ -35733,7 +35733,7 @@
      "path": "src/dreamer_runner/maintenance/identity/admission.rs",
      "purpose": "Identity asks as one reader may read them (FIX 8711)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1
      }
     },
@@ -35846,7 +35846,7 @@
      "path": "src/dreamer_runner/maintenance/identity/settlement.rs",
      "purpose": "Settles an ask: applies a choice, keeps the names separate, or escalates",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -37823,7 +37823,7 @@
      "purpose": "Wake request and outcome vocabulary plus the executor contract",
      "surface": {
       "crate-vis": 4,
-      "fn": 5,
+      "fn": 6,
       "re-export": 3,
       "struct": 1,
       "trait": 1
@@ -42256,7 +42256,7 @@
      "path": "src/federation/agent_verb_class.rs",
      "purpose": "The one resolver of an owner's agent Grant's verb classes (FIX 8735, Engine 18:26 = A; DEC-0006 invariant 3)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -47899,7 +47899,7 @@
      "purpose": "Who decided a topology seal, and whether that decision stands here (mesh PR2-topology, amended 10-19 03:0x…",
      "surface": {
       "const": 2,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 4,
       "fn": 8,
       "struct": 1
@@ -87509,7 +87509,7 @@
      "path": "src/sync/connection/predicted.rs",
      "purpose": "The predicted level's upkeep on a machine (census L7-46 + L10-14, ARCH-0023b #predicted-residence)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -89044,7 +89044,7 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 27,
+      "crate-vis": 28,
       "fn": 10,
       "re-export": 33
      }
@@ -89578,7 +89578,7 @@
      "path": "src/sync/residence/predict.rs",
      "purpose": "The home's prediction for one machine at the predicted level (ARCH-0023b #predicted-residence)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 3
      }
@@ -91118,7 +91118,7 @@
      "path": "src/tagging/provisional.rs",
      "purpose": "Provisional entities: what a save mints when the identity key names nothing (ARCH-0055 §10), for the Dreamer…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 5,
       "re-export": 1
      }
@@ -91225,13 +91225,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/tagging/role.rs",
      "purpose": "The role rung (ARCH-0024 signal 3): a mention that names a person by their relationship to the speaker, `my…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -95239,7 +95239,7 @@
      "path": "src/test_doors/extraction_steps.rs",
      "purpose": "One admitted extraction attempt's bound step fixture: the verdict parity resources plus a lend switch",
      "surface": {
-      "fn": 9,
+      "fn": 11,
       "struct": 2
      }
     },
@@ -95267,7 +95267,7 @@
      "path": "src/test_doors/extraction_verdict/lender.rs",
      "purpose": "Provides the extraction verdict parity fixture, which lends scripted extraction resources to one admitted…",
      "surface": {
-      "fn": 9,
+      "fn": 11,
       "struct": 5
      }
     },
@@ -95918,7 +95918,7 @@
      "path": "src/test_doors/identity_recheck.rs",
      "purpose": "The nightly identity re-check, one page, run from a test, and the open identity asks after it (census item…",
      "surface": {
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -99307,7 +99307,7 @@
      "path": "src/vault_cleanup/mod.rs",
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "mod": 1,
       "re-export": 10
      }
@@ -99323,13 +99323,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/vault_cleanup/person_provenance.rs",
      "purpose": "Mint-time evidence for the extraction-only PERSON cleanup arm",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 12,
       "fn": 1
      }
     },
@@ -105972,6 +105972,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/agent_act_grant_lists_read.rs",
+     "purpose": "The owner's agent Grant that names an act an agent's Grant may carry also lists `read` (Engine ANSWER…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/agent_append_provenance.rs",
      "purpose": "Blob append provenance follows the bound writer class",
      "surface": {}
@@ -106070,6 +106078,14 @@
      "notable": [],
      "path": "tests/agent_grant_expiry_wall_clock.rs",
      "purpose": "An owner-agent grant's end is wall time (census L7-18)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_grant_hydrate_receipt.rs",
+     "purpose": "A hydrate an agent's own live Grant admits reports that Grant's reach in its receipt, as vault.get does, not…",
      "surface": {}
     },
     {
@@ -106584,6 +106600,14 @@
      "notable": [],
      "path": "tests/batch_put_over_hard_delete_marker.rs",
      "purpose": "A batch put at an id holding the permanent `dt:` hard-delete marker must not commit a body that then reads…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/blend_body_parsed_once.rs",
+     "purpose": "Row [RECALL-EXPANDED-ROW-FACTS-REREAD], the blend part: a blend that boosts by salience and confidence reads…",
      "surface": {}
     },
     {
@@ -108574,6 +108598,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/entity_linker_confirmed_role_possessor.rs",
+     "purpose": "A confirmed role person is its possessor's alone (FIX LINKER-ROLE-CONFIRMED-PERSON-KEY-ACROSS-SPEAKERS…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/entity_linker_role_possessor.rs",
      "purpose": "A role phrase names a person by their relation to its possessor, the one author of the message it is said in…",
      "surface": {}
@@ -108776,6 +108808,14 @@
      "notable": [],
      "path": "tests/extraction_relationship_label.rs",
      "purpose": "An extraction candidate never holds wider than its words' relationship label (S63E-RULED, live leak 1)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_step_destination_bound.rs",
+     "purpose": "A lent extraction step lists for the destination bound of the pass that lends it (FIX row…",
      "surface": {}
     },
     {
@@ -109960,6 +110000,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/identity_ask_archived_candidates.rs",
+     "purpose": "FIX [IDENTITY-ASK-ARCHIVED-CANDIDATE-OPTIONS]: an archived person the nightly identity re-check names is an…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/identity_distinct_event_position.rs",
      "purpose": "The ledger event of a distinct fact an identity answer derives from a MESSAGE stands where that fact stands…",
      "surface": {}
@@ -110981,7 +111029,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/it_sync/device_predicted_residence_live.rs",
@@ -117357,7 +117405,7 @@
    "over_bar": 301,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8264,
-   "test_files": 2004
+   "test_files": 2010
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -125577,7 +125625,7 @@
      "surface": {
       "const": 1,
       "enum": 2,
-      "fn": 6,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -126584,6 +126632,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/contracts_vad_register_names.rs",
+     "purpose": "The names of `VadAnnotationSource` in `oneiron-contracts`, one line per row, generated from…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/cursor_text.rs",
      "purpose": "The `{at}:{id}` cursor (UC-13 PR 1): written byte for byte as the mail inbox and the conversation transcript…",
      "surface": {}
@@ -126877,7 +126933,7 @@
    "over_bar": 3,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
    "source_files": 72,
-   "test_files": 10
+   "test_files": 11
   },
   "oneiron-crypto": {
    "files": [
@@ -151999,8 +152055,8 @@
      "surface": {
       "const": 2,
       "crate-vis": 2,
-      "fn": 6,
-      "mod": 1,
+      "fn": 7,
+      "mod": 2,
       "struct": 2
      }
     },
@@ -152015,6 +152071,20 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BodyParseWork"
+     ],
+     "path": "src/fusion/body_parse_work.rs",
+     "purpose": "Door for `oneiron`'s `tests/blend_body_parsed_once.rs` (row [RECALL-EXPANDED-ROW-FACTS-REREAD]): counts, on…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -152093,7 +152163,7 @@
      "purpose": "Cosine distance and similarity over `f32` vectors, with AVX2/FMA and NEON kernels picked at run time and a…"
     },
     "fusion": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -152116,7 +152186,7 @@
    },
    "over_bar": 0,
    "purpose": "Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion",
-   "source_files": 25,
+   "source_files": 26,
    "test_files": 7
   },
   "oneiron-ruler": {
@@ -161343,7 +161413,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 82
+      "crate-vis": 83
      }
     },
     {
@@ -165426,7 +165496,7 @@
      "path": "src/commands/mcp_bridge/call_meta.rs",
      "purpose": "What the bridge adds to a relayed `tools/call`'s `_meta`: the invocation it runs under (ARCH-0080 §3), and…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -165446,7 +165516,7 @@
      "path": "src/commands/mcp_bridge/link/replies.rs",
      "purpose": "Reply forwarding on the bridge's shared socket driver",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -166231,7 +166301,7 @@
      "path": "src/config/limits.rs",
      "purpose": "The `[limits]` section: the bounds on work a remote caller can start at this server",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "struct": 1
      }
     },
@@ -166242,7 +166312,7 @@
      "path": "src/config/limits/machine_floors.rs",
      "purpose": "The machine's own floors the `[limits]` defaults are sized from: its memory",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -166408,7 +166478,7 @@
      "path": "src/config/mod.rs",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 18,
       "re-export": 34
      }
@@ -166939,6 +167009,7 @@
      "path": "src/config/server_config.rs",
      "purpose": "Resolved server configuration: `SyncServerConfig` and `ServeConfig`",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 1,
       "re-export": 1,

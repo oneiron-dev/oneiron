@@ -392,7 +392,7 @@ impl Vault {
         )?;
         let (windows, documents) = self.prediction_units(&txn, &scores)?;
         let (previous, previous_stands) =
-            self.previous_predicted_set(&txn, &states, machine, parent.id, now)?;
+            self.previous_predicted_set(&txn, &states, machine, parent.id)?;
         let set = PredictedResidenceSet {
             windows: keep_ranked_windows(&windows, &previous.windows, parent.window_budget),
             documents: keep_ranked_documents(
@@ -511,45 +511,37 @@ impl Vault {
     /// This home's last predicted set for `machine` under `parent`, and whether it still stands
     /// there. The set is the body this home holds for the machine (each push keeps only its own
     /// body) while a `Predicted` directive under `parent` names it: empty when it holds none, and
-    /// then it never stands. It stands unless a later prediction under `parent`, dated no later than
-    /// `now`, names a set this home holds no body for: the machine adopts the prediction it applies
-    /// last, so another home's since then stands until this home pushes again. A prediction dated
-    /// ahead by another home's clock neither stands in for this home's set nor unseats it.
+    /// then it never stands. It stands while the prediction the machine adopts under `parent`
+    /// ([`live_prediction_in_txn`]) names it. Another home's prediction that follows this home's
+    /// last push in the signed log unseats it whatever its date, and so does one that neither
+    /// follows it nor is followed by it but outranks it (it follows more of the predictions, or as
+    /// many and is dated after it), so this home pushes again: its next push follows both
+    /// (REVIEW-9781).
     fn previous_predicted_set(
         &self,
         txn: &heed::RoTxn<'_>,
         states: &[ResidenceDirectiveState],
         machine: EntityId,
         parent: EntityId,
-        now: u64,
     ) -> Result<(PredictedResidenceSet, bool)> {
         let held = PREDICTED_BODY.scan_keys(&self.store, txn, machine.to_hex().as_bytes())?;
-        let mut stands = true;
         for state in states.iter().rev() {
-            let ResidenceAct::Predicted {
-                parent: named,
-                set_digest,
-                ..
-            } = &state.directive.act
-            else {
+            let Some(set_digest) = prediction_digest_under(state, machine, parent) else {
                 continue;
             };
-            if state.directive.machine != machine || *named != parent {
-                continue;
-            }
             let digest = oneiron_hex::encode(set_digest);
             if !held.iter().any(|key| key.1 == digest) {
-                stands &= state.directive.issued_at > now;
                 continue;
             }
             let body = PREDICTED_BODY.get(&self.store, txn, &(HexId(machine), digest))?;
             let Some(body) = body else {
                 break;
             };
-            return Ok((
-                PredictedResidenceSet::decode_verified(&body, set_digest)?,
-                stands,
-            ));
+            let set = PredictedResidenceSet::decode_verified(&body, set_digest)?;
+            let stands = live_prediction_in_txn(self, txn, states, machine, parent)?
+                .and_then(|live| prediction_digest_under(live, machine, parent))
+                == Some(set_digest);
+            return Ok((set, stands));
         }
         Ok((PredictedResidenceSet::default(), false))
     }
@@ -612,4 +604,56 @@ impl Vault {
         }
         Ok(())
     }
+}
+
+/// The set digest of `state` when it is a prediction for `machine` under `parent`.
+fn prediction_digest_under(
+    state: &ResidenceDirectiveState,
+    machine: EntityId,
+    parent: EntityId,
+) -> Option<&[u8; 32]> {
+    match &state.directive.act {
+        ResidenceAct::Predicted {
+            parent: named,
+            set_digest,
+            ..
+        } if state.directive.machine == machine && *named == parent => Some(set_digest),
+        _ => None,
+    }
+}
+
+/// The prediction `machine` adopts under `parent` among `states`, read in `txn` (FIX
+/// PREDICTED-FUTURE-DATED-BLOCKS-LATER, REVIEW-9781): of the predictions under `parent` that no
+/// other one follows (no other's signed authority row descends from its own), the one that
+/// follows the most of the others, then the latest by `(issued_at, id)`. A prediction that follows
+/// another outranks it whatever their dates, since it follows that one and all that one follows.
+/// A prediction's rank depends only on what it follows, which no later row changes, so the answer
+/// is the same in whatever order the predictions arrived, and one outranked once is never adopted
+/// later: a machine that refused it never finds it named again (REVIEW-9781 round 2). Dates order
+/// only predictions that follow as many of the others. The machine applies only this one, and a
+/// home's own set stands there only while this one names it.
+///
+/// # Errors
+///
+/// Storage.
+pub(crate) fn live_prediction_in_txn<'a>(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    states: &'a [ResidenceDirectiveState],
+    machine: EntityId,
+    parent: EntityId,
+) -> Result<Option<&'a ResidenceDirectiveState>> {
+    let predictions: Vec<&ResidenceDirectiveState> = states
+        .iter()
+        .filter(|state| prediction_digest_under(state, machine, parent).is_some())
+        .collect();
+    let rows: Vec<[u8; 32]> = predictions.iter().map(|state| state.entry).collect();
+    let heads = crate::authority::authority_heads_with_ancestor_counts(&vault.store, txn, &rows)?;
+    Ok(predictions
+        .into_iter()
+        .filter_map(|state| heads.get(&state.entry).map(|ancestors| (*ancestors, state)))
+        .max_by_key(|(ancestors, state)| {
+            (*ancestors, state.directive.issued_at, state.directive.id)
+        })
+        .map(|(_, state)| state))
 }
