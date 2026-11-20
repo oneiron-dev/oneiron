@@ -36,16 +36,18 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
+use oneiron::authority::{ActAuthority, ActSurface};
 use oneiron::recovery::checkpoint::{CheckpointKey, CheckpointSigner};
 use oneiron::world_keys::{
-    self, EscrowAddWarning, HybridSecretKey, NewVaultKeyWrap, RecoveryPreset, VaultKeyUnlock,
-    VaultKeyWrapInfo, VaultPageSeal,
+    self, EscrowAddWarning, HybridSecretKey, NewVaultKeyWrap, NoRecoveryBox, RecoveryPreset,
+    VaultKeyUnlock, VaultKeyWrapInfo, VaultPageSeal,
 };
 use oneiron_keystore::DeviceKeystore;
 use rand_core::RngCore as _;
 use serde::Serialize;
 use zeroize::Zeroizing;
 
+use super::recovery_kit::read_kit_args;
 use super::secret_input::{TerminalRead, read_stdin_secret};
 use super::{emit, open_stopped_vault};
 use crate::cli::{
@@ -63,10 +65,12 @@ const SECRET_LIMIT: usize = 4096;
 mod data_key_generation;
 mod fresh_restore;
 mod host_unlock;
+mod recovery_preset_command;
 mod unlocked_open;
 
 pub(super) use self::fresh_restore::{RestoreWrap, restore_fresh};
 pub(crate) use self::host_unlock::HostUnlock;
+use self::recovery_preset_command::recovery_preset;
 pub(super) use self::unlocked_open::{
     KeyNeed, UnlockRequest, open_with_unlock, open_with_unlock_for_secret,
     open_with_unlock_for_secret_checked, refuse_two_stdin_secrets,
@@ -106,74 +110,6 @@ pub fn vault_key(command: VaultKeyCommand) -> anyhow::Result<()> {
         VaultKeyCommand::ResealCapsule(args) => reseal_capsule(*args),
         VaultKeyCommand::RecoveryPreset(args) => recovery_preset(*args),
     }
-}
-
-/// Shows the recovery preset, or sets it with `--set`. Entering
-/// `nobody-but-me` writes the printed sheet's code to the new owner-only file
-/// `--sheet-out` names, synced, before the write that removes the old wraps
-/// (review of #7766): a failed write leaves the vault as it was. The file is
-/// removed again when the vault did not take the sheet. The vault keeps only
-/// the sheet's wrap.
-fn recovery_preset(args: VaultKeyRecoveryPresetArgs) -> anyhow::Result<()> {
-    let unlock = UnlockRequest::of(&args.unlock);
-    let Some(set) = args.set else {
-        anyhow::ensure!(
-            args.sheet_out.is_none(),
-            "--sheet-out is read only with --set nobody-but-me"
-        );
-        let vault = open(&args.serve, &unlock, KeyNeed::Open)?;
-        return emit(&view::RecoveryPresetView {
-            preset: vault.recovery_preset()?,
-        });
-    };
-    let (preset, need, sheet_out) = match (set, args.sheet_out) {
-        (RecoveryPresetArg::NobodyButMe, Some(path)) => {
-            (RecoveryPreset::NobodyButMe, KeyNeed::Held, Some(path))
-        }
-        (RecoveryPresetArg::NobodyButMe, None) => anyhow::bail!(
-            "--set nobody-but-me writes the printed sheet's code to a new owner-only file: \
-             --sheet-out FILE"
-        ),
-        (RecoveryPresetArg::NobodyButMeAnyTwo, _) => anyhow::bail!(
-            "\"any 2 pieces\" is turned on with the kit its pieces come from: \
-             oneiron recovery-kit issue-vault-key --any-two-pieces"
-        ),
-        (RecoveryPresetArg::Standard, None) => (RecoveryPreset::Standard, KeyNeed::Open, None),
-        (RecoveryPresetArg::Standard, Some(_)) => {
-            anyhow::bail!("--sheet-out is read only with --set nobody-but-me")
-        }
-    };
-    let vault = open(&args.serve, &unlock, need)?;
-    let owner = local_owner(&vault)?;
-    let mut kept = None;
-    let changed = vault.set_recovery_preset_as(&owner, preset, |sheet| {
-        let path = sheet_out
-            .as_deref()
-            .ok_or_else(|| oneiron::Error::Io(std::io::Error::other("no --sheet-out file")))?;
-        credential_file::write_new(path, sheet.code().as_bytes())
-            .map_err(|error| oneiron::Error::Io(std::io::Error::other(error.to_string())))?;
-        kept = Some(path);
-        Ok(())
-    });
-    // A kept sheet the vault did not take opens nothing. One the vault may
-    // have taken stays: an error after the commit must not drop it.
-    let took_sheet = match &changed {
-        Ok(change) => change.previous != change.preset,
-        Err(_) => vault.recovery_preset().ok() != Some(RecoveryPreset::Standard),
-    };
-    if !took_sheet && let Some(path) = kept.take() {
-        let _ = std::fs::remove_file(path);
-    }
-    let change = changed.map_err(|error| match kept {
-        Some(path) => anyhow::anyhow!(
-            "{error}; the sheet's code stays in {}, as the vault may have taken its wrap",
-            path.display()
-        ),
-        None => error.into(),
-    })?;
-    let (mut set, _) = view::RecoveryPresetSet::of(&vault.vault_key_vault_id(), change);
-    set.sheet_file = kept.map(|path| path.display().to_string());
-    emit(&set)
 }
 
 /// Reseals a registry's escrow capsule to a fresh recipient and prints the

@@ -1,6 +1,8 @@
 //! The recovery root's authority key R on the owner's roster: its enrolment
 //! under its own attestation kind (pass 27 R4 PR 2).
 
+mod generations;
+
 use super::*;
 
 /// A kit activation's predecessor for the root's authority key enrolment
@@ -109,10 +111,11 @@ const KIT_ROOT_KEY_NOT_THE_OWNERS: &str = "this kit's root authority key is enro
 fn recovery_authority_enrollment(
     seed: &crate::world_keys::RecoveryRootSeed,
     vault_id: &AuthorityVaultId,
+    generation: u32,
     machine: EntityId,
     actor: EntityId,
 ) -> Result<OwnerKeyEnrollment> {
-    let signer = crate::world_keys::RecoveryAuthoritySigner::from_seed(seed, vault_id)?;
+    let signer = crate::world_keys::RecoveryAuthoritySigner::from_seed(seed, vault_id, generation)?;
     signer.enrollment(machine, actor)
 }
 
@@ -204,7 +207,7 @@ impl Vault {
             let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;
             let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-            recovery_authority_enrollment(seed, &vault_id, machine, actor)?
+            recovery_authority_enrollment(seed, &vault_id, 0, machine, actor)?
         };
         self.enrol_owner_key_of_kind_as(
             authority,
@@ -346,7 +349,7 @@ impl Vault {
         let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-        let input = recovery_authority_enrollment(seed, &vault_id, machine, actor)?;
+        let input = recovery_authority_enrollment(seed, &vault_id, 0, machine, actor)?;
         let predecessor_key = predecessor.predecessor_key();
         let mut sign =
             |fold: &AuthorityFold, transcript: &[u8]| predecessor.sign(self, fold, transcript);
@@ -366,7 +369,8 @@ impl Vault {
     /// the activation's, vouches for R again, carried by `machine`, and R
     /// then acts as any owner root, the restored machine's roster row
     /// included (REVIEW-9488 P1 3). Nothing on the roster changes. An R the
-    /// passkey limits do not hold needs no row (`None`).
+    /// passkey limits do not hold needs no row (`None`). `signer` is R at
+    /// the kit's live generation, as the activation derived it.
     ///
     /// # Errors
     /// As [`Self::confirm_owner_key_as`].
@@ -375,7 +379,7 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         authority: &ActAuthority,
         machine: EntityId,
-        seed: &crate::world_keys::RecoveryRootSeed,
+        signer: &crate::world_keys::RecoveryAuthoritySigner,
         predecessor: &ActivationPredecessor,
     ) -> Result<Option<OwnerKeyEnrollmentReceipt>> {
         let owner = match authority {
@@ -384,8 +388,7 @@ impl Vault {
         };
         let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-        let input = recovery_authority_enrollment(seed, &vault_id, machine, actor)?;
+        let input = signer.enrollment(machine, actor)?;
         if !fold.passkey_limited(&AuthorityKey::Ed25519(input.public_key)) {
             return Ok(None);
         }
@@ -518,24 +521,14 @@ impl Vault {
         key: AuthorityKey,
         predecessor: &ActivationPredecessor,
     ) -> Result<()> {
-        if self.privacy_posture() != crate::HostingPrivacyPosture::SelfHostLocal {
-            return Ok(());
-        }
-        let fold = self.authority_view_readonly_in_txn(txn)?;
-        if actor_binding_is_active(&fold, &actor, ACTOR_CLASS_HUMAN) {
-            return Ok(());
-        }
-        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-        let bind = EnrolledKeyBinding {
-            fold: &fold,
-            vault_id,
-            predecessor: predecessor.predecessor_key(),
-            key,
-            owner: actor,
-        };
         let mut sign =
             |fold: &AuthorityFold, transcript: &[u8]| predecessor.sign(self, fold, transcript);
-        self.bind_enrolled_owner_key_in_txn(txn, bind, &mut sign)
+        self.bind_unbound_owner_on_self_host_in_txn(
+            txn,
+            actor,
+            key,
+            (predecessor.predecessor_key(), &mut sign),
+        )
     }
 
     /// Chooses, in the caller's write transaction and BEFORE any key in
