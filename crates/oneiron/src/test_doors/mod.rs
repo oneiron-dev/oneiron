@@ -317,6 +317,7 @@ pub mod schedule;
 pub mod scope_summary;
 pub mod scoped_read_liveness;
 pub mod scratchpad_wake;
+pub mod sealed_pad_capsule;
 pub mod scrub_keeps_hint_and_name_rows;
 pub mod seat_park_model_step;
 #[cfg(feature = "sync")]

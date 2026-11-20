@@ -10,10 +10,15 @@ use super::*;
 /// the reply's send judges its rows for an unknown destination (FIX 11991).
 /// That caller's reach is written to `reader` before the read, for the
 /// answer's release to judge again (SELECTOR-RELEASE-POINT = B).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the residence RPC's call state, each part its own borrow"
+)]
 pub(super) fn search(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     params: Value,
     budgets: ResidenceOperationBudgets,
     attribution: &mut Option<ForwardedAttribution>,
@@ -33,6 +38,7 @@ pub(super) fn search(
         server,
         auth,
         peer,
+        lane,
         input,
         budgets,
         attribution,

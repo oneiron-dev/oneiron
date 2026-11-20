@@ -28,11 +28,15 @@ pub(super) enum SocketMode {
     /// owner, whom no token id names, the actor its sync frames count
     /// under, and the session this machine serves it as a peer while their
     /// home is down (FIX 4748), if it does. A booking socket is never one.
+    /// A shared-vault member's lane (MEMBER-SYNC) is this loop restricted to
+    /// its selector: `member` names it, and then `owner` and `peer_serve`
+    /// are `None`.
     Replication {
         session_jti: Option<String>,
         owner: Option<CoreAuth>,
         telemetry_actor: String,
         peer_serve: Option<super::super::peer_serve::PeerServe>,
+        member: Option<Arc<super::super::member_lane::MemberLane>>,
     },
     /// A stale owner sign-in's socket: the five booking verbs and nothing
     /// more (FIX 11712).
@@ -65,12 +69,13 @@ pub(super) async fn handle_connection(
             owner,
             telemetry_actor,
             peer_serve,
+            member,
         } => {
             replication::handle_connection(
                 socket,
                 server,
                 conn_id,
-                (session_jti, owner),
+                (session_jti, owner, member),
                 telemetry_actor,
                 locality,
                 (machine, peer_serve),
