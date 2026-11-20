@@ -208,18 +208,12 @@ pub(super) fn dream_windows(models: &ModelsConfig) -> BTreeMap<ModelId, u64> {
             let Ok(model) = rung.model.engine_id(&provider.revision) else {
                 continue;
             };
-            let output = match provider.max_output_tokens {
-                Some(ceiling) => ceiling,
-                None if provider.context_tokens > EXTRACTION_MAX_TOKENS => {
-                    EXTRACTION_MAX_TOKENS.min(provider.context_tokens / 2)
-                }
-                None => 0,
-            };
-            let room = provider
-                .context_tokens
-                .checked_sub(output)
-                .filter(|room| *room > 0)
-                .unwrap_or(provider.context_tokens);
+            let output = provider
+                .max_output_tokens
+                .filter(|output| *output < provider.context_tokens)
+                .unwrap_or(0);
+            let room = provider.context_tokens - output;
+            let _ = EXTRACTION_MAX_TOKENS;
             windows
                 .entry(model)
                 .and_modify(|held: &mut u64| *held = (*held).min(room))
