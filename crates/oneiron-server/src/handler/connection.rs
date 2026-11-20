@@ -427,10 +427,25 @@ fn window_broadcast_allowed(
     }
 }
 
+/// What a broadcast window frame becomes on this socket.
+pub(super) enum WindowDelivery {
+    /// The frame itself, or the notice that stands for it.
+    Send(Vec<u8>),
+    /// The last door withheld the change from a socket the window is pushed
+    /// to. It may carry writes the peer may take beside one it may not, so
+    /// the socket asks its peer for a fresh exchange of the window, whose
+    /// answer is the window's scrubbed export
+    /// (`window_ready::withheld_change_notice`; REVIEW-9846 round 2).
+    Withheld(oneiron::sync::WindowKey),
+    /// Nothing goes.
+    Nothing,
+}
+
 /// What a broadcast window frame becomes on this socket: itself where the
 /// socket is pushed the window, a `WINDOW_INVALIDATE` where it forgot the
 /// window's subscription past `max_windows_per_connection`, or nothing. A
-/// frame this server withholds as device-only is neither.
+/// frame this server withholds is neither: on a socket it is pushed to, it
+/// is [`WindowDelivery::Withheld`].
 ///
 /// A socket served as a peer (FIX 4748) is sent no operation, live ones
 /// included: a change of a window it is pushed, or forgot, reaches it as the
@@ -444,12 +459,32 @@ fn window_delivery(
     protocol_version: u8,
     state: &super::conn_state::ConnState,
     frame: Vec<u8>,
-) -> Option<Vec<u8>> {
+) -> WindowDelivery {
     let pushed = window_broadcast_allowed(protocol_version, state, &frame);
     if pushed && !state.peer_served {
         let peer = state.peer_machine(server.vault());
-        return (!window_update_withheld(server, peer, &frame)).then_some(frame);
+        if !window_update_withheld(server, peer, &frame) {
+            return WindowDelivery::Send(frame);
+        }
+        return frame
+            .get(1..)
+            .and_then(|payload| protocol::decode_window_sync(payload).ok())
+            .and_then(|(key, _, _)| oneiron::sync::WindowKey::try_new(key))
+            .map_or(WindowDelivery::Nothing, WindowDelivery::Withheld);
     }
+    window_invalidation(server, protocol_version, state, &frame, pushed)
+        .map_or(WindowDelivery::Nothing, WindowDelivery::Send)
+}
+
+/// The `WINDOW_INVALIDATE` notice a broadcast window frame becomes on a
+/// socket that takes notices and is not sent the frame itself.
+fn window_invalidation(
+    server: &SyncServer,
+    protocol_version: u8,
+    state: &super::conn_state::ConnState,
+    frame: &[u8],
+    pushed: bool,
+) -> Option<Vec<u8>> {
     if !protocol::takes_window_invalidations(protocol_version) {
         return None;
     }
@@ -458,7 +493,7 @@ fn window_delivery(
         .and_then(|payload| protocol::decode_window_sync(payload).ok())?;
     let window = oneiron::sync::WindowKey::try_new(key)?;
     if !(pushed || state.invalidates_window(&window))
-        || window_update_withheld(server, state.peer_machine(server.vault()), &frame)
+        || window_update_withheld(server, state.peer_machine(server.vault()), frame)
         || !super::peer_serve::notices_change(state, &window)
     {
         return None;
