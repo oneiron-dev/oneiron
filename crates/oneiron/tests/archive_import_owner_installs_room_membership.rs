@@ -1088,7 +1088,7 @@ fn a_whole_vault_export_withholds_the_ledger_of_a_deleted_room() {
     for (table, rows) in tables {
         assert_eq!(
             table_count(&summary, table, "inserted_rows"),
-            Some(rows),
+            Some(rows as u64),
             "FIXTURE: the source keeps an inert copy of each {table} envelope: {summary}"
         );
     }
