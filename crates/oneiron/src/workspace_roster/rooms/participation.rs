@@ -48,8 +48,9 @@ use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 mod admission;
 use self::admission::lacks;
 pub(super) use self::admission::{
-    addressable_agent_in_txn, admit_speech_in, joined, person_stands_in_txn,
-    record_addressed_in_txn, require_speaker_in_txn, require_thread_audience_in,
+    addressable_agent_in_txn, admit_speech_in, joined, leader_answers_turn_in_txn,
+    person_stands_in_txn, record_addressed_in_txn, require_speaker_in_txn,
+    require_thread_audience_in,
 };
 pub(crate) use self::admission::{
     admit_participation_in_txn, agent_standing_in_txn, person_standing_in_txn,

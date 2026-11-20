@@ -672,12 +672,23 @@ impl Memory<'_> {
             // An agent holding the thread's open task counts as addressed.
             // An agent speaks only when it is addressed or holds a task
             // there (ARCH-0006a, ruled 2026-09-23), so it claims no turn
-            // that names no one either; a person still may.
+            // that names no one either; a person still may. A project's
+            // current leader is spoken to by a person's turn that names no
+            // agent in its home room (ARCH-0067:485), as the witness reads it.
             let named = addressed.addressed_agents.contains(&self.actor().to_hex());
             let task = claimant.held_task_in_txn(self.vault(), txn, &addressed)?;
+            let leads = claimant.is_agent()
+                && participation::leader_answers_turn_in_txn(
+                    self.vault(),
+                    txn,
+                    room,
+                    self.actor(),
+                    &addressed,
+                )?;
             if (claimant.is_agent() || !addressed.addressed_agents.is_empty())
                 && !named
                 && task.is_none()
+                && !leads
             {
                 return Ok(RoomClaimOutcome::NotAddressed);
             }

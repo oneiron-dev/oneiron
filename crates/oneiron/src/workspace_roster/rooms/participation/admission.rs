@@ -244,7 +244,9 @@ pub(crate) fn admit_participation_in_txn(
 /// or its thread `branch` (ARCH-0006a, ruled 2026-09-23: an agent speaks
 /// only when it is addressed or holds a task there, and asks in by an offer
 /// card): it is named on the room turn `answers`, holds that turn's open
-/// thread TASK, or `record` is the turn an accepted offer bound to it.
+/// thread TASK, or `record` is the turn an accepted offer bound to it. A
+/// project's current leader is also spoken to by a person's turn that names
+/// no agent in the project's home room ([`leader_answers_turn_in_txn`]).
 /// Standing alone never lets an agent speak, and none of these grants a
 /// seat or mints a task.
 pub(super) fn agent_spoken_to_in_txn(
@@ -269,7 +271,43 @@ pub(super) fn agent_spoken_to_in_txn(
         return Ok(false);
     }
     Ok(turn.addressed_agents.contains(&agent.to_hex())
-        || held_thread_task_in_txn(vault, txn, &turn, agent)?.is_some())
+        || held_thread_task_in_txn(vault, txn, &turn, agent)?.is_some()
+        || leader_answers_turn_in_txn(vault, txn, room, agent, &turn)?)
+}
+
+/// Whether `agent` may answer `turn` in `room` as its project's leader
+/// (PROJECT-LEADER-WAKE-NO-REPLY-STANDING = B, canon ARCH-0067:485): `room`
+/// is a project's home room, `agent` is that project's current leader, read
+/// live in this transaction, and `turn` is a person's turn there that names
+/// no agent, on the trunk or in one of the room's threads. A replaced leader
+/// stands on nothing at once. A turn that names an agent stays that agent's,
+/// and an agent's turn never counts, so no two agents answer each other
+/// here. It adds no seat, task or scope: the leader still stands on its
+/// seat, and the claim and witness doors read this same rule.
+pub(in crate::workspace_roster::rooms) fn leader_answers_turn_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    agent: EntityId,
+    turn: &RoomTurn,
+) -> Result<bool> {
+    if !turn.addressed_agents.is_empty() || turn.room_id != room.to_hex() {
+        return Ok(false);
+    }
+    let speaker = EntityId::from_hex(&turn.actor)?;
+    let now = vault.store.clock.now_recorded_at();
+    if !matches!(
+        participant_in_txn(vault, txn, speaker, now)?,
+        Some(JoinSubject::Person(_))
+    ) {
+        return Ok(false);
+    }
+    let Some(project) = super::hosting::room_project_in(vault, txn, room)? else {
+        return Ok(false);
+    };
+    Ok(vault
+        .effective_project_in_txn(txn, project)?
+        .is_some_and(|(_, effective)| effective.leader == agent.to_hex()))
 }
 
 /// Files the room join a person's first write in a room needs, in the
