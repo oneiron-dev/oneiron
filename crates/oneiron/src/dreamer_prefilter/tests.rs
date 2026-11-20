@@ -216,10 +216,17 @@ fn skipped_turns_advance_the_watermark_and_the_rescan_door_re_sweeps_them() {
     let (_dir, vault) = open_vault();
     let (_conversation, ids, _) = seed_fixture_corpus(&vault);
     vault
-        .set_prefilter_config(PrefilterConfig {
-            threshold: separating_threshold(),
-            ..PrefilterConfig::default()
-        })
+        .set_setting(
+            crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+            crate::setting::SetSetting::vault_value(
+                "dreamer.prefilter",
+                serde_json::to_value(PrefilterConfig {
+                    threshold: separating_threshold(),
+                    ..PrefilterConfig::default()
+                })
+                .expect("prefilter setting value"),
+            ),
+        )
         .expect("tighten");
 
     let actor = EntityId::now();
@@ -233,7 +240,13 @@ fn skipped_turns_advance_the_watermark_and_the_rescan_door_re_sweeps_them() {
 
     // Make skipped turns visible to planning if the close failed to consume them.
     vault
-        .set_prefilter_config(PrefilterConfig::default())
+        .set_setting(
+            crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+            crate::setting::SetSetting::vault_value(
+                "dreamer.prefilter",
+                serde_json::to_value(PrefilterConfig::default()).expect("prefilter setting value"),
+            ),
+        )
         .expect("restore lossless policy");
     assert!(
         plan_now(&vault).is_empty(),

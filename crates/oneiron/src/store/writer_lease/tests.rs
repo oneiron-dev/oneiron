@@ -156,6 +156,7 @@ fn embedded_owner_bootstrap_refuses_permanent_hard_delete_after_reopen() {
     ] {
         let dir = tempfile::tempdir().expect("tempdir");
         let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let owner = vault.ensure_embedded_owner_actor().expect("bootstrap");
         assert_eq!(
             vault.ensure_embedded_owner_actor().expect("idempotent"),
@@ -167,6 +168,7 @@ fn embedded_owner_bootstrap_refuses_permanent_hard_delete_after_reopen() {
         assert!(vault.get_raw(&owner).expect("read owner").is_none());
         drop(vault);
         let vault = Vault::open(dir.path(), VaultConfig::default()).expect("reopen vault");
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let before = vault.store.env.read_txn().expect("marker snapshot");
         assert!(
             vault

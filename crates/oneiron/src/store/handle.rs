@@ -313,6 +313,11 @@ pub struct StoreCore {
     /// The engine's delete guards, supplied by the open door: a store never
     /// exists without them.
     pub(crate) delete_guards: &'static dyn crate::store::StoreDeleteGuards,
+    /// The soft deletes' `pt:` markers whose own publication is in flight,
+    /// which no replay publishes in its stead. Never persisted: a crash
+    /// leaves each marker to the next replay.
+    #[cfg(feature = "sync")]
+    pub(crate) tombstone_publications_in_flight: crate::deletion::TombstonePublicationsInFlight,
     /// The engine's record-scope stamp hooks, supplied by the open door with
     /// the delete guards.
     pub(crate) scope_stamps: &'static dyn crate::store::StoreScopeStamps,
@@ -385,6 +390,11 @@ pub struct StoreCore {
     /// worker, none until one attaches (FIX 14976,
     /// [`crate::Vault::attach_drafter_serving`]). Never persisted.
     pub(crate) drafter_serving: RwLock<Option<Arc<dyn crate::drafter::DrafterServingRuntime>>>,
+    /// The host operator's mail settings on this vault and the runner its
+    /// blocking mail work runs on, the defaults and none until a host
+    /// installs them (fix list row 17645, [`crate::Vault::install_mail_host`]).
+    /// Never persisted.
+    pub(crate) mail_host: crate::mail_pack::MailHostSlot,
     /// The pool code-mode result bodies held in memory draw on: this
     /// vault's own until the host installs the process's
     /// ([`crate::Vault::set_result_memory`]).
@@ -469,6 +479,14 @@ pub struct StoreCore {
     /// lock because the two critical sections never nest.
     #[cfg(feature = "sync")]
     pub(crate) staged_import_confirm_lock: Mutex<()>,
+    /// Held while an install reads its owner signing slot for this vault,
+    /// checks the slot's key against the roster and gives a revoked key's slot
+    /// a fresh seed. Two callers never act on one reading: a later delete
+    /// would take a fresh key that a vouch had made live in between. It was a
+    /// process-wide lock; the slot belongs to this vault, and a process holds
+    /// one store per vault path, so the vault's own lock keeps every caller
+    /// of the process that reaches the slot in one line.
+    pub(crate) owner_signing_slot_lock: Mutex<()>,
     /// This vault's test seams. `#[cfg(test)]` so a production `StoreCore`
     /// carries neither the field nor its types: see [`TestHooks`] for why a
     /// test seam is exactly the state that must not be process-wide.

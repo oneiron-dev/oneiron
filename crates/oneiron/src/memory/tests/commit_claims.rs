@@ -42,6 +42,7 @@ fn commit_auto_request_downgrades_to_proposed_when_gate_pends() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x61);
     let subject = put_person(&vault, 0x62);
+    grant_reads(&vault, actor);
 
     // A Person-backed agent has a valid actor binding, but this explicit
     // ceiling still prevents the Auto request from attaching.
@@ -164,6 +165,7 @@ fn auto_eligible_upsert_stages_before_closing_prior() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x73);
     let subject = put_person(&vault, 0x74);
+    grant_reads(&vault, actor);
     let facade = facade_for(&vault, actor);
     let first = facade
         .claim_upsert(&claim_input(
@@ -285,6 +287,7 @@ fn a_correction_on_an_unregistered_predicate_takes_its_grant() {
         }
         let actor = put_person(&vault, 0x75);
         let subject = put_person(&vault, 0x76);
+        grant_reads(&vault, actor);
         let facade = facade_for(&vault, actor);
         let first = facade
             .claim_upsert(&claim_input(
@@ -720,6 +723,7 @@ fn admit_imported_claim_rides_the_ingest_trust_ceiling() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0xF1);
     let subject = put_person(&vault, 0xF2);
+    grant_reads(&vault, actor);
     let facade = facade_for(&vault, actor);
 
     // The only registered source at base has permits_auto == false, so the
@@ -767,6 +771,29 @@ fn blob_door_round_trips_bytes_and_dedupes_head() {
     // a manifest rule for blob.version.
     let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
     let actor = put_person(&vault, 0x12);
+    // FIXTURE (E7): the cleared vault needs an actor-bound Auto ceiling and a
+    // blob.version normal rule, else the ledger claim pends actor_ceiling +
+    // criticality_floor (body0503).
+    let writer = crate::WriteActor::new(actor, crate::edge::EdgeActorClass::Human);
+    let policy = serde_json::json!({
+        "schema_version": "1.2", "pack_id": "memory-test-read-blob", "pack_version": "v1",
+        "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {}, "rules": [{"prefix": "blob.version", "exact": true, "axes": {"criticality": "normal", "sensitivity": "normal"}}],
+        "actor_ceilings": [{"actor_class": "human", "actor_ref": actor.to_hex(), "ceiling": "auto"}],
+        "scoped_grants": [{
+            "actor_ref": actor.to_hex(),
+            "effector": "core:read",
+            "scope": crate::federation::scope_codec::read_preset(),
+            "receipt_required": false,
+        }],
+    });
+    crate::conversation_dag::test_support::put_test_policy_manifest(
+        &vault,
+        writer,
+        EntityId::now(),
+        &policy,
+    )
+    .unwrap();
     let facade = facade_for(&vault, actor);
 
     let artifact = facade
@@ -1009,6 +1036,8 @@ fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
     let first_agent = put_person(&vault, 0x19);
     let replacement_agent = put_person(&vault, 0x1A);
     let subject = put_person(&vault, 0x1B);
+    grant_reads(&vault, first_agent);
+    grant_reads(&vault, replacement_agent);
     let first_facade = vault.memory(first_agent, EdgeActorClass::Agent);
     let claim_id = EntityId::from_bytes([0x1C; 16]).expect("claim id");
     let mut first = claim_input(
@@ -1093,6 +1122,7 @@ fn signed_machine_keyed_create_replace_and_delete() {
         &vault,
         vec![("system".into(), machine.to_hex(), "auto".into())],
     );
+    grant_reads_as(&vault, machine, EdgeActorClass::System);
     let machine_sign = |transcript: &[u8]| Ok(machine_key.sign(transcript).to_bytes());
     let facade = vault.memory_signed_machine(
         machine,
@@ -1221,7 +1251,7 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
             crate::store::GateDecisionId::now(),
         )
         .unwrap();
-    let created = vault
+    vault
         .initialize_shared_vault(
             &authenticated,
             42,
@@ -1243,6 +1273,14 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
             1,
         )
         .unwrap();
+    let grant_refs = crate::test_util::accept_founding_invitation(
+        &vault,
+        42,
+        member,
+        FederationGrantRole::Member,
+    );
+    crate::test_util::grant_founding_writer_reads(&vault, member);
+    crate::test_util::accept_founding_invitation(&vault, 42, viewer, FederationGrantRole::Viewer);
     let task = || StructuralPutInput {
         id: None,
         kind: "TASK".into(),
@@ -1343,8 +1381,7 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
         before_claims
     );
 
-    let (id, mut grant) = created
-        .grant_refs
+    let (id, mut grant) = grant_refs
         .iter()
         .find_map(|hex| {
             let id = EntityId::from_hex(hex).unwrap();
@@ -1416,11 +1453,15 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
     in_b.scope = Some(serde_json::json!({"scopeProjectId": project_b.to_hex()}));
     member_facade.claim_upsert(&in_b).expect("project B claim");
     in_b.value = serde_json::json!("second");
-    member_facade
+    let replacement_receipt = member_facade
         .claim_upsert(&in_b)
         .expect("project B replacement");
+    let new_id = member_facade
+        .resolve_ref(&replacement_receipt.claim_short_id)
+        .unwrap();
+    // FIX 8793: a changed belief gets a fresh id; the old row keeps "first".
     assert_eq!(
-        vault.get_claim(&in_b_id).unwrap().unwrap().value.as_str(),
+        vault.get_claim(&new_id).unwrap().unwrap().value.as_str(),
         Some("second")
     );
 

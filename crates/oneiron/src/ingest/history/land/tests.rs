@@ -34,6 +34,7 @@ fn vault_and_owner() -> (tempfile::TempDir, Vault, AuthenticatedOwner) {
     let dir = tempfile::tempdir().expect("tempdir");
     let mut config = VaultConfig::device();
     config.map_size = 64 * 1024 * 1024;
+    config.store_clock = crate::test_util::pinned_store_clock(IMPORTED_AT);
     let vault = Vault::open(dir.path(), config).expect("open vault");
     let actor = vault.ensure_embedded_owner_actor().expect("owner actor");
     let owner = vault
@@ -240,6 +241,7 @@ fn an_import_leaves_a_plain_conversation_at_its_derived_id_alone() {
             conversation_ref: id.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,

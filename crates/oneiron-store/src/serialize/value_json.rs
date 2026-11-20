@@ -2,22 +2,51 @@
 //! APIs read and write.
 
 use oneiron_base::error::{Error, Result};
+use oneiron_contracts::msgpack;
 use rmpv::Value;
-use serde_json::Value as JsonValue;
-use std::io::Cursor;
+use serde_json::{Number, Value as JsonValue};
+
+/// The MessagePack value of a JSON value: null, booleans, text, arrays and
+/// objects (in their key order) as themselves, an integer as an integer and
+/// any other number as a 64-bit float. It refuses nothing; a door that keeps
+/// the value calls [`msgpack_value_from_json`].
+#[must_use]
+pub fn json_to_msgpack_value(value: &JsonValue) -> Value {
+    match value {
+        JsonValue::Null => Value::Nil,
+        JsonValue::Bool(flag) => Value::Boolean(*flag),
+        JsonValue::Number(number) => msgpack_number(number),
+        JsonValue::String(text) => Value::from(text.as_str()),
+        JsonValue::Array(items) => Value::Array(items.iter().map(json_to_msgpack_value).collect()),
+        JsonValue::Object(entries) => Value::Map(
+            entries
+                .iter()
+                .map(|(key, item)| (Value::from(key.as_str()), json_to_msgpack_value(item)))
+                .collect(),
+        ),
+    }
+}
+
+/// An integer first, as unsigned or signed (both give the one
+/// `rmpv::Integer` of its value); else the 64-bit float JSON holds.
+fn msgpack_number(number: &Number) -> Value {
+    match (number.as_u64(), number.as_i64(), number.as_f64()) {
+        (Some(unsigned), _, _) => Value::from(unsigned),
+        (None, Some(signed), _) => Value::from(signed),
+        (None, None, Some(float)) => Value::F64(float),
+        // serde_json gives every number an `f64` unless its
+        // `arbitrary_precision` feature is on, and no crate turns it on.
+        (None, None, None) => Value::Nil,
+    }
+}
 
 /// Converts JSON accepted by public APIs into the opaque MessagePack value a
-/// record carries.
+/// record carries: [`json_to_msgpack_value`], refused when the one reader
+/// cannot read its bytes back (a value nested deeper than `rmpv` reads), so
+/// no record holds a value it cannot decode.
 pub fn msgpack_value_from_json(value: &JsonValue) -> Result<Value> {
-    let encoded = rmp_serde::to_vec_named(value)
-        .map_err(|_| Error::InvalidClaimBody("value must be msgpack-encodable JSON"))?;
-    let mut cursor = Cursor::new(encoded.as_slice());
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::InvalidClaimBody("value is not valid MessagePack"))?;
-    if cursor.position() != encoded.len() as u64 {
-        return Err(Error::InvalidClaimBody("trailing bytes after value"));
-    }
-    Ok(value)
+    msgpack::decode(&msgpack::encode(&json_to_msgpack_value(value)))
+        .map_err(|_| Error::InvalidClaimBody("value is not valid MessagePack"))
 }
 
 /// Converts an opaque MessagePack value back to JSON for typed API
@@ -67,6 +96,44 @@ pub fn msgpack_value_projection(value: &Value) -> Value {
         }
         other => other.clone(),
     }
+}
+
+/// The JSON of `value` when JSON holds it exactly, else none: binary, an
+/// extension, a non-finite float, a string that is no UTF-8, and a map key
+/// that is not text or appears twice have no JSON form. A 32-bit float reads
+/// as the 64-bit float of its value, and every number loses its width.
+#[must_use]
+pub fn msgpack_value_to_exact_json(value: &Value) -> Option<JsonValue> {
+    Some(match value {
+        Value::Nil => JsonValue::Null,
+        Value::Boolean(flag) => JsonValue::Bool(*flag),
+        Value::Integer(number) => match number.as_u64() {
+            Some(unsigned) => unsigned.into(),
+            None => number.as_i64()?.into(),
+        },
+        Value::F32(number) => Number::from_f64(f64::from(*number))?.into(),
+        Value::F64(number) => Number::from_f64(*number)?.into(),
+        Value::String(text) => text.as_str()?.into(),
+        Value::Array(items) => JsonValue::Array(
+            items
+                .iter()
+                .map(msgpack_value_to_exact_json)
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        Value::Map(entries) => {
+            let mut object = serde_json::Map::with_capacity(entries.len());
+            for (key, item) in entries {
+                if object
+                    .insert(key.as_str()?.to_owned(), msgpack_value_to_exact_json(item)?)
+                    .is_some()
+                {
+                    return None;
+                }
+            }
+            JsonValue::Object(object)
+        }
+        Value::Binary(_) | Value::Ext(..) => return None,
+    })
 }
 
 /// A [`msgpack_value_projection`] as JSON, which loses only number widths.

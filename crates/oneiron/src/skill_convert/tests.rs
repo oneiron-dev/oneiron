@@ -15,6 +15,7 @@ use crate::registry::ENTITY_TYPE_PERSON;
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     (tmp, vault)
 }
 
@@ -149,6 +150,7 @@ fn witnessed_turns(vault: &Vault, lines: &[&str], now: u64) -> Vec<EntityId> {
                     }],
                     occurred_at: now + u64::try_from(index).expect("fixture turn counts are small"),
                     thread_audience: None,
+                    project: None,
                     assertions: Default::default(),
                 })
                 .expect("the witness door lands the turn");

@@ -111,6 +111,7 @@ fn a_continuation_behind_a_later_consumed_turn_is_selected_again() -> Result<()>
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(later.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![message(0, WitnessAuthor::User, "the weather is fine", true)],
             occurred_at: 20,
             assertions: Default::default(),
@@ -124,7 +125,7 @@ fn a_continuation_behind_a_later_consumed_turn_is_selected_again() -> Result<()>
     assert_ne!(again, consumed, "the new words get a new attempt");
     assert_eq!(
         transcript(&vault, conversation, turn, again)?,
-        format!("[{} user] call me Owen\n", turn.to_hex())
+        "[T1 user] call me Owen\n".to_owned()
     );
     Ok(())
 }
@@ -153,7 +154,7 @@ fn a_continuation_in_an_adopted_dag_conversation_is_selected_again() -> Result<(
     assert_ne!(again, consumed, "the new words get a new attempt");
     assert_eq!(
         transcript(&vault, conversation, turn, again)?,
-        format!("[{} user] call me Owen\n", turn.to_hex())
+        "[T1 user] call me Owen\n".to_owned()
     );
     Ok(())
 }
@@ -175,6 +176,7 @@ fn a_same_second_continuation_is_planned_by_its_close_and_strands_no_new_turn() 
         conversation_ref: conversation.to_hex(),
         turn_ref: Some(turn.to_hex()),
         thread_audience: None,
+        project: None,
         messages: vec![message(0, WitnessAuthor::User, "", true)],
         occurred_at: now,
         assertions: Default::default(),
@@ -199,6 +201,7 @@ fn a_same_second_continuation_is_planned_by_its_close_and_strands_no_new_turn() 
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(later.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![message(0, WitnessAuthor::User, "the weather is fine", true)],
             occurred_at: now,
             assertions: Default::default(),

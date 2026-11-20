@@ -24,6 +24,7 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir");
     let vault =
         Vault::open(dir.path(), crate::VaultConfig::default()).expect("open anti-abuse vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     (dir, vault)
 }
 
@@ -50,6 +51,7 @@ fn install_page_and_config(vault: &Vault, page: EntityId, event_type: &EventType
             booking_window_secs: 86_400,
             daily_cap: None,
             weekly_cap: None,
+            deposit: None,
             routing: RoutingMode::Either,
             hosts: vec![HostAvailabilityConfig {
                 host_ref: id(0x55),
@@ -64,6 +66,7 @@ fn install_page_and_config(vault: &Vault, page: EntityId, event_type: &EventType
             }],
             flex_with_ordinary: false,
             flex_windows: Vec::new(),
+            allowed_durations_min: Vec::new(),
         },
     };
     let mut body = ClaimBody::new(

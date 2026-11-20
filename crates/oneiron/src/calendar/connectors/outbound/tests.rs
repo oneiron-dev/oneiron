@@ -256,22 +256,24 @@ fn applied_series_snapshot_keeps_new_members_and_child_edits_for_the_next_sequen
                 .store(&vault),
                 added
             );
+            let mut series_body = crate::ClaimBody::new(
+                PREDICATE_CALENDAR_SERIES_EXCEPTION,
+                crate::ClaimSubject::Entity(added),
+                rmpv::Value::Map(vec![
+                    ("master_ref".into(), master.to_hex().into()),
+                    ("uid".into(), "series@test".into()),
+                    ("original_start_utc".into(), 1_786_111_200_u64.into()),
+                ]),
+                1.0,
+                crate::ClaimApprovalStatus::Approved,
+                crate::ClaimLifecycleStatus::Active,
+            )
+            .unwrap();
+            crate::test_util::stamp_vault_default_facet(&vault, &mut series_body);
             vault
                 .put_claim(
                     &EntityId::now(),
-                    &crate::ClaimBody::new(
-                        PREDICATE_CALENDAR_SERIES_EXCEPTION,
-                        crate::ClaimSubject::Entity(added),
-                        rmpv::Value::Map(vec![
-                            ("master_ref".into(), master.to_hex().into()),
-                            ("uid".into(), "series@test".into()),
-                            ("original_start_utc".into(), 1_786_111_200_u64.into()),
-                        ]),
-                        1.0,
-                        crate::ClaimApprovalStatus::Approved,
-                        crate::ClaimLifecycleStatus::Active,
-                    )
-                    .unwrap(),
+                    &series_body,
                     crate::TimeRange {
                         start: NOW,
                         end: NOW,
@@ -406,7 +408,7 @@ fn remote_applied_resume_uses_stored_snapshot_after_a_newer_local_edit() {
             .ics,
     };
     issue_prepared_upsert(
-        &vault, &operation, &transport, &uid, NOW, &mut row, &request,
+        &vault, &operation, &transport, &uid, NOW, &mut row, &request, true,
     )
     .unwrap();
     let row = calendar_write_outbox_rows(&vault).unwrap().remove(0);
@@ -568,7 +570,7 @@ fn a_push_under_a_pending_passport_uid_never_moves_the_uid_index() {
     let minted = native("minted with the uid");
     index_passport_uid(&vault, uid, &minted).unwrap();
     let target = native("proposal target");
-    let proposal = crate::ClaimBody::new(
+    let mut proposal = crate::ClaimBody::new(
         PREDICATE_CALENDAR_PASSPORT,
         crate::ClaimSubject::Entity(target),
         encode_passport_value(&CalendarPassportValue {
@@ -581,12 +583,16 @@ fn a_push_under_a_pending_passport_uid_never_moves_the_uid_index() {
             direction: CalendarPassportDirection::TwoWay,
             last_seen_at: NOW,
             presence: CalendarPassportPresence::Live,
+            cancelled_since: None,
+            written_cancelled: false,
+            deferred_cancel_seen_at: None,
         }),
         1.0,
         crate::ClaimApprovalStatus::Proposed,
         crate::ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(&vault, &mut proposal);
     vault
         .put_claim(
             &vault.new_entity_id().unwrap(),

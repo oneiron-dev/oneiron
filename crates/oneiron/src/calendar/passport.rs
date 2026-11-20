@@ -755,6 +755,24 @@ pub(crate) fn encode_passport_value(value: &CalendarPassportValue) -> rmpv::Valu
             ]),
         ));
     }
+    if let Some(since) = value.cancelled_since {
+        entries.push((
+            rmpv::Value::from("cancelled_since"),
+            rmpv::Value::from(since),
+        ));
+    }
+    if value.written_cancelled {
+        entries.push((
+            rmpv::Value::from("written_cancelled"),
+            rmpv::Value::Boolean(true),
+        ));
+    }
+    if let Some(seen_at) = value.deferred_cancel_seen_at {
+        entries.push((
+            rmpv::Value::from("deferred_cancel_seen_at"),
+            rmpv::Value::from(seen_at),
+        ));
+    }
     rmpv::Value::Map(entries)
 }
 
@@ -830,6 +848,9 @@ mod tests {
             direction: CalendarPassportDirection::Outbound,
             last_seen_at: 100,
             presence: CalendarPassportPresence::Live,
+            cancelled_since: None,
+            written_cancelled: false,
+            deferred_cancel_seen_at: None,
         };
         let claim = crate::ClaimBody::new(
             PREDICATE_CALENDAR_PASSPORT,

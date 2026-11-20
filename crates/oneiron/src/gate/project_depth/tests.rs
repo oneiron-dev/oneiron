@@ -79,23 +79,8 @@ fn put_manifest_for_test(vault: &Vault, id: EntityId, body: &[u8], at: u64) -> R
     })
 }
 
-fn owner(vault: &Vault, seed: u8) -> Result<crate::write_envelope::WriteActor> {
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        crate::TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
-    let writer = crate::write_envelope::WriteActor::new(person, crate::edge::EdgeActorClass::Human);
-    crate::subject_model::tests::authorization::root_owner(vault, writer, seed)?;
-    Ok(writer)
-}
-
-/// The writer the rooted signed-birth tests birth and edit as: the vault's
-/// embedded owner under the host `seed` names. The seed-key `owner` above
-/// stays for the seed-rooted merge test, whose edits still sign with it.
+/// The writer the rooted tests birth and edit as: the vault's embedded owner
+/// under the host `seed` names, the one owner the live census admits.
 fn host_owner(vault: &Vault, seed: u8) -> Result<crate::write_envelope::WriteActor> {
     crate::subject_model::tests::authorization::root_host_owner(vault, seed)
 }
@@ -157,16 +142,12 @@ fn immutable_edits_merge_restrictively_and_causal_raise_supersedes_seen_heads() 
     let id = EntityId::now();
     project(&a, root_a, id)?;
     project(&b, root_a, id)?;
-    let author = owner(&a, 0xB8)?;
-    b.put_entity(
-        &author.entity_ref(),
-        crate::registry::ENTITY_TYPE_PERSON,
-        crate::TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let author = host_owner(&a, 0xB8)?;
+    crate::subject_model::tests::authorization::host_owner_writer(&b)?;
     b.import_signed_authority_history(&a.export_signed_authority_history()?)?;
-    crate::workspace_roster::set_project_depth_signed_for_test(&a, id, 2, &author, 2, 0xB8)?;
+    crate::subject_model::tests::authorization::set_project_depth_with_host(
+        &a, id, 2, &author, 2, 0xB8,
+    )?;
     let a_fact = contributions_for_test(&a, id)?
         .into_iter()
         .find(|(_, body)| {
@@ -176,7 +157,9 @@ fn immutable_edits_merge_restrictively_and_causal_raise_supersedes_seen_heads() 
             )
         })
         .ok_or(Error::EntityNotFound)?;
-    crate::workspace_roster::set_project_depth_signed_for_test(&b, id, 0, &author, 2, 0xB8)?;
+    crate::subject_model::tests::authorization::set_project_depth_with_host(
+        &b, id, 0, &author, 2, 0xB8,
+    )?;
     let b_fact = contributions_for_test(&b, id)?
         .into_iter()
         .find(|(_, body)| {
@@ -192,7 +175,9 @@ fn immutable_edits_merge_restrictively_and_causal_raise_supersedes_seen_heads() 
     assert_eq!(a.project(id)?.unwrap().depth, 0);
     put_manifest_for_test(&a, a_fact.0, &a_fact.1, 4)?;
     assert_eq!(a.project(id)?.unwrap().depth, 0);
-    crate::workspace_roster::set_project_depth_signed_for_test(&a, id, 12, &author, 5, 0xB8)?;
+    crate::subject_model::tests::authorization::set_project_depth_with_host(
+        &a, id, 12, &author, 5, 0xB8,
+    )?;
     assert_eq!(a.project(id)?.unwrap().depth, 12);
     put_manifest_for_test(&a, b_fact.0, &b_fact.1, 6)?;
     assert_eq!(a.project(id)?.unwrap().depth, 12);
@@ -204,7 +189,9 @@ fn immutable_edits_merge_restrictively_and_causal_raise_supersedes_seen_heads() 
     assert_eq!(a.project(id)?.unwrap().roster, stale_member.roster);
     // A restriction B authored offline AFTER our raise, but without seeing
     // it, stays an unsuperseded concurrent head and narrows again.
-    crate::workspace_roster::set_project_depth_signed_for_test(&b, id, 1, &author, 8, 0xB8)?;
+    crate::subject_model::tests::authorization::set_project_depth_with_host(
+        &b, id, 1, &author, 8, 0xB8,
+    )?;
     let new_stop = contributions_for_test(&b, id)?
         .into_iter()
         .find(|(fact, body)| {

@@ -40,6 +40,7 @@ fn witness_writes_turn_messages_edges_and_text() {
             conversation_ref: conversation_hex.clone(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             // ONE-1767: one call = ONE non-system speaker. Mixed-author turns
             // are witnessed as consecutive single-speaker turns, so this row
             // set is all `User` (a `Companion` row here is a bad request).
@@ -152,6 +153,7 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
             conversation_ref: conversation_hex.clone(),
             turn_ref: Some(turn_hex.clone()),
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "first half")],
             occurred_at: 600,
             assertions: Default::default(),
@@ -175,6 +177,7 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
             conversation_ref: conversation_hex,
             turn_ref: Some(turn_hex.clone()),
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(1, WitnessAuthor::System, "system row")],
             occurred_at: 601,
             assertions: Default::default(),
@@ -244,6 +247,7 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
             conversation_ref: turn_hex,
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "x")],
             occurred_at: 602,
             assertions: Default::default(),
@@ -270,6 +274,7 @@ fn witness_facade_turn_enqueues_meso_on_session_close() {
             conversation_ref: conversation_hex.clone(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 0,
                 WitnessAuthor::Companion,
@@ -350,6 +355,7 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
             conversation_ref: conversation_hex.clone(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![
                 witness_message(0, WitnessAuthor::User, "owner row in the ledger"),
                 witness_message(
@@ -404,6 +410,7 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
             conversation_ref: conversation_hex.clone(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 0,
                 WitnessAuthor::User,
@@ -431,6 +438,7 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
             conversation_ref: conversation_hex,
             turn_ref: Some(turn.id_hex),
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 1,
                 WitnessAuthor::Companion,
@@ -513,6 +521,7 @@ fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
                 conversation_ref: conversation_hex,
                 turn_ref: Some(turn_id.to_hex()),
                 thread_audience: None,
+                project: None,
                 messages: vec![witness_message(0, WitnessAuthor::Companion, "late joiner")],
                 occurred_at: 750,
                 assertions: Default::default(),
@@ -601,6 +610,7 @@ fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
                 conversation_ref: conversation2_hex,
                 turn_ref: Some(turn2_id.to_hex()),
                 thread_audience: None,
+                project: None,
                 messages: vec![witness_message(0, WitnessAuthor::Companion, "speaker grab")],
                 occurred_at: 850,
                 assertions: Default::default(),
@@ -674,6 +684,7 @@ fn witness_concurrent_wrong_type_conversation_refuses_without_rows_or_edges() {
                 conversation_ref: conversation.to_hex(),
                 turn_ref: Some(turn_id.to_hex()),
                 thread_audience: None,
+                project: None,
                 messages: vec![message],
                 occurred_at: 750,
                 assertions: Default::default(),
@@ -739,6 +750,7 @@ fn witness_concurrent_soft_erased_conversation_refuses_without_a_turn() {
                 conversation_ref: conversation.to_hex(),
                 turn_ref: Some(turn_id.to_hex()),
                 thread_audience: None,
+                project: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, "after erasure")],
                 occurred_at: 750,
                 assertions: Default::default(),
@@ -772,6 +784,7 @@ fn witness_append_redirties_the_same_turn() {
             conversation_ref: conversation_hex.clone(),
             turn_ref: Some(turn_id.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "the original turn")],
             occurred_at: 1_000,
             assertions: Default::default(),
@@ -803,6 +816,7 @@ fn witness_append_redirties_the_same_turn() {
             conversation_ref: conversation_hex,
             turn_ref: Some(turn_id.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![
                 witness_message(1, WitnessAuthor::User, "the turn continues"),
                 witness_message(2, WitnessAuthor::System, "tool row in between"),
@@ -892,6 +906,7 @@ fn witness_system_interleave_appends_but_never_mints_a_turn() {
             conversation_ref: conversation_hex.clone(),
             turn_ref: Some(turn_id.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 0,
                 WitnessAuthor::Companion,
@@ -911,6 +926,7 @@ fn witness_system_interleave_appends_but_never_mints_a_turn() {
             conversation_ref: conversation_hex,
             turn_ref: Some(turn_id.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(1, WitnessAuthor::System, "tool result row")],
             occurred_at: 601,
             assertions: Default::default(),
@@ -952,6 +968,7 @@ fn witness_system_interleave_appends_but_never_mints_a_turn() {
                     .to_hex(),
                 turn_ref,
                 thread_audience: None,
+                project: None,
                 messages: vec![witness_message(
                     0,
                     WitnessAuthor::System,
@@ -991,6 +1008,7 @@ fn witness_bumps_open_session_activity_atomically() {
             conversation_ref: conversation_hex.clone(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "hello again")],
             occurred_at: 500,
             assertions: Default::default(),
@@ -1013,6 +1031,7 @@ fn witness_bumps_open_session_activity_atomically() {
             conversation_ref: conversation_hex,
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "backfilled note")],
             occurred_at: 450,
             assertions: Default::default(),
@@ -1039,6 +1058,7 @@ fn witness_without_an_open_session_stays_valid() {
             conversation_ref: conversation_hex,
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "sessionless turn")],
             occurred_at: 600,
             assertions: Default::default(),
@@ -1080,6 +1100,7 @@ fn witnessed_person_turn_obeys_room_delete_and_erasure_fence_without_blocking_ot
                 conversation_ref: room.to_hex(),
                 turn_ref: None,
                 thread_audience: None,
+                project: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, content)],
                 occurred_at: 10,
                 assertions: Default::default(),
@@ -1157,6 +1178,7 @@ fn witness_author_cannot_be_replaced_or_removed_by_raw_turn_reput() {
             conversation_ref: room.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 0,
                 WitnessAuthor::User,
@@ -1269,6 +1291,7 @@ fn mixed_room_messages() -> (
             conversation_ref: room.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "cedarwax")],
             occurred_at: 10,
             assertions: Default::default(),
@@ -1291,6 +1314,7 @@ fn mixed_room_messages() -> (
             conversation_ref: room.to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(1, WitnessAuthor::User, "orchidwax")],
             occurred_at: 11,
             assertions: Default::default(),
@@ -1459,6 +1483,7 @@ fn persist_received_turn_tombstone(vault: &crate::Vault, turn: EntityId, raw_val
 fn persisted_personal_turn_tombstone_erases_only_its_authored_messages_on_receiver() {
     for soft_first in [false, true] {
         let (_dir, vault, alice, _bob, _room, turn, a_message, b_message) = mixed_room_messages();
+        vault.prepare_install_signing().expect("install signing");
         let request_id = *uuid::Uuid::now_v7().as_bytes();
         if soft_first {
             let soft = crate::deletion::TombstoneValueV2 {
@@ -1585,6 +1610,7 @@ fn non_person_witness_author_does_not_block_another_persons_room_erasure() {
             conversation_ref: room.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 0,
                 WitnessAuthor::Companion,
@@ -1612,6 +1638,7 @@ fn non_person_witness_author_does_not_block_another_persons_room_erasure() {
             conversation_ref: room.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 0,
                 WitnessAuthor::User,
@@ -1678,6 +1705,7 @@ fn a_turn_fill_leased_before_the_owner_binding_does_not_land() {
                 .to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 0,
                 WitnessAuthor::User,
@@ -1746,6 +1774,7 @@ fn witness_refuses_a_future_occurrence_that_would_strand_later_turns() {
             .to_hex(),
         turn_ref: None,
         thread_audience: None,
+        project: None,
         messages: vec![witness_message(0, WitnessAuthor::User, "a plain turn")],
         occurred_at,
         assertions: Default::default(),

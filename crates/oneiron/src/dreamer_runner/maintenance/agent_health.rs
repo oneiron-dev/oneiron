@@ -116,6 +116,9 @@ pub use trend::{
     TrendDirection, TrendMetric, TrendSide, TrendUnknown, review_health_trends,
 };
 pub(super) use trend_output::run_health_trends;
+// The replay hash's K-proof seam (PLAN-UC-04 3.2), for `test_doors::fingerprint_keep_dreamer`.
+#[cfg(oneiron_test_support)]
+pub(crate) use trend_output::content_hash_for_test;
 pub use trend_policy::{DetectionDialChanges, HEALTH_TREND_PERIOD_DAYS, TrendPeriods, TrendWindow};
 pub(crate) use vocabulary::parse_card_ref;
 pub use vocabulary::{
@@ -220,3 +223,6 @@ fn same_inputs(first: Option<&str>, second: Option<&str>) -> bool {
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::call_evidence::call_receipt_accepts_masked;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{ask::ask_dedupe_key_for_test, outcomes::review_state_of_for_test};

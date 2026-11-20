@@ -11,7 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/conflict_decisions.rs` | src | s | 13 struct · 7 enum · 3 re-export | AnsweredPack, ConflictDecision, Correction, DecisionAnswer, DecisionEntry, EarlierAnswer, Error, ExtractionCorrectionPair +12 | Builds bound extraction verdict packs and reduces their answers as pure policy |
+| `src/conflict_decisions.rs` | src | m | 13 struct · 7 enum · 3 re-export | AnsweredPack, ConflictDecision, Correction, DecisionAnswer, DecisionEntry, EarlierAnswer, Error, ExtractionCorrectionPair +12 | Builds bound extraction verdict packs and reduces their answers as pure policy |
 | `src/conflict_decisions/answers.rs` | src | s | 2 fn · 8 crate-vis | — | Reads ordered verdict entries and maps canonical claims through served facts |
 | `src/conflict_decisions/questions.rs` | src | m | 7 fn · 1 crate-vis | — | Builds canonical pack questions without wording, labels or byte measures |
 | `src/conflict_decisions/steps.rs` | src | s | 2 fn | — | Reduces a successful verdict history to the next pack or a typed result |
@@ -24,10 +24,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/extraction_reply.rs` | src | m | 8 struct · 1 enum · 2 fn | BoundEvidenceRange, BoundExtractionCandidate, BoundExtractionPerson, BoundExtractionReply, BoundExtractionSubject, BoundSourceVersion, BoundTurnEvidence, ExtractionOperands +1 | Mirrors one bound extraction reply and builds its verdict operands |
 | `src/extraction_routing.rs` | src | m | 4 struct · 3 enum · 2 fn | AlreadyRepresentedReason, CandidateRoute, Correction, Error, ExtractionRoutePlan, JudgeSet, Route | Routes ready extraction groups against admitted priors and judge sets |
 | `src/extraction_selection.rs` | src | m | 5 struct · 2 enum · 5 fn · 1 crate-vis | CandidateGroup, CandidateGroups, Error, ExtractionSelectionConfig, ExtractionSelectionPlan, ScoredCandidateGroup, SelectionHold | Groups extraction operands and selects their verified evidence unions |
-| `src/lib.rs` | src | s | 8 mod | — | oneiron-dreamer — the Dreamer's maintenance jobs outside the engine (untangle 6.9c, S69-RUN = A) |
+| `src/lib.rs` | src | s | 9 mod | — | oneiron-dreamer — the Dreamer's maintenance jobs outside the engine (untangle 6.9c, S69-RUN = A) |
+| `src/psych_profile.rs` | src | s | 1 struct · 1 enum · 4 fn · 2 const | Candidate, ClaimSource | Chooses a Psych Mirror profile's source claims and scores its confidence as pure policy (untangle 6.9i… |
 | `src/strength_archive.rs` | src | s | 2 struct · 1 enum · 2 fn · 2 const | Error, Input, Outcome | The consolidation strength archive (untangle 6.9c, F6): archives the Dreamer's old, weak claims through… |
 | `src/strength_scoring.rs` | src | s | 5 crate-vis | — | Shared consolidation strength scoring (F6 subset) |
 | `tests/conflict_decisions.rs` | test | m | — | — | Pure public-API checks for bound extraction conflict decisions |
 | `tests/extraction_decisions.rs` | test | m | — | — | Pure public-API checks for decision operands and D2 skip policy |
 | `tests/extraction_routing.rs` | test | s | — | — | Checks ordinary routing and observed-beside policy through the public crate API |
 | `tests/extraction_selection.rs` | test | m | — | — | Extraction grouping, union and selection over the shared fixture |
+| `tests/psych_profile.rs` | test | s | — | — | Pure public-API checks for the Psych Mirror profile policy: the band floor, the round-robin slot fill and… |

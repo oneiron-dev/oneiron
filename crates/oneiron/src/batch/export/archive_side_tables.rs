@@ -9,9 +9,9 @@
 //! an edit settlement's live work are in-flight work that never leaves; and a
 //! code view is a host directory, its id no record.
 //!
-//! The whole-vault archive also carries the retained rows: one inert copy of every row of the
-//! 95 retained side tables, each naming its source table with the row's original key suffix
-//! and value bytes, and declares the 23 omitted tables with their reasons in its manifest. No
+//! The whole-vault archive also carries the retained rows: one inert copy of every row of
+//! each retained side table, naming its source table with the row's original key suffix
+//! and value bytes, and declares each omitted table with its reason in its manifest. No
 //! live reader reads a retained copy; the next archive carries it again.
 //!
 //! A row goes out with the record it belongs to and every carrier it names, read
@@ -660,6 +660,20 @@ impl SideRowBytes {
     pub(crate) fn opaque_credential(&self) -> bool {
         self.family.spec().value == Form::Opaque
             && crate::batch::secret_scan::scan_file_content("", &self.value).is_some()
+    }
+
+    /// Whether the release scan reads a credential in a tree-form value's
+    /// binary, extension or byte-array payload, which the document's pass
+    /// sees only as hex or as an attached file.
+    pub(crate) fn payload_credential(&self) -> bool {
+        if self.family.spec().value != Form::MessagePack {
+            return false;
+        }
+        let mut cursor = std::io::Cursor::new(self.value.as_slice());
+        rmpv::decode::read_value(&mut cursor)
+            .ok()
+            .filter(|_| cursor.position() == self.value.len() as u64)
+            .is_some_and(|value| payload_credential_in(&value))
     }
 
     /// The manifest entry of this row held out of the archive, with the
@@ -1408,6 +1422,31 @@ fn key_bytes(layout: &[Part], parts: &[ArchiveSideKeyPart]) -> Option<Vec<u8>> {
         }
     }
     parts.next().is_none().then_some(key)
+}
+
+/// Whether any binary, extension or byte-array payload under the decoded
+/// `value` reads as a credential to the release scan: the inline hex and the
+/// attached files of [`tree`] alike, which the document's pass never reads as
+/// bytes. Strings stay with that pass, which reads them as text.
+fn payload_credential_in(value: &rmpv::Value) -> bool {
+    use rmpv::Value as Mp;
+    match value {
+        Mp::Binary(bytes) => release_hit(bytes),
+        Mp::Ext(_, bytes) => release_hit(bytes),
+        Mp::Array(items) => match byte_values(items) {
+            Some(bytes) => release_hit(&bytes),
+            None => items.iter().any(payload_credential_in),
+        },
+        Mp::Map(entries) => entries
+            .iter()
+            .any(|(key, value)| payload_credential_in(key) || payload_credential_in(value)),
+        _ => false,
+    }
+}
+
+/// Whether `bytes` read as a credential under the release rules.
+fn release_hit(bytes: &[u8]) -> bool {
+    crate::batch::secret_scan::scan_file_content("", bytes).is_some()
 }
 
 /// A MessagePack value as its archive tree. A long binary value or byte array

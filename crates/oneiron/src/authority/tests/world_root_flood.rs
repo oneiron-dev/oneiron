@@ -11,7 +11,7 @@ use super::support::{authority_key_from_ed, ed_key, owner_act, sign_ed, unsigned
 use super::world_key_doors::{Fresh, fresh_install, own_request};
 use super::world_key_store_gate::put_replicated;
 use super::world_privacy::{settings, stored_entries, world_row};
-use super::world_reissue::{admit, issue, pinned, set_on};
+use super::world_reissue::{admit, issue, pinned, profiled, set_on, with_predecessor};
 use super::*;
 use crate::Vault;
 use crate::authority::log_budget::with_rows_per_signer_for_test;
@@ -61,6 +61,7 @@ fn mark_entry(
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     };
     let op = AuthorityOp::MachineProfile(profile);
     let entry = anchor_signed_entry(&fold, &seed.anchor(), op, 2).unwrap();
@@ -157,6 +158,12 @@ fn a_flood_of_strangers_rows_never_fails_the_fold() {
         let host = host();
         let world = world_row(&host);
         let [issuer, peer] = [(); 2].map(|()| fresh_install(&host));
+        profiled(
+            &host,
+            &peer.vault,
+            MachineRole::Owned(MachineOwnership::Yours),
+        );
+        with_predecessor(&host, &issuer.vault, &issuer.owner);
         let root = issue(&issuer, &[]);
         let owner = issuer.owner.actor();
         let stranger = RecoveryRootSeed::generate().unwrap();
@@ -242,6 +249,8 @@ fn a_root_held_behind_a_flood_pins_in_two_steps() {
         let host = host();
         let world = world_row(&host);
         let [issuer, b] = [(); 2].map(|()| fresh_install(&host));
+        profiled(&host, &b.vault, MachineRole::Owned(MachineOwnership::Yours));
+        with_predecessor(&host, &issuer.vault, &issuer.owner);
         let r0 = issue(&issuer, &[]);
         admit(&issuer, &r0, &b);
         set_on(&b, world, ReadLocation::MyMachines);
@@ -260,6 +269,7 @@ fn a_root_held_behind_a_flood_pins_in_two_steps() {
         let waiting = AwaitedRoot {
             root: r1.root,
             arrived: false,
+            request: None,
         };
         assert_eq!(awaiting(&b), Some(waiting));
         let owner = b.owner.actor();
@@ -276,6 +286,7 @@ fn a_root_held_behind_a_flood_pins_in_two_steps() {
         let arrived = AwaitedRoot {
             root: r1.root,
             arrived: true,
+            request: None,
         };
         assert_eq!(awaiting(&b), Some(arrived));
         let report = b.vault.pin_owner_root(&b.owner, r1.root).unwrap();
@@ -292,9 +303,10 @@ fn a_root_held_behind_a_flood_pins_in_two_steps() {
 /// full, R1's marks wait: the pin moves, but B is not mine under R1, K is
 /// not current there, and the owner item names R1. The next drain lands
 /// the marks, since R1's anchor is now B's own; the item says they have
-/// arrived, and pinning again keys K under R1 and ends the wait. Fails
-/// before: the pin door left no item, so the owner could not tell when to
-/// pin again.
+/// arrived, and pinning again keys K under R1 and ends the wait. B's
+/// roster profile is `WorkSchool`, so only an anchor's mark makes it mine
+/// (a `Yours` one would under any pin). Fails before: the pin door left
+/// no item, so the owner could not tell when to pin again.
 #[test]
 fn a_carried_re_pin_whose_marks_wait_finishes_on_the_second_pin() {
     with_rows_per_signer_for_test(BOUND, || {
@@ -302,6 +314,12 @@ fn a_carried_re_pin_whose_marks_wait_finishes_on_the_second_pin() {
             let host = host();
             let world = world_row(&host);
             let [issuer, b] = [(); 2].map(|()| fresh_install(&host));
+            profiled(
+                &host,
+                &b.vault,
+                MachineRole::Owned(MachineOwnership::WorkSchool),
+            );
+            with_predecessor(&host, &issuer.vault, &issuer.owner);
             let r0 = issue(&issuer, &[]);
             admit(&issuer, &r0, &b);
             set_on(&b, world, ReadLocation::MyMachines);
@@ -335,12 +353,14 @@ fn a_carried_re_pin_whose_marks_wait_finishes_on_the_second_pin() {
             let waiting = AwaitedRoot {
                 root: r1.root,
                 arrived: false,
+                request: None,
             };
             assert_eq!(awaiting(&b), Some(waiting));
             assert_eq!(drain(&issuer.vault, &b.vault), 0);
             let arrived = AwaitedRoot {
                 root: r1.root,
                 arrived: true,
+                request: None,
             };
             assert_eq!(awaiting(&b), Some(arrived));
             let report = b.vault.pin_owner_root(&b.owner, r1.root).unwrap();

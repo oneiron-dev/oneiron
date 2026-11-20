@@ -17,6 +17,7 @@ fn test_config() -> VaultConfig {
 fn open() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("regression fixture");
     let vault = Vault::open(dir.path(), test_config()).expect("regression fixture");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     set_cleanup_posture(&vault, CleanupPosture::ProposeFirst).expect("regression fixture");
     (dir, vault)
 }

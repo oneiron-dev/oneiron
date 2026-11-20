@@ -76,6 +76,7 @@ fn the_owner_still_enrolls_a_person_through_the_typed_door() {
                 reply_snooze_policy: None,
                 voice_guide_ref: None,
                 copy_review: None,
+                send_mode: None,
             },
             NOW,
         )

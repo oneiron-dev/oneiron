@@ -338,6 +338,9 @@ impl PartialServeConfig {
         if let Some(value) = self.line {
             resolved.line = value;
         }
+        if let Some(value) = self.mail {
+            resolved.mail = value;
+        }
         if let Some(value) = self.channel_endpoints {
             resolved.channel_endpoints = value;
         }
@@ -372,6 +375,9 @@ impl PartialServeConfig {
         if let Some(value) = self.connectors {
             resolved.connectors = value;
         }
+        if let Some(value) = self.gpu_jobs {
+            resolved.gpu_jobs = value.resolve()?;
+        }
         // An explicit no stands as firmly as a yes.
         if let Some(value) = self.failure_signal_export {
             resolved.failure_signal_export = Some(value);
@@ -393,6 +399,12 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.device_class {
             resolved.device_class = value;
+        }
+        if let Some(value) = self.machine_reported_name {
+            resolved.machine_reported_name = Some(value);
+        }
+        if let Some(value) = self.machine_reported_model {
+            resolved.machine_reported_model = Some(value);
         }
         if let Some(value) = self.esign_delivery_outbox_dir {
             resolved.esign_delivery_outbox_dir = Some(value);

@@ -149,7 +149,15 @@ fn constructor_refuses_free_text_in_every_string_position() {
 #[test]
 fn dial_off_stores_and_withholds_without_minting_a_party() {
     let (_tmp, vault) = open_vault();
-    set_publisher_enabled(&vault, false).expect("dial off");
+    vault
+        .set_setting(
+            crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+            crate::setting::SetSetting::vault_value(
+                "edit_distance.publisher.enabled",
+                serde_json::json!(false),
+            ),
+        )
+        .expect("dial off");
     let ids = [
         emit_pending(&vault, &signature(), "test-lane-send-a"),
         emit_pending(&vault, &signature(), "test-lane-send-b"),
@@ -185,7 +193,15 @@ fn dial_off_stores_and_withholds_without_minting_a_party() {
 #[test]
 fn dial_on_hands_off_and_delivery_confirms_sent() {
     let (_tmp, vault) = open_vault();
-    set_publisher_enabled(&vault, true).expect("dial on");
+    vault
+        .set_setting(
+            crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+            crate::setting::SetSetting::vault_value(
+                "edit_distance.publisher.enabled",
+                serde_json::json!(true),
+            ),
+        )
+        .expect("dial on");
     let lanes = ["test-lane-send-a", "test-lane-send-b"];
     let ids = [
         emit_pending(&vault, &signature(), lanes[0]),
@@ -261,7 +277,15 @@ fn dial_on_hands_off_and_delivery_confirms_sent() {
 #[test]
 fn send_door_refuses_an_unknown_signature_id() {
     let (_tmp, vault) = open_vault();
-    set_publisher_enabled(&vault, true).expect("dial on");
+    vault
+        .set_setting(
+            crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+            crate::setting::SetSetting::vault_value(
+                "edit_distance.publisher.enabled",
+                serde_json::json!(true),
+            ),
+        )
+        .expect("dial on");
     let missing = crate::test_util::entity(0x5E);
     assert!(matches!(
         send_signatures_if_enabled(&vault, &[missing]),

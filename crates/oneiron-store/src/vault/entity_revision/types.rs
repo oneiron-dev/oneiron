@@ -63,14 +63,15 @@ pub enum ReadMode {
     Pinned(RevisionRef),
 }
 
-/// A point in the vault's memory history (L3-39): how many live-revision
-/// moves this store had committed when it was handed out, and the store's
-/// recording-clock instant then. A position, not a content hash: an erase
-/// leaves no hash of its row in one. A graph-FS memory fork names one by its
-/// hex form.
+/// A point in the vault's memory history (L3-39): the memory timeline's
+/// sequence when it was handed out (every move of one write transaction takes
+/// that transaction's one sequence), and the store's recording-clock instant
+/// then. A position, not a content hash: an erase leaves no hash of its row
+/// in one. A graph-FS memory fork names one by its hex form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MemoryFrontier {
-    /// The live-revision moves committed at the frontier.
+    /// The sequence of the last committed live-revision move at the
+    /// frontier: every move at or below it stands there.
     pub sequence: u64,
     /// The recording clock (Unix seconds, the clock edges and learned times
     /// are stamped with) when the frontier was handed out.

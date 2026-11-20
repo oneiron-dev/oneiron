@@ -93,7 +93,9 @@ pub(crate) use self::run_effects::{
 mod run_handover;
 pub use self::run_handover::AgentRunLeaseReap;
 mod run_lineage;
-pub(crate) use run_lineage::delegation_lineage_parent_in_txn;
+pub(crate) use run_lineage::{
+    LineageStart, delegation_lineage_parent_in_txn, settling_lineage_in_txn,
+};
 mod run_objectives;
 mod run_placement;
 mod run_task;
@@ -134,6 +136,8 @@ mod workflow;
 mod workflow_host;
 mod workflow_pump;
 mod workflow_record;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::workflow_record::dedupe_key_hash_for_test as workflow_dedupe_key_hash_for_test;
 pub(crate) use workflow::tool_wait::checkpoint as workflow_tool_checkpoint;
 #[cfg(oneiron_test_support)]
 pub(crate) use workflow::tool_wait::{
@@ -182,8 +186,9 @@ pub use self::spend_record::{
 
 pub use self::agent_wait::{AgentWaitChild, AgentWaitSetResult};
 pub(crate) use self::agent_wait::{
-    AgentWaitOpen, AgentWaitPolicy, agent_dispatch_child_wait_accepts_masked, agent_wait_attempt,
-    open_agent_wait, settle_agent_child_waits_in_txn,
+    AgentWaitOpen, AgentWaitPolicy, CHILD_WAIT_UNTIL_JOB, agent_dispatch_child_wait_accepts_masked,
+    agent_wait_attempt, open_agent_wait, rearm_restored_wait_deadlines_in_txn,
+    settle_agent_child_waits_in_txn,
 };
 pub(crate) use self::budget_hold::erase_plan_hold_actor_in_txn;
 pub use self::budget_hold::{

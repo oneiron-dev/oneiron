@@ -220,20 +220,20 @@ fn relationship_room(room: &Room, space: oneiron::EntityId) -> oneiron::EntityId
             occurred_at: 4,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .expect("speak in the relationship's room");
     id
 }
 
 /// Each door of `real` answers the outsider as its twin in `missing` answers
-/// it, and serves the member: one line per door that does not.
-async fn door_mismatches(
+/// it: one line per door that does not.
+async fn outsider_mismatches(
     room: &Room,
     real: &[DoorRequest],
     missing: &[DoorRequest],
 ) -> Vec<String> {
     let outsider = outsider(room);
-    let member = test_bearer(&room.agent_recipe(None));
     let mut mismatches = Vec::new();
     for (request, twin) in real.iter().zip(missing) {
         let refused = answer(&room.server, &outsider, request).await;
@@ -244,6 +244,15 @@ async fn door_mismatches(
                 request.door
             ));
         }
+    }
+    mismatches
+}
+
+/// Each door of `real` serves the member: one line per door that does not.
+async fn member_mismatches(room: &Room, real: &[DoorRequest]) -> Vec<String> {
+    let member = test_bearer(&room.agent_recipe(None));
+    let mut mismatches = Vec::new();
+    for request in real {
         let served = answer(&room.server, &member, request).await;
         if served.0 != StatusCode::OK {
             mismatches.push(format!("{}: the member got {served:?}", request.door));
@@ -252,9 +261,22 @@ async fn door_mismatches(
     mismatches
 }
 
+/// Each door of `real` answers the outsider as its twin in `missing` answers
+/// it, and serves the member: one line per door that does not.
+async fn door_mismatches(
+    room: &Room,
+    real: &[DoorRequest],
+    missing: &[DoorRequest],
+) -> Vec<String> {
+    let mut mismatches = outsider_mismatches(room, real, missing).await;
+    mismatches.extend(member_mismatches(room, real).await);
+    mismatches
+}
+
 /// The room's row and turns, at the legacy row and edge doors, the TURN
 /// doors and the context pack: an outsider whose lane reads them reads a
-/// missing room; a member reads them.
+/// missing room; a member reads them, and the room's DAG shape at the DAG
+/// doors.
 #[tokio::test]
 async fn an_outsider_reads_a_rooms_rows_and_turns_as_missing() {
     let room = room();
@@ -264,7 +286,16 @@ async fn an_outsider_reads_a_rooms_rows_and_turns_as_missing() {
         &seeded_test_entity_id(0x2401_0053).to_hex(),
         &seeded_test_entity_id(0x2401_0054).to_hex(),
     );
-    let mismatches = door_mismatches(&room, &real, &missing).await;
+    let mut mismatches = outsider_mismatches(&room, &real, &missing).await;
+    // The edges door serves a TURN's edges only when its center is
+    // retrievable, which a TURN is only with every MESSAGE readable
+    // (`ScopedRead::edges_out_of_in_txn`), and the member's agent key holds
+    // no MESSAGE grant (FIX 10895); the member reads the room's shape
+    // through the DAG doors instead.
+    let mut member_real = row_door_requests(&room.room.to_hex(), &turn.to_hex());
+    member_real.retain(|request| request.door != "legacy turn edges");
+    member_real.extend(dag_door_requests(&room.room.to_hex(), &turn.to_hex()));
+    mismatches.extend(member_mismatches(&room, &member_real).await);
     assert!(mismatches.is_empty(), "{mismatches:#?}");
 }
 
@@ -351,6 +382,18 @@ async fn batch_outcomes(
 async fn a_relationship_grantee_reads_the_room() {
     let room = room();
     let space = seeded_test_entity_id(0x2401_0056);
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    room.server
+        .vault
+        .put_entity(
+            &space,
+            oneiron::registry::ENTITY_TYPE_RELATIONSHIP,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     let opened = relationship_room(&room, space);
     let grantee = seeded_test_entity_id(0x2401_0057);
     super::context_board_history::restrict_principal_read_types(
@@ -436,6 +479,7 @@ async fn a_direct_conversations_turn_reads_by_its_lane() {
             occurred_at: 4,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .expect("speak in the direct");
     let turn = first_turn(&room.server, direct).await;
@@ -449,7 +493,9 @@ async fn a_direct_conversations_turn_reads_by_its_lane() {
         "scope=core:read;principal_ref={}",
         reader.to_hex()
     ));
-    let (status, body) = route_json(
+    // With no `view` the door answers the row's raw body (a witnessed
+    // TURN's is MessagePack), not JSON.
+    let (status, _, body) = route_bytes(
         room.server.clone(),
         core_request_with_authz(
             "GET",
@@ -459,7 +505,7 @@ async fn a_direct_conversations_turn_reads_by_its_lane() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
     let short =
         oneiron::retrieval_depth::short_ref_or_hex(&room.server.vault, &turn).expect("short ref");
     assert!(short.contains(':'), "{} holds no short id", turn.to_hex());
@@ -490,42 +536,55 @@ async fn a_direct_conversations_turn_reads_by_its_lane() {
 async fn an_outsider_finds_no_room_turn_by_search_or_timeline() {
     let room = room();
     let needle = "zorblaxneedle";
-    // A TURN whose words are its own, as the core batch writes one (a
-    // witnessed turn's words index under its messages), bound to the room by
-    // its one ChildOf edge, which names its room (`named_room`).
-    let (status, written) = route_json_auth(
-        room.server.clone(),
-        json_request(
-            "POST",
-            "/v1/core/batch",
-            json!({
-                "entities": [{
-                    "entity_type": oneiron::registry::ENTITY_TYPE_TURN,
-                    "learned_at": 100_u64,
-                    "occurred_start": 100_u64,
-                    "occurred_end": 100_u64,
-                    "body": {
-                        "txt": format!("a room turn {needle}"),
-                        "spkr": "user",
-                        "at": 100_u64
-                    }
-                }]
-            }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{written}");
-    let turn_hex = written["entities"][0]["id"]
-        .as_str()
-        .expect("the written turn's id")
-        .to_owned();
-    let turn = oneiron::EntityId::from_hex(&turn_hex).expect("turn id");
-    room.server
+    // A TURN whose words are its own (a witnessed turn's words index under
+    // its messages), bound to the room by the DAG append: the room adopted
+    // the DAG, so the legacy ChildOf append is refused.
+    let head = room
+        .server
         .vault
-        .batch()
-        .edge(&turn, oneiron::EdgeKind::ChildOf, &room.room, 1.0)
-        .commit()
+        .head(&room.room)
+        .expect("the room's head")
+        .expect("the room's witnessed turns");
+    let writer = oneiron::WriteActor::new(room.owner, oneiron::EdgeActorClass::Human);
+    let surface = room
+        .server
+        .vault
+        .memory(room.owner, oneiron::EdgeActorClass::Human);
+    let words = format!("a room turn {needle}");
+    let appended = room
+        .server
+        .vault
+        .append_dag_record(
+            &surface,
+            &oneiron::conversation_dag::AppendRecord {
+                conversation: room.room,
+                parent: Some(head),
+                reply_to: None,
+                quote: None,
+                address: oneiron::conversation_dag::AddressMode::Broadcast,
+                recipients: vec![],
+                advance: true,
+                kind: oneiron::registry::ENTITY_TYPE_TURN,
+                containing_turn: None,
+                occurred: oneiron::TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                learned_at: 100,
+                body: rmp_serde::to_vec_named(&json!({
+                    "txt": words.clone(),
+                    "spkr": "user",
+                    "at": 100_u64
+                }))
+                .expect("turn body"),
+                text: vec![("txt".to_owned(), words)],
+                session: None,
+                actor: writer,
+                thread_audience: None,
+            },
+        )
         .expect("bind the turn to the room");
+    let turn_hex = appended.id.to_hex();
     let outsider = seeded_test_entity_id(0x2401_0060);
     super::context_board_history::restrict_principal_read_types(
         &room.server,

@@ -26,7 +26,7 @@ pub(super) use std::sync::{
     Mutex,
     atomic::{AtomicUsize, Ordering},
 };
-pub(super) use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+pub(super) use std::task::{Context, Poll};
 pub(super) use tempfile::TempDir;
 
 mod anonymous_chat;
@@ -36,6 +36,7 @@ mod door_invariants;
 mod edge_identity;
 mod foundations;
 mod hosted_registration_relay;
+mod hosted_self_host_route;
 mod outage_contracts;
 mod owner_decisions_ledger;
 mod owner_manifest_binding;

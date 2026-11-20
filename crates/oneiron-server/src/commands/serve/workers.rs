@@ -212,6 +212,9 @@ pub(crate) async fn start_desktop_workers(
     workers.push(crate::wire_health::spawn(&sync_server, admitted()));
     // Sensitive imported topics ask the owner who sees their later imports (OF-492).
     workers.push(crate::import_audience::spawn(&sync_server, admitted()));
+    // This machine's measured capacity, on its MACHINE entity (CROSS-ARCH-0024
+    // #my-network 05): at start and every hour.
+    workers.push(crate::machine_capacity::spawn(&sync_server, admitted()));
     timings.mark("board_and_watches");
     // Due standing questions are answered through the ladder (OF-506).
     if !ai.bind_question_timer(&sync_server) {
@@ -292,6 +295,11 @@ pub(crate) async fn start_desktop_workers(
         Arc::clone(&sync_server),
         admitted(),
     ));
+    // Booking deposits' due captures, voids and refunds go to Stripe (BK-DEPOSITS).
+    workers.push(crate::booking_deposit::settle::spawn_deposit_settlement(
+        Arc::clone(&sync_server),
+        admitted(),
+    ));
     // A transcript upload that met an open session lands once it closes (FIX 9654).
     workers.push(crate::calendar_host::spawn_pending_transcript_drain(
         Arc::clone(&sync_server),
@@ -312,6 +320,12 @@ pub(crate) async fn start_desktop_workers(
         admitted(),
     ));
     timings.mark("mail_sources");
+    // Customer GPU jobs step on their offers' backends (row L10-31), when
+    // `[gpu_jobs]` posts an offer.
+    workers.extend(crate::gpu_host::spawn_gpu_job_steps(
+        Arc::clone(&sync_server),
+        admitted(),
+    ));
     // Past the vault's deletion these two run on, to let its backups go at
     // their deadline (FIX 11979): every pass admitted, as today.
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));

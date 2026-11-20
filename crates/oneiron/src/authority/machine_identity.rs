@@ -30,7 +30,7 @@ const REQUEST_CODE_CONTEXT: &str = "oneiron/machine-request-code/v1";
 /// install whose owner has not answered whose it is. It carries his acts and
 /// reaches no further than an unprofiled install until he answers. Never
 /// mine, and never a hosted node, which only the managed host's own node is.
-pub(crate) const SERVING_INSTALL_ROLE: MachineRole = MachineRole::Unanswered;
+pub const SERVING_INSTALL_ROLE: MachineRole = MachineRole::Unanswered;
 
 /// Whether a restore that loads no keys names this install's serving machine
 /// by the public half of its machine key the install cached when its keys
@@ -78,6 +78,11 @@ pub struct MachineEnrolmentRequest {
     pub device_class: MachineDeviceClass,
     pub encryption_key: MachineEncryptionKey,
     pub machine_proof: [u8; 64],
+    /// The checkpoint image this install was restored from, when a restore
+    /// that dropped the image's machine identity made it (row
+    /// RESTORED-COPIES-ENROL-EACH-OTHER): `machine_proof` then signs the
+    /// restored transcript, and the profile it enrols names the image.
+    pub restored_from: Option<[u8; 32]>,
 }
 
 /// What a new machine shows the owner, as a QR code or 26 base32 characters,
@@ -90,7 +95,9 @@ pub struct RequestCode(pub [u8; 16]);
 impl MachineEnrolmentRequest {
     /// The first 16 bytes of `BLAKE3-derive_key("oneiron/machine-request-code/v1",
     /// vault_id ‖ machine ‖ machine_key ‖ class name ‖ 0 ‖ suite (u16 BE) ‖ key
-    /// length (u32 BE) ‖ key ‖ machine_proof)`.
+    /// length (u32 BE) ‖ key ‖ machine_proof)`, then `1 ‖ image` for a
+    /// machine born of a restore (a request that names no image keeps its
+    /// code).
     #[must_use]
     pub fn code(&self) -> RequestCode {
         let key = &self.encryption_key.key;
@@ -104,6 +111,10 @@ impl MachineEnrolmentRequest {
         hasher.update(&u32::try_from(key.len()).unwrap_or(u32::MAX).to_be_bytes());
         hasher.update(key);
         hasher.update(&self.machine_proof);
+        if let Some(image) = &self.restored_from {
+            hasher.update(&[1]);
+            hasher.update(image);
+        }
         let mut code = [0; 16];
         code.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
         RequestCode(code)
@@ -114,8 +125,11 @@ impl MachineEnrolmentRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalMachine {
     pub id: EntityId,
-    /// Every admitter's chain for this row, once one of them names this
-    /// install's key.
+    /// Every admitter's chain for this row, once a chain this install reads
+    /// ([`FoldedMachine::names_key_under`] its pin: the accepted roster
+    /// revisions, the roster's head, the pinned anchor's) names this
+    /// install's key. A reader of it reads
+    /// [`FoldedMachine::standing_heads`], never another anchor's chain.
     pub profile: Option<FoldedMachine>,
     /// Mine under this install's pin, through a trusted identity that names
     /// this install's key. A chain that clones the row with other keys never
@@ -170,15 +184,25 @@ pub(super) fn resident_genesis_vault_id_in_txn(
 }
 
 /// Whether this install's own profile already stands as a carrier: the one
-/// carrier rule admits its install key, and a live chain names both its keys.
-/// The full predicate the owner-act writers ask, not the roster head alone.
+/// carrier rule admits its install key, and a live head it stands under here
+/// ([`FoldedMachine::standing_heads`]) names both its keys. The full
+/// predicate the owner-act writers ask, not the roster head alone. Another
+/// anchor's chain is no profile of it here (FIX
+/// FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES).
 pub(super) fn serving_profile_stands(
     fold: &AuthorityFold,
     folded: &FoldedMachine,
     request: &MachineEnrolmentRequest,
 ) -> bool {
-    owner_act_signer_admits(Some(folded), &fold.roster, &request.machine_key)
-        && folded.chains().any(|(_, chain)| {
+    owner_act_signer_admits(
+        Some(folded),
+        &fold.roster,
+        &request.machine_key,
+        fold.pinned_root.as_ref(),
+    ) && folded
+        .standing_heads(fold.pinned_root.as_ref())
+        .into_iter()
+        .any(|chain| {
             chain.is_live()
                 && chain.profile.machine_key == request.machine_key
                 && chain.profile.encryption_key == request.encryption_key
@@ -188,6 +212,8 @@ pub(super) fn serving_profile_stands(
 impl Vault {
     /// This install's own MACHINE id while a profile of it names this
     /// install's machine key, in any role and any standing (FIX 4728): the
+    /// roster's, its accepted revisions or the pinned anchor's, never another
+    /// anchor's chain (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES);
     /// one machine row an authority-preserving restore keeps live. Read in
     /// `txn`'s snapshot alone: nothing is minted, loaded or ensured, and no
     /// role selects it. The key is the loaded signer's for that id, else the
@@ -212,7 +238,7 @@ impl Vault {
         };
         Ok(fold
             .machine(machine)
-            .is_some_and(|folded| folded.names_key(&key))
+            .is_some_and(|folded| folded.names_key_under(&key, fold.pinned_root.as_ref()))
             .then_some(machine))
     }
 
@@ -236,23 +262,57 @@ impl Vault {
     }
 }
 
-/// Whether a live chain of this install's standing profile names another
-/// class than the one its host declares now (FIX 3835).
-fn serving_class_differs(folded: &FoldedMachine, request: &MachineEnrolmentRequest) -> bool {
-    folded.chains().any(|(_, chain)| {
+/// Whether a live head of this install's standing profile under `pin`
+/// names another class than the one its host declares now (FIX 3835).
+fn serving_class_differs(
+    folded: &FoldedMachine,
+    pin: Option<&PinnedRoot>,
+    request: &MachineEnrolmentRequest,
+) -> bool {
+    folded.standing_heads(pin).into_iter().any(|chain| {
         chain.is_live()
             && chain.profile.machine_key == request.machine_key
             && chain.profile.device_class != request.device_class
     })
 }
 
-/// Why a profile under this install's id that does not stand is never
-/// enrolled over: the first of removed, conflicted, other keys and not live.
-fn serving_profile_refusal(
+/// Why the chain of the anchor this install pins refuses to let the roster
+/// enrol an install it holds no head of: it removed the install, it is
+/// conflicted, or it names other keys. `None` with no pin, no such chain, or
+/// one that agrees: the door then enrols. Only the pinned anchor vetoes here;
+/// another anchor's chain says nothing on this install.
+fn pinned_bootstrap_veto(
+    fold: &AuthorityFold,
     folded: &FoldedMachine,
     request: &MachineEnrolmentRequest,
+) -> Option<&'static str> {
+    let chain = fold
+        .pinned_root
+        .as_ref()
+        .and_then(|pin| folded.anchored.get(&pin.anchor_key))?;
+    if chain.removed {
+        Some(SERVING_PROFILE_REMOVED)
+    } else if chain.conflicted {
+        Some(SERVING_PROFILE_CONFLICTED)
+    } else if chain.profile.machine_key != request.machine_key
+        || chain.profile.encryption_key != request.encryption_key
+    {
+        Some(SERVING_PROFILE_KEY_MISMATCH)
+    } else {
+        None
+    }
+}
+
+/// Why a profile under this install's id that does not stand is never
+/// enrolled over: the first of removed, conflicted, other keys and not live,
+/// on the heads it stands under with `pin`.
+fn serving_profile_refusal(
+    folded: &FoldedMachine,
+    pin: Option<&PinnedRoot>,
+    request: &MachineEnrolmentRequest,
 ) -> &'static str {
-    let chains = move || folded.chains().map(|(_, chain)| chain);
+    let heads = folded.standing_heads(pin);
+    let chains = || heads.iter().copied();
     if chains().any(|chain| chain.removed) {
         SERVING_PROFILE_REMOVED
     } else if chains().any(|chain| chain.conflicted) {
@@ -308,7 +368,9 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let profile = fold
             .machine(id)
-            .filter(|machine| key.is_some_and(|key| machine.names_key(&key)))
+            .filter(|machine| {
+                key.is_some_and(|key| machine.names_key_under(&key, fold.pinned_root.as_ref()))
+            })
             .cloned();
         let mine = fold
             .trusted_machine(id)
@@ -345,15 +407,28 @@ impl Vault {
             }
             let machine_key = key.verifying_key().to_bytes();
             let device_class = self.config.machine_device_class;
-            let machine_proof = key
-                .sign(&machine_profile_proof_transcript(
+            // The restore that made this install, if one did: every request
+            // it sends names that image, under its own signature (row
+            // RESTORED-COPIES-ENROL-EACH-OTHER).
+            let restored_from = crate::identity::read_restored_from_image_in_txn(self, wtxn)?;
+            let transcript = match &restored_from {
+                Some(image) => restored_machine_profile_proof_transcript(
                     &vault_id,
                     machine,
                     &machine_key,
                     device_class,
                     &encryption_key,
-                ))
-                .to_bytes();
+                    image,
+                ),
+                None => machine_profile_proof_transcript(
+                    &vault_id,
+                    machine,
+                    &machine_key,
+                    device_class,
+                    &encryption_key,
+                ),
+            };
+            let machine_proof = key.sign(&transcript).to_bytes();
             request = Some(MachineEnrolmentRequest {
                 vault_id,
                 machine,
@@ -361,6 +436,7 @@ impl Vault {
                 device_class,
                 encryption_key: encryption_key.clone(),
                 machine_proof,
+                restored_from,
             });
             Ok(())
         })?;
@@ -419,7 +495,11 @@ impl Vault {
     /// id refuses, naming why (removed, conflicted, other keys, not live
     /// here): its keys are never replaced and a removed machine never comes
     /// back. With none, the bootstrap arm enrols it in `role`. The vault must
-    /// already be rooted under `issuer`; no root is minted here.
+    /// already be rooted under `issuer`; no root is minted here. An install a
+    /// restore made is never enrolled here: a machine of the vault that has
+    /// joined pairs it, and this refuses with
+    /// [`super::machine_answers::RESTORED_NOT_JOINED`] (row
+    /// RESTORED-COPIES-ENROL-EACH-OTHER).
     pub fn ensure_serving_install_profile(
         &self,
         issuer: &HostSlipIssuer,
@@ -440,8 +520,15 @@ impl Vault {
         issuer: &HostSlipIssuer,
         role: MachineRole,
     ) -> Result<(FoldedMachine, Option<bool>)> {
-        let vault_id = self
-            .authority_fold()?
+        // An install born of a restore that stands nowhere refuses before
+        // anything is written: read in one read-only snapshot, before the
+        // clock rows `authority_fold` commits and before any identity or key
+        // is minted (REVIEW-9509 P1, rounds 1 and 2).
+        if let Some(reason) = self.restored_install_refusal()? {
+            return Err(authority_refused(reason));
+        }
+        let fold = self.authority_fold()?;
+        let vault_id = fold
             .vault_id
             .ok_or_else(|| authority_refused(SERVING_ROOT_ABSENT))?;
         // The install's identity, minted and signed outside the writer.
@@ -449,10 +536,25 @@ impl Vault {
         let request = self.machine_enrolment_request(vault_id, encryption_key)?;
         let mut txn = self.store.env.write_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        if let Some(folded) = fold.machine(request.machine) {
+        // "On the roster yet?" is the roster's question (Fable design pass
+        // 29, 3.4; Engine 06:15, FIX
+        // SERVING-PROFILE-ANCHOR-MARKED-INSTALL-NO-BOOTSTRAP): an install the
+        // roster holds no head of is enrolled, whatever an anchor's chain
+        // says of it, unless the chain of the anchor it pins refuses it.
+        let held = fold
+            .machine(request.machine)
+            .filter(|folded| folded.roster.is_some());
+        if let Some(reason) = fold
+            .machine(request.machine)
+            .filter(|_| held.is_none())
+            .and_then(|folded| pinned_bootstrap_veto(&fold, folded, &request))
+        {
+            return Err(authority_refused(reason));
+        }
+        if let Some(folded) = held {
             return if serving_profile_stands(&fold, folded, &request) {
                 let issuer_is_root = super::slip_vault::require_host(&fold, issuer).is_ok();
-                if serving_class_differs(folded, &request) {
+                if serving_class_differs(folded, fold.pinned_root.as_ref(), &request) {
                     tracing::warn!(
                         declared = request.device_class.wire(),
                         reason = SERVING_PROFILE_CLASS_DIFFERS,
@@ -461,7 +563,11 @@ impl Vault {
                 }
                 Ok((folded.clone(), Some(issuer_is_root)))
             } else {
-                Err(authority_refused(serving_profile_refusal(folded, &request)))
+                Err(authority_refused(serving_profile_refusal(
+                    folded,
+                    fold.pinned_root.as_ref(),
+                    &request,
+                )))
             };
         }
         if fold.vault_root_is_conflicted() {
@@ -473,9 +579,40 @@ impl Vault {
             .first()
             .copied()
             .ok_or_else(|| authority_refused(SERVING_NO_OWNER))?;
+        // An install born of a restore is not a machine of the vault until a
+        // joined machine joins it (row RESTORED-COPIES-ENROL-EACH-OTHER): the
+        // root never enrols it, and nothing is written.
+        if request.restored_from.is_some() {
+            return Err(authority_refused(
+                super::machine_answers::RESTORED_NOT_JOINED,
+            ));
+        }
         let folded = self.enroll_bootstrap_in_txn(&mut txn, issuer, owner, &request, role)?;
         txn.commit()?;
         Ok((folded, None))
+    }
+
+    /// The refusal an install born of a restore (row
+    /// RESTORED-COPIES-ENROL-EACH-OTHER) meets before anything is written:
+    /// [`SERVING_ROOT_ABSENT`] on a vault no root roots, and
+    /// [`super::machine_answers::RESTORED_NOT_JOINED`] when no machine of it
+    /// stands (no machine id yet, or none under its id). `None` for an
+    /// install no restore made, read from its mark alone, and for one that
+    /// stands. One read-only snapshot: no clock row, identity or key is
+    /// written to read it.
+    pub(super) fn restored_install_refusal(&self) -> Result<Option<&'static str>> {
+        let txn = self.store.env.read_txn()?;
+        if crate::identity::read_restored_from_image_in_txn(self, &txn)?.is_none() {
+            return Ok(None);
+        }
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        if fold.vault_id.is_none() {
+            return Ok(Some(SERVING_ROOT_ABSENT));
+        }
+        let machine = crate::identity::read_machine_id_in_txn(self, &txn)?;
+        Ok(machine
+            .is_none_or(|machine| fold.machine(machine).is_none())
+            .then_some(super::machine_answers::RESTORED_NOT_JOINED))
     }
 
     /// [`Self::ensure_serving_install_profile`] in [`SERVING_INSTALL_ROLE`]
@@ -580,6 +717,26 @@ impl Vault {
         timestamp: u64,
         nonce: &str,
     ) -> Result<Option<(EntityId, [u8; 64])>> {
+        self.machine_connection_proof_with_pin(token, timestamp, nonce, None)
+    }
+
+    /// [`Self::machine_connection_proof`] for a sync client that holds the
+    /// checkpoint pin its owner-authorized pairing handed it. While this
+    /// vault has no root of its own (no resident Genesis, no adopted pin), as
+    /// on a machine that joined from an empty vault before its first
+    /// catch-up, it signs for the pin's genesis: the vault its enrolment
+    /// request signed for (FIX 3375). Without that proof the home serves the
+    /// pinned checkpoint and the tail to no one, so the join never adopts
+    /// (FIX DEVICE-JOIN-PROOF-DEADLOCK). Proof only: the pin is never read as
+    /// this vault's root, and the home verifies against its own vault id and
+    /// the machine key the pairing enrolled.
+    pub fn machine_connection_proof_with_pin(
+        &self,
+        token: &str,
+        timestamp: u64,
+        nonce: &str,
+        pin: Option<&AuthorityCheckpointPin>,
+    ) -> Result<Option<(EntityId, [u8; 64])>> {
         self.load_install_signing_if_minted()?;
         let txn = self.store.env.read_txn()?;
         let Some(machine) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
@@ -592,8 +749,12 @@ impl Vault {
             Ok(view) => view.vault_id,
             Err(_) => resident_genesis_vault_id_in_txn(&self.store, &txn)?,
         };
-        let Some(vault_id) = vault_id else {
-            return Ok(None);
+        let vault_id = match (vault_id, pin) {
+            (Some(vault_id), _) => vault_id,
+            (None, Some(pin)) if resident_genesis_vault_id_in_txn(&self.store, &txn)?.is_none() => {
+                pin.genesis
+            }
+            (None, _) => return Ok(None),
         };
         let transcript = machine_connection_transcript(&vault_id, machine, token, timestamp, nonce);
         Ok(Some((machine, key.sign(&transcript).to_bytes())))

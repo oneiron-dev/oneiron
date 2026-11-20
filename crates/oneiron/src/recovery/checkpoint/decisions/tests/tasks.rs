@@ -81,6 +81,7 @@ fn mint(
                 assigned_ref: None,
                 actor_generation: None,
                 assigned_generation: None,
+                answered_heads: None,
                 occurred_at: 10,
             },
         )
@@ -292,6 +293,7 @@ pub(super) fn resident_wakes() -> Result<Case> {
             conversation_ref: room.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             occurred_at: 2,
             messages: vec![WitnessMessage {
                 id: Some(node.to_hex()),

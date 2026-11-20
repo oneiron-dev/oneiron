@@ -221,9 +221,11 @@ pub(super) fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> R
     }
     room.member_ids = effective.seat_list(project.members());
     room.claims_scope_ref = effective.claims_scope_ref;
-    // The view never carries the room's shared pins: a reader gets them only
-    // through the room's admitted projection (ROOM-SCOPED-PINS).
+    // The view never carries the room's shared pins, nor the records its
+    // unpins removed: a reader gets pins only through the room's admitted
+    // projection (ROOM-SCOPED-PINS).
     room.pins.clear();
+    room.unpinned.clear();
     Ok(room)
 }
 /// `room`'s access for `actor` on its roster, in any room: a home room's
@@ -392,10 +394,11 @@ pub(crate) fn room_join_audience_in(
 }
 
 /// The live vault owner who alone reads the ordinary room `room`, or `None`:
-/// no project room, one current member, that member a live vault owner, and
-/// no Ready join filed for anyone else in the room or its threads. An
-/// unplaced voice speaker's entry (OF-365) is keyed by its speaker, not by
-/// room, and is not seen here.
+/// no project room, one current member, that member a live vault owner, no
+/// Ready join filed for anyone else in the room or its threads, and no voice
+/// speaker entered it (OF-365). A speaker's entry reads the room's records
+/// from its entry on and takes no seat; while the index that finds them is
+/// incomplete, no room reads as its owner's alone.
 pub(crate) fn room_sole_owner_reader_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -409,6 +412,8 @@ pub(crate) fn room_sole_owner_reader_in(
     };
     if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &owner)?
         || super::join_receipt::room_ready_join_for_other_in(&vault.store, txn, room, owner)?
+        || crate::task_verb::speaker_entry_index::speaker_entered_in(vault, txn, room)?
+            != Some(false)
     {
         return Ok(None);
     }

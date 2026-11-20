@@ -4,7 +4,7 @@
 use super::*;
 use crate::edge::EdgeActorClass;
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
-use crate::registry::ENTITY_TYPE_PERSON;
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use crate::test_util::entity;
 use crate::{TimeRange, Vault, VaultConfig};
 
@@ -39,6 +39,7 @@ fn witness(
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages,
             occurred_at: at,
             assertions: Default::default(),
@@ -95,6 +96,7 @@ fn turn(id: EntityId, messages: &[(&str, &str)]) -> (String, Vec<(String, String
 fn a_transcript_reads_turns_in_order_and_never_returns_an_erased_message() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let room = entity(0xD0);
     let (first, second, third) = (entity(0xD3), entity(0xD1), entity(0xD2));
@@ -291,6 +293,17 @@ fn scoped_room() -> ScopedRoom {
         )
         .expect("put the scoped reader");
     let space = entity(0x68);
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    vault
+        .put_entity(
+            &space,
+            ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     let granted = |order, author, content| {
         let mut message = said(order, author, content);
         message.metadata = Some(serde_json::json!({"rel": space.to_hex()}));

@@ -14,6 +14,7 @@ fn witness_query_window_pair(facade: &Memory<'_>, now: u64) -> [(String, String)
                 )],
                 occurred_at: now - days_ago * 86_400,
                 thread_audience: None,
+                project: None,
                 assertions: Default::default(),
             })
             .expect("witness");
@@ -124,6 +125,7 @@ fn recall_default_effort_ranks_the_newer_identical_message_first() {
                 messages: vec![witness_message(0, WitnessAuthor::User, text)],
                 occurred_at: now - days_ago * 86_400,
                 thread_audience: None,
+                project: None,
                 assertions: Default::default(),
             })
             .expect("witness");
@@ -171,6 +173,7 @@ fn recall_light_effort_ranks_the_newer_identical_message_first() {
                 messages: vec![witness_message(0, WitnessAuthor::User, text)],
                 occurred_at: now - days_ago * 86_400,
                 thread_audience: None,
+                project: None,
                 assertions: Default::default(),
             })
             .expect("witness");

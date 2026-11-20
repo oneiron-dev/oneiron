@@ -392,6 +392,19 @@ pub(crate) fn share_effect_target(
     ))
 }
 
+/// `Err` when the row `id` names is stored with an entity header that does
+/// not decode. The share reads below take such a row for no share; a slip
+/// door that judges a share-bound slip calls this first, so the vault
+/// failing to answer is a store fault there, never the slip's refusal
+/// (RATCHET-9413 review round 2). An absent row passes.
+pub(crate) fn require_share_header_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    store.port_entity_record(txn, id).map(drop)
+}
+
 /// The share `id` names and its admission, as stored: nothing is proved but
 /// that both decode.
 fn stored_share_in_txn(
@@ -558,7 +571,13 @@ fn share_viewer_actor_in_txn(
     }
     let mut actor_class = None;
     for class in classes {
-        if !crate::authority::actor_binding_is_active(&fold, viewer, class.gate_actor_class()) {
+        if !crate::authority::actor_binding_is_live_in(
+            &vault.store,
+            txn,
+            &fold,
+            viewer,
+            class.gate_actor_class(),
+        )? {
             continue;
         }
         if crate::provenance::validate_actor_class(raw.entity_type, class).is_err()

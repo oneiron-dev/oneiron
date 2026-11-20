@@ -32,6 +32,8 @@ use crate::edge::EdgeKind;
 use rmpv::Value;
 
 use super::*;
+pub(crate) use authority::sign_with as sign_project_with_for_scan_tests;
+pub(crate) use authority::spawn_signed as spawn_signed_project_for_scan_tests;
 #[cfg(feature = "sync")]
 pub(crate) use support::signed_birth as create_project_signed_for_test;
 pub(crate) use support::signed_depth as set_project_depth_signed_for_test;
@@ -167,6 +169,7 @@ fn deleting_project_removes_derived_room_and_member_access() -> Result<()> {
     for door in [0, 1, 2] {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let root = vault.root_project()?;
         let owner = vault
             .ensure_embedded_owner_actor()
@@ -274,6 +277,7 @@ fn erased_parent_is_invalid_not_a_pending_dependency() -> Result<()> {
     for hard in [false, true] {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let root = vault.root_project()?;
         let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
         let parent = EntityId::now();
@@ -469,6 +473,31 @@ fn approved_project_card_mints_one_atomic_branch_and_grant() -> Result<()> {
     assert_eq!(envelope.budget(), Some(1200));
     assert!(envelope.receipt_required());
     assert_eq!(envelope.selectors(), &[format!("project:{}", id.to_hex())]);
+    // The room reads only what every member may read (FIX 5545): the roster
+    // agent peer needs its own core:read, or the opening header is withheld.
+    let scope = crate::federation::scope_codec::read_preset();
+    let grants: Vec<_> = project
+        .roster
+        .iter()
+        .map(|actor_ref| {
+            serde_json::json!({
+                "actor_ref": actor_ref, "effector": "core:read",
+                "scope": scope, "receipt_required": false
+            })
+        })
+        .collect();
+    let policy = serde_json::json!({
+        "schema_version": "1.2", "pack_id": "mint-read-fixture",
+        "pack_version": "1", "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {"criticality": "normal", "sensitivity": "normal"},
+        "rules": [],
+        "scoped_grants": grants
+    });
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        EntityId::now(),
+        &rmp_serde::to_vec_named(&policy).expect("read policy"),
+    )?;
     let room = EntityId::from_hex(&project.home_room)?;
     let history = vault
         .memory(owner.actor(), crate::edge::EdgeActorClass::Human)
@@ -832,6 +861,7 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
             conversation_ref: chat.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             occurred_at: at,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
@@ -865,6 +895,7 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
         conversation_ref: chat.to_hex(),
         turn_ref: Some(alice_turn.to_hex()),
         thread_audience: None,
+        project: None,
         occurred_at: 5,
         messages: vec![WitnessMessage {
             id: Some(message.to_hex()),
@@ -912,6 +943,7 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
         conversation_ref: chat.to_hex(),
         turn_ref: Some(EntityId::now().to_hex()),
         thread_audience: None,
+        project: None,
         occurred_at: 5,
         messages: vec![WitnessMessage {
             id: Some(streamed_message.to_hex()),
@@ -1073,6 +1105,7 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
         conversation_ref: chat.to_hex(),
         turn_ref: None,
         thread_audience: None,
+        project: None,
         occurred_at: 4,
         messages: vec![WitnessMessage {
             id: Some(message.to_hex()),
@@ -1790,6 +1823,7 @@ fn project_body_updates_preserve_venture_org_edge_and_retire_only_old_project_pa
 fn updating_project_cannot_recreate_its_soft_deleted_home_room() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let root = vault.root_project()?;
     let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
     let id = EntityId::now();
@@ -1866,6 +1900,7 @@ fn a_project_whose_home_room_id_sorts_first_replays_without_a_stuck_window() -> 
     // source root's subtree, room included.
     let images = tempfile::tempdir()?;
     let image = images.path().join("before-child");
+    source.ensure_vault_key().expect("mint the vault data key");
     source.snapshot_checkpoint(&image, 5)?;
     let checkpoint_key = source.checkpoint_key()?;
     let (child_id, child) = child_project_whose_home_room_sorts_first(&source)?;
@@ -1953,14 +1988,9 @@ fn in_range_depth_cannot_be_changed_through_generic_or_replicated_puts() -> Resu
         crate::gate::seeded_project_depth_default()
     );
 
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        range,
-        8,
-        b"owner",
-    )?;
+    let person = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
     let owner = crate::write_envelope::WriteActor::new(person, crate::edge::EdgeActorClass::Human);
     let revoke = crate::subject_model::tests::authorization::root_owner(&vault, owner, 0xA5)?;
     crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &owner, 10, 0xA5)?;
@@ -2152,6 +2182,7 @@ fn secondary_parent_rule_narrows_cross_project_leader_chat() -> Result<()> {
         ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(&vault, &mut claim);
     claim.scope_project = right;
     vault.put_claim(&rule, &claim, TimeRange { start: 5, end: 5 }, 5)?;
     let refusal = vault

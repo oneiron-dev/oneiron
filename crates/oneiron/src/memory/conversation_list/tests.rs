@@ -12,7 +12,7 @@ use crate::access_grant::{
 use crate::edge::EdgeActorClass;
 use crate::federation::scope_codec::read_preset;
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
-use crate::registry::ENTITY_TYPE_PERSON;
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use crate::test_util::entity;
 use crate::{DeleteReason, TimeRange, Vault, VaultConfig, WriteActor};
 
@@ -47,6 +47,7 @@ fn witness(
             conversation_ref: room.to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![message],
             occurred_at: at,
             assertions: Default::default(),
@@ -208,6 +209,19 @@ fn rooted_reader_with(
             b"scoped reader",
         )
         .expect("put the reader");
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A): the spaces these fixtures witness with.
+    for space in [entity(SPACE), entity(0x69)] {
+        vault
+            .put_entity(
+                &space,
+                ENTITY_TYPE_RELATIONSHIP,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"relationship",
+            )
+            .expect("put the relationship space");
+    }
     setup(&vault, owner, reader);
 
     // In a vault with no authority root every human PERSON reads as its

@@ -18,6 +18,7 @@ fn room_turn(
                 messages: vec![witness_message(0, WitnessAuthor::User, words)],
                 occurred_at: 900,
                 thread_audience: None,
+                project: None,
                 assertions: Default::default(),
             },
             None,
@@ -137,6 +138,7 @@ fn a_walk_in_the_room_reaches_its_rows_past_a_warm_base_cache_and_caches_nothing
             messages: vec![witness_message(0, WitnessAuthor::User, "said in base")],
             occurred_at: 800,
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("base witness");

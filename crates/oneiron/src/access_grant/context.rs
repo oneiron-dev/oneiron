@@ -206,6 +206,16 @@ impl<'v> AccessContext<'v> {
 }
 
 impl AccessContextSnapshot {
+    /// Whether `other` resolves the same reach as this snapshot: the same
+    /// principal, relationship memberships and live grants, whatever second
+    /// each was observed at (SELECTOR-RELEASE-POINT = B). A grant revoked or
+    /// expired since is no longer loaded, so the reach differs.
+    pub(crate) fn same_reach(&self, other: &Self) -> bool {
+        self.principal == other.principal
+            && self.relationships == other.relationships
+            && self.grants == other.grants
+    }
+
     pub(crate) fn allows_at_snapshot(
         &self,
         entity_type: u8,
@@ -325,12 +335,22 @@ mod tests {
             1,
             b"author",
         )?;
+        // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+        // (MESSAGE-REL-NAMES = A).
+        vault.put_entity(
+            &space,
+            crate::registry::ENTITY_TYPE_RELATIONSHIP,
+            when,
+            1,
+            b"relationship",
+        )?;
         vault
             .memory(author, crate::EdgeActorClass::Human)
             .witness(&crate::memory::WitnessTurn {
                 conversation_ref: EntityId::now().to_hex(),
                 turn_ref: None,
                 thread_audience: None,
+                project: None,
                 occurred_at: 1,
                 messages: vec![crate::memory::WitnessMessage {
                     id: Some(message.to_hex()),
@@ -661,6 +681,7 @@ mod tests {
                         ClaimLifecycleStatus::Active,
                     )
                     .unwrap();
+                    crate::test_util::stamp_vault_default_facet(vault, &mut body);
                     body.world = Some(world);
                     vault
                         .put_claim(&binding, &body, when, 1)
@@ -678,6 +699,7 @@ mod tests {
                 ClaimLifecycleStatus::Active,
             )
             .unwrap();
+            crate::test_util::stamp_vault_default_facet(vault, &mut body);
             body.rel = Some(crate::claim::RelationshipSet::from([space]));
             vault
                 .put_claim(&shared, &body, when, 1)

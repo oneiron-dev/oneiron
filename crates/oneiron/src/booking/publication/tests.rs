@@ -40,26 +40,23 @@ fn open_unrooted() -> (tempfile::TempDir, Vault) {
             .expect("entity");
     }
     let config = fixture_config();
+    let mut body = ClaimBody::new(
+        BOOKING_EVENT_TYPE_PREDICATE,
+        ClaimSubject::Entity(id(1)),
+        encode_event_type_claim_value(&BookingEventTypeClaimValue {
+            schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
+            page_ref: id(1),
+            config,
+        })
+        .expect("configuration"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     vault
-        .put_claim(
-            &id(5),
-            &ClaimBody::new(
-                BOOKING_EVENT_TYPE_PREDICATE,
-                ClaimSubject::Entity(id(1)),
-                encode_event_type_claim_value(&BookingEventTypeClaimValue {
-                    schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
-                    page_ref: id(1),
-                    config,
-                })
-                .expect("configuration"),
-                1.0,
-                ClaimApprovalStatus::Auto,
-                ClaimLifecycleStatus::Active,
-            )
-            .unwrap(),
-            TimeRange { start: 1, end: 1 },
-            1,
-        )
+        .put_claim(&id(5), &body, TimeRange { start: 1, end: 1 }, 1)
         .expect("config claim");
     (dir, vault)
 }
@@ -75,6 +72,7 @@ fn fixture_config() -> EventTypeConfig {
         booking_window_secs: 7 * 86_400,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: id(3),
@@ -89,6 +87,7 @@ fn fixture_config() -> EventTypeConfig {
         }],
         flex_with_ordinary: false,
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     }
 }
 
@@ -105,8 +104,10 @@ fn publication() -> BookingPagePublication {
         event_types: vec![EventTypeCard {
             key: EventTypeKey("event".to_owned()),
             title: "Owner supplied title".to_owned(),
+            deposit: None,
             duration_min: 30,
             description: "Owner supplied description".to_owned(),
+            allowed_durations_min: Vec::new(),
         }],
         constraint_field: ConstraintFieldConfig {
             enabled: false,

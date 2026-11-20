@@ -12,7 +12,7 @@ use std::sync::Arc;
 use ed25519_dalek::SigningKey;
 use oneiron::EntityId;
 use oneiron::authority::{
-    ActSurface, HostSlipIssuer, MachineDeviceClass, MachineOwnership, MachineRole,
+    ActAuthority, ActSurface, HostSlipIssuer, MachineDeviceClass, MachineOwnership, MachineRole,
     PredictedResidenceSet, ResidenceAct, ResidenceResultStatus,
 };
 use oneiron::consent::AuthenticatedOwner;
@@ -62,6 +62,12 @@ impl Device {
             .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
             .expect("authenticated owner");
         vault
+            .enrol_device_owner_signing_key(
+                &ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall),
+                &issuer,
+            )
+            .expect("the owner enrols this install's owner signing key");
+        let landing = vault
             .set_machine_role(
                 &owner,
                 ActSurface::ThisInstall,
@@ -70,6 +76,10 @@ impl Device {
                 None,
             )
             .expect("the owner answers the device's machine");
+        assert!(
+            landing.held().is_none(),
+            "FIXTURE: the owner key this install holds proves the work-or-school answer"
+        );
         let founder = vault
             .create_world(&owner, "Founder world", vault.now_recorded_at())
             .expect("founder world");
@@ -451,6 +461,129 @@ fn a_phone_waits_for_wifi_and_power() {
             vec![window.as_str().to_owned()]
         );
     });
+}
+
+/// Applies the predicted level and the home's prediction of one window of `device` on
+/// `connection`, as `a_phone_waits_for_wifi_and_power` does, its set served by `predicted`;
+/// answers the predicted window.
+async fn adopt_one_predicted_window(
+    device: &Device,
+    connection: &SyncConnection,
+    predicted: &Arc<PredictedHome>,
+) -> WindowKey {
+    let window = WindowKey::for_world(now_secs(), device.founder);
+    device
+        .vault
+        .sync_state_put(
+            &format!("ri:w:{window}:{}", EntityId::now().to_hex()),
+            b"thin index anchor",
+        )
+        .expect("the thin index anchor");
+    let parent = issue(
+        device,
+        ResidenceAct::SyncPredicted {
+            window_budget: 8,
+            document_budget: 16,
+        },
+    );
+    assert_eq!(
+        apply_residence_directives(connection)
+            .await
+            .expect("the level applies"),
+        1
+    );
+    let set = predicted_set(&[window.clone()], &[]);
+    serve(predicted, &set);
+    let prediction = append_prediction(
+        &device.vault,
+        &issuer(),
+        local_machine(&device.vault),
+        parent,
+        &set,
+    )
+    .expect("the home's prediction");
+    assert_eq!(
+        apply_residence_directives(connection)
+            .await
+            .expect("the prediction applies"),
+        1
+    );
+    assert_eq!(
+        result_of(device, prediction),
+        Some(ResidenceResultStatus::Applied)
+    );
+    window
+}
+
+/// The shell's report is a fact of the open install, not of one connection: a connection
+/// rebuilt over the same vault (a credential renewal, an embedded engine's wake) fetches on the
+/// report the shell made before it, with no new report.
+#[test]
+fn a_reconnected_phone_keeps_its_reported_fetch_conditions() {
+    run_async(
+        "a_reconnected_phone_keeps_its_reported_fetch_conditions",
+        || async {
+            let device = Device::open_as(MachineDeviceClass::Phone);
+            let predicted = Arc::new(PredictedHome::default());
+            let (url, _seen) = start_home(Arc::clone(&predicted)).await;
+            let first = device_connection(&device, url.clone());
+            let window = adopt_one_predicted_window(&device, &first, &predicted).await;
+            first.set_fetch_conditions(FetchConditions {
+                unmetered: true,
+                powered: true,
+            });
+            drop(first);
+            let reconnected = device_connection(&device, url);
+            run_predicted_pass(&reconnected)
+                .await
+                .expect("the reconnected pass");
+            assert_eq!(
+                predicted.asks.lock().expect("the asks").len(),
+                1,
+                "the rebuilt connection asks on the shell's earlier report"
+            );
+            assert_eq!(
+                *predicted.promotes.lock().expect("the promotes"),
+                vec![window.as_str().to_owned()]
+            );
+        },
+    );
+}
+
+/// The shell may report before any connection runs (an embedded engine reports at app start,
+/// before device sync dials its home): the report stands on the open vault, and the first
+/// connection fetches on it.
+#[test]
+fn a_shell_report_before_the_connection_opens_its_gate() {
+    run_async(
+        "a_shell_report_before_the_connection_opens_its_gate",
+        || async {
+            let device = Device::open_as(MachineDeviceClass::Phone);
+            assert_eq!(
+                device.vault.reported_fetch_conditions(),
+                FetchConditions::default(),
+                "closed until the shell reports"
+            );
+            let open = FetchConditions {
+                unmetered: true,
+                powered: true,
+            };
+            device.vault.report_fetch_conditions(open);
+            assert_eq!(device.vault.reported_fetch_conditions(), open);
+            let predicted = Arc::new(PredictedHome::default());
+            let (url, _seen) = start_home(Arc::clone(&predicted)).await;
+            let connection = device_connection(&device, url);
+            let window = adopt_one_predicted_window(&device, &connection, &predicted).await;
+            run_predicted_pass(&connection)
+                .await
+                .expect("the fetching pass");
+            assert_eq!(predicted.asks.lock().expect("the asks").len(), 1);
+            assert_eq!(
+                *predicted.promotes.lock().expect("the promotes"),
+                vec![window.as_str().to_owned()]
+            );
+        },
+    );
 }
 
 #[test]

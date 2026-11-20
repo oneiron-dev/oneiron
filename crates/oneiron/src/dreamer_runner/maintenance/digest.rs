@@ -38,6 +38,8 @@ pub use urgent::{
     DigestVersionRef, UrgentDigestAssessment,
 };
 pub use view::{DigestReadRequest, ProactivityDigestView};
+#[cfg(oneiron_test_support)]
+pub(crate) use view::{digest_content_hash_for_test, digest_id_for_test};
 const STATE: SideTable<(), DigestState, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_STATE);
 const DIGEST: SideTable<[u8; 32], ProactivityDigest, LegacyJson> =
@@ -702,3 +704,6 @@ impl crate::store::Store {
         }
     }
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::urgent::{harm_basis_of_for_test, host_witness_key_of_for_test};

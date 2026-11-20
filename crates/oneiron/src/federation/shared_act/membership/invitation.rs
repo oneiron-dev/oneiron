@@ -19,6 +19,7 @@ use crate::authority::{CapabilitySlip, HostSlipIssuer, PairingLink, PendingInvit
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
+use crate::federation::setting_keys::SHARED_INVITATION_TTL;
 use crate::federation::{FederationGrantRole as Role, OrgAdminPower, SharedVaultWrite};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
@@ -27,7 +28,8 @@ use std::collections::BTreeSet;
 const INVITATION_PREFIX: &[u8] = b"shared-vault:invitation:v1:";
 /// `side_table::SHARED_VAULT_INVITATION_KEY`: the key an invitation's slips bind.
 const INVITATION_KEY_PREFIX: &[u8] = b"shared-vault:invitation-key:v1:";
-/// How long an invitation stays open on the store clock.
+/// How long an invitation stays open on the store clock until the owner sets
+/// another lifetime (the Setting key `federation.invitation.ttl_secs`).
 pub const SHARED_INVITATION_TTL_SECS: u64 = 14 * 24 * 60 * 60;
 
 #[doc(hidden)]
@@ -100,19 +102,29 @@ impl InvitationKeyBinding {
 }
 
 impl Vault {
+    /// `invitee`'s invitation `id` as stored: `None` when no row is stored,
+    /// else the row decoded (`Err` inside when it does not decode).
+    fn stored_invitation_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        invitee: EntityId,
+        id: &str,
+    ) -> Result<Option<Result<SharedInvitation>>> {
+        let id = EntityId::from_hex(id)?.to_hex();
+        Ok(self
+            .store
+            .vault_meta
+            .get(txn, &invitation_key(&invitee, &id))?
+            .map(|raw| decode(&raw)))
+    }
     fn invitation_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         invitee: EntityId,
         id: &str,
     ) -> Result<SharedInvitation> {
-        let id = EntityId::from_hex(id)?.to_hex();
-        let raw = self
-            .store
-            .vault_meta
-            .get(txn, &invitation_key(&invitee, &id))?
-            .ok_or_else(invalid)?;
-        decode(&raw)
+        self.stored_invitation_in_txn(txn, invitee, id)?
+            .ok_or_else(invalid)?
     }
     fn put_invitation_in_txn(
         &self,
@@ -210,6 +222,10 @@ impl Vault {
     /// `holder_key` is the key it records, and the independent credential
     /// that bound it, if one did, is live (FIX 8745). A slip minted to a key
     /// no binding records, or since replaced, does not.
+    ///
+    /// `Err` when the vault cannot answer: a failed read, or a stored
+    /// invitation or key binding row that does not decode. That is this
+    /// vault's fault, never the slip's refusal (RATCHET-9413 review round 2).
     pub(crate) fn invitation_slip_stands_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -217,23 +233,43 @@ impl Vault {
         id: &str,
         holder_key: &[u8; 32],
         now: u64,
-    ) -> bool {
-        let pending = self.invitation_in_txn(txn, invitee, id).is_ok_and(|open| {
-            open.state == SharedInvitationState::Pending
-                && !oneiron_store::expiry::is_expired(now, open.expires_at)
-        });
-        pending
-            && self
-                .invitation_key_binding_in_txn(txn, invitee, id)
-                .is_ok_and(|binding| {
-                    binding.is_some_and(|binding| {
-                        binding.holder_key == *holder_key
-                            && binding.source_slip.is_none_or(|source| {
-                                self.capability_slip_id_is_live_in_txn(txn, &source)
-                                    .unwrap_or(false)
-                            })
-                    })
-                })
+    ) -> Result<bool> {
+        // An id that does not parse names no invitation here.
+        let Ok(id) = EntityId::from_hex(id) else {
+            return Ok(false);
+        };
+        let id = id.to_hex();
+        let open = match self.stored_invitation_in_txn(txn, invitee, &id)? {
+            None => return Ok(false),
+            Some(open) => {
+                open.map_err(|_| crate::error::Error::CorruptedIndex("shared invitation"))?
+            }
+        };
+        if open.state != SharedInvitationState::Pending
+            || oneiron_store::expiry::is_expired(now, open.expires_at)
+        {
+            return Ok(false);
+        }
+        let binding = match self.invitation_key_binding_in_txn(txn, invitee, &id) {
+            Ok(binding) => binding,
+            // The id parsed above, so this is the stored binding not decoding.
+            Err(crate::error::Error::InvalidConfig(_)) => {
+                return Err(crate::error::Error::CorruptedIndex(
+                    "shared invitation key binding",
+                ));
+            }
+            Err(error) => return Err(error),
+        };
+        let Some(binding) = binding else {
+            return Ok(false);
+        };
+        if binding.holder_key != *holder_key {
+            return Ok(false);
+        }
+        match binding.source_slip {
+            None => Ok(true),
+            Some(source) => self.capability_slip_id_is_live_in_txn(txn, &source),
+        }
     }
 
     /// `invitee`'s invitation `id`, open for a slip at `now`: into
@@ -281,7 +317,10 @@ impl Vault {
     /// The `add_member` effect: one pending invitation of `member` at `role`,
     /// refused while another of theirs to this vault is still open. `founding`
     /// marks the creation writer's own invitations. It names no key: the
-    /// invitee binds one ([`Vault::mint_invitation_slip`]).
+    /// invitee binds one ([`Vault::mint_invitation_slip`]). It stays open for
+    /// the owner's `federation.invitation.ttl_secs`, read in this writer
+    /// ([`SHARED_INVITATION_TTL_SECS`] until the owner sets another, never
+    /// under a second).
     pub(super) fn issue_invitation_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -295,6 +334,10 @@ impl Vault {
         if self.open_invitation_stands_in_txn(txn, vault_id, member, now)? {
             return Err(invalid());
         }
+        let ttl_secs = SHARED_INVITATION_TTL
+            .read_in_txn(self, txn, &[], None)?
+            .value
+            .max(1);
         let invitation = SharedInvitation {
             id: self.store.clock.entity_id()?.to_hex(),
             vault_id,
@@ -302,8 +345,8 @@ impl Vault {
             invitee: member.to_hex(),
             role,
             issued_at: now,
-            expires_at: oneiron_store::expiry::expires_at_checked(now, SHARED_INVITATION_TTL_SECS)
-                .ok_or_else(invalid)?,
+            // An owner's lifetime past the clock's end is one that never ends.
+            expires_at: oneiron_store::expiry::expires_at_saturating(now, ttl_secs),
             state: SharedInvitationState::Pending,
             founding,
         };

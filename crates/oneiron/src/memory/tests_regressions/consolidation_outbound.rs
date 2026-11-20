@@ -87,6 +87,7 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
             conversation_ref: EntityId::from_bytes([0x53; 16]).unwrap().to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 0,
                 WitnessAuthor::User,

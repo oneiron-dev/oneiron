@@ -415,6 +415,7 @@ fn fixture_config(host: EntityId) -> EventTypeConfig {
         booking_window_secs: 7 * 24 * 3_600,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: host,
@@ -429,6 +430,7 @@ fn fixture_config(host: EntityId) -> EventTypeConfig {
         }],
         flex_with_ordinary: false,
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     }
 }
 

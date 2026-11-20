@@ -128,7 +128,8 @@ pub(crate) use self::shallow::{merge_window_heads, strict_window_cut, tip_window
 pub(in crate::sync) use self::tombstones::apply_tombstone_to_indexed_window_doc;
 pub(crate) use self::tombstones::{
     CarrierRemoval, DeleteBearingUpdate, entity_carriers, export_tombstone_commit_delta,
-    mark_removed_carriers_first, publish_pending_tombstones,
+    forget_removed_carrier_records_in_txn, mark_removed_carriers_first, publish_pending_tombstones,
+    suppress_published_carriers_first,
 };
 pub use self::tombstones::{
     apply_tombstone_to_window_doc, rebuild_window_from_updates, replay_pending_tombstones,

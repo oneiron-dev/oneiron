@@ -154,6 +154,7 @@ fn on_record_witness_required_off_record_overlay_never_counts_even_after_close()
     let mut config = VaultConfig::default();
     config.failure_signals.export_opt_in = Some(true);
     let vault = crate::Vault::open(dir.path(), config)?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let session = vault
         .off_record_session_vault()
         .enter("failure-room", OffRecordBackendClass::Local)?;
@@ -209,7 +210,9 @@ fn opt_in_and_vault_isolation() -> Result<()> {
     let mut config = VaultConfig::default();
     config.failure_signals.export_opt_in = Some(true);
     let vault = crate::Vault::open(one.path(), config.clone())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let other = crate::Vault::open(two.path(), config)?;
+    other.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let id = on_record_diagnostic(&vault, 3601)?;
     vault.record_failure_signal(
         &vault.tier1_observation(id)?.expect("real producer"),
@@ -339,7 +342,9 @@ fn registered_system_and_platform_versions_are_stable_across_vaults_and_reopen()
     let mut config = VaultConfig::default();
     config.failure_signals.export_opt_in = Some(true);
     let vault = crate::Vault::open(one.path(), config.clone())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let other = crate::Vault::open(two.path(), config.clone())?;
+    other.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let (agent_ref, definition) = vault
         .get_seeded_agent_definition_by_logical_id("sys.default")?
         .expect("seeded system agent");
@@ -372,6 +377,7 @@ fn registered_system_and_platform_versions_are_stable_across_vaults_and_reopen()
     assert_eq!(first.detector_id.as_deref(), Some("consent.denied.v1"));
     drop(vault);
     let reopened = crate::Vault::open(one.path(), config)?;
+    reopened.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     assert!(
         reopened.tier1_observation(id_one)?.is_none(),
         "the open-vault witness must not persist"
@@ -414,6 +420,7 @@ fn retrieval_miss_uses_published_base_run_not_entity_impersonation() -> Result<(
     config.retrieval_telemetry_capture = true;
     config.failure_signals.export_opt_in = Some(true);
     let vault = crate::Vault::open(dir.path(), config)?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let run = crate::store::RetrievalRunRecord::new(
         crate::store::RetrievalRunId::now(),
         crate::store::RetrievalAction::Pipeline,
@@ -434,7 +441,8 @@ fn retrieval_miss_uses_published_base_run_not_entity_impersonation() -> Result<(
             .expect("retrieval producer"),
         input(FailureClassV1::MemoryMiss),
     )?;
-    assert_eq!(vault.export_tier1_failure_counts()?.len(), 1);
+    // Live counting (OF-380, FIX 2146): detector auto-count plus explicit public-door record = 2 rows.
+    assert_eq!(vault.export_tier1_failure_counts()?.len(), 2);
     vault.store.delete_retrieval_run(run.run_id)?;
     assert!(
         vault
@@ -460,6 +468,7 @@ fn a_long_running_vault_collects_dead_witnesses_and_keeps_live_ones() -> Result<
     config.retrieval_telemetry_capture = true;
     config.failure_signals.export_opt_in = Some(true);
     let vault = crate::Vault::open(dir.path(), config)?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let miss = |started_at| {
         crate::store::RetrievalRunRecord::new(
             crate::store::RetrievalRunId::now(),
@@ -539,6 +548,7 @@ fn real_retrieval_abstention_is_a_ledger_backed_failure_signal() -> Result<()> {
     config.retrieval_telemetry_capture = true;
     config.failure_signals.export_opt_in = Some(true);
     let vault = crate::Vault::open(dir.path(), config)?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let id = EntityId::now();
     vault
         .batch()
@@ -575,7 +585,8 @@ fn real_retrieval_abstention_is_a_ledger_backed_failure_signal() -> Result<()> {
             .expect("retrieval producer"),
         input(FailureClassV1::MemoryMiss),
     )?;
-    assert_eq!(vault.export_tier1_failure_counts()?.len(), 1);
+    // Live counting (OF-380, FIX 2146): detector auto-count plus explicit public-door record = 2 rows.
+    assert_eq!(vault.export_tier1_failure_counts()?.len(), 2);
     Ok(())
 }
 
@@ -586,11 +597,13 @@ fn failure_signals_consolidation_requires_base_receipt_not_caller_copy() -> Resu
     let mut config = VaultConfig::device();
     config.failure_signals.export_opt_in = Some(true);
     let vault = crate::Vault::open(dir.path(), config)?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let decision = GateDecisionRecord {
         version: 0,
         decision_id: GateDecisionId::now(),
         created_at: 3_601,
-        outcome: "denied".into(),
+        // UC-03 stage 1f (GATE-OUTCOME-DENIED-TWO-MEANINGS): engine Deny is "deny"; "denied" on a claim reads Rejected.
+        outcome: "deny".into(),
         reason_codes: vec!["gate.deny.dreamer_precommit.degenerate_output".into()],
         receipt_reasons: vec![],
         system_notices: vec![],
@@ -608,6 +621,7 @@ fn failure_signals_consolidation_requires_base_receipt_not_caller_copy() -> Resu
     vault.with_write_txn(|txn| vault.store.append_gate_decision_in_txn(txn, &decision))?;
     let receipt = crate::receipt::gate_decision_receipt(&decision);
     let ids = vault.project_receipt_tripwires("run", std::slice::from_ref(&receipt), 3_601)?;
+    // UC-03 stage 1f (GATE-OUTCOME-DENIED-TWO-MEANINGS): corrected Deny receipt now projects one observation.
     assert_eq!(ids.len(), 1);
     let observation = vault
         .tier1_observation(ids[0])?
@@ -621,7 +635,8 @@ fn failure_signals_consolidation_requires_base_receipt_not_caller_copy() -> Resu
     assert_eq!(forged_ids.len(), 1);
     assert_ne!(forged_ids[0], ids[0]);
     assert!(vault.tier1_observation(forged_ids[0])?.is_none());
-    assert_eq!(vault.export_tier1_failure_counts()?.len(), 1);
+    // Live counting (OF-380, FIX 2146): auto TaskFailure plus manual record = 2 rows (after Deny fix).
+    assert_eq!(vault.export_tier1_failure_counts()?.len(), 2);
     Ok(())
 }
 
@@ -631,6 +646,7 @@ fn public_door_counts_nine_classes_without_provenance_references() -> Result<()>
     let mut config = VaultConfig::default();
     config.failure_signals.export_opt_in = Some(true);
     let vault = crate::Vault::open(dir.path(), config)?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let id = on_record_diagnostic(&vault, 1)?;
     let observation = vault.tier1_observation(id)?.expect("real producer");
     for class in ALL {
@@ -713,6 +729,7 @@ fn a_failed_turn_exports_as_counts_never_its_text() -> Result<()> {
     config.retrieval_telemetry_capture = true;
     config.failure_signals.deployment = crate::config::failure_signals::DeploymentTier::Managed;
     let vault = crate::Vault::open(dir.path(), config)?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let actor = EntityId::from_bytes([0x61; 16])?;
     vault.put_entity(
         &actor,
@@ -728,6 +745,7 @@ fn a_failed_turn_exports_as_counts_never_its_text() -> Result<()> {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             occurred_at: 10,
             messages: vec![WitnessMessage {
                 id: None,
@@ -765,7 +783,8 @@ fn a_failed_turn_exports_as_counts_never_its_text() -> Result<()> {
     )?;
 
     let rows = vault.export_tier1_failure_counts()?;
-    assert_eq!(rows.iter().map(Tier1FailureCount::count).sum::<u64>(), 1);
+    // Live counting (OF-380, FIX 2146): detector auto-count plus explicit public-door record sums to 2.
+    assert_eq!(rows.iter().map(Tier1FailureCount::count).sum::<u64>(), 2);
     let wire = serde_json::to_string(&rows).expect("tier-1 export");
     assert!(
         !wire.contains(SENTINEL),

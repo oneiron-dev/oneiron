@@ -58,6 +58,7 @@ impl PublicBookingAvailability {
             visitor_tz: self.visitor_tz.clone(),
             constraint: None,
             session_ref,
+            duration_min: None,
         })
     }
 
@@ -138,6 +139,13 @@ impl BookingPagePublication {
             {
                 return Err("public booking configuration hash must be a BLAKE3 digest");
             }
+            if let Some(defect) = event
+                .deposit
+                .as_ref()
+                .and_then(crate::booking::DepositTerms::defect)
+            {
+                return Err(defect);
+            }
             if event.key.0.trim().is_empty()
                 || event.title.trim().is_empty()
                 || event.duration_min == 0
@@ -148,6 +156,12 @@ impl BookingPagePublication {
                 return Err(
                     "public booking event cards must have unique keys, titles and durations",
                 );
+            }
+            if let Some(defect) = crate::booking::config::allowed_durations_defect(
+                &event.allowed_durations_min,
+                event.duration_min,
+            ) {
+                return Err(defect);
             }
         }
         if !self
@@ -366,8 +380,19 @@ fn load_public_booking_page_listed_in_txn(
             }
         };
         if u32::from(config.duration_min) != card.duration_min
+            || !config
+                .allowed_durations_min
+                .iter()
+                .map(|minutes| u32::from(*minutes))
+                .eq(card.allowed_durations_min.iter().copied())
             || value.event_config_hashes.get(&card.key.0) != Some(&booking_config_hash(&config)?)
         {
+            return Ok(None);
+        }
+        // The deposit a visitor reads on the card is the one confirm will
+        // ask (BK-DEPOSITS): a card whose terms drifted from its
+        // configuration is a stale page, as a drifted duration is.
+        if config.deposit != card.deposit {
             return Ok(None);
         }
     }

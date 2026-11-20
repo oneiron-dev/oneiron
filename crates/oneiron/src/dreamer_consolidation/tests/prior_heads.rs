@@ -8,7 +8,6 @@ use std::future::Future;
 struct Fixture {
     attempt: crate::dreamer_runner::DreamerAdmittedAttempt,
     turn: EntityId,
-    turns: Vec<EntityId>,
     subject: EntityId,
     head: EntityId,
     scope: Scope,
@@ -170,14 +169,20 @@ fn fixture_in_project(
     project: EntityId,
     nested: bool,
 ) -> Result<Fixture> {
-    fixture_with(
+    let named =
+        super::super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?;
+    let mut fx = fixture_with(
         vault,
         (source, ClaimApprovalStatus::Approved),
         project,
         nested,
-        b"person",
+        &named,
         &[("user", "my name is Owen")],
-    )
+    )?;
+    fx.scope
+        .readable
+        .insert(document_version(fx.subject, &named));
+    Ok(fx)
 }
 
 /// The Dreamer's own unvetted head, `Generated` and `Auto`, about a person
@@ -301,7 +306,6 @@ fn fixture_with(
     Ok(Fixture {
         attempt,
         turn: turns[0],
-        turns,
         subject,
         head,
         scope,
@@ -362,11 +366,11 @@ fn execute_at_pin<'a>(
     ))
 }
 
-fn extract(fx: &Fixture, value: &str) -> crate::LlmResponse {
+fn extract(_fx: &Fixture, value: &str) -> crate::LlmResponse {
     text_response(
         serde_json::json!({"candidates": [{
-            "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": value,
-            "evidence_refs": [{"source_id":fx.turn.to_hex(), "byte_range":[0,1]}], "confidence": 0.8,
+            "subject": "P1", "predicate": "profile.name", "value": value,
+            "evidence_refs": [{"source": "T1", "quote": "Owen"}], "confidence": 0.8,
         }]})
         .to_string(),
     )
@@ -377,10 +381,36 @@ fn extract(fx: &Fixture, value: &str) -> crate::LlmResponse {
 fn correct(fx: &Fixture, value: &str) -> crate::LlmResponse {
     text_response(
         serde_json::json!({"candidates": [{
-            "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": value,
+            "subject": "P1", "predicate": "profile.name", "value": value,
             "corrects": fx.head.to_hex(), "confidence": 0.9,
-            "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
+            "evidence_refs": [{"source": "T1", "quote": "Owen"}],
         }]})
+        .to_string(),
+    )
+}
+
+fn pack_none() -> crate::LlmResponse {
+    text_response(serde_json::json!({"Q1": {"none": 1.0, "C1": 0.0}}).to_string())
+}
+
+fn pack_correct() -> crate::LlmResponse {
+    text_response(serde_json::json!({"Q1": {"none": 0.0, "C1": 1.0}}).to_string())
+}
+
+fn pack_none_two_heads() -> crate::LlmResponse {
+    text_response(serde_json::json!({"Q1": {"none": 1.0, "C1": 0.0, "C2": 0.0}}).to_string())
+}
+
+fn pack_correct_two_heads() -> crate::LlmResponse {
+    text_response(serde_json::json!({"Q1": {"none": 0.0, "C1": 1.0, "C2": 0.0}}).to_string())
+}
+
+fn pack_correct_then_none() -> crate::LlmResponse {
+    text_response(
+        serde_json::json!({
+            "Q1": {"none": 0.0, "C1": 1.0},
+            "Q2": {"none": 1.0, "C1": 0.0},
+        })
         .to_string(),
     )
 }
@@ -511,21 +541,21 @@ fn pinned_extraction_persists_parent_verified_locators_taint_and_integrity_marke
     let expected_hash = swarm_evidence_content_hash(&text.as_bytes()[range_start..range_end]);
     let reply = text_response(
         serde_json::json!({"candidates":[{
-            "subject": fx.subject.to_hex(), "predicate":"profile.nickname",
+            "subject": "P1", "predicate":"profile.nickname",
             "value":"Lex", "confidence":0.8,
             "evidence_refs":[
-                {"source_id":fx.turn.to_hex(),"byte_range":[range_start,range_end]},
-                {"source_id":fx.turn.to_hex(),"byte_range":[range_start,range_end]},
-                {"source_id":fx.head.to_hex(),"claim_id":fx.head.to_hex()}
+                {"source": "T1", "quote": "☕"},
+                {"source": "T1", "quote": "☕"},
+                {"claim": "C1"}
             ],
             "evidence_hashes":{
-                fx.turn.to_hex():"00".repeat(32),
-                fx.head.to_hex():"11".repeat(32)
+                "T1":"00".repeat(32),
+                "C1":"11".repeat(32)
             }
         }]})
         .to_string(),
     );
-    let backend = ScriptedBackend::new(vec![Ok(reply)]);
+    let backend = ScriptedBackend::new(vec![Ok(reply), Ok(pack_none())]);
     let guard = crate::BudgetGuard::with_reserve_units(
         "wake",
         10_000,
@@ -658,13 +688,14 @@ fn exact_persisted_head_attaches_evidence_without_judge_or_duplicate_and_survive
     let (dir, vault) = open_vault();
     let fx = fixture(&vault)?;
     let before = vault.get_raw(&fx.head)?.expect("head");
-    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen"))]);
+    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen")), Ok(pack_none())]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
     assert!(matches!(
         execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?,
         DreamerAttemptExecution::Completed { .. }
     ));
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 1); // extraction only
+    // T1-only evidence asks the correction pack before exact-head attachment.
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
     assert_eq!(sink.outcome.landed, vec![fx.head]);
     assert_eq!(vault.get_raw(&fx.head)?.as_ref(), Some(&before));
     assert_eq!(names(&vault, fx.subject)?, vec![fx.head]);
@@ -693,7 +724,7 @@ fn exact_persisted_head_attaches_evidence_without_judge_or_duplicate_and_survive
         execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?,
         DreamerAttemptExecution::Completed { .. }
     ));
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
     drop(sink);
     drop(vault);
     let vault = Vault::open(dir.path(), VaultConfig::device())?;
@@ -719,7 +750,7 @@ fn an_evidence_attachment_counts_on_the_agents_auto_write_rate() -> Result<()> {
     let kind = crate::own_rate::OwnRateKind::AutoWrite;
     assert!(vault.own_rate_check(actor, kind)?.is_none());
     crate::own_rate::set_auto_write_threshold_for_test(Some(0));
-    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen"))]);
+    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen")), Ok(pack_none())]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
     let executed = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone());
     crate::own_rate::set_auto_write_threshold_for_test(None);
@@ -758,7 +789,7 @@ fn project_bound_branch_never_relabels_default_project_evidence() -> Result<()> 
     scope
         .writable
         .insert(super::super::gap::branch_gap_projection(&queued, &scope));
-    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen"))]);
+    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen")), Ok(pack_none())]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
     assert!(matches!(
         execute(&vault, &fx, &backend, &mut sink, scope)?,
@@ -803,7 +834,7 @@ fn project_local_exact_head_attachment_keeps_its_provenance_in_the_project() -> 
         let project = EntityId::now();
         let fx = fixture_in_project(&vault, ClaimSource::UserStated, project, nested)?;
         let before = vault.get_raw(&fx.head)?.expect("head");
-        let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen"))]);
+        let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen")), Ok(pack_none())]);
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
         assert!(matches!(
             execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?,
@@ -955,7 +986,7 @@ fn a_replay_closes_no_conflict_for_a_replacement_that_no_longer_stands() -> Resu
         let (_dir, vault) = open_vault();
         let fx = fixture_with_head_source(&vault, ClaimSource::Generated)?;
         single_valued_names(&vault)?;
-        let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Alex"))]);
+        let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Alex")), Ok(pack_correct())]);
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
         execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())
             .unwrap_or_else(|error| panic!("the pass refused: {error}; {:?}", sink.outcome));
@@ -972,7 +1003,7 @@ fn a_replay_closes_no_conflict_for_a_replacement_that_no_longer_stands() -> Resu
         if replay == Replay::Retracted {
             vault.retract_claim(&new, fx.run.now_ms + 1)?;
         }
-        let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Alex"))]);
+        let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Alex")), Ok(pack_correct())]);
         let inner = PromotionWriterSink::new(&vault, fx.run.clone());
         let (result, outcome) = if replay == Replay::SourceMoved {
             let mut sink = DriftSink {
@@ -1018,7 +1049,7 @@ fn a_correction_the_policy_allows_lands_with_its_grant_and_closes_its_conflict_o
         // An earlier pass left the question open against the head.
         let marker = open_conflict_on_head(&vault, &fx)?;
         let script = || {
-            let mut script = vec![Ok(extract(&fx, "Alex"))];
+            let mut script = vec![Ok(extract(&fx, "Alex")), Ok(pack_correct())];
             if !fast_path {
                 script.push(Ok(text_response(
                     "{\"resolution\":\"merge\",\"value\":\"Alex\"}".into(),
@@ -1108,9 +1139,19 @@ fn each_dreamer_role_calls_its_own_backend() -> Result<()> {
     let (_dir, vault) = open_vault();
     let fx = fixture_with_head_source(&vault, ClaimSource::Generated)?;
     let extractor = std::sync::Arc::new(ScriptedBackend::new(vec![Ok(extract(&fx, "Alex"))]));
-    let judge = std::sync::Arc::new(ScriptedBackend::new(vec![Ok(text_response(
-        "{\"resolution\":\"merge\",\"value\":\"Alex\"}".into(),
-    ))]));
+    let judge = std::sync::Arc::new(ScriptedBackend::new(vec![
+        Ok(pack_none()),
+        Ok(text_response(
+            serde_json::json!({
+                "Q1": {"merge": 1.0, "supersede": 0.0, "accumulate": 0.0, "escalate": 0.0},
+                "Q2": {"none": 1.0, "C1": 0.0},
+            })
+            .to_string(),
+        )),
+        Ok(text_response(
+            serde_json::json!({"value": "Alex"}).to_string(),
+        )),
+    ]));
     let unrouted = ScriptedBackend::new(Vec::new());
     let routed = |backend: std::sync::Arc<ScriptedBackend>, model: &str| {
         let model = crate::ModelId::new(model).expect("model");
@@ -1173,11 +1214,12 @@ fn each_dreamer_role_calls_its_own_backend() -> Result<()> {
         "{execution:?}"
     );
     assert_eq!(extractor.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(judge.calls.load(Ordering::SeqCst), 1);
+    // Extraction uses extractor; correction, conflict and value use judge in order.
+    assert_eq!(judge.calls.load(Ordering::SeqCst), 3);
     assert_eq!(unrouted.calls.load(Ordering::SeqCst), 0);
     let models = |backend: &ScriptedBackend| backend.models();
     assert_eq!(models(&extractor), vec!["test/extractor@r1".to_owned()]);
-    assert_eq!(models(&judge), vec!["test/judge@r1".to_owned()]);
+    assert_eq!(models(&judge), vec!["test/judge@r1".to_owned(); 3]);
     Ok(())
 }
 
@@ -1202,10 +1244,19 @@ fn a_protected_correction_stays_proposed(declared_critical: bool) -> Result<()> 
     } else {
         fixture_with_head_source(&vault, ClaimSource::UserStated)?
     };
+    // Extraction, correction, then conflict and value only for the user-stated head.
     let backend = ScriptedBackend::new(vec![
         Ok(extract(&fx, "Alex")),
+        Ok(pack_correct()),
         Ok(text_response(
-            "{\"resolution\":\"merge\",\"value\":\"Alex\"}".into(),
+            serde_json::json!({
+                "Q1": {"merge": 1.0, "supersede": 0.0, "accumulate": 0.0, "escalate": 0.0},
+                "Q2": {"none": 1.0, "C1": 0.0},
+            })
+            .to_string(),
+        )),
+        Ok(text_response(
+            serde_json::json!({"value": "Alex"}).to_string(),
         )),
     ]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
@@ -1262,9 +1313,9 @@ fn a_correction_on_an_unregistered_predicate_lands_with_its_grant() -> Result<()
         DreamerConsolidationScope::Micro,
         Some(&fx.scope),
     )?;
-    // A bound correction makes no verdict call: a second call would find
+    // A bound correction makes no verdict call: a third call would find
     // the script empty.
-    let backend = ScriptedBackend::new(vec![Ok(correct(&fx, "Alex"))]);
+    let backend = ScriptedBackend::new(vec![Ok(correct(&fx, "Alex")), Ok(pack_correct())]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
     execute_at_pin(
         &vault,
@@ -1310,7 +1361,7 @@ fn a_granted_correction_counts_on_the_agents_auto_write_rate() -> Result<()> {
         DreamerConsolidationScope::Micro,
         Some(&fx.scope),
     )?;
-    let backend = ScriptedBackend::new(vec![Ok(correct(&fx, "Alex"))]);
+    let backend = ScriptedBackend::new(vec![Ok(correct(&fx, "Alex")), Ok(pack_correct())]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
     crate::own_rate::set_auto_write_threshold_for_test(Some(0));
     let pass = execute_at_pin(
@@ -1357,9 +1408,9 @@ fn a_correction_closes_the_dreamers_own_unvetted_claim() -> Result<()> {
         DreamerConsolidationScope::Micro,
         Some(&fx.scope),
     )?;
-    // A bound correction makes no verdict call: a second call would find
+    // A bound correction makes no verdict call: a third call would find
     // the script empty.
-    let backend = ScriptedBackend::new(vec![Ok(correct(&fx, "Alex"))]);
+    let backend = ScriptedBackend::new(vec![Ok(correct(&fx, "Alex")), Ok(pack_correct())]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
     let execution = execute_at_pin(
         &vault,
@@ -1413,6 +1464,7 @@ fn a_bound_correction_replaces_its_head_with_no_verdict_call() -> Result<()> {
     )?;
     let backend = ScriptedBackend::new(vec![
         Ok(correct(&fx, "Alex")),
+        Ok(pack_correct()),
         Ok(text_response("{\"resolution\":\"escalate\"}".into())),
     ]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
@@ -1424,7 +1476,12 @@ fn a_bound_correction_replaces_its_head_with_no_verdict_call() -> Result<()> {
         fx.scope.clone(),
         Some(&pin),
     )?;
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 1, "no verdict call");
+    // The named Auto head is correctable: extraction, then the correction pack, then the bound correction skips the verdict.
+    assert_eq!(
+        backend.calls.load(Ordering::SeqCst),
+        2,
+        "extraction + correction, no verdict"
+    );
     let [new] = sink.outcome.landed.as_slice() else {
         panic!("one granted replacement: {:?}", sink.outcome);
     };
@@ -1461,14 +1518,14 @@ fn a_correction_that_shares_its_head_still_takes_the_verdict_call() -> Result<()
             text_response(
                 serde_json::json!({"candidates": [
                     {
-                        "subject": fx.subject.to_hex(), "predicate": "profile.name",
+                        "subject": "P1", "predicate": "profile.name",
                         "value": "Alex", "corrects": fx.head.to_hex(), "confidence": 0.9,
-                        "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
+                        "evidence_refs": [{"source": "T1", "quote": "Owen"}],
                     },
                     {
-                        "subject": fx.subject.to_hex(), "predicate": "profile.name",
+                        "subject": "P1", "predicate": "profile.name",
                         "value": "Owen", "confidence": 0.9,
-                        "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
+                        "evidence_refs": [{"source": "T1", "quote": "Owen"}],
                     },
                 ]})
                 .to_string(),
@@ -1479,9 +1536,21 @@ fn a_correction_that_shares_its_head_still_takes_the_verdict_call() -> Result<()
             DreamerConsolidationScope::Micro,
             Some(&fx.scope),
         )?;
+        let pack = if second_head {
+            pack_correct_two_heads()
+        } else {
+            pack_correct_then_none()
+        };
         let backend = ScriptedBackend::new(vec![
             Ok(extraction),
-            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+            Ok(pack),
+            Ok(text_response(
+                serde_json::json!({
+                    "Q1": {"merge": 0.0, "supersede": 0.0, "accumulate": 1.0, "escalate": 0.0},
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
+                .to_string(),
+            )),
         ]);
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
         execute_at_pin(
@@ -1492,9 +1561,10 @@ fn a_correction_that_shares_its_head_still_takes_the_verdict_call() -> Result<()
             fx.scope.clone(),
             Some(&pin),
         )?;
+        // Extraction, correction, then the conflict pack; no value call.
         assert_eq!(
             backend.calls.load(Ordering::SeqCst),
-            2,
+            3,
             "the verdict was asked (second head: {second_head})"
         );
         assert_eq!(
@@ -1515,13 +1585,24 @@ fn a_verdict_that_names_no_value_parks_and_writes_nothing() -> Result<()> {
         let fx = fixture_with_head_source(&vault, ClaimSource::Generated)?;
         let backend = ScriptedBackend::new(vec![
             Ok(extract(&fx, "Alex")),
+            Ok(pack_none()),
             Ok(text_response(
-                serde_json::json!({"resolution": resolution}).to_string(),
+                serde_json::json!({
+                    "Q1": {
+                        "merge": if resolution == "merge" { 1.0 } else { 0.0 },
+                        "supersede": if resolution == "supersede" { 1.0 } else { 0.0 },
+                        "accumulate": 0.0, "escalate": 0.0,
+                    },
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
+                .to_string(),
             )),
+            Ok(text_response("{}".into())),
         ]);
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
         execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
-        assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
+        // Extraction, correction, conflict decision, then the missing merge value.
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 4);
         assert_eq!(names(&vault, fx.subject)?, vec![fx.head], "{resolution}");
         let bodies = vault
             .claims_for_subject(&fx.subject)?
@@ -1562,8 +1643,16 @@ fn a_bound_correction_of_a_user_stated_claim_is_judged_by_the_source_doors() -> 
     )?;
     let backend = ScriptedBackend::new(vec![
         Ok(correct(&fx, "Alex")),
+        Ok(pack_correct()),
         Ok(text_response(
-            "{\"resolution\":\"supersede\",\"value\":\"Alex\"}".into(),
+            serde_json::json!({
+                "Q1": {"merge": 0.0, "supersede": 1.0, "accumulate": 0.0, "escalate": 0.0},
+                "Q2": {"none": 1.0, "C1": 0.0},
+            })
+            .to_string(),
+        )),
+        Ok(text_response(
+            serde_json::json!({"value": "Alex"}).to_string(),
         )),
     ]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
@@ -1575,9 +1664,10 @@ fn a_bound_correction_of_a_user_stated_claim_is_judged_by_the_source_doors() -> 
         fx.scope.clone(),
         Some(&pin),
     )?;
+    // Extraction, correction, conflict, then the superseding value.
     assert_eq!(
         backend.calls.load(Ordering::SeqCst),
-        2,
+        4,
         "the verdict was asked"
     );
     assert!(sink.outcome.landed.is_empty(), "{:?}", sink.outcome);
@@ -1610,7 +1700,7 @@ fn a_held_restatement_keeps_its_head_on_the_verdict_path() -> Result<()> {
     let fx = named_fixture(
         &vault,
         (ClaimSource::Generated, ClaimApprovalStatus::Auto),
-        &[("user", "my name is Owen"), ("user", "call me Alex")],
+        &[("user", "my name is Owen"), ("user", "call me Alex Owen")],
     )?;
     let pin = PreparedWake::capture_with_grants(
         &vault,
@@ -1622,28 +1712,33 @@ fn a_held_restatement_keeps_its_head_on_the_verdict_path() -> Result<()> {
         evidence_minimum: 2,
         ..Default::default()
     })?;
-    let refs = |turns: &[EntityId]| {
-        turns
-            .iter()
-            .map(|turn| serde_json::json!({"source_id": turn.to_hex(), "byte_range": [0, 1]}))
-            .collect::<Vec<_>>()
-    };
     let backend = ScriptedBackend::new(vec![
         Ok(text_response(
             serde_json::json!({"candidates": [
                 {
-                    "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": "Alex",
+                    "subject": "P1", "predicate": "profile.name", "value": "Alex",
                     "corrects": fx.head.to_hex(), "confidence": 0.9,
-                    "evidence_refs": refs(&fx.turns),
+                    "evidence_refs": [
+                        {"source": "T1", "quote": "Owen"},
+                        {"source": "T2", "quote": "Alex"},
+                    ],
                 },
                 {
-                    "subject": fx.subject.to_hex(), "predicate": "profile.name",
-                    "value": "Owen", "confidence": 0.9, "evidence_refs": refs(&fx.turns[..1]),
+                    "subject": "P1", "predicate": "profile.name",
+                    "value": "Owen", "confidence": 0.9,
+                    "evidence_refs": [{"source": "T1", "quote": "Owen"}],
                 },
             ]})
             .to_string(),
         )),
-        Ok(text_response("{\"resolution\":\"escalate\"}".into())),
+        Ok(pack_correct_then_none()),
+        Ok(text_response(
+            serde_json::json!({
+                "Q1": {"merge": 0.0, "supersede": 0.0, "accumulate": 0.0, "escalate": 1.0},
+                "Q2": {"none": 1.0, "C1": 0.0},
+            })
+            .to_string(),
+        )),
     ]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
     execute_at_pin(
@@ -1654,9 +1749,10 @@ fn a_held_restatement_keeps_its_head_on_the_verdict_path() -> Result<()> {
         fx.scope.clone(),
         Some(&pin),
     )?;
+    // Extraction, correction, then the conflict pack; no value call.
     assert_eq!(
         backend.calls.load(Ordering::SeqCst),
-        2,
+        3,
         "the verdict was asked"
     );
     assert_eq!(
@@ -1681,9 +1777,9 @@ fn a_correction_that_names_no_value_writes_nothing() -> Result<()> {
             Some(&fx.scope),
         )?;
         let mut item = serde_json::json!({
-            "subject": fx.subject.to_hex(), "predicate": "profile.name",
+            "subject": "P1", "predicate": "profile.name",
             "corrects": fx.head.to_hex(), "confidence": 0.9,
-            "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
+            "evidence_refs": [{"source": "T1", "quote": "Owen"}],
         });
         if let Some(value) = &value {
             item["value"] = value.clone();
@@ -1728,7 +1824,34 @@ fn a_correction_that_names_no_value_writes_nothing() -> Result<()> {
 #[test]
 fn a_correction_of_a_head_the_listing_did_not_show_asks_the_verdict() -> Result<()> {
     let (_dir, vault) = open_vault();
-    let fx = fixture_with_head_source(&vault, ClaimSource::Generated)?;
+    let fx = named_fixture(
+        &vault,
+        (ClaimSource::Generated, ClaimApprovalStatus::Approved),
+        &[("user", "my name is Owen")],
+    )?;
+    // Pin a subject-only listing: withhold the head for one run, so the wake lists P1 but not the head.
+    let mut subject_only = fx.scope.clone();
+    let head_pin = document_version(fx.head, &vault.get(&fx.head)?.expect("head body"));
+    subject_only.readable.remove(&head_pin);
+    subject_only.writable.remove(&head_pin);
+    let prime = ReasoningBackend {
+        inner: ScriptedBackend::new(vec![Ok(extract(&fx, "Owen"))]),
+        requests: Mutex::new(Vec::new()),
+    };
+    let mut prime_sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    assert!(matches!(
+        execute(&vault, &fx, &prime, &mut prime_sink, subject_only)?,
+        DreamerAttemptExecution::Completed { .. }
+    ));
+    assert_eq!(prime.inner.calls.load(Ordering::SeqCst), 1);
+    let prime_prompt: String = prime.requests.lock().unwrap()[0]
+        .messages
+        .iter()
+        .map(message_text)
+        .collect();
+    assert!(prime_prompt.contains("entity P1"), "{prime_prompt}");
+    assert!(!prime_prompt.contains("claim C1"), "{prime_prompt}");
+    // The head is held by its scope pin alone: P1 resolves, no correction is asked, the verdict judges.
     let backend = ScriptedBackend::new(vec![
         Ok(correct(&fx, "Alex")),
         Ok(text_response("{\"resolution\":\"escalate\"}".into())),
@@ -1849,21 +1972,29 @@ fn a_head_an_earlier_branch_closed_is_counted_and_the_next_branch_still_runs() -
             .read_receipt()?;
         let item = if corrects {
             serde_json::json!({
-                "subject": person.to_hex(), "predicate": "residence.city", "value": "Porto",
+                "subject": "P1", "predicate": "residence.city", "value": "Porto",
                 "corrects": head.to_hex(), "confidence": 0.9,
-                "evidence_refs": [{"source_id": turn.to_hex(), "byte_range": [0, 1]}],
+                "evidence_refs": [{"source": "T1", "quote": "Porto"}],
             })
         } else {
             serde_json::json!({
-                "subject": person.to_hex(), "predicate": "music.instrument", "value": "viola",
+                "subject": "P1", "predicate": "music.instrument", "value": "viola",
                 "confidence": 0.9,
-                "evidence_refs": [{"source_id": turn.to_hex(), "byte_range": [0, 1]}],
+                "evidence_refs": [{"source": "T1", "quote": "viola"}],
             })
         };
+        let pack = if corrects {
+            pack_correct()
+        } else {
+            pack_none()
+        };
         let backend = JudgeBackend {
-            inner: ScriptedBackend::new(vec![Ok(text_response(
-                serde_json::json!({ "candidates": [item] }).to_string(),
-            ))]),
+            inner: ScriptedBackend::new(vec![
+                Ok(text_response(
+                    serde_json::json!({ "candidates": [item] }).to_string(),
+                )),
+                Ok(pack),
+            ]),
             requests: Mutex::new(Vec::new()),
         };
         let run = DreamerRunContext {
@@ -1904,7 +2035,11 @@ fn a_head_an_earlier_branch_closed_is_counted_and_the_next_branch_still_runs() -
             matches!(done, DreamerAttemptExecution::Completed { .. }),
             "corrects {corrects}: {done:?}"
         );
-        assert_eq!(backend.inner.calls.load(Ordering::SeqCst), 1);
+        // Only the branch that still shows the head asks the correction pack.
+        assert_eq!(
+            backend.inner.calls.load(Ordering::SeqCst),
+            if corrects { 2 } else { 1 }
+        );
         assert_eq!(
             sink.outcome.landed.len(),
             1,
@@ -1920,7 +2055,8 @@ fn a_head_an_earlier_branch_closed_is_counted_and_the_next_branch_still_runs() -
                 _ => None,
             })
             .collect();
-        seen.push((prompt.contains(&head.to_hex()), opened));
+        // The listing shows the head as `claim C1 residence.city`, never its hex id.
+        seen.push((prompt.contains("claim C1 residence.city"), opened));
     }
     assert_eq!(
         vault.get_claim(&head)?.expect("closed").lifecycle,
@@ -1960,20 +2096,23 @@ fn nothing_attaches_to_an_unvetted_claim_and_it_corroborates_nothing() -> Result
         )?;
         let candidate = if cite {
             serde_json::json!({
-                "subject": fx.subject.to_hex(), "predicate": "profile.nickname", "value": "Ollie",
+                "subject": "P1", "predicate": "profile.nickname", "value": "Ollie",
                 "confidence": 0.9,
-                "evidence_refs": [{"source_id": fx.head.to_hex(), "claim_id": fx.head.to_hex()}],
+                "evidence_refs": [{"claim": "C1"}],
             })
         } else {
             serde_json::json!({
-                "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": "Owen",
+                "subject": "P1", "predicate": "profile.name", "value": "Owen",
                 "confidence": 0.9,
-                "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
+                "evidence_refs": [{"source": "T1", "quote": "Owen"}],
             })
         };
-        let backend = ScriptedBackend::new(vec![Ok(text_response(
-            serde_json::json!({ "candidates": [candidate] }).to_string(),
-        ))]);
+        let backend = ScriptedBackend::new(vec![
+            Ok(text_response(
+                serde_json::json!({ "candidates": [candidate] }).to_string(),
+            )),
+            Ok(pack_none()),
+        ]);
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
         let execution = execute_at_pin(
             &vault,
@@ -2021,7 +2160,7 @@ fn a_replay_after_writing_about_a_listed_person_never_calls_again() -> Result<()
     let actor = vault.dreamer_authority()?;
     policy(&vault, actor.entity_ref(), true)?;
     let store = DreamerRunnerStore::new(&vault);
-    let (admitted, turns, _) = admitted_attempt_fixture(
+    let (admitted, _, _) = admitted_attempt_fixture(
         &vault,
         &store,
         0x5A,
@@ -2054,14 +2193,17 @@ fn a_replay_after_writing_about_a_listed_person_never_calls_again() -> Result<()
             2,
         )
         .commit()?;
-    let backend = ScriptedBackend::new(vec![Ok(text_response(
-        serde_json::json!({"candidates": [{
-            "subject": person.to_hex(), "predicate": "residence.city", "value": "Lisbon",
-            "confidence": 0.9,
-            "evidence_refs": [{"source_id": turns[0].to_hex(), "byte_range": [0, 1]}],
-        }]})
-        .to_string(),
-    ))]);
+    let backend = ScriptedBackend::new(vec![
+        Ok(text_response(
+            serde_json::json!({"candidates": [{
+                "subject": "P1", "predicate": "residence.city", "value": "Lisbon",
+                "confidence": 0.9,
+                "evidence_refs": [{"source": "T1", "quote": "Lisbon"}],
+            }]})
+            .to_string(),
+        )),
+        Ok(pack_none()),
+    ]);
     let run = DreamerRunContext {
         run_id: admitted.status.attempt.run_id.clone().expect("queued run"),
         attempt_id: admitted.status.attempt.id,
@@ -2133,15 +2275,15 @@ fn saved_execution_scope_pins_claim_across_retry_wakes() -> Result<()> {
     })?;
     let response = text_response(
         serde_json::json!({"candidates":[{
-            "subject":fx.subject.to_hex(), "predicate":"profile.nickname", "value":"Lex",
+            "subject":"P1", "predicate":"profile.nickname", "value":"Lex",
             "confidence": 0.5, "evidence_refs":[
-                {"source_id":fx.turn.to_hex(),"byte_range":[0,1]},
-                {"source_id":fx.head.to_hex(),"claim_id":fx.head.to_hex()}
+                {"source": "T1", "quote": "Owen"},
+                {"claim": "C1"}
             ]
         }]})
         .to_string(),
     );
-    let first_backend = ScriptedBackend::new(vec![Ok(response.clone())]);
+    let first_backend = ScriptedBackend::new(vec![Ok(response.clone()), Ok(pack_none())]);
     let first_pin = PreparedWake::capture_with_grants(
         &vault,
         DreamerConsolidationScope::Micro,
@@ -2202,7 +2344,7 @@ fn saved_execution_scope_pins_claim_across_retry_wakes() -> Result<()> {
         evidence_minimum: 2,
         ..Default::default()
     })?;
-    let second_backend = ScriptedBackend::new(vec![Ok(response)]);
+    let second_backend = ScriptedBackend::new(vec![Ok(response), Ok(pack_none())]);
     let guard = crate::BudgetGuard::with_reserve_units(
         "wake",
         10_000,
@@ -2282,16 +2424,19 @@ fn wrapper_first_wake_consumes_explicit_host_claim_scope() -> Result<()> {
         evidence_minimum: 2,
         ..Default::default()
     })?;
-    let backend = ScriptedBackend::new(vec![Ok(text_response(
-        serde_json::json!({"candidates":[{
-            "subject":fx.subject.to_hex(), "predicate":"profile.nickname", "value":"Lex",
-            "confidence": 0.5, "evidence_refs":[
-                {"source_id":fx.turn.to_hex(),"byte_range":[0,1]},
-                {"source_id":fx.head.to_hex(),"claim_id":fx.head.to_hex()}
-            ]
-        }]})
-        .to_string(),
-    ))]);
+    let backend = ScriptedBackend::new(vec![
+        Ok(text_response(
+            serde_json::json!({"candidates":[{
+                "subject":"P1", "predicate":"profile.nickname", "value":"Lex",
+                "confidence": 0.5, "evidence_refs":[
+                    {"source": "T1", "quote": "Owen"},
+                    {"claim": "C1"}
+                ]
+            }]})
+            .to_string(),
+        )),
+        Ok(pack_none()),
+    ]);
     let guard = crate::BudgetGuard::with_reserve_units(
         "wake",
         10_000,
@@ -2351,7 +2496,8 @@ fn wrapper_first_wake_consumes_explicit_host_claim_scope() -> Result<()> {
     };
     drop(wrapper);
     assert_eq!(report.completed, 1);
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    // The nickname does not reinforce the listed name, so correction is a separate read.
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
     let [written] = sink.outcome.landed.as_slice() else {
         panic!("one host-scoped claim")
     };
@@ -2428,13 +2574,13 @@ fn pinned_exact_head_attachment_retains_visible_range_and_original_head() -> Res
     )?;
     let response = text_response(
         serde_json::json!({"candidates":[{
-            "subject":fx.subject.to_hex(), "predicate":"profile.name", "value":"Owen",
+            "subject":"P1", "predicate":"profile.name", "value":"Owen",
             "confidence":0.8,
-            "evidence_refs":[{"source_id":fx.turn.to_hex(), "byte_range":[start,end]}]
+            "evidence_refs":[{"source": "T1", "quote": "Owen"}]
         }]})
         .to_string(),
     );
-    let backend = ScriptedBackend::new(vec![Ok(response)]);
+    let backend = ScriptedBackend::new(vec![Ok(response), Ok(pack_none())]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
     assert!(matches!(
         execute_at_pin(
@@ -2786,17 +2932,24 @@ fn different_value_consults_one_prior_and_outage_leaves_original_and_open_confli
         let judge = if outage {
             Err(crate::LlmError::Fatal(crate::FatalLlmError::InvalidRequest))
         } else {
-            Ok(text_response("{\"resolution\":\"accumulate\"}".into()))
+            Ok(text_response(
+                serde_json::json!({
+                    "Q1": {"merge": 0.0, "supersede": 0.0, "accumulate": 1.0, "escalate": 0.0},
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
+                .to_string(),
+            ))
         };
         let backend = JudgeBackend {
-            inner: ScriptedBackend::new(vec![Ok(extract(&fx, "Alex")), judge]),
+            inner: ScriptedBackend::new(vec![Ok(extract(&fx, "Alex")), Ok(pack_none()), judge]),
             requests: Mutex::new(Vec::new()),
         };
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
         let result = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
-        assert_eq!(backend.inner.calls.load(Ordering::SeqCst), 2);
+        // The conflict read follows extraction and the correction pack.
+        assert_eq!(backend.inner.calls.load(Ordering::SeqCst), 3);
         let requests = backend.requests.lock().unwrap();
-        let user_text: String = requests[1]
+        let user_text: String = requests[2]
             .messages
             .iter()
             .flat_map(|message| &message.content)
@@ -2805,7 +2958,8 @@ fn different_value_consults_one_prior_and_outage_leaves_original_and_open_confli
                 _ => None,
             })
             .collect();
-        assert!(user_text.contains(&fx.head.to_hex()));
+        // The conflict pack labels the candidate C1, then the prior head C2.
+        assert!(user_text.contains("\"prior_heads\":[{\"claim\":\"C2\""));
         assert!(user_text.contains("Owen"));
         assert_eq!(vault.get_raw(&fx.head)?.as_ref(), Some(&before));
         if outage {
@@ -2895,7 +3049,7 @@ fn missing_head_rights_revoked_actor_and_write_time_source_drift_refuse() -> Res
             "gate" => policy(&vault, fx.run.agent_actor.entity_ref(), false)?,
             _ => {}
         }
-        let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen"))]);
+        let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen")), Ok(pack_none())]);
         let sink = PromotionWriterSink::new(&vault, fx.run.clone());
         let result = if fault.ends_with("revision") || fault == "read_revocation" {
             if fault == "new_revision" {
@@ -2994,7 +3148,14 @@ fn a_prior_the_handoff_closed_still_fences_its_later_writes() -> Result<()> {
         let fx = fixture(&vault)?;
         let backend = ScriptedBackend::new(vec![
             Ok(extract(&fx, "Alex")),
-            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+            Ok(pack_none()),
+            Ok(text_response(
+                serde_json::json!({
+                    "Q1": {"merge": 0.0, "supersede": 0.0, "accumulate": 1.0, "escalate": 0.0},
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
+                .to_string(),
+            )),
         ]);
         let mut sink = ClosedHeadSink {
             inner: PromotionWriterSink::new(&vault, fx.run.clone()),
@@ -3002,7 +3163,8 @@ fn a_prior_the_handoff_closed_still_fences_its_later_writes() -> Result<()> {
             after,
         };
         let result = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone());
-        assert_eq!(backend.calls.load(Ordering::SeqCst), 2, "{after:?}");
+        // Extraction, correction, then the accumulating conflict pack.
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 3, "{after:?}");
         if after == AfterClose::Kept {
             result.unwrap_or_else(|error| {
                 panic!(
@@ -3069,9 +3231,17 @@ fn a_row_a_close_relies_on_is_fenced_for_the_handoffs_later_writes() -> Result<(
             1,
             b"another person",
         )?;
+        // Extraction, correction, then the accumulating conflict pack.
         let backend = ScriptedBackend::new(vec![
             Ok(extract(&fx, "Alex")),
-            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+            Ok(pack_none()),
+            Ok(text_response(
+                serde_json::json!({
+                    "Q1": {"merge": 0.0, "supersede": 0.0, "accumulate": 1.0, "escalate": 0.0},
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
+                .to_string(),
+            )),
         ]);
         let mut sink = StandingSink {
             inner: PromotionWriterSink::new(&vault, fx.run.clone()),
@@ -3110,12 +3280,28 @@ fn multiple_pinned_priors_remain_context_without_arbitrary_supersession() -> Res
         fx.scope.readable.insert(pin.clone());
         fx.scope.writable.insert(pin);
         let originals = [vault.get_raw(&fx.head)?, vault.get_raw(&second)?];
-        let backend = ScriptedBackend::new(vec![
+        // Extraction, correction, conflict, then a value only for the merge arm.
+        let mut script = vec![
             Ok(extract(&fx, "Alex")),
+            Ok(pack_none_two_heads()),
             Ok(text_response(
-                serde_json::json!({"resolution": resolution, "value": "Alex"}).to_string(),
+                serde_json::json!({
+                    "Q1": {
+                        "merge": if resolution == "merge" { 1.0 } else { 0.0 },
+                        "supersede": 0.0, "accumulate": 0.0,
+                        "escalate": if resolution == "escalate" { 1.0 } else { 0.0 },
+                    },
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
+                .to_string(),
             )),
-        ]);
+        ];
+        if resolution == "merge" {
+            script.push(Ok(text_response(
+                serde_json::json!({"value": "Alex"}).to_string(),
+            )));
+        }
+        let backend = ScriptedBackend::new(script);
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
         assert!(matches!(
             execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?,
@@ -3163,7 +3349,7 @@ fn owned_attempt_sink_promotes_under_the_executors_own_run() -> Result<()> {
     let (_dir, vault) = open_vault();
     let vault = std::sync::Arc::new(vault);
     let fx = fixture(&vault)?;
-    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen"))]);
+    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen")), Ok(pack_none())]);
     // No run context is handed in: the sink reads it from the sealed write.
     let mut sink = crate::dreamer_promotion::AttemptPromotionSink::new(vault.clone());
     assert!(matches!(
@@ -3297,7 +3483,7 @@ fn every_dreamer_call_names_medium_with_its_budget_unless_the_vault_authors_a_le
         let (_dir, vault) = open_vault();
         let fx = fixture(&vault)?;
         if authored {
-            vault.set_description_policy(&crate::llm::routing::DescriptionPolicy {
+            let policy = crate::llm::routing::DescriptionPolicy {
                 models: vec![crate::llm::routing::ModelDescription {
                     model: crate::ModelId::new("test/model@r1").unwrap(),
                     wire: crate::llm::registry::ModelWireFormat::OpenaiCompat,
@@ -3311,20 +3497,40 @@ fn every_dreamer_call_names_medium_with_its_budget_unless_the_vault_authors_a_le
                 vault_effort: None,
                 purpose_effort: [("extraction".to_owned(), ReasoningEffort::Low)].into(),
                 global_effort: None,
-            })?;
+            };
+            vault.set_setting(
+                crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(
+                    &vault,
+                )),
+                crate::setting::SetSetting::vault_value(
+                    "models.description_policy",
+                    serde_json::to_value(&policy).unwrap(),
+                ),
+            )?;
         }
         let backend = ReasoningBackend {
             inner: ScriptedBackend::new(vec![
                 Ok(extract(&fx, "Alex")),
-                Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+                Ok(pack_none()),
+                Ok(text_response(
+                    serde_json::json!({
+                        "Q1": {"merge": 0.0, "supersede": 0.0, "accumulate": 1.0, "escalate": 0.0},
+                        "Q2": {"none": 1.0, "C1": 0.0},
+                    })
+                    .to_string(),
+                )),
             ]),
             requests: Mutex::new(Vec::new()),
         };
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
         execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
         let requests = backend.requests.lock().unwrap();
-        let [extraction, verdict] = requests.as_slice() else {
-            panic!("one extraction and one verdict call: {}", requests.len());
+        // The named head is correctable: extraction, then the correction pack, then the verdict.
+        let [extraction, correction, verdict] = requests.as_slice() else {
+            panic!(
+                "one extraction, one correction and one verdict call: {}",
+                requests.len()
+            );
         };
         let budget = serde_json::json!(4_096);
         assert_eq!(extraction.envelope.response_format, ResponseFormat::Text);
@@ -3338,9 +3544,26 @@ fn every_dreamer_call_names_medium_with_its_budget_unless_the_vault_authors_a_le
             );
             assert_eq!(extraction.params.get(REASONING_BUDGET_PARAM), Some(&budget));
         }
+        // The correction pack's purpose has no authored level either.
+        assert_eq!(
+            correction.envelope.seat_effort,
+            Some(ReasoningEffort::Medium)
+        );
+        assert_eq!(correction.params.get(REASONING_BUDGET_PARAM), Some(&budget));
         // The verdict's purpose has no authored level in either arm.
         assert_eq!(verdict.envelope.seat_effort, Some(ReasoningEffort::Medium));
         assert_eq!(verdict.params.get(REASONING_BUDGET_PARAM), Some(&budget));
+        // Tell the correction read from the conflict verdict by their wordings.
+        let correction_text: String = correction.messages.iter().map(message_text).collect();
+        assert!(
+            correction_text.contains("correct or update"),
+            "{correction_text}"
+        );
+        let verdict_text: String = verdict.messages.iter().map(message_text).collect();
+        assert!(
+            verdict_text.contains("How do they resolve"),
+            "{verdict_text}"
+        );
 
         let roles: Vec<_> = extraction.messages.iter().map(|m| m.role).collect();
         assert_eq!(
@@ -3367,7 +3590,7 @@ fn every_dreamer_call_names_medium_with_its_budget_unless_the_vault_authors_a_le
             assert!(system.contains(rule), "the system text names {rule}");
         }
         let transcript = message_text(&extraction.messages[5]);
-        assert!(transcript.contains(&fx.turn.to_hex()));
+        assert!(transcript.contains("[T1 user] my name is Owen"));
         for pair in extraction.messages[1..5].chunks(2) {
             let (input, answer) = (message_text(&pair[0]), message_text(&pair[1]));
             assert!(!input.contains(&fx.turn.to_hex()) && !input.contains(&fx.subject.to_hex()));
@@ -3387,7 +3610,7 @@ fn every_dreamer_call_names_medium_with_its_budget_unless_the_vault_authors_a_le
             );
             for person in &reply.persons {
                 assert!(person.name.starts_with("Placeholder") && input.contains(&person.name));
-                assert!(person.id.starts_with(&person.id[..1].repeat(28)));
+                assert!(person.id.starts_with("new:P"));
             }
             for candidate in &reply.candidates {
                 let predicate = candidate["predicate"].as_str().unwrap();
@@ -3399,20 +3622,18 @@ fn every_dreamer_call_names_medium_with_its_budget_unless_the_vault_authors_a_le
                     };
                     assert!(
                         (input.contains(id) || added.iter().any(|added| *added == id))
-                            && id.starts_with(&id[..1].repeat(28))
+                            && (id.starts_with('P') || id.starts_with("new:P"))
                     );
                 }
                 let cited = &candidate["evidence_refs"][0];
-                let turn = cited["source_id"].as_str().unwrap();
+                let turn = cited["source"].as_str().unwrap();
                 let line = input
                     .lines()
                     .find_map(|line| line.strip_prefix(&format!("[{turn} user] ")))
                     .expect("the example cites one of its own user turns");
-                let [start, end] = [0, 1].map(|i| cited["byte_range"][i].as_u64().unwrap());
-                assert!(
-                    line.get(start as usize..end as usize)
-                        .is_some_and(|said| said.len() > 10)
-                );
+                let quote = cited["quote"].as_str().unwrap();
+                assert!(line.contains(quote) && quote.len() > 10);
+                assert_eq!(line.matches(quote).count(), 1);
             }
         }
     }
@@ -3435,7 +3656,14 @@ fn a_reply_one_brace_short_is_mended_and_one_two_short_is_refused_and_asked_agai
         inner: ScriptedBackend::new(vec![
             Ok(text_response(two_short)),
             Ok(text_response(open.to_owned())),
-            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+            Ok(pack_none()),
+            Ok(text_response(
+                serde_json::json!({
+                    "Q1": {"merge": 0.0, "supersede": 0.0, "accumulate": 1.0, "escalate": 0.0},
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
+                .to_string(),
+            )),
         ]),
         requests: Mutex::new(Vec::new()),
     };
@@ -3453,8 +3681,12 @@ fn a_reply_one_brace_short_is_mended_and_one_two_short_is_refused_and_asked_agai
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
     execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
     let requests = backend.requests.lock().unwrap();
-    assert_eq!(requests.len(), 3, "the refused reply was asked again");
-    let verdict: String = requests[2].messages.iter().map(message_text).collect();
+    // Refusal, retried extraction, correction pack, then conflict pack.
+    assert_eq!(requests.len(), 4, "the refused reply was asked again");
+    let correction: String = requests[2].messages.iter().map(message_text).collect();
+    assert!(correction.contains("correct or update"));
+    let verdict: String = requests[3].messages.iter().map(message_text).collect();
+    assert!(verdict.contains("How do they resolve"));
     assert!(
         verdict.contains("\"Alex\""),
         "the mended reply's candidate reaches the verdict: {verdict}"
@@ -3472,7 +3704,7 @@ fn a_mended_reply_whose_candidate_lacks_a_field_is_refused_and_asked_again() -> 
     let (_dir, vault) = open_vault();
     let fx = fixture(&vault)?;
     let mut lacking = serde_json::json!({"candidates": [{
-        "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": "Alex",
+        "subject": "P1", "predicate": "profile.name", "value": "Alex",
         "confidence": 0.8,
     }]})
     .to_string();
@@ -3482,7 +3714,14 @@ fn a_mended_reply_whose_candidate_lacks_a_field_is_refused_and_asked_again() -> 
         inner: ScriptedBackend::new(vec![
             Ok(text_response(lacking)),
             Ok(extract(&fx, "Alex")),
-            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+            Ok(pack_none()),
+            Ok(text_response(
+                serde_json::json!({
+                    "Q1": {"merge": 0.0, "supersede": 0.0, "accumulate": 1.0, "escalate": 0.0},
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
+                .to_string(),
+            )),
         ]),
         requests: Mutex::new(Vec::new()),
     };
@@ -3500,11 +3739,13 @@ fn a_mended_reply_whose_candidate_lacks_a_field_is_refused_and_asked_again() -> 
         matches!(done, DreamerAttemptExecution::Completed { .. }),
         "{done:?}"
     );
-    assert_eq!(
-        backend.requests.lock().unwrap().len(),
-        3,
-        "the refused reply was asked again"
-    );
+    let requests = backend.requests.lock().unwrap();
+    // Refusal, retried extraction, correction pack, then conflict pack.
+    assert_eq!(requests.len(), 4, "the refused reply was asked again");
+    let correction: String = requests[2].messages.iter().map(message_text).collect();
+    assert!(correction.contains("correct or update"));
+    let verdict: String = requests[3].messages.iter().map(message_text).collect();
+    assert!(verdict.contains("How do they resolve"));
     assert_eq!(names(&vault, fx.subject)?.len(), 2);
     Ok(())
 }
@@ -3520,10 +3761,15 @@ fn a_stored_reply_decode_cannot_wholly_take_never_wedges_a_resume() -> Result<()
     let (_dir, vault) = open_vault();
     let fx = fixture(&vault)?;
     let candidate = |value: &str, source: EntityId| {
+        let refs = if source == fx.turn {
+            serde_json::json!([{"source": "T1", "quote": "Owen"}])
+        } else {
+            serde_json::json!([{"source": "T2", "quote": "Owen"}])
+        };
         serde_json::json!({
-            "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": value,
+            "subject": "P1", "predicate": "profile.name", "value": value,
             "confidence": 0.8,
-            "evidence_refs": [{"source_id": source.to_hex(), "byte_range": [0, 1]}],
+            "evidence_refs": refs,
         })
     };
     let mut unrelated = candidate("Kit", fx.turn);
@@ -3536,7 +3782,20 @@ fn a_stored_reply_decode_cannot_wholly_take_never_wedges_a_resume() -> Result<()
     let backend = ReasoningBackend {
         inner: ScriptedBackend::new(vec![
             Ok(text_response(reply.to_string())),
-            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+            Ok(text_response(
+                serde_json::json!({
+                    "Q1": {"none": 1.0, "C1": 0.0},
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
+                .to_string(),
+            )),
+            Ok(text_response(
+                serde_json::json!({
+                    "Q1": {"merge": 0.0, "supersede": 0.0, "accumulate": 1.0, "escalate": 0.0},
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
+                .to_string(),
+            )),
         ]),
         requests: Mutex::new(Vec::new()),
     };
@@ -3550,8 +3809,9 @@ fn a_stored_reply_decode_cannot_wholly_take_never_wedges_a_resume() -> Result<()
         assert_eq!(names(&vault, fx.subject)?.len(), 2, "{run}");
     }
     let requests = backend.requests.lock().unwrap();
-    assert_eq!(requests.len(), 2, "the replay asked no model");
-    let verdict: String = requests[1].messages.iter().map(message_text).collect();
+    // Extraction, correction, conflict; replay memo-hits all three calls.
+    assert_eq!(requests.len(), 3, "the replay asked no model");
+    let verdict: String = requests[2].messages.iter().map(message_text).collect();
     assert!(verdict.contains("\"Alex\""), "{verdict}");
     assert!(
         !verdict.contains("\"Sam\"") && !verdict.contains("\"Kit\""),
@@ -3575,14 +3835,17 @@ fn every_consolidation_door_counts_its_auto_write_once() -> Result<()> {
         let (fx, landed) = match door {
             AutoWriteDoor::Promotion => {
                 let fx = fixture(&vault)?;
-                let backend = ScriptedBackend::new(vec![Ok(text_response(
-                    serde_json::json!({"candidates": [{
-                        "subject": fx.subject.to_hex(), "predicate": "profile.nickname",
-                        "value": "Olek", "confidence": 0.9,
-                        "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
-                    }]})
-                    .to_string(),
-                ))]);
+                let backend = ScriptedBackend::new(vec![
+                    Ok(text_response(
+                        serde_json::json!({"candidates": [{
+                            "subject": "P1", "predicate": "profile.nickname",
+                            "value": "Olek", "confidence": 0.9,
+                            "evidence_refs": [{"source": "T1", "quote": "Owen"}],
+                        }]})
+                        .to_string(),
+                    )),
+                    Ok(pack_none()),
+                ]);
                 let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
                 crate::own_rate::set_auto_write_threshold_for_test(Some(0));
                 let pass = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone());
@@ -3599,7 +3862,7 @@ fn every_consolidation_door_counts_its_auto_write_once() -> Result<()> {
             }
             AutoWriteDoor::Attachment => {
                 let fx = fixture(&vault)?;
-                let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen"))]);
+                let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen")), Ok(pack_none())]);
                 let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
                 crate::own_rate::set_auto_write_threshold_for_test(Some(0));
                 let pass = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone());
@@ -3624,7 +3887,8 @@ fn every_consolidation_door_counts_its_auto_write_once() -> Result<()> {
                     DreamerConsolidationScope::Micro,
                     Some(&fx.scope),
                 )?;
-                let backend = ScriptedBackend::new(vec![Ok(correct(&fx, "Alex"))]);
+                let backend =
+                    ScriptedBackend::new(vec![Ok(correct(&fx, "Alex")), Ok(pack_correct())]);
                 let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
                 crate::own_rate::set_auto_write_threshold_for_test(Some(0));
                 let pass = execute_at_pin(

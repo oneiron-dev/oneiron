@@ -16,8 +16,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{
-    ActSurface, AuthorityEntryHash, HostSlipIssuer, MachineDeviceClass, MachineOwnership,
-    MachineRole, OwnerWorkKind, OwnerWorkRefusal, RecoveryRootId, RootChange,
+    ActAuthority, ActSurface, AuthorityEntryHash, HostSlipIssuer, MachineDeviceClass,
+    MachineOwnership, MachineRole, OwnerWorkKind, OwnerWorkRefusal, RecoveryRootId, RootChange,
 };
 #[cfg(feature = "sync")]
 use oneiron::authority::{ReadLocation, WorldPrivacy};
@@ -36,9 +36,8 @@ use oneiron::{EntityId, Vault, VaultConfig};
 
 /// What a refused-for-mismatch status advises: the words of
 /// `OwnerWorkStatus::advice` for `RootRevisionMismatch`.
-const MISMATCH_ADVICE: &str = "the target holds owner roots or a standing of its own other than \
-    the ones you saw (a target still syncing what you saw waits instead). Review where it stands \
-    and ask again";
+const MISMATCH_ADVICE: &str = "the target's roster heads moved since you recorded the request. \
+    Review where it stands and ask again";
 
 fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
     vault
@@ -67,6 +66,12 @@ fn host() -> Host {
     let person = vault.ensure_embedded_owner_actor().expect("the owner");
     bind_host_owner(&vault, &issuer, person).expect("the owner's binding");
     let owner = proof(&vault, person);
+    vault
+        .enrol_device_owner_signing_key(
+            &ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall),
+            &issuer,
+        )
+        .expect("the owner enrols this install's owner signing key");
     let vault_id = vault
         .authority_fold()
         .expect("the host's fold")
@@ -161,7 +166,8 @@ fn device_with_class(host: &Host, class: MachineDeviceClass) -> Device {
     let request = vault
         .machine_enrolment_request(host.vault_id, key)
         .expect("the device's enrolment request");
-    host.vault
+    let landing = host
+        .vault
         .enroll_machine(
             &host.owner,
             ActSurface::HostedConsole,
@@ -170,6 +176,10 @@ fn device_with_class(host: &Host, class: MachineDeviceClass) -> Device {
             None,
         )
         .expect("the owner enrols the device as his");
+    assert!(
+        landing.held().is_none(),
+        "FIXTURE: the owner key the host holds proves the device's answer"
+    );
     vault
         .ensure_embedded_owner_actor()
         .expect("the owner on the device");
@@ -644,12 +654,21 @@ fn moved_roots_refuse_the_request_as_a_revision_mismatch() {
     let device = device(&host);
     let root = host.mint_own_root();
     device.request_pin(host.machine(), root);
-    // The revision moves after the owner decided: another root the
-    // request's witness never saw.
-    let moved = host.mint_own_root();
+    // The target's roster head moves after the owner decided: a new
+    // revision the request's witness never saw.
+    let landing = host
+        .vault
+        .set_machine_role(
+            &host.owner,
+            ActSurface::HostedConsole,
+            host.machine(),
+            MachineRole::ExecutionNode,
+            None,
+        )
+        .expect("the owner re-answers the host");
     assert!(
-        moved != root,
-        "the second mint is the move the witness never saw"
+        landing.held().is_none(),
+        "FIXTURE: the owner key the host holds proves the host's answer"
     );
     host.take(&device);
     let before = host

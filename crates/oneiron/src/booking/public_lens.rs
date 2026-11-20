@@ -357,6 +357,7 @@ mod tests {
             },
             constraint: None,
             visitor_tz: "UTC".to_owned(),
+            duration_min: None,
         };
         let mask = slot_mask(
             &request,
@@ -377,8 +378,10 @@ mod tests {
                 event_types: vec![EventTypeCard {
                     key: request.event_type,
                     title: "Introduction".to_owned(),
+                    deposit: None,
                     duration_min: 10,
                     description: "Fixture description".to_owned(),
+                    allowed_durations_min: Vec::new(),
                 }],
                 constraint_field: ConstraintFieldConfig {
                     enabled: false,

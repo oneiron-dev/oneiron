@@ -27,6 +27,7 @@ fn surfaced_failure_card_accepts_canonical_witness_membership() -> Result<()> {
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,

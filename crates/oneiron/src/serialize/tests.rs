@@ -102,6 +102,7 @@ fn sample_pack() -> ContextPack {
             items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
             items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
             deadline_exceeded: false,
+            working_set: Default::default(),
         },
         empty: None,
     }
@@ -189,6 +190,7 @@ fn empty_stats() -> PackStats {
         items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
         items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
         deadline_exceeded: false,
+        working_set: Default::default(),
     }
 }
 

@@ -16,6 +16,11 @@ use crate::temporal::TimeRange;
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(tmp.path(), telemetry_config()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    // These tests cover off-record behavior, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     (tmp, vault)
 }
 
@@ -596,6 +601,7 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
                 }],
                 occurred_at: 1000,
                 thread_audience: None,
+                project: None,
                 assertions: Default::default(),
             },
             Some("grant-scope fixture summary"),
@@ -747,6 +753,7 @@ fn promote_refuses_a_turn_whose_author_left_base() -> Result<()> {
                 }],
                 occurred_at: 1000,
                 thread_audience: None,
+                project: None,
                 assertions: Default::default(),
             },
             None,
@@ -818,6 +825,7 @@ fn said_alone(
                 }],
                 occurred_at: at,
                 thread_audience: None,
+                project: None,
                 assertions: Default::default(),
             },
             None,
@@ -992,6 +1000,7 @@ fn seed_recallable_base_turn(vault: &Vault, needle: &str) -> EntityId {
             }],
             occurred_at: 1500,
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("witness base turn");
@@ -1380,7 +1389,7 @@ fn a_room_retrieval_queues_no_embed_job_once_its_saver_left() -> Result<()> {
     let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
     // A claim owes its vector from the write that put it.
     let claim = EntityId::now();
-    let body = ClaimBody::new(
+    let mut body = ClaimBody::new(
         "test.status",
         ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16]).expect("subject id")),
         rmpv::Value::from("v"),
@@ -1389,6 +1398,7 @@ fn a_room_retrieval_queues_no_embed_job_once_its_saver_left() -> Result<()> {
         ClaimLifecycleStatus::Active,
     )
     .expect("claim body");
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     vault
         .batch()
         .put(
@@ -1466,7 +1476,7 @@ fn a_room_read_that_keeps_its_embed_jobs_out_still_stops_once_its_saver_left() -
     let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
     // A claim owes its vector from the write that put it.
     let claim = EntityId::now();
-    let body = ClaimBody::new(
+    let mut body = ClaimBody::new(
         "test.status",
         ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16]).expect("subject id")),
         rmpv::Value::from("v"),
@@ -1475,6 +1485,7 @@ fn a_room_read_that_keeps_its_embed_jobs_out_still_stops_once_its_saver_left() -
         ClaimLifecycleStatus::Active,
     )
     .expect("claim body");
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     vault
         .batch()
         .put(
@@ -1567,6 +1578,7 @@ fn a_room_on_record_with_an_unsaved_message(
                 }],
                 occurred_at: 10,
                 thread_audience: None,
+                project: None,
                 assertions: Default::default(),
             },
             None,
@@ -2089,6 +2101,7 @@ fn anonymous_witness_read_and_close_retain_no_rows_or_receipts() -> Result<()> {
                 }],
                 occurred_at: 1600,
                 thread_audience: None,
+                project: None,
                 assertions: Default::default(),
             },
             Some("anonymous private summary"),

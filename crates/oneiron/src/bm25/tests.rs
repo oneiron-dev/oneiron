@@ -1097,24 +1097,32 @@ fn the_same_words_index_the_same_in_one_field_or_many() -> Result<()> {
     Ok(())
 }
 
-/// Bug repro (H6) and done-means: the engine's query door reads a query's first
-/// `MAX_QUERY_TEXT_BYTES`, the facade's ceiling, and never tokenizes the rest; a cut that
-/// falls inside a character keeps the whole characters before it.
+/// Done-means (FIX55, #4909): the engine's query door tokenizes the whole query. The 8 KiB
+/// read cut this test pinned for H6 is retired, so a matching term past 8 KiB still finds its
+/// document, and a long multi-byte query is served with no character-boundary clip.
 #[test]
-fn a_query_is_read_to_the_query_ceiling() -> Result<()> {
+fn a_query_is_read_whole_past_the_retired_ceiling() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
     let id = EntityId::now();
     put_text_doc(&vault, &id, "lantern")?;
     // The engine query door's 8 KiB text ceiling (oneiron-base MAX_QUERY_BYTES), retired by
     // d396e233532 (FIX55, #4909: serve the full shared query text).
-    let limit = 8 * 1024;
-    let within = format!("{} lantern", text_of_len("x", limit - " lantern".len()));
-    assert_eq!(within.len(), limit);
+    let retired_ceiling = 8 * 1024;
+    let within = format!(
+        "{} lantern",
+        text_of_len("x", retired_ceiling - " lantern".len())
+    );
+    assert_eq!(within.len(), retired_ceiling);
     assert!(contains_id(&vault.search_text(&within, 10)?, &id));
-    let past = format!("{} lantern", text_of_len("x", limit));
-    assert!(vault.search_text(&past, 10)?.is_empty());
-    assert!(vault.search_text(&"\u{3042}".repeat(limit), 10)?.is_empty());
+    let past = format!("{} lantern", text_of_len("x", retired_ceiling));
+    assert!(past.len() > retired_ceiling);
+    assert!(contains_id(&vault.search_text(&past, 10)?, &id));
+    assert!(
+        vault
+            .search_text(&"\u{3042}".repeat(retired_ceiling), 10)?
+            .is_empty()
+    );
     Ok(())
 }
 
@@ -1269,6 +1277,7 @@ fn posting_dup_item_literal_layout() -> Result<()> {
 fn deindex_deletes_exactly_one_dup_item() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let mut ids = [EntityId::now(), EntityId::now(), EntityId::now()];
     for id in &ids {
         put_text_doc(&vault, id, "shared")?;
@@ -1373,6 +1382,7 @@ fn synthetic_base64_word(seed: &str, len: usize) -> String {
 fn a_1583_character_base64_term_round_trips_through_the_index() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let long = synthetic_base64_word("bm25-long-term", 1_583);
     let mut tokens = Vec::new();
     vault

@@ -37,7 +37,7 @@ use std::ops::Bound;
 use super::kernel::hex_lower;
 use crate::Vault;
 use crate::authority::{
-    AuthorityCheckpointRow, AuthorityFold, VerifiedAuthorityCheckpoint,
+    AuthorityCheckpointRow, AuthorityFold, RestoredJoinEnrolment, VerifiedAuthorityCheckpoint,
     cached_adopted_authority_checkpoint_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
@@ -400,6 +400,32 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
         AuthorityOp::RevokeActor { .. } => (Other, "revoke_actor", OpFields::default()),
         AuthorityOp::MachineProfile(_) => (Other, "machine_profile", OpFields::default()),
         AuthorityOp::OwnerRoot(_) => (Other, "owner_root", OpFields::default()),
+        // The appointed successor root key, and the root whose anchor
+        // appoints it (OWNER-ANCHOR-ROOT-RECOVERY).
+        AuthorityOp::RootAppointment(appointment) => (
+            Other,
+            "root_appointment",
+            OpFields {
+                detail: Some(hex_lower(&appointment.root.0)),
+                subject_ref: Some(key_hex(&appointment.successor.key)),
+                ..OpFields::default()
+            },
+        ),
+        // The owner's word that no other machine is left: its subject is the
+        // machine it joins, its detail the held enrolment it names (row
+        // RESTORED-COPIES-ENROL-EACH-OTHER).
+        AuthorityOp::RestoredMachineJoin(join) => (
+            Other,
+            "restored_machine_join",
+            OpFields {
+                detail: match &join.enrolment {
+                    RestoredJoinEnrolment::Held(enrolment) => Some(hex_lower(enrolment)),
+                    RestoredJoinEnrolment::Inline(_) => Some("inline enrolment".to_owned()),
+                },
+                subject_ref: Some(join.act.target.to_hex()),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::WorldPrivacy(_) => (Other, "world_privacy", OpFields::default()),
         AuthorityOp::WorldKeyWraps(_) => (Other, "world_key_wraps", OpFields::default()),
         AuthorityOp::OwnerHandover(action) => (

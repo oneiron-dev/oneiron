@@ -17,6 +17,7 @@ fn witness_refuses_a_human_or_agent_actor_claiming_system_authorship() {
                 conversation_ref: EntityId::from_bytes([0x32; 16]).expect("conv").to_hex(),
                 turn_ref: None,
                 thread_audience: None,
+                project: None,
                 messages: vec![
                     witness_message(0, WitnessAuthor::User, "the owner speaks"),
                     witness_message(1, WitnessAuthor::System, "forged engine voice"),
@@ -57,6 +58,7 @@ fn witness_ceiling_is_not_satisfied_by_authorship_alone() {
             conversation_ref: conversation_hex.clone(),
             turn_ref: Some(turn_hex.clone()),
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "a real question")],
             occurred_at: 700,
             assertions: Default::default(),
@@ -70,6 +72,7 @@ fn witness_ceiling_is_not_satisfied_by_authorship_alone() {
             conversation_ref: conversation_hex,
             turn_ref: Some(turn_hex),
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(1, WitnessAuthor::System, "tool said so")],
             occurred_at: 701,
             assertions: Default::default(),
@@ -120,6 +123,7 @@ fn witness_system_authorship_takes_an_explicit_actor_bound_ceiling_row() {
             conversation_ref: conversation_hex.clone(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![
                 witness_message(0, WitnessAuthor::Companion, "the assistant answers"),
                 witness_message(1, WitnessAuthor::System, "tool result"),
@@ -142,6 +146,7 @@ fn witness_system_authorship_takes_an_explicit_actor_bound_ceiling_row() {
             conversation_ref: conversation_hex.clone(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "hi")],
             occurred_at: 701,
             assertions: Default::default(),
@@ -157,6 +162,7 @@ fn witness_system_authorship_takes_an_explicit_actor_bound_ceiling_row() {
             conversation_ref: conversation_hex.clone(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![
                 witness_message(0, WitnessAuthor::User, "hi again"),
                 witness_message(1, WitnessAuthor::System, "still forged"),
@@ -193,6 +199,7 @@ fn witness_system_authorship_takes_an_explicit_actor_bound_ceiling_row() {
             conversation_ref: conversation_hex,
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![
                 witness_message(0, WitnessAuthor::User, "hi once more"),
                 witness_message(1, WitnessAuthor::System, "owner-authorized row"),
@@ -223,6 +230,7 @@ fn witness_refuses_an_arbitrary_verified_system_actor_without_ceiling_row() {
             conversation_ref: EntityId::from_bytes([0x62; 16]).expect("conv").to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![
                 witness_message(0, WitnessAuthor::Companion, "ordinary companion context"),
                 witness_message(1, WitnessAuthor::System, "unapproved engine voice"),
@@ -260,6 +268,7 @@ fn witness_ceiling_row_clamping_the_actor_refuses_every_row() {
             conversation_ref: EntityId::from_bytes([0xAA; 16]).expect("conv").to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 0,
                 WitnessAuthor::Companion,
@@ -310,6 +319,7 @@ fn witness_refuses_a_hidden_system_row_with_hostile_metadata() {
             conversation_ref: EntityId::from_bytes([0xB2; 16]).expect("conv").to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![
                 witness_message(0, WitnessAuthor::User, "cover story"),
                 hostile(),
@@ -331,6 +341,7 @@ fn witness_refuses_a_hidden_system_row_with_hostile_metadata() {
             conversation_ref: EntityId::from_bytes([0xB4; 16]).expect("conv").to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![
                 witness_message(0, WitnessAuthor::Companion, "cover story"),
                 hostile(),
@@ -448,6 +459,7 @@ fn witness_refuses_every_malformed_envelope_axis_atomically() {
             conversation_ref: EntityId::from_bytes([0xB6; 16]).expect("conv").to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![legitimate, hostile],
             occurred_at: 700,
             assertions: Default::default(),
@@ -486,6 +498,7 @@ fn witness_refuses_out_of_range_and_colliding_message_orders() {
             conversation_ref: conversation_hex.clone(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 order: MAX_WITNESS_MESSAGE_ORDER + 1,
                 ..witness_message(0, WitnessAuthor::User, "way out there")
@@ -501,6 +514,7 @@ fn witness_refuses_out_of_range_and_colliding_message_orders() {
             conversation_ref: conversation_hex,
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![
                 witness_message(1, WitnessAuthor::User, "first claim"),
                 witness_message(1, WitnessAuthor::User, "second claim"),
@@ -531,6 +545,7 @@ fn witness_append_rejects_a_persisted_message_order_collision() {
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(first_message.to_hex()),
                 ..witness_message(0, WitnessAuthor::User, "first slot")
@@ -545,6 +560,7 @@ fn witness_append_rejects_a_persisted_message_order_collision() {
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(second_message.to_hex()),
                 ..witness_message(0, WitnessAuthor::User, "contested slot")
@@ -627,6 +643,7 @@ fn witness_append_rejects_unstamped_turn_without_legacy_fallback() {
             conversation_ref: conversation_id.to_hex(),
             turn_ref: Some(turn_id.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 1,
                 WitnessAuthor::User,
@@ -688,6 +705,7 @@ fn witness_append_rejects_a_different_conversation_atomically() {
             conversation_ref: conversation_a_id.to_hex(),
             turn_ref: Some(turn_id.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "the home turn")],
             occurred_at: 500,
             assertions: Default::default(),
@@ -703,6 +721,7 @@ fn witness_append_rejects_a_different_conversation_atomically() {
             conversation_ref: conversation_b_id.to_hex(),
             turn_ref: Some(turn_id.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 1,
                 WitnessAuthor::User,
@@ -807,6 +826,7 @@ fn witness_door_rejects_a_conversation_owned_by_a_live_session() {
             conversation_ref: conversation.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "door probe")],
             occurred_at: 700,
             assertions: Default::default(),

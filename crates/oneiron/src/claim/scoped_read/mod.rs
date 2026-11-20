@@ -44,6 +44,7 @@ mod note_visibility;
 mod phone_line;
 mod pinned_reads;
 mod point_reads;
+mod reaction_reactor_redaction;
 mod reactions;
 mod receipt;
 mod retrieval_visibility;

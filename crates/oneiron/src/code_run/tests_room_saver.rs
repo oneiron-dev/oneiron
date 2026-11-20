@@ -368,6 +368,7 @@ fn a_removed_agents_run_learns_nothing_of_the_room_from_its_refusal() {
                 conversation_ref: room.id.to_hex(),
                 turn_ref: Some(turn_id.to_hex()),
                 thread_audience: None,
+                project: None,
                 messages: vec![crate::memory::WitnessMessage {
                     id: None,
                     author: crate::memory::WitnessAuthor::Companion,
@@ -597,6 +598,7 @@ fn a_removed_agents_run_hears_nothing_of_the_saver() {
                 conversation_ref: room.id.to_hex(),
                 turn_ref: None,
                 thread_audience: None,
+                project: None,
                 messages: vec![crate::memory::WitnessMessage {
                     id: None,
                     author: crate::memory::WitnessAuthor::Companion,

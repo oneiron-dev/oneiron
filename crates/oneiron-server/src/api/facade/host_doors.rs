@@ -19,6 +19,7 @@ mod admission;
 mod artifacts_audit;
 mod authority_clock;
 mod diary;
+mod gpu_jobs;
 mod media;
 mod packs;
 mod proactivity;
@@ -30,6 +31,7 @@ pub(super) use self::admission::*;
 pub(crate) use self::artifacts_audit::*;
 pub(crate) use self::authority_clock::*;
 pub(crate) use self::diary::*;
+pub(crate) use self::gpu_jobs::*;
 pub(crate) use self::media::*;
 pub(crate) use self::packs::*;
 pub(crate) use self::proactivity::*;
@@ -105,6 +107,7 @@ pub(crate) use super::asr_doors::*;
 pub(crate) use super::cleanup_doors::*;
 pub(crate) use super::clustering_doors::*;
 pub(crate) use super::default_facet_doors::*;
+pub(crate) use super::display_edit_doors::*;
 pub(crate) use super::extraction_doors::*;
 pub(crate) use super::hosted_import_doors::*;
 pub(crate) use super::identity_doors::*;
@@ -116,6 +119,7 @@ pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 pub(crate) use super::live_voice_doors::*;
+pub(crate) use super::machine_name_doors::*;
 pub(crate) use super::mesh_doors::*;
 pub(crate) use super::model_catalog_doors::*;
 pub(crate) use super::model_manifest_doors::*;
@@ -127,6 +131,7 @@ pub(crate) use super::outbox_diverged_doors::*;
 pub(crate) use super::sandbox_provider_doors::*;
 pub(crate) use super::snapshot_read_settings_doors::*;
 pub(crate) use super::web_connector_doors::*;
+pub(crate) use super::world_vectors_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
 // A turn program's reads (DOOR-141 PR3a), on the caller's own lane.
@@ -269,6 +274,8 @@ pub(crate) use super::connector_slate_doors::*;
 pub(crate) use super::connector_witness_read_doors::*;
 // The owner's per-call outbound request erase (FIX 11801), likewise.
 pub(crate) use super::outbound_call_erase_doors::*;
+// The shared owner-checked preview of one one-way act (DEC-0006 #undo-class).
+pub(crate) use super::owner_confirm_doors::*;
 pub(crate) use super::proxy_doors::*;
 pub(crate) use crate::api::openai_proxy::ai_chat_completions;
 // The secret use door, whose connector.call sends (OF-560), likewise.

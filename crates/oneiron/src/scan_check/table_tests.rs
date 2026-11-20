@@ -11,6 +11,12 @@ use crate::registry::ENTITY_TYPE_TASK_LIST;
 use crate::store::Store;
 use heed::RwTxn;
 
+mod seed_agent_definition_tests;
+mod seed_code_repo_tests;
+mod seed_project_tests;
+mod seed_room_thread_tests;
+mod seed_runtime_records_tests;
+
 /// The row each scan is lowered to; every fixture reads one row past it.
 const ROW: u64 = 2;
 const PAST: usize = 3;
@@ -146,6 +152,8 @@ const REMAT_MARKERS: crate::side_table::SideTable<String, (), crate::side_table:
 /// (`it_sync`'s `child_of_arbitration_walks_the_whole_map_past_its_threshold_row`)
 /// and a Dreamer selection retry (`dreamer_consolidation::tests::late_budget::
 /// manifest_retry_source_budget_truncates_and_holder_cannot_widen`).
+/// The scans main added later are seeded per family in the `seed_*_tests` child
+/// modules; a `NO-FIXTURE` comment there says why a scan has none yet.
 fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
     let src = id(0x51, 0);
     match scan {
@@ -170,8 +178,8 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         | EngineScan::DreamerRetryPeers
         | EngineScan::PendingCommStops
         | EngineScan::PartyContactClaims => None,
-        // Scans main added after these fixtures were written: none has a
-        // fixture here yet (FIX LIBTEST-SCAN-CHECK-TABLE-UNSEEDED-SCANS).
+        // Scans main added after these fixtures were written: one child module
+        // per scan family seeds them (FIX LIBTEST-SCAN-CHECK-TABLE-UNSEEDED-SCANS).
         // Each new scan still has to be named here or given a fixture.
         EngineScan::OriginTreeEntries
         | EngineScan::OriginTagPeelSteps
@@ -185,31 +193,19 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         | EngineScan::SymbolManifestRows
         | EngineScan::SymbolOperationChain
         | EngineScan::CodebaseFileRows
-        | EngineScan::RoomThreadChildRows
-        | EngineScan::MessageOriginRows
-        | EngineScan::ThreadTaskCensus
-        | EngineScan::ProjectTaskRows
         | EngineScan::CodeMemorySlotValues
         | EngineScan::CodeMemoryAlwaysOnContracts
         | EngineScan::CodeMemoryPullSeeds
         | EngineScan::CodeMemoryPullNotes
         | EngineScan::CodeMemoryPullSymbols
         | EngineScan::RepoDiffFiles
+        | EngineScan::DeclaredSymbols
+        | EngineScan::DeclaredSymbolBytes => seed_code_repo_tests::seed(vault, scan),
+        EngineScan::RoomThreadChildRows
+        | EngineScan::MessageOriginRows
+        | EngineScan::ThreadTaskCensus
         | EngineScan::AskSoftConfirmDeliveryRows
-        | EngineScan::PredicateClaimRows
-        | EngineScan::VaultEdgeRows
-        | EngineScan::PrefilterReceiptRows
-        | EngineScan::MachineHandoffChain
-        | EngineScan::MachineHistoryTargetRows
-        | EngineScan::MachineTransitionFrontier
-        | EngineScan::ClaimVadIncidentEdges
-        | EngineScan::RetrievalRunRows
-        | EngineScan::CallReceiptRows
-        | EngineScan::BlockedRunReports
-        | EngineScan::SieveAuditRows
         | EngineScan::RoomRosterMembers
-        | EngineScan::DagWalkRecords
-        | EngineScan::TaskAuthorityFactEdges
         | EngineScan::OpenAskTaskRows
         | EngineScan::AudienceEdgeRows
         | EngineScan::RoomAncestryRecords
@@ -217,31 +213,28 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         | EngineScan::WordSourceRecords
         | EngineScan::RoomPolicyRows
         | EngineScan::RoomThreadHolderRows
+        | EngineScan::CommWidenAncestorRows
+        | EngineScan::ReplyStripRequestedRows
+        | EngineScan::RoomRequestedPageRows
+        | EngineScan::RoomThreadListRows
+        | EngineScan::RoomLinkWalkRows
+        | EngineScan::RoomRetryLineageRows
+        | EngineScan::RoomMentions
+        | EngineScan::RoomThreadPolicyRows
+        | EngineScan::RoomThreadTokens
+        | EngineScan::RoomThreadWaitRows
+        | EngineScan::AudienceCoverDepth
+        | EngineScan::GuestDisclosureRefs
+        | EngineScan::GuestGrantDisclosedRefs
+        | EngineScan::AttendeeIdentityCandidates
+        | EngineScan::AttendeeIdentityKeyBytes
+        | EngineScan::TaskPostIntentKeyBytes => seed_room_thread_tests::seed(vault, scan),
+        EngineScan::ProjectTaskRows
         | EngineScan::ProjectDepthDefaultRows
         | EngineScan::ProjectDepthPolicyRows
         | EngineScan::ProjectDepthSourceAncestors
         | EngineScan::ProjectDepthPredecessors
         | EngineScan::ProjectDepthContributionBytes
-        | EngineScan::DispatchAncestorRows
-        | EngineScan::LinearProvenanceRows
-        | EngineScan::NoteDocumentBytes
-        | EngineScan::NoteDocumentPinRows
-        | EngineScan::NoteDocumentAuthorshipRows
-        | EngineScan::AgentDefinitionListEntries
-        | EngineScan::AgentBirthSkillRows
-        | EngineScan::AgentBirthClaimOfRows
-        | EngineScan::SpendAncestorScopes
-        | EngineScan::SpendRetryAttempts
-        | EngineScan::AttemptKindRows
-        | EngineScan::AttemptEventActorBytes
-        | EngineScan::AttemptEventNoteBytes
-        | EngineScan::AttendeeIdentityCandidates
-        | EngineScan::GuestDisclosureRefs
-        | EngineScan::GuestGrantDisclosedRefs
-        | EngineScan::DeclaredSymbols
-        | EngineScan::AttendeeIdentityKeyBytes
-        | EngineScan::DeclaredSymbolBytes
-        | EngineScan::CommWidenAncestorRows
         | EngineScan::ProjectGoalAxes
         | EngineScan::ProjectGoalPreferences
         | EngineScan::ProjectGoalTextBytes
@@ -256,16 +249,12 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         | EngineScan::ProjectCycleAssignments
         | EngineScan::ProjectJointWork
         | EngineScan::ProjectProposalTextBytes
-        | EngineScan::ReplyStripRequestedRows
-        | EngineScan::RoomRequestedPageRows
-        | EngineScan::RoomThreadListRows
-        | EngineScan::RoomLinkWalkRows
-        | EngineScan::RoomRetryLineageRows
-        | EngineScan::RoomMentions
-        | EngineScan::RoomThreadPolicyRows
-        | EngineScan::RoomThreadTokens
-        | EngineScan::RoomThreadWaitRows
         | EngineScan::ResidentGoalAxes
+        | EngineScan::ProjectAnchorDepth
+        | EngineScan::ProjectFoldDepth => seed_project_tests::seed(vault, scan),
+        EngineScan::AgentDefinitionListEntries
+        | EngineScan::AgentBirthSkillRows
+        | EngineScan::AgentBirthClaimOfRows
         | EngineScan::AgentDefinitionIdentityBytes
         | EngineScan::AgentDefinitionDescriptionBytes
         | EngineScan::AgentDefinitionVersionBytes
@@ -273,14 +262,33 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         | EngineScan::AgentDefinitionReferenceBytes
         | EngineScan::AgentDefinitionVerbatimPinBytes
         | EngineScan::AgentBirthSourceBytes
-        | EngineScan::TaskPostIntentKeyBytes
-        | EngineScan::AudienceCoverDepth
-        | EngineScan::ProjectAnchorDepth
-        | EngineScan::ProjectFoldDepth
+        | EngineScan::NoteDocumentBytes
+        | EngineScan::NoteDocumentPinRows
+        | EngineScan::NoteDocumentAuthorshipRows => seed_agent_definition_tests::seed(vault, scan),
+        EngineScan::PredicateClaimRows
+        | EngineScan::VaultEdgeRows
+        | EngineScan::PrefilterReceiptRows
+        | EngineScan::MachineHandoffChain
+        | EngineScan::MachineHistoryTargetRows
+        | EngineScan::MachineTransitionFrontier
+        | EngineScan::ClaimVadIncidentEdges
+        | EngineScan::RetrievalRunRows
+        | EngineScan::CallReceiptRows
+        | EngineScan::BlockedRunReports
+        | EngineScan::SieveAuditRows
+        | EngineScan::DagWalkRecords
+        | EngineScan::TaskAuthorityFactEdges
+        | EngineScan::DispatchAncestorRows
+        | EngineScan::LinearProvenanceRows
+        | EngineScan::SpendAncestorScopes
+        | EngineScan::SpendRetryAttempts
+        | EngineScan::AttemptKindRows
+        | EngineScan::AttemptEventActorBytes
+        | EngineScan::AttemptEventNoteBytes
         | EngineScan::ReceiptSourceRows
         | EngineScan::SyncPrefixRows
         | EngineScan::DependentWalkRows
-        | EngineScan::ResearchContinuationRoots => None,
+        | EngineScan::ResearchContinuationRoots => seed_runtime_records_tests::seed(vault, scan),
         EngineScan::MentionRows => {
             let seed = id(0x60, 0);
             // `Mentions` is semantic: the strict read refuses a structural value.
@@ -679,32 +687,53 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
 
 #[test]
 fn no_engine_scan_refuses_for_its_row_count() {
-    let mut refused = Vec::new();
+    // Every scan runs, and the test names every scan that failed, so one run
+    // shows each broken fixture (a panicking fixture prints its own message).
+    let mut failed = Vec::new();
     for scan in EngineScan::ALL {
-        let dir = tempfile::tempdir().expect("vault dir");
-        let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("open");
-        vault.set_scan_threshold(scan, ROW).expect("lower the row");
-        let Some((served, read)) = seed(&vault, scan) else {
-            continue;
-        };
-        for _ in 0..2 {
-            match read() {
-                Ok(rows) => assert_eq!(rows, served, "{} read every row", scan.code()),
-                Err(error) => refused.push(format!("{}: {:?}", scan.code(), error.kind())),
-            }
+        let run = std::panic::AssertUnwindSafe(|| scan_reads_past_its_row(scan));
+        match std::panic::catch_unwind(run) {
+            Ok(Ok(())) => {}
+            Ok(Err(failure)) => failed.push(format!("{}: {failure}", scan.code())),
+            Err(_) => failed.push(format!("{}: its fixture panicked", scan.code())),
         }
-        let checks = vault.scan_checks().expect("checks");
-        let raised: Vec<_> = checks
-            .iter()
-            .filter(|check| check.scan == scan.code())
-            .collect();
-        assert_eq!(raised.len(), 1, "{} raised its check once", scan.code());
-        assert_eq!(raised[0].threshold, ROW);
     }
     assert!(
-        refused.is_empty(),
-        "scans refused past their row: {refused:?}"
+        failed.is_empty(),
+        "{} scans failed: {failed:#?}",
+        failed.len()
     );
+}
+
+/// One scan on a fresh vault: its read serves every row past the lowered
+/// threshold row, twice, and raises the scan's check once.
+fn scan_reads_past_its_row(scan: EngineScan) -> std::result::Result<(), String> {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("open");
+    vault.set_scan_threshold(scan, ROW).expect("lower the row");
+    let Some((served, read)) = seed(&vault, scan) else {
+        return Ok(());
+    };
+    for _ in 0..2 {
+        match read() {
+            Ok(rows) if rows == served => {}
+            Ok(rows) => return Err(format!("read {rows} items, not {served}")),
+            Err(error) => return Err(format!("refused past its row: {:?}", error.kind())),
+        }
+    }
+    let checks = vault.scan_checks().expect("checks");
+    let raised: Vec<_> = checks
+        .iter()
+        .filter(|check| check.scan == scan.code())
+        .collect();
+    match raised.as_slice() {
+        [check] if check.threshold == ROW => Ok(()),
+        [check] => Err(format!(
+            "raised its check at {}, not {ROW}",
+            check.threshold
+        )),
+        _ => Err(format!("raised its check {} times, not once", raised.len())),
+    }
 }
 
 /// Class-A row 49: a canonical window capture walks the whole local receipt
