@@ -8,10 +8,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use heed::RoTxn;
 
 use super::archive_retained_side_rows::ArchiveRetainedSideRow;
+use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::SideKey;
-use crate::store::Store;
 
 /// The room a room-keyed retained row belongs to: the membership ledger, its revision and the
 /// room role grants are keyed by their room first.
@@ -59,7 +59,7 @@ pub(super) fn withhold_room_ledger(
 /// [`withhold_room_ledger`] withholds one (REVIEW-9739 round 2 P1-1). Returns whether the export
 /// carries the envelope.
 pub(super) fn note_ledger_envelope(
-    store: &Store,
+    vault: &Vault,
     rtxn: &RoTxn<'_>,
     envelope: &ArchiveRetainedSideRow,
     identity: [u8; 32],
@@ -74,7 +74,7 @@ pub(super) fn note_ledger_envelope(
     };
     if envelope.source_table == crate::side_table::CONVERSATION_MEMBERSHIP_ROW.name
         && !(envelope.source_live && withheld_ledgers.contains(&room))
-        && membership_row_withheld(store, rtxn, &envelope.source_value)?
+        && membership_row_withheld(vault, rtxn, &envelope.source_value)?
     {
         if !envelope.source_live {
             return Ok(false);
@@ -87,12 +87,12 @@ pub(super) fn note_ledger_envelope(
 
 /// Whether the export withholds a membership ledger row with value bytes `value`, read in
 /// `rtxn`: its bytes read as no ledger row, or it names an entity the export keeps out.
-fn membership_row_withheld(store: &Store, rtxn: &RoTxn<'_>, value: &[u8]) -> Result<bool> {
+fn membership_row_withheld(vault: &Vault, rtxn: &RoTxn<'_>, value: &[u8]) -> Result<bool> {
     let Some(named) = crate::conversation::membership_row_named_entities(value) else {
         return Ok(true);
     };
     for id in &named {
-        if super::export_egress::whole_vault_export_excludes_entity_in_txn(store, rtxn, id)? {
+        if super::export_egress::whole_vault_export_excludes_entity_in_txn(vault, rtxn, id)? {
             return Ok(true);
         }
     }
