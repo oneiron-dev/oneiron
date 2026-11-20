@@ -766,10 +766,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/document_import/issue_archive_restore.rs` | src | s | 2 crate-vis | — | Owner-only ISSUE recovery, separate from generic maintenance-row admission |
 | `src/batch/export/document_import/owner_archive_restore.rs` | src | m | 1 fn · 19 crate-vis | — | The owner act and call-scoped source permit for a whole-vault archive restore, the claims that restore… |
 | `src/batch/export/document_import/seed_replacement.rs` | src | s | 1 crate-vis | — | Owner-edited engine seeds restored only after the import proves a fresh destination |
+| `src/batch/export/document_import/topology_restore.rs` | src | s | 2 crate-vis | — | The merges and splits the owner's restore into a fresh vault decides again (fix list row… |
 | `src/batch/export/document_import/unseated_rooms.rs` | src | s | 3 crate-vis | — | Archived rooms this vault cannot seat (fix list rows ARCHIVE-IMPORT-ACTORLESS-SEATED-ROOM-REFUSED and… |
 | `src/batch/export/document_snapshot.rs` | src | L | 4 fn · 7 crate-vis | — | Snapshot enumeration for whole-vault export |
 | `src/batch/export/document_tests.rs` | test | L | — | — | Observable whole-vault export/import contracts |
-| `src/batch/export/document_types.rs` | src | m | 14 struct · 3 enum · 10 fn · 1 re-export · 1 crate-vis | ArchiveSideTableOmission, ArchiveSpeakers, ExportDerivationEnvelope, ExportEntity, ExportLedger, ExportPack, ExportPackSource, ExportRowBirth +9 | The typed whole-vault document: what the archive's JSONL rows assemble into on import, and what the snapshot… |
+| `src/batch/export/document_types.rs` | src | m | 16 struct · 5 enum · 10 fn · 1 re-export · 1 crate-vis | ArchiveSideTableOmission, ArchiveSpeakers, ExportDerivationEnvelope, ExportEntity, ExportLedger, ExportPack, ExportPackSource, ExportRowBirth +13 | The typed whole-vault document: what the archive's JSONL rows assemble into on import, and what the snapshot… |
 | `src/batch/export/document_validation.rs` | src | m | 2 crate-vis | — | Import-time validation of the serializer's full document, not its claims |
 | `src/batch/export/embedding_setup.rs` | src | m | 2 struct · 2 fn · 1 re-export · 11 crate-vis | EmbeddingSetupImport, PortableSlotBindings | The vault's embedding setup in the logical whole-vault exports (OF-370): each declared space's descriptor… |
 | `src/batch/export/epoch_floors.rs` | src | s | 3 crate-vis | — | The epoch floors a whole-vault archive carries (OF-013), one row per lineage (FIX 5029): a SESSION's own… |
@@ -2620,7 +2621,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/disclosure/vault_agent.rs` | src | s | 1 fn · 2 crate-vis | — | Who is one of this vault's own agents (the Engine lane's ruling, 2026-10-11): an active `agent` binding in… |
 | `src/disclosure/vault_context.rs` | src | L | 2 struct · 15 fn · 18 crate-vis | DisclosureAssembly, DisclosureContext | vault_meta scope/tier-A rows, Vault impl, and agent-visible assembly block |
 | `src/dispatch_byoa/connector.rs` | src | m | 6 struct · 4 enum · 10 fn · 3 const · 2 re-export · 19 crate-vis | ByoEndpointProtocol, ByoEndpointSpec, ByoaAttemptPayload, ByoaConnectorSpec, ByoaDispatchOutcome, ByoaDispatchStatus, CliSandboxSpec, DispatchByoa +2 | Connector shapes, wire enums, attempt-payload codec, and serde adapters |
-| `src/dispatch_byoa/continue_work.rs` | src | L | 2 struct · 3 enum · 2 fn · 1 crate-vis | ContinueOutsideWorkCheckRequest, ContinueOutsideWorkCheckView, ContinueOutsideWorkRequest, ContinueOutsideWorkView, RunnerContinueCaller | The engine door that continues an outside session on this node (census L10-17): from the hand-off commit the… |
+| `src/dispatch_byoa/continue_work.rs` | src | m | 2 struct · 3 enum · 2 fn · 1 crate-vis | ContinueOutsideWorkCheckRequest, ContinueOutsideWorkCheckView, ContinueOutsideWorkRequest, ContinueOutsideWorkView, RunnerContinueCaller | The engine door that continues an outside session on this node (census L10-17): from the hand-off commit the… |
+| `src/dispatch_byoa/continue_work/hand_over.rs` | src | s | 8 crate-vis | — | The hand-over a continue starts: its ids, its job, and the pushed tip it starts from (census L10-17) |
+| `src/dispatch_byoa/continue_work/seats.rs` | src | s | 4 crate-vis | — | The runner seats a continue searches, in the policy's order with the owner's first (census L10-17) |
 | `src/dispatch_byoa/dispatcher.rs` | src | L | 3 struct · 3 trait · 10 fn · 6 crate-vis | ByoEndpointBackendFactory, ByoEndpointBinding, ByoaCliExecutor, ByoaDispatcher, ByoaExecutionFence, ByoaMcpExecutor | Dispatcher organ with dispatch, execute, authorize, and capture doors |
 | `src/dispatch_byoa/dispatcher/capture_fact.rs` | src | s | 5 crate-vis | — | The native terminal landing's byte-free canonical capture identity |
 | `src/dispatch_byoa/dispatcher/terminal.rs` | src | m | 1 fn · 4 crate-vis | — | The terminal capture door, moved whole from the dispatcher: a terminated executor's exhaust folded into one… |
@@ -4092,17 +4095,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/identity_reputation.rs` | src | s | 2 struct · 1 enum · 1 fn · 1 re-export · 2 crate-vis | CampaignEmailWebhookEvent, EmailDeliveryDisposition, SenderHealthProjection | ChannelIdentity reputation claims and warmup delivery floors (OF-347 R4) |
 | `src/identity_topology/act_admission.rs` | src | m | 1 struct · 4 enum · 8 fn · 2 const · 14 crate-vis | EngineCause, SealAuthority, SealStanding, TopologySeal, TopologySealBy | Who decided a topology seal, and whether that decision stands here (mesh PR2-topology, amended 10-19 03:0x… |
 | `src/identity_topology/admission_disposition.rs` | src | L | 1 struct · 2 enum · 20 crate-vis | AdmissionDisposition, AdmissionVerdict, ProposerStamp | Signed append-only admission facts, independent of a decision's erasable author |
+| `src/identity_topology/archive_restore.rs` | src | s | 5 crate-vis | — | The owner's restore of a whole-vault archive into a fresh vault decides each merge and split the source held… |
 | `src/identity_topology/attribution.rs` | src | m | 15 crate-vis | — | Erasable authorship for immutable type-76 decisions |
 | `src/identity_topology/distinct_claim.rs` | src | m | 2 fn · 1 re-export · 9 crate-vis | — | The ARCH-0055 §6 anti-merge assertion: the normalized `entity.distinct_from` pair key, its claim wire value… |
 | `src/identity_topology/event_body_codec.rs` | src | L | 16 crate-vis | — | The low-level MessagePack field codec for the type-76 event body, plus the stateless admission checks every… |
 | `src/identity_topology/integrity_refusal.rs` | src | s | 3 crate-vis | — | The engine's integrity refusals on the type-76 family: a deletion's or a redaction's signed refusal of a… |
 | `src/identity_topology/ledger_fold.rs` | src | m | 2 struct · 1 enum · 1 fn · 2 crate-vis | IdentityTopologyAction, IdentityTopologyEvent, IdentityTopologyFold | The deterministic fold over the append-only op log: the action/event/fold shapes, the undo-currency rule… |
 | `src/identity_topology/lifecycle_state.rs` | src | s | 2 fn · 1 re-export · 8 crate-vis | — | Entity lifecycle state ([`EntityLifecycleState`]), its CRDT join, the zero-head-split ledger witness, and… |
-| `src/identity_topology/mod.rs` | src | s | 13 re-export · 25 crate-vis | — | ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an… |
+| `src/identity_topology/mod.rs` | src | s | 13 re-export · 26 crate-vis | — | ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an… |
 | `src/identity_topology/op_apply.rs` | src | m | 1 struct · 1 enum · 4 fn · 10 crate-vis | IdentityOpOutcome, IdentityOpWrite | The apply door: the per-write consent metadata, the door outcome, the merge/split/facet/assert_distinct… |
 | `src/identity_topology/op_undo.rs` | src | m | 2 fn · 1 crate-vis | — | The undo door: a counter-event appended over an applied merge, split or facet, never a rewrite of the event… |
 | `src/identity_topology/op_vocabulary.rs` | src | s | 6 struct · 2 enum · 1 fn · 3 crate-vis | AssertDistinctOp, FacetOp, FacetSpec, IdentityOpEvidence, IdentityTopologyOp, MergeOp, SplitOp, SurvivorshipPlan | The typed identity-topology op vocabulary (ARCH-0055 §2): merge, split, facet and assert_distinct, plus the… |
-| `src/identity_topology/operation_parts.rs` | src | m | 7 crate-vis | — | One merge, split or facet decision too large for one record, carried across bounded records of the same… |
+| `src/identity_topology/operation_parts.rs` | src | m | 8 crate-vis | — | One merge, split or facet decision too large for one record, carried across bounded records of the same… |
 | `src/identity_topology/post_hoc_review.rs` | src | m | 1 struct · 2 re-export · 7 crate-vis | TopologyAuditSelection | The receipted post-hoc review of automatic topology (FIX 7817, ARCH-0055 §8 "sampled post-hoc audit replaces… |
 | `src/identity_topology/post_hoc_review/home.rs` | src | s | 1 crate-vis | — | FIX 7817: the topology-audit tables a home move carries, as one section on L03's carrier C1… |
 | `src/identity_topology/post_hoc_review/home/partition.rs` | src | m | 19 crate-vis | — | FIX 8875 for the topology-audit section: its rows split into content-free facts and each actor's content… |
@@ -6501,6 +6505,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/self_heal/untrusted_text.rs` | src | s | 2 crate-vis | — | Untrusted detail-text validation and escaping |
 | `src/serialize/credential_nulling.rs` | src | s | 8 crate-vis | — | Core half of `serialize::credential_nulling`: its store-layer items live in… |
 | `src/serialize/export_actor_references.rs` | src | s | 2 crate-vis | — | Core half of `serialize::export_actor_references`: its store-layer items live in… |
+| `src/serialize/export_identity_topology_references.rs` | src | s | 1 crate-vis | — | A type-76 merge or split keeps its typed byte slots in an export without secrets… |
 | `src/serialize/export_value.rs` | src | m | 1 struct · 2 enum · 24 crate-vis | ExportBody, ExportBodyFile, ExportValue | Credential-safe, type-preserving MessagePack values for whole-vault JSON |
 | `src/serialize/export_value/file_stream.rs` | src | s | 2 crate-vis | — | Core half of `serialize::export_value::file_stream`: its store-layer items live in… |
 | `src/serialize/export_value/tree.rs` | src | m | 5 crate-vis | — | Core half of `serialize::export_value::tree`: its store-layer items live in… |
@@ -7633,7 +7638,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/repo_manifests.rs` | src | m | 11 crate-vis | — | FIX 6870 phase 1: a repo's portable manifest on the window plane |
 | `src/sync/repo_manifests/checkpoint.rs` | src | s | 4 crate-vis | — | A repo manifest in a checkpoint (KS7-3a), read with the head codec and filed under its portable id: the head… |
 | `src/sync/repo_manifests/conflicts.rs` | src | s | 2 crate-vis | — | FIX 12763: narrow helpers for one portable manifest carrier |
-| `src/sync/residence.rs` | src | m | 10 fn · 2 const · 33 re-export · 26 crate-vis | — | Grant-checked, per-item residence projections over a window document |
+| `src/sync/residence.rs` | src | m | 10 fn · 2 const · 33 re-export · 27 crate-vis | — | Grant-checked, per-item residence projections over a window document |
 | `src/sync/residence/admission.rs` | src | m | 1 struct · 12 fn · 2 crate-vis | ResidenceAdmission | One residence request's admission for the machine at the other end of the connection (OF-534 G6) |
 | `src/sync/residence/authority_parts.rs` | src | s | 4 struct · 1 enum · 3 fn · 2 const | AuthorityAppendPart, AuthorityAppendStage, AuthorityEntryPart, AuthorityEntryRef, AuthorityPartedPage | One authority entry past one RPC frame (FIX 8087, 8246), such as a machine profile revision that lists every… |
 | `src/sync/residence/authority_tail.rs` | src | m | 3 struct · 9 fn · 3 const · 3 crate-vis | AuthorityAppendProgress, AuthorityCheckpointPart, AuthorityPageImport | Authority history for a machine that syncs what it opened (OF-469, the delivery half) |
@@ -7672,7 +7677,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/residence/own_device_grants.rs` | src | m | 1 struct · 1 enum · 4 fn · 1 const | OwnDeviceGrantAdmission, OwnDeviceGrantState | The own-device grants a linked machine's live slips stand on, served beside its authority catch-up (FIX… |
 | `src/sync/residence/pad_custody.rs` | src | s | 3 struct · 1 enum · 3 fn · 1 const | WorldPadCapsule, WorldPadFetch, WorldPadPage, WorldPadSelection | Pad hydration through the home (KS-5, FIX 6706): one world's current pads, sealed for the one machine of the… |
 | `src/sync/residence/policy.rs` | src | s | 1 struct · 7 fn · 4 crate-vis | DeviceSyncPreference | This machine's residence choice: sync every window it may read, sync what it opened, or sync what it opened… |
-| `src/sync/residence/predict.rs` | src | m | 1 enum · 3 fn · 6 crate-vis | PredictedResidenceAnswer | The home's prediction for one machine at the predicted level (ARCH-0023b #predicted-residence) |
+| `src/sync/residence/predict.rs` | src | m | 1 enum · 3 fn · 9 crate-vis | PredictedResidenceAnswer | The home's prediction for one machine at the predicted level (ARCH-0023b #predicted-residence) |
 | `src/sync/residence/prune.rs` | src | m | 1 struct · 2 fn · 8 crate-vis | WindowDemotion | Last-touch accounting and pruning for opened-item read caches, and the demotion of a promoted canonical window |
 | `src/sync/residence/publication_access.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | PendingPublicationGrant | Request-bound publication grants kept by the home beside their generation |
 | `src/sync/residence/recall_scope.rs` | src | s | 1 re-export | — | Resolved recall scope and signing transcript, defined by the recall layer |
@@ -8298,7 +8303,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/peer_author_redaction.rs` | src | s | 3 fn | — | Doors for the peer-redaction refusal test (ARCH-0055 author-carrier-open): this vault's own author carrier… |
 | `src/test_doors/pending_work_reports.rs` | src | s | 3 fn | — | FIX 5558: doors for the pending-work-reports tests |
 | `src/test_doors/pending_write_tray.rs` | src | s | 1 fn | — | Door for `tests/mcp_page_continuation_unknown_rows.rs` in oneiron-server (FIX-LIST L23762): park a claim in… |
-| `src/test_doors/predicted_residence.rs` | src | s | 4 fn | — | Doors for the integration tests of the predicted residence level (census L7-46 + L10-14, ARCH-0023b… |
+| `src/test_doors/predicted_residence.rs` | src | s | 7 fn | — | Doors for the integration tests of the predicted residence level (census L7-46 + L10-14, ARCH-0023b… |
 | `src/test_doors/profiles_other_machine.rs` | src | s | 1 fn | — | Door for `tests/doors_read_standing_heads.rs` (FIX [FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES]… |
 | `src/test_doors/provenance_body_checkpoint.rs` | src | s | 6 fn | — | Doors for the provenance-body checkpoint owner-erasure tests |
 | `src/test_doors/question_saved_lane.rs` | src | s | 7 fn | — | A saved question's two rebuilt readers (FIX 14344, Astra F2 on #8029), as `questions::saved_reader` builds… |
@@ -9053,7 +9058,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/state.rs` | src | s | 1 fn · 1 re-export · 1 crate-vis | — | The no-kit warning (ruling fix 10): a typed state |
 | `src/world_keys/tables.rs` | src | s | — | — | The side tables `world_keys` keeps (core split slice 1): each row declares one, and the crate's build script… |
 | `src/world_keys/tests.rs` | test | m | — | — | P6b done-means checks on the key core |
-| `src/world_keys/vault_doors.rs` | src | m | 6 fn · 5 crate-vis | — | The vault-handle doors for this install's own keys: installing the keystore, loading this install's signing… |
+| `src/world_keys/vault_doors.rs` | src | m | 6 fn · 6 crate-vis | — | The vault-handle doors for this install's own keys: installing the keystore, loading this install's signing… |
 | `src/world_keys/vault_key.rs` | src | L | 6 re-export · 23 crate-vis | — | The vault data key and the wraps that unlock it (OF-570 E1) |
 | `src/world_keys/vault_key/escrow.rs` | src | s | 2 struct · 3 fn · 2 re-export | ResealedEscrowCapsule, VaultKeyEscrowCapsule | Vault-key escrow result shapes and outbound capsule access |
 | `src/world_keys/vault_key/generation.rs` | src | m | 4 struct · 1 enum · 5 fn · 1 const · 3 crate-vis | DataKeyGenerationCause, DataKeyGenerationDraft, DataKeyGenerationKeptWays, DataKeyGenerationOutcome, DataKeyGenerationWays | A new data-key generation: the owner replaces the vault's data key (KIT-ONLY-DATA-KEY = D, Apple ADP… |
@@ -9858,7 +9863,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/plugin_section_fit_install.rs` | test | m | — | — | FIX-LIST [FIT-INSTALL-AUTO-CLAIM-PENDS-AT-GATE]: under ARCH-0053 ("Everything installs; permissions ask"), a… |
 | `tests/point_read_filter_withholding.rs` | test | m | — | — | L23005 (POINT-READ-FILTER-WITHHOLDING-GAP): a row the base key reads but the request filter excludes is… |
 | `tests/policy_row_verbs.rs` | test | s | — | — | Public-door policy-row proof independent of unrelated lib-test compilation |
-| `tests/predicted_residence_home.rs` | test | m | — | — | The home computes one machine's prediction (census L7-46 + L10-14; ARCH-0023b #predicted-residence) |
+| `tests/predicted_residence_home.rs` | test | L | — | — | The home computes one machine's prediction (census L7-46 + L10-14; ARCH-0023b #predicted-residence) |
 | `tests/primitive_a_evidence_spans.rs` | test | m | — | — | Primitive A, slice 6.4a (SLICE6-MAP row A): `vault.evidence.spans` serves the exact bytes of a TURN's text… |
 | `tests/primitive_a_policy_preflight.rs` | test | s | — | — | Primitive A, slice 6.4e (SLICE6-MAP row A; ENGINE CALL S64-5): `vault.policy.preflight` with the act `read`… |
 | `tests/primitive_a_policy_preflight_derive.rs` | test | m | — | — | Primitive A, slice 6.4e-2 (ENGINE CALL S64E-JUDGE = A; S64-5): `vault.policy.preflight` with the acts… |
@@ -10233,6 +10238,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/whole_vault_restore_edited_seeds.rs` | test | m | — | — | Owner whole-vault restore replaces an owner-edited seeded AGENT_DEF and PERSON |
 | `tests/whole_vault_restore_held_link_provenance.rs` | test | m | — | — | Fix list row WHOLE-VAULT-IMPORT-HELD-LINK-OLDER-PROVENANCE-ABORTS, the plain-link twin of REVIEW-9581 round… |
 | `tests/whole_vault_restore_identity_topology_shells.rs` | test | s | — | — | Fix list row WHOLE-VAULT-IMPORT-REFUSES-RESERVED-OWNER-EDGES, identity topology part (OWNEDGES-SHELL-RESTORE… |
+| `tests/whole_vault_restore_merges_and_splits.rs` | test | m | — | — | Fix list row RESTORE-KEEPS-MERGES-AND-SPLITS (Engine ANSWER 08:00 17 Nov = B): the owner's restore of a… |
 | `tests/whole_vault_restore_readiness_and_fulfillment.rs` | test | s | — | — | Fix list row WHOLE-VAULT-IMPORT-REFUSES-RESERVED-OWNER-EDGES, readiness and fulfillment part: a whole-vault… |
 | `tests/whole_vault_restore_same_as_links.rs` | test | L | — | — | Fix list row WHOLE-VAULT-IMPORT-REFUSES-RESERVED-OWNER-EDGES, its same_as part: a whole-vault archive of a… |
 | `tests/whole_vault_restore_seeds.rs` | test | s | — | — | Whole-vault archive restore into a fresh SEEDED vault: engine-seed equivalence |
