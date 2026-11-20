@@ -71753,7 +71753,7 @@
      "path": "src/run_tree/signal/intent.rs",
      "purpose": "The keyed fingerprint of a signal's exact intent (FIX 10066), kept beside a signal the side-row wall masked…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -104590,9 +104590,19 @@
      "path": "src/world_keys/owner_signing.rs",
      "purpose": "This install's own owner signing key (FIX 4921; owner ruling 10-19, OWNER SIGNING KEYS = B): one Ed25519 key…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 15,
       "fn": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/owner_signing/slot.rs",
+     "purpose": "An install's owner signing slot ([`Vault::device_owner_signing_slot`]) and the renewal of its seed by a door…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -113277,6 +113287,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/signal_ask_answer_known_value.rs",
+     "purpose": "FIX SIGNAL-NEW-KEY-MASKED-ANSWER: an ask's answer is stored through the side-row wall, which gives a value…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -116298,7 +116316,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 84,
+     "files": 85,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116307,8 +116325,8 @@
    },
    "over_bar": 306,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8206,
-   "test_files": 1956
+   "source_files": 8207,
+   "test_files": 1957
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -129207,6 +129225,14 @@
      "path": "tests/stemma_reader.rs",
      "purpose": "The stemma fork reads untrusted DOCX parts with quick-xml",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/xlsx_format_part_types.rs",
+     "purpose": "A caller in another crate writes a cell format's alignment and protection by name",
+     "surface": {}
     }
    ],
    "modules": {
@@ -129382,7 +129408,7 @@
    "over_bar": 1,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
    "source_files": 196,
-   "test_files": 17
+   "test_files": 18
   },
   "oneiron-dreamer": {
    "files": [
