@@ -3199,8 +3199,10 @@ fn a_kept_booking_handle_opens_its_card_on_a_later_day() {
 // PR 3; RULING DEPOSIT-PICK-AFTER-EMERGENCY-CANCEL = A, Engine 15 Nov 19:08).
 // A booking the visitor takes again from the owner's emergency proposals
 // carries no deposit, because the emergency cancel gave it back whole; the
-// owner's card of that booking says so. Each card is read through the verbs
-// by name, so the pre-fix head builds these tests: its red is an assert.
+// owner's card of that booking says so. The line names no owner: in a shared
+// vault every live owner reads the card, and the emergency cancel may be
+// another owner's (review round 1 of #10073). Each card is read through the
+// verbs by name, so the pre-fix head builds these tests: its red is an assert.
 
 /// The owner cancels `booked`, which starts at `hour`, in a BK-09 emergency
 /// at `now`, before its start, with its proposals delivered; then the
@@ -3327,7 +3329,7 @@ fn a_booking_picked_again_after_an_emergency_cancel_says_its_deposit_was_refunde
         serde_json::json!({
             "returned": "refund_pending",
             "line": format!(
-                "{label}: no new deposit held; the refund from your emergency cancel is pending."
+                "{label}: no new deposit held; the refund from the emergency cancel is pending."
             ),
         }),
         "{card}"
@@ -3353,7 +3355,7 @@ fn a_booking_picked_again_after_an_emergency_cancel_says_its_deposit_was_refunde
         card["emergency_return"],
         serde_json::json!({
             "returned": "refunded",
-            "line": format!("{label}: no deposit held (refunded at your emergency cancel)."),
+            "line": format!("{label}: no deposit held (refunded at the emergency cancel)."),
         }),
         "{card}"
     );
@@ -3392,7 +3394,7 @@ fn a_booking_picked_again_after_an_emergency_cancel_says_its_deposit_was_release
         serde_json::json!({
             "returned": "release_pending",
             "line": format!(
-                "{label}: no new deposit held; the release from your emergency cancel is pending."
+                "{label}: no new deposit held; the release from the emergency cancel is pending."
             ),
         }),
         "{card}"
@@ -3413,7 +3415,7 @@ fn a_booking_picked_again_after_an_emergency_cancel_says_its_deposit_was_release
         card["emergency_return"],
         serde_json::json!({
             "returned": "released",
-            "line": format!("{label}: no deposit held (released at your emergency cancel)."),
+            "line": format!("{label}: no deposit held (released at the emergency cancel)."),
         }),
         "{card}"
     );
