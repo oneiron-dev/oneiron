@@ -136,10 +136,7 @@ pub(super) fn options(
             .find(|(key, _)| key.as_str() == Some(name))
             .map(|(_, value)| value)
     };
-    let purpose = field("purpose")
-        .and_then(Value::as_str)
-        .ok_or_else(|| invalid("summary declaration has no purpose"))?;
-    let purpose = purpose_in_txn(vault, txn, purpose)?;
+    let purpose = declared_purpose_in_txn(vault, txn, input)?;
     let previous = match field("previous") {
         Some(Value::Nil) => None,
         Some(value) => Some(EntityId::from_hex(
@@ -166,6 +163,24 @@ pub(super) fn options(
     let edited = (blake3::hash(text.as_bytes()).as_bytes() != &meta.derivation.generated_text_hash)
         .then_some(text);
     Ok((purpose, Some(previous), meta.keep, edited))
+}
+
+/// The purpose the declaration `input` names.
+fn declared_purpose_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    input: &Value,
+) -> Result<SummaryPurpose> {
+    let purpose = input
+        .as_map()
+        .and_then(|fields| {
+            fields
+                .iter()
+                .find(|(key, _)| key.as_str() == Some("purpose"))
+        })
+        .and_then(|(_, value)| value.as_str())
+        .ok_or_else(|| invalid("summary declaration has no purpose"))?;
+    purpose_in_txn(vault, txn, purpose)
 }
 
 fn observation(vault: &Vault, txn: &mut heed::RwTxn<'_>, input: &Value) -> Result<[u8; 32]> {
@@ -201,32 +216,33 @@ pub(super) fn register_in_txn(
     input: &Value,
     summary: EntityId,
 ) -> Result<()> {
-    register_declared_in_txn(vault, txn, input, input, summary, false)
+    register_declared_in_txn(vault, txn, input, summary, false)
 }
 
 /// [`register_in_txn`] of `summary` in the projection `input` declares,
-/// under the lane `declared` froze. With `unobserved_when_refused`, an
-/// observation a lost grant, an erased source or a gone scope refuses
-/// leaves the projection unobserved, as a re-derivation's does, rather than
-/// failing the write.
+/// with the source set it admitted and the lane it froze. Only its purpose
+/// is read of the rest: the prior summary it names is lineage, and a
+/// rollback's restored summary may name one since erased. With
+/// `unobserved_when_refused`, an observation a lost grant, an erased source
+/// or a gone scope refuses leaves the projection unobserved, as a
+/// re-derivation's does, rather than failing the write.
 fn register_declared_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     input: &Value,
-    declared: &Value,
     summary: EntityId,
     unobserved_when_refused: bool,
 ) -> Result<()> {
     let request = decode_request(vault, txn, input)?;
-    let (purpose, _, _, _) = options(vault, txn, input)?;
+    let purpose = declared_purpose_in_txn(vault, txn, input)?;
     let key = projection_key(&request, &purpose.id)?;
-    let normalized = inherited_declaration(&request, &purpose.id, None, declared)?;
+    let normalized = inherited_declaration(&request, &purpose.id, None, input)?;
     let request = encode(&normalized)?;
     let current_input = inherited_declaration(
         &decode_request(vault, txn, input)?,
         &purpose.id,
         Some(summary),
-        declared,
+        input,
     )?;
     // An Arc is re-derived through its gate (FIX 7509 P8), never by an
     // observation, and its row keeps its gate state.
@@ -279,28 +295,24 @@ fn register_declared_in_txn(
 /// revert withdraws (owner ruling 10-18): the summary it replaced is current
 /// again while that one stands, and with none standing the projection goes,
 /// so the next request derives afresh. A projection a later summary holds is
-/// left as it is. Returns the summary current after it, and the
-/// `merge.summary` header that landed `summary`, if one did.
+/// left as it is. Returns the summary current after it, and every standing
+/// `merge.summary` header that lands `summary`.
 pub(crate) fn roll_back_summary_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     summary: EntityId,
-) -> Result<(Option<EntityId>, Option<EntityId>)> {
+) -> Result<(Option<EntityId>, Vec<EntityId>)> {
     let meta = crate::entity_doc::summary_meta_in_txn(vault, txn, &summary)?;
-    let attempt = crate::store::attempt_id::AttemptId::from_bytes(&meta.derivation.trigger)?;
-    let header = super::status::result_in_txn(vault, txn, attempt)?
-        .and_then(|result| result.claim)
-        .map(|claim| EntityId::from_hex(&claim))
-        .transpose()?;
+    let headers = super::doors::standing_headers_in_txn(vault, txn, &summary)?;
     let input = decode(&meta.derivation.request)?;
     let request = decode_request(vault, txn, &input)?;
     let key = projection_key(&request, &meta.purpose.id)?;
     let Some(projection) = PROJECTION.get(&vault.store, txn, &key)? else {
-        return Ok((None, header));
+        return Ok((None, headers));
     };
     if projection.current.as_deref() != Some(summary.to_hex().as_str()) {
         let current = projection.current.as_deref().map(EntityId::from_hex);
-        return Ok((current.transpose()?, header));
+        return Ok((current.transpose()?, headers));
     }
     let previous = meta
         .derivation
@@ -312,28 +324,29 @@ pub(crate) fn roll_back_summary_in_txn(
         let state =
             crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, &previous)?;
         if !state.deleted && vault.archive_tombstone_in_txn(txn, &previous)?.is_none() {
-            // The summary it replaced stands again under the lane its own
-            // declaration froze, not the reverted one's, and a lane that no
-            // longer reads its sources leaves it unobserved: the owner's
-            // revert never waits on a requester's credential (review P1 of
-            // #9683).
+            // The summary it replaced stands again under its own
+            // declaration, not the reverted one's: the lane it froze
+            // (review P1 of #9683) and the source set it admitted (review
+            // P1 of #9808). A lane that no longer reads its sources leaves
+            // it unobserved: the owner's revert never waits on a
+            // requester's credential.
             let declared = decode(
                 &crate::entity_doc::summary_meta_in_txn(vault, txn, &previous)?
                     .derivation
                     .request,
             )?;
-            register_declared_in_txn(vault, txn, &input, &declared, previous, true)?;
-            return Ok((Some(previous), header));
+            register_declared_in_txn(vault, txn, &declared, previous, true)?;
+            return Ok((Some(previous), headers));
         }
     }
     // An Arc's row keeps its gate state (FIX 7509 P8): with no summary
     // standing, it is owed again.
     if projection.arc.is_some() {
         super::arc_gate::withdrawn_in_txn(vault, txn, &key, projection)?;
-        return Ok((None, header));
+        return Ok((None, headers));
     }
     PROJECTION.delete(&vault.store, txn, &key)?;
-    Ok((None, header))
+    Ok((None, headers))
 }
 
 thread_local! {

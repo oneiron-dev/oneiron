@@ -382,6 +382,31 @@ pub fn decode_scope_summary_body(bytes: &[u8]) -> Result<ScopeSummaryBody> {
     Ok(body)
 }
 
+/// The producer of the SUMMARY body `bytes`, read without its text (review
+/// P1 of #9808). The producer is fixed when the summary is minted; the text
+/// is an editable document, and its merged edits may leave a blank text,
+/// which [`decode_scope_summary_body`] refuses. Refuses a body that is no
+/// map, has trailing bytes, or names no valid producer, or one twice.
+pub fn scope_summary_actor(bytes: &[u8]) -> Result<EntityId> {
+    let mut cursor = bytes;
+    let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut cursor) else {
+        return Err(invalid("invalid summary MessagePack"));
+    };
+    if !cursor.is_empty() {
+        return Err(invalid("trailing summary bytes"));
+    }
+    let mut actors = entries
+        .iter()
+        .filter(|(key, _)| key.as_str() == Some("actor"));
+    let (Some((_, actor)), None) = (actors.next(), actors.next()) else {
+        return Err(invalid("a summary names one actor"));
+    };
+    let actor = actor
+        .as_str()
+        .ok_or_else(|| invalid("actor must be a string"))?;
+    EntityId::from_hex(actor).map_err(|_| invalid("invalid summary actor"))
+}
+
 /// Recognizes scope-summary identity before strict decoding, including a
 /// damaged suffix after a family-specific key.
 pub fn is_scope_summary(bytes: &[u8]) -> bool {

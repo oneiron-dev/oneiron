@@ -277,20 +277,15 @@ pub(crate) fn revert_authored_change_in_txn(
                     "the Dreamer did not write this summary",
                 ));
             }
-            let (current, header) =
+            let (current, headers) =
                 crate::scope_summary::roll_back_summary_in_txn(vault, txn, change)?;
             archive_in_txn(vault, txn, &change)?;
             let mut reverted = RevertedDreamerChange::of(DreamerChangeKind::Summary);
             reverted.archived = Some(change);
             reverted.current = current;
-            if let Some(header) = header {
-                if vault
-                    .get_claim_in_txn(txn, &header)?
-                    .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active)
-                {
-                    vault.retract_claim_in_txn_as(txn, &header, now / 1_000, Some(reverter))?;
-                    reverted.retracted.push(header);
-                }
+            for header in headers {
+                vault.retract_claim_in_txn_as(txn, &header, now / 1_000, Some(reverter))?;
+                reverted.retracted.push(header);
             }
             Ok(reverted)
         }
@@ -456,8 +451,10 @@ fn claim_kind(body: &ClaimBody) -> DreamerChangeKind {
 /// Whether the standing SUMMARY `summary`, stored as `stored`, is the
 /// Dreamer's. A summary with a document stores a pointer row, which is no
 /// summary body: its body is read through the document, as every summary
-/// read does (FIX DREAMER-REVERT-DECODES-SUMMARY-POINTER-ROW). A body that
-/// does not resolve or decode is no Dreamer summary.
+/// read does (FIX DREAMER-REVERT-DECODES-SUMMARY-POINTER-ROW). Only its
+/// producer is read, never its text: an edit may leave the text blank, and
+/// the owner still reverts the summary (review P1 of #9808). A body that
+/// does not resolve or names no producer is no Dreamer summary.
 fn summary_by_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -466,8 +463,8 @@ fn summary_by_in_txn(
     dreamer: EntityId,
 ) -> bool {
     crate::entity_doc::resolve_record_body(&vault.store, txn, summary, stored)
-        .and_then(|body| crate::scope_summary::decode_scope_summary_body(&body))
-        .is_ok_and(|body| body.actor == dreamer.to_hex())
+        .and_then(|body| crate::scope_summary::scope_summary_actor(&body))
+        .is_ok_and(|actor| actor == dreamer)
 }
 
 /// The NOTE's kind when the Dreamer wrote it: its stored core names both
