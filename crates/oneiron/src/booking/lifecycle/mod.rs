@@ -379,11 +379,13 @@ enum CalendarCancellation {
     None,
     /// Only a feed's omission says cancelled (basis `imported_absence`). The
     /// next live VEVENT of any source ends it: calendar ingest retracts every
-    /// omission's status of an EVENT a feed reports live.
+    /// omission's status of an EVENT a feed reports live, and a booking's
+    /// feed move retracts it in the move's own transaction.
     Omission,
     /// A head with any other basis says cancelled: the booking's own cancel,
     /// an owner's ruling, a provider's cancellation or tombstone. No later
-    /// VEVENT ends it, since ingest never writes `confirmed` back.
+    /// VEVENT ends it, since ingest never writes `confirmed` back and an
+    /// omission never replaces it.
     Standing,
 }
 

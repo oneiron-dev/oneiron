@@ -92,7 +92,9 @@ pub(crate) enum FeedMoveOutcome {
 /// CAL-07 measure a later cancellation against. That cancellation may come
 /// from a calendar that moves no money (RULING DEPOSIT-HOST-CANCEL-SOURCE =
 /// A). An omission's cancellation is no bar: this live VEVENT ends it, so
-/// the booking moves as a live one.
+/// the booking moves as a live one, and the move retracts it in its own
+/// transaction, so the revised invite it queues never reads the booking
+/// cancelled (review round 1 of #9677).
 ///
 /// The move does not consult the solver: a clash with another booking is two
 /// overlapping EVENTs, as any feed drift makes.
@@ -127,6 +129,7 @@ pub(crate) fn move_booking_by_feed(
         if booking.calendar_cancellation == CalendarCancellation::Standing {
             return Ok(FeedMoveOutcome::Unchanged);
         }
+        let ends_omission = booking.calendar_cancellation == CalendarCancellation::Omission;
         let Some(slot) = feed_slot.filter(|range| range.start < range.end) else {
             return Ok(FeedMoveOutcome::Unchanged);
         };
@@ -183,6 +186,15 @@ pub(crate) fn move_booking_by_feed(
                 reads,
             },
         )?;
+        // This live VEVENT ends the omission's cancellation. Calendar ingest
+        // retracts it after the move too, but a drain between the two would
+        // read the booking cancelled and settle its revised invite unsent.
+        if ends_omission {
+            crate::calendar::ingest::clear_absence_cancellation_in_txn(
+                vault, wtxn, event_ref, now_utc,
+            )
+            .map_err(|error| engine_failure("omission cancellation retract", error))?;
+        }
         enqueue_revision_invite_in(vault, wtxn, &revision, now_utc)?;
         Ok(FeedMoveOutcome::Moved(revision))
     })

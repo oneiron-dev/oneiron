@@ -46,6 +46,7 @@ pub(in crate::calendar) use import_claim::{
     admit_calendar_import_claim, admit_calendar_import_claim_in_txn,
 };
 use import_claim::{admit_calendar_import_claim_screened, imported_screen};
+pub(crate) use recurrence::clear_absence_cancellation_in_txn;
 
 #[cfg(test)]
 use super::fetch::{IcsFeedFetcher, IcsFetchResponse};
@@ -846,6 +847,12 @@ impl PollAdmission<'_> {
 
     /// Admits one `calendar.status` claim, superseding the prior live status
     /// claim, and skips when the live claim already carries the exact value.
+    /// An omission's cancellation (basis `imported_absence`) also skips over
+    /// a live cancellation of any other basis: an omission is the weakest
+    /// evidence, and a later live VEVENT ends it
+    /// ([`Self::clear_absence_cancellation`]), so replacing a provider's,
+    /// the booking's or the owner's cancellation with it would let that
+    /// VEVENT end the cancellation too (review round 1 of #9677).
     /// Returns the new claim's id, or `None` when nothing was written.
     fn admit_status_if_changed(
         &mut self,
@@ -867,7 +874,9 @@ impl PollAdmission<'_> {
             }
             let current = decode_status_value(&claim.value)
                 .map_err(|_| ingest("stored status claim did not decode"))?;
-            if current.status == status && current.basis == basis {
+            if current.status == status
+                && (current.basis == basis || basis == CalendarStatusBasis::ImportedAbsence)
+            {
                 return Ok(None);
             }
             prior_live = Some(claim_id);
