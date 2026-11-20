@@ -272,3 +272,7 @@ pub use self::workflow_dispatch::operations as workflow_operations;
 // of the import block.
 #[cfg(oneiron_test_support)]
 pub(crate) use self::verb_hooks::{hook_parked_outcome_for_test, parked_note_resumed_for_test};
+
+// A call past its pre chain and what its own post chain left of a skill
+// answer's text view, for the host (SKILL-ANSWER-DEEP-JSON-STACK-SAFE).
+pub(crate) use self::verb_hooks::{HookedCall, TextAnswerPost};
