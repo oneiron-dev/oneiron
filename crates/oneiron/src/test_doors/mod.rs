@@ -242,6 +242,7 @@ pub mod msgpack_duplicate_key;
 pub mod msgpack_trailing;
 pub mod native_person_mint;
 pub mod nightly;
+pub mod nightly_arc_summary;
 pub mod note_bm25f_repair;
 #[cfg(feature = "sync")]
 pub mod note_fork_upload;

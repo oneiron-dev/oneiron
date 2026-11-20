@@ -34,10 +34,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod chunks;
+#[cfg(oneiron_test_support)]
+pub(crate) mod doors;
 pub(super) mod narrative_labels;
 mod write;
 pub(super) use super::call_labels::subject_label;
 use chunks::retry_chunks_in_txn;
+use write::MergeDraft;
 pub(super) use write::{Draft, NightlyWrite, landed_units_in_txn, recheck_in_txn, scoped_draft};
 
 pub(crate) const ATTEMPT: &str = "dreamer.nightly.merge";
@@ -237,7 +240,7 @@ impl ConsolidationExecutor<'_> {
                             Value::from(crate::claim::COREFERENCE_STATUS_PROPOSED),
                             1.0,
                         );
-                        drafts.push(scoped_draft(candidate, first, &cohort));
+                        drafts.push(MergeDraft::Drafted(scoped_draft(candidate, first, &cohort)));
                     }
                 } else {
                     let value = Value::Map(vec![
@@ -258,7 +261,7 @@ impl ConsolidationExecutor<'_> {
                         value,
                         1.0,
                     );
-                    drafts.push(scoped_draft(candidate, first, &cohort));
+                    drafts.push(MergeDraft::Drafted(scoped_draft(candidate, first, &cohort)));
                 }
             }
             let call = RoleCall::resolve(
@@ -462,27 +465,22 @@ impl ConsolidationExecutor<'_> {
                 Err(error) => return Ok(charges.park_on_error(&error)),
             };
             let narrative = narrative_labels::durable_text(&narrative, &names);
-            let candidate = ClaimCandidate::new(
-                "dreamer.arc.summary",
-                ClaimSubject::Entity(first.scope_project),
-                narrative.into(),
-                1.0,
-            );
-            drafts.push(scoped_draft(candidate, first, members));
+            drafts.push(MergeDraft::ArcSummary {
+                members: members.as_slice(),
+                narrative: narrative.into(),
+            });
         }
         let now = ctx.now_ms / 1_000;
-        let writer = NightlyWrite {
-            vault: ctx.vault,
-            actor: self.actor,
-            attempt: &attempt.status,
-            ids: MERGE_IDS,
-            now,
-        };
+        let writer = merge_writer(ctx.vault, self.actor, &attempt.status, now);
         let read_back: Vec<&Proposal> = proposals.iter().collect();
         let commit = ctx.vault.with_write_txn_grouped(|txn| {
             let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("nightly merge");
             recheck_in_txn(&read, txn, &read_back)?;
-            let outputs = writer.claims_in_txn(txn, drafts)?;
+            let mut written = Vec::with_capacity(drafts.len());
+            for draft in drafts {
+                written.push(draft.in_txn(&read, txn));
+            }
+            let outputs = writer.claims_in_txn(txn, written)?;
             writer.result_in_txn(
                 txn,
                 &MergeResult {
@@ -506,6 +504,23 @@ impl ConsolidationExecutor<'_> {
             // a gate only an owner act opens keeps the private park.
             Err(error) => Ok(charges.park_on_error(&error)),
         }
+    }
+}
+
+/// The writer of a merge attempt's own claims, under the merge's id domain;
+/// `now` is Unix seconds.
+fn merge_writer<'a>(
+    vault: &'a Vault,
+    actor: WriteActor,
+    attempt: &'a DreamerAttemptStatus,
+    now: u64,
+) -> NightlyWrite<'a> {
+    NightlyWrite {
+        vault,
+        actor,
+        attempt,
+        ids: MERGE_IDS,
+        now,
     }
 }
 
