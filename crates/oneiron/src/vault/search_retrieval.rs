@@ -219,7 +219,7 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             let admit = lane.recall_candidates_in(&txn, &policy, &filter, None);
             let mut admits = |id: &crate::EntityId| admit(id);
-            let mut withheld = lane.world_withheld_rows_in(&txn)?;
+            let mut withheld = lane.world_withheld_row_test_in(&txn)?;
             let scores = self.text_scoped_in_txn(
                 &self.store,
                 &txn,

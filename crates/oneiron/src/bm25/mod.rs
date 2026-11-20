@@ -52,7 +52,8 @@ pub(crate) use self::index::{
     index_analyzed_text, index_text,
 };
 pub(crate) use self::query::{
-    Bm25SearchOptions, PrefixExpansionPostingDecision, final_token_exact_posting_matches,
+    Bm25SearchOptions, HiddenRowTest, PrefixExpansionPostingDecision,
+    final_token_exact_posting_matches,
     final_token_prefix_expansion_has_scoped_and_rejected_postings, search_text,
     search_text_scoped_with_recency,
 };

@@ -2,7 +2,7 @@
 
 use super::admit::{AdmitSignal, ChannelAccumulator};
 use super::turn_fold;
-use crate::bm25::Bm25Config;
+use crate::bm25::{Bm25Config, HiddenRowTest};
 use crate::disclosure::DisclosureContext;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -186,8 +186,9 @@ impl PipelineBuilder<'_> {
     /// WORLD-SCOPE-BM25-DF-COUNTS-HIDDEN-POSTINGS): a device-local world
     /// off this device (`filter_config.device_local`), a world outside the
     /// owner's ALLOWED-SET of an ActiveSet turn (`world_allowed_set`), or a
-    /// world the scoped read's verified credential does not grant
-    /// ([`crate::claim::ScopedReadActorKey::credential_worlds_withhold_row_in`]).
+    /// world the run's scoped reader may not read
+    /// ([`crate::claim::ScopedReadActorKey::world_withheld_rows_in`]: its
+    /// verified credential's worlds and its holder's standing agent Grants).
     /// What the run only selects still counts: its types, corpus or
     /// category, a named world or world set, the worlds a turn chose inside
     /// its ALLOWED-SET, the worlds a read asked for. `None` when nothing
@@ -205,24 +206,24 @@ impl PipelineBuilder<'_> {
             Option<&'t WorldAuthoritySet>,
         ),
         metadata: &'t mut EntityMetadataCache,
-    ) -> Option<Box<dyn FnMut(&EntityId) -> Result<bool> + 't>> {
+    ) -> Result<Option<HiddenRowTest<'t>>> {
         let clamp = filter_config.disclosure;
         let device_local = filter_config
             .device_local
             .filter(|flagged| !flagged.is_empty());
-        let credential = self
-            .scoped_note_reader
-            .as_ref()
-            .filter(|key| key.has_world_ceiling());
+        let reader = match self.statistics_reader_key() {
+            Some(key) => key.world_withheld_rows_in(self.vault, rtxn)?,
+            None => None,
+        };
         if clamp.is_none()
             && device_local.is_none()
             && world_allowed_set.is_none()
-            && credential.is_none()
+            && reader.is_none()
         {
-            return None;
+            return Ok(None);
         }
         let mut answers = std::collections::HashMap::<EntityId, bool>::new();
-        Some(Box::new(move |id: &EntityId| {
+        Ok(Some(Box::new(move |id: &EntityId| {
             if let Some(&hidden) = answers.get(id) {
                 return Ok(hidden);
             }
@@ -240,13 +241,13 @@ impl PipelineBuilder<'_> {
                     Some(allowed) => allowed_set_withholds_row(&self.read, rtxn, id, allowed)?,
                     None => false,
                 }
-                || match credential {
-                    Some(key) => key.credential_worlds_withhold_row_in(&self.read, rtxn, id)?,
+                || match &reader {
+                    Some(withheld) => withheld.withholds_in(&self.read, rtxn, id)?,
                     None => false,
                 };
             answers.insert(*id, hidden);
             Ok(hidden)
-        }))
+        })))
     }
 
     /// Runs the text channel, the next of `stages_left` deadline stages, and
@@ -321,7 +322,7 @@ impl PipelineBuilder<'_> {
                     rtxn,
                     (inputs.filter_config, inputs.world_allowed_set),
                     &mut retry_hidden_metadata,
-                );
+                )?;
                 let mut retry_exact_posting_matches_scope = |id: &EntityId| {
                     pipeline_candidate_matches_filters_and_gate(
                         &self.read,
@@ -450,7 +451,7 @@ impl PipelineBuilder<'_> {
             rtxn,
             (inputs.filter_config, inputs.world_allowed_set),
             &mut hidden_metadata,
-        );
+        )?;
         let mut exact_posting_matches_scope = |id: &EntityId| {
             pipeline_candidate_matches_filters_and_gate(
                 &self.read,

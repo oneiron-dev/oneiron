@@ -49,6 +49,10 @@ where
     pub(crate) hidden_row: Option<&'a mut dyn FnMut(&EntityId) -> Result<bool>>,
 }
 
+/// An owned own-row test ([`Bm25SearchOptions::hidden_row`]): whether the
+/// reader may not read a row, so its postings count in no statistic.
+pub(crate) type HiddenRowTest<'t> = Box<dyn FnMut(&EntityId) -> Result<bool> + 't>;
+
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct PrefixExpansionPostingDecision {
     pub(crate) matches_scope: bool,

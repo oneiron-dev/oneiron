@@ -636,7 +636,8 @@ impl Memory<'_> {
                 .token_budget(budget);
             builder = builder
                 .filter_candidates(&admitted)
-                .gate_candidates(&conversation_gate);
+                .gate_candidates(&conversation_gate)
+                .statistics_reader(lane.actor_key().clone());
             // A facet narrows strictly inside this same builder (FIX 9961):
             // the pack it admits and pins is the one its items and its
             // rendering are read from, and it walks no edges, so nothing

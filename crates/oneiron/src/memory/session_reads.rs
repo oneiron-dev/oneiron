@@ -607,7 +607,7 @@ pub(crate) fn scoped_session_text(
         admit(&txn)?;
         let admit = lane.recall_candidates_in(&txn, &policy, &filter, None);
         let mut admits = |id: &EntityId| admit(id);
-        let mut withheld = lane.world_withheld_rows_in(&txn)?;
+        let mut withheld = lane.world_withheld_row_test_in(&txn)?;
         vault.text_scoped_in_txn(
             view,
             &txn,
