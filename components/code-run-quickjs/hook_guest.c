@@ -13,6 +13,10 @@
 #include "hook_bootstrap.h"
 
 #define MESSAGE_LIMIT (1024 * 1024)
+/* What a run answers when the guest could not take its input: out of memory,
+   or any other failure before the body starts. The host reads it as a run
+   whose body never judged the input. */
+#define INPUT_NOT_TAKEN "hook_input_not_taken"
 
 /* The clock is the input's `now` (Unix ms), frozen for the run. It reads 0
    while the context initializes, so no ambient time seeds anything. */
@@ -270,9 +274,19 @@ static char *terminated(const char *prefix, const hook_string_t *text, const cha
     return out;
 }
 
+/* Frees a host string before its run ends; the run's own cleanup then frees
+   nothing twice. */
+static void release_host_string(hook_string_t *text) {
+    hook_string_free(text);
+    text->ptr = NULL; text->len = 0;
+}
+
 bool exports_hook_run_hook(hook_string_t *source, hook_string_t *input_json, hook_string_t *error) {
-    if (source->len > MESSAGE_LIMIT || input_json->len > MESSAGE_LIMIT) {
-        hook_string_dup(error, "hook body or input exceeds message budget");
+    /* The body is held to a message. The input is held only to the
+       interpreter's memory, as a read's answer and the outcome are (FIX 9233,
+       10074, 10086); its host bounds it by this guest's memory. */
+    if (source->len > MESSAGE_LIMIT) {
+        hook_string_dup(error, "hook body exceeds message budget");
         hook_string_free(source); hook_string_free(input_json);
         return false;
     }
@@ -298,11 +312,14 @@ bool exports_hook_run_hook(hook_string_t *source, hook_string_t *input_json, hoo
     JSValue execution = JS_UNDEFINED, result = JS_UNDEFINED, done = JS_UNDEFINED;
     bool ok = false;
     size_t length;
-    char *text = terminated("", input_json, "", &length);
-    if (!text) { JS_ThrowOutOfMemory(ctx); goto failed; }
-    input = JS_ParseJSON(ctx, text, length, "hook-input.json");
-    free(text);
-    if (JS_IsException(input)) goto failed;
+    /* Parsed where the host lowered it, grown by its NUL, never copied. */
+    char *text = input_json->len ? realloc(input_json->ptr, input_json->len + 1) : NULL;
+    if (!text) goto input_not_taken;
+    input_json->ptr = (uint8_t *)text;
+    text[input_json->len] = '\0';
+    input = JS_ParseJSON(ctx, text, input_json->len, "hook-input.json");
+    release_host_string(input_json);
+    if (JS_IsException(input)) goto input_not_taken;
     double now_ms = -1;
     if (JS_IsObject(input) && JS_IsArray(ctx, input) == 0) {
         JSValue now = JS_GetPropertyStr(ctx, input, "now");
@@ -317,9 +334,9 @@ bool exports_hook_run_hook(hook_string_t *source, hook_string_t *input_json, hoo
     JS_SetPropertyStr(ctx, global, "__oneironHookAbi", make_abi(ctx));
     JS_FreeValue(ctx, global);
     setup = JS_Eval(ctx, hook_bootstrap, sizeof(hook_bootstrap) - 1, "oneiron-hook-bootstrap.js", JS_EVAL_TYPE_GLOBAL);
-    if (JS_IsException(setup)) goto failed;
+    if (JS_IsException(setup)) goto input_not_taken;
     complete = JS_Call(ctx, setup, JS_UNDEFINED, 1, (JSValueConst *)&input);
-    if (JS_IsException(complete)) goto failed;
+    if (JS_IsException(complete)) goto input_not_taken;
     text = terminated("(async () => {\n", source, "\n})()", &length);
     if (!text) { JS_ThrowOutOfMemory(ctx); goto failed; }
     execution = JS_Eval(ctx, text, length, "hook.js", JS_EVAL_TYPE_GLOBAL);
@@ -339,6 +356,13 @@ bool exports_hook_run_hook(hook_string_t *source, hook_string_t *input_json, hoo
     done = JS_Call(ctx, complete, JS_UNDEFINED, 1, (JSValueConst *)&result);
     if (JS_IsException(done)) goto failed;
     ok = true;
+    goto cleanup;
+input_not_taken:
+    /* The body never started, so it never judged the input. */
+    ok = false;
+    JS_FreeValue(ctx, JS_GetException(ctx));
+    release_host_string(input_json);
+    hook_string_dup(error, INPUT_NOT_TAKEN);
     goto cleanup;
 failed:
     ok = false;
