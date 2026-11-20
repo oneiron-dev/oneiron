@@ -63,6 +63,8 @@ pub(crate) use storage::{
     capture_native_note_in_txn, finish_native_note_publication_in_txn, indexed_native_note_in_txn,
 };
 #[cfg(oneiron_test_support)]
+pub(crate) use storage::publication_text_fields;
+#[cfg(oneiron_test_support)]
 pub(crate) use storage::{
     pins_frontier_document_value, pins_revision_doc_bytes, pins_revision_reference,
     put_pins_entity_revision_doc_in_txn, put_pins_entity_revision_frontier_in_txn,

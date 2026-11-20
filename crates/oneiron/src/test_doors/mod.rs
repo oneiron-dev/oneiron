@@ -53,6 +53,7 @@ pub mod checkpoint_descriptor;
 pub mod checkpoint_pins;
 pub mod checkpoint_registry;
 pub mod claim_facet_birth;
+pub mod claim_publication_text;
 pub mod claim_refinement_erase;
 pub mod claim_source_recheck;
 pub mod claim_transition;
