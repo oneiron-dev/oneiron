@@ -69,9 +69,11 @@ mod key;
 mod parking;
 mod plan_run;
 mod settlement;
+pub(super) use self::settlement::settle_refusal;
+
 use self::key::{PostKey, observe_key_in};
 pub(crate) use self::settlement::settle_task_proposal_in_txn;
-pub(super) use self::settlement::{envelope_actor_class, proposer_of, settle_refusal};
+pub(super) use self::settlement::{envelope_actor_class, proposer_of};
 
 /// Reason code of a proposal the addressed agent declined.
 const TAKE_DECLINED_REASON: &str = "gate.tasks.take.declined";
