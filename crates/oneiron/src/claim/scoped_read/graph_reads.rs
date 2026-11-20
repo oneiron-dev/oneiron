@@ -257,6 +257,17 @@ impl ScopedRead<'_> {
             receipt.restrict_with(&self.timeline_receipt_in(&txn, None, fresh, 0, &held));
             receipt
         };
+        // An anchor the final snapshot refuses, on entry or in the record
+        // gate, ends the read as it would have on entry: only the anchor is
+        // judged, so the receipt cannot size its chain (review round 2 of
+        // #10031).
+        let anchor_refused = |suppressed| ScopedReadResult {
+            value: MemoryTimeline {
+                anchor: *anchor,
+                records: Vec::new(),
+            },
+            receipt: receipt(suppressed),
+        };
         let rooms = RoomVerdicts::default();
         let anchor_admitted = self.admit_in(&txn, anchor, || {
             Ok(
@@ -275,16 +286,7 @@ impl ScopedRead<'_> {
             )
         })?;
         if !anchor_admitted.visible() {
-            // An anchor the final snapshot refuses ends the read as it would
-            // have on entry: only the anchor is judged, so no record of its
-            // chain counts and the receipt cannot size the chain.
-            return Ok(ScopedReadResult {
-                value: MemoryTimeline {
-                    anchor: *anchor,
-                    records: Vec::new(),
-                },
-                receipt: receipt(anchor_admitted.suppression()),
-            });
+            return Ok(anchor_refused(anchor_admitted.suppression()));
         }
         let mut kept = Vec::new();
         let mut suppressed = 0;
@@ -304,17 +306,7 @@ impl ScopedRead<'_> {
                 .then_some(()))
             })?;
             if record.id == *anchor && !admitted.visible() {
-                // An anchor this per-record gate refuses ends the read as
-                // the anchor gate does: only the anchor counts, so the
-                // receipt cannot tell whether a linked record survived
-                // (review round 2 of #10031).
-                return Ok(ScopedReadResult {
-                    value: MemoryTimeline {
-                        anchor: *anchor,
-                        records: Vec::new(),
-                    },
-                    receipt: receipt(admitted.suppression()),
-                });
+                return Ok(anchor_refused(admitted.suppression()));
             }
             suppressed += admitted.suppression();
             if admitted.visible() {
