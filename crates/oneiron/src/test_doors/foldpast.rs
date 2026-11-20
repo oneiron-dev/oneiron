@@ -1,5 +1,6 @@
 //! Doors for `tests/foldpast_tail_scope.rs`: sign a host-root op as the next
-//! row without storing it (or cosigned, or as another key), store signed
+//! row without storing it (or one sequence past it, cosigned, or as another
+//! key), store signed
 //! rows on a vault, and forget a first-seen receipt.
 
 use crate::authority::{
@@ -25,6 +26,21 @@ pub fn sign_next_host_op(
     op: AuthorityOp,
 ) -> Result<AuthorityLogEntry> {
     vault.sign_host_op_for_test(issuer, op)
+}
+
+/// Signs `op` as the host root's row one sequence past its next on `vault`'s
+/// heads, without storing it: a row beside the one [`sign_next_host_op`]
+/// signs on the same heads.
+///
+/// # Errors
+///
+/// The fold's and the signer's.
+pub fn sign_host_op_beside_next(
+    vault: &Vault,
+    issuer: &HostSlipIssuer,
+    op: AuthorityOp,
+) -> Result<AuthorityLogEntry> {
+    vault.sign_host_op_after_next_for_test(issuer, op)
 }
 
 /// Signs `op` as the host root's next row on `vault`, cosigned by

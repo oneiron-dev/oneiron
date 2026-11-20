@@ -310,6 +310,7 @@ pub(super) fn capture_adopted_checkpoint_tail(
         fold,
         final_merged: Some(final_merged),
         revoke_facts,
+        retired_keys,
         // The whole build keeps the once fold before any cap of a fold with
         // no vouch.
         no_vouch: _,
@@ -384,7 +385,7 @@ pub(super) fn capture_adopted_checkpoint_tail(
         counted_pairs,
         frontier_ancestry,
         revoke_facts,
-        retired_keys: image.safety.retired_keys.clone(),
+        retired_keys,
         handoff_or_appointment_retired_keys: image
             .safety
             .handoff_or_appointment_retired_keys
