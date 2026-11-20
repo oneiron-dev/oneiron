@@ -42,7 +42,7 @@ pub use continuation::{
     ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND, IcsPropertyContinuationPayload,
     run_ics_property_continuation,
 };
-use host_cancel::{cancel_moves_deposit, names_written_calendar};
+use host_cancel::names_written_calendar;
 pub(crate) use import_claim::ensure_ics_import_actor;
 pub use import_claim::ics_import_actor_id;
 pub(in crate::calendar) use import_claim::{
@@ -232,7 +232,7 @@ impl PollAdmission<'_> {
                 // tombstone.
                 written_tombstone |= omitted
                     && absence_basis == CalendarStatusBasis::ImportedCancel
-                    && cancel_moves_deposit(self.system, value);
+                    && names_written_calendar(self.system, value);
                 if !flips && !dates_cancel {
                     continue;
                 }
