@@ -195,6 +195,9 @@ pub(super) struct ChoiceAt<'a, P> {
     pub(super) choice: Option<&'a P>,
     /// The kind's revision domain, which `seen` is under.
     pub(super) context: &'static [u8],
+    /// The choice lies outside a proving owner-key enrolment's line
+    /// ([`OwnerChoiceOp::needs_proof_off_the_line`]).
+    pub(super) needs_proof_off_the_line: bool,
     /// A person's own narrowing of their own row
     /// ([`OwnerChoiceOp::persons_own_narrowing`]); `false` for an engine
     /// statement.
@@ -263,6 +266,7 @@ pub(super) fn owner_choice_landing<P: Clone>(
         machine: op.machine,
         choice: op.choice,
         context: op.context,
+        needs_proof_off_the_line: op.needs_proof_off_the_line,
         persons_own_narrowing: op.persons_own_narrowing,
     };
     choice_landing(state, register, entry, at, hash, counting, restriction_only)
@@ -328,7 +332,7 @@ pub(super) fn choice_landing<P: Clone>(
         && !op.persons_own_narrowing
     {
         return Ok(OwnerChoiceLanding::Waiting {
-            target: op.act.target,
+            target: op.target,
             hash,
         });
     }

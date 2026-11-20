@@ -537,6 +537,7 @@ fn fold_merged_entry(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
