@@ -7,6 +7,7 @@ use oneiron::code_run::{
     AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, HostSelfDispatcher, RunCall,
     SelfAgentVerbCall, SelfEffect,
 };
+use oneiron::engine_executor::{AdmittedSkillAnswer, AdmittedSkillText};
 use oneiron::memory::{
     HostWriteOrigin, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError,
     MemoryResult,
@@ -33,14 +34,16 @@ use crate::server::{LiveRunCaller, LiveRunRefusal, SyncServer};
 /// refusal before the call runs, or after it for a revoked credential, lists
 /// none. `outer_hooks_live` is the generated facade's own pre chain's state
 /// for this call (`!VerbHookPre::passed_through()`), carried to the admitted
-/// entry it calls: that entry reads no binding for it again.
+/// entry it calls: that entry reads no binding for it again. While that
+/// chain is live, an answer nesting past what a value may hold comes back as
+/// its JSON text, which [`admitted_skill_text_post`] judges.
 pub(crate) async fn self_skills_call(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     session: Option<oneiron::EntityId>,
     input: LiveRunRequest<oneiron::code_run::SkillCallInput>,
     outer_hooks_live: bool,
-) -> MaybeListed<serde_json::Value> {
+) -> MaybeListed<AdmittedSkillAnswer> {
     skills_call(server, auth, session, input, outer_hooks_live)
         .await
         .unwrap_or_else(|refusal| (Err(refusal), Some(Vec::new())))
@@ -68,7 +71,7 @@ async fn skills_call(
     session: Option<oneiron::EntityId>,
     input: LiveRunRequest<oneiron::code_run::SkillCallInput>,
     outer_hooks_live: bool,
-) -> MemoryResult<MaybeListed<serde_json::Value>> {
+) -> MemoryResult<MaybeListed<AdmittedSkillAnswer>> {
     const VERB: &str = "self.skills.call";
     if session.is_some() {
         return Err(MemoryError::new(
@@ -128,7 +131,7 @@ async fn skills_call(
         };
     let auth = auth.clone();
     let server = Arc::clone(server);
-    super::clock_ingress::run_blocking(move || -> MemoryResult<MaybeListed<serde_json::Value>> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<MaybeListed<AdmittedSkillAnswer>> {
         let binding = held.proof();
         let memory = crate::api::credential_memory(server.vault(), Some(&auth), actor, class)
             .at(auth.locality());
@@ -222,6 +225,41 @@ pub(crate) async fn spill_admitted_skill_view(
             fallback
         }
     }
+}
+
+/// An admitted skill call's answer held as JSON text
+/// ([`AdmittedSkillAnswer::Text`]; SKILL-ANSWER-DEEP-JSON-STACK-SAFE), past
+/// the call's post chain `pre`, as its caller reads it
+/// ([`oneiron::engine_executor::judge_admitted_skill_text`]: a view read
+/// into a value, or the card of the view spilled to the run), then spilled
+/// past the inline size as a value view is ([`spill_admitted_skill_view`]).
+/// `rows` are the rows the answer was produced from. Runs off the async
+/// runtime, as [`super::row_hooks_post`] runs a value's chain.
+pub(crate) async fn admitted_skill_text_post(
+    server: &Arc<SyncServer>,
+    pre: VerbHookPre,
+    answer: AdmittedSkillText,
+    spill_run: Option<EntityId>,
+    rows: Option<Vec<EntityId>>,
+) -> Result<serde_json::Value, MemoryError> {
+    let judged = {
+        let server = Arc::clone(server);
+        let rows = rows.clone();
+        super::clock_ingress::run_blocking(move || {
+            let (view, _) = crate::hook_decisions::collect_hook_decisions(move || {
+                oneiron::engine_executor::judge_admitted_skill_text(
+                    server.vault(),
+                    pre,
+                    answer,
+                    rows,
+                )
+            });
+            view
+        })
+        .await
+        .map_err(|_| super::hooks::hooks_did_not_finish())??
+    };
+    Ok(spill_admitted_skill_view(server, spill_run, judged, rows).await)
 }
 
 /// Bytes `value` takes as JSON, holding none of them.

@@ -162,7 +162,24 @@ pub fn bind_blocking_redact_post_hook(
     proof: &AuthenticatedOwner,
     verb: &str,
 ) -> Result<EntityId> {
-    bind_redact_post_hook_inner(vault, owner, proof, verb, Vec::new(), true)
+    bind_redact_post_hook_inner(vault, owner, proof, verb, Vec::new(), true, Vec::new())
+}
+
+/// [`bind_redact_post_hook`] with served filter `served`: the hook runs only
+/// on a result that serves a row the filter takes ([SKILL-ANSWER-DEEP-JSON-STACK-SAFE]).
+///
+/// # Errors
+///
+/// The owner's proof no longer valid, the pack source's, or the write's
+/// refusal.
+pub fn bind_served_redact_post_hook(
+    vault: &Vault,
+    owner: EntityId,
+    proof: &AuthenticatedOwner,
+    verb: &str,
+    served: Vec<String>,
+) -> Result<EntityId> {
+    bind_redact_post_hook_inner(vault, owner, proof, verb, Vec::new(), false, served)
 }
 
 /// [`bind_redact_post_hook`] taking only calls by one of `actors` (every
@@ -180,7 +197,7 @@ pub fn bind_redact_post_hook_for_actors(
     verb: &str,
     actors: Vec<HookActorClass>,
 ) -> Result<EntityId> {
-    bind_redact_post_hook_inner(vault, owner, proof, verb, actors, false)
+    bind_redact_post_hook_inner(vault, owner, proof, verb, actors, false, Vec::new())
 }
 
 fn bind_redact_post_hook_inner(
@@ -190,6 +207,7 @@ fn bind_redact_post_hook_inner(
     verb: &str,
     actors: Vec<HookActorClass>,
     blocking: bool,
+    served: Vec<String>,
 ) -> Result<EntityId> {
     let body_bytes = b"return { kind: \"redact\", paths: [\"/output/title\"] };\n";
     let pack_md = "---\nname: test.typed-reply\ndescription: Redact test pack for typed reply handles\nversion: 1.0.0\nkind: capability\nhooks: [\"redact-title\"]\n---\nTest pack body.\n"
@@ -225,7 +243,7 @@ fn bind_redact_post_hook_inner(
             budget_ms: 200,
             blocking,
             outcomes: vec![HookOutcomeKind::Redact],
-            served: Vec::new(),
+            served,
             render_class: HookRenderClass::default(),
         },
         enabled: true,

@@ -62,6 +62,7 @@ use serde_json::json;
 
 pub(super) use self::boundary::executor_boundary_contract;
 pub(super) use self::deadline_replay::DeadlineReplay;
+pub(super) use self::dispatch::text_nests_past_whole_depth;
 pub(super) use self::prompt::executor_turn_instruction;
 pub(crate) use self::prompt::{executor_declarations_block, executor_system_prompt};
 use self::results::recorded_output;
@@ -157,8 +158,9 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// caller's post chain may still run on it: its bridge row spills the
     /// real answer record-only and binds no name to it, and the admitted
     /// entry (`skill_call`) returns this answer to that caller instead of
-    /// the recorded card. Taken by that entry after its one dispatch.
-    pub(super) admitted_skill_answer: Option<serde_json::Value>,
+    /// the recorded card, as a value or, nesting past what one may hold,
+    /// as JSON text. Taken by that entry after its one dispatch.
+    pub(super) admitted_skill_answer: Option<super::AdmittedSkillAnswer>,
     /// Whether the admitted call's answer was withheld where its bridge row
     /// stores it: the side-row wall could not place a secret it holds, so
     /// the row keeps the typed unavailable content and nothing of the

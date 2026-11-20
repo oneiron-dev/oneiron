@@ -62,6 +62,7 @@ use crate::task_verb::{
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, MemoryError, Result, Vault};
 
+use super::chain::view::{PostView, TextView};
 use super::{VerbArgsCheck, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, chain};
 
 mod held;
@@ -731,9 +732,34 @@ impl Vault {
     pub(crate) fn post_verb_hooks_in(
         &self,
         storage: VerbHookStorage<'_>,
-        mut pre: VerbHookPre,
+        pre: VerbHookPre,
         result: Value,
     ) -> Result<std::result::Result<Value, VerbHookStop>> {
+        self.post_verb_hooks_on(storage, pre, result)
+    }
+
+    /// [`Self::post_verb_hooks_in`] over a skill answer's view held as JSON
+    /// text, never read into a value (SKILL-ANSWER-DEEP-JSON-STACK-SAFE).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::post_verb_hooks_in`].
+    pub(crate) fn post_verb_hooks_text_in(
+        &self,
+        storage: VerbHookStorage<'_>,
+        pre: VerbHookPre,
+        view: TextView,
+    ) -> Result<std::result::Result<TextView, VerbHookStop>> {
+        self.post_verb_hooks_on(storage, pre, view)
+    }
+
+    /// [`Self::post_verb_hooks_in`] over a view of either kind.
+    fn post_verb_hooks_on<V: PostView + Clone>(
+        &self,
+        storage: VerbHookStorage<'_>,
+        mut pre: VerbHookPre,
+        result: V,
+    ) -> Result<std::result::Result<V, VerbHookStop>> {
         let VerbHookStorage::Session(hooks) = storage else {
             return chain::post(self, storage, pre, result);
         };

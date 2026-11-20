@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::code_run::TextAnswerPost;
+use crate::engine_executor::{AdmittedSkillAnswer, AdmittedSkillText};
 
 /// What a pre-record spill stands for: the run's own result, or the view a
 /// verb hook left the caller in its place.
@@ -27,10 +28,6 @@ pub(super) enum ReadAnswer {
     Value(serde_json::Value),
     Text(Box<serde_json::value::RawValue>),
 }
-
-/// Why a skill answer that a live post chain reading values must judge is
-/// refused: it nests past what a value may hold.
-const ANSWER_TOO_DEEP: &str = "the skill answer nests too deep for the live post hook to judge";
 
 impl RecordingJsHost<'_, '_> {
     /// A verb's, a callable skill's, a fold's or the leader's answer too
@@ -370,27 +367,23 @@ impl RecordingJsHost<'_, '_> {
     /// never its card; `dispatch_call` then stores it for the record as it
     /// stores every large answer, a hook's view leaving it record-only
     /// ([`Shown::View`]). A whole answer nesting past that depth is read as
-    /// its JSON text instead ([`ReadAnswer::Text`]), which the call's own
-    /// chain judges as text ([`Self::judge_text_answer`]) when `as_text`
-    /// says one does; every other chain still reads one value, so there it
-    /// is refused with its cause before any of it is read. Text a value
-    /// could not hold but for its nesting is refused as non-JSON, as the
-    /// value read refuses it ([`scalars_read_as_values`]).
+    /// its JSON text instead ([`ReadAnswer::Text`]), which that chain judges
+    /// as text: the call's own here ([`Self::judge_text_answer`]), the
+    /// admitted outer caller's once its entry returns it
+    /// ([`Self::hold_admitted_text`]). Text a value could not hold but for
+    /// its nesting is refused as non-JSON, as the value read refuses it
+    /// ([`scalars_read_as_values`]).
     pub(super) fn skill_answer(
         &mut self,
         seq: u64,
         mut answer: crate::skill::CallableSkillAnswer,
         whole: bool,
-        as_text: bool,
     ) -> Result<ReadAnswer> {
         let non_json =
             || Error::InvalidConfig("callable skill returned non-JSON output".to_owned());
         if whole || answer.byte_len() <= RESULT_REPLY_INLINE_BYTES as u64 {
             let nests_past = answer_nests_past_whole_depth(&mut answer)?;
             if nests_past && whole {
-                if !as_text {
-                    return Err(Error::Refused(ANSWER_TOO_DEEP.to_owned()));
-                }
                 let mut text = String::new();
                 std::io::Read::read_to_string(answer.reader()?, &mut text)
                     .map_err(|_| non_json())?;
@@ -467,6 +460,36 @@ impl RecordingJsHost<'_, '_> {
         };
         if let Some(view) = view {
             self.gated_write.serve_hook_view(view);
+        }
+        Ok(output)
+    }
+
+    /// Skill answer `text`, held as JSON text ([`ReadAnswer::Text`]), for
+    /// the admitted outer caller's post chain, which judges it as text once
+    /// the admitted entry returns it ([`AdmittedSkillAnswer::Text`]): the
+    /// answer is stored record-only, as an answer held whole for that chain
+    /// is (`dispatch_call`), and the output its row keeps is that body's
+    /// card. An answer the row's store withheld holds nothing: the caller
+    /// reads the row's withheld content, as for a value.
+    fn hold_admitted_text(
+        &mut self,
+        seq: u64,
+        text: Box<serde_json::value::RawValue>,
+    ) -> Result<serde_json::Value> {
+        let output = {
+            let bytes = text.get().as_bytes();
+            // Held on the run's share while the copy stores them (FIX 10674).
+            let _copy_hold = self
+                .result_share
+                .zip(self.storage)
+                .and_then(|(share, storage)| share.hold(bytes.len() as u64, storage.limit_watch()));
+            self.store_sourced_answer(seq, &[], |sink| sink.write(bytes), Shown::View)?
+        };
+        if !self.admitted_skill_withheld {
+            self.admitted_skill_answer = Some(AdmittedSkillAnswer::Text(AdmittedSkillText::new(
+                self.run_id,
+                text,
+            )));
         }
         Ok(output)
     }
@@ -711,23 +734,17 @@ impl RecordingJsHost<'_, '_> {
         let rewritten = hooked.as_ref().and_then(|hooked| hooked.1.clone());
         let outcome = match ran {
             Ok(answer) => {
-                // An answer nesting past what a value may hold, which a
-                // live chain must judge, is read as text only for the call's
-                // own chain on the canonical vault. The admitted outer
-                // caller's chain and a room's still read one value, so
-                // `skill_answer` refuses it there with its cause, before any
-                // of it is read.
-                let as_text = hooked.is_some() && self.gated_write.post_chain_reads_text();
-                let output = match self.skill_answer(seq, answer, whole_for_hooks, as_text)? {
+                let output = match self.skill_answer(seq, answer, whole_for_hooks)? {
                     ReadAnswer::Value(output) => output,
-                    // The call's own chain judges its text here, and the
-                    // answer is stored once it is done.
-                    ReadAnswer::Text(text) => {
-                        let own = hooked.take().ok_or(Error::InvariantViolation(
-                            "a skill answer read as text has no chain to judge it",
-                        ))?;
-                        self.judge_text_answer(seq, own, &text)?
-                    }
+                    // An answer nesting past what a value may hold meets the
+                    // live chain that reads it whole as text: the call's own
+                    // judges it here, and the answer is stored once it is
+                    // done; the admitted outer caller's takes it from the
+                    // admitted entry (`hooked` is `None` only there).
+                    ReadAnswer::Text(text) => match hooked.take() {
+                        Some(own) => self.judge_text_answer(seq, own, &text)?,
+                        None => self.hold_admitted_text(seq, text)?,
+                    },
                 };
                 SelfDispatchOutcome::SkillCall(SelfSkillCallResult {
                     skill: skill.skill,
@@ -774,9 +791,14 @@ impl RecordingJsHost<'_, '_> {
         }
         // The admitted outer caller's post chain reads the whole answer
         // this host returns to it: hold it for that entry, while
-        // `dispatch_call` records the outcome itself record-only below.
-        if outer_hooks_live && let SelfDispatchOutcome::SkillCall(result) = &outcome {
-            self.admitted_skill_answer = Some(result.output.clone());
+        // `dispatch_call` records the outcome itself record-only below. An
+        // answer held as text was held, or withheld, as it was stored.
+        if outer_hooks_live
+            && self.admitted_skill_answer.is_none()
+            && !self.admitted_skill_withheld
+            && let SelfDispatchOutcome::SkillCall(result) = &outcome
+        {
+            self.admitted_skill_answer = Some(AdmittedSkillAnswer::Value(result.output.clone()));
         }
         // The post chain reads the answer itself: while one is live a large
         // answer came back whole above, never by its card. No spill runs
@@ -1032,7 +1054,8 @@ impl RecordingJsHost<'_, '_> {
         // The admitted skill call's whole answer is held for its outer
         // caller, whose post chain may still serve a view of it: its real
         // body records record-only here too, bound to no name, exactly as
-        // when this call's own chain left a view.
+        // when this call's own chain left a view. An answer held as text
+        // was stored record-only already.
         let admitted_answer = matches!(&call, SelfCall::SkillsCall(_))
             && self.admitted_skill_seq == Some(seq)
             && self.admitted_skill_answer.is_some();
@@ -1188,7 +1211,7 @@ fn answer_nests_past_whole_depth(answer: &mut crate::skill::CallableSkillAnswer)
 
 /// Whether JSON `text` nests past [`WHOLE_ANSWER_MAX_DEPTH`], so no value
 /// may be read from it.
-fn text_nests_past_whole_depth(text: &str) -> bool {
+pub(in crate::engine_executor) fn text_nests_past_whole_depth(text: &str) -> bool {
     NestingScan::default().passes_whole_depth(text.as_bytes())
 }
 
