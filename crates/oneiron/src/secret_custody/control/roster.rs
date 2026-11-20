@@ -258,7 +258,8 @@ impl Vault {
         let plan = CustodyPlan::default();
         let recorded = self.record_custody_change_in_txn(
             txn,
-            rewrap.actor,
+            // Automatic upkeep: no write the owner made now, so no proof.
+            (rewrap.actor, None),
             // Audit only: the upkeep on this install recorded it.
             ActSurface::ThisInstall,
             ActiveChange {

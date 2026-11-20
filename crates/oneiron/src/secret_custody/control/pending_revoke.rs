@@ -220,8 +220,10 @@ impl Vault {
             PENDING.delete(&self.store, txn, &id)?;
             return Ok(false);
         }
+        // A queued carry is no write the owner made now: it carries no proof.
+        let author = (pending.owner, None);
         let carried = self
-            .carry_revoke_for_in_txn(txn, pending.owner, pending.surface, id, &record, pending.at)?
+            .carry_revoke_for_in_txn(txn, author, pending.surface, id, &record, pending.at)?
             .is_some();
         if carried {
             PENDING.delete(&self.store, txn, &id)?;

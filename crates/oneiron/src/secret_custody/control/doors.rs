@@ -291,6 +291,7 @@ impl Vault {
         self.load_install_signing_if_minted()?;
         let mut wtxn = self.store.env.write_txn()?;
         let actor = live_owner_in_txn(self, owner, &wtxn, "only the vault owner rewraps a secret")?;
+        let owner_authored = owner.owner_answer_in_txn(self, &wtxn)?;
         let known = self
             .known_custody_in_txn(&wtxn, secret_ref)?
             .ok_or_else(|| {
@@ -317,7 +318,7 @@ impl Vault {
         }
         let recorded = self.record_custody_change_in_txn(
             &mut wtxn,
-            actor,
+            (actor, owner_authored.as_ref()),
             surface,
             ActiveChange {
                 change: CustodyChange::Rewrap,
@@ -424,6 +425,7 @@ impl Vault {
             &wtxn,
             "only the vault owner changes a secret's custody",
         )?;
+        let owner_authored = owner.owner_answer_in_txn(self, &wtxn)?;
         refuse_revoked_use_in_txn(
             self,
             &wtxn,
@@ -437,7 +439,7 @@ impl Vault {
         };
         let recorded = self.record_custody_change_in_txn(
             &mut wtxn,
-            actor,
+            (actor, owner_authored.as_ref()),
             surface,
             ActiveChange {
                 change: sealed.change,

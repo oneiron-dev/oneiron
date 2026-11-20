@@ -119,7 +119,8 @@ fn record_in_txn(
     // FIX 11866: the anchor writes permits past one row in pieces ahead of
     // its own row too, measured as an install's request measures them, else
     // today's path.
-    let staged = vault.stage_custody_permit_pieces_in_txn(wtxn, fold, (None, anchor), &mut work)?;
+    let staged =
+        vault.stage_custody_permit_pieces_in_txn(wtxn, fold, (None, anchor), None, &mut work)?;
     let fold = staged.as_deref().unwrap_or(fold);
     let request = OwnerWorkRequest {
         carrier: id,
