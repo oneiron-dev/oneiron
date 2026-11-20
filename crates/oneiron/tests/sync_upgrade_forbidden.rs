@@ -8,7 +8,9 @@
 //! While it waits, a local commit goes to the durable queue, never to a
 //! channel nobody reads; and a peer session's probe of the home that gets the
 //! 403 ends that session, so the probe never redials on it either (round-1
-//! review of #8018, P1 1 and P1 2).
+//! review of #8018, P1 1 and P1 2). The commit is queued on a served host
+//! too, whose relay to its own clients stays attached beside the run (round-2
+//! review of #8018).
 //!
 //! Each case runs a real reconnecting `SyncConnection` against a fake home on
 //! a loopback port that answers every upgrade with one fixed HTTP status and
@@ -308,68 +310,94 @@ fn a_forbidden_upgrade_without_a_credential_still_redials() {
 
 #[test]
 fn a_commit_made_while_the_run_waits_on_a_403_is_queued_at_once() {
-    on_sync_runtime("forbidden_wait_commit", || async {
-        let (url, upgrades) = refusing_home("403 Forbidden");
-        let dir = tempfile::tempdir().expect("tempdir");
-        let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("vault"));
-        let manager = Arc::new(WindowManager::new(
-            Arc::clone(&vault),
-            Arc::new(Materializer::new()),
-            "owen",
-        ));
-        let window = manager
-            .open_window(&WindowKey::new(PARKED_WINDOW))
-            .expect("open the window");
-        let queue = SyncQueue::new(Arc::clone(&vault)).expect("the sync queue");
-        let connection = reconnecting_connection(manager, url, true);
-        let (stop, shutdown) = tokio::sync::oneshot::channel();
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let sink = Arc::clone(&events);
-        let run = connection.run_observed(shutdown, move |event: SyncEvent| {
-            sink.lock().expect("event sink").push(format!("{event:?}"));
-        });
-        let waiting = async {
-            let refused = wait_until(|| {
-                events
-                    .lock()
-                    .expect("event sink")
-                    .iter()
-                    .any(|told| told == "UpgradeForbidden")
-            })
-            .await;
-            let before = queued_in(&queue, PARKED_WINDOW);
-            window
-                .doc
-                .get_map("parked_commits")
-                .insert("commit", "made while the run waits")
-                .expect("a local edit");
-            window.doc.commit();
-            let queued = wait_until(|| queued_in(&queue, PARKED_WINDOW) > before).await;
-            let _ = stop.send(());
-            (refused, before, queued)
-        };
-        let (ran, (refused, before, queued)) =
-            tokio::join!(tokio::time::timeout(Duration::from_secs(60), run), waiting);
-        ran.expect("the run ends on its shutdown")
-            .expect("the run ends cleanly");
-        assert!(refused, "the home's 403 is told");
-        assert_eq!(
-            upgrades.sent.load(Ordering::SeqCst),
-            1,
-            "the run never redials on the refused credential"
-        );
-        assert!(
-            queued,
-            "a commit made while the run waits on a refused credential goes to the durable \
-             queue at once, never to a channel nobody reads ({before} rows of the window \
-             queued before it)"
-        );
-        assert_eq!(
-            queued_in(&queue, PARKED_WINDOW),
-            before + 1,
-            "the commit is queued once, and the run's end adds no copy"
-        );
+    on_sync_runtime("forbidden_wait_commit", || commit_while_parked(false));
+}
+
+/// A served host (device sync's `Host::Served`) keeps its relay to its own
+/// clients attached to the window manager's outbound sink beside the run.
+/// The relay takes every update, so the sink's no-channel fallback never
+/// queues one: the run itself must queue each commit made while it waits
+/// (round-2 review of #8018).
+#[test]
+fn a_commit_made_while_a_served_hosts_run_waits_on_a_403_is_queued_at_once() {
+    on_sync_runtime("forbidden_wait_commit_served", || commit_while_parked(true));
+}
+
+/// Runs a reconnecting connection against a home that answers 403, makes one
+/// local commit once the 403 is told, and checks that the commit is queued
+/// once. With `host_relay`, a relay channel stands beside the run on the
+/// manager's outbound sink for the whole run, as a served host's does.
+async fn commit_while_parked(host_relay: bool) {
+    let (url, upgrades) = refusing_home("403 Forbidden");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("vault"));
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "owen",
+    ));
+    let window = manager
+        .open_window(&WindowKey::new(PARKED_WINDOW))
+        .expect("open the window");
+    let queue = SyncQueue::new(Arc::clone(&vault)).expect("the sync queue");
+    // Held, never read, until the case ends: the relay stays attached.
+    let (relay_tx, relay_rx) = tokio::sync::mpsc::unbounded_channel();
+    let relay = host_relay.then(|| manager.outbound().attach(relay_tx));
+    let connection = reconnecting_connection(Arc::clone(&manager), url, true);
+    let (stop, shutdown) = tokio::sync::oneshot::channel();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&events);
+    let run = connection.run_observed(shutdown, move |event: SyncEvent| {
+        sink.lock().expect("event sink").push(format!("{event:?}"));
     });
+    let waiting = async {
+        let refused = wait_until(|| {
+            events
+                .lock()
+                .expect("event sink")
+                .iter()
+                .any(|told| told == "UpgradeForbidden")
+        })
+        .await;
+        let before = queued_in(&queue, PARKED_WINDOW);
+        window
+            .doc
+            .get_map("parked_commits")
+            .insert("commit", "made while the run waits")
+            .expect("a local edit");
+        window.doc.commit();
+        let queued = wait_until(|| queued_in(&queue, PARKED_WINDOW) > before).await;
+        let _ = stop.send(());
+        (refused, before, queued)
+    };
+    let (ran, (refused, before, queued)) =
+        tokio::join!(tokio::time::timeout(Duration::from_secs(60), run), waiting);
+    ran.expect("the run ends on its shutdown")
+        .expect("the run ends cleanly");
+    assert!(refused, "the home's 403 is told");
+    assert_eq!(
+        upgrades.sent.load(Ordering::SeqCst),
+        1,
+        "the run never redials on the refused credential"
+    );
+    assert!(
+        queued,
+        "a commit made while the run waits on a refused credential goes to the durable \
+         queue at once, never to a channel nobody reads ({before} rows of the window \
+         queued before it)"
+    );
+    assert_eq!(
+        queued_in(&queue, PARKED_WINDOW),
+        before + 1,
+        "the commit is queued once, and the run's end adds no copy"
+    );
+    if let Some(relay) = relay {
+        assert!(
+            !relay_rx.is_empty(),
+            "the host's relay stayed attached and was sent the commit too"
+        );
+        manager.outbound().detach(relay);
+    }
 }
 
 #[cfg(oneiron_test_support)]
