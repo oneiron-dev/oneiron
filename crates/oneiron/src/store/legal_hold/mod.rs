@@ -28,9 +28,9 @@ mod settlement;
 mod use_limit;
 
 pub(crate) use use_limit::{
-    CooperativeRestriction, CooperativeRestrictionKey, cooperative_restriction_active_in_txn,
-    held_in_txn, legal_hold_held_in_txn, legal_hold_use_limit_in_txn, partition_held_in_txn,
-    rows_keep_record, use_limit_in_txn,
+    CooperativeRestriction, CooperativeRestrictionKey, any_record_use_limit_in_txn,
+    cooperative_restriction_active_in_txn, held_in_txn, legal_hold_held_in_txn,
+    legal_hold_use_limit_in_txn, partition_held_in_txn, rows_keep_record, use_limit_in_txn,
 };
 use use_limit::{USE_LIMITS, keep_use_limited_in_txn};
 

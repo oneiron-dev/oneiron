@@ -81,7 +81,7 @@ use self::egress::window_packing_excludes_entity;
 use self::egress::window_packing_excludes_entity_with;
 pub(in crate::sync) use self::egress::{
     export_scrubbed_window_snapshot, export_scrubbed_window_state, withdrawn_delete_carriers,
-    withhold_audience_carriers,
+    withhold_audience_carriers, withhold_use_limited_carriers,
 };
 pub use self::egress::{
     history_free_window_required, replay_pending_mirrors, require_history_free_window,

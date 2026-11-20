@@ -1056,6 +1056,9 @@ pub(crate) fn refresh_and_scrub(
     // A carried row the full window would not pack now leaves it first: a
     // DerivedFrom edge can join a row to one bound otherwise after its birth.
     super::window::withhold_audience_carriers(vault, doc, pin)?;
+    // So does a carried row a use limit now keeps for storage only here; its
+    // marker rides in this map (Engine ANSWER SERVING-DOORS-OWNER-WINDOW-USE-LIMIT = B).
+    super::window::withhold_use_limited_carriers(vault, doc, pin)?;
     let rows = carried_rows(doc);
     let published = published_of(vault, &rows)?;
     // A derived row rides with its lineage's policies (fix list row 17207).
