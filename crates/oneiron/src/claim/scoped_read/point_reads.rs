@@ -511,6 +511,9 @@ impl ScopedRead<'_> {
 
     /// Projects bounded row frames and their final reduction under one snapshot,
     /// policy resolution and held authority. The frame size never limits input.
+    /// Its receipt is built in that snapshot under that authority, as
+    /// [`Self::read`]'s is: on a lane that reports its live Grants it names
+    /// the Grants its rows' gate held (FIX-LIST GRANT-RECEIPT-OTHER-READ-LANES).
     pub(crate) fn read_projected_frames<S, T, E: From<Error>>(
         &self,
         reads: &[PointRead<'_>],
@@ -556,7 +559,14 @@ impl ScopedRead<'_> {
             self.charge_served(rows.iter().flatten().map(|row| row.id));
             project(&txn, frame_index * frame_size, rows, &mut state)?;
         }
-        let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
+        let receipt = self.receipt_in(
+            &txn,
+            requested,
+            &policy,
+            &filter,
+            suppressed,
+            Some(&authority),
+        );
         Ok(ScopedReadResult {
             value: finish(&txn, state)?,
             receipt,

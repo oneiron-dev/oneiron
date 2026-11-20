@@ -167,17 +167,24 @@ impl ScopedRead<'_> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
+        // The plan and a deny-all answer's receipt in one snapshot, as the
+        // text and vector searches build theirs: on a lane that reports its
+        // live Grants its ceiling names them (FIX-LIST
+        // GRANT-RECEIPT-OTHER-READ-LANES).
+        let txn = self.grant_read_txn()?;
         let SearchPlan {
             filter,
             candidates,
             policy,
-        } = self.search_plan(requested)?;
+        } = self.search_plan_in(&txn, requested)?;
         if candidates.deny_all {
             return Ok(ScopedReadResult {
                 value: Vec::new(),
-                receipt: self.receipt_for(requested, &policy, &candidates, 0),
+                receipt: self.receipt_in(&txn, requested, &policy, &candidates, 0, None),
             });
         }
+        // The search opens its own snapshots: LMDB allows one per thread.
+        drop(txn);
         let excluded = self.request_exclusions(&policy, requested)?;
         let admitted = self.plan_gate(&filter, &policy, &excluded, requested);
         let results = self
@@ -225,17 +232,24 @@ impl ScopedRead<'_> {
         query_affect: Option<oneiron_contracts::affect::Vad>,
         media_memory: Option<&crate::host_memory::MachineMemory>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
+        // The plan and a deny-all answer's receipt in one snapshot, as the
+        // text and vector searches build theirs: on a lane that reports its
+        // live Grants its ceiling names them (FIX-LIST
+        // GRANT-RECEIPT-OTHER-READ-LANES).
+        let txn = self.grant_read_txn()?;
         let SearchPlan {
             filter,
             candidates,
             policy,
-        } = self.search_plan(requested)?;
+        } = self.search_plan_in(&txn, requested)?;
         if candidates.deny_all {
             return Ok(ScopedReadResult {
                 value: Vec::new(),
-                receipt: self.receipt_for(requested, &policy, &candidates, 0),
+                receipt: self.receipt_in(&txn, requested, &policy, &candidates, 0, None),
             });
         }
+        // The search opens its own snapshots: LMDB allows one per thread.
+        drop(txn);
         let excluded = self.request_exclusions(&policy, requested)?;
         let admitted = self.plan_gate(&filter, &policy, &excluded, requested);
         let mut pipeline = self
