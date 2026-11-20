@@ -224,6 +224,7 @@ fn gate_consent_bundle_approve_applies_every_member_with_one_receipt() -> Result
     let owner = consent_bundle_owner(&vault)?;
     let owner_id = owner.actor();
 
+    let before = vault.now_recorded_at();
     let receipt = vault.resolve_gate_consent_bundle(
         &owner,
         bundle.bundle_id,
@@ -231,13 +232,15 @@ fn gate_consent_bundle_approve_applies_every_member_with_one_receipt() -> Result
         GateConsentBundleAction::Approve,
         9,
     )?;
+    let after = vault.now_recorded_at();
 
     assert_eq!(receipt.schema_version, GATE_CONSENT_BUNDLE_SCHEMA_VERSION);
     assert_eq!(receipt.action, GateConsentBundleAction::Approve);
     assert_eq!(receipt.bundle_id, bundle.bundle_id);
     assert_eq!(receipt.dreamer_run_id, run);
     assert_eq!(receipt.member_claim_ids, vec![first, second]);
-    assert_eq!(receipt.created_at, 9);
+    // The row's second on the recording clock, not the caller's `now` (UC-03 PR 4-1).
+    assert!((before..=after).contains(&receipt.created_at));
 
     for id in [first, second] {
         assert_eq!(
@@ -253,13 +256,13 @@ fn gate_consent_bundle_approve_applies_every_member_with_one_receipt() -> Result
     assert_eq!(bundle_rows.len(), 1);
     let row = &bundle_rows[0];
     assert_eq!(row.decision_id, receipt.receipt_id);
-    assert_eq!(row.outcome, GATE_BUNDLE_OUTCOME_APPROVED);
+    assert_eq!(row.outcome, "approved");
     assert_eq!(row.reason_codes, vec![GATE_BUNDLE_REASON_APPROVED]);
     assert_eq!(row.claim_id, None);
     assert_eq!(row.diff_handle, bundle.bundle_id.to_vec());
     assert_eq!(row.actor_class, "human");
     assert_eq!(row.actor_ref, Some(owner_id.to_hex()));
-    assert_eq!(row.created_at, 9);
+    assert_eq!(row.created_at, receipt.created_at);
 
     // Per-claim history survives beside it: one resolution receipt per member.
     let member_rows: Vec<GateDecisionRecord> = vault
@@ -320,7 +323,7 @@ fn gate_consent_bundle_decline_closes_every_member_with_one_receipt() -> Result<
     let bundle_rows = consent_bundle_receipts(&vault)?;
     assert_eq!(bundle_rows.len(), 1);
     assert_eq!(bundle_rows[0].decision_id, receipt.receipt_id);
-    assert_eq!(bundle_rows[0].outcome, GATE_BUNDLE_OUTCOME_DECLINED);
+    assert_eq!(bundle_rows[0].outcome, "rejected");
     assert_eq!(
         bundle_rows[0].reason_codes,
         vec![GATE_BUNDLE_REASON_DECLINED]

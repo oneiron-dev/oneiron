@@ -29,9 +29,13 @@ use crate::sync_harness::window_update_frame;
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer, VersionVector};
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::client::{SyncClient, SyncClientConfig, SyncEvent, SyncResidenceMode};
+use oneiron::sync::lease::{self, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP};
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::queue::SyncQueue;
-use oneiron::sync::schema::{add_window_to_root, create_root_doc, create_window_doc};
+use oneiron::sync::schema::{
+    add_window_to_root, create_root_doc, create_window_doc, read_window_list,
+};
+use oneiron::sync::server_state;
 use oneiron::sync::transport::{
     self, TAG_SYNC_UPDATE, TAG_WINDOW_SYNC, TransportError, window_sub_tags,
 };
@@ -419,6 +423,17 @@ fn local_commit_buffers_to_sync_queue_when_disconnected() {
     let manager = make_manager(&vault);
     let window = manager.open_window(&WindowKey::new("2026-03")).unwrap();
     let queue = SyncQueue::new(Arc::clone(&vault)).unwrap();
+    // The manager's live mirror also opens every window a pending-mirror marker
+    // names (the seeded owner rows mark "1970-01") and, with no live receiver,
+    // queues that window's recovery commits; this test counts its own window's.
+    let window_updates = || -> Vec<_> {
+        queue
+            .drain_updates()
+            .unwrap()
+            .into_iter()
+            .filter(|update| update.window_key == "2026-03")
+            .collect()
+    };
 
     // (a) Never attached → durable queue.
     let first = EntityId::now();
@@ -432,7 +447,7 @@ fn local_commit_buffers_to_sync_queue_when_disconnected() {
         .unwrap();
     window.doc.commit();
 
-    let updates = queue.drain_updates().unwrap();
+    let updates = window_updates();
     assert_eq!(updates.len(), 1, "offline update must land in sync_queue");
     assert_eq!(updates[0].window_key, "2026-03");
     let receiver_doc = LoroDoc::new();
@@ -456,7 +471,7 @@ fn local_commit_buffers_to_sync_queue_when_disconnected() {
         .unwrap();
     window.doc.commit();
 
-    let updates = queue.drain_updates().unwrap();
+    let updates = window_updates();
     assert_eq!(
         updates.len(),
         2,
@@ -525,6 +540,160 @@ fn root_doc_persists_on_change_and_reloads_on_restart_with_u_root_replay() {
         client3.server_windows(),
         vec!["2026-01", "2026-02", "2026-03"],
         "pending u:root: updates must replay on top of d:root"
+    );
+}
+
+// ─── Two writers of d:root: the link's client and the device's own server ───
+//
+// FIX DEVICE-LINK-ROOT-PERSIST-DROPS-SERVER-ROOT-OPS. On a device whose server
+// runs beside its link to home, the server and the link's client each hold a
+// root doc over the one vault, and each puts a whole snapshot over `d:root`.
+
+const LEASE_VAULT: u64 = 10;
+const LEASE_CLIENT: u64 = 17;
+
+/// A root frame from the home: its whole root.
+fn root_frame(home_root: &LoroDoc) -> Vec<u8> {
+    let mut frame = vec![TAG_SYNC_UPDATE];
+    frame.extend_from_slice(&home_root.export(ExportMode::Snapshot).unwrap());
+    frame
+}
+
+/// Writes the one test lease into `root` with `status` and commits, as a
+/// server's lease registrar does.
+fn write_lease(root: &LoroDoc, status: LeaseStatus) {
+    let record = LeaseRecord {
+        vault_id: LEASE_VAULT,
+        status,
+        pubkey: [7; 32],
+        granted_at: 1,
+        renewed_at: 2,
+        expires_at: u64::MAX,
+    };
+    root.get_map(ROOT_LEASES_MAP)
+        .insert(
+            &lease::lease_registry_key(LEASE_VAULT, LEASE_CLIENT),
+            lease::encode_lease_record(&record).as_slice(),
+        )
+        .unwrap();
+    root.commit();
+}
+
+/// The root as `d:root` holds it.
+fn stored_root(vault: &Arc<Vault>) -> LoroDoc {
+    server_state::load_root_from_state(vault)
+        .unwrap()
+        .expect("a root is stored")
+}
+
+fn stored_root_windows(vault: &Arc<Vault>) -> Vec<String> {
+    read_window_list(&stored_root(vault))
+        .iter()
+        .map(|key| key.as_str().to_owned())
+        .collect()
+}
+
+/// The test lease's status in the stored root's registry.
+fn stored_root_lease_status(vault: &Arc<Vault>) -> LeaseStatus {
+    let entry = map_get_bytes(
+        &stored_root(vault).get_map(ROOT_LEASES_MAP),
+        &lease::lease_registry_key(LEASE_VAULT, LEASE_CLIENT),
+    )
+    .expect("the stored root holds the lease");
+    lease::decode_lease_record(&entry).unwrap().status
+}
+
+/// The test lease's status in its `ls:` row, the one a replay door reads.
+fn mirrored_lease_status(vault: &Arc<Vault>) -> LeaseStatus {
+    let row = vault
+        .sync_state_get(&lease::lease_key(LEASE_VAULT, LEASE_CLIENT))
+        .unwrap()
+        .expect("the lease has its ls: row");
+    lease::decode_lease_record(&row).unwrap().status
+}
+
+#[test]
+fn link_root_persist_keeps_what_the_device_server_wrote_since_the_link_loaded_the_root() {
+    let (_temp, vault) = test_vault();
+    let manager = make_manager(&vault);
+    let (mut client, _rx) = make_client(&manager);
+
+    // The home's root names one window and one active lease; the link's
+    // client holds it and has persisted it.
+    let home_root = create_root_doc("user-1", "vault-1", &[WindowKey::new("2026-01")]);
+    write_lease(&home_root, LeaseStatus::Active);
+    client
+        .handle_server_message(&root_frame(&home_root))
+        .unwrap();
+    assert_eq!(mirrored_lease_status(&vault), LeaseStatus::Active);
+
+    // The device's own server, on its own doc of the stored root, then
+    // revokes the lease and adds a window: the root and its `ls:` mirror in
+    // one write, as its lease registrar commits them.
+    let server_root = stored_root(&vault);
+    write_lease(&server_root, LeaseStatus::Revoked);
+    add_window_to_root(&server_root, &WindowKey::new("2026-02"));
+    vault
+        .with_write_txn_grouped(|wtxn| {
+            server_state::persist_root_snapshot_in_txn(&vault, wtxn, &server_root)?;
+            lease::mirror_leases_from_root_in_txn(&vault, wtxn, &server_root)
+        })
+        .unwrap();
+    assert_eq!(mirrored_lease_status(&vault), LeaseStatus::Revoked);
+
+    // The home names another window. The link's client, whose doc still
+    // reads the lease as active, imports that root and persists.
+    add_window_to_root(&home_root, &WindowKey::new("2026-03"));
+    client
+        .handle_server_message(&root_frame(&home_root))
+        .unwrap();
+
+    assert_eq!(
+        mirrored_lease_status(&vault),
+        LeaseStatus::Revoked,
+        "the link's root persist put a revoked lease back to active in ls:"
+    );
+    assert_eq!(
+        stored_root_lease_status(&vault),
+        LeaseStatus::Revoked,
+        "the link's root persist dropped the server's revoke from d:root"
+    );
+    assert_eq!(
+        stored_root_windows(&vault),
+        ["2026-01", "2026-02", "2026-03"],
+        "d:root names the home's windows and the one the server added"
+    );
+}
+
+#[test]
+fn server_root_put_keeps_what_the_link_persisted_since_the_server_read_the_root() {
+    let (_temp, vault) = test_vault();
+    let manager = make_manager(&vault);
+    let (mut client, _rx) = make_client(&manager);
+
+    let home_root = create_root_doc("user-1", "vault-1", &[WindowKey::new("2026-01")]);
+    client
+        .handle_server_message(&root_frame(&home_root))
+        .unwrap();
+
+    // The device's own server has read the stored root into its doc. Before
+    // its next root write commits, the link learns a window from the home and
+    // persists it: the state a link persist leaves between a server write's
+    // merge and its put.
+    let server_root = stored_root(&vault);
+    add_window_to_root(&home_root, &WindowKey::new("2026-02"));
+    client
+        .handle_server_message(&root_frame(&home_root))
+        .unwrap();
+    assert_eq!(stored_root_windows(&vault), ["2026-01", "2026-02"]);
+
+    add_window_to_root(&server_root, &WindowKey::new("2026-03"));
+    server_state::persist_root_snapshot(&vault, &server_root).unwrap();
+
+    assert_eq!(
+        stored_root_windows(&vault),
+        ["2026-01", "2026-02", "2026-03"],
+        "the server's root put dropped the window its link had persisted"
     );
 }
 

@@ -2,6 +2,6 @@
 
 pub use crate::model_decision::{
     BandMode, DEFAULT_QUESTIONS_PER_CALL, DecisionBandEnforceRequest, DecisionBandLearnRequest,
-    DecisionBandPolicy, DecisionBandReadRequest, LearnedBand, PersonThreshold, Reversibility,
-    ThinkRouteCounts, ThinkThreshold,
+    DecisionBandPolicy, DecisionBandReadRequest, LearnedBand, LearnedBandKey, PersonThreshold,
+    Reversibility, ThinkRouteCounts, ThinkThreshold,
 };

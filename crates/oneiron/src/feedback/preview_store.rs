@@ -36,7 +36,8 @@ pub struct RetainedFeedbackPreview {
     pub route: FeedbackSendRoute,
     /// When the preview was issued, on the vault's recording clock.
     pub issued_at: u64,
-    /// The last second it may still be sent.
+    /// The first second it may no longer be sent: it is dead from this
+    /// second on (`oneiron_store::expiry`, UC-12).
     pub expires_at: u64,
 }
 
@@ -92,7 +93,7 @@ impl Vault {
             let mut expired = Vec::new();
             for entry in PREVIEWS.iter_from(&self.store, txn, &[])? {
                 let (key, stored) = entry?;
-                if stored.expires_at >= now {
+                if !oneiron_store::expiry::is_expired(now, stored.expires_at) {
                     break;
                 }
                 expired.push(key);
@@ -105,7 +106,7 @@ impl Vault {
     }
 
     /// The preview kept under `approval` at `issued_at`, while it has not
-    /// expired at `now`; `None` when none stands. The bytes come back as
+    /// expired at `now` (`now < expires_at`); `None` when none stands. The bytes come back as
     /// stored, decoded and digested again but never filtered or re-encoded.
     ///
     /// # Errors
@@ -125,7 +126,7 @@ impl Vault {
         let Some(row) = PREVIEWS.get(&self.store, &txn, &(issued_at, key))? else {
             return Ok(None);
         };
-        if row.expires_at < now {
+        if oneiron_store::expiry::is_expired(now, row.expires_at) {
             return Ok(None);
         }
         let corrupted = || Error::CorruptedIndex("retained feedback preview");

@@ -4,7 +4,9 @@
 //! The row is the delegation: the state is unguessable, and only the owner who started the
 //! install holds it. Every issued state stays until redeemed or expired; there is no count cap.
 //!
-//! A row past its `expires_at` reads as absent and is deleted when seen. Redemption also
+//! A row reads as absent from its `expires_at` second on. A take deletes such a row when it
+//! sees it, and each hold first deletes every such row, so a state never redeemed leaves no row
+//! behind. A row that does not decode stays for its take to report. Redemption also
 //! requires the owner to still own the vault and, when the starting proof carried one, its
 //! credential and host action to still hold, so a slip revoked meanwhile stops the install.
 
@@ -106,7 +108,9 @@ impl Vault {
         let ttl = install.ttl_secs;
         self.with_write_txn_grouped(|txn| {
             let owner = install.owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            let expires_at = self.now_recorded_at().saturating_add(ttl);
+            let now = self.now_recorded_at();
+            self.delete_expired_slack_installs_in_txn(txn, now)?;
+            let expires_at = now.saturating_add(ttl);
             SLACK_PENDING.put(
                 &self.store,
                 txn,
@@ -177,6 +181,32 @@ impl Vault {
         }))
     }
 
+    /// Deletes every row that reads as absent at `now`: its `expires_at` is `now` or earlier,
+    /// the instant [`Self::take_slack_install`] treats as lapsed. A row that does not decode,
+    /// or whose key is not a state, stays: no take could read it as absent.
+    fn delete_expired_slack_installs_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        now: u64,
+    ) -> Result<()> {
+        let mut expired = Vec::new();
+        for entry in SLACK_PENDING.iter_raw_from(&self.store, txn, &[])? {
+            let (key, value) = entry?;
+            let Ok(row) = SLACK_PENDING.decode_value(&value) else {
+                continue;
+            };
+            if row.expires_at <= now
+                && let Ok(state) = String::from_utf8(key)
+            {
+                expired.push(state);
+            }
+        }
+        for state in &expired {
+            SLACK_PENDING.delete(&self.store, txn, state)?;
+        }
+        Ok(())
+    }
+
     /// Whether the host action a row's starting proof carried still holds:
     /// the dev mode still acts as its owner, or the root slip is still
     /// live. `true` for a row with no host action.
@@ -192,5 +222,16 @@ impl Vault {
             None => Ok(self.host_action_owner_in_txn(txn, None)? == host_owner),
             Some(root) => Ok(self.capability_slip_id_is_live_in_txn(txn, &root)?),
         }
+    }
+}
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// Door for `tests/slack_install_sweep.rs`: every state the table holds, in key order,
+    /// expired or not; no public read shows an expired row. Compiled only under
+    /// `--cfg oneiron_test_support`; never API.
+    pub(crate) fn slack_install_states_for_test(&self) -> Result<Vec<String>> {
+        let txn = self.store.env.read_txn()?;
+        SLACK_PENDING.scan_keys(&self.store, &txn, &[])
     }
 }

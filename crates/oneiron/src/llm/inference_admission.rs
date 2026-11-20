@@ -2,6 +2,8 @@
 //! A row requests a route; only a concrete host/catalog binding establishes it.
 use std::collections::BTreeMap;
 
+use oneiron_contracts::register::Register;
+
 use super::{
     CallPurpose, LlmRequest, ModelId, ModelLocality, ValidatedPurposeDefaults, defaults,
     manifest::{self, ModelManifest, ModelRole, ModelSlot},
@@ -10,7 +12,6 @@ use super::{
 use crate::{
     Vault,
     error::{Error, Result},
-    store::Store,
 };
 
 /// Private, verified identity returned beside the final request.
@@ -65,12 +66,13 @@ pub struct InferencePolicySnapshot {
 }
 impl InferencePolicySnapshot {
     fn load(
-        store: &Store,
+        vault: &Vault,
         txn: &heed::RoTxn<'_>,
         role: Option<ModelRole>,
         host: &HostInferenceBinding,
         request: &mut LlmRequest,
     ) -> Result<Self> {
+        let store = &vault.store;
         let defaults = defaults::read_effective_defaults(store, txn)?;
         // Raw calls have their own explicit host-selected model; a role call
         // may instead bind a manifest model. Read its registry row afterwards.
@@ -79,10 +81,9 @@ impl InferencePolicySnapshot {
         } else {
             None
         };
-        let routes = if manifest.is_some() {
-            manifest::read_routes(store, txn)?
-        } else {
-            BTreeMap::new()
+        let routes = match &manifest {
+            Some(manifest) => manifest::read_routes(vault, txn, manifest)?,
+            None => BTreeMap::new(),
         };
         // `PurposeDefaultTable::apply`, on the row the call is admitted as.
         if let Some(row) = defaults
@@ -137,7 +138,7 @@ impl InferencePolicySnapshot {
                 .purpose(admitted_as(&request.envelope.purpose))
                 .is_some_and(|row| row.locality != request.envelope.locality)
         {
-            return Err(invalid("no model binding for inference default locality"));
+            return Err(invalid(InferenceRefusal::NoDefaultBinding));
         }
         let selected = &request.model;
         let native = matches!(
@@ -148,7 +149,7 @@ impl InferencePolicySnapshot {
             HostInferenceBinding::Registered => {
                 self.registry
                     .as_ref()
-                    .ok_or_else(|| invalid("no registered model for host transport"))?
+                    .ok_or_else(|| invalid(InferenceRefusal::NoRegisteredModel))?
                     .catalog
                     .locality
             }
@@ -160,11 +161,11 @@ impl InferencePolicySnapshot {
             }
             HostInferenceBinding::Advertised { .. }
             | HostInferenceBinding::SupervisedNativeLocal { .. } => {
-                return Err(invalid("host backend model differs from selected route"));
+                return Err(invalid(InferenceRefusal::HostModelDiffers));
             }
         };
         if locality != request.envelope.locality {
-            return Err(invalid("model locality differs from bound transport"));
+            return Err(invalid(InferenceRefusal::LocalityDiffers));
         }
         if let Some(row) = &self.registry {
             // The supervised native view of a model registers as the
@@ -176,7 +177,7 @@ impl InferencePolicySnapshot {
                 row.catalog.locality == locality
             };
             if !agrees {
-                return Err(invalid("registry locality differs from host transport"));
+                return Err(invalid(InferenceRefusal::RegistryLocalityDiffers));
             }
         }
         // A local lease must be backed by a registered Local transport, or by
@@ -189,7 +190,7 @@ impl InferencePolicySnapshot {
                     && row.catalog.locality == ModelLocality::OnDevice
             })
         {
-            return Err(invalid("local inference has no local model binding"));
+            return Err(invalid(InferenceRefusal::NoLocalBinding));
         }
         Ok(BoundInference {
             model: selected.clone(),
@@ -199,8 +200,55 @@ impl InferencePolicySnapshot {
         })
     }
 }
-fn invalid(reason: &'static str) -> Error {
-    Error::InvalidConfig(reason.into())
+fn invalid(refusal: InferenceRefusal) -> Error {
+    Error::InvalidConfig(refusal.reason().into())
+}
+
+/// Why the authorizer refused a call: each reason is fixed text that names
+/// no caller field, key or vault row, so an inference door may send it to
+/// its caller and log it (STEP-DOOR-REFUSAL-REASON).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Register)]
+#[register("inference.refusal", rename_all = "snake_case")]
+pub enum InferenceRefusal {
+    /// A role call with no manifest, whose purpose default names another
+    /// locality than the call's.
+    NoDefaultBinding,
+    /// The host binds the call to a catalog row, and none is registered.
+    NoRegisteredModel,
+    /// The host's transport serves another model than the call selects.
+    HostModelDiffers,
+    /// The call's locality is not the one its transport runs at.
+    LocalityDiffers,
+    /// The model's registered locality is not its host transport's.
+    RegistryLocalityDiffers,
+    /// An on-device call with no local model behind it.
+    NoLocalBinding,
+    /// A nonlocal extraction the host's egress did not authorize.
+    ExtractionEgress,
+}
+impl InferenceRefusal {
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::NoDefaultBinding => "no model binding for inference default locality",
+            Self::NoRegisteredModel => "no registered model for host transport",
+            Self::HostModelDiffers => "host backend model differs from selected route",
+            Self::LocalityDiffers => "model locality differs from bound transport",
+            Self::RegistryLocalityDiffers => "registry locality differs from host transport",
+            Self::NoLocalBinding => "local inference has no local model binding",
+            Self::ExtractionEgress => "nonlocal extraction needs host egress authorization",
+        }
+    }
+    /// The refusal `error` is, or `None` for any other error the authorizer
+    /// returns (a store or decode fault), whose text a door does not send.
+    pub fn of(error: &Error) -> Option<Self> {
+        let Error::InvalidConfig(text) = error else {
+            return None;
+        };
+        Self::ROWS
+            .iter()
+            .copied()
+            .find(|refusal| refusal.reason() == text.as_str())
+    }
 }
 
 /// Whether `row` is the registered form of a model the host also serves over
@@ -236,9 +284,7 @@ fn admit_extraction(
         .extraction_egress
         .is_some_and(|predicate| predicate.permits(request))
     {
-        return Err(invalid(
-            "nonlocal extraction needs host egress authorization",
-        ));
+        return Err(invalid(InferenceRefusal::ExtractionEgress));
     }
     Ok(())
 }
@@ -253,7 +299,7 @@ impl Vault {
         let mut request = request;
         let txn = self.store.env.read_txn()?;
         let snapshot =
-            InferencePolicySnapshot::load(&self.store, &txn, role, &host.binding, &mut request)?;
+            InferencePolicySnapshot::load(self, &txn, role, &host.binding, &mut request)?;
         let binding = snapshot.bind(&request, host)?;
         drop(txn); // Host code may read the vault; never call it under an LMDB reader.
         admit_extraction(&snapshot, &request, &binding, host)?;

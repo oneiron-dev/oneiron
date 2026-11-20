@@ -13,9 +13,9 @@ use crate::error::Result;
 
 impl Vault {
     /// Binds the embedded owner as `human` under `issuer`, in the transaction
-    /// that wrote this vault's genesis. A deleted owner, soft or hard, is not
-    /// brought back: the vault stays rooted with no owner bound, and owner
-    /// verbs refuse.
+    /// that wrote this vault's genesis or that moves the host root. A deleted
+    /// owner, soft or hard, is not brought back: the vault stays rooted with
+    /// no owner bound, and owner verbs refuse.
     pub(super) fn bind_rooted_owner_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,

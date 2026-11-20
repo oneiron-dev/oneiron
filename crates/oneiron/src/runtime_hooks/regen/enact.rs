@@ -31,10 +31,13 @@ pub(crate) enum HookPut<'a> {
     Owner(&'a AuthenticatedOwner),
     /// The authoring agent's own put of the `local` pack: the hook binds as
     /// the agent's again, at its ceiling, its grant carried. `owner` is the
-    /// owner's proof when the owner enacts it, revalidated in the writer.
+    /// owner's proof when the owner enacts it, revalidated in the writer;
+    /// `admit` is a granted enactor's admission (restriction wave 7, C41),
+    /// run again in the writer.
     Agent {
         agent: WriteActor,
         owner: Option<&'a AuthenticatedOwner>,
+        admit: Option<&'a dyn Fn(&heed::RoTxn<'_>) -> Result<()>>,
     },
 }
 
@@ -47,6 +50,7 @@ impl HookPut<'_> {
             (Self::Owner(owner), HookAuthor::Agent { agent }) => Ok(Self::Agent {
                 agent: WriteActor::new(*agent, EdgeActorClass::Agent),
                 owner: Some(owner),
+                admit: None,
             }),
             (Self::Owner(_), _) => Ok(self),
             (Self::Agent { agent, .. }, HookAuthor::Agent { agent: author })
@@ -96,9 +100,16 @@ impl HookPut<'_> {
     ) -> Result<PackInstallDisposition> {
         match self {
             Self::Owner(owner) => vault.put_owner_pack_prepared_in_txn(txn, owner, prepared),
-            Self::Agent { agent, owner } => {
+            Self::Agent {
+                agent,
+                owner,
+                admit,
+            } => {
                 if let Some(owner) = owner {
                     owner.revalidate_in_txn(vault, txn)?;
+                }
+                if let Some(admit) = admit {
+                    admit(txn)?;
                 }
                 vault.put_agent_pack_prepared_in_txn(txn, &agent, prepared)
             }

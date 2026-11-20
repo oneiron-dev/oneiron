@@ -309,6 +309,12 @@ impl McpGeneratedVerbTool {
     pub(crate) fn born_in_scope(self) -> bool {
         AgentVerb::from_name(self.name).is_some_and(AgentVerb::born_in_scope)
     }
+    /// A host door whose HTTP admission is `lane_record_scope`: it runs
+    /// outside the engine's scoped read, which applies a channel caveat row
+    /// by row, so every transport refuses a channel caveat at it.
+    pub(crate) fn lane_record_scope_host_door(self) -> bool {
+        AgentVerb::from_name(self.name).is_some_and(AgentVerb::lane_record_scope_host_door)
+    }
     pub(crate) fn writes(self) -> bool {
         AgentVerb::from_name(self.name).is_some_and(AgentVerb::writes)
     }

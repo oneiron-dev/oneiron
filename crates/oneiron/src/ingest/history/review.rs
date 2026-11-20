@@ -9,6 +9,8 @@
 //! landed words in a TURN is the TURN's source and its newest MESSAGE's
 //! learned time.
 
+use std::time::{Duration, Instant};
+
 use super::HistorySource;
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
@@ -18,6 +20,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
+use crate::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
 use crate::ports::EdgeDirection;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE,
@@ -33,7 +36,58 @@ pub fn history_import_review_id(source: HistorySource, imported_at: u64) -> Stri
 /// Producer name of a finished history import's inbox row.
 const NOTIFICATION_PRODUCER_HISTORY_IMPORT: &str = "history_import";
 
+/// How long an import waits for the vault's clock to pass the second it
+/// started in.
+const OWN_SECOND_WAIT: Duration = Duration::from_secs(2);
+
+/// How often an import reads the vault's clock while it waits.
+const OWN_SECOND_POLL: Duration = Duration::from_millis(50);
+
+/// A vault clock that did not pass its second within [`OWN_SECOND_WAIT`].
+const ERR_CLOCK_AHEAD: &str = "the vault's clock is ahead of this machine's; import again once \
+     the machine's clock passes it, so this import has a review of its own";
+
+/// The one import second owned at a time in this process. The CLI, the
+/// queue pass, the hosted-import worker and `vault.imports.hook_transcript`
+/// all own their second through [`Vault::own_import_second`], which holds
+/// this from its first read of the vault's clock until the second is owned,
+/// so two imports that start in the same second own different seconds and
+/// each keeps a review of its own.
+static OWN_SECOND: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 impl Vault {
+    /// The second an import lands at: after every write before it, so no two
+    /// imports share one and each has a review of its own. Holds the
+    /// process's one import-second lock for the whole wait, so two imports
+    /// that start in the same second own different seconds. Waits out the
+    /// rest of the current second; a vault clock more than two seconds ahead
+    /// of this machine's refuses the import rather than share a second with
+    /// an earlier one.
+    ///
+    /// # Errors
+    /// A vault clock that did not pass its second within two seconds.
+    pub fn own_import_second(&self) -> MemoryResult<u64> {
+        let _second = OWN_SECOND
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let start = self.now_recorded_at();
+        let deadline = Instant::now() + OWN_SECOND_WAIT;
+        loop {
+            let now = self.now_recorded_at();
+            if now > start {
+                return Ok(now);
+            }
+            if Instant::now() >= deadline {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    ERR_CLOCK_AHEAD,
+                    &[],
+                ));
+            }
+            std::thread::sleep(OWN_SECOND_POLL);
+        }
+    }
+
     /// Surfaces one finished history import in the inbox (OF-221): one
     /// `ImportFinished` row for the batch's review of `source`, named by the
     /// review id, never one per conversation. The batch's caller writes it
@@ -74,8 +128,9 @@ impl Vault {
 /// What a claim's evidence says about imports.
 pub(crate) struct ImportedEvidence {
     /// Some ref is imported words (an imported TURN, one of its MESSAGEs or
-    /// its CONVERSATION) or a CLAIM whose source or taint is imported: the
-    /// claim is `Imported`, whatever meet a caller computed for it.
+    /// its CONVERSATION, or a foreign archive's CONVERSATION) or a CLAIM
+    /// whose source or taint is imported: the claim is `Imported`, whatever
+    /// meet a caller computed for it.
     pub(crate) imported: bool,
     /// The review of the latest import that landed the words the claim cites.
     pub(crate) review: Option<String>,
@@ -117,9 +172,12 @@ pub(crate) fn imported_evidence_in_txn(
                 continue;
             }
             // An imported conversation carries its turns' stamp, and names no
-            // review of its own either.
+            // review of its own either. A foreign archive's conversation is
+            // imported words whatever stamp it keeps: one whose TURNs hold
+            // their words inline keeps the absence of one (FIX 15412).
             ENTITY_TYPE_CONVERSATION => {
-                imported |= decode_turn_body(&body).imported;
+                imported |= decode_turn_body(&body).imported
+                    || crate::memory::admitted_foreign(ENTITY_TYPE_CONVERSATION, &body);
                 continue;
             }
             // A message's words were landed by the import that learned it. Its
@@ -143,7 +201,10 @@ pub(crate) fn imported_evidence_in_txn(
                     stamped |= parent_header.entity_type == ENTITY_TYPE_TURN && facts.imported;
                 }
                 imported |= stamped;
+                // A foreign archive's copy names no owner history import's
+                // review, whatever source it keeps (FIX 15412).
                 if let Some(source) = source.as_deref().and_then(HistorySource::parse)
+                    && !crate::memory::admitted_foreign(ENTITY_TYPE_MESSAGE, &body)
                     && latest
                         .as_ref()
                         .is_none_or(|(at, _)| header.learned_at > *at)
@@ -160,7 +221,11 @@ pub(crate) fn imported_evidence_in_txn(
             continue;
         }
         imported = true;
-        // Only a source this module imports names a review.
+        // Only a source this module imports names a review; a foreign
+        // archive's copy names none, whatever source it keeps (FIX 15412).
+        if crate::memory::admitted_foreign(ENTITY_TYPE_TURN, &body) {
+            continue;
+        }
         let Some(source) = facts
             .import_source
             .as_deref()

@@ -1,0 +1,17 @@
+{
+  "name": "vault.files.sources.ask",
+  "description": "The owner asks a question of one file or of the files a search finds; the answer stands only when each file it cites holds the quoted words exactly.",
+  "input": "crate::task_verb::sdk::FilesSourceAskRequest",
+  "output": "crate::task_verb::sdk::FilesSourceAskAnswer",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.files.sources.ask\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

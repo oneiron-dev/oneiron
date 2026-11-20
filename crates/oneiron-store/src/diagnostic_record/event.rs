@@ -1,5 +1,6 @@
 //! Closed diagnostic event vocabulary: classes, sources, criticality, event and working-set types, bounds.
 
+use oneiron_contracts::register::Register;
 use rmpv::Value;
 
 use oneiron_base::error::Error;
@@ -194,8 +195,10 @@ impl DiagnosticEventClass {
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("agent.health.signal")]
 pub enum AgentHealthSignal {
     /// The same call, repeated with no other call between.
     Loop,
@@ -216,21 +219,6 @@ pub enum AgentHealthSignal {
 }
 
 impl AgentHealthSignal {
-    /// Canonical wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Loop => "loop",
-            Self::FailedCheckRepeat => "failed_check_repeat",
-            Self::CostSpike => "cost_spike",
-            Self::LongWait => "long_wait",
-            Self::Silent => "silent",
-            Self::DuplicateWork => "duplicate_work",
-            Self::UnsupportedDone => "unsupported_done",
-            Self::Misalignment => "misalignment",
-        }
-    }
-
     /// Parses a wire spelling, rejecting anything outside the closed set.
     #[must_use]
     pub fn from_wire(raw: &str) -> Option<Self> {

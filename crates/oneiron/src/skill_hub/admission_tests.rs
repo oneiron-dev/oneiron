@@ -453,6 +453,7 @@ fn two_hubs_dedup_and_raw_or_replayed_activation_cannot_bypass_rejection() -> Re
                 crate::registry::ENTITY_TYPE_SKILL,
                 at(25),
                 25,
+                None,
                 &encoded
             )
             .commit()
@@ -518,6 +519,7 @@ fn raw_create_and_delete_recreate_cannot_launder_import_origin() -> Result<()> {
                 crate::registry::ENTITY_TYPE_SKILL,
                 at(12),
                 12,
+                None,
                 &crate::skill::encode_skill_record(&record)?
             )
             .commit()
@@ -1600,6 +1602,7 @@ fn shared_skill_erase_matrix_retains_denial_after_raw_local_and_replayed_delete(
                         crate::registry::ENTITY_TYPE_SKILL,
                         at(30),
                         30,
+                        None,
                         &crate::skill::encode_skill_record(&attempted)?
                     )
                     .commit()
@@ -1627,6 +1630,7 @@ fn replay_native_skill(
                 entity_type: crate::registry::ENTITY_TYPE_SKILL,
                 occurred: at(stamp),
                 learned_at: stamp,
+                row_version: 0,
                 body: &data,
             },
             crate::sync::client::ImportTier::OwnDevice,
@@ -1641,6 +1645,7 @@ fn replay_native_skill(
                 crate::registry::ENTITY_TYPE_SKILL,
                 at(stamp),
                 stamp,
+                None,
                 &data,
             )
             .commit()

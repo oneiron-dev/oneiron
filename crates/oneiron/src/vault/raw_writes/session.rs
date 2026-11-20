@@ -65,8 +65,13 @@ pub(super) enum RawOp<'a> {
         tgt: EntityId,
         weight: f32,
     },
-    /// An entity's vector.
-    Vector { id: EntityId, vector: &'a [f32] },
+    /// An entity's vector, with the device and runtime that computed it when
+    /// its host marked it.
+    Vector {
+        id: EntityId,
+        vector: &'a [f32],
+        provenance: Option<&'a crate::embed::EmbeddingProvenance>,
+    },
 }
 
 impl Memory<'_> {
@@ -188,7 +193,11 @@ impl Memory<'_> {
                     };
                     (src, at, now, op)
                 }
-                RawOp::Vector { id, vector } => {
+                RawOp::Vector {
+                    id,
+                    vector,
+                    provenance,
+                } => {
                     if let Some(error) = Error::invalid_vector_component(vector) {
                         return Err(error.into());
                     }
@@ -196,7 +205,7 @@ impl Memory<'_> {
                         id,
                         vector: vector.to_vec(),
                         pending_embedding_token: None,
-                        provenance: None,
+                        provenance: provenance.cloned(),
                     };
                     (id, at, now, op)
                 }

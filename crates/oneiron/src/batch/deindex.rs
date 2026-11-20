@@ -48,6 +48,7 @@ pub(super) fn reject_engine_authored_delete(
     crate::conversation_dag::guard_room_turn_delete(store, wtxn, id)?;
     crate::conversation::guard_room_message_delete(store, wtxn, *id)?;
     crate::blob_artifact::esign::reject_event_delete(store, wtxn, id)?;
+    crate::blob_artifact::reject_lone_version_claim_delete(store, wtxn, id)?;
     crate::store::task_authority_guard::reject_fact_delete(store, wtxn, id)?;
     store
         .delete_guards
@@ -379,18 +380,20 @@ pub(crate) fn drop_seeded_actor_row(
         return Ok(());
     };
     let (entity_type, occurred, learned_at) = parse_entity_metadata(&record)?;
+    crate::store::person_party_keys::reindex_person_party_keys(store, wtxn, id, None)?;
     delete_entity_index_rows(store, wtxn, id, entity_type, occurred, learned_at)?;
     crate::vault::entity_revision::remove_entity_revisions(store, wtxn, id)?;
     delete_short_id_rows_for_id(store, wtxn, id)?;
     store.scope_stamps.retire_stamp(store, wtxn, *id)?;
     crate::access_grant::reindex_companion_grant(store, wtxn, id, None)?;
+    crate::batch::reindex_lexical_query_hint(store, wtxn, id, None)?;
     crate::store::identity_hints::reindex_identity_hints(store, wtxn, id, None)?;
     crate::ports::reindex_named_entities(store, wtxn, id, None)?;
     crate::authority::reindex_mesh_machine_endpoint(store, wtxn, id, None)?;
     store.port_remove_entity_row(wtxn, id)?;
     Ok(())
 }
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) fn deindex_entity_for_test(
     vault: &crate::Vault,
     wtxn: &mut RwTxn<'_>,

@@ -21,7 +21,10 @@
 //! starts no turn (FIX 3342). What a turn's memories read found, heard and
 //! withheld goes to the owner's client with the turn's first event, its
 //! narrowing receipts whole; a turn cancelled or ended before any event
-//! sends it then.
+//! sends it then. An owner's own standalone call keeps each answered turn,
+//! the person's words and the answer, in its home conversation once the
+//! answer stops, and that conversation compacts as a chat's does
+//! (`voice_host::record`, UNBUILT-02).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -45,12 +48,12 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::speech::{TurnSources, notice_rows};
-use super::{HostError, VoiceBrainOut};
+use super::{CallRecord, HostError, KeptTurn, VoiceBrainOut};
 use crate::ai_host::{AiHandle, CHAT_ROLE};
 use crate::api::RoomAudience;
 use crate::api::ai::chat::{chat_request, text_message};
 use crate::auth::CoreAuth;
-use crate::models::{ModelCallBinding, OfferLadder, Seat};
+use crate::models::{AnsweringRung, ModelCallBinding, OfferLadder, RoleCall, Seat};
 
 // Vault memory/diary material is exempt from the external/tool sentence
 // safeguard. Live connector results enter separately and always add taint.
@@ -101,6 +104,9 @@ pub struct ChatBrainBindings {
     pub funding: Option<PayerPerson>,
     /// Where the turns' events go: the host's `brain_out`.
     pub out: mpsc::Sender<VoiceBrainOut>,
+    /// Where an owner's own call keeps its answered turns (UNBUILT-02);
+    /// `None` keeps none, as a phone call or a call heard in a room.
+    pub(crate) record: Option<CallRecord>,
 }
 
 /// The chat role as a voice call's [`Brain`].
@@ -338,11 +344,22 @@ impl ChatBrain {
             BudgetExhaustionPolicy::Suspend,
             payer.clone(),
         )?;
+        // Whether the call's room has a live stretch that keeps no record,
+        // read once at the turn's arrival: for the turn's run here and for
+        // whether the turn is kept (census L5-25).
+        let room = self.bindings.room;
+        let no_record_at_arrival = room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
         let run = ai.model_runtime().funded_run(line, meter, funding.clone());
         // Its permits and metered settlement carry the rows the input was
-        // read from (FIX 6935).
+        // read from (FIX 6935). In a stretch that keeps no record they name
+        // no rows, so no receipt names them or their worlds.
         let read = oneiron::skill_optimize::union_source_rows([Some(said_from.as_slice())]);
         let run = run.sourced(read);
+        let run = if no_record_at_arrival {
+            run.off_record()
+        } else {
+            run
+        };
         let run = match &self.bindings.phone {
             Some(phone) => {
                 let phone = Arc::clone(phone);
@@ -362,8 +379,6 @@ impl ChatBrain {
             .ladder
             .stream_recorded(&run, admitted.request.clone(), None)
             .map_err(|error| refused(format!("{error:?}")))?;
-        let room = self.bindings.room;
-        let no_record_at_arrival = room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
         let capture = ModelCallCapture {
             vault: Arc::clone(vault),
             ladder: Arc::clone(&admitted.ladder),
@@ -510,7 +525,7 @@ impl ChatBrain {
 
     /// Whether no turn of this brain is answering or still winding down, so
     /// nothing it started can write any more.
-    pub(super) fn at_rest(&self) -> bool {
+    pub(crate) fn at_rest(&self) -> bool {
         self.turn
             .as_ref()
             .is_none_or(|turn| turn.handle.is_finished())
@@ -616,7 +631,8 @@ impl Brain for ChatBrain {
             self.open(request, memories, heard, phone_scope.as_ref())?;
         self.history_phone_scope = phone_scope;
         let generation = request.generation;
-        // The person's words: no stored row.
+        // The person's words: no stored row yet; an owner's own call keeps
+        // them, with the answer, once the answer stops (UNBUILT-02).
         self.history
             .lock()
             .map_err(|_| refused("history poisoned"))?
@@ -636,9 +652,22 @@ impl Brain for ChatBrain {
         })));
         let said = Arc::new(Mutex::new(Some(String::new())));
         let memories = Arc::new(Mutex::new(memories));
+        // An owner's own call keeps the turn once its answer stops: the
+        // person's words as heard now, then the answer (UNBUILT-02).
+        let kept = self.bindings.record.map(|record| KeptTurn {
+            ai: self.bindings.ai.clone(),
+            vault: Arc::clone(&self.bindings.vault),
+            record,
+            agent: self.bindings.agent,
+            transcript: request.transcript.clone(),
+            heard_at: self.bindings.vault.now_recorded_at(),
+            funding: self.bindings.funding.clone(),
+            budget_units: self.bindings.ai.chat_settings().turn_budget_units,
+        });
         let turn = Turn {
             generation,
             capture,
+            kept,
             tainted,
             memories: Arc::clone(&memories),
             sources: Arc::clone(&sources),
@@ -816,6 +845,8 @@ impl Drop for ChatBrain {
 struct Turn {
     generation: GenerationEpoch,
     capture: ModelCallCapture,
+    /// What an owner's own call keeps of the turn once its answer stops.
+    kept: Option<KeptTurn>,
     /// The turn heard context from outside it: every event says so, from
     /// the first delta, so its first sentence already passes the safeguard.
     tainted: bool,
@@ -835,6 +866,9 @@ struct Turn {
 
 impl Turn {
     async fn run(mut self, mut stream: LlmStream<'static>) {
+        // A stop that may keep the turn: whether its room keeps no record of
+        // it, and the rung that answered.
+        let mut stopped: Option<(bool, Option<AnsweringRung>)> = None;
         let event = loop {
             match stream.next().await {
                 Some(Ok(LlmStreamEvent::TextDelta { text, .. })) => {
@@ -896,6 +930,7 @@ impl Turn {
                         binding.as_ref(),
                         no_record,
                     );
+                    stopped = Some((no_record, binding.and_then(|binding| binding.answering)));
                     break BrainEvent::Done;
                 }
                 Some(Ok(LlmStreamEvent::Done { .. })) => break BrainEvent::Incomplete,
@@ -915,6 +950,7 @@ impl Turn {
                 .map(|said| format!("{said}{INCOMPLETE_MARK}")),
             _ => None,
         };
+        let answer = entry.clone().filter(|text| !text.trim().is_empty());
         if let Some(entry) = entry
             && let Ok(mut history) = self.history.lock()
         {
@@ -924,6 +960,19 @@ impl Turn {
             ));
         }
         self.send(event).await;
+        // Kept after the host has its stop, so speech never waits on the
+        // write; the turn's task holds until it lands, so a brain at rest
+        // writes no more. Only a whole answer outside a no-record stretch
+        // is kept.
+        if let (Some(kept), Some((false, answering)), Some(answer)) =
+            (self.kept.take(), stopped, answer)
+        {
+            let admitted = RoleCall {
+                request: self.capture.request.clone(),
+                ladder: Arc::clone(&self.capture.ladder),
+            };
+            crate::server::blocking(move || kept.keep(answer, &admitted, answering));
+        }
     }
 
     /// `false` once the host stopped listening.

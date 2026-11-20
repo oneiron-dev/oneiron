@@ -4,10 +4,10 @@
 //! over that snapshot, never folded into it, and each comes back as its own
 //! exact operation spans. Every value the capture meets, at a shallow root,
 //! in the latest state and in every retained operation, is placed with its
-//! family's codec ([`super::owners::root_entry`]): each rightful holder takes its own copy
+//! family's codec ([`super::descriptor::root_entry`]): each rightful holder takes its own copy
 //! (FIX 9128), the actors it names are split out (FIX 9127), and every key,
 //! a deleted one's too, must be one that may stand plaintext
-//! ([`super::owners::key_refusal`]). A Loro PeerID only writes; the owner handles the
+//! ([`super::descriptor::key_refusal`]). A Loro PeerID only writes; the owner handles the
 //! capture records are indexes into this capture's own holders.
 //!
 //! A window splits only once its all-open join gives each stored row back
@@ -28,9 +28,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use loro::checkpoint::{Atom, AtomId, Capture, Parts, Payload, SlotKind, Unsupported};
 use loro::{EncodedBlobMode, ExportMode, IdSpan, ImportBlobMetadata, LoroDoc, LoroValue};
 
+use super::binding::{PartedCollector, PartedRows};
 use super::classify::{Classifier, Home, Plan, Refusal};
+use super::descriptor::WINDOW_ROOTS;
 use super::joined_turns::{Transport, TurnSource, derived_atom};
-use super::owners::{WINDOW_ROOTS, key_fill, root_fill};
+use super::owners::{key_fill, root_fill};
 use super::parts::PartHolders;
 use super::{
     AtomHome, AtomRef, CapturedSyncRow, DerivedRole, JoinedTurn, LoroCarrier, LoroRow, LoroSlice,
@@ -229,7 +231,18 @@ fn prepare(
     let parts = match captured {
         Capture::Classified(parts) => parts,
         Capture::Unclassified(why) => {
-            return Err(classifier.refusal.unwrap_or((None, unsupported(why))));
+            let refusal = classifier.refusal.unwrap_or((None, unsupported(why)));
+            // A parted row's refusal names the holder its key names; one whose
+            // parts join to another row names none, and neither does one whose
+            // history the binding cannot read whole (UC-10 PR 1).
+            if classifier.parted_refusal && refusal.0.is_some() {
+                match parted_rows_bound(&doc) {
+                    Some(true) => {}
+                    Some(false) => return Err((None, SyncUnclassified::Undecodable)),
+                    None => return Err((None, refusal.1)),
+                }
+            }
+            return Err(refusal);
         }
     };
     let Classifier {
@@ -246,20 +259,17 @@ fn prepare(
         })
     });
     // Current-map values alone miss historical heads and removed parts.
-    // Judge manifest bindings against every value this group captured.
+    // Judge manifest bindings against every value this group captured
+    // (UC-10 PR 1); a derived slot holds none of its own.
     {
-        let entries: Vec<(&str, &[u8])> = plans
-            .iter()
-            .filter(|plan| {
-                plan.kind == SlotKind::Value
-                    && plan.root.as_str() == crate::sync::repo_manifests::REPO_MANIFESTS_MAP
-            })
-            .map(|plan| (plan.key.as_str(), plan.value.as_slice()))
-            .collect();
-        if let Some((owner, reason)) =
-            crate::sync::repo_manifests::checkpoint::binding_refusal(&entries)
-        {
-            return Err((Some(owner), reason));
+        let mut parted = PartedRows::default();
+        for plan in &plans {
+            if plan.kind == SlotKind::Value && plan.derived.is_none() {
+                parted.note(&plan.root, &plan.key, || plan.value.as_slice());
+            }
+        }
+        if let Some(refusal) = parted.capture_refusal() {
+            return Err(refusal);
         }
     }
     prove(&doc, rows, &slices, &parts, &plans, turn.as_ref())?;
@@ -270,6 +280,20 @@ fn prepare(
         slices,
         turn,
     })
+}
+
+/// Whether every parted row in `doc`'s history is bound to its key (UC-10
+/// PR 1): a second pass, which places nothing, notes every parted map value
+/// the first one stopped short of. `Some(false)` when a row's parts join to
+/// a row its key does not name; `None` when that pass stops short too (a
+/// root outside the window's maps), as it then holds only part of the
+/// history and proves no binding.
+fn parted_rows_bound(doc: &LoroDoc) -> Option<bool> {
+    let mut collector = PartedCollector::default();
+    match doc.export_root_map_checkpoint(&WINDOW_ROOTS, &mut collector) {
+        Capture::Classified(_) => Some(collector.rows.mismatch().is_none()),
+        Capture::Unclassified(_) => None,
+    }
 }
 
 fn not_proved() -> Refusal {

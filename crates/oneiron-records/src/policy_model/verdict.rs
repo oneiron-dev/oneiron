@@ -2,6 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_policy_vocabulary::policy_model::pattern::PolicyPatternRole;
+use oneiron_store::gate_reason::GateReceiptOutcome;
 pub use oneiron_verb_wire::policy_model::verdict::PolicySkipReason;
 use serde::Deserialize;
 use serde::Serialize;
@@ -54,6 +55,21 @@ impl PolicyClassifyDecision {
             Self::Hold => "hold",
             Self::RouteToHelp => "route_to_help",
             Self::Skipped(_) => "skipped",
+        }
+    }
+
+    /// The Gate receipt outcome a verdict is recorded under (UC-03 D1 = A).
+    /// A verdict that delivers the content is an `Allow`, one that withholds
+    /// it a `Deny`, a hold `Pending`, and a skip `Noted`: nothing examined the
+    /// content. The word [`Self::ledger_str`] stays on the row as the reason
+    /// code `gate.policy_model.<word>`.
+    #[must_use]
+    pub const fn ledger_outcome(self) -> GateReceiptOutcome {
+        match self {
+            Self::Allow | Self::Warn => GateReceiptOutcome::Allow,
+            Self::Reword | Self::Block | Self::RouteToHelp => GateReceiptOutcome::Deny,
+            Self::Hold => GateReceiptOutcome::Pending,
+            Self::Skipped(_) => GateReceiptOutcome::Noted,
         }
     }
 

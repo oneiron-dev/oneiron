@@ -31,14 +31,14 @@ use crate::claim::{ScopedReadReceipt, ScopedReadResult};
 use crate::memory::{
     EntityView, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
 };
+use crate::request_limits::{ZeroLimitRefused, page_limit_zero_refused};
 
-pub use crate::store::record_ref::RECORD_REF_LABEL_MAX_CHARS;
-/// The most characters a [`RecordRefPreview`] snippet carries.
-pub const RECORD_REF_SNIPPET_MAX_CHARS: usize = 280;
 pub use crate::request_limits::RECORD_REF_MAX_BYTES;
+pub use crate::store::record_ref::RECORD_REF_LABEL_MAX_CHARS;
 
-/// The most messages one `vault.refs.links` page of a turn reads for links,
-/// and the page size when the caller names none.
+/// The default of the owner's `refs.links.page_max`: the most messages one
+/// `vault.refs.links` page of a turn reads for links, and the page size when
+/// the caller names none, while the owner has not set the key.
 pub const RECORD_LINKS_TURN_PAGE_MAX: usize = 32;
 
 /// The body fields a snippet is read from; the first one holding text wins.
@@ -85,7 +85,9 @@ pub struct RecordRefPreview {
     /// The revision this preview was read at, lower hex: the pin the ref
     /// named, else the record's live revision when it keeps revisions.
     pub revision: Option<String>,
-    /// A bounded, single-line snippet of the record's text, when it has some.
+    /// A bounded, single-line snippet of the record's text, when it has some:
+    /// at most the owner's `refs.resolve.snippet_chars` characters (280 by
+    /// default).
     pub snippet: Option<String>,
 }
 
@@ -152,13 +154,19 @@ impl Memory<'_> {
             Some((_, pinned)) => Some(pinned.to_ascii_lowercase()),
             None => live(&view)?,
         };
+        let snippet_chars = super::setting_keys::vault_value(
+            self.vault(),
+            &super::setting_keys::REFS_RESOLVE_SNIPPET_CHARS,
+        )?;
+        let snippet_chars = usize::try_from(snippet_chars).unwrap_or(usize::MAX);
         Ok(ScopedReadResult {
             value: RecordRefPreview {
                 snippet: view
                     .body
                     .as_ref()
+                    .filter(|_| snippet_chars > 0)
                     .and_then(|body| first_text(body, &SNIPPET_FIELDS))
-                    .map(|text| bounded(&text, RECORD_REF_SNIPPET_MAX_CHARS))
+                    .map(|text| bounded(&text, snippet_chars))
                     .filter(|snippet| !snippet.is_empty()),
                 record: RecordRef::from_view(&view),
                 revision,
@@ -311,18 +319,26 @@ impl Memory<'_> {
                 })
             }
             (None, Some(turn_ref)) => {
-                let limit = match input.limit {
-                    Some(0) => {
-                        return Err(MemoryError::bad_request_with(
-                            "a page of a turn holds at least one message",
-                            &["Pass a `limit` of 1 or more, or none for the default page."],
-                        ));
-                    }
-                    Some(limit) => usize::try_from(limit)
-                        .unwrap_or(RECORD_LINKS_TURN_PAGE_MAX)
-                        .min(RECORD_LINKS_TURN_PAGE_MAX),
-                    None => RECORD_LINKS_TURN_PAGE_MAX,
-                };
+                let page_max = super::setting_keys::vault_value(
+                    self.vault(),
+                    &super::setting_keys::REFS_LINKS_PAGE_MAX,
+                )?
+                .get();
+                let page_max = usize::try_from(page_max).unwrap_or(usize::MAX);
+                let limit = page_limit_zero_refused(
+                    input
+                        .limit
+                        .map(|limit| usize::try_from(limit).unwrap_or(usize::MAX)),
+                    page_max,
+                    page_max,
+                )
+                .map_err(|ZeroLimitRefused| {
+                    MemoryError::bad_request_with(
+                        "a page of a turn holds at least one message",
+                        &["Pass a `limit` of 1 or more, or none for the default page."],
+                    )
+                })?
+                .rows;
                 self.turn_links(turn_ref.trim(), input.after.as_deref(), limit)
             }
             _ => Err(MemoryError::bad_request_with(

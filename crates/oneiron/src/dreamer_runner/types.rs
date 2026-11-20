@@ -684,8 +684,9 @@ pub fn dreamer_park_cause_of_response(
 /// 10-21): a checkpoint at the wake-pass deadline; a provider outage for
 /// a model call whose provider is down; a private park for a failure
 /// only an owner act clears (the model failures and engine error kinds
-/// the wake driver's owner-act checks name); and a Retry, resumed after
-/// its delay, for any other.
+/// the wake driver's owner-act checks name) or that refuses the attempt's
+/// own input for good (`refuses_attempt_input`); and a Retry, resumed
+/// after its delay, for any other.
 #[must_use]
 pub fn dreamer_park_cause_of_step(
     error: &crate::model_step_error::DurableStepError,
@@ -698,7 +699,10 @@ pub fn dreamer_park_cause_of_step(
             crate::dreamer_runner::dreamer_park_cause_of_llm(source)
         }
         DurableStepError::Engine(engine) => {
-            if crate::dreamer_wake::waits_on_owner_act(engine.kind()) {
+            let kind = engine.kind();
+            if crate::dreamer_wake::waits_on_owner_act(kind)
+                || crate::dreamer_wake::refuses_attempt_input(engine)
+            {
                 DreamerParkCause::Other
             } else {
                 DreamerParkCause::Retry

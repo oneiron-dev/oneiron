@@ -131,7 +131,13 @@ impl Vault {
             return Ok(());
         };
         let invitee = EntityId::from_hex(&claims.holder_ref).map_err(|_| invalid_authority())?;
-        if !self.invitation_slip_stands_in_txn(txn, invitee, invitation, &claims.binding_key, now) {
+        if !self.invitation_slip_stands_in_txn(
+            txn,
+            invitee,
+            invitation,
+            &claims.binding_key,
+            now,
+        )? {
             return Err(invalid_authority());
         }
         Ok(())
@@ -161,12 +167,25 @@ impl Vault {
         Ok(())
     }
 
-    /// What every slip door reads beside the fold's revocation check: a
-    /// grant-bound slip's grant (OF-232), an invitation-bound slip's
-    /// invitation, a support slip's delegation (OF-606), a contact-bound
-    /// slip's naming (FIX 4325) and a seat-child slip's claim (FIX 10624)
-    /// still stand.
+    /// What every slip door reads beside the fold's revocation check: the
+    /// holder's row is not deleted, and a grant-bound slip's grant (OF-232),
+    /// an invitation-bound slip's invitation, a support slip's delegation
+    /// (OF-606), a contact-bound slip's naming (FIX 4325) and a seat-child
+    /// slip's claim (FIX 10624) still stand.
     pub(super) fn require_live_slip_refs_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+        now: u64,
+    ) -> Result<()> {
+        self.require_undeleted_slip_holder_in_txn(txn, claims)?;
+        self.require_live_slip_refs_but_holder_in_txn(txn, claims, now)
+    }
+
+    /// [`Self::require_live_slip_refs_in_txn`] without its holder's row:
+    /// every grant, invitation, share, delegation, contact naming and seat
+    /// claim the slip names still stands.
+    fn require_live_slip_refs_but_holder_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         claims: &SlipClaims,
@@ -177,6 +196,7 @@ impl Vault {
         if let Some(share) = &claims.share_ref {
             let share = EntityId::from_hex(share).map_err(|_| invalid_authority())?;
             let holder = EntityId::from_hex(&claims.holder_ref).map_err(|_| invalid_authority())?;
+            crate::share::require_share_header_in_txn(&self.store, txn, &share)?;
             crate::share::live_share_for_holder_in_txn(self, txn, &share, &holder, now)?
                 .ok_or_else(invalid_authority)?;
         }
@@ -185,20 +205,99 @@ impl Vault {
         self.require_live_seat_claim_in_txn(txn, claims)
     }
 
+    /// A slip follows its holder's row (RULING DELETED-ACTOR-SLIP-AUTH = A):
+    /// when `holder_ref` names an entity whose row here is a deleted shell,
+    /// or whose row a hard delete or a batch delete removed (RULING
+    /// DELETED-SLIP-BATCH-DELETE = A), the slip does not stand, so a
+    /// deleted actor's credential authenticates nothing at any door that
+    /// verifies, admits or rechecks it. A `host` or `operator` holder, and a
+    /// holder with no row here that no delete removed (a share recipient, a
+    /// derived principal not yet stored), keep the rule they had. A row that
+    /// is restored brings its slips back. The left-notice doors verify the
+    /// origin alone and still serve a removed member.
+    fn require_undeleted_slip_holder_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+    ) -> Result<()> {
+        if slip_holder_is_deleted_in_txn(&self.store, txn, &claims.holder_ref)? {
+            return Err(invalid_authority());
+        }
+        Ok(())
+    }
+
     /// [`Self::require_live_slip_refs_in_txn`] as a judgment, for a slip
     /// verified earlier and checked again (FIX 5952): `false` once its grant,
     /// invitation, delegation, contact naming or seat claim no longer stands,
     /// an error only when that cannot be judged.
-    pub(super) fn slip_refs_stand_in_txn(
+    pub(crate) fn slip_refs_stand_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         claims: &SlipClaims,
         now: u64,
     ) -> Result<bool> {
-        match self.require_live_slip_refs_in_txn(txn, claims, now) {
-            Ok(()) => Ok(true),
-            Err(Error::Record(RecordError::InvalidAuthorityLogBody(_))) => Ok(false),
-            Err(error) => Err(error),
-        }
+        slip_refs_judgment(self.require_live_slip_refs_in_txn(txn, claims, now))
     }
+
+    /// [`Self::slip_refs_stand_in_txn`] at the publication of a delete whose
+    /// own scrub of `scrubbed` committed before it: a slip `scrubbed` holds,
+    /// the owner's own credential when that delete is the owner's delete of
+    /// their own PERSON, is judged with that PERSON's row read as undeleted
+    /// (the scrub is the delete being published); every reference it names
+    /// is judged as before, and so is a slip any other holder holds.
+    pub(crate) fn slip_refs_stand_after_own_scrub_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+        now: u64,
+        scrubbed: &EntityId,
+    ) -> Result<bool> {
+        let held_by_scrubbed =
+            EntityId::from_hex(&claims.holder_ref).is_ok_and(|holder| holder == *scrubbed);
+        slip_refs_judgment(if held_by_scrubbed {
+            self.require_live_slip_refs_but_holder_in_txn(txn, claims, now)
+        } else {
+            self.require_live_slip_refs_in_txn(txn, claims, now)
+        })
+    }
+}
+
+/// A slip-reference check as a judgment: `false` when a reference no longer
+/// stands, an error only when that cannot be judged.
+fn slip_refs_judgment(refs: Result<()>) -> Result<bool> {
+    match refs {
+        Ok(()) => Ok(true),
+        Err(Error::Record(RecordError::InvalidAuthorityLogBody(_))) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether the entity `holder_ref` names is deleted here: its row a deleted
+/// shell, or gone under a hard-delete marker (RULING DELETED-ACTOR-SLIP-AUTH
+/// = A), or a pinned agent id with no row (RULING DELETED-SLIP-BATCH-DELETE
+/// = A): every delete pins the AGENT_DEF row it removes (H215), so an id
+/// whose pin stands and whose row is gone was deleted, and a definition
+/// reborn within its pin stands again. A seeded id this vault never stored
+/// holds no pin and keeps the rule below. A `holder_ref` that names no entity (`host`,
+/// `operator`), and any other entity with no row and no marker here, is not.
+/// It reads the store alone, for a live door with no vault at hand (a
+/// PROJECT write proof).
+pub(crate) fn slip_holder_is_deleted_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    holder_ref: &str,
+) -> Result<bool> {
+    let Ok(holder) = EntityId::from_hex(holder_ref) else {
+        return Ok(false);
+    };
+    Ok(
+        match crate::vault::live_entity_row_in_txn(store, txn, &holder)? {
+            crate::vault::LiveEntityRow::DeletedShell => true,
+            crate::vault::LiveEntityRow::Absent => {
+                crate::deletion::hard_delete_marker_exists_in_txn(store, txn, &holder)?
+                    || crate::agent_def::agent_id_pinned_in_txn(store, txn, &holder)?
+            }
+            crate::vault::LiveEntityRow::Live { .. } => false,
+        },
+    )
 }

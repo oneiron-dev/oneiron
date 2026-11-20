@@ -23,9 +23,9 @@ It also refuses two Registers with one name: every `#[register("...")]` line is 
 repeated name exits 1 in every mode that counts.
 
 The count only goes down: a new list of names is declared as a Register, and the conversions
-lower baseline.json's count once per train (the Engine; adopting PRs never edit it). After the
-gate goes live, the pipeline pre-flight runs `--check` on the PR merged into main, against
-main's baseline.json.
+lower baseline.json's count once per train (the Engine; adopting PRs never edit it). The count
+blocks no merge: the merge pipeline counts each change merged into main and reports a raise to
+its author, who lowers it in a follow-up PR.
 
 Usage:
   hand_name_tables.py [TREE]                    the count and its three parts
@@ -38,7 +38,7 @@ Usage:
       that dispatch on two or more name strings without building a variant, and const tables
       of ("name", value) pairs
   hand_name_tables.py --check [--baseline FILE] [TREE]
-      the merge gate: exit 1 when the count is above the baseline's hand_name_tables count
+      the baseline check: exit 1 when the count is above the baseline's hand_name_tables count
       (default FILE: TREE/scripts/ratchet/baseline.json)
 
 TREE defaults to the current directory. Exit 2, never a silent pass, on a missing tree, a

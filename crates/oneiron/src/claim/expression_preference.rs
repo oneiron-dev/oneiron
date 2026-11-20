@@ -345,9 +345,7 @@ impl Vault {
             if change.origin
                 == ExpressionWriteOrigin::Native(ExpressionPreferenceOrigin::ExplicitUser)
             {
-                crate::memory::explicit_claim_override_in_txn(
-                    self, wtxn, *actor, old_id, &body, learned_at,
-                )?;
+                crate::memory::explicit_claim_override_in_txn(self, wtxn, *actor, old_id, &body)?;
             } else {
                 crate::memory::require_claim_self_grant_in_txn(
                     self,
@@ -366,10 +364,7 @@ impl Vault {
             Some(permit) => gate_mode.with_owner_archive_restore(permit),
             None => gate_mode,
         };
-        apply_ops_with_gate_mode(
-            &self.store,
-            &self.config,
-            &self.analyzer,
+        self.apply_ops_restoring_claim_subjects_in_txn(
             wtxn,
             vec![BatchOp::ClaimCandidate {
                 id: claim_id,
@@ -379,8 +374,6 @@ impl Vault {
                 learned_at,
                 internal_lexical_query_hint: false,
             }],
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
             gate_mode,
         )?;
         let mut superseded_claim_ids = Vec::new();
@@ -421,8 +414,26 @@ impl Vault {
         subject: &EntityId,
         at: u64,
     ) -> Result<ExpressionPreferenceSet> {
-        let mut best: BTreeMap<ExpressionPreferenceKind, (EntityId, ClaimBody, u64)> =
-            BTreeMap::new();
+        self.expression_preferences_admitted_in_txn(rtxn, subject, at, |ids| {
+            Ok(vec![true; ids.len()])
+        })
+    }
+
+    /// [`Self::expression_preferences_in_txn`] over the claims `admit` lets
+    /// through: given the ids of the claims in force, in one call, it answers
+    /// for each whether the reader may read it. A bound caller passes its own
+    /// read lane (REVIEW-8147 P1), so the winner of each kind is chosen among
+    /// the claims that reader may read. A claim it may not read neither shows
+    /// its value or ref nor hides a value the reader may see, so the view says
+    /// nothing about it. An id `admit` leaves unanswered is not admitted.
+    pub(crate) fn expression_preferences_admitted_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        subject: &EntityId,
+        at: u64,
+        admit: impl FnOnce(&[EntityId]) -> Result<Vec<bool>>,
+    ) -> Result<ExpressionPreferenceSet> {
+        let mut in_force: Vec<(ExpressionPreferenceKind, EntityId, ClaimBody, u64)> = Vec::new();
         for predicate in [
             PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
             PREDICATE_COMPANION_EXPRESSION_REGISTER,
@@ -462,17 +473,27 @@ impl Vault {
                     PREDICATE_COMPANION_EXPRESSION_KEIGO => ExpressionPreferenceKind::Keigo,
                     _ => ExpressionPreferenceKind::Style,
                 };
-                let replace = best.get(&kind).is_none_or(|(old_id, old, old_learned_at)| {
-                    Self::expression_preference_wins(
-                        (body.source, body.valid_from, learned_at, id),
-                        (old.source, old.valid_from, *old_learned_at, *old_id),
-                    )
-                });
-                if replace {
-                    best.insert(kind, (id, body, learned_at));
-                }
+                in_force.push((kind, id, body, learned_at));
                 Ok(())
             })?;
+        }
+        let ids: Vec<EntityId> = in_force.iter().map(|(_, id, _, _)| *id).collect();
+        let admitted = admit(&ids)?;
+        let mut best: BTreeMap<ExpressionPreferenceKind, (EntityId, ClaimBody, u64)> =
+            BTreeMap::new();
+        for ((kind, id, body, learned_at), admitted) in in_force.into_iter().zip(admitted) {
+            if !admitted {
+                continue;
+            }
+            let replace = best.get(&kind).is_none_or(|(old_id, old, old_learned_at)| {
+                Self::expression_preference_wins(
+                    (body.source, body.valid_from, learned_at, id),
+                    (old.source, old.valid_from, *old_learned_at, *old_id),
+                )
+            });
+            if replace {
+                best.insert(kind, (id, body, learned_at));
+            }
         }
         let mut out = ExpressionPreferenceSet::default();
         for (kind, (id, body, _learned_at)) in best {
@@ -573,9 +594,7 @@ impl Vault {
             ));
         }
         self.verify_expression_preference_retract_actor_in_txn(&wtxn, actor, &head)?;
-        crate::memory::explicit_claim_override_in_txn(
-            self, &mut wtxn, *actor, *claim_id, &head, now,
-        )?;
+        crate::memory::explicit_claim_override_in_txn(self, &mut wtxn, *actor, *claim_id, &head)?;
 
         // Every direct predecessor is read and judged in this one write
         // (FIX 8657): the count only feeds the advisory EdgePeerRows check.

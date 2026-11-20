@@ -427,6 +427,7 @@ impl<'v> Landing<'v> {
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: self.revision_author(&turn, headers)?,
@@ -458,6 +459,7 @@ impl<'v> Landing<'v> {
                 headers,
                 prior.as_ref(),
             )]),
+            facet: None,
         };
         let landed = self.memory.witness_imported(&witness, &stamp, |wtxn| {
             self.owner.revalidate_in_txn(vault, wtxn)?;

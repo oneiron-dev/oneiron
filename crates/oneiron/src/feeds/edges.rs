@@ -190,6 +190,7 @@ pub(super) fn edges_after_in_txn(
                     kind: kind.name().to_owned(),
                     target: row.target,
                 }),
+                setting: None,
             },
             judge: Judge::ReadBoth(PointRead::id(row.source), PointRead::id(row.target)),
         });
@@ -240,6 +241,7 @@ pub(super) fn redirty_after_in_txn(
                 recorded_at: row.recorded_at,
                 revision: None,
                 edge: None,
+                setting: None,
             },
             judge: Judge::Read(PointRead::id(row.turn)),
         });
@@ -281,7 +283,7 @@ pub(super) fn passed_rows_in_txn(
                 rows.push(row?.0);
             }
         }
-        FeedSource::Changes | FeedSource::Settlements => {}
+        FeedSource::Changes | FeedSource::Settlements | FeedSource::Settings => {}
     }
     Ok(rows)
 }
@@ -301,7 +303,7 @@ pub(super) fn delete_rows_in_txn(
             FeedSource::Redirty => {
                 REDIRTY.delete(store, txn, sequence)?;
             }
-            FeedSource::Changes | FeedSource::Settlements => {}
+            FeedSource::Changes | FeedSource::Settlements | FeedSource::Settings => {}
         }
     }
     Ok(())

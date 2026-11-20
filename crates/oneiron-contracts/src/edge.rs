@@ -1,6 +1,8 @@
 //! Edge vocabulary the write path shares. The edge kinds, layouts and codec stay in
 //! `oneiron::edge`, which re-exports [`EdgeActorClass`].
 
+use crate::register::Register;
+
 /// Hot actor-class flag cached on a 26-byte semantic-provenanced edge.
 #[repr(u8)]
 #[derive(
@@ -13,8 +15,10 @@
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("edge.actor.class")]
 pub enum EdgeActorClass {
     Human = 0,
     Agent = 1,
@@ -37,10 +41,6 @@ impl EdgeActorClass {
     /// Actor-class key used by Gate `actor_ceilings` policy rows.
     #[must_use]
     pub const fn gate_actor_class(self) -> &'static str {
-        match self {
-            Self::Human => "human",
-            Self::Agent => "agent",
-            Self::System => "system",
-        }
+        self.as_str()
     }
 }

@@ -9,8 +9,13 @@
 //! summary and steps, and a batch of marked folds or folds by kind with the
 //! folds it committed. The prefix rides every request of the run right
 //! after its task, the same bytes until the next boundary, a request sent
-//! again included. Once the backend answers a request that carried it, the
-//! executor tells the host the prefix was delivered (Engine call C).
+//! again included, while every row it was derived from still stands: before
+//! a request carries a held prefix again, the executor asks the host to
+//! recheck it, and carries the prefix the host prepares afresh in its place,
+//! or none, when a row it shows was deleted or its reader no longer reads it
+//! ([BRIEF-PREFIX-STALE-PAST-REVOKE]). Once the backend answers a request
+//! that carried it, the executor tells the host the prefix was delivered
+//! (Engine call C).
 //!
 //! The port exchanges only these typed values and rendered text: no server
 //! type crosses it. A turn program's pinned entry binds none, and makes no
@@ -38,6 +43,19 @@ pub trait SelfBriefPort: Send + Sync {
     ///
     /// The host could not prepare the prefix.
     fn prepare(&self, boundary: BriefBoundary) -> crate::Result<Option<BriefPrefix>>;
+
+    /// The prefix the run's next request carries in place of `held`, the
+    /// prefix its requests carry now, which the executor is about to send
+    /// again with no boundary between: [`BriefRecheck::Holds`] while every
+    /// row `held` shows still stands for the reader it was prepared for,
+    /// else the prefix the host prepares afresh at the same boundary, or
+    /// none. A refusal stops the run before its request is sent, as a
+    /// [`Self::prepare`] refusal does.
+    ///
+    /// # Errors
+    ///
+    /// The host could not judge the prefix's rows.
+    fn recheck(&self, held: &BriefPrefix) -> crate::Result<BriefRecheck>;
 
     /// The backend answered a request that carried the prefix `token` names.
     /// Called once per prepared prefix, at the first such answer.
@@ -102,6 +120,16 @@ pub struct BriefPrefix {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BriefCandidateToken(pub u64);
 
+/// What [`SelfBriefPort::recheck`] answered for a held prefix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BriefRecheck {
+    /// Every row the prefix shows still stands: the request carries it.
+    Holds,
+    /// A row the prefix shows no longer stands: the request carries this
+    /// prefix, prepared afresh at the same boundary, or none.
+    Replaced(Option<BriefPrefix>),
+}
+
 /// The executor's side of a bound port: the run it was born for, the prefix
 /// its requests carry, and the fold batches committed since that prefix was
 /// prepared.
@@ -144,16 +172,27 @@ impl<'a> NativeBrief<'a> {
     /// prefix it already delivered (a run entering again), so a batch that
     /// landed at this entry still asks for its own fold. A boundary leaves
     /// the queue only once its prefix was prepared, so a refusal asks again
-    /// at the same one.
+    /// at the same one. With no boundary to prepare, the held prefix is
+    /// about to go again: the host rechecks it first
+    /// ([BRIEF-PREFIX-STALE-PAST-REVOKE]).
     fn prepare_for(&mut self, run_id: EntityId) -> crate::Result<()> {
+        let mut prepared = false;
         if self.born != Some(run_id) {
             let prefix = self.port.prepare(BriefBoundary::Birth { run_id })?;
             self.current = prefix.map(HeldPrefix::new);
             self.born = Some(run_id);
+            prepared = true;
         }
         while let Some(fold) = self.pending.front() {
             let prefix = self.port.prepare(BriefBoundary::Fold(fold.clone()))?;
             self.pending.pop_front();
+            self.current = prefix.map(HeldPrefix::new);
+            prepared = true;
+        }
+        if !prepared
+            && let Some(held) = &self.current
+            && let BriefRecheck::Replaced(prefix) = self.port.recheck(&held.prefix)?
+        {
             self.current = prefix.map(HeldPrefix::new);
         }
         Ok(())
@@ -163,12 +202,26 @@ impl<'a> NativeBrief<'a> {
 impl EngineNativeExecutor<'_> {
     /// The brief this request carries, right after its task: the host's
     /// prefix as it stands at the run's current boundary, the same bytes on
-    /// every request until the next one. `None` with no port bound, or when
-    /// the host has no brief.
+    /// every request until the next one while its rows stand. `None` with no
+    /// port bound, or when the host has no brief.
     pub(super) fn brief_prefix_text(
         &mut self,
         run_id: EntityId,
     ) -> EngineExecutorResult<Option<String>> {
+        // L2-37: folds an idle call landed while the run was parked are a
+        // batch the run committed with no executor to hear of it (Engine
+        // call FOLD B). Its first request in this entry is prepared past
+        // them, as if they had landed here.
+        if self
+            .self_brief
+            .as_ref()
+            .is_some_and(|brief| brief.born != Some(run_id))
+            && let crate::code_run::ExecutorStorage::Canonical(vault) = &self.storage
+            && let Some(folds) = crate::idle_fold::take_parked_fold_boundary(vault, run_id)?
+            && let Some(boundary) = FoldBoundary::landed(run_id, folds)
+        {
+            self.brief_fold_committed(boundary);
+        }
         let Some(brief) = self.self_brief.as_mut() else {
             return Ok(None);
         };

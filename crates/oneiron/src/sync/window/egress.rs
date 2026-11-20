@@ -15,7 +15,9 @@ use super::reverse::{
     remove_entity_crdt_carriers, reverse_remat_skip_redaction_receipt_mirror,
 };
 use super::types::WindowKey;
-use crate::sync::window_rows::{HISTORY_FREE_WINDOW, OFF_RECORD_PROMOTE_PICKUP, WindowEntityKey};
+use crate::sync::window_rows::{
+    HISTORY_FREE_WINDOW, OFF_RECORD_PROMOTE_PICKUP, WindowEntityHexKey,
+};
 
 use crate::Vault;
 use crate::edge::EdgeKind;
@@ -58,6 +60,14 @@ use loro::{CommitOptions, LoroDoc};
 /// (`source_audiences::mirror_record`); one whose binding does not resolve,
 /// or whose words came from a row bound otherwise, stays on this vault
 /// (Engine A, 6 Nov 03:46; `source_audience::withheld_from_replication_in`).
+///
+/// A row kept for storage only under a use limit (a privacy erase a standing
+/// customer hold refused, C6, or a cooperative review restriction) stays on
+/// this vault too: the owner's devices lose it as they lose an erased row,
+/// and it packs again once the limit goes inert (Engine ANSWER
+/// SERVING-DOORS-OWNER-WINDOW-USE-LIMIT = B, 20 Nov 21:19; LEGAL-HOLD-USE = B).
+/// A row the window already carries leaves it through
+/// [`super::use_limited::withhold_use_limited_carriers`].
 /// A packing pass asks it through [`window_packing_excludes_entity_with`].
 #[cfg(test)]
 pub(super) fn window_packing_excludes_entity(
@@ -86,7 +96,9 @@ pub(super) fn window_packing_excludes_entity_with(
         |rtxn| {
             Ok(
                 crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, rtxn, id)?
-                    || crate::settings::device_only_withholds(&vault.store, rtxn, device_only, id)?,
+                    || crate::settings::device_only_withholds(&vault.store, rtxn, device_only, id)?
+                    || crate::store::legal_hold::use_limit_in_txn(&vault.store, rtxn, id)?
+                        .is_some(),
             )
         },
     )? {
@@ -106,10 +118,16 @@ pub fn history_free_window_required(vault: &Vault, key: &WindowKey) -> Result<bo
 
 /// Durably pins this window to history-free snapshot transport/persistence.
 pub fn require_history_free_window(vault: &Vault, key: &WindowKey) -> Result<()> {
-    vault.with_write_txn_grouped(|wtxn| {
-        HISTORY_FREE_WINDOW.put(&vault.store, wtxn, &key.as_str().to_owned(), &[1u8])?;
-        Ok(())
-    })
+    vault.with_write_txn_grouped(|wtxn| require_history_free_window_in_txn(vault, wtxn, key))
+}
+
+/// [`require_history_free_window`] in the caller's write transaction `wtxn`.
+pub(crate) fn require_history_free_window_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &WindowKey,
+) -> Result<()> {
+    HISTORY_FREE_WINDOW.put(&vault.store, wtxn, &key.as_str().to_owned(), &[1u8])
 }
 
 /// Whether the entities-map value `blob` under key `raw_key` is a carrier no
@@ -542,13 +560,91 @@ pub(crate) fn export_history_free_window_snapshot(
 
 /// Scrubs the live state and persists it: a pinned window keeps only the history
 /// [`super::history_free::HistoryCheck`] ships where a root allows it, every other window all
-/// it holds.
+/// it holds. The bytes of [`export_scrubbed_window_state`].
 pub(in crate::sync) fn export_scrubbed_window_snapshot(
     vault: &Vault,
     key: &WindowKey,
     doc: &LoroDoc,
 ) -> Result<Vec<u8>> {
+    export_scrubbed_window_state(vault, key, doc).map(|state| state.bytes)
+}
+
+/// A scrubbed window state ready to persist ([`export_scrubbed_window_state`]).
+pub(in crate::sync) struct ScrubbedWindowState {
+    /// The snapshot to store while no legal hold keeps the history it dropped.
+    pub(in crate::sync) bytes: Vec<u8>,
+    /// Whether it was exported under the window's history-free pin: the pin
+    /// the export read, which is never lifted (census L6-05).
+    pub(in crate::sync) history_free: bool,
+    /// Set when `bytes` dropped history the doc holds: the snapshot of all of
+    /// it, and the carriers that history holds.
+    whole: Option<WholeWindowState>,
+}
+
+/// The snapshot of all the history a pinned window's doc holds, and its
+/// carriers ([`ScrubbedWindowState`]).
+struct WholeWindowState {
+    bytes: Vec<u8>,
+    carriers: crate::sync::carrier_holds::CarrierInventory,
+}
+
+impl ScrubbedWindowState {
+    /// The snapshot to store in `txn`, the transaction that stores it, and
+    /// whether it is history-free ([`Self::keeps_whole_in_txn`]).
+    pub(in crate::sync) fn stored_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<(&[u8], bool)> {
+        let whole = self.keeps_whole_in_txn(vault, txn)?;
+        Ok(match (&self.whole, whole) {
+            (Some(state), true) => (&state.bytes, false),
+            _ => (&self.bytes, self.history_free),
+        })
+    }
+
+    /// Whether the snapshot of all the doc's history ([`Self::whole_bytes`])
+    /// is stored in `txn`, the transaction that stores it, in place of
+    /// `bytes`, as not history-free. A legal hold keeps every row it names
+    /// (OF-470), so it is when one keeps a row the dropped history carries,
+    /// or its indexed hold row is missing (census L6-05 round 1). The hold is
+    /// read in the storing transaction, so one placed after the export is
+    /// seen. The pin guard of [`super::persist_window_doc_in_txn`] then owes
+    /// the erasure sweep a compaction, which defers while the hold stands. An
+    /// export to a peer still checks the history it ships.
+    pub(in crate::sync) fn keeps_whole_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<bool> {
+        let Some(whole) = &self.whole else {
+            return Ok(false);
+        };
+        let held = whole.carriers.held_in_txn(&vault.store, txn)?;
+        if held {
+            tracing::warn!("window persist: a legal hold keeps its history — stored whole");
+        }
+        Ok(held)
+    }
+
+    /// The snapshot of all the doc's history, set when `bytes` dropped some.
+    pub(in crate::sync) fn whole_bytes(&self) -> Option<&[u8]> {
+        self.whole.as_ref().map(|whole| whole.bytes.as_slice())
+    }
+}
+
+/// [`export_scrubbed_window_snapshot`] with what its persist needs: whether the snapshot was
+/// exported under the window's pin, and the snapshot of all the doc's history when it dropped
+/// some ([`ScrubbedWindowState::stored_in_txn`]).
+pub(in crate::sync) fn export_scrubbed_window_state(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+) -> Result<ScrubbedWindowState> {
     crate::sync::note::refresh(vault, doc, key)?;
+    // A row a use limit keeps here leaves first, so the side-row scrubs
+    // below drop its side rows as a row the window no longer carries.
+    super::use_limited::withhold_use_limited_carriers(vault, doc, Some(key))?;
     scrub_local_claim_carriers(vault, key, doc)?;
     scrub_local_only_carriers(vault, key, doc)?;
     scrub_redacted_attribution_carriers(vault, key, doc)?;
@@ -589,26 +685,42 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     if super::project_history::carry_project_history(vault, doc)? {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
-    persisted_window_snapshot(vault, key, doc)
+    persisted_window_state(vault, key, doc)
 }
 
-/// The snapshot a scrubbed window state is stored as: a window pinned history-free keeps only the
+/// The state a scrubbed window is stored as: a window pinned history-free keeps only the
 /// history [`super::history_free::HistoryCheck`] ships where a root allows it, else the strict cut
-/// at its newest operation ([`super::history_free::persisted_history_free_snapshot`]); every
-/// other window all it holds. Window persist stores it, and so does the sealed mirror of a private
-/// world's window once the erased-actor scrubs ran over it (FIX 19525).
-pub(crate) fn persisted_window_snapshot(
+/// at its newest operation ([`super::history_free::persisted_history_free_snapshot`]), with the
+/// snapshot of all of it beside when that dropped some; every other window all it holds.
+fn persisted_window_state(
     vault: &Vault,
     key: &WindowKey,
     doc: &LoroDoc,
-) -> Result<Vec<u8>> {
-    if history_free_window_required(vault, key)? {
-        let check = super::history_free::HistoryCheck::read(vault, key, doc)?;
-        super::history_free::persisted_history_free_snapshot(vault, key, doc, &check)
-    } else {
+) -> Result<ScrubbedWindowState> {
+    if !history_free_window_required(vault, key)? {
         // A shallow doc's snapshot keeps its own root.
-        export_snapshot(doc)
+        return Ok(ScrubbedWindowState {
+            bytes: export_snapshot(doc)?,
+            history_free: false,
+            whole: None,
+        });
     }
+    let check = super::history_free::HistoryCheck::read(vault, key, doc)?;
+    let (bytes, kept_all) =
+        super::history_free::persisted_history_free_snapshot(vault, key, doc, &check)?;
+    let whole = if kept_all {
+        None
+    } else {
+        Some(WholeWindowState {
+            bytes: export_snapshot(doc)?,
+            carriers: crate::sync::carrier_holds::CarrierInventory::of_window(doc),
+        })
+    };
+    Ok(ScrubbedWindowState {
+        bytes,
+        history_free: true,
+        whole,
+    })
 }
 
 /// Replays pending-mirror markers (pm:*) for crash recovery.
@@ -627,7 +739,7 @@ pub(super) fn replay_pending_mirrors_kept(
     vault: &Vault,
     doc: &LoroDoc,
     window_key: &WindowKey,
-) -> Result<Vec<WindowEntityKey>> {
+) -> Result<Vec<WindowEntityHexKey>> {
     let mut done = Vec::new();
     replay_mirrors(vault, doc, window_key, &mut Markers::Collect(&mut done))?;
     Ok(done)
@@ -636,11 +748,11 @@ pub(super) fn replay_pending_mirrors_kept(
 /// What a replay does with a marker whose mirror it settled.
 enum Markers<'a> {
     ClearNow,
-    Collect(&'a mut Vec<WindowEntityKey>),
+    Collect(&'a mut Vec<WindowEntityHexKey>),
 }
 
 impl Markers<'_> {
-    fn settle(&mut self, vault: &Vault, marker: &WindowEntityKey) -> Result<()> {
+    fn settle(&mut self, vault: &Vault, marker: &WindowEntityHexKey) -> Result<()> {
         match self {
             Self::ClearNow => vault.with_write_txn_grouped(|wtxn| {
                 OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker)?;
@@ -665,11 +777,11 @@ fn replay_mirrors(
     // A key that does not decode to a hex entity id is silently skipped here
     // (not a fail-closed refusal): best-effort crash-recovery replay, not a
     // fail-closed read of engine-authored truth.
-    let markers: Vec<(WindowEntityKey, EntityId)> = OFF_RECORD_PROMOTE_PICKUP
+    let markers: Vec<(WindowEntityHexKey, EntityId)> = OFF_RECORD_PROMOTE_PICKUP
         .iter_from(&vault.store, &rtxn, format!("{window_key}:").as_bytes())?
         .filter_map(Result::ok)
         .map(|(key, _)| {
-            let entity = key.entity;
+            let entity = key.id;
             (key, entity)
         })
         .collect();

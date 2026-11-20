@@ -72,16 +72,19 @@ impl EmergencyPlan {
         self.payload.as_ref()
     }
     pub(super) fn hash(&self) -> Result<[u8; 32], BookingError> {
-        content_hash(&(
-            &self.request,
-            &self.booking,
-            &self.proposals,
-            self.planned_at,
-            &self.payload,
-            &self.recipient,
-            &self.organizer,
-            &self.invite_before,
-        ))
+        content_hash(
+            purposes::booking::EMERGENCY_PLAN_CONTENT_HASH,
+            &(
+                &self.request,
+                &self.booking,
+                &self.proposals,
+                self.planned_at,
+                &self.payload,
+                &self.recipient,
+                &self.organizer,
+                &self.invite_before,
+            ),
+        )
     }
 }
 
@@ -120,10 +123,10 @@ pub(crate) fn item_key(
 ) -> Result<Vec<u8>, BookingError> {
     let mut key = EMERGENCY_ITEM_META_PREFIX.to_vec();
     key.extend_from_slice(
-        hex_lower(&content_hash(&(
-            request_instruction_key(request)?,
-            event.to_hex(),
-        ))?)
+        hex_lower(&content_hash(
+            purposes::booking::EMERGENCY_ITEM_KEY,
+            &(request_instruction_key(request)?, event.to_hex()),
+        )?)
         .as_bytes(),
     );
     Ok(key)
@@ -246,6 +249,8 @@ pub(crate) fn solve_live(
             window,
             constraint: booking.context.constraint.clone(),
             visitor_tz: booking.context.visitor_tz.clone(),
+            // A move keeps the booked length (BK-VARIABLE-DURATION).
+            duration_min: SolveRequest::slot_duration_min(booking.occurrence),
         },
         booking.calendar.event_ref,
     )
@@ -370,6 +375,8 @@ pub(super) fn plan_item(
         .sequence
         .checked_add(1)
         .ok_or_else(|| refused("booking passport sequence is exhausted"))?;
+    // The owner's proposal count, floor and search span (PACK-SETTINGS-ALL W1).
+    let policy = super::setting_keys::emergency_proposal_policy(vault).map_err(storage_failure)?;
     let start = request
         .affected_window
         .end
@@ -382,7 +389,7 @@ pub(super) fn plan_item(
         calendars,
         TimeRange {
             start,
-            end: start.saturating_add(7 * 86_400),
+            end: start.saturating_add(policy.search_span_secs),
         },
         now_utc,
     )?;
@@ -396,15 +403,13 @@ pub(super) fn plan_item(
         }) {
             proposals.push(slot);
         }
-        if proposals.len() == 3 {
+        if proposals.len() >= usize::from(policy.max_proposals) {
             break;
         }
     }
-    if proposals.len() < 2 {
-        return Err(refused(
-            "this booking has fewer than two live solver proposals",
-        ));
-    }
+    policy
+        .admit(proposals.len())
+        .map_err(BookingError::InvalidConfig)?;
     let (organizer, recipient) = delivery_parties(vault, &booking)?;
     let invite_before = {
         let txn = vault.store.env.read_txn().map_err(storage_failure)?;

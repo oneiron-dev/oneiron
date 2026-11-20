@@ -1,6 +1,7 @@
 //! The OF-327 artifact-publish dispatch door and its share-style receipt projection.
 
 use super::*;
+use crate::store::gate_reason::GateReceiptOutcome;
 
 impl OutboundDispatchPipeline {
     /// Authorize one exact public pointer update before making it visible. Gate,
@@ -314,7 +315,24 @@ fn admitted_gate(
         .store
         .gate_decision_in_txn(txn, admission.gate_id)?
         .ok_or(Error::CorruptedIndex("artifact publish gate missing"))?;
-    if gate.outcome != "allow"
+    let allowed = match gate.gate_outcome() {
+        Some(GateReceiptOutcome::Allow) => true,
+        Some(
+            GateReceiptOutcome::Pending
+            | GateReceiptOutcome::Deny
+            | GateReceiptOutcome::Approved
+            | GateReceiptOutcome::ApprovedAmended
+            | GateReceiptOutcome::Rejected
+            | GateReceiptOutcome::LetGo
+            | GateReceiptOutcome::Superseded
+            | GateReceiptOutcome::Retracted
+            | GateReceiptOutcome::Invalidated
+            | GateReceiptOutcome::Revoked
+            | GateReceiptOutcome::Noted,
+        )
+        | None => false,
+    };
+    if !allowed
         || gate.redacted_at.is_some()
         || gate.content_kind != "external_effect"
         || gate.actor_ref.as_deref() != Some(admission.actor.to_hex().as_str())

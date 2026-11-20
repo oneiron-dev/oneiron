@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_RECEIPT_QUERY_LIMIT: usize = 100;
@@ -60,7 +61,8 @@ pub const fn default_receipt_query_limit() -> usize {
     DEFAULT_RECEIPT_QUERY_LIMIT
 }
 
-/// Receipt family discriminator pinned by OF-367 RS1.
+/// Receipt family discriminator pinned by OF-367 RS1. A Register: each kind's stored and
+/// queried name is its serde name (`as_str`, and `Register::named` to read one back).
 #[derive(
     Debug,
     Clone,
@@ -73,8 +75,10 @@ pub const fn default_receipt_query_limit() -> usize {
     Serialize,
     Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("receipt.kind")]
 pub enum ReceiptKind {
     /// Outbound effect receipt.
     Outbound,
@@ -164,53 +168,6 @@ pub enum ReceiptKind {
 }
 
 impl ReceiptKind {
-    /// Returns the stable query string for this receipt kind.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Outbound => "outbound",
-            Self::Gate => "gate",
-            Self::IdentityLifecycle => "identity_lifecycle",
-            Self::ScopedRead => "scoped_read",
-            Self::Share => "share",
-            Self::ArtifactSettle => "artifact_settle",
-            Self::ProposalOutcome => "proposal_outcome",
-            Self::CommitmentLifecycle => "commitment_lifecycle",
-            Self::Extraction => "extraction",
-            Self::ServedForm => "served_form",
-            Self::Hook => "hook",
-            Self::ReferenceRefusal => "reference_refusal",
-            Self::TaskLifecycle => "task_lifecycle",
-            Self::RunHoldOverride => "run_hold_override",
-            Self::CheckIn => "check_in",
-            Self::Inquiry => "inquiry",
-        }
-    }
-
-    /// Parses a stable receipt kind string.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "outbound" => Some(Self::Outbound),
-            "gate" => Some(Self::Gate),
-            "identity_lifecycle" => Some(Self::IdentityLifecycle),
-            "scoped_read" => Some(Self::ScopedRead),
-            "share" => Some(Self::Share),
-            "artifact_settle" => Some(Self::ArtifactSettle),
-            "proposal_outcome" => Some(Self::ProposalOutcome),
-            "commitment_lifecycle" => Some(Self::CommitmentLifecycle),
-            "extraction" => Some(Self::Extraction),
-            "served_form" => Some(Self::ServedForm),
-            "hook" => Some(Self::Hook),
-            "reference_refusal" => Some(Self::ReferenceRefusal),
-            "task_lifecycle" => Some(Self::TaskLifecycle),
-            "run_hold_override" => Some(Self::RunHoldOverride),
-            "check_in" => Some(Self::CheckIn),
-            "inquiry" => Some(Self::Inquiry),
-            _ => None,
-        }
-    }
-
     /// Returns true when this receipt kind is stamped on an agent emit
     /// (OF-369/RS9: chat turn, voice utterance, outbound send, artifact
     /// write). Only emit-adjacent receipts carry the context receipt

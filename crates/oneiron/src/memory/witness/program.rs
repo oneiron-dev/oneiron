@@ -110,6 +110,13 @@ pub(crate) struct ImportedTurnStamp {
     /// Whom the source names as each message's speaker, resolved in the
     /// landing's writer before admission.
     pub(crate) attribution: super::SourceAttribution,
+    /// The FACET a TURN this landing births is born under: a shared
+    /// workspace's own facet for a history import of it (Engine ruling
+    /// L2-18-WORKSPACE-FACET-CARRIER = A); `None` stamps the vault default,
+    /// as every other landing does. Only the TURN takes it: the FacetOf
+    /// table admits no CONVERSATION or MESSAGE (ONE-1645), so those keep
+    /// their substrate facet.
+    pub(crate) facet: Option<EntityId>,
 }
 
 /// Who holds the door, and which turn-id capability they carry.

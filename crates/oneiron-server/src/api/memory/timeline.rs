@@ -1,20 +1,24 @@
 //! The memory timeline route: `GET /v1/core/memory/{id}/timeline`, through
 //! its verb-hook boundary (FIX 1435). `core_memory_timeline` is its call
-//! surface; the parent module keeps its DTOs and
-//! `core_memory_timeline_response`.
+//! surface and `core_memory_timeline_response` its projection; the parent
+//! module keeps its DTOs.
 
-use super::{CoreMemoryTimelineResponse, core_memory_timeline_response};
+use super::{
+    CoreMemoryChange, CoreMemoryTimelineRecord, CoreMemoryTimelineRecordState,
+    CoreMemoryTimelineResponse,
+};
 use crate::api::native_read_hooks::{
     NativeReadAnswer, NativeReadBody, NativeReadError, decoded, encoded, native_read_hooked,
 };
 use crate::api::{
-    FacadeCall, MemoryTimelineQuery, core_engine_error, parse_entity_id_param, query_params,
-    read_filter_param, scoped_read_for_core_auth,
+    FacadeCall, MemoryTimelineQuery, core_engine_error, core_hydrate_deletion_metadata,
+    parse_entity_id_param, query_params, read_filter_param, scoped_read_for_core_auth,
 };
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
 use crate::error::ApiErrorEnvelope;
+use crate::projection;
 use crate::projection::View;
 use crate::server::SyncServer;
 use axum::extract::Path;
@@ -189,5 +193,178 @@ impl CoreMemoryTimelineResponse {
         rows.sort_unstable();
         rows.dedup();
         Some(rows)
+    }
+}
+
+/// Projects one timeline, its bodies, pinned changes included, decoded under
+/// one budget of `body_bytes` (`[limits].projection_body_bytes`).
+pub(crate) fn core_memory_timeline_response(
+    read: &oneiron::claim::ScopedRead<'_>,
+    result: oneiron::claim::ScopedReadResult<oneiron::MemoryTimeline>,
+    view: View,
+    body_bytes: usize,
+) -> Result<CoreMemoryTimelineResponse, ApiError> {
+    let mut bodies = projection::BodyBudget::new(read.vault(), body_bytes);
+    let timeline = result.value;
+    let mut narrowing = result.receipt;
+    let projected = read
+        .memory_timeline_parts_with_receipt(&timeline.records, Some(&narrowing.applied.as_filter()))
+        .map_err(|error| core_engine_error("core memory timeline projection failed", error))?;
+    narrowing.restrict_with(&projected.receipt);
+    let mut parts: std::collections::BTreeMap<_, _> = timeline
+        .records
+        .iter()
+        .map(|record| record.id)
+        .zip(projected.value)
+        .filter_map(|(id, body)| body.map(|body| (id, body)))
+        .collect();
+    let mut records = Vec::with_capacity(timeline.records.len());
+    let deleted_anchor_visible = timeline.records.iter().any(|record| {
+        record.id == timeline.anchor
+            && record.state == oneiron::MemoryTimelineRecordState::Deleted
+            && !narrowing.applied.deny_all
+            && record.entity_type.is_some_and(|kind| {
+                narrowing
+                    .applied
+                    .entity_types
+                    .as_ref()
+                    .is_none_or(|types| types.contains(&kind))
+            })
+    });
+    if !parts.contains_key(&timeline.anchor) && !deleted_anchor_visible {
+        narrowing.add_suppressed(parts.len());
+        return Ok(CoreMemoryTimelineResponse {
+            narrowing,
+            anchor_id: timeline.anchor.to_hex(),
+            records,
+        });
+    }
+    for record in timeline.records {
+        let item = if record.state == oneiron::MemoryTimelineRecordState::Deleted {
+            if narrowing.applied.deny_all
+                || record.entity_type.is_none_or(|kind| {
+                    narrowing
+                        .applied
+                        .entity_types
+                        .as_ref()
+                        .is_some_and(|types| !types.contains(&kind))
+                })
+            {
+                narrowing.add_suppressed(1);
+                continue;
+            }
+            None
+        } else {
+            let Some((kind, learned_at, body)) = parts.remove(&record.id) else {
+                continue;
+            };
+            if record.entity_type != Some(kind)
+                || record.learned_at != Some(learned_at)
+                || record.body_bytes != Some(body.len())
+            {
+                narrowing.add_suppressed(1);
+                continue;
+            }
+            Some(bodies.project(&record.id, kind, learned_at, &body, view))
+        };
+        records.push(CoreMemoryTimelineRecord {
+            id: record.id.to_hex(),
+            state: core_memory_timeline_state(record.state),
+            entity_type: record.entity_type,
+            occurred_start: record.occurred_start,
+            occurred_end: record.occurred_end,
+            learned_at: record.learned_at,
+            body_bytes: record.body_bytes,
+            deletion: record.deletion.map(core_hydrate_deletion_metadata),
+            supersedes: record
+                .supersedes
+                .into_iter()
+                .map(|id| id.to_hex())
+                .collect(),
+            superseded_by: record
+                .superseded_by
+                .into_iter()
+                .map(|id| id.to_hex())
+                .collect(),
+            item,
+            changes: Vec::new(),
+        });
+    }
+    let content_visible: std::collections::BTreeSet<_> = records
+        .iter()
+        .filter(|record| record.item.is_some())
+        .map(|record| record.id.clone())
+        .collect();
+    for record in &mut records {
+        if !content_visible.contains(&record.id) {
+            continue;
+        }
+        let after_id = oneiron::EntityId::from_hex(&record.id)
+            .map_err(|_| ApiError::internal_server_error("timeline successor id"))?;
+        for before_id in &record.supersedes {
+            if !content_visible.contains(before_id) {
+                continue;
+            }
+            let old_id = oneiron::EntityId::from_hex(before_id)
+                .map_err(|_| ApiError::internal_server_error("timeline predecessor id"))?;
+            let pinned = read
+                .memory_supersession_parts_with_receipt(
+                    &old_id,
+                    &after_id,
+                    Some(&narrowing.applied.as_filter()),
+                )
+                .map_err(|error| core_engine_error("core memory pinned change failed", error))?;
+            narrowing.restrict_with(&pinned.receipt);
+            let Some((
+                (before_kind, before_at, before_body, before_revision),
+                (after_kind, after_at, after_body, after_revision),
+            )) = pinned.value
+            else {
+                continue;
+            };
+            record.changes.push(CoreMemoryChange {
+                before_id: before_id.clone(),
+                after_id: record.id.clone(),
+                before: bodies.project_at(
+                    &old_id,
+                    before_kind,
+                    before_at,
+                    &before_body,
+                    view,
+                    oneiron::memory::ReadMode::Pinned(before_revision),
+                ),
+                after: bodies.project_at(
+                    &after_id,
+                    after_kind,
+                    after_at,
+                    &after_body,
+                    view,
+                    oneiron::memory::ReadMode::Pinned(after_revision),
+                ),
+            });
+        }
+    }
+    let visible: std::collections::BTreeSet<_> =
+        records.iter().map(|record| record.id.clone()).collect();
+    for record in &mut records {
+        record.supersedes.retain(|id| visible.contains(id));
+        record.superseded_by.retain(|id| visible.contains(id));
+    }
+    Ok(CoreMemoryTimelineResponse {
+        narrowing,
+        anchor_id: timeline.anchor.to_hex(),
+        records,
+    })
+}
+
+pub(crate) fn core_memory_timeline_state(
+    state: oneiron::MemoryTimelineRecordState,
+) -> CoreMemoryTimelineRecordState {
+    match state {
+        oneiron::MemoryTimelineRecordState::Live => CoreMemoryTimelineRecordState::Live,
+        oneiron::MemoryTimelineRecordState::Superseded => CoreMemoryTimelineRecordState::Superseded,
+        oneiron::MemoryTimelineRecordState::Retracted => CoreMemoryTimelineRecordState::Retracted,
+        oneiron::MemoryTimelineRecordState::Deleted => CoreMemoryTimelineRecordState::Deleted,
+        oneiron::MemoryTimelineRecordState::Missing => CoreMemoryTimelineRecordState::Missing,
     }
 }

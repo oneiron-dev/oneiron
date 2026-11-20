@@ -50,8 +50,7 @@ pub struct GraduationScopeRequest {
 #[doc(hidden)]
 pub use oneiron_verb_wire::consent_graduation::api::{
     GraduationAnswer, GraduationChanged, GraduationDemotionReason, GraduationMode,
-    GraduationOutcome, GraduationPolicies, GraduationPolicy, GraduationPolicyClearRequest,
-    GraduationPolicySetRequest, GraduationSnooze,
+    GraduationOutcome, GraduationPolicies, GraduationPolicy, GraduationSnooze,
 };
 
 impl From<ThresholdRow> for GraduationPolicy {
@@ -220,31 +219,6 @@ pub fn policies(
             .map(Into::into)
             .collect(),
         effective,
-    })
-}
-
-pub fn set_policy(
-    vault: &Vault,
-    owner: &AuthenticatedOwner,
-    input: GraduationPolicySetRequest,
-) -> MemoryResult<GraduationChanged> {
-    let row = ThresholdRow {
-        scope_pattern: input.policy.scope_pattern,
-        required_streak: input.policy.required_streak,
-        posterior_guard: input.policy.posterior_guard,
-        snooze_backoff_seconds: input.policy.snooze_backoff_seconds,
-    };
-    graduation::set_graduation_policy_as_owner(vault, owner, &row)?;
-    Ok(GraduationChanged { changed: true })
-}
-
-pub fn clear_policy(
-    vault: &Vault,
-    owner: &AuthenticatedOwner,
-    input: GraduationPolicyClearRequest,
-) -> MemoryResult<GraduationChanged> {
-    Ok(GraduationChanged {
-        changed: graduation::clear_graduation_policy_as_owner(vault, owner, &input.scope_pattern)?,
     })
 }
 

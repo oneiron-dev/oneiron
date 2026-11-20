@@ -12,6 +12,7 @@ use super::{
     validate_model_substrate_field, winner_index,
 };
 use crate::Vault;
+use crate::batch::export::OwnerArchiveRestorePermit;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, encode_claim_body,
@@ -266,6 +267,7 @@ impl Vault {
         closer_id: &EntityId,
         close_at: u64,
         without_edge: bool,
+        restore_permit: Option<&OwnerArchiveRestorePermit>,
     ) -> Result<()> {
         let prior = self.load_provenance_claim_in_txn(wtxn, prior_id)?;
         if prior.wrapper.lifecycle != ClaimLifecycleStatus::Active {
@@ -274,7 +276,7 @@ impl Vault {
         let closed_record = close_record_for_supersession(&prior.record, close_at)?;
         let (closed_occurred, closed_learned_at, closed_claim_body, closed_data) =
             closed_claim_put_payload(&prior, &closed_record, ClaimLifecycleStatus::Superseded)?;
-        let policy = crate::gate::resolve_policy_manifest(&self.store, wtxn)?;
+        let policy = provenance_write_policy(self, wtxn, restore_permit, &closed_record)?;
         crate::gate::check_edge_provenance_claim_policy(
             &self.store,
             wtxn,
@@ -291,7 +293,13 @@ impl Vault {
             closed_learned_at,
             closed_data,
         )?;
-        crate::batch::apply_owner_bound_claim_puts(self, wtxn, vec![op], vec![binding], true)?;
+        crate::batch::apply_provenance_claim_puts(
+            self,
+            wtxn,
+            vec![op],
+            vec![binding],
+            restore_permit,
+        )?;
         // The close changes the live head, so the subject edge must carry
         // the surviving cohort's flags, not the inserted prior's. Mirror
         // the retract path; a no-op when the edge is gone or already
@@ -387,6 +395,21 @@ impl Vault {
         now: u64,
         without_edge: bool,
     ) -> Result<()> {
+        self.retract_restored_edge_provenance_in_txn(wtxn, claim_id, now, without_edge, None)
+    }
+
+    /// [`Self::retract_edge_provenance_in_txn`] for a whole-vault import's
+    /// restore of an archived retraction: `restore_permit` is the owner's
+    /// restore permit when the import is that restore, and the retracted
+    /// re-put is gated under it ([`provenance_write_policy`]).
+    pub(crate) fn retract_restored_edge_provenance_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &EntityId,
+        now: u64,
+        without_edge: bool,
+        restore_permit: Option<&OwnerArchiveRestorePermit>,
+    ) -> Result<()> {
         let claim = self.load_provenance_claim_in_txn(wtxn, claim_id)?;
         if claim.wrapper.lifecycle != ClaimLifecycleStatus::Active {
             return Err(Error::Claim(ClaimError::ProvenanceClaimAlreadyClosed {
@@ -410,7 +433,7 @@ impl Vault {
             return Err(Error::EdgeNotFound);
         }
 
-        let policy = crate::gate::resolve_policy_manifest(&self.store, wtxn)?;
+        let policy = provenance_write_policy(self, wtxn, restore_permit, &retracted)?;
         crate::gate::check_edge_provenance_claim_policy(
             &self.store,
             wtxn,
@@ -444,7 +467,13 @@ impl Vault {
             learned_at,
             data,
         )?;
-        crate::batch::apply_owner_bound_claim_puts(self, wtxn, vec![op], vec![binding], true)?;
+        crate::batch::apply_provenance_claim_puts(
+            self,
+            wtxn,
+            vec![op],
+            vec![binding],
+            restore_permit,
+        )?;
         // Blind-review P1: a structural subject keeps its 12-byte value — no
         // hot flags to restamp — so only the claim's own lifecycle change
         // lands; the edge bytes, PPR and graph version stay put.
@@ -609,13 +638,23 @@ impl Vault {
     /// door, so its restore replays that same path. Every ordinary write
     /// keeps the static-kind rejection via
     /// [`Self::write_edge_provenance_in_txn`].
+    /// `restore_permit` is the owner's restore permit when the import is that
+    /// restore: the write is gated under it ([`provenance_write_policy`]).
     pub(crate) fn restore_edge_provenance_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         write: EdgeProvenanceWrite<'_>,
         allow_structural: bool,
+        restore_permit: Option<&OwnerArchiveRestorePermit>,
     ) -> Result<()> {
-        self.write_edge_provenance_inner(wtxn, write, allow_structural, false)
+        self.write_edge_provenance_through(
+            wtxn,
+            write,
+            allow_structural,
+            false,
+            ProvenanceWriteDoor::Asserted,
+            restore_permit,
+        )
     }
 
     /// Owning restore inlet for an archived cut wrapper (blind-review P1c,
@@ -629,8 +668,16 @@ impl Vault {
         wtxn: &mut RwTxn<'_>,
         write: EdgeProvenanceWrite<'_>,
         allow_structural: bool,
+        restore_permit: Option<&OwnerArchiveRestorePermit>,
     ) -> Result<()> {
-        self.write_edge_provenance_inner(wtxn, write, allow_structural, true)
+        self.write_edge_provenance_through(
+            wtxn,
+            write,
+            allow_structural,
+            true,
+            ProvenanceWriteDoor::Asserted,
+            restore_permit,
+        )
     }
 
     /// The `edge.provenance` Claim of one link a NOTE birth's content writer
@@ -652,6 +699,7 @@ impl Vault {
             true,
             false,
             ProvenanceWriteDoor::AuthoredLink,
+            None,
         )
     }
 
@@ -672,12 +720,16 @@ impl Vault {
             allow_structural,
             without_edge,
             ProvenanceWriteDoor::Asserted,
+            None,
         )
     }
 
     /// [`Self::write_edge_provenance_inner`] through `door`: an
     /// [`ProvenanceWriteDoor::AuthoredLink`] record skips the new Claim's
-    /// claim write gate and every flag stamp.
+    /// claim write gate and every flag stamp. `restore_permit` is the owner's
+    /// restore permit when a whole-vault import that is that restore writes
+    /// an archived row: the new Claim and each closure are gated under it
+    /// ([`provenance_write_policy`]).
     fn write_edge_provenance_through(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -685,6 +737,7 @@ impl Vault {
         allow_structural: bool,
         without_edge: bool,
         door: ProvenanceWriteDoor,
+        restore_permit: Option<&OwnerArchiveRestorePermit>,
     ) -> Result<()> {
         let EdgeProvenanceWrite {
             claim_id,
@@ -874,7 +927,7 @@ impl Vault {
             decode_model_entity_body(&substrate_raw[ENTITY_METADATA_HEADER_LEN..])?;
         }
 
-        let policy = crate::gate::resolve_policy_manifest(&self.store, wtxn)?;
+        let mut policy = provenance_write_policy(self, wtxn, restore_permit, &record)?;
         if door == ProvenanceWriteDoor::Asserted {
             crate::gate::check_edge_provenance_claim_policy(
                 &self.store,
@@ -976,6 +1029,13 @@ impl Vault {
                     &closed_record,
                     ClaimLifecycleStatus::Superseded,
                 )?;
+            // A closed row keeps its own annotator, whom the gate judges.
+            if let Some(permit) = restore_permit {
+                policy = policy.with_owner_archive_restore_permit_for_annotator(
+                    permit,
+                    closed_record.actor_entity_ref,
+                );
+            }
             crate::gate::check_edge_provenance_claim_policy(
                 &self.store,
                 wtxn,
@@ -1022,7 +1082,7 @@ impl Vault {
             ops.push(op);
             bindings.push(binding);
         }
-        crate::batch::apply_owner_bound_claim_puts(self, wtxn, ops, bindings, true)?;
+        crate::batch::apply_provenance_claim_puts(self, wtxn, ops, bindings, restore_permit)?;
         if let Some(actor) = born_from {
             let evidence = self
                 .store
@@ -1135,4 +1195,28 @@ impl Vault {
         // RETRACT.
         crate::store::graph_version::increment_graph_version(&self.store, wtxn)
     }
+}
+
+/// The policy that gates an `edge.provenance` write of `record`: the vault's
+/// resolved manifest, and, when `restore_permit` is the owner's restore
+/// permit, the same in-memory copy with that restore's Imported Auto row
+/// bound to the record's annotator (Engine ANSWER
+/// PROVENANCE-RESTORE-UNDER-TRUSTED-MANIFEST = A, 20 Nov 09:26: the lead
+/// ruling RESTORE-EXPRESSIONS = A reaches the provenance writer of that same
+/// restore). The gate judges an edge provenance claim as its annotator's, so
+/// the row binds the annotator, never the owner. The stored manifest is
+/// unchanged, and no write outside that restore gains the row.
+fn provenance_write_policy(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    restore_permit: Option<&OwnerArchiveRestorePermit>,
+    record: &EdgeProvenanceClaimBody,
+) -> Result<crate::gate::PolicyManifestResolution> {
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+    Ok(match restore_permit {
+        Some(permit) => {
+            policy.with_owner_archive_restore_permit_for_annotator(permit, record.actor_entity_ref)
+        }
+        None => policy,
+    })
 }

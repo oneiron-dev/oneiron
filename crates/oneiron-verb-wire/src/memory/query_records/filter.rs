@@ -2,6 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -50,8 +51,11 @@ pub enum FilterAst {
 }
 
 /// Comparison operators available to a [`FilterAst::Claim`] term.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("claim.comparison")]
 pub enum ClaimComparison {
     /// The predicate has at least one live claim.
     Exists,
@@ -72,21 +76,6 @@ pub enum ClaimComparison {
 }
 
 impl ClaimComparison {
-    /// Wire token for this comparison.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Exists => "exists",
-            Self::Eq => "eq",
-            Self::NotEq => "not_eq",
-            Self::Lt => "lt",
-            Self::Lte => "lte",
-            Self::Gt => "gt",
-            Self::Gte => "gte",
-            Self::Contains => "contains",
-        }
-    }
-
     /// Parses a wire token, rejecting anything outside the closed set.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {

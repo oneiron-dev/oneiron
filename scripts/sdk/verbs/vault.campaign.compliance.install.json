@@ -3,7 +3,7 @@
   "description": "The owner installs cited compliance rows through the versioned amendment classifier; a loosening still waits for an exact-hash owner approval.",
   "input": "crate::campaign::compliance::ComplianceAmendRequest",
   "output": "crate::campaign::compliance::ComplianceReceipt",
-  "call": "memory.vault().store.record_hooks.compliance_install_as(memory, &memory.embedded_owner(\"vault.campaign.compliance.install\")?, &input)?",
+  "call": "memory.with_owner_or_delegate(\"vault.campaign.compliance.install\", |who, _credential| match who { crate::authority::OwnerOrDelegate::Owner(owner) => memory.vault().store.record_hooks.compliance_install_as(memory, owner, &input), crate::authority::OwnerOrDelegate::Delegate(_agent) => memory.compliance_install_as_delegate(&input) })?",
   "scope": "Write",
   "act_class": "unstated",
   "admission": {
@@ -14,5 +14,5 @@
   "host_door": true,
   "host_door_caller": true,
   "host_door_lists": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "owner_delegate"
 }

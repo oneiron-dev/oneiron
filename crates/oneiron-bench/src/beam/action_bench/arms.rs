@@ -317,6 +317,7 @@ fn witness(memory: &Memory<'_>, conversation: EntityId, turn: &Turn) -> Result<E
             conversation_ref: conversation.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: match turn.author {

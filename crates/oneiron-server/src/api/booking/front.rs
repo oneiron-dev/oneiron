@@ -115,6 +115,7 @@ async fn run_constraint_turn_in(
         visitor_tz: input.visitor_tz.clone(),
         constraint: Some(BookingConstraintInput::FreeText(input.free_text.clone())),
         session_ref: input.session_ref.clone(),
+        duration_min: None,
     });
     public_availability::validate_public_request(&authority.publication, &listing)?;
     validate_operation_shape(&listing, transport.credential.is_none())?;
@@ -126,7 +127,7 @@ async fn run_constraint_turn_in(
     let settings = parse_seat_settings(server)?;
 
     // ── the one admission call, in the listing class ────────────────────
-    let mut turn = turn::Turn::new(server, transport);
+    let mut turn = turn::Turn::new(server, transport.credential.is_some());
     let caller = transport.caller();
     let (now, disposition) = loop {
         let now = now_secs()?;
@@ -208,6 +209,7 @@ async fn run_constraint_turn_in(
                     let one_turn = ConstraintSessionCaps {
                         max_turns: 1,
                         max_model_calls: 1,
+                        max_offered_slots: caps.max_offered_slots,
                     };
                     let outcome = block_on(run_constraint_turn(
                         &oracle,
@@ -289,6 +291,7 @@ impl SlotOracle for PublicSlotOracle<'_> {
             slots: mask.slots,
             flex_used: mask.flex_used,
             host_bindings: Vec::new(),
+            full_days: mask.full_days,
         })
     }
 }

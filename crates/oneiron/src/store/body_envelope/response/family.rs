@@ -468,9 +468,11 @@ impl ResponseFamily {
         };
         match self {
             Self::StepClaim => crate::llm::retire_step_claim_in_txn(write, wtxn, key),
+            Self::Replay => {
+                crate::code_run::replay_rows::put_canonical_bytes_at(store, wtxn, key, &kept()?)
+            }
             Self::ProgramStep
             | Self::StepState
-            | Self::Replay
             | Self::WaitDelivery
             | Self::WaitSettled
             | Self::ModelStepSubmission

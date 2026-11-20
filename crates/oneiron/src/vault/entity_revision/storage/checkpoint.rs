@@ -1,13 +1,14 @@
 //! The checkpoint getter of the revision ledger (KS7-2): each entity's
-//! revision state, retained frontiers, frontier identities, vector refill
-//! marker, staged index inputs and staged phonetic codes, under its own
-//! entity tree, each row exact. An identity-topology author carrier's
-//! state, retained frontiers and reverse rows hash the carrier's raw row,
-//! its actor included, and its revision document (one a pin made) holds that
-//! row: each is that actor's actor-keyed row under the carrier's tree, as the
-//! carrier row is (FIX 17143), so an erase of the actor leaves neither the
-//! row nor a hash of it in an image. Its document's bindings are not checked
-//! on restore: no split of it is restored, only the whole document.
+//! revision state, retained frontiers, frontier identities, memory timeline
+//! (L3-39), vector refill marker, staged index inputs and staged phonetic
+//! codes, under its own entity tree, each row exact. An identity-topology
+//! author carrier's state, retained frontiers, timeline and reverse rows
+//! hash the carrier's raw row, its actor included, and its revision document
+//! (one a pin made) holds that row: each is that actor's actor-keyed row
+//! under the carrier's tree, as the carrier row is (FIX 17143), so an erase
+//! of the actor leaves neither the row nor a hash of it in an image. Its
+//! document's bindings are not checked on restore: no split of it is
+//! restored, only the whole document.
 //!
 //! The retained revision document holds the whole raw entity row of every
 //! revision. It splits through its own codec ([`document`], FIX 6072) when
@@ -29,33 +30,58 @@ use std::collections::BTreeMap;
 
 use heed::{RoTxn, RwTxn};
 
+use super::super::timeline::TIMELINE;
 use super::super::vector_refill::REFILL;
 use super::super::{pending_index, phonetic};
 use super::{DOC, FRONTIER, IDENTITY, STATE};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::ManifestDbs;
+use crate::store::checkpoint_payload::rows::descriptor::{
+    Adapter, Capture, CapturedByAdapter, Check, Join, Restore,
+};
 use crate::store::checkpoint_payload::rows::{
-    self, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator,
+    self, Captured, OpenedOwnerRows, OwnerRef, Restored, RowLocator,
+};
+use crate::store::{ManifestDbs, Store};
+
+/// Every revision-ledger row by entity. The capture is the adapter's own: a
+/// revision document splits only by the bindings its state, frontiers and
+/// identities give, and an author carrier's rows go under its actor. So is
+/// the restore: a joined document's bindings are checked around the parts.
+pub(crate) static ADAPTER: Adapter = Adapter {
+    tables: &[
+        &CapturedByAdapter(STATE),
+        &CapturedByAdapter(DOC),
+        &CapturedByAdapter(FRONTIER),
+        &CapturedByAdapter(IDENTITY),
+        &CapturedByAdapter(TIMELINE),
+        &CapturedByAdapter(REFILL),
+        pending_index::checkpoint::TABLE,
+        phonetic::checkpoint::TABLE,
+    ],
+    capture: Capture::Own(capture),
+    check: Check::Own(check),
+    row_owner: None,
+    join: Join::Row(document::join),
+    restore: Restore::Own(restore),
 };
 
 /// Every revision-ledger row in `txn`, by entity.
-pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
-    let mut out = Captured::default();
-    let states = rows::typed_rows(dbs, txn, STATE, &mut out)?;
-    let docs = rows::typed_rows(dbs, txn, DOC, &mut out)?;
-    let frontiers = rows::typed_rows(dbs, txn, FRONTIER, &mut out)?;
-    let identities = rows::typed_rows(dbs, txn, IDENTITY, &mut out)?;
+fn capture(store: &Store, txn: &RoTxn<'_>, out: &mut Captured) -> Result<()> {
+    let states = rows::typed_rows(store, txn, STATE, out)?;
+    let docs = rows::typed_rows(store, txn, DOC, out)?;
+    let frontiers = rows::typed_rows(store, txn, FRONTIER, out)?;
+    let identities = rows::typed_rows(store, txn, IDENTITY, out)?;
     let bindings = document::Bindings::index(&docs, &states, &frontiers, &identities);
-    bindings.check_native_without_doc(dbs, txn)?;
+    bindings.check_native_without_doc(store, txn)?;
     let mut carriers = BTreeMap::new();
     for row in states {
         let owner = OwnerRef::entity(&row.key);
-        match carrier_actor(dbs, txn, &row.key)? {
+        match carrier_actor(store, txn, &row.key)? {
             Some(actor) => {
                 carriers.insert(row.key, actor);
                 let table = STATE.decl().prefix;
-                rows::actor_keyed(&mut out, owner, actor, &row.at, table, &row.bytes)?;
+                rows::actor_keyed(out, owner, actor, &row.at, table, &row.bytes)?;
             }
             None => out.exact(owner, row.at, row.bytes),
         }
@@ -65,9 +91,9 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
             Some(actor) => {
                 let owner = OwnerRef::entity(&row.key);
                 let table = DOC.decl().prefix;
-                rows::actor_keyed(&mut out, owner, *actor, &row.at, table, &row.bytes)?;
+                rows::actor_keyed(out, owner, *actor, &row.at, table, &row.bytes)?;
             }
-            None => document::capture(dbs, txn, &mut out, &bindings, row)?,
+            None => document::capture(store, txn, out, &bindings, row)?,
         }
     }
     for row in frontiers {
@@ -75,7 +101,19 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
         match carriers.get(&row.key.0) {
             Some(actor) => {
                 let table = FRONTIER.decl().prefix;
-                rows::actor_keyed(&mut out, owner, *actor, &row.at, table, &row.bytes)?;
+                rows::actor_keyed(out, owner, *actor, &row.at, table, &row.bytes)?;
+            }
+            None => out.exact(owner, row.at, row.bytes),
+        }
+    }
+    // A timeline row names a revision of its key's entity: a carrier's
+    // names a hash of the carrier row, as its frontier rows do.
+    for row in rows::typed_rows(store, txn, TIMELINE, out)? {
+        let owner = OwnerRef::entity(&row.key.0);
+        match carriers.get(&row.key.0) {
+            Some(actor) => {
+                let table = TIMELINE.decl().prefix;
+                rows::actor_keyed(out, owner, *actor, &row.at, table, &row.bytes)?;
             }
             None => out.exact(owner, row.at, row.bytes),
         }
@@ -87,17 +125,16 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
         match carriers.get(&row.value) {
             Some(actor) => {
                 let table = IDENTITY.decl().prefix;
-                rows::actor_keyed(&mut out, owner, *actor, &row.at, table, &row.bytes)?;
+                rows::actor_keyed(out, owner, *actor, &row.at, table, &row.bytes)?;
             }
             None => out.exact(owner, row.at, row.bytes),
         }
     }
-    for row in rows::typed_rows(dbs, txn, REFILL, &mut out)? {
+    for row in rows::typed_rows(store, txn, REFILL, out)? {
         out.exact(OwnerRef::entity(&row.key), row.at, row.bytes);
     }
-    pending_index::checkpoint::capture(dbs, txn, &mut out)?;
-    phonetic::checkpoint::capture(dbs, txn, &mut out)?;
-    Ok(out)
+    pending_index::checkpoint::capture(store, txn, out)?;
+    phonetic::checkpoint::capture(store, txn, out)
 }
 
 /// The actor `id`'s entity row attributes, when it is an author carrier.
@@ -112,25 +149,6 @@ fn carrier_actor(
         .and_then(crate::identity_topology::author_carrier_actor))
 }
 
-fn owns(at: &RowLocator) -> bool {
-    [
-        STATE.decl(),
-        DOC.decl(),
-        FRONTIER.decl(),
-        IDENTITY.decl(),
-        REFILL.decl(),
-    ]
-    .into_iter()
-    .any(|decl| at.in_table(decl))
-        || pending_index::checkpoint::owns(at)
-        || phonetic::checkpoint::owns(at)
-}
-
-/// The bundle framing of `rows`' revision-ledger parts.
-pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
-    rows::frame_owner(rows, owns)
-}
-
 fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     if at.in_table(STATE.decl()) {
         rows::check_row(STATE, at, value)
@@ -143,6 +161,8 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
             .map_err(|_| rows::bad_part())
     } else if at.in_table(IDENTITY.decl()) {
         rows::check_row(IDENTITY, at, value)
+    } else if at.in_table(TIMELINE.decl()) {
+        rows::check_row(TIMELINE, at, value)
     } else if at.in_table(REFILL.decl()) {
         rows::check_row(REFILL, at, value)
     } else if pending_index::checkpoint::owns(at) {
@@ -160,15 +180,11 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
 /// joined document's bindings are checked whole: their collisions before any row is written,
 /// and what was written once every row is in, before this returns, so no
 /// later row of this getter writes one of them again.
-pub(crate) fn restore_in_txn(
-    dbs: &impl ManifestDbs,
-    txn: &mut RwTxn<'_>,
-    opened: OpenedOwnerRows,
-) -> Result<Restored> {
-    let staged = document::preflight(dbs, txn, &opened)?;
-    let restored = rows::restore_parts(dbs, txn, &opened, check, document::join)?;
+fn restore(store: &Store, txn: &mut RwTxn<'_>, opened: OpenedOwnerRows) -> Result<Restored> {
+    let staged = document::preflight(store, txn, &opened)?;
+    let restored = ADAPTER.restore_parts(store, txn, &opened)?;
     if let Some(staged) = staged {
-        document::finish_restore_in_txn(dbs, txn, &staged)?;
+        document::finish_restore_in_txn(store, txn, &staged)?;
     }
     Ok(restored)
 }

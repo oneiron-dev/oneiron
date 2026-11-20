@@ -1,6 +1,6 @@
 //! Base-apply misc arms: edge dispatch and commitment gap-decay.
 
-use super::edge::{apply_edge_op, edge_op_endpoints};
+use super::edge::{apply_edge_op, edge_op_endpoints, world_carrying_edge_source};
 use super::validation::take_lapse_decisions;
 use super::*;
 use crate::write_envelope::WriteEnvelope;
@@ -14,10 +14,12 @@ pub(super) fn apply_edge_arm(
     let store = write.store;
     let endpoints = edge_op_endpoints(&op);
     state.project_edge_endpoints.extend(endpoints);
+    let world_edge_source = world_carrying_edge_source(&op);
     let changed = apply_edge_op(write, wtxn, op)?;
     state.had_graph_mutation |= changed;
     if changed {
         state.question_arrival_ids.extend(endpoints);
+        state.world_edge_sources.extend(world_edge_source);
     }
     Ok(())
 }

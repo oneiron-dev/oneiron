@@ -76,6 +76,7 @@ fn put_manifest(vault: &Vault, data: Vec<u8>) -> Result<()> {
                 entity_type: ENTITY_TYPE_POLICY_MANIFEST,
                 occurred: AT,
                 learned_at: 1,
+                row_version: None,
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
@@ -118,6 +119,7 @@ fn effect_outcome(vault: &Vault, channel: &str) -> Result<GateOutcome> {
         has_opted_in: true,
         has_permission: true,
         policy_risk: ExternalEffectPolicyRisk::Normal,
+        send_autonomy: None,
     };
     let policy = policy(vault)?;
     vault.with_write_txn(|txn| {

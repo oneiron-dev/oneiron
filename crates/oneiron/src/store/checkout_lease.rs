@@ -50,15 +50,7 @@ impl SideKey for CheckoutId {
     }
 
     fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let text = std::str::from_utf8(bytes).ok()?;
-        if text.len() != 32 {
-            return None;
-        }
-        let mut out = [0_u8; 16];
-        for (index, byte) in out.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).ok()?;
-        }
-        Self::from_bytes(out).ok()
+        Self::from_bytes(oneiron_hex::decode::<16>(std::str::from_utf8(bytes).ok()?)?).ok()
     }
 }
 impl FixedSideKey for CheckoutId {
@@ -109,6 +101,35 @@ pub enum CheckoutLeaseState {
     Settling,
     Settled,
     Retained,
+}
+
+impl oneiron_contracts::lifecycle::Lifecycle for CheckoutLeaseState {
+    type Kind = Self;
+
+    fn kind(&self) -> Self::Kind {
+        *self
+    }
+
+    fn next_kinds(kind: Self::Kind) -> &'static [Self::Kind] {
+        match kind {
+            Self::Active => &[Self::Settled, Self::Settling, Self::Retained],
+            // While its holder clears the cause, the unexpired lease still renews and settles (FIX 22391).
+            Self::Retained => &[Self::Settled, Self::Settling],
+            // Teardown accepts every lease state, so a settled lease prepares too.
+            Self::Settled => &[Self::Settling, Self::Retained],
+            // Collection authorised under this fence: deletion is the only way out.
+            Self::Settling => &[],
+        }
+    }
+}
+
+impl oneiron_contracts::lifecycle::LifecycleWords for CheckoutLeaseState {
+    const WORDS: &'static [(Self::Kind, &'static str)] = &[
+        (Self::Active, "active"),
+        (Self::Settling, "settling"),
+        (Self::Settled, "settled"),
+        (Self::Retained, "retained"),
+    ];
 }
 #[doc(hidden)]
 pub use oneiron_records::store::checkout_lease::CheckoutHolder;
@@ -240,6 +261,12 @@ pub enum CheckoutError {
 impl From<Error> for CheckoutError {
     fn from(e: Error) -> Self {
         Self::Store(e)
+    }
+}
+
+impl From<oneiron_contracts::lifecycle::IllegalTransition<CheckoutLeaseState>> for CheckoutError {
+    fn from(_: oneiron_contracts::lifecycle::IllegalTransition<CheckoutLeaseState>) -> Self {
+        Self::Invalid("checkout lease transition not declared")
     }
 }
 pub type CheckoutResult<T> = Result<T, CheckoutError>;

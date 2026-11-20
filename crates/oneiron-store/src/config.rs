@@ -195,6 +195,18 @@ pub struct VaultConfig {
     /// Both presets declare a computer; a phone's host sets
     /// `authority::MachineDeviceClass::Phone`.
     pub machine_device_class: oneiron_authority::authority::MachineDeviceClass,
+    /// The name this install reports for itself in the owner's machine list
+    /// (FIX [DEVICE-DISPLAY-NAME]), as its host declares it: a phone's own
+    /// name (iOS `UIDevice.name`), a computer's host name. Display only: no
+    /// authority, policy or routing code reads it, and it never enters the
+    /// signed machine profile. The owner's own name for the machine wins over
+    /// it; with neither, the list names the machine by its model, else its
+    /// class. `None` in both presets.
+    pub machine_reported_name: Option<String>,
+    /// The model this install reports for itself (`MacBook Air`, `iPhone`,
+    /// `Linux server`), as its host declares it; display only, as
+    /// [`Self::machine_reported_name`] is. `None` in both presets.
+    pub machine_reported_model: Option<String>,
     /// The maximum tier (OF-570): the page seal every LMDB page of the vault
     /// is sealed under. `None` opens a plain vault; a sealed one opens only
     /// with its seal (`world_keys::unlock_page_seal`), and a new one
@@ -209,6 +221,12 @@ pub struct VaultConfig {
     /// vault's owner to choose checkpoint roots without the host. Never an
     /// owner setting or a request credential; false in both presets.
     pub allow_host_checkpoint_opt_out: bool,
+    /// The most bytes this vault's folder may hold on disk, as its host
+    /// declares it (`[import] storage_cap_bytes`; ARCH-0027
+    /// #archive-precheck): an archive an import unpacks stops at the room
+    /// the cap leaves. Never an owner setting or a request field; `None`, no
+    /// cap, in both presets, so a local vault never stops.
+    pub storage_cap_bytes: Option<u64>,
 }
 
 /// Scoring-only BM25F rank profile (ARCH-0031 §bm25f, ARCH-0019 D3).
@@ -391,9 +409,12 @@ impl VaultConfig {
             off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
             limits: oneiron_contracts::limit_ask::EngineLimits::default(),
             machine_device_class: oneiron_authority::authority::MachineDeviceClass::Computer,
+            machine_reported_name: None,
+            machine_reported_model: None,
             page_seal: None,
             checkpoint_host_holds: crate::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
             allow_host_checkpoint_opt_out: false,
+            storage_cap_bytes: None,
         }
     }
 
@@ -428,9 +449,12 @@ impl VaultConfig {
             off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
             limits: oneiron_contracts::limit_ask::EngineLimits::default(),
             machine_device_class: oneiron_authority::authority::MachineDeviceClass::Computer,
+            machine_reported_name: None,
+            machine_reported_model: None,
             page_seal: None,
             checkpoint_host_holds: crate::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
             allow_host_checkpoint_opt_out: false,
+            storage_cap_bytes: None,
         }
     }
 

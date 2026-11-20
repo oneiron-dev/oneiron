@@ -23,6 +23,9 @@
 //!   real-traffic cache hit rates and a descriptive NVMe fsync row, each
 //!   reported on its own axis. Accuracy and cost stay BEAM-owned.
 //!
+//! * `ppr-walk-share` — UNBUILT3-06: share of High recall wall time spent in
+//!   the narrowed PPR walks over a generated linked corpus.
+//!
 //! * `swarm` — seeded one-vault, in-process write/recall/mixed agent curve.
 //! * `fleet` — authenticated fleet writes, recall and real held sockets, plus
 //!   paired full/resumed PPR measurements and receipt-derived regression floors.
@@ -36,10 +39,12 @@
 //! * `eval route-calibration` — known-answer yes/no cases answered by the
 //!   real decision ladder in a fresh vault, labelled after their answers,
 //!   and the per-route calibration report over those pairs (Engine row 22229).
+//! * `eval phonetic` — cross-script name cases asked through the code rung,
+//!   the learned rung and both, with R@1, R@5, MRR and the false-positive
+//!   rate per script pair (CROSS-ARCH-0013 §11).
 //!
-//! The full MIRACL / Mr.TyDi / internal SEA judgment-set retrieval
-//! matrix is not shipped here; this binary ships the bench drivers,
-//! cheap in-workspace checks, and the ONE-1311 trace export seam.
+//! The MIRACL / Mr.TyDi retrieval matrix runs through `scorecard convert-trec`,
+//! `run --arm keyword`, `tune-bm25f` and `grade-run` (docs/ops/retrieval-matrix.md).
 #![recursion_limit = "256"]
 #![allow(
     clippy::disallowed_methods,
@@ -61,8 +66,10 @@ mod interface_bench;
 mod load;
 mod oneironer_shadow;
 mod perf;
+mod ppr_walk_share;
 mod retrieval_trace_export;
 mod retrieval_turn_corpus;
+mod scorecard;
 mod swarm;
 mod teacher_probe;
 mod vector;
@@ -102,11 +109,13 @@ fn main() -> ExitCode {
         [cmd, rest @ ..] if cmd == "vector" => vector::run(rest),
         [cmd, rest @ ..] if cmd == "eval" => eval::run(rest),
         [cmd, rest @ ..] if cmd == "perf" => perf::run(rest),
+        [cmd, rest @ ..] if cmd == "ppr-walk-share" => ppr_walk_share::run(rest),
         [cmd, rest @ ..] if cmd == "teacher-probe" => teacher_probe::run(rest),
         [cmd, rest @ ..] if cmd == "fleet" => fleet::run(rest),
         [cmd, rest @ ..] if cmd == "swarm" => swarm::run(rest),
         [cmd, rest @ ..] if cmd == "load" => load::run(rest),
         [cmd, rest @ ..] if cmd == "infer" => infer::run(rest),
+        [cmd, rest @ ..] if cmd == "scorecard" => scorecard::run(rest),
         _ => {
             eprintln!("unknown invocation: {args:?}");
             print_help();
@@ -146,6 +155,10 @@ fn print_help() {
                                        the real decision ladder in a fresh vault\n\
                                        and report route-conditioned calibration\n\
                                        (Engine row 22229)\n\
+          eval phonetic               ask cross-script name cases through the\n\
+                                       code rung, the learned rung and both, and\n\
+                                       report R@1, R@5, MRR and false positives\n\
+                                       per script pair (CROSS-ARCH-0013)\n\
                                        outcome-ingest and tune open an existing\n\
                                        vault and require its full reopen\n\
                                        configuration: --vault --dimensions\n\
@@ -182,6 +195,11 @@ fn print_help() {
                                        emits every axis and is always marked\n\
                                        synthetic_smoke and never a publication\n\
                                        candidate (see `perf --help`)\n\
+          ppr-walk-share [--records N] [--edges-per-record K]\n\
+                                       [--cases C] [--repetitions R] [--seed S]\n\
+                                       [--out PATH]\n\
+                                       share of High recall wall time in the narrowed\n\
+                                       PPR walks over a generated linked corpus\n\
           teacher-probe --checkpoint DIR --runner EXECUTABLE\n\
                                        --manifest CANDIDATE.json --policy RESOLVED.json\n\
                                        --out APPROVED.json\n\
@@ -202,14 +220,51 @@ fn print_help() {
                                        mixed at 1/10/100/300 agents; JSONL\n\
           swarm --mode write|recall|mixed --agents 1|10|100|300\n\
                                        one seeded single-vault trial as JSON\n\
+          scorecard convert --dataset F --out-dir D --seed N\n\
+                                       --search N --held-out N --sealed N [--slice S]\n\
+                                       [--first-of-each-category C,C,..] [--pack-id ID]\n\
+                                       [--revision R]\n\
+                                       LongMemEval-S JSON into pack slices and split.json\n\
+          scorecard convert-trec --manifest F --out-dir D\n\
+                                       [--fill-seed N --fill-per-corpus K]\n\
+                                       TREC collections into pack slices\n\
+          scorecard pack-embed --pack-dir D --slice S [--endpoint URL]\n\
+                                       [--model-id ID] [--batch N]\n\
+                                       fill a slice's vectors from the served embedder\n\
+          scorecard run --pack-dir D --slice S --engine-commit SHA --out F\n\
+                                       [--arm pipeline|keyword] [--params F]\n\
+                                       [--rank-profile F] [--dict-dir D]\n\
+                                       [--budget-rows N] [--repeats N]\n\
+                                       replay a slice into a retrieval scorecard\n\
+          scorecard run ... --slice sealed --sealed-ledger L --campaign C\n\
+                                       (--incumbent true | --proposals D --proposal ID)\n\
+                                       replay the sealed slice once, spending its claim\n\
+          scorecard tune-bm25f --pack-dir D --slice search --out F\n\
+                                       --steps-out F --engine-commit SHA [--start F]\n\
+                                       [--budget-rows N] [--max-rounds N] [--dict-dir D]\n\
+                                       tune the BM25F rank profile on the search slice\n\
+          scorecard grade-run --pack-dir D --slice S --run F\n\
+                                       --retriever NAME --engine-commit SHA --out F\n\
+                                       [--budget-rows N]\n\
+                                       grade a TREC run file into a retrieval scorecard\n\
+          scorecard compare --campaign C [--repo R] [--candidate-params F]\n\
+                                       [--candidate-profile F] [--reference F]\n\
+                                       [--proposals D --at T] BASE CAND\n\
+                                       judge a candidate on held_out, recording a Promote\n\
+          scorecard compare --sealed --campaign C --proposals D\n\
+                                       --proposal ID --at T BASE CAND\n\
+                                       run the sealed check once, withdrawing or passing\n\
+          scorecard proposals --proposals D\n\
+                                       list every proposal, withdrawn included\n\
+          scorecard stamp --proposals D --proposal ID --at T [--note TEXT]\n\
+                                       record the owner's stamp and its pin calls\n\
           vector                      ARCH-0019 vector perf/recall harness\n\
                                        [--n 1k|10k] [--dim 1024|4096] [--seed N]\n\
                                        [--queries N] [--churn none|refresh|delete|both]\n\
                                        [--churn-pct 1..99] [--churn-ops N]\n\
                                        [--no-recall-assert]\n\
          \n\
-         note: MIRACL / Mr.TyDi / internal SEA retrieval quality matrix\n\
-         is not yet implemented in this binary."
+         note: MIRACL / Mr.TyDi retrieval matrix: scorecard convert-trec | run --arm keyword | tune-bm25f | grade-run (docs/ops/retrieval-matrix.md)"
     );
 }
 

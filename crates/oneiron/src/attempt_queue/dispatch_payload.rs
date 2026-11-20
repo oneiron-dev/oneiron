@@ -3,7 +3,7 @@
 pub use crate::store::dispatch_attempt_kind::AGENT_DISPATCH_ATTEMPT_TYPE;
 
 /// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
-pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 28] = [
+pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 29] = [
     "schema_version",
     "target",
     "agent_def",
@@ -32,4 +32,5 @@ pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 28] = [
     "caller_origin",
     "funding",
     "carried_wake_keys",
+    "spawn_parent",
 ];

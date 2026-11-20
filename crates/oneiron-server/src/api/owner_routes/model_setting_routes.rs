@@ -9,6 +9,7 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::{get, post};
+use oneiron::setting::{SetSetting, SettingCaller};
 use oneiron::task_verb::sdk::ModelResponsesStoreSettings as ModelSettings;
 
 use super::{CHANGED, OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
@@ -77,8 +78,8 @@ async fn read(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
     Ok(Json(settings))
 }
 
-/// `POST /v1/owner/settings/models`: sets the switch; the next Responses
-/// turn reads it.
+/// `POST /v1/owner/settings/models`: sets the key `models.responses_store`
+/// as the owner; the next Responses turn reads it.
 async fn put(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -87,7 +88,13 @@ async fn put(
     let owner = owner(&auth, &server)?;
     let settings = payload.read(&server).await?;
     let settings = blocking(move || -> OwnerResult<ModelSettings> {
-        server.apply_responses_store(&owner, settings.responses_store)?;
+        server.vault().set_setting(
+            SettingCaller::Owner(&owner),
+            SetSetting::vault_value(
+                "models.responses_store",
+                serde_json::Value::Bool(settings.responses_store),
+            ),
+        )?;
         Ok(settings)
     })
     .await?;

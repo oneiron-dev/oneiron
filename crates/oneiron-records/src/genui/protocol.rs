@@ -2,29 +2,21 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::genui::consent_eval::ConsentActionKind;
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 
 /// RCPT-3 component set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("of336.component.kind")]
 pub enum Of336ComponentKind {
     ReceiptView,
     ConsentAsk,
     BundleApprove,
     ProjectProposal,
-}
-
-impl Of336ComponentKind {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::ReceiptView => "receipt_view",
-            Self::ConsentAsk => "consent_ask",
-            Self::BundleApprove => "bundle_approve",
-            Self::ProjectProposal => "project_proposal",
-        }
-    }
 }
 
 /// One stable action advertised by an OF-336 card.

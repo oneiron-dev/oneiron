@@ -5,8 +5,10 @@
 //! guest responses its host handed out, what its result reads saw of reader
 //! state (FIX 6352), and where its calls end (FIX 6354).
 
+use super::continuation::continuation_note;
 use super::driver::EngineNativeExecutor;
 use super::record::{StepEnd, completed_step_count};
+use super::store::{RUN_SIGNALS_OUTPUT_SUFFIX, TURN_INTERRUPTS_OUTPUT_SUFFIX};
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
 use crate::code_run::{
     CapsuleHost, CodeRunRawOutput, CodeRunReplayRecord, ConsoleSlot, ExecutorStorage, FoldWordRef,
@@ -17,19 +19,31 @@ use crate::{EntityId, Error, LlmRequest};
 
 impl EngineNativeExecutor<'_> {
     /// The complete rows this step's request was read from, or `None` when
-    /// any constituent lacks a witness (FIX 6999). The host-built task and
-    /// browser-handoff evidence stay unknown today; the other sets are real
-    /// witnesses, ready for their later carriers to complete the union. The
-    /// self brief the request carries brings the rows its host listed beside
-    /// it (FIX 17594), and a request with none brings none.
+    /// any constituent lacks a witness (FIX 6999). A task its host declared
+    /// the caller's own text names no row (FIX 7087); a task its host built,
+    /// the signals a leased branch delivered and a continuation's note stay
+    /// unknown today. The other sets are real witnesses, ready for their
+    /// later carriers to complete the union. The self brief the request
+    /// carries brings the rows its host listed beside it (FIX 17594), and a
+    /// request with none brings none. Host data a backend adds after the
+    /// request, as the browser planner's handoff is, is not in this set: the
+    /// backend names no rows for a call it adds any to.
     pub(super) fn step_source_rows(
         &self,
         config: &EngineExecutorConfig,
         record: &CodeRunReplayRecord,
     ) -> Option<Vec<EntityId>> {
-        // Engine 03:58: claimed.task plus executor_config is host-built, not
-        // source-free. Skill additions do not witness the host text itself.
-        let host_task_rows: Option<Vec<EntityId>> = None;
+        // FIX 7087: a task its host declared the caller's own, byte for
+        // byte, as an MCP `execute_code` caller's is, no row of the vault
+        // wrote. Engine 03:58: claimed.task plus executor_config is
+        // host-built, not source-free, so every other task stays unknown, a
+        // declared one its host added to included. Skill additions do not
+        // witness the host text itself.
+        let host_task_rows = self
+            .gated_write
+            .declared_caller_task(config.run_id)
+            .filter(|task| *task == config.task)
+            .map(|_| Vec::new());
         let exposure_rows = if self.gated_write.run_write_token().is_none() {
             Some(Vec::new())
         } else {
@@ -53,8 +67,16 @@ impl EngineNativeExecutor<'_> {
                 .collect::<Vec<_>>()
         });
         let brief_rows = Some(self.brief_source_rows());
-        // Browser planner handoff evidence has no row witness yet (FIX 6999).
-        let browser_rows: Option<Vec<EntityId>> = None;
+        // The steers, messages and interrupts the run's branch delivered
+        // (AGM-2), which its requests read back beside their steps and
+        // turns, have no row witness yet. A run that kept none reads none.
+        let signal_rows = (!holds_branch_signals(record)).then(Vec::new);
+        // An approved continuation's note (FIX 3694) has no row witness
+        // yet. A run with no note reads none.
+        let continuation_rows = match continuation_note(&self.storage, config.run_id) {
+            Ok(None) => Some(Vec::new()),
+            Ok(Some(_)) | Err(_) => None,
+        };
         // The records each fold summary the request copies was written from
         // (FIX 18924).
         let fold_rows = Some(
@@ -69,7 +91,8 @@ impl EngineNativeExecutor<'_> {
             bridge_rows,
             epoch_rows,
             brief_rows,
-            browser_rows,
+            signal_rows,
+            continuation_rows,
             fold_rows,
         ])
     }
@@ -221,4 +244,13 @@ impl EngineNativeExecutor<'_> {
         };
         Ok((end, commit))
     }
+}
+
+/// Whether `record` keeps steers, messages or interrupts its branch
+/// delivered (AGM-2), which every later request of the run reads back.
+fn holds_branch_signals(record: &CodeRunReplayRecord) -> bool {
+    record.outputs.iter().any(|output| {
+        output.path.ends_with(RUN_SIGNALS_OUTPUT_SUFFIX)
+            || output.path.ends_with(TURN_INTERRUPTS_OUTPUT_SUFFIX)
+    })
 }

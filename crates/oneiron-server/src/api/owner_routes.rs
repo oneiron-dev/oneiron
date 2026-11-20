@@ -68,6 +68,7 @@ pub(super) mod desktop_takeover_routes;
 mod device_succession_routes;
 pub(super) mod diary_routes;
 mod disclosure_routes;
+mod display_edit_routes;
 pub(super) mod dreamer_maintenance_routes;
 pub(super) mod dreamer_routes;
 pub(super) mod embedding_space_routes;
@@ -96,6 +97,7 @@ mod oauth_authorization_routes;
 #[cfg(target_os = "linux")]
 pub(super) mod outbox_diverged_routes;
 pub(super) mod owner_key_enrollment_routes;
+pub(super) mod owner_passkey_routes;
 pub(super) mod owner_work_routes;
 pub(super) mod pack_preview_routes;
 pub(super) mod pack_routes;
@@ -111,7 +113,9 @@ pub(super) mod root_routes;
 pub(super) mod schema;
 pub(super) mod secret_control_routes;
 pub(super) mod secret_found_routes;
+mod secret_handle_edit_routes;
 pub(super) mod secret_lift_routes;
+mod secret_list_routes;
 mod secret_payment_mark_routes;
 pub(super) mod secret_reveal_routes;
 pub(super) mod secret_use_routes;
@@ -159,6 +163,7 @@ fn owner_tables() -> OwnerTable {
         connector_subscription_routes::owner_table(),
         diary_routes::owner_table(),
         disclosure_routes::owner_table(),
+        display_edit_routes::owner_table(),
         dreamer_maintenance_routes::owner_table(),
         harness_evaluation_routes::owner_table(),
         dreamer_routes::owner_table(),
@@ -214,8 +219,10 @@ fn owner_tables() -> OwnerTable {
         secret_use_routes::owner_table(),
         secret_reveal_routes::owner_table(),
         secret_found_routes::owner_table(),
+        secret_handle_edit_routes::owner_table(),
         code_run_secret_lift_routes::owner_table(),
         secret_lift_routes::owner_table(),
+        secret_list_routes::owner_table(),
         secret_payment_mark_routes::owner_table(),
         steer_routes::owner_table(),
         stream_recovery_routes::owner_table(),
@@ -226,6 +233,7 @@ fn owner_tables() -> OwnerTable {
         world_privacy_routes::owner_table(),
         world_privacy_work_routes::owner_table(),
         owner_key_enrollment_routes::owner_table(),
+        owner_passkey_routes::owner_table(),
         owner_work_routes::owner_table(),
         root_routes::owner_table(),
         recovery_kit_target_routes::owner_table(),
@@ -293,7 +301,8 @@ fn serve(table: OwnerTable) -> Router<Arc<SyncServer>> {
 }
 
 /// The owner door. Every refusal is the same 403, so a caller learns nothing
-/// about which check failed. The proof it returns carries the verified slip,
+/// about which check failed; a host fault its check meets is a 500
+/// ([`owner_check_failure`]). The proof it returns carries the verified slip,
 /// except a managed vault's owner's, whom its supervisor attested for this
 /// one request (`ManagedOwnerAction`): that proof holds only while the
 /// person is the vault's live recorded owner ([`managed_owner_proof`]); one
@@ -313,7 +322,10 @@ pub(crate) fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<Authenticate
         return server
             .vault()
             .authenticate_host_action_owner(&action, GateDecisionId::now())
-            .map_err(|error| super::error_map::carried_refusal(&error).unwrap_or_else(refused));
+            .map_err(|error| {
+                super::error_map::carried_refusal(&error)
+                    .unwrap_or_else(|| owner_check_failure(&error))
+            });
     }
     if !auth.is_owner_grade() {
         return Err(refused());
@@ -327,13 +339,37 @@ pub(crate) fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<Authenticate
     let owner = server
         .vault()
         .authenticate_owner(actor, principal, true, GateDecisionId::now())
-        .map_err(|_| refused())?;
+        .map_err(|error| owner_check_failure(&error))?;
     // Binding checks the slip is the owner's own full slip, still live, and
     // that the actor owns this vault now.
     server
         .vault()
         .bind_owner_credential(owner, slip.clone())
-        .map_err(|_| refused())
+        .map_err(|error| owner_check_failure(&error))
+}
+
+/// The owner door's answer to an engine `error` its check met: a host fault
+/// (storage, I/O, index damage) is this home's own, a 500 the caller retries,
+/// for no refusal of a credential rides on it; every other error is the
+/// door's one 403. A sync client stops on a 403 to its upgrade and never
+/// redials it (MEMBER-SELECTOR-SOCKET), so a passing store failure must not
+/// read as one. Keep the host-fault list in step with the shared
+/// MEMORY_CODE_INTERNAL arm in crates/oneiron-contracts/src/memory/error/engine.rs.
+pub(crate) fn owner_check_failure(error: &oneiron::Error) -> ApiError {
+    match error.kind() {
+        oneiron::ErrorKind::Storage
+        | oneiron::ErrorKind::Io
+        | oneiron::ErrorKind::CorruptedIndex
+        | oneiron::ErrorKind::SideTableRow
+        | oneiron::ErrorKind::InvariantViolation
+        | oneiron::ErrorKind::MapFull
+        | oneiron::ErrorKind::IndexOverflow
+        | oneiron::ErrorKind::MissingPostingEntry => {
+            tracing::warn!(%error, "owner check could not read the vault");
+            ApiError::internal_server_error("the owner check could not read the vault")
+        }
+        _ => ApiError::forbidden_scope("owner"),
+    }
 }
 
 /// A managed vault's attested owner's proof: the recorded owner `holder`
@@ -343,18 +379,17 @@ pub(crate) fn managed_owner_proof(
     server: &SyncServer,
     holder: oneiron::EntityId,
 ) -> Result<Option<AuthenticatedOwner>, ApiError> {
-    let refused = || ApiError::forbidden_scope("owner");
     let Some(owner) = server
         .vault()
         .authenticate_recorded_owner(holder, &holder.to_hex(), GateDecisionId::now())
-        .map_err(|_| refused())?
+        .map_err(|error| owner_check_failure(&error))?
     else {
         return Ok(None);
     };
     Ok(server
         .vault()
         .is_live_vault_owner(&owner)
-        .map_err(|_| refused())?
+        .map_err(|error| owner_check_failure(&error))?
         .then_some(owner))
 }
 
@@ -401,6 +436,32 @@ fn feedback_host(
     })
 }
 
+/// The status `POST /v1/owner/steer`, `POST /v1/owner/inbox/concern/move`
+/// and `GET /v1/owner/inbox` answer an engine refusal whose code is `code`
+/// with, in that order: the integration tests' door (UC-11).
+#[cfg(oneiron_test_support)]
+pub(crate) fn engine_refusal_statuses_for_test(code: &str) -> [axum::http::StatusCode; 3] {
+    let refusal = || oneiron::memory::MemoryError::new(code, "a pinned refusal", &[]);
+    [
+        owner_error(steer_routes::steer_error(refusal())).status(),
+        owner_error(concern_routes::move_error(refusal())).status(),
+        owner_error(inbox_routes::inbox_error(refusal())).status(),
+    ]
+}
+
+/// The owner's refusal `POST /v1/owner/steer`, `POST /v1/owner/inbox/concern/move`
+/// and `GET /v1/owner/inbox` make of an engine refusal whose code is `code`,
+/// in that order: the integration tests' door (UC-11).
+#[cfg(oneiron_test_support)]
+pub(crate) fn owner_route_refusals_for_test(code: &str) -> [OwnerError; 3] {
+    let refusal = || oneiron::memory::MemoryError::new(code, "a pinned refusal", &[]);
+    [
+        steer_routes::steer_error(refusal()),
+        concern_routes::move_error(refusal()),
+        inbox_routes::inbox_error(refusal()),
+    ]
+}
+
 pub(super) fn owner_error(error: OwnerError) -> ApiError {
     // FIX 5479, FIX 5615: a backup or a rehearsal stopped at the disk's floor
     // or by a full disk names capacity, never a fault of its own.
@@ -440,6 +501,19 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
             }
             oneiron::ErrorKind::ConsentApproveOnceSpent => {
                 ApiError::invalid_state(Some("already_decided"))
+            }
+            // FIX [L6-03-FOUND-KEY-ROUTE-BOUND-500], [DISCLOSURE-CONFIRM-STALE-500],
+            // [OWNER-DISCLOSURE-NARROW-STATE-STRING]: an act its target's state
+            // does not admit (a found key already ruled, a place that cannot
+            // take its value back, an erased value, a narrowing wider than the
+            // clearance, an inactive contact, a repeated trusted-set contact, a
+            // consent row that failed validation) is a refused owner act: 409
+            // `refused` in the engine's own words. Each reason is a fixed
+            // sentence; none carries a value. The disclosure confirm names the
+            // widen proposal instead (`disclosure_routes::offer_answer_refusal`).
+            oneiron::ErrorKind::InvalidConsentGrantRow
+            | oneiron::ErrorKind::InvalidConsentBound => {
+                owner_error(OwnerError::Refused(error.to_string()))
             }
             oneiron::ErrorKind::SecretRefNotFound => ApiError::not_found("secret", None),
             oneiron::ErrorKind::SecretCustodyNotActive => {
@@ -487,10 +561,19 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
 pub(super) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, OwnerError> + Send + 'static,
 ) -> Result<T, ApiError> {
+    blocking_with(owner_error, work).await
+}
+
+/// [`blocking`] with the route's own refusal map in place of
+/// [`owner_error`], for a route whose engine refusal names its own state.
+pub(super) async fn blocking_with<T: Send + 'static>(
+    refusal: fn(OwnerError) -> ApiError,
+    work: impl FnOnce() -> Result<T, OwnerError> + Send + 'static,
+) -> Result<T, ApiError> {
     super::clock_ingress::run_blocking(work)
         .await
         .map_err(|_| ApiError::internal_server_error("owner action task failed"))?
-        .map_err(owner_error)
+        .map_err(refusal)
 }
 
 /// The status root admin command's answer, at `GET /v1/owner/status` and

@@ -1,5 +1,5 @@
 ---
-name: fact
+name: fact.hooks
 description: Ordered fact commits across a real server restart
 version: 1.0.0
 license: Apache-2.0

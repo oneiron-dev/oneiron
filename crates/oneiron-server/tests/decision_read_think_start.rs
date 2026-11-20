@@ -62,17 +62,30 @@ recipe = "recipe.toml"
 /// The ThinkThreshold start value a host with the default config gives its
 /// policy: the recipe and templates are written under `dir`.
 fn default_think_start(dir: &Path) -> anyhow::Result<f64> {
-    std::fs::write(dir.join("plain.txt"), "{question}\n{labels}\n{state}\n")?;
-    std::fs::write(
-        dir.join("joint.txt"),
+    write_referenced_file(&dir.join("plain.txt"), "{question}\n{labels}\n{state}\n")?;
+    write_referenced_file(
+        &dir.join("joint.txt"),
         "{question}\n{paired}\n{labels}\n{state}\n",
     )?;
-    std::fs::write(dir.join("recipe.toml"), RECIPE)?;
+    write_referenced_file(&dir.join("recipe.toml"), RECIPE)?;
     let models = ModelsConfig::from_toml(MODELS, Some(dir))?;
     let settings = models
         .decision_read
         .ok_or_else(|| anyhow::anyhow!("the config binds the decision read"))?;
     Ok(settings.think_threshold)
+}
+
+/// Writes a file the `[models]` body refers to with mode 0644. Serve reads
+/// such a file only once no other user can write it, so a bare write would
+/// take its mode from the host's umask (FIX SIDE-FILE-TESTS-UMASK-DEPENDENT).
+fn write_referenced_file(path: &Path, text: &str) -> std::io::Result<()> {
+    std::fs::write(path, text)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644))?;
+    }
+    Ok(())
 }
 
 /// The host's policy, its think row at `threshold` as the house read seeds it.

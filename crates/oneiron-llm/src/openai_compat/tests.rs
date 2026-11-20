@@ -219,6 +219,70 @@ fn an_own_server_gets_the_level_in_its_template_with_the_budget_and_a_hosted_api
     }
 }
 
+/// A param the call names own-server only (a Dreamer extraction's answer cap
+/// and sampling) reaches an own server and this device's model, and never a
+/// hosted API: the wire of the rung that answers decides, not the seat's
+/// widest route. The name list itself reaches no wire, and a list that is not
+/// an array of names is refused.
+#[test]
+fn an_own_server_only_param_reaches_an_own_server_and_this_device_and_never_a_hosted_api() {
+    let config_at = |locality| {
+        OpenAiCompatConfig::from_catalog([LlmCatalogEntry {
+            model: ModelId::new(MODEL).expect("model"),
+            display_name: "teacher".to_owned(),
+            locality,
+            context_window_tokens: 8_192,
+            max_output_tokens: None,
+            cost: None,
+            capabilities: Vec::new(),
+            metadata: BTreeMap::new(),
+        }])
+    };
+    for locality in [
+        ModelLocality::OwnServer,
+        ModelLocality::OnDevice,
+        ModelLocality::ThirdParty,
+    ] {
+        let mut call = request();
+        call.envelope.locality = locality;
+        call.params.insert("max_tokens".into(), json!(12_288));
+        call.params.insert("temperature".into(), json!(0.7));
+        call.params.insert("seed".into(), json!(7));
+        call.params.insert(
+            oneiron::llm::OWN_SERVER_ONLY_PARAM.into(),
+            json!(["max_tokens", "temperature"]),
+        );
+        let body = super::build_openai_chat_request(&config_at(locality), &call, false)
+            .expect("request")
+            .body;
+        assert_eq!(
+            body.get(oneiron::llm::OWN_SERVER_ONLY_PARAM),
+            None,
+            "{body}"
+        );
+        assert_eq!(
+            body["seed"], 7,
+            "a param it does not name reaches every wire: {body}"
+        );
+        if locality == ModelLocality::ThirdParty {
+            assert_eq!(body.get("max_tokens"), None, "{body}");
+            assert_eq!(body.get("temperature"), None, "{body}");
+        } else {
+            assert_eq!(body["max_tokens"], 12_288, "{locality:?}: {body}");
+            assert_eq!(body["temperature"], 0.7, "{locality:?}: {body}");
+        }
+    }
+    let mut call = request();
+    call.params.insert(
+        oneiron::llm::OWN_SERVER_ONLY_PARAM.into(),
+        json!("max_tokens"),
+    );
+    assert!(matches!(
+        super::build_openai_chat_request(&config_at(ModelLocality::ThirdParty), &call, false),
+        Err(LlmError::Fatal(FatalLlmError::InvalidRequest))
+    ));
+}
+
 /// A reply that names no finish is not a finished one. The decoder used to
 /// fill in `Stop`, which every caller that demands a finished answer (the
 /// policy classifier among them) then read as one.
@@ -454,7 +518,7 @@ fn a_raw_tool_or_format_control_needs_the_capability_its_typed_field_would() {
                     ),
                 }
             }
-            let able = config(vec![LlmCapability::Streaming, capability.clone()]);
+            let able = config(vec![LlmCapability::Streaming, capability]);
             let body = super::build_openai_chat_request(&able, &call, false)
                 .expect("a capable model takes the raw control")
                 .body;
@@ -470,60 +534,4 @@ fn a_raw_tool_or_format_control_needs_the_capability_its_typed_field_would() {
         .expect("a sampling field and a text format need no capability")
         .body;
     assert_eq!(body["temperature"], 0.2, "{body}");
-}
-
-/// An image transport that answers every request with one canned reply.
-struct CannedImage(serde_json::Value);
-
-impl super::OpenAiImageTransport for CannedImage {
-    fn execute<'a>(
-        &'a self,
-        _request: super::OpenAiImageHttpRequest,
-        _lease: &'a BudgetLease,
-    ) -> super::OpenAiImageTransportFuture<'a> {
-        let body = self.0.clone();
-        Box::pin(async move {
-            Ok(super::OpenAiImageHttpResponse {
-                status: 200,
-                headers: BTreeMap::new(),
-                body,
-            })
-        })
-    }
-}
-
-fn generate_from(b64_json: String) -> oneiron::LlmResult<oneiron::llm::image::ImageResponse> {
-    use oneiron::llm::image::{ImageBackend, ImageIntent};
-    let backend = super::DirectOpenAiImageBackend::new(CannedImage(
-        json!({ "created": 1, "data": [{ "b64_json": b64_json }] }),
-    ));
-    let intent = ImageIntent {
-        model: ModelId::new(MODEL).expect("model"),
-        instruction: "a lighthouse".to_owned(),
-        width: 1024,
-        height: 1024,
-        params: BTreeMap::new(),
-    };
-    ready(backend.generate(intent, &BudgetLease::for_test("image")))
-}
-
-// F04 H366: a provider reply carrying an image past the 64 MiB ceiling is
-// refused from its encoded length, before it is decoded. Main decoded it and
-// returned it.
-#[test]
-fn a_provider_image_past_the_ceiling_is_refused_before_it_is_decoded() {
-    use base64::Engine as _;
-    const CEILING: usize = 64 << 20;
-    let encode = |len: usize| base64::engine::general_purpose::STANDARD.encode(vec![7u8; len]);
-
-    let at_ceiling = generate_from(encode(CEILING)).expect("at the ceiling");
-    assert_eq!(at_ceiling.image.bytes.len(), CEILING);
-    assert_eq!(at_ceiling.metadata.get("created"), Some(&json!(1)));
-
-    // Ruled (FIX 8615, c39a7de7a4a): "a successful image over 64 MiB was
-    // discarded as EmptyResponse. FIXED: replies are kept whole"; "The 64 MiB
-    // image discard and the 512 MiB transport refusal are gone." The same
-    // reply past the former ceiling now decodes whole.
-    let past = generate_from(encode(CEILING + 1));
-    assert_eq!(past.map(|reply| reply.image.bytes.len()), Ok(CEILING + 1));
 }
