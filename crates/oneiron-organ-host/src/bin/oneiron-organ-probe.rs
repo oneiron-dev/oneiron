@@ -7,7 +7,8 @@
 //! socket, `--drip` sends its `hello_ack` one byte at a time, `--ask-twice`
 //! sends a second ask before the first is answered, `--ask-once` asks and
 //! then ignores the call and its cancel, and `--stale-asks` asks for calls
-//! that are not in flight.
+//! that are not in flight. `--organ-name <name>` is the probe answering as
+//! organ `<name>`, as a pack build under another organ's name would.
 
 #[cfg(target_os = "linux")]
 #[path = "oneiron-organ-probe/escape_calls.rs"]
@@ -25,12 +26,16 @@ mod probe {
     #[cfg(target_os = "linux")]
     use crate::escape_calls::{inet_socket, ptrace, reach_process};
 
-    pub(super) struct Probe;
+    /// The probe, answering the handshake as organ `name`: `probe`, or
+    /// the name `--organ-name` gives it.
+    pub(super) struct Probe {
+        pub(super) name: String,
+    }
 
     impl Organ for Probe {
         fn identity(&self) -> OrganIdentity {
             OrganIdentity {
-                name: "probe".into(),
+                name: self.name.clone(),
                 version: env!("CARGO_PKG_VERSION").into(),
             }
         }
@@ -623,7 +628,12 @@ fn main() -> std::process::ExitCode {
             std::process::ExitCode::SUCCESS
         }
         Some("--open-paths") => oneiron_organ_protocol::serve(opener::Opener),
-        _ => oneiron_organ_protocol::serve(probe::Probe),
+        Some("--organ-name") => oneiron_organ_protocol::serve(probe::Probe {
+            name: std::env::args().nth(2).unwrap_or_default(),
+        }),
+        _ => oneiron_organ_protocol::serve(probe::Probe {
+            name: "probe".into(),
+        }),
     }
 }
 

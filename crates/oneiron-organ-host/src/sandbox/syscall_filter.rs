@@ -152,9 +152,11 @@ fn jump(code: u16, k: u32, jt: u8, jf: u8) -> libc::sock_filter {
 
 impl SyscallFilter {
     /// `spec`'s allow-list as a seccomp program for this build's syscall
-    /// table: a first-party image or seal organ, or the probe's diagnostics
-    /// install, under its own list; every other organ under the fixed tier
-    /// list. A call under another audit arch, an x32 call, a `clone` that
+    /// table: the host's own image organ or the probe's diagnostics install
+    /// (each first party and unpinned), or a first-party seal organ, under
+    /// its own list; every other organ, a pinned build named `image` or
+    /// `probe` among them, under the fixed tier list. A call under another
+    /// audit arch, an x32 call, a `clone` that
     /// starts no thread (save the probe's), a call whose arguments
     /// [`argument_rows`] refuses, or a call its list does not name kills
     /// the process; `clone3` answers ENOSYS, and a `prlimit64` that sets a
@@ -166,16 +168,23 @@ impl SyscallFilter {
     /// unfiltered.
     pub(super) fn for_organ(spec: &OrganSpec) -> io::Result<Self> {
         let first_party = spec.tier == OrganTier::FirstParty;
-        // The probe's list forks with any clone flags, and the host reaps
-        // only the organ's own pid: it is for the diagnostics install alone,
-        // first party and unpinned, which only tests make. A pinned build
-        // named `probe` (a pack's, whose blake3 the operator trusts) runs
-        // under the fixed tier list.
-        let diagnostics = first_party && spec.program_hash.is_none();
+        // The image and probe lists are traced from the builds the host
+        // names by their program, first party and unpinned: the image organ
+        // a server installs from its own path (L4-15), and the probe's
+        // diagnostics install, which only tests make. A pinned build under
+        // either name (a pack's, whose blake3 the operator trusts) is no
+        // such build, and runs under the fixed tier list: the image's list
+        // names no file call, not even `getcwd`, and the probe's forks with
+        // any clone flags while the host reaps only the organ's own pid.
+        // The seal's list holds for its pinned pack build too: the seal
+        // worker installs the program the host names, else that build
+        // (OF-575), and the pack pass installs no other build named `seal`;
+        // its tier is the one the build's provenance earns (FIX 7644).
+        let host_named = first_party && spec.program_hash.is_none();
         let (own, own_legacy, forks): (&[libc::c_long], &[libc::c_long], bool) =
             match spec.name.as_str() {
-                PROBE_ORGAN if diagnostics => (lists::PROBE, lists::PROBE_LEGACY, true),
-                crate::image::IMAGE_ORGAN if first_party => (lists::IMAGE, &[], false),
+                PROBE_ORGAN if host_named => (lists::PROBE, lists::PROBE_LEGACY, true),
+                crate::image::IMAGE_ORGAN if host_named => (lists::IMAGE, &[], false),
                 crate::seal::SEAL_ORGAN if first_party => (lists::SEAL, &[], false),
                 _ => (lists::FENCED_FILES, lists::FENCED_FILES_LEGACY, false),
             };

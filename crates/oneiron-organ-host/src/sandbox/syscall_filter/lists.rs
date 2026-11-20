@@ -108,7 +108,9 @@ pub(super) const PROBE_LEGACY: &[c_long] = &[libc::SYS_fork, libc::SYS_pause, li
 pub(super) const PROBE_LEGACY: &[c_long] = &[];
 
 /// The image organ's own calls: none past [`RUNTIME`]. It decodes, edits
-/// and encodes bytes the host lends it and opens no file.
+/// and encodes bytes the host lends it and opens no file. For the host's
+/// own build only (unpinned): a pinned pack build named `image` runs under
+/// [`FENCED_FILES`].
 pub(super) const IMAGE: &[c_long] = &[];
 
 /// The seal organ's own calls: none past [`RUNTIME`]. Its fetches and
