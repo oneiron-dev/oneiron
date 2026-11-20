@@ -112,6 +112,21 @@ pub(crate) enum OwnerRow {
     DeletingItself,
 }
 
+/// Whether the vault's owner census names `actor`, asking `row` of its own
+/// PERSON: live, or taken as live for its delete of that PERSON. A rooted and
+/// an unrooted vault ask it alike.
+fn census_holds_owner_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+    row: OwnerRow,
+) -> crate::error::Result<bool> {
+    match row {
+        OwnerRow::Live => crate::policy_model::is_live_vault_owner_in_txn(vault, txn, actor),
+        OwnerRow::DeletingItself => vault.is_vault_owner_deleting_own_person_in_txn(txn, actor),
+    }
+}
+
 /// [`verify_owner_actor_binding_in_txn`] asking `row` of the owner's own
 /// PERSON: a host action re-proved at the publication of its owner's
 /// delete of their own PERSON asks [`OwnerRow::DeletingItself`].
@@ -159,8 +174,9 @@ pub(crate) fn verify_owner_binding_in_txn(
     }
     if fold.vault_id.is_none() {
         if actor == crate::vault::embedded_owner_actor_id()? {
-            // The census reads the PERSON's liveness on either kind of vault.
-            if crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)? {
+            // The census reads the PERSON's liveness on either kind of vault,
+            // as `row` asks it.
+            if census_holds_owner_in_txn(vault, txn, &actor, row)? {
                 return Ok(());
             }
             if vault.shared_vault_creation_in_txn(txn)?.is_some() {
@@ -198,13 +214,7 @@ pub(crate) fn verify_owner_binding_in_txn(
         }
     };
     if bound {
-        let owner = match row {
-            OwnerRow::Live => crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?,
-            OwnerRow::DeletingItself => {
-                vault.is_vault_owner_deleting_own_person_in_txn(txn, &actor)?
-            }
-        };
-        if owner {
+        if census_holds_owner_in_txn(vault, txn, &actor, row)? {
             return Ok(());
         }
         return Err(MemoryError::new(
