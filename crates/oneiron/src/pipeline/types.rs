@@ -203,7 +203,8 @@ pub(super) struct PipelineFilterConfig<'a> {
     pub(super) disclosure: Option<&'a crate::disclosure::DisclosureContext>,
     /// The call's `made_by` slice (Rule A, OF-466) at a bounded result
     /// channel's admission, so a row the call drops takes no place in a
-    /// vector, text or temporal fetch (`PipelineBuilder::bounded_result_filters`).
+    /// vector, text, temporal or typed media fetch
+    /// (`PipelineBuilder::bounded_result_filters`).
     /// The run's shared config holds `MadeByPredicate::All`: the narrowed
     /// walk's visibility, the TURN fold, the reranker's words, L2 evidence
     /// and the trace judge rows that are not results, and admit as before.

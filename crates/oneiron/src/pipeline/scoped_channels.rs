@@ -231,12 +231,12 @@ impl PipelineBuilder<'_> {
     }
 
     /// `filters` for a bounded result channel's own admission and cut
-    /// (vector and HyDE vector, text, temporal): the call's `made_by` slice
-    /// joins the scope, so a row it drops takes no place in the fetch. A
-    /// slice counts as a strict scope ([`Self::has_strict_text_scope_filter`]),
-    /// so these channels widen their window and cut it to the slice. The
-    /// run's shared config keeps every slice for the reads that judge rows
-    /// other than results.
+    /// (vector and HyDE vector, text, temporal, typed media): the call's
+    /// `made_by` slice joins the scope, so a row it drops takes no place in
+    /// the fetch. A slice counts as a strict scope
+    /// ([`Self::has_strict_text_scope_filter`]), so these channels widen their
+    /// window and cut it to the slice. The run's shared config keeps every
+    /// slice for the reads that judge rows other than results.
     pub(super) fn bounded_result_filters<'f>(
         &self,
         filters: PipelineFilterConfig<'f>,
