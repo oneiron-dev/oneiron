@@ -535,10 +535,12 @@ impl PollAdmission<'_> {
     /// The other way round, a status whose body the screen flagged waits on
     /// the owner too (the standing consent holds it), so it supersedes no
     /// admitted status: that one stays live beside it until the owner's
-    /// approval closes it as the review's conflict head, and a decline leaves
-    /// it standing (CAL-HELD-STATUS-SUPERSEDES-ADMITTED-STATUS). The writer
-    /// that closes the prior decides, so an owner's answer that lands while
-    /// the new status is screened counts ([`super::consent::status_supersedes`]).
+    /// approval closes it, as its review's conflict head or in the feed
+    /// review's approval (`consent::close_admitted_status_beside_in_txn`), and
+    /// a decline leaves it standing
+    /// (CAL-HELD-STATUS-SUPERSEDES-ADMITTED-STATUS). The writer that closes
+    /// the prior decides, so an owner's answer that lands while the new
+    /// status is screened counts ([`super::consent::status_supersedes`]).
     /// Returns the new claim's id, or `None` when nothing was written.
     fn admit_status_if_changed(
         &mut self,
