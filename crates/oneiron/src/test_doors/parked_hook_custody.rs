@@ -2,14 +2,15 @@
 //! PARKED-HOOK-LIVE-EXACT-COMPARE): one code-run call a verb pre-hook's ask
 //! parked, stored in an agent's replay record through the side-row wall,
 //! and the note that row leaves read against the same call made again, as a
-//! durable run's next try reads it to resume the ask.
+//! durable run's next try reads it to resume the ask, with the args the ask
+//! saved.
 //! Compiled only under `--cfg oneiron_test_support`; never API.
 
 use rmpv::Value;
 
 use crate::code_run::{
     BaseKnownRead, CodeRunBridgeCall, CodeRunReplayRecord, ExecutorStorage, SelfCall,
-    SelfMemoryPutClaimCall, hook_parked_outcome_for_test, parked_note_meets_for_test,
+    SelfMemoryPutClaimCall, hook_parked_outcome_for_test, parked_note_resumed_for_test,
 };
 use crate::error::{Error, Result};
 use crate::runtime_hooks::InvocationId;
@@ -59,18 +60,20 @@ pub fn store_parked_note_call(vault: &Vault, words: &str) -> Result<[EntityId; 2
     Ok([agent, run])
 }
 
-/// Whether the note the call `run`'s stored record parked meets the call
-/// `agent` makes again writing `words`, read with the values `vault`'s base
-/// custody holds now, as the run's next try reads it.
+/// Whether the call `agent` makes again writing `words` resumes the ask the
+/// call `run`'s stored record parked on, read with the values `vault`'s base
+/// custody holds now, as the run's next try reads it, when the ask saved the
+/// args of the call writing `saved_words`.
 ///
 /// # Errors
 ///
 /// The record cannot be read, its call parked on no ask, or the compare
-/// cannot read the request or base custody's values.
-pub fn parked_note_meets(
+/// cannot read the request, a call's args or base custody's values.
+pub fn parked_note_resumed(
     vault: &Vault,
     run: EntityId,
     agent: EntityId,
+    saved_words: &str,
     words: &str,
 ) -> Result<bool> {
     let row = vault
@@ -78,6 +81,7 @@ pub fn parked_note_meets(
         .and_then(|record| record.bridge_calls.into_iter().next())
         .ok_or(Error::CorruptedIndex("the parked run has no stored call"))?;
     let read: BaseKnownRead<'_> = &|| vault.known_values_now();
-    parked_note_meets_for_test(&row, &note_call(agent, words), read)?
+    let saved = note_call(agent, saved_words);
+    parked_note_resumed_for_test(&row, &note_call(agent, words), read, &saved)?
         .ok_or(Error::CorruptedIndex("the stored call parked on no ask"))
 }
