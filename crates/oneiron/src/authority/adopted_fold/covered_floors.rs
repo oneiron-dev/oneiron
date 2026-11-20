@@ -356,7 +356,7 @@ fn vouch_tip_free(
 /// Whether every covered row's signer `signer` names signed its covered
 /// rows, in each sequence scope (`world_privacy::side_world`), as one chain:
 /// sequences strictly rise, and each row descends from the one below it
-/// along that scope's rows (`rows_floor::descends_within_scope`). Then none
+/// along that scope's rows (`rows_floor::highest_key_row_below`). Then none
 /// of those signers' covered rows sits past a floor
 /// (`rows_floor::rows_sequence_floors`). A row that names a side row of
 /// another world is left out and never walked.
