@@ -91,7 +91,7 @@ pub(in crate::authority) fn fold_belief_structure_in_txn(
         }
         entries.push(decode_authority_log_entry_body(&body)?);
     }
-    entries.extend(arriving.values().cloned());
+    let _ = arriving; // RED PIN: the arriving rows left out of the belief.
     STAGED_BATCH.with(|staged| entries.extend(staged.borrow().iter().flatten().cloned()));
     let carried = evidence
         .iter()
