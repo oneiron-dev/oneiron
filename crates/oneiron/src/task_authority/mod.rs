@@ -1562,8 +1562,13 @@ impl Vault {
     /// under a carrier that names this install's machine without its verified signature
     /// (blind review round 2 P1, REVIEW-9365). Its task must still be a live TASK: a task's
     /// delete takes the fact's link to it and leaves the fact, so a twin would link the
-    /// deleted task again (blind review round 2 P1, REVIEW-8610). And its twin must not
-    /// stand yet ([`Self::twinned_here_in`]). None when this install signs nothing.
+    /// deleted task again (blind review round 2 P1, REVIEW-8610). Its row must link to that
+    /// task: sync can commit a fact's row before its `ScopedTo` link, in separate writes, and
+    /// the fold reads a task's facts through those links, so it does not see such a row. The
+    /// twin carries the link, and would count what the row does not, such as a cancel the
+    /// owner's archive held unlinked (blind review round 2 P1, REVIEW-9981); the row waits
+    /// for its link. And its twin must not stand yet ([`Self::twinned_here_in`]). None when
+    /// this install signs nothing.
     fn task_facts_to_adopt_in(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<TaskAuthorityFact>> {
         if !fact_proof::signs_in_txn(self, txn)? {
             return Ok(Vec::new());
@@ -1597,6 +1602,14 @@ impl Vault {
                 .live_type()
                 != Some(ENTITY_TYPE_TASK)
             {
+                continue;
+            }
+            if !self.edge_exists_in_txn(
+                txn,
+                &fact_ref,
+                EdgeKind::ScopedTo,
+                &carried.fact.task_ref,
+            )? {
                 continue;
             }
             if self.twinned_here_in(txn, &fact_ref, &carried.fact)? {
@@ -1688,10 +1701,11 @@ impl Vault {
     /// judges it as any fact: maker derive, actor rule and owner fork. A fact whose maker
     /// does not derive its task's id ([`TaskAuthorityFact::commits_to_its_task`]), such as
     /// a peer's second Owner fact the vault held beside the true one, lands as the archive
-    /// holds it and no more: no door of this install could have written it, so it is no
-    /// local write and gets no twin, and the fold skips it here as it did where it came
-    /// from. A restore does not fail on a row the source vault held and skipped (blind
-    /// review P1, REVIEW-9981).
+    /// holds it and no more, times included: replay takes a row's times apart from its
+    /// body, and no door of this install could have written the fact, so its times are not
+    /// checked, it is no local write and it gets no twin. The fold skips it here as it did
+    /// where it came from. A restore does not fail on a row the source vault held and
+    /// skipped (blind review P1 rounds 1 and 2, REVIEW-9981).
     pub(crate) fn restore_archived_task_fact_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -1702,17 +1716,18 @@ impl Vault {
         birth_facet: Option<EntityId>,
     ) -> Result<()> {
         let carried = decode_carried_task_authority_fact_body(body)?;
+        let derived = carried.fact.commits_to_its_task();
         let at = carried.fact.occurred_at;
-        if occurred.start != at || occurred.end != at || learned_at != at {
+        if derived && (occurred.start != at || occurred.end != at || learned_at != at) {
             return Err(Error::Record(RecordError::InvalidTaskBody(
                 "archived task authority fact times",
             )));
         }
         self.batch_in()
             .mask(birth_facet)
-            .put_task_fact(fact_ref, body, at)
+            .put_task_fact_with_times(fact_ref, body, occurred, learned_at)
             .apply(wtxn)?;
-        if !carried.fact.commits_to_its_task() {
+        if !derived {
             return Ok(());
         }
         fact_proof::record_written_fact_in_txn(&self.store, wtxn, fact_ref, body)
