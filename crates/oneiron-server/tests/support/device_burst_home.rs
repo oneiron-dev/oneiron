@@ -31,6 +31,8 @@ pub(crate) type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 const SECRET: &str = "device-burst-secret";
+/// The stored row's metadata header ahead of its body.
+const ROW_HEADER_LEN: usize = 25;
 /// The month window the rows land in: 2026-03-15 00:00 UTC.
 pub(crate) const WINDOW: &str = "2026-03";
 const T0: u64 = 1_773_532_800;
@@ -68,7 +70,7 @@ impl Device {
                     oneiron::registry::ENTITY_TYPE_TURN,
                     TimeRange { start: T0, end: T0 },
                     T0,
-                    &turn_body(),
+                    &turn_body("user"),
                 )
                 .unwrap();
         }
@@ -78,16 +80,60 @@ impl Device {
         self.doc.commit();
         (self.doc.export(ExportMode::updates(&before)).unwrap(), ids)
     }
+
+    /// One update that rewrites the TURN row `edited`, which an earlier
+    /// update added, as the assistant's, and adds `rows` new TURN rows, and
+    /// the new rows' ids. Its operations build on every earlier update's.
+    pub(crate) fn edit_and_rows_update(
+        &self,
+        edited: EntityId,
+        rows: usize,
+    ) -> (Vec<u8>, Vec<EntityId>) {
+        let before = self.doc.oplog_vv();
+        let ids = (0..rows).map(|_| EntityId::now()).collect::<Vec<_>>();
+        for id in &ids {
+            self.vault
+                .put_entity(
+                    id,
+                    oneiron::registry::ENTITY_TYPE_TURN,
+                    TimeRange { start: T0, end: T0 },
+                    T0,
+                    &turn_body("user"),
+                )
+                .unwrap();
+        }
+        let _mirrored =
+            oneiron::sync::window::reverse_rematerialize(&self.vault, &self.doc, &self.key)
+                .unwrap();
+        let raw = self
+            .vault
+            .get_raw(&edited)
+            .unwrap()
+            .expect("the edited row");
+        let mut blob = raw[..ROW_HEADER_LEN].to_vec();
+        blob.extend(turn_body("assistant"));
+        self.doc
+            .get_map("entities")
+            .insert(&edited.to_hex(), blob)
+            .unwrap();
+        self.doc.commit();
+        (self.doc.export(ExportMode::updates(&before)).unwrap(), ids)
+    }
 }
 
-fn turn_body() -> Vec<u8> {
+fn turn_body(role: &str) -> Vec<u8> {
     let mut body = Vec::new();
     rmpv::encode::write_value(
         &mut body,
-        &rmpv::Value::Map(vec![(rmpv::Value::from("role"), rmpv::Value::from("user"))]),
+        &rmpv::Value::Map(vec![(rmpv::Value::from("role"), rmpv::Value::from(role))]),
     )
     .unwrap();
     body
+}
+
+/// The host issuer the home's server roots its vault under.
+pub(crate) fn host_issuer() -> HostSlipIssuer {
+    HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap()
 }
 
 /// The operations an update carries, as the home's burst core counts them.
@@ -209,6 +255,11 @@ impl Home {
         .unwrap();
         let _ = next_binary(&mut ws, Duration::from_secs(10)).await;
         ws
+    }
+
+    /// The home's owner, as the test acts for them.
+    pub(crate) fn owner(&self) -> &AuthenticatedOwner {
+        &self.owner
     }
 
     /// The owner's view of the batch `batch_ref` of `device`.

@@ -8,7 +8,9 @@
 //! `StaleAuthority` and is never handed back. So does one whose slip still
 //! stands but whose write authority changed since it was held: its grant
 //! narrowed in place, another grant it may write under expired, or a world
-//! kept off its device (BURST-REPLAY-SKIPS-ROW-ADMISSION).
+//! kept off its device (BURST-REPLAY-SKIPS-ROW-ADMISSION). A grant's end is
+//! judged there on the wall clock, as the home's row admission judges it,
+//! not on the vault's grant clock (#9226 review round 2).
 //!
 //! The last test reads a receipt stored before own devices had receipts
 //! through the ledger's door (the lead's M-1 STORED-CHANGE-RULE, Engine
@@ -18,6 +20,7 @@
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use loro::{ExportMode, LoroDoc};
 use oneiron::authority::{HostSlipIssuer, PeerMachine};
@@ -49,6 +52,17 @@ const NOW: u64 = 1_700_000_000;
 /// Rows in one burst: far over a baseline of one write a second on a fresh
 /// vault's size.
 const BURST_ROWS: usize = 100;
+
+/// How long a grant that ends on the wall clock stays conferring past the
+/// moment it is written: room for the test to hold and hand back a burst
+/// first.
+const GRANT_WALL_LIFETIME_SECS: u64 = 5;
+
+/// The wall clock's second, which the home's row admission judges a grant's
+/// end on.
+fn wall_secs() -> TestResult<u64> {
+    Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
+}
 
 /// A device's home whose owner set the device's baseline to one write a
 /// second; `unusual_rate` routes a burst over it.
@@ -482,6 +496,78 @@ fn a_held_burst_ends_stale_once_another_residence_grant_of_its_holder_expires() 
         due.is_empty(),
         "a burst held under a grant that has expired since is not handed back: {due:?}"
     );
+    assert_eq!(
+        home.receipt_of(&device, &batch_ref)?.state,
+        FederationBurstWorkState::StaleAuthority
+    );
+    Ok(())
+}
+
+/// Case 3 of BURST-REPLAY-ROUND2-TESTS (#9226 review round 2, P1 3): whether
+/// a grant the device may write under confers is hashed into its held work's
+/// authority on the wall clock, which the home's row admission judges a
+/// grant's end on, not on the vault's grant clock. Here the grant clock
+/// stands past a Delegate grant's end that the wall clock has not reached:
+/// the burst held then is handed back and stands, and it stops standing once
+/// the wall clock passes that end, with no row changed and the vault's clock
+/// still. Red at 9cc1dbcc293d, whose digest judged the end on the grant
+/// clock, so it never changed.
+#[test]
+fn a_held_burst_stops_standing_once_the_wall_clock_passes_a_grant_end_the_grant_clock_passed()
+-> TestResult {
+    let home = home(FederationBurstOutcome::Defer)?;
+    let owner = home.vault.ensure_embedded_owner_actor()?;
+    let ends = wall_secs()? + GRANT_WALL_LIFETIME_SECS;
+    // The vault's clock, and with it its grant clock, a minute past the end.
+    let grant_clock = ends + 60;
+    home.clock.set(grant_clock);
+    // The own-device grant the device's slip names. It never ends.
+    let named_id = EntityId::now();
+    let named = FederationGrant::new(
+        own_device_residence_scope(),
+        owner,
+        FederationGrantRole::Owner,
+        FederationGrantPreset::Owner,
+    );
+    put_selector_test_federation_grant(&home.vault, &named_id, &named, grant_clock)?;
+    // A second grant of the slip's holder under the residence scope, which
+    // the device's selector may name: a Delegate grant that ends at `ends`.
+    let delegate_id = EntityId::now();
+    let mut delegate = FederationGrant::new(
+        own_device_residence_scope(),
+        owner,
+        FederationGrantRole::Delegate,
+        FederationGrantPreset::Delegate,
+    );
+    delegate.expires_at = Some(ends);
+    put_selector_test_federation_grant(&home.vault, &delegate_id, &delegate, grant_clock)?;
+    let slip = [0x48; 32];
+    home.mint_slip_under(slip, 3_600, Some(named_id))?;
+    let device = home.device_with_slip(PeerMachine::Unknown, slip)?;
+    let batch_ref = home.hold_burst(&device)?;
+
+    // Two seconds on the vault's clock, the device's rate is back at its
+    // baseline. The wall clock has not reached the grant's end: the drain
+    // hands the burst back, and it stands.
+    home.clock.set(grant_clock + 2);
+    let due = ready_device_work(&home.vault)?;
+    let [work] = due.as_slice() else {
+        return Err(format!(
+            "a burst held short of its grant's end on the wall clock is handed back: {due:?}"
+        )
+        .into());
+    };
+    assert!(device_burst_work_stands(&home.vault, work)?);
+
+    // The wall clock passes the grant's end.
+    while wall_secs()? <= ends {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        !device_burst_work_stands(&home.vault, work)?,
+        "a burst held while its grant conferred on the wall clock does not stand once the wall clock passes the grant's end"
+    );
+    assert!(ready_device_work(&home.vault)?.is_empty());
     assert_eq!(
         home.receipt_of(&device, &batch_ref)?.state,
         FederationBurstWorkState::StaleAuthority
