@@ -498,27 +498,42 @@ impl PipelineBuilder<'_> {
         )?;
         if !narrowed {
             // A clamped pack's unnarrowed list: the cut keeps the rows the
-            // list kept with no clamp asked, less the hidden ones, and the
-            // list is cut as before.
-            let mut kept = Vec::with_capacity(scores.len());
+            // reader reads, and the list is cut as before. The reader asks
+            // only the clamp here, so a row inside the bound the cut does not
+            // keep is a hidden one.
+            let mut readable = Vec::with_capacity(scores.len());
+            // The rows the bound held with no reader asked, best first under
+            // the request's sigma, and whether the clamp hides each.
+            let mut held_before = Vec::new();
             for scored in scores {
+                let inside = cut.ranks_inside_bound(&scored.id);
                 if cut.keeps(&self.read, rtxn, &scored.id)? {
-                    kept.push(scored);
+                    if inside {
+                        held_before.push((scored.id, false));
+                    }
+                    readable.push(scored);
+                } else if inside {
+                    held_before.push((scored.id, true));
                 }
             }
             if self.memory_category {
-                super::capabilities::retain_memory_candidates(&mut kept, &self.read, rtxn)?;
+                super::capabilities::retain_memory_candidates(&mut readable, &self.read, rtxn)?;
             }
-            // Best first under the request's sigma: a hidden row among the
-            // first `limit` held a place in the cut before, and the pack
-            // counts it as it did then.
+            // A hidden row among the first `limit` of those, in the lane,
+            // held a place in the list before, and the pack counts it as it
+            // did then.
             let mut withheld = Vec::new();
-            let mut readable = Vec::with_capacity(kept.len());
-            for (place, scored) in kept.into_iter().enumerate() {
-                if reader.reads(&self.read, rtxn, &scored.id)? {
-                    readable.push(scored);
-                } else if place < config.limit {
-                    withheld.push(scored.id);
+            let mut places = 0_usize;
+            for (id, hidden) in held_before {
+                if places == config.limit {
+                    break;
+                }
+                if self.memory_category && !CapabilityLane::Memory.admits(&self.read, rtxn, &id)? {
+                    continue;
+                }
+                places += 1;
+                if hidden {
+                    withheld.push(id);
                 }
             }
             self.truncate_to_scope(

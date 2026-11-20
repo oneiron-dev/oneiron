@@ -238,6 +238,15 @@ impl<'r, 'p, 'f> WindowCut<'r, 'p, 'f> {
         }
     }
 
+    /// Whether `id` ranks inside the bound in the window's order: a place
+    /// the bound gives a row with no reader asked, as a call with no reader
+    /// keeps it.
+    pub(super) fn ranks_inside_bound(&self, id: &EntityId) -> bool {
+        self.positions
+            .get(id)
+            .is_some_and(|&position| position < self.bound)
+    }
+
     pub(super) fn keeps(
         &self,
         store: &StoreRead<'_>,
