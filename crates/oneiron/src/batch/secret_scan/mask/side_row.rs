@@ -787,6 +787,29 @@ pub(crate) fn admission_form(value: &Value, known: Option<Arc<KnownValues>>) -> 
     Ok(std::mem::replace(&mut planned.0, Value::Nil))
 }
 
+/// `value` with each value `known` holds inside a member that carries a
+/// body of its own ([`mask_nested`]) as its record's handle, as the wall
+/// places it there at a write. Nothing is minted and nothing else changes
+/// (blind review round 1 of #9692). [`admission_form`] reads members by the
+/// field rule alone, so a body that is no text, such as a MessagePack map,
+/// it reads as written: an erase that reads custody reads a request a put
+/// fence erased before the wall in this form first, as a scrub reads the
+/// stored row whose body holds the handle.
+///
+/// # Errors
+///
+/// A body the wall cannot read.
+pub(crate) fn known_nested_form(value: &Value, known: Arc<KnownValues>) -> Result<Value> {
+    let mut form = PlanTree(value.clone());
+    let mut masker = Masker {
+        known: Some(known),
+        known_only: true,
+        ..Masker::default()
+    };
+    mask_nested(&mut masker, &mut form.0)?;
+    Ok(std::mem::replace(&mut form.0, Value::Nil))
+}
+
 /// `value` as a MessagePack tree that keeps its field names, as a named row
 /// stores it, for the wall's field rule.
 pub(crate) fn named_tree<T: Serialize>(value: &T) -> Result<Value> {
