@@ -385,7 +385,7 @@ pub(crate) fn door_refuses_retired_standing(
                 }
             }
         }
-        let held_fence = before.fenced.contains(signer);
+        let held_fence = before.fenced.contains(signer) || fold.handoff_or_appointment_retired_keys.contains(signer);
         if !held_fence && !signed_handoff {
             continue;
         }
