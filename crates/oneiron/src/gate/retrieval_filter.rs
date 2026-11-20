@@ -390,6 +390,20 @@ impl RetrievalPolicyFloor {
         .with_authority(&authority)
     }
 
+    /// This floor and `other` held as alternatives at once, as one envelope
+    /// for a read receipt's ceiling (FIX GRANT-READ-NARROWING-SAYS-DENY-ALL):
+    /// [`Self::union_envelope`], a deny-all side adding nothing. It reports
+    /// what the alternatives together could read, never an authorization.
+    pub(crate) fn alternative_envelope(&self, other: &Self) -> Self {
+        if other.deny_all {
+            return self.clone();
+        }
+        if self.deny_all {
+            return other.clone();
+        }
+        self.clone().union_envelope(other.clone())
+    }
+
     /// A safe prefilter for alternative grants, not a complete authorization.
     /// The final matcher must still accept one whole relationship/world/facet
     /// scope together with that same row's retrieval constraints.

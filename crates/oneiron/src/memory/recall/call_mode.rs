@@ -62,7 +62,9 @@ impl crate::memory::Memory<'_> {
         pin: &super::selection::RecallPin,
     ) -> MemoryResult<super::MemoryPack> {
         let worlds = self.recall_door_worlds(scope, pin)?;
-        let lane = self.read_lane(crate::claim::ClaimReadStatus::Surfaceable)?;
+        let lane = self
+            .read_lane(crate::claim::ClaimReadStatus::Surfaceable)?
+            .with_live_grant_receipts();
         let lane = match worlds {
             Some(worlds) => lane.within_worlds(worlds),
             None => lane,

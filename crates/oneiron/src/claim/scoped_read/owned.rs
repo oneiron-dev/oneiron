@@ -17,6 +17,7 @@ pub struct OwnedScopedRead {
     records_cover: records_cover::ArtifactRecordsCover,
     judged_at: Option<u64>,
     read_filter: Option<RetrievalFilter>,
+    receipts_include_live_grants: bool,
     vault: Arc<crate::Vault>,
 }
 
@@ -47,6 +48,7 @@ impl ScopedRead<'_> {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
         } = self;
         Ok(OwnedScopedRead {
             actor_key,
@@ -62,6 +64,7 @@ impl ScopedRead<'_> {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
             vault,
         })
     }
@@ -85,6 +88,7 @@ impl OwnedScopedRead {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
             vault,
         } = self;
         let read = ScopedRead {
@@ -104,6 +108,7 @@ impl OwnedScopedRead {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
         };
         let result = operation(&read);
         let ScopedRead {
@@ -123,6 +128,7 @@ impl OwnedScopedRead {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
         } = read;
         (
             Self {
@@ -139,6 +145,7 @@ impl OwnedScopedRead {
                 records_cover,
                 judged_at,
                 read_filter,
+                receipts_include_live_grants,
                 vault,
             },
             result,
@@ -192,6 +199,7 @@ impl OwnedScopedRead {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
             vault: _,
         } = self;
         Ok(ScopedRead {
@@ -211,6 +219,7 @@ impl OwnedScopedRead {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
         })
     }
 }

@@ -101,7 +101,7 @@ impl ScopedRead<'_> {
             suppressed += withheld;
             value.push(outcome.into_slot());
         }
-        let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
+        let receipt = self.receipt_in(txn, requested, &policy, &filter, suppressed);
         self.charge_served(
             value
                 .iter()
