@@ -409,8 +409,6 @@ fn suspend_pacts_of_expired_rows<E: LogRow>(
                 && !live_row(&|renewal| {
                     sets_ceiling(renewal, pact) && backs_peer_pin(renewal, pact)
                 }))
-                || (backs_peer_pin(action, pact)
-                    && !live_row(&|renewal| backs_peer_pin(renewal, pact)))
         };
         if shapes {
             held.insert(action.pact_id);
