@@ -48,6 +48,7 @@ pub(in crate::calendar) use import_claim::{
     admit_calendar_import_claim, admit_calendar_import_claim_in_txn,
 };
 use import_claim::{admit_calendar_import_claim_screened, imported_screen};
+pub(crate) use recurrence::clear_absence_cancellation_in_txn;
 
 #[cfg(test)]
 use super::fetch::{IcsFeedFetcher, IcsFetchResponse};
@@ -320,7 +321,9 @@ impl PollAdmission<'_> {
     /// revised invite is queued. The echo of the slot the booking already
     /// sits at writes nothing, and a pending emergency delivery holds the
     /// move back. [`FeedMoveOutcome::NotBooking`] when the EVENT carries no
-    /// live booking: the caller then rewrites the EVENT as any other.
+    /// booking, or one its own status cancelled: the caller then rewrites the
+    /// EVENT as any other. A booking a calendar's cancellation stands on keeps
+    /// its booked slot ([`FeedMoveOutcome::Unchanged`]), as below.
     ///
     /// A cancellation moves nothing and stays the imported-cancel outcome. A
     /// booking's EVENT keeps its booked slot through it
@@ -328,22 +331,36 @@ impl PollAdmission<'_> {
     /// measure the cancellation against that slot, and a cancellation that
     /// names no DTSTART would otherwise rewrite it to the undated sentinel
     /// (review round 2 of #9233). Any other EVENT is rewritten as before.
+    ///
+    /// A live VEVENT's body is screened before a booking can move on it: the
+    /// admissions after the move screen the same body, so a screen that
+    /// refuses it fails the poll here, before the booking takes a slot,
+    /// ends an omission's cancellation or queues an invite on a version
+    /// that was never admitted (review round 2 of #9677). A screen that
+    /// passes here and fails on one of those admissions fails the pass after
+    /// the move; the next read of the feed admits the version, and the move,
+    /// already made, writes nothing again.
     fn move_booking(
         &self,
         event_ref: EntityId,
         event: &ParsedVEvent,
     ) -> Result<FeedMoveOutcome, CalendarError> {
-        if event.cancelled {
-            let is_booking = crate::booking::lifecycle::is_booking_event(self.vault, &event_ref)
-                .map_err(|error| CalendarError::IcsIngest {
-                    reason: error.to_string(),
-                })?;
-            return Ok(if is_booking {
-                FeedMoveOutcome::Unchanged
-            } else {
-                FeedMoveOutcome::NotBooking
-            });
+        let is_booking = crate::booking::lifecycle::is_booking_event(self.vault, &event_ref)
+            .map_err(|error| CalendarError::IcsIngest {
+                reason: error.to_string(),
+            })?;
+        if !is_booking {
+            return Ok(FeedMoveOutcome::NotBooking);
         }
+        if event.cancelled {
+            return Ok(FeedMoveOutcome::Unchanged);
+        }
+        screen_then_claim(
+            self.safeguard_enabled,
+            self.screener,
+            &screen_body(event),
+            |_| Ok(()),
+        )?;
         let slot = match (event.starts_at_utc, event.ends_at_utc) {
             (Some(start), Some(end)) => Some(TimeRange { start, end }),
             _ => None,
@@ -504,6 +521,17 @@ impl PollAdmission<'_> {
 
     /// Admits one `calendar.status` claim, superseding the prior live status
     /// claim, and skips when the live claim already carries the exact value.
+    /// An omission's cancellation (basis `imported_absence`) also skips over
+    /// an admitted cancellation of any other basis: an omission is the
+    /// weakest evidence, and a later live VEVENT ends it
+    /// ([`Self::clear_absence_cancellation`]), so replacing a provider's,
+    /// the booking's or the owner's cancellation with it would let that
+    /// VEVENT end the cancellation too (review round 1 of #9677). A status
+    /// that still waits on the owner (a flagged cancel the feed's standing
+    /// consent holds) is no admitted cancellation: booking reads skip it
+    /// ([`crate::claim::claim_surfaceable`]), so it does not block the
+    /// omission, and the omission is admitted beside it without superseding
+    /// it, so the owner's answer to it stays owed (review round 2 of #9677).
     /// Returns the new claim's id, or `None` when nothing was written.
     fn admit_status_if_changed(
         &mut self,
@@ -527,6 +555,14 @@ impl PollAdmission<'_> {
                 .map_err(|_| ingest("stored status claim did not decode"))?;
             if current.status == status && current.basis == basis {
                 return Ok(None);
+            }
+            if basis == CalendarStatusBasis::ImportedAbsence {
+                if !crate::claim::claim_surfaceable(&claim) {
+                    continue;
+                }
+                if current.status == status {
+                    return Ok(None);
+                }
             }
             prior_live = Some(claim_id);
         }

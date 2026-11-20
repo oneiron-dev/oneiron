@@ -1282,6 +1282,92 @@ fn a_host_cancel_naming_no_start_refunds_against_the_booked_start() {
     );
 }
 
+/// FIX BK-DEPOSIT-CANCELLED-ELSEWHERE-FEED-REWRITES-BOOKED-SLOT: a calendar
+/// the booking was never written to cancels it, which moves no money (RULING
+/// DEPOSIT-HOST-CANCEL-SOURCE = A). The host's calendar then carries the
+/// booking live with no DTSTART or DTEND, and its EVENT keeps the booked
+/// slot, so the host's cancel from that calendar before the start refunds in
+/// full.
+#[test]
+fn a_host_cancel_after_another_calendar_cancelled_refunds_against_the_booked_start() {
+    let fixture = Fixture::open();
+    let host = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let booked = captured_booking(&fixture, "pi_cancelled_elsewhere", 9);
+    let event = booked.calendar.event_ref;
+    let booked_slot = slot_at(9);
+    let wrote = host.write(&fixture.vault, event, NOW + 55);
+    pull_seat(
+        &host,
+        &fixture,
+        &wrote,
+        booked_slot.start,
+        0,
+        false,
+        NOW + 60,
+    )
+    .expect("the host seat's first pull");
+    // The visitor's calendar shows the booking, and at 08:02 carries it
+    // cancelled as SEQUENCE 1.
+    let visitor = Seat::install(&fixture.vault, VISITOR_SEAT_SYSTEM);
+    read_booking_on_seat(&visitor, &fixture, &booked, booked_slot.start, NOW + 90);
+    visitor
+        .pull(
+            &fixture.vault,
+            &[SeatChange::foreign(
+                &visitor,
+                &booked.calendar.uid,
+                booked_slot.start,
+                booked_slot.end,
+                1,
+                true,
+            )],
+            NOW + 120,
+        )
+        .expect("the visitor calendar's cancellation");
+    assert_eq!(
+        fixture.state_of("pi_cancelled_elsewhere"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a cancellation from a calendar the booking was not written to moves no money"
+    );
+    // At 08:03 the host's calendar carries the booking live as SEQUENCE 1,
+    // with no DTSTART or DTEND.
+    host.pull(
+        &fixture.vault,
+        &[SeatChange::undated_live(&wrote, 1)],
+        NOW + 180,
+    )
+    .expect("the undated version's pull");
+    assert_eq!(
+        fixture
+            .vault
+            .get_occurred(&event)
+            .expect("booking occurrence")
+            .start,
+        booked_slot.start,
+        "the cancelled booking's EVENT keeps its booked start"
+    );
+    // At 08:04 the host cancels it in that calendar, before the 09:00 start.
+    pull_seat(
+        &host,
+        &fixture,
+        &wrote,
+        booked_slot.start,
+        2,
+        true,
+        NOW + 240,
+    )
+    .expect("the host's cancellation");
+    assert_eq!(
+        fixture.state_of("pi_cancelled_elsewhere"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the host's cancel before the booked start refunds in full"
+    );
+}
+
 /// Review round 2 of #9233: the repair of a stopped refund reads the same
 /// booked start. The undated cancellation's passport commits at 08:02 and
 /// the pull stops before its refund; the same version read after the start

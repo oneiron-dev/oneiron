@@ -71,14 +71,15 @@ pub(crate) enum SeatChange {
         sequence: u32,
         cancelled: bool,
     },
-    /// One booking's resource as a cancellation that names no DTSTART or
-    /// DTEND (calendar/ics/parse.rs takes both as optional).
-    UndatedCancel {
+    /// One booking's resource with no DTSTART or DTEND, live or cancelled
+    /// (calendar/ics/parse.rs takes both as optional).
+    Undated {
         /// The resource path, as the provider reported it.
         href: String,
         /// The booking's UID.
         uid: String,
         sequence: u32,
+        cancelled: bool,
     },
     /// The provider removed the resource carrying one booking's UID.
     Tombstone {
@@ -137,10 +138,22 @@ impl SeatChange {
     /// DTSTART or DTEND, carried under the href the seat's write of it
     /// returned.
     pub(crate) fn undated_cancel(receipt: &RemoteWriteReceipt, sequence: u32) -> Self {
-        Self::UndatedCancel {
+        Self::Undated {
             href: receipt.href.clone(),
             uid: receipt.uid.clone(),
             sequence,
+            cancelled: true,
+        }
+    }
+
+    /// One booking's resource, live at `sequence`, that names no DTSTART or
+    /// DTEND, carried under the href the seat's write of it returned.
+    pub(crate) fn undated_live(receipt: &RemoteWriteReceipt, sequence: u32) -> Self {
+        Self::Undated {
+            href: receipt.href.clone(),
+            uid: receipt.uid.clone(),
+            sequence,
+            cancelled: false,
         }
     }
 
@@ -244,12 +257,13 @@ impl Seat {
                         &ics,
                     ))
                 }
-                SeatChange::UndatedCancel {
+                SeatChange::Undated {
                     href,
                     uid,
                     sequence,
+                    cancelled,
                 } => {
-                    let ics = undated_cancel_ics(uid, *sequence);
+                    let ics = undated_ics(uid, *sequence, *cancelled);
                     RemoteCalendarChange::Upsert(remote_upsert(
                         href,
                         Some(&format!("{href}-s{sequence}")),
@@ -439,15 +453,18 @@ fn booking_ics(uid: &str, start: u64, end: u64, sequence: u32, cancelled: bool) 
     out.into_bytes()
 }
 
-/// One booking's cancellation at `sequence` with no DTSTART or DTEND.
-fn undated_cancel_ics(uid: &str, sequence: u32) -> Vec<u8> {
+/// One booking's resource at `sequence` with no DTSTART or DTEND, live or
+/// cancelled.
+fn undated_ics(uid: &str, sequence: u32, cancelled: bool) -> Vec<u8> {
     let mut out = String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//test//EN\r\n");
     out.push_str("BEGIN:VEVENT\r\n");
     out.push_str(&format!("UID:{uid}\r\n"));
     out.push_str("DTSTAMP:20260302T070000Z\r\n");
     out.push_str(&format!("SEQUENCE:{sequence}\r\n"));
     out.push_str("SUMMARY:intro-call\r\n");
-    out.push_str("STATUS:CANCELLED\r\n");
+    if cancelled {
+        out.push_str("STATUS:CANCELLED\r\n");
+    }
     out.push_str("END:VEVENT\r\nEND:VCALENDAR\r\n");
     out.into_bytes()
 }
