@@ -32652,7 +32652,7 @@
      "purpose": "The Dreamer's model roles, and the backend each one calls out on",
      "surface": {
       "const": 4,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 7,
       "struct": 3
      }
@@ -135711,7 +135711,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "LlmCapability",
@@ -135722,7 +135722,7 @@
      "path": "src/llm/catalog.rs",
      "purpose": "Capability catalog: flags, entries with supports/require, costs, and reasoning effort",
      "surface": {
-      "const": 2,
+      "const": 3,
       "enum": 2,
       "fn": 9,
       "struct": 2
@@ -136092,7 +136092,7 @@
      "surface": {
       "const": 3,
       "enum": 8,
-      "fn": 11,
+      "fn": 12,
       "struct": 9
      }
     },
