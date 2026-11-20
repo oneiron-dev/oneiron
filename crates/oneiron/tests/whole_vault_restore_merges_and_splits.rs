@@ -22,12 +22,28 @@
 //! * `owner_restore_into_a_vault_holding_rows_keeps_its_machine_identity`:
 //!   that restore loads no signing keys, so a keystore lacking this install's
 //!   slot does not make it forget its machine (REVIEW-9756 round 1 P1-2).
+//! * `owner_restore_of_an_archive_without_secrets_names_a_multipart_merge_incomplete`:
+//!   a merge of 256 sources is recorded over several parts; the restore of
+//!   an archive taken without secrets completes and names it
+//!   `ArchivedDecisionIncomplete` (REVIEW-9756 round 2 P1-1).
+//! * `owner_restore_into_a_fresh_vault_with_an_unheld_machine_seed_keeps_its_machine_identity`:
+//!   a fresh vault whose keystore lacks this install's slot loads no keys for
+//!   the restore and keeps its machine; each decision is `SigningUnavailable`
+//!   (REVIEW-9756 round 2 P1-2).
+//! * `a_whole_vault_export_names_no_use_limited_merge`: the manifest names a
+//!   current merge only when the archive carries its record; a held privacy
+//!   erase keeps one out (REVIEW-9756 round 2 P1-3).
 //!
 //! Red on main d4c26c681b6 (the tests-only commit): the first test fails at
 //! its first lifecycle check (the merged PERSON is back Active); the other
 //! two pass and guard the doors this row does not change. The receipt
 //! fields, the undo of a restored merge and the no-keys test are new, so
 //! they come with the fix commit.
+//!
+//! Red at the round-1 head 76e4b56ff52 (the round-2 tests-only commit): the
+//! multipart restore fails (the import's round-trip check refuses the part
+//! rows), the unheld-seed restore seals each decision under a machine it
+//! joined as anew, and the manifest names the use-limited merge.
 //!
 //! Vaults in tempdirs, every step through public doors. Source and
 //! destination each sign with their own in-memory install keystore. Each
@@ -44,14 +60,19 @@ use oneiron::batch::export::{
     IdentityTopologyNotRestored, IdentityTopologyRestoreKind, WholeVaultImportReceipt,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::deletion::LegalHoldTarget;
 use oneiron::edge::EdgeKind;
 use oneiron::identity_topology::{
     EngineCause, EntityLifecycleState, IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite,
     IdentityTopologyOp, MergeOp, ReassignmentMap, SplitOp, SurvivorshipPlan, TopologySeal,
 };
+use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
-use oneiron::{ClaimSource, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
+use oneiron::{
+    ClaimSource, EdgeActorClass, EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig,
+    WriteActor,
+};
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -527,5 +548,212 @@ fn owner_restore_into_a_vault_holding_rows_keeps_its_machine_identity() {
             .expect("load this install's signing keys again"),
         machine,
         "a restore that seals no decision keeps this install's machine identity"
+    );
+}
+
+/// The receipt's unrestored decisions as (archived id, reason), sorted.
+fn unrestored(receipt: &WholeVaultImportReceipt) -> Vec<(String, IdentityTopologyNotRestored)> {
+    let mut unrestored: Vec<(String, IdentityTopologyNotRestored)> = receipt
+        .unrestored_identity_topology_events
+        .iter()
+        .map(|event| (event.archived.clone(), event.reason.clone()))
+        .collect();
+    unrestored.sort_by(|a, b| a.0.cmp(&b.0));
+    unrestored
+}
+
+#[test]
+fn owner_restore_of_an_archive_without_secrets_names_a_multipart_merge_incomplete() {
+    let (_dir, source) = open_signing_vault();
+    let survivor = put_person(&source);
+    // One record holds fewer than 256 participants besides the survivor, so
+    // this decision is stored as an operation manifest and its parts.
+    let sources: Vec<EntityId> = (0..256).map(|_| put_person(&source)).collect();
+    let decision = apply(
+        &source,
+        IdentityTopologyOp::Merge(MergeOp {
+            sources: sources.clone(),
+            survivor,
+            evidence: evidence("one person under many records"),
+            survivorship_plan: SurvivorshipPlan::ReadThrough,
+        }),
+        200,
+    );
+    assert_eq!(
+        source
+            .entity_lifecycle_state(&sources[0])
+            .expect("source lifecycle"),
+        EntityLifecycleState::Merged,
+        "precondition: the wide merge applies at the source"
+    );
+    let archive = source
+        .export_whole_vault(false)
+        .expect("whole-vault export without secrets")
+        .bytes()
+        .to_vec();
+    let (_dest_dir, dest) = open_later_signing_vault();
+    let owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner)
+        .expect("the owner's restore of an archive without secrets completes");
+    assert!(
+        receipt.restored_identity_topology.is_empty(),
+        "a decision whose parts went nulled is not decided again"
+    );
+    assert_eq!(
+        unrestored(&receipt),
+        vec![(
+            decision.to_hex(),
+            IdentityTopologyNotRestored::ArchivedDecisionIncomplete
+        )],
+        "the receipt names the wide merge incomplete"
+    );
+    for row in sources.iter().chain([&survivor]) {
+        assert_eq!(
+            dest.entity_lifecycle_state(row)
+                .expect("destination lifecycle"),
+            EntityLifecycleState::Active,
+            "PERSON {} is back as a separate row",
+            row.to_hex()
+        );
+    }
+}
+
+#[test]
+fn owner_restore_into_a_fresh_vault_with_an_unheld_machine_seed_keeps_its_machine_identity() {
+    let restored = topology_archive();
+    let (_dir, dest) = open_later_vault();
+    let keystore = Arc::new(oneiron_keystore::MemoryKeystore::new());
+    dest.install_device_keystore(keystore.clone());
+    let machine = dest
+        .prepare_install_signing()
+        .expect("load this install's signing keys");
+    // A keystore without this install's slot: the vault names a device key
+    // whose seed this install does not hold. The vault holds no row of its
+    // own, so the restore is into a fresh vault.
+    dest.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    let owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&restored.archive), &owner)
+        .expect("the owner's restore completes");
+    assert!(
+        receipt.restored_identity_topology.is_empty(),
+        "no decision is sealed by a machine this install joined as anew: {:?}",
+        receipt.restored_identity_topology
+    );
+    let mut expected: Vec<(String, IdentityTopologyNotRestored)> = restored
+        .current
+        .iter()
+        .map(|(event, _)| {
+            (
+                event.to_hex(),
+                IdentityTopologyNotRestored::SigningUnavailable,
+            )
+        })
+        .collect();
+    expected.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        unrestored(&receipt),
+        expected,
+        "each current decision stays archive data for want of keys"
+    );
+    assert_back_separate(&dest, &restored);
+    dest.install_device_keystore(keystore);
+    assert_eq!(
+        dest.prepare_install_signing()
+            .expect("load this install's signing keys again"),
+        machine,
+        "the restore keeps this install's machine identity"
+    );
+}
+
+/// A hosted vault that signs with its own in-memory install keystore, so a
+/// held privacy erase keeps its record use-limited.
+fn open_hosted_signing_vault() -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().expect("temp dir for the hosted vault");
+    let mut config = VaultConfig::default();
+    config.privacy.posture = HostingPrivacyPosture::Hosted;
+    let vault = Vault::open_owned(dir.path(), config).expect("open the hosted vault");
+    load_signing_keys(&vault);
+    (dir, vault)
+}
+
+/// Places a customer hold on `record` and runs its privacy erase, which the
+/// hold refuses: the record stays stored and use-limited, and a whole-vault
+/// export keeps it out.
+fn use_limit(vault: &Vault, record: EntityId) {
+    let hold = vault
+        .place_legal_hold(
+            &owner_proof(vault),
+            vec![LegalHoldTarget::Record(record)],
+            Some("matter-topology".to_owned()),
+        )
+        .expect("FIXTURE: place the customer hold");
+    assert!(hold.stands(), "FIXTURE: the customer hold stands: {hold:?}");
+    let actor = vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the vault names its embedded owner actor");
+    let memory = vault.memory(actor, EdgeActorClass::Human);
+    let preview = memory
+        .preview_entity_delete(&record)
+        .expect("FIXTURE: preview the privacy erase");
+    let outcome = memory
+        .confirm_entity_erase(
+            &preview,
+            EraseOptions {
+                reason: EraseReason::GdprDelete,
+                also_same_bytes: false,
+                veto_starter: None,
+            },
+        )
+        .expect("FIXTURE: the privacy erase runs");
+    assert_eq!(
+        outcome.first.reason.as_str(),
+        "privacy_erase_kept",
+        "FIXTURE: the held privacy erase is kept: {outcome:?}"
+    );
+    assert!(
+        vault
+            .legal_hold_use_limit(&record)
+            .expect("FIXTURE: read the use limit")
+            .is_some(),
+        "FIXTURE: the kept erase use-limits the record"
+    );
+}
+
+#[test]
+fn a_whole_vault_export_names_no_use_limited_merge() {
+    let (_dir, source) = open_hosted_signing_vault();
+    let carried = apply(
+        &source,
+        merge(put_person(&source), put_person(&source)),
+        200,
+    );
+    let held = apply(
+        &source,
+        merge(put_person(&source), put_person(&source)),
+        210,
+    );
+    use_limit(&source, held);
+    let archive = source
+        .export_whole_vault(true)
+        .expect("whole-vault export")
+        .bytes()
+        .to_vec();
+    let document = source
+        .read_whole_vault_archive(&archive)
+        .expect("read the archive");
+    assert!(
+        !document
+            .evidence_ledger
+            .entities
+            .iter()
+            .any(|entity| entity.id == held.to_hex()),
+        "FIXTURE: the archive keeps the use-limited merge's record out"
+    );
+    assert_eq!(
+        document.manifest.current_identity_topology_events,
+        vec![carried.to_hex()],
+        "the manifest names the carried merge and not the use-limited one"
     );
 }
