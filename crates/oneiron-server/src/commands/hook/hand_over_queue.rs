@@ -7,22 +7,27 @@
 //! The recall sign-in stays `read`, and the import is a Write row, so a
 //! hand-over on it never landed. When no hand-over sign-in stands, the log
 //! waits here: one small owner-only file per session in an owner-only folder
-//! per vault ([`hosted_selection::hand_over_queue_dir`]), naming the host,
-//! the session and the log's path, never a copy of the log.
+//! per origin and vault id ([`hosted_selection::hand_over_queue_dir`]),
+//! naming the host, the session and the log's path, never a copy of the
+//! log. Every hand-over on an OAuth selection queues its log first and takes
+//! it out once it lands, so a send that fails (a sign-in the vault no longer
+//! takes, a vault that does not answer) lands later.
 //!
 //! At the next hand-over on a standing sign-in, the logs waiting land after
 //! the session's own, each read again through the hand-over's own checks
-//! ([`super::continue_command::hand_over_hosted`]). One that lands, or whose
-//! log is gone or refused, leaves the queue; one whose send fails waits on.
+//! ([`super::continue_command::hand_over_hosted`]), and only while its
+//! session is still bound to that vault alone. One that lands, or whose log
+//! is gone or refused, leaves the queue; one whose send got no answer waits
+//! on.
 //! A logout of the vault empties its queue ([`clear`]).
 
 use std::io::Read as _;
-use std::os::unix::fs::DirBuilderExt as _;
+use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::hosted_selection;
+use super::hosted_selection::{self, HostedVault};
 use crate::cli::HookHost;
 use crate::commands::{credential_file, local_servers, oauth_sign_in};
 
@@ -69,23 +74,25 @@ fn entry_file(dir: &Path, host: HookHost, session: &str) -> PathBuf {
     dir.join(format!("{}-{}.json", host.as_str(), &digest[..16]))
 }
 
-/// Queues the log at `log` of `host`'s session `session` for the vault at
-/// `origin`, in place of any earlier entry of the session; past
-/// [`MAX_QUEUED`], the oldest log leaves. Answers whether the queue held no
-/// log before.
+/// Queues the log at `log` of `host`'s session `session` for `vault`, in
+/// place of any earlier entry of the session; past [`MAX_QUEUED`], the
+/// oldest log leaves. The count, the eviction and the write run under the
+/// queue's lock, so session ends that queue at once keep the bound. Answers
+/// whether the queue held no log before.
 pub(super) fn enqueue(
-    origin: &str,
+    vault: &HostedVault,
     host: HookHost,
     session: &str,
     log: &Path,
 ) -> anyhow::Result<bool> {
-    let dir = hosted_selection::hand_over_queue_dir(origin)
+    let dir = hosted_selection::hand_over_queue_dir(vault)
         .ok_or_else(|| anyhow::anyhow!("there is no per-user oneiron folder (HOME is not set)"))?;
     std::fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
         .create(&dir)
         .map_err(|error| anyhow::anyhow!("create {}: {error}", dir.display()))?;
+    let _locked = lock(&dir)?;
     let file = entry_file(&dir, host, session);
     let waiting = read_dir(&dir);
     let first = waiting.is_empty();
@@ -103,23 +110,39 @@ pub(super) fn enqueue(
     Ok(first)
 }
 
-/// The logs waiting for the vault at `origin`, oldest first. A file that is
-/// not one only this user can write, or not a queued log, is passed over.
-pub(super) fn queued(origin: &str) -> Vec<Queued> {
-    hosted_selection::hand_over_queue_dir(origin).map_or_else(Vec::new, |dir| read_dir(&dir))
+/// The queue folder `dir`'s lock, held until the answer drops: an
+/// exclusive `flock` on `.lock` in it.
+fn lock(dir: &Path) -> anyhow::Result<std::fs::File> {
+    let path = dir.join(".lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .open(&path)
+        .map_err(|error| anyhow::anyhow!("open {}: {error}", path.display()))?;
+    rustix::fs::flock(&file, rustix::fs::FlockOperation::LockExclusive)
+        .map_err(|error| anyhow::anyhow!("lock {}: {error}", path.display()))?;
+    Ok(file)
 }
 
-/// Takes the log of `host`'s session `session` out of the queue of the
-/// vault at `origin`, if it waits there.
-pub(super) fn leave(origin: &str, host: HookHost, session: &str) {
-    if let Some(dir) = hosted_selection::hand_over_queue_dir(origin) {
+/// The logs waiting for `vault`, oldest first. A file that is not one only
+/// this user can write, or not a queued log, is passed over.
+pub(super) fn queued(vault: &HostedVault) -> Vec<Queued> {
+    hosted_selection::hand_over_queue_dir(vault).map_or_else(Vec::new, |dir| read_dir(&dir))
+}
+
+/// Takes the log of `host`'s session `session` out of `vault`'s queue, if
+/// it waits there.
+pub(super) fn leave(vault: &HostedVault, host: HookHost, session: &str) {
+    if let Some(dir) = hosted_selection::hand_over_queue_dir(vault) {
         let _ = std::fs::remove_file(entry_file(&dir, host, session));
     }
 }
 
-/// Empties the queue of the vault at `origin`, and removes its folder.
-pub(super) fn clear(origin: &str) -> anyhow::Result<()> {
-    let Some(dir) = hosted_selection::hand_over_queue_dir(origin) else {
+/// Empties `vault`'s queue, and removes its folder.
+pub(super) fn clear(vault: &HostedVault) -> anyhow::Result<()> {
+    let Some(dir) = hosted_selection::hand_over_queue_dir(vault) else {
         return Ok(());
     };
     match std::fs::remove_dir_all(&dir) {
@@ -131,13 +154,24 @@ pub(super) fn clear(origin: &str) -> anyhow::Result<()> {
 }
 
 /// What the hand-over says on stderr when a session's log is the first to
-/// wait for the vault at `origin`: which command lets it land.
+/// wait for the vault at `origin` with no hand-over sign-in: which command
+/// lets it land.
 pub(super) fn waiting_note(origin: &str) -> String {
     format!(
         "This session's log waits on this machine: {origin} is signed in here for recall \
          alone, and landing a log writes. `oneiron hosted login --origin {origin} --hand-over` \
          lets session logs land there as each session ends; the logs waiting land at the next \
          one."
+    )
+}
+
+/// What the hand-over says on stderr when a session's log, the first to
+/// wait for the vault at `origin`, did not land on its hand-over sign-in.
+pub(super) fn unlanded_note(origin: &str, error: &anyhow::Error) -> String {
+    format!(
+        "This session's log waits on this machine: its hand-over to {origin} did not land \
+         ({error:#}). It lands at a later session end; when the vault no longer takes the \
+         hand-over sign-in, `oneiron hosted login --origin {origin} --hand-over` signs in again."
     )
 }
 
