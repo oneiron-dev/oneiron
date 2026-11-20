@@ -80,5 +80,6 @@ mod hub_source_archive;
 pub use hub_source_archive::ExportHubSource;
 
 mod export_actor_references;
+mod export_identity_topology_references;
 
 pub(crate) use oneiron_store::serialize::person_identity;

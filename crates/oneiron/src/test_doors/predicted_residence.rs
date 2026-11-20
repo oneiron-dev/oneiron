@@ -109,3 +109,15 @@ pub fn append_prediction_dated(
 pub async fn run_predicted_pass(connection: &SyncConnection) -> Result<(), TransportError> {
     connection.run_predicted_pass().await
 }
+
+/// Moves the home's noted prediction pushes `secs` into the past, as that much time passing does,
+/// so a test reaches the end of the push spacing without waiting.
+pub fn age_predicted_pushes(vault: &Vault, secs: u64) {
+    vault.store.predicted_pushes.age(secs);
+}
+
+/// How many prediction pushes the home holds noted for its push spacing: only those younger than
+/// the spacing once the next ask has run.
+pub fn noted_predicted_pushes(vault: &Vault) -> usize {
+    vault.store.predicted_pushes.noted()
+}
