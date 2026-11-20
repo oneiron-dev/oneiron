@@ -271,15 +271,13 @@ impl Vault {
             return Err(refusal);
         }
         let conversation = conversation_id(SOURCE, &input.session)?;
-        let txn = self.store.env.read_txn()?;
-        if !crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, &conversation)? {
+        if !self.transcript_conversation_present(&conversation)? {
             return Err(MemoryError::new(
                 MEMORY_CODE_BAD_REQUEST,
                 ERR_NO_CONVERSATION,
                 &[HINT_NO_CONVERSATION],
             ));
         }
-        drop(txn);
         Ok(HookTranscriptImportView {
             conversation: conversation.to_hex(),
             conversations: views
@@ -288,6 +286,13 @@ impl Vault {
                 .collect::<Result<_>>()?,
             review,
         })
+    }
+
+    /// Whether the CONVERSATION `id` is present, as `vault.runners.continue`
+    /// asks of the one it takes, in a read snapshot of its own.
+    fn transcript_conversation_present(&self, id: &EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, id)
     }
 }
 
