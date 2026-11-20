@@ -19,6 +19,9 @@
 //! STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS). A facet-limited agent's second
 //! ask replays its answer while its Grant reads the answer's facet, and
 //! never once it does not (FIX STANDING-ANSWER-FACET-LIMITED-REPLAY-TEST).
+//! A room that read a raised budget's live fold, wider than the frozen
+//! record still saved, stales the answer that fold placed once it narrows
+//! back to the record's set (review round 1 on #9735).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test graph_answer_source_facets`.
@@ -27,7 +30,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use oneiron::authority::{ActSurface, HostSlipIssuer};
+use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::DeleteEntityOptions;
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
@@ -54,7 +57,10 @@ use oneiron::test_doors::room_facet_set::{
 use oneiron::verbs::{
     AgentGrantMintRequest, AgentGrantRevokeRequest, mint_agent_grant_as, revoke_agent_grant_as,
 };
-use oneiron::workspace_roster::{ProjectRecord, ProjectWriteProof};
+use oneiron::workspace_roster::{
+    DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, ProjectDisposition, ProjectFrontier,
+    ProjectHistoryPolicy, ProjectRecord, ProjectWriteProof,
+};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use serde_json::json;
 
@@ -284,12 +290,17 @@ impl Fixture {
 
     /// The owner's live `read` Grant to `agent` over MESSAGE and CLAIM rows
     /// placed in `facets` alone, every other axis covering every row; returns
-    /// the Grant's row.
+    /// the Grant's row. This install's live machine profile carries the
+    /// owner's agent Grant act, as a serving start or `init` enrols it (FIX
+    /// 4648).
     fn grant_reading_in(
         &self,
         agent: EntityId,
         facets: &BTreeSet<EntityId>,
     ) -> TestResult<EntityId> {
+        self.vault
+            .ensure_serving_install_profile(&self.issuer, MachineRole::Unanswered)
+            .map_err(|error| format!("this install's live machine profile: {error:?}"))?;
         let mut authority_scope = Scope::top();
         authority_scope.bands =
             ScopeAxis::Some(BTreeSet::from([ENTITY_TYPE_MESSAGE, ENTITY_TYPE_CLAIM]));
@@ -449,6 +460,22 @@ impl Fixture {
         room: Option<BTreeSet<EntityId>>,
         edit: impl FnOnce(&mut ProjectRecord),
     ) -> TestResult {
+        assert!(
+            self.roster_write_installs(project, room, edit)?,
+            "precondition: the roster write installs"
+        );
+        Ok(())
+    }
+
+    /// [`Self::write_roster`], which may also hold the state: past the
+    /// history budget a state over the frozen head is held, and the frozen
+    /// view takes it as a narrowing meet. Whether it installs.
+    fn roster_write_installs(
+        &self,
+        project: EntityId,
+        room: Option<BTreeSet<EntityId>>,
+        edit: impl FnOnce(&mut ProjectRecord),
+    ) -> TestResult<bool> {
         let mut body = self.vault.project(project)?.ok_or("the project reads")?;
         edit(&mut body);
         self.sign_as_host(project, &mut body, room)?;
@@ -457,8 +484,27 @@ impl Fixture {
             .memory(self.owner, EdgeActorClass::Human)
             .projects_write_roster(project, &body)
             .map_err(|error| format!("the roster write lands; it refused: {error:?}"))?;
-        assert!(written.installed, "precondition: the roster write installs");
+        Ok(written.installed)
+    }
+
+    /// The owner's per-project history budget of `max_revisions` revisions.
+    fn set_history_budget(&self, max_revisions: u64) -> TestResult {
+        self.vault.set_project_history_policy(
+            &self.owner_proof,
+            ProjectHistoryPolicy {
+                max_revisions,
+                ..ProjectHistoryPolicy::default()
+            },
+        )?;
         Ok(())
+    }
+
+    /// The frontier `project` serves now.
+    fn frontier(&self, project: EntityId) -> TestResult<ProjectFrontier> {
+        Ok(self
+            .vault
+            .project_frontier(project)?
+            .ok_or("the project serves a frontier")?)
     }
 }
 
@@ -1196,6 +1242,81 @@ fn a_hard_deleted_projects_room_stales_the_answer_only_the_room_placed() -> Test
     assert!(
         fixture.answer_stale(Fixture::answer_claim(&first))?,
         "once the purge unbinds the room, the answer it placed in the room's facet is stale"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_room_back_from_a_raised_budgets_live_fold_stales_the_answer_that_fold_placed() -> TestResult {
+    let fixture = open()?;
+    let work = fixture.put_row(ENTITY_TYPE_FACET, "work")?;
+    let health = fixture.put_row(ENTITY_TYPE_FACET, "health")?;
+    // The project's slice facet sorts last, so an answer on a row the
+    // widened room reads lands at the other facet.
+    let (slice, other) = (work.max(health), work.min(health));
+    let (project, room) = fixture.project_room_reading(&BTreeSet::from([slice]))?;
+
+    // Past a budget of one revision the project freezes at the view it
+    // serves. A host-signed state over the frozen head that widens the room
+    // lands in its history, and the frozen view takes it only as a narrowing
+    // meet.
+    fixture.set_history_budget(1)?;
+    fixture.roster_write_installs(project, Some(BTreeSet::from([other, slice])), |_| {})?;
+    let frozen = fixture.frontier(project)?;
+    assert!(
+        matches!(frozen.disposition, ProjectDisposition::OverBudget { .. }),
+        "precondition: past its budget the project is frozen"
+    );
+    assert_eq!(
+        frozen.effective.and_then(|view| view.room_facets),
+        Some(BTreeSet::from([slice])),
+        "precondition: the frozen view meets the widening state, so its room reads the slice \
+         facet alone"
+    );
+
+    // The raised budget serves the whole history again; the frozen record
+    // stays saved until a refresh writes the project.
+    fixture.set_history_budget(DEFAULT_PROJECT_HISTORY_MAX_REVISIONS)?;
+    let live = fixture.frontier(project)?;
+    assert_eq!(
+        live.disposition,
+        ProjectDisposition::Settled,
+        "precondition: under the raised budget the project serves its live fold"
+    );
+    assert_eq!(
+        live.effective.and_then(|view| view.room_facets),
+        Some(BTreeSet::from([other, slice])),
+        "precondition: the live fold's room reads both facets"
+    );
+    let message = fixture.message_in_room(room, "The ward closes at noon on Fridays.")?;
+    let question = fixture.question(vec![message])?;
+    let widened = fixture
+        .ask(question, message, Vec::new())
+        .map_err(|error| format!("an answer on a room MESSAGE lands; it refused: {error}"))?;
+    let earlier = Fixture::answer_claim(&widened);
+    assert_eq!(
+        fixture.answer_facet(&widened)?,
+        other,
+        "precondition: an answer on a row the live fold reads in two facets lands at the lower"
+    );
+
+    // The owner's set door returns the room to the slice facet alone, the
+    // set the frozen record it replaces read too.
+    fixture.set_room(project, Some(BTreeSet::from([slice])))?;
+    assert!(
+        fixture.answer_stale(earlier)?,
+        "once the room no longer reads the facet the live fold placed its answer in, that \
+         answer is stale, though the frozen record the write replaced read the same set"
+    );
+    let narrowed = fixture
+        .ask(question, message, Vec::new())
+        .map_err(|error| {
+            format!("an answer on the unchanged MESSAGE lands again; it refused: {error}")
+        })?;
+    assert_eq!(
+        fixture.answer_facet(&narrowed)?,
+        slice,
+        "the next answer lands where the room reads the MESSAGE now"
     );
     Ok(())
 }
