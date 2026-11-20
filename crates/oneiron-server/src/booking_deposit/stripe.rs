@@ -236,8 +236,9 @@ struct RefundView {
 #[derive(Deserialize)]
 struct RefundList {
     data: Vec<RefundView>,
-    /// Whether more refunds follow the last one on this page.
-    #[serde(default)]
+    /// Whether more refunds follow the last one on this page. Stripe always
+    /// says; a page that does not is refused, so a cut list is never read as
+    /// the whole list (Sol blind review of #9862, round 2).
     has_more: bool,
 }
 
@@ -556,10 +557,12 @@ impl<'v> StripeClient<'v> {
     /// Hands `visit` each refund the payment holds, newest first, page by
     /// page, until it breaks; its break, or `Continue` once the list ends.
     /// Stripe answers at most [`REFUND_PAGE_LIMIT`] refunds to a call and
-    /// says whether more follow. A refund id the list names a second time, a
-    /// list that says more follow but ends on no refund id to go on from, or
-    /// one longer than [`MAX_REFUND_PAGES`] pages fails the call, so no
-    /// refund is counted twice and none is made on a part of the list.
+    /// says whether more follow. A page that does not say so, a refund id the
+    /// list names a second time, a list that says more follow but ends on no
+    /// refund id to go on from, or one longer than [`MAX_REFUND_PAGES`] pages
+    /// fails the call, so no refund is counted twice and none is made on a
+    /// part of the list. Every id on a page is checked before any refund on
+    /// it is visited, so a break never reads past a repeat on its own page.
     fn each_payment_refund<B>(
         &self,
         payment_id: &str,
@@ -580,14 +583,15 @@ impl<'v> StripeClient<'v> {
             let page: RefundList = serde_json::from_slice(&page).map_err(|_| {
                 StripeCallError::Malformed("no refund list in the reply".to_owned())
             })?;
-            let mut last = None;
-            for refund in page.data {
+            for refund in &page.data {
                 if !listed_ids.insert(refund.id.clone()) {
                     return Err(StripeCallError::Malformed(
                         "the refund list names one refund twice".to_owned(),
                     ));
                 }
-                last = Some(refund.id.clone());
+            }
+            let last = page.data.last().map(|refund| refund.id.clone());
+            for refund in page.data {
                 if let ControlFlow::Break(found) = visit(refund) {
                     return Ok(ControlFlow::Break(found));
                 }
