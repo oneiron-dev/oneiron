@@ -341,6 +341,7 @@ pub use checkpoint_choice::CheckpointPolicyHead;
 pub use checkpoint_image::*;
 pub use checkpoint_policy::*;
 pub use checkpoint_policy_choice::CheckpointPolicyView;
+pub(crate) use checkpoint_root_attest::HeldRootSigner;
 pub use checkpoint_root_attest::{
     ASK_WORD_PROOF_DOMAIN, AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX, CheckpointRootSigner,
     ROOT_CHECKPOINT_AUTHORITY, ROOT_CHECKPOINT_PICKUP, RootCheckpointAttest,
