@@ -25,22 +25,20 @@ impl<'v> ScopedRead<'v> {
     }
 
     /// Whether every one of `ids` resolves for this lane, judged in one
-    /// snapshot as [`Self::is_ref_readable`] judges each.
+    /// snapshot as [`Self::is_ref_readable`] judges each, by one held
+    /// authority for the whole call ([`Self::refs_readable_held_in`]).
     pub fn all_refs_readable(&self, ids: &[EntityId]) -> Result<bool> {
         let rtxn = self.grant_read_txn()?;
         let policy = self.live_policy_manifest_in(&rtxn)?;
-        for id in ids {
-            if !self.is_ref_readable_with_policy_in(&rtxn, &policy, id)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        let authority = HeldAuthority::for_request(None);
+        self.refs_readable_held_in(&rtxn, &policy, ids, &authority)
     }
 
     /// Which of `sets` resolve whole for this lane, one answer for each set:
     /// each judged as [`Self::all_refs_readable`] judges its ids, every set
-    /// in one snapshot under one policy, so a listing that admits its rows
-    /// one by one admits them all at one instant (FIX 7645).
+    /// in one snapshot under one policy and one held authority, so a listing
+    /// that admits its rows one by one admits them all at one instant (FIX
+    /// 7645).
     pub fn refs_readable_each(&self, sets: &[Vec<EntityId>]) -> Result<Vec<bool>> {
         let rtxn = self.grant_read_txn()?;
         self.refs_readable_each_in(&rtxn, sets)
@@ -55,18 +53,36 @@ impl<'v> ScopedRead<'v> {
         sets: &[Vec<EntityId>],
     ) -> Result<Vec<bool>> {
         let policy = self.live_policy_manifest_in(rtxn)?;
-        let mut each = Vec::with_capacity(sets.len());
-        for ids in sets {
-            let mut readable = true;
-            for id in ids {
-                if !self.is_ref_readable_with_policy_in(rtxn, &policy, id)? {
-                    readable = false;
-                    break;
-                }
-            }
-            each.push(readable);
+        let authority = HeldAuthority::for_request(None);
+        sets.iter()
+            .map(|ids| self.refs_readable_held_in(rtxn, &policy, ids, &authority))
+            .collect()
+    }
+
+    /// Whether every one of `ids` resolves for this lane in `rtxn` under
+    /// `policy`, each judged as [`Self::is_ref_readable_with_policy_in`]
+    /// judges it, by the row checks `authority` holds for the call's serving
+    /// txn: the reader's relationship context and the owner's exemption are
+    /// judged at the first ref that needs them and shared by every later
+    /// one, as a search's hits share them (FIX 7462), not judged again per
+    /// ref (FIX REFS-READABLE-EACH-FRESH-AUTHORITY-PER-ROW).
+    fn refs_readable_held_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        ids: &[EntityId],
+        authority: &HeldAuthority,
+    ) -> Result<bool> {
+        if ids.is_empty() {
+            return Ok(true);
         }
-        Ok(each)
+        let filter = self.actor_retrieval_floor(policy)?;
+        for id in ids {
+            if !self.is_ref_readable_held_in(rtxn, policy, id, &filter, authority)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// [`Self::is_ref_readable`] in the caller's snapshot, under `policy`
@@ -77,7 +93,22 @@ impl<'v> ScopedRead<'v> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
     ) -> Result<bool> {
-        match self.is_entity_readable_with_policy_in(rtxn, policy, id) {
+        let filter = self.actor_retrieval_floor(policy)?;
+        let authority = HeldAuthority::for_request(None);
+        self.is_ref_readable_held_in(rtxn, policy, id, &filter, &authority)
+    }
+
+    /// [`Self::is_entity_readable_held_in`] for a ref a caller names: sealed
+    /// secret custody reads as absent, as [`Self::is_ref_readable`] says.
+    fn is_ref_readable_held_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        filter: &ResolvedRetrievalFilter,
+        authority: &HeldAuthority,
+    ) -> Result<bool> {
+        match self.is_entity_readable_held_in(rtxn, policy, id, filter, authority) {
             Err(error) if error.kind() == crate::ErrorKind::InvalidSecretCustodyBody => Ok(false),
             readable => readable,
         }
@@ -100,10 +131,7 @@ impl<'v> ScopedRead<'v> {
     ) -> Result<bool> {
         let filter = self.actor_retrieval_floor(policy)?;
         let authority = HeldAuthority::for_request(None).reading_archive_of(*id);
-        match self.is_entity_readable_held_in(rtxn, policy, id, &filter, &authority) {
-            Err(error) if error.kind() == crate::ErrorKind::InvalidSecretCustodyBody => Ok(false),
-            readable => readable,
-        }
+        self.is_ref_readable_held_in(rtxn, policy, id, &filter, &authority)
     }
 
     pub(crate) fn is_entity_readable_in(
