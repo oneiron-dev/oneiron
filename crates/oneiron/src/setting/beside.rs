@@ -469,6 +469,50 @@ pub(crate) fn land_beside_row(
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) fn land_pack_table(
     vault: &Vault,
+    (pack, digest, _act): (&str, &[u8; 32], &AuthorityEntryHash),
+    held: &[u8],
+) -> Result<EntityId> {
+    let id = pack_table_row_id(pack, digest)?;
+    vault.with_write_txn_grouped(|txn| {
+        put_beside_body_in_txn(vault, txn, id, (PACK_TABLE_TAG, held))
+    })?;
+    Ok(id)
+}
+
+/// Red pin door (the base's one row per pack and digest; the act is not part of the id).
+#[cfg(all(oneiron_test_support, feature = "test-support", feature = "sync"))]
+pub(crate) fn land_pack_table_from_peer(
+    vault: &Vault,
+    (pack, digest, _act): (&str, &[u8; 32], &AuthorityEntryHash),
+    held: &[u8],
+) -> Result<EntityId> {
+    let id = pack_table_row_id(pack, digest)?;
+    let mut body = PACK_TABLE_TAG.to_vec();
+    body.extend_from_slice(held);
+    vault.with_write_txn_grouped(|txn| {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        vault
+            .batch_in()
+            .put_replicated(
+                &id,
+                ENTITY_TYPE_ASSET,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                None,
+                &body,
+            )
+            .apply(txn)
+    })?;
+    Ok(id)
+}
+
+/// Red pin door: the base's one row per pack and digest.
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) fn land_pack_table_shared_row(
+    vault: &Vault,
     (pack, digest): (&str, &[u8; 32]),
     held: &[u8],
 ) -> Result<()> {
@@ -487,7 +531,7 @@ pub(crate) fn land_pack_table(
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) fn pack_table_bytes(
     vault: &Vault,
-    (pack, digest): (&str, &[u8; 32]),
+    (pack, digest, _act): (&str, &[u8; 32], &AuthorityEntryHash),
 ) -> Result<Option<Vec<u8>>> {
     let txn = vault.store.env.read_txn()?;
     let body = beside_body_in_txn(vault, &txn, pack_table_row_id(pack, digest)?)?;
