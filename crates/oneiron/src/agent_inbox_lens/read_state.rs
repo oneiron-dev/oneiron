@@ -5,7 +5,9 @@
 //! Each record is the agent's own, keyed by the row's handle, and holds the
 //! time of the row's newest entry when it was written. An entry newer than
 //! that brings the row back as new, so marking a conversation never closes a
-//! message that arrives after it. A digest row is also the agent's own
+//! message that arrives after it; so does a new version of a row that its
+//! time may not show (a held deposit's cancel turned unattributed). A digest
+//! row is also the agent's own
 //! NOTIFICATION: opening it marks the notification seen, and closing it
 //! acknowledges it.
 
@@ -38,15 +40,27 @@ struct AgentInboxReadMark {
     /// entry without moving the time, and must reopen the row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     through_payload: Option<String>,
+    /// The row's version then that its time and payload may not show
+    /// ([`crate::booking::lifecycle::booking_inbox_row_version_in_txn`]): a
+    /// different one reopens the row, whatever its time (review round 2 of
+    /// #10028).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    through_version: Option<String>,
     /// When the record was written.
     at: u64,
 }
 
 impl AgentInboxReadMark {
-    /// The state this record leaves `item` in at `now`.
-    fn state_of(&self, item: &AgentInboxLensItem, now: u64) -> AgentInboxReadState {
+    /// The state this record leaves `item`, now at `version`, in at `now`.
+    fn state_of(
+        &self,
+        item: &AgentInboxLensItem,
+        version: Option<&str>,
+        now: u64,
+    ) -> AgentInboxReadState {
         if item.occurred_at > self.through
             || (item.occurred_at == self.through && item.payload_ref != self.through_payload)
+            || version != self.through_version.as_deref()
         {
             return AgentInboxReadState::New;
         }
@@ -111,9 +125,17 @@ impl Vault {
         items
             .iter()
             .map(|item| {
-                Ok(READ_MARKS
-                    .get(&self.store, &rtxn, &(actor, item.item_id.clone()))?
-                    .map_or(AgentInboxReadState::New, |mark| mark.state_of(item, now)))
+                let Some(mark) =
+                    READ_MARKS.get(&self.store, &rtxn, &(actor, item.item_id.clone()))?
+                else {
+                    return Ok(AgentInboxReadState::New);
+                };
+                let version = crate::booking::lifecycle::booking_inbox_row_version_in_txn(
+                    self,
+                    &rtxn,
+                    &item.item_id,
+                )?;
+                Ok(mark.state_of(item, version.as_deref(), now))
             })
             .collect()
     }
@@ -159,14 +181,26 @@ fn digest_notification(item: &AgentInboxLensItem) -> Option<&str> {
 }
 
 impl Memory<'_> {
-    /// The row `item_id` of this actor's own INBOX slice.
+    /// The row `item_id` of this actor's own INBOX slice. A booking handle a
+    /// live owner kept also names its row after the row has left the
+    /// same-day listing, while the booking reads as a card (review round 2
+    /// of #10028).
     fn own_inbox_item(&self, item_id: &str) -> MemoryResult<AgentInboxLensItem> {
         crate::memory::verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        self.vault()
+        if let Some(item) = self
+            .vault()
             .agent_inbox_slice(self.actor(), usize::MAX, None)?
             .into_iter()
             .find(|item| item.item_id == item_id)
-            .ok_or_else(|| MemoryError::not_found("no row with that handle is in this inbox"))
+        {
+            return Ok(item);
+        }
+        crate::booking::lifecycle::booking_owner_card_row_of_handle(
+            self.vault(),
+            item_id,
+            self.actor(),
+        )?
+        .ok_or_else(|| MemoryError::not_found("no row with that handle is in this inbox"))
     }
 
     /// Records `state` for this actor on `item`, through its newest entry.
@@ -177,15 +211,22 @@ impl Memory<'_> {
         until: Option<u64>,
     ) -> MemoryResult<()> {
         let vault = self.vault();
-        let mark = AgentInboxReadMark {
-            state,
-            until,
-            through: item.occurred_at,
-            through_payload: item.payload_ref.clone(),
-            at: vault.now_recorded_at(),
-        };
         let key = (self.actor(), item.item_id.clone());
-        vault.with_write_txn(|wtxn| READ_MARKS.put(&vault.store, wtxn, &key, &mark))?;
+        vault.with_write_txn(|wtxn| {
+            let mark = AgentInboxReadMark {
+                state,
+                until,
+                through: item.occurred_at,
+                through_payload: item.payload_ref.clone(),
+                through_version: crate::booking::lifecycle::booking_inbox_row_version_in_txn(
+                    vault,
+                    &*wtxn,
+                    &item.item_id,
+                )?,
+                at: vault.now_recorded_at(),
+            };
+            READ_MARKS.put(&vault.store, wtxn, &key, &mark)
+        })?;
         Ok(())
     }
 

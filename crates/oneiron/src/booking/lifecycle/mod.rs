@@ -110,7 +110,10 @@ pub use self::owner_card::{
     BOOKING_HELD_DEPOSIT_ITEM_PREFIX, BOOKING_OWNER_CARD_ITEM_PREFIX, BookingDepositHeld,
     BookingDepositHeldReason, BookingOwnerCard, BookingOwnerCardDeposit, BookingOwnerCardOffer,
 };
-pub(crate) use self::owner_card::{booking_owner_card_inbox_items, booking_owner_card_of_item};
+pub(crate) use self::owner_card::{
+    booking_inbox_row_version_in_txn, booking_owner_card_inbox_items, booking_owner_card_of_item,
+    booking_owner_card_row_of_handle,
+};
 pub use self::token::{
     HoldLeaseSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, SessionKey, confirm_event_type,
     confirm_hold_taken_at, token_event_type, token_page_ref,

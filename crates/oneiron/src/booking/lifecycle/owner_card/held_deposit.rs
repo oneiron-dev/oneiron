@@ -72,12 +72,15 @@ pub enum BookingDepositHeldReason {
     /// A calendar cancelled the booking and its cancel moved no money: one
     /// first seen at or after the start, one from a calendar the booking
     /// was never written to, or a host delete held while the owner's own
-    /// cancelled write was unproven.
+    /// cancelled write was unproven. A calendar's report of the cancel that
+    /// stands counts also where another calendar's omission concluded it
+    /// (review round 2 of #10028).
     CalendarCancel,
     /// Every calendar that listed the booking left it out of a complete
-    /// listing, and no report of a cancel is held: the booking reads
-    /// cancelled until a calendar lists it again, and the omission, which is
-    /// no cancel, moved no money. On the booking card only.
+    /// listing, and no calendar's report of a cancel stands, held or dated:
+    /// the booking reads cancelled until a calendar lists it again, and the
+    /// omission, which is no cancel, moved no money. On the booking card
+    /// only.
     CalendarOmission,
     /// A seat stored a cancelled copy of the booking with no write marker,
     /// which reads as the owner's own cancelled write: a host's cancel at
@@ -103,15 +106,15 @@ impl BookingDepositHeldReason {
 /// The deposit note of the booking `facts` describe at `now`, for `reader`:
 /// what `held` still holds, once the booking is effectively cancelled or
 /// has started (the owner's return's own condition); `None` before then,
-/// or with nothing held. `removal_report_held` says a calendar's report of
-/// the booking removed waits on one of its passports, unsettled: with an
-/// omission, that is the host delete held while the owner's cancelled write
-/// was unproven. Times read in the owner's `zone` (UTC when it does not
-/// resolve).
+/// or with nothing held. `cancel_reported` says a calendar's report of the
+/// booking cancelled or removed stands on one of its passports: with an
+/// omission concluding the cancel, that calendar cancelled it, though
+/// another calendar's omission came last. Times read in the owner's `zone`
+/// (UTC when it does not resolve).
 pub(super) fn deposit_note(
     facts: &BookingFacts,
     held: Option<HeldDeposit>,
-    removal_report_held: bool,
+    cancel_reported: bool,
     zone: Option<&str>,
     now: u64,
     reader: Option<EntityId>,
@@ -128,7 +131,7 @@ pub(super) fn deposit_note(
         _ if own_cancel => BookingDepositHeldReason::Cancelled,
         _ if held.unattributed_cancel_at.is_some() => BookingDepositHeldReason::UnattributedCancel,
         CalendarCancellation::Standing => BookingDepositHeldReason::CalendarCancel,
-        CalendarCancellation::Omission if removal_report_held => {
+        CalendarCancellation::Omission if cancel_reported => {
             BookingDepositHeldReason::CalendarCancel
         }
         CalendarCancellation::Omission => BookingDepositHeldReason::CalendarOmission,

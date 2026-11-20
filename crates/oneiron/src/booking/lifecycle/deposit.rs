@@ -50,7 +50,9 @@ mod refund;
 mod settle;
 
 pub(crate) use self::held::note_unattributed_cancel_in_txn;
-pub(super) use self::held::{HeldDeposit, HeldDepositKind, held_deposit_in_txn};
+pub(super) use self::held::{
+    HeldDeposit, HeldDepositKind, held_deposit_in_txn, unattributed_cancel_sequence_in_txn,
+};
 pub(super) use self::refund::{
     cap_refund_on_visitor_reschedule_in_writer, refund_on_host_cancel_in_writer,
     refund_on_visitor_cancel_in_writer,

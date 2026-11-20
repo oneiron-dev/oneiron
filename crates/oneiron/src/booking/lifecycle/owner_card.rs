@@ -22,6 +22,9 @@
 //! deposit still holds and offers Return deposit ([`held_deposit`]); where a
 //! calendar's cancel moved no money, that line is an INBOX row of its own
 //! ([`BOOKING_HELD_DEPOSIT_ITEM_PREFIX`]) until the deposit holds nothing.
+//! A live owner's kept booking handle opens the card on any day, after its
+//! row has left the same-day listing
+//! ([`booking_owner_card_row_of_handle`]).
 
 use std::collections::BTreeSet;
 
@@ -30,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use super::CalendarCancellation;
 use super::authorship::counts_in_txn;
 use super::claim::read_booking_facts;
-use super::deposit::held_deposit_in_txn;
+use super::deposit::{held_deposit_in_txn, unattributed_cancel_sequence_in_txn};
 use super::occurrence::inclusive_occurrence;
 use super::storage::decode_claim_value;
 use super::types::{
@@ -154,17 +157,10 @@ pub(crate) fn booking_owner_card_inbox_items(
         return Ok(Vec::new());
     }
     let owners = crate::policy_model::owners_in_txn(vault, &rtxn)?;
-    let Some(&actor_ref) = owners.first() else {
+    if owners.is_empty() {
         return Ok(Vec::new());
-    };
+    }
     let held_reader = own_reader.filter(|reader| owners.contains(reader));
-    let participants: Vec<AgentInboxParticipant> = owners
-        .iter()
-        .map(|&owner| AgentInboxParticipant {
-            identity_ref: None,
-            actor_ref: owner,
-        })
-        .collect();
     let mut items = Vec::new();
     for event_ref in events {
         let Some(read) = card_in_txn(vault, &rtxn, &event_ref, now, None)? else {
@@ -173,30 +169,101 @@ pub(crate) fn booking_owner_card_inbox_items(
         if let Some(held) = held_reader.and_then(|reader| held_deposit_row(&read, reader)) {
             items.push(held);
         }
-        let card = read.card;
-        if !same_owner_day(card.recorded_at, now, read.zone.as_deref()) {
-            continue;
+        if same_owner_day(read.card.recorded_at, now, read.zone.as_deref()) {
+            items.extend(booking_card_row(read.card, &owners));
         }
-        items.push(AgentInboxLensItem {
-            item_id: format!("{BOOKING_OWNER_CARD_ITEM_PREFIX}{}", card.event_ref),
-            kind: AgentInboxItemKind::CoordinationUpdate,
-            thread_ref: None,
-            identity_ref: None,
-            actor_ref,
-            facet_ref: None,
-            participants: participants.clone(),
-            impact: InboxImpact(BOOKING_OWNER_CARD_INBOX_IMPACT),
-            occurred_at: card.recorded_at,
-            receipt_ref: None,
-            payload_ref: Some(card.event_ref),
-            approval_digest: None,
-            concern: None,
-            diary_review: None,
-            sender: None,
-            widening: None,
-        });
     }
     Ok(items)
+}
+
+/// The booking row `item_id` (`booking:<event hex>`) as `reader`, a live
+/// owner, reads it now, whatever day it is: a booking handle the owner kept
+/// opens the booking's card after its row has left the same-day listing, so
+/// a booking that starts on a later day keeps its deposit line and Return
+/// deposit within reach (review round 2 of #10028). `None` for any other
+/// handle, for a reader who is no live owner, and for a booking that no
+/// longer reads as a card.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn booking_owner_card_row_of_handle(
+    vault: &Vault,
+    item_id: &str,
+    reader: EntityId,
+) -> Result<Option<AgentInboxLensItem>> {
+    let Some(event_ref) = item_id
+        .strip_prefix(BOOKING_OWNER_CARD_ITEM_PREFIX)
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+    else {
+        return Ok(None);
+    };
+    let now = vault.now_recorded_at();
+    let rtxn = vault.store.env.read_txn()?;
+    let owners = crate::policy_model::owners_in_txn(vault, &rtxn)?;
+    if !owners.contains(&reader) {
+        return Ok(None);
+    }
+    Ok(card_in_txn(vault, &rtxn, &event_ref, now, None)?
+        .and_then(|read| booking_card_row(read.card, &owners)))
+}
+
+/// The version of the INBOX row `item_id` that its time and payload may not
+/// show, for its read state: on a held-deposit row, the SEQUENCE of the
+/// replay proof that made its cancel one Oneiron cannot attribute, once one
+/// is noted, so a row marked done comes back when that proof lands in the
+/// same second as the cancel the row was dated by (review round 2 of
+/// #10028); `None` for every other row.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn booking_inbox_row_version_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    item_id: &str,
+) -> Result<Option<String>> {
+    let Some(event_ref) = item_id
+        .strip_prefix(BOOKING_HELD_DEPOSIT_ITEM_PREFIX)
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+    else {
+        return Ok(None);
+    };
+    Ok(
+        unattributed_cancel_sequence_in_txn(vault, rtxn, &event_ref)?
+            .map(|sequence| format!("unattributed_cancel:{sequence}")),
+    )
+}
+
+/// The booking row of `card` for the vault's live `owners`: item id
+/// `booking:<event hex>`, the EVENT hex as its payload, at the commit or the
+/// cancel; `None` with no live owner.
+fn booking_card_row(card: BookingOwnerCard, owners: &[EntityId]) -> Option<AgentInboxLensItem> {
+    let &actor_ref = owners.first()?;
+    Some(AgentInboxLensItem {
+        item_id: format!("{BOOKING_OWNER_CARD_ITEM_PREFIX}{}", card.event_ref),
+        kind: AgentInboxItemKind::CoordinationUpdate,
+        thread_ref: None,
+        identity_ref: None,
+        actor_ref,
+        facet_ref: None,
+        participants: owners
+            .iter()
+            .map(|&owner| AgentInboxParticipant {
+                identity_ref: None,
+                actor_ref: owner,
+            })
+            .collect(),
+        impact: InboxImpact(BOOKING_OWNER_CARD_INBOX_IMPACT),
+        occurred_at: card.recorded_at,
+        receipt_ref: None,
+        payload_ref: Some(card.event_ref),
+        approval_digest: None,
+        concern: None,
+        diary_review: None,
+        sender: None,
+        widening: None,
+    })
 }
 
 /// The held-deposit row of the booking `read` describes, on the own slice
@@ -359,17 +426,11 @@ fn card_in_txn(
         .and_then(|context| context.host_zones.first().cloned());
     let held = held_deposit_in_txn(vault, rtxn, event_ref)?;
     let unattributed_cancel_at = held.as_ref().and_then(|held| held.unattributed_cancel_at);
-    let removal_report_held = held.is_some()
+    let cancel_reported = held.is_some()
         && facts.calendar_cancellation == CalendarCancellation::Omission
-        && removal_report_held_in_txn(vault, rtxn, event_ref);
-    let deposit = held_deposit::deposit_note(
-        &facts,
-        held,
-        removal_report_held,
-        zone.as_deref(),
-        now,
-        reader,
-    );
+        && calendar_cancel_reported_in_txn(vault, rtxn, event_ref);
+    let deposit =
+        held_deposit::deposit_note(&facts, held, cancel_reported, zone.as_deref(), now, reader);
     let selected_hosts = facts
         .context
         .as_ref()
@@ -395,19 +456,29 @@ fn card_in_txn(
     }))
 }
 
-/// Whether a calendar's report of the booking `event_ref` removed waits,
-/// unsettled, on one of its passports (`deferred_cancel_seen_at`): a host's
-/// delete or cancel a pull held back while a cancelled write of the UID was
-/// in flight, which a replay whose read proved no stored copy keeps held
-/// (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING). Passports that
-/// do not read count as no held report, with a warning.
-fn removal_report_held_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>, event_ref: &EntityId) -> bool {
+/// Whether a calendar's report of the booking `event_ref` cancelled or
+/// removed stands on one of its passports, absent or not: a tombstone or a
+/// cancelled version the calendar sent and has not taken back
+/// (`cancelled_since`), unless it is the engine's own cancelled write coming
+/// back (`written_cancelled`), or a host's delete or cancel a pull held back
+/// while a cancelled write of the UID was in flight
+/// (`deferred_cancel_seen_at`), which a replay whose read proved no stored
+/// copy keeps held (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING).
+/// A cancel that waited on another calendar still listing the booking
+/// counts when that calendar's omission concludes it (review round 2 of
+/// #10028). Passports that do not read count as no report, with a warning.
+fn calendar_cancel_reported_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+) -> bool {
     match crate::calendar::passport::live_passports_for_event_in_txn(vault, rtxn, event_ref) {
-        Ok(passports) => passports
-            .iter()
-            .any(|(_, value)| value.deferred_cancel_seen_at.is_some()),
+        Ok(passports) => passports.iter().any(|(_, value)| {
+            (value.cancelled_since.is_some() && !value.written_cancelled)
+                || value.deferred_cancel_seen_at.is_some()
+        }),
         Err(error) => {
-            tracing::warn!(%error, "calendar passports not read; no held removal report counted");
+            tracing::warn!(%error, "calendar passports not read; no cancel report counted");
             false
         }
     }

@@ -95,6 +95,28 @@ pub(in crate::booking::lifecycle) fn held_deposit_in_txn(
     }))
 }
 
+/// The SEQUENCE of the replay proof that noted a cancel Oneiron cannot
+/// attribute on the deposit of the booking `event_ref`
+/// ([`note_unattributed_cancel_in_txn`]), read in `rtxn`; `None` for a
+/// booking this node holds no deposit for, or one with no such note.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(in crate::booking::lifecycle) fn unattributed_cancel_sequence_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+) -> Result<Option<u32>> {
+    let Some(link) = DEPOSIT_BOOKING.get(&vault.store, rtxn, &booking_key(event_ref))? else {
+        return Ok(None);
+    };
+    Ok(DEPOSIT
+        .get(&vault.store, rtxn, &link.deposit_key)?
+        .and_then(|row| row.unattributed_cancel)
+        .map(|noted| noted.sequence))
+}
+
 /// Records, in the calendar writer `wtxn`, that a seat's replay of the
 /// owner's cancelled write of the booking `event_ref` at `sequence` read a
 /// stored copy with no write marker as the owner's own
