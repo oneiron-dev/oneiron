@@ -2937,6 +2937,79 @@ fn the_changes_list_names_the_confirmation_of_a_passkey_vouched_key() {
     );
 }
 
+/// A key only a passkey vouched for, confirmed for another machine than the
+/// vouch named, then removed: the enrolment's line and the confirmation's
+/// line each name the machine their own row names, and the removal's line
+/// names the enrolment's, whichever of the two enrolment entries is the
+/// smaller (REVIEW-9790 P1: the enrolment's line took the confirmation's
+/// machine when the confirmation's entry was the smaller one).
+#[test]
+fn each_change_of_a_key_confirmed_on_another_machine_names_its_rows_machine() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let (vouched_machine, vouched_key) =
+        removal_vault.enrol_passkey_vouched_key_on_second_machine();
+    let other_machine = removal_vault.enrol_machine_with([0x77; 16], MACHINE_C_SEED);
+    let confirming = signing(0x6C);
+    let (confirming_key, _) = removal_vault.enrol_owner_key_on_machine(other_machine, &confirming);
+    let receipt = removal_vault
+        .vault
+        .confirm_owner_key_as(
+            &ActAuthority::Owner(removal_vault.owner.clone(), ActSurface::ThisInstall),
+            keyed_enrollment(&removal_vault, other_machine, &signing(0x6B)),
+            AuthorityKey::Ed25519(confirming_key),
+            |transcript| Ok(confirming.sign(transcript).to_bytes().to_vec()),
+        )
+        .expect("a device key of the owner's confirms the vouched key for another machine");
+    assert_eq!(
+        (receipt.public_key, receipt.machine),
+        (vouched_key, other_machine),
+        "guard: the confirmation names the vouched key and the other machine"
+    );
+    assert!(
+        oneiron::test_doors::passkey_vouch_limits::revoke_owner_key_signed_by(
+            &removal_vault.vault,
+            AuthorityKey::Ed25519(confirming_key),
+            AuthorityKey::Ed25519(vouched_key),
+            |transcript| confirming.sign(transcript).to_bytes().to_vec(),
+        )
+        .expect("the revoke is stored"),
+        "guard: the confirming key revokes the vouched key"
+    );
+    let changes = removal_vault
+        .vault
+        .owner_key_changes(&removal_vault.owner)
+        .expect("the owner reads the key changes");
+    let line_of = |kind: OwnerKeyChangeKind| {
+        changes
+            .iter()
+            .find(|line| {
+                line.change == kind && line.public_key == AuthorityKey::Ed25519(vouched_key)
+            })
+            .unwrap_or_else(|| panic!("the changes list names the key's {kind:?}: {changes:?}"))
+    };
+    assert_eq!(
+        line_of(OwnerKeyChangeKind::Confirmed).entry,
+        receipt.entry,
+        "guard: the confirmation's line is the confirmation's entry"
+    );
+    assert_eq!(
+        line_of(OwnerKeyChangeKind::Enrolled).machine,
+        vouched_machine,
+        "the enrolment's line names the machine the passkey's vouch named: {changes:?}"
+    );
+    assert_eq!(
+        line_of(OwnerKeyChangeKind::Confirmed).machine,
+        other_machine,
+        "the confirmation's line names the machine the confirmation named: {changes:?}"
+    );
+    assert_eq!(
+        line_of(OwnerKeyChangeKind::Removed).machine,
+        vouched_machine,
+        "the removal's line names the machine of the key's enrolment: {changes:?}"
+    );
+}
+
 /// A passkey's removal is a key change the owner reads: a device key of the
 /// owner's revokes the enrolled passkey, and the changes list names that
 /// removal (row KEY-CHANGE-RECEIPT-EMPTY-NO-NOTICE).
