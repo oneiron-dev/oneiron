@@ -167,6 +167,30 @@ fn retire_held_unclear_no_revision_in_txn(
     Ok(())
 }
 
+/// The cause rows kept for `receipt` and its attempt index entries, counted
+/// by key, for a test that reads what an erase leaves.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn amendment_cause_rows_for_test(
+    vault: &Vault,
+    receipt: &str,
+) -> Result<(usize, usize)> {
+    let rtxn = vault.store.env.read_txn()?;
+    let digest = receipt_key(receipt);
+    let causes = AMENDMENT_CAUSE
+        .scan_keys(&vault.store, &rtxn, &digest)?
+        .len();
+    let attempts = AMENDMENT_ATTEMPT
+        .scan_keys(&vault.store, &rtxn, &[])?
+        .into_iter()
+        .filter(|key| key.1 == digest)
+        .count();
+    Ok((causes, attempts))
+}
+
 /// The cause rows settled on `actor`'s proposals that name `attempt`, the
 /// attempt's pack receipt, oldest first (FIX 11639): the nightly
 /// agent-health pass's lookup, through the attempt index instead of a full
