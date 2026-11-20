@@ -16,7 +16,6 @@ use crate::deletion::delete_bearing_update::DeleteBearingUpdate;
 use crate::edge::EdgeKind;
 #[cfg(feature = "sync")]
 use crate::store::StoreSyncHooks;
-#[cfg(feature = "sync")]
 use crate::store::{
     GateDecisionId, GateDecisionRetentionPolicy, Store, StoreActorScrubs, StoreDeleteGuards,
     StoreGateHooks, StoreHooks, StoreProjectWrites, StoreRecordHooks, StoreScopeStamps,
