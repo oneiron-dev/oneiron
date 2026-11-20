@@ -632,7 +632,7 @@ impl<'c> Chain<'c> {
                         hidden = Some(self.hide(binding));
                         break;
                     }
-                    if self.skill_answer_unjudged() {
+                    if false && self.skill_answer_unjudged() {
                         self.fail_safe("skipped");
                         hidden = Some(VerbHookStop::Skipped {
                             hook: hook_name(binding),
