@@ -19,7 +19,11 @@
 //!   after the accept is refused (#8300 review round 1 P1);
 //! - the join with an edge takes the invitee's own independent credential,
 //!   which still stands for its retry, and refuses the invitation's slip,
-//!   which the acceptance spends (FIX 8745).
+//!   which the acceptance spends (FIX 8745);
+//! - review round 2 of #8372/#9195: a prepare never offers an unbound edge
+//!   the owner minted on other terms; a repeat with a blank member name is
+//!   refused; a plain Connect grant the member's leave releases is no
+//!   inquiry edge and leaves the seat's first edge free.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test inquiry_edge_at_join`.
 
@@ -32,12 +36,14 @@ use oneiron::authority::{
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{
-    ConnectMemberLeaveBinding, FederationGrantRole, ScopeAxis, SharedActExecutionReceipt,
-    SharedVaultChange, decode_federation_grant_body,
+    ConnectMemberLeaveBinding, ConnectMemberLeaveConsent, FederationGrantRole, Scope, ScopeAxis,
+    ScopeId, Sensitivity, SensitivityCeiling, SharedActExecutionReceipt, SharedVaultChange,
+    decode_federation_grant_body,
 };
 use oneiron::inquiry::{
-    InquiryEdgeRequest, InquiryJoinOffer, InquiryJoinPrepared, InquiryRouteRequest,
+    InquiryEdgeRequest, InquiryJoinOffer, InquiryJoinPrepared, InquiryKeep, InquiryRouteRequest,
 };
+use oneiron::registry::ENTITY_TYPE_CLAIM;
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
@@ -679,5 +685,133 @@ impl Joining {
             .vault
             .bind_request_credential(proof, verified)
             .expect("the request's slip binds")
+    }
+}
+
+#[test]
+fn a_prepare_offers_no_edge_minted_on_other_terms() {
+    let fx = joining();
+    let custom = fx
+        .member
+        .vault
+        .mint_inquiry_edge(
+            &fx.member.proof,
+            &InquiryEdgeRequest {
+                keep_allowed: InquiryKeep::Copy,
+                ..InquiryEdgeRequest::member_defaults(fx.company.vault_id, COMPANY)
+            },
+        )
+        .expect("the owner mints an unbound edge on other terms");
+    let prepared = fx.prepare();
+    assert_ne!(
+        prepared.edge.grant, custom.grant,
+        "the edge minted on other terms is not the join's"
+    );
+    assert_eq!(
+        prepared.edge.terms.keep_allowed,
+        InquiryKeep::default(),
+        "the join's edge holds the member defaults"
+    );
+    assert_eq!(
+        fx.prepare().edge,
+        prepared.edge,
+        "the default edge is the one offered again"
+    );
+}
+
+#[test]
+fn a_repeat_with_a_blank_member_name_is_refused() {
+    let fx = joining();
+    fx.company
+        .vault
+        .accept_shared_invitation(&fx.seat_proof, SHARED, &fx.invitation)
+        .expect("the member joins without an edge");
+    let prepared = fx.prepare();
+    fx.company
+        .vault
+        .attach_inquiry_edge_to_seat(&fx.seat_proof, &fx.company.issuer, SHARED, &prepared.offer)
+        .expect("the member attaches the edge");
+    let blank = InquiryJoinOffer {
+        member_name: "   ".to_owned(),
+        ..prepared.offer.clone()
+    };
+    let refusal = fx
+        .company
+        .vault
+        .attach_inquiry_edge_to_seat(&fx.seat_proof, &fx.company.issuer, SHARED, &blank)
+        .expect_err("a repeat that names no member is refused");
+    assert!(
+        refusal.to_string().contains("names its member"),
+        "{refusal}"
+    );
+}
+
+#[test]
+fn a_plain_connect_grant_bound_to_the_leave_is_no_inquiry_edge() {
+    let fx = joining();
+    fx.company
+        .vault
+        .accept_shared_invitation(&fx.seat_proof, SHARED, &fx.invitation)
+        .expect("the member joins without an edge");
+    let world = fx
+        .company
+        .vault
+        .create_world(
+            &fx.company.proof,
+            "Shared notes",
+            fx.company.vault.now_recorded_at(),
+        )
+        .expect("a named WORLD");
+    let plain = fx
+        .company
+        .vault
+        .mint_connect_grant(
+            &fx.company.proof,
+            ELSEWHERE,
+            read_scope(world),
+            None,
+            Some(ConnectMemberLeaveConsent {
+                shared_vault_id: SHARED,
+                member: &fx.seat_proof,
+            }),
+        )
+        .expect("a read Connect grant to another vault, released by the member's leave");
+    let body = fx
+        .company
+        .vault
+        .get(&plain.grant)
+        .expect("the plain grant's row")
+        .expect("the plain grant is live");
+    assert_eq!(
+        decode_federation_grant_body(&body)
+            .expect("a grant")
+            .detach_on_member_leave,
+        Some(ConnectMemberLeaveBinding {
+            shared_vault_id: SHARED,
+            person_ref: fx.seat,
+        }),
+        "the member's leave releases the plain grant"
+    );
+
+    let prepared = fx.prepare();
+    let counter = fx
+        .company
+        .vault
+        .attach_inquiry_edge_to_seat(&fx.seat_proof, &fx.company.issuer, SHARED, &prepared.offer)
+        .expect("the plain grant is no inquiry edge: the seat takes its first one");
+    assert_eq!(fx.apply(&prepared, &counter), FederationPactStatus::Active);
+}
+
+/// `read` alone over `world`, as a plain Connect grant shares it.
+fn read_scope(world: EntityId) -> Scope {
+    Scope {
+        worlds: ScopeAxis::Some(BTreeSet::from([ScopeId(world)])),
+        facets: ScopeAxis::Bottom,
+        bands: ScopeAxis::Some(BTreeSet::from([ENTITY_TYPE_CLAIM])),
+        audience: ScopeAxis::Some(BTreeSet::from([ScopeId(
+            oneiron::claim::default_project_id(),
+        )])),
+        verbs: ScopeAxis::Some(BTreeSet::from(["read".to_owned()])),
+        sensitivity: SensitivityCeiling::AtMost(Sensitivity::Public),
     }
 }
