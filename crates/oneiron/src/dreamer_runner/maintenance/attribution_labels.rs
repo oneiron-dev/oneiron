@@ -900,6 +900,58 @@ pub(crate) fn forget_unclear_notes_in_txn(
     Ok(())
 }
 
+/// Files `proposal` as the proposal of a new pattern whose filing quotes note
+/// 0 of the outcome under unclear-ledger key `outcome`, the rows
+/// [`Pass::file_if_due_in_txn`] records, without the pass's model choice
+/// (test door).
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn file_label_proposal_for_test(
+    vault: &Vault,
+    outcome: &str,
+    proposal: EntityId,
+) -> Result<()> {
+    let member = member_key(outcome, 0);
+    let group = [7_u8; 32];
+    let pattern_id = *EntityId::now().as_bytes();
+    vault.with_write_txn(|txn| {
+        MEMBER.put(
+            &vault.store,
+            txn,
+            &member,
+            &NoteMember {
+                group,
+                pattern: Some(pattern_id),
+                fingerprint: [0; 32],
+            },
+        )?;
+        SUPPORT.put(
+            &vault.store,
+            txn,
+            &support_key(&group, &pattern_id, &member),
+            &NoteSupport {
+                outcome: outcome.to_owned(),
+            },
+        )?;
+        PATTERN.put(
+            &vault.store,
+            txn,
+            &pattern_key(&group, &pattern_id),
+            &NotePattern {
+                exemplar: Some(member.clone()),
+                proposal: Some(*proposal.as_bytes()),
+                filed: vec![member.clone()],
+                sources: Vec::new(),
+                refile: false,
+            },
+        )?;
+        Ok(())
+    })
+}
+
 /// Withdraws each proposal waiting on its owner that quoted a note of the
 /// outcome under unclear-ledger key `outcome`: a re-judgment replaced the
 /// outcome's row with another (FIX 21885). The notes stay in their patterns

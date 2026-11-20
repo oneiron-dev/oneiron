@@ -14,6 +14,13 @@
 //! skeleton. With the fix each takes the row in its own write, and a receipt
 //! the writer did not touch keeps its row.
 //!
+//! Round 2 of the review of #10051 kept three more cases. The discard is local,
+//! so it leaves a label proposal that copied the row's note where it is,
+//! where the withdrawal erased it and staged its sync tombstone. A legal hold
+//! on such a proposal stops no retention sweep, where its refusal rolled back
+//! the whole sweep. And a side restore that drops the record whose key the
+//! sweep retired takes the row the image carried, where it came back.
+//!
 //! The discard is reached through a test door that runs its bundle write on a
 //! set of claims, without a world fixture:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -27,6 +34,8 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer as _, SigningKey};
 use oneiron::authority::HostSlipIssuer;
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::deletion::LegalHoldTarget;
 use oneiron::edit_distance::attribution::{
     AmendmentEvidence, judge_amendment, record_amendment_evidence,
 };
@@ -68,14 +77,14 @@ fn person(vault: &Vault) -> EntityId {
 }
 
 /// A rooted vault on a manual clock, with an enrolled MACHINE and a bound
-/// owner.
+/// owner. The vault closes before its directory goes.
 struct Seeded {
-    _dir: tempfile::TempDir,
     vault: Vault,
     clock: Arc<ManualClock>,
     machine: EntityId,
     signing: SigningKey,
     owner: EntityId,
+    dir: tempfile::TempDir,
 }
 
 fn seed() -> Seeded {
@@ -84,6 +93,24 @@ fn seed() -> Seeded {
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
     let vault = Vault::open(dir.path(), config).expect("fresh vault");
+    enrol(dir, vault, clock)
+}
+
+/// [`seed`] in a vault this process owns, with a device keystore and a vault
+/// key, so it snapshots and restores, and the retention sweep retires the
+/// key of a claim whose decisions all went.
+fn seed_restorable() -> Seeded {
+    let dir = oneiron::test_support::restore_tempdir();
+    let clock = ManualClock::new(NOW);
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let vault = Vault::open_owned(dir.path().join("vault"), config).expect("fresh vault");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.ensure_vault_key().expect("FIXTURE: the vault key");
+    enrol(dir, vault, clock)
+}
+
+fn enrol(dir: tempfile::TempDir, vault: Vault, clock: Arc<ManualClock>) -> Seeded {
     let issuer = HostSlipIssuer::from_secret(SECRET).expect("host issuer");
     vault.ensure_host_root_slip(&issuer).expect("host root");
     let machine = EntityId::now();
@@ -103,19 +130,19 @@ fn seed() -> Seeded {
     let owner = vault.ensure_embedded_owner_actor().expect("vault owner");
     bind_host_owner(&vault, &issuer, owner).expect("FIXTURE: owner binding");
     Seeded {
-        _dir: dir,
         vault,
         clock,
         machine,
         signing,
         owner,
+        dir,
     }
 }
 
 /// A CLAIM the MACHINE writes Proposed about a new PERSON, held for the
-/// owner, then revised by the owner: an `approved_amended` decision with its
-/// Δ. Returns the claim and the decision's receipt id.
-fn owner_amended_claim(seeded: &Seeded) -> (EntityId, String) {
+/// owner: Active and Proposed, a claim waiting on its owner. Returns the
+/// claim and its subject.
+fn held_machine_claim(seeded: &Seeded) -> (EntityId, EntityId) {
     let vault = &seeded.vault;
     let subject = person(vault);
     let target = EntityId::now();
@@ -143,7 +170,14 @@ fn owner_amended_claim(seeded: &Seeded) -> (EntityId, String) {
         .claim_candidate(&target, candidate, &signed, at(NOW), NOW)
         .commit()
         .expect("FIXTURE: the machine birth");
+    (target, subject)
+}
 
+/// [`held_machine_claim`], then revised by the owner: an `approved_amended`
+/// decision with its Δ. Returns the claim and the decision's receipt id.
+fn owner_amended_claim(seeded: &Seeded) -> (EntityId, String) {
+    let vault = &seeded.vault;
+    let (target, subject) = held_machine_claim(seeded);
     let successor = ClaimCandidate::new(
         "profile.note",
         ClaimSubject::Entity(subject),
@@ -206,9 +240,13 @@ fn decision_state(vault: &Vault, receipt: &str) -> Option<bool> {
         .map(|record| record.redacted_at.is_some())
 }
 
-/// The owner sets a retention horizon of [`HORIZON`] seconds.
-fn set_horizon(seeded: &Seeded) {
-    let owner = seeded
+/// Whether `claim` still reads: a label proposal no writer erased.
+fn claim_kept(vault: &Vault, claim: EntityId) -> bool {
+    matches!(vault.get_claim(&claim), Ok(Some(_)))
+}
+
+fn owner_proof(seeded: &Seeded) -> AuthenticatedOwner {
+    seeded
         .vault
         .authenticate_owner(
             seeded.owner,
@@ -216,11 +254,28 @@ fn set_horizon(seeded: &Seeded) {
             true,
             GateDecisionId::now(),
         )
-        .expect("FIXTURE: the owner's proof");
+        .expect("FIXTURE: the owner's proof")
+}
+
+/// The owner sets a retention horizon of [`HORIZON`] seconds.
+fn set_horizon(seeded: &Seeded) {
     seeded
         .vault
-        .set_gate_decision_retention_secs(&owner, Some(HORIZON))
+        .set_gate_decision_retention_secs(&owner_proof(seeded), Some(HORIZON))
         .expect("FIXTURE: the owner's retention horizon");
+}
+
+/// A label proposal waiting on its owner that the Coach filed quoting the
+/// note of the unclear row under `receipt`.
+fn label_proposal(seeded: &Seeded, receipt: &str) -> EntityId {
+    let (proposal, _) = held_machine_claim(seeded);
+    door::file_label_proposal(&seeded.vault, receipt, proposal)
+        .expect("FIXTURE: the Coach files a label proposal quoting the receipt's note");
+    assert!(
+        claim_kept(&seeded.vault, proposal),
+        "FIXTURE: the label proposal waits on its owner"
+    );
+    proposal
 }
 
 #[test]
@@ -303,5 +358,119 @@ fn an_owner_discard_that_skeletons_an_amended_decision_leaves_no_unclear_row() {
         !unclear_kept(&seeded.vault, &receipt),
         "the discard that made the amended decision a skeleton leaves no unclear row under its \
          receipt"
+    );
+}
+
+#[test]
+fn an_owner_discard_leaves_the_label_proposal_that_quoted_the_unclear_row() {
+    let seeded = seed();
+    let (target, receipt) = owner_amended_claim(&seeded);
+    judge_unsettled(&seeded, &receipt);
+    let proposal = label_proposal(&seeded, &receipt);
+
+    door::discard_claims_gate_payload(&seeded.vault, &BTreeSet::from([target]))
+        .expect("the discard's write over the claim");
+
+    assert!(
+        !unclear_kept(&seeded.vault, &receipt),
+        "FIXTURE: the discard leaves no unclear row under the receipt"
+    );
+    assert!(
+        claim_kept(&seeded.vault, proposal),
+        "the owner's discard, which is local, leaves the label proposal that quoted the receipt's \
+         note where it is: no erase and no sync tombstone"
+    );
+}
+
+#[test]
+fn a_legal_hold_on_a_label_proposal_stops_no_retention_sweep() {
+    let seeded = seed();
+    let (_, receipt) = owner_amended_claim(&seeded);
+    judge_unsettled(&seeded, &receipt);
+    let (_, unrelated) = owner_amended_claim(&seeded);
+    let proposal = label_proposal(&seeded, &receipt);
+    seeded
+        .vault
+        .place_legal_hold(
+            &owner_proof(&seeded),
+            vec![LegalHoldTarget::Record(proposal)],
+            None,
+        )
+        .expect("FIXTURE: the owner holds the label proposal");
+    set_horizon(&seeded);
+
+    seeded.clock.set(NOW + 10 * HORIZON);
+    let swept = seeded.vault.maintain_gate_decision_retention();
+
+    assert!(
+        swept.is_ok(),
+        "a hold on a label proposal refuses no retention pass: {:?}",
+        swept.err()
+    );
+    assert_eq!(
+        decision_state(&seeded.vault, &unrelated),
+        None,
+        "the sweep removes an unrelated record past the horizon"
+    );
+    assert_eq!(
+        decision_state(&seeded.vault, &receipt),
+        None,
+        "and the amended record whose note the held proposal quoted"
+    );
+    assert!(
+        !unclear_kept(&seeded.vault, &receipt),
+        "and the unclear row under its receipt"
+    );
+    assert!(
+        claim_kept(&seeded.vault, proposal),
+        "the held label proposal stays"
+    );
+}
+
+#[test]
+fn a_restore_that_drops_a_retired_amended_record_leaves_no_unclear_row() {
+    let seeded = seed_restorable();
+    let (_, receipt) = owner_amended_claim(&seeded);
+    judge_unsettled(&seeded, &receipt);
+    set_horizon(&seeded);
+    let key = seeded
+        .vault
+        .checkpoint_key()
+        .expect("FIXTURE: the checkpoint key");
+    let image = seeded.dir.path().join("image");
+    seeded
+        .vault
+        .snapshot_checkpoint(&image, NOW)
+        .expect("FIXTURE: the checkpoint holds the unclear row");
+
+    seeded.clock.set(NOW + 10 * HORIZON);
+    seeded
+        .vault
+        .maintain_gate_decision_retention()
+        .expect("FIXTURE: the retention pass");
+    assert_eq!(
+        decision_state(&seeded.vault, &receipt),
+        None,
+        "FIXTURE: the sweep removed the amended record and retired its claim's key"
+    );
+
+    let (copy, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &key,
+        &seeded.dir.path().join("restored"),
+        VaultConfig::device(),
+        &seeded.vault,
+        NOW + 10 * HORIZON,
+    )
+    .expect("the side restore");
+
+    assert_eq!(
+        decision_state(&copy, &receipt),
+        None,
+        "FIXTURE: the restore drops the record whose key the sweep retired"
+    );
+    assert!(
+        !unclear_kept(&copy, &receipt),
+        "the restore that dropped the amended record leaves no unclear row under its receipt"
     );
 }
