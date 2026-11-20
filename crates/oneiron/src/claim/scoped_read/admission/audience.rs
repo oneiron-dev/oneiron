@@ -37,7 +37,8 @@ impl ScopedRead<'_> {
                 &HeldAuthority::default(),
             )? && self.private_threads_readable_in(txn, id, &raw)?
                 && self.phone_threads_readable_in(txn, id, &raw, &HeldAuthority::default())?
-                && self.own_entry_readable_in(txn, id, &raw)?);
+                && self.own_entry_readable_in(txn, id, &raw)?
+                && self.stretch_sight_in(txn, id, &raw)?);
         }
         let Some(record) = self.entity_record_in(txn, id)? else {
             return Ok(false);
@@ -113,7 +114,40 @@ impl ScopedRead<'_> {
         self.audience_cache
             .lock()
             .map_err(|_| Error::InvariantViolation("audience cache lock"))?
-            .own_entry_readable_raw(self.vault, &self.store_read(), txn, *id, raw, reader)
+            .own_entry_readable_raw_in_stretch(
+                self.vault,
+                &self.store_read(),
+                txn,
+                *id,
+                raw,
+                reader,
+                self.stretch,
+            )
+    }
+
+    /// A member's read over a room stretch (ARCH-0052 #e5-read-union-open =
+    /// B, ROOM-PACK-MEMBER-BIND) reads a row the stretch staged only as the
+    /// stretch's copy reads its talk to them (D5): while they are on the
+    /// room's roster in this snapshot, and inside one of their own windows
+    /// there, so a member who joined with no history reads nothing staged
+    /// before the join. A row is the stretch's when its overlay stages it,
+    /// whatever it hangs under: a turn under the stretch's shell, and a
+    /// claim staged with only an edge to its subject alike (#8104 review
+    /// round 2). Any other row, a read over no room stretch, and the owner's
+    /// read add nothing here.
+    fn stretch_sight_in(&self, txn: &heed::RoTxn<'_>, id: &EntityId, raw: &[u8]) -> Result<bool> {
+        let Some(stretch) = self.stretch.filter(|stretch| stretch.member().is_some()) else {
+            return Ok(true);
+        };
+        let store = self.store_read();
+        if *id == stretch.shell()
+            || !crate::store::ManifestDbs::entities(&store).stages_row(id.as_bytes())
+        {
+            return Ok(true);
+        }
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        stretch.sees_in_txn(self.vault, txn, header.occurred_start, header.learned_at)
     }
 
     /// The audience conjunct over the exact revision `raw` being served. A
@@ -142,6 +176,7 @@ impl ScopedRead<'_> {
             || !self.private_threads_readable_in(txn, id, raw)?
             || !self.phone_threads_readable_in(txn, id, raw, authority)?
             || !self.own_entry_readable_in(txn, id, raw)?
+            || !self.stretch_sight_in(txn, id, raw)?
         {
             return Ok(false);
         }
@@ -179,6 +214,7 @@ impl ScopedRead<'_> {
             // is now, a held one's in each turn (FIX 5545, 5636), and a
             // caller with a seat meets the room's windows by its own alone
             // (FIX 5667).
+            let stretch = self.stretch.map(|stretch| (self.store_read(), stretch));
             if !room.admits_world(&record)
                 || !room.discloses(self.vault, txn, *id, raw)?
                 || !self
@@ -193,6 +229,7 @@ impl ScopedRead<'_> {
                         &room.roster,
                         room.personal,
                         room.personal.then_some(room.caller),
+                        stretch.as_ref().map(|(dbs, stretch)| (dbs, *stretch)),
                     )?
             {
                 return Ok(false);
@@ -313,12 +350,22 @@ impl ScopedRead<'_> {
             .room_turn()
             .filter(|turn| turn.personal)
             .map(|turn| turn.caller);
+        let stretch = self.stretch.map(|stretch| (self.store_read(), stretch));
         if let Some(audience) = &self.audience
             && !self
                 .audience_cache
                 .lock()
                 .map_err(|_| Error::InvariantViolation("audience cache lock"))?
-                .readable_raw(self.vault, txn, *id, raw, audience, own.is_some(), own)?
+                .readable_raw(
+                    self.vault,
+                    txn,
+                    *id,
+                    raw,
+                    audience,
+                    own.is_some(),
+                    own,
+                    stretch.as_ref().map(|(dbs, stretch)| (dbs, *stretch)),
+                )?
         {
             return Ok(false);
         }

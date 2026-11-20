@@ -5,8 +5,8 @@
 //! two sibling handoffs a vault settles keeps it: signatures alone cannot tell
 //! the genuine one from a forgery. A replica that settled a forged handoff
 //! first therefore refuses the real one, and this record is how it says so.
-//! Each refusal of a row signed by such a key names the key, the handoffs this
-//! vault holds that it signed, and the refused row. Only a row of this vault
+//! Each record names the key, the handoffs it signed that the vault held
+//! before the write, and the refused row. Only a row of this vault
 //! whose signatures verify is recorded, so no one without the key can plant a
 //! record, and a peer replaying another vault's genuine rows, signed by a key
 //! enrolled there too, plants none. It is evidence for the owner, never a
@@ -14,6 +14,23 @@
 //! Each retired key's first such record also raises a saved alarm (key and
 //! refused row hash) that stays until the vault's owner acknowledges it
 //! (OF-166); a row the owner has not seen raises it again.
+//!
+//! Such a key is one that a closed handoff or appointment fence holds
+//! (`AuthorityFold::handoff_or_appointment_retired_keys`). A key that only a
+//! revocation (`RevokeDevice`) retired is refused at the same doors and leaves
+//! no record and no alarm: a revoked device that signs late is no sign of a
+//! forked handoff.
+//!
+//! A refused row's signer is recorded only if a handoff or appointment
+//! fence the vault held before the write holds it, or if it signed a handoff
+//! the judging fold holds closed. That handoff may already be held, arrive
+//! beside the refused row, or be the refused row itself. A key that only an
+//! arriving fence holds and that signed no handoff leaves no record or
+//! alarm until the fence lands and a door refuses its next late row. An
+//! appointment has no such signer rule: its only signer is its anchor key,
+//! and an anchor's rows stand on no roster key, so the door never judges them.
+//! One root that signs two sibling handoffs is recorded when both arrive
+//! together: a fork needs no earlier fence.
 
 use std::collections::BTreeSet;
 use std::sync::{Mutex, PoisonError};
@@ -26,14 +43,16 @@ use crate::store::Store;
 use super::retired_signers::entry_signer_keys;
 use super::*;
 
-/// A key that a handoff this vault holds retired signed another row, which a
-/// door refused.
+/// A key that a closed handoff or root appointment fence holds signed a row,
+/// which a door refused. The vault held that fence before the refused write,
+/// or the key signed a handoff the refusing door's fold held closed.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AuthorityHandoffEquivocation {
     /// The retired key that signed the refused row.
     pub signer: AuthorityKey,
-    /// The handoffs this vault holds that `signer` also signed: none when a
-    /// handoff fenced it as another key of its parents' roster.
+    /// The handoffs `signer` also signed that the vault held before the write:
+    /// none when a handoff fenced it as another key of its parents' roster.
+    /// This never names the refused row itself.
     pub handoffs: BTreeSet<AuthorityEntryHash>,
     /// The refused row, a sibling handoff or any other row.
     pub refused: AuthorityEntryHash,
@@ -222,17 +241,104 @@ impl HandoffEquivocations {
     }
 }
 
+/// The stack of the thread that reads the committed state: a main thread's
+/// default, so the fold runs there with no less stack than on its caller's.
+const COMMITTED_READ_STACK_BYTES: usize = 8 << 20;
+
+/// What this vault held before the write a refusing door is in.
+#[derive(Default)]
+struct HeldBeforeWrite {
+    /// The keys its closed handoff and appointment fences held.
+    fenced: BTreeSet<AuthorityKey>,
+    /// The closed handoffs of the judging fold that it stored, or that the
+    /// checkpoint image it had adopted covered.
+    handoffs: BTreeSet<AuthorityEntryHash>,
+}
+
+/// Reads [`HeldBeforeWrite`] from the committed state, on a thread of its own.
+/// A door runs inside its caller's transaction. Its fold may count rows the
+/// write staged and a checkpoint image its prelude adopted. They all roll back
+/// when the door refuses, and the committed read sees none of them. While a
+/// writer is open, the committed state is the vault as it was before the write.
+/// For a door in a read transaction, it is the vault as it stands, without
+/// the rows the door is judging. A second read transaction on the door's own
+/// thread fails with MDB_BAD_RSLOT, so the read runs on a separate thread.
+/// If the committed fold lacks history it needs (OF-469), it names no fences.
+/// If the thread fails to start, returns another error, or panics, the read
+/// names neither fences nor handoffs. The refusal still stands.
+fn held_before_write(
+    store: &Store,
+    posture: crate::HostingPrivacyPosture,
+    closed_handoffs: &BTreeSet<AuthorityEntryHash>,
+) -> HeldBeforeWrite {
+    let held = std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("held-before-write".into())
+            .stack_size(COMMITTED_READ_STACK_BYTES)
+            .spawn_scoped(scope, || -> std::result::Result<HeldBeforeWrite, String> {
+                let committed = store.env.read_txn().map_err(|error| error.to_string())?;
+                let fenced = match super::readonly_fold::authority_view_readonly_for_store_in_txn(
+                    store, posture, &committed,
+                ) {
+                    Ok(view) => view.handoff_or_appointment_retired_keys.clone(),
+                    Err(error) if super::readonly_fold::is_history_incomplete(&error) => {
+                        BTreeSet::new()
+                    }
+                    Err(error) => return Err(error.to_string()),
+                };
+                let evidence = super::adopted_evidence::adopted_evidence_in_txn(store, &committed)
+                    .map_err(|error| error.to_string())?;
+                let mut handoffs = BTreeSet::new();
+                for hash in closed_handoffs {
+                    if super::retired_signers::authority_row_held(
+                        store,
+                        &committed,
+                        evidence.as_deref(),
+                        hash,
+                    )
+                    .map_err(|error| error.to_string())?
+                    {
+                        handoffs.insert(*hash);
+                    }
+                }
+                Ok(HeldBeforeWrite { fenced, handoffs })
+            })
+            .map_err(|error| error.to_string())?
+            .join()
+            .map_err(|_| "committed reader panicked".to_owned())?
+    });
+    match held {
+        Ok(held) => held,
+        Err(error) => {
+            tracing::warn!(
+                kind = AuthorityHandoffEquivocation::KIND,
+                error = %error,
+                "could not read the vault before the write; the refusal records only a signer of a closed handoff"
+            );
+            HeldBeforeWrite::default()
+        }
+    }
+}
+
 /// Whether a door refuses `entry` because it stands on a retired key (see
 /// [`AuthorityFold::stands_on_retired_key`]). A refused row of `fold`'s own
-/// vault that a retired key signed, with signatures that verify, is recorded
-/// first, with the handoffs `fold` holds that the same key signed. A row of
-/// another vault is refused the same way and recorded nowhere: a key also
-/// enrolled in a second vault signs that vault's rows rightly, so they are no
-/// evidence of a fork here. Doors that compare the vault first never reach
-/// that case; the append door does, and so does any door added later. `row`
-/// reads a row by hash, stored or arriving beside it.
+/// vault that a key a closed handoff or appointment fence holds signed, with
+/// signatures that verify, can leave a record before the door refuses. A
+/// signer that only a revocation retired is
+/// refused the same way and recorded nowhere: its late row is no evidence of
+/// a forked handoff. A row of another vault is refused the same way and
+/// recorded nowhere: a key also enrolled in a second vault signs that vault's
+/// rows rightly, so they are no evidence of a fork here. Doors that compare
+/// the vault first never reach that case; the append door does, and so does
+/// any door added later. `row` reads a row by hash, stored or arriving beside
+/// it. The door reads what the vault held before the write from its committed
+/// state under `posture`. It records a fenced signer only if a handoff or
+/// appointment fence held it before the write or it signed a handoff `fold`
+/// holds closed. The record names only handoffs the signer signed and the
+/// vault held before the write, never the refused row itself.
 pub(crate) fn door_refuses_retired_standing(
     store: &Store,
+    posture: crate::HostingPrivacyPosture,
     fold: &AuthorityFold,
     hash: &AuthorityEntryHash,
     entry: &AuthorityLogEntry,
@@ -247,14 +353,41 @@ pub(crate) fn door_refuses_retired_standing(
     {
         return Ok(true);
     }
-    for signer in entry_signer_keys(entry).filter(|key| fold.retired_keys.contains(*key)) {
+    let fenced_signers: Vec<_> = entry_signer_keys(entry)
+        .filter(|key| fold.handoff_or_appointment_retired_keys.contains(*key))
+        .collect();
+    if fenced_signers.is_empty() {
+        return Ok(true);
+    }
+    let before = held_before_write(store, posture, &fold.closed_handoffs);
+    for signer in fenced_signers {
+        // A door whose fold already counts the arriving rows (a batch's or an
+        // import's preflight) holds each as a closed handoff in conflict with
+        // the real one. A record names only handoffs this vault held before
+        // the write, never the refused row or a sibling the refused write brings.
         let mut handoffs = BTreeSet::new();
-        for held in &fold.closed_handoffs {
-            if row(held)?
-                .is_some_and(|handoff| entry_signer_keys(&handoff).any(|key| key == signer))
-            {
-                handoffs.insert(*held);
+        let mut signed_handoff = false;
+        for candidate in &fold.closed_handoffs {
+            if candidate == hash {
+                signed_handoff = true;
+                continue;
             }
+            // A closed handoff the door cannot read is no evidence, and its
+            // read error never replaces the refusal: the replicated door's
+            // fold counts rows beside the judged one that its `row` does not
+            // read, and on an adopted vault that read answers a history error.
+            if row(candidate).is_ok_and(|read| {
+                read.is_some_and(|handoff| entry_signer_keys(&handoff).any(|key| key == signer))
+            }) {
+                signed_handoff = true;
+                if before.handoffs.contains(candidate) {
+                    handoffs.insert(*candidate);
+                }
+            }
+        }
+        let held_fence = before.fenced.contains(signer);
+        if !held_fence && !signed_handoff {
+            continue;
         }
         let evidence = AuthorityHandoffEquivocation {
             signer: signer.clone(),
@@ -281,8 +414,8 @@ fn of_fold_vault(fold: &AuthorityFold, entry: &AuthorityLogEntry) -> Result<bool
 }
 
 impl Vault {
-    /// The rows a door refused since this handle opened because a key a held
-    /// handoff retired signed them (OF-166 evidence).
+    /// Evidence of retired-key signatures a door recorded since this handle
+    /// opened (OF-166). A key that only a revocation retired leaves none.
     #[must_use]
     pub fn authority_handoff_equivocations(&self) -> Vec<AuthorityHandoffEquivocation> {
         self.store

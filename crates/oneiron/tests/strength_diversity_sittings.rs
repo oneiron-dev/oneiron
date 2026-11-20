@@ -129,6 +129,7 @@ fn witness_words(
         }],
         occurred_at: fixture.vault.now_recorded_at(),
         assertions: WitnessAssertions::default(),
+        project: None,
     })?;
     assert_eq!(receipt.turn_id, turn);
     Ok(turn)
@@ -197,7 +198,7 @@ fn a_fact_the_owner_repeats_in_three_sittings_counts_once_per_sitting() -> Diver
         signals["source_count"],
         sources.len() + 1,
         "the landing TURN {} and every repeat are sources: {signals}",
-        fixture.landing_turn
+        fixture.landing_turn.to_hex()
     );
     // On main every user TURN counts as the one speaker `user`: 1. Each of
     // the three sittings counts once beside the bare `user` key: 4.

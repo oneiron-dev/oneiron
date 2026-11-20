@@ -2,7 +2,9 @@
 //! a claim an agent derived replaces one its live `derive` grant reaches,
 //! through the claim lifecycle's own supersession, and never over
 //! user-stated truth; an agent answers an open conflict its grant reaches
-//! through the conflict settlement's own door.
+//! through the conflict settlement's own door. A settlement about a PERSON
+//! under the vault cleanup's archive marker restores her (FIX
+//! DREAMER-DIRECT-CLAIM-WRITERS-LAND-ON-ARCHIVED-PERSON).
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -15,12 +17,13 @@ use oneiron::claim::{
 };
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::temporal::TimeRange;
+use oneiron::test_doors::cleanup_archive::archive_as_cleanup;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derivation_floor::{define_agent, write_derived_claim};
 use oneiron::test_doors::derive::{
     Claim, Derived, Named, Settle, Settlement, Supersede, batch_items, claim_lifecycle, commit,
-    define_auto_agent, grant_derive_rows, open_conflict, open_conflict_with_imported_alternative,
-    refusal_receipt, revert_as_owner,
+    define_auto_agent, grant_derive_rows, open_conflict, open_conflict_with_alternative,
+    open_conflict_with_imported_alternative, refusal_receipt, revert_as_owner,
 };
 use oneiron::test_doors::steward::{
     STEWARD_ARCHIVE_VERB, STEWARD_READ_VERB, STEWARD_VERBS, dreamer, receive_steward_grant_row,
@@ -925,5 +928,139 @@ fn a_derived_keep_the_revert_took_back_stages_afresh_on_the_next_keep() {
     assert!(
         marker_is_open(),
         "the marker stays open beside the new proposal"
+    );
+}
+
+/// Puts the vault cleanup's archive marker on the fixture's PERSON after claims about her
+/// stand: the stranded state a vault keeps from a claim written about her after the cleanup
+/// archived her, before her claim writers restored her (FIX
+/// DREAMER-DIRECT-CLAIM-WRITERS-LAND-ON-ARCHIVED-PERSON).
+fn archive_person(fixture: &Fixture) {
+    archive_as_cleanup(&fixture.vault, &fixture.person).expect("the archive marker");
+    assert!(
+        fixture
+            .vault
+            .archived_entity(&fixture.person)
+            .expect("read")
+            .is_some(),
+        "the cleanup's archive marker stands on her"
+    );
+}
+
+/// Whether the fixture's PERSON is back: no archive marker stands on her.
+fn person_restored(fixture: &Fixture) -> bool {
+    fixture
+        .vault
+        .archived_entity(&fixture.person)
+        .expect("read")
+        .is_none()
+}
+
+/// ARCH-0073 §6, "a re-mention restores the archived record": the answer a settlement
+/// writes about a PERSON under the cleanup's archive marker is a new mention of her, and the
+/// settlement's own write restores her.
+#[test]
+fn a_derived_settlement_about_an_archived_person_restores_her() {
+    let fixture = fixture();
+    let first = landed_claim(&fixture, "an oat milk flat white");
+    let second = landed_claim(&fixture, "a cortado");
+    let marker = open_conflict(&fixture.vault, second, first).expect("an open conflict");
+    archive_person(&fixture);
+
+    let committed = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-settle-archived",
+        &[Derived::Settle(Settle {
+            local: "keep_second",
+            marker: Named::Stored(marker),
+            settlement: Settlement::Keep(Named::Stored(second)),
+        })],
+    )
+    .expect("commit");
+    let [settled] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(settled.landed, "the settlement lands: {settled:?}");
+    assert!(
+        person_restored(&fixture),
+        "the answer is a new mention of her: it restored her"
+    );
+}
+
+/// ARCH-0073 §6: the retained alternative a Keep lands about a PERSON under the cleanup's
+/// archive marker is a new mention of her, and the settlement's own write restores her.
+#[test]
+fn a_derived_keep_of_an_alternative_about_an_archived_person_restores_her() {
+    let fixture = fixture();
+    let first = landed_claim(&fixture, "an oat milk flat white");
+    let (marker, alternative) = open_conflict_with_alternative(&fixture.vault, first, "a cortado")
+        .expect("an open conflict with a retained alternative");
+    archive_person(&fixture);
+
+    let committed = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-keep-alternative-archived",
+        &[Derived::Settle(Settle {
+            local: "keep_alternative",
+            marker: Named::Stored(marker),
+            settlement: Settlement::Keep(Named::Stored(alternative)),
+        })],
+    )
+    .expect("commit");
+    let [settled] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(settled.landed, "the Keep lands: {settled:?}");
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, alternative).expect("read"),
+        Some("active".to_owned()),
+        "the kept alternative stands"
+    );
+    assert!(
+        person_restored(&fixture),
+        "the kept alternative is a new mention of her: it restored her"
+    );
+}
+
+/// ARCH-0073 §6: kept imported words about a PERSON under the cleanup's archive marker stage
+/// in the import's review with no answer written, and the staged proposal is a new mention of
+/// her: its own write restores her.
+#[test]
+fn a_derived_keep_of_imported_words_about_an_archived_person_restores_her() {
+    let fixture = fixture();
+    let first = landed_claim(&fixture, "an oat milk flat white");
+    let (marker, alternative) =
+        open_conflict_with_imported_alternative(&fixture.vault, first, "a cortado")
+            .expect("an open conflict with an imported alternative");
+    archive_person(&fixture);
+
+    let committed = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-keep-imported-archived",
+        &[Derived::Settle(Settle {
+            local: "keep_imported",
+            marker: Named::Stored(marker),
+            settlement: Settlement::Keep(Named::Stored(alternative)),
+        })],
+    )
+    .expect("commit");
+    let [settled] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(settled.landed, "the imported Keep stages: {settled:?}");
+    assert_eq!(
+        settled.approval.as_deref(),
+        Some("proposed"),
+        "the staged proposal waits for review: {settled:?}"
+    );
+    assert!(
+        person_restored(&fixture),
+        "the staged proposal is a new mention of her: it restored her"
     );
 }

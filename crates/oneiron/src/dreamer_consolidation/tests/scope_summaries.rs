@@ -12,7 +12,9 @@ use crate::conversation_dag::{ScopePath, ScopeSelector};
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::edge::EdgeKind;
 use crate::memory::{WitnessAuthor, WitnessMessage};
-use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY};
+use crate::registry::{
+    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SUMMARY,
+};
 use crate::scope_summary::{ScopeSummaryRequest, ScopeSummaryTarget};
 
 const SECRET: &str = "the gate code is 4417";
@@ -108,10 +110,13 @@ fn run(
         &mut WakeAttemptContext {
             vault,
             deadline: &deadline,
+            cancel: None,
+            device_cancel: None,
             budget_id: "wake",
             now_ms: 21_000,
             prepared_wake: None,
             prepared_attempt: None,
+            spend_meter: None,
         },
     ))
 }
@@ -162,10 +167,16 @@ fn dag_conversation(vault: &Vault) -> Result<(WriteActor, EntityId)> {
 fn inline_turn_text_outside_the_dreamers_read_never_reaches_the_model() -> Result<()> {
     let (_dir, vault) = open_vault();
     let (author, conversation) = dag_conversation(&vault)?;
-    vault.append_dag_record(&crate::conversation_dag::AppendRecord {
-        body: turn_body("user", SECRET, None),
-        ..input(conversation, None, true, author)
-    })?;
+    let writer = vault.memory(author.entity_ref(), author.actor_class());
+    vault
+        .append_dag_record(
+            &writer,
+            &crate::conversation_dag::AppendRecord {
+                body: turn_body("user", SECRET, None),
+                ..input(conversation, None, true, author)
+            },
+        )
+        .map_err(|error| Error::InvalidConfig(error.message))?;
     declare(&vault, author.entity_ref(), conversation, None)?;
     let admitted = admit(&vault)?;
     crate::test_util::withhold_dreamer_read(&vault)?;
@@ -178,7 +189,7 @@ fn inline_turn_text_outside_the_dreamers_read_never_reaches_the_model() -> Resul
                 .messages
                 .iter()
                 .flat_map(|message| &message.content)
-                .any(|part| matches!(part, ContentPart::Text { text } if text.contains(SECRET)))
+                .any(|part| matches!(part, ContentPart::Text { text, .. } if text.contains(SECRET)))
         }),
         "the withheld TURN's words reached the model"
     );
@@ -193,20 +204,31 @@ fn inline_turn_text_outside_the_dreamers_read_never_reaches_the_model() -> Resul
 fn a_record_without_text_is_not_covered() -> Result<()> {
     let (_dir, vault) = open_vault();
     let (author, conversation) = dag_conversation(&vault)?;
-    let said = vault.append_dag_record(&crate::conversation_dag::AppendRecord {
-        body: turn_body("user", "the first words", None),
-        ..input(conversation, None, true, author)
-    })?;
+    let writer = vault.memory(author.entity_ref(), author.actor_class());
+    let said = vault
+        .append_dag_record(
+            &writer,
+            &crate::conversation_dag::AppendRecord {
+                body: turn_body("user", "the first words", None),
+                ..input(conversation, None, true, author)
+            },
+        )
+        .map_err(|error| Error::InvalidConfig(error.message))?;
     let mut silent = Vec::new();
     rmpv::encode::write_value(
         &mut silent,
         &Value::Map(vec![(Value::from("spkr"), Value::from("user"))]),
     )
     .expect("text-less turn body");
-    vault.append_dag_record(&crate::conversation_dag::AppendRecord {
-        body: silent,
-        ..input(conversation, Some(said.id), true, author)
-    })?;
+    vault
+        .append_dag_record(
+            &writer,
+            &crate::conversation_dag::AppendRecord {
+                body: silent,
+                ..input(conversation, Some(said.id), true, author)
+            },
+        )
+        .map_err(|error| Error::InvalidConfig(error.message))?;
     declare(&vault, author.entity_ref(), conversation, None)?;
     let backend = RecordingBackend::new(vec![Ok(text_response("a summary".to_owned()))]);
     let outcome = compose(&vault, &backend)?;
@@ -383,6 +405,17 @@ fn a_reader_who_may_not_read_the_message_reads_no_summary_of_it() -> Result<()> 
 fn a_grant_revoked_during_the_call_still_charges_the_wake() -> Result<()> {
     let (_dir, vault, _clock) = open_clocked_vault();
     let space = EntityId::now();
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    vault
+        .put_entity(
+            &space,
+            ENTITY_TYPE_RELATIONSHIP,
+            occurred(1),
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     let (_, conversation) = witness(
         &vault,
         0x6B,

@@ -35,6 +35,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR;
+use crate::serialize::msgpack_value_to_exact_json;
 use crate::store::Store;
 use crate::temporal::TimeRange;
 
@@ -46,7 +47,7 @@ pub use crate::store::claim_descriptors::ClaimWriteClass;
 pub use crate::store::claim_descriptors::EnforcementStamp;
 use crate::store::claim_descriptors::{
     DESCRIPTOR_PUT_OPERATION, compiled_descriptor, compiled_row, generic_class_seed, hash_hex,
-    invalid, json_value, value_meets_schema,
+    invalid, value_meets_schema,
 };
 
 /// Checks `body` against its class's descriptor where the descriptor
@@ -74,7 +75,7 @@ pub(crate) fn check_claim_against_descriptor_in_txn(
     if let (ClaimValidatorKind::Generic, Some(schema)) =
         (descriptor.validator_kind, &descriptor.schema)
     {
-        let value = json_value(&body.value)
+        let value = msgpack_value_to_exact_json(&body.value)
             .ok_or_else(|| invalid("the claim's value is not JSON for its class's schema"))?;
         if !value_meets_schema(&body.predicate, schema, &value)? {
             return Err(invalid(
@@ -103,7 +104,7 @@ pub(crate) fn check_claim_against_compiled_descriptor(
     if !seed.subject_kind.admits_without_store(&body.subject) {
         return Err(invalid("the claim's subject is not one its class admits"));
     }
-    let value = json_value(&body.value)
+    let value = msgpack_value_to_exact_json(&body.value)
         .ok_or_else(|| invalid("the claim's value is not JSON for its class's schema"))?;
     if !seed.admits_value(&value)? {
         return Err(invalid(

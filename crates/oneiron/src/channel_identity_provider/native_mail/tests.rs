@@ -204,6 +204,10 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
     }
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    // This test covers native-send/CID-5 gating, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     let id = EntityId::now();
     let actor = EntityId::now();
     vault.put_entity(
@@ -278,6 +282,7 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
             continue;
         }
         body.source = Some(ClaimSource::Observed);
+        crate::test_util::stamp_vault_default_facet(&vault, &mut body);
         let claim_id = EntityId::now();
         if body.predicate == crate::identity_reputation::PREDICATE_IDENTITY_REPUTATION_WARMUP_STAGE
         {
@@ -561,7 +566,9 @@ fn held_reputation_vetoes_the_ramp_but_never_earns_it() -> Result<()> {
     };
     let put = |body: &crate::claim::ClaimBody, at: u64| -> Result<EntityId> {
         let claim = EntityId::now();
-        vault.put_claim(&claim, body, TimeRange { start: at, end: at }, at)?;
+        let mut stamped = body.clone();
+        crate::test_util::stamp_vault_default_facet(&vault, &mut stamped);
+        vault.put_claim(&claim, &stamped, TimeRange { start: at, end: at }, at)?;
         Ok(claim)
     };
     let heads = IdentityReputation {
@@ -629,6 +636,10 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
     }
     let dir = tempfile::tempdir()?;
     let vault = std::rc::Rc::new(Vault::open(dir.path(), crate::VaultConfig::default())?);
+    // This test covers cold-send approval, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     let actor = EntityId::now();
     let owner_id = vault
         .ensure_embedded_owner_actor()

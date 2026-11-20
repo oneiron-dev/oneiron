@@ -131,6 +131,8 @@ fn validate_claim_body_and_decode_with_descriptor(
         crate::provider_confidence::validate_actor_confidence_prior_claim_structure(&body)?;
     } else if crate::provider_confidence::is_provider_enrichment_claim_predicate(&body.predicate) {
         crate::provider_confidence::validate_provider_enrichment_claim_structure(&body)?;
+    } else if body.predicate == crate::machine_capacity::PREDICATE_MACHINE_CAPACITY {
+        crate::machine_capacity::validate_machine_capacity_claim_structure(&body)?;
     } else if body.predicate == crate::write_envelope::subject_record::PREDICATE_ACTOR_SUBJECT_REF {
         crate::write_envelope::subject_record::validate_actor_subject_claim_structure(&body)?;
     } else if body.predicate == crate::write_envelope::claim_predicate::PREDICATE_PERSON_SUBSTRATE {
@@ -215,8 +217,6 @@ pub(crate) fn validate_claim_body_bytes(data: &[u8], allow_reserved_predicate: b
     validate_claim_body_and_decode(data, allow_reserved_predicate).map(|_| ())
 }
 
-// FIX [LIBTEST-QUARANTINE-CLAIM-CORE-TYPES-IMPORT-VALIDATION-TESTS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod import_validation_tests {
     use super::*;
@@ -250,14 +250,14 @@ mod import_validation_tests {
                     return vault.with_write_txn(|txn| {
                         vault
                             .batch_in()
-                            .put_replicated(&id, ENTITY_TYPE_CLAIM, at, 100, &data)
+                            .put_replicated(&id, ENTITY_TYPE_CLAIM, at, 100, None, &data)
                             .apply(txn)
                     });
                 }
                 let _ = transactional;
                 vault
                     .batch()
-                    .put_replicated(&id, ENTITY_TYPE_CLAIM, at, 100, &data)
+                    .put_replicated(&id, ENTITY_TYPE_CLAIM, at, 100, None, &data)
                     .commit()
             };
             let mut body = ClaimBody::new(
