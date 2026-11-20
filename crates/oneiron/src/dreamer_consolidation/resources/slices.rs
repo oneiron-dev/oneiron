@@ -3,6 +3,7 @@ use super::*;
 use crate::dreamer_consolidation::branch::QueuedBranch;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 use crate::dreamer_consolidation::extraction_step::render_host_material;
+use crate::dreamer_consolidation::sieve_ports::SliceCall;
 
 pub(in crate::dreamer_consolidation) struct ExtractionSlice {
     pub(in crate::dreamer_consolidation) turns: Vec<EntityId>,
@@ -23,6 +24,52 @@ pub(in crate::dreamer_consolidation) struct ExtractionSlice {
     /// The rows its transcript was read from (FIX 6998): every row its
     /// labels name and each MESSAGE its TURNs' words were projected from.
     pub(in crate::dreamer_consolidation) sources: Vec<EntityId>,
+    /// Set when its listing page, as its transcript renders it, leaves its
+    /// turns no room in the lent window: the extraction model is never
+    /// called over it (FIX DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW).
+    pub(in crate::dreamer_consolidation) page_past_room: Option<PagePastRoom>,
+}
+
+impl ExtractionSlice {
+    /// The slice as its extraction port reads it.
+    pub(in crate::dreamer_consolidation) fn call(&self) -> SliceCall<'_> {
+        SliceCall {
+            transcript: &self.transcript,
+            labels: &self.labels,
+            scope: &self.scope,
+            sources: &self.sources,
+            page_past_room: self.page_past_room,
+        }
+    }
+}
+
+/// A call's listing page as rendered under its scope, `page` bytes, that
+/// fills its `room` (FIX DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW). A
+/// request to the extraction model over the call is refused before it goes
+/// out; a reply the engine authors from its turns' relations calls no model
+/// and still runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::dreamer_consolidation) struct PagePastRoom {
+    page: usize,
+    room: usize,
+}
+
+impl PagePastRoom {
+    /// The room a page of `page` bytes fills, when a room is lent and the
+    /// page leaves none of it to a turn.
+    fn filling(page: usize, room: Option<usize>) -> Option<Self> {
+        room.filter(|room| page >= *room)
+            .map(|room| Self { page, room })
+    }
+
+    /// The refusal a model call over the slice meets.
+    pub(in crate::dreamer_consolidation) fn refusal(self) -> crate::Error {
+        crate::Error::Refused(format!(
+            "the extraction model's lent window leaves {} bytes beside its prompt, and this \
+             call's listing page needs {}: lend the extraction role a model with a larger window",
+            self.room, self.page
+        ))
+    }
 }
 
 /// How far one extraction call's input may run (FIX
@@ -73,10 +120,14 @@ impl BranchResources<'_> {
     /// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW) it also ends before the
     /// turn that would pass it beside what each of its calls carries (the
     /// host material and the group's widest page), and a chunk whose built
-    /// call still passes it is split until each fits. A turn that passes it
-    /// alone is a chunk of its own, its words whole: labels and spans cite
-    /// them. The host material keeps only the whole texts that leave each
-    /// turn of the group room, and a room that holds no page is refused.
+    /// call still passes it is split until each fits. The host material
+    /// keeps only the whole texts that leave each turn of the group room by
+    /// that estimate, and a single turn whose built call still passes drops
+    /// whole texts from the last until it fits or none is left. A turn that
+    /// passes it alone then is read whole, its own chunk: labels and spans
+    /// cite its words. A call whose page, as its transcript renders it under
+    /// the call's scope, fills the room carries [`PagePastRoom`]: the model
+    /// is never called over it.
     pub(in crate::dreamer_consolidation) fn extraction_slices(
         &self,
         turns: &[EntityId],
@@ -115,23 +166,28 @@ impl BranchResources<'_> {
         for ((_, entities), group) in groups {
             let known = self.known.slice(&entities);
             let pages = known.pages(|id| self.priors.contains_key(id));
-            let (material, turn_room) = match bound.room {
-                None => (render_host_material(hook_material), None),
+            let (texts, turn_room) = match bound.room {
+                None => (hook_material.len(), None),
                 Some(room) => {
                     let widest = pages
                         .iter()
                         .map(|page| page.rendered_bytes())
                         .max()
                         .unwrap_or_default();
-                    let material = material_in_room(hook_material, room, widest, &group)?;
-                    let fixed = material.len().saturating_add(widest);
-                    (material, Some(room.saturating_sub(fixed)))
+                    let texts = material_in_room(hook_material, room, widest, &group);
+                    let fixed = render_host_material(&hook_material[..texts])
+                        .len()
+                        .saturating_add(widest);
+                    (texts, Some(room.saturating_sub(fixed)))
                 }
             };
             let chunks = room_chunks(&group, bound.turns, turn_room, |(_, facts)| {
                 turn_line_bytes(facts)
             });
-            let chunk_slices = |chunk: &[(EntityId, TurnBodyFacts)]| -> Result<Vec<_>> {
+            let chunk_slices = |chunk: &[(EntityId, TurnBodyFacts)],
+                                texts: usize|
+             -> Result<Vec<_>> {
+                let material = render_host_material(&hook_material[..texts]);
                 let mut built = Vec::new();
                 let ids: BTreeSet<_> = chunk.iter().map(|(id, _)| *id).collect();
                 let parents: BTreeSet<EntityId> = ids
@@ -168,6 +224,7 @@ impl BranchResources<'_> {
                     }
                     let mut labels = CallLabelMap::default();
                     let mut transcript = material.clone();
+                    let mut page_bytes = 0;
                     let mut current = None;
                     for (at, (id, facts)) in chunk.iter().enumerate() {
                         // A conversation's header leads its run of turns; the
@@ -181,8 +238,9 @@ impl BranchResources<'_> {
                                 transcript.push_str(&format!("conversation {conversation}\n"));
                             }
                             if at == 0 {
-                                transcript
-                                    .push_str(&page.render(&mut labels, page_rels.iter().copied()));
+                                let rendered = page.render(&mut labels, page_rels.iter().copied());
+                                page_bytes = rendered.len();
+                                transcript.push_str(&rendered);
                             }
                         }
                         let turn = labels.assign(LabelKind::Turn, *id);
@@ -231,11 +289,12 @@ impl BranchResources<'_> {
                         labels,
                         low_trust: slice_low_trust,
                         sources,
+                        page_past_room: PagePastRoom::filling(page_bytes, bound.room),
                     });
                 }
                 Ok(built)
             };
-            let fitted = fit_chunks(chunks, bound.room, chunk_slices, |slice| {
+            let fitted = fit_chunks(chunks, bound.room, texts, chunk_slices, |slice| {
                 slice.transcript.len()
             })?;
             // What paging costs, measured where it happens (FIX 10354): each
@@ -252,7 +311,11 @@ impl BranchResources<'_> {
                 );
             }
             for calls in fitted {
-                let widest = calls.iter().map(|slice| slice.transcript.len()).max();
+                let widest = calls
+                    .iter()
+                    .filter(|slice| slice.page_past_room.is_none())
+                    .map(|slice| slice.transcript.len())
+                    .max();
                 let past = widest.zip(bound.room).filter(|(bytes, room)| bytes > room);
                 if let Some((bytes, room)) = past {
                     tracing::warn!(
@@ -329,62 +392,71 @@ fn room_chunks<T>(
     chunks
 }
 
-/// `chunks` built in order by `build`, a chunk whose calls pass `room` by
-/// `bytes` split in two and each half built again, until every call fits or
-/// its chunk holds one item (FIX DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW).
-/// The estimate the chunks were cut by leaves out what only a built call
-/// shows: the relationship lines its turns' words are bound to, and the
-/// labels they widen. Returns each kept chunk's calls, in order.
+/// `chunks` built in order by `build` with the first `texts` host material
+/// texts, a chunk whose calls pass `room` by `bytes` split in two and each
+/// half built again, until every call fits or its chunk holds one item; a
+/// single item whose calls still pass is built again with one text fewer,
+/// the last first, until they fit or it carries none (FIX
+/// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW). The estimate the chunks
+/// were cut by leaves out what only a built call shows: the relationship
+/// lines its turns' words are bound to, and the labels they widen. Returns
+/// each kept chunk's calls, in order.
 fn fit_chunks<'g, T, S>(
     chunks: Vec<&'g [T]>,
     room: Option<usize>,
-    mut build: impl FnMut(&'g [T]) -> Result<Vec<S>>,
+    texts: usize,
+    mut build: impl FnMut(&'g [T], usize) -> Result<Vec<S>>,
     bytes: impl Fn(&S) -> usize,
 ) -> Result<Vec<Vec<S>>> {
+    let past = |calls: &[S]| room.is_some_and(|room| calls.iter().any(|call| bytes(call) > room));
     let mut pending: Vec<&'g [T]> = chunks.into_iter().rev().collect();
     let mut kept = Vec::new();
     while let Some(chunk) = pending.pop() {
-        let calls = build(chunk)?;
-        let past = room.is_some_and(|room| calls.iter().any(|call| bytes(call) > room));
-        if past && chunk.len() > 1 {
+        let mut carried = texts;
+        let mut calls = build(chunk, carried)?;
+        if past(&calls) && chunk.len() > 1 {
             let (first, second) = chunk.split_at(chunk.len() / 2);
             pending.push(second);
             pending.push(first);
             continue;
+        }
+        while past(&calls) && carried > 0 {
+            carried -= 1;
+            calls = build(chunk, carried)?;
+        }
+        if carried < texts {
+            tracing::warn!(
+                target: "oneiron::dreamer",
+                code = "host_material_past_room",
+                kept = carried,
+                dropped = texts - carried,
+                "host material past a single turn's call stays out of that call"
+            );
         }
         kept.push(calls);
     }
     Ok(kept)
 }
 
-/// The host material one group's calls carry in `room` beside its widest
-/// page of `widest` bytes (FIX DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW):
-/// the wake's texts in order, each whole, while they leave the group's
-/// longest turn line room beside them. A text is never cut, and the texts
-/// from the first that does not fit stay out of the group's calls.
-///
-/// # Errors
-///
-/// [`crate::Error::Refused`] when the room holds no page beside the prompt:
-/// no call of the group could carry its listing.
+/// How many of the wake's host material texts one group's calls carry in
+/// `room` beside its widest page of `widest` bytes by the estimate (FIX
+/// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW): the texts in order, each
+/// whole, while they leave the group's longest turn line room beside them.
+/// A text is never cut, and the texts from the first that does not fit stay
+/// out of the group's calls; [`fit_chunks`] drops more from a single turn's
+/// call that its built transcript shows past the room.
 fn material_in_room(
     material: &[String],
     room: usize,
     widest: usize,
     group: &[(EntityId, TurnBodyFacts)],
-) -> Result<String> {
-    if widest >= room {
-        return Err(crate::Error::Refused(format!(
-            "the extraction model's lent window leaves {room} bytes beside its prompt, and one \
-             listing page needs {widest}: lend the extraction role a model with a larger window"
-        )));
-    }
+) -> usize {
     let longest = group
         .iter()
         .map(|(_, facts)| turn_line_bytes(facts))
         .max()
         .unwrap_or_default();
-    let share = (room - widest).saturating_sub(longest);
+    let share = room.saturating_sub(widest).saturating_sub(longest);
     let mut used = 0_usize;
     let kept = material
         .iter()
@@ -403,27 +475,27 @@ fn material_in_room(
             "host material past an extraction call's room stays out of its calls"
         );
     }
-    Ok(render_host_material(&material[..kept]))
+    kept
 }
 
-/// The transcripts of the native extraction slices over `turns` of
-/// `attempt`, with `material` as its wake's host material and at most `room`
-/// transcript bytes a call, in call order (FIX
+/// The native extraction slices over `turns` of `attempt`, with `material`
+/// as its wake's host material and at most `room` transcript bytes a call,
+/// in call order, each as its transcript and whether its page fills its
+/// room, so no model is called over it (FIX
 /// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW): the attempt prepared and
 /// its branch opened as native extraction does, and no model run.
 ///
 /// # Errors
 ///
-/// A missing queue record, an unprepared branch, the branch opening, or the
-/// slicing's own refusal of a room that holds no listing page.
+/// A missing queue record, an unprepared branch, or the branch opening.
 #[cfg(oneiron_test_support)]
-pub(crate) fn native_slice_transcripts_in_room_for_test(
+pub(crate) fn native_slice_calls_in_room_for_test(
     vault: &Vault,
     attempt: AttemptId,
     turns: &[EntityId],
     material: &[String],
     room: Option<usize>,
-) -> crate::memory::MemoryResult<Vec<String>> {
+) -> crate::memory::MemoryResult<Vec<(String, bool)>> {
     use crate::dreamer_consolidation::wake_plan::AttemptPreparation;
     use crate::memory::MemoryError;
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
@@ -450,28 +522,45 @@ pub(crate) fn native_slice_transcripts_in_room_for_test(
     let (slices, _) = resources
         .extraction_slices(turns, bound)
         .map_err(MemoryError::from)?;
-    Ok(slices.into_iter().map(|slice| slice.transcript).collect())
+    Ok(slices
+        .into_iter()
+        .map(|slice| (slice.transcript, slice.page_past_room.is_some()))
+        .collect())
 }
 
-/// The chunk sizes [`fit_chunks`] keeps for items of `lines` bytes cut by
-/// [`room_chunks`] at most `turns` a chunk in `room`, when each built call
-/// is its items' bytes and `unseen` bytes the estimate leaves out, as a
-/// chunk's bound relationship lines are.
+/// The calls [`fit_chunks`] keeps for items of `lines` bytes cut by
+/// [`room_chunks`] at most `turns` a chunk in what `room` leaves beside the
+/// host material texts of `material` bytes, when each built call is its
+/// items' bytes, the texts it carries and `unseen` bytes the estimate leaves
+/// out, as a chunk's bound relationship lines are: each call's item count
+/// and the texts it carries.
 #[cfg(oneiron_test_support)]
-pub(crate) fn fitted_chunk_sizes_for_test(
+pub(crate) fn fitted_calls_for_test(
     lines: &[usize],
     turns: usize,
     room: usize,
     unseen: usize,
-) -> Vec<usize> {
-    let chunks = room_chunks(lines, turns, Some(room), |line| *line);
-    let build = |chunk: &[usize]| Ok(vec![(chunk.len(), chunk.iter().sum::<usize>() + unseen)]);
-    fit_chunks(chunks, Some(room), build, |(_, bytes)| *bytes)
-        .unwrap_or_default()
-        .into_iter()
-        .flatten()
-        .map(|(items, _)| items)
-        .collect()
+    material: &[usize],
+) -> Vec<(usize, usize)> {
+    let turn_room = room.saturating_sub(material.iter().sum());
+    let chunks = room_chunks(lines, turns, Some(turn_room), |line| *line);
+    let build = |chunk: &[usize], texts: usize| {
+        let carried: usize = material[..texts].iter().sum();
+        let bytes = chunk.iter().sum::<usize>() + unseen + carried;
+        Ok(vec![(chunk.len(), texts, bytes)])
+    };
+    fit_chunks(
+        chunks,
+        Some(room),
+        material.len(),
+        build,
+        |(_, _, bytes)| *bytes,
+    )
+    .unwrap_or_default()
+    .into_iter()
+    .flatten()
+    .map(|(items, texts, _)| (items, texts))
+    .collect()
 }
 
 /// Whether a prior head is not the user's own words, by its source or its

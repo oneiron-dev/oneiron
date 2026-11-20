@@ -3,15 +3,30 @@
 //! less the prompt it carries, not by its TURN count alone. A TURN past the
 //! room is read alone, its words whole; with no window lent, chunks stay by
 //! count. A chunk whose built call passes the room (its bound relationship
-//! lines) is split; host material keeps only the whole texts that fit; and a
-//! room that holds no listing page is refused (review round 1 of #9809).
+//! lines) is split; host material keeps only the whole texts that fit
+//! (review round 1 of #9809). A single TURN whose built call passes drops
+//! whole host texts, the last first; a call whose page as rendered (its
+//! bound relationship lines too) fills the room is marked, and only a call
+//! to the extraction model over it is refused: a relation reply the engine
+//! authors still runs (review round 2 of #9809).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test dreamer_extraction_room`
 
 #![cfg(oneiron_test_support)]
 
+use std::collections::BTreeMap;
+
+use oneiron::memory::extraction::{
+    EncoderOutput, NerSpan, RelationLink, SpeakerLink, SpeakerTarget,
+};
+use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::tagging::{TaggingMarkerConfig, TaggingMode};
+use oneiron::test_doors::consolidation::{
+    consolidate_tagged_turn_in_window, consolidate_unbound_turn_in_window,
+    open_tagged_dreamer_vault,
+};
 use oneiron::test_doors::dreamer_extraction_room::{
-    fitted_chunk_sizes, meso_extraction_transcripts, room_slice_transcripts,
+    fitted_calls, fitted_chunk_sizes, meso_extraction_transcripts, room_slice_calls,
 };
 
 /// The shipped prompt's frame (system text and worked examples) is 7,698
@@ -21,6 +36,9 @@ use oneiron::test_doors::dreamer_extraction_room::{
 const WINDOW_TOKENS: u64 = 6_000;
 const ROOM_BYTES: usize = 6_000 * 3 - 7_698;
 const TURNS_PER_CHILD: usize = 16;
+/// 7,500 bytes at 3 a token: less than the shipped prompt's 7,698-byte
+/// frame, so a call's transcript has no room at all.
+const NO_ROOM_WINDOW_TOKENS: u64 = 2_500;
 
 /// `count` TURNs of about `bytes` bytes each, every one naming owen and
 /// numbered, so each reads apart.
@@ -133,10 +151,10 @@ fn host_material_past_the_room_keeps_only_the_whole_texts_that_fit() {
     let kept = "owen keeps his garden plans in a notebook".to_owned();
     let past = format!("dropped {}", "garden notes ".repeat(1_000));
     assert!(past.len() > ROOM_BYTES);
-    let calls = room_slice_transcripts(&words, &[kept.clone(), past], Some(ROOM_BYTES))
+    let calls = room_slice_calls(&words, false, &[kept.clone(), past], Some(ROOM_BYTES))
         .expect("native slices in a room");
     assert!(!calls.is_empty(), "the TURNs are read");
-    for call in &calls {
+    for call in calls.iter().map(|call| &call.transcript) {
         assert!(
             call.len() <= ROOM_BYTES,
             "a call's transcript fits its room: {} > {ROOM_BYTES}",
@@ -154,11 +172,173 @@ fn host_material_past_the_room_keeps_only_the_whole_texts_that_fit() {
 }
 
 #[test]
-fn a_room_that_holds_no_listing_page_is_refused() {
-    let error = room_slice_transcripts(&["owen planted tulips"], &[], Some(0))
-        .expect_err("no room beside the prompt");
+fn a_room_that_holds_no_listing_page_marks_every_call() {
+    let calls = room_slice_calls(&["owen planted tulips"], false, &[], Some(0))
+        .expect("the slicing itself never refuses");
+    assert!(!calls.is_empty(), "the TURN is read");
     assert!(
-        format!("{error:?}").contains("larger window"),
-        "the refusal names its bound: {error:?}"
+        calls.iter().all(|call| call.page_past_room),
+        "no page fits a room of nothing: {calls:?}"
     );
+}
+
+#[test]
+fn a_single_turn_past_the_room_drops_whole_host_texts_from_the_last() {
+    // One 28-byte TURN line and 161 bytes of bound relationship lines the
+    // estimate leaves out: with both texts the call is 10,389 bytes.
+    assert_eq!(
+        fitted_calls(&[28], TURNS_PER_CHILD, ROOM_BYTES, 161, &[100, 10_100]),
+        vec![(1, 1)],
+        "the last text goes, the first stays"
+    );
+    assert_eq!(
+        fitted_calls(&[28], TURNS_PER_CHILD, ROOM_BYTES, 161, &[10_200]),
+        vec![(1, 0)],
+        "a TURN that fits alone is read with no text that passes the room"
+    );
+    assert_eq!(
+        fitted_calls(&[3_000, 3_000], TURNS_PER_CHILD, ROOM_BYTES, 500, &[4_000]),
+        vec![(1, 1), (1, 1)],
+        "a chunk splits before it drops a text"
+    );
+}
+
+/// The bytes of the listing page in a one-conversation `transcript`: the
+/// lines after its conversation header and before its first TURN line.
+fn page_bytes(transcript: &str) -> usize {
+    transcript
+        .lines()
+        .skip_while(|line| !line.starts_with("conversation "))
+        .skip(1)
+        .take_while(|line| !line.starts_with("[T"))
+        .map(|line| line.len() + 1)
+        .sum()
+}
+
+#[test]
+fn a_page_fills_the_room_as_rendered_with_its_bound_relationship() {
+    let words = ["owen planted tulips"];
+    let whole = room_slice_calls(&words, true, &[], None).expect("native slices, no room");
+    let [call] = whole.as_slice() else {
+        panic!("FIXTURE: one TURN is one call: {whole:?}");
+    };
+    assert!(
+        call.transcript
+            .lines()
+            .any(|line| line.starts_with("relationship ")),
+        "FIXTURE: the call lists its words' relationship: {}",
+        call.transcript
+    );
+    let page = page_bytes(&call.transcript);
+    let at_page = room_slice_calls(&words, true, &[], Some(page)).expect("native slices");
+    assert!(
+        !at_page.is_empty() && at_page.iter().all(|call| call.page_past_room),
+        "a {page}-byte page with its relationship line fills a {page}-byte room: {at_page:?}"
+    );
+    let past_page = room_slice_calls(&words, true, &[], Some(page + 1)).expect("native slices");
+    assert!(
+        !past_page.is_empty() && past_page.iter().all(|call| !call.page_past_room),
+        "a {page}-byte page leaves a {}-byte room a byte: {past_page:?}",
+        page + 1
+    );
+}
+
+const READER: &str = "reader";
+const CHECKPOINT: &str = "0123456789abcdef";
+const WORDS: &str = "I work at Acme";
+const PREDICATE: &str = "work.employer";
+
+/// A vault whose tagger saves its tags, maps `PERSON`, and maps the
+/// `works_at` relation to [`PREDICATE`] (as tests/jointie_relation_extraction.rs).
+fn tagged_vault(dir: &tempfile::TempDir) -> oneiron::Vault {
+    let tagging = TaggingMarkerConfig::new(CHECKPOINT)
+        .expect("checkpoint")
+        .with_labels(BTreeMap::from([("PERSON".to_owned(), ENTITY_TYPE_PERSON)]))
+        .with_relations(BTreeMap::from([(
+            "works_at".to_owned(),
+            PREDICATE.to_owned(),
+        )]))
+        .with_mode(TaggingMode::Save);
+    open_tagged_dreamer_vault(dir.path(), READER, tagging).expect("fixture vault")
+}
+
+/// A relation-capable tagger's answer for [`WORDS`]: `I`, the turn's
+/// speaker; `Acme`; and one `works_at` relation from `I` to `Acme`.
+fn works_at_tags() -> EncoderOutput {
+    let span = |start: usize, end: usize, label: &str| NerSpan {
+        message: 0,
+        start,
+        end,
+        label: label.to_owned(),
+        confidence: 0.9,
+    };
+    EncoderOutput {
+        spans: vec![span(0, 1, "PRONOUN"), span(10, 14, "ORG")],
+        links: Vec::new(),
+        vad: None,
+        context_links: Vec::new(),
+        speaker_links: vec![SpeakerLink {
+            span: 0,
+            target: SpeakerTarget::Speaker,
+            confidence: 0.9,
+        }],
+        mood_parts: Vec::new(),
+        relations: Some(vec![RelationLink {
+            head: 0,
+            tail: 1,
+            label: "works_at".to_owned(),
+            confidence: 0.9,
+        }]),
+        stack_sha16: None,
+    }
+}
+
+/// The scripted model's reply: a claim no relation would file.
+fn decoy() -> String {
+    serde_json::json!({
+        "persons": [{"id": "new:P1", "name": "Acme", "evidence_turn_refs": ["T1"]}],
+        "candidates": [{
+            "subject": "new:P1",
+            "predicate": "decoy.value",
+            "value": "model",
+            "confidence": 0.8,
+            "evidence_refs": [{"source": "T1", "quote": "Acme"}],
+        }],
+    })
+    .to_string()
+}
+
+#[test]
+fn a_window_with_no_room_runs_a_relation_reply_and_refuses_the_model() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = tagged_vault(&dir);
+    let pass = consolidate_tagged_turn_in_window(
+        &vault,
+        WORDS,
+        &works_at_tags(),
+        &decoy(),
+        Some(NO_ROOM_WINDOW_TOKENS),
+    )
+    .expect("a slice its relations cover sends no prompt, so no window refuses it");
+    assert!(
+        pass.call_relationships.is_empty(),
+        "a covered slice calls no model: {:?}",
+        pass.call_relationships
+    );
+    let [claim] = pass.landed.as_slice() else {
+        panic!("one landed claim, found {}", pass.landed.len());
+    };
+    let body = vault
+        .get_claim(claim)
+        .expect("claim read")
+        .expect("the landed claim");
+    assert_eq!(
+        body.predicate, PREDICATE,
+        "the relation reply's claim lands"
+    );
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = tagged_vault(&dir);
+    consolidate_unbound_turn_in_window(&vault, WORDS, &decoy(), Some(NO_ROOM_WINDOW_TOKENS))
+        .expect_err("an untagged slice needs the model, and its window holds no page");
 }
