@@ -479,6 +479,7 @@ impl<'a, 't> LineagePass<'a, 't> {
                 every_support,
             },
             policies: BTreeMap::new(),
+            waiting_readable: None,
             rows: self.verdicts.remove(&ask).unwrap_or_default(),
         };
         let readable = judge.row_readable(*id, None);
@@ -526,6 +527,7 @@ pub(crate) fn derived_travel_in(
             every_support: false,
         },
         policies: BTreeMap::new(),
+        waiting_readable: None,
         rows: BTreeMap::new(),
     };
     if judge.row_readable(*id, None)? {
@@ -620,6 +622,7 @@ pub(crate) fn readable_with_read_in(
         txn,
         ask: Ask::Read(viewers),
         policies: BTreeMap::new(),
+        waiting_readable: None,
         rows: BTreeMap::new(),
     };
     judge.row_readable(id, Some(raw))
@@ -661,6 +664,7 @@ pub(crate) fn read_audience_in(
         txn,
         ask: Ask::Read(viewers),
         policies: BTreeMap::new(),
+        waiting_readable: None,
         rows: BTreeMap::new(),
     };
     let mut seen: BTreeSet<EntityId> = roots.iter().copied().collect();
@@ -716,6 +720,9 @@ struct Judge<'a, 's, 't> {
     /// The settled verdicts that hold whatever row asks. A [`LineagePass`]
     /// keeps them across its rows (see [`Judge::row_readable`]).
     rows: BTreeMap<EntityId, bool>,
+    /// Whether the viewers read a row whose floor waits, once asked
+    /// ([`super::waiting_floor_readable_in`]).
+    waiting_readable: Option<bool>,
 }
 
 /// A row the judge has opened: decided at once, or waiting on what its
@@ -931,6 +938,15 @@ impl Judge<'_, '_, '_> {
         {
             return Ok(Opened::Decided(false));
         }
+        // A row whose floor is not known whole here (READ-LINEAGE L1; #9289
+        // review 2 P1-1, P1-2) reads only to an owner who reads every source
+        // this vault holds, whatever its floor would name.
+        if let Ask::Read(viewers) = self.ask
+            && super::floor_waits_in(self.vault, self.txn, &id)?
+            && !self.waiting_floor_readable(viewers)?
+        {
+            return Ok(Opened::Decided(false));
+        }
         // The policies a full-window carrier brought for a derived row (fix
         // list row 17207), and the floor its own write raised (READ-LINEAGE
         // L1): every policy on it reads, whatever the row's own lineage here
@@ -991,6 +1007,15 @@ impl Judge<'_, '_, '_> {
             every.append(&mut supports);
         }
         Ok(Opened::Waiting(Frame::new(id, every, supports)))
+    }
+
+    fn waiting_floor_readable(&mut self, viewers: &[EntityId]) -> Result<bool> {
+        if let Some(known) = self.waiting_readable {
+            return Ok(known);
+        }
+        let verdict = super::waiting_floor_readable_in(self.vault, self.txn, viewers)?;
+        self.waiting_readable = Some(verdict);
+        Ok(verdict)
     }
 
     fn policy_readable(&mut self, policy: EntityId, viewers: &[EntityId]) -> Result<bool> {
