@@ -549,6 +549,80 @@ fn the_feed_echo_of_the_booked_slot_writes_nothing() {
     );
 }
 
+/// FIX BK-DEPOSIT-CANCELLED-ELSEWHERE-FEED-REWRITES-BOOKED-SLOT: a booking
+/// the host's complete feed left out reads cancelled, by omission only. When
+/// the feed carries it again at another slot, that live VEVENT ends the
+/// omission's cancellation, so the booking moves as a live one: its passport
+/// takes the next SEQUENCE and the booker's revised invite is queued. Main
+/// rewrote the EVENT as any other, with no revision and no notice.
+#[test]
+fn a_booking_the_feed_left_out_moves_as_a_booking_when_it_returns_at_another_slot() {
+    let fixture = Fixture::open();
+    let (booked, _) = book_seen_by_the_host_feed(&fixture, b"feed-omission-return");
+    let event = booked.calendar.event_ref;
+    // 16:00, outside the host's working hours: no solve offers it.
+    let moved = TimeRange {
+        start: MONDAY + 16 * 3_600,
+        end: MONDAY + 16 * 3_600 + u64::from(DEFAULT_INTRO_DURATION_MIN) * 60,
+    };
+
+    // The host's complete feed leaves the booking out. A token reschedule
+    // refuses it as cancelled before it reads the target slot.
+    fixture.poll_host_feed(&[], "v2", NOW + 120);
+    let refused = fixture.run(
+        BookingVerbRequest::Reschedule(RescheduleSpec {
+            token: booked.reschedule_token.clone(),
+            new_slot: moved,
+            visitor_tz: "UTC".to_owned(),
+            constraint: None,
+            idempotency_key: None,
+        }),
+        NOW + 150,
+    );
+    assert!(
+        matches!(
+            &refused,
+            Err(BookingError::InvalidConstraint(detail)) if detail.contains("cancelled")
+        ),
+        "the booking the feed left out reads cancelled; got {refused:?}"
+    );
+
+    // The host's feed carries it again, moved to 16:00.
+    fixture.poll_host_feed(
+        &[FeedEvent {
+            uid: &booked.calendar.uid,
+            sequence: 1,
+            slot: moved,
+            summary: "intro-call",
+        }],
+        "v3",
+        NOW + 180,
+    );
+
+    assert_eq!(
+        fixture.booking_sequence(&event),
+        1,
+        "the returned booking's move takes the booking passport's next SEQUENCE"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .get_occurred(&event)
+            .expect("booking occurrence"),
+        inclusive(moved),
+        "the move lands at the feed's slot"
+    );
+    assert_eq!(
+        fixture.queued_revision_invites(),
+        vec![serde_json::json!({
+            "event_ref": event.to_hex(),
+            "uid": booked.calendar.uid,
+            "sequence": 1,
+        })],
+        "one revised invite to the booker is queued for the move's SEQUENCE"
+    );
+}
+
 #[test]
 fn a_feed_update_of_an_event_with_no_booking_still_moves_it() {
     let fixture = Fixture::open();
