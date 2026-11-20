@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use loro::ExportMode;
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::conversation::{ConversationBody, ConversationKind, RoomPinPolicy, RoomRole};
+use oneiron::conversation::{ConversationBody, ConversationKind, RoomPin, RoomPinPolicy, RoomRole};
 use oneiron::federation::{
     FederationGrantRole, FederationGrantScope, InitialSharedMember, decode_federation_grant_body,
 };
@@ -38,6 +38,8 @@ const ROOM_AT: u64 = 1_773_532_800;
 struct Fixture {
     client: SyncClient,
     vault: Arc<Vault>,
+    owner: EntityId,
+    member: EntityId,
     room: EntityId,
     window: WindowKey,
     // Drop every vault handle before removing its directory.
@@ -209,6 +211,8 @@ fn fixture(peer_owns_room: bool, closed: bool) -> Fixture {
     Fixture {
         client,
         vault,
+        owner,
+        member,
         room,
         window,
         _directory: directory,
@@ -306,4 +310,38 @@ fn a_member_peer_that_runs_no_room_cannot_set_its_pin_policy() {
         fx.vault.conversation_body(fx.room).unwrap().pin_policy,
         before
     );
+}
+
+/// A pin record as the member's body carries it, made a minute after the room.
+fn pin_by(target: EntityId, pinned_by: EntityId) -> RoomPin {
+    RoomPin {
+        target,
+        pinned_by,
+        acting_agent: None,
+        pinned_at: ROOM_AT + 60,
+    }
+}
+
+#[test]
+fn a_member_peer_cannot_add_a_pin_in_another_persons_name() {
+    let mut fx = fixture(false, false);
+    let forged = pin_by(fx.member, fx.owner);
+    let blob = edited_blob(&fx, |body| body.pins.push(forged));
+    let result = import_member(&mut fx, &blob);
+    assert!(
+        matches!(result, Err(TransportError::InvalidPayload(_))),
+        "{result:?}"
+    );
+    fx.client.replay_deferred_federation_update().unwrap();
+    assert!(fx.vault.conversation_body(fx.room).unwrap().pins.is_empty());
+}
+
+#[test]
+fn a_member_peer_adds_a_pin_in_its_own_name() {
+    let mut fx = fixture(false, false);
+    let own = pin_by(fx.owner, fx.member);
+    let blob = edited_blob(&fx, |body| body.pins.push(own.clone()));
+    import_member(&mut fx, &blob).expect("a member pins under the Members policy as itself");
+    fx.client.replay_deferred_federation_update().unwrap();
+    assert_eq!(fx.vault.conversation_body(fx.room).unwrap().pins, vec![own]);
 }
