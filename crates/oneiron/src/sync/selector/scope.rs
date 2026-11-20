@@ -500,6 +500,18 @@ pub(super) fn band_filter(
     (position.bands != ScopeAxis::All).then_some(&position.bands)
 }
 
+/// The band a row of type `entity_type` sits in: its registry identity, or
+/// the family of its structural kind registration. `None` for a type with
+/// neither, which no selector carries.
+pub(super) fn selector_identity(vault: &Vault, entity_type: u8) -> Option<SelectorRange> {
+    selector_range_of(entity_type).or_else(|| {
+        vault
+            .structural_kind_registration(entity_type)
+            .and_then(|registration| registration.family)
+            .map(SelectorRange::Family)
+    })
+}
+
 /// A SUMMARY a run settled (an epoch summary) travels only where the
 /// selector, under its pact ceiling, selects the position it was born at:
 /// shared-base residence is not base-world disclosure, and a SUMMARY has no
@@ -553,12 +565,7 @@ pub(super) fn entity_selector_decision(
     }
     // Registration is mandatory even for an unfiltered selector. Unknown
     // bytes do not gain a scope from their numeric position.
-    let identity = selector_range_of(header.entity_type).or_else(|| {
-        vault
-            .structural_kind_registration(header.entity_type)
-            .and_then(|registration| registration.family)
-            .map(crate::federation::SelectorRange::Family)
-    })?;
+    let identity = selector_identity(vault, header.entity_type)?;
     if band_filter(position).is_some_and(|bands| !bands.contains(&identity)) {
         return None;
     }

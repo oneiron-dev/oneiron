@@ -48,6 +48,10 @@ impl Vault {
         let receipt_id = self.store.clock.entity_id()?;
         let mut scope = RedactionScope::entity(id);
         let mut wtxn = self.store.env.write_txn()?;
+        // A row beside a setting act that a projection reads (stage 7c-1): once the purge
+        // commits, the projection reads it again before the delete returns, so no read takes its
+        // erased value as the setting's.
+        let setting_watched = crate::setting::beside_row_watched_in_txn(&self.store, &wtxn, id)?;
         let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
         self.require_room_delete_gate(&wtxn, id, gate.as_ref(), allow_replay_test)?;
         // The purge txn: the one that actually tears. It re-checks authority
@@ -178,6 +182,7 @@ impl Vault {
             self.store.brief_delete_fences.settle(id);
             wtxn.commit()?;
             effects.committed(self);
+            self.project_settings_after_authority_ingest(setting_watched);
             pending_cloud_revokes.publish();
             self.notify_local_delete_materialized(&[*id]);
             return Ok(DeleteEntityOutcome {
@@ -185,6 +190,7 @@ impl Vault {
                 receipt_id: None,
                 sweep_key: None,
                 turn_program_details: turn_program_details.to_vec(),
+                version_release: false,
             });
         }
         // ONE-1122 `dt:` local hard-delete marker: the permanent local truth
@@ -324,6 +330,7 @@ impl Vault {
         self.store.brief_delete_fences.settle(id);
         wtxn.commit()?;
         effects.committed(self);
+        self.project_settings_after_authority_ingest(setting_watched);
         pending_cloud_revokes.publish();
         self.notify_local_delete_materialized(&affected);
         // The CRDT record (tombstone-first, above) is durable — the crash
@@ -339,6 +346,7 @@ impl Vault {
             receipt_id: Some(receipt_id),
             sweep_key: Some(sweep_key),
             turn_program_details: turn_program_details.to_vec(),
+            version_release: false,
         })
     }
 }

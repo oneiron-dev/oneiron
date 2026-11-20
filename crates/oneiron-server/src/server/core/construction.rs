@@ -359,6 +359,7 @@ impl SyncServer {
             live_voice: Default::default(),
             asr_sessions: Default::default(),
             meeting_imports: Default::default(),
+            hook_transcript_uploads: Default::default(),
             model_streams: Default::default(),
             export_transfers: Default::default(),
             pairing_backoff: Default::default(),

@@ -46,13 +46,14 @@ impl SyncConnection {
     /// Resolves the mode at start, then on each wake whose committed home
     /// moved this machine in or out of the home, or whose store resolves to
     /// a mode other than the one this connection runs, for the connection's
-    /// whole life. A federation lane keeps its configured mode and runs none.
-    /// Each change holds the host's admission, a pause waited out (FIX 12036).
+    /// whole life. A federation or member lane keeps its configured mode and
+    /// runs none (H8-SHARED-ENV-LANE = B). Each change holds the host's
+    /// admission, a pause waited out (FIX 12036).
     pub(super) async fn run_residence_mode(
         &self,
         events: mpsc::UnboundedSender<SyncEvent>,
     ) -> Infallible {
-        if self.config.client_config.federation_peer.is_some() {
+        if self.config.client_config.residence_mode_is_fixed() {
             match std::future::pending::<Infallible>().await {}
         }
         let vault = Arc::clone(self.manager.vault());
@@ -111,6 +112,9 @@ impl SyncConnection {
     /// store resolves to, and a refresh that ends on sync opened withdrew
     /// the mark under that resolution.
     fn follow_home(&self, vault: &Vault) -> crate::error::Result<()> {
+        if self.config.client_config.residence_mode_is_fixed() {
+            return Ok(());
+        }
         let _publish = self
             .mode_publish
             .lock()

@@ -17,6 +17,34 @@ type TimelineEntityParts = (u8, u64, Vec<u8>);
 type SupersessionSide = (u8, u64, Vec<u8>, RevisionRef);
 type SupersessionParts = (SupersessionSide, SupersessionSide);
 
+/// What a timeline's projection snapshot admits of one record the timeline
+/// listed in an earlier one ([`ScopedRead::memory_timeline_projection_with_receipt`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TimelineRecordProjection {
+    /// A living record the snapshot admits: its type, its learned-at time
+    /// and its body.
+    Body {
+        /// The record's entity type.
+        entity_type: u8,
+        /// When the vault learned the record.
+        learned_at: u64,
+        /// The record's body, after its header.
+        body: Vec<u8>,
+    },
+    /// A deleted record whose shell the snapshot still admits: its deletion
+    /// metadata may show, never a body.
+    Shell,
+    /// A record the snapshot refuses, or one whose row is gone. `counted`
+    /// when the projection's receipt counts it as one withheld row: the read
+    /// asked a narrower scope than its floor, which still admits it. A row
+    /// gone from the store, or one only another authority admitted, is never
+    /// counted (review round 1 of #10031).
+    Withheld {
+        /// Whether the projection's receipt counts this row.
+        counted: bool,
+    },
+}
+
 impl ScopedRead<'_> {
     /// The graph-ask recipe reads at most `limit` usable outgoing neighbors.
     /// Its semantic scan cap applies after admission, so Empty relations cannot
@@ -229,6 +257,17 @@ impl ScopedRead<'_> {
             receipt.restrict_with(&self.timeline_receipt_in(&txn, None, fresh, 0, &held));
             receipt
         };
+        // An anchor the final snapshot refuses, on entry or in the record
+        // gate, ends the read as it would have on entry: only the anchor is
+        // judged, so the receipt cannot size its chain (review round 2 of
+        // #10031).
+        let anchor_refused = |suppressed| ScopedReadResult {
+            value: MemoryTimeline {
+                anchor: *anchor,
+                records: Vec::new(),
+            },
+            receipt: receipt(suppressed),
+        };
         let rooms = RoomVerdicts::default();
         let anchor_admitted = self.admit_in(&txn, anchor, || {
             Ok(
@@ -247,16 +286,7 @@ impl ScopedRead<'_> {
             )
         })?;
         if !anchor_admitted.visible() {
-            // An anchor the final snapshot refuses ends the read as it would
-            // have on entry: only the anchor is judged, so no record of its
-            // chain counts and the receipt cannot size the chain.
-            return Ok(ScopedReadResult {
-                value: MemoryTimeline {
-                    anchor: *anchor,
-                    records: Vec::new(),
-                },
-                receipt: receipt(anchor_admitted.suppression()),
-            });
+            return Ok(anchor_refused(anchor_admitted.suppression()));
         }
         let mut kept = Vec::new();
         let mut suppressed = 0;
@@ -275,6 +305,9 @@ impl ScopedRead<'_> {
                     )?)
                 .then_some(()))
             })?;
+            if record.id == *anchor && !admitted.visible() {
+                return Ok(anchor_refused(admitted.suppression()));
+            }
             suppressed += admitted.suppression();
             if admitted.visible() {
                 kept.push(record);
@@ -293,17 +326,64 @@ impl ScopedRead<'_> {
         })
     }
 
+    /// The bodies of already-authorized timeline rows,
+    /// [`Self::memory_timeline_projection_with_receipt`] with a withheld row
+    /// as `None`. A deleted record is `None` before any check, so it adds
+    /// no count and no axis to the receipt (review round 2 of #10031).
+    pub fn memory_timeline_parts_with_receipt(
+        &self,
+        records: &[MemoryTimelineRecord],
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<ScopedReadResult<Vec<Option<TimelineEntityParts>>>> {
+        let projected = self.timeline_projection_in(records, requested, false)?;
+        Ok(ScopedReadResult {
+            value: projected
+                .value
+                .into_iter()
+                .map(|part| match part {
+                    TimelineRecordProjection::Body {
+                        entity_type,
+                        learned_at,
+                        body,
+                    } => Some((entity_type, learned_at, body)),
+                    TimelineRecordProjection::Shell | TimelineRecordProjection::Withheld { .. } => {
+                        None
+                    }
+                })
+                .collect(),
+            receipt: projected.receipt,
+        })
+    }
+
     /// Read the bodies of already-authorized timeline rows. This is NOT a
     /// retrieval search: closed claims are history, but their audience,
     /// predicate, world, sensitivity and policy gates still apply. Recheck
     /// each row against the caller's current authority snapshot before giving
     /// its bytes to a renderer. A row takes `requested` and the key's live
     /// Grants; it counts as withheld when the floor or one Grant admits it.
-    pub fn memory_timeline_parts_with_receipt(
+    /// A deleted record's shell takes the timeline's own shell gate in this
+    /// snapshot too, so a shell whose authority went after the timeline
+    /// listed it is [`TimelineRecordProjection::Withheld`] (FIX
+    /// TIMELINE-SHELL-TWO-SNAPSHOT-CAP), counted as a living row is: a shell
+    /// gone from the store, or one the floor no longer admits, adds no count
+    /// (review round 1 of #10031).
+    pub fn memory_timeline_projection_with_receipt(
         &self,
         records: &[MemoryTimelineRecord],
         requested: Option<&RetrievalFilter>,
-    ) -> Result<ScopedReadResult<Vec<Option<TimelineEntityParts>>>> {
+    ) -> Result<ScopedReadResult<Vec<TimelineRecordProjection>>> {
+        self.timeline_projection_in(records, requested, true)
+    }
+
+    /// [`Self::memory_timeline_projection_with_receipt`]; a deleted record
+    /// takes its shell gate only where `judge_shells`, and is otherwise
+    /// withheld uncounted before any check.
+    fn timeline_projection_in(
+        &self,
+        records: &[MemoryTimelineRecord],
+        requested: Option<&RetrievalFilter>,
+        judge_shells: bool,
+    ) -> Result<ScopedReadResult<Vec<TimelineRecordProjection>>> {
         let txn = self.vault.store.env.read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         let held = self.held_for(requested);
@@ -311,34 +391,36 @@ impl ScopedRead<'_> {
         let mut suppressed = 0;
         let mut value = Vec::with_capacity(records.len());
         for record in records {
-            if record.state == MemoryTimelineRecordState::Deleted {
-                value.push(None);
+            if !judge_shells && record.state == MemoryTimelineRecordState::Deleted {
+                value.push(TimelineRecordProjection::Withheld { counted: false });
                 continue;
             }
             let admitted = self.admit_held_in(&txn, &record.id, &held, || {
                 self.timeline_record_allowed_in(&txn, &policy, &filter, record, &held)
                     .map(|visible| visible.then_some(()))
             })?;
-            if admitted.suppression() > 0
+            let counted = admitted.suppression() > 0
                 && requested.is_some()
                 && self
                     .actor_retrieval_floor(&policy)
                     .and_then(|floor| {
                         self.timeline_record_allowed_in(&txn, &policy, &floor, record, &floor_held)
                     })
-                    .unwrap_or(false)
-            {
-                suppressed += 1;
-            }
+                    .unwrap_or(false);
+            suppressed += usize::from(counted);
             if !admitted.visible() {
-                value.push(None);
+                value.push(TimelineRecordProjection::Withheld { counted });
+                continue;
+            }
+            if record.state == MemoryTimelineRecordState::Deleted {
+                value.push(TimelineRecordProjection::Shell);
                 continue;
             }
             let Some(raw) = self
                 .entity_record_in(&txn, &record.id)?
                 .map(|row| row.encode())
             else {
-                value.push(None);
+                value.push(TimelineRecordProjection::Withheld { counted: false });
                 continue;
             };
             // A file-plane ASSET reads as its body, never its manifest.
@@ -348,17 +430,18 @@ impl ScopedRead<'_> {
             let raw = self.redact_reaction_row_in(&txn, raw)?;
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            value.push(Some((
-                header.entity_type,
-                header.learned_at,
-                raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
-            )));
+            value.push(TimelineRecordProjection::Body {
+                entity_type: header.entity_type,
+                learned_at: header.learned_at,
+                body: raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+            });
         }
         self.charge_served(
             records
                 .iter()
                 .zip(&value)
-                .filter_map(|(record, part)| part.as_ref().map(|_| record.id)),
+                .filter(|(_, part)| matches!(part, TimelineRecordProjection::Body { .. }))
+                .map(|(record, _)| record.id),
         );
         Ok(ScopedReadResult {
             value,

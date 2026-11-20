@@ -8,6 +8,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::*;
 use crate::store::Store;
 
+mod belief;
+
+pub(super) use belief::{fold_belief_structure_in_txn, stage_batch_for_belief};
+
 /// The key an admission names: an enrollment, a rotation, a re-root, or the
 /// owner's enrollment of a device's own owner signing key (FIX 4920), which
 /// its primary signer, an owner root, vouches for.
@@ -569,6 +573,7 @@ impl AuthorityStructure {
             AuthorityOp::MembershipExecution(record) => install_key(record.machine),
             AuthorityOp::PolicySettingSet(set) => install_key(set.machine),
             AuthorityOp::SettingCopy(copy) => install_key(copy.machine),
+            AuthorityOp::SettingPackHead(head) => install_key(head.machine),
             AuthorityOp::ExportAct(record) => install_key(record.machine),
             // A frontier join: its carrier's install key, as for the act it
             // leads to, a stranger's once its carrier is removed
@@ -662,6 +667,7 @@ impl AuthorityStructure {
             AuthorityOp::MembershipExecution(record) => machine_key(record.machine),
             AuthorityOp::PolicySettingSet(set) => machine_key(set.machine),
             AuthorityOp::SettingCopy(copy) => machine_key(copy.machine),
+            AuthorityOp::SettingPackHead(head) => machine_key(head.machine),
             AuthorityOp::ExportAct(record) => machine_key(record.machine),
             AuthorityOp::FrontierJoin(FrontierJoin {
                 family: FrontierJoinFamily::Install(carrier),

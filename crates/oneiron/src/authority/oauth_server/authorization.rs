@@ -51,14 +51,23 @@ const NOT_PENDING: &str = "this sign-in request is no longer waiting for an answ
 const NOT_A_WORLD: &str = "world_ref names no live world of this vault";
 
 /// One authorize request as the server validated it: a known client, one of its redirect URIs,
-/// an S256 challenge, the client's state, the `/mcp` resource and the tier asked.
+/// an S256 challenge, the client's state, the resources it named and the tier asked.
 #[derive(Debug, Clone, Copy)]
 pub struct OAuthAuthorizationStart<'a> {
     pub client: &'a OAuthClientRecord,
     pub redirect_uri: &'a str,
     pub code_challenge: &'a str,
     pub state: Option<&'a str>,
+    /// The first RFC 8707 resource it named: this vault's `/mcp`, or its `/git`.
     pub resource: &'a str,
+    /// Every further resource it named, each another of this vault's, none twice (RFC 8707
+    /// §2). Its tokens reach each, and no other.
+    pub further_resources: &'a [String],
+    /// What the sign-in asks to do, when a resource it names says: `oneiron continue --cloud`'s
+    /// step-up, which names `/git`, shows "continue this session in your hosted vault: land its
+    /// log, push its code and start it there" (CONTINUE-STEP-UP-MCP-WRITE = A). The owner's ask
+    /// shows it beside the tier.
+    pub purpose: Option<&'a str>,
     pub tier: AgentTier,
 }
 
@@ -144,22 +153,30 @@ impl Vault {
             code_challenge: start.code_challenge.to_owned(),
             state: start.state.map(str::to_owned),
             resource: start.resource.to_owned(),
+            further_resources: start.further_resources.to_vec(),
             tier: start.tier,
             page_secret_key: secret_row_key(issuer, &secret),
             expires_at,
             decision: AuthorizationDecision::Pending,
         };
-        // The owner's inbox shows the client, the tier and the match code from this object; it
-        // holds no secret.
-        let detail = serde_json::json!({
+        // The owner's inbox shows the client, the tier and the match code from this object, the
+        // resources the sign-in names and what it asks to do; it holds no secret.
+        let resources: Vec<&str> = std::iter::once(start.resource)
+            .chain(start.further_resources.iter().map(String::as_str))
+            .collect();
+        let mut detail = serde_json::json!({
             "client_id": start.client.client_id,
             "client_name": start.client.display_name(),
             "client_host": start.client.display_host(start.redirect_uri),
             "tier": start.tier.wire_name(),
+            "resources": resources,
             "match_code": match_code,
             "expires_at": expires_at,
-        })
-        .to_string();
+        });
+        if let (Some(purpose), Some(fields)) = (start.purpose, detail.as_object_mut()) {
+            fields.insert("purpose".to_owned(), purpose.into());
+        }
+        let detail = detail.to_string();
         // One Ask per live owner, each its own notification (its event names the owner): a
         // shared vault's owners each see it, and whichever answers first settles the request;
         // the others' taps then find it settled (review #6478).
@@ -250,6 +267,7 @@ impl Vault {
                 code_challenge,
                 state,
                 resource,
+                further_resources,
                 decision,
                 ..
             } = request;
@@ -268,6 +286,7 @@ impl Vault {
                         redirect_uri: redirect_uri.clone(),
                         code_challenge,
                         resource,
+                        further_resources,
                         grant,
                         expires_at: now.saturating_add(OAUTH_CODE_TTL_SECS),
                         redeemed_family: None,

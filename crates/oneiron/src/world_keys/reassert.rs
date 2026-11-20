@@ -121,7 +121,13 @@ impl Vault {
                         Ok(secret),
                         owner_authored.as_ref(),
                     )?;
-                    self.settle_world_key_work_in_txn(txn, owner, receipt, status)?
+                    self.settle_world_key_work_in_txn(
+                        txn,
+                        owner,
+                        receipt,
+                        status,
+                        owner_authored.as_ref(),
+                    )?
                 }
                 None => self.record_reassert_work_in_txn(txn, owner, world, receipt)?,
             };

@@ -9,8 +9,11 @@
 //! member (FIX 2312), bytes no reading takes (an opaque codec), a masked copy
 //! the row's own codec refuses, or a secret that needs a new record in a
 //! writer whose target holds no custody door. A value custody already holds
-//! still takes its handle there (FIX 6647). With the owner's switch off the
-//! row is written as given, as the batch door skips its scan.
+//! still takes its handle there (FIX 6647). An off-record room's view holds
+//! the room's own custody door ([`CustodyDoor::Room`], ROOM-LOCAL-CUSTODY): a
+//! fresh secret is kept in the room, in memory only, and the row holds its
+//! room handle. With the owner's switch off the row is written as given, as
+//! the batch door skips its scan.
 //!
 //! A body a session route publishes is decided by the base vault
 //! ([`admit_decided_parts`], FIX 6647, FIX 5718 part 3): its switch, kept
@@ -40,8 +43,8 @@ use serde::de::DeserializeOwned;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::super::{
-    FieldRule, REASON_DETECTED, SecretScanMode, off_record_fresh_key_refusal,
-    scan_write_tree_with_rule, secret_scan_error, secret_scan_mode_in_txn,
+    FieldRule, REASON_DETECTED, SecretScanMode, scan_write_tree_with_rule, secret_scan_error,
+    secret_scan_mode_in_txn,
 };
 use super::admit::Lifted;
 use super::held_template::{MapOrder, held_row_meets};
@@ -53,6 +56,7 @@ use crate::entity_id::{EntityId, derived_domains::SIDE_ROW_MASK};
 use crate::error::{Error, Result};
 use crate::secret_custody::KeptValues;
 use crate::secret_record::CustodyWrite;
+use crate::session_overlay::SessionOverlay;
 use crate::side_table::{CodecName, RefPath, RefStep, SideTableDbs, SideTableDecl};
 use crate::store::Store;
 use crate::store::known_value_index::KnownValues;
@@ -372,7 +376,7 @@ fn admit_read_parts(
 /// needs a new record refuses the write.
 pub(super) fn admit_decided_parts(
     base: &Vault,
-    door: Option<CustodyWrite<'_>>,
+    door: Option<CustodyDoor<'_>>,
     wtxn: &mut RwTxn<'_>,
     (place, key): (&str, &[u8]),
     parts: &mut [SidePart],
@@ -381,12 +385,23 @@ pub(super) fn admit_decided_parts(
         mode: secret_scan_mode_in_txn(base, &*wtxn)?,
         decides: Some(&base.store),
         door,
-        off_record: false,
     };
     let origins = vec![(origin(place, key)?, place); parts.len()];
     let (mut seed, pass) = (Lifted::default(), Pass::default());
     let placed = admitted(scope, wtxn, &origins, parts, &mut seed, |_| true, pass)?;
     Ok(placed.is_some())
+}
+
+/// Where an admission keeps the secrets its plan lifts.
+pub(crate) enum CustodyDoor<'a> {
+    /// Base custody, through a vault's door: one record per value, its
+    /// short id as the handle, its fingerprint in the known-value index.
+    Vault(CustodyWrite<'a>),
+    /// An off-record room's own custody (ROOM-LOCAL-CUSTODY; the lead's
+    /// ruling of 21 Nov): the room keeps each value in memory and the row
+    /// holds its room handle. Nothing reaches base and no fingerprint is
+    /// learned until a save moves the value into base custody.
+    Room(&'a SessionOverlay),
 }
 
 /// Who decides one admission and what mints the records it lifts: a
@@ -399,22 +414,22 @@ struct Scope<'a> {
     decides: Option<&'a Store>,
     /// The custody door the plan's new records go through; `None` mints
     /// none.
-    door: Option<CustodyWrite<'a>>,
-    /// Whether the writer's target is an off-record room's view (FIX 2329):
-    /// a refusal of a fresh secret names the remedy.
-    off_record: bool,
+    door: Option<CustodyDoor<'a>>,
 }
 
 impl<'a> Scope<'a> {
     /// A writer's own target, which decides with the custody door it holds
-    /// and mints through it. A room's view holds no door and decides with
-    /// its base's custody (FIX 2329), as a reply published there does.
+    /// and mints through it. A room's view decides with its base's custody
+    /// (FIX 2329), as a reply published there does, and keeps a fresh
+    /// secret in the room's own custody.
     fn of(dbs: &'a impl SideTableDbs, wtxn: &RwTxn<'_>) -> Result<Self> {
         Ok(Self {
             mode: secret_scan_mode_in_txn(dbs, wtxn)?,
             decides: dbs.side_decides(),
-            door: dbs.side_custody(),
-            off_record: dbs.side_off_record(),
+            door: dbs
+                .side_custody()
+                .map(CustodyDoor::Vault)
+                .or_else(|| dbs.side_room().map(CustodyDoor::Room)),
         })
     }
 }
@@ -500,7 +515,6 @@ pub(super) fn plan_seeded_parts(
         mode: secret_scan_mode_in_txn(vault, &*wtxn)?,
         decides: Some(&vault.store),
         door: None,
-        off_record: false,
     };
     let pass = Pass {
         known: Some(known),
@@ -587,21 +601,17 @@ fn admitted(
     drop(planned);
     // With no door nothing is minted (FIX 6647): a plan that needs a new
     // record refuses with the door's reason, and one that placed only
-    // values custody already holds takes their handles, minting none. In an
-    // off-record room's row the refusal names the remedy (FIX 2329).
+    // values custody already holds takes their handles, minting none. A
+    // room keeps its fresh values in its own custody (ROOM-LOCAL-CUSTODY).
     match &scope.door {
-        Some(door) => {
+        Some(CustodyDoor::Vault(door)) => {
             let at = crate::ports::recorded_at_in_txn(door.store, wtxn)?;
             seed.0
                 .adopt(plan.mint(door, wtxn, at)?.map(|(handle, _)| handle));
         }
+        Some(CustodyDoor::Room(room)) => seed.0.adopt(plan.keep_in_room(room)?),
         None if !plan.found.is_empty() => {
-            let refusal = refusal.unwrap_or_else(|| secret_scan_error(REASON_DETECTED));
-            return Err(if scope.off_record {
-                off_record_fresh_key_refusal(refusal)
-            } else {
-                refusal
-            });
+            return Err(refusal.unwrap_or_else(|| secret_scan_error(REASON_DETECTED)));
         }
         None => {}
     }
@@ -743,10 +753,11 @@ pub(crate) fn admitted_from_known(
 }
 
 /// Whether `held` is what admitting `raw` stored, in a compare with no
-/// custody read in reach (a record read in memory): each handle on either
-/// side, and each secret the plan places in `raw`, as the plan's one
+/// custody read in reach (a record read in memory): each vault handle on
+/// either side, and each secret the plan places in `raw`, as the plan's one
 /// stand-in, so a secret the wall lifted meets the same secret offered
-/// again (FIX 6534). Nothing is minted.
+/// again (FIX 6534). A room's handle meets only itself here (REVIEW-10003
+/// round 2). Nothing is minted.
 ///
 /// # Errors
 ///
@@ -965,6 +976,10 @@ fn stand_in_body(body: &[u8]) -> Result<Option<Vec<u8>>> {
     encoded(&tree.0).map(Some)
 }
 
+/// `text` with each vault custody handle, whole or in `[secret …]`, as the
+/// plan's stand-in. A room's handle stays as written (REVIEW-10003 round 2):
+/// only a matcher holding the room's values meets it with its value, so two
+/// rooms' handles, or a room's and a fresh value, never read as one here.
 fn stand_in_text(text: &str) -> String {
     if bare_handle(text) {
         return STAND_IN.to_owned();
@@ -986,6 +1001,12 @@ fn stand_in_text(text: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// What `[secret …]` holds where a mask on write placed a handle: a vault
+/// custody handle, or an off-record room's `r1` (ROOM-LOCAL-CUSTODY).
+pub(super) fn bracket_handle(text: &str) -> bool {
+    bare_handle(text) || crate::session_overlay::is_room_secret_handle(text)
 }
 
 /// `sc` and digits: a custody handle.

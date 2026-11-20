@@ -740,6 +740,7 @@ impl Vault {
                 return Ok((VoiceDeletionTally::default(), true));
             }
             let tally = delete_voice_prints_in_txn(store, wtxn, &subject)?;
+            super::consent_void::void_later_dated_grants_in_txn(store, wtxn, &event)?;
             on_insert(wtxn, admitted)?;
             Ok((tally, false))
         })?;

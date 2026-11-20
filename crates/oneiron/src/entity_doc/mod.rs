@@ -7,6 +7,7 @@
 #[cfg(feature = "sync")]
 mod adoption;
 mod artifact;
+mod bound_room;
 #[cfg(feature = "sync")]
 mod carried;
 pub(crate) mod checkpoint;

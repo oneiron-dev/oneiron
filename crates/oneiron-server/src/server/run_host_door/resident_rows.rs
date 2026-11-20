@@ -73,6 +73,10 @@ impl RunHostDoor {
             // renders no SCRATCHPAD and its brief has no session to look in.
             scratchpad: None,
             pins,
+            read_shape: *self
+                .read_shape
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
         }
     }
 }

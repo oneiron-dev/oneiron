@@ -137,10 +137,12 @@ pub use policy::{
 pub(crate) use policy::{
     device_world_pick_in, set_device_sync_preference_in_txn, set_device_world_pick_in_txn,
 };
+pub use predict::BOARD_SEEDS_MAX;
 pub(crate) use predict::PredictedPushes;
 pub use predict::PredictedResidenceAnswer;
 #[cfg(oneiron_test_support)]
 pub(crate) use predict::WithholdingNodes;
+pub(crate) use predict::erase_machine_touches_in_txn;
 pub(crate) use predict::live_prediction_in_txn;
 pub(in crate::sync) use promoted_window_rows::admit_promoted_window_update_then;
 pub(crate) use promoted_window_rows::promoted_window_update_rows;
@@ -149,6 +151,7 @@ pub use promoted_window_rows::{
     promoted_window_rows_may_leave_in_txn,
 };
 pub(crate) use prune::checkpoint_read_cache_keys;
+pub(crate) use prune::clear_thin_item_cache_in_txn;
 pub(crate) use prune::demote_resident_window;
 pub(crate) use prune::erase_item_caches_in_txn;
 pub(crate) use prune::prune_thin_items_in_txn;

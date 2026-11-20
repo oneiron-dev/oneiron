@@ -24,7 +24,7 @@
 use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc};
-use oneiron::registry::ENTITY_TYPE_TURN;
+use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edge_key};
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::types::WindowKey;
@@ -63,10 +63,15 @@ fn open_vault() -> (tempfile::TempDir, Arc<Vault>) {
 }
 
 fn put_turn(vault: &Vault, id: &EntityId, body: &[u8]) {
+    put_row(vault, id, ENTITY_TYPE_TURN, body);
+}
+
+/// A row of `entity_type` learned in [`WINDOW`].
+fn put_row(vault: &Vault, id: &EntityId, entity_type: u8, body: &[u8]) {
     vault
         .put_entity(
             id,
-            ENTITY_TYPE_TURN,
+            entity_type,
             TimeRange {
                 start: LEARNED,
                 end: LEARNED,
@@ -181,8 +186,10 @@ fn an_open_editor_holds_back_no_erasure_and_its_document_is_compacted() {
     ));
     let open = EntityId::now();
     put_turn(&vault, &open, b"ledger pointer");
+    // The editor is a PERSON: the store admits a human actor for that kind
+    // only, and a document edit checks its actor against the store.
     let author = EntityId::now();
-    put_turn(&vault, &author, b"author");
+    put_row(&vault, &author, ENTITY_TYPE_PERSON, b"author");
     let document = manager.documents().open(open).unwrap();
     document
         .edit_text(
@@ -261,7 +268,8 @@ fn an_edge_reput_naming_an_erased_row_owes_its_window_a_compaction() {
 /// A peer's update puts the edge and takes it out again, so no live value is
 /// left for ingest to see; the writer that makes the admitted update durable
 /// owes the window a compaction for the edge its history holds. On main the
-/// admitted inserts named entities-map rows only.
+/// admitted inserts named entities-map rows only, so the persist raised
+/// nothing: the row read after it is the one read before it.
 #[test]
 fn a_history_only_edge_reput_owes_its_window_a_compaction_where_it_persists() {
     let (_dir, vault) = open_vault();
@@ -281,10 +289,12 @@ fn a_history_only_edge_reput_owes_its_window_a_compaction_where_it_persists() {
         &key,
     )
     .unwrap();
+    let raise_before_persist = owed_compaction_raise(&vault);
     oneiron::sync::server_state::persist_imported_window_update(&vault, &key, &reput, &inserts)
         .unwrap();
+    let raise = owed_compaction_raise(&vault);
     assert!(
-        owed_compaction_raise(&vault).is_some(),
+        raise.is_some() && raise != raise_before_persist,
         "the durable edge re-put owes its window no compaction"
     );
 }

@@ -516,6 +516,7 @@ fn delete_missing_id_is_strict_noop_for_every_reason() -> Result<()> {
                 receipt_id: None,
                 sweep_key: None,
                 turn_program_details: Vec::new(),
+                version_release: false,
             },
             "{reason:?}: a fully-missing id must report missing()"
         );

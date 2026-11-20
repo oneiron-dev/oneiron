@@ -52,13 +52,15 @@ pub(crate) use self::index::{
     index_analyzed_text, index_text,
 };
 pub(crate) use self::query::{
-    Bm25SearchOptions, PrefixExpansionPostingDecision, final_token_exact_posting_matches,
+    Bm25SearchOptions, HiddenRowTest, PrefixExpansionPostingDecision,
+    final_token_exact_posting_matches,
     final_token_prefix_expansion_has_scoped_and_rejected_postings, search_text,
     search_text_scoped_with_recency,
 };
 use self::query::{
     QueryTerm, apply_recency_blend, collapse_lexical_query_hint_scores, collect_query_terms,
-    compute_avgdl, lexical_query_hint_scope_id, scores_for_use_limited, scores_for_withdrawn,
+    compute_avgdl, lexical_query_hint_scope_id, posting_scores_for_hidden_row,
+    scores_for_use_limited, scores_for_withdrawn,
 };
 #[cfg(test)]
 use crate::analyzer::AnalyzerChannel;

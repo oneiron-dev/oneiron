@@ -330,6 +330,10 @@ pub const SIDE_ROW_MASK: &[u8] = b"oneiron.side_row.mask.v1\0";
 /// (`learning_setting::global_setting_subject`). Parts: the catalog key.
 pub const GLOBAL_SETTING_SUBJECT: &[u8] = b"oneiron.learning.setting.global_subject.v1\0";
 
+/// The ASSET row that holds a setting value beside its signed act (`setting::beside`, stage
+/// 7c-1). Parts: the act's target, the BLAKE3 of the value's JSON bytes.
+pub const SETTING_BESIDE_VALUE: &[u8] = b"oneiron.setting.beside_value.v1";
+
 /// The subproject a TASK wraps when its leader splits it
 /// (`code_run::dispatcher::leader`): one child per wrapper, so a retried split
 /// names the child the first try linked. Parts: the wrapper TASK.
@@ -506,7 +510,7 @@ pub const CALL_SPEAKER_BIND: &[u8] = b"oneiron.disclosure.call_speaker_bind.v1";
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 77] = [
+pub(crate) const ALL: [&[u8]; 78] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -566,6 +570,7 @@ pub(crate) const ALL: [&[u8]; 77] = [
     COORDINATION_PATTERN,
     SIDE_ROW_MASK,
     GLOBAL_SETTING_SUBJECT,
+    SETTING_BESIDE_VALUE,
     TASK_SUBPROJECT,
     AGENT_PACK_TRAVEL,
     CONNECT_GUEST_ACTOR,

@@ -301,10 +301,10 @@ pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntry
         .collect()
 }
 
-/// Whether a bind or rebind in `state` has the owner's proof where the fold
-/// asks for it: on a hosted fold, one of the row's `participants` (its signer
-/// and cosigners) proves for the owner ([`proves_for_the_owner`]), an owner
-/// key no cloud key holds. A managed host's root acts as
+/// Whether a bind, rebind or revoke of an actor binding in `state` has the
+/// owner's proof where the fold asks for it: on a hosted fold, one of the
+/// row's `participants` (its signer and cosigners) proves for the owner
+/// ([`proves_for_the_owner`]), an owner key no cloud key holds. A managed host's root acts as
 /// nobody inside a customer's vault, and being the trust root never makes
 /// the operator a person there (owner ruling 2026-10-18, "A + support"; rows
 /// OLD-PARENTS-OWNER-BINDING-REVOKE and OLD-PARENTS-OWNER-BINDING-CONFLICT).
@@ -312,9 +312,9 @@ pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntry
 /// it end the owner's standing on every replica (`owner_live_at` takes an
 /// owner every binding of whom is revoked or conflicted as removed), by
 /// revoking that binding, on parents from before an owner key's enrolment
-/// too, or by a conflicting sibling bind. No writer binds a person on a
-/// hosted vault, so its owner is unbound and trusted on the carrier's word;
-/// the owner binds from a device of their own.
+/// too, or by a conflicting sibling bind. The owner binds from a device of
+/// their own, with the owner key it enrolled (lead ruling
+/// HOSTED-RELAY-OWNER-HUMAN-BIND-CEREMONY = B).
 ///
 /// The gate asks for a `human` bind or rebind, and for a bind or rebind, of
 /// whatever class, of a key that could hold a person's binding: a key whose
@@ -333,9 +333,19 @@ pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntry
 /// person's binding can name, such as a machine's `ROLE_AGENT` key, binds
 /// on the root's word. A self-host or relay fold and every other op pass: a
 /// self-host root is the owner's own key, and those folds take no cloud
-/// key's consent. A revoke never asks (ONE-REVOKE-DURABILITY), so the root
-/// alone can still end a binding an owner key made (row
-/// HOSTED-OWNER-BIND-ROOT-REVOKE).
+/// key's consent.
+///
+/// A revoke asks the same (row HOSTED-OWNER-BIND-ROOT-REVOKE). Else the root
+/// alone could end the binding an owner key made, and with it the owner's
+/// standing on every replica ([`super::owner_act::owner_live_at`]), and raise
+/// the key's epoch floor past any bind of it. It asks for a revoke of a key
+/// that could hold a person's binding, as above, and for a revoke of a key
+/// its parents do not hold: the floor of a verified revoke lands on every
+/// branch the merge joins, a sibling that enrols and binds the key among
+/// them. A revoke of a machine's or an agent's key binding ends it on the
+/// root's word. ONE-REVOKE-DURABILITY keeps a verified revoke's floor when
+/// its ancestry turns invalid; it names no signer, and a revoke whose own
+/// participants do not consent never verifies.
 ///
 /// A passkey-limited key ([`FoldState::passkey_limited`]) gives no proof
 /// here, as it gives none to a carried answer or to a revoke of an owner
@@ -350,23 +360,26 @@ pub(super) fn human_bind_proved(
     participants: &BTreeSet<AuthorityKey>,
     consent_arm: fn(&FoldedDevice) -> bool,
 ) -> bool {
-    let (AuthorityOp::BindActor {
-        authority_key,
-        actor_class,
-        ..
-    }
-    | AuthorityOp::RebindActor {
-        authority_key,
-        actor_class,
-        ..
-    }) = op
-    else {
-        return true;
+    let (authority_key, reaches_a_person) = match op {
+        AuthorityOp::BindActor {
+            authority_key,
+            actor_class,
+            ..
+        }
+        | AuthorityOp::RebindActor {
+            authority_key,
+            actor_class,
+            ..
+        } => (authority_key, actor_class == ACTOR_CLASS_HUMAN),
+        AuthorityOp::RevokeActor { authority_key, .. } => {
+            (authority_key, !state.roster.contains_key(authority_key))
+        }
+        _ => return true,
     };
     if !state.hosted {
         return true;
     }
-    let touches_a_person = actor_class == ACTOR_CLASS_HUMAN
+    let touches_a_person = reaches_a_person
         || state
             .actor_bindings
             .get(authority_key)
@@ -423,6 +436,32 @@ impl AuthorityFold {
     #[must_use]
     pub(crate) fn passkey_limited(&self, key: &AuthorityKey) -> bool {
         self.passkey_limited_keys.contains(key)
+    }
+
+    /// Whether a counted fresh enrolment of the passkey `key`, signed by a
+    /// key in the host's custody, names `owner` on this fold: the passkey
+    /// the host vouched for as `owner`'s, which may sign `owner`'s first
+    /// binding itself (row PASSKEY-SELF-BIND,
+    /// `owner_key_enrollment::passkey_self_bind`).
+    #[must_use]
+    pub(crate) fn host_vouched_passkey_for(&self, key: &AuthorityKey, owner: &EntityId) -> bool {
+        self.host_vouched_passkey_owners
+            .get(key)
+            .is_some_and(|owners| owners.contains(owner))
+    }
+
+    /// Whether `key` is a passkey the host vouched for that the passkey
+    /// limits hold ([`Self::passkey_limited`]): once it binds its owner, its
+    /// binding names the owner for their verbs and writes alone, and it
+    /// stands for no one but its own key elsewhere (row PASSKEY-SELF-BIND):
+    /// its federation narrowings are its key's
+    /// (`current_scope::projected_narrowing_party`) and its project-depth
+    /// edits stay quarantined. A passkey a self-hosted vault bound at its
+    /// enrolment, by its predecessor's signature, is no host's and keeps its
+    /// standing.
+    #[must_use]
+    pub(crate) fn host_vouched_passkey_limited(&self, key: &AuthorityKey) -> bool {
+        self.passkey_limited(key) && self.host_vouched_passkey_owners.contains_key(key)
     }
 
     /// A choice door's answer about `act`, the choice it appended in its
@@ -571,12 +610,51 @@ impl crate::Vault {
     /// ([`super::log_budget`]) and nothing in any fold. An agent's Grant, a
     /// delegated holder, a narrowed or delegated owner credential, a queued
     /// retry and automatic upkeep author no such write, so their acts are
-    /// carried unproven and never spend another install's reserve.
+    /// carried unproven and never spend another install's reserve. Nor does
+    /// a write whose proof came with a request's slip
+    /// ([`crate::consent::OwnerAuthoredWrite::bound_to_request_slip`]): that
+    /// slip's cut is read for nothing but its liveness (REVIEW-9955 P1).
     pub(crate) fn owner_act_proof_signer(
         &self,
         fold: &AuthorityFold,
         owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
     ) -> Option<OwnerProofSigner<'_>> {
-        owner_authored.and_then(|_| self.owner_proof_signer(fold))
+        owner_authored
+            .filter(|write| !write.bound_to_request_slip())
+            .and_then(|_| self.owner_proof_signer(fold))
+    }
+
+    /// The owner key this install proves its result for the request or
+    /// residence directive signed as entry `answered` with, on `fold`, the
+    /// result writer's view (row
+    /// OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, LIMIT-1
+    /// RESULT-NEEDS-EXECUTOR-KEY): the request is the owner's own signed word
+    /// ([`super::log_budget::answers_the_owners_signed_work_in_txn`]), and
+    /// this install, its executor, holds a key that proves now
+    /// ([`Self::owner_proof_signer`]). The proof is this install's own,
+    /// signed over the result's transcript; none is copied from the request.
+    /// A request carried unproven (an agent's Grant, a holder's edit,
+    /// automatic upkeep, a queued retry, or an older install's request) has
+    /// its answer carried unproven, and so does any request answered by an
+    /// executor that holds no such key: those results wait past another
+    /// install's owner reserve, as before.
+    ///
+    /// # Errors
+    /// The store's, reading the request or the door's view.
+    pub(crate) fn result_proof_signer_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        answered: &AuthorityEntryHash,
+    ) -> crate::error::Result<Option<OwnerProofSigner<'_>>> {
+        if !super::log_budget::answers_the_owners_signed_work_in_txn(
+            &self.store,
+            txn,
+            fold,
+            answered,
+        )? {
+            return Ok(None);
+        }
+        Ok(self.owner_proof_signer(fold))
     }
 }
