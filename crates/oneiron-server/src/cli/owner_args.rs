@@ -1495,6 +1495,11 @@ pub struct EmbeddingSpaceProbeDeleteArgs {
     /// The probe's id, 32 hex, as `probes list` names it.
     pub id: String,
 
+    /// Another asker's approved check-in for deleting this probe, 32 hex:
+    /// the delete applies it on your own proof and spends it.
+    #[arg(long, value_name = "HEX")]
+    pub check_in_ref: Option<String>,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }

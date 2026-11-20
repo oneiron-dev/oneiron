@@ -58,6 +58,12 @@ pub(super) fn core_memory_retract_by_facade(
 /// refusal FORBIDDEN and naming its reason. A token that names no actor is
 /// refused `unresolved_actor`.
 ///
+/// A person whose role makes the delete wait (a Steward's delete of
+/// another's item in scope) gets `CHECK_IN_PENDING` naming the check-in;
+/// once the Owner approves it, the same call naming it as `check_in_ref`
+/// deletes and spends it, and the receipt's `check_in` names it
+/// (ROLES-CHECKIN 2k5; FIX-LIST CHECK-IN-CORE-DELETE-ROUTE-NO-CHECK-IN-REF).
+///
 /// An account API key (OF-448) names its person and no actor class: it is
 /// judged as that person, a human (Engine rulings 13 Nov 08:20 and 08:30 =
 /// C). The owner's own key deletes on the owner's path, within its scopes.
@@ -71,6 +77,7 @@ pub(super) fn core_memory_delete_by_role(
     auth: &CoreAuth,
     id: &oneiron::EntityId,
     reason: CoreMemoryVerbDeleteReason,
+    check_in_ref: Option<&str>,
 ) -> Result<(Option<String>, Value), DagWriteError> {
     let (actor, class, by_account_key) = core_memory_caller(server, auth, "delete")?;
     let memory = scoped_auth::credential_memory(server.vault(), Some(auth), actor, class);
@@ -80,12 +87,16 @@ pub(super) fn core_memory_delete_by_role(
         CoreMemoryVerbDeleteReason::Gdpr => oneiron::memory::SafeDeleteReason::GdprDelete,
         CoreMemoryVerbDeleteReason::Policy => oneiron::memory::SafeDeleteReason::PolicyDelete,
     };
+    let mut input = serde_json::json!({ "entity_ref": id.to_hex(), "reason": reason.as_str() });
+    if let Some(check_in_ref) = check_in_ref {
+        input["check_in_ref"] = Value::String(check_in_ref.to_owned());
+    }
     let mut committed = None;
     let deleted = oneiron::task_verb::verb_hook_boundary::row(
         &memory,
         &oneiron::task_verb::sdk::VERB_TABLE,
         "vault.delete",
-        serde_json::json!({ "entity_ref": id.to_hex(), "reason": reason.as_str() }),
+        input,
         |value| {
             let input: SafeDeleteRequest = serde_json::from_value(value).map_err(|error| {
                 oneiron::memory::MemoryError::bad_request(format!("invalid SDK request: {error}"))

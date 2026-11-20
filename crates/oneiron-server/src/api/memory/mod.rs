@@ -146,6 +146,14 @@ pub(crate) struct CoreMemoryVerbRequest {
     /// Delete reason override for delete verbs.
     #[serde(default)]
     reason: Option<CoreMemoryVerbDeleteReason>,
+    /// For `delete` and `hard_delete` judged by role: the check-in an
+    /// earlier call's `CHECK_IN_PENDING` named, 32 hex. Once the Owner
+    /// approves it, the same delete naming it runs and spends it
+    /// (ROLES-CHECKIN 2k5). The owner's delete and every other verb refuse
+    /// it.
+    #[serde(default)]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    check_in_ref: Option<String>,
 }
 
 /// Named delete reason accepted by the memory verb route.
@@ -240,6 +248,13 @@ pub(crate) struct CoreMemoryVerbDeleteOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(example = "applied")]
     state: Option<String>,
+    /// The check-in decision a delete judged by role ran on: the role it
+    /// was judged under and why it went, and the check-in it spent when an
+    /// approved one let it go. Absent on the owner's path and when post
+    /// hooks redact it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    check_in: Option<Value>,
 }
 
 /// Typed operation family selected by a named memory verb.
@@ -296,7 +311,8 @@ pub(super) use self::watch::{
     request_body(content = CoreMemoryVerbRequest, content_type = "application/json"),
     responses(
         (status = 200, description = "Named verb resolved and executed as a typed operation.", body = CoreMemoryVerbResponse, content_type = "application/json"),
-        (status = 400, description = "Malformed verb request, or a retract by a caller that is not the vault owner naming `at`.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 202, description = "delete or hard_delete by a person whose role makes it wait (a Steward's delete of another's item in scope): CHECK_IN_PENDING with a typed `pending` block naming the check-in, in the facade's MemoryError body; nothing is deleted. Once the Owner approves it, the same call naming it as `check_in_ref` deletes and spends it.", body = super::facade::MemoryErrorEnvelopeSchema, content_type = "application/json"),
+        (status = 400, description = "Malformed verb request, a retract by a caller that is not the vault owner naming `at`, or a `check_in_ref` on a verb other than delete and hard_delete or on the owner's delete.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:write, or the verb names the owner's erase. delete and hard_delete by a token that is not owner-grade answer the engine's delete authority (DEL-2) in the facade's MemoryError body: FORBIDDEN naming not_owner_of_item, out_of_admin_scope, no_delete_grant, credential_bounds, unresolved_actor, or account_key_unbound (an account key that does not name the owner, on a rooted vault). remember's guarded batch door refusing the writer answers the engine's FORBIDDEN in the facade's MemoryError body, as `/v1/core/batch` does. supersede by a caller that is not the vault owner is refused. retract by a caller that is not the vault owner answers `vault.claims.retract`'s refusal in the facade's MemoryError body: FORBIDDEN for a claim it did not write, for a token that names no actor (unresolved_actor), or for an account key on a rooted vault retracting a claim its person did not write (account_key_unbound); OWNER_BINDING_REQUIRED for a person the authority log does not bind.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Referenced entity was not found. A retract by a caller that is not the vault owner answers the claim door's NOT_FOUND in the facade's MemoryError body.", body = ApiErrorEnvelope, content_type = "application/json"),
@@ -318,6 +334,20 @@ pub(crate) async fn core_memory_verb(
     let verb = oneiron::NamedMemoryVerb::parse(&verb_name).map_err(memory_verb_refusal)?;
     let req = json_payload(payload)?;
     let operation = core_memory_operation_kind(verb.operation_kind());
+    // A check-in names a person's waiting delete; no other verb spends one,
+    // so the field is refused, never dropped.
+    if req.check_in_ref.is_some()
+        && !matches!(
+            verb,
+            oneiron::NamedMemoryVerb::Delete | oneiron::NamedMemoryVerb::HardDelete
+        )
+    {
+        return Err(ApiError::bad_request(
+            "check_in_ref is only for delete and hard_delete",
+            Some("check_in_ref"),
+        )
+        .into());
+    }
 
     match verb {
         oneiron::NamedMemoryVerb::Remember => {
@@ -494,6 +524,15 @@ pub(crate) async fn core_memory_verb(
             // the owner's proof in each writer before it publishes or tears
             // (FIX MEMORY-DELETE-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
             let owner = memory_owner_proof(&server, &auth, host_action.is_some())?;
+            // The owner's delete goes on their own proof and waits on no
+            // check-in, as the engine's `vault.delete` refuses one there.
+            if owner.is_some() && req.check_in_ref.is_some() {
+                return Err(ApiError::bad_request(
+                    "check_in_ref names a person's waiting delete; the owner's delete waits on none",
+                    Some("check_in_ref"),
+                )
+                .into());
+            }
             let (id, delete) = if let Some(owner) = owner {
                 let failed = |error: oneiron::Error| {
                     tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory delete failed");
@@ -521,10 +560,17 @@ pub(crate) async fn core_memory_verb(
                             .as_str()
                             .to_owned()
                     ),
+                    check_in: None,
                 });
                 (Some(id.to_hex()), delete)
             } else {
-                core_memory_delete_by_role(&server, &auth, &id, response_reason)?
+                core_memory_delete_by_role(
+                    &server,
+                    &auth,
+                    &id,
+                    response_reason,
+                    req.check_in_ref.as_deref(),
+                )?
             };
 
             Ok(Json(CoreMemoryVerbResponse {
