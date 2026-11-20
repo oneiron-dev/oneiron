@@ -718,13 +718,14 @@ finish("hidden:call-threw:" + (callError !== null) + ":secret-guessed:" + secret
 
 /// The refused-call program: it calls the skill, which its blocking post
 /// hook cannot judge whole, then probes every guessed ref. The call is
-/// refused: the guest reads the denial (or the call throws), never the
-/// answer and never a card for it.
+/// refused: the guest reads the denial (or the call throws it, which the
+/// finish text keeps after `:thrown:`), never the answer and never a card
+/// for it.
 const DENIED_PROGRAM: &str = r#"let out = null, callError = null;
 try {
   out = await self.skills.call({skill: "__SKILL__", args: {bytes: 1572864}});
 } catch (e) {
-  callError = String(e).slice(0, 300);
+  callError = String(e).slice(0, 600);
 }
 let secret = false;
 const shown = typeof out === "undefined" ? "" : JSON.stringify(out);
@@ -733,7 +734,7 @@ if (callError !== null && callError.includes("secret-title-")) secret = true;
 __GUESSES__
 const denied = out && typeof out === "object" && typeof out.denied === "string" ? out.denied : "";
 const cause = out && typeof out === "object" && out.reasonCodes ? JSON.stringify(out.reasonCodes).slice(0, 200) : "";
-finish("denied:" + denied + ":cause:" + cause + ":call-threw:" + (callError !== null) + ":secret-guessed:" + secret);"#;
+finish("denied:" + denied + ":cause:" + cause + ":call-threw:" + (callError !== null) + ":secret-guessed:" + secret + ":thrown:" + (callError ?? ""));"#;
 
 /// The control program: it calls the skill, checks the reply is a card,
 /// and reads the body's head through `slice`.
@@ -1985,8 +1986,11 @@ mod real_sandbox {
             !text.contains(TAG),
             "no read returned the secret title:\n{text}"
         );
+        // The typed bridge throws a denial, so it reads in the thrown text
+        // or, were it returned, in `denied`; the host's own refusal before
+        // the hook spells neither.
         assert!(
-            text.contains("denied:verb_hook_skipped"),
+            text.contains("verb_hook_skipped"),
             "the hook's chain refuses the call, never the host before it:\n{text}",
         );
         assert!(
@@ -1999,4 +2003,90 @@ mod real_sandbox {
             "the row stands as a view-served row",
         );
     }
+
+    /// A callable whose answer nests `levels` deep beside `odd`, a string
+    /// spelling a lone surrogate escape: valid JSON text, which no value
+    /// reads.
+    fn odd_text_skill(vault: &Vault) -> EntityId {
+        let source = concat!(
+            r#"finish('{"title":"secret-title-7","odd":"\\uD800","deep":'"#,
+            r#" + "[".repeat(skillArgs.levels) + "0" + "]".repeat(skillArgs.levels) + '}');"#,
+        );
+        callable_skill::put_active_callable(
+            vault,
+            "fixture.odd-text-answer",
+            source,
+            &serde_json::json!({"levels":"integer"}),
+            &serde_json::json!("object"),
+        )
+        .expect("the odd text callable is stored and active")
+    }
+
+    /// The run's status and finish text for a call to [`odd_text_skill`]
+    /// nesting `levels` deep, its blocking post hook bound.
+    fn odd_answer_run(levels: usize) -> (Option<EngineExecutorStatus>, Option<String>) {
+        let (_dir, vault) = open_vault();
+        let factory = quickjs_factory();
+        let skill = odd_text_skill(&vault);
+        bind_blocking_real_hook(&vault);
+        let program = program_with(DEEP_VIEW_PROGRAM, skill, &[])
+            .replace("__ARGS__", &format!("{{levels: {levels}}}"))
+            .replace("__FIELD__", "title");
+        let run_id = fresh_id();
+        let (outcome, _) = execute_run(&vault, &factory, run_id, vec![program]);
+        (
+            outcome.ok().map(|outcome| outcome.status),
+            doors::finish_text(&vault, &run_id).ok(),
+        )
+    }
+
+    /// A deep answer whose text no value reads (a lone surrogate escape
+    /// beside `deep`) ends as the same answer nesting two levels does: the
+    /// text path takes no answer the value path refuses as non-JSON, and no
+    /// hook judges it. Red at the pin that takes it as text: the hook
+    /// redacts it and the guest reads a card.
+    #[test]
+    fn a_deep_answer_no_value_reads_ends_as_a_shallow_one_does() {
+        let shallow = odd_answer_run(2);
+        assert!(
+            !shallow
+                .1
+                .as_deref()
+                .is_some_and(|text| text.starts_with("card:")),
+            "the value path never serves the answer: {shallow:?}",
+        );
+        assert_eq!(
+            odd_answer_run(DEEP_LEVELS),
+            shallow,
+            "the deep answer ends as the shallow one does",
+        );
+    }
+}
+
+/// A hook input nesting past what a value may hold names the rows it spells
+/// through `\u` escapes, as a decoded one names them: its saved run lists
+/// them, so an erase of one retires the run's payload. Red at the pin whose
+/// scan reads no escape: the escaped id is missed.
+#[test]
+fn a_deep_hook_input_names_a_row_it_spells_through_escapes() {
+    let row = fresh_id();
+    let escaped: String = row
+        .to_hex()
+        .chars()
+        .map(|digit| format!("\\u{:04x}", u32::from(digit)))
+        .collect();
+    let input = format!(
+        "{{\"args\":{{}},\"result\":{{\"output\":{{\"ref\":\"{escaped}\",\"deep\":{}0{}}}}}}}",
+        "[".repeat(DEEP_LEVELS),
+        "]".repeat(DEEP_LEVELS),
+    );
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&input).is_err(),
+        "the input nests past what a value reads",
+    );
+    assert_eq!(
+        handle_doors::rows_named_by_hook_input(&input),
+        vec![row],
+        "the run names the row its input spells through escapes",
+    );
 }

@@ -282,6 +282,14 @@ pub fn redact_view_text(text: &str, paths: &[String]) -> Result<Option<String>> 
     crate::runtime_hooks::verb::redact_text_for_test(text, paths)
 }
 
+/// The rows a verb run's saved hook `input` names, as its run record keeps
+/// them so an erase of one retires the run's payload: read from the decoded
+/// input, or, when it does not decode (it nests past a value's limit), from
+/// every id it spells, its escapes read.
+pub fn rows_named_by_hook_input(input: &str) -> Vec<EntityId> {
+    crate::runtime_hooks::verb::rows_named_by_input_for_test(input)
+}
+
 /// Hands `vault`'s verb hooks the [`CappedRedactRuntime`] redacting `paths`
 /// over inputs up to `message_bytes`. The runtime is per vault: each test
 /// vault installs its own.

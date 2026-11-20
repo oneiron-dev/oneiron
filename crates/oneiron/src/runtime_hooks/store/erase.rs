@@ -129,12 +129,17 @@ impl ErasedIds {
         self.ids.contains(id)
     }
 
-    /// Whether `text` holds the ref of one anywhere: the cheap test before
-    /// a pinned input is decoded.
+    /// Whether `text` holds the ref of one anywhere, its escapes read too
+    /// ([`escapes_read`]), so a ref spelled through `\u` escapes counts: the
+    /// cheap test before a pinned input is decoded.
     pub(in crate::runtime_hooks) fn named_in(&self, text: &str) -> bool {
-        self.refs
-            .iter()
-            .any(|reference| text.contains(reference.as_str()))
+        let read = escapes_read(text);
+        self.refs.iter().any(|reference| {
+            text.contains(reference.as_str())
+                || read
+                    .as_deref()
+                    .is_some_and(|read| read.contains(reference.as_str()))
+        })
     }
 
     /// Whether `text` is the ref of one.
@@ -223,15 +228,48 @@ pub(in crate::runtime_hooks) fn rows_named_by_fact(input: &str) -> Vec<EntityId>
 /// Adds to `ids` each id the JSON `text` can spell in a string or key once
 /// decoded ([`hex_ids_in`]): a run of 32 lowercase hex digits, or the last
 /// 32 of a longer run, as an escape such as `\b` or `\u001f` lengthens a
-/// run on its left. A superset, each one checked before it counts.
+/// run on its left; and the same over `text` with its escapes read
+/// ([`escapes_read`]), so an id spelled through `\u` escapes counts too. A
+/// superset, each one checked before it counts.
 fn spelled_ids_in(text: &str, ids: &mut BTreeSet<EntityId>) {
-    for token in text.split(|digit: char| !matches!(digit, '0'..='9' | 'a'..='f')) {
-        if let Some(start) = token.len().checked_sub(32)
-            && let Ok(id) = EntityId::from_hex(&token[start..])
-        {
-            ids.insert(id);
+    let read = escapes_read(text);
+    for scanned in std::iter::once(text).chain(read.as_deref()) {
+        for token in scanned.split(|digit: char| !matches!(digit, '0'..='9' | 'a'..='f')) {
+            if let Some(start) = token.len().checked_sub(32)
+                && let Ok(id) = EntityId::from_hex(&token[start..])
+            {
+                ids.insert(id);
+            }
         }
     }
+}
+
+/// JSON `text` with each escape read for an id scan: a `\u` escape that
+/// spells a lowercase hex digit becomes that digit, every other escape a
+/// space, so an id a string spells through escapes reads as one run, as it
+/// does once decoded. Flat, so it reads text no value may hold (a nesting
+/// past serde_json's limit). `None` when `text` holds no escape.
+fn escapes_read(text: &str) -> Option<String> {
+    if !text.contains('\\') {
+        return None;
+    }
+    let mut read = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(next) = chars.next() {
+        if next != '\\' {
+            read.push(next);
+            continue;
+        }
+        let digit = match chars.next() {
+            Some('u') => u32::from_str_radix(&chars.by_ref().take(4).collect::<String>(), 16)
+                .ok()
+                .and_then(char::from_u32)
+                .filter(|digit| matches!(digit, '0'..='9' | 'a'..='f')),
+            _ => None,
+        };
+        read.push(digit.unwrap_or(' '));
+    }
+    Some(read)
 }
 
 /// [`hex_ids_in`] over every string and key of `value`.

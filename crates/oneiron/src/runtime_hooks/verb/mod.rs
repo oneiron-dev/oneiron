@@ -538,3 +538,10 @@ pub(crate) fn redact_value_for_test(view: &mut Value, paths: &[String]) {
 pub(crate) fn redact_text_for_test(text: &str, paths: &[String]) -> Result<Option<String>> {
     redact::hide_in_text(text, paths)
 }
+
+// Door seam for `test_doors::typed_reply_handle`: the rows a verb run's saved
+// input names for erase ([SKILL-ANSWER-DEEP-JSON-STACK-SAFE]).
+#[cfg(oneiron_test_support)]
+pub(crate) fn rows_named_by_input_for_test(input: &str) -> Vec<EntityId> {
+    super::store::rows_named_by_call(input, None)
+}
