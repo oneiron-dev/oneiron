@@ -7,7 +7,7 @@ use super::machine_identity::{Host, host, request_for};
 use super::support::ed_key;
 use super::world_key_doors::{Fresh, enrol_own, fresh_install, own_request};
 use super::world_privacy::stored_entries;
-use super::world_reissue::with_predecessor;
+use super::world_reissue::{profiled, with_predecessor};
 use super::*;
 use crate::Vault;
 use crate::error::{Error, KitRecord, SecretError};
@@ -167,7 +167,17 @@ fn a_forged_kit_piece_never_pins() {
     assert_eq!(view.pinned, Some(owners));
     assert!(view.foreign.contains_key(&theirs));
 
-    let Fresh { vault, owner, .. } = &fresh_install(&host);
+    // A restored copy stands only once a live machine joins it
+    // (RESTORED-COPIES-ENROL-EACH-OTHER): the host's enrolment joins it, as
+    // work or school, so only the genuine piece's anchor makes it mine.
+    let joined = fresh_install(&host);
+    profiled(
+        &host,
+        &joined.vault,
+        MachineRole::Owned(MachineOwnership::WorkSchool),
+    );
+    let Fresh { vault, owner, .. } = &joined;
+    assert!(!vault.local_machine().unwrap().unwrap().mine);
     let own = own_request(vault);
     let anchored = vault
         .anchor_machine(owner, &genuine, &own, None, None)
