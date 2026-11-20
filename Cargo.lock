@@ -9159,6 +9159,7 @@ dependencies = [
  "futures-core",
  "libc",
  "oneiron",
+ "oneiron-contracts",
  "oneiron-keystore",
  "oneiron-spawn",
  "serde_json",
