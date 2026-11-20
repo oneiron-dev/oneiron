@@ -116,14 +116,13 @@ fn composite_is_provenanced_idempotent_and_neutral_when_unknown() -> Result<()> 
         Vault::open(target_dir.path(), config.clone()).expect("open restore state-index fixture");
     target.import_whole_vault_archive(export.bytes())?;
     let restored = target.get_claim(&id)?.unwrap();
+    // The evidence counts the annotated turn and names no turn and no signal.
     assert_eq!(
         restored.evidence,
-        Some(Value::Array(
-            vec![turn, evidence.goal_velocity, evidence.engagement]
-                .into_iter()
-                .map(|id| Value::from(id.to_hex()))
-                .collect()
-        ))
+        Some(Value::Map(vec![(
+            Value::from(COMPOSITE_EVIDENCE_ANNOTATED_TURNS),
+            Value::from(1_u64)
+        )]))
     );
     assert_eq!(restored.source, Some(ClaimSource::Imported));
     assert_eq!(restored.approval, ClaimApprovalStatus::Proposed);

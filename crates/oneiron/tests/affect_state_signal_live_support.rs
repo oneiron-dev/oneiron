@@ -7,7 +7,13 @@
 //! claim, and stay served after every record they counted is deleted, as the
 //! composite index that carries the same numbers does. A served signal spells
 //! no counted TASK or turn id, which a reader of the substrate facet may not
-//! read (REVIEW-9816 P1).
+//! read (REVIEW-9816 P1). The composite counts the annotated turns it read
+//! and names none, for the same reason
+//! (STATE-COMPOSITE-TURN-HEX-OUTSIDE-READER-FACET). It names neither signal
+//! either: a reader the composite admits may be refused a signal row by a
+//! check of its own, and it refuses a signal outside its facet or narrowed
+//! to one principal, whose number it would carry (REVIEW-9905 P1, rounds 1
+//! and 2).
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -17,15 +23,17 @@
 
 use std::sync::Arc;
 
+use oneiron::affect::state_index::{ENGAGEMENT, GOAL_VELOCITY, StateIndexEvidence};
 use oneiron::authority::{HostSlipIssuer, MachineOwnership, MachineRole};
 use oneiron::memory::state_index::StateWindow;
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
-use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
+use oneiron::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_POLICY_MANIFEST};
 use oneiron::task_verb::TaskCreateSpec;
 use oneiron::test_doors::affect_state_signals::{RefreshedStateSignals, refresh_state_signals};
 use oneiron::test_doors::derive::claim_has_live_support;
 use oneiron::{
-    DeleteReason, EdgeActorClass, EntityId, Vad, VadAnnotation, VadAnnotationSource, Vault,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, DeleteReason,
+    EdgeActorClass, EntityId, TimeRange, Vad, VadAnnotation, VadAnnotationSource, Vault,
     VaultConfig, WriteActor,
 };
 use oneiron_keystore::MemoryKeystore;
@@ -169,15 +177,15 @@ fn owned_task(vault: &Vault, owner: EntityId) -> EntityId {
         .expect("the TASK creation took effect")
 }
 
-/// The value a signal's evidence holds under `key`, or `None` when the
-/// evidence holds no such key.
+/// The value a signal's (or the composite's) evidence holds under `key`, or
+/// `None` when the evidence holds no such key.
 fn evidence_field(vault: &Vault, signal: &EntityId, key: &str) -> Option<Value> {
     let body = vault
         .get_claim(signal)
         .expect("signal read")
         .expect("the signal is stored");
     let Some(Value::Map(fields)) = body.evidence.as_ref() else {
-        panic!("a signal's evidence is a map: {:?}", body.evidence);
+        panic!("the claim's evidence is a map: {:?}", body.evidence);
     };
     fields
         .iter()
@@ -298,4 +306,259 @@ fn a_state_signal_keeps_live_support_after_every_counted_record_is_deleted() {
         Some(true),
         "the composite carrying the same numbers stays served too"
     );
+}
+
+/// The owner speaks one annotated turn and owns one TASK; the production
+/// refresh writes the composite. The composite spells no turn id: the turn
+/// sits in its room's facet and the composite in the owner's substrate facet,
+/// so a door that serves the composite's bytes to a reader of that facet
+/// would hand on the id of a turn the reader may not read. Its evidence
+/// counts the one annotated turn and names neither signal claim, which sit in
+/// the composite's own facet: a reader the composite admits may be refused a
+/// signal row by a check of its own (REVIEW-9905 P1 round 2).
+/// Red on main: the composite's evidence is an array of the annotated turn's
+/// hex id, then the two signals' ids. Red at #9905's round-1 head
+/// 60dda246c995: the evidence counts the turn and names both signals.
+#[test]
+fn a_composite_index_counts_its_annotated_turns_and_names_none() {
+    let (_dir, vault, owner) = owned_vault();
+    declare_predicates_normal(&vault, &[("state.", false)]);
+    let room = EntityId::now();
+    let turn = spoken_turn(&vault, owner, room);
+    let _task = owned_task(&vault, owner);
+
+    let RefreshedStateSignals {
+        composite,
+        goal_velocity,
+        engagement,
+    } = refresh_state_signals(&vault, &owner, &WINDOW, vault.now_recorded_at())
+        .expect("the refresh")
+        .expect("an annotated turn the owner spoke and a TASK it owns make the refresh measure");
+
+    assert!(
+        !row_spells_id(&vault, &composite, &turn),
+        "FAILBEFORE STATE-COMPOSITE-TURN-HEX-OUTSIDE-READER-FACET: the composite spells the \
+         id of the turn it read, which a reader of the substrate facet may not read"
+    );
+    assert_eq!(
+        evidence_field(&vault, &composite, "annotated_turns"),
+        Some(Value::from(1_u64)),
+        "the composite counts the one annotated turn the owner spoke"
+    );
+    for (signal, predicate) in [
+        (goal_velocity, "state.goal_velocity"),
+        (engagement, "state.engagement"),
+    ] {
+        assert!(
+            !row_spells_id(&vault, &composite, &signal),
+            "FAILBEFORE REVIEW-9905-P1-ROUND-2: the composite spells the id of its {predicate} \
+             signal, which a reader the composite admits may be refused"
+        );
+        let body = vault.get_claim(&signal).expect("read").expect("stored");
+        assert_eq!(body.predicate, predicate);
+        assert_eq!(
+            body.scope_facet,
+            vault
+                .get_claim(&composite)
+                .expect("read")
+                .expect("stored")
+                .scope_facet,
+            "the {predicate} signal sits in the composite's own facet"
+        );
+    }
+    assert_eq!(
+        claim_has_live_support(&vault, &composite).expect("read"),
+        Some(true),
+        "the composite index is served"
+    );
+}
+
+/// One `predicate` signal claim about `subject` stored in `facet` through the
+/// public claim door, which keeps the facet it is given.
+fn signal_in_facet(
+    vault: &Vault,
+    subject: EntityId,
+    predicate: &str,
+    value: f32,
+    facet: EntityId,
+) -> EntityId {
+    let at = vault.now_recorded_at();
+    let id = EntityId::now();
+    let mut body = ClaimBody::new(
+        predicate,
+        ClaimSubject::Entity(subject),
+        Value::F32(value),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("signal claim");
+    body.source = Some(ClaimSource::Observed);
+    body.scope_facet = facet;
+    vault
+        .put_claim(&id, &body, TimeRange { start: at, end: at }, at)
+        .expect("signal claim put");
+    id
+}
+
+/// The composite carries both signals' numbers, so a signal claim stored in a
+/// facet other than the composite's is refused: a reader of the composite's
+/// facet may not read that signal, and must not learn it from the composite.
+/// The same derivation with the signal in the composite's own facet is
+/// accepted, and names no signal (REVIEW-9905 P1).
+/// Red at #9905's first fix f51cfaad91f7: the derivation accepts the signal
+/// in the other facet and names it in the composite's evidence.
+#[test]
+fn a_composite_refuses_a_signal_claim_outside_its_facet() {
+    let (_dir, vault, owner) = owned_vault();
+    declare_predicates_normal(&vault, &[("state.", false)]);
+    let room = EntityId::now();
+    let turn = spoken_turn(&vault, owner, room);
+    let _task = owned_task(&vault, owner);
+    let RefreshedStateSignals { composite, .. } =
+        refresh_state_signals(&vault, &owner, &WINDOW, vault.now_recorded_at())
+            .expect("the refresh")
+            .expect(
+                "an annotated turn the owner spoke and a TASK it owns make the refresh measure",
+            );
+    let own_facet = vault
+        .get_claim(&composite)
+        .expect("read")
+        .expect("stored")
+        .scope_facet;
+    let other_facet = EntityId::now();
+    let at = vault.now_recorded_at();
+    vault
+        .put_entity(
+            &other_facet,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: at, end: at },
+            at,
+            b"facet",
+        )
+        .expect("a second FACET");
+    assert_ne!(other_facet, own_facet);
+
+    let engagement = signal_in_facet(&vault, owner, ENGAGEMENT, 0.8, own_facet);
+    let foreign = signal_in_facet(&vault, owner, GOAL_VELOCITY, 0.7, other_facet);
+    let derived = vault.derive_state_index(
+        &owner,
+        &StateIndexEvidence {
+            vad_turns: vec![turn],
+            goal_velocity: foreign,
+            engagement,
+        },
+        vault.now_recorded_at(),
+    );
+    assert!(
+        derived.is_err(),
+        "FAILBEFORE REVIEW-9905-P1: the composite accepts a goal-velocity signal stored in \
+         another facet and names it to readers of its own: {derived:?}"
+    );
+
+    let own = signal_in_facet(&vault, owner, GOAL_VELOCITY, 0.7, own_facet);
+    let derived = vault
+        .derive_state_index(
+            &owner,
+            &StateIndexEvidence {
+                vad_turns: vec![turn],
+                goal_velocity: own,
+                engagement,
+            },
+            vault.now_recorded_at(),
+        )
+        .expect("the same derivation with the signal in the composite's facet");
+    assert!(
+        !row_spells_id(&vault, &derived, &own),
+        "the composite names no signal, even one in its own facet"
+    );
+}
+
+/// One `predicate` signal claim about `subject` in `facet`, narrowed to
+/// `principal` by its scope, through the public claim door.
+fn principal_signal_in_facet(
+    vault: &Vault,
+    subject: EntityId,
+    predicate: &str,
+    value: f32,
+    facet: EntityId,
+    principal: EntityId,
+) -> EntityId {
+    let at = vault.now_recorded_at();
+    let id = EntityId::now();
+    let mut body = ClaimBody::new(
+        predicate,
+        ClaimSubject::Entity(subject),
+        Value::F32(value),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("signal claim");
+    body.source = Some(ClaimSource::Observed);
+    body.scope_facet = facet;
+    body.scope = Some(Value::Map(vec![(
+        Value::from("principal"),
+        Value::Binary(principal.as_bytes().to_vec()),
+    )]));
+    vault
+        .put_claim(&id, &body, TimeRange { start: at, end: at }, at)
+        .expect("a signal claim for one principal");
+    id
+}
+
+/// The composite has no principal, so it carries no signal narrowed to one:
+/// a reader the composite admits, who is not that principal, is refused the
+/// signal row and must not learn its number or id from the composite
+/// (REVIEW-9905 P1 round 2). The same signal with no principal is accepted.
+/// Red at #9905's round-1 head 60dda246c995: the derivation accepts the
+/// principal-scoped signal and names it in the composite's evidence.
+#[test]
+fn a_composite_refuses_a_signal_claim_narrowed_to_one_principal() {
+    let (_dir, vault, owner) = owned_vault();
+    declare_predicates_normal(&vault, &[("state.", false)]);
+    let room = EntityId::now();
+    let turn = spoken_turn(&vault, owner, room);
+    let _task = owned_task(&vault, owner);
+    let RefreshedStateSignals { composite, .. } =
+        refresh_state_signals(&vault, &owner, &WINDOW, vault.now_recorded_at())
+            .expect("the refresh")
+            .expect(
+                "an annotated turn the owner spoke and a TASK it owns make the refresh measure",
+            );
+    let own_facet = vault
+        .get_claim(&composite)
+        .expect("read")
+        .expect("stored")
+        .scope_facet;
+
+    let engagement = signal_in_facet(&vault, owner, ENGAGEMENT, 0.8, own_facet);
+    let narrowed = principal_signal_in_facet(&vault, owner, GOAL_VELOCITY, 0.7, own_facet, owner);
+    let derived = vault.derive_state_index(
+        &owner,
+        &StateIndexEvidence {
+            vad_turns: vec![turn],
+            goal_velocity: narrowed,
+            engagement,
+        },
+        vault.now_recorded_at(),
+    );
+    assert!(
+        derived.is_err(),
+        "FAILBEFORE REVIEW-9905-P1-ROUND-2: the composite accepts a goal-velocity signal \
+         narrowed to one principal and carries it to every reader of its facet: {derived:?}"
+    );
+
+    let open = signal_in_facet(&vault, owner, GOAL_VELOCITY, 0.7, own_facet);
+    vault
+        .derive_state_index(
+            &owner,
+            &StateIndexEvidence {
+                vad_turns: vec![turn],
+                goal_velocity: open,
+                engagement,
+            },
+            vault.now_recorded_at(),
+        )
+        .expect("the same derivation with a signal no principal narrows");
 }
