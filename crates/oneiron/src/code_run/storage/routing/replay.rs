@@ -234,8 +234,9 @@ fn put_base_replay_in_txn(
 /// a later scrub would keep only the handle's stand-in. Only a save of the
 /// room moves its secrets into base custody, so the writer commits nothing,
 /// consumes nothing, and a wait stays; the run ends with the room, and its
-/// end message says to save the room to keep its secrets
-/// (ROOM-CUSTODY-ON-RECORD-CARRY = A, the Engine 21 Nov 06:19).
+/// end message says a save of the room keeps only the secrets its saved talk
+/// names (ROOM-CUSTODY-ON-RECORD-CARRY = A, the Engine 21 Nov 06:19;
+/// REVIEW-10041).
 fn refuse_room_bound_record(record: &CodeRunReplayRecord) -> Result<()> {
     let encoded = zeroize::Zeroizing::new(REPLAY_RECORDS.encode_value(record)?);
     if crate::session_overlay::holds_room_secret_handle(&encoded) {

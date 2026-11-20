@@ -72,10 +72,13 @@ pub enum OffRecordError {
     /// values, and only a save of the room moves them there
     /// (ROOM-CUSTODY-ON-RECORD-CARRY = A, the Engine 21 Nov 06:19), so the
     /// run's record does not move to base: nothing was written, and the run
-    /// ends with the room. Its kind is [`ErrorKind::OffRecordTaintedBaseWrite`]:
-    /// a base write an off-record room's state refused.
+    /// ends with the room. A save carries only the handles its saved rows
+    /// name, so the message says a save keeps the secrets its saved talk
+    /// names and never one the run alone holds (REVIEW-10041). Its kind is
+    /// [`ErrorKind::OffRecordTaintedBaseWrite`]: a base write an off-record
+    /// room's state refused.
     #[error(
-        "run {run_ref} holds secrets its off-record room keeps, so it cannot go on record: save the room to keep its secrets, or the run ends with the room"
+        "run {run_ref} holds secrets its off-record room keeps, so it cannot go on record and ends with the room: a save of the room keeps only the secrets its saved talk names, never one the run alone holds"
     )]
     OffRecordRoomSecretsUnsaved { run_ref: String },
     /// ARCH-0052 D2 backstop (a) (ONE-1728, K7): the canonical-handle witness
