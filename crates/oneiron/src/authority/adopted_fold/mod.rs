@@ -561,14 +561,7 @@ fn tail_folds_past(
         .filter(|(_, entry)| verify_entry_signatures(entry).is_ok())
         .map(|(hash, entry)| (*hash, *entry))
         .collect();
-    if !tail_signers_covered_rows_unfloored(image, &signed) {
-        return None;
-    }
-    let floored = if rows_floors_unmoved(image, &signed) {
-        BTreeSet::new()
-    } else {
-        covered_floors::floored_covered_rows(image, &signed)?
-    };
+    let floored = covered_floors::tail_floored_rows(image, &signed)?;
     let mut confirms = (
         image.safety.confirm_ids.clone(),
         image.safety.confirm_nonces.clone(),
@@ -792,4 +785,4 @@ fn is_main(entry: &AuthorityLogEntry) -> bool {
 }
 
 #[cfg(oneiron_test_support)]
-pub(crate) use covered_floors::covered_rows_unfloored_for_door;
+pub(crate) use covered_floors::{covered_rows_unfloored_for_door, tail_floored_rows_for_door};

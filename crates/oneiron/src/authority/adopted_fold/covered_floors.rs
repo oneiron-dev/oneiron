@@ -22,6 +22,24 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 
+/// The covered rows `tail` floors past `image`: none where it moves no
+/// covered row's floor (`rows_floors_unmoved`). None where only the whole
+/// history judges it: a tail signer's covered rows form no chain
+/// (`tail_signers_covered_rows_unfloored`), or the tail floors rows the fold
+/// past the image cannot stand for ([`floored_covered_rows`]).
+pub(super) fn tail_floored_rows(
+    image: &AuthorityCheckpointV2,
+    tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
+) -> Option<BTreeSet<AuthorityEntryHash>> {
+    if !super::tail_signers_covered_rows_unfloored(image, tail) {
+        return None;
+    }
+    if super::rows_floors_unmoved(image, tail) {
+        return Some(BTreeSet::new());
+    }
+    floored_covered_rows(image, tail)
+}
+
 /// The covered rows `tail` floors, where the tail's rows of each signer and
 /// scope rise above the image's top as one chain (each above, and descending
 /// along that scope's rows from, the one below it): each covered row of that
@@ -431,4 +449,14 @@ impl CoveredFloors {
 #[cfg(oneiron_test_support)]
 pub(crate) fn covered_rows_unfloored_for_door(image: &AuthorityCheckpointV2) -> bool {
     covered_rows_unfloored(image, |_| true)
+}
+
+/// [`tail_floored_rows`], for the adopted-fold door (FIX
+/// [ADOPTED-FOLD-TAIL-WALK-SIGNER-COST]).
+#[cfg(oneiron_test_support)]
+pub(crate) fn tail_floored_rows_for_door(
+    image: &AuthorityCheckpointV2,
+    tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
+) -> Option<BTreeSet<AuthorityEntryHash>> {
+    tail_floored_rows(image, tail)
 }
