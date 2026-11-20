@@ -187,7 +187,13 @@ pub(crate) async fn vault_imports_hook_transcript_part(
         Ok(owner) => owner,
         Err(refusal) => return (Err(refusal), Vec::new()),
     };
-    let text = match server.hook_transcript_uploads.stage(owner.actor(), &input) {
+    // The upload's holder: the proof's own person, once the proof is this
+    // vault's. The landing import revalidates the proof in its writers.
+    let holder = match owner.actor_for_read(server.vault()) {
+        Ok(holder) => holder,
+        Err(error) => return (Err(error.into()), Vec::new()),
+    };
+    let text = match server.hook_transcript_uploads.stage(holder, &input) {
         Ok(Staged::Open(staged)) => {
             let view = HookTranscriptPartView {
                 upload: input.upload,
