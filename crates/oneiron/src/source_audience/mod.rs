@@ -39,6 +39,7 @@ pub(crate) mod binding_door;
 pub(crate) mod carried;
 pub(crate) mod checkpoint;
 pub(crate) mod floor;
+mod floor_state;
 mod obligation;
 mod rederive;
 mod replica;
@@ -58,6 +59,11 @@ use crate::{EntityId, Vault};
 pub(crate) use floor::{
     FloorSource, SOURCE_READERS, SourceReaders, floor_source_in, floor_threads_in,
     raise_floors_in_txn, seal_births_from_erased_inputs_in_txn,
+};
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) use floor_state::forget_floor_state_in_txn;
+pub(crate) use floor_state::{
+    backfill_floors, binding_landed_in_txn, floor_waits_in, waiting_floor_readable_in,
 };
 pub(crate) use obligation::{
     SourceAudienceBirth, admit_obligation_in_txn, admit_session_obligation_in_txn,
@@ -655,7 +661,9 @@ pub(crate) fn bind_record_in_txn(
         None => RECORDS.put(&vault.store, txn, record, policy)?,
     }
     // The landing that marked the row born binds it here: the mark goes.
-    obligation::clear_birth_in_txn(vault, txn, record)
+    obligation::clear_birth_in_txn(vault, txn, record)?;
+    // A row written from it before its binding landed waits for it.
+    floor_state::binding_landed_in_txn(vault, txn, record)
 }
 
 /// Shares the thread policy `thread` with `person` (`share`), or withdraws

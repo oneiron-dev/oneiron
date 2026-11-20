@@ -9,17 +9,22 @@
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test read_lineage_floor`.
 #![cfg(oneiron_test_support)]
 
+use oneiron::housekeeping::HousekeepingBudget;
 use oneiron::memory::SafeDeleteReason;
 use oneiron::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
 };
 use oneiron::store::GateDecisionId;
-use oneiron::test_doors::house_link::put_claim_made_by;
-use oneiron::test_doors::read_lineage_floor::{floor_of, walked_policies_of};
-use oneiron::test_doors::source_audience_binding::{bound_row, reads, remove_policy_row};
+use oneiron::test_doors::house_link::{put_claim_made_by, stamp_stated_birth};
+use oneiron::test_doors::read_lineage_floor::{
+    floor_of, floor_waits, forget_floor_state, walked_policies_of,
+};
+use oneiron::test_doors::source_audience_binding::{
+    bound_row, bound_row_read_by, reads, remove_policy_row,
+};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    EdgeActorClass, EdgeKind, EntityId, Vault, VaultConfig,
+    EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig,
 };
 
 const AT: u64 = 1_769_947_200;
@@ -55,6 +60,63 @@ fn mailbox() -> Mailbox {
     }
 }
 
+/// A vault holding one mail CONVERSATION bound to a policy read by its
+/// owner and by `reader`: the owner reads every source the vault holds.
+fn owners_mailbox() -> Mailbox {
+    let dir = tempfile::tempdir().expect("FIXTURE: a temporary vault dir");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("FIXTURE: open the vault");
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the embedded owner");
+    let reader = EntityId::now();
+    let row = EntityId::now();
+    let policy =
+        bound_row_read_by(&vault, row, &[owner, reader]).expect("FIXTURE: the owner's mailbox");
+    Mailbox {
+        _dir: dir,
+        vault,
+        owner,
+        reader,
+        stranger: EntityId::now(),
+        row,
+        policy,
+    }
+}
+
+/// An open CLAIM body about the owner under `predicate`, stated by the user.
+fn claim_body(mailbox: &Mailbox, predicate: &str, value: &str) -> ClaimBody {
+    let mut body = ClaimBody::new(
+        predicate,
+        ClaimSubject::Entity(mailbox.owner),
+        rmpv::Value::from(value),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("FIXTURE: an open CLAIM body");
+    body.source = Some(ClaimSource::UserStated);
+    body
+}
+
+/// A stated birth by the owner naming `inputs` as `role`.
+fn made_by(mailbox: &Mailbox, inputs: &[EntityId], role: MadeByInputRole) -> MadeBy {
+    MadeBy {
+        inputs: inputs
+            .iter()
+            .map(|row| MadeByInput { row: *row, role })
+            .collect(),
+        process: MadeByProcess {
+            actor: mailbox.owner,
+            class: MadeByClass::Stated,
+            identity: "read_lineage_floor.fixture".to_owned(),
+            version: "1".to_owned(),
+            params_hash: "0".repeat(64),
+        },
+        at: AT,
+        trigger: None,
+    }
+}
+
 /// An open CLAIM about the owner whose birth names `inputs` as its
 /// evidence (`Input`), stamped in a local write; no edge names them.
 fn claim_born_from(mailbox: &Mailbox, inputs: &[EntityId], value: &str) -> EntityId {
@@ -69,34 +131,45 @@ fn claim_born_with(
     value: &str,
 ) -> EntityId {
     let id = EntityId::now();
-    let mut body = ClaimBody::new(
-        "profile.preference",
-        ClaimSubject::Entity(mailbox.owner),
-        rmpv::Value::from(value),
-        1.0,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
+    put_claim_made_by(
+        &mailbox.vault,
+        id,
+        &claim_body(mailbox, "profile.preference", value),
+        made_by(mailbox, inputs, role),
     )
-    .expect("FIXTURE: an open CLAIM body");
-    body.source = Some(ClaimSource::UserStated);
-    let made_by = MadeBy {
-        inputs: inputs
-            .iter()
-            .map(|row| MadeByInput { row: *row, role })
-            .collect(),
-        process: MadeByProcess {
-            actor: mailbox.owner,
-            class: MadeByClass::Stated,
-            identity: "read_lineage_floor.fixture".to_owned(),
-            version: "1".to_owned(),
-            params_hash: "0".repeat(64),
-        },
-        at: AT,
-        trigger: None,
-    };
-    put_claim_made_by(&mailbox.vault, id, &body, made_by)
-        .expect("FIXTURE: the CLAIM and its birth");
+    .expect("FIXTURE: the CLAIM and its birth");
     id
+}
+
+/// A CLAIM under `predicate` as a vault wrote it before floors were: the
+/// CLAIM, then its birth naming `inputs`, stamped with no floor raised. Its
+/// floor stays empty; [`forget_floor_state`] then makes the vault read as
+/// one written before floors.
+fn claim_born_before_floors(mailbox: &Mailbox, inputs: &[EntityId], predicate: &str) -> EntityId {
+    let id = EntityId::now();
+    mailbox
+        .vault
+        .put_claim(
+            &id,
+            &claim_body(mailbox, predicate, "held before floors"),
+            TimeRange { start: AT, end: AT },
+            AT,
+        )
+        .expect("FIXTURE: the CLAIM");
+    stamp_stated_birth(
+        &mailbox.vault,
+        id,
+        made_by(mailbox, inputs, MadeByInputRole::Input),
+    )
+    .expect("FIXTURE: its birth, with no floor raised");
+    id
+}
+
+/// How many of `rows` `viewer` reads.
+fn read_count(mailbox: &Mailbox, rows: &[EntityId], viewer: EntityId) -> usize {
+    rows.iter()
+        .filter(|row| reads(&mailbox.vault, **row, &[viewer]).expect("the read"))
+        .count()
 }
 
 /// The mail half of the held row: a CLAIM whose birth alone names a
@@ -279,5 +352,192 @@ fn a_superseded_sealed_claim_leaves_the_doctor_count() {
         hidden(&mailbox.vault),
         0,
         "doctor counts a sealed CLAIM a later CLAIM closed as a fact hidden",
+    );
+}
+
+/// #9289 review 2 P1-1 (the order a sync can land rows in): a CLAIM born
+/// from a row this vault does not hold yet waits for it, never sealed. While
+/// the row is missing the CLAIM reads to no one but the owner, who reads
+/// every source here; once the row lands bound to its mailbox, the CLAIM
+/// holds that mailbox's policy and reads to its readers, and to no stranger.
+#[test]
+fn a_claim_born_from_a_row_not_yet_here_reads_once_the_row_lands() {
+    let mailbox = owners_mailbox();
+    let late = EntityId::now();
+    let learnt = claim_born_from(&mailbox, &[late], "learnt from a row still on its way");
+    assert!(
+        !reads(&mailbox.vault, learnt, &[mailbox.stranger]).expect("the stranger's read"),
+        "LEAK: a stranger reads a CLAIM whose source has not landed",
+    );
+    assert!(
+        !reads(&mailbox.vault, learnt, &[mailbox.reader]).expect("the reader's read"),
+        "a reader reads a CLAIM whose source has not landed",
+    );
+    assert!(
+        reads(&mailbox.vault, learnt, &[mailbox.owner]).expect("the owner's read"),
+        "the owner, who reads every source here, reads a CLAIM whose source has not landed",
+    );
+    assert!(
+        floor_waits(&mailbox.vault, learnt).expect("the floor's state"),
+        "a CLAIM born from a row not held here waits for it",
+    );
+    assert_eq!(
+        mailbox
+            .vault
+            .doctor()
+            .expect("doctor")
+            .facts_hidden_source_unknown,
+        0,
+        "a CLAIM waiting for its source is not sealed",
+    );
+    let policy = bound_row_read_by(&mailbox.vault, late, &[mailbox.owner, mailbox.reader])
+        .expect("the row lands, bound to its mailbox");
+    assert!(
+        !floor_waits(&mailbox.vault, learnt).expect("the floor's state"),
+        "the CLAIM's floor is whole once its source landed",
+    );
+    assert!(
+        floor_of(&mailbox.vault, learnt)
+            .expect("the floor")
+            .contains(&policy),
+        "the CLAIM holds the landed row's policy",
+    );
+    assert!(
+        reads(&mailbox.vault, learnt, &[mailbox.reader]).expect("the reader's read"),
+        "the mailbox's reader reads the CLAIM once its source landed: it was never sealed",
+    );
+    assert!(
+        reads(&mailbox.vault, learnt, &[mailbox.owner]).expect("the owner's read"),
+        "the owner reads the CLAIM throughout",
+    );
+    assert!(
+        !reads(&mailbox.vault, learnt, &[mailbox.stranger]).expect("the stranger's read"),
+        "LEAK: a stranger reads the CLAIM once its source landed",
+    );
+}
+
+/// #9289 review 2 P1-2: facts a vault held before floors were written (a
+/// CLAIM whose birth names a mailbox's row, with no floor) read to no
+/// stranger the moment the vault runs this build, and to the mailbox's
+/// reader once the floor backfill (a housekeeping sweep) has raised them;
+/// the owner reads them throughout.
+#[test]
+fn facts_held_before_floors_read_to_the_mailboxs_reader_once_the_backfill_raised_them() {
+    const N: usize = 5;
+    let mailbox = owners_mailbox();
+    let facts: Vec<EntityId> = (0..N)
+        .map(|n| claim_born_before_floors(&mailbox, &[mailbox.row], &format!("fact.held_n{n}")))
+        .collect();
+    assert_eq!(
+        read_count(&mailbox, &facts, mailbox.stranger),
+        N,
+        "precondition: a fact whose floor was never raised reads to a stranger as before floors",
+    );
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault written before floors");
+    assert_eq!(
+        read_count(&mailbox, &facts, mailbox.stranger),
+        0,
+        "LEAK: a stranger reads facts held before floors before the backfill ran",
+    );
+    assert_eq!(
+        read_count(&mailbox, &facts, mailbox.reader),
+        0,
+        "the mailbox's reader reads facts whose floor the backfill has not raised",
+    );
+    assert_eq!(
+        read_count(&mailbox, &facts, mailbox.owner),
+        N,
+        "the owner reads every fact before the backfill",
+    );
+    mailbox
+        .vault
+        .housekeeping_all(HousekeepingBudget::unbounded())
+        .expect("a housekeeping pass runs the floor backfill");
+    for fact in &facts {
+        assert!(
+            !floor_waits(&mailbox.vault, *fact).expect("the floor's state"),
+            "the backfill raised every fact",
+        );
+        assert!(
+            floor_of(&mailbox.vault, *fact)
+                .expect("the floor")
+                .contains(&mailbox.policy),
+            "a raised fact holds its mailbox's policy",
+        );
+    }
+    assert_eq!(
+        read_count(&mailbox, &facts, mailbox.stranger),
+        0,
+        "LEAK: a stranger reads facts after the backfill",
+    );
+    assert_eq!(
+        read_count(&mailbox, &facts, mailbox.reader),
+        N,
+        "the mailbox's reader reads every fact after the backfill",
+    );
+    assert_eq!(
+        read_count(&mailbox, &facts, mailbox.owner),
+        N,
+        "the owner reads every fact after the backfill",
+    );
+}
+
+/// #9289 review 2 P1-2, a fact born from a fact held before floors: its
+/// write raises the old fact's floor first, so the new fact holds the
+/// mailbox's policy at once, before any backfill ran.
+#[test]
+fn a_fact_born_from_a_fact_held_before_floors_holds_its_floor_at_once() {
+    let mailbox = owners_mailbox();
+    let old = claim_born_before_floors(&mailbox, &[mailbox.row], "fact.held_old");
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault written before floors");
+    let new = claim_born_from(&mailbox, &[old], "learnt from the old fact");
+    for (row, label) in [(old, "the old fact"), (new, "the fact born from it")] {
+        assert!(
+            !floor_waits(&mailbox.vault, row).expect("the floor's state"),
+            "{label}'s floor is whole",
+        );
+        assert!(
+            floor_of(&mailbox.vault, row)
+                .expect("the floor")
+                .contains(&mailbox.policy),
+            "{label} holds the mailbox's policy",
+        );
+        assert!(
+            reads(&mailbox.vault, row, &[mailbox.reader]).expect("the reader's read"),
+            "the mailbox's reader reads {label}",
+        );
+        assert!(
+            !reads(&mailbox.vault, row, &[mailbox.stranger]).expect("the stranger's read"),
+            "LEAK: a stranger reads {label}",
+        );
+    }
+}
+
+/// READ-LINEAGE-L3 as the lead reads it (21 Nov 06:28): the vault owner
+/// reads the sources that are his, never a member's own mailbox, whose
+/// audience is that member. A fact learnt from it reads to the member and
+/// not to the owner, whether its floor is whole or waits.
+#[test]
+fn a_members_own_mailbox_fact_does_not_read_to_the_vault_owner() {
+    let mailbox = mailbox();
+    let member = mailbox.reader;
+    let fact = claim_born_from(&mailbox, &[mailbox.row], "learnt from the member's mailbox");
+    assert!(
+        reads(&mailbox.vault, fact, &[member]).expect("the member's read"),
+        "the member reads a fact learnt from the member's own mailbox",
+    );
+    assert!(
+        !reads(&mailbox.vault, fact, &[mailbox.owner]).expect("the owner's read"),
+        "the vault owner reads a fact learnt from a member's own mailbox",
+    );
+    let held = claim_born_before_floors(&mailbox, &[mailbox.row], "fact.held_member");
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault written before floors");
+    assert!(
+        !reads(&mailbox.vault, held, &[mailbox.owner]).expect("the owner's read"),
+        "the vault owner reads a fact held before floors in a vault holding a member's own mailbox",
+    );
+    assert!(
+        floor_waits(&mailbox.vault, held).expect("the floor's state"),
+        "the fact's floor waits for the backfill",
     );
 }

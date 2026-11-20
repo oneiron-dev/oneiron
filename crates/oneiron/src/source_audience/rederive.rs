@@ -16,8 +16,10 @@
 //!   sealed CLAIM over it;
 //! - a scope SUMMARY its projection names current is declared again under
 //!   its own requester ([`Vault::rederive_scope_summary`]): the next
-//!   generation is born under its sources' floors, so one whose sources
-//!   still do not resolve is sealed again and stays counted;
+//!   generation is born under its sources' floors, so one born from an
+//!   input this vault erased is sealed again and stays counted, and one
+//!   whose sources have not landed yet waits for them
+//!   ([`super::floor_state`]);
 //! - every other row is kept: no generator here writes it again.
 //!
 //! Only a sealed row that is still current is counted or acted on: a
