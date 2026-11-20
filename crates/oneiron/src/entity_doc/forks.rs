@@ -118,6 +118,22 @@ pub(super) const ENTITY_DOC_FORK_SNAPSHOT: SideTable<String, Vec<u8>, Raw> =
 /// Review bundle of every fork opened under one text-edit proposal.
 pub(super) const ENTITY_DOC_PROPOSAL_BUNDLE: SideTable<String, ProposalBundle, Named> =
     SideTable::new(&side_table::ENTITY_DOC_PROPOSAL_BUNDLE);
+
+/// Puts a fork's snapshot for the checkpoint-pins door: `full` cut at
+/// `base`, as `retain_fork` keeps it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_fork_snapshot_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    key: &str,
+    full: &[u8],
+    base: &[u8],
+) -> Result<()> {
+    let doc = EntityDoc::from_snapshot(full)?;
+    let shallow = doc.shallow_snapshot(base)?;
+    ENTITY_DOC_FORK_SNAPSHOT.put(store, txn, &key.to_owned(), &shallow)
+}
+
 /// Durable settlement receipt for one fork's merge/switch/reject verdict,
 /// keyed by entity then receipt id.
 pub(super) const ENTITY_DOC_RECEIPT: SideTable<HexPair, TextReceipt, Named> =

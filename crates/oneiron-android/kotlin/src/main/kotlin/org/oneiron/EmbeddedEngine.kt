@@ -78,6 +78,17 @@ class EmbeddedEngine(
         wakeNative()
     }
 
+    /**
+     * What the app observes about fetching predictions on this phone: whether it is on an
+     * unmetered network and on power. A phone at the predicted level asks and fetches only while
+     * both hold, closed until the app reports; the report holds across [stop], [wake] and every
+     * reconnect. Report again on each change the network and battery callbacks see.
+     */
+    fun setFetchConditions(unmetered: Boolean, powered: Boolean) {
+        check(!closed.get()) { "engine is closed" }
+        setFetchConditionsNative(unmetered, powered)
+    }
+
     /** The app is backgrounding: drain, stop every worker, keep the vault open for the next [wake]. */
     fun stop() {
         check(!closed.get()) { "engine is closed" }
@@ -134,6 +145,7 @@ class EmbeddedEngine(
         body: ByteArray,
     ): EngineReply
     private external fun wakeNative()
+    private external fun setFetchConditionsNative(unmetered: Boolean, powered: Boolean)
     private external fun stopNative()
     private external fun closeNative()
 

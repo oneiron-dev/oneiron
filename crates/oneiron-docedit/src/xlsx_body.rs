@@ -55,8 +55,8 @@ pub use crate::xlsx_shift::{
 use crate::xlsx_shift::{drop_table_columns, shift_formula};
 use crate::xlsx_styles::write_formats;
 pub use crate::xlsx_styles::{
-    XlsxBorder, XlsxColor, XlsxDifferentialFormat, XlsxEdge, XlsxFill, XlsxFont, XlsxFormat,
-    XlsxNumberFormat, check_differential_format, check_format,
+    XlsxAlignment, XlsxBorder, XlsxColor, XlsxDifferentialFormat, XlsxEdge, XlsxFill, XlsxFont,
+    XlsxFormat, XlsxNumberFormat, XlsxProtection, check_differential_format, check_format,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

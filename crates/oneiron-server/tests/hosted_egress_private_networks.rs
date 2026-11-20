@@ -13,6 +13,9 @@
     reason = "a test process starts its own subprocesses; the rule covers the server's crates"
 )]
 
+#[path = "support/owner_only_file.rs"]
+mod owner_only_file;
+
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -148,7 +151,11 @@ fn a_private_network_outside_the_three_spellings_stops_the_start() {
 fn a_managed_settings_file_that_names_the_private_networks_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let settings = dir.path().join("settings.toml");
-    std::fs::write(&settings, "hosted_private_networks = [\"rfc1918\"]\n").unwrap();
+    crate::owner_only_file::write_owner_only_file(
+        &settings,
+        "hosted_private_networks = [\"rfc1918\"]\n",
+    )
+    .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_oneiron-server"))
         .arg("serve")
         .args(managed_argv(dir.path()))

@@ -240,7 +240,9 @@ options are not in it, so no record's `execution_mode` comes from it.
 thinking reply comes back split, as llama.cpp's `--reasoning-format deepseek`
 splits it: the thought in `reasoning_content`, the answer in `content`.
 `reasoning_budget_tokens` caps the thought: at the cap the server closes it
-and the answer gets the rest of `max_tokens`. A `response_format` schema
+and the answer gets the rest of `max_tokens`. A request that sets a budget
+and no `max_tokens` gets the budget plus `--default-max-tokens` (4,096), so
+the answer keeps that room after a full thought. A `response_format` schema
 constrains the answer only. A prompt that fills the context is refused with
 `400` and `code = "context_length_exceeded"`. By default up to four
 requests run at once; one that sets `"oneiron_solo": true` runs alone (see

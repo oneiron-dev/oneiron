@@ -4,6 +4,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
@@ -37,6 +39,9 @@ pub(crate) struct AdmittedUpdate {
     /// these bytes bring (FIX 3656).
     pub(super) placements: crate::sync::ingest::AdmittedPlacements,
     pub(super) lane: Option<String>,
+    /// The member peer whose first-party update this is, whose room bodies
+    /// the import judges again (ROOM-BODY-REPLICA-SETTINGS).
+    pub(super) first_party_sender: Option<EntityId>,
     pub(super) routed: Vec<AdmittedUpdate>,
 }
 
@@ -53,6 +58,13 @@ impl AdmittedUpdate {
     /// WORLD window (FIX 3497), in the order they import.
     pub(crate) fn parts(&self) -> impl Iterator<Item = &Self> {
         std::iter::once(self).chain(&self.routed)
+    }
+
+    /// The member peer whose first-party update this is, if one: its room
+    /// bodies are judged again in the import's writer transaction
+    /// (ROOM-BODY-REPLICA-SETTINGS).
+    pub(crate) const fn first_party_sender(&self) -> Option<EntityId> {
+        self.first_party_sender
     }
 
     /// The admitted bytes to import.
@@ -306,7 +318,7 @@ pub(in crate::sync) fn staged_births(
     // A receipt binds all per-window records before any is selected or held.
     let record = crate::batch::export::vault_import_staged_stamps(vault, receipt_id)?
         .ok_or(Error::CorruptedIndex("staged facet stamps"))?;
-    if stamps_digest != Some(*blake3::hash(&record).as_bytes()) {
+    if stamps_digest != Some(*ContentHash::of(&record).as_bytes()) {
         return Err(Error::CorruptedIndex("staged facet stamps"));
     }
     let mut records = crate::batch::export::decode_staged_window_parts(&record)?

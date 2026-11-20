@@ -47,9 +47,10 @@ use crate::vault::Vault;
 pub(crate) use crate::store::install_identity::{
     DeviceIdentity, InstallSigner, cache_machine_pk, load_or_mint_client_id,
     load_or_mint_client_id_in_txn, load_or_mint_machine_id_in_txn, put_or_check_device_pk_in_txn,
-    read_client_id_from, read_client_id_in_txn, read_device_verifying_key_in_txn,
-    read_machine_id_in_txn, read_machine_verifying_key_in_store_txn,
-    read_machine_verifying_key_in_txn,
+    put_restored_from_image_in_txn, read_client_id_from, read_client_id_in_txn,
+    read_device_verifying_key_in_txn, read_machine_id_in_txn,
+    read_machine_verifying_key_in_store_txn, read_machine_verifying_key_in_txn,
+    read_restored_from_image_in_txn,
 };
 
 /// `m:client_id` sync_state row (u64 LE, 8 bytes).
@@ -116,10 +117,12 @@ pub(crate) fn ensure_device_identity(vault: &Vault) -> Result<DeviceIdentity> {
 /// so an old image never rolls trust back to an older root, and an image a
 /// host made never arrives pinned to the host's. The owner's dismissals of
 /// held machine answers go with them: each is the mark of the install he
-/// made it on.
+/// made it on. So does the image's own restored-from mark: the restore
+/// writes its own (row RESTORED-COPIES-ENROL-EACH-OTHER).
 pub(crate) fn is_machine_identity_row(key: &[u8]) -> bool {
     key == side_table::IDENTITY_CLIENT_ID.prefix
         || key == side_table::IDENTITY_MACHINE_ID.prefix
+        || key == side_table::IDENTITY_RESTORED_FROM.prefix
         || key == side_table::IDENTITY_DEVICE_PK.prefix
         || key == side_table::IDENTITY_MACHINE_PK.prefix
         || crate::authority::is_pinned_root_row(key)
@@ -127,7 +130,9 @@ pub(crate) fn is_machine_identity_row(key: &[u8]) -> bool {
 }
 
 /// Forgets this install's client id, machine and pin, so the vault joins as a new
-/// one: another live vault keeps the machine it was.
+/// one: another live vault keeps the machine it was. The install's
+/// restored-from mark stays: a machine born of a restore that mints a new id
+/// here is still born of that restore (row RESTORED-COPIES-ENROL-EACH-OTHER).
 pub(crate) fn drop_machine_identity_in_txn(
     store: &crate::store::Store,
     wtxn: &mut heed::RwTxn<'_>,
