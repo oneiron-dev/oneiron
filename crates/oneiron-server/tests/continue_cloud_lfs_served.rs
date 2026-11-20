@@ -36,6 +36,21 @@
 //! - An object path holding a FIFO stops the push before its pack, naming
 //!   the path, and is never opened to wait on a writer.
 //!
+//! Review round 2 of #9882 added two cases; before the fix each fails, as
+//! the base's push sends no object, and at round 1's head each fails too:
+//! - A clone that lacks the continue ref's old commit (another clone pushed
+//!   it) lands its hand-off past a pointer that commit already carried,
+//!   whose object is on neither side (as one the vault withholds from this
+//!   machine is to the batch answer, FIX 8182), and sends the object of the
+//!   pointer it adds. Round 1's head diffed from the empty tree and stopped
+//!   on the unchanged pointer's missing object; the custody repo diffs from
+//!   the old commit and asks nothing of it.
+//! - A separate git directory whose name holds a byte that is no UTF-8 is
+//!   read byte for byte: the object in its git-lfs store goes and the
+//!   hand-off lands. Round 1's head decoded the name and looked for the
+//!   object under a path with U+FFFD in it. Linux only: APFS refuses such a
+//!   name.
+//!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --features oneiron/test-support --test
 //! continue_cloud_lfs_served`. Stock `git` (with `http-backend`) must be on
@@ -69,6 +84,8 @@ const CONTINUE_REF: &str = "refs/heads/oneiron/continue/0b5e2c1d7a444c399f0e5d2a
 const OWNER_SEED: u8 = 0x71;
 /// The bytes of the work's Git-LFS object.
 const OBJECT: &[u8] = b"a model checkpoint the work goes on from\x00\x01\x02\n";
+/// The bytes of the Git-LFS object a later hand-off adds.
+const ADDED: &[u8] = b"a later checkpoint\x00\x03\x04\n";
 
 /// The served app on a loopback port, the vault behind it, its empty custody
 /// repo, and the owner's slip.
@@ -192,30 +209,48 @@ fn work_repo(dir: &Path, stored: bool) -> TestResult<LfsOid> {
     std::fs::write(dir.join("README.md"), "outside work\n")?;
     git(dir, &["add", "--", "README.md"]);
     git(dir, &["commit", "-m", "first"]);
-    let oid = LfsOid::digest(OBJECT);
+    let store = dir.join(".git/lfs");
+    pointer_file(
+        dir,
+        "assets/model.bin",
+        OBJECT,
+        stored.then_some(store.as_path()),
+    )
+}
+
+/// Writes a Git-LFS pointer file for `object` at `path` in the work repo
+/// `dir`, and with `store`, the object into that git-lfs store
+/// (`<store>/objects/<2>/<2>/<oid>`), as `git lfs` leaves it. Answers the
+/// object's id.
+fn pointer_file(dir: &Path, path: &str, object: &[u8], store: Option<&Path>) -> TestResult<LfsOid> {
+    let oid = LfsOid::digest(object);
     let hex = oid.to_hex();
-    std::fs::create_dir_all(dir.join("assets"))?;
+    let file = dir.join(path);
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     std::fs::write(
-        dir.join("assets/model.bin"),
+        &file,
         format!(
             // testkit-lint: allow(network) the pointer grammar's version line names a URI; nothing fetches it.
             "version https://git-lfs.github.com/spec/v1\noid sha256:{hex}\nsize {}\n",
-            OBJECT.len()
+            object.len()
         ),
     )?;
-    if stored {
-        let store = dir
-            .join(".git/lfs/objects")
-            .join(&hex[..2])
-            .join(&hex[2..4]);
-        std::fs::create_dir_all(&store)?;
-        std::fs::write(store.join(&hex), OBJECT)?;
+    if let Some(store) = store {
+        let objects = store.join("objects").join(&hex[..2]).join(&hex[2..4]);
+        std::fs::create_dir_all(&objects)?;
+        std::fs::write(objects.join(&hex), object)?;
     }
     Ok(oid)
 }
 
 fn size() -> u64 {
-    u64::try_from(OBJECT.len()).expect("the object's length fits u64")
+    size_of(OBJECT)
+}
+
+fn size_of(object: &[u8]) -> u64 {
+    u64::try_from(object.len()).expect("the object's length fits u64")
 }
 
 #[test]
@@ -396,6 +431,110 @@ fn a_fifo_at_the_object_path_stops_the_push_before_its_pack() -> TestResult {
         assert!(
             !served.vault.has_lfs_object(oid, size())?,
             "the vault holds no object"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn a_clone_lacking_the_old_hand_off_lands_past_its_unchanged_pointer() -> TestResult {
+    on_engine_stack(|| async {
+        let served = Served::start().await?;
+        // The old hand-off, which another clone pushed: its pointer's object
+        // is on neither side. It goes into the custody store as is.
+        let first = tempfile::tempdir()?;
+        let unchanged = work_repo(first.path(), false)?;
+        git(first.path(), &["add", "-A"]);
+        git(first.path(), &["commit", "-m", "the old hand-off"]);
+        let old = git(first.path(), &["rev-parse", "HEAD"]);
+        let first_dir = first.path().to_str().ok_or("the temp dir is UTF-8")?;
+        let refspec = format!("+refs/heads/main:{CONTINUE_REF}");
+        git(
+            &served.bare,
+            &["fetch", "--no-tags", first_dir, refspec.as_str()],
+        );
+        assert_eq!(
+            served.landed().as_deref(),
+            Some(old.as_str()),
+            "the custody repo holds the old hand-off"
+        );
+        // This clone never fetched it: the same pointer, an edited plain
+        // file, and a pointer it adds, whose object is here.
+        let work = tempfile::tempdir()?;
+        work_repo(work.path(), false)?;
+        std::fs::write(work.path().join("README.md"), "outside work, edited\n")?;
+        let store = work.path().join(".git/lfs");
+        let added = pointer_file(
+            work.path(),
+            "assets/added.bin",
+            ADDED,
+            Some(store.as_path()),
+        )?;
+        assert!(
+            !git_output(work.path(), &["cat-file", "-e", old.as_str()])
+                .status
+                .success(),
+            "this clone lacks the old hand-off"
+        );
+
+        let pushed = served.push(work.path()).await?;
+
+        let commit = pushed.map_err(|error| format!("the push fails: {error}"))?;
+        assert_eq!(
+            served.landed().as_deref(),
+            Some(commit.as_str()),
+            "the hand-off lands on its continue ref"
+        );
+        assert!(
+            served.vault.has_lfs_object(added, size_of(ADDED))?,
+            "the vault holds the object of the pointer the hand-off adds"
+        );
+        assert!(
+            !served.vault.has_lfs_object(unchanged, size())?,
+            "nothing sent the unchanged pointer's object"
+        );
+        Ok(())
+    })
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_git_directory_named_with_a_byte_that_is_no_utf8_is_read_as_written() -> TestResult {
+    use std::os::unix::ffi::OsStrExt as _;
+
+    on_engine_stack(|| async {
+        let served = Served::start().await?;
+        let work = tempfile::tempdir()?;
+        let tree = work.path().join("tree");
+        let git_dir = work
+            .path()
+            .join(std::ffi::OsStr::from_bytes(b"git-\xff-dir"));
+        let made = Command::new("git")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .args(["init", "--initial-branch=main", "--separate-git-dir"])
+            .arg(&git_dir)
+            .arg(&tree)
+            .status()?;
+        assert!(
+            made.success(),
+            "git init makes the work tree and its git directory"
+        );
+        let oid = work_repo(&tree, false)?;
+        let store = git_dir.join("lfs");
+        pointer_file(&tree, "assets/model.bin", OBJECT, Some(store.as_path()))?;
+
+        let pushed = served.push(&tree).await?;
+
+        let commit = pushed.map_err(|error| format!("the push fails: {error}"))?;
+        assert_eq!(
+            served.landed().as_deref(),
+            Some(commit.as_str()),
+            "the hand-off lands on its continue ref"
+        );
+        assert!(
+            served.vault.has_lfs_object(oid, size())?,
+            "the vault holds the work's Git-LFS object"
         );
         Ok(())
     })
