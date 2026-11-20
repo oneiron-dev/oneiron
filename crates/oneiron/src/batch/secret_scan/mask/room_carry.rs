@@ -16,7 +16,7 @@
 //! too (ROOM-CUSTODY-SAVED-ARTIFACTS), through one [`RoomCarry`]: a NOTE's
 //! texts ([`RoomCarry::text_in_txn`]), a CLAIM's values
 //! ([`RoomCarry::value_in_txn`]), a shell's row ([`RoomCarry::ops_in_txn`]).
-//! A saved result MESSAGE's body is carried whole
+//! A saved result MESSAGE's body is carried whole, read as the door read it
 //! ([`RoomCarry::body_in_txn`], ROOM-CUSTODY-REPLY-BODIES): the carried bytes
 //! are a new body in base, which the MESSAGE names in place of the room's.
 
@@ -28,6 +28,7 @@ use rmpv::Value;
 use zeroize::Zeroize;
 
 use super::HANDLE_OPEN;
+use super::body::{opens_json, opens_whole_messagepack};
 use super::wipe::{PlanOps, PlanTree};
 use crate::Vault;
 use crate::batch::BatchOp;
@@ -136,10 +137,13 @@ impl RoomCarry {
     }
 
     /// `body`, the result body a saved MESSAGE of `record` names, with each
-    /// room handle it holds moved (ROOM-CUSTODY-REPLY-BODIES): a text body
-    /// read as one text, a MessagePack body as one value, as a row's are.
-    /// `None` when it moves none; a body that is neither keeps its bytes,
-    /// and a room handle in it stays as written, naming nothing.
+    /// room handle it holds moved (ROOM-CUSTODY-REPLY-BODIES), the body read
+    /// as the door read it when the room admitted it (`Masker::mask_body`):
+    /// JSON, a whole MessagePack value, or one text. A JSON field the door
+    /// lifted whole holds a bare room handle, which only a JSON read finds
+    /// (REVIEW-10057 round 2). `None` when it moves none; a body that is none
+    /// of these keeps its bytes, and a room handle in it stays as written,
+    /// naming nothing.
     ///
     /// # Errors
     ///
@@ -155,23 +159,37 @@ impl RoomCarry {
         if !self.names_kept_handle(body) {
             return Ok(None);
         }
-        if let Ok(text) = std::str::from_utf8(body) {
-            return Ok(self
-                .text_in_txn(vault, wtxn, record, text)?
-                .map(|carried| carried.text.into_bytes()));
+        if opens_json(body)
+            && let Ok(value) = serde_json::from_slice::<Value>(body)
+        {
+            let mut tree = PlanTree(value);
+            if !self.value_in_txn(vault, wtxn, record, &mut tree.0)? {
+                return Ok(None);
+            }
+            return serde_json::to_vec(&tree.0).map(Some).map_err(|_| {
+                Error::InvariantViolation("a carried JSON result body did not encode")
+            });
         }
         let mut cursor = body;
-        let Ok(decoded) = rmpv::decode::read_value(&mut cursor) else {
-            return Ok(None);
-        };
-        let mut tree = PlanTree(decoded);
-        if !cursor.is_empty() || !self.value_in_txn(vault, wtxn, record, &mut tree.0)? {
-            return Ok(None);
+        if opens_whole_messagepack(body)
+            && let Ok(decoded) = rmpv::decode::read_value(&mut cursor)
+            && cursor.is_empty()
+        {
+            let mut tree = PlanTree(decoded);
+            if !self.value_in_txn(vault, wtxn, record, &mut tree.0)? {
+                return Ok(None);
+            }
+            let mut carried = Vec::with_capacity(body.len());
+            rmpv::encode::write_value(&mut carried, &tree.0)
+                .map_err(|_| Error::InvariantViolation("a carried result body did not encode"))?;
+            return Ok(Some(carried));
         }
-        let mut carried = Vec::with_capacity(body.len());
-        rmpv::encode::write_value(&mut carried, &tree.0)
-            .map_err(|_| Error::InvariantViolation("a carried result body did not encode"))?;
-        Ok(Some(carried))
+        match std::str::from_utf8(body) {
+            Ok(text) => Ok(self
+                .text_in_txn(vault, wtxn, record, text)?
+                .map(|carried| carried.text.into_bytes())),
+            Err(_) => Ok(None),
+        }
     }
 
     /// Whether `data` holds, as written, the handle of a secret the room

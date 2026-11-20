@@ -329,7 +329,11 @@ impl Vault {
     /// MESSAGE carries, naming the carried body, and for a new file the pin
     /// that keeps the collector off it until the save's transaction has
     /// ended, then lets the save's discard take it if nothing names it (FIX
-    /// 3633); `None` when the body moves no room handle.
+    /// 3633); `None` when the body moves no room handle. The attachment's
+    /// preview shows the carried body's head when the room's showed the room
+    /// body's stored head as is (REVIEW-10057 round 2); a preview the room
+    /// withheld, redacted or showed otherwise stays as the save's row carry
+    /// left it, so the save shows nothing the room's preview withheld.
     ///
     /// # Errors
     ///
@@ -371,6 +375,8 @@ impl Vault {
         let Some(carried) = carry(wtxn, &bytes)? else {
             return Ok(None);
         };
+        let room_head = CodeRunRawOutput::from_bytes(output.path.as_str(), &bytes)?.preview;
+        let shows_stored_head = said.preview == room_head.text;
         let digest = *oneiron_contracts::fingerprint::ContentHash::of(&carried).as_bytes();
         let (base, pin) = if RAW_OUTPUTS
             .get(&self.store, wtxn, &body_handle(&digest))?
@@ -412,6 +418,10 @@ impl Vault {
             (finished.output.clone(), pin)
         };
         let mut saved = said.clone();
+        if shows_stored_head {
+            saved.preview = base.preview.text;
+            saved.preview_truncated = base.preview.truncated;
+        }
         saved.handle = base.handle;
         saved.bytes = base.raw_len;
         saved.lines = base.lines;
