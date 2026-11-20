@@ -1024,6 +1024,9 @@ and `operations_reference` of `stemma` and `read_model_reference` of
 (`docs/examples.md`, `docs/reference/operations.md`,
 `docs/reference/read-model.md`, one directory above the package) that the
 import did not copy. `untouched_block_fidelity` fails in one test,
-`single_tracked_edit_leaves_untouched_blocks_identical`. `redline_invariants`
-passes with one test and ignores five; `corpus_triage`, `redline_word_parity`
-and `stress_manifest` hold only ignored tests, which need an external corpus.
+`single_tracked_edit_leaves_untouched_blocks_identical`, after about 17
+minutes: its ratchet counts 121 untouched blocks whose `w:pPr` a single tracked
+edit changes, against the 119 of `tests/untouched_block_fidelity_baseline.txt`
+(unchanged since the import). `redline_invariants` passes with one test and
+ignores five; `corpus_triage`, `redline_word_parity` and `stress_manifest` hold
+only ignored tests, which need an external corpus.
