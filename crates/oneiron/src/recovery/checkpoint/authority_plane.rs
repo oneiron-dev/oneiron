@@ -567,11 +567,14 @@ fn current_rows(
 
 /// Whether a live projection is authority the live vault holds. A task fact
 /// is only when the live fold counts it: this install's door wrote it with
-/// that body, or its carrier's signature proves it
-/// (`task_authority::FactCountRule`). A row that proves nothing, such as
-/// another install's unsigned or forged replica, changes no task, so a
+/// that body, or its carrier's signature proves it, and the fold admits it
+/// (`task_authority::FactCountRule::counts`). A row that proves nothing, such
+/// as another install's unsigned or forged replica, changes no task, so a
 /// restore that drops it rolls nothing back (FIX
-/// TASK-FACT-RESTORE-BELIEVES-ROWS). Every other projection is.
+/// TASK-FACT-RESTORE-BELIEVES-ROWS); nor does a proved fact the fold skips,
+/// such as an Owner fact whose maker derives another task, or an assignment
+/// by an actor who does not own the task (FIX
+/// TASK-FACT-RESTORE-COUNT-SKIPS-ADMISSION). Every other projection is.
 fn counted_in_live_fold(
     current: &Vault,
     txn: &heed::RoTxn<'_>,
