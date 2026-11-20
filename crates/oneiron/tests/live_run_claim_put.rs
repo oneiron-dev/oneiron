@@ -361,6 +361,13 @@ mod lent_checker {
 
     impl Fixture {
         fn open() -> TestResult<Self> {
+            Self::open_with_default_criticality("normal")
+        }
+
+        /// As [`Self::open`], with `criticality` the class of every
+        /// predicate no rule names: `"critical"` makes each such predicate
+        /// critical only by fallback, as the shipped default does.
+        fn open_with_default_criticality(criticality: &str) -> TestResult<Self> {
             let dir = tempfile::tempdir()?;
             let mut config = VaultConfig::device();
             config.dimensions = 4;
@@ -369,7 +376,8 @@ mod lent_checker {
             let agent = person(&vault)?;
             let shipped = oneiron_store::policy_record::default_policy_manifest_id()
                 .map_err(at("the shipped manifest's id"))?;
-            put_policy_manifest_bytes(&vault, shipped, &checked_agent_policy(agent)?)
+            let policy = checked_agent_policy(agent, criticality)?;
+            put_policy_manifest_bytes(&vault, shipped, &policy)
                 .map_err(at("install the policy"))?;
             let reader = agent_reader(&vault, agent)?;
             Ok(Self {
@@ -542,10 +550,11 @@ mod lent_checker {
     }
 
     /// tests/run_revert_unsettled.rs's policy, which lands Generated claims at
-    /// Auto, with its actor ceiling for `agent` and the host checker named.
-    fn checked_agent_policy(agent: EntityId) -> TestResult<Vec<u8>> {
+    /// Auto, with its actor ceiling for `agent` and the host checker named,
+    /// and `criticality` the default class.
+    fn checked_agent_policy(agent: EntityId, criticality: &str) -> TestResult<Vec<u8>> {
         let axes = Value::Map(vec![
-            (Value::from("criticality"), Value::from("normal")),
+            (Value::from("criticality"), Value::from(criticality)),
             (Value::from("sensitivity"), Value::from("normal")),
         ]);
         let manifest = Value::Map(vec![
@@ -772,6 +781,71 @@ mod lent_checker {
             f.reviews(successor)?,
             vec![vec!["gate.pending.checker".to_owned()]],
             "FAILBEFORE LIVE-RUN-CHECKER-SUCCESSOR-EDIT: the successor was judged with no checker \
+             (checker asked {} times)",
+            holding.calls()
+        );
+        assert_eq!(
+            f.approval(successor)?,
+            "proposed",
+            "the held edit lands Proposed"
+        );
+        assert_eq!(holding.calls(), 1, "the lent checker is asked once per put");
+        Ok(())
+    }
+
+    /// Review 9774 P1: on a predicate critical only by fallback (no rule
+    /// names it; the default class is critical), the gate lifts the floor
+    /// for the Auto request, so the lent checker is asked, and its hold
+    /// lands the put Proposed with the checker's own pending review. Red on
+    /// main: the Proposed landing pends on the fallback floor, the hold its
+    /// gate recorded is not replayed, and the put fails with "preflight gate
+    /// decision does not match pending candidate".
+    #[test]
+    fn a_held_live_run_put_on_a_fallback_critical_predicate_parks_with_the_hold() -> TestResult {
+        let f = Fixture::open_with_default_criticality("critical")?;
+        let holding = Arc::new(RecordingAutoChecker::hold());
+        let checker = bounded(holding.clone());
+        let (id, put) =
+            f.put_predicate(&checker, "run-fallback-critical-held", PREDICATE, "matcha")?;
+        assert!(
+            put.is_ok(),
+            "FAILBEFORE REVIEW-9774-P1: the held put failed instead of parking ({:?})",
+            put.as_ref().map(drop)
+        );
+        assert_eq!(
+            f.reviews(id)?,
+            vec![vec!["gate.pending.checker".to_owned()]],
+            "the checker's hold is the review the owner rules on"
+        );
+        assert_eq!(f.approval(id)?, "proposed", "the held put lands Proposed");
+        assert_eq!(holding.calls(), 1, "the lent checker is asked once per put");
+        Ok(())
+    }
+
+    /// Review 9774 P1: a live run's semantic edit on a predicate critical
+    /// only by fallback, held by the lent checker, parks its successor
+    /// Proposed with the checker's own pending review. Red on main: the
+    /// successor was judged with no checker and parked on the fallback
+    /// floor. Red at the PR's first head: the successor's landing failed
+    /// with "preflight gate decision does not match pending candidate".
+    #[test]
+    fn a_held_semantic_edit_on_a_fallback_critical_predicate_parks_its_successor() -> TestResult {
+        let f = Fixture::open_with_default_criticality("critical")?;
+        let allow = bounded(Arc::new(RecordingAutoChecker::allow()));
+        let holding = Arc::new(RecordingAutoChecker::hold());
+        let hold = bounded(holding.clone());
+        let (_, successor) = put_then_edit(
+            &f,
+            "run-fallback-critical-edit-held",
+            &allow,
+            "draft",
+            &hold,
+            "ready",
+        )?;
+        assert_eq!(
+            f.reviews(successor)?,
+            vec![vec!["gate.pending.checker".to_owned()]],
+            "FAILBEFORE REVIEW-9774-P1: the successor did not park with the checker's hold \
              (checker asked {} times)",
             holding.calls()
         );
