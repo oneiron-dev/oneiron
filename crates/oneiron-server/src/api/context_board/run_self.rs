@@ -392,8 +392,13 @@ pub(crate) fn run_brief_people(
     run_people(server, actor)
 }
 
-/// The vault's people as the agent's own lane on this device reads them
-/// ([`read_people`]).
+/// The vault's people as the agent's own lane reads them for a caller off
+/// this device ([`read_people`]). A run's brief goes into the model requests
+/// of every seat its ladder may take and is sent again until its next
+/// boundary, so it is judged off this device always: a derived text follows
+/// its strictest input (DEC-0005:476; RULING RUN-BRIEF-ROSTER-SHAPE = A).
+/// Giving an all-on-device run its full view back (DEC-0005:564) is FIX-LIST
+/// RUN-BRIEF-ROUTE-AWARE-ROSTER.
 fn run_people(
     server: &SyncServer,
     actor: oneiron::WriteActor,
@@ -405,13 +410,15 @@ fn run_people(
     .ok_or_else(|| internal("run actor key invalid"))?;
     let read = server
         .vault
-        .scoped_read(key.at(oneiron::claim::CallerLocality::OnDevice));
+        .scoped_read(key.at(oneiron::claim::CallerLocality::OffDevice));
     read_people(server, &read)
 }
 
-/// The vault's people as `read` reads them, each `about` the stored line of
-/// the highest band that read reads, and the names it may be told
-/// disclosed.
+/// The vault's people as `read` reads them for a staged brief, each `about`
+/// the stored line of the highest band the key's own floor reads, shown
+/// only where that floor reads the PERSON and every fact of the line under
+/// `read` ([`oneiron::context_board::People::set_own_floor_about_for_reader`]),
+/// and the names it may be told disclosed.
 pub(super) fn read_people(
     server: &SyncServer,
     read: &oneiron::claim::ScopedRead<'_>,
@@ -420,9 +427,7 @@ pub(super) fn read_people(
     let mut people = oneiron::context_board::People::load(&server.vault, now, &mut |person| {
         read.is_entity_readable(&person)
     })?;
-    let applied = read.read_receipt(None, 0)?.applied;
-    let ceiling = (!applied.deny_all).then_some(applied.max_sensitivity_band);
-    people.set_about(&mut |person| server.vault.person_about_sourced(person, ceiling))?;
+    people.set_own_floor_about_for_reader(read)?;
     people.disclose_names(&server.vault, read.actor_key())?;
     Ok(people)
 }

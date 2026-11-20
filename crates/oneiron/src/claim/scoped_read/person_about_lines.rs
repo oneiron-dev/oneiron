@@ -30,6 +30,16 @@ use crate::{EntityId, Result};
 /// An `about` line and the CLAIM ids it stands on, as the roster sets it.
 type SourcedAbout = Option<(String, Vec<EntityId>)>;
 
+/// Which alternatives may show a person's `about` line to a read.
+#[derive(Clone, Copy)]
+enum AboutAlternatives {
+    /// The key's own floor, or a single live Grant of the reader's: a read
+    /// made for one answer.
+    OwnFloorAndGrants,
+    /// The key's own floor alone: a staged brief.
+    OwnFloor,
+}
+
 impl ScopedRead<'_> {
     /// Runs `run` with the `about` line each person shows this read: the
     /// line of the highest band the key's own floor reads, or, where higher,
@@ -47,11 +57,46 @@ impl ScopedRead<'_> {
         &self,
         run: impl FnOnce(&mut dyn FnMut(EntityId) -> Result<SourcedAbout>) -> Result<T>,
     ) -> Result<T> {
+        self.with_about_lines_from(AboutAlternatives::OwnFloorAndGrants, run)
+    }
+
+    /// [`Self::with_about_lines`] with the key's own floor as the one
+    /// alternative, for a staged brief (a run's, an MCP connection's): its
+    /// bytes are sent again until its next boundary, so no Grant, which may
+    /// be revoked before then, lends it a line (review round 2 of #9929).
+    /// The floor's line still shows only where that floor reads the PERSON
+    /// and every fact of the line under this read, at its locality: a brief
+    /// read for a caller off this device shows no line written from a world
+    /// this device keeps (DEC-0005:476, a line follows its strictest input;
+    /// RULING RUN-BRIEF-ROSTER-SHAPE = A).
+    ///
+    /// # Errors
+    /// As [`Self::with_about_lines`].
+    pub(crate) fn with_own_floor_about_lines<T>(
+        &self,
+        run: impl FnOnce(&mut dyn FnMut(EntityId) -> Result<SourcedAbout>) -> Result<T>,
+    ) -> Result<T> {
+        self.with_about_lines_from(AboutAlternatives::OwnFloor, run)
+    }
+
+    /// Runs `run` with the line each person shows this read under the
+    /// alternatives `alternatives` names, every person judged in one
+    /// snapshot under one policy.
+    fn with_about_lines_from<T>(
+        &self,
+        alternatives: AboutAlternatives,
+        run: impl FnOnce(&mut dyn FnMut(EntityId) -> Result<SourcedAbout>) -> Result<T>,
+    ) -> Result<T> {
         let txn = self.vault.person_about_snapshot()?;
         let (own, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let own = (!own.deny_all).then_some(own);
         let held = self.held_for(None);
-        let grants = self.grant_alternatives_in(&txn, &policy, &held);
+        let grants = match alternatives {
+            AboutAlternatives::OwnFloorAndGrants => {
+                self.grant_alternatives_in(&txn, &policy, &held)
+            }
+            AboutAlternatives::OwnFloor => Vec::new(),
+        };
         run(&mut |person| {
             Ok(self
                 .about_line_in(&txn, &policy, &held, own.as_ref(), &grants, person)?
