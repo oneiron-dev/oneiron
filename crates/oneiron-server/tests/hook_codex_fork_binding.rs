@@ -10,9 +10,11 @@
 //! start records the binding of the session it was forked from before its
 //! own: a fork of a session that bound the selected hosted vault sends its
 //! log there, and a fork of a session that bound another vault, a pin, more
-//! than one binding or nothing sends it nowhere. A rollout whose first line
-//! is not a whole `session_meta` holds turns no start can place: its log
-//! goes nowhere too.
+//! than one binding or nothing sends it nowhere; its record is one file,
+//! so no write that fails leaves the copied turns' binding alone (REVIEW-9973
+//! round 1). A rollout whose first line is not a whole `session_meta`, with
+//! an object payload, holds turns no start can place: its log goes nowhere
+//! too. A record that is a FIFO never holds a start up.
 //!
 //! The shipped binary runs the hook; the `oneiron` it runs for the bridge
 //! and the import is a stand-in that records its arguments and, as `oneiron
@@ -30,6 +32,7 @@ use std::net::TcpListener;
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use base64::Engine as _;
 use serde_json::{Value, json};
@@ -44,6 +47,8 @@ const PARENT: &str = "019a7c2e-1111-4222-8333-444455556666";
 const FORK: &str = "019a7c2e-2222-4333-8444-555566667777";
 /// The fork of [`FORK`].
 const FORK_OF_FORK: &str = "019a7c2e-3333-4444-8555-666677778888";
+/// How long one hook may run before a test calls it stuck.
+const HOOK_LIMIT: Duration = Duration::from_secs(120);
 /// What the probed origin answers as `GET /.well-known/oneiron`.
 const DESCRIPTOR: &str = r#"{"protocol":"oneiron-pairing","slip_version":2,"binding":"ed25519","pairing_endpoint":"/v1/core/pairing/redeem"}"#;
 
@@ -104,6 +109,38 @@ impl Bench {
         self.path("oneiron-stand-in")
     }
 
+    /// The folder runtime files are in, where `XDG_RUNTIME_DIR` points.
+    fn run_dir(&self) -> PathBuf {
+        if cfg!(target_os = "macos") {
+            self.path("config").join("oneiron").join("run")
+        } else {
+            self.path("runtime").join("oneiron")
+        }
+    }
+
+    /// The record of the Codex session `session`: the folder of the files
+    /// its starts wrote.
+    fn record(&self, session: &str) -> PathBuf {
+        self.run_dir().join("hook-sessions-codex").join(session)
+    }
+
+    /// The names of the files in the record of the Codex session `session`,
+    /// sorted.
+    fn record_files(&self, session: &str) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(self.record(session))
+            .expect("the session's record")
+            .map(|entry| {
+                entry
+                    .expect("test fixture")
+                    .file_name()
+                    .into_string()
+                    .expect("UTF-8 name")
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
     /// Selects the hosted vault `vault_id` at `origin`, signed in to here
     /// with a slip, as `oneiron hosted` publishes it, in place of any
     /// selection made before.
@@ -143,7 +180,7 @@ impl Bench {
     }
 
     /// Runs `oneiron hook --host codex <event>` with `payload` on stdin,
-    /// which exits 0; what it printed.
+    /// which exits 0 within [`HOOK_LIMIT`]; what it printed.
     fn hook(&self, event: &[&str], payload: &Value) -> String {
         let mut child = Command::new(env!("CARGO_BIN_EXE_oneiron"))
             .args(["hook", "--host", "codex"])
@@ -169,7 +206,16 @@ impl Bench {
             .expect("hook stdin")
             .write_all(payload.to_string().as_bytes())
             .expect("write the hook event");
-        let output = child.wait_with_output().expect("run oneiron hook");
+        let pid = child.id().to_string();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(child.wait_with_output());
+        });
+        let Ok(output) = receiver.recv_timeout(HOOK_LIMIT) else {
+            let _ = Command::new("kill").args(["-KILL", &pid]).status();
+            panic!("{event:?}: the hook is still running after {HOOK_LIMIT:?}");
+        };
+        let output = output.expect("run oneiron hook");
         assert_eq!(
             output.status.code(),
             Some(0),
@@ -438,12 +484,54 @@ fn a_codex_fork_of_a_session_that_bound_another_vault_a_pin_or_nothing_sends_its
         bench.select_hosted(&origin, VAULT_ID);
         let fork = run_fork(&bench, FORK, PARENT, &parent);
         bench.assert_sent_nowhere(case);
+        // One file for the whole log: no write that fails after the first
+        // could leave the parent's binding recorded alone.
+        assert_eq!(bench.record_files(FORK), ["unknown"], "{case}");
 
         // A fork of that fork copies the same turns, and more: its log goes
         // nowhere either, though its parent bound the selected vault.
         run_fork(&bench, FORK_OF_FORK, FORK, &fork);
         bench.assert_sent_nowhere(&format!("{case}, forked again"));
+        assert_eq!(
+            bench.record_files(FORK_OF_FORK),
+            ["unknown"],
+            "{case}, forked again"
+        );
     }
+}
+
+#[test]
+fn a_codex_fork_of_a_session_whose_record_is_a_fifo_starts_and_sends_its_log_nowhere() {
+    // A FIFO with no writer in place of the parent's record: the fork's
+    // start reads it as a record no vault takes, without waiting on it. On
+    // the PR's base the start never reads it, and the fork's log goes to the
+    // selected vault.
+    let bench = Bench::new();
+    let origin = answering_vault();
+    bench.select_hosted(&origin, VAULT_ID);
+    let parent = new_rollout(PARENT);
+    bench.write_rollout(PARENT, &parent);
+    let said = bench.start(PARENT, &[]);
+    assert!(
+        said.contains("uses your hosted vault"),
+        "the parent binds the vault: {said}"
+    );
+    let files = bench.record_files(PARENT);
+    let [file] = &files[..] else {
+        panic!("one record file: {files:?}");
+    };
+    let file = bench.record(PARENT).join(file);
+    std::fs::remove_file(&file).expect("test fixture");
+    let made = Command::new("mkfifo")
+        .args(["-m", "600"])
+        .arg(&file)
+        .status()
+        .expect("run mkfifo");
+    assert!(made.success(), "make the FIFO");
+
+    run_fork(&bench, FORK, PARENT, &parent);
+    bench.assert_sent_nowhere("a fork of a session whose record is a FIFO");
+    assert_eq!(bench.record_files(FORK), ["unknown"]);
 }
 
 #[test]
@@ -454,7 +542,18 @@ fn a_codex_start_whose_rollout_begins_with_no_whole_meta_line_sends_its_log_nowh
     let parent = new_rollout(PARENT);
     let cut_meta = meta(FORK, Some(PARENT)).to_string();
     let cut_meta = &cut_meta[..cut_meta.len() / 2];
-    let cases: [(&str, String); 2] = [
+    // A meta line whose payload is no object, or whose parent is neither a
+    // session id nor null: Codex writes neither, and the engine's importer
+    // refuses the first.
+    let odd_meta = |payload: Value| {
+        std::iter::once(
+            json!({"timestamp": "2026-11-21T01:00:00.000Z", "type": "session_meta", "payload": payload}),
+        )
+        .chain(parent.iter().cloned())
+        .map(|line| format!("{line}\n"))
+        .collect::<String>()
+    };
+    let cases: [(&str, String); 5] = [
         (
             "a first line that is a turn",
             turn(PARENT, 1)
@@ -467,6 +566,15 @@ fn a_codex_start_whose_rollout_begins_with_no_whole_meta_line_sends_its_log_nowh
             std::iter::once(format!("{cut_meta}\n"))
                 .chain(parent.iter().map(|line| format!("{line}\n")))
                 .collect(),
+        ),
+        ("a meta line whose payload is null", odd_meta(Value::Null)),
+        (
+            "a meta line whose parent is a number",
+            odd_meta(json!({"id": FORK, "forked_from_id": 7})),
+        ),
+        (
+            "a meta line whose parent is empty",
+            odd_meta(json!({"id": FORK, "forked_from_id": ""})),
         ),
     ];
     for (case, text) in cases {
