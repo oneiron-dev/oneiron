@@ -545,10 +545,13 @@ pub fn step_up_reset_effect_digest(person: &EntityId, factor: StepUpFactor) -> [
 /// and answers its result with the decision it ran on: the Owner on their
 /// own proof, and with `applied` the asker's approved check-in. That
 /// check-in is checked on the Owner's live proof before `run`, writing
-/// nothing, and spent in a writer of its own on that proof after `run`
-/// lands, so an act that refuses leaves it unspent for the Owner to apply
-/// again. An act that lands in the vault's writer spends it there instead
-/// ([`owner_act_decision_in_txn`]), as the NOTE history purge does (2k2).
+/// nothing, and spent in a writer of its own after `run` lands, so an act
+/// that refuses leaves it unspent for the Owner to apply again. The spend
+/// records the act that landed on that proof and grants nothing, so it does
+/// not recheck the proof: an Owner credential that expires or is revoked
+/// after the act lands refuses no landed act. An act that lands in the
+/// vault's writer spends it there instead ([`owner_act_decision_in_txn`]),
+/// as the NOTE history purge does (2k2).
 ///
 /// Two calls that apply one check-in at once can both pass the check and
 /// both act: the later spend then refuses, after its act landed on the
@@ -556,9 +559,9 @@ pub fn step_up_reset_effect_digest(person: &EntityId, factor: StepUpFactor) -> [
 ///
 /// # Errors
 ///
-/// The Owner's proof no longer holds; as [`check_applied_check_in_in_txn`]
-/// before `run`; `run`'s refusal; as [`spend_applied_check_in_in_txn`]
-/// after it.
+/// The Owner's proof no longer holds before `run`; as
+/// [`check_applied_check_in_in_txn`] before `run`; `run`'s refusal; as
+/// [`spend_applied_check_in_in_txn`] after it.
 pub(crate) fn run_owner_act_outside_vault_writer<T>(
     vault: &Vault,
     owner: &crate::consent::AuthenticatedOwner,
@@ -575,10 +578,8 @@ pub(crate) fn run_owner_act_outside_vault_writer<T>(
         check_applied_check_in_in_txn(vault, &rtxn, applied, act)?;
     }
     let done = run()?;
-    let decision = vault.with_write_txn_grouped(|txn| {
-        owner.revalidate_in_txn(vault, txn)?;
-        owner_act_decision_in_txn(vault, txn, act, Some(applied))
-    })?;
+    let decision = vault
+        .with_write_txn_grouped(|txn| owner_act_decision_in_txn(vault, txn, act, Some(applied)))?;
     Ok((done, decision))
 }
 
