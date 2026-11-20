@@ -47,8 +47,10 @@ const SUBJECT_DOMAIN: &[u8] = b"oneiron-bench.scorecard.world-scoped.subject\0";
 const REQUEST_CHALLENGE: &[u8] = b"oneiron-request:scorecard-world-scoped";
 const BINDING_SEED: u8 = 0x77;
 
-/// The agent's pairing link lifetime: it is paired after the corpus lands.
-const PAIRING_TTL_SECS: u64 = 3_600;
+/// The agent's slip lifetime, a week: one slip serves every query and repeat
+/// of its corpus, however long they run (the shipped ceiling, the policy's
+/// `initial_owner_secs`, is a year). The agent pairs after the corpus lands.
+const PAIRING_TTL_SECS: u64 = 7 * 24 * 60 * 60;
 
 /// One corpus's pack vault, its owner and its base-world agent.
 pub(super) struct AgentVault {
@@ -169,7 +171,7 @@ impl AgentVault {
                     "ceiling": "auto",
                     "enabled": true,
                 }))
-                .map_err(failed("agent definition"))?,
+                .map_err(failed("agent definition body"))?,
             },
         )
         .map_err(failed("agent definition"))?;
@@ -288,8 +290,10 @@ impl AgentVault {
         Ok(placed)
     }
 
-    /// Commit `claims` as one atomic owner-authored batch; a refused element
-    /// fails the run.
+    /// Commit `claims` as one atomic owner-authored batch. A refused element
+    /// fails the run, and so does a claim that landed held: a held claim
+    /// stages no text, so it would drop out of every term statistic while
+    /// still graded as readable.
     fn commit_claims(&self, claims: &[ScopedClaimInput]) -> Result<(), ScorecardFailure> {
         let outcomes = self
             .vault
@@ -304,10 +308,21 @@ impl AgentVault {
             )));
         }
         for outcome in &outcomes {
-            if let CommitOutcome::Refused { refusal, .. } = outcome {
-                return Err(ScorecardFailure::Run(format!(
-                    "claim batch refused: {refusal:?}"
-                )));
+            match outcome {
+                // The two approvals a landing stages text for (landing.rs).
+                CommitOutcome::Landed(receipt)
+                    if matches!(receipt.approval.as_str(), "auto" | "approved") => {}
+                CommitOutcome::Landed(receipt) => {
+                    let (claim, approval) = (&receipt.claim_short_id, &receipt.approval);
+                    return Err(ScorecardFailure::Run(format!(
+                        "claim {claim} landed {approval}: a held claim stages no text"
+                    )));
+                }
+                CommitOutcome::Refused { refusal, .. } => {
+                    return Err(ScorecardFailure::Run(format!(
+                        "claim batch refused: {refusal:?}"
+                    )));
+                }
             }
         }
         Ok(())

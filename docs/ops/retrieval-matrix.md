@@ -174,9 +174,10 @@ exists.
 
 Every arm above reads as the vault's owner. `scorecard run --arm
 world-scoped` reads as an agent whose one Grant reads the base world: in
-each corpus vault, `--hidden-share` per mille of the records (default 500)
-land as the owner's claims in a second world, chosen from the record id
-and `--partition-seed` (default 0) alone, and the rest in the base world.
+each corpus vault, about `--hidden-share` per mille of the records
+(default 500; a hash of the record id and `--partition-seed`, default 0,
+picks each one) land as the owner's claims in a second world, and the rest
+in the base world.
 It grades the scoped text channel alone (BM25 under the agent's world
 scope, no vectors, no recency blend), on the readable records only: a
 hidden relevant record leaves the qrels, a query left with none is

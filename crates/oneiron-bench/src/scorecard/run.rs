@@ -95,7 +95,7 @@ enum ArmKind {
     Pipeline,
     /// The BM25F keyword arm.
     Keyword,
-    /// The scoped text channel as a base-world agent (`world_scoped.rs`).
+    /// The scoped text channel as a base-world agent (`world_scoped/`).
     WorldScoped,
 }
 
