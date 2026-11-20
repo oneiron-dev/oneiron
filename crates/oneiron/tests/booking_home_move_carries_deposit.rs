@@ -14,7 +14,11 @@
 //! - a visitor who held and paid on the old home confirms on the new home,
 //!   and the old home starts no new checkout;
 //! - the confirmation's parties travel apart under the booker's key:
-//!   withheld, the receipt lands as its facts alone, and the cancel works.
+//!   withheld, the receipt lands as its facts alone, and the cancel works;
+//! - a provider cancellation the old home hears after its freeze is deferred
+//!   there, writing nothing, and voids the deposit on the new home; a capture
+//!   the provider answers with nothing captured (the payment stands
+//!   cancelled) voids it too.
 //!
 //! The two machines are copies of one vault, as
 //! `tests/room_pins_concurrent_merge.rs` makes them, so the bookings' EVENTs
@@ -26,7 +30,8 @@
 //! Red on main 315a7f87ba6a, where no booking section is registered and the
 //! move carries nothing: the new home refuses the cancel ("token does not
 //! resolve to a booking") and the confirm, holds no deposit to capture, and
-//! the old home's drain captures after the freeze.
+//! the old home's drain captures after the freeze; the old home applies a
+//! provider event after the freeze.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test booking_home_move_carries_deposit`.
 #![cfg(all(oneiron_test_support, feature = "sync"))]
@@ -304,6 +309,87 @@ fn a_capture_owed_at_the_move_is_asked_by_the_new_home_alone() {
         Some(DepositState::Captured {
             amount_minor: DEPOSIT_MINOR
         })
+    );
+}
+
+/// A provider that answers every capture with nothing captured: the payment
+/// stands cancelled at the provider, as Stripe's port answers a refused
+/// capture of a cancelled PaymentIntent.
+struct CancelledPaymentProvider;
+
+impl DepositSettlementPort for CancelledPaymentProvider {
+    fn settle(
+        &mut self,
+        request: &DepositSettleRequest<'_>,
+    ) -> Result<u64, DepositProviderFailure> {
+        match request.movement {
+            DepositSettleMove::Capture { .. } | DepositSettleMove::Void => Ok(0),
+            DepositSettleMove::Refund { amount_minor } => Ok(amount_minor),
+        }
+    }
+}
+
+#[test]
+fn a_provider_cancel_during_the_move_is_applied_where_the_deposit_landed() {
+    let (seed, clock) = seed();
+    paid_booking(&seed, SessionKey::derive(b"move-void"), "pi_move_void");
+    let capture_due = Some(DepositState::CaptureDue {
+        amount_minor: DEPOSIT_MINOR,
+    });
+    let (old_home, new_home) = old_and_new_home(seed, &clock);
+    assert!(move_booking_home(&old_home.vault, &new_home.vault, &[]).expect("the home move"));
+
+    let cancel = DepositProviderEvent {
+        event_id: "evt-cancel-pi_move_void".to_owned(),
+        payment_id: "pi_move_void".to_owned(),
+        kind: DepositProviderEventKind::Canceled,
+    };
+    let on_old_home = record_deposit_provider_event(&old_home.vault, &cancel, NOW + 50)
+        .expect("the old home answers the event");
+    // By its name, so the red run on main, which has no such answer, fails
+    // on this assert rather than to compile.
+    assert_eq!(
+        format!("{on_old_home:?}"),
+        "Deferred",
+        "the frozen old home defers the event, so the provider delivers it again"
+    );
+    assert_eq!(
+        state_of(&old_home, "pi_move_void"),
+        capture_due,
+        "the old home's history is unchanged"
+    );
+    assert_eq!(
+        record_deposit_provider_event(&new_home.vault, &cancel, NOW + 55)
+            .expect("the new home applies the event"),
+        DepositProviderEventOutcome::Applied(DepositState::Voided),
+        "the redelivered cancellation voids the carried deposit on the new home"
+    );
+    assert!(
+        drained_moves(&new_home, NOW + 60).is_empty(),
+        "the new home's queued capture finds nothing owed"
+    );
+}
+
+#[test]
+fn a_capture_of_a_cancelled_payment_on_the_new_home_voids_the_deposit() {
+    let (seed, clock) = seed();
+    paid_booking(&seed, SessionKey::derive(b"move-gone"), "pi_move_gone");
+    let (old_home, new_home) = old_and_new_home(seed, &clock);
+    assert!(move_booking_home(&old_home.vault, &new_home.vault, &[]).expect("the home move"));
+
+    let drained = run_booking_deposit_settlement(
+        &new_home.vault,
+        "deposit-settle-worker",
+        &mut CancelledPaymentProvider,
+        16,
+        NOW + 50,
+    )
+    .expect("drain the new home's settle rows");
+    assert_eq!(drained.captured, 1, "the carried capture was asked once");
+    assert_eq!(
+        state_of(&new_home, "pi_move_gone"),
+        Some(DepositState::Voided),
+        "a capture that captured nothing leaves no capture owed: the deposit voids"
     );
 }
 
