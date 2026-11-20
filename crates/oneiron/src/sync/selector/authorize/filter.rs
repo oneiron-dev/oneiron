@@ -86,6 +86,16 @@ pub(in crate::sync::selector) fn filter_window_doc(
             claims_withheld.insert(*id);
         }
     }
+    // A purged row's `InWorld` edges and sources went with its delete, so
+    // the capture bound to that delete says where its words sat
+    // (REVIEW-10024).
+    map_for_each_tombstone_value(&source_tombstones, |raw_key, value| {
+        if let Ok(id) = EntityId::from_hex(raw_key)
+            && super::super::tombstones::device_only_by_capture(vault, &rtxn, &flagged, &id, value)
+        {
+            claims_withheld.insert(id);
+        }
+    });
 
     let facets = facet_filter(scope_position);
     let facet_scope = facet_scope_by_source(
@@ -602,17 +612,19 @@ pub(in crate::sync::selector) fn filter_window_doc(
     });
 
     let out_tombstones = out.get_map("tombstones");
-    // A selector narrowed to some worlds or bands takes the tombstone of a row
-    // it does not keep where its delete's captured position lies in them
-    // (blind review 2 of #9592; SELECTOR-FACET-BAND-EXPORT-DROPS-BODYLESS-
-    // TOMBSTONES): a hard delete took the row's carrier with it.
+    // A selector narrowed to some facets, worlds or bands takes the tombstone
+    // of a row it does not keep where its delete's captured position lies in
+    // them (blind review 2 of #9592; SELECTOR-FACET-BAND-EXPORT-DROPS-
+    // BODYLESS-TOMBSTONES; SELECTOR-FACET-EXPORT-DROPS-BODYLESS-TOMBSTONES):
+    // a hard delete took the row's carrier and its edges with it.
     let worlds =
         (!matches!(selector.world, SyncSelectorWorld::All)).then_some(&scope_position.worlds);
     let export = super::super::tombstones::TombstoneExport::new(
         &grant.authority_scope,
-        facets.is_some(),
+        facets,
         band_filter(scope_position),
         worlds,
+        note_world::selector_world_axis(selector.world),
     );
     let ttxn = vault.store.env.read_txn()?;
     // The window's bodies of each tombstoned row, under every hex casing of
@@ -630,6 +642,14 @@ pub(in crate::sync::selector) fn filter_window_doc(
         });
     }
     map_for_each_tombstone_value(&source_tombstones, |raw_key, value| {
+        // A copy to another vault carries no tombstone: that vault's
+        // admission refuses every one, so one would fail the whole answer
+        // (`admission::reject_federated_tombstones`), and the guest codec
+        // drops them all (REVIEW-10024). A delete reaches the owner's own
+        // machines alone.
+        if other_vault {
+            return;
+        }
         let Ok(id) = EntityId::from_hex(raw_key) else {
             return;
         };
