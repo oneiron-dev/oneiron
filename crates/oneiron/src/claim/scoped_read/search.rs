@@ -892,6 +892,11 @@ impl<'v> ScopedRead<'v> {
     }
 }
 
+/// The most rows one snapshot's recall gate keeps a judgement for. A row past
+/// it is judged in full each time it is asked: a scoped text scan can visit the
+/// whole corpus, and the gate does not keep that corpus.
+const RECALL_GATE_KEPT_JUDGEMENTS_MAX: usize = 1 << 16;
+
 /// [`ScopedRead::recall_candidate_gate`].
 pub(crate) struct RecallCandidateGate<'p, 'v> {
     read: &'p ScopedRead<'v>,
@@ -907,16 +912,49 @@ impl crate::store::retrieval_values::CandidateGate for RecallCandidateGate<'_, '
         // A recall plan resolves its filter with no request beyond its
         // lane's bound caller filter (FIX 3977).
         let held = self.read.held_for(None);
+        // A row's judgement in this snapshot reads only the snapshot, the
+        // plan's policy and filter, and `held`, so the gate keeps each answer
+        // for the snapshot (row [RECALL-EXPANDED-ROW-FACTS-REREAD]): the PPR
+        // walk asks once for each edge it meets, and the post-blend filters
+        // ask again for every fused row. An error is never kept. A row asked
+        // in another transaction is judged there, as before. A conjunct that
+        // reads the clock (an actor proof's expiry, `proof_live_in`) is read
+        // at a row's first ask; the pack's own fresh admission still refuses
+        // a proof or grant that lapses during the call
+        // (`context_pack/builder/assembly.rs`).
+        let judged = std::cell::RefCell::new(std::collections::HashMap::<EntityId, bool>::new());
         #[cfg(oneiron_test_support)]
         let snapshot = crate::test_doors::recall_gate_judgements::open_snapshot();
         Box::new(
             move |_: &crate::store::StoreRead<'_>, rtxn: &heed::RoTxn<'_>, id: &EntityId| {
-                #[cfg(oneiron_test_support)]
-                if std::ptr::eq(rtxn, txn) {
-                    crate::test_doors::recall_gate_judgements::record_judgement(snapshot, id);
+                if !std::ptr::eq(rtxn, txn) {
+                    return self.read.snapshot_candidate_in(
+                        txn,
+                        &held,
+                        rtxn,
+                        self.policy,
+                        self.filter,
+                        id,
+                    );
                 }
-                self.read
-                    .snapshot_candidate_in(txn, &held, rtxn, self.policy, self.filter, id)
+                let kept = judged.borrow().get(id).copied();
+                if let Some(admits) = kept {
+                    return Ok(admits);
+                }
+                #[cfg(oneiron_test_support)]
+                crate::test_doors::recall_gate_judgements::record_judgement(snapshot, id);
+                let admits = self.read.is_entity_retrievable_held_in(
+                    rtxn,
+                    self.policy,
+                    self.filter,
+                    id,
+                    &held,
+                )?;
+                let mut judged = judged.borrow_mut();
+                if judged.len() < RECALL_GATE_KEPT_JUDGEMENTS_MAX {
+                    judged.insert(*id, admits);
+                }
+                Ok(admits)
             },
         )
     }
