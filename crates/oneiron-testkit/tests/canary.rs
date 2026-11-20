@@ -205,8 +205,6 @@ fn the_scan_reads_the_point_doors_and_follows_the_refs_its_answers_name() {
     // would show as one.
     for (class, door) in [
         (CanaryClass::OwnerKeyValue, "vault.kv.get"),
-        (restricted, "vault.claims.list_filtered"),
-        (restricted, "vault.claims.read_filtered "),
         (restricted, "vault.claims.history "),
         (restricted, "vault.refs.resolve "),
         (CanaryClass::RelationshipMessage, "vault.refs.links "),
@@ -215,6 +213,22 @@ fn the_scan_reads_the_point_doors_and_follows_the_refs_its_answers_name() {
         assert!(
             surfaces.iter().any(|surface| surface.starts_with(door)),
             "the owner's scan read its {class} canary on no `{door}` surface, only on {surfaces:#?}; refused: {:#?}",
+            scan.refused
+        );
+    }
+    // The filtered claim doors serve only the claims retrieval may surface
+    // (approved or auto, and active), which the restricted-band canary is
+    // not: each reads the owner's claim canary in a band it serves.
+    for door in ["vault.claims.list_filtered", "vault.claims.read_filtered "] {
+        let served = ClaimBand::ALL.into_iter().any(|band| {
+            canaries
+                .surfaces_seeing(&scan, CanaryClass::Claim(band))
+                .iter()
+                .any(|surface| surface.starts_with(door))
+        });
+        assert!(
+            served,
+            "the owner's scan read no claim canary on a `{door}` surface; refused: {:#?}",
             scan.refused
         );
     }
