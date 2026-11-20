@@ -104,12 +104,14 @@ pub(super) struct CheckpointSafety {
     pub(super) frontier_ancestry: BTreeMap<AuthorityEntryHash, (u64, u64)>,
     /// Fork and slip: the restrictive facts proved on their own branches
     /// (actor revocations, slip withdrawals and burns, machine removals),
-    /// the retired keys, the closed handoffs, whether a handoff is
-    /// unsettled, the settlement's issues, the parents no folded row is, and
+    /// the retired keys and their handoff and appointment subset, the closed
+    /// handoffs, whether a handoff is unsettled, the settlement's issues,
+    /// the parents no folded row is, and
     /// the accepted roster marks before custody is judged: an owner-held
     /// signer or an admitted owner answer (`MarkProof`).
     pub(super) revoke_facts: RevokeFacts,
     pub(super) retired_keys: BTreeSet<AuthorityKey>,
+    pub(super) handoff_or_appointment_retired_keys: BTreeSet<AuthorityKey>,
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
     pub(super) unsettled: bool,
     pub(super) issues: Vec<AuthorityFoldIssue>,
@@ -449,6 +451,15 @@ impl AuthorityCheckpointV2 {
         if !aggregate.fold.valid_entries.iter().all(covered)
             || !safety.uncounted.iter().all(covered)
             || !safety.closed_handoffs.iter().all(covered)
+            || safety.handoff_or_appointment_retired_keys
+                != aggregate.fold.handoff_or_appointment_retired_keys
+            || !safety
+                .handoff_or_appointment_retired_keys
+                .is_subset(&safety.retired_keys)
+            || !aggregate
+                .fold
+                .handoff_or_appointment_retired_keys
+                .is_subset(&aggregate.fold.retired_keys)
             || !safety
                 .frontier_ancestry
                 .keys()

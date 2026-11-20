@@ -3,6 +3,12 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v42 (FIX RETIRED-STANDING-REFUSAL-RECORDS-HANDOFF-ALARM-FOR-PLAIN-REVOKE):
+/// a checkpoint image requires the keys held by closed handoff or appointment
+/// fences so a plain revocation alone raises no handoff alarm. The fold schema
+/// advances and older images no longer decode. Signed authority-log rows and
+/// saved alarm rows keep their bytes and meaning. No migration is provided.
+///
 /// v41 (row SEQ-FLOOR-S-WITHHELD-COSIGN; RULING
 /// SEQ-FLOOR-S-WITHHELD-COSIGN-SHAPE = A): stored authority-log rows keep
 /// their bytes and change meaning. A granting row the fold counts as a fork
@@ -264,7 +270,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 41;
+pub const STORAGE_ABI_VERSION: u16 = 42;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 

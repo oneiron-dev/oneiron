@@ -362,6 +362,10 @@ pub(super) fn capture_adopted_checkpoint_tail(
         frontier_ancestry,
         revoke_facts,
         retired_keys: image.safety.retired_keys.clone(),
+        handoff_or_appointment_retired_keys: image
+            .safety
+            .handoff_or_appointment_retired_keys
+            .clone(),
         closed_handoffs: image.safety.closed_handoffs.clone(),
         unsettled: image.safety.unsettled,
         issues,

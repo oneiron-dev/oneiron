@@ -105,7 +105,9 @@ use serde::Serialize;
 /// 51: the fold holds each act-free enrolment of a machine born of a restore until an entry
 /// signed by a joined machine descends from it, and refuses a revision that changes a
 /// machine's restore origin (row RESTORED-COPIES-ENROL-EACH-OTHER).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 51;
+/// 52: the image requires the keys held by closed handoff or appointment fences in both
+/// its projected fold and safety indexes (FIX RETIRED-STANDING-REFUSAL-RECORDS-HANDOFF-ALARM-FOR-PLAIN-REVOKE).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 52;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

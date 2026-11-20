@@ -14,6 +14,12 @@
 //! Each retired key's first such record also raises a saved alarm (key and
 //! refused row hash) that stays until the vault's owner acknowledges it
 //! (OF-166); a row the owner has not seen raises it again.
+//!
+//! Such a key is one that a closed handoff or appointment fence holds
+//! (`AuthorityFold::handoff_or_appointment_retired_keys`). A key that only a
+//! revocation (`RevokeDevice`) retired is refused at the same doors and leaves
+//! no record and no alarm: a revoked device that signs late is no sign of a
+//! forked handoff.
 
 use std::collections::BTreeSet;
 use std::sync::{Mutex, PoisonError};
@@ -26,8 +32,8 @@ use crate::store::Store;
 use super::retired_signers::entry_signer_keys;
 use super::*;
 
-/// A key that a handoff this vault holds retired signed another row, which a
-/// door refused.
+/// A key that a handoff or a root appointment this vault holds retired signed
+/// another row, which a door refused.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AuthorityHandoffEquivocation {
     /// The retired key that signed the refused row.
@@ -224,15 +230,18 @@ impl HandoffEquivocations {
 
 /// Whether a door refuses `entry` because it stands on a retired key (see
 /// [`AuthorityFold::stands_on_retired_key`]). A refused row of `fold`'s own
-/// vault that a retired key signed, with signatures that verify, is recorded
-/// first, with the handoffs `fold` holds that the same key signed. A row of
-/// another vault is refused the same way and recorded nowhere: a key also
-/// enrolled in a second vault signs that vault's rows rightly, so they are no
-/// evidence of a fork here. Doors that compare the vault first never reach
-/// that case; the append door does, and so does any door added later. `row`
-/// reads a row by hash, stored or arriving beside it. `held` says whether
-/// this vault held the row at a hash before the write: it stores it, or the
-/// checkpoint image it adopted covers it.
+/// vault that a key a closed handoff or appointment fence holds signed, with
+/// signatures that verify, is recorded first, with the handoffs `fold` holds
+/// that the same key signed. A signer that only a revocation retired is
+/// refused the same way and recorded nowhere: its late row is no evidence of
+/// a forked handoff. A row of another vault is refused the same way and
+/// recorded nowhere: a key also enrolled in a second vault signs that vault's
+/// rows rightly, so they are no evidence of a fork here. Doors that compare
+/// the vault first never reach that case; the append door does, and so does
+/// any door added later. `row` reads a row by hash, stored or arriving beside
+/// it. `held` says whether this vault held the row at a hash before the
+/// write: it stores it, or the checkpoint image it adopted covers it. It
+/// bounds the handoffs a record names, never which signers are recorded.
 pub(crate) fn door_refuses_retired_standing(
     store: &Store,
     fold: &AuthorityFold,
@@ -250,7 +259,9 @@ pub(crate) fn door_refuses_retired_standing(
     {
         return Ok(true);
     }
-    for signer in entry_signer_keys(entry).filter(|key| fold.retired_keys.contains(*key)) {
+    for signer in entry_signer_keys(entry)
+        .filter(|key| fold.handoff_or_appointment_retired_keys.contains(*key))
+    {
         // A door whose fold already counts the arriving rows (a batch's or an
         // import's preflight) holds each as a closed handoff in conflict with
         // the real one. The evidence names only the handoffs this vault held
@@ -291,7 +302,8 @@ fn of_fold_vault(fold: &AuthorityFold, entry: &AuthorityLogEntry) -> Result<bool
 
 impl Vault {
     /// The rows a door refused since this handle opened because a key a held
-    /// handoff retired signed them (OF-166 evidence).
+    /// handoff or root appointment retired signed them (OF-166 evidence). A
+    /// key that only a revocation retired leaves none.
     #[must_use]
     pub fn authority_handoff_equivocations(&self) -> Vec<AuthorityHandoffEquivocation> {
         self.store
