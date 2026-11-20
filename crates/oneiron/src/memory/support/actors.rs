@@ -101,7 +101,7 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
 
 /// Which state of the owner's own PERSON row the owner predicate asks for.
 #[derive(Clone, Copy)]
-enum OwnerRow {
+pub(crate) enum OwnerRow {
     /// A live PERSON: a deleted owner's binding authorizes nothing (H149,
     /// L9-52 (b)).
     Live,
@@ -112,7 +112,10 @@ enum OwnerRow {
     DeletingItself,
 }
 
-fn verify_owner_binding_in_txn(
+/// [`verify_owner_actor_binding_in_txn`] asking `row` of the owner's own
+/// PERSON: a host action re-proved at the publication of its owner's
+/// delete of their own PERSON asks [`OwnerRow::DeletingItself`].
+pub(crate) fn verify_owner_binding_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: EntityId,

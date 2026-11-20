@@ -185,6 +185,29 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         verified: &VerifiedSlip,
     ) -> Result<bool> {
+        self.capability_slip_stands_in_txn(txn, verified, None)
+    }
+
+    /// [`Self::capability_slip_is_live_in_txn`] at the publication of a
+    /// delete whose own scrub of `scrubbed` committed before it: a slip
+    /// `scrubbed` holds is judged with that PERSON's row read as undeleted
+    /// ([`Self::slip_refs_stand_after_own_scrub_in_txn`]); every other check
+    /// is the same.
+    pub(crate) fn capability_slip_is_live_after_own_scrub_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        verified: &VerifiedSlip,
+        scrubbed: &crate::EntityId,
+    ) -> Result<bool> {
+        self.capability_slip_stands_in_txn(txn, verified, Some(scrubbed))
+    }
+
+    fn capability_slip_stands_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        verified: &VerifiedSlip,
+        scrubbed: Option<&crate::EntityId>,
+    ) -> Result<bool> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let now = self.instant_in_txn(txn)?.secs();
         let claims = verified.claims();
@@ -193,7 +216,12 @@ impl Vault {
             && fold.vault_id == Some(claims.vault_id)
             && fold.slip_is_live(&claims.slip_id)
             && verified.witness_pact(&fold).is_ok()
-            && self.slip_refs_stand_in_txn(txn, claims, now)?
+            && match scrubbed {
+                None => self.slip_refs_stand_in_txn(txn, claims, now)?,
+                Some(scrubbed) => {
+                    self.slip_refs_stand_after_own_scrub_in_txn(txn, claims, now, scrubbed)?
+                }
+            }
             && self.member_slip_scope_is_current_in_txn(txn, claims)?)
     }
     /// Sample the authority plane's local monotonic clock before constructing
