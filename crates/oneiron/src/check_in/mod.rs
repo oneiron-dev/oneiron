@@ -73,6 +73,8 @@ pub(crate) use effect::{
     DoorAct, DoorCheckIn, owner_own_proof_decision, person_door_check_in_in_txn,
     spend_applied_check_in_in_txn,
 };
+// A Steward's own-item delete refuses a named check-in as the judge does.
+pub(crate) use effect::named_check_in_at_once;
 pub use mode::CheckInMode;
 pub use pending::{
     CapturedWait, DelayWindow, DelayWindowOpen, EligibleBasis, Extension, HolderAnswer, HolderKind,

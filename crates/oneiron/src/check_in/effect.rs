@@ -170,7 +170,7 @@ fn go_at_once(
 /// The refusal (`BAD_REQUEST`) of a `check_in_ref` named for a person's act
 /// that goes at once: it spends no check-in, so the one it names would stay
 /// unspent while the act runs (as REVIEW-9810 P1 found at the delete doors).
-pub(super) fn named_check_in_at_once() -> Error {
+pub(crate) fn named_check_in_at_once() -> Error {
     refuse("check_in_ref names a waiting act; this act goes at once and spends none")
 }
 
