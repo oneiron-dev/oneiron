@@ -246,6 +246,47 @@ fn an_ask_with_a_passphrase_custody_holds_opens_as_its_branch_holds_it() -> Test
     Ok(())
 }
 
+/// Blind review round 1 of #9803: the side-row wall reads an ask's handle as
+/// it reads its words, so a handle that holds a passphrase custody holds is
+/// stored with its record's handle in its place. The ask its open gives is
+/// the ask its branch holds, under the handle its branch holds, and the
+/// identical ask opened again with its handle as written is that ask. At
+/// 9d2407c9 the open gave the handle as written, which `peek_ask` does not
+/// know, and the ask opened again refused: its handle met no held handle.
+#[test]
+fn a_handle_holding_a_passphrase_custody_holds_opens_as_its_branch_holds_it() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let (branch, attempt_count) = leased_branch(&vault)?;
+    let adapter = RunTreeAdapter::new(&vault);
+    let handle = format!("unlock-{HELD_PASSPHRASE}");
+    let open = || {
+        adapter.open_ask(
+            branch,
+            RUN,
+            LEASE,
+            attempt_count,
+            &handle,
+            questions(UNHELD_PASSPHRASE),
+        )
+    };
+    let opened = open()?;
+    assert_ne!(
+        opened.handle, handle,
+        "the opened ask holds the passphrase in its handle as its record's handle"
+    );
+    assert_eq!(
+        opened.questions,
+        questions(UNHELD_PASSPHRASE),
+        "the words of the opened ask hold no value custody holds and read as written"
+    );
+    assert_eq!(
+        adapter.peek_ask(branch, RUN, &opened.handle)?,
+        Some(RunAskState::Pending(opened.clone())),
+        "the opened ask is the ask its branch holds, under the handle its branch holds"
+    );
+    reopened_ask_is_held_ask([Ok(opened), open()])
+}
+
 /// Guard: an ask with a passphrase no custody record holds keeps it as
 /// written, and the identical ask opened again meets it on main and head.
 #[test]
