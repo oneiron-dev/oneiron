@@ -618,6 +618,60 @@ fn a_revoked_keys_concurrent_enrolment_synced_late_lands_refused() {
     );
 }
 
+#[test]
+fn a_plain_revocation_refuses_a_late_row_without_a_handoff_alarm() {
+    let shared = shared();
+    let co_owner_key = AuthorityKey::Ed25519(shared.bound_co_owner_key());
+    let withheld = shared.withheld_co_owner_row(enrol_agent(31));
+    let late = decode_authority_log_entry_body(&withheld).expect("the withheld row");
+    let mut replica = Replica::holding(shared.history());
+    replica.take(vec![withheld]);
+    assert!(replica.on_roster_live(public_key(31)));
+
+    shared.remove_owner(shared.co_owner);
+    let history = shared.history();
+    let ops: Vec<_> = history
+        .iter()
+        .map(|bytes| decode_authority_log_entry_body(bytes).expect("a row").op)
+        .collect();
+    assert!(ops.iter().any(|op| matches!(
+        op,
+        AuthorityOp::RevokeDevice { revoked_key } if revoked_key == &co_owner_key
+    )));
+    assert!(!ops.iter().any(|op| matches!(
+        op,
+        AuthorityOp::ReRoot { .. } | AuthorityOp::RootAppointment(_)
+    )));
+    let fold = shared.vault.authority_fold().expect("the fold");
+    assert!(fold.retired_keys.contains(&co_owner_key));
+    assert!(shared.vault.authority_handoff_equivocations().is_empty());
+    assert!(
+        shared
+            .vault
+            .authority_handoff_alarms()
+            .expect("alarms")
+            .is_empty()
+    );
+
+    let now = now_secs();
+    let error = shared
+        .vault
+        .put_authority_log_entry(
+            &late,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
+        .expect_err("the append door refuses the revoked signer");
+    assert_eq!(error.kind(), ErrorKind::InvalidAuthorityLogBody);
+    assert_eq!(shared.history(), history);
+    assert!(!shared.on_roster_live(public_key(31)));
+    assert!(shared.vault.authority_handoff_equivocations().is_empty());
+    assert_eq!(shared.vault.authority_handoff_equivocations_dropped(), 0);
+}
+
 /// The removed co-Owner's key revokes the owner's second owner key on the
 /// heads before the removal and holds the row back. After the removal, that
 /// revocation counts for nothing: the owner's key stays live.

@@ -362,6 +362,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         machines: Default::default(),
         machine_keys: Default::default(),
         held_machine_answers: Default::default(),
+        restored_enrolments: Default::default(),
         root_anchors: Default::default(),
         anchor_entries: Default::default(),
         host_custody_keys: Default::default(),

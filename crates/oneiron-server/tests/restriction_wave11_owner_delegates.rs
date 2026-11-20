@@ -54,7 +54,9 @@ use oneiron::setting::{SetSetting, SetSettingOutcome, SettingMode, SettingScope}
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::run_doors::CANCEL_FORCE_VERB;
 use oneiron::task_verb::sdk::REPO_ANCHOR_BIND_VERB;
-use oneiron::test_doors::held_program::plant_held_turn_program_for_test;
+use oneiron::test_doors::held_program::{
+    plant_held_turn_program_for_test, plant_unbound_held_turn_program_for_test,
+};
 use oneiron::test_doors::live_task::plant_task_with_live_attempt_for_test;
 use oneiron::test_doors::spend::reserve_child_scope;
 use oneiron::test_doors::spent_seat::{plant_spent_seat_credit_for_test, topped_up_by_for_test};
@@ -789,6 +791,73 @@ fn program_hold_release_of_a_program_the_delegate_does_not_read_is_not_found() {
             status,
             StatusCode::NOT_FOUND,
             "another agent's program: {body}"
+        );
+
+        let attempt = AttemptId::from_bytes(
+            EntityId::from_hex(&attempt_hex)
+                .expect("attempt id")
+                .as_bytes(),
+        )
+        .expect("attempt id");
+        let record = AttemptQueue::new(&fixture.vault)
+            .get(attempt)
+            .expect("read the attempt")
+            .expect("the held attempt");
+        assert!(
+            record.cancel_state.cancellation.is_none(),
+            "the try is not stopped: {record:?}"
+        );
+        assert!(
+            !record.state.is_terminal(),
+            "the try stays open: {record:?}"
+        );
+    });
+}
+
+/// Program-hold Stop by a delegate on a try whose stamp names it but binds
+/// no admission ([W11-PROGRAM-HOLD-RELEASE-ADMISSION-BINDING]): a program
+/// reads only through the admission its stamp names, whose wake authority
+/// names the same actor and which queued a root try (`read::program_for`).
+/// With none, the program read finds no program. The row is on and the Grant
+/// lists the verb, yet the door answers the NOT_FOUND a try no program
+/// stamped gets, and the try is not stopped.
+#[test]
+fn program_hold_release_of_a_try_no_admission_binds_is_not_found() {
+    run_on_engine_stack("w11-release-unbound", || async {
+        let fixture = setup();
+        let agent = pair_agent(&fixture, "release-unbound", [0xB6; 32]).await;
+        let agent_hex = agent.principal.to_hex();
+        let (attempt_hex, reason, parked_at) = plant_unbound_held_turn_program_for_test(
+            &fixture.vault,
+            agent.principal,
+            EdgeActorClass::Agent,
+        )
+        .expect("plant a held try with no admission");
+        let _grant = mint_grant(&fixture, &agent_hex, &[PROGRAM_HOLD_RELEASE_VERB]).await;
+        set_row(
+            &fixture.vault,
+            FORCE_CANCEL_KEY,
+            None,
+            SettingScope::Agent(agent.principal),
+            json!(true),
+        );
+
+        let (status, body) = agent_post(
+            &fixture,
+            &agent,
+            &format!("/v1/core/facade/{PROGRAM_HOLD_RELEASE_VERB}"),
+            json!({
+                "attempt": attempt_hex,
+                "reason": reason,
+                "parked_at": parked_at,
+                "action": "stop",
+            }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "a try no admission binds: {body}"
         );
 
         let attempt = AttemptId::from_bytes(

@@ -469,7 +469,7 @@ fn policy_setting_op(machine: EntityId, prior: [u8; 32], value: Option<[u8; 32]>
     AuthorityOp::PolicySettingSet(PolicySettingSet {
         act: act(owner(), OwnerActKind::PolicySetting, target),
         machine,
-        setting,
+        setting: setting.wire().to_owned(),
         prior,
         value,
     })

@@ -764,7 +764,10 @@ impl OffRecordSession<'_> {
             route,
             table,
             key,
-            value,
+            |wtxn, dbs| match dbs {
+                crate::side_table::RoutedDbs::Session(view) => table.put(view, wtxn, key, value),
+                crate::side_table::RoutedDbs::Base(vault) => table.put(vault, wtxn, key, value),
+            },
             |stored| {
                 let current = stored.map(|bytes| table.decode_value(bytes)).transpose()?;
                 accepts_current(current.as_ref())
@@ -781,7 +784,10 @@ impl OffRecordSession<'_> {
     /// the row and its counter: a turn's code-run replay append, its heal
     /// tally and the fold receipts it staged commit together or not at all.
     /// `accepts_stored` reads the row's stored bytes in place, so a compare
-    /// over part of a large row decodes only that part (FIX 16).
+    /// over part of a large row decodes only that part (FIX 16). `put_value`
+    /// puts the row at `key` on the target it is given: a replay heal fences
+    /// its record there before any put of it (FIX
+    /// FENCE-ERASED-FORM-THROUGH-WALL).
     #[expect(
         clippy::too_many_arguments,
         reason = "the counter-routed put's axes, plus the rows that commit with it"
@@ -791,7 +797,7 @@ impl OffRecordSession<'_> {
         route: &SessionWriteRoute,
         table: &SideTable<K, V, C>,
         key: &K,
-        value: &V,
+        put_value: impl FnOnce(&mut heed::RwTxn<'_>, crate::side_table::RoutedDbs<'_>) -> Result<()>,
         accepts_stored: impl FnOnce(Option<&[u8]>) -> Result<()>,
         counter: &SideTable<CK, CV, CC>,
         counter_key: &CK,
@@ -827,11 +833,11 @@ impl OffRecordSession<'_> {
                 let delta = self.overlay_counter_delta(counter, counter_key)?;
                 let (next_counter, total) = update_counter(base, delta, target)?;
                 if target == RouteTarget::Overlay {
-                    table.put(&view, wtxn, key, value)?;
+                    put_value(wtxn, RoutedDbs::Session(&view))?;
                     counter.put(&view, wtxn, counter_key, &next_counter)?;
                     also(wtxn, RoutedDbs::Session(&view))?;
                 } else {
-                    table.put(self.vault, wtxn, key, value)?;
+                    put_value(wtxn, RoutedDbs::Base(self.vault))?;
                     counter.put(&self.vault.store, wtxn, counter_key, &next_counter)?;
                     also(wtxn, RoutedDbs::Base(self.vault))?;
                 }

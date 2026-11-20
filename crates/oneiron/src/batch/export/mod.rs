@@ -11,6 +11,7 @@ pub(crate) use credential_filter::{
 pub(crate) use oneiron_store::batch::export::agent_knowledge_format;
 pub(crate) mod agent_knowledge_selection;
 mod archive_index;
+pub(crate) use archive_index::{IndexedArchive, Tag};
 mod archive_project;
 mod archive_read;
 /// Inert copies of source side-table rows carried by whole-vault archives.

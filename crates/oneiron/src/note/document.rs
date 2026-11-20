@@ -1,6 +1,7 @@
 //! NOTE entity-document operations, stable cursors and citation provenance.
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 
 use crate::EntityId;
 use crate::config::bm25::NoteTextField;
@@ -21,6 +22,8 @@ use oneiron_records::note::document::{BODY, quoted_cursor};
 pub use oneiron_records::note::document::{NotePin, NoteScalarEdit};
 #[doc(hidden)]
 pub(super) use oneiron_records::note::document::{frontier, invalid};
+
+mod splice;
 
 /// The common root map (FIX 7784): the NOTE's immutable identity, its
 /// editable fields and its pins.
@@ -410,20 +413,17 @@ impl NoteDocument {
         editable_fields(&self.doc.get_map(META))
     }
 
-    /// Rewrites the live body to `text` by the smallest edits that make it:
-    /// a mask on write's handles in place of the spans it lifted (OF-067).
-    /// Every other character keeps its identity, and the cursors on it.
-    pub(super) fn mask_body(&self, text: &str) -> Result<()> {
-        self.doc
-            .get_text(BODY)
-            .update(
-                text,
-                loro::UpdateOptions {
-                    timeout_ms: None,
-                    use_refined_diff: true,
-                },
-            )
-            .map_err(|_| invalid("NOTE mask update"))?;
+    /// Puts a mask on write's handles in the live body in place of the spans
+    /// it lifted (OF-067): `replaced` holds, in order, each span of the body
+    /// the mask lifted and the span its handle takes in `masked`, the body
+    /// as masked. Every other character keeps its identity, and the cursors
+    /// on it ([`splice::splice_handles`]).
+    pub(super) fn mask_body(
+        &self,
+        replaced: &[(Range<usize>, Range<usize>)],
+        masked: &str,
+    ) -> Result<()> {
+        splice::splice_handles(&self.doc.get_text(BODY), replaced, masked)?;
         self.doc
             .commit_with(CommitOptions::new().commit_msg("oneiron.note/v1 mask_on_write"));
         Ok(())
@@ -442,19 +442,14 @@ impl NoteDocument {
         Ok(())
     }
 
-    /// Rewrites the live body to `text` by the smallest edits that make it,
-    /// as [`Self::mask_body`] does, its commit naming the ruling person's
-    /// stamp token `stamp`: a found key's value back where the mask left its
-    /// handle (FIX L6-03-NOTE-RULING-KEEPS-DOC-HANDLE).
-    pub(super) fn restore_body(&self, text: &str, stamp: ActorStamp) -> Result<()> {
-        let options = loro::UpdateOptions {
-            timeout_ms: None,
-            use_refined_diff: true,
-        };
-        self.doc
-            .get_text(BODY)
-            .update(text, options)
-            .map_err(|_| invalid("NOTE restore update"))?;
+    /// Puts found keys' values back where the mask left their handles, its
+    /// commit naming the ruling person's stamp token `stamp` (FIX
+    /// L6-03-NOTE-RULING-KEEPS-DOC-HANDLE): for each `(text_form, value)` of
+    /// `values` in turn, each place the live body then holds `text_form`
+    /// takes `value`, as [`str::replace`] puts it. Every other character
+    /// keeps its identity, and the cursors on it ([`splice::splice_values`]).
+    pub(super) fn restore_body(&self, values: &[(&str, &str)], stamp: ActorStamp) -> Result<()> {
+        splice::splice_values(&self.doc.get_text(BODY), values)?;
         commit_stamped(&self.doc, stamp);
         Ok(())
     }

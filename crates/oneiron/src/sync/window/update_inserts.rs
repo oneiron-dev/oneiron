@@ -69,6 +69,14 @@ impl UpdateInserts {
         }
     }
 
+    /// The entity ids read: an own device's held burst names them as rows
+    /// its bytes carry, so an erase of any scrubs them (#9226 review round
+    /// 2). Admission reads them on the home window, where a delta that
+    /// builds on the home's own operations applies.
+    pub fn ids(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.ids.iter().copied()
+    }
+
     /// Owes the erasure sweep a compaction of window `key` in `wtxn`, the
     /// transaction that makes the update durable, when an insert names a row
     /// hard-deleted here (its permanent marker, read in `wtxn`) or the

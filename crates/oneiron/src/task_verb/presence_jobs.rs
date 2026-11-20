@@ -72,7 +72,7 @@ pub(super) fn job_backlinks_for_task(vault: &Vault, task_hex: &str) -> Result<Ve
 
 /// Renders `records` into their run tree and hands `visit`, in pre-order, each
 /// node that reaches a board as a job, with the superseded ids it was judged by.
-fn for_each_head_job(
+pub(super) fn for_each_head_job(
     records: Vec<AttemptRecord>,
     mut visit: impl FnMut(&RunTreeNode, JobPresence, &HashSet<String>),
 ) -> Result<()> {

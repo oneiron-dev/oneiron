@@ -162,3 +162,7 @@ pub(crate) use self::reader_jobs::code_run_reader_wait_accepts_masked;
 pub(crate) use self::records::code_run_replay_record_accepts_masked;
 pub(crate) use self::replay_capsule::code_run_replay_capsule_accepts_masked;
 pub(crate) use self::type_diagnostics::code_run_type_diagnostics_accepts_masked;
+
+// The door of `test_doors::erased_request_identity` (blind review round 1 of #9692).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::program_resume::put_record_with_resume_listing_its_calls;

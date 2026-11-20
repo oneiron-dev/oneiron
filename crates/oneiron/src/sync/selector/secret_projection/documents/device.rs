@@ -21,7 +21,7 @@
 //! the marked blob are merged as concurrent edits of the blob's copy.
 
 use heed::{RoTxn, RwTxn};
-use loro::{ExportMode, LoroDoc, UpdateOptions, VersionVector};
+use loro::{ExportMode, LoroDoc, VersionVector};
 use oneiron_contracts::fingerprint::ContentHash;
 
 use super::{
@@ -524,8 +524,7 @@ fn merged(base: &str, ours: &str, theirs: &str) -> Result<String> {
     let edit = |doc: &LoroDoc, peer: u64, text: &str| -> Result<()> {
         doc.set_peer_id(peer)
             .map_err(|_| Error::InvariantViolation("document copy merge author"))?;
-        doc.get_text(BODY)
-            .update(text, UpdateOptions::default())
+        crate::text_diff::set_text(&doc.get_text(BODY), text)
             .map_err(|_| Error::InvariantViolation("document copy merge diff"))?;
         doc.commit();
         Ok(())
@@ -552,4 +551,38 @@ fn covers(peer: &VersionVector, floor: &VersionVector) -> bool {
 
 fn denied() -> Error {
     Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied)
+}
+
+#[cfg(test)]
+mod text_diff_budget_tests {
+    use super::merged;
+    use std::time::{Duration, Instant};
+
+    /// Before the diff budget this ran for many minutes. Past the budget the
+    /// merge is refused: a coarse replacement would lose the other copy's
+    /// concurrent edits inside the replaced span.
+    #[test]
+    fn an_unrelated_merge_of_a_large_copy_is_refused_within_the_budget() {
+        let base = format!("{} tail \u{2713}", "x".repeat(1 << 20));
+        let ours = "\u{e9}dited tail \u{2713}";
+        let started = Instant::now();
+        let result = merged(&base, ours, &base);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(60),
+            "the copy merge took {elapsed:?}"
+        );
+        assert!(result.is_err(), "the merge is refused past the budget");
+    }
+
+    #[test]
+    fn edits_at_opposite_ends_of_a_copy_both_survive_the_merge() {
+        let result = merged(
+            "the first draft of a turn",
+            "the second draft of a turn",
+            "the first draft of a story",
+        )
+        .unwrap();
+        assert_eq!(result, "the second draft of a story");
+    }
 }

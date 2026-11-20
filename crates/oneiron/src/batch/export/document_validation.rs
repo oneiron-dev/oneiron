@@ -218,11 +218,26 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
         if section == Section::Claim
             && let Ok(body) = row.body.to_bytes()
             && let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(&body, false)
-            && let ClaimSubject::Entity(subject) = claim.subject
         {
-            let mut key = subject.as_bytes().to_vec();
-            key.extend_from_slice(id.as_bytes());
-            self.index.put(Tag::About, &key, &[])?;
+            match claim.subject {
+                ClaimSubject::Entity(subject) => {
+                    let mut key = subject.as_bytes().to_vec();
+                    key.extend_from_slice(id.as_bytes());
+                    self.index.put(Tag::About, &key, &[])?;
+                }
+                ClaimSubject::Edge {
+                    source,
+                    kind,
+                    target,
+                } if claim.predicate == crate::claim::PREDICATE_COREFERENCE_STATUS => {
+                    let mut key = edge_key(&source, kind as u8, &target);
+                    key.extend_from_slice(id.as_bytes());
+                    let active = claim.lifecycle == crate::claim::ClaimLifecycleStatus::Active;
+                    self.index
+                        .put(Tag::CoreferenceStatus, &key, &[u8::from(active)])?;
+                }
+                _ => {}
+            }
         }
         let at = EntityAt {
             section,

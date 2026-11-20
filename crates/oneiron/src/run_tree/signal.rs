@@ -222,6 +222,9 @@ impl RunTreeAdapter<'_> {
                 ));
             }
         }
+        // The held answer an answer given again under a new key met, when the
+        // two differ as written: the new receipt carries it.
+        let mut held_answer = None;
         if let RunSignalKind::AskAnswer {
             handle,
             who,
@@ -229,21 +232,43 @@ impl RunTreeAdapter<'_> {
             kind,
         } = &input.kind
         {
-            let ask = record
+            let at_ask = record
                 .asks
-                .iter_mut()
-                .find(|a| &a.handle == handle)
+                .iter()
+                .position(|a| &a.handle == handle)
                 .ok_or_else(|| Error::InvalidConfig("unknown ask handle".into()))?;
+            let ask = &record.asks[at_ask];
             if !ask.questions.iter().any(|q| &q.who == who) {
                 return Err(Error::InvalidConfig("unaddressed ask answer".into()));
             }
             if let Some(prior) = ask.answers.iter().find(|a| &a.who == who) {
-                if &prior.answer != answer || prior.kind != *kind {
+                // The held answer is as the side-row wall stored it: a value
+                // base custody holds reads as its record's handle there, and
+                // the keyed intent (FIX 10066) names the signal's key. An
+                // answer given again under a new key is the same answer only
+                // when it is the first answer exactly as given: the
+                // fingerprint kept beside that answer's signal meets it
+                // restated under that signal's key and actor (FIX
+                // SIGNAL-NEW-KEY-MASKED-ANSWER; blind review round 2 of
+                // #9531: the held form alone cannot tell two values custody
+                // holds apart, nor meet a mask widened to a character).
+                if prior.kind != *kind
+                    || (&prior.answer != answer
+                        && !intent::answer_repeats(self.vault, txn, &record, &input))
+                {
                     return Err(Error::InvalidConfig("ask already answered".into()));
+                }
+                // The new receipt carries the held answer, so the branch holds
+                // one answer for the ask: the raw answer the wall would store
+                // as written with the switch off, or under the handle of a
+                // longer value custody took since, would answer it twice
+                // (blind review round 1 of #9531).
+                if &prior.answer != answer {
+                    held_answer = Some(prior.answer.clone());
                 }
             } else {
                 let at = crate::ports::recorded_at_in_txn(&self.vault.store, txn)?;
-                ask.answers.push(RunAskAnswer {
+                record.asks[at_ask].answers.push(RunAskAnswer {
                     who: who.clone(),
                     answer: answer.clone(),
                     kind: *kind,
@@ -259,22 +284,30 @@ impl RunTreeAdapter<'_> {
             }
         }
         let intent_bytes = intent::intent_bytes(&input);
-        let signal = RunBranchSignal {
+        let given = RunBranchSignal {
             key: input.key,
             actor: input.actor,
             kind: input.kind,
             state: RunSignalState::Pending,
         };
+        let mut signal = given.clone();
+        if let (Some(held), RunSignalKind::AskAnswer { answer, .. }) =
+            (held_answer, &mut signal.kind)
+        {
+            *answer = held;
+        }
         record.signals.push(signal.clone());
         self.save(txn, &mut record)?;
         // The receipt as the side-row wall stored it, which a retry replays.
+        // A receipt that is not the signal as given keeps the fingerprint of
+        // the given intent, so the same signal retried replays it.
         let stored = record
             .signals
             .iter()
             .find(|s| s.key == signal.key)
             .cloned()
             .unwrap_or_else(|| signal.clone());
-        if stored != signal
+        if stored != given
             && let Some(bytes) = intent_bytes
         {
             self.keep_intent_in(txn, &mut record, &stored.key, &bytes);

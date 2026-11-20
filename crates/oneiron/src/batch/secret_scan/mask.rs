@@ -34,6 +34,8 @@ mod batch_door;
 mod body;
 pub(super) mod carrier;
 mod changed_scan;
+// An erased request's custody identity (FIX ERASED-IDENTITY-ONE-STAND-IN).
+pub(super) mod custody_form;
 // The claim value a checker reads before the door masks it.
 pub(super) mod claim_value_plan;
 // An escaped key's span (FIX 1369).
@@ -538,9 +540,13 @@ struct Masker {
     known_only: bool,
     /// A compare of a held row with its offer: only the values of the
     /// records the row's handles name are read, by their handles (FIX
-    /// RECEIPT-RECORDS-CALL-HELD-INPUT). `None` reads every value `known`
-    /// holds.
+    /// RECEIPT-RECORDS-CALL-HELD-INPUT), and only their handles name a
+    /// record in a text. `None` reads every value `known` holds.
     records: Option<BTreeSet<String>>,
+    /// With `records`, only their values at most this many bytes long are
+    /// read: a custody identity read as its erase read it before a record
+    /// it names took a longer value (blind review round 2 of #9528).
+    records_longest: Option<usize>,
     /// The door's scan read each text this pass reads now by the same text
     /// rules and found no shape: none is sought again (speed).
     shapes_read: bool,
@@ -986,7 +992,8 @@ impl Masker {
     /// does.
     fn known_whole(&self, value: &[u8]) -> Option<String> {
         let known = self.known.as_ref()?;
-        match text::known_spans(known, self.records.as_ref(), value, |_| false).as_slice() {
+        let records = self.records.as_ref();
+        match text::known_spans(known, records, self.records_longest, value, |_| false).as_slice() {
             [hit] if hit.span == (0..value.len()) => Some(hit.handle.to_owned()),
             _ => None,
         }

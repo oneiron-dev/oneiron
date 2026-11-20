@@ -30,6 +30,14 @@
 //! reads, so a key revoked after the door picked it refuses its own
 //! signature. Red with the key asked on the fold of the door's earlier read:
 //! it signs there, and the append's admission refuses the row instead.
+//!
+//! FIX VOUCH-DOOR-ROLE-CHECK-OUTSIDE-WRITE: the holding machine is judged
+//! the owner's again on the fold of the entry the vouching key signs, so a
+//! machine the owner answered as a hosted node after the door's read takes
+//! no owner key. FIX VOUCH-DOOR-LABEL-NOT-RECHECKED: the owner device's door
+//! refuses a request whose label breaks its rules as the label's. Red at
+//! main 3c75f527c38 (the key enrols; the machine proof's refusal answers),
+//! green at the head.
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -66,6 +74,17 @@ const SHARED: u64 = 27;
 /// What an owner signing key answers when the roster it is asked on does not
 /// list it live (`KEY_NOT_LIVE` of `world_keys::owner_signing`).
 const KEY_NOT_LIVE: &str = "the roster does not list this owner signing key live";
+
+/// What the vouch door answers for a machine the owner has not answered as
+/// theirs (`MACHINE_NOT_THE_OWNERS` of `authority::owner_key_vouch`).
+const MACHINE_NOT_THE_OWNERS: &str = "an owner key is held only on a machine the owner \
+                                      answered as theirs; this one is a hosted or execution \
+                                      node, or unanswered";
+
+/// What the vouch door answers for a label that breaks its rules
+/// (`LABEL_NOT_VALID` of `authority::owner_key_vouch`).
+const LABEL_NOT_VALID: &str = "a device label is at most 64 bytes of text with no control or \
+                               invisible format characters";
 
 fn hosted_config() -> VaultConfig {
     let mut config = VaultConfig::device();
@@ -503,6 +522,64 @@ fn a_vouching_key_revoked_after_the_pick_refuses_its_signature_and_enrols_nothin
     );
 }
 
+/// The owner answers the new device's machine as a hosted node after the
+/// vouch door's read judged it the owner's and before the enrollment's
+/// writer (FIX VOUCH-DOOR-ROLE-CHECK-OUTSIDE-WRITE). The holding machine is
+/// judged again on the fold of the entry the vouching key signs, so the
+/// vouch is refused as the machine's: the writer stores nothing and the new
+/// key is not enrolled. Red at the base: the writer asked only that the
+/// machine be live, in any role, and the key enrolled on a hosted node.
+#[test]
+fn a_machine_answered_as_a_hosted_node_after_the_read_takes_no_owner_key() {
+    let owner = owner_device(true);
+    let device = new_device(&owner);
+    let request = device.request();
+
+    let mut after_answer = None;
+    let refusal = enrol_vouched_owner_signing_key_between(
+        &owner.vault,
+        &owner_act(&owner.proof),
+        &request,
+        || {
+            let landing = owner
+                .vault
+                .set_machine_role(
+                    &owner.proof,
+                    ActSurface::ThisInstall,
+                    device.machine,
+                    MachineRole::HostedNode,
+                    None,
+                )
+                .expect("the owner answers the new device's machine again");
+            assert!(
+                matches!(landing, MachineAnswerLanding::Stands(_)),
+                "guard: the owner's answer stands: {landing:?}"
+            );
+            after_answer = Some(owner.history());
+        },
+    )
+    .expect_err("a machine the owner answered as a hosted node takes no owner key");
+    let after_answer = after_answer.expect("the answer ran between the door's read and its writer");
+
+    assert!(
+        matches!(
+            &refusal,
+            Error::Record(RecordError::AuthorityRefused(reason))
+                if *reason == MACHINE_NOT_THE_OWNERS
+        ),
+        "the holding machine is refused on the entry's fold: {refusal:?}"
+    );
+    assert_eq!(
+        owner.history(),
+        after_answer,
+        "the refused vouch stores no row"
+    );
+    assert!(
+        !owner.roster_lists(request.public_key),
+        "the new key is not enrolled"
+    );
+}
+
 /// Once the new device takes the row, its request door answers the
 /// enrollment's receipt and its handle holds the key.
 #[test]
@@ -839,6 +916,40 @@ fn the_new_devices_door_refuses_a_label_over_its_bound() {
         ),
         "{refused:?}"
     );
+}
+
+/// A request whose label breaks its rules is refused as the label's at the
+/// owner device's door, and nothing is written (FIX
+/// VOUCH-DOOR-LABEL-NOT-RECHECKED): the decoders and the new device's door
+/// keep the rules, and a request built in code reaches the vouch door
+/// without either. Red at the base: the door never read the label, and the
+/// request was refused only because its machine proof, which covers the
+/// label, no longer verified.
+#[test]
+fn a_request_whose_label_breaks_its_rules_is_refused_as_the_labels() {
+    let owner = owner_device(true);
+    let device = new_device(&owner);
+    let mut request = device.request();
+    request.label = "Laptop\u{202e}".to_owned();
+    let rows = owner.history().len();
+
+    let refused = owner
+        .vouch(&request)
+        .expect_err("a label with a bidirectional override");
+
+    assert!(
+        matches!(
+            &refused,
+            Error::Record(RecordError::InvalidAuthorityLogBody(reason))
+                if *reason == LABEL_NOT_VALID
+        ),
+        "the label's refusal: {refused:?}"
+    );
+    assert!(
+        !owner.roster_lists(request.public_key),
+        "the key is not enrolled"
+    );
+    assert_eq!(owner.history().len(), rows, "nothing was written");
 }
 
 /// An agent's act is refused at both doors before anything is readied

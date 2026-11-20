@@ -25,7 +25,6 @@
 //! carrier is never a roster key.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
 
 use ed25519_dalek::Signer;
 
@@ -36,6 +35,8 @@ use super::*;
 
 mod revoke_device;
 pub(crate) use revoke_device::EntrySigner;
+
+mod owner_authority_closure;
 
 mod recovery_authority;
 pub(crate) use recovery_authority::ActivationPredecessor;
@@ -1449,53 +1450,21 @@ impl Vault {
         Ok(())
     }
 
-    /// Every live owner key whose enrolment names `person`: their device
-    /// keys and their passkeys (row WEB-PASSKEY-OWNER-KEY), whose enrolment
-    /// names its owner as a device key's does. Each key counts by its
-    /// smallest valid enrollment entry, stored or carried by an adopted
-    /// checkpoint image, as [`Self::enrolled_owner_keys`] counts a device
-    /// key; that listing keeps device keys only (REVIEW-8437 P1).
+    /// Every live owner key the removal of `person` ends (row
+    /// OWNER-REVOKE-BY-NAMED-ATTRIBUTION, direction (b)): each key a counted
+    /// enrolment names them for, their device keys and their passkeys (row
+    /// WEB-PASSKEY-OWNER-KEY) alike, by every such enrolment and not only
+    /// the smallest one [`Self::enrolled_owner_keys`] lists, and every owner
+    /// key one of theirs signed in, transitively
+    /// ([`Self::owner_authority_closure_in_txn`]). The membership move, its
+    /// refusal with no issuer and the device-confirmed move all read this
+    /// one set, so they plan, sign, land and refuse the same keys.
     pub(super) fn live_owner_keys_enrolled_for_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         person: EntityId,
     ) -> Result<Vec<AuthorityKey>> {
-        let view = self.authority_view_readonly_in_txn(txn)?;
-        let fold: &AuthorityFold = &view;
-        let mut enrolled: BTreeMap<AuthorityKey, (AuthorityEntryHash, EntityId)> = BTreeMap::new();
-        let mut keep = |hash: AuthorityEntryHash, entry: &AuthorityLogEntry| {
-            let AuthorityOp::OwnerKeyEnroll(enroll) = &entry.op else {
-                return;
-            };
-            if !fold.valid_entries.contains(&hash)
-                || enrolled
-                    .get(&enroll.device.key)
-                    .is_some_and(|(kept, _)| *kept <= hash)
-            {
-                return;
-            }
-            enrolled.insert(enroll.device.key.clone(), (hash, enroll.act.owner));
-        };
-        let mut stored = BTreeSet::new();
-        for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, txn)? {
-            let entry = decode_authority_log_entry_body(&body)?;
-            let hash = authority_entry_hash(&entry)?;
-            stored.insert(hash);
-            keep(hash, &entry);
-        }
-        if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, txn)?
-        {
-            for (hash, entry) in evidence.carried_past(&stored) {
-                keep(*hash, entry);
-            }
-        }
-        Ok(enrolled
-            .into_iter()
-            .filter(|(key, (_, owner))| {
-                *owner == person && fold.roster.get(key).is_some_and(|device| !device.revoked)
-            })
-            .map(|(key, _)| key)
-            .collect())
+        Ok(self.owner_authority_closure_in_txn(txn, person)?.keys)
     }
 
     /// Ends the owner authority `person` holds on this vault's log, in the
@@ -1504,7 +1473,9 @@ impl Vault {
     /// key whose enrolment names them, a passkey among them, which ends any
     /// binding on that key, then a `RevokeActor` for each other live `human`
     /// binding that names them, the host root's binding of its embedded
-    /// owner among them. The root key itself stays: only its binding ends.
+    /// owner among them, and for each live `human` binding a key of theirs
+    /// signed, whomever it names (row OWNER-REVOKE-BY-NAMED-ATTRIBUTION). The
+    /// root key itself stays: only its binding ends.
     /// Each entry must count, or the move commits nothing. A person with
     /// neither writes no entry.
     ///
@@ -1536,8 +1507,9 @@ impl Vault {
         person: EntityId,
     ) -> Result<()> {
         let root = issuer.public_key();
-        let mut keys: Vec<AuthorityKey> = self
-            .live_owner_keys_enrolled_for_in_txn(txn, person)?
+        let closure = self.owner_authority_closure_in_txn(txn, person)?;
+        let mut keys: Vec<AuthorityKey> = closure
+            .keys
             .into_iter()
             .filter(|key| *key != root)
             .collect();
@@ -1548,20 +1520,21 @@ impl Vault {
             // Under the Hosted posture no host root this install holds is
             // offered as the owner's proof, a self-host root a move carried
             // here included (HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A).
-            let proof = if fold.offers_owner_proof(issuer, hosted) {
-                None
-            } else {
-                let proof = self.owner_proof_signer(&fold).ok_or(Error::Record(
-                    RecordError::OwnerKeyMoveRefused {
-                        member: person,
-                        step: OwnerKeyMoveStep::Unavailable,
-                        act: None,
-                    },
-                ))?;
-                let proof_key = proof.key();
-                keys.sort_by_key(|key| *key == proof_key);
-                Some(proof)
-            };
+            let proof =
+                if fold.offers_owner_proof(&issuer.public_key(), issuer.is_host_root(), hosted) {
+                    None
+                } else {
+                    let proof = self.owner_proof_signer(&fold).ok_or(Error::Record(
+                        RecordError::OwnerKeyMoveRefused {
+                            member: person,
+                            step: OwnerKeyMoveStep::Unavailable,
+                            act: None,
+                        },
+                    ))?;
+                    let proof_key = proof.key();
+                    keys.sort_by_key(|key| *key == proof_key);
+                    Some(proof)
+                };
             for revoked_key in keys {
                 let signer = match &proof {
                     Some(proof) => EntrySigner::HostWithOwnerProof(issuer, proof),
@@ -1574,9 +1547,9 @@ impl Vault {
         let bindings: Vec<(AuthorityKey, u64)> = fold
             .actor_bindings
             .iter()
-            .filter(|(_, binding)| {
+            .filter(|(key, binding)| {
                 binding.status == ActorBindingStatus::Active
-                    && binding.actor_ref == person
+                    && (binding.actor_ref == person || closure.signed_bindings.contains(*key))
                     && binding.actor_class == ACTOR_CLASS_HUMAN
             })
             .map(|(key, binding)| (key.clone(), binding.epoch))
@@ -1659,8 +1632,10 @@ impl Vault {
 
     /// Refuses a membership move no issuer signs while `person` holds owner
     /// authority on this vault's log that the move must end: a live owner key
-    /// whose enrolment names them, or a live `human` binding that names them.
-    /// Only the vault's live host root signs their revocation
+    /// whose enrolment names them or that a key of theirs signed in, a live
+    /// `human` binding that names them, or one a key of theirs signed
+    /// ([`Self::owner_authority_closure_in_txn`]). Only the vault's live host
+    /// root signs their revocation
     /// ([`Self::revoke_owner_authority_in_txn`]), so such a move runs on the
     /// vault's host; a person with neither moves on any install (REVIEW-7931).
     ///
@@ -1671,13 +1646,12 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         person: EntityId,
     ) -> Result<()> {
-        let holds_key = !self
-            .live_owner_keys_enrolled_for_in_txn(txn, person)?
-            .is_empty();
+        let closure = self.owner_authority_closure_in_txn(txn, person)?;
+        let holds_key = !closure.keys.is_empty();
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        let holds_binding = fold.actor_bindings.values().any(|binding| {
+        let holds_binding = fold.actor_bindings.iter().any(|(key, binding)| {
             binding.status == ActorBindingStatus::Active
-                && binding.actor_ref == person
+                && (binding.actor_ref == person || closure.signed_bindings.contains(key))
                 && binding.actor_class == ACTOR_CLASS_HUMAN
         });
         if holds_key || holds_binding {

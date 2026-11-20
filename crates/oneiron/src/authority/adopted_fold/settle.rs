@@ -263,6 +263,10 @@ pub(super) fn settle_tail(
             by_hash: &projected,
             revoke_facts: &revoke_facts,
             retired_keys: image.safety.retired_keys.clone(),
+            handoff_or_appointment_retired_keys: image
+                .safety
+                .handoff_or_appointment_retired_keys
+                .clone(),
             closed_handoffs: image.safety.closed_handoffs.clone(),
             unsettled: image.safety.unsettled,
             counted_ancestor_pairs: counted_pairs,
@@ -503,6 +507,10 @@ fn image_fold_under(
             by_hash: projected,
             revoke_facts: &image.safety.revoke_facts,
             retired_keys: image.safety.retired_keys.clone(),
+            handoff_or_appointment_retired_keys: image
+                .safety
+                .handoff_or_appointment_retired_keys
+                .clone(),
             closed_handoffs: image.safety.closed_handoffs.clone(),
             unsettled: image.safety.unsettled,
             counted_ancestor_pairs: image.safety.counted_pairs,

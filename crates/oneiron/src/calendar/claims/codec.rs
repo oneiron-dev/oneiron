@@ -85,6 +85,10 @@ pub(super) const KEY_PRESENCE: &str = "presence";
 
 pub(super) const KEY_CANCELLED_SINCE: &str = "cancelled_since";
 
+pub(super) const KEY_WRITTEN_CANCELLED: &str = "written_cancelled";
+
+pub(super) const KEY_DEFERRED_CANCEL_SEEN_AT: &str = "deferred_cancel_seen_at";
+
 pub(super) const KEY_STATUS: &str = "status";
 
 pub(super) const KEY_BASIS: &str = "basis";
@@ -321,6 +325,12 @@ pub(in crate::calendar) fn decode_attendee_value(value: &Value) -> Result<Calend
 /// An optional `cancelled_since` dates the source's first report of the UID
 /// cancelled; a row without it (every row of an uncancelled version, and
 /// every row written before it) decodes it as `None`.
+/// An optional `written_cancelled`, present only as `true`, marks the
+/// source's cancellation as the engine's own write of the EVENT already
+/// cancelled; a row without it decodes it as `false`.
+/// An optional `deferred_cancel_seen_at` dates a pull's first sighting of a
+/// cancelled version it held back unread; a row without it decodes it as
+/// `None`.
 pub(crate) fn decode_passport_value(value: &Value) -> Result<CalendarPassportValue> {
     let entries = value_map(value)?;
     let required = [
@@ -332,7 +342,13 @@ pub(crate) fn decode_passport_value(value: &Value) -> Result<CalendarPassportVal
         KEY_LAST_SEEN_AT,
     ];
     let mut allowed = required.to_vec();
-    allowed.extend([KEY_PRESENCE, KEY_SOURCE, KEY_CANCELLED_SINCE]);
+    allowed.extend([
+        KEY_PRESENCE,
+        KEY_SOURCE,
+        KEY_CANCELLED_SINCE,
+        KEY_WRITTEN_CANCELLED,
+        KEY_DEFERRED_CANCEL_SEEN_AT,
+    ]);
     validate_keys(entries, &allowed, &required)?;
     let system = required_string(entries, KEY_SYSTEM)?;
     let uid = required_string(entries, KEY_UID)?;
@@ -373,6 +389,22 @@ pub(crate) fn decode_passport_value(value: &Value) -> Result<CalendarPassportVal
                 value
                     .as_u64()
                     .ok_or_else(|| invalid_claim("calendar passport cancelled_since is invalid"))
+            })
+            .transpose()?,
+        written_cancelled: match optional_value(entries, KEY_WRITTEN_CANCELLED)? {
+            None => false,
+            Some(Value::Boolean(true)) => true,
+            Some(_) => {
+                return Err(invalid_claim(
+                    "calendar passport written_cancelled is present only as true",
+                ));
+            }
+        },
+        deferred_cancel_seen_at: optional_value(entries, KEY_DEFERRED_CANCEL_SEEN_AT)?
+            .map(|value| {
+                value.as_u64().ok_or_else(|| {
+                    invalid_claim("calendar passport deferred_cancel_seen_at is invalid")
+                })
             })
             .transpose()?,
     })
