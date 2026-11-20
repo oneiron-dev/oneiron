@@ -64,6 +64,7 @@ use crate::settings::ReadDestination;
 use crate::side_table::{self, Named, SideTable};
 use crate::vault::ReadMode;
 use crate::{EntityId, Result, Vault};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_model::llm::ScopeResource;
 
 mod candidates;
@@ -610,7 +611,7 @@ fn readable_notes(
         let sealed_pad = sealed_pad.then_some(PadAsk::First {
             keep: !keep.is_empty(),
         });
-        let fingerprint = *blake3::hash(stored.as_bytes()).as_bytes();
+        let fingerprint = *ContentHash::of(stored.as_bytes()).as_bytes();
         let seen = SEEN
             .get(&vault.store, &txn, id)?
             .filter(|seen| seen.fingerprint == fingerprint);

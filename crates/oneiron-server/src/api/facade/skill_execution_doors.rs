@@ -11,12 +11,12 @@ use oneiron::memory::{
     HostWriteOrigin, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError,
     MemoryResult,
 };
-use oneiron::runtime_hooks::InvocationId;
+use oneiron::runtime_hooks::{InvocationId, VerbHookPre};
 use oneiron::task_verb::sdk::{
     self, LiveRunRequest, SkillPackCreditRequest, SkillPackOutcomeRequest, SkillPackReceipt,
     SkillPackReceiptRequest,
 };
-use oneiron::{ModelId, WriteActor};
+use oneiron::{EntityId, ModelId, WriteActor};
 
 use super::host_doors::support::{
     Listed, MaybeListed, internal, owner_proof, refused, with_calling_origin,
@@ -31,14 +31,17 @@ use crate::server::{LiveRunCaller, LiveRunRefusal, SyncServer};
 /// ([`oneiron::engine_executor::execute_live_skill_call_listing`]): `None`
 /// when one nested answer kept no set, never `[]` read off the SKILL id. A
 /// refusal before the call runs, or after it for a revoked credential, lists
-/// none.
+/// none. `outer_hooks_live` is the generated facade's own pre chain's state
+/// for this call (`!VerbHookPre::passed_through()`), carried to the admitted
+/// entry it calls: that entry reads no binding for it again.
 pub(crate) async fn self_skills_call(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     session: Option<oneiron::EntityId>,
     input: LiveRunRequest<oneiron::code_run::SkillCallInput>,
+    outer_hooks_live: bool,
 ) -> MaybeListed<serde_json::Value> {
-    skills_call(server, auth, session, input)
+    skills_call(server, auth, session, input, outer_hooks_live)
         .await
         .unwrap_or_else(|refusal| (Err(refusal), Some(Vec::new())))
 }
@@ -64,6 +67,7 @@ async fn skills_call(
     auth: &CoreAuth,
     session: Option<oneiron::EntityId>,
     input: LiveRunRequest<oneiron::code_run::SkillCallInput>,
+    outer_hooks_live: bool,
 ) -> MemoryResult<MaybeListed<serde_json::Value>> {
     const VERB: &str = "self.skills.call";
     if session.is_some() {
@@ -145,6 +149,7 @@ async fn skills_call(
             &model,
             input.spec,
             (runtime.as_mut(), provider.code_check()),
+            outer_hooks_live,
         );
         // A revoked credential receives no result, even if it died mid-call.
         let proof = auth.verified_slip().ok_or_else(credential_required)?;
@@ -157,6 +162,86 @@ async fn skills_call(
     })
     .await
     .map_err(|_| internal(VERB))?
+}
+
+/// The attached run an admitted `self.skills.call` ran on, for its
+/// post-hook view spill: the run its own `live_run` handle names. The door
+/// resolved and ran under this same handle — its pre chain's args, which the
+/// door decoded and nothing after it changes — so the parsed run is the run
+/// the call's record stands on. `None` when the handle is absent or
+/// malformed, which a call whose door ran never is.
+pub(crate) fn skill_call_spill_run(hooks: &VerbHookPre) -> Option<EntityId> {
+    hooks
+        .args
+        .get("live_run")?
+        .as_str()
+        .and_then(oneiron::code_run::live_run::parse_live_run_handle)
+        .map(|(run, _)| run)
+}
+
+/// An admitted skill call's post-hook view as its caller reads it: spilled
+/// and bound to the run as a readable result when it is too large for one
+/// reply, else the view itself, exactly as the facade answered before. A
+/// spill that fails — the run went while its post chain ran, or another
+/// writer kept landing first — falls back to the view inline: the caller
+/// still gets the data its hooks judged for it. Runs off the async runtime.
+pub(crate) async fn spill_admitted_skill_view(
+    server: &Arc<SyncServer>,
+    run: Option<EntityId>,
+    view: serde_json::Value,
+    rows: Option<Vec<EntityId>>,
+) -> serde_json::Value {
+    let Some(run) = run else {
+        return view;
+    };
+    if encoded_len(&view) <= oneiron::engine_executor::RESULT_REPLY_INLINE_BYTES {
+        return view;
+    }
+    let fallback = view.clone();
+    let server = Arc::clone(server);
+    let spilled = super::clock_ingress::run_blocking(move || {
+        oneiron::engine_executor::spill_admitted_skill_view(&server.vault, run, view, rows)
+    })
+    .await;
+    match spilled {
+        Ok(Ok(card)) => card,
+        Ok(Err(error)) => {
+            tracing::warn!(
+                run = %run.to_hex(),
+                error = ?error,
+                "an admitted skill call's large view stays inline: its spill failed"
+            );
+            fallback
+        }
+        Err(error) => {
+            tracing::warn!(
+                run = %run.to_hex(),
+                %error,
+                "an admitted skill call's large view stays inline: its spill did not finish"
+            );
+            fallback
+        }
+    }
+}
+
+/// Bytes `value` takes as JSON, holding none of them.
+fn encoded_len(value: &serde_json::Value) -> usize {
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.saturating_add(bytes.len());
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    match serde_json::to_writer(&mut count, value) {
+        Ok(()) => count.0,
+        Err(_) => usize::MAX,
+    }
 }
 
 fn credential_required() -> MemoryError {

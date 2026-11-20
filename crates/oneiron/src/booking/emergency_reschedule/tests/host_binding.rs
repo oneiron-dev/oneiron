@@ -86,6 +86,40 @@ fn two_host_page(vault: &Vault, routing: RoutingMode, first_available: bool) -> 
     config
 }
 
+/// The two-host page with the vault's owner as the second host. The first
+/// host is another PERSON, who holds no owner verb on this personal vault
+/// (the live owner census), so the host the solver binds past a busy first
+/// host is the one who plans the booking's emergency reschedule.
+fn owner_second_host_page(
+    vault: &Vault,
+    routing: RoutingMode,
+    first_available: bool,
+) -> EventTypeConfig {
+    let mut config = two_host_page(vault, routing, true);
+    config.hosts.reverse();
+    if !first_available {
+        config.hosts[0].working_hours[0].end_minute = 30;
+    }
+    replace_config(vault, config.clone());
+    config
+}
+
+/// Binds the host key to `person` as `human` and asks it to log an owner
+/// instruction: accepted only for a live owner of this vault.
+fn owner_instruction_accepted_for(vault: &Vault, person: u8) -> bool {
+    crate::test_util::bind_test_owner(vault, id(person));
+    let req = request();
+    append_owner_instruction(
+        vault,
+        id(person),
+        req.affected_window,
+        &req.reason,
+        req.action_policy,
+        NOW,
+    )
+    .is_ok()
+}
+
 fn confirm_with_real_solver(vault: &Vault) -> (ConfirmReceipt, SolveResult) {
     confirm_with_real_solver_in_zone(vault, "UTC")
 }
@@ -145,6 +179,7 @@ fn confirm_with_real_solver_in_zone(
             },
             constraint: None,
             visitor_tz: visitor_zone.to_owned(),
+            duration_min: None,
         })
         .unwrap();
     assert!(
@@ -218,14 +253,14 @@ fn bind_delivery(vault: &Vault, _event: EntityId, owner: u8) {
 #[test]
 fn either_confirmation_persists_the_host_that_actually_offered_the_slot() {
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
-    let mut config = two_host_page(&vault, RoutingMode::Either, false);
+    let mut config = owner_second_host_page(&vault, RoutingMode::Either, false);
     let (receipt, solved) = confirm_with_real_solver(&vault);
     assert_eq!(
         solved.host_bindings,
         vec![SlotHostBinding {
             start_utc: NOW + 3_600,
             end_utc: NOW + 5_400,
-            host_refs: vec![id(OTHER).to_hex()],
+            host_refs: vec![id(OWNER).to_hex()],
             host_zones: vec!["UTC".to_owned()],
         }]
     );
@@ -235,8 +270,8 @@ fn either_confirmation_persists_the_host_that_actually_offered_the_slot() {
     )
     .unwrap()
     .unwrap();
-    assert_eq!(context.owner_refs, vec![id(OTHER).to_hex()]);
-    let owner = request_as(&vault, OTHER);
+    assert_eq!(context.owner_refs, vec![id(OWNER).to_hex()]);
+    let owner = request_as(&vault, OWNER);
     let before = enumerate_affected_bookings(&vault, &owner, NOW).unwrap();
     assert_eq!(before.len(), 1);
     // Both hosts are now available and the routing mode/order also changes.
@@ -249,13 +284,13 @@ fn either_confirmation_persists_the_host_that_actually_offered_the_slot() {
         enumerate_affected_bookings(&vault, &owner, NOW).unwrap(),
         before
     );
-    bind_delivery(&vault, receipt.calendar.event_ref, OTHER);
+    bind_delivery(&vault, receipt.calendar.event_ref, OWNER);
     let batch = plan_emergency_reschedule(&vault, &owner, &host_calendars(), NOW).unwrap();
     assert!(batch.refusals.is_empty(), "{:?}", batch.refusals);
     assert_eq!(batch.plans.len(), 1);
     assert_eq!(
         batch.plans[0].booking.context.owner_refs,
-        vec![id(OTHER).to_hex()]
+        vec![id(OWNER).to_hex()]
     );
     for proposal in &batch.plans[0].proposals {
         let result = solve_live(
@@ -273,48 +308,27 @@ fn either_confirmation_persists_the_host_that_actually_offered_the_slot() {
             result
                 .host_bindings
                 .iter()
-                .all(|binding| binding.host_refs == vec![id(OTHER).to_hex()])
+                .all(|binding| binding.host_refs == vec![id(OWNER).to_hex()])
         );
         assert!(!result.host_bindings.is_empty());
     }
-    let non_owner = request_as(&vault, OWNER);
-    assert!(
-        enumerate_affected_bookings(&vault, &non_owner, NOW)
-            .unwrap()
-            .is_empty()
-    );
-    assert!(
-        plan_emergency_reschedule(&vault, &non_owner, &host_calendars(), NOW)
-            .unwrap()
-            .plans
-            .is_empty()
-    );
-    let mut sink = spy(&vault, &batch.plans[0]);
-    let unchanged = (meta(&vault), entities(&vault));
-    assert!(
-        execute_emergency_plan(
-            &vault,
-            &non_owner,
-            &batch.plans[0],
-            &host_calendars(),
-            &consumer(&vault, NOW),
-            &mut sink
-        )
-        .is_err()
-    );
-    assert!(sink.calls.is_empty());
-    assert_eq!((meta(&vault), entities(&vault)), unchanged);
+    // The other host is no owner of this personal vault: bound as a human,
+    // it cannot log the owner instruction every enumeration, plan and
+    // execution needs, so it reaches this booking by no emergency door. Two
+    // owner hosts, where a non-host owner enumerates nothing, need a shared
+    // vault (FIX [EMERGENCY-RESCHEDULE-TWO-OWNER-HOST-TESTS]).
+    assert!(!owner_instruction_accepted_for(&vault, OTHER));
 }
 
 #[test]
 fn removing_selected_host_refuses_planning_instead_of_assigning_another_owner() {
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
-    let mut config = two_host_page(&vault, RoutingMode::Either, false);
+    let mut config = owner_second_host_page(&vault, RoutingMode::Either, false);
     let (receipt, _) = confirm_with_real_solver(&vault);
-    config.hosts.retain(|host| host.host_ref == id(OWNER));
+    config.hosts.retain(|host| host.host_ref == id(OTHER));
     config.hosts[0].working_hours[0].end_minute = 1440;
     replace_config(&vault, config);
-    let owner = request_as(&vault, OTHER);
+    let owner = request_as(&vault, OWNER);
     let batch = plan_emergency_reschedule(&vault, &owner, &host_calendars(), NOW).unwrap();
     assert!(batch.plans.is_empty());
     assert_eq!(batch.refusals.len(), 1);
@@ -324,10 +338,17 @@ fn removing_selected_host_refuses_planning_instead_of_assigning_another_owner() 
             .1
             .contains("original hosts are unavailable")
     );
-    assert!(
-        enumerate_affected_bookings(&vault, &request_as(&vault, OWNER), NOW)
-            .unwrap()
-            .is_empty()
+    // The booking stays with the host that offered it: the remaining host is
+    // never assigned in its place.
+    assert_eq!(
+        crate::booking::lifecycle::booking_confirmation_context(
+            &vault,
+            &receipt.calendar.event_ref
+        )
+        .unwrap()
+        .unwrap()
+        .owner_refs,
+        vec![id(OWNER).to_hex()]
     );
 }
 
@@ -470,7 +491,7 @@ fn ordinary_reschedule_rechecks_only_confirmation_bound_hosts() {
 }
 
 #[test]
-fn both_secondary_owner_and_rotated_sender_keep_the_actual_initial_organizer() {
+fn a_rotated_sender_keeps_the_actual_initial_organizer() {
     use crate::channel_identity::{
         ChannelIdentityBinding, ChannelIdentityState, ChannelIdentityStep, SelfHeldShape,
     };
@@ -508,9 +529,12 @@ fn both_secondary_owner_and_rotated_sender_keep_the_actual_initial_organizer() {
         NOW + 1,
     );
     vault.create_channel_identity(&id(0x7d), &rotated).unwrap();
+    // The organizer plans: the other host is no owner of this personal vault
+    // (the live owner census). A secondary owner host who plans needs a shared
+    // vault (FIX [EMERGENCY-RESCHEDULE-TWO-OWNER-HOST-TESTS]).
     let batch = plan_emergency_reschedule(
         &vault,
-        &request_as(&vault, OTHER),
+        &request_as(&vault, OWNER),
         &host_calendars(),
         NOW + 1,
     )

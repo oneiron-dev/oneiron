@@ -3,6 +3,7 @@ use super::super::booking_anti_abuse::{cached_slot_list_body, remember_slot_list
 use super::helpers::domain_digest;
 use super::*;
 use oneiron::booking::BookingPagePublication;
+use oneiron::booking::agent_api::GrantedBusyView;
 use oneiron::booking::publication::PublicBookingAuthority;
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +34,7 @@ fn query(input: &BookingAvailabilityInput, authority: &PublicBookingAuthority) -
     let material = serde_json::to_vec(&serde_json::json!({
         "event_type": input.event_type, "window": {"start": input.window.start, "end": input.window.end},
         "visitor_tz": input.visitor_tz, "constraint": input.constraint, "authority": authority,
+        "duration_min": input.duration_min,
     }))
     .ok()?;
     let digest = domain_digest(QUERY_DIGEST_DOMAIN, &material);
@@ -43,24 +45,33 @@ pub(super) fn validate_public_request(
     publication: &BookingPagePublication,
     request: &BookingOperationRequest,
 ) -> Result<(), ApiError> {
-    let (event, has_constraint) = match request {
-        BookingOperationRequest::Availability(input) => {
-            (&input.event_type, input.constraint.is_some())
-        }
+    let (event, has_constraint, duration_min) = match request {
+        BookingOperationRequest::Availability(input) => (
+            &input.event_type,
+            input.constraint.is_some(),
+            input.duration_min,
+        ),
         BookingOperationRequest::Book(BookingBookInput::Hold(input)) => {
-            (&input.event_type, input.constraint.is_some())
+            (&input.event_type, input.constraint.is_some(), None)
         }
         _ => return Ok(()),
     };
-    if !publication
-        .event_types
-        .iter()
-        .any(|card| card.key == *event)
-        || (has_constraint && !publication.constraint_field.enabled)
+    // A length off the card is not part of this publication, as an unlisted
+    // event type is not (BK-VARIABLE-DURATION).
+    if !publication.event_types.iter().any(|card| {
+        card.key == *event
+            && duration_min.is_none_or(|minutes| card_offers_minutes(card, u32::from(minutes)))
+    }) || (has_constraint && !publication.constraint_field.enabled)
     {
         return Err(public::public_booking_not_found());
     }
     Ok(())
+}
+
+/// Whether an event card offers a meeting of `minutes`: its default length,
+/// or one of the lengths it lists for the visitor to pick.
+pub(super) fn card_offers_minutes(card: &oneiron::booking::EventTypeCard, minutes: u32) -> bool {
+    minutes == card.duration_min || card.allowed_durations_min.contains(&minutes)
 }
 
 pub(super) fn recheck(
@@ -162,6 +173,7 @@ pub(super) fn solve(
         window: input.window,
         constraint,
         visitor_tz: input.visitor_tz.clone(),
+        duration_min: input.duration_min,
     };
     let producers = oneiron::memory::ProducerRows::default();
     let (oracle, mut sources) =
@@ -194,6 +206,7 @@ pub(super) fn solve(
         slots,
         flex_used,
         full_days,
+        busy: None,
     };
     remember_response(
         server,
@@ -204,6 +217,56 @@ pub(super) fn solve(
         &sources,
     )?;
     Ok((response, sources))
+}
+
+/// The caller's own grant view for one availability request (ARCH-0062
+/// #grant-view; owner ruling BOOKING-GRANT-VIEW = A, 2026-10-20), beside the
+/// rows it read: the calendar grants that decided it and the rows its busy
+/// union read. It is judged for `caller` at `now` on every answer, outside the
+/// slot cache, whose entries stay caller-free and never hold it. `None` when
+/// no host's every bound calendar is named by one of `caller`'s live grants.
+pub(super) fn granted_view(
+    server: &Arc<SyncServer>,
+    page_ref: EntityId,
+    input: &BookingAvailabilityInput,
+    caller: EntityId,
+    now: u64,
+) -> Result<(Option<Vec<GrantedBusyView>>, Vec<EntityId>), ApiError> {
+    let request = SolveRequest {
+        event_type: input.event_type.clone(),
+        window: input.window,
+        // A constraint or an asked length narrows which slots are offered,
+        // never which time is busy, so the view is solved without them.
+        constraint: None,
+        visitor_tz: input.visitor_tz.clone(),
+        duration_min: None,
+    };
+    let producers = oneiron::memory::ProducerRows::default();
+    let (oracle, _) = lifecycle::booking_oracle_listing(server, page_ref, None, now, &producers)?;
+    let view = oracle.granted_busy(&request, &caller)?;
+    Ok((view, producers.take()))
+}
+
+/// `response` with `view` as its grant view, when it is an availability
+/// answer; any other answer unchanged.
+pub(super) fn with_granted_view(
+    response: BookingOperationResponse,
+    view: Option<Vec<GrantedBusyView>>,
+) -> BookingOperationResponse {
+    match response {
+        BookingOperationResponse::Availability {
+            slots,
+            flex_used,
+            full_days,
+            ..
+        } => BookingOperationResponse::Availability {
+            slots,
+            flex_used,
+            full_days,
+            busy: view,
+        },
+        other => other,
+    }
 }
 
 /// Replaces caller-supplied constraint input with a canonical object.

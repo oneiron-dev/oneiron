@@ -90,6 +90,9 @@ pub(super) fn admit_federated_authority_log(
             &mut |hash| {
                 crate::authority::door_ancestor_row(&vault.store, txn, evidence.as_deref(), hash)
             },
+            &mut |hash| {
+                crate::authority::authority_row_held(&vault.store, txn, evidence.as_deref(), hash)
+            },
         )?
     {
         return Err(Error::Record(RecordError::InvalidAuthorityLogBody(

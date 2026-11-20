@@ -9,7 +9,8 @@
 //!    scripted backend, and one owner turn ([`SAID`], `vault.witness`);
 //! 2. the vault opened as its process owner, and a Dreamer turn wake over the
 //!    turn, its model calls answered by [`TURN_WAKE_CALLS`]: the extraction
-//!    lands one claim;
+//!    lands one claim. A pass that leaves its script ends the day here
+//!    ([`run`]);
 //! 3. the owner remembers a claim (`vault.remember`);
 //! 4. the owner makes an agent and grants it reads (`vault.agents.create`,
 //!    `vault.agents.grants.mint`);
@@ -79,7 +80,7 @@ pub const TURN_WAKE_CALLS: &[(&str, &str)] = &[
         r#"{"readings":[{"span":1,"kind":"name","novel":true,"confidence":90,"entity":null},{"span":2,"kind":"name","novel":true,"confidence":90,"entity":null}]}"#,
     ),
     (
-        "78d9143fe540c8d87f9f1c3807d66bd8622baf605aaa7e445e123a51655ea334",
+        "fd552e2249e1dc35060cbe0e05fb6a177cc1603fe5cf9d108e5b310003db8796",
         r#"{"candidates":[{"subject":"P1","predicate":"residence.city","value":"Lisbon","confidence":0.9,"evidence_refs":[{"source":"T1","quote":"I moved to Lisbon last March"}]}],"persons":[]}"#,
     ),
 ];
@@ -235,12 +236,15 @@ pub fn backend() -> ScriptedBackend {
 }
 
 /// Runs the day once on a fresh vault, its model calls answered by
-/// `backend` ([`backend`]). Call `backend.finish()` afterwards: an
-/// unscripted model call fails there, with its prompt and digest.
+/// `backend` ([`backend`]). Call `backend.finish()` afterwards.
 ///
 /// # Errors
-/// The seed, the open or the owner failed: the day did not run. A step that
-/// refuses is recorded, not returned.
+/// The seed, the open or the owner failed: the day did not run. The Dreamer
+/// pass left its script (a model call the script does not answer, with its
+/// prompt and digest, or a step it never asked for): the day ends right after
+/// the pass. The engine answers an unscripted extraction with its empty
+/// fallback, so the rest of the day would run on a pass that read nothing.
+/// A step that refuses is recorded, not returned.
 pub fn run(backend: &ScriptedBackend) -> Result<GoldenDayRun, GoldenDayError> {
     let mut day = Day::default();
     let test_vault = TestVault::seeded(SCRIPT, |vault, clock| day.seed(vault, clock))
@@ -256,6 +260,9 @@ pub fn run(backend: &ScriptedBackend) -> Result<GoldenDayRun, GoldenDayError> {
     let pass = crate::dreamer::DreamerPass::new(backend)
         .with_run_id(PASS_RUN_ID)
         .run_turn_wake(&vault, clock);
+    backend
+        .check()
+        .map_err(|mismatch| failed("the Dreamer pass left its script", mismatch))?;
     day.record_pass(clock, pass);
     clock.advance(STEP_SECS);
 

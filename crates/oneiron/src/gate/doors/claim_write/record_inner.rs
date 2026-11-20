@@ -23,6 +23,49 @@ pub(super) fn isolation_class(
     dreamer_isolation_class(predicate)
 }
 
+/// Whether the receipt a preflight recorded is this candidate's (FIX 8752,
+/// ONE-1419): equal to the decision apply judged in every part, or, for a
+/// candidate the mask on write rewrote after its preflight, in every part
+/// but the diff handle, which then names exactly the pre-mask body the
+/// preflight judged (`pre_mask_diff`). The stored body is that body as the
+/// mask on write rewrote it: custody handles in place of what it lifts, and
+/// for a MACHINE candidate the proof renewed over those bytes (FIX 11356)
+/// (CHECKER-PREVIEW-READS-UNMASKED-CANDIDATE).
+fn preflight_receipt_matches(
+    preflight: &crate::store::GateDecisionRecord,
+    applied: &crate::store::GateDecisionRecord,
+    pre_mask_diff: Option<[u8; 32]>,
+) -> bool {
+    if gate_decision_matches_pending_candidate(preflight, applied) {
+        return true;
+    }
+    pre_mask_diff.is_some_and(|judged| {
+        preflight.diff_handle == judged && {
+            let mut judged_candidate = applied.clone();
+            judged_candidate.diff_handle = judged.to_vec();
+            gate_decision_matches_pending_candidate(preflight, &judged_candidate)
+        }
+    })
+}
+
+/// Whether the auto checker may read `predicate`, the claim `id`'s, as
+/// written: the door's plan for the claim's text places nothing in it (no
+/// value custody holds, no secret its rules detect, none the owner kept as
+/// text there). The checker's request carries the predicate verbatim, so one
+/// the plan would change is never sent (review 9216 round 2 P1).
+fn predicate_reaches_checker_as_written(
+    store: &Store,
+    wtxn: &heed::RwTxn<'_>,
+    id: EntityId,
+    predicate: &str,
+) -> Result<bool> {
+    let written = rmpv::Value::from(predicate);
+    Ok(
+        crate::batch::secret_scan::plan_masked_claim_value_in_txn(store, wtxn, id, &written)?
+            .is_some_and(|planned| planned == written),
+    )
+}
+
 // The inner executor carries the outer record seam's axis tuple plus the
 // preflight identity exactly once; a parameter struct would only rename the
 // same boundary.
@@ -38,7 +81,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
     recorded_decision: &mut Option<RecordedClaimGateDecision>,
-    preflight_decision_id: Option<GateDecisionId>,
+    preflight_receipt: Option<PreflightReceipt>,
     operation_effect_body: bool,
     skip_precommit: bool,
     reader: Option<&crate::claim::ScopedRead<'_>>,
@@ -344,7 +387,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
             && !attach_critical_confirm
             && checked_producer
             && (policy.auto_checker().is_some() || verdict_binding.is_some())
-            && preflight_decision_id.is_none()
+            && preflight_receipt.is_none()
             && let Some(source) = body.source.filter(|source| {
                 source.requires_explicit_auto_permit()
                     || lineage.is_some_and(SourceLineage::requires_explicit_auto_permit)
@@ -354,7 +397,26 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
             // A value the preview cannot hold whole is never sent: the
             // checker would answer for a prefix while the write stores the
             // rest. With no checker to ask, the write is held below.
-            let value_preview = auto_check_value_preview(&body.value);
+            // The checker reads the value as the door's plan predicts the
+            // write stores it, before base apply masks it: a copy with each
+            // secret under a stand-in handle, so no credential reaches a rung
+            // that may run off the device. A copy that still holds one is not
+            // whole either (CHECKER-PREVIEW-READS-UNMASKED-CANDIDATE).
+            let value_preview = crate::batch::secret_scan::plan_masked_claim_value_in_txn(
+                store,
+                &*wtxn,
+                *id,
+                &body.value,
+            )?
+            .and_then(|planned| auto_check_value_preview(&planned));
+            // The checker reads the predicate as written, so a predicate
+            // that holds a secret (a value custody holds, or one the door's
+            // rules detect) is never sent either: no checker is asked, and
+            // the write is held below as for a value it cannot see whole
+            // (review 9216 round 2 P1).
+            let predicate_as_written =
+                predicate_reaches_checker_as_written(store, &*wtxn, *id, &body.predicate)?;
+            let value_preview = value_preview.filter(|_| predicate_as_written);
             if value_preview.is_none() {
                 checker_receipt_reasons.push(CHECKER_PARTIAL_VIEW_RECEIPT_REASON.to_owned());
             }
@@ -512,11 +574,13 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         // write lands held, and the writer below binds that receipt's pending
         // row instead of dropping the hold. A fresh Deny or Pending stands.
         if decision.outcome() == GateOutcome::Allow
-            && let Some(preflight_id) = preflight_decision_id
+            && let Some(receipt) = preflight_receipt
         {
-            let preflight = store.gate_decision_in_txn(&*wtxn, preflight_id)?.ok_or(
-                Error::InvariantViolation("preflight gate decision missing during apply"),
-            )?;
+            let preflight = store
+                .gate_decision_in_txn(&*wtxn, receipt.decision)?
+                .ok_or(Error::InvariantViolation(
+                    "preflight gate decision missing during apply",
+                ))?;
             let checker_hold = [
                 GateReasonCode::PendingChecker,
                 GateReasonCode::PendingCheckerUnavailable,
@@ -548,7 +612,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
                 held.reason_codes.clone_from(&preflight.reason_codes);
                 held.receipt_reasons.clone_from(&preflight.receipt_reasons);
                 held.grant_ref.clone_from(&preflight.grant_ref);
-                if !gate_decision_matches_pending_candidate(&preflight, &held) {
+                if !preflight_receipt_matches(&preflight, &held, receipt.pre_mask_diff) {
                     return Err(Error::InvariantViolation(
                         "preflight gate decision does not match pending candidate",
                     ));
@@ -597,17 +661,22 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         {
             let pending_decision = if mode.record_decision {
                 decision_record.clone()
-            } else if let Some(decision_id) = preflight_decision_id {
-                let record = store.gate_decision_in_txn(&*wtxn, decision_id)?.ok_or(
-                    Error::InvariantViolation(
+            } else if let Some(receipt) = preflight_receipt {
+                let record = store
+                    .gate_decision_in_txn(&*wtxn, receipt.decision)?
+                    .ok_or(Error::InvariantViolation(
                         "preflight gate decision missing during pending bind",
-                    ),
-                )?;
-                if !gate_decision_matches_pending_candidate(&record, &decision_record) {
+                    ))?;
+                if !preflight_receipt_matches(&record, &decision_record, receipt.pre_mask_diff) {
                     return Err(Error::InvariantViolation(
                         "preflight gate decision does not match pending candidate",
                     ));
                 }
+                // The pending row binds the body this write stores, the one
+                // an owner's answer is judged against; the receipt named it
+                // before the mask wrote its handles.
+                let mut record = record;
+                record.diff_handle.clone_from(&decision_record.diff_handle);
                 record
             } else {
                 // Caller-owned transactions have no same-transaction preflight

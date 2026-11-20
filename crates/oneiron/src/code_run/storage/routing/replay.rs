@@ -82,8 +82,8 @@ impl SessionBinding<'_> {
         let fenced = self.composed_fold_answers(Cow::Borrowed(record))?;
         let record: &CodeRunReplayRecord = &fenced;
         // An overlay record of a run whose actor is gone lands erased, in
-        // the same writer (FIX 7366).
-        let run_id = record.run_id;
+        // the same writer (FIX 7366), fenced before any put of it: its raw
+        // form never meets the wall (FIX FENCE-ERASED-FORM-THROUGH-WALL).
         match healed_model {
             Some(model) => self
                 .session
@@ -91,19 +91,16 @@ impl SessionBinding<'_> {
                     &self.route,
                     &REPLAY_RECORDS,
                     &record.run_id,
-                    record,
+                    |txn, write| {
+                        let fenced =
+                            fence_overlay_replay_in_txn(&write, txn, Cow::Borrowed(record), None)?;
+                        replay_rows::put_fenced(&write, txn, &fenced)
+                    },
                     |stored| replay_generation_matches(replay_generation_of(stored)?, expected),
                     &MODEL_HEAL_COUNTS,
                     &model.as_str().to_owned(),
                     next_additive_heal_count,
                     |txn, write| {
-                        // The helper put `record`; its erased form, when it
-                        // is one, replaces it in the same segment.
-                        let fenced =
-                            fence_overlay_replay_in_txn(&write, txn, Cow::Borrowed(record), None)?;
-                        if let Cow::Owned(erased) = fenced {
-                            replay_rows::put(&write, txn, &run_id, &erased)?;
-                        }
                         prepare(txn, write, write)?;
                         also(txn, write)
                     },
@@ -117,7 +114,7 @@ impl SessionBinding<'_> {
                     prepare(txn, read, write)?;
                     let record =
                         fence_overlay_replay_in_txn(&write, txn, Cow::Borrowed(record), None)?;
-                    replay_rows::put(&write, txn, &run_id, &record)?;
+                    replay_rows::put_fenced(&write, txn, &record)?;
                     also(txn, write)
                 }),
         }
@@ -158,7 +155,7 @@ impl SessionBinding<'_> {
                         RoutedDbs::Base(vault) => {
                             stamp_response_owner_in_txn(vault, wtxn, record.run_id, run, actor)?;
                             let record = fence_replay_in_txn(vault, wtxn, Cow::Borrowed(record))?;
-                            replay_rows::put(vault, wtxn, &record.run_id, &record)
+                            replay_rows::put_fenced(vault, wtxn, &record)
                         }
                         RoutedDbs::Session(_) => {
                             stamp_response_owner_in_txn(&write, wtxn, record.run_id, run, actor)?;
@@ -168,7 +165,7 @@ impl SessionBinding<'_> {
                                 Cow::Borrowed(overlay_record),
                                 Some((run, actor)),
                             )?;
-                            replay_rows::put(&write, wtxn, &record.run_id, &record)
+                            replay_rows::put_fenced(&write, wtxn, &record)
                         }
                     }
                 })
@@ -215,7 +212,7 @@ fn put_base_replay_in_txn(
     };
     prepare(txn, read, write)?;
     let record = fence_replay_in_txn(vault, txn, Cow::Borrowed(record))?;
-    replay_rows::put(vault, txn, &record.run_id, &record)?;
+    replay_rows::put_fenced(vault, txn, &record)?;
     if let Some(model) = healed_model {
         let key = model.as_str().to_owned();
         let base = MODEL_HEAL_COUNTS.get(&vault.store, txn, &key)?;

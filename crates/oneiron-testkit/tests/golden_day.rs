@@ -16,7 +16,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use oneiron_testkit::dreamer::print_seen;
+use oneiron_testkit::dreamer::{print_seen, scripted_backend};
 use oneiron_testkit::golden_day::{self, GOLDEN_FILE, GoldenDayRun, MEASURED, Normaliser, render};
 use serde_json::{Value, json};
 
@@ -41,7 +41,8 @@ fn run_day(label: &str) -> (GoldenDayRun, Value) {
             println!("## GOLDEN-DAY UNKNOWN {label} {line}");
         }
     }
-    // An unscripted model call fails here first, with its prompt and digest.
+    // A model call after the Dreamer pass that the script does not answer
+    // fails here, with its prompt and digest.
     backend.finish();
     let normalised = normalised.unwrap_or_else(|error| panic!("{error}"));
     (run, normalised)
@@ -69,6 +70,24 @@ fn differing_lines(old: &str, new: &str) -> Vec<String> {
 /// Whether `answer` names `claim` anywhere in it.
 fn names(answer: &Value, claim: &str) -> bool {
     answer.to_string().contains(claim)
+}
+
+/// A Dreamer pass that leaves its script ends the day right after the pass,
+/// naming the unscripted call: the extraction is left out of the script here.
+#[test]
+fn a_dreamer_pass_that_leaves_its_script_ends_the_day_with_the_unscripted_call() {
+    let backend = scripted_backend(golden_day::SCRIPT, &golden_day::TURN_WAKE_CALLS[..1]);
+    let Err(error) = golden_day::run(&backend) else {
+        panic!("the day ran on after a Dreamer pass that left its script");
+    };
+    let error = error.to_string();
+    assert!(
+        error.contains("the Dreamer pass left its script")
+            && error.contains("no scripted reply for prompt digest"),
+        "{error}"
+    );
+    let finish = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| backend.finish()));
+    assert!(finish.is_err(), "finish() passed a script the pass left");
 }
 
 #[test]

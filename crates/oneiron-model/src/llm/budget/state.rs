@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use super::dispatch::DispatchBinding;
 use super::ledger::{
-    BudgetRowTally, FloorAllocation, LeaseRecord, LeaseState, ReserveAllocation, ReservePlan,
+    BudgetRowTally, FloorAllocation, LeaseEntry, LeaseRecord, ReserveAllocation, ReservePlan,
 };
 use super::policy::{BudgetPolicyRow, BudgetPolicyTable};
 use super::types::{BudgetAdmission, BudgetExhaustionPolicy, BudgetRead, BudgetThreshold};
@@ -19,10 +19,23 @@ pub(super) struct BudgetState {
     pub(super) limit_units: u64,
     pub(super) reserve_units: u64,
     pub(super) on_budget_exhausted: BudgetExhaustionPolicy,
+    /// A hard line no admission passes, whatever the exhaustion policy adds
+    /// to the limit: a live spend scope's room as its lease last read it
+    /// (`BudgetGuard::revise_ceiling`). `None` bounds nothing. It is not
+    /// checkpointed: a restored meter's lease reads it again.
+    pub(super) ceiling_units: Option<u64>,
+    /// The caller's id of the last overdraft grant this meter took
+    /// (`BudgetGuard::grant_overdraft`), so the same grant never widens it
+    /// twice. Checkpointed with the meter.
+    pub(super) overdraft_grant: Option<u64>,
     pub(super) used_units: u64,
     pub(super) reserved_units: u64,
     pub(super) next_lease_seq: u64,
     pub(super) fired_thresholds: BTreeSet<BudgetThreshold>,
+    /// The open leases, by id. A lease leaves as it settles or aborts, so a
+    /// line that lives as long as the server holds no record per call it ever
+    /// made; a closed lease answers through its handle's cell
+    /// (FIX BUDGET-LINE-LEASE-TABLE-UNBOUNDED).
     pub(super) leases: BTreeMap<String, LeaseRecord>,
     /// Engine-stamped actor this meter is bound to, for actor selectors.
     pub(super) actor: Option<EntityId>,
@@ -60,6 +73,8 @@ impl BudgetState {
             limit_units,
             reserve_units,
             on_budget_exhausted,
+            ceiling_units: None,
+            overdraft_grant: None,
             used_units: 0,
             reserved_units: 0,
             next_lease_seq: 0,
@@ -84,11 +99,14 @@ impl BudgetState {
         self.row_horizons = row_horizons(&self.policy, limit_units, self.total_floor_units);
     }
 
-    /// Refuses new work on a parked meter, before any reservation is planned.
-    /// Every issuance goes through [`Self::reserve_bound`] or
-    /// [`Self::issue_lease`], and both ask it first.
-    fn refuse_if_parked(&self) -> Result<(), BudgetDenied> {
-        if self.parked {
+    /// Refuses new work on a parked meter, and on a meter whose lease
+    /// sequence is spent, before any reservation is planned. Every issuance
+    /// goes through [`Self::reserve_bound`] or [`Self::issue_lease`], and
+    /// both ask it first. A spent sequence (a restored checkpoint can carry
+    /// any `next_lease_seq`) would issue its last id twice, and closing one
+    /// of the two leases would remove the other's record.
+    fn refuse_new_lease(&self) -> Result<(), BudgetDenied> {
+        if self.parked || self.next_lease_seq == u64::MAX {
             Err(BudgetDenied::AdmissionDenied)
         } else {
             Ok(())
@@ -101,6 +119,16 @@ impl BudgetState {
         } else {
             Err(BudgetDenied::LeaseInvalid)
         }
+    }
+
+    /// The lease as this meter answers for it, for a caller that checked its
+    /// provenance: its record while it is open, then what its handles keep;
+    /// `None` for a lease this meter never issued.
+    pub(super) fn lease_entry<'a>(&'a self, lease: &'a BudgetLease) -> Option<LeaseEntry<'a>> {
+        if let Some(record) = self.leases.get(lease.id()) {
+            return Some(LeaseEntry::Open(record));
+        }
+        lease.closed.get().map(LeaseEntry::Closed)
     }
 
     pub(super) fn reserve(&mut self, reserve_units: u64) -> Result<BudgetLease, BudgetDenied> {
@@ -124,7 +152,7 @@ impl BudgetState {
         purpose: Option<&CallPurpose>,
         binding: Option<DispatchBinding>,
     ) -> Result<BudgetLease, BudgetDenied> {
-        self.refuse_if_parked()?;
+        self.refuse_new_lease()?;
         if reserve_units == 0 {
             return Err(BudgetDenied::AdmissionDenied);
         }
@@ -314,10 +342,12 @@ impl BudgetState {
     }
 
     pub(super) fn cap_units(&self) -> u64 {
-        self.on_budget_exhausted.admission_cap(self.limit_units)
+        let cap = self.on_budget_exhausted.admission_cap(self.limit_units);
+        self.ceiling_units.map_or(cap, |ceiling| cap.min(ceiling))
     }
 
-    /// An unreserved lease (free local work). A parked meter refuses it.
+    /// An unreserved lease (free local work). A parked meter, or one whose
+    /// lease sequence is spent, refuses it.
     pub(super) fn issue_lease(
         &mut self,
         reserve_units: u64,
@@ -325,7 +355,7 @@ impl BudgetState {
         kind: &str,
         binding: Option<DispatchBinding>,
     ) -> Result<BudgetLease, BudgetDenied> {
-        self.refuse_if_parked()?;
+        self.refuse_new_lease()?;
         Ok(self.issue_lease_with(
             reserve_units,
             metered,
@@ -336,7 +366,9 @@ impl BudgetState {
     }
 
     /// The lease id stays `<attempt>:<kind>:<seq>`: row indices, actor refs,
-    /// and selector names never enter the public token.
+    /// and selector names never enter the public token. Its caller asked
+    /// [`Self::refuse_new_lease`] first, so the sequence advances and no id
+    /// is issued twice.
     pub(super) fn issue_lease_with(
         &mut self,
         reserve_units: u64,
@@ -353,13 +385,13 @@ impl BudgetState {
             LeaseRecord {
                 reserve_units,
                 metered,
-                state: LeaseState::Open,
                 matched_rows: allocation.matched_rows,
                 floor_allocations: allocation.floor_allocations,
                 shared_reserved_units: allocation.shared_units,
                 binding,
                 dispatched: false,
                 physical_attempts: lease.physical_attempt_evidence(),
+                closed: lease.closed.clone(),
             },
         );
         lease

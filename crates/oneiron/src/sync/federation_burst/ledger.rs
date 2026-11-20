@@ -1,8 +1,8 @@
 //! Payload-free batch receipts, kept after durable work completes.
 use super::{
-    DeferredWork, FederationBurstBaselineState, FederationBurstDecision,
-    FederationBurstDisposition, FederationBurstReceipt, FederationBurstWorkState, FederationPeer,
-    corrupt,
+    BurstPeer, DeferredWork, FederationBurstBaselineState, FederationBurstDecision,
+    FederationBurstDisposition, FederationBurstPeerRef, FederationBurstReceipt,
+    FederationBurstWorkState, corrupt,
 };
 use crate::store::Store;
 use crate::{Result, Vault};
@@ -16,20 +16,31 @@ fn key(id: &[u8; 32]) -> Vec<u8> {
 pub(super) fn load(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    peer: &FederationPeer,
+    peer: BurstPeer<'_>,
     id: &[u8; 32],
 ) -> Result<Option<FederationBurstReceipt>> {
     let Some(bytes) = vault.store.sync_queue.get(txn, &key(id))? else {
         return Ok(None);
     };
-    let row: FederationBurstReceipt = rmp_serde::from_slice(&bytes).map_err(|_| corrupt())?;
+    decode(&bytes, &peer.receipt_peer(), id).map(Some)
+}
+
+/// One stored receipt as the ledger reads it: the row must name the batch
+/// `id` and the peer `named`, else it is corrupt. A receipt stored before
+/// own devices had receipts names a federated peer by principal and grant,
+/// as one stored now does, so it reads unchanged (L7-41 keep path).
+pub(crate) fn decode(
+    bytes: &[u8],
+    named: &FederationBurstPeerRef,
+    id: &[u8; 32],
+) -> Result<FederationBurstReceipt> {
+    let row: FederationBurstReceipt = rmp_serde::from_slice(bytes).map_err(|_| corrupt())?;
     if row.batch_ref != blake3::Hash::from(*id).to_hex().to_string()
-        || row.principal != peer.principal()
-        || row.grant != peer.grant()
+        || row.peer().as_ref() != Some(named)
     {
         return Err(corrupt());
     }
-    Ok(Some(row))
+    Ok(row)
 }
 
 fn put(store: &Store, txn: &mut heed::RwTxn<'_>, row: &FederationBurstReceipt) -> Result<()> {
@@ -42,7 +53,7 @@ fn put(store: &Store, txn: &mut heed::RwTxn<'_>, row: &FederationBurstReceipt) -
 pub(super) fn record(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    peer: &FederationPeer,
+    peer: BurstPeer<'_>,
     work: &DeferredWork,
     decision: FederationBurstDecision,
     baseline: FederationBurstBaselineState,
@@ -63,13 +74,15 @@ pub(super) fn record(
             }
         }
     };
+    let named = peer.receipt_peer();
     put(
         &vault.store,
         txn,
         &FederationBurstReceipt {
             batch_ref,
-            principal: peer.principal(),
-            grant: peer.grant(),
+            principal: named.principal(),
+            grant: named.grant(),
+            device: named.device(),
             window_key: work.window.clone(),
             disposition,
             state: FederationBurstWorkState::Pending,
@@ -81,7 +94,7 @@ pub(super) fn record(
 pub(super) fn settle(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    peer: &FederationPeer,
+    peer: BurstPeer<'_>,
     work: &DeferredWork,
     state: FederationBurstWorkState,
 ) -> Result<()> {
@@ -122,7 +135,7 @@ impl Vault {
     pub fn federation_burst_disposition_as_owner(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
-        peer: &FederationPeer,
+        peer: BurstPeer<'_>,
         batch_ref: &str,
     ) -> Result<FederationBurstReceipt> {
         let id = crate::deletion::parse_hex::<32>(batch_ref)
@@ -136,7 +149,7 @@ impl Vault {
     /// Only this peer's own batch can be read through a peer door.
     pub fn federation_burst_disposition(
         &self,
-        peer: &FederationPeer,
+        peer: BurstPeer<'_>,
         batch_ref: &str,
     ) -> Result<FederationBurstReceipt> {
         let id = crate::deletion::parse_hex::<32>(batch_ref)

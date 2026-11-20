@@ -18,7 +18,7 @@ pub mod legal_clone;
 mod nonce;
 mod record;
 #[cfg(all(
-    any(test, feature = "stack-probe"),
+    any(test, feature = "stack-probe", oneiron_test_support),
     any(target_arch = "x86_64", target_arch = "aarch64"),
     any(target_os = "linux", target_os = "macos")
 ))]

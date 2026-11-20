@@ -127,6 +127,7 @@ fn speak_thread(vault: &Vault, speaker: EntityId, room: EntityId) -> TestResult<
             conversation_ref: room.to_hex(),
             turn_ref: Some(trunk.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(EntityId::now().to_hex()),
                 author: WitnessAuthor::User,
@@ -148,6 +149,7 @@ fn speak_thread(vault: &Vault, speaker: EntityId, room: EntityId) -> TestResult<
             conversation_ref: room.to_hex(),
             turn_ref: Some(thread.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(EntityId::now().to_hex()),
                 author: WitnessAuthor::User,
@@ -266,6 +268,7 @@ fn room_wake_run_works_in_the_waking_room() -> TestResult {
             conversation_ref: home_room.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(home_node.to_hex()),
                 author: WitnessAuthor::User,
@@ -306,6 +309,7 @@ fn room_wake_run_works_in_the_waking_room() -> TestResult {
             conversation_ref: room_a.to_hex(),
             turn_ref: Some(wake_turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(EntityId::now().to_hex()),
                 author: WitnessAuthor::User,

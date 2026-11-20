@@ -86,6 +86,11 @@ impl Vault {
     /// are excluded; a record a cleanup archive filed away goes with its
     /// retained body (FIX 21912). No caller can disable nulling.
     ///
+    /// Each TASK's authority facts go with it byte-exact: one true archive
+    /// keeps them, where a sync window bound for another vault withholds
+    /// them, and another chain's import refuses them (Engine ruling
+    /// TASK-FACT-ARCHIVE-CROSSING = A; `ForeignAuthorityChain`).
+    ///
     /// The owner's own archive carries custody secret values unless
     /// `include_secrets` is false (owner ruling 2026-10-17: "all your data is
     /// all your data"); then each custody record goes as its handle only.
@@ -662,17 +667,40 @@ impl Vault {
         // ruling 1-EXPORT = B), never with a records archive. A carried
         // record whose family names a carrier left out is named in the
         // manifest instead.
+        let mut side_table_omissions = Vec::new();
         if cut == ExportCut::Archive {
-            let (rows, withheld) = super::archive_side_rows_in_txn(
-                &self.store,
-                &rtxn,
-                &included,
-                only.is_none() && (owner_export || locality == CallerLocality::OnDevice),
-            )?;
+            let include_vault_wide =
+                only.is_none() && (owner_export || locality == CallerLocality::OnDevice);
+            let (rows, withheld) =
+                super::archive_side_rows_in_txn(&self.store, &rtxn, &included, include_vault_wide)?;
             for row in rows {
                 writer.side_row(row)?;
             }
             writer.side_rows_withheld(withheld);
+            // SIDE-1: the retained rows go only with an unscoped whole-vault archive, under
+            // the same vault-wide gate as the other vault-wide families; a records, OKF,
+            // scoped or projected export gets none. Collected into memory like the 41-family
+            // writer.
+            if scope == ExportScope::WholeVault && include_vault_wide {
+                for row in super::archive_retained_side_rows::collect_retained_side_rows_in_txn(
+                    &self.store,
+                    &rtxn,
+                )? {
+                    writer.side_row(row)?;
+                }
+                side_table_omissions =
+                    super::archive_retained_side_rows::omitted_side_table_counts_in_txn(
+                        &self.store,
+                        &rtxn,
+                    )?
+                    .into_iter()
+                    .map(|(table, reason, rows)| super::ArchiveSideTableOmission {
+                        table: table.to_owned(),
+                        reason,
+                        rows,
+                    })
+                    .collect();
+            }
         }
         // FIX 11844: a custody secret only the fold knows here is named for
         // its holder too, as a held row's unopened value is above.
@@ -718,6 +746,7 @@ impl Vault {
                         && cut == ExportCut::Archive,
                     fold_only_secrets,
                     embedding_setup,
+                    side_table_omissions,
                     sources: sources.into_iter().collect(),
                     signer,
                 },

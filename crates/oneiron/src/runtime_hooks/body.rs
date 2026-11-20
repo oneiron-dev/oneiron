@@ -49,6 +49,16 @@ pub trait HookBodyRuntime: Send + Sync {
     fn runtime_identity(&self) -> Option<String> {
         None
     }
+
+    /// The longest hook input, in bytes, this runtime runs a body with: a
+    /// longer input fails the run before the body starts. `None` when the
+    /// runtime caps nothing, so every input runs. The post chain's strict
+    /// skill-answer refusal reads it (SKILL-POST-HOOK-SEES-LARGE-ANSWER-CARD
+    /// P1-A): a blocking post hook whose input passed it never judged the
+    /// answer.
+    fn message_limit(&self) -> Option<usize> {
+        None
+    }
 }
 
 /// What one body run gave back.

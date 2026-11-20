@@ -8,8 +8,6 @@ pub use self::seal::{
     OpenKey, OpenPolicy, SealKey, SealParams, seal, seal_with_aad, seal_with_aad_into,
 };
 
-use std::io::Write;
-
 use crate::codec::{Reader, check_len, put_lp8};
 use crate::error::{Error, Result};
 use crate::keys::{Argon2Cost, MLKEM1024_CIPHERTEXT_LEN};
@@ -173,6 +171,17 @@ pub enum Purpose {
     /// A legal-clone content chunk or encrypted descriptor/summary, sealed only
     /// to the host's independently destroyable per-order hybrid key.
     LegalClone = 31,
+    /// A device's PIN key, sealed under the device PIN on a device whose
+    /// keystore has no hardware that counts wrong PINs (row OCS-OWNER-PIN).
+    /// It belongs to the device, not to a vault: the caller binds constant
+    /// ids.
+    DevicePinKey = 32,
+    /// One keystore slot's secret, sealed under the device PIN key in place
+    /// of resting in the slot (row OCS-OWNER-PIN). The caller binds the
+    /// slot's vault as `vault_id`, its install as the recipient, the
+    /// secret's public half as `key_id`, and the slot's name as extra
+    /// associated data.
+    DevicePinSlotSecret = 33,
 }
 
 impl Purpose {
@@ -209,6 +218,8 @@ impl Purpose {
             29 => Self::WorldSideRow,
             30 => Self::SealedWorldUpdate,
             31 => Self::LegalClone,
+            32 => Self::DevicePinKey,
+            33 => Self::DevicePinSlotSecret,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }

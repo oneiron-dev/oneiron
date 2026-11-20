@@ -1,7 +1,7 @@
 //! Tombstone apply/export/replay plus window rebuild from updates.
 
 use super::bridge::{self, BRIDGE_ORIGIN};
-use super::egress::export_scrubbed_window_snapshot;
+use super::egress::export_scrubbed_window_state;
 use super::loro_support::{
     TombstoneIndex, doc_version_vector, import_doc, map_delete, map_for_each_bytes,
     map_insert_bytes,
@@ -18,6 +18,7 @@ use crate::deletion::decode_tombstone_value;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::ports::{WindowAddress, WindowDeletionRows};
+use crate::sync::manager::PublicationWindow;
 use crate::sync::window_rows::{PENDING_TOMBSTONE, WINDOW_FULL_RESYNC_MARKER};
 use loro::{CommitOptions, LoroDoc};
 
@@ -67,6 +68,37 @@ pub(crate) fn mark_removed_carriers_first(
     #[cfg(test)]
     fail_after_carrier_mark(path)?;
     Ok(())
+}
+
+/// The half of [`mark_removed_carriers_first`] a local delete's publication
+/// ([`CarrierRemoval::LocalPublication`]) commits before it touches the
+/// document: the task-authority suppression alone. The records of who brought
+/// or wrote each carrier leave in its publish transaction, once that
+/// transaction's refusals have passed ([`forget_removed_carrier_records_in_txn`]):
+/// a refused publication keeps its carrier, and a peer's row stays the peer's.
+/// The suppression it keeps leaves the task reading as a refusal, as the
+/// removal it refused would have.
+pub(crate) fn suppress_published_carriers_first(
+    vault: &Vault,
+    carriers: &[(EntityId, Vec<u8>)],
+) -> Result<()> {
+    crate::task_authority::mark_removed_carriers(vault, carriers)?;
+    #[cfg(test)]
+    fail_after_carrier_mark(CarrierRemoval::LocalPublication)?;
+    Ok(())
+}
+
+/// Forgets, in `wtxn`, a peer's record of each removed carrier and the record
+/// of which machine wrote a removed MESSAGE (FIX 12113): the other half of
+/// [`mark_removed_carriers_first`], run by a local delete's publication in
+/// the transaction that publishes it.
+pub(crate) fn forget_removed_carrier_records_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    carriers: &[(EntityId, Vec<u8>)],
+) -> Result<()> {
+    crate::sync::ingest::forget_peer_rows_in_txn(vault, wtxn, carriers)?;
+    crate::sync::ingest::forget_written_rows_in_txn(vault, wtxn, carriers)
 }
 
 #[cfg(test)]
@@ -234,13 +266,21 @@ pub fn replay_pending_tombstones(
 /// window (FIX 343). It takes `Vault::write_crdt_tombstone`'s two paths: the
 /// live doc under the materializer lock when the window is open here, else
 /// a transient load, whose persist also keeps the delta as a `u:` row so an
-/// open racing it still loads the tombstones.
+/// open racing it still loads the tombstones. The transient load holds the
+/// window closed until its persist has committed, so no replacement installs
+/// over it the state from before it ([`Vault::publication_window`]).
 pub(crate) fn publish_pending_tombstones(vault: &Vault, window_key: &WindowKey) -> Result<u32> {
     let markers = pending_tombstone_markers(vault, window_key)?;
     if markers.is_empty() {
         return Ok(0);
     }
-    let replayed = if let Some((window, materializer, _manager)) = vault.live_window(window_key) {
+    let publication = vault.publication_window(window_key);
+    let replayed = if let PublicationWindow::Live {
+        window,
+        materializer,
+        ..
+    } = &publication
+    {
         // The live-window turn first (L7-45): the replay builds a tombstone
         // index over the shared doc, so no peer import lands in it from the
         // merge to the commit. Both drop before the scrub of other windows.
@@ -269,6 +309,7 @@ pub(crate) fn publish_pending_tombstones(vault: &Vault, window_key: &WindowKey) 
         let merged_update_keys = merge_persisted_state_into_doc(vault, &doc, window_key)?;
         replay_tombstone_markers(vault, &doc, window_key, &markers, &merged_update_keys, true)?
     };
+    drop(publication);
     // Once the lock is down, a deleted NOTE's attachments leave the other
     // live windows too (FIX 8878).
     crate::sync::note::deleted_elsewhere(vault, window_key.as_str(), marker_ids(&markers));
@@ -283,18 +324,29 @@ fn marker_ids(
 }
 
 /// The `pt:` markers staged in `window_key`. A malformed marker key is left
-/// in place and logged: a deletion intent is never silently dropped.
+/// in place and logged: a deletion intent is never silently dropped. A
+/// marker whose soft delete is still publishing it is that publication's,
+/// which re-proves the delete first, and is left to it. The held set is
+/// locked before the snapshot opens: a marker read is still held, or its
+/// publication ended before the snapshot, which then shows its withdrawal.
 fn pending_tombstone_markers(
     vault: &Vault,
     window_key: &WindowKey,
 ) -> Result<Vec<(crate::sync::window_rows::WindowEntityHexKey, Vec<u8>)>> {
     let mut markers: Vec<(crate::sync::window_rows::WindowEntityHexKey, Vec<u8>)> = Vec::new();
+    let held = vault.store.tombstone_publications_in_flight.lock();
     let rtxn = vault.store.env.read_txn()?;
     for entry in vault
         .store
         .port_pending_tombstones_in_window(&rtxn, WindowAddress::new(window_key.as_str()))?
     {
         match entry {
+            Ok(row) if held.holds_marker(&row.window_label, &row.id, &row.raw) => {
+                tracing::debug!(
+                    entity = %row.id.to_hex(),
+                    "pt replay: marker left to its own publication"
+                );
+            }
             Ok(row) => markers.push((
                 crate::sync::window_rows::WindowEntityHexKey {
                     window: row.window_label,
@@ -353,11 +405,14 @@ fn replay_tombstone_markers(
     let delete_update = export_tombstone_commit_delta(doc, &vv_before)?;
 
     // Persist BEFORE clearing the markers — the marker may only be cleared
-    // after CRDT commit + snapshot persistence succeed.
-    let snapshot = export_scrubbed_window_snapshot(vault, window_key, doc)?;
+    // after CRDT commit + snapshot persistence succeed. The export reads the
+    // pin; a legal hold read in the writer keeps the history a pinned export
+    // dropped (census L6-05).
+    let snapshot = export_scrubbed_window_state(vault, window_key, doc)?;
     let vv = doc_version_vector(doc);
     vault.with_write_txn_grouped(|wtxn| {
-        persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv)?;
+        let (stored, history_free) = snapshot.stored_in_txn(vault, wtxn)?;
+        persist_window_doc_in_txn(vault, wtxn, window_key, stored, &vv, history_free)?;
         if any_hard {
             crate::sync::queue::scrub_window_updates_in_txn(vault, wtxn, window_key.as_str())?;
             prune_subsumed_window_updates_in_txn(vault, wtxn, window_key, merged_update_keys)?;
