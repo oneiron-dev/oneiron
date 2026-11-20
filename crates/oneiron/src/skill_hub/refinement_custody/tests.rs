@@ -338,7 +338,7 @@ fn historical_refinement_carrier_scrubs_by_holder_without_trusting_forged_key() 
     let window = crate::sync::types::WindowKey::new(&label);
     let doc = crate::sync::schema::create_window_doc("refinement-fixture", &window);
     let mut blob = vec![ENTITY_TYPE_ASSET];
-    for stamp in [1_u64, 1, 1] {
+    for stamp in [1_u64, 1, 1, 0] {
         blob.extend_from_slice(&stamp.to_be_bytes());
     }
     blob.extend_from_slice(&bytes);
