@@ -533,7 +533,7 @@ pub fn parse_a1(text: &str) -> Option<(u32, u32)> {
     let cell = crate::a1::parse_cell(text)?;
     // Today's lenient reader still refuses a leading-zero row (`B007`),
     // as the strict stored-XML reader does: only case is folded here.
-    if text.bytes().find(|byte| byte.is_ascii_digit()) == Some(b'0') {
+    if text.bytes().find(u8::is_ascii_digit) == Some(b'0') {
         return None;
     }
     (cell.col <= MAX_COLUMN && (1..=MAX_ROW).contains(&cell.row)).then_some((cell.col, cell.row))

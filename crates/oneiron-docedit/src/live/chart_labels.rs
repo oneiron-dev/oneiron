@@ -145,7 +145,7 @@ impl Value for usize {
     }
 
     fn put_text(&mut self, text: &str) {
-        *self = self.saturating_add(escape_text(text).as_bytes().len());
+        *self = self.saturating_add(escape_text(text).len());
     }
 
     fn append(&mut self, other: Self) {

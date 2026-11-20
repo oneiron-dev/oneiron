@@ -132,8 +132,7 @@ pub fn read_docx_scoped_blocks(
             .stories
             .into_iter()
             .find(|story| &story.scope == scope)
-            .map(|story| story.blocks)
-            .unwrap_or_default();
+            .map_or_default(|story| story.blocks);
         let paragraphs = blocks
             .iter()
             .flat_map(|block| {

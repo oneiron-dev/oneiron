@@ -140,7 +140,7 @@ impl Metrics {
             style
                 .resolved_typeface
                 .as_deref()
-                .or_else(|| match style.typeface.value.as_deref() {
+                .or(match style.typeface.value.as_deref() {
                     Some("+mj-lt") => theme.major,
                     Some("+mn-lt") | None => theme.minor,
                     Some(name) => Some(name),

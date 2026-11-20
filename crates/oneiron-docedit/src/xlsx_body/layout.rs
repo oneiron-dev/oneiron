@@ -229,7 +229,7 @@ impl Book {
             if kept_state(*at) != *state {
                 match (state.state(), node.attr_spans.get("state")) {
                     (Some(value), _) => {
-                        sheet_edits.push(set_attribute(&bytes, node, "state", value))
+                        sheet_edits.push(set_attribute(&bytes, node, "state", value));
                     }
                     (None, Some(span)) => {
                         let start = if bytes[span.start - 1].is_ascii_whitespace() {
@@ -485,7 +485,7 @@ impl Book {
                 match fate(node) {
                     SourceFate::Keep => {}
                     SourceFate::Sheet(name) => {
-                        edits.push(set_attribute(&bytes, node, "sheet", &name))
+                        edits.push(set_attribute(&bytes, node, "sheet", &name));
                     }
                     SourceFate::Range(reference) => {
                         edits.push(set_attribute(&bytes, node, "ref", &reference));

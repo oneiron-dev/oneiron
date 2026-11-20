@@ -392,20 +392,17 @@ pub(super) fn typed_reads(deck: &LiveDeck) -> Vec<Vec<String>> {
 
 /// The deck's slides in presentation order.
 pub(super) fn slides(deck: &LiveDeck) -> Vec<NodeId> {
-    deck.nodes
-        .get(&NodeId(0))
-        .map(|root| {
-            root.children
-                .iter()
-                .copied()
-                .filter(|id| {
-                    deck.nodes
-                        .get(id)
-                        .is_some_and(|node| node.kind == NodeKind::Slide)
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    deck.nodes.get(&NodeId(0)).map_or_default(|root| {
+        root.children
+            .iter()
+            .copied()
+            .filter(|id| {
+                deck.nodes
+                    .get(id)
+                    .is_some_and(|node| node.kind == NodeKind::Slide)
+            })
+            .collect()
+    })
 }
 
 /// A node's identity across two decks: its kind and the retained element

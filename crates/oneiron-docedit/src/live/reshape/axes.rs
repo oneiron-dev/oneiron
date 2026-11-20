@@ -321,12 +321,11 @@ pub(super) fn plot_axes(
         let kept: Vec<u32> = target
             .held
             .filter(|&at| plots[at].0.has_axes())
-            .map(|at| {
+            .map_or_default(|at| {
                 children(tree, plots[at].1, C, "axId")
                     .filter_map(|id| tree.nodes[id].attr("val")?.trim().parse().ok())
                     .collect()
-            })
-            .unwrap_or_default();
+            });
         held_ids.push(kept.clone());
         let fits = |ids: &&Vec<u32>| {
             ids.len() >= 2

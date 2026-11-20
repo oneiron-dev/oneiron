@@ -402,11 +402,7 @@ fn categories_of(points: Points) -> Result<ChartCategories, LiveError> {
             available: None,
         })?;
     let mut out: Vec<ChartCategory> = Vec::new();
-    reserve(
-        &mut out,
-        count,
-        count.checked_mul(each).unwrap_or(usize::MAX),
-    )?;
+    reserve(&mut out, count, count.saturating_mul(each))?;
     for _ in 0..count {
         out.push(ChartCategory {
             id: None,
