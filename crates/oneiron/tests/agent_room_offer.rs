@@ -252,6 +252,53 @@ fn a_custom_agent_made_through_the_agent_definition_door_can_mint_a_room_offer_c
     Ok(())
 }
 
+/// L9-52 (Engine RULING L9-52-ROOM-STRUCTURE = A; FIX
+/// [ROOM-STRUCTURE-FACADE-ROOM-RECORD]): a room's current offer cards are its
+/// structure, so they list only to a caller that reads its roster or that the
+/// room's own admission admits. An agent outside the room (it reads the
+/// room's row, but has no seat, no Ready join and no grant, and is not the
+/// host) lists no cards and no open cards, still publishes its own card, as
+/// an agent asks to join a room (OF-530), and the host lists that card.
+#[test]
+fn an_agent_outside_the_room_lists_no_offer_cards() -> TestResult {
+    let fixture = open()?;
+    let room = fixture.room;
+    let agent = create_agent(&fixture, "outside-lister")?;
+    permit_room_reads(&fixture, agent)?;
+    let asker = fixture.vault.memory(agent, EdgeActorClass::Agent);
+    let host = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let refusal = asker
+        .rooms_offers(&OffersRequest {
+            room,
+            branch: None,
+            after: None,
+            limit: None,
+        })
+        .expect_err("an agent outside the room lists no offer cards");
+    assert_eq!(refusal.code, oneiron::memory::MEMORY_CODE_NOT_FOUND);
+    assert_eq!(refusal.message, "no room or thread the caller reads");
+    let open_refusal = asker
+        .rooms_open_offers(room)
+        .expect_err("an agent outside the room lists no open cards");
+    assert_eq!(open_refusal.code, oneiron::memory::MEMORY_CODE_NOT_FOUND);
+    assert_eq!(open_refusal.message, "no room or thread the caller reads");
+    let draft = offer_draft(room, agent, "outside-lister-1");
+    let card = asker.rooms_offer(&draft)?;
+    assert_eq!(card.room, room);
+    assert_eq!(card.agent, agent);
+    let page = host.rooms_offers(&OffersRequest {
+        room,
+        branch: None,
+        after: None,
+        limit: None,
+    })?;
+    assert!(
+        page.rows.iter().any(|row| row.offer_id == card.offer_id),
+        "the host lists the outside agent's card"
+    );
+    Ok(())
+}
+
 /// The fix does not widen the rule: an AGENT_DEF anchored to a member's own
 /// PERSON takes part as that person, who joins by writing.
 #[test]
@@ -327,6 +374,67 @@ fn the_owners_join_answer_records_her_check_in_decision() -> TestResult {
             requester: None,
         }),
         "her join answer is her own add: {join:?}"
+    );
+    Ok(())
+}
+
+/// REVIEW-9839 P1 (round 2): the room's host settles the card's join with
+/// an Admission yes at `vault.rooms.consent`, so the card stays open while
+/// its join adds no one again. A join answer that names a `check_in_ref`
+/// then spends none, so it is refused as a bad request and lands no
+/// acceptance; the answer without one lands it. A yes at the consent door
+/// that names a `check_in_ref` on the settled join is refused the same way.
+///
+/// At #9839's head before this fix (c9d20e5a899e) the answer naming the
+/// check-in lands the acceptance and leaves the check-in unspent.
+#[test]
+fn a_join_answer_on_a_settled_join_refuses_a_named_check_in() -> TestResult {
+    let fixture = open()?;
+    let agent = create_agent(&fixture, "offer-agent-settled-join")?;
+    permit_room_reads(&fixture, agent)?;
+    let host = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let card = fixture
+        .vault
+        .memory(agent, EdgeActorClass::Agent)
+        .rooms_offer(&offer_draft(fixture.room, agent, "offer-settled-join-1"))?;
+    let admission = |check_in_ref: Option<String>| oneiron::workspace_roster::ConsentAnswer {
+        join_ref: card.join_ref.clone(),
+        part: ConsentPart::Admission,
+        grant: true,
+        spend_scope: None,
+        check_in_ref,
+    };
+    let settled = host.rooms_consent(&admission(None))?;
+    assert_eq!(
+        settled.decision.state,
+        JoinDecision::Ready,
+        "the host's yes settles the card's join"
+    );
+    let named = EntityId::now().to_hex();
+    let answer = |check_in_ref: Option<String>| OfferAnswerRequest {
+        offer_id: card.offer_id.clone(),
+        action: OfferAnswer::Join,
+        intent_key: "offer-settled-join-answer".to_owned(),
+        check_in_ref,
+    };
+    let refused = host
+        .rooms_offer_answer(&answer(Some(named.clone())))
+        .expect_err("the answer's join is settled, so it spends no check-in");
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{refused:?}");
+    assert!(
+        refused.message.contains("check_in_ref"),
+        "the refusal names the field: {refused:?}"
+    );
+    let refused = host
+        .rooms_consent(&admission(Some(named)))
+        .expect_err("a yes on a settled join adds no one, so it spends no check-in");
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{refused:?}");
+
+    let accepted = host.rooms_offer_answer(&answer(None))?;
+    assert!(
+        matches!(accepted.state, OfferState::Joined { .. }),
+        "the refused answer landed nothing, so this one lands the acceptance: {:?}",
+        accepted.state
     );
     Ok(())
 }

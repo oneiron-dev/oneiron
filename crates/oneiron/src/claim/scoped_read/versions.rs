@@ -123,26 +123,36 @@ impl ScopedRead<'_> {
         // The key's own filter (B) and the candidates its own live Grants
         // add (A, FIX 7528): the search ranks both, and each candidate takes
         // the row gate, B first.
+        let txn = self.grant_read_txn()?;
         let super::search::SearchPlan {
             filter,
             candidates,
             policy,
-        } = self.search_plan(requested)?;
+        } = self.search_plan_in(&txn, requested)?;
         if candidates.deny_all {
             return Ok(RevisionedHits {
                 vector_refinement: None,
                 embedding_matches: Default::default(),
                 hits: Vec::new(),
                 revisions: Default::default(),
-                receipt: self.receipt_for(requested, &policy, &candidates, 0),
+                receipt: self.receipt_in(&txn, requested, &policy, &candidates, 0, None),
             });
         }
+        // The search opens its own snapshots: LMDB allows one per thread.
+        drop(txn);
         let excluded = self.request_exclusions(&policy, requested)?;
         let plan_admits = self.plan_admits(&filter, &policy, &excluded, requested);
         let admitted =
             |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
                 Ok(plan_admits(store, txn, id)?
-                    && self.session_scope_admits_in(txn, &policy, &filter, id, session_scope)?)
+                    && self.session_scope_admits_in(
+                        txn,
+                        &policy,
+                        &filter,
+                        id,
+                        session_scope,
+                        requested,
+                    )?)
             };
         let pipeline = self
             .vault
@@ -221,26 +231,36 @@ impl ScopedRead<'_> {
         // The key's own filter (B) and the candidates its own live Grants
         // add (A, FIX 7528): the search ranks both, and each candidate takes
         // the row gate, B first.
+        let txn = self.grant_read_txn()?;
         let super::search::SearchPlan {
             filter,
             candidates,
             policy,
-        } = self.search_plan(requested)?;
+        } = self.search_plan_in(&txn, requested)?;
         if candidates.deny_all {
             return Ok(RevisionedHits {
                 vector_refinement: None,
                 embedding_matches: Default::default(),
                 hits: Vec::new(),
                 revisions: Default::default(),
-                receipt: self.receipt_for(requested, &policy, &candidates, 0),
+                receipt: self.receipt_in(&txn, requested, &policy, &candidates, 0, None),
             });
         }
+        // The search opens its own snapshots: LMDB allows one per thread.
+        drop(txn);
         let excluded = self.request_exclusions(&policy, requested)?;
         let plan_admits = self.plan_admits(&filter, &policy, &excluded, requested);
         let admitted =
             |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
                 Ok(plan_admits(store, txn, id)?
-                    && self.session_scope_admits_in(txn, &policy, &filter, id, session_scope)?)
+                    && self.session_scope_admits_in(
+                        txn,
+                        &policy,
+                        &filter,
+                        id,
+                        session_scope,
+                        requested,
+                    )?)
             };
         let mut pipeline = self
             .vault
@@ -281,6 +301,11 @@ impl ScopedRead<'_> {
 
     /// Session hints narrow each channel in its ranking snapshot. The final
     /// result still rechecks current authority and its exact pinned revision.
+    /// The row takes the row gate under what the search asked
+    /// (`requested`), as its final recheck does, so a row the reader's own
+    /// live Grant admits keeps its hint and none reads wider than asked
+    /// (FIX-LIST SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS). Its facet is judged
+    /// as [`Self::sits_in_readable_facet_in`] judges it.
     fn session_scope_admits_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -288,10 +313,14 @@ impl ScopedRead<'_> {
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
         scope: Option<&SessionScope>,
+        requested: Option<&RetrievalFilter>,
     ) -> Result<bool> {
         let Some(scope) = scope.filter(|scope| !scope.is_empty()) else {
             return Ok(true);
         };
+        // One held authority for this row's checks in `txn`: the search
+        // calls this from its own snapshots.
+        let held = self.held_for(requested);
         if let Some(world) = scope.world_ref {
             let revision =
                 match self
@@ -302,7 +331,6 @@ impl ScopedRead<'_> {
                     Ok(None) | Err(Error::EntityNotFound) => return Ok(false),
                     Err(error) => return Err(error),
                 };
-            let held = self.held_for(None);
             let Some(row) = self.entity_raw_with_mode_held_in(
                 txn,
                 policy,
@@ -324,26 +352,10 @@ impl ScopedRead<'_> {
                 return Ok(false);
             }
         }
-        if let Some(facet) = scope.facet_ref {
-            let admitted = self.admitted_edges_in(
-                txn,
-                policy,
-                filter,
-                id,
-                crate::ports::EdgeDirection::Out,
-                Some(crate::edge::EdgeKind::FacetOf),
-                usize::MAX,
-                usize::MAX,
-                false,
-            )?;
-            if !admitted.source.visible()
-                || !admitted
-                    .edges
-                    .into_iter()
-                    .any(|edge| edge.info().target == facet)
-            {
-                return Ok(false);
-            }
+        if let Some(facet) = scope.facet_ref
+            && !self.sits_in_readable_facet_in(txn, policy, filter, id, &facet, &held)?
+        {
+            return Ok(false);
         }
         if !scope.document_short_ids.is_empty() {
             // Match the citation door's base short ref, including its hex
@@ -359,6 +371,89 @@ impl ScopedRead<'_> {
             }
         }
         Ok(true)
+    }
+
+    /// Whether the row `id`, admitted under `filter` and `held`, carries a
+    /// `facet_of` edge to `facet` whose FACET row this reader reads under its
+    /// own authority: the key's floor, or one live Grant alone, with no
+    /// request. A request names the kinds of the rows it asks for, never of
+    /// the facet they sit in, so a search for CLAIMs alone that names a facet
+    /// still finds the claims in it, for the owner as for an agent (FIX-LIST
+    /// SESSION-FACET-HINT-KIND-NARROWED-PEER). A facet the reader cannot read
+    /// admits no row.
+    pub(super) fn sits_in_readable_facet_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        id: &EntityId,
+        facet: &EntityId,
+        held: &HeldAuthority,
+    ) -> Result<bool> {
+        let row = self.admit_held_in(txn, id, held, || {
+            self.is_entity_retrievable_held_in(txn, policy, filter, id, held)
+                .map(|allowed| allowed.then_some(()))
+        })?;
+        if !row.visible() {
+            return Ok(false);
+        }
+        let floor = self.actor_retrieval_floor(policy)?;
+        let own = HeldAuthority::for_request(None);
+        let kind = crate::edge::EdgeKind::FacetOf;
+        // Counted as the scoped edge scan counts it: every row read.
+        let scope = [
+            &[crate::ports::EdgeDirection::Out as u8][..],
+            id.as_bytes(),
+            &[kind as u8][..],
+        ]
+        .concat();
+        let mut count = crate::scan_check::ScanCount::start(
+            &self.vault.store,
+            txn,
+            crate::store::EngineScan::ScopedEdgeRows,
+            &scope,
+        )?;
+        let mut sits = false;
+        for edge in self.out_edges_in(txn, id, Some(kind))? {
+            count.row();
+            let edge = edge?;
+            if edge.target != *facet {
+                continue;
+            }
+            let admitted = super::edge_admission::admit_stored_edge_in(
+                self.vault,
+                txn,
+                *id,
+                *facet,
+                edge,
+                || Ok::<_, Error>(super::admission::ReadAdmission::Visible(())),
+                || {
+                    self.admit_held_in(txn, facet, &own, || {
+                        self.is_entity_retrievable_held_in(txn, policy, &floor, facet, &own)
+                            .map(|allowed| allowed.then_some(()))
+                    })
+                },
+            )?;
+            if admitted.into_option().is_some() {
+                sits = true;
+                break;
+            }
+        }
+        count.defer(&self.vault.store);
+        Ok(sits)
+    }
+
+    /// [`Self::sits_in_readable_facet_in`] in a fresh snapshot of this lane,
+    /// the row under its bound caller filter alone, as [`Self::edges_out`]
+    /// judges it: the depth read's session hint after ranking.
+    ///
+    /// # Errors
+    /// A store, policy or clock failure.
+    pub(crate) fn sits_in_readable_facet(&self, id: &EntityId, facet: &EntityId) -> Result<bool> {
+        let txn = self.grant_read_txn()?;
+        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
+        let held = self.held_for(None);
+        self.sits_in_readable_facet_in(&txn, &policy, &filter, id, facet, &held)
     }
 
     /// Same-snapshot, live, policy-gated source for callers that must settle
@@ -454,6 +549,9 @@ impl ScopedRead<'_> {
             raw.extend_from_slice(&body);
         }
         let mut raw = self.redact_extra_room_key_in_txn(txn, raw)?;
+        // A reaction claim names its reactor only to a reader who may read
+        // them (FIX REACTION-CLAIM-VALUE-REACTOR-ID).
+        raw = self.redact_reaction_row_in(txn, raw)?;
         // A room's shared pins never leave in its served body: a reader gets
         // them only through the room's admitted projection (ROOM-SCOPED-PINS).
         if raw.first() == Some(&crate::registry::ENTITY_TYPE_CONVERSATION)
@@ -506,7 +604,7 @@ impl ScopedRead<'_> {
         authority: &HeldAuthority,
     ) -> Result<Option<Vec<u8>>> {
         // A read by id matches no meaning, so it takes the row predicate
-        // alone. The TURN rule of `is_entity_retrievable_with_policy_in`
+        // alone. The TURN rule of `is_entity_retrievable_held_in`
         // guards the doors that find a row (search, recall, packs, graph
         // edges), and each runs it before it reads the row here. The bytes
         // judged are kept: a revision read that returns them is admitted.

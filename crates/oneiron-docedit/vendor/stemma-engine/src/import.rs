@@ -1024,8 +1024,9 @@ pub(crate) fn revision_walk_digest(doc: &mut CanonDoc) -> (usize, String) {
     (count, sha256_hex(&input))
 }
 
-/// Adopt the engine identities a previous save recorded in
-/// `word/stemmaRevisionIds.xml`, so reopening does not re-derive them.
+/// Adopt the engine identities a previous save recorded in the part named by
+/// the main part's internal revision-identity relationship, so reopening does
+/// not re-derive them.
 ///
 /// The whole part is a HINT that must corroborate: it names the carrier walk
 /// it describes (count + [`revision_walk_digest`]), and it is adopted only
@@ -1052,14 +1053,20 @@ pub(crate) fn revision_walk_digest(doc: &mut CanonDoc) -> (usize, String) {
 /// whole keeps the two id regimes from ever mixing: the document leaves this
 /// function either entirely on its recorded identities or entirely on the
 /// derived ones.
-fn adopt_persisted_revision_identities(archive: &DocxArchive, doc: &mut CanonDoc) {
+fn adopt_persisted_revision_identities(archive: &DocxArchive, main_part: &str, doc: &mut CanonDoc) {
     let debug = std::env::var("STEMMA_DEBUG_IDENTITY").is_ok();
     let decline = |reason: &str| {
         if debug {
             eprintln!("SIDECAR DECLINED: {reason}");
         }
     };
-    let Some(bytes) = archive.get(crate::runtime::REVISION_IDS_PART) else {
+    let rels_path = crate::docx_package::rels_part_path(main_part);
+    let Some(bytes) = archive
+        .get(&rels_path)
+        .and_then(|xml| crate::docx_package::RelationshipSet::parse(xml, &rels_path).ok())
+        .and_then(|rels| crate::runtime::related_revision_ids_part(&rels))
+        .and_then(|part| archive.get(&part))
+    else {
         return;
     };
     let Ok(root) = crate::word_xml::parse_document_xml(bytes) else {
@@ -3069,7 +3076,7 @@ fn build_canonical_from_archive(
     // document presents is the same post-lift canonical walk the writer
     // digested. Before the lifts, a whole-paragraph insertion counts two
     // carriers where the writer counted one, and the digest can never match.
-    adopt_persisted_revision_identities(archive, &mut doc);
+    adopt_persisted_revision_identities(archive, &main_part, &mut doc);
 
     Ok((doc, diagnostics))
 }
@@ -3103,10 +3110,11 @@ pub(crate) fn build_canonical_from_root_with_stories(
     endnotes: Vec<EndnoteStory>,
     comments: Vec<CommentStory>,
     even_and_odd_headers: Option<bool>,
-    // The package this document came from, when there is one. Used only to
-    // adopt engine identities a previous save recorded; `None` for callers
-    // that build from a bare root (fragments, tests), which simply derive.
-    package: Option<&DocxArchive>,
+    // The package this document came from and its resolved main part, when
+    // there is one. Used only to adopt engine identities a previous save
+    // recorded; `None` for callers that build from a bare root (fragments,
+    // tests), which simply derive.
+    package: Option<(&DocxArchive, &str)>,
 ) -> Result<(CanonDoc, Vec<Diagnostic>), RuntimeError> {
     let body = body_element(root).map_err(map_word_xml_error)?;
 
@@ -3195,8 +3203,8 @@ pub(crate) fn build_canonical_from_root_with_stories(
     // Adopt identities a previous save recorded — LAST, so the walk this
     // document presents is the same post-lift canonical walk the writer
     // digested (see the body-import pipeline for the full rationale).
-    if let Some(package) = package {
-        adopt_persisted_revision_identities(package, &mut doc);
+    if let Some((archive, main_part)) = package {
+        adopt_persisted_revision_identities(archive, main_part, &mut doc);
     }
 
     Ok((doc, diagnostics))
@@ -10511,17 +10519,20 @@ fn inline_nodes_from_atoms(
 /// Parse the main document part's relationships. The relationships part path is
 /// derived from the resolved main part name (OPC §9.3.4), not hardcoded to
 /// `word/_rels/document.xml.rels`.
+///
+/// A package with no relationships part for its main part is read as a main
+/// part with no outgoing relationships: OPC asks for the part only when the
+/// source part has a relationship. A part that is present must still parse and
+/// carry every required attribute.
 pub(crate) fn parse_document_relationships(
     archive: &DocxArchive,
     main_part_name: &str,
 ) -> Result<DocumentRelationships, RuntimeError> {
     let rels_path = crate::docx_package::rels_part_path(main_part_name);
 
-    let rels_xml = archive.get(&rels_path).ok_or_else(|| RuntimeError {
-        code: ErrorCode::InvalidDocx,
-        message: format!("missing {rels_path}"),
-        details: ErrorDetails::default(),
-    })?;
+    let Some(rels_xml) = archive.get(&rels_path) else {
+        return Ok(DocumentRelationships::default());
+    };
 
     let root = word_xml::parse_document_xml(rels_xml).map_err(|err| RuntimeError {
         code: ErrorCode::InvalidDocx,
@@ -13295,21 +13306,23 @@ mod tests {
     }
 
     // =========================================================================
-    // parse_document_relationships tests (confirm existing error behavior)
+    // parse_document_relationships tests (an absent part, and parse errors)
     // =========================================================================
 
     #[test]
-    fn parse_document_relationships_missing_rels_file_returns_error() {
+    fn parse_document_relationships_missing_rels_file_returns_empty() {
         let archive = DocxArchive::from_parts(vec![]);
 
-        let err = parse_document_relationships(&archive, "word/document.xml")
-            .expect_err("missing rels file should return an error");
-        assert_eq!(err.code, ErrorCode::InvalidDocx);
-        assert!(
-            err.message.contains("word/_rels/document.xml.rels"),
-            "error should name the expected file, got: {}",
-            err.message
-        );
+        let rels = parse_document_relationships(&archive, "word/document.xml")
+            .expect("an absent relationships part reads as no relationships");
+        assert!(rels.headers.is_empty());
+        assert!(rels.footers.is_empty());
+        assert!(rels.footnotes.is_none());
+        assert!(rels.endnotes.is_none());
+        assert!(rels.comments.is_none());
+        assert!(rels.comments_extended.is_none());
+        assert!(rels.custom_xml.is_empty());
+        assert!(rels.hyperlinks.is_empty());
     }
 
     #[test]

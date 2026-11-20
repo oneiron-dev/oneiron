@@ -450,7 +450,8 @@ impl Memory<'_> {
     }
 
     /// `vault.weave.report`: the live weave report for the bound actor,
-    /// through its own read and the vault's weave policy for its role.
+    /// through its own read and the vault's weave policy for its role. Its
+    /// receipt names the live Grants that admitted its rows.
     pub fn weave_report(
         &self,
         owner: Option<&AuthenticatedOwner>,
@@ -462,7 +463,9 @@ impl Memory<'_> {
             .iter()
             .map(WeaveSectionInput::spec)
             .collect::<MemoryResult<Vec<_>>>()?;
-        let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        let read = self
+            .read_lane(ClaimReadStatus::Surfaceable)?
+            .with_live_grant_receipts();
         let report = read.weave_report(reader, &recipe)?;
         self.produced_from(report.value.source_rows());
         Ok(WeaveReportView {
@@ -594,7 +597,11 @@ impl Memory<'_> {
         request: &WeaveDigestRequest,
     ) -> MemoryResult<Option<WeaveDigestFramed>> {
         let reader = self.weave_reader(owner)?;
-        let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        // A period this open renders saves a receipt naming the live Grants
+        // that admitted its rows.
+        let read = self
+            .read_lane(ClaimReadStatus::Surfaceable)?
+            .with_live_grant_receipts();
         if owner.is_some() {
             read.render_due_weave_digest(reader, self.vault().store.clock.now_recorded_at())?;
         }

@@ -162,6 +162,7 @@ fn speak(
             }],
             occurred_at: fixture.vault.now_recorded_at(),
             assertions: Default::default(),
+            project: None,
         })
         .map(|_| ());
     (turn, spoken)
@@ -524,6 +525,7 @@ fn an_offer_accepted_on_a_private_thread_is_refused() -> TestResult {
         offer_id: card.offer_id.clone(),
         action: OfferAnswer::Join,
         intent_key: "ordinary-room-thread-reply-refused:answer".to_owned(),
+        check_in_ref: None,
     });
     let error = match answered {
         Ok(settlement) => {

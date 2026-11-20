@@ -359,6 +359,17 @@ impl Vault {
                 ));
             }
         }
+        // A delete applied here whose publication was refused withdrew its
+        // pending tombstone and kept its row fence: neither check below sees
+        // it. The store's removal predicate reads the fence, and it never
+        // counts the archive marker itself.
+        if crate::ports::removed_in_txn(&self.store, wtxn, entity)? {
+            return Err(Error::Maintenance(
+                MaintenanceError::VaultCleanupRestoreNotArchived {
+                    entity: entity.to_hex(),
+                },
+            ));
+        }
         self.clear_archive_tombstone_in_txn(wtxn, entity)?;
         crate::browser_library::reindex_restored_source_in_txn(self, wtxn, entity)?;
         let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, entity)?

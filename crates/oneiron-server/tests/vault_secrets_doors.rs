@@ -33,8 +33,12 @@
 //!   leaves over the sync socket and a peer's custody carrier is refused
 //!   there and writes nothing.
 //!
-//! These promises hold on main. Their red proof is a seeded fault (Test rules
-//! v2, rule 5), named in the PR.
+//! These promises hold on main, save one. Their red proof is a seeded fault
+//! (Test rules v2, rule 5), named in the PR. The recall half of "a secret is
+//! not knowledge" did not hold: the recall's recency stage handed the custody
+//! row to the retrieval predicate, whose row gate failed the whole read with
+//! a 400 (FIX RECALL-CUSTODY-ROW-FAILS-WHOLE-READ). The knowledge case and the
+//! recall-standing case are red on main with no seed.
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support --test
@@ -89,16 +93,29 @@ const NAME: &str = "doors-custody-secret";
 /// The name the agent's refused register asks for.
 const AGENT_NAME: &str = "doors-custody-agent-secret";
 
-/// One paired agent credential: its registered principal, its holder
-/// signing key, its redeemed slip and the token it presents.
-struct Agent {
+/// One credential its holder holds by its own key: the holder signing key,
+/// the slip and the token it presents. A paired agent's, or the owner's
+/// own.
+struct HeldCredential {
     holder: SigningKey,
     slip: CapabilitySlip,
     token: String,
 }
 
-/// A served vault with its owner's host root credential and one paired
-/// agent.
+impl HeldCredential {
+    /// The holder's signature over the slip's binding transcript of
+    /// `challenge`, as hex.
+    fn proof(&self, challenge: &str) -> String {
+        let transcript = self
+            .slip
+            .binding_transcript(challenge.as_bytes())
+            .expect("holder binding transcript");
+        hex(&self.holder.sign(&transcript).to_bytes())
+    }
+}
+
+/// A served vault with its owner's host root credential, a full slip the
+/// owner holds by his own key, and one paired agent.
 struct Served {
     _dir: tempfile::TempDir,
     vault: Arc<Vault>,
@@ -106,13 +123,20 @@ struct Served {
     issuer: HostSlipIssuer,
     owner_slip: CapabilitySlip,
     owner_token: String,
-    agent: Agent,
+    owner_held: HeldCredential,
+    agent: HeldCredential,
 }
 
 /// Who posts a request.
 #[derive(Clone, Copy)]
 enum Caller {
+    /// The owner on the host root credential.
     Owner,
+    /// The owner on a full slip of his own, held by his own key. The served
+    /// recall reads under the slip for the actor it binds, and the host
+    /// root's holder is the host (FIX RECALL-HOST-ROOT-READ-REFUSED, #8564),
+    /// so the owner's recall cases present this one.
+    OwnerHeld,
     Agent,
 }
 
@@ -174,6 +198,7 @@ async fn served() -> Served {
         .ensure_host_root_slip(&issuer)
         .expect("owner root slip");
     let owner_token = owner_slip.to_token().expect("owner slip token");
+    let owner_held = owner_held_slip(&vault, &issuer, &owner_slip);
     let app = build_app(server);
     let agent = pair_agent(&vault, &app, &issuer, "secrets-doors-agent", [0x41; 32]).await;
     Served {
@@ -183,7 +208,37 @@ async fn served() -> Served {
         issuer,
         owner_slip,
         owner_token,
+        owner_held,
         agent,
+    }
+}
+
+/// A full slip the host mints for the owner's own PERSON, as a human, held
+/// by the owner's own key (as rerank_pair_template_price.rs does).
+fn owner_held_slip(
+    vault: &Vault,
+    issuer: &HostSlipIssuer,
+    root: &CapabilitySlip,
+) -> HeldCredential {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the owner's PERSON");
+    let holder = SigningKey::from_bytes(&[0x52; 32]);
+    let mut claims = root.claims.clone();
+    claims.parent_id = None;
+    claims.slip_id = [0x52; 32];
+    claims.holder_ref = owner.to_hex();
+    claims.binding_key = holder.verifying_key().to_bytes();
+    claims.actor_class = Some("human".to_owned());
+    claims.scope = Scope::top();
+    let slip = vault
+        .mint_capability_slip(issuer, claims)
+        .expect("the owner's own slip");
+    let token = slip.to_token().expect("the owner's own slip token");
+    HeldCredential {
+        holder,
+        slip,
+        token,
     }
 }
 
@@ -197,7 +252,7 @@ async fn pair_agent(
     issuer: &HostSlipIssuer,
     name: &str,
     seed: [u8; 32],
-) -> Agent {
+) -> HeldCredential {
     let principal = vault.ensure_agent_principal(name).expect("agent principal");
     let holder = SigningKey::from_bytes(&seed);
     let binding_key = holder.verifying_key().to_bytes();
@@ -252,7 +307,7 @@ async fn pair_agent(
         Some("agent"),
         "the redeemed slip binds an agent"
     );
-    Agent {
+    HeldCredential {
         holder,
         slip,
         token,
@@ -270,14 +325,8 @@ impl Served {
                 .issuer
                 .binding_proof(&self.owner_slip, challenge.as_bytes())
                 .expect("owner holder proof")),
-            Caller::Agent => {
-                let transcript = self
-                    .agent
-                    .slip
-                    .binding_transcript(challenge.as_bytes())
-                    .expect("agent binding transcript");
-                hex(&self.agent.holder.sign(&transcript).to_bytes())
-            }
+            Caller::OwnerHeld => self.owner_held.proof(&challenge),
+            Caller::Agent => self.agent.proof(&challenge),
         };
         json!({"timestamp": timestamp, "nonce": nonce, "signature": signature}).to_string()
     }
@@ -294,6 +343,7 @@ impl Served {
     async fn request(&self, caller: Caller, path: &str, input: Value) -> (StatusCode, Value) {
         let token = match caller {
             Caller::Owner => self.owner_token.as_str(),
+            Caller::OwnerHeld => self.owner_held.token.as_str(),
             Caller::Agent => self.agent.token.as_str(),
         };
         let request = Request::post(path)
@@ -591,19 +641,37 @@ fn a_secret_is_not_knowledge_and_no_read_carries_its_value() {
             .expect("the register reply names the record")
             .to_owned();
 
-        for caller in [Caller::Owner, Caller::Agent] {
-            for (path, input) in [
-                ("/v1/core/facade/vault.recall", json!({"query": NAME})),
-                ("/v1/core/query", json!({"query": NAME, "limit": 10})),
-            ] {
-                let (status, body) = served.request(caller, path, input).await;
-                assert_eq!(status, StatusCode::OK, "{path}: {body}");
-                assert_value_free(path, &body, &all);
-                assert!(
-                    !body.to_string().contains(&secret_id),
-                    "{path} names the custody record: {body}"
-                );
-            }
+        // The owner's recall presents his own held slip (Caller::OwnerHeld);
+        // his query reads under the host root as before.
+        for (caller, path, input) in [
+            (
+                Caller::OwnerHeld,
+                "/v1/core/facade/vault.recall",
+                json!({"query": NAME}),
+            ),
+            (
+                Caller::Agent,
+                "/v1/core/facade/vault.recall",
+                json!({"query": NAME}),
+            ),
+            (
+                Caller::Owner,
+                "/v1/core/query",
+                json!({"query": NAME, "limit": 10}),
+            ),
+            (
+                Caller::Agent,
+                "/v1/core/query",
+                json!({"query": NAME, "limit": 10}),
+            ),
+        ] {
+            let (status, body) = served.request(caller, path, input).await;
+            assert_eq!(status, StatusCode::OK, "{path}: {body}");
+            assert_value_free(path, &body, &all);
+            assert!(
+                !body.to_string().contains(&secret_id),
+                "{path} names the custody record: {body}"
+            );
         }
 
         let (status, document) = served
@@ -658,6 +726,66 @@ fn a_secret_is_not_knowledge_and_no_read_carries_its_value() {
             row["body"].is_null(),
             "an archive with secrets left out carries no custody body: {row}"
         );
+    });
+}
+
+/// One custody row among a recall's candidates leaves the rest of the read
+/// standing (FIX RECALL-CUSTODY-ROW-FAILS-WHOLE-READ; arch-0069:8 "never as
+/// retrievable claims"). A note that names the secret is still recalled by
+/// that name: the owner's and the agent's recall answer 200, the owner's
+/// lists the note, and neither names the custody record nor carries its
+/// value. On main the custody row, which the recall's recency stage meets
+/// whatever the query, failed the whole read with a 400, and the 400 versus
+/// 200 told the reader that a secret was just registered.
+#[test]
+fn a_custody_row_leaves_the_rest_of_a_recall_standing() {
+    run_on_engine_stack("secrets-doors-recall-standing", || async {
+        let served = served().await;
+        let value = SecretValue::fresh();
+        let all = [&value];
+        let registered = served.register(NAME, &value).await;
+        let secret_id = registered["secret_id"]
+            .as_str()
+            .expect("the register reply names the record")
+            .to_owned();
+        let (status, note) = served
+            .post(
+                Caller::Owner,
+                "vault.notes.create",
+                json!({
+                    "kind": "research",
+                    "markdown": format!("The deploy runbook reads its token from {NAME}."),
+                }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "the owner writes a note: {note}");
+        let note_id = note["id_hex"]
+            .as_str()
+            .expect("the note receipt names its id")
+            .to_owned();
+        let note_ref = note["entity_ref"]
+            .as_str()
+            .expect("the note receipt names its ref")
+            .to_owned();
+
+        for caller in [Caller::OwnerHeld, Caller::Agent] {
+            let (status, body) = served
+                .post(caller, "vault.recall", json!({"query": NAME}))
+                .await;
+            assert_eq!(status, StatusCode::OK, "vault.recall: {body}");
+            assert_value_free("vault.recall", &body, &all);
+            let text = body.to_string();
+            assert!(
+                !text.contains(&secret_id),
+                "vault.recall names the custody record: {body}"
+            );
+            if matches!(caller, Caller::OwnerHeld) {
+                assert!(
+                    text.contains(&note_id) || text.contains(&note_ref),
+                    "the owner's recall still lists the note that names the secret: {body}"
+                );
+            }
+        }
     });
 }
 

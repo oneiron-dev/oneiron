@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use oneiron::Vault;
 use oneiron::mail_pack::MailSyncBudget;
+use oneiron::web_fetch::HostedEgressGuard;
 
 use crate::server::{HousekeepingAdmission, SyncServer};
 use oneiron_mail_pack::ext::MailPackLocalSyncVaultExt as _;
@@ -37,7 +38,7 @@ pub(crate) fn spawn_mail_source_syncs(
             let server = Arc::clone(&server);
             let pass = tokio::task::spawn_blocking(move || {
                 let _admission = admission;
-                sync_due_sources(server.vault());
+                sync_due_sources(server.vault(), server.hosted_egress_guard());
             })
             .await;
             if let Err(error) = pass {
@@ -47,8 +48,10 @@ pub(crate) fn spawn_mail_source_syncs(
     })
 }
 
-/// One step of every due source, as the local owner.
-fn sync_due_sources(vault: &Vault) {
+/// One step of every due source, as the local owner. A managed vault has
+/// no local owner and syncs nothing here, so `guard` changes no step today;
+/// it is passed as at the owner's door, so no served step runs unguarded.
+fn sync_due_sources(vault: &Vault, guard: Option<Arc<HostedEgressGuard>>) {
     let owner = match crate::owner::local_owner(vault) {
         Ok(owner) => owner,
         Err(error) => {
@@ -67,7 +70,12 @@ fn sync_due_sources(vault: &Vault) {
         }
     };
     for source in sources {
-        if let Err(error) = vault.mail_source_sync_step(&owner, source, MailSyncBudget::default()) {
+        if let Err(error) = vault.mail_source_sync_step_with_hosted_guard(
+            &owner,
+            source,
+            MailSyncBudget::default(),
+            guard.clone(),
+        ) {
             tracing::warn!(
                 source = %source.to_hex(),
                 error = %error,

@@ -9,13 +9,12 @@ use super::machine_identity::host;
 use super::support::authority_key_from_ed;
 use super::world_key_doors::{enrol_own, fresh_install, key_records, set};
 use super::world_privacy::{edit_by, land, settings, stored_entries, world_row};
-use super::world_reissue::{admit, issue, sync};
+use super::world_reissue::{admit, issue, profiled, sync, with_predecessor};
 use super::*;
 use crate::Vault;
 use crate::error::ErrorKind;
 use crate::world_keys::WorldKeyStatus;
 
-const HERE: EditOrigin = EditOrigin::ThisMachine;
 const AT: TimeRange = TimeRange { start: 3, end: 3 };
 
 fn install_signing(vault: &Vault) -> ed25519_dalek::SigningKey {
@@ -34,6 +33,7 @@ pub(super) fn put_replicated(vault: &Vault, entry: &AuthorityLogEntry) -> crate:
             ENTITY_TYPE_AUTHORITY_LOG,
             AT,
             3,
+            None,
             &encode_authority_log_entry_body(entry)?,
         )
         .commit()
@@ -94,9 +94,10 @@ fn ensure_stores_a_key_for_a_stored_private_world() {
 fn the_first_recovery_root_activates() {
     let host = host();
     enrol_own(&host);
+    with_predecessor(&host, &host.vault, &host.owner);
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     host.vault
-        .activate_owner_root(&host.owner, HERE, prepared, &BTreeSet::new())
+        .activate_owner_root(&host.owner, prepared, &BTreeSet::new())
         .unwrap();
     assert_eq!(host.vault.authority_fold().unwrap().root_anchors().len(), 1);
 }
@@ -107,6 +108,8 @@ fn the_first_recovery_root_activates() {
 fn an_anchors_machine_mark_lands_locally_and_through_sync() {
     let host = host();
     let [issuer, a, peer] = [(); 3].map(|()| fresh_install(&host));
+    profiled(&host, &a.vault, MachineRole::Owned(MachineOwnership::Yours));
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let root = issue(&issuer, &[]);
     admit(&issuer, &root, &a);
     let held: BTreeSet<_> = stored_entries(&peer.vault)
@@ -137,11 +140,12 @@ fn an_anchors_machine_mark_lands_locally_and_through_sync() {
 fn a_fresh_install_restores_the_kit_and_anchors_itself() {
     let host = host();
     let [issuer, install] = [(); 2].map(|()| fresh_install(&host));
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let root = issue(&issuer, &[]);
     sync(&issuer.vault, &install.vault);
     install
         .vault
-        .restore_world_keys(&install.owner, HERE, &root.seed, None)
+        .restore_world_keys(&install.owner, &root.seed, None)
         .unwrap();
     let fold = install.vault.authority_fold().unwrap();
     assert!(fold.trusted_machine(install.machine()).is_some());
@@ -153,6 +157,7 @@ fn a_fresh_install_restores_the_kit_and_anchors_itself() {
 fn an_anchor_signs_no_roster_row() {
     let host = host();
     let issuer = fresh_install(&host);
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let root = issue(&issuer, &[]);
     let fold = issuer.vault.authority_fold().unwrap();
     let row = anchor_signed_entry(

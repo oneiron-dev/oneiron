@@ -438,6 +438,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "ENTITY_REVISION_PENDING_PHONETIC",
         "ENTITY_REVISION_TIMELINE",
         "ENTITY_REVISION_TIMELINE_HEAD",
+        "ENTITY_REVISION_TIMELINE_WRITER",
         "ENTITY_REVISION_VECTOR_REFILL",
         "ESIGN_CAPABILITY_TOKEN",
         "ESIGN_DOCUMENT_QR_CAPABILITY_INDEX",
@@ -564,6 +565,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "PROJECT_REVISIONS",
         "PROJECT_REVISION_AWAITING_MINT",
         "PROJECT_REVISION_BACKFILL",
+        "PROJECT_ROOM_NARROWING",
         "PROJECT_STRIPPED_PROOF",
         "PROJECT_WIDEN_ASK",
         "PROPOSAL_ACTOR_COUNT",
@@ -649,6 +651,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "SYNC_RESIDENCE_PREDICTED_WINDOW",
         "SYNC_RESIDENCE_PROMOTED_WINDOW",
         "SYNC_RESIDENCE_RETAIN_REFUSED_WINDOW",
+        "SYNC_RESTRICTED_DROPPED_CARRIER",
         "TAGGING_MARKER_SEQUENCE",
         "TAGGING_MENTION_REF",
         "TAGGING_PROVISIONAL",
@@ -678,9 +681,11 @@ fn pre_move_fixture_coverage_is_explicit() {
         "TYPED_QUESTION_UNIT_WATCH",
         "VAULT_ARCHIVED_BY_RESTORE",
         "VAULT_CLEANUP_ATTEMPT_ARCHIVE",
+        "VAULT_CLEANUP_EXTRACTION_LINEAGE",
         "VAULT_CLEANUP_TASK_ATTEMPT_ARCHIVE",
         "VAULT_IDENTITY_LOCAL",
         "VAULT_IMPORT_STAMPS",
+        "VAULT_KEY_BOX_HOLD_PENDING",
         "VOICE_OWNER_REF",
         "VOICE_OWNER_REF_OWNER_INDEX",
         "VOICE_REF_IDENTITY",
@@ -691,6 +696,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "WEAVE_DIGEST_SOURCE",
         "WEAVE_WRONG_LINK_LABEL",
         "WIRE_LIMIT_QUESTION",
+        "WORK_TALK_REGISTRATION",
     ]
     .into_iter()
     .collect();
