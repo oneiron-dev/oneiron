@@ -113,9 +113,11 @@ impl SyncConnection {
 
     /// Runs one predicted upkeep pass: ask when due and the fetch gate is open, fetch the
     /// adopted set's windows and documents, and evict what the set dropped, at any time. A
-    /// federation lane does nothing. The home's outage ends the pass quietly.
+    /// federation or member lane does nothing: its residence mode is fixed, and a member lane
+    /// stays Opened for its life (H8-SHARED-ENV-LANE = B). The home's outage ends the pass
+    /// quietly.
     pub(crate) async fn run_predicted_pass(&self) -> Result<(), TransportError> {
-        if self.config.client_config.federation_peer.is_some() {
+        if self.config.client_config.residence_mode_is_fixed() {
             return Ok(());
         }
         let vault = self.manager.vault();
