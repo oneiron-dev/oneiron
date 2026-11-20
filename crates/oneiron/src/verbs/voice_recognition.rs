@@ -14,7 +14,10 @@
 //! oneiron-arch-0061 "the agent logs who/when/what"; lead: "the way out must never be harder
 //! than the way in") under the same Grant that lets it log that person's
 //! consent: one naming [`VOICE_RECOGNITION_CONSENT_VERB`], checked live in
-//! each write; never for a live owner's voice or its own. Each live owner is
+//! each write; never for a live owner's voice or its own. Consent it logs
+//! only for a person who holds no credential here: a live member consents on
+//! their own proof (VOICE-CONSENT-LOG-MEMBERS). A member's withdrawal it may
+//! log, since it only narrows, and the member is told. Each live owner is
 //! told in that write, on its first insertion; a replay tells no one again.
 //! An agent here is an agent or system-class principal on its own credential.
 //!
@@ -157,8 +160,9 @@ pub fn record_voice_recognition_consent_as(
 /// `vault.voices.recognition.consent` for the agent `memory` acts as, on
 /// its own credential: it logs the spoken consent of the subject it
 /// names, a counterparty on its call, never a live owner's voice (the owner
-/// consents for their own voice on their own proof). The consent's write
-/// admits the agent first ([`agent_recorder_in_txn`]); the door's early
+/// consents for their own voice on their own proof) nor a live member's,
+/// who consents on their own proof too (VOICE-CONSENT-LOG-MEMBERS). The
+/// consent's write admits the agent first ([`agent_recorder_in_txn`]); the door's early
 /// check ([`voice_recognition_recorder_admits_agent`]) runs the same
 /// admission in a snapshot of its own. It enrols no print.
 pub fn record_voice_recognition_consent_as_agent(
@@ -206,7 +210,9 @@ pub fn voice_recognition_recorder_admits_agent(
 /// `verb`: its actor binding holds, its presented credential is still live, a live
 /// Grant from a live owner names it and lists
 /// [`VOICE_RECOGNITION_CONSENT_VERB`], and `subject`, when named, is no
-/// live owner of the vault. Answers that Grant.
+/// live owner of the vault, nor, for consent, a live member who can consent
+/// on their own proof ([`Vault::holds_live_human_credential_in_txn`]).
+/// Answers that Grant.
 fn agent_recorder_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
@@ -259,7 +265,67 @@ fn agent_recorder_in_txn(
             "a vault owner consents and withdraws for their own voice on their own proof",
         ));
     }
+    // VOICE-CONSENT-LOG-MEMBERS: consent for a live member is the member's
+    // own act; their withdrawal stays open to the agent, which only narrows,
+    // and the withdrawal's write tells the member.
+    if verb == VOICE_RECOGNITION_CONSENT_VERB
+        && let Some(subject) = subject
+        && vault.holds_live_human_credential_in_txn(txn, subject)?
+    {
+        return Err(agent_refused(
+            verb,
+            "a member of this vault consents for their own voice on their own proof; an agent \
+             logs consent only for a person who holds no credential here",
+        ));
+    }
     Ok(grant)
+}
+
+impl Memory<'_> {
+    /// The tap a person's own notice of an agent-logged withdrawal of their
+    /// voice offers (VOICE-WITHDRAW-UNDO-SHAPE = B, lead 05:1x 17 Nov): "that
+    /// wasn't me" logs a new recognition grant for the purposes the
+    /// withdrawal ended, through [`VOICE_RECOGNITION_CONSENT_VERB`] with no
+    /// subject, so the consent door's own-voice path makes it their own act
+    /// on their own proof. It restores consent only: the withdrawal
+    /// hard-deleted the print (promise-dura-13), and recognition needs a
+    /// fresh enrolment. Offered while the withdrawal is open to disown
+    /// ([`Vault::voice_withdrawal_open_to_disown_in_txn`]). The grant is dated
+    /// one second after the withdrawal, so that withdrawal never voids it, a
+    /// later one still does, and a repeated tap replays the same decision.
+    /// Clients label it "That wasn't me".
+    pub(crate) fn voice_consent_restore_actions(
+        &self,
+        row: &crate::inbox::NotificationRow,
+    ) -> Vec<crate::inbox::NotificationAction> {
+        if self.actor_class() != EdgeActorClass::Human {
+            return Vec::new();
+        }
+        let Some(event_id) = row.source.result.as_deref() else {
+            return Vec::new();
+        };
+        let vault = self.vault();
+        let open = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)
+            .and_then(|txn| {
+                vault.voice_withdrawal_open_to_disown_in_txn(&txn, self.actor(), event_id)
+            });
+        let Ok(Some(withdrawal)) = open else {
+            return Vec::new();
+        };
+        vec![crate::inbox::NotificationAction {
+            verb: VOICE_RECOGNITION_CONSENT_VERB.to_owned(),
+            args: serde_json::json!({
+                "event_id": format!("{event_id}:restored"),
+                "occurred_at": withdrawal.occurred_at.saturating_add(1),
+                "purposes": withdrawal.purposes,
+                "basis": {"SettingsToggle": {"surface_ref": format!("inbox:{}", row.id)}},
+            }),
+        }]
+    }
 }
 
 /// The refusal of an agent `verb` does not admit.

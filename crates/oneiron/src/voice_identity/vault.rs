@@ -3,7 +3,7 @@
 use std::collections::{BTreeSet, HashSet};
 
 use crate::Vault;
-use crate::authority::EffectiveRead;
+use crate::authority::{ACTOR_CLASS_HUMAN, ActorBindingStatus, EffectiveRead};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -16,9 +16,9 @@ use super::storage_admission::{
     CONSENT, PRINT_POINTER, PRINT_RECORD, ROSTER, SAMPLE, VoiceDeletionTally,
     active_print_subjects, admit_enrollment_consent, admit_match_segments, admit_sample_origin,
     best_enrolled_match, calibration_for, cluster_residuals, compute_centroid,
-    delete_voice_prints_in_txn, load_match_candidates, read_active_print,
-    require_counterparty_contact_entity, require_relationship_entity, residual_cluster_ref,
-    residual_speaker_label, sample_digest, unambiguous_invite_remainder,
+    delete_voice_prints_in_txn, load_match_candidates, read_active_print, read_consent_event,
+    read_consent_events, require_counterparty_contact_entity, require_relationship_entity,
+    residual_cluster_ref, residual_speaker_label, sample_digest, unambiguous_invite_remainder,
 };
 use super::stored::{StoredPrint, StoredSample};
 use super::types::{
@@ -38,8 +38,9 @@ enum ConsentEventWrite {
 }
 
 /// The producer of the owner's notice that an agent logged a person's
-/// spoken voice-recognition consent or its withdrawal on a call.
-const VOICE_RECOGNITION_NOTIFICATION_PRODUCER: &str = "voice_recognition";
+/// spoken voice-recognition consent or its withdrawal on a call, and of the
+/// member's own notice of a logged withdrawal, whose tap the inbox offers.
+pub(crate) const VOICE_RECOGNITION_NOTIFICATION_PRODUCER: &str = "voice_recognition";
 
 /// Both consent doors compare inside the transaction that holds the event
 /// write and any hard deletion.
@@ -595,6 +596,9 @@ impl Vault {
     /// the owner logs their word, as the owner logged their grant. Either
     /// check runs inside the withdrawal's write transaction, so a proof that
     /// stopped holding while the request waited appends and deletes nothing.
+    /// A withdrawal dated past this vault's clock is refused, as a consent
+    /// is: it would void every grant dated before it until the clock reached
+    /// it.
     pub fn withdraw_voice_consent_as(
         &self,
         proof: &AuthenticatedOwner,
@@ -621,10 +625,11 @@ impl Vault {
             &request,
             |txn| {
                 if subject == actor {
-                    proof.revalidate_person_in_txn(self, txn).map(drop)
+                    proof.revalidate_person_in_txn(self, txn)?;
                 } else {
-                    proof.revalidate_in_txn(self, txn).map(drop)
+                    proof.revalidate_in_txn(self, txn)?;
                 }
+                self.consent_dated_by_clock_in_txn(txn, occurred_at)
             },
             |_, ()| Ok(()),
         )
@@ -639,7 +644,11 @@ impl Vault {
     /// or a Grant revoked while the request waited, appends and deletes
     /// nothing. On the first insertion each live owner is told in the same
     /// transaction, naming who asked, which consent it was, and the agent and
-    /// Grant that logged it; a replay tells no one again.
+    /// Grant that logged it, and so is the subject when they hold a
+    /// credential in this vault (VOICE-CONSENT-LOG-MEMBERS: a live member's
+    /// withdrawal stands, and the member hears of it); a replay tells no one
+    /// again. A withdrawal dated past this vault's clock is refused, after
+    /// the agent's admission, as a consent is.
     pub(crate) fn withdraw_voice_consent_logged_by_agent<E: From<Error>>(
         &self,
         agent: EntityId,
@@ -660,16 +669,23 @@ impl Vault {
             ],
             basis,
         };
-        self.withdraw_voice_consent_admitted(&request, admit_agent, |wtxn, grant| {
-            self.tell_owners_of_logged_withdrawal_in_txn(wtxn, &request, grant)
-        })
+        self.withdraw_voice_consent_admitted(
+            &request,
+            |txn| -> std::result::Result<EntityId, E> {
+                let grant = admit_agent(txn)?;
+                self.consent_dated_by_clock_in_txn(txn, occurred_at)?;
+                Ok(grant)
+            },
+            |wtxn, grant| self.tell_of_logged_withdrawal_in_txn(wtxn, &request, grant),
+        )
     }
 
     /// One notice per live owner that `request.recorded_by_ref`, an agent
     /// under `grant`, logged `request`'s spoken withdrawal of
-    /// voice-recognition consent. Told again under the same event, a row is
-    /// found, not written twice.
-    fn tell_owners_of_logged_withdrawal_in_txn(
+    /// voice-recognition consent, and one to the subject when they hold a
+    /// credential in this vault ([`Self::holds_live_human_credential_in_txn`]).
+    /// Told again under the same event, a row is found, not written twice.
+    fn tell_of_logged_withdrawal_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         request: &VoiceWithdrawalRequest,
@@ -685,26 +701,144 @@ impl Vault {
             grant.to_hex()
         );
         let now = self.instant_in_txn(wtxn)?.secs();
-        for owner in crate::policy_model::owners_in_txn(self, wtxn)? {
+        let owners = crate::policy_model::owners_in_txn(self, wtxn)?;
+        let member = !owners.contains(&request.subject_ref)
+            && self.holds_live_human_credential_in_txn(wtxn, request.subject_ref)?;
+        let member_notice = if member {
+            let who = crate::reaction::person_name_in(self, wtxn, request.recorded_by_ref)?
+                .unwrap_or_else(|| "An agent".to_owned());
+            Some((
+                NotificationKind::VoiceRecognitionWithdrawalLoggedForSubject,
+                request.subject_ref,
+                format!(
+                    "{who} recorded that you asked to stop voice recognition on a call, \
+                     and your voiceprint, if any, was deleted (logged by agent {} under \
+                     Grant {}). If that wasn't you, restore your consent here; recognition \
+                     then needs a fresh enrolment.",
+                    request.recorded_by_ref.to_hex(),
+                    grant.to_hex()
+                ),
+            ))
+        } else {
+            None
+        };
+        let owner_notices = owners.into_iter().map(|owner| {
+            (
+                NotificationKind::VoiceRecognitionWithdrawn,
+                owner,
+                detail.clone(),
+            )
+        });
+        for (kind, recipient, detail) in owner_notices.chain(member_notice) {
             self.record_notification_in_txn(
                 wtxn,
                 &NotificationEvent {
-                    kind: NotificationKind::VoiceRecognitionWithdrawn,
+                    kind,
                     source: NotificationSource {
                         producer: VOICE_RECOGNITION_NOTIFICATION_PRODUCER.to_owned(),
-                        event: format!("{subject}:{}:{}", request.event_id, owner.to_hex()),
+                        event: format!("{subject}:{}:{}", request.event_id, recipient.to_hex()),
                         result: Some(request.event_id.clone()),
-                        detail: Some(detail.clone()),
+                        detail: Some(detail),
                         ..NotificationSource::default()
                     },
                     subject_refs: Vec::new(),
-                    recipient: Some(owner),
+                    recipient: Some(recipient),
                     created_at: now,
                     origin_conversation: None,
                 },
             )?;
         }
         Ok(())
+    }
+
+    /// Whether `person` holds a live member credential in this vault
+    /// (VOICE-CONSENT-LOG-MEMBERS): a live ordinary human-class slip minted to
+    /// them (a paired person or an accepted member, who can act at the voice
+    /// doors on their own proof), or an active human actor binding that
+    /// speaks for them. A limited-purpose slip does not count: a pending
+    /// invitation, a share link, a support delegation, a trusted-contact or a
+    /// seat binding reaches only its own doors, an organization-bound slip
+    /// only its organization's administration powers, and a single-use slip
+    /// only its one consuming door, so its holder cannot consent on their own
+    /// proof there. A counterparty an agent hears on a call holds none.
+    pub(crate) fn holds_live_human_credential_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+    ) -> Result<bool> {
+        let (bound, slips) = {
+            let fold = self.authority_view_readonly_in_txn(txn)?;
+            let bound = fold.actor_bindings.values().any(|binding| {
+                binding.actor_ref == person
+                    && binding.actor_class == ACTOR_CLASS_HUMAN
+                    && binding.status == ActorBindingStatus::Active
+            });
+            let slips: Vec<[u8; 32]> = fold
+                .slips
+                .mints
+                .iter()
+                .filter(|(_, mint)| {
+                    let claims = &mint.action.claims;
+                    EntityId::from_hex(&claims.holder_ref).ok() == Some(person)
+                        && claims.actor_class.as_deref() == Some(ACTOR_CLASS_HUMAN)
+                        && !claims.single_use
+                        && claims.org_ref.is_none()
+                        && claims.invitation_ref.is_none()
+                        && claims.share_ref.is_none()
+                        && claims.delegation.is_none()
+                        && claims.trusted_contact.is_none()
+                        && claims.seat_claim.is_none()
+                })
+                .map(|(id, _)| *id)
+                .collect();
+            (bound, slips)
+        };
+        if bound {
+            return Ok(true);
+        }
+        for id in slips {
+            if self.capability_slip_id_is_live_in_txn(txn, &id)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// `subject`'s withdrawal `event_id` while they may still disown it
+    /// (VOICE-WITHDRAW-UNDO-SHAPE = B): a withdrawal someone else recorded
+    /// for them that is still their latest decision, dated before this
+    /// vault's clock. No grant of theirs is dated after it and no other
+    /// withdrawal at or after it; a grant in its own second loses to it, as
+    /// enrolment and recognition order a tie.
+    /// Their "that wasn't me" logs a grant dated one second after it, which
+    /// the consent door then accepts, and which reverses only that
+    /// withdrawal: a later one still voids it. It restores consent only; the
+    /// withdrawal already hard-deleted the print (promise-dura-13).
+    pub(crate) fn voice_withdrawal_open_to_disown_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        subject: EntityId,
+        event_id: &str,
+    ) -> Result<Option<VoiceConsentEventV1>> {
+        let Some(withdrawal) = read_consent_event(&self.store, txn, &subject, event_id)? else {
+            return Ok(None);
+        };
+        if withdrawal.state != VoiceConsentState::Withdrawn
+            || withdrawal.recorded_by_ref == subject
+            || withdrawal.occurred_at >= self.instant_in_txn(txn)?.secs()
+        {
+            return Ok(None);
+        }
+        let decided_since = read_consent_events(&self.store, txn, &subject)?
+            .iter()
+            .any(|other| {
+                other.event_id != withdrawal.event_id
+                    && match other.state {
+                        VoiceConsentState::Granted => other.occurred_at > withdrawal.occurred_at,
+                        VoiceConsentState::Withdrawn => other.occurred_at >= withdrawal.occurred_at,
+                    }
+            });
+        Ok((!decided_since).then_some(withdrawal))
     }
 
     /// The withdrawal transaction: `admit` runs first inside it, so a
@@ -854,11 +988,13 @@ impl Vault {
         })
     }
 
-    /// Refuses a consent a door logs dated later than this vault's clock, with
-    /// no allowance (REVIEW-9224 P1): enrolment and recognition count a
-    /// withdrawal only when it is dated at or after the grant, so a grant
-    /// dated even a minute ahead would outlive a withdrawal the subject logs
-    /// in that minute. A recorder whose clock runs ahead dates by the vault's.
+    /// Refuses a consent decision a door logs, a grant or a withdrawal, dated
+    /// later than this vault's clock, with no allowance (REVIEW-9224 P1):
+    /// enrolment and recognition count a withdrawal only when it is dated at
+    /// or after the grant, so a grant dated even a minute ahead would outlive
+    /// a withdrawal the subject logs in that minute, and a withdrawal dated
+    /// ahead would void every grant before its date. A recorder whose clock
+    /// runs ahead dates by the vault's.
     fn consent_dated_by_clock_in_txn(&self, txn: &heed::RoTxn<'_>, occurred_at: u64) -> Result<()> {
         if occurred_at > self.instant_in_txn(txn)?.secs() {
             return Err(invalid_voice(
