@@ -128,7 +128,6 @@ impl HostSelfDispatcher<'_> {
                             .clone()
                             .with_approval(crate::claim::ClaimApprovalStatus::Proposed)
                     });
-                let gate_candidate = candidate.clone();
                 vault.put_claim_candidate_with_gate_returning_actual(
                     &call.id,
                     candidate,
@@ -136,23 +135,25 @@ impl HostSelfDispatcher<'_> {
                     call.occurred,
                     call.learned_at,
                     |_| Ok(()),
-                    |txn| {
-                        // The gate judges the body the landing stores, at the
+                    |txn, landed_id, landed| {
+                        // The gate judges the row the landing stores (a
+                        // semantic edit's fresh successor, FIX
+                        // LIVE-RUN-CHECKER-SUCCESSOR-EDIT), its body at the
                         // facet the landing stamps, read in this transaction,
-                        // so the decision it records names that body (its
-                        // diff handle) and the landing can reuse it (review
-                        // 9216 round 2 P1).
+                        // so the decision it records names that row and body
+                        // (its diff handle) and the landing can reuse it
+                        // (review 9216 round 2 P1).
                         let facet =
                             crate::batch::claim_candidate_apply::claim_candidate_birth_facet(
                                 &vault.store,
                                 &*txn,
-                                &call.id,
+                                &landed_id,
                             )?;
-                        let gate_body = gate_candidate.into_claim_body(&envelope, facet)?;
+                        let gate_body = landed.clone().into_claim_body(&envelope, facet)?;
                         let (verdict, recorded) = super::super::envelope::check_write_gate_in_txn(
                             vault,
                             txn,
-                            call.id,
+                            landed_id,
                             &gate_body,
                             &envelope,
                             true,
