@@ -448,9 +448,10 @@ impl ScopedRead<'_> {
     }
 
     /// Whether `alternative` alone reads the row `id` in `rtxn`, as the row
-    /// gate's A judges a row under that one Grant, and what the row was
-    /// written from as the row gate reads it. A failure admits nothing and is
-    /// counted, as A counts it.
+    /// gate's A judges a row under that one Grant, and each row it was
+    /// written from under that same Grant, at the Grant's floor as the row
+    /// gate judges a source: no other Grant lends a source (review round 1
+    /// of #9929). A failure admits nothing and is counted, as A counts it.
     pub(super) fn row_readable_under_grant_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -481,10 +482,12 @@ impl ScopedRead<'_> {
         let Some(raw) = self.entity_record_in(rtxn, id)?.map(|row| row.encode()) else {
             return Ok(false);
         };
-        Ok(
-            self.own_row_under_grant_in(rtxn, policy, id, &raw, request.as_ref(), held, grant)?
-                && self.written_from_readable_in(rtxn, policy, id, &raw, held)?,
-        )
+        if !self.own_row_under_grant_in(rtxn, policy, id, &raw, request.as_ref(), held, grant)? {
+            return Ok(false);
+        }
+        self.written_from_each_readable_in(rtxn, id, &raw, |source, raw| {
+            self.own_row_under_grant_in(rtxn, policy, source, raw, None, held, grant)
+        })
     }
 
     /// Whether `grant` admits the record position of the row `raw` of `id`,
