@@ -97,12 +97,13 @@ fn unread_source() -> Error {
     Error::InvalidConfig("a private thread converts only from a turn its converter reads".into())
 }
 
-fn thread_project_in(
+/// The project id a room thread's origin index names, read from the index
+/// alone: no PROJECT body is decoded here.
+fn thread_index_target(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
     thread: EntityId,
-    kind: u8,
 ) -> Result<Option<EntityId>> {
     let Some(owner) = vault
         .store
@@ -117,6 +118,19 @@ fn thread_project_in(
             .try_into()
             .map_err(|_| Error::CorruptedIndex("project origin index"))?,
     )?;
+    Ok(Some(id))
+}
+
+fn thread_project_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    thread: EntityId,
+    kind: u8,
+) -> Result<Option<EntityId>> {
+    let Some(id) = thread_index_target(vault, txn, room, thread)? else {
+        return Ok(None);
+    };
     let project = record::<ProjectRecord>(&vault.store, txn, id, kind)?
         .ok_or(Error::CorruptedIndex("project origin target"))?;
     if project.origin_room.as_deref() != Some(room.to_hex().as_str())

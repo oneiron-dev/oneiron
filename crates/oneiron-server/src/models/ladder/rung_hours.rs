@@ -48,4 +48,29 @@ impl OfferLadder {
             .as_ref()
             .is_some_and(|hours| self.hours_now().is_some_and(|now| !hours.contains(now)))
     }
+
+    /// The end of a call that met no failure and passed rungs for their
+    /// hours: no rung serves at this hour, with when the first of those
+    /// rungs' hours opens. Such a walk ends here when the rungs that keep no
+    /// hours are gone, such as one whose provider was unavailable when the
+    /// runtime was built. `None` when the walk passed no rung for its hours.
+    pub(super) fn outside_hours_refusal(&self, walk: &Walk) -> Option<LlmError> {
+        let now = self.hours_now()?;
+        let mut passed = walk
+            .passed
+            .iter()
+            .filter(|(_, passed)| matches!(passed, Passed::OutsideHours))
+            .peekable();
+        passed.peek()?;
+        let opens = passed
+            .filter_map(|(index, _)| self.rungs[*index].hours.as_ref()?.next_open(now))
+            .min();
+        Some(
+            RetryableLlmError::OutsideHours {
+                retry_after: opens.map(|at| at.saturating_sub(now)),
+                resets_at: opens.into_iter().collect(),
+            }
+            .into(),
+        )
+    }
 }

@@ -7,7 +7,7 @@ use super::{
 use crate::attempt_queue::{AttemptQueue, AttemptRecord, ClaimOutcome};
 use crate::outbound::{
     OutboundDispatchError, OutboundDispatchRequest, OutboundExecutionOutcome,
-    OutboundExecutionRequest, OutboundExecutionSink,
+    OutboundExecutionRequest, OutboundExecutionSink, kept_send_backoff_until,
 };
 use crate::receipt::{DispatchObservationKey, append_dispatch_observation_in_txn};
 use crate::store::attempt_id::AttemptId;
@@ -360,9 +360,7 @@ impl Vault {
                             lease_owner,
                             attempt_count: attempt.attempt_count,
                             // FIX 11660: never before the edge its receipt names.
-                            backoff_until: now
-                                .saturating_add(60)
-                                .max(result.retry_at().unwrap_or(0)),
+                            backoff_until: kept_send_backoff_until(now, result.retry_at()),
                             last_error: Some("notice_not_dispatched".into()),
                             now,
                         },

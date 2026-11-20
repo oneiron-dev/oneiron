@@ -17,6 +17,7 @@
 //! urgent, and leaves the regular digest as it is. Urgency breaks the
 //! digest's cadence only, never quiet hours, a grant or an outbound send.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -92,12 +93,7 @@ impl DigestHarmCandidate {
     /// The candidate does not encode.
     pub fn basis(&self, question: &str) -> Result<[u8; 32]> {
         let json = serde_json::to_vec(self).map_err(|_| invalid())?;
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"oneiron:digest-harm:v1");
-        hasher.update(&(json.len() as u64).to_be_bytes());
-        hasher.update(&json);
-        hasher.update(question.as_bytes());
-        Ok(*hasher.finalize().as_bytes())
+        Ok(harm_basis_of(&json, question))
     }
 
     /// The typed question the ladder answers for this candidate, in the
@@ -456,14 +452,28 @@ impl Vault {
 /// The assessment does not encode.
 pub(crate) fn host_witness_key(assessment: &UrgentDigestAssessment) -> Result<String> {
     let json = serde_json::to_vec(assessment).map_err(|_| invalid())?;
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron:digest-harm-host:v1");
-    hasher.update(&(json.len() as u64).to_be_bytes());
-    hasher.update(&json);
-    Ok(format!(
+    Ok(host_witness_key_of(&json))
+}
+
+/// [`DigestHarmCandidate::basis`] over the candidate's JSON (K, PLAN-UC-04
+/// stage 7).
+fn harm_basis_of(json: &[u8], question: &str) -> [u8; 32] {
+    let mut hasher = LegacyDigest::new(purposes::dreamer_runner::DIGEST_HARM_BASIS);
+    hasher.len_u64_be(json.len());
+    hasher.raw(json);
+    hasher.raw(question.as_bytes());
+    hasher.finish()
+}
+
+/// [`host_witness_key`] over the assessment's JSON (K, PLAN-UC-04 stage 7).
+fn host_witness_key_of(json: &[u8]) -> String {
+    let mut hasher = LegacyDigest::new(purposes::dreamer_runner::DIGEST_HARM_HOST_WITNESS);
+    hasher.len_u64_be(json.len());
+    hasher.raw(json);
+    format!(
         "{DIGEST_URGENT_FACET}:host:{}",
-        crate::entity_id::bytes_to_hex_lower(hasher.finalize().as_bytes())
-    ))
+        crate::entity_id::bytes_to_hex_lower(&hasher.finish())
+    )
 }
 
 /// Enqueues the witness for one host-built urgent assessment in the
@@ -647,4 +657,14 @@ pub(crate) fn json_field<T: DeserializeOwned>(input: &Value, key: &str) -> Resul
         .and_then(|(_, value)| value.as_str())
         .ok_or_else(invalid)?;
     serde_json::from_str(json).map_err(|_| invalid())
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn harm_basis_of_for_test(json: &[u8], question: &str) -> [u8; 32] {
+    harm_basis_of(json, question)
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn host_witness_key_of_for_test(json: &[u8]) -> String {
+    host_witness_key_of(json)
 }

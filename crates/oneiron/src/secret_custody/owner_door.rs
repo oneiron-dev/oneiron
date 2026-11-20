@@ -301,6 +301,7 @@ impl Vault {
                 "only the vault owner registers a secret",
             )));
         }
+        let owner_authored = owner.owner_answer_in_txn(self, &wtxn)?;
         default_import_fetch_actor(&mut bindings, &actor);
         let floor = SecretCustodyFloor::resolve(&self.store, &wtxn)?;
         if let Some(manifest) = &manifest {
@@ -342,7 +343,7 @@ impl Vault {
             refuse_bindings_wider_than_live_floor(&self.store, &wtxn, &rec.0)?;
             let recorded = self.record_custody_change_in_txn(
                 &mut wtxn,
-                actor,
+                (actor, owner_authored.as_ref()),
                 surface,
                 ActiveChange {
                     change: CustodyChange::Register,
@@ -630,7 +631,5 @@ fn refuse_wider_than_entry(
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-SECRET-CUSTODY-OWNER-DOOR-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

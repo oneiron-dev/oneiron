@@ -126,7 +126,11 @@ the pin names that one model, so there is no walk. A ladder whose every rung
 keeps hours is refused, so a call outside them always has a rung, as is
 `hours` on a role's single `model`. The hours say when, not where: the rung's
 provider is the owner's own entry, and `leave_device` applies to it as to any
-rung.
+rung. When the rungs without hours are gone at run time, such as one whose
+provider was unavailable when the server started, a call outside the
+remaining rungs' hours ends with the retryable refusal `outside_hours` (HTTP
+503), whose `retry_after` and `resets_at` say when the first of those hours
+opens; a durable model step parks until then.
 
 The local Dreamer model the examples name is the measured recipe for the
 Dreamer's seat: Qwen3.8-27B as EXL3 4 bpw (`turboderp/Qwen3.8-27B-exl3`) with
@@ -384,6 +388,7 @@ names the field and never its value:
   `kit_bundle_public_urls`, `allow_unauthenticated`, `allowed_origins`,
   `artifact_domains`, `artifact_vault_name`, `trusted_proxies`,
   `lease_vault_id`, `privacy_posture`, `hosted_kms_key_ref`, `device_class`,
+  `machine_reported_name`, `machine_reported_model`,
   every `[models.broker]` key, `[models.voice] socket`, `[keystore] dir` and
   `[linear] response_dir`, which the vault derives itself. A managed vault's
   artifact origin answers on its internal authority alone
@@ -785,8 +790,8 @@ and a vLLM server started with `--middleware body_codec.DecodeContentEncoding`
 (deploy/house-model/README.md, "Compressed requests").
 Each opts in on its own entry with `request_compression = "zstd"`; an entry
 whose server does not decode stays plain. A `voxcpm2` entry takes none (its
-loopback voice socket carries no codec frame) and an entry that sets it is
-refused at config load; an opted-in provider's media JSON bodies compress by
+loopback voice socket carries no codec frame) and an entry that turns it on
+is refused at config load; an opted-in provider's media JSON bodies compress by
 the same rules. A tagger endpoint opts in on its section, `[oneironer]
 request_compression = "zstd"`, for its `/v1/extract` posts, with the same
 plain resend; a `kind = "oneironer"` provider entry takes none.
@@ -1859,8 +1864,9 @@ unreranked, and say `skipped` with `no_reranker`. With one, nothing stands in
 for it: a spent line is refused with `BUDGET_SPENT` (402; MCP kind
 `budget_spent`), and a reranker that refuses, fails or answers out of shape
 with `MODEL_UNAVAILABLE` (503; MCP kind `model_unavailable`). A route whose
-rungs cannot serve (a key variable unset, or a `key_secret` provider: the
-broker has no rerank shape yet) refuses the same way. The request
+rungs cannot serve (a key variable unset) refuses the same way. A
+`key_secret` provider serves the reranker: its `/v1/rerank` calls go through
+the credential broker's rerank shape (`crates/oneiron-server/src/models/broker_rerank.rs`). The request
 never names the model, the endpoint or the lease; the server holds them, for
 MCP, HTTP and WebSocket recall alike.
 
@@ -2725,8 +2731,10 @@ written into a one-shot document of that origin which the host answers
 itself, so no page script runs before it, and read back key by key; then
 it loads the URL, scrolls, and reads the page whole. The answer carries
 the switch's `receipt` (verb `switch_engine`), whose `engine_switch` is its
-record (`{from, to, reason, url, carried, not_carried, outcome}`), and the
-new page's `observation`. A carried store names its origin, its item
+record (`{from, to, reason, url, carried, not_carried, outcome}`, and on a
+switched one `source_guest_pressure`: the pids-limit hits the source guest
+showed by the time it went, which no later answer names), and the new
+page's `observation`. A carried store names its origin, its item
 count, its `phase` (`pre_input`, `post_act`, `exit`, `hand_back` or
 `switch_export`) and `after_receipt`, the last receipt the run had landed
 when it was read. `not_carried` lists, by component, origin, cookie

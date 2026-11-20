@@ -31,7 +31,8 @@
 use std::collections::BTreeMap;
 
 use heed::{RoTxn, RwTxn};
-use loro::{ExportMode, ID, LoroDoc, UpdateOptions, VersionVector};
+use loro::{ExportMode, ID, LoroDoc, VersionVector};
+use oneiron_contracts::fingerprint::ContentHash;
 
 use super::rows::HeldEdit;
 use super::{GENERATION_CONTEXT, SyncSecretProjection};
@@ -152,7 +153,7 @@ fn text_bound_in_txn(
             .ok()
             .flatten()
             .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..).map(<[u8]>::to_vec))
-            .filter(|body| carried(marks, hash, body) == *blake3::hash(body).as_bytes());
+            .filter(|body| carried(marks, hash, body) == *ContentHash::of(body).as_bytes());
         return Ok(Some(TextBound {
             key: *id,
             hash: stored
@@ -162,7 +163,7 @@ fn text_bound_in_txn(
             own: false,
         }));
     }
-    let hash = *blake3::hash(text.as_bytes()).as_bytes();
+    let hash = *ContentHash::of(text.as_bytes()).as_bytes();
     Ok(marks.is_marked(&hash).then(|| TextBound {
         key: *id,
         hash,
@@ -175,7 +176,7 @@ fn text_bound_in_txn(
 /// `bytes`: those bytes' own blob when a mark covers them (a landed edit's
 /// carried mark, FIX 10732), else `hash`.
 fn carried(marks: &RepoIndexMarks, hash: [u8; 32], bytes: &[u8]) -> [u8; 32] {
-    let own = *blake3::hash(bytes).as_bytes();
+    let own = *ContentHash::of(bytes).as_bytes();
     if own != hash && marks.is_marked(&own) {
         own
     } else {
@@ -246,7 +247,7 @@ fn project_text_in_txn(
         bytes,
         own,
     } = bound;
-    let whole = blake3::hash(&bytes).as_bytes() == &hash;
+    let whole = ContentHash::of(&bytes).as_bytes() == &hash;
     let empty = own && bytes.is_empty();
     let input = marks.source_input_in_txn(vault, txn, &hash, bytes)?;
     let Some(stamp) = input.stamp().cloned() else {
@@ -365,7 +366,7 @@ fn bring_current(
     lineage
         .set_peer_id(author()?)
         .map_err(|_| Error::InvariantViolation("document copy author"))?;
-    text.update(copy, UpdateOptions::default())
+    crate::text_diff::set_text(&text, copy)
         .map_err(|_| Error::InvariantViolation("document copy diff"))?;
     lineage.commit();
     Ok(true)
@@ -411,6 +412,8 @@ pub(crate) mod settlement;
 
 /// The device half of a marked source's copy stream (FIX 10872).
 pub(crate) mod device;
+#[cfg(test)]
+mod text_diff_budget_tests;
 
 /// The shipped visible diff of `submitted`, a peer's text of `copy`, onto
 /// `text`: pure, no store read. Both the import writer and the
@@ -530,9 +533,7 @@ fn land_copy_in_txn(
         .set_peer_id(LoroDoc::new().peer_id())
         .map_err(|_| Error::InvariantViolation("document copy landing peer"))?;
     let before = resident.oplog_vv();
-    resident
-        .get_text(BODY)
-        .update(&landed, UpdateOptions::default())
+    crate::text_diff::set_text(&resident.get_text(BODY), &landed)
         .map_err(|_| Error::InvariantViolation("document copy landing diff"))?;
     resident.commit();
     let update = resident

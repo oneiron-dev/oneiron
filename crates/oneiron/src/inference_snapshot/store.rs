@@ -385,6 +385,11 @@ impl Vault {
         wrapped.retire();
         let plaintext = match opened? {
             Some(Some(plaintext)) => plaintext,
+            // A body that does not open under keys read after a key handoff
+            // began proves nothing: it retires only while the admission
+            // still holds, as a new data-key generation ends every earlier
+            // admission before it commits.
+            Some(None) if !self.snapshot_admission_holds(admission) => return Ok(None),
             Some(None) => {
                 self.retire_inference_snapshot(id)?;
                 return Ok(None);
@@ -415,7 +420,10 @@ impl Vault {
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Some(None)),
             Err(error) => return Err(error.into()),
         };
-        let Ok(key) = self.vault_subkey(WRAP_CONTEXT) else {
+        // The held key first, then each earlier generation's: a snapshot
+        // published before a new data-key generation keeps its wrapper under
+        // that generation's key, and only an authenticated open counts.
+        let Ok(keys) = self.vault_subkeys(WRAP_CONTEXT) else {
             return Ok(None);
         };
         let aad = associated_data(&record.id, &record.manifest)?;
@@ -432,18 +440,24 @@ impl Vault {
             Ok(_) | Err(Error::CorruptedIndex(_)) => return Ok(Some(None)),
             Err(error) => return Err(error),
         };
-        let plaintext = match open_snapshot_with_expected_len(
-            &key,
-            wrapped,
-            &aad,
-            &sealed,
-            record.plaintext_bytes,
-        ) {
-            Ok(plaintext) => Some(plaintext),
-            Err(Error::CorruptedIndex(_)) => None,
-            Err(error) => return Err(error),
+        let mut opened = None;
+        for (_, key) in &keys {
+            match open_snapshot_with_expected_len(
+                key,
+                wrapped,
+                &aad,
+                &sealed,
+                record.plaintext_bytes,
+            ) {
+                Ok(plaintext) => {
+                    opened = Some(plaintext);
+                    break;
+                }
+                Err(Error::CorruptedIndex(_)) => {}
+                Err(error) => return Err(error),
+            }
         }
-        .filter(|plaintext| {
+        let plaintext = opened.filter(|plaintext| {
             plaintext.len() as u64 == record.plaintext_bytes
                 && sha256(plaintext) == record.snapshot_sha256
         });

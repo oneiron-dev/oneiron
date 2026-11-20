@@ -26,6 +26,12 @@ pub struct GraphFsMounted {
     pub mount: GraphFsMountRequest,
     pub root: String,
     pub projection: String,
+    /// The memory frontier this mount reads at, as 32 hex characters: on a
+    /// live-head mount the one the committed head stood at when it mounted,
+    /// on a memory fork its own, and none on a repository mount. Mount it as
+    /// a `fork_hash` without a `repo` to read the memory as it stood then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frontier: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

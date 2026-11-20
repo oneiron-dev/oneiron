@@ -258,6 +258,33 @@ impl Vault {
             .is_none_or(|current| claims.scope.is_narrowing_of(&current)))
     }
 
+    /// [`Self::member_slip_scope_is_current_in_txn`] for a credential a
+    /// saved read lane keeps (OF-506), which only reads: the mint's Scope
+    /// with its verbs met to `read` and `core:read` must lie inside the
+    /// current membership grant. A verb the grant no longer confers beside
+    /// those ends no saved read, as each fresh verification meets the proof
+    /// to the grant's verbs ([`Self::member_bounded_slip_view_in_txn`]); a
+    /// grant that stops conferring read, or narrows any other axis, ends it
+    /// (round 2 review P1 of #9583).
+    pub(super) fn member_slip_read_scope_is_current_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+    ) -> Result<bool> {
+        let Some(current) = self.current_member_slip_scope_in_txn(txn, claims)? else {
+            return Ok(true);
+        };
+        let read_verbs = oneiron_authority::federation::ScopeAxis::Some(BTreeSet::from([
+            "read".to_owned(),
+            "core:read".to_owned(),
+        ]));
+        let read = oneiron_authority::federation::Scope {
+            verbs: claims.scope.verbs.meet(&read_verbs),
+            ..claims.scope.clone()
+        };
+        Ok(read.is_narrowing_of(&current))
+    }
+
     /// Rebuild a proof-backed read key from the current membership bound in
     /// its own snapshot, without changing the authenticated token or caveats.
     pub(crate) fn member_bounded_slip_view_in_txn(
@@ -552,7 +579,9 @@ impl Vault {
     /// shared vault `vault_id` releases (FIX 12555): the one selection policy
     /// over the owner's local binding, unchanged shared property bytes. Every
     /// grant is read; one whose body does not decode is no bound grant here.
-    fn live_bound_connect_grants_in_txn(
+    /// The inquiry edge's join reads the same selection as the seat's edges
+    /// (FIX INQUIRY-EDGE-ONE-PER-SEAT).
+    pub(crate) fn live_bound_connect_grants_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         vault_id: u64,

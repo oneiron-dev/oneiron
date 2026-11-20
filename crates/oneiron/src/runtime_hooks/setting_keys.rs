@@ -3,7 +3,7 @@
 //! sets the key.
 
 use super::body::{DEFAULT_HOOK_MAX_BUDGET_MS, HookMaxBudgetMs};
-use crate::setting::{Kind, lower_is_tighter};
+use crate::setting::Kind;
 use crate::{Result, Vault};
 
 fn default_hook_max_budget_ms() -> HookMaxBudgetMs {
@@ -14,7 +14,7 @@ crate::setting::setting_keys! {
     /// The longest body budget, in milliseconds, a hook selector may name; an accounting
     /// deadline, never a stop; at least 1; a higher value is a loosening.
     pub(crate) HOOK_MAX_BUDGET_MS: HookMaxBudgetMs = "runtime_hooks.hook.max_budget_ms" {
-        kind: Kind::new(default_hook_max_budget_ms).tighter(lower_is_tighter::<HookMaxBudgetMs>),
+        kind: Kind::new(default_hook_max_budget_ms).lower(),
     };
 }
 

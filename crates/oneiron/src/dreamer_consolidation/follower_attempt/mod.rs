@@ -11,6 +11,8 @@
 
 mod output;
 mod request;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{output::cache_identity_digest_for_test, request::route_digest_for_test};
 
 use super::executor::ConsolidationExecutor;
 use super::roles::{DREAMER_EXTRACTION_ROLE, RoleCall, bind_reasoning};
@@ -167,6 +169,8 @@ impl ConsolidationExecutor<'_> {
         let mut charges = StepChargeTally {
             units,
             step_bindings,
+            #[cfg(oneiron_test_support)]
+            spent_observations: Vec::new(),
         };
         let call = RoleCall::resolve(
             &self.roles,

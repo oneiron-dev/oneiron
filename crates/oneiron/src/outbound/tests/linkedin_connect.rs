@@ -5,6 +5,7 @@ use crate::linkedin_connector::{
     LinkedInConnectionObservation, LinkedInConnectionState, LinkedInMcpConnectRequest,
     LinkedInMcpConnectTransport, LinkedInMcpVerifiedConnectSink, LinkedInVerifiedConnectPlan,
 };
+use oneiron_contracts::lifecycle::LifecycleWords;
 
 struct ConnectTransport {
     calls: Vec<LinkedInMcpConnectRequest>,
@@ -483,6 +484,7 @@ fn scheduled_connect_without_seat_policy_refuses_before_provider_transport()
             trigger_ref: "session:linkedin-connect".to_owned(),
             job_ref: None,
             occurred_at: Some(1_060),
+            mention: None,
         });
     assert!(
         scheduled.is_err(),
@@ -739,7 +741,7 @@ fn an_aged_out_retry_meets_todays_cap() -> std::result::Result<(), Box<dyn std::
                     .fields
                     .get("intent_state")
                     .map(String::as_str),
-                Some(crate::outbound_intent_ledger::IntentState::Pending.as_str()),
+                Some(crate::outbound_intent_ledger::IntentState::Pending.word()),
                 "the held retry is still the Pending row it was"
             );
         }
@@ -990,7 +992,13 @@ fn connect_at_ceiling(
                 "never connect_request on linkedin",
                 today,
             )?;
-            vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", today)?;
+            vault.approve_connector_charter(
+                &key_id,
+                pending.text_hash,
+                pending.compiled_hash,
+                "owner",
+                today,
+            )?;
         }
     }
     let mut sink = capped_connect_sink("intent:cl:jane", jane)?;
@@ -1050,7 +1058,7 @@ fn a_ceiling_only_holds_a_send_governance_lets_out()
                 if !matches!(path, CeilingPath::FreshSend) {
                     assert_eq!(
                         full.intent_state.as_deref(),
-                        Some(crate::outbound_intent_ledger::IntentState::Pending.as_str()),
+                        Some(crate::outbound_intent_ledger::IntentState::Pending.word()),
                         "{case}: the held retry is still the Pending row it was"
                     );
                 }

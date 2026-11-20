@@ -115,6 +115,189 @@ pub(in crate::calendar) fn admit_connector_event<'a>(
     admission.queue_property_continuations_reading(source_version)?;
     Ok(admission.owed_booking_moves > 0)
 }
+
+/// A pulled resource the echo law acknowledged: `passport`, the source's
+/// live passport, already carries its SEQUENCE and content hash, so nothing
+/// of it is admitted again.
+///
+/// An uncancelled resource at the version of a passport that dates a
+/// cancellation (`cancelled_since`, a held sighting, or the owner's
+/// cancelled write) is the calendar showing the EVENT again: that report is
+/// withdrawn
+/// ([`withdraw_tombstone_report`]).
+///
+/// For a cancellation, when an admission of pulled bytes committed that
+/// passport (it keeps their archived source), the deposit refund and status
+/// are asked again, as a feed poll asks them on an unchanged sighting: the
+/// passport commits before they do, so a stop between them leaves the next
+/// pull of the same bytes here, and this is where they are repaired. A
+/// passport the seat's own write committed keeps no source: its echo is the
+/// owner's own write coming back, not a cancellation made in that calendar,
+/// and writes nothing.
+pub(in crate::calendar) fn repeat_connector_echo<'a>(
+    vault: &'a Vault,
+    system: &'a str,
+    source: ConnectorAdmissionSource<'a>,
+    event_ref: EntityId,
+    passport: &CalendarPassportValue,
+    event: &ParsedVEvent,
+    now: u64,
+) -> Result<(), CalendarError> {
+    let mut admission = connector_admission(vault, system, source, now);
+    if !event.cancelled {
+        return withdraw_tombstone_report(&mut admission, event_ref, passport, event);
+    }
+    if passport.source.is_none() {
+        return Ok(());
+    }
+    admission.repeat_imported_cancel(event_ref, event)
+}
+
+/// A cancelled version of `event` a pull held back unread, since a cancelled
+/// write of its member to this calendar is still in flight and the version
+/// may be that write coming back
+/// (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS). `passport`, the
+/// source's live passport, keeps this first sighting as
+/// `deferred_cancel_seen_at`, unless it already dates a cancellation or a
+/// held sighting. A write that settles, or proves to be the stored copy,
+/// drops it; when the write was refused and the copy is not its own, the
+/// next pull admits the version as the source's cancellation, dated by this
+/// sighting rather than by that later read.
+pub(in crate::calendar) fn defer_connector_cancel<'a>(
+    vault: &'a Vault,
+    system: &'a str,
+    source: ConnectorAdmissionSource<'a>,
+    event_ref: EntityId,
+    passport: &CalendarPassportValue,
+    event: &ParsedVEvent,
+    now: u64,
+) -> Result<(), CalendarError> {
+    if passport.cancelled_since.is_some() || passport.deferred_cancel_seen_at.is_some() {
+        return Ok(());
+    }
+    let mut admission = connector_admission(vault, system, source, now);
+    let mut next = passport.clone();
+    next.deferred_cancel_seen_at = Some(now);
+    admission.admit_superseding_passport(event_ref, &next, &screen_body(event))
+}
+
+/// A provider tombstone of `uid` a pull held back unread, since a cancelled
+/// write of the UID to this calendar is still in flight and a provider that
+/// keeps a cancelled event as a deleted one reports that write coming back
+/// as a tombstone
+/// (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING). Each of this
+/// source's live passports of the UID that the tombstone would date (an
+/// inbound-bearing one, or one of a calendar the EVENT was written to) keeps
+/// this first sighting as `deferred_cancel_seen_at`, unless it already dates
+/// a cancellation or a held sighting. A write that settles marks its own
+/// cancel and drops the sighting; when it proves not to be the stored copy,
+/// the tombstone read again dates the host's cancel by this sighting rather
+/// than by that later read.
+pub(in crate::calendar) fn defer_connector_delete<'a>(
+    vault: &'a Vault,
+    system: &'a str,
+    source: ConnectorAdmissionSource<'a>,
+    uid: &str,
+    now: u64,
+) -> Result<(), CalendarError> {
+    let mut admission = connector_admission(vault, system, source, now);
+    for event_ref in list_event_ids(vault)? {
+        let Some((_, passport)) =
+            crate::calendar::passport::live_passport_for(vault, &event_ref, system, uid)?
+        else {
+            continue;
+        };
+        let dated =
+            passport.direction.is_inbound_bearing() || names_written_calendar(system, &passport);
+        if !dated
+            || passport.cancelled_since.is_some()
+            || passport.deferred_cancel_seen_at.is_some()
+        {
+            continue;
+        }
+        let mut next = passport;
+        next.deferred_cancel_seen_at = Some(now);
+        admission.admit_superseding_passport(event_ref, &next, &CalendarInboundBody::default())?;
+    }
+    Ok(())
+}
+
+/// Whether a provider tombstone of `uid` from `system` would conclude, by
+/// itself, the host's cancel of an EVENT no inbound source carries (RULING
+/// CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING = A): a live
+/// passport of `system` names a calendar the EVENT was written to by a write
+/// that was no cancel of the engine's ([`cancel_moves_deposit`]), no
+/// tombstone has dated it yet, and no passport of the EVENT is
+/// inbound-bearing. A sync delta can report such a resource gone on a page
+/// before the one carrying the new href the host moved it to, so the pull
+/// holds the tombstone ([`defer_connector_delete`]) until a full listing,
+/// which lists every member whole, leaves the resource out.
+pub(in crate::calendar) fn tombstone_cancels_written_only_event(
+    vault: &Vault,
+    system: &str,
+    uid: &str,
+) -> Result<bool, CalendarError> {
+    for event_ref in list_event_ids(vault)? {
+        let passports = live_passports_for_event(vault, &event_ref)?;
+        let written = passports.iter().any(|(_, value)| {
+            value.system == system
+                && value.uid == uid
+                && value.cancelled_since.is_none()
+                && cancel_moves_deposit(system, value)
+        });
+        if written
+            && !passports
+                .iter()
+                .any(|(_, value)| value.direction.is_inbound_bearing())
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// A live passport a tombstone dated, whose calendar shows the uncancelled
+/// EVENT again at the same version, drops that date: the host took the
+/// deletion back, so it can no longer date a host cancel that another
+/// calendar's omission later concludes, and no deposit moves on it. The
+/// passport keeps its presence and direction, so an Outbound one stays no
+/// absence vote. Only an Outbound passport can stand live with such a date:
+/// an inbound-bearing one flips absent at its tombstone, and its
+/// reappearance is an update whose passport carries no cancellation.
+///
+/// The live version ends a held cancelled one too, as an update does: its
+/// first sighting (`deferred_cancel_seen_at`) goes, so a cancel first seen
+/// later is dated by its own sighting and not by the withdrawn one
+/// (BK-ECHO-DEFERRED-SIGHTING-OUTLIVES-ECHO-RESTORE), and so does a mark of
+/// the owner's cancelled write, which no later cancellation of the shown
+/// EVENT inherits.
+///
+/// Only the passport's own version (its SEQUENCE and content hash) shows the
+/// EVENT again. A version below it is a stale replay, which never regresses
+/// passport state: a live copy a pull read before the owner's cancelled
+/// write settled leaves that write's mark, so the provider's later rewrite
+/// of the cancellation still reads as the owner's own write.
+fn withdraw_tombstone_report(
+    admission: &mut PollAdmission<'_>,
+    event_ref: EntityId,
+    passport: &CalendarPassportValue,
+    event: &ParsedVEvent,
+) -> Result<(), CalendarError> {
+    let dated = passport.cancelled_since.is_some()
+        || passport.deferred_cancel_seen_at.is_some()
+        || passport.written_cancelled;
+    let same_version =
+        event.sequence == passport.last_sequence && event.content_hash == passport.content_hash;
+    if !dated || !same_version || passport.presence != CalendarPassportPresence::Live {
+        return Ok(());
+    }
+    let mut next = passport.clone();
+    next.cancelled_since = None;
+    next.deferred_cancel_seen_at = None;
+    next.written_cancelled = false;
+    next.last_seen_at = admission.now;
+    admission.admit_superseding_passport(event_ref, &next, &screen_body(event))
+}
 /// Sweeps one resource's omitted events under the source's screen, as a
 /// complete feed's sweep runs under its poll's.
 pub(in crate::calendar) fn sweep_connector_resource<'a>(

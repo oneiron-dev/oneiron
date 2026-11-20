@@ -13,19 +13,22 @@ fn run_request(actor: oneiron::EntityId, credential: &str, run_ref: &str) -> Req
     mcp_endpoint_call_request("/mcp", credential, run_ref, "execute_code", args)
 }
 
-/// A run whose guest states `claim` about `subject` in `world`.
+/// A run whose guest states `claim` about `subject` in `world`, citing the
+/// `evidence` TURN a concluded (generated) claim names.
 fn state_in(
     vault: &oneiron::Vault,
     claim: oneiron::EntityId,
     subject: oneiron::EntityId,
+    evidence: oneiron::EntityId,
     world: oneiron::EntityId,
 ) -> String {
     format!(
         "await vault.claims.upsert({{id: '{}', predicate: 'profile.favorite_drink', \
-         subject_ref: '{}', value: 'sencha', confidence: 1, source: 'user_stated', \
-         scope: {}}}); finish('stated');",
+         subject_ref: '{}', evidence_turn_refs: ['{}'], value: 'sencha', confidence: 1, \
+         source: 'user_stated', scope: {}}}); finish('stated');",
         claim.to_hex(),
         subject.to_hex(),
+        evidence.to_hex(),
         upsert_scope(vault, world)
     )
 }
@@ -57,9 +60,10 @@ async fn a_code_run_off_this_device_releases_no_row_its_world_made_device_local(
             )
             .unwrap();
     }
+    let evidence = witness_evidence_turn(&mode.vault);
     mode.backend.scripts.lock().unwrap().extend([
-        state_in(&mode.vault, portable, subject, world),
-        state_in(&mode.vault, kept, subject, world),
+        state_in(&mode.vault, portable, subject, evidence, world),
+        state_in(&mode.vault, kept, subject, evidence, world),
     ]);
     let credential = "quickjs-device-local";
     register_mcp_actor(
