@@ -411,6 +411,69 @@ fn union_leaves_out_a_member_citation_of_the_head_its_representative_corrects() 
     );
 }
 
+/// A member that cites the head its representative corrects joins that citation to the
+/// union when it corrects the same head with the representative's own predicate and
+/// value: the engine took its correction while it cited the head, so neither it nor the
+/// union restates the head. A member that corrects the head with another proposed
+/// predicate proves nothing about the union, so its citation stays out.
+#[test]
+fn union_keeps_a_citation_of_the_corrected_head_from_a_member_that_corrects_it_too() {
+    let corrected = "c1".repeat(16);
+    let pin = json!({
+        "claim": corrected,
+        "version": {
+            "entity": corrected,
+            "entity_type": 0,
+            "learned_at": 7,
+            "revision": format!("blake3:{}", "ab".repeat(32)),
+        },
+    });
+    let operand = |predicate: &str, cites: bool| {
+        let mut built = json!({
+            "subject": "b1".repeat(16),
+            "predicate": predicate,
+            "value": "coffee",
+            "evidence": [],
+            "corrects": corrected,
+        });
+        if cites {
+            built["claim_evidence"] = json!([pin.clone()]);
+        }
+        built
+    };
+    let operands = vec![
+        operand("likes", false),
+        operand("likes", true),
+        operand("likes", false),
+        operand("prefers", true),
+    ];
+    let group = |representative_index: usize| CandidateGroup {
+        representative_index,
+        member_indexes: vec![representative_index, representative_index + 1],
+        corrects: Some(corrected.clone()),
+    };
+    let groups = CandidateGroups {
+        groups: vec![group(0), group(2)],
+        pending_bindings: Vec::new(),
+    };
+    let unions = union_operands(&operands, &groups);
+    assert_eq!(unions.len(), 2, "one union per bound group");
+    assert_eq!(
+        unions[0]["claim_evidence"],
+        json!([pin]),
+        "a member that corrects the same head with the same proposal joins its citation"
+    );
+    assert_eq!(
+        unions[0]["corrects"],
+        json!(corrected),
+        "the union keeps its representative's correction"
+    );
+    assert!(
+        unions[1].get("claim_evidence").is_none(),
+        "a member that corrects the head with another predicate keeps its citation out"
+    );
+}
+
 #[test]
 fn required_policy_fields_and_policy_pin_are_enforced() {
     let fixture = load_fixture();

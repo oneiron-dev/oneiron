@@ -19,6 +19,7 @@ use crate::dreamer_consolidation::executor::extraction::{
     ExtractedPerson, authored_fallback, check_extraction_reply, decode_ref, extraction_reply,
     prospective_queries,
 };
+use crate::dreamer_consolidation::extracted_people::normalize_name_span;
 use crate::entity_id::EntityId;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::snapshot_read::{EvidenceRange, SourceVersion};
@@ -186,6 +187,12 @@ impl BoundReplySources<'_> {
     }
 
     /// Resolves a listed entity or a declared person without deriving any identifier.
+    ///
+    /// A declared person is available by native's binding rule
+    /// (`extracted_people/bindings.rs`): its trimmed name holds a letter
+    /// once normalized, and each TURN label it declares names a TURN this
+    /// call showed. Any other declaration leaves its candidates a skip, so
+    /// the reply check judges none of their citations.
     fn subject(
         &self,
         item: &Value,
@@ -206,7 +213,9 @@ impl BoundReplySources<'_> {
                     .iter()
                     .find(|person| new_person(&person.id) == Some(number));
                 let available = person.is_some_and(|person| {
-                    !person.name.trim().is_empty()
+                    let name = person.name.trim();
+                    !name.is_empty()
+                        && normalize_name_span(name).chars().any(char::is_alphabetic)
                         && person.evidence_turn_refs.iter().all(|label| {
                             self.labels
                                 .resolve_as(LabelKind::Turn, label)

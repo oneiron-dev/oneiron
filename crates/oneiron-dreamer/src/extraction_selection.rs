@@ -258,12 +258,16 @@ fn native_keys(candidate: &CandidateObservation) -> (&str, &str, &str) {
 /// [`CandidateGroup::corrects`]. The engine recounts verified citations, times and
 /// diversity on these unions; none are summed.
 ///
-/// One cited claim stays out of the union: the head the representative corrects,
-/// when only another member cites it. The engine asks a correction about a head only
-/// while the candidate does not restate it, and a candidate restates a head it cites
-/// with the head's own predicate and value. A union that gained that citation from a
-/// member could restate the head its representative was asked about and answered,
-/// and the engine would refuse its `corrects` as naming an unlisted claim.
+/// One cited claim may stay out of the union: the head the representative corrects,
+/// when the representative does not cite it itself. The engine asks a correction
+/// about a head only while the candidate does not restate it, and a candidate
+/// restates a head it cites with the head's own predicate and value. A union that
+/// gained that citation from a member could restate the head its representative was
+/// asked about and answered, and the engine would refuse its `corrects` as naming an
+/// unlisted claim. The operands do not carry the head's predicate and value, so the
+/// citation joins only from a member that proves the union does not restate the head:
+/// one that corrects the same head with the representative's own predicate and value
+/// (`shares_correction`). From any other member it stays out.
 ///
 /// # Panics
 ///
@@ -287,10 +291,11 @@ pub fn union_operands(operands: &[Value], groups: &CandidateGroups) -> Vec<Value
                 ] {
                     if let Some(entries) = operands[*index][key].as_array() {
                         for entry in entries {
-                            let corrected_head = key == "claim_evidence"
+                            let left_out = key == "claim_evidence"
                                 && corrected.is_some()
-                                && entry["claim"].as_str() == corrected;
-                            if !corrected_head && !merged.contains(entry) {
+                                && entry["claim"].as_str() == corrected
+                                && !shares_correction(&operands[*index], &operand);
+                            if !left_out && !merged.contains(entry) {
                                 merged.push(entry.clone());
                             }
                         }
@@ -304,6 +309,20 @@ pub fn union_operands(operands: &[Value], groups: &CandidateGroups) -> Vec<Value
             operand
         })
         .collect()
+}
+
+/// Tells whether `member` corrects the head `representative` corrects, with the
+/// representative's own predicate and value.
+///
+/// The engine takes a `corrects` only for a head the operand does not restate. Such a
+/// member cites that head and still corrects it, so its predicate and value are not
+/// both the head's. A union with the same predicate and value cannot restate the head
+/// either, whatever it cites.
+fn shares_correction(member: &Value, representative: &Value) -> bool {
+    member["corrects"].is_string()
+        && member["corrects"] == representative["corrects"]
+        && member["predicate"] == representative["predicate"]
+        && member["value"] == representative["value"]
 }
 
 /// Names each listed claim `operand` cites as evidence.

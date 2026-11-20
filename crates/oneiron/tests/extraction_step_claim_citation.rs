@@ -458,3 +458,60 @@ fn an_unbound_quote_beside_a_cited_claim_with_another_value_is_skipped()
     );
     Ok(())
 }
+
+/// A declared person whose name holds no letter is not available, as native's binding
+/// rule has it, so its candidate is skipped before any citation is judged: the generated
+/// head it cites does not refuse the reply, and the candidate beside it stands.
+#[test]
+fn a_declared_person_with_no_letter_in_its_name_is_skipped_before_its_citation_is_judged()
+-> ExtractionStepTestResult<()> {
+    let reply = json!({
+        "persons": [{"id": "new:P1", "name": "123", "evidence_turn_refs": ["T1"]}],
+        "candidates": [
+            {
+                "subject": "new:P1",
+                "predicate": FOOD,
+                "value": HEAD_VALUE,
+                "confidence": 0.9,
+                "evidence_refs": [{"source": "T1", "quote": WORDS}, {"claim": "C1"}],
+            },
+            {
+                "subject": "P2",
+                "predicate": FOOD,
+                "value": "black tea",
+                "confidence": 0.9,
+                "evidence_refs": [{"source": "T1", "quote": WORDS}],
+            },
+        ],
+    })
+    .to_string();
+    let fixture = citation_fixture(ClaimSource::Generated, reply)?;
+    let submit = fixture.submit()?;
+    fixture.assert_listed(true);
+    assert_eq!(
+        submit["result"]["status"],
+        json!("finished"),
+        "a candidate about an unavailable declared person refuses nothing: {submit}"
+    );
+    let decoded = &submit["result"]["json"];
+    assert_eq!(
+        decoded["skipped"].as_array().map(Vec::len),
+        Some(1),
+        "only the declared person's candidate is skipped: {decoded}"
+    );
+    assert_eq!(decoded["skipped"][0]["index"], json!(0));
+    let reason = decoded["skipped"][0]["reason"]
+        .as_str()
+        .ok_or("the skipped candidate names its reason")?;
+    assert!(
+        reason.contains("unavailable declared person"),
+        "the candidate is skipped for its declared person: {reason}"
+    );
+    assert_eq!(
+        decoded["candidates"].as_array().map(Vec::len),
+        Some(1),
+        "the candidate about owen stands: {decoded}"
+    );
+    assert_eq!(decoded["candidates"][0]["index"], json!(1));
+    Ok(())
+}
