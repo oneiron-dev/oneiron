@@ -155,6 +155,7 @@ async fn run_against(status: &'static str, credentialed: bool) -> Run {
     let connection = reconnecting_connection(manager, url, credentialed);
     let (stop, shutdown) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
+        // testkit-lint: allow(sleep) the window is what the cases observe: no redial within it
         tokio::time::sleep(RUN_WINDOW).await;
         let _ = stop.send(());
     });
@@ -177,16 +178,17 @@ async fn run_against(status: &'static str, credentialed: bool) -> Run {
     }
 }
 
-/// Polls `done` every 20 ms for up to 10 s; whether it held by then.
+/// Polls `done` every 20 ms for up to 10 s; whether it held by then. Only for
+/// a state with no change signal to wait on: the durable queue.
 async fn wait_until(mut done: impl FnMut() -> bool) -> bool {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    while tokio::time::Instant::now() < deadline {
-        if done() {
-            return true;
+    let polled = tokio::time::timeout(Duration::from_secs(10), async {
+        while !done() {
+            // testkit-lint: allow(sleep) the durable queue has no change signal to wait on
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    done()
+    })
+    .await;
+    polled.is_ok() || done()
 }
 
 /// The rows of window `window` that `queue` holds.
@@ -347,18 +349,26 @@ async fn commit_while_parked(host_relay: bool) {
     let (stop, shutdown) = tokio::sync::oneshot::channel();
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::clone(&events);
+    // Each event the host is told wakes the wait for the 403 below.
+    let told = Arc::new(tokio::sync::Notify::new());
+    let tell = Arc::clone(&told);
     let run = connection.run_observed(shutdown, move |event: SyncEvent| {
         sink.lock().expect("event sink").push(format!("{event:?}"));
+        tell.notify_one();
     });
     let waiting = async {
-        let refused = wait_until(|| {
-            events
+        let refused = tokio::time::timeout(Duration::from_secs(10), async {
+            while !events
                 .lock()
                 .expect("event sink")
                 .iter()
-                .any(|told| told == "UpgradeForbidden")
+                .any(|event| event == "UpgradeForbidden")
+            {
+                told.notified().await;
+            }
         })
-        .await;
+        .await
+        .is_ok();
         let before = queued_in(&queue, PARKED_WINDOW);
         window
             .doc
