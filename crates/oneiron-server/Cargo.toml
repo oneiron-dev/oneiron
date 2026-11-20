@@ -591,6 +591,12 @@ name = "quota_answer_requires_vault_owner"
 path = "tests/quota_answer_requires_vault_owner.rs"
 required-features = ["oneiron/test-support"]
 
+# OWNER-GRADE H2-H8's owner act cases root the owner's home on a `MemoryKeystore` too.
+[[test]]
+name = "owner_acts_require_vault_owner"
+path = "tests/owner_acts_require_vault_owner.rs"
+required-features = ["oneiron/test-support"]
+
 # L1-02's named-client OAuth acceptance roots its served vault on a `MemoryKeystore`.
 [[test]]
 name = "oauth_named_client_acceptance"
