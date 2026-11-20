@@ -155,7 +155,9 @@ impl HookSandbox {
         let pre = bindings::HookPre::new(pre)
             .map_err(|_| failure("hook component run-hook ABI mismatch"))?;
         let budget = ComponentBudget::default();
-        let input_limit = measure_input_limit(&pre, budget)?;
+        // RED PIN (REVIEW-9805): the fixed 8 MiB wire cap of 584c37bc487.
+        let _ = measure_input_limit(&pre, budget)?;
+        let input_limit = 8 * 1024 * 1024;
         let sandbox = Self {
             pre,
             budget,
@@ -198,14 +200,6 @@ impl HookSandbox {
         verdict: HookVerdictCall<'_>,
     ) -> Result<HookBodyRun> {
         // A body refused before its worker starts used nothing (FIX 9332).
-        // The input is judged first: one the guest cannot take is never
-        // taken, whatever else the hook gets wrong, so a skill answer's post
-        // chain refuses it (REVIEW-9805).
-        if input_json.len() > self.input_limit {
-            context.report_usage(HookBodyUsage::NOT_RUN);
-            context.report_input_not_taken();
-            return Err(failure("hook input exceeds the guest memory"));
-        }
         let budget_ms = context.budget_ms();
         if budget_ms == 0 || budget_ms > context.max_budget_ms() {
             context.report_usage(HookBodyUsage::NOT_RUN);
@@ -219,6 +213,11 @@ impl HookSandbox {
         if executed.len() > self.budget.message_bytes {
             context.report_usage(HookBodyUsage::NOT_RUN);
             return Err(failure("hook body exceeds the message limit"));
+        }
+        if input_json.len() > self.input_limit {
+            context.report_usage(HookBodyUsage::NOT_RUN);
+            context.report_input_not_taken();
+            return Err(failure("hook input exceeds the guest memory"));
         }
         // Wasmtime needs 'static store data, so the body runs on a scoped
         // worker and the borrowed `read` answers on this thread over a bounded
