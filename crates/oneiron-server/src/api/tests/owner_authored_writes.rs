@@ -145,8 +145,14 @@ async fn an_owners_own_critical_claim_carries_its_own_confirmation() {
             Some(&health_claim(claim, owner, "handed")),
         ),
     );
-    let response = api_routes(server.clone()).oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK, "the handed slip writes");
+    // Polled on the engine's stack, as `route_json` polls the other legs:
+    // the facade dispatch frame does not fit a test thread's stack.
+    let routed = server.clone();
+    let status = crate::test_engine_stack::on_engine_stack(async move {
+        api_routes(routed).oneshot(request).await.unwrap().status()
+    })
+    .await;
+    assert_eq!(status, StatusCode::OK, "the handed slip writes");
     let found = outcome(&server, claim);
     if found != (Some(oneiron::ClaimApprovalStatus::Auto), true, false) {
         wrong.push(format!(
