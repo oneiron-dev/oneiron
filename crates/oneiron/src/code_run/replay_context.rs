@@ -58,10 +58,64 @@ pub(crate) struct CapturedGuestResponse {
     /// The bridge position of the row that answers it.
     pub(crate) seq: u64,
     /// The verb hook's view the guest read in place of the outcome; `None`
-    /// when the guest read the outcome itself.
+    /// when the guest read the outcome itself. Read back from its own text
+    /// ([`view_from_own_text`]).
+    #[serde(default, deserialize_with = "view_from_own_text")]
     pub(crate) view: Option<serde_json::Value>,
     /// The budget envelope the response carried; `None` outside a wake pass.
     pub(crate) budget: Option<BudgetLegibilityEnvelope>,
+}
+
+/// A kept view, read from its own JSON text with a depth budget of its own.
+/// A hook's view nests as deep as the reader that made it allowed, and the
+/// containers the context wraps around it would take its deepest value past
+/// the depth budget of one reader for the whole context: the context would
+/// not read back, though the guest read the view (FIX 25025). The context's
+/// reader takes the view's text whole, spending no depth on it, and the
+/// view is read from that text alone. The bytes kept, and so the context's
+/// digest, are as before.
+fn view_from_own_text<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Some(text) = Option::<Box<serde_json::value::RawValue>>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    serde_json::from_str(text.get())
+        .map(Some)
+        .map_err(serde::de::Error::custom)
+}
+
+/// The most arrays and objects a view's text may open inside one another
+/// and still read back ([`view_from_own_text`]): `serde_json`'s reader
+/// spends one of its 128 levels on each `[` or `{`, and fails at the 128th.
+const VIEW_READ_NESTS: usize = 127;
+
+/// Whether `view` reads back from its own text: it opens at most
+/// [`VIEW_READ_NESTS`] arrays and objects inside one another. A hook's
+/// projection of an answer at that limit, under the `output` member that
+/// frames it, opens one more.
+fn reads_back(view: &serde_json::Value) -> bool {
+    let mut open = vec![(view, 1_usize)];
+    while let Some((value, nests)) = open.pop() {
+        match value {
+            serde_json::Value::Array(_) | serde_json::Value::Object(_)
+                if nests > VIEW_READ_NESTS =>
+            {
+                return false;
+            }
+            serde_json::Value::Array(items) => {
+                open.extend(items.iter().map(|item| (item, nests + 1)));
+            }
+            serde_json::Value::Object(fields) => {
+                open.extend(fields.values().map(|field| (field, nests + 1)));
+            }
+            _ => {}
+        }
+    }
+    true
 }
 
 /// The guest responses one step's host handed out, in the order it handed
@@ -87,8 +141,9 @@ impl GuestResponseCapture {
     /// Keeps the response the guest read for `call`: its `view` and its
     /// `budget`, the same values the runtime was handed, at `seq`, the
     /// position of the row that answers it. A `reveal.wait`'s response is
-    /// never kept. A response with no position, or at a position kept
-    /// before, leaves the capture incomplete.
+    /// never kept. A response with no position, at a position kept before,
+    /// or with a view that would not read back from its text
+    /// ([`reads_back`]), leaves the capture incomplete.
     pub(crate) fn keep(
         &mut self,
         call: &SelfCall,
@@ -100,11 +155,13 @@ impl GuestResponseCapture {
             return;
         }
         match seq {
-            Some(seq) if self.at(seq).is_none() => self.responses.push(CapturedGuestResponse {
-                seq,
-                view: view.cloned(),
-                budget,
-            }),
+            Some(seq) if self.at(seq).is_none() && view.is_none_or(reads_back) => {
+                self.responses.push(CapturedGuestResponse {
+                    seq,
+                    view: view.cloned(),
+                    budget,
+                })
+            }
             _ => self.complete = false,
         }
     }
