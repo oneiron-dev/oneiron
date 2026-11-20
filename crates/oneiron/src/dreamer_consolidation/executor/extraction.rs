@@ -6,7 +6,6 @@ use super::*;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, CandidateRel};
 use crate::dreamer_consolidation::extracted_people::MintNamespace;
 use crate::dreamer_consolidation::provenance::KeptDecision;
-use crate::dreamer_consolidation::resources::SliceBound;
 
 pub(in crate::dreamer_consolidation) use super::decisions::identity_choice::identity_round_specs;
 pub(in crate::dreamer_consolidation) use super::decisions::{
@@ -62,7 +61,7 @@ impl ConsolidationExecutor<'_> {
         &self,
         vault: &crate::Vault,
         config: &crate::dreamer_consolidation::selection::SelectionConfig,
-    ) -> Result<SliceBound> {
+    ) -> Result<crate::dreamer_consolidation::resources::SliceBound> {
         let room = match self.roles.follower_window_tokens() {
             Some(window) => {
                 let bytes_per_token = vault.dreamer_recipe_policy()?.follower_sizing_token_bytes;
@@ -71,7 +70,7 @@ impl ConsolidationExecutor<'_> {
             }
             None => None,
         };
-        Ok(SliceBound {
+        Ok(crate::dreamer_consolidation::resources::SliceBound {
             turns: config.extraction_turns_per_child,
             room,
         })
