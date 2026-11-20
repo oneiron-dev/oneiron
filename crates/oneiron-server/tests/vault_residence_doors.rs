@@ -60,8 +60,10 @@ use oneiron::authority::{
     ActSurface, AgentTier, CapabilitySlip, HostSlipIssuer, MachineOwnership, MachineRole,
     holder_proof_challenge,
 };
+use oneiron::edge::EdgeActorClass;
 use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON};
+use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::connection::{ConnectionConfig, SyncConnection};
@@ -325,10 +327,39 @@ impl Host {
         id
     }
 
+    /// The owner's MESSAGE saying `words`, written through the witness door
+    /// (a raw put of a MESSAGE is refused, ONE-1686): its id.
+    fn message(&self, words: &str) -> EntityId {
+        let receipt = self
+            .vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .witness(&WitnessTurn {
+                conversation_ref: EntityId::now().to_hex(),
+                turn_ref: None,
+                thread_audience: None,
+                project: None,
+                messages: vec![WitnessMessage {
+                    id: None,
+                    author: WitnessAuthor::User,
+                    message_type: "dialogue".to_owned(),
+                    content: words.to_owned(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                    parts: None,
+                    quote: None,
+                }],
+                occurred_at: self.vault.now_recorded_at(),
+                assertions: Default::default(),
+            })
+            .expect("the owner's witnessed MESSAGE");
+        EntityId::from_hex(&receipt.messages[0].id).expect("the MESSAGE's id")
+    }
+
     /// A MESSAGE this vault holds, saying `words`: its id and its stored
     /// bytes, as a home sends them on a first touch.
     fn home_row(&self, words: &str) -> (EntityId, Vec<u8>) {
-        let id = self.row(ENTITY_TYPE_MESSAGE, "content", words);
+        let id = self.message(words);
         let raw = self
             .vault
             .get_raw(&id)
@@ -579,7 +610,7 @@ fn a_row_for_a_machine_this_host_never_reaches_waits_as_one_directive_per_act() 
         .await
         .bad_request(
             MODE,
-            "a residence directive names one of the owner's machines",
+            "a residence directive names a machine the roster links and the owner answered",
         );
         assert_eq!(
             host.owner_ok(DIRECTIVES, json!({"machine": stranger}))
@@ -741,11 +772,7 @@ fn a_prune_drops_only_copies_untouched_since_its_cutoff_and_never_a_local_edit()
         let machine_hex = machine.to_hex();
         host.seed_opened(stale, &stale_raw, CUTOFF - 1);
         host.seed_opened(fresh, &fresh_raw, CUTOFF);
-        let edit = host.row(
-            ENTITY_TYPE_MESSAGE,
-            "content",
-            "a line written on this machine that never reached its home",
-        );
+        let edit = host.message("a line written on this machine that never reached its home");
         let edit_raw = host
             .vault
             .get_raw(&edit)
