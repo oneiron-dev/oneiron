@@ -41,7 +41,7 @@ impl ScopedRead<'_> {
     /// This lane reporting its live Grants in each receipt it builds in a
     /// serving snapshot ([`Self::receipt_in`]). Set on a verb answer whose
     /// receipt tells its caller what admitted its rows: vault.recall,
-    /// vault.search.bm25, vault.claims.list and vault.get.
+    /// vault.search.bm25, vault.claims.list, vault.get and vault.hydrate.
     #[must_use]
     pub(crate) fn with_live_grant_receipts(mut self) -> Self {
         self.receipts_include_live_grants = true;
