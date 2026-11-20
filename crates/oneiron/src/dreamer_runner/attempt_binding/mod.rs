@@ -346,7 +346,7 @@ fn facet_refused(facet: BoundFacet) -> MemoryError {
         ),
         BoundFacet::PsychProfile => (
             "the Dreamer psych profile facet does not admit this operation",
-            "A psych profile attempt reads its key's sources page, runs one bound ai.steps.submit with its receipt, and commits PsychProfile items of its own key only.",
+            "A psych profile attempt reads its key's sources page, runs one bound ai.steps.submit, reads that step's ai.steps.receipt, and commits PsychProfile items of its own key only.",
         ),
     };
     MemoryError::new(MEMORY_CODE_FORBIDDEN, message, &[hint])
