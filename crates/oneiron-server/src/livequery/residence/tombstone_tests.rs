@@ -183,13 +183,21 @@ async fn a_window_answers_the_ids_of_its_hard_deleted_rows() {
     );
     let (ids, cursor) = page(&two);
     assert_eq!(ids, vec![second.to_hex()], "the second page: {two:#}");
-    let three = reply(
+    // The last page names no cursor, and the device stops there: a page asked
+    // with no cursor starts the set again.
+    assert!(cursor.is_none(), "the last page ends the set: {two:#}");
+    let past = reply(
         &server,
         &auth,
-        json!({"window": window.as_str(), "selector": encoded, "after": cursor, "limit": 1}),
+        json!({
+            "window": window.as_str(), "selector": encoded, "after": second.to_hex(), "limit": 1,
+        }),
     );
-    let (ids, cursor) = page(&three);
-    assert!(ids.is_empty() && cursor.is_none(), "the end: {three:#}");
+    let (ids, cursor) = page(&past);
+    assert!(
+        ids.is_empty() && cursor.is_none(),
+        "past the last id: {past:#}"
+    );
 
     let whole = reply(
         &server,
