@@ -18,18 +18,25 @@
 //! whose set lies outside the candidate's is offered to no correction
 //! ([`takes_head_relationship`]).
 //!
-//! Which candidates fold into one operand is not proved here: the fold follows each
-//! member's own correction answer, which no record holds.
+//! Every named candidate must fold into its operand as native assembly folds extracted
+//! candidates, by identity, topic and value keys ([`check_named_candidates_fold`]). A
+//! candidate folds under the correction it was given, and no record holds that answer.
+//! So the candidate is assembled once without a correction and once for each listed head
+//! it may be asked to correct, and it folds when one of those assemblies has the
+//! operand's keys. A candidate that folds under none lends the operand no evidence.
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
+use std::slice::from_ref;
 
 use super::super::ConsolidationBranchPlan;
 use super::super::extraction_step::{
     ExtractionStepPiece, RecordedExtractionCandidate, RecordedExtractionStep,
 };
+use super::super::routing::candidate_keys;
 use super::BoundBranchRead;
 use super::checks::{check_turn_evidence, every_queued_turn_serves_in_txn};
+use super::reads::{check_pack_candidates, parse_reference};
 use crate::attempt_queue::AttemptId;
 use crate::claim::ScopedRead;
 use crate::dreamer_runner::DreamerConsolidationScope;
@@ -68,6 +75,9 @@ struct RecordedStep {
     reply: RecordedExtractionStep,
     /// Names every TURN the step's call showed.
     turns: BTreeSet<EntityId>,
+    /// Holds the relationship set the step's call assembled its candidates under:
+    /// `None` is unbound.
+    relationship: Option<BTreeSet<EntityId>>,
 }
 
 /// Reads every recorded step candidate `candidates` name, compares each naming operand
@@ -79,7 +89,8 @@ struct RecordedStep {
 /// A step that this attempt holds no record of, or whose record the caller may not be
 /// served, answers as an unknown step does. Refused by name: a step reference in another
 /// spelling, a record that keeps no label table, a named candidate the step did not keep
-/// about a listed subject, and an operand that differs from the candidates it names.
+/// about a listed subject, an operand that differs from the candidates it names, and a
+/// named candidate that does not fold into its operand.
 pub(super) fn bind_operands_in_txn(
     reads: &OperandReads<'_>,
     attempt: AttemptId,
@@ -118,6 +129,7 @@ pub(super) fn bind_operands_in_txn(
         }
         let mut turns = BTreeSet::new();
         let mut recorded = Vec::with_capacity(operand.from_steps.len());
+        let mut within = Vec::with_capacity(operand.from_steps.len());
         for named in &operand.from_steps {
             let hash = extraction_step_hash(&named.step)?;
             let step = match steps.entry(hash) {
@@ -132,9 +144,19 @@ pub(super) fn bind_operands_in_txn(
                     "extraction operand {position} names a recorded candidate its step did not keep: {reason}"
                 ))
             })?);
+            within.push(step.relationship.clone());
         }
         compare_operand(position, operand, &recorded)?;
-        relationships.push(bound.candidate_relationship_in_txn(vault, reads.txn, Some(&turns))?);
+        let relationship = bound.candidate_relationship_in_txn(vault, reads.txn, Some(&turns))?;
+        check_named_candidates_fold(
+            position,
+            (operand, &relationship),
+            (&recorded, &within),
+            bound,
+            attempt,
+            reads.queued.1,
+        )?;
+        relationships.push(relationship);
     }
     Ok(relationships)
 }
@@ -211,8 +233,12 @@ fn read_recorded_step(
         });
     }
     let relationship = bound.candidate_relationship_in_txn(vault, reads.txn, Some(&turns))?;
-    let reply = RecordedExtractionStep::read(bound, &record, labels, pieces, relationship)?;
-    Ok(RecordedStep { reply, turns })
+    let reply = RecordedExtractionStep::read(bound, &record, labels, pieces, relationship.clone())?;
+    Ok(RecordedStep {
+        reply,
+        turns,
+        relationship,
+    })
 }
 
 /// Requires `operand` to agree with the `recorded` candidates it names: each is about its
@@ -265,6 +291,87 @@ fn compare_operand(
             .any(|candidate| candidate.claim_evidence.contains(cited))
         {
             return Err(differs("it cites a claim none of them cites"));
+        }
+    }
+    Ok(())
+}
+
+/// Requires every `recorded` candidate `operand` names to fold into it as native assembly
+/// folds extracted candidates: by identity, topic and value keys.
+///
+/// `relationship` is the set the operand is assembled under, and `within` holds, by
+/// named position, the set each candidate's own step assembled it under. A candidate
+/// is assembled as its step's call assembled it, once under each correction answer it
+/// may have been given: the operand's own, none, and each listed head about the
+/// subject that its read may ask it to correct. It folds when one of those assemblies
+/// has the operand's keys. Which answer the candidate was given is not proved, since
+/// no record holds it. A candidate that proposes another value, or one whose identity
+/// no answer makes the operand's, folds under none: native keeps it in another group,
+/// so here it lends the operand neither a quote nor a cited claim.
+///
+/// An operand that does not assemble by itself is left to the candidate check that
+/// follows this one, which refuses it by name.
+///
+/// # Errors
+///
+/// A named candidate that folds into the operand under no correction answer.
+fn check_named_candidates_fold(
+    position: usize,
+    (operand, relationship): (&CandidateOperand, &Option<BTreeSet<EntityId>>),
+    (recorded, within): (
+        &[RecordedExtractionCandidate],
+        &[Option<BTreeSet<EntityId>>],
+    ),
+    bound: &BoundBranchRead,
+    attempt: AttemptId,
+    branch: &ConsolidationBranchPlan<EntityId>,
+) -> MemoryResult<()> {
+    let keys_under = |candidate: &CandidateOperand, set: &Option<BTreeSet<EntityId>>| {
+        let pack =
+            check_pack_candidates(from_ref(candidate), (bound, from_ref(set)), attempt, branch)
+                .ok()?;
+        candidate_keys(&pack.rows.first()?.proposal, bound.key_rules()).ok()
+    };
+    let Some(operand_keys) = keys_under(operand, relationship) else {
+        return Ok(());
+    };
+    let Ok(subject) = parse_reference(&operand.subject) else {
+        return Ok(());
+    };
+    // The operand's own answer comes first: a candidate that carries the operand's whole
+    // proposal folds under it at once.
+    let mut answers = vec![operand.corrects.clone()];
+    if operand.corrects.is_some() {
+        answers.push(None);
+    }
+    for (claim, ..) in bound.correctable(subject, bound.scope()) {
+        let head = Some(claim.to_hex());
+        if !answers.contains(&head) {
+            answers.push(head);
+        }
+    }
+    let named = recorded.iter().zip(&operand.from_steps).zip(within);
+    for ((candidate, reference), set) in named {
+        let mut alone = CandidateOperand {
+            subject: candidate.subject.clone(),
+            predicate: candidate.predicate.clone(),
+            value: candidate.value.clone(),
+            rel: candidate.rel.clone(),
+            topic: candidate.topic.clone(),
+            corrects: None,
+            evidence: candidate.evidence.clone(),
+            claim_evidence: candidate.claim_evidence.clone(),
+            from_steps: vec![reference.clone()],
+        };
+        let folds = answers.iter().any(|answer| {
+            alone.corrects.clone_from(answer);
+            keys_under(&alone, set).is_some_and(|keys| keys == operand_keys)
+        });
+        if !folds {
+            return Err(MemoryError::bad_request(format!(
+                "extraction operand {position} differs from the recorded candidates it names: candidate {} of its step does not fold into it under any correction it may be given",
+                reference.index
+            )));
         }
     }
     Ok(())

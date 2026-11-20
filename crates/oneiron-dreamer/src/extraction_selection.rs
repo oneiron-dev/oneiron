@@ -261,6 +261,15 @@ fn native_keys(candidate: &CandidateObservation) -> (&str, &str, &str) {
 /// [`CandidateGroup::corrects`]. The engine recounts verified citations, times and
 /// diversity on these unions; none are summed.
 ///
+/// A group may hold members that name recorded candidates beside members that name
+/// none. No recorded candidate carries the evidence of the second kind, so the union
+/// of such a group names none either: the engine reads it as it read the members that
+/// named none, over every queued TURN. A union of such a group that corrects a head
+/// also leaves out the representative's proposed `rel`. A correction binds the head's
+/// relationship set and the engine reads no proposed one, but it holds a proposed one
+/// inside the set the operand is assembled under, and the set over every queued TURN
+/// may be narrower than the set of the step that allowed the representative's.
+///
 /// One cited claim may stay out of the union: the head the representative corrects,
 /// when the representative does not cite it itself. The engine asks a correction
 /// about a head only while the candidate does not restate it, and a candidate
@@ -446,12 +455,28 @@ pub(crate) fn union_operands_with_facts(
             if !claim_evidence.is_empty() {
                 operand["claim_evidence"] = Value::Array(claim_evidence);
             }
-            if !from_steps.is_empty() {
+            let every_member_names_some = group
+                .member_indexes
+                .iter()
+                .all(|index| names_recorded_candidates(&operands[*index]));
+            if every_member_names_some {
                 operand["from_steps"] = Value::Array(from_steps);
+            } else if let Some(fields) = operand.as_object_mut() {
+                fields.remove("from_steps");
+                if !from_steps.is_empty() && fields.get("corrects").is_some_and(Value::is_string) {
+                    fields.remove("rel");
+                }
             }
             operand
         })
         .collect()
+}
+
+/// Tells whether `operand` names a recorded step candidate it is folded from.
+fn names_recorded_candidates(operand: &Value) -> bool {
+    operand["from_steps"]
+        .as_array()
+        .is_some_and(|named| !named.is_empty())
 }
 
 /// Names each listed claim `operand` cites as evidence.

@@ -599,3 +599,61 @@ fn an_operand_folded_from_two_recorded_candidates_carries_both_quotes()
     );
     Ok(())
 }
+
+/// An operand takes no quote from a named candidate that does not fold into it. Two
+/// candidates about one subject that propose different values are separate operands: each
+/// asks by itself, and the first is refused the second's quote, which native assembly would
+/// keep in another group.
+#[test]
+fn an_operand_takes_no_quote_from_a_named_candidate_that_does_not_fold_into_it()
+-> ExtractionStepTestResult<()> {
+    const WORDS: &str = "owen savors green tea daily";
+    let fixture = record_fixture(
+        &[WORDS, SECOND_WORDS],
+        listed_reply(json!([
+            quoted_candidate("P2", FOOD, "green tea", "T1", "owen savors green tea"),
+            quoted_candidate("P2", FOOD, "black coffee", "T1", "green tea daily"),
+        ])),
+    )?;
+    let submit = fixture.submit_first_turn()?;
+    assert_eq!(submit["result"]["status"], json!("finished"));
+    let decoded = &submit["result"]["json"];
+    assert_eq!(
+        decoded["skipped"],
+        json!([]),
+        "The step keeps both candidates."
+    );
+    let step = submit["step_ref"]
+        .as_str()
+        .expect("The submit answers its step ref.")
+        .to_owned();
+    let first = operand_from_candidate(&decoded["candidates"][0]);
+    let second = operand_from_candidate(&decoded["candidates"][1]);
+    fixture
+        .observe(from_ref(&with_from_steps(first.clone(), &step, &[0])))
+        .expect("The first candidate asks by itself.");
+    fixture
+        .observe(from_ref(&with_from_steps(second.clone(), &step, &[1])))
+        .expect("The second candidate asks by itself.");
+    let mut borrowed = first;
+    let mut evidence = borrowed["evidence"]
+        .as_array()
+        .expect("The first candidate quotes its turn.")
+        .clone();
+    evidence.extend(
+        second["evidence"]
+            .as_array()
+            .expect("The second candidate quotes its turn.")
+            .iter()
+            .cloned(),
+    );
+    borrowed["evidence"] = Value::Array(evidence);
+    assert_bad_request(
+        fixture.observe(from_ref(&with_from_steps(borrowed, &step, &[0, 1]))),
+        &[
+            "differs from the recorded candidates it names",
+            "candidate 1 of its step does not fold into it",
+        ],
+    );
+    Ok(())
+}

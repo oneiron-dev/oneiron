@@ -289,7 +289,7 @@ pub(super) fn correction_project(checked: &CheckedPack) -> Option<EntityId> {
 /// with none the set every labelled word the candidate was drawn from shares.
 /// A candidate that names no relationship is assembled under it, as a native
 /// candidate is under its call's scope, and one that names a relationship
-/// stays inside it.
+/// stays inside it, except a correction that names its recorded candidates.
 pub(crate) fn check_pack_candidates(
     candidates: &[CandidateOperand],
     (bound, relationships): (&BoundBranchRead, &[Option<BTreeSet<EntityId>>]),
@@ -367,8 +367,15 @@ pub(crate) fn check_pack_candidates(
         };
         // A proposed relationship stays inside the operand's set even while
         // the candidate corrects: shared assembly intentionally ignores it then.
+        // A correction that names its recorded candidates is not held to it:
+        // each naming step kept its candidate's relationship inside its own
+        // set, and the set folded over several steps may be narrower than the
+        // proposing step's. The head's set, which the correction binds, is held
+        // inside the folded set by the pairs above and by assembly below.
         let scope_relationship = relationships[position].as_ref();
-        if let PackRelationship::Set(ids) = &rel
+        let recorded_correction = corrects.is_some() && !operand.from_steps.is_empty();
+        if !recorded_correction
+            && let PackRelationship::Set(ids) = &rel
             && let Some(allowed) = scope_relationship
             && !ids.iter().all(|id| allowed.contains(id))
         {

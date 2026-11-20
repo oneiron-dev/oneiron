@@ -277,3 +277,83 @@ fn a_union_names_the_recorded_candidates_of_every_member() {
         "a union of operands that name no step names none"
     );
 }
+
+/// Builds one operand that proposes a home town with one quote of `turn`, and corrects
+/// the head when `corrects`.
+fn quoting(turn: &str, corrects: bool) -> Value {
+    let mut built = operand("lives_in", "Kyoto", corrects, false);
+    built["evidence"] = json!([{ "turn": turn.repeat(16) }]);
+    built
+}
+
+/// A group that holds a member naming a recorded candidate beside a member naming none
+/// is unioned with both quotes and no step name, whichever member represents it: no
+/// recorded candidate carries the second member's quote.
+#[test]
+fn a_union_with_a_member_that_names_no_recorded_candidate_names_none() {
+    let step = "5e".repeat(32);
+    let mut recorded = quoting("a1", false);
+    recorded["from_steps"] = json!([{ "step": step, "index": 0 }]);
+    let standalone = quoting("a2", false);
+    for operands in [
+        [recorded.clone(), standalone.clone()],
+        [standalone, recorded],
+    ] {
+        let unions = union_operands(&operands, &pair());
+        assert!(
+            unions[0].get("from_steps").is_none(),
+            "the union names no recorded candidate: {}",
+            unions[0]
+        );
+        assert_eq!(
+            unions[0]["evidence"].as_array().map(Vec::len),
+            Some(2),
+            "the union carries both members' quotes"
+        );
+    }
+}
+
+/// A correcting union of such a group leaves out the representative's proposed
+/// relationship, which the engine reads for no correction. A union that corrects
+/// nothing keeps it, and so does a union whose every member names a recorded candidate.
+#[test]
+fn a_correcting_union_that_names_no_recorded_candidate_proposes_no_relationship() {
+    let step = "5e".repeat(32);
+    let relationship = json!(["e1".repeat(16)]);
+    let named = |turn: &str, corrects: bool, index: usize| {
+        let mut built = quoting(turn, corrects);
+        built["from_steps"] = json!([{ "step": step, "index": index }]);
+        built["rel"] = relationship.clone();
+        built
+    };
+    let unions = union_operands(&[named("a1", true, 0), quoting("a2", true)], &pair());
+    assert!(
+        unions[0].get("rel").is_none(),
+        "the correcting union proposes no relationship: {}",
+        unions[0]
+    );
+    assert_eq!(
+        unions[0]["corrects"],
+        json!(head()),
+        "the union keeps its representative's correction"
+    );
+    let unions = union_operands(&[named("a1", false, 0), quoting("a2", false)], &pair());
+    assert_eq!(
+        unions[0]["rel"], relationship,
+        "a union that corrects nothing keeps its proposed relationship"
+    );
+    assert!(
+        unions[0].get("from_steps").is_none(),
+        "and it names no recorded candidate"
+    );
+    let unions = union_operands(&[named("a1", true, 0), named("a2", true, 1)], &pair());
+    assert_eq!(
+        unions[0]["rel"], relationship,
+        "a union whose every member names a recorded candidate keeps it"
+    );
+    assert_eq!(
+        unions[0]["from_steps"].as_array().map(Vec::len),
+        Some(2),
+        "and it names both recorded candidates"
+    );
+}
