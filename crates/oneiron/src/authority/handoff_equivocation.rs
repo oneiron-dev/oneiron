@@ -386,7 +386,7 @@ pub(crate) fn door_refuses_retired_standing(
             }
         }
         let held_fence = before.fenced.contains(signer);
-        if !held_fence && !signed_handoff {
+        if !held_fence && !(signed_handoff && fold.closed_handoffs.is_empty()) {
             continue;
         }
         let evidence = AuthorityHandoffEquivocation {
