@@ -478,8 +478,9 @@ pub(super) const HANDLE_OPEN: &str = "[secret ";
 
 /// The handle a mask on write leaves where it lifted a secret into custody
 /// (ARCH-0069 #handles-in-fields): `sc12` as a whole value, or `[secret sc12]`
-/// as a whole value, or an off-record room's `[secret r1]`
-/// (ROOM-LOCAL-CUSTODY). It names a custody record and holds no value.
+/// as a whole value, or an off-record room's, bare or bracketed
+/// (ROOM-LOCAL-CUSTODY; REVIEW-10003). It names a custody record and holds no
+/// value.
 fn custody_handle(value: &str) -> bool {
     let bare = |text: &str| {
         text.strip_prefix(HANDLE_TAG).is_some_and(|digits| {
@@ -490,6 +491,7 @@ fn custody_handle(value: &str) -> bool {
     // A bracket handle counts only as a whole value: trailing text past its
     // closing bracket is no handle (FIX 8645).
     bare(value)
+        || is_room_secret_handle(value)
         || value
             .strip_prefix(HANDLE_OPEN)
             .and_then(|rest| rest.split_once(']'))
