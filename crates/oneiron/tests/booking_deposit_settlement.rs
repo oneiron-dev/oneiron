@@ -1658,6 +1658,80 @@ fn a_second_seat_s_cancelled_version_of_the_first_seat_s_unproven_replay_is_no_h
 }
 
 #[test]
+fn a_second_seat_s_cancelled_version_of_a_masked_write_in_flight_is_no_host_cancel() {
+    // CAL-SECOND-SEAT-CANCELLED-VERSION-MISSES-OTHER-SEAT-WRITE (review
+    // round 1 of #10020, P1-2): as the write in flight above, but the
+    // shared system name is already a custody value when the first seat
+    // stages its cancelled PUT, so the stored outbox row keeps the system
+    // as a custody handle while its key is still derived from the literal
+    // name. The second seat's pull of the cancelled version must still
+    // hold it as the engine's own cancel coming back, by key, not by the
+    // readable strings. (The write's settlement is not followed here: the
+    // passports it writes would hold the system name masked as well.)
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let second = seat.install_second_seat(&fixture.vault, "seat:host-second");
+    let booked = written_only_booking(
+        &fixture,
+        &seat,
+        b"second-seat-masked-write",
+        "pi_second_seat_masked_write",
+    );
+    fixture
+        .cancel(&booked.cancel_token, NOW + 60)
+        .expect("the visitor cancels");
+    fixture
+        .vault
+        .register_test_secret(
+            "seat-system-canary",
+            HOST_SEAT_SYSTEM.as_bytes(),
+            Vec::new(),
+            NOW + 65,
+        )
+        .expect("the shared system name is a custody value");
+    seat.write_with_lost_answer(&fixture.vault, booked.calendar.event_ref, NOW + 70);
+    let masked = oneiron::calendar::connectors::calendar_write_outbox_rows(&fixture.vault)
+        .expect("the outbox rows")
+        .into_iter()
+        .find(|row| row.uid == booked.calendar.uid)
+        .expect("the writing seat's row is staged");
+    assert!(
+        masked.system != HOST_SEAT_SYSTEM,
+        "FIXTURE: the stored row keeps the known system as a handle"
+    );
+    assert!(
+        masked.system.contains("[secret sc"),
+        "FIXTURE: the stored system is a custody handle: {}",
+        masked.system
+    );
+
+    second
+        .pull(
+            &fixture.vault,
+            &[seat.stored_own_write(&booked.calendar.uid)],
+            NOW + 80,
+        )
+        .expect("seat pull");
+    assert_eq!(
+        cancel_statuses(
+            &fixture,
+            &booked.calendar.event_ref,
+            CalendarStatusBasis::ImportedCancel
+        ),
+        0,
+        "the second seat's cancelled version of the masked write is no host cancel"
+    );
+    assert_eq!(
+        state_of(&fixture, "pi_second_seat_masked_write"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the second seat's cancelled version of the masked write moves no money"
+    );
+}
+
+#[test]
 fn a_copy_whose_sync_answer_names_a_deleted_booking_s_uid_keeps_the_delete() {
     // Review round 2 of #9936: a sync answer carries the host's delete of a
     // booking written only to their seat beside a copy whose answer names
