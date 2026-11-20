@@ -170,7 +170,11 @@ impl Memory<'_> {
         &self,
         input: &ProductivityTreeRequest,
     ) -> MemoryResult<ScopedReadResult<Option<ProductivityTree>>> {
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        // Its nodes are admitted under the key's live Grants too, so its
+        // receipt reports what admitted them.
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
         let root = self.resolve_ref_in_lane(&lane, &input.root_ref)?;
         lane.child_of_tree_projected(
             &root,

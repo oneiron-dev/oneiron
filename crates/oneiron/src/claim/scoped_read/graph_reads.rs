@@ -124,7 +124,10 @@ impl ScopedRead<'_> {
         kind: Option<EdgeKind>,
     ) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        let admitted = self.admitted_edges_in(
+        // The centre and its peers take the authority this txn holds, as a
+        // point read does (FIX 7462): a live Grant of this key admits them.
+        let held = self.held_for(None);
+        let admitted = self.admitted_edges_held_in(
             txn,
             &policy,
             &filter,
@@ -134,6 +137,7 @@ impl ScopedRead<'_> {
             usize::MAX,
             usize::MAX,
             false,
+            &held,
         )?;
         // A withheld centre or peer counts; an opaque one never does.
         let suppressed = admitted.source.suppression() + admitted.suppressed;
@@ -146,7 +150,7 @@ impl ScopedRead<'_> {
         });
         Ok(ScopedReadResult {
             value,
-            receipt: self.receipt_in(txn, None, &policy, &filter, suppressed, None),
+            receipt: self.receipt_in(txn, None, &policy, &filter, suppressed, Some(&held)),
         })
     }
 

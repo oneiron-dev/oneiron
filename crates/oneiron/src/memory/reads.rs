@@ -644,7 +644,11 @@ impl Memory<'_> {
             })?),
             None => None,
         };
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        // Its anchor and peers are admitted under the key's live Grants too,
+        // so its receipt reports what admitted them.
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
         let id = self.resolve_ref_in_lane(&lane, entity_ref)?;
         // Scan inside the ONE read snapshot. Hidden edges are not results:
         // count only edges admitted by both endpoint and exact-pair gates.
