@@ -59,7 +59,13 @@ pub(crate) const PROTECTED_RESOURCE_GIT_METADATA_PATH: &str =
 /// RFC 8414's metadata path for an issuer with no path.
 const AUTHORIZATION_SERVER_METADATA_PATH: &str = "/.well-known/oauth-authorization-server";
 pub(crate) const AUTHORIZE_PATH: &str = "/oauth/authorize";
-const AUTHORIZE_STATUS_PATH: &str = "/oauth/authorize/status";
+/// The authorize page's poll, which `hosted login --unattended` polls as the page's script does.
+pub(crate) const AUTHORIZE_STATUS_PATH: &str = "/oauth/authorize/status";
+/// The header the page's poll sends its token in; `authorize.js` names the same one.
+pub(crate) const PAGE_TOKEN_HEADER: &str = "x-oneiron-oauth-page";
+/// The name of the authorize page's `<meta>` that carries the poll's token; `authorize.js`
+/// reads the same one.
+pub(crate) const PAGE_TOKEN_META: &str = "oauth-page-token";
 pub(crate) const TOKEN_PATH: &str = "/oauth/token";
 pub(crate) const REGISTER_PATH: &str = "/oauth/register";
 pub(crate) const REVOKE_PATH: &str = "/oauth/revoke";

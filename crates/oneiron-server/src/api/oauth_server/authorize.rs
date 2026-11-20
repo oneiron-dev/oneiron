@@ -28,14 +28,12 @@ use sha2::{Digest, Sha256};
 use super::client_document::resolve_client;
 use super::html::escape_html;
 use super::{
-    OAuthFloodCaps, OAuthIdentity, PURPOSE_PARAMETER, ProtectedResource, SignInPurpose, not_found,
-    now,
+    OAuthFloodCaps, OAuthIdentity, PAGE_TOKEN_HEADER, PAGE_TOKEN_META, PURPOSE_PARAMETER,
+    ProtectedResource, SignInPurpose, not_found, now,
 };
 use crate::auth::ClientAddress;
 use crate::server::SyncServer;
 
-/// The header the page sends its token in; `authorize.js` names the same one.
-const PAGE_TOKEN_HEADER: &str = "x-oneiron-oauth-page";
 /// The page's one script, allowed by its digest alone.
 const PAGE_SCRIPT: &str = include_str!("authorize.js");
 
@@ -346,7 +344,7 @@ fn consent_page(
         "default-src 'none'; script-src 'sha256-{digest}'; connect-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     );
     let html = format!(
-        "<!doctype html><html lang=en><meta charset=utf-8><meta name=referrer content=no-referrer><meta name=viewport content=\"width=device-width,initial-scale=1\"><meta name=oauth-page-token content=\"{token}\"><title>Sign-in request</title><main><h1>Sign-in request</h1><p><strong>{name}</strong> ({host}) asks to use this vault with <strong>{tier}</strong> access{purpose}.</p><p>Match code: <code>{code}</code></p><p>Open your inbox and check that the request there shows the same match code, then allow or deny it.</p><p id=status role=status>Waiting for your answer.</p></main><script>{PAGE_SCRIPT}</script></html>",
+        "<!doctype html><html lang=en><meta charset=utf-8><meta name=referrer content=no-referrer><meta name=viewport content=\"width=device-width,initial-scale=1\"><meta name={PAGE_TOKEN_META} content=\"{token}\"><title>Sign-in request</title><main><h1>Sign-in request</h1><p><strong>{name}</strong> ({host}) asks to use this vault with <strong>{tier}</strong> access{purpose}.</p><p>Match code: <code>{code}</code></p><p>Open your inbox and check that the request there shows the same match code, then allow or deny it.</p><p id=status role=status>Waiting for your answer.</p></main><script>{PAGE_SCRIPT}</script></html>",
         token = escape_html(&pending.page_token),
         name = escape_html(client.display_name()),
         host = escape_html(&client.display_host(redirect_uri)),

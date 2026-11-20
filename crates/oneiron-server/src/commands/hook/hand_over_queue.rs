@@ -131,13 +131,23 @@ pub(super) fn clear(origin: &str) -> anyhow::Result<()> {
 }
 
 /// What the hand-over says on stderr when a session's log is the first to
-/// wait for the vault at `origin`: which command lets it land.
-pub(super) fn waiting_note(origin: &str) -> String {
+/// wait for the vault at `origin`, or when it `asked` the owner for the
+/// hand-over sign-in: how the log comes to land.
+pub(super) fn waiting_note(origin: &str, asked: bool) -> String {
+    let how = if asked {
+        format!(
+            "Your Oneiron inbox now asks to let this machine's session logs land there as each \
+             session ends (or run `oneiron hosted login --origin {origin} --hand-over`)"
+        )
+    } else {
+        format!(
+            "`oneiron hosted login --origin {origin} --hand-over` lets session logs land there \
+             as each session ends"
+        )
+    };
     format!(
         "This session's log waits on this machine: {origin} is signed in here for recall \
-         alone, and landing a log writes. `oneiron hosted login --origin {origin} --hand-over` \
-         lets session logs land there as each session ends; the logs waiting land at the next \
-         one."
+         alone, and landing a log writes. {how}; the logs waiting land at the next one."
     )
 }
 

@@ -25,6 +25,9 @@
 //! - `login --hand-over` makes the hand-over sign-in of that vault: a
 //!   second sign-in, `full` at its `/mcp` alone, kept beside the first,
 //!   which the hooks' hand-over alone reads ([`super::hand_over_queue`]).
+//!   With `--unattended` it files the request with no browser and polls the
+//!   owner's answer, as the hooks start it themselves
+//!   ([`super::hand_over_ask`]).
 //! - `select` selects one recorded vault, or none.
 //! - `logout` forgets one recorded vault, or every one. It never deletes a
 //!   credential file another surface wrote: that surface keeps it. An OAuth
@@ -43,8 +46,8 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use super::hosted_selection::{self, HostedAuthMode, HostedVault, Selection};
-use super::hosted_sign_in::StepUp;
-use super::{hand_over_queue, hosted_sign_in, recall};
+use super::hosted_sign_in::{CodeDelivery, SignInEnded, StepUp};
+use super::{hand_over_ask, hand_over_queue, hosted_sign_in, recall};
 use crate::cli::{HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs, McpAuthMode};
 use crate::commands::credential_file::PairedCredentialFile;
 use crate::commands::oauth_sign_in;
@@ -164,6 +167,7 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
                 &staged,
                 Duration::from_secs(args.sign_in_timeout_secs),
                 hosted_sign_in::SignInAsk::Recall,
+                CodeDelivery::Browser,
             )?;
             (HostedAuthMode::OAuth, file, named, Some(staged))
         }
@@ -188,8 +192,11 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
 
 /// `login --push` or `login --hand-over` (`flag`): the step-up `step_up` of
 /// the vault recorded at `--origin` in OAuth mode (the one `--vault-id`
-/// names, when given). The recorded sign-in and the selection stay as they
-/// are.
+/// names, when given), by a browser or, with `--unattended`, by the owner's
+/// inbox alone. A hand-over sign-in that stands forgets the hooks' ask, and
+/// an unattended one that ends with none records how it ended
+/// ([`hand_over_ask::record_end`]). The recorded sign-in and the selection
+/// stay as they are.
 fn step_up_login(args: &HostedLoginArgs, step_up: StepUp, flag: &str) -> anyhow::Result<()> {
     let selection = held()?;
     let origin = origin(&args.origin)?;
@@ -208,8 +215,26 @@ fn step_up_login(args: &HostedLoginArgs, step_up: StepUp, flag: &str) -> anyhow:
                  login --origin {origin}` first, then add {flag}"
             )
         })?;
-    step_up.run(vault, Duration::from_secs(args.sign_in_timeout_secs))?;
-    Ok(())
+    let delivery = if args.unattended {
+        CodeDelivery::Unattended
+    } else {
+        CodeDelivery::Browser
+    };
+    let made = step_up.run(
+        vault,
+        Duration::from_secs(args.sign_in_timeout_secs),
+        delivery,
+    );
+    if step_up == StepUp::HandOver && (made.is_ok() || args.unattended) {
+        let ended = made.as_ref().err().map(|error| {
+            error
+                .downcast_ref::<SignInEnded>()
+                .copied()
+                .unwrap_or(SignInEnded::Lapsed)
+        });
+        hand_over_ask::record_end(&vault.origin, ended);
+    }
+    made.map(drop)
 }
 
 /// Records the vault at `origin` reached by `file` in `auth_mode`, once
@@ -363,7 +388,8 @@ fn logout(args: &HostedLogoutArgs) -> anyhow::Result<()> {
 }
 
 /// Revokes and removes each OAuth sign-in `login` made among `vaults`, and
-/// its continue and hand-over sign-ins, and empties its hand-over queue. A
+/// its continue and hand-over sign-ins, empties its hand-over queue and
+/// forgets the hooks' ask for it. A
 /// credential file another surface wrote stays: that surface keeps it.
 fn sign_out(vaults: &[HostedVault]) {
     for vault in vaults
@@ -375,6 +401,7 @@ fn sign_out(vaults: &[HostedVault]) {
             StepUp::Continue.sign_out(&vault.origin),
             StepUp::HandOver.sign_out(&vault.origin),
             hand_over_queue::clear(&vault.origin),
+            hand_over_ask::forget(&vault.origin),
         ] {
             if let Err(error) = signed_out {
                 let _ = writeln!(std::io::stderr().lock(), "{error}");

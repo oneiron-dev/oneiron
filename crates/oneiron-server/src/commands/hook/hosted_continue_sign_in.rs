@@ -25,7 +25,7 @@ use std::io::Write as _;
 use std::time::{Duration, Instant};
 
 use super::hosted_selection::{HostedAuthMode, HostedVault};
-use super::hosted_sign_in::{self, StepUp};
+use super::hosted_sign_in::{self, CodeDelivery, StepUp};
 use crate::commands::oauth_sign_in::OAuthSession;
 
 /// The longest `continue --cloud` waits for the owner to allow its step-up,
@@ -51,7 +51,7 @@ pub(super) fn continuing(vault: &HostedVault, deadline: Instant) -> anyhow::Resu
                 vault.origin
             );
             let timeout = STEP_UP_TIMEOUT.min(deadline.saturating_duration_since(Instant::now()));
-            StepUp::Continue.run(vault, timeout)?
+            StepUp::Continue.run(vault, timeout, CodeDelivery::Browser)?
         }
     };
     Ok(HostedVault {

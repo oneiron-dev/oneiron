@@ -25,8 +25,10 @@
 //! An OAuth selection lands logs on its hand-over sign-in alone, `full` at
 //! the vault's `/mcp` ([`StepUp::HandOver`]): its recall sign-in is `read`,
 //! and the import writes. With none standing, the log waits in the vault's
-//! hand-over queue ([`hand_over_queue`]), and the first to wait says on
-//! stderr which command lets it land. Every hand-over that lands a log
+//! hand-over queue ([`hand_over_queue`]); the first session end that finds
+//! none files the hand-over sign-in request itself, as an ask in the
+//! owner's inbox ([`hand_over_ask`]), and says so on stderr. Every
+//! hand-over that lands a log
 //! lands the logs waiting for that vault after it, each read through the
 //! same checks (row HOOK-HOSTED-HAND-OVER-OAUTH-READ-TIER; lead ruling B,
 //! Sat 21 Nov 07:0x).
@@ -45,9 +47,9 @@ use oneiron::ingest::history::{
 use super::transcript::SessionLogs;
 use super::{Hosted, transcript};
 use crate::cli::HookHost;
-use crate::commands::hook::hand_over_queue;
 use crate::commands::hook::hosted_selection::{HostedAuthMode, HostedVault};
 use crate::commands::hook::hosted_sign_in::StepUp;
+use crate::commands::hook::{hand_over_ask, hand_over_queue};
 
 /// The hooks' hand-over to the selected hosted vault: `host`'s session log
 /// at `log` (Claude Code's with its subagents' logs), landed through
@@ -64,9 +66,10 @@ use crate::commands::hook::hosted_sign_in::StepUp;
 /// never land.
 ///
 /// An OAuth selection goes on its hand-over sign-in; with none standing,
-/// the log is queued for the vault and nothing is sent. Once the log
-/// lands, the logs waiting for the vault go over the same bridge, oldest
-/// first ([`land_waiting`]).
+/// the log is queued for the vault, nothing is sent, and the owner is asked
+/// for the sign-in when an ask is due ([`hand_over_ask::start_if_due`]).
+/// Once the log lands, the logs waiting for the vault go over the same
+/// bridge, oldest first ([`land_waiting`]).
 pub(in crate::commands::hook) fn hand_over_hosted(
     oneiron: &Path,
     vault: &HostedVault,
@@ -85,11 +88,13 @@ pub(in crate::commands::hook) fn hand_over_hosted(
                 ..vault.clone()
             },
             None => {
-                if hand_over_queue::enqueue(&vault.origin, host, session, log)? {
+                let first = hand_over_queue::enqueue(&vault.origin, host, session, log)?;
+                let asked = hand_over_ask::start_if_due(oneiron, vault);
+                if first || asked {
                     let _ = writeln!(
                         std::io::stderr().lock(),
                         "{}",
-                        hand_over_queue::waiting_note(&vault.origin)
+                        hand_over_queue::waiting_note(&vault.origin, asked)
                     );
                 }
                 return Ok(());
