@@ -139,7 +139,8 @@ pub(crate) fn erase_mention_resolutions_in_txn(
     let mut erased = false;
     for (key, resolution) in RESOLUTIONS.scan(store, txn)? {
         let original_refs: Vec<_> = match &resolution.original.link {
-            crate::tagging::MentionLinkView::Tag => Vec::new(),
+            crate::tagging::MentionLinkView::Tag
+            | crate::tagging::MentionLinkView::Unmatched { .. } => Vec::new(),
             crate::tagging::MentionLinkView::Candidates { entity_refs, .. } => {
                 entity_refs.iter().collect()
             }

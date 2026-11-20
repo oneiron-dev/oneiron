@@ -150,6 +150,9 @@ enum SettlePlan {
     Move {
         payment_id: String,
         movement: DepositSettleMove,
+        /// What the provider refunded before this refund; 0 for any other
+        /// move.
+        refunded_before: u64,
     },
 }
 
@@ -164,12 +167,16 @@ fn plan_settle(vault: &Vault, key: &[u8; 32], now_utc: u64) -> Result<SettlePlan
         else {
             return Ok(SettlePlan::Nothing);
         };
+        let mut refunded_before = 0;
         let movement = match row.state {
             DepositState::CaptureDue { amount_minor } => {
                 DepositSettleMove::Capture { amount_minor }
             }
             DepositState::VoidDue => DepositSettleMove::Void,
-            DepositState::RefundDue { amount_minor } => DepositSettleMove::Refund { amount_minor },
+            DepositState::RefundDue { amount_minor } => {
+                refunded_before = row.refunded_minor;
+                DepositSettleMove::Refund { amount_minor }
+            }
             state if state.is_open() => {
                 if now_utc < row.lease_expires_at {
                     return Ok(SettlePlan::Wait {
@@ -186,6 +193,7 @@ fn plan_settle(vault: &Vault, key: &[u8; 32], now_utc: u64) -> Result<SettlePlan
         Ok(SettlePlan::Move {
             payment_id: row.payment_id,
             movement,
+            refunded_before,
         })
     })
 }
@@ -199,6 +207,9 @@ fn plan_settle(vault: &Vault, key: &[u8; 32], now_utc: u64) -> Result<SettlePlan
 /// is owed back at once, as a refund queued in this same commit. A void that
 /// found the payment already captured (a capture whose reply was lost, then
 /// a cancel that released the deposit) owes that capture back the same way.
+/// Either records what the provider captured. A refund adds to what was
+/// refunded before it; when the owner's return came while it was owed, the
+/// balance of the capture is owed next, queued in the same commit.
 fn record_settled(
     vault: &Vault,
     key: &[u8; 32],
@@ -218,6 +229,7 @@ fn record_settled(
                 DepositState::CaptureDue { amount_minor: owed },
                 DepositSettleMove::Capture { .. },
             ) => {
+                row.captured_minor = Some(moved);
                 if moved > owed {
                     DepositState::RefundDue {
                         amount_minor: moved - owed,
@@ -231,13 +243,26 @@ fn record_settled(
             (
                 DepositState::VoidDue,
                 DepositSettleMove::Capture { .. } | DepositSettleMove::Void,
-            ) if moved > 0 => DepositState::RefundDue {
-                amount_minor: moved,
-            },
+            ) if moved > 0 => {
+                row.captured_minor = Some(moved);
+                DepositState::RefundDue {
+                    amount_minor: moved,
+                }
+            }
             (DepositState::VoidDue, DepositSettleMove::Void) => DepositState::Voided,
             (DepositState::RefundDue { .. }, DepositSettleMove::Refund { .. }) => {
-                DepositState::Refunded {
-                    amount_minor: moved,
+                let refunded = row.refunded_minor.saturating_add(moved);
+                let balance_owed = std::mem::take(&mut row.balance_owed_after_refund);
+                match row.captured_minor {
+                    Some(captured) if balance_owed && captured > refunded => {
+                        row.refunded_minor = refunded;
+                        DepositState::RefundDue {
+                            amount_minor: captured - refunded,
+                        }
+                    }
+                    _ => DepositState::Refunded {
+                        amount_minor: refunded,
+                    },
                 }
             }
             // The deposit moved on while the call ran (a provider
@@ -249,10 +274,10 @@ fn record_settled(
         row.updated_at = now_utc;
         put_deposit(vault, wtxn, key, &row)?;
         if refund_owed {
-            let cause = if movement == DepositSettleMove::Void {
-                "void-found-captured"
-            } else {
-                "capture-overtaken"
+            let cause = match movement {
+                DepositSettleMove::Void => "void-found-captured",
+                DepositSettleMove::Capture { .. } => "capture-overtaken",
+                DepositSettleMove::Refund { .. } => "owner-balance",
             };
             enqueue_settle(vault, wtxn, key, cause, now_utc)?;
         }
@@ -268,23 +293,35 @@ fn settle_deposit_key<P: DepositSettlementPort>(
     port: &mut P,
     now_utc: u64,
 ) -> Result<DepositSettleStep, BookingError> {
-    let (payment_id, movement) = match plan_settle(vault, key, now_utc)? {
+    let (payment_id, movement, refunded_before) = match plan_settle(vault, key, now_utc)? {
         SettlePlan::Nothing => return Ok(DepositSettleStep::Nothing),
         SettlePlan::Wait { due_at } => return Ok(DepositSettleStep::Wait { due_at }),
         SettlePlan::Move {
             payment_id,
             movement,
-        } => (payment_id, movement),
+            refunded_before,
+        } => (payment_id, movement, refunded_before),
     };
     // One key per deposit, move and amount: a retry of the same move is
     // deduped by the provider, and a smaller capture after a cancel is a
-    // new request rather than a mismatched replay.
-    let idempotency_key = format!(
-        "oneiron-deposit-{}-{}-{}",
-        movement.tag(),
-        movement.amount_minor(),
-        &hex_lower(key)[..32]
-    );
+    // new request rather than a mismatched replay. A refund after an
+    // earlier one also names what was refunded before it, so a balance
+    // equal to the earlier refund is not taken for its replay.
+    let key_hex = hex_lower(key);
+    let digest = &key_hex[..32];
+    let idempotency_key = if refunded_before > 0 {
+        format!(
+            "oneiron-deposit-{}-{}-after-{refunded_before}-{digest}",
+            movement.tag(),
+            movement.amount_minor(),
+        )
+    } else {
+        format!(
+            "oneiron-deposit-{}-{}-{digest}",
+            movement.tag(),
+            movement.amount_minor(),
+        )
+    };
     match port.settle(&DepositSettleRequest {
         payment_id: &payment_id,
         movement,

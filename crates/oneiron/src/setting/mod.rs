@@ -64,13 +64,14 @@ pub use oneiron_setting_contract::{
 pub use self::ask::SettingAsk;
 pub(crate) use self::ask::erase_setting_ask_actor_in_txn;
 pub use self::beside::SettingTravel;
-pub(crate) use self::beside::notes_projection_pass_in_txn;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::beside::{
     beside_row_for, beside_row_json, beside_row_of, land_beside_row, land_pack_table,
     pack_table_bytes,
 };
+pub(crate) use self::beside::{beside_row_watched_in_txn, notes_projection_pass_in_txn};
 pub(crate) use self::born::write_born_rows_in_txn;
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::carry::carry_between_in_txn;
 pub(crate) use self::carry::carry_settings_in_txn;
 #[cfg(feature = "sync")]
