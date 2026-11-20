@@ -73,9 +73,9 @@ pub const PART_NPD_THRESHOLD: f32 = 0.1;
 /// code ([`LinkingCodes::every_part`]), and this is the same rule by sound.
 pub fn every_part_sounds_like(mention: &str, name: &str) -> bool {
     let name = normalize(name);
-    let name_parts: Vec<Vec<Vec<Segment>>> = parts(&name).map(part_readings).collect();
+    let name_parts: Vec<Vec<Vec<Segment>>> = lettered_parts(&name).map(part_readings).collect();
     let mention = normalize(mention);
-    let mut mention_parts = parts(&mention).peekable();
+    let mut mention_parts = lettered_parts(&mention).peekable();
     mention_parts.peek().is_some()
         && mention_parts.all(|part| {
             let readings = part_readings(part);
@@ -87,6 +87,13 @@ pub fn every_part_sounds_like(mention: &str, name: &str) -> bool {
                 })
             })
         })
+}
+
+/// The parts of a normalized name that hold more than marks: a part of
+/// marks alone is no part, as [`linking_codes`] counts the parts of a Latin
+/// name once its marks are stripped, and it has no reading.
+fn lettered_parts(name: &str) -> impl Iterator<Item = &str> {
+    parts(name).filter(|part| !part.chars().all(is_combining_mark))
 }
 
 /// The segments of each reading of one part of a name.
@@ -112,13 +119,6 @@ pub struct LinkingCodes {
     /// inside or before the last part ("owen snow" and "owen smith" are
     /// both O525).
     pub every_part: Vec<String>,
-    /// The sound keys of the name taken whole ([`sound_keys`]), for the
-    /// same names as `whole`: a person whose stored sound key is within the
-    /// Normalized Phonetic Distance cut, and one of whose names holds a part
-    /// that sounds like each part of this one ([`every_part_sounds_like`]),
-    /// sounds like it (CROSS-ARCH-0013 `#two-uses`, canonicalize at
-    /// extraction).
-    pub sound: Vec<String>,
 }
 
 /// The [`LinkingCodes`] of a name or a mention.
@@ -142,15 +142,9 @@ pub fn linking_codes(name: &str) -> LinkingCodes {
         }
         _ => {}
     }
-    let sound = if whole.is_empty() {
-        Vec::new()
-    } else {
-        sound_keys(name)
-    };
     LinkingCodes {
         whole: whole.into_iter().collect(),
         every_part: every_part.into_iter().collect(),
-        sound,
     }
 }
 

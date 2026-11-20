@@ -699,6 +699,40 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
     id: &EntityId,
     mode: ReadMode,
 ) -> Result<Option<Vec<u8>>> {
+    read_revision_from_store_in_txn(vault, store, txn, id, mode, ArchivedRead::Refused)
+}
+
+/// [`read_entity_revision_in_txn`] that also serves a record the vault
+/// cleanup archived. The archive is a local visibility marker that keeps
+/// the record's body and indexes
+/// (`Vault::archive_cleanup_candidate_in_txn`), and the entity linker
+/// sees it (ARCH-0055 §10, resolution sees the archive). Every other
+/// refusal stands: an unpublished chunk, a deletion shell, and words a
+/// deletion withdrew or whose recorded sources no longer stand.
+pub(crate) fn read_entity_revision_including_archived_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    mode: ReadMode,
+) -> Result<Option<Vec<u8>>> {
+    read_revision_from_store_in_txn(vault, &vault.store, txn, id, mode, ArchivedRead::Served)
+}
+
+/// Whether a revision read serves a record the vault cleanup archived.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArchivedRead {
+    Refused,
+    Served,
+}
+
+fn read_revision_from_store_in_txn(
+    vault: &Vault,
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    mode: ReadMode,
+    archived: ArchivedRead,
+) -> Result<Option<Vec<u8>>> {
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(None);
     };
@@ -713,7 +747,7 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
         ));
     }
     if crate::origin::lfs::unpublished_lfs_chunk_in_txn(&vault.store, txn, id, header.entity_type)?
-        || vault.archive_tombstone_in_txn(txn, id)?.is_some()
+        || (archived == ArchivedRead::Refused && vault.archive_tombstone_in_txn(txn, id)?.is_some())
         || (raw.len() == ENTITY_METADATA_HEADER_LEN
             && vault
                 .store
@@ -756,12 +790,13 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
         && let Some(row) =
             super::turn_text::turn_row_for_text_revision_in_txn(vault, store, txn, id, target)?
     {
-        return read_entity_revision_from_store_in_txn(
+        return read_revision_from_store_in_txn(
             vault,
             store,
             txn,
             id,
             ReadMode::Pinned(row),
+            archived,
         );
     }
     raw_for_revision(store, txn, id, &raw, Some(target)).map(admit)

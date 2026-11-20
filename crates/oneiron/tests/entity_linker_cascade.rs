@@ -7,13 +7,16 @@
 //! Soundex code of every one of its parts, or whose sound key (G2P to IPA)
 //! is within the Normalized Phonetic Distance cut of the name's while each
 //! of its parts is within the tighter part cut of one of theirs
-//! (CROSS-ARCH-0013 `#two-uses`, canonicalize at extraction). Two or more
-//! people who sound like the name stay candidates together: the nightly
-//! identity re-check asks which one it is (IDENTITY_SETTLE), and nothing is
-//! merged. One person alone is an unsure match (OF-123): the mention mints
-//! its own provisional person, as on main, the re-check asks whether it is
-//! that person or someone new,
-//! and an agent about to act on the name asks first. A first name alone
+//! (CROSS-ARCH-0013 `#two-uses`, canonicalize at extraction), archived or
+//! not. Two or more people whose codes match the name stay candidates
+//! together: the nightly identity re-check asks which one it is
+//! (IDENTITY_SETTLE), and nothing is merged. One person alone is an unsure
+//! match (OF-123): the mention mints its own provisional person, as on
+//! main, the re-check asks whether it is that person or someone new,
+//! and an agent about to act on the name asks first. A save never links by
+//! sound alone: a mention only the sound match finds people for mints, how
+//! many they are, and the re-check asks whether it is one of them or
+//! someone new. A first name alone
 //! mints with no ask, as on main, and so does a name whose parts sound unlike
 //! every person's.
 //!
@@ -77,6 +80,7 @@ use oneiron::tagging::{
     TaggingReconciler,
 };
 use oneiron::temporal::TimeRange;
+use oneiron::test_doors::cleanup_archive::archive_as_cleanup;
 use oneiron::test_doors::identity_recheck::{keep_identity_asks_separate, run_identity_recheck};
 use oneiron::test_doors::label_writers::{embedded_owner, open_member_vault};
 use oneiron::write_envelope::claim_body::ClaimDemotionAction;
@@ -436,6 +440,71 @@ fn a_whole_name_inside_the_sound_cut_with_a_part_that_sounds_different_takes_no_
 fn a_part_outside_the_part_sound_cut_takes_no_link() {
     assert_codes_miss("Christina Lee", "Kristen Lee");
     assert_no_phonetic_link("Christina Lee", "Kristen Lee");
+}
+
+/// Two people named Catherine Smith, and "Katherine Smith" holds none of
+/// their codes, so only the sound match finds them. A save never links by
+/// sound alone, so the link it stores never counts a person a lane reading
+/// the turn may not read: the mention mints, and the nightly re-check opens
+/// one IDENTITY_SETTLE ask that names both, or someone new. Main mints and
+/// asks nothing.
+#[test]
+fn two_people_only_the_sound_finds_are_asked_about_and_the_save_mints() {
+    assert_codes_miss("Catherine Smith", "Katherine Smith");
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(&dir);
+    let first = person(&vault, "Catherine Smith");
+    let second = person(&vault, "Catherine Smith");
+
+    let (turn, link) = save(&vault, "Katherine Smith called.", "Katherine Smith");
+
+    let provisional = assert_mints(&vault, link);
+    let asks = run_identity_recheck(&vault, now_seconds()).expect("recheck");
+    assert_eq!(asks.len(), 1, "one ask for the one mention: {asks:?}");
+    let ask = &asks[0];
+    assert_eq!(ask.name, "Katherine Smith");
+    assert_eq!(ask.turn, turn);
+    assert_eq!(ask.reason, IdentityAskReason::Unsettled);
+    assert_eq!(ask.provisional, Some(provisional));
+    assert_eq!(
+        ask.candidates.iter().copied().collect::<BTreeSet<_>>(),
+        BTreeSet::from([first, second, provisional])
+    );
+}
+
+/// The vault cleanup archived Catherine Smith; the archive keeps her body
+/// and phonetic postings, and the linker sees the archive (ARCH-0055 §10).
+/// "Katherine Smith" holds none of her codes, so only her sound finds her:
+/// the mention mints, and the nightly re-check asks whether it is her. Main
+/// mints and asks nothing.
+#[test]
+fn an_archived_person_is_asked_about_by_their_sound() {
+    assert_codes_miss("Catherine Smith", "Katherine Smith");
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(&dir);
+    let archived = person(&vault, "Catherine Smith");
+    archive_as_cleanup(&vault, &archived).expect("archive the person");
+
+    let saved = save(&vault, "Katherine Smith called.", "Katherine Smith");
+
+    assert_asks_whether_it_is(&vault, saved, "Katherine Smith", archived);
+}
+
+/// A mark standing alone between "Katherine" and "Smith" is no part of the
+/// name: the code rung strips it and counts two parts, and the sound match
+/// splits the name the same way, so the mark does not keep "Katherine
+/// Smith" from sounding like Catherine Smith. Main mints and asks nothing.
+#[test]
+fn a_part_of_marks_alone_does_not_keep_a_name_from_its_sound() {
+    let mention = "Katherine \u{301} Smith";
+    assert_codes_miss("Catherine Smith", mention);
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(&dir);
+    let real = person(&vault, "Catherine Smith");
+
+    let saved = save(&vault, &format!("{mention} called."), mention);
+
+    assert_asks_whether_it_is(&vault, saved, mention, real);
 }
 
 /// `mention` holds none of `person_name`'s codes, so the code rung alone
