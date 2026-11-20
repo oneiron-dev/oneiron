@@ -109,7 +109,10 @@ pub use self::run_task::{
     AGENT_RUN_TASK_SUBKIND, AgentRunExecutorLease, AgentRunFence, AgentRunOutcome,
 };
 #[cfg(oneiron_test_support)]
-pub(crate) use self::run_task::{proven_agent_run_task_writer_in, put_peer_agent_run_task_in_txn};
+pub(crate) use self::run_task::{
+    proven_agent_run_task_writer_in, put_peer_agent_run_task_in_txn,
+    rewrite_peer_agent_run_task_parent_context_in_txn,
+};
 mod run_writer_proof;
 mod scope;
 pub(crate) use scope::project_descends_from_in_txn;
