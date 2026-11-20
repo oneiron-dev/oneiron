@@ -10,9 +10,10 @@
 //!
 //! Beside them, `vault.imports.hook_transcript` (census L10-17, Engine
 //! ruling 17 Nov 06:50): the owner on its proof, or the actor its credential
-//! binds, whose live Grant naming the verb the engine checks before the
-//! import and in each of its writers, lands one Claude Code session. It
-//! lists no row: its answer names the session's CONVERSATION by id.
+//! binds, whose live Grant naming the verb the engine checks at the door's
+//! admission, before the import and in each of its writers, lands one Claude
+//! Code session. It lists no row: its answer names the session's
+//! CONVERSATION by id.
 use std::sync::Arc;
 
 use oneiron::EntityId;
@@ -115,7 +116,9 @@ pub(in crate::api::facade) enum TranscriptImporter {
 
 /// `vault.imports.hook_transcript`'s caller, as `door_admits` checks it first
 /// and the door acts under it: the owner's proof, else the credential's own
-/// actor; a credential bound to none keeps the owner refusal.
+/// actor, whose live Grant naming the verb the engine judges here, before any
+/// verb hook sees the call; a credential bound to none keeps the owner
+/// refusal.
 pub(in crate::api::facade) fn transcript_importer(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -123,8 +126,13 @@ pub(in crate::api::facade) fn transcript_importer(
 ) -> MemoryResult<TranscriptImporter> {
     match owner_proof(auth, server, verb) {
         Ok(owner) => Ok(TranscriptImporter::Owner(owner)),
-        Err(refusal) => super::owner_binding::facade_caller_or(server, auth, || refusal)
-            .map(|(actor, _class)| TranscriptImporter::Agent(actor)),
+        Err(refusal) => {
+            let (actor, _class) = super::owner_binding::facade_caller_or(server, auth, || refusal)?;
+            server
+                .vault()
+                .admit_hook_transcript_caller(HistoryImportCaller::GrantedAgent(actor))?;
+            Ok(TranscriptImporter::Agent(actor))
+        }
     }
 }
 

@@ -6,10 +6,11 @@
 //! CONVERSATION, which `vault.runners.continue` then takes.
 //!
 //! The owner calls it, or an agent whose live Grant names the verb
-//! (substrate behind grants). The Grant is checked before anything is read,
-//! and again in each of the import's writers, where the owner's proof is
-//! revalidated, so a Grant revoked during an import refuses the turns that
-//! had not landed yet.
+//! (substrate behind grants). The Grant is checked at the door's admission,
+//! before any verb hook runs, again before anything is read, and again in
+//! each of the import's writers, where the owner's proof is revalidated, so
+//! a Grant revoked during an import refuses the turns that had not landed
+//! yet; what had landed still reaches the owner's inbox and the Dreamer.
 //!
 //! Each log travels gzip-compressed in standard base64: the `oneiron mcp`
 //! bridge reads at most 2 MiB per message, and a long session's log is
@@ -68,6 +69,13 @@ const ERR_PAST_CAP: &str = "the hook transcript's logs inflate past 64 MiB (HOOK
 /// What the caller does about logs past the cap.
 const HINT_PAST_CAP: &str =
     "Import the session on the machine it ran on: oneiron import claude-code <log>.";
+
+/// A session log that left its CONVERSATION absent: no message of it was
+/// kept, now or before.
+const ERR_NO_CONVERSATION: &str = "the hook transcript's session log holds no message the import keeps, so the session has no CONVERSATION to continue";
+
+/// What the caller does about a session log with no message kept.
+const HINT_NO_CONVERSATION: &str = "Send the log once the session has a user or assistant message.";
 
 /// `vault.imports.hook_transcript`'s input: one Claude Code session's log,
 /// as the hook names it, and the logs of its subagents.
@@ -183,6 +191,22 @@ impl HistoryImportCaller<'_> {
 }
 
 impl Vault {
+    /// The door's admission of `caller` to `vault.imports.hook_transcript`,
+    /// before any verb hook sees the call: the owner's proof revalidated, or
+    /// the agent's live Grant naming the act, in a read snapshot of its own.
+    /// [`Self::import_hook_transcript`] judges the caller again.
+    ///
+    /// # Errors
+    ///
+    /// A caller the door refuses.
+    pub fn admit_hook_transcript_caller(
+        &self,
+        caller: HistoryImportCaller<'_>,
+    ) -> MemoryResult<()> {
+        caller.owner(self)?;
+        Ok(())
+    }
+
     /// Lands one Claude Code session a CLI on another machine sent, as
     /// `oneiron import claude-code <log>` lands it: the session's log and
     /// its subagents' logs decode as Claude Code logs, land earliest first
@@ -191,14 +215,19 @@ impl Vault {
     /// the import's review.
     ///
     /// `caller` is judged before any log is read, so a refused caller is
-    /// told nothing of them, and again in each of the import's writers.
+    /// told nothing of them, and again in each of the import's writers. A
+    /// conversation refused part-way (a Grant revoked during the call) ends
+    /// the call with its refusal, after the conversations that had landed
+    /// get the call's inbox row and Dreamer planning at the call's import
+    /// second, as a whole call's would.
     ///
     /// # Errors
     ///
     /// A caller the door refuses; a request that fails its checks, a log
     /// that is not gzip in standard base64, and logs that inflate past
-    /// [`HOOK_TRANSCRIPT_MAX_BYTES`], with nothing landed; every error
-    /// [`Self::import_history`] has.
+    /// [`HOOK_TRANSCRIPT_MAX_BYTES`], with nothing landed; a session log
+    /// whose CONVERSATION is absent after the import (no message kept);
+    /// every error [`Self::import_history`] has.
     pub fn import_hook_transcript(
         &self,
         caller: HistoryImportCaller<'_>,
@@ -216,12 +245,21 @@ impl Vault {
         let imported_at = self.own_import_second()?;
         let mut landed = false;
         let mut views = Vec::with_capacity(conversations.len());
+        let mut refusal = None;
         for conversation in &conversations {
-            let report = self.import_history_as(caller, SOURCE, conversation, imported_at, None)?;
-            landed |= report.new > 0 || report.changed > 0;
-            views.push(HookTranscriptConversation::of(&report)?);
+            match self.import_history_as(caller, SOURCE, conversation, imported_at, None) {
+                Ok(report) => {
+                    landed |= report.new > 0 || report.changed > 0;
+                    views.push(report);
+                }
+                Err(error) => {
+                    refusal = Some(error);
+                    break;
+                }
+            }
         }
-        // One inbox row for the call, never one per conversation.
+        // One inbox row for the call, never one per conversation; written
+        // for what landed before a refusal too.
         let review = if landed {
             self.record_history_import_finished(SOURCE, imported_at)?;
             Some(history_import_review_id(SOURCE, imported_at))
@@ -229,9 +267,25 @@ impl Vault {
             None
         };
         crate::dreamer_consolidation::plan_dirty_turn_rounds(self, imported_at)?;
+        if let Some(refusal) = refusal {
+            return Err(refusal);
+        }
+        let conversation = conversation_id(SOURCE, &input.session)?;
+        let txn = self.store.env.read_txn()?;
+        if !crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, &conversation)? {
+            return Err(MemoryError::new(
+                MEMORY_CODE_BAD_REQUEST,
+                ERR_NO_CONVERSATION,
+                &[HINT_NO_CONVERSATION],
+            ));
+        }
+        drop(txn);
         Ok(HookTranscriptImportView {
-            conversation: conversation_id(SOURCE, &input.session)?.to_hex(),
-            conversations: views,
+            conversation: conversation.to_hex(),
+            conversations: views
+                .iter()
+                .map(HookTranscriptConversation::of)
+                .collect::<Result<_>>()?,
             review,
         })
     }
