@@ -44,11 +44,15 @@
 //! Tests 4 to 6 (FIX-LIST ERASE-SERVED-KV-CACHE-REVIEW-RETRY-TEST) erase the
 //! row after the call's first checks passed, where only a later ask stops it.
 //!
-//! Test 4, a cooldown's resend (REVIEW-9900 round 1): the model refuses a
-//! pass's first send for its rate, with a one-second reset. A pass of live
-//! rows waits it out and is answered by its resend (guard). For a window
-//! read from two CLAIMs, the owner erases one while the ladder waits: the
-//! pass is refused for it and nothing more reaches the model.
+//! Test 4, a cooldown's resend (REVIEW-9900 round 1): the provider, reached
+//! through the credential broker as in test 5, refuses each pass's first
+//! send for its rate, with a one-second reset. A pass of live rows waits it
+//! out and is answered by its resend, each send reading the provider's key
+//! (guard). For a window read from two CLAIMs, the owner erases one while
+//! the ladder waits: the pass is refused for it, nothing more reaches the
+//! provider, and the resend never reads the key: the ladder stops it before
+//! it goes out, not only the transport's release after the key read
+//! (REVIEW-9949 round 1).
 //!
 //! Test 5, a brokered send (REVIEW-9900 round 2 P1 1): the one provider's
 //! key is a vault secret, sent through the credential broker child against
@@ -65,7 +69,8 @@
 //! On a scratch head with those asks taken out (the ladder's `may_send`
 //! always yes, no dispatch release on the run, `source_rows_withdrawn`
 //! reading deleted shells only), tests 4 to 6 fail and tests 1 to 3 pass
-//! (RED).
+//! (RED). With only the ladder's `may_send` taken out, test 4 alone fails:
+//! its resend reads the key before the release refuses it (RED).
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test
 //! --locked -p oneiron-server --all-features --features
@@ -80,12 +85,13 @@ mod engine_stack;
 mod fake_llm;
 
 use std::path::Path;
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use engine_stack::run_on_engine_stack;
-use fake_llm::{FakeLlm, Reply};
+use fake_llm::FakeLlm;
 use oneiron::authority::MachineRole;
 use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::registry::ENTITY_TYPE_PERSON;
@@ -105,6 +111,7 @@ use oneiron_server::test_doors::compaction_pass::{
     house_live_fork_bind, house_live_fork_request, house_pass, serve_broker,
 };
 use serde_json::{Value, json};
+use tokio::sync::{oneshot, watch};
 use zeroize::Zeroizing;
 
 /// The self-writer frame this test's prompt package carries: a self-written
@@ -251,12 +258,56 @@ async fn served_with_keys(
     (Arc::new(server), host)
 }
 
+/// A vault served under [`brokered_models`] for one fake provider, and the
+/// directories it reads, which live as long as it.
+struct Brokered {
+    _host: AiHost,
+    server: Arc<SyncServer>,
+    _dirs: [tempfile::TempDir; 3],
+}
+
+/// [`served_with_keys`] under [`brokered_models`] for `provider`: its key is
+/// the vault secret [`KEY_HANDLE`], read through the custody door `door`
+/// makes of the vault's own.
+async fn served_brokered(
+    provider: &FakeProvider,
+    door: impl FnOnce(VaultKeyDoor) -> Arc<dyn KeyDoor>,
+) -> Brokered {
+    let files = tempfile::tempdir().unwrap();
+    let ca = files.path().join("ca.pem");
+    std::fs::write(&ca, provider.ca_pem()).unwrap();
+    let prompts = prompt_package_with_frame();
+    let models = brokered_models(provider.origin(), &ca, prompts.path());
+    let dir = tempfile::tempdir().unwrap();
+    let (server, host) = served_with_keys(dir.path(), &models, |vault| {
+        vault
+            .register_test_secret(
+                KEY_HANDLE,
+                b"live-fork-erase-test-key",
+                vec![SecretBinding {
+                    effector: BROKER_EFFECTOR.to_owned(),
+                    tier_ceiling: CustodyTier::T0Doored,
+                    scopes: vec![SECRET_SCOPE_READ.to_owned()],
+                }],
+                1_700_000_000,
+            )
+            .expect("FIXTURE: the provider key is registered");
+        Some(door(VaultKeyDoor::new(Arc::clone(vault))))
+    })
+    .await;
+    Brokered {
+        _host: host,
+        server,
+        _dirs: [files, prompts, dir],
+    }
+}
+
 /// The vault's custody door, whose first key read says it has begun and
 /// then waits until the test lets it go on; every later read goes straight
 /// through.
 struct GatedKeyDoor {
     door: VaultKeyDoor,
-    gate: Mutex<Option<(Sender<()>, Receiver<()>)>>,
+    gate: Mutex<Option<(oneshot::Sender<()>, Receiver<()>)>>,
 }
 
 impl KeyDoor for GatedKeyDoor {
@@ -274,6 +325,25 @@ impl KeyDoor for GatedKeyDoor {
             began.send(()).unwrap();
             go_on.recv().unwrap();
         }
+        self.door.read(name)
+    }
+}
+
+/// The vault's custody door, counting the provider key reads made through
+/// it. A brokered send reads its key once the ladder has let it go out, and
+/// before the transport's release asks again.
+struct CountingKeyDoor {
+    door: VaultKeyDoor,
+    reads: Arc<AtomicUsize>,
+}
+
+impl KeyDoor for CountingKeyDoor {
+    fn check(&self, name: &str) -> anyhow::Result<()> {
+        self.door.check(name)
+    }
+
+    fn read(&self, name: &str) -> anyhow::Result<Zeroizing<Vec<u8>>> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
         self.door.read(name)
     }
 }
@@ -361,26 +431,16 @@ fn summary_reply(body: &Value) -> String {
     json!({"from": input["from"], "through": input["through"], "summary": SUMMARY}).to_string()
 }
 
-/// The scripted model's rate refusal, back in [`COOLDOWN_SECS`].
-fn rate_limited() -> Reply {
-    Reply::Error {
-        status: 429,
-        headers: vec![("retry-after".into(), COOLDOWN_SECS.to_string())],
-        body: json!({"error": {"message": "rate limit", "type": "rate_limit_error"}}),
-    }
-}
-
-/// Waits until the scripted model has seen `count` requests.
-async fn until_seen(fake: &FakeLlm, count: usize, what: &str) {
-    let deadline = Instant::now() + SEND_DEADLINE;
-    while fake.seen().len() < count {
-        assert!(
-            Instant::now() < deadline,
-            "FIXTURE: {what}: {} of {count} requests seen",
-            fake.seen().len()
-        );
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+/// The brokered provider's rate refusal, back in [`COOLDOWN_SECS`].
+fn brokered_rate_limited() -> FakeReply {
+    let mut reply = FakeReply::json(
+        429,
+        &json!({"error": {"message": "rate limit", "type": "rate_limit_error"}}),
+    );
+    reply
+        .headers
+        .push(("retry-after".to_owned(), COOLDOWN_SECS.to_string()));
+    reply
 }
 
 /// The owner's privacy (GDPR) erase of `row`, confirmed from its preview.
@@ -562,14 +622,32 @@ fn a_pass_sends_no_window_read_from_a_row_erased_since() {
 #[test]
 fn a_pass_resends_no_window_read_from_a_row_erased_during_its_cooldown() {
     run_on_engine_stack("live-fork-erased-during-cooldown", || async {
-        let fake = FakeLlm::start(
-            vec![rate_limited()],
-            Some(Reply::Computed(Arc::new(summary_reply))),
-        )
+        let provider = FakeProvider::start(FakeReply::json(500, &json!({})));
+        // Each pass's first send is refused for its rate; its resend is
+        // answered.
+        let (arrived, mut requests) = watch::channel(0_usize);
+        provider.respond_with(move |request| {
+            let mut count = 0;
+            arrived.send_modify(|seen| {
+                *seen += 1;
+                count = *seen;
+            });
+            if matches!(count, 1 | 3) {
+                brokered_rate_limited()
+            } else {
+                brokered_answer(request)
+            }
+        });
+        let reads = Arc::new(AtomicUsize::new(0));
+        let door_reads = Arc::clone(&reads);
+        let brokered = served_brokered(&provider, move |door| {
+            Arc::new(CountingKeyDoor {
+                door,
+                reads: door_reads,
+            })
+        })
         .await;
-        let prompts = prompt_package_with_frame();
-        let dir = tempfile::tempdir().unwrap();
-        let (server, _host) = served(dir.path(), &models(&fake.base_url, prompts.path())).await;
+        let server = Arc::clone(&brokered.server);
         let vault = server.vault();
         let person = stored_person(vault);
         let erased = stored_claim(vault, person, ERASED_WORDS);
@@ -578,7 +656,9 @@ fn a_pass_resends_no_window_read_from_a_row_erased_during_its_cooldown() {
         let stale = window_read_from(vault, ERASED_WORDS, vec![erased, kept], true);
 
         // Guard: a pass whose first send is refused for its rate waits the
-        // limit out and sends the same window again, which is answered.
+        // limit out and sends the same window again, which is answered; each
+        // send reads the provider's key.
+        let reads_before = reads.load(Ordering::SeqCst);
         let resent = {
             let server = Arc::clone(&server);
             tokio::task::spawn_blocking(move || house_pass(&server, &clean))
@@ -591,19 +671,30 @@ fn a_pass_resends_no_window_read_from_a_row_erased_during_its_cooldown() {
             )
         });
         assert!(
-            answer.summary.contains(SUMMARY) && fake.seen().len() == 2,
+            answer.summary.contains(SUMMARY) && provider.seen().len() == 2,
             "FIXTURE: the cooldown's resend went out and was answered: {} requests, {answer:?}",
-            fake.seen().len()
+            provider.seen().len()
+        );
+        assert_eq!(
+            reads.load(Ordering::SeqCst) - reads_before,
+            2,
+            "FIXTURE: each send of the pass read the provider's key"
         );
 
         // The same refusal for the window read from both rows; the owner
         // erases one while the ladder waits.
-        fake.push(rate_limited());
+        let reads_before = reads.load(Ordering::SeqCst);
         let pass = {
             let server = Arc::clone(&server);
             tokio::task::spawn_blocking(move || house_pass(&server, &stale))
         };
-        until_seen(&fake, 3, "the pass's first send reaches the model").await;
+        let reached = tokio::time::timeout(SEND_DEADLINE, requests.wait_for(|seen| *seen >= 3))
+            .await
+            .is_ok_and(|seen| seen.is_ok());
+        assert!(
+            reached,
+            "FIXTURE: the pass's first send reaches the provider"
+        );
         privacy_erase(vault, erased);
         match pass.await.unwrap() {
             Err(refusal) => assert!(
@@ -616,9 +707,15 @@ fn a_pass_resends_no_window_read_from_a_row_erased_during_its_cooldown() {
             ),
         }
         assert_eq!(
-            fake.seen().len(),
+            provider.seen().len(),
             3,
             "the cooldown's resend of a window read from a row erased since went out"
+        );
+        assert_eq!(
+            reads.load(Ordering::SeqCst) - reads_before,
+            1,
+            "the cooldown's resend of a window read from a row erased since got past the \
+             ladder: it read the provider's key, and only the transport's release kept it in"
         );
     });
 }
@@ -648,33 +745,16 @@ fn a_broker_send_writes_no_window_read_from_a_row_erased_during_its_key_read() {
     run_on_engine_stack("live-fork-erased-during-key-read", || async {
         let provider = FakeProvider::start(FakeReply::json(500, &json!({})));
         provider.respond_with(brokered_answer);
-        let files = tempfile::tempdir().unwrap();
-        let ca = files.path().join("ca.pem");
-        std::fs::write(&ca, provider.ca_pem()).unwrap();
-        let prompts = prompt_package_with_frame();
-        let models = brokered_models(provider.origin(), &ca, prompts.path());
-        let dir = tempfile::tempdir().unwrap();
-        let (began_tx, began) = channel();
+        let (began_tx, began) = oneshot::channel();
         let (go_on, go_on_rx) = channel();
-        let (server, _host) = served_with_keys(dir.path(), &models, |vault| {
-            vault
-                .register_test_secret(
-                    KEY_HANDLE,
-                    b"live-fork-erase-test-key",
-                    vec![SecretBinding {
-                        effector: BROKER_EFFECTOR.to_owned(),
-                        tier_ceiling: CustodyTier::T0Doored,
-                        scopes: vec![SECRET_SCOPE_READ.to_owned()],
-                    }],
-                    1_700_000_000,
-                )
-                .expect("FIXTURE: the provider key is registered");
-            Some(Arc::new(GatedKeyDoor {
-                door: VaultKeyDoor::new(Arc::clone(vault)),
+        let brokered = served_brokered(&provider, |door| {
+            Arc::new(GatedKeyDoor {
+                door,
                 gate: Mutex::new(Some((began_tx, go_on_rx))),
-            }))
+            })
         })
         .await;
+        let server = Arc::clone(&brokered.server);
         let vault = server.vault();
         let person = stored_person(vault);
         let erased = stored_claim(vault, person, ERASED_WORDS);
@@ -684,17 +764,18 @@ fn a_broker_send_writes_no_window_read_from_a_row_erased_during_its_key_read() {
 
         // The pass gets past every check before its send and reads the
         // provider's key; the owner erases one of its rows during that read.
-        let pass = {
+        let mut pass = {
             let server = Arc::clone(&server);
             tokio::task::spawn_blocking(move || house_pass(&server, &stale))
         };
-        let deadline = Instant::now() + SEND_DEADLINE;
-        while began.try_recv().is_err() {
-            assert!(
-                Instant::now() < deadline && !pass.is_finished(),
+        tokio::select! {
+            began = tokio::time::timeout(SEND_DEADLINE, began) => assert!(
+                matches!(began, Ok(Ok(()))),
                 "FIXTURE: the brokered pass reads its provider key"
-            );
-            tokio::time::sleep(Duration::from_millis(5)).await;
+            ),
+            _ = &mut pass => {
+                panic!("FIXTURE: the brokered pass ended before it read its provider key")
+            }
         }
         privacy_erase(vault, erased);
         go_on.send(()).unwrap();
