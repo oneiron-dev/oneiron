@@ -37,10 +37,12 @@ fn replicated_actor_denial_narrows_a_class_wide_permit_only_for_that_actor() -> 
             ENTITY_TYPE_POLICY_MANIFEST,
             test_time(1),
             1,
+            None,
             &denial,
         )
         .commit()?;
     let policy = resolve(&vault)?;
+    // FIX 8780: an untrusted pack is a proposal; it never narrows
     assert!(
         crate::gate::resolution::check_claim_source_trust(
             &body,
@@ -48,7 +50,7 @@ fn replicated_actor_denial_narrows_a_class_wide_permit_only_for_that_actor() -> 
             &policy,
             None
         )
-        .is_err()
+        .is_ok()
     );
     crate::gate::resolution::check_claim_source_trust(&body, Some(&other.to_hex()), &policy, None)?;
     crate::gate::resolution::check_claim_source_trust(&body, None, &policy, None)?;
@@ -93,11 +95,13 @@ fn replicated_class_wide_cap_narrows_every_bound_actor_in_either_manifest_order(
                 ENTITY_TYPE_POLICY_MANIFEST,
                 test_time(1),
                 1,
+                None,
                 &clamp,
             )
             .commit()?;
         let policy = resolve(&vault)?;
         for actor in actors {
+            // FIX 8780: an untrusted pack is a proposal; it never narrows
             assert!(
                 crate::gate::resolution::check_claim_source_trust(
                     &band_two,
@@ -105,7 +109,7 @@ fn replicated_class_wide_cap_narrows_every_bound_actor_in_either_manifest_order(
                     &policy,
                     None,
                 )
-                .is_err()
+                .is_ok()
             );
             crate::gate::resolution::check_claim_source_trust(
                 &public,
@@ -114,6 +118,8 @@ fn replicated_class_wide_cap_narrows_every_bound_actor_in_either_manifest_order(
                 None,
             )?;
         }
+        // FIX 8780: an untrusted pack is a proposal; it never narrows
+        // R42: 0x83 has no actor-bound Generated row, so default-deny refuses (ceiling.rs:608-609).
         assert!(
             crate::gate::resolution::check_claim_source_trust(
                 &public,
@@ -175,11 +181,13 @@ fn replicated_multi_actor_denial_narrows_every_existing_bound_slot_in_either_ord
                 ENTITY_TYPE_POLICY_MANIFEST,
                 test_time(1),
                 1,
+                None,
                 &denial,
             )
             .commit()?;
         let policy = resolve(&vault)?;
         for id in [actor, projector] {
+            // FIX 8780: an untrusted pack is a proposal; it never narrows
             assert!(
                 crate::gate::resolution::check_claim_source_trust(
                     &body,
@@ -187,7 +195,7 @@ fn replicated_multi_actor_denial_narrows_every_existing_bound_slot_in_either_ord
                     &policy,
                     None
                 )
-                .is_err()
+                .is_ok()
             );
         }
     }
@@ -251,6 +259,7 @@ fn trusted_disjoint_generated_actor_bindings_preserve_each_permit() -> Result<()
             ENTITY_TYPE_POLICY_MANIFEST,
             test_time(1),
             1,
+            None,
             &encode_policy_manifest(vec![(key, Value::Map(sources))]),
         )
         .commit()?;
@@ -296,12 +305,14 @@ fn untrusted_source_rows_only_narrow_present_slots_independent_of_scan_order() -
                 ENTITY_TYPE_POLICY_MANIFEST,
                 test_time(1),
                 1,
+                None,
                 &narrower,
             )
             .commit()?;
+        // FIX 8780: an untrusted pack is a proposal; it never narrows
         assert!(
             crate::gate::resolution::check_claim_source_trust(&body, None, &resolve(&vault)?, None)
-                .is_err()
+                .is_ok()
         );
         let public = public_stamped(body);
         crate::gate::resolution::check_claim_source_trust(&public, None, &resolve(&vault)?, None)
@@ -317,9 +328,11 @@ fn untrusted_source_rows_only_narrow_present_slots_independent_of_scan_order() -
                 ENTITY_TYPE_POLICY_MANIFEST,
                 test_time(1),
                 2,
+                None,
                 &unreceipted,
             )
             .commit()?;
+        // FIX 8780: an untrusted pack is a proposal; it never narrows
         assert!(
             crate::gate::resolution::check_claim_source_trust(
                 &public,
@@ -327,7 +340,7 @@ fn untrusted_source_rows_only_narrow_present_slots_independent_of_scan_order() -
                 &resolve(&vault)?,
                 None
             )
-            .is_err()
+            .is_ok()
         );
     }
     Ok(())
@@ -372,12 +385,14 @@ fn product_band_permit_needs_explicit_owner_reauthoring() -> Result<()> {
             ENTITY_TYPE_POLICY_MANIFEST,
             test_time(1),
             3,
+            None,
             &narrowing,
         )
         .commit()?;
+    // FIX 8780: an untrusted pack is a proposal; it never narrows
     assert!(
         crate::gate::resolution::check_claim_source_trust(&body, None, &resolve(&vault)?, None)
-            .is_err()
+            .is_ok()
     );
     assert!(
         vault
@@ -462,6 +477,7 @@ fn owner_mints_one_foreign_principal_grant_into_the_trusted_default_policy() -> 
             ENTITY_TYPE_POLICY_MANIFEST,
             test_time(1),
             1,
+            None,
             &crate::gate::default_policy_manifest()?,
         )
         .commit()?;
@@ -510,8 +526,10 @@ fn restore_keeps_a_quarantine_the_owner_placed_since() -> Result<()> {
             .is_err()
     );
 
+    let key = vault.checkpoint_key()?;
     let (restored, _) = crate::Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &backups.path().join("restored"),
         crate::VaultConfig::default(),
         &vault,

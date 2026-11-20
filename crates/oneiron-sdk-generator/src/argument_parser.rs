@@ -252,7 +252,7 @@ fn consume_optional(
                 taken.push((current, Vec::new()));
                 let prefix: String = option_string.chars().take(1).collect();
                 let mut rest = arg.chars();
-                let next = rest.next().map(String::from).unwrap_or_default();
+                let next = rest.next().map_or_default(String::from);
                 option_string = format!("{prefix}{next}");
                 if let Some(opt) = option_action(&option_string) {
                     action = Some(opt);

@@ -1,5 +1,7 @@
 //! Genesis vectors, wall-clock clock, signature suites, roles and quorum.
 
+use oneiron_persistent_collections::PersistentMap;
+
 use super::support::hex;
 use super::support::*;
 use super::*;
@@ -61,13 +63,73 @@ fn two_open_vaults_observe_on_independent_authority_clocks() {
     );
 }
 
+/// A reply's held authority reading (FIX
+/// QUESTION-OUTCOMES-REPLY-SPANS-SNAPSHOTS, blind review round 2 of #9864):
+/// every reading in the held snapshot is the held one while the handle's
+/// clock moves an hour, another vault reads its own clock meanwhile, and once
+/// the hold drops the same snapshot reads the moved clock.
+///
+/// Another thread moves the clock: it commits a floor an hour ahead and reads
+/// it, which rebases this handle's anchor. That snapshot's floor did not
+/// move, yet an unheld reading in it moves by the hour, as a credential's
+/// expiry falling between two checks of one reply would be read.
+#[test]
+fn a_held_authority_reading_stands_for_its_snapshot_while_the_clock_moves() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault_at(dir.path(), 1_000);
+    let other_dir = tempfile::tempdir().unwrap();
+    let other = open_vault_at(other_dir.path(), 500_000);
+    let store = &vault.store;
+    let txn = store.env.read_txn().unwrap();
+    let held = hold_authority_reading_in_txn(store, &txn).unwrap();
+    let at = authority_instant_secs_for_store_in_txn(store, &txn).unwrap();
+    let later = at + 3_600;
+    // LMDB's default reader slot is thread-local: the second snapshot of this
+    // vault is opened on another thread.
+    std::thread::scope(|scope| {
+        scope
+            .spawn(move || {
+                let mut wtxn = store.env.write_txn().unwrap();
+                put_authority_clock_floor_in_txn(store, &mut wtxn, later).unwrap();
+                wtxn.commit().unwrap();
+                let fresh = store.env.read_txn().unwrap();
+                assert!(
+                    authority_instant_secs_for_store_in_txn(store, &fresh).unwrap() >= later,
+                    "a fresh snapshot on another thread reads the raised floor"
+                );
+            })
+            .join()
+            .unwrap();
+    });
+    assert_eq!(
+        authority_instant_secs_for_store_in_txn(store, &txn).unwrap(),
+        at,
+        "every reading in the held snapshot is the held one, though the clock moved an hour"
+    );
+    let other_txn = other.store.env.read_txn().unwrap();
+    assert!(
+        authority_instant_secs_for_store_in_txn(&other.store, &other_txn).unwrap() >= 500_000,
+        "another vault reads its own clock while this vault's reading is held"
+    );
+    drop(other_txn);
+    drop(held);
+    assert!(
+        authority_instant_secs_for_store_in_txn(store, &txn).unwrap() >= later,
+        "with the hold dropped the same snapshot reads the moved clock, the second reading a \
+         reply judged twice would take"
+    );
+}
+
 #[test]
 fn authority_genesis_golden_vector_is_canonical() {
     let genesis = genesis_entry(1, 123);
     let encoded = encode_authority_log_entry_body(&genesis).unwrap();
     let vault_id = genesis_vault_id(&genesis).unwrap();
 
-    let golden = "88ae736368656d615f76657273696f6e01a87661756c745f6964c0a373657100ad706172656e745f68617368657390a26f7086a46b696e64a767656e65736973a664657669636585a36b657982a57375697465a765643235353139aa7075626c69635f6b6579c4208a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5cb57472616e73706f72745f6b65795f62696e64696e67c4200707070707070707070707070707070707070707070707070707070707070707ab6174746573746174696f6e82a46b696e64b0536f6674776172654172676f6e326964a865766964656e6365c403010203a474696572a8736f667477617265a5726f6c657303ad67656e657369735f6e6f6e6365c4200b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0bb47265636f766572795f7365637265745f7374657082aa636f6d6d69746d656e74c4200101010101010101010101010101010101010101010101010101010101010101a76f7574636f6d65a57361766564aa746965725f666c6f6f72a8736f667477617265b870656e64696e675f776964656e5f64656c61795f73656373ce00015180a67369676e657283a57375697465a765643235353139aa7075626c69635f6b6579c4208a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5ca97369676e6174757265c4404396b664b5a1769c08a2bcf1ac2ad00c70445eede20f7a1fd80a5fb585f8ee1bbf7adbe1a937ba2e6f1d25945c8382b4c2116efcebee8bdbb52a92c309805101a7636f7369676e7390a274737b";
+    // Re-pinned after cb0899ccc91 (OF-275) deleted the genesis op's
+    // `tier_floor` and `pending_widen_delay_secs`: the op map is 4 entries,
+    // and the signature covers the shorter body.
+    let golden = "88ae736368656d615f76657273696f6e01a87661756c745f6964c0a373657100ad706172656e745f68617368657390a26f7084a46b696e64a767656e65736973a664657669636585a36b657982a57375697465a765643235353139aa7075626c69635f6b6579c4208a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5cb57472616e73706f72745f6b65795f62696e64696e67c4200707070707070707070707070707070707070707070707070707070707070707ab6174746573746174696f6e82a46b696e64b0536f6674776172654172676f6e326964a865766964656e6365c403010203a474696572a8736f667477617265a5726f6c657303ad67656e657369735f6e6f6e6365c4200b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0bb47265636f766572795f7365637265745f7374657082aa636f6d6d69746d656e74c4200101010101010101010101010101010101010101010101010101010101010101a76f7574636f6d65a57361766564a67369676e657283a57375697465a765643235353139aa7075626c69635f6b6579c4208a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5ca97369676e6174757265c440574f93083b830790ce559e50a1d97bac99db9adbcdc7e571aa0d328354d6e210fe745eae147c53260a79754ecb7bfa972190c6dd6c5173348ac2683fa5a26300a7636f7369676e7390a274737b";
     assert_eq!(hex(&encoded), golden);
     // The identity hashes the pinned full signed body, not just its operation.
     assert_eq!(vault_id, *blake3::hash(&hex_bytes(golden)).as_bytes());
@@ -121,7 +183,8 @@ fn authority_log_entity_id_is_first_sixteen_bytes_of_entry_hash() {
 #[test]
 fn sub_second_readonly_folds_still_advance_the_observed_clock() {
     let mut clock = AuthorityLocalClock::default();
-    let now = Instant::now();
+    // A monotonic reading: only the differences between readings count.
+    let now = Duration::from_secs(5);
     let first = clock.observation_secs_at(0, 1_000, now);
     assert_eq!(first, 1_000);
 
@@ -321,7 +384,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
     let state = FoldState {
         slips: SlipAuthorityState::default(),
         vault_id: [40; 32],
-        roster: BTreeMap::from([
+        roster: PersistentMap::from([
             (
                 owner_key.clone(),
                 FoldedDevice {
@@ -343,27 +406,28 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         ]),
         genesis_recovery_dismissed: false,
         recovery_redundancy_established: false,
-        federation_pacts: BTreeMap::new(),
-        federation_confirms: BTreeMap::new(),
-        critical_write_confirms: BTreeMap::new(),
-        consumed_critical_write_confirm_nonces: BTreeSet::new(),
-        critical_write_confirm_nonce_provenance: BTreeMap::new(),
-        conflicted_critical_write_confirms: BTreeSet::new(),
-        federation_grant_bindings: BTreeMap::new(),
-        actor_bindings: BTreeMap::new(),
-        actor_binding_revocations: BTreeMap::new(),
-        actor_revocation_hashes: BTreeMap::new(),
-        seqs: BTreeMap::from([(owner_key.clone(), 0)]),
-        machines: BTreeMap::new(),
-        machine_keys: BTreeMap::new(),
-        held_machine_answers: BTreeMap::new(),
-        root_anchors: BTreeMap::new(),
-        anchor_entries: BTreeSet::new(),
-        host_custody_keys: BTreeSet::new(),
-        worlds: BTreeMap::new(),
-        refused_world_edits: BTreeSet::new(),
-        grant_travel: BTreeMap::new(),
-        refused_grant_travel: BTreeSet::new(),
+        federation_pacts: Default::default(),
+        federation_confirms: Default::default(),
+        critical_write_confirms: Default::default(),
+        consumed_critical_write_confirm_nonces: Default::default(),
+        critical_write_confirm_nonce_provenance: Default::default(),
+        conflicted_critical_write_confirms: Default::default(),
+        federation_grant_bindings: Default::default(),
+        actor_bindings: Default::default(),
+        actor_binding_revocations: Default::default(),
+        actor_revocation_hashes: Default::default(),
+        seqs: PersistentMap::from([(owner_key.clone(), 0)]),
+        machines: Default::default(),
+        machine_keys: Default::default(),
+        held_machine_answers: Default::default(),
+        restored_enrolments: Default::default(),
+        root_anchors: Default::default(),
+        anchor_entries: Default::default(),
+        host_custody_keys: Default::default(),
+        worlds: Default::default(),
+        refused_world_edits: Default::default(),
+        grant_travel: Default::default(),
+        refused_grant_travel: Default::default(),
         checkpoint_policy: Default::default(),
         home_pick: Default::default(),
         origin_cut: Default::default(),
@@ -371,17 +435,20 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         conversation_training: Default::default(),
         conversation_training_vault: Default::default(),
         policy_settings: Default::default(),
-        refused_export_acts: BTreeSet::new(),
-        agent_carried_acts: BTreeMap::new(),
+        refused_export_acts: Default::default(),
+        agent_carried_acts: Default::default(),
         home_candidacy: Default::default(),
         full_copy_mark: Default::default(),
         owner_work: Default::default(),
-        world_keys: BTreeMap::new(),
-        refused_world_keys: BTreeSet::new(),
-        key_admitters: BTreeMap::new(),
+        world_keys: Default::default(),
+        refused_world_keys: Default::default(),
+        key_admitters: Default::default(),
         hosted: false,
-        actor_rows: BTreeSet::new(),
-        residence_directives: BTreeMap::new(),
+        actor_rows: Default::default(),
+        residence_directives: Default::default(),
+        passkey_contexts: BTreeMap::new(),
+        passkey_vouched_keys: BTreeSet::new(),
+        passkey_vouch_confirmations: BTreeSet::new(),
     };
     let entry = cosign_ed(
         unsigned_entry(

@@ -34,7 +34,7 @@ pub(crate) use codec::{
 };
 pub(crate) use decls::*;
 pub(crate) use erased::{Erased, ErasedForm};
-pub(crate) use key::{FixedSideKey, HexId, SideKey};
+pub(crate) use key::{FixedSideKey, HexId, NulFreeText, SideKey};
 pub(crate) use row_classes::{RestoreClass, StorageTier};
 
 /// Where a side table's rows live: the two side databases of a write target.
@@ -319,6 +319,38 @@ impl SideTableDecl {
             .map_or(self.tier, |(_, tier)| *tier)
     }
 
+    /// Every stored row of this declaration as raw bytes, in key order: the key suffix after the
+    /// declared prefix and the stored value, undecoded. A `SyncState` key's text becomes its
+    /// bytes. Storage errors fail the scan.
+    pub(crate) fn iter_raw<'txn>(
+        &'static self,
+        dbs: &impl SideTableDbs,
+        txn: &'txn RoTxn<'_>,
+    ) -> Result<RawRows<'txn>> {
+        let prefix_len = self.prefix.len();
+        Ok(match self.db {
+            SideDb::VaultMeta => Box::new(
+                dbs.side_vault_meta()
+                    .prefix_iter(txn, self.prefix)?
+                    .map(move |row| {
+                        row.map(|(key, value)| (key[prefix_len..].to_vec(), value.into_owned()))
+                    }),
+            ),
+            SideDb::SyncState => {
+                let prefix = self.prefix_str()?;
+                Box::new(
+                    dbs.side_sync_state()?
+                        .prefix_iter(txn, prefix)?
+                        .map(move |row| {
+                            row.map(|(key, value)| {
+                                (key.as_bytes()[prefix_len..].to_vec(), value.into_owned())
+                            })
+                        }),
+                )
+            }
+        })
+    }
+
     /// The declared prefix as the `sync_state` key spelling.
     fn prefix_str(&self) -> Result<&'static str> {
         std::str::from_utf8(self.prefix)
@@ -446,8 +478,9 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         })
     }
 
-    /// Writes bytes the codec would never produce, for fixtures that plant a damaged row.
-    #[cfg(any(test, feature = "test-support"))]
+    /// Writes bytes the codec would never produce, for fixtures that plant a damaged row. The
+    /// test cfg builds it too: the cfg-only door `test_doors::call_receipt_damage` calls it.
+    #[cfg(any(test, feature = "test-support", oneiron_test_support))]
     pub(crate) fn put_undecodable(
         &self,
         dbs: &impl SideTableDbs,
@@ -527,6 +560,25 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         self.put_raw(dbs, txn, &self.key_bytes(key), &bytes)
     }
 
+    /// Stores canonical archive bytes under the owner restore permit, without side-row admission.
+    pub(crate) fn put_archived_as_stored_in_txn(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &mut heed::RwTxn<'_>,
+        _permit: &crate::batch::export::OwnerArchiveRestorePermit,
+        key: &K,
+        source_value: &[u8],
+    ) -> Result<()> {
+        let value = C::decode(source_value)
+            .map_err(|_| self.decl.row_error(SideTableRowProblem::Undecodable))?;
+        let encoded =
+            C::encode(&value).map_err(|_| self.decl.row_error(SideTableRowProblem::Unencodable))?;
+        if encoded != source_value {
+            return Err(self.decl.row_error(SideTableRowProblem::Undecodable));
+        }
+        self.write_raw(dbs, txn, &self.key_bytes(key), source_value)
+    }
+
     /// [`Self::put`], returning the bytes the row holds now, as the side-row wall stored them,
     /// for a writer that keeps its own copy of what it wrote.
     pub(crate) fn put_as_stored(
@@ -565,6 +617,23 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
             *value = self.decode_value(&masked)?;
         }
         Ok(())
+    }
+
+    /// Reads `projection` as the side-row wall will store it, writing
+    /// nothing (FIX FENCE-ERASED-FORM-THROUGH-WALL): the bytes of a row of
+    /// this table with the parts the wall does not read taken out, and
+    /// `decodes` the table's reading of a masked copy with those parts put
+    /// back. `None` when the wall changes nothing.
+    pub(crate) fn admit_projection(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &mut RwTxn<'_>,
+        key: &K,
+        projection: &[u8],
+        decodes: impl Fn(&[u8]) -> bool,
+    ) -> Result<Option<Vec<u8>>> {
+        self.decl
+            .admit(dbs, txn, &self.key_bytes(key), projection, decodes)
     }
 
     /// Deletes one row; `true` when a row was present.

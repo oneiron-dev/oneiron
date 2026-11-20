@@ -47,6 +47,8 @@ use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 mod authority;
 mod publish;
 
+#[cfg(feature = "sync")]
+pub(in crate::workspace_roster) use authority::peer_admission_party_in_txn;
 pub(in crate::workspace_roster) use authority::{
     answering_party_in_txn, require_admission_party_in_txn,
 };
@@ -279,7 +281,8 @@ enum Consented {
 ///
 /// A caller that does not answer the room's admission; an agent's yes to a
 /// join sharing the whole past, or with no live owner Grant listing `verb`;
-/// a `check_in_ref` the add cannot spend; storage errors.
+/// a `check_in_ref` the add cannot spend, or one named for a settled join
+/// ([`crate::check_in::refuse_unspent_check_in_ref`]); storage errors.
 pub(in crate::workspace_roster) fn admission_check_in_in_txn(
     memory: &Memory<'_>,
     txn: &mut heed::RwTxn<'_>,
@@ -294,7 +297,10 @@ pub(in crate::workspace_roster) fn admission_check_in_in_txn(
         return Ok(None);
     };
     if receipt.is_settled() {
-        return Ok(None);
+        // A settled join's answer adds no one and spends no check-in, so one
+        // the call names is refused, never left unspent while an offer's
+        // answer lands its acceptance on the settled join (REVIEW-9839 P1).
+        return crate::check_in::refuse_unspent_check_in_ref(None, check_in_ref);
     }
     let request = &receipt.request;
     require_admission_party_in_txn(vault, txn, request.room, caller)?;

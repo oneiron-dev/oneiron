@@ -68,6 +68,12 @@ pub struct HeldOutProposal {
     pub candidate: ExperimentIdentity,
     /// The candidate's resolved parameter file (oneiron.retrieval_eval_params.v1), so a stamp can name what to pin.
     pub candidate_params: serde_json::Value,
+    /// The model_id both held_out scorecards carry: the embedding model, or the keyword retriever.
+    /// The sealed run and both sealed scorecards must carry the same one.
+    pub model_id: String,
+    /// The budget_rows both held_out scorecards carry.
+    /// The sealed run and both sealed scorecards must carry the same one.
+    pub budget_rows: u32,
     /// sha256 of each held_out scorecard FILE's bytes (the store keeps the files; a parsed float may be 1 ULP off).
     pub incumbent_scorecard_sha256: String,
     /// sha256 of the candidate held_out scorecard file's bytes.
@@ -313,6 +319,16 @@ impl ProposalStore {
                 side: "incumbent".to_owned(),
             });
         }
+        for (side, card) in [
+            ("candidate", &outcome.candidate_sealed),
+            ("incumbent", &outcome.incumbent_sealed),
+        ] {
+            if card.model_id != held.model_id || card.budget_rows != held.budget_rows {
+                return Err(ProposalError::IdentityMismatch {
+                    side: side.to_owned(),
+                });
+            }
+        }
         let withdrawn = outcome.verdict == SealedVerdict::Withdrawn;
         if withdrawn == outcome.losses.is_empty() || withdrawn != outcome.reason.is_some() {
             return Err(ProposalError::InconsistentOutcome);
@@ -475,7 +491,7 @@ pub enum ProposalError {
     /// A sealed scorecard names another slice.
     #[error("not the sealed slice")]
     NotSealedSlice,
-    /// A sealed scorecard names another experiment than the proposal.
+    /// A sealed scorecard names another experiment than the proposal, or another model_id or budget_rows.
     #[error("identity mismatch on the {side} side")]
     IdentityMismatch {
         /// Which side mismatches: "candidate" or "incumbent".

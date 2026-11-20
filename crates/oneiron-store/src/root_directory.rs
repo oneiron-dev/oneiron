@@ -268,24 +268,108 @@ pub fn shared_vault_root(root: &Path) -> Result<Option<SharedPath>> {
     )
 }
 
-/// Makes the directory `path` names, owner-only whatever the umask, through
-/// a descriptor of the directory holding it, and returns the one made,
-/// opened through that same descriptor.
+/// Makes the directory `path` names, owner-only (exactly 0700) whatever the
+/// umask, through a descriptor of the directory holding it, and returns the
+/// one made, opened for reading.
+///
+/// On Linux both descriptors are path-only (`O_PATH`): the parent needs only
+/// the write and search access `mkdir` needs, and the new directory is held
+/// and set to 0700 before it is opened for reading, so a umask that takes the
+/// owner's own bits leaves no directory its owner cannot open. Elsewhere both
+/// are opened for reading, as before.
+///
+/// `mkdirat` hands back no descriptor, so whoever may move entries in the
+/// parent can put another directory at the name before it is opened. The
+/// mode is set only on a directory of this user's that no group or other may
+/// enter, so setting it gives back only its owner's own bits. Another user's
+/// directory is refused; one a group or other may enter, which `mkdirat`
+/// never makes on a file system that keeps modes, is left as it is.
 pub fn make_directory(path: &Path) -> Result<File> {
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
         return Err(Error::InvalidConfig(
             "a directory to make needs a parent and a name".to_owned(),
         ));
     };
-    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    let flags = DIRECTORY_HANDLE | OFlags::DIRECTORY | OFlags::CLOEXEC;
     let parent = File::from(
         rustix::fs::open(parent_or_here(parent), flags, Mode::empty())
             .map_err(std::io::Error::from)?,
     );
     rustix::fs::mkdirat(&parent, name, Mode::from_raw_mode(0o700)).map_err(std::io::Error::from)?;
-    let made = openat(&parent, name, flags | OFlags::NOFOLLOW, Mode::empty())
-        .map_err(std::io::Error::from)?;
-    Ok(File::from(made))
+    #[cfg(any(test, feature = "test-support"))]
+    if let Some(mut callback) = AFTER_DIRECTORY_MADE.with(|slot| slot.borrow_mut().take()) {
+        callback(path);
+    }
+    let made = File::from(
+        openat(&parent, name, flags | OFlags::NOFOLLOW, Mode::empty())
+            .map_err(std::io::Error::from)?,
+    );
+    let metadata = made.metadata()?;
+    if metadata.uid() != rustix::process::geteuid().as_raw() {
+        return Err(Error::InvalidConfig(format!(
+            "another user's directory took the name {} before it was opened; it is left as it is",
+            path.display()
+        )));
+    }
+    if metadata.mode() & 0o077 == 0 && metadata.mode() & 0o700 != 0o700 {
+        set_owner_only(&made)?;
+    }
+    readable_directory(made)
+}
+
+/// How [`make_directory`] opens the parent and the directory it makes:
+/// path-only on Linux (`O_PATH`), which needs no read access to either; for
+/// reading elsewhere.
+#[cfg(target_os = "linux")]
+const DIRECTORY_HANDLE: OFlags = OFlags::PATH;
+#[cfg(not(target_os = "linux"))]
+const DIRECTORY_HANDLE: OFlags = OFlags::RDONLY;
+
+/// Sets the directory `made` holds to 0700. A path-only descriptor takes no
+/// `fchmod`, so on Linux the mode goes through the descriptor's own
+/// `/proc/self/fd` entry, which reaches that very directory, never a name in
+/// its parent.
+#[cfg(target_os = "linux")]
+fn set_owner_only(made: &File) -> Result<()> {
+    let held = format!("/proc/self/fd/{}", made.as_raw_fd());
+    rustix::fs::chmod(held.as_str(), Mode::from_raw_mode(0o700)).map_err(std::io::Error::from)?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn set_owner_only(made: &File) -> Result<()> {
+    rustix::fs::fchmod(made, Mode::from_raw_mode(0o700)).map_err(std::io::Error::from)?;
+    Ok(())
+}
+
+/// The directory `made` holds, opened for reading: on Linux through the
+/// path-only descriptor itself (`.`), never by its name again.
+#[cfg(target_os = "linux")]
+fn readable_directory(made: File) -> Result<File> {
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    let readable = openat(&made, ".", flags, Mode::empty()).map_err(std::io::Error::from)?;
+    Ok(File::from(readable))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn readable_directory(made: File) -> Result<File> {
+    Ok(made)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+type DirectoryMadeCallback = Box<dyn FnMut(&Path)>;
+
+#[cfg(any(test, feature = "test-support"))]
+thread_local! {
+    static AFTER_DIRECTORY_MADE: std::cell::RefCell<Option<DirectoryMadeCallback>> =
+        std::cell::RefCell::new(None);
+}
+
+/// Runs `callback` once, with the path, when this thread's next
+/// [`make_directory`] has made its directory and not yet opened it.
+#[cfg(any(test, feature = "test-support"))]
+pub fn arm_after_directory_made(callback: impl FnMut(&Path) + 'static) {
+    AFTER_DIRECTORY_MADE.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
 }
 
 /// `parent`, or the working directory when a relative path has none.

@@ -20,6 +20,7 @@ use super::model::{
 };
 
 use super::coreutils::{claim_matches_world_in, read_grant_matches_actor};
+use super::memory_fork::{claim_names_subject, row_of_file_path, served_claim};
 
 use super::paging::{
     DayPosition, EdgeCursor, PageBuilder, TemporalCursor, WorldPosition, format_day_shard,
@@ -113,7 +114,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 let id = parse_entity_id(entity)?;
                 let readable = self.scoped_read.is_entity_readable(&id)?;
                 let body = self.file_row(id)?;
-                let page = if readable {
+                // At a memory fork the row is a directory only where it
+                // reads as it stood there.
+                let page = if readable && (self.memory_fork().is_none() || body.value.is_some()) {
                     self.fixed_page(
                         &normalized,
                         vec![
@@ -161,8 +164,22 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     }
 
     /// A file and any scoped-read receipt behind it. Fixed files and paths
-    /// that name no file make no scoped read and carry no receipt.
+    /// that name no file make no scoped read and carry no receipt. At a
+    /// memory fork, a row path that finds no file because this machine no
+    /// longer holds the row's bytes at the frontier answers
+    /// [`Error::HistoryNotHeld`] to a reader whose live read admits the row.
     pub fn read_file(&self, path: &str) -> Result<GraphFsFileRead> {
+        let read = self.read_file_at_mount(path)?;
+        if read.value.is_none()
+            && self.memory_fork().is_some()
+            && let Some(id) = row_of_file_path(&path_components(&normalize_path(path)?)?)?
+        {
+            self.refuse_history_not_held(&id)?;
+        }
+        Ok(read)
+    }
+
+    fn read_file_at_mount(&self, path: &str) -> Result<GraphFsFileRead> {
         let normalized = normalize_path(path)?;
         let components = path_components(&normalized)?;
         if self.snapshot.is_some() {
@@ -184,8 +201,14 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 }
                 let claim = parse_entity_id(claim)?;
                 let store = &self.scoped_read.vault().store;
+                let at_fork = self.memory_fork().is_some();
                 Ok(self
-                    .read_listed_claim_file(&normalized, &claim, |_| {
+                    .read_listed_claim_file(&normalized, &claim, |row| {
+                        // At a memory fork, the subject the claim named there.
+                        if at_fork {
+                            return Ok(served_claim(row)
+                                .is_some_and(|body| claim_names_subject(&body, &subject)));
+                        }
                         let rtxn = store.env.read_txn()?;
                         Ok(crate::ports::EdgeStoreRead::port_edge_get(
                             store,
@@ -202,8 +225,13 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 let world = parse_world_scope(world)?;
                 let claim = parse_entity_id(claim)?;
                 let store = &self.scoped_read.vault().store;
+                let at_fork = self.memory_fork().is_some();
                 Ok(self
-                    .read_listed_claim_file(&normalized, &claim, |_| {
+                    .read_listed_claim_file(&normalized, &claim, |row| {
+                        // At a memory fork, the world the claim stood in there.
+                        if at_fork {
+                            return Ok(served_claim(row).is_some_and(|body| body.world == world));
+                        }
                         let rtxn = store.env.read_txn()?;
                         claim_matches_world_in(store, &rtxn, &claim, world)
                     })?
@@ -349,7 +377,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         })
     }
 
-    /// One live point read, folded into a listing's receipt.
+    /// One point read at this mount (live, or at a memory fork's frontier),
+    /// folded into a listing's receipt.
     pub(super) fn read_live_into(
         &self,
         id: EntityId,
@@ -425,7 +454,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut last_listed = after;
         for entry in rows {
             let id = entry?;
-            if !self.world_visible(&rtxn, &policy, Some(id))? {
+            if !self.world_visible(&rtxn, &policy, Some(id))?
+                || !self.listed_at_fork_in(&rtxn, &id, |_| Ok(true))?
+            {
                 continue;
             }
             let entry = GraphFsEntry::directory(id.to_hex());
@@ -489,7 +520,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             if !sealed_is_absent(
                 self.scoped_read
                     .is_entity_readable_with_policy_in(&rtxn, &policy, &cursor.id),
-            )? {
+            )? || !self.listed_at_fork_in(&rtxn, &cursor.id, |_| Ok(true))?
+            {
                 continue;
             }
             let entry = GraphFsEntry::directory(cursor.id.to_hex());
@@ -542,8 +574,15 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             ))? {
                 continue;
             }
-            if !claim_matches_world_in(&self.scoped_read.vault().store, &rtxn, &temporal.id, world)?
-            {
+            // At a memory fork, the world the claim stood in there.
+            let member = if self.memory_fork().is_some() {
+                self.listed_at_fork_in(&rtxn, &temporal.id, |row| {
+                    Ok(row.claim().is_some_and(|body| body.world == world))
+                })?
+            } else {
+                claim_matches_world_in(&self.scoped_read.vault().store, &rtxn, &temporal.id, world)?
+            };
+            if !member {
                 continue;
             }
             let entry = GraphFsEntry::file(temporal.id.to_hex(), None);
@@ -564,7 +603,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         target: &EntityId,
         cursor: Option<&str>,
     ) -> Result<GraphFsPage> {
-        if !self.scoped_read.is_entity_readable(target)? {
+        if !self.scoped_read.is_entity_readable(target)? || !self.target_at_fork(target)? {
             return Ok(empty_page(path, self.options.mount));
         }
         let scope = self.cursor_scope(path);
@@ -597,7 +636,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 &rtxn,
                 &policy,
                 &edge.target,
-            ))? {
+            ))? || !self.link_at_fork(edge.created_at)
+                || !self.listed_at_fork_in(&rtxn, &edge.target, |_| Ok(true))?
+            {
                 continue;
             }
             let name = format!("{}-{}", edge.kind as u8, edge.target.to_hex());
@@ -658,6 +699,10 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 &policy,
                 &temporal.id,
             ))? || self.entity_type_in(&rtxn, &temporal.id)? != Some(ENTITY_TYPE_CLAIM)
+                || !self.listed_at_fork_in(&rtxn, &temporal.id, |row| {
+                    Ok(row.entity_type == ENTITY_TYPE_CLAIM
+                        && row.learned_at / 86_400 == day_of(temporal))
+                })?
             {
                 continue;
             }
@@ -721,6 +766,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 &policy,
                 &temporal.id,
             ))? || self.entity_type_in(&rtxn, &temporal.id)? != Some(ENTITY_TYPE_CLAIM)
+                || !self.listed_at_fork_in(&rtxn, &temporal.id, |row| {
+                    Ok(row.entity_type == ENTITY_TYPE_CLAIM && row.learned_at / 86_400 == day)
+                })?
             {
                 continue;
             }

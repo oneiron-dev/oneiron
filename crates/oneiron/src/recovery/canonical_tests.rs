@@ -4,7 +4,7 @@ use super::*;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::ArtifactError;
 use crate::note::{
-    NoteProgramEdit as NoteEdit, NoteProgramEditOutcome as NoteEditOutcome, NoteVerdict,
+    NoteActor, NoteProgramEdit as NoteEdit, NoteProgramEditOutcome as NoteEditOutcome, NoteVerdict,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -364,6 +364,7 @@ fn world_month_canonical_snapshot_round_trips_and_rebuilds() -> Result<()> {
         crate::claim::ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     body.world = Some(world);
     vault.put_claim(&claim, &body, occurred, at)?;
     let window = format!("2026-02@{}", world.to_hex());
@@ -419,6 +420,7 @@ fn world_month_canonical_snapshot_round_trips_and_rebuilds() -> Result<()> {
 fn soft_deleted_world_claim_canonical_recovery_keeps_shell_edge_and_address() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let world = EntityId::now();
     let person = EntityId::now();
     let claim = EntityId::now();
@@ -484,6 +486,7 @@ fn soft_deleted_world_claim_canonical_recovery_keeps_shell_edge_and_address() ->
     {
         let peer_dir = tempfile::tempdir()?;
         let peer = Vault::open(peer_dir.path(), VaultConfig::device())?;
+        peer.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         peer.put_entity(
             &world,
             crate::registry::ENTITY_TYPE_WORLD,
@@ -658,7 +661,10 @@ fn redaction_refuses_title_copy_until_scrubbed_and_restores_safe_title() -> Resu
         .iter_mut()
         .find(|row| row.entity_id == *fixture.note.as_bytes() && row.head == *head.as_bytes())
         .unwrap();
-    live.title = Some("🦀 secret".into());
+    live.metadata.insert(
+        "title".to_owned(),
+        crate::entity_doc::encode_metadata_value(&rmpv::Value::from("🦀 secret"))?,
+    );
     assert!(copied.validate().is_ok());
     assert!(
         copied
@@ -670,7 +676,11 @@ fn redaction_refuses_title_copy_until_scrubbed_and_restores_safe_title() -> Resu
         .iter_mut()
         .find(|row| row.entity_id == *fixture.note.as_bytes() && row.head == *head.as_bytes())
         .unwrap()
-        .title = Some("Safe title".into());
+        .metadata
+        .insert(
+            "title".to_owned(),
+            crate::entity_doc::encode_metadata_value(&rmpv::Value::from("Safe title"))?,
+        );
     let redacted = copied.excluding_document_span(fixture.note, head, 7, 15, quote)?;
     let encoded = redacted.encode()?;
     assert!(
@@ -679,14 +689,16 @@ fn redaction_refuses_title_copy_until_scrubbed_and_restores_safe_title() -> Resu
             .any(|part| part == "🦀 secret".as_bytes())
     );
     let decoded = CanonicalSnapshot::decode(&encoded)?;
+    let title = decoded
+        .doc_snapshots
+        .iter()
+        .find(|row| row.head == *head.as_bytes())
+        .unwrap()
+        .metadata
+        .get("title")
+        .unwrap();
     assert_eq!(
-        decoded
-            .doc_snapshots
-            .iter()
-            .find(|row| row.head == *head.as_bytes())
-            .unwrap()
-            .title
-            .as_deref(),
+        crate::entity_doc::decode_metadata_value(title)?.as_str(),
         Some("Safe title")
     );
     let target_dir = tempfile::tempdir()?;
@@ -748,7 +760,13 @@ fn standard_forward_rebuild_restores_documents_shells_graph_and_indexes() -> Res
         Some("Recovered title")
     );
     // The recovered authority reserves the title in its own writer.
-    let owner = fixture.vault.read_note(&fixture.note)?.unwrap().author_ref;
+    let owner = fixture
+        .vault
+        .read_note(&fixture.note)?
+        .unwrap()
+        .author_ref
+        .id()
+        .unwrap();
     let second = target
         .create_note(
             "research",
@@ -1081,7 +1099,7 @@ fn canonical_workflows_bind_membership_and_refuse_partial_window_bundles() -> Re
         .find(|row| row.id == bundle.id)
         .unwrap()
         .waiting[0]
-        .actor = EntityId::now();
+        .actor = NoteActor::Actor(EntityId::now());
     assert!(bad.validate().is_err());
     Ok(())
 }
@@ -1362,7 +1380,7 @@ fn rejected_fork_without_document_recovers_and_divergent_workflow_fails_prefligh
         .find(|row| row.fork == fork)
         .unwrap()
         .clone();
-    divergent.actor = EntityId::now();
+    divergent.actor = NoteActor::Actor(EntityId::now());
     target.with_write_txn(|txn| {
         target
             .store
@@ -1391,7 +1409,7 @@ fn rejected_fork_without_document_recovers_and_divergent_workflow_fails_prefligh
 fn canonical_adapter_recovery_binds_merge_target_to_displayed_proposal() -> Result<()> {
     let fixture = fixture()?;
     let core = crate::note::decode_note_body(&fixture.vault.get(&fixture.note)?.unwrap())?;
-    let actor = WriteActor::new(core.author_ref, EdgeActorClass::Human);
+    let actor = WriteActor::new(core.author_ref.id().unwrap(), EdgeActorClass::Human);
     let doc = fixture.vault.note_program_document(fixture.note)?.unwrap();
     let fork = fixture
         .vault
@@ -1480,6 +1498,7 @@ fn canonical_roundtrip_keeps_suppression_record_over_quarantined_tombstone() -> 
                 ENTITY_TYPE_RECEIPT_RECORD,
                 TimeRange { start: at, end: at },
                 at,
+                None,
                 &body,
             )
             .apply(txn)
@@ -1680,6 +1699,7 @@ fn a_capture_without_sync_carries_the_refusal_of_a_deleted_fact_never_admitted()
         assigned_ref: None,
         actor_generation: None,
         assigned_generation: None,
+        answered_heads: None,
         occurred_at: LEARNED_AT,
     };
     let window = LoroDoc::new();
@@ -1718,6 +1738,7 @@ fn a_capture_without_sync_carries_the_refusal_of_a_deleted_fact_never_admitted()
     for stamp in [at.start, at.end, LEARNED_AT] {
         blob.extend_from_slice(&stamp.to_be_bytes());
     }
+    blob.extend_from_slice(&0u64.to_be_bytes());
     blob.extend_from_slice(&body);
     entities
         .insert(&fact.to_hex(), &blob[..])

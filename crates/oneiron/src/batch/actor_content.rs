@@ -323,6 +323,7 @@ pub(super) fn apply_actor_ops_admitted(
         ));
     }
     let effects = ContentWriteSet::before(vault, txn, actor, &ops)?;
+    let claims = crate::vault_cleanup::candidate_claim_subjects(&ops);
     apply_ops_with_origin(
         &vault.store,
         &vault.config,
@@ -336,5 +337,7 @@ pub(super) fn apply_actor_ops_admitted(
     if let Some(effects) = effects {
         effects.after(vault, txn, actor)?;
     }
-    Ok(())
+    // A claim about a PERSON the cleanup archived restores her in this write
+    // (FIX PUT-CLAIM-LANDS-ON-ARCHIVED-PERSON).
+    vault.restore_subjects_of_landed_claims_in_txn(txn, &claims)
 }

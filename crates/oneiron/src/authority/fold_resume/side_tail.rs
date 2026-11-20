@@ -31,7 +31,7 @@ pub(super) struct FrontierPoint {
 pub(super) fn frontier_of(
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
-    entry_ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    entry_ancestors: &AncestorIndex,
     uncounted: &BTreeSet<AuthorityEntryHash>,
     head: AuthorityEntryHash,
 ) -> Option<BTreeMap<AuthorityEntryHash, FrontierPoint>> {
@@ -50,8 +50,10 @@ pub(super) fn frontier_of(
             let point = FrontierPoint {
                 state: Arc::new(states.get(&hash)?.clone()),
                 ancestors: past.len() as u64,
-                counted_ancestors: past.iter().filter(|row| !uncounted.contains(*row)).count()
-                    as u64,
+                counted_ancestors: past
+                    .iter_unordered()
+                    .filter(|row| !uncounted.contains(*row))
+                    .count() as u64,
             };
             Some((hash, point))
         })
@@ -93,15 +95,11 @@ pub(super) fn fold_tail(
     let mut confirms = (once.confirm_ids.clone(), once.confirm_nonces.clone());
     for hash in &order {
         let entry = new_rows[hash];
-        let retired = std::iter::once(&entry.signer)
-            .chain(&entry.cosigns)
-            .any(|signature| settlement.retired_keys.contains(&signature.public_key));
-        let below_floor = context
-            .sequence_floors
-            .and_then(|floors| floors.get(hash))
-            .is_some_and(|floor| entry.seq < *floor);
+        // The fence's own signers, as the whole fold reads them
+        // (`retired_signers::entry_signer_keys`, REVIEW-9961 P1).
+        let retired = super::super::retired_signers::entry_signer_keys(entry)
+            .any(|key| settlement.retired_keys.contains(key));
         if settlement.missing_parents.contains(hash)
-            || below_floor
             || retired
             || !once.admits(entry, &mut confirms)
         {

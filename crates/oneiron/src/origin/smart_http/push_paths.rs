@@ -12,9 +12,9 @@ use crate::origin::git_ref_change::GitPushRefChange;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 
-/// The changes the push `stamp` admitted makes, when it was admitted on a
-/// checkout's run Grant; `None` for every other push, which the writer does
-/// not judge path by path.
+/// The changes the push `stamp` admitted makes, when the push named a
+/// checkout lease; `None` for every other push, which the writer does not
+/// judge path by path.
 ///
 /// # Errors
 /// The stream is missing or malformed, or names no record for a moving ref.

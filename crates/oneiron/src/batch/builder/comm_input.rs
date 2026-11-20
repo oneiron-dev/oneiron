@@ -51,6 +51,9 @@ pub(super) fn admit_routed_inputs(
                 include_source_in_gate_input: gate_mode.include_source_in_gate_input,
             },
             preflight,
+            // The admitted candidate is the body its preflight judged: no
+            // mask rewrote it.
+            None,
         );
         match verdict {
             Err(crate::error::Error::Gate(crate::error::GateError::GateWriteRejected {

@@ -158,10 +158,13 @@ pub const fn peer_ignores_frame(tag: u8) -> bool {
 /// this machine's authority fold is settled enough to serve a peer; it fails
 /// closed otherwise ("It fails closed while the authority fold is
 /// unsettled"). Settled is all of: the fold reads (no history it lacks
-/// refuses it), its vault root is not in conflict, every row its own rows
-/// and checkpoint name is held ([`Vault::authority_missing_history`]), and
+/// refuses it), its vault root is not in conflict, the history it believes it
+/// lacks is held ([`Vault::authority_missing_believed_history`]), and
 /// this machine's own chains do not rest on an unsettled roster root (no
-/// chain `admitter_unsettled`, the retired-signer conflict mark).
+/// head it stands under here, the roster's or the pinned anchor's,
+/// `admitter_unsettled`, the retired-signer conflict mark; another anchor's
+/// chain is no chain of it here: FIX
+/// FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES).
 ///
 /// # Errors
 ///
@@ -180,14 +183,17 @@ pub fn authority_fold_settled(vault: &Vault) -> Result<bool> {
         let Some(local) = crate::identity::read_machine_id_in_txn(vault, &txn)? else {
             return Ok(false);
         };
-        let settled = fold
-            .machine(local)
-            .is_some_and(|machine| !machine.chains().any(|(_, chain)| chain.admitter_unsettled));
+        // A machine no head of which stands here (a stranger's mark alone
+        // names it) is unsettled, as an absent one is.
+        let settled = fold.machine(local).is_some_and(|machine| {
+            let heads = machine.standing_heads(fold.pinned_root.as_ref());
+            !heads.is_empty() && !heads.iter().any(|chain| chain.admitter_unsettled)
+        });
         if !settled {
             return Ok(false);
         }
     }
-    Ok(vault.authority_missing_history()?.is_complete())
+    Ok(vault.authority_missing_believed_history()?.is_complete())
 }
 
 /// FIX 4748 engine call (CALLS "FIX 4748 peer state-only export"): whether a

@@ -18,6 +18,7 @@
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
+use oneiron_contracts::fingerprint::ContentHash;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -482,7 +483,7 @@ impl AssetForms {
                     handle: Some(format!(
                         "{}@{}",
                         self.asset.to_hex(),
-                        &blake3::hash(bytes).to_hex()[..HANDLE_HASH_HEX]
+                        &ContentHash::of(bytes).to_hex()[..HANDLE_HASH_HEX]
                     )),
                 },
                 ServedForm::audio(self.asset),
@@ -503,7 +504,7 @@ impl AssetForms {
                             format!(
                                 "{}@{}",
                                 self.asset.to_hex(),
-                                &blake3::hash(bytes).to_hex()[..HANDLE_HASH_HEX],
+                                &ContentHash::of(bytes).to_hex()[..HANDLE_HASH_HEX],
                             )
                         }),
                     },

@@ -73,6 +73,7 @@ fn edit_of(artifact: EntityId, ops: Vec<ImageOp>) -> ImageEdit {
         artifact,
         version: None,
         ops,
+        format: None,
         run_ref: "max-ops-probe".to_owned(),
         trigger: None,
         submitter: None,

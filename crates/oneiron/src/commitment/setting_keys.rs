@@ -10,7 +10,7 @@ use super::types::{CommitmentContent, MAX_COMMITMENT_TEXT_BYTES};
 use crate::Vault;
 use crate::commitment_wake::{COMMITMENT_REMINDER_WORDING_MAX_BYTES, MAX_QUOTED_PROMISE_CHARS};
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, SettingValue};
 
 /// The most bytes a new commitment's text may hold: 1 to 65,536.
 #[derive(
@@ -87,21 +87,21 @@ crate::setting::setting_keys! {
     pub(crate) COMMITMENT_MAX_TEXT_BYTES: CommitmentTextCap = "commitment.content.max_text_bytes" {
         kind: Kind::new(commitment_text_default)
             .strictest(commitment_text_default)
-            .tighter(lower_is_tighter::<CommitmentTextCap>),
+            .lower(),
     };
     /// How many chars of the promise a commitment reminder quotes; 400 by default. A raise
     /// quotes more of the promise, and is the looser value. Only the owner sets it.
     pub(crate) REMINDER_MAX_QUOTED_CHARS: ReminderQuoteCap = "commitment.reminder.max_quoted_chars" {
         kind: Kind::new(reminder_quote_default)
             .strictest(reminder_quote_default)
-            .tighter(lower_is_tighter::<ReminderQuoteCap>),
+            .lower(),
     };
     /// The most bytes a filed commitment reminder wording may hold; 4,096 by default. A raise
     /// lets longer wordings be filed, and is the looser value. Only the owner sets it.
     pub(crate) REMINDER_WORDING_MAX_BYTES: ReminderWordingCap = "commitment.reminder.max_wording_bytes" {
         kind: Kind::new(reminder_wording_default)
             .strictest(reminder_wording_default)
-            .tighter(lower_is_tighter::<ReminderWordingCap>),
+            .lower(),
     };
 }
 

@@ -1,6 +1,8 @@
 //! `[models.training]`: the trainer connectors this host dispatches an
 //! owner-authorized training run through (FIX 7263). There is none by
 //! default, and then every authorized run holds as having no trainer.
+//! Role runs have their own table, `[models.training.role_trainers]`
+//! (`role_trainers`), and vault drafters theirs (`drafter_trainers`).
 //!
 //! The one transport is a local process on this server's own host: the
 //! pinned interpreter runs `scripts/training_pack/worker.py`, which trains a
@@ -43,6 +45,10 @@ pub(crate) struct TrainingFile {
     /// `[models.training.drafters]` (FIX 14974): the vault drafter trainers.
     #[serde(default)]
     drafters: BTreeMap<String, super::drafter_trainers::DrafterTrainerFile>,
+    /// `[models.training.role_trainers]` (ROLE-TRAINING-RUN): the role
+    /// trainers.
+    #[serde(default)]
+    role_trainers: BTreeMap<String, super::role_trainers::RoleTrainerFile>,
 }
 
 /// `[models.training.connectors.<name>]` as written.
@@ -64,6 +70,8 @@ pub struct TrainingSettings {
     pub connectors: BTreeMap<String, TrainingConnectorSettings>,
     /// The vault drafter trainers, by connector name (FIX 14974).
     pub drafters: BTreeMap<String, super::drafter_trainers::DrafterTrainerSettings>,
+    /// The role trainers, by connector name (ROLE-TRAINING-RUN).
+    pub role_trainers: BTreeMap<String, super::role_trainers::RoleTrainerSettings>,
 }
 
 /// One trainer connector: the process it runs and the paid connector its
@@ -109,6 +117,12 @@ impl TrainingSettings {
     ) -> Option<&super::drafter_trainers::DrafterTrainerSettings> {
         self.drafters.get(name)
     }
+
+    /// The role trainer connector named `name` (ROLE-TRAINING-RUN).
+    #[must_use]
+    pub fn role_trainer(&self, name: &str) -> Option<&super::role_trainers::RoleTrainerSettings> {
+        self.role_trainers.get(name)
+    }
 }
 
 impl TrainingFile {
@@ -124,9 +138,21 @@ impl TrainingFile {
                 "models.training.drafters.{name}: a drafter trainer and a training connector share one name"
             );
         }
+        let role_trainers = super::role_trainers::resolve(self.role_trainers)?;
+        // A run pins its connector by name alone, so one name names one
+        // trainer across the three tables.
+        if let Some(name) = role_trainers
+            .keys()
+            .find(|name| connectors.contains_key(*name) || drafters.contains_key(*name))
+        {
+            anyhow::bail!(
+                "models.training.role_trainers.{name}: a role trainer shares its name with another trainer connector"
+            );
+        }
         Ok(TrainingSettings {
             connectors,
             drafters,
+            role_trainers,
         })
     }
 }

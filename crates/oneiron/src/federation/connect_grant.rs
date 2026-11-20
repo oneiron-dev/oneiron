@@ -53,6 +53,11 @@ const CONNECT_SCOPE_KEYS: [&str; 2] = ["kind", "peer_vault_id"];
 /// opened scope.
 pub const INQUIRE_VERB_CLASS: &str = "inquire";
 
+/// The one verb class a member seat's approval mints: the company's
+/// reciprocal half of the seat's inquiry edge (Engine ruling INQUIRE-SHAPE
+/// Q1 = A).
+const SEAT_EDGE_VERB_CLASS: &str = "propose";
+
 /// The verb classes a Connect guest grant may carry: a guest reads,
 /// proposes or inquires, and never writes or administers (ARCH-0043
 /// #guest-grants). `inquire` rides only an inquiry edge, alone.
@@ -81,6 +86,24 @@ pub struct ConnectMemberLeaveConsent<'proof> {
 pub(crate) struct ConnectGrantRequest {
     pub(crate) scope: Scope,
     pub(crate) inquiry_terms: Option<crate::inquiry::InquiryTerms>,
+}
+
+/// Who approves a Connect guest grant's mint.
+pub(crate) enum ConnectGrantApproval<'proof> {
+    /// This vault's live Owner, on their own proof.
+    Owner(&'proof AuthenticatedOwner),
+    /// A member's seat in this vault's shared vault, for that seat's own
+    /// inquiry edge alone (Engine ruling L7-04-COMPANY-HALF = A): the seat's
+    /// giver approved the edge with the seat, since canon makes the edge part
+    /// of the seat ("created at joining", federation.md #inquiry-first-build).
+    /// It approves only the company's reciprocal half: verbs `propose` alone,
+    /// no inquiry terms, no expiry, and released when that member leaves.
+    InquirySeat {
+        /// The shared vault the seat is in.
+        shared_vault_id: u64,
+        /// The seated person.
+        member: EntityId,
+    },
 }
 
 /// What [`Vault::mint_connect_grant`] wrote.
@@ -423,7 +446,7 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             self.mint_connect_grant_in_txn(
                 txn,
-                owner,
+                ConnectGrantApproval::Owner(owner),
                 peer_vault_id,
                 ConnectGrantRequest {
                     scope: authority_scope,
@@ -436,22 +459,47 @@ impl Vault {
     }
 
     /// The writer of [`Self::mint_connect_grant`], in the caller's
-    /// transaction. An inquiry edge's mint passes its terms; any other mint
-    /// that asks for the class `inquire` refuses.
+    /// transaction, approved by `approval`. An inquiry edge's mint passes its
+    /// terms; any other mint that asks for the class `inquire` refuses. A
+    /// member seat's approval mints only that seat's reciprocal inquiry
+    /// grant, and binds it to end with the seat; every other Connect mint
+    /// check holds as for an Owner.
     pub(crate) fn mint_connect_grant_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        owner: &AuthenticatedOwner,
+        approval: ConnectGrantApproval<'_>,
         peer_vault_id: AuthorityVaultId,
         request: ConnectGrantRequest,
         expires_at: Option<u64>,
         detach: Option<ConnectMemberLeaveConsent<'_>>,
     ) -> Result<ConnectGrantMinted> {
+        let (actor, seat_binding) = match approval {
+            ConnectGrantApproval::Owner(owner) => (Some(owner.revalidate_in_txn(self, txn)?), None),
+            ConnectGrantApproval::InquirySeat {
+                shared_vault_id,
+                member,
+            } => {
+                self.require_inquiry_seat_approval_in_txn(
+                    txn,
+                    shared_vault_id,
+                    member,
+                    &request,
+                    expires_at,
+                    detach.is_some(),
+                )?;
+                (
+                    None,
+                    Some(ConnectMemberLeaveBinding {
+                        shared_vault_id,
+                        person_ref: member,
+                    }),
+                )
+            }
+        };
         let ConnectGrantRequest {
             scope: requested,
             inquiry_terms,
         } = request;
-        let actor = owner.revalidate_in_txn(self, txn)?;
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         if fold.vault_root_is_conflicted() {
             return Err(refused("this vault's authority root is in conflict"));
@@ -485,9 +533,12 @@ impl Vault {
         if expires_at.is_some_and(|expires| expires <= now) {
             return Err(refused("a Connect grant's expiry must be in the future"));
         }
-        let detach_on_member_leave = match detach {
-            None => None,
-            Some(consent) => Some(self.require_detach_binding_in_txn(txn, consent, actor)?),
+        let detach_on_member_leave = match (detach, actor) {
+            (None, _) => seat_binding,
+            (Some(consent), Some(actor)) => {
+                Some(self.require_detach_binding_in_txn(txn, consent, actor)?)
+            }
+            (Some(_), None) => return Err(refused("a member seat's grant is bound by its seat")),
         };
         let resolved = requested.meet(&ceiling);
         let guest_actor = self.connect_guest_actor_in_txn(txn, &local, &peer_vault_id, now)?;
@@ -520,6 +571,41 @@ impl Vault {
             expires_at,
             detach_on_member_leave,
         })
+    }
+
+    /// The bounds of a member seat's approval (Engine ruling
+    /// L7-04-COMPANY-HALF = A): the seat is a live member seat of this
+    /// vault's own shared vault, delegates and guests aside, and the grant is
+    /// that seat's reciprocal inquiry half: verbs `propose` alone, no inquiry
+    /// terms, no expiry, and no separate release choice, since the seat binds
+    /// it.
+    fn require_inquiry_seat_approval_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        shared_vault_id: u64,
+        member: EntityId,
+        request: &ConnectGrantRequest,
+        expires_at: Option<u64>,
+        consent: bool,
+    ) -> Result<()> {
+        let ours = shared_vault_id != 0
+            && self
+                .shared_vault_creation_in_txn(txn)?
+                .is_some_and(|row| row.vault_id == shared_vault_id);
+        let propose_alone = matches!(&request.scope.verbs, ScopeAxis::Some(verbs)
+            if verbs.len() == 1 && verbs.contains(SEAT_EDGE_VERB_CLASS));
+        if !ours
+            || !propose_alone
+            || request.inquiry_terms.is_some()
+            || expires_at.is_some()
+            || consent
+            || !self.holds_inquiry_seat_in_txn(txn, shared_vault_id, member)?
+        {
+            return Err(refused(
+                "a member seat approves only its own inquiry edge's propose grant",
+            ));
+        }
+        Ok(())
     }
 
     /// Stores the person's own release setting in the Owner-authorized mint

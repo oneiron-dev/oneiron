@@ -117,7 +117,6 @@ pub(super) fn scale_log(shape: &str, rows: usize) -> Vec<AuthorityLogEntry> {
 
 fn unfloored() -> AuthorityLocalObservations {
     AuthorityLocalObservations {
-        sequence_floors: BTreeMap::new(),
         vouched: BTreeSet::new(),
         unvouched: false,
         policy: AuthorityObservationPolicy {

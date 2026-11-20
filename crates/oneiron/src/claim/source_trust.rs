@@ -74,6 +74,17 @@ pub(crate) fn claim_surfaceable(body: &ClaimBody) -> bool {
         && !body.stale
 }
 
+/// The text a claim is indexed and embedded by, on every path that stages it:
+/// a claim write, an approval, the idle publication pass, a room restage, a
+/// value redaction and the embedder (`embed::payload_text`). A reaction-family
+/// claim has its own ([`super::reaction_record::reaction_index_text`]); any
+/// other is its value's index text: a string as it is, any other value
+/// rendered whole.
+pub(crate) fn claim_index_text(predicate: &str, value: &rmpv::Value) -> String {
+    super::reaction_record::reaction_index_text(predicate, value)
+        .unwrap_or_else(|| claim_value_index_text(value))
+}
+
 /// Read-admission predicate for authority-consuming consolidation paths.
 ///
 /// This is intentionally stricter than [`claim_surfaceable`]: first-party or

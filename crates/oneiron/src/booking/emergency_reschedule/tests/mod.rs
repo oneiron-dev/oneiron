@@ -10,12 +10,20 @@ use crate::booking::{
 use crate::calendar::outcome::{EventOutcome, read_event_outcome};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
-use crate::test_util::{entity as id, open_test_vault_with};
+use crate::test_util::open_test_vault_with;
 use crate::{DreamerRunnerStore, VaultConfig};
 
 const NOW: u64 = 1_772_409_600;
 const OWNER: u8 = 0x51;
 const PAGE: u8 = 0x52;
+
+fn id(byte: u8) -> crate::EntityId {
+    if byte == OWNER {
+        // The fixture owner is the embedded owner, so the bound owner passes the live owner census.
+        return crate::vault::embedded_owner_actor_id().expect("owner");
+    }
+    crate::test_util::entity(byte)
+}
 
 fn request() -> EmergencyRescheduleRequest {
     let window = TimeRange {
@@ -144,6 +152,7 @@ fn page(vault: &Vault, page_seed: u8, host_seed: u8) {
         booking_window_secs: 86_400,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: id(host_seed),
@@ -158,8 +167,9 @@ fn page(vault: &Vault, page_seed: u8, host_seed: u8) {
         }],
         flex_with_ordinary: false,
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     };
-    let body = ClaimBody::new(
+    let mut body = ClaimBody::new(
         BOOKING_EVENT_TYPE_PREDICATE,
         ClaimSubject::Entity(id(page_seed)),
         encode_event_type_claim_value(&BookingEventTypeClaimValue {
@@ -173,6 +183,7 @@ fn page(vault: &Vault, page_seed: u8, host_seed: u8) {
         ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(vault, &mut body);
     vault
         .put_claim(&EntityId::now(), &body, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();
@@ -469,8 +480,6 @@ fn emergency_records(vault: &Vault) -> Vec<crate::outbound_intent_ledger::Intent
     }).collect()
 }
 
-// FIX [LIBTEST-QUARANTINE-BOOKING-EMERGENCY-RESCHEDULE-TESTS-CALENDAR-SYNC]: the lib test target's type check fails here (2 errors: E0639 x1, E0308 x1); port it, then drop this gate
-#[cfg(any())]
 mod calendar_sync;
 mod corrections;
 mod effects;
