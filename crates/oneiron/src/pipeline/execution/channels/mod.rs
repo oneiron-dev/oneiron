@@ -334,6 +334,9 @@ impl PipelineBuilder<'_> {
                     authority_filter,
                     text_scope_widening_active,
                     private_note_ids: private_note_ids.as_deref(),
+                    world_allowed_set: world_authority
+                        .as_ref()
+                        .map(|resolved| &resolved.allowed_set),
                     claim_gate_widening_probe,
                 },
                 &mut acc,

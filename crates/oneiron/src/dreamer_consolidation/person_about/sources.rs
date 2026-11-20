@@ -75,6 +75,36 @@ impl Vault {
             }),
         )
     }
+
+    /// Every `about` line stored for `person`, read in `txn`
+    /// ([`Vault::person_about_snapshot`]): each band's current line and each
+    /// line the Dreamer's newest landing replaced, whatever their freshness.
+    /// These are the lines a brief staged before now may show, which a
+    /// recheck of the held brief judges again
+    /// ([`crate::claim::ScopedRead::fallen_own_floor_about_facts`]).
+    ///
+    /// # Errors
+    /// A store or decode failure reading the stored row.
+    pub(crate) fn person_about_stored_lines_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+    ) -> Result<Vec<ShownAboutLine>> {
+        let Some(row) = PERSON_ABOUT.get(&self.store, txn, &person)? else {
+            return Ok(Vec::new());
+        };
+        let previous = row.previous.iter().flat_map(|prior| &prior.lines);
+        Ok(row
+            .lines
+            .iter()
+            .chain(previous)
+            .map(|line| ShownAboutLine {
+                band: line.band,
+                text: line.text.chars().take(ABOUT_MAX_CHARS).collect(),
+                fact_claim_ids: line.fact_claim_ids.clone(),
+            })
+            .collect())
+    }
 }
 
 /// The line of `row` a reader at `ceiling` sees, read in `txn`, a grant-clock

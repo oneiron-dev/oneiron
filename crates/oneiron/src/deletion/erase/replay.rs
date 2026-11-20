@@ -385,8 +385,9 @@ impl Vault {
         }
         // A peer's release of a blob version (L9-44, Engine ruling 13 Nov
         // 17:56) may arrive as its claim's tombstone alone: the version this
-        // vault's chain keeps under the claim is read before the purge takes
-        // the claim's body, and released after it.
+        // vault's chain keeps under the claim, or on a replica that keeps no
+        // chain the claim's pair and bytes (REVIEW-7640-NO-CHAIN-REPLICA-REPLAY),
+        // is read before the purge takes the claim's body, and released after it.
         let released_version =
             crate::blob_artifact::replayed_claim_version_in_txn(&self.store, &*wtxn, id)?;
         // A legal hold on the version's artifact or ASSET keeps the version, so it keeps the

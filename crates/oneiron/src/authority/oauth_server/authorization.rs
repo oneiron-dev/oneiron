@@ -60,10 +60,14 @@ pub struct OAuthAuthorizationStart<'a> {
     pub state: Option<&'a str>,
     /// The first RFC 8707 resource it named: this vault's `/mcp`, or its `/git`.
     pub resource: &'a str,
-    /// Every further resource it named, each another of this vault's, none twice: `oneiron
-    /// hosted login` names `/mcp` and then `/git` (CONTINUE-PUSH-NON-SLIP-SELECTION). Its
-    /// tokens reach each, and no other.
+    /// Every further resource it named, each another of this vault's, none twice (RFC 8707
+    /// §2). Its tokens reach each, and no other.
     pub further_resources: &'a [String],
+    /// What the sign-in asks to do, when a resource it names says: `oneiron continue --cloud`'s
+    /// step-up, which names `/git`, shows "continue this session in your hosted vault: land its
+    /// log, push its code and start it there" (CONTINUE-STEP-UP-MCP-WRITE = A). The owner's ask
+    /// shows it beside the tier.
+    pub purpose: Option<&'a str>,
     pub tier: AgentTier,
 }
 
@@ -155,12 +159,12 @@ impl Vault {
             expires_at,
             decision: AuthorizationDecision::Pending,
         };
-        // The owner's inbox shows the client, the tier and the match code from this object, and
-        // the resources the sign-in names; it holds no secret.
+        // The owner's inbox shows the client, the tier and the match code from this object, the
+        // resources the sign-in names and what it asks to do; it holds no secret.
         let resources: Vec<&str> = std::iter::once(start.resource)
             .chain(start.further_resources.iter().map(String::as_str))
             .collect();
-        let detail = serde_json::json!({
+        let mut detail = serde_json::json!({
             "client_id": start.client.client_id,
             "client_name": start.client.display_name(),
             "client_host": start.client.display_host(start.redirect_uri),
@@ -168,8 +172,11 @@ impl Vault {
             "resources": resources,
             "match_code": match_code,
             "expires_at": expires_at,
-        })
-        .to_string();
+        });
+        if let (Some(purpose), Some(fields)) = (start.purpose, detail.as_object_mut()) {
+            fields.insert("purpose".to_owned(), purpose.into());
+        }
+        let detail = detail.to_string();
         // One Ask per live owner, each its own notification (its event names the owner): a
         // shared vault's owners each see it, and whichever answers first settles the request;
         // the others' taps then find it settled (review #6478).

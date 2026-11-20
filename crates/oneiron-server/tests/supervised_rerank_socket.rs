@@ -61,7 +61,7 @@ fn socket_config(dir: &Path) -> String {
         r#"
 [providers.house-rerank]
 kind = "local-openai-compat"
-base_url = "http://127.0.0.1:18431"
+base_url = "http://127.0.0.1:18431" # testkit-lint: allow(fixed-port) config text: nothing binds or calls a provider its socket rows serve
 revision = "v1"
 timeout_secs = 20
 
@@ -79,7 +79,7 @@ server_sha256 = "{sha}"
 runtime_root = "{runtime}"
 "#,
         weights = dir.join("absent-weights.json").display(),
-        server = dir.join("absent-llama-server").display(),
+        server = dir.join("absent-server-binary").display(),
         sha = "0".repeat(64),
         runtime = dir.join("rt").display(),
     )
@@ -105,6 +105,7 @@ async fn start_stub(socket: &Path, log: &Path) -> SocketStub {
         ],
     )
     .expect("FIXTURE: the stub starts");
+    // testkit-lint: allow(wall-clock) hang guard while the stub process binds its socket
     let started = Instant::now();
     while !socket.exists() {
         assert!(
@@ -112,6 +113,7 @@ async fn start_stub(socket: &Path, log: &Path) -> SocketStub {
             "FIXTURE: the stub bound {} within 20 s",
             socket.display()
         );
+        // testkit-lint: allow(sleep) poll interval: the stub binds its socket in its own process
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     stub
@@ -338,7 +340,7 @@ async fn a_loopback_http_reranker_has_no_on_device_view() {
         r#"
 [providers.loopback]
 kind = "local-openai-compat"
-base_url = "http://127.0.0.1:18432"
+base_url = "http://127.0.0.1:18432" # testkit-lint: allow(fixed-port) config text: the test reads the built view and calls nothing
 revision = "v1"
 
 [roles.reranker]
@@ -398,7 +400,7 @@ fn listen_unix_is_refused_off_a_reranker_only_llama_row() {
             r#"
 [providers.house-rerank]
 kind = "local-openai-compat"
-base_url = "http://127.0.0.1:18431"
+base_url = "http://127.0.0.1:18431" # testkit-lint: allow(fixed-port) config text: the config is refused, so nothing binds or calls it
 revision = "v1"
 
 [roles.reranker]

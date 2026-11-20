@@ -607,6 +607,7 @@ pub(crate) fn scoped_session_text(
         admit(&txn)?;
         let admit = lane.recall_candidates_in(&txn, &policy, &filter, None);
         let mut admits = |id: &EntityId| admit(id);
+        let mut withheld = lane.world_withheld_row_test_in(&txn)?;
         vault.text_scoped_in_txn(
             view,
             &txn,
@@ -618,7 +619,9 @@ pub(crate) fn scoped_session_text(
                 matches_scope: &mut admits,
                 private_note_ids: None,
                 recency: None,
-                hidden_row: None,
+                hidden_row: withheld
+                    .as_deref_mut()
+                    .map(|withheld| withheld as &mut dyn FnMut(&EntityId) -> crate::Result<bool>),
             },
         )
     };

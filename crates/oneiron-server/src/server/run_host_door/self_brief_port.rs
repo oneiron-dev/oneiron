@@ -183,8 +183,8 @@ impl ResidentSelfBrief {
     }
 
     /// The rows of a prefix, `sources` and the persons its roster holds,
-    /// `resident`, that no longer stand for the agent's own lane on this
-    /// device, past the settled ones.
+    /// `resident`, that no longer stand for the agent's own lane read for a
+    /// caller off this device, past the settled ones.
     fn fallen_rows(
         &self,
         sources: &[EntityId],
@@ -313,10 +313,10 @@ impl SelfBriefPort for ResidentSelfBrief {
     }
 
     /// The held prefix goes again while every row it shows stands for the
-    /// agent's own lane on this device. Else the installation's prefix is
-    /// withdrawn and its boundary staged afresh from what the door holds
-    /// now, and the request carries that, or none when it does not prepare
-    /// or the rows could not be judged.
+    /// agent's own lane read for a caller off this device. Else the
+    /// installation's prefix is withdrawn and its boundary staged afresh
+    /// from what the door holds now, and the request carries that, or none
+    /// when it does not prepare or the rows could not be judged.
     fn recheck(&self, held: &BriefPrefix) -> oneiron::Result<BriefRecheck> {
         let handed = self
             .last

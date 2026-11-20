@@ -35,17 +35,23 @@ where
     pub(crate) exact_posting_matches_scope: &'a mut F,
     /// The scoped query's transaction-local, authenticated diary NOTE ids.
     pub(crate) private_note_ids: Option<&'a crate::claim::ScopedDiaryCandidates>,
-    /// A clamped read's own-row test: whether its audience could not read a
-    /// row whatever its status. A posting that scores for such a row counts
-    /// in no query term's document frequency, so no word of a row the
-    /// audience may not read moves the score of a row it may (REVIEW-9980
-    /// round 2). The document count and the fields' average lengths stay the
-    /// vault's, hidden rows included: they carry no word of any row (FIX
+    /// A read's own-row test: whether its reader may not read a row whatever
+    /// its status, as a clamped pack's audience may not, or as a world keeps
+    /// it from the reader. A posting that scores for such a row counts in no
+    /// query term's document frequency, so no word of a row the reader may
+    /// not read moves the score of a row it may (REVIEW-9980 round 2; FIX
+    /// WORLD-SCOPE-BM25-DF-COUNTS-HIDDEN-POSTINGS). The document count and
+    /// the fields' average lengths stay the vault's, hidden rows included:
+    /// they carry no word of any row (FIX
     /// [CLAMPED-BM25-IDF-COUNTS-HIDDEN-POSTINGS]). The posting still scores:
     /// the read's admission keeps it out, and a clamped pack counts it among
     /// the rows its clamp withheld. `None` counts every posting.
     pub(crate) hidden_row: Option<&'a mut dyn FnMut(&EntityId) -> Result<bool>>,
 }
+
+/// An owned own-row test ([`Bm25SearchOptions::hidden_row`]): whether the
+/// reader may not read a row, so its postings count in no statistic.
+pub(crate) type HiddenRowTest<'t> = Box<dyn FnMut(&EntityId) -> Result<bool> + 't>;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct PrefixExpansionPostingDecision {

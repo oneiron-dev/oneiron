@@ -250,16 +250,40 @@ fn apply_remote_change(
                 return Ok(());
             }
             // A cancelled version of a member a write of this UID still in
-            // flight writes cancelled may be that write coming back before
-            // its settlement marks the member's passport, and would read as a
+            // flight (or refused with its stored copy's proof owed) writes
+            // cancelled may be that write coming back before its settlement
+            // or proof marks the member's passport, and would read as a
             // host cancel that refunds the deposit. The resource stays owed
             // and unread, as an omission a write in flight holds back does,
             // and each cancelled member's passport keeps this first sighting,
             // which dates the cancellation if the write proves not to be the
             // stored copy (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
             // A VEVENT is the staged member its UID and staged RECURRENCE-ID
-            // name, whatever exception claims the member holds now.
-            let in_flight = cancelled_members_in_flight(vault, operation, &primary.uid)?;
+            // name, whatever exception claims the member holds now. The write
+            // may be in flight on another seat of the calendar, which shares
+            // its passports
+            // (CAL-SECOND-SEAT-CANCELLED-VERSION-MISSES-OTHER-SEAT-WRITE);
+            // such a row, which this seat never settles, holds only a copy
+            // that may be its write's own (its SEQUENCE and write marker).
+            // Only a copy that carries a cancelled VEVENT asks: no other copy
+            // is held back here.
+            let in_flight = if feed.events.iter().any(|parsed| parsed.cancelled) {
+                let lowest_sequence = feed
+                    .events
+                    .iter()
+                    .map(|parsed| parsed.sequence)
+                    .min()
+                    .unwrap_or(primary.sequence);
+                cancelled_members_in_flight(
+                    vault,
+                    operation,
+                    &primary.uid,
+                    &object.ics,
+                    lowest_sequence,
+                )?
+            } else {
+                Vec::new()
+            };
             if !in_flight.is_empty() {
                 let mut cancelled = Vec::new();
                 for parsed in feed.events.iter().filter(|parsed| parsed.cancelled) {
