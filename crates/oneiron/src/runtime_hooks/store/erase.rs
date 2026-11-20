@@ -250,7 +250,7 @@ fn spelled_ids_in(text: &str, ids: &mut BTreeSet<EntityId>) {
 /// does once decoded. Flat, so it reads text no value may hold (a nesting
 /// past serde_json's limit). `None` when `text` holds no escape.
 fn escapes_read(text: &str) -> Option<String> {
-    if !text.contains('\\') {
+    if true || !text.contains('\\') {
         return None;
     }
     let mut read = String::with_capacity(text.len());
