@@ -136,6 +136,17 @@ fn preset(fixture: &Fixture) -> WorkspaceRosterPreset {
 
 /// Keeps encoding failures separate from the Owner door's refusal.
 fn install_one_vault(fixture: &Fixture, row: Value) -> TestResult<oneiron::Result<()>> {
+    install_one_vault_with_id(fixture, fresh_id(), row)
+}
+
+/// [`install_one_vault`] under a caller-chosen manifest id, so a later install
+/// replaces the earlier one: a second install under a fresh id would conflict
+/// with the first and leave the setting unreadable.
+fn install_one_vault_with_id(
+    fixture: &Fixture,
+    id: EntityId,
+    row: Value,
+) -> TestResult<oneiron::Result<()>> {
     let policy = json!({
         "schema_version": "1.2",
         "pack_id": "one-vault-work-talk-test",
@@ -149,7 +160,7 @@ fn install_one_vault(fixture: &Fixture, row: Value) -> TestResult<oneiron::Resul
     let bytes = rmp_serde::to_vec_named(&policy)?;
     Ok(fixture.vault.install_owner_policy_manifest(
         &fixture.owner_proof,
-        fresh_id(),
+        id,
         bytes,
         fixture.vault.now_recorded_at(),
     ))
@@ -814,7 +825,8 @@ fn the_brought_companion_writes_nowhere_else_in_the_company_vault() -> TestResul
 #[test]
 fn work_talk_stays_company_record_after_the_mode_turns_off() -> TestResult {
     let fixture = setup()?;
-    install_one_vault(&fixture, json!({ "version": 1, "mode": "on" }))??;
+    let manifest = fresh_id();
+    install_one_vault_with_id(&fixture, manifest, json!({ "version": 1, "mode": "on" }))??;
     let (yuki, _, companion_actor, yuki_outcome) =
         onboard_yuki_bring(&fixture, "work-talk-record-yuki")?;
     let talk = conversation_of(&open_via_verb(&member_memory(&fixture, yuki)?)?)?;
@@ -836,7 +848,7 @@ fn work_talk_stays_company_record_after_the_mode_turns_off() -> TestResult {
         at,
     )?;
 
-    install_one_vault(&fixture, json!({ "version": 1, "mode": "off" }))??;
+    install_one_vault_with_id(&fixture, manifest, json!({ "version": 1, "mode": "off" }))??;
 
     assert!(
         company_recall_finds(&fixture, "March invoice", "March invoice")?,
