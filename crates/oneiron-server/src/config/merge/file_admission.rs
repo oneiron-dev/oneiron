@@ -13,7 +13,21 @@
 //! first rule: one any user can write is refused (FIX
 //! CONFIG-SIDE-FILES-MODE-UNCHECKED). None holds the issuer key.
 //!
-//! Both are read from the open handle the text is then read from, so the
+//! A config file a host places for the process it starts is held to the
+//! first rule alone (FIX MANAGED-SETTINGS-FILE-MODE-UNCHECKED): a managed
+//! vault's settings file, which Hypnos writes root's at mode 0640 for the
+//! vault's group, and a relay room's file, which the room's installer writes
+//! root's at 0440 for the room's group. Neither holds the issuer key: the
+//! managed reader refuses `auth_secret` as the supervisor's leaf, and a
+//! room's schema has no such field.
+//!
+//! A credential its host shares with one group cannot be its owner's alone:
+//! a relay room's locker token is root's, at 0440, and the room reads it
+//! through its own private group. So it is refused when any user outside its
+//! owner and its group can read or write it (FIX
+//! RELAY-ACCESS-TOKEN-FILE-NOT-ADMITTED).
+//!
+//! Each is read from the open handle the text is then read from, so the
 //! file checked is the file read. A link is followed: its target is that
 //! file. Only a regular file is checked, because a pipe or a device keeps no
 //! mode an operator could change. The mode bits are Unix's; elsewhere
@@ -32,9 +46,34 @@ use crate::commands::credential_file;
 /// a config names is a vault secret's name or an environment variable's.
 const ISSUER_KEY_SETTING: &str = "auth_secret";
 
+/// What a refused mode lets users outside a file's owner and group do, and
+/// the command that shuts them out.
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+struct Reach {
+    /// The mode bits that refuse the file.
+    bits: u32,
+    /// What those bits let any user do, as a refusal says it.
+    acts: &'static str,
+    /// The command that clears those bits.
+    mend: &'static str,
+}
+
 /// The mode bit that lets any user write a file.
 #[cfg(unix)]
-const WRITE_BY_ANY_USER: u32 = 0o002;
+const WRITE_BY_ANY_USER: Reach = Reach {
+    bits: 0o002,
+    acts: "written",
+    mend: "chmod o-w",
+};
+
+/// The mode bits that let any user read or write a file.
+#[cfg(unix)]
+const READ_OR_WRITE_BY_ANY_USER: Reach = Reach {
+    bits: 0o006,
+    acts: "read or written",
+    mend: "chmod o-rw",
+};
 
 /// A file this server will not read because of who else can reach it. Its
 /// text names the file, its mode and the command that mends it, and never
@@ -88,14 +127,38 @@ pub(crate) fn read_referenced_file(path: &Path) -> anyhow::Result<String> {
     read_admitted(path, Role::Referenced).map(|admitted| admitted.text)
 }
 
+/// The text of the config file at `path` that a host places for the process
+/// it starts (a managed vault's settings file, a relay room's file), from one
+/// open handle, once that handle's file is not writable by any user. Such a
+/// file never holds the issuer key, so the owner-alone rule of
+/// [`read_config_file`] is not asked of it: its host shares it with the
+/// process's group. A refusal names the file, its mode and the command that
+/// mends it; it never repeats a line of the file.
+pub(crate) fn read_host_placed_config_file(path: &Path) -> anyhow::Result<String> {
+    read_admitted(path, Role::Config).map(|admitted| admitted.text)
+}
+
+/// The text of the credential file at `path` that its host shares with one
+/// group (a relay room's locker token), from one open handle, once no user
+/// outside that handle's file's owner and group can read or write it. A
+/// refusal names the file, its mode and the command that mends it; it never
+/// repeats the file's text.
+pub(crate) fn read_group_shared_credential_file(path: &Path) -> anyhow::Result<String> {
+    read_admitted(path, Role::GroupSharedCredential).map(|admitted| admitted.text)
+}
+
 /// What a file is to this server, as a refusal names it.
 #[derive(Clone, Copy)]
 enum Role {
     /// The config file itself: `--config`, `ONEIRON_CONFIG`, the default
-    /// path, `--settings-file`, the config `model-workers` reads.
+    /// path, `--settings-file`, the config `model-workers` reads, a relay
+    /// room's file.
     Config,
     /// A file a config refers to.
     Referenced,
+    /// A credential its host shares with one group: a relay room's locker
+    /// token.
+    GroupSharedCredential,
 }
 
 impl Role {
@@ -104,10 +167,11 @@ impl Role {
         match self {
             Self::Config => "config file",
             Self::Referenced => "file",
+            Self::GroupSharedCredential => "credential file",
         }
     }
 
-    /// Why a file any user can write is refused.
+    /// Why a file outside users can reach is refused.
     #[cfg_attr(not(unix), allow(dead_code))]
     fn stake(self) -> &'static str {
         match self {
@@ -116,6 +180,18 @@ impl Role {
                 "the config refers to it for what a model is told, what runs or whom this \
                  server trusts"
             }
+            Self::GroupSharedCredential => {
+                "it holds a credential its host shares with one group alone"
+            }
+        }
+    }
+
+    /// What users outside the file's owner and group may not do to it.
+    #[cfg(unix)]
+    fn refused_reach(self) -> Reach {
+        match self {
+            Self::Config | Self::Referenced => WRITE_BY_ANY_USER,
+            Self::GroupSharedCredential => READ_OR_WRITE_BY_ANY_USER,
         }
     }
 }
@@ -129,7 +205,8 @@ struct Admitted {
 }
 
 /// The file at `path`, opened once and read from that handle when the
-/// handle's file is not writable by any user.
+/// handle's file keeps out what `role` refuses: any user's write, and for a
+/// group-shared credential any user's read too.
 fn read_admitted(path: &Path, role: Role) -> anyhow::Result<Admitted> {
     let mut file = File::open(path).with_context(|| unread(path, role))?;
     let metadata = file.metadata().with_context(|| unread(path, role))?;
@@ -138,13 +215,16 @@ fn read_admitted(path: &Path, role: Role) -> anyhow::Result<Admitted> {
     if stored {
         use std::os::unix::fs::PermissionsExt;
         let mode = metadata.permissions().mode();
-        if mode & WRITE_BY_ANY_USER != 0 {
+        let reach = role.refused_reach();
+        if mode & reach.bits != 0 {
             return Err(FileRefused(format!(
-                "{} {} can be written by any user (mode {:o}), and {}; run `chmod o-w` on it",
+                "{} {} can be {} by any user (mode {:o}), and {}; run `{}` on it",
                 role.noun(),
                 path.display(),
+                reach.acts,
                 mode & 0o777,
-                role.stake()
+                role.stake(),
+                reach.mend
             ))
             .into());
         }
