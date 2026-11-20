@@ -393,7 +393,9 @@ fn lane_tags(
 /// `vault.tagging.tags` serves it (FIX
 /// TAG-LINK-DECIDED-OVER-UNREADABLE-PERSONS). `None` when that decision no
 /// longer names `entity`: the hit is then no mention of it to this lane.
-/// `views` keeps each TURN's lane view, read once.
+/// `views` keeps each TURN's lane view, read once. The view is read after
+/// the hit, so a re-tag between the two reads can move the set's indices: a
+/// hit whose index names another span in the view is left out too.
 fn lane_hit_link(
     vault: &Vault,
     lane: &ScopedRead<'_>,
@@ -421,10 +423,20 @@ fn lane_hit_link(
         })?;
         slot.insert(view);
     }
-    Ok(views
-        .get(&hit.turn)
-        .and_then(Option::as_ref)
-        .and_then(|view| view.link(hit.index))
+    let Some(view) = views.get(&hit.turn).and_then(Option::as_ref) else {
+        return Ok(None);
+    };
+    let span = |mention: &TaggedMention| (mention.message, mention.start, mention.end);
+    let same_span = view
+        .tags
+        .mentions
+        .get(hit.index)
+        .is_some_and(|shown| span(shown) == span(&hit.mention));
+    if !same_span {
+        return Ok(None);
+    }
+    Ok(view
+        .link(hit.index)
         .filter(|link| link.entities().contains(entity))
         .cloned())
 }
