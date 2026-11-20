@@ -36,6 +36,10 @@
 //! while a pass of a window read from the kept row alone reaches the provider
 //! (guard). Every call of a pass, its retries and waits too, asks the same
 //! (REVIEW-9900 P1 1). On the round-1 head the stale window is sent (RED).
+//! So is a window whose ids the caller only asserted, as an executor's are
+//! (`window_read_from_sources` false): the receipt names none of them, but
+//! the freshness asks still read each (REVIEW-9900 round 2); on the round-2
+//! head it is sent (RED).
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test
 //! --locked -p oneiron-server --all-features --features oneiron/test-support
@@ -323,9 +327,10 @@ fn a_pass_sends_no_window_read_from_a_row_erased_since() {
         let person = stored_person(vault);
         let erased = stored_claim(vault, person, ERASED_WORDS);
         let kept = stored_claim(vault, person, KEPT_WORDS);
-        // A window the host read from the rows it names, as a conversation's
-        // is.
-        let window_read_from = |words: &str, rows: Vec<EntityId>| {
+        // A window that names the rows it was read from: read by the host
+        // itself, as a conversation's is (`whole`), or asserted by its
+        // caller, as an executor's is.
+        let window_read_from = |words: &str, rows: Vec<EntityId>, whole: bool| {
             let mut request = oneiron::test_doors::compaction_request::sealed_window(
                 vault,
                 &[words, WINDOW[1]],
@@ -333,11 +338,12 @@ fn a_pass_sends_no_window_read_from_a_row_erased_since() {
             )
             .unwrap();
             request.sources = rows;
-            request.window_read_from_sources = true;
+            request.window_read_from_sources = whole;
             request
         };
-        let stale = window_read_from(ERASED_WORDS, vec![erased, kept]);
-        let clean = window_read_from(KEPT_WORDS, vec![kept]);
+        let stale = window_read_from(ERASED_WORDS, vec![erased, kept], true);
+        let asserted = window_read_from(ERASED_WORDS, vec![erased, kept], false);
+        let clean = window_read_from(KEPT_WORDS, vec![kept], true);
 
         privacy_erase(vault, erased);
 
@@ -360,6 +366,19 @@ fn a_pass_sends_no_window_read_from_a_row_erased_since() {
         assert!(
             fake.seen().is_empty(),
             "a window read from a row erased since reached the provider: {} requests",
+            fake.seen().len()
+        );
+
+        let asserted_pass = {
+            let server = Arc::clone(&server);
+            tokio::task::spawn_blocking(move || house_pass(&server, &asserted))
+                .await
+                .unwrap()
+        };
+        assert!(
+            asserted_pass.is_err() && fake.seen().is_empty(),
+            "a window whose asserted ids name a row erased since reached the provider: {} \
+             requests",
             fake.seen().len()
         );
 
