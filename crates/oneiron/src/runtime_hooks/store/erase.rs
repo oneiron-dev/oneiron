@@ -13,9 +13,10 @@
 
 mod kept;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
+use serde_json::value::RawValue;
 
 use super::*;
 use crate::receipt::ERASED_CALL_IDENTITY;
@@ -189,8 +190,10 @@ fn hex_ids_in(text: &str, ids: &mut BTreeSet<EntityId>) {
 /// The rows a verb run's caller named in its own args and result, and in
 /// the args its landing was judged on ([`named_ids`]), read from the whole
 /// input before the pin bound drops any of it (review #6817): a row named
-/// there can carry its bytes into the run's outcome. Text that does not
-/// decode names every id it spells.
+/// there can carry its bytes into the run's outcome. An input that does
+/// not decode names them by its members ([`DeepInput::named_rows`]), so its
+/// caller, tail and hook ids name no row there either (REVIEW-9897 round
+/// 2); text that does not read so names every id it spells.
 pub(in crate::runtime_hooks) fn rows_named_by_call(
     input: &str,
     landing_original: Option<&str>,
@@ -204,7 +207,10 @@ pub(in crate::runtime_hooks) fn rows_named_by_call(
                 }
             }
         }
-        Err(_) => spelled_ids_in(input, &mut rows),
+        Err(_) => match DeepInput::read(input) {
+            Some(deep) => deep.named_rows(&mut rows),
+            None => spelled_ids_in(input, &mut rows),
+        },
     }
     if let Some(args) = landing_original {
         match serde_json::from_str::<Value>(args) {
@@ -213,6 +219,115 @@ pub(in crate::runtime_hooks) fn rows_named_by_call(
         }
     }
     rows.into_iter().collect()
+}
+
+/// A verb run's saved input that does not decode, read by its top-level
+/// members: only its result, a skill answer, can nest past what a value
+/// holds (SKILL-ANSWER-DEEP-JSON-STACK-SAFE), so it stays text, read with
+/// no recursion, and every other member, the args among them, came from a
+/// value and reads as one.
+struct DeepInput<'t> {
+    /// Every member but `result`, as an object value.
+    fields: Value,
+    result: Option<&'t RawValue>,
+}
+
+impl<'t> DeepInput<'t> {
+    /// `input` by its members; `None` when it is no object or a member
+    /// other than `result` does not read as a value.
+    fn read(input: &'t str) -> Option<Self> {
+        let members: BTreeMap<String, &'t RawValue> = serde_json::from_str(input).ok()?;
+        let mut fields = serde_json::Map::new();
+        let mut result = None;
+        for (key, member) in members {
+            if key == "result" {
+                result = Some(member);
+            } else {
+                fields.insert(key, serde_json::from_str(member.get()).ok()?);
+            }
+        }
+        Some(Self {
+            fields: Value::Object(fields),
+            result,
+        })
+    }
+
+    /// Adds to `rows` each id its args and result name, as a decoded
+    /// input's do ([`rows_named_by_call`]): the result's as its text spells
+    /// them ([`spelled_ids_in`]).
+    fn named_rows(&self, rows: &mut BTreeSet<EntityId>) {
+        if let Some(args) = self.fields.get("args") {
+            named_ids(args, rows);
+        }
+        if let Some(result) = self.result {
+            spelled_ids_in(result.get(), rows);
+        }
+    }
+
+    /// The input as JSON text again, its result verbatim.
+    fn to_text(&self) -> Option<String> {
+        let mut members = BTreeMap::new();
+        for (key, field) in self.fields.as_object()? {
+            members.insert(key.as_str(), serde_json::value::to_raw_value(field).ok()?);
+        }
+        if let Some(result) = self.result {
+            members.insert("result", result.to_owned());
+        }
+        serde_json::to_string(&members).ok()
+    }
+}
+
+/// What an erase does to a verb run's saved input that does not decode
+/// ([`erase_deep_verb_input`]).
+enum DeepInputErase {
+    Unchanged,
+    /// Its args or result name an erased row.
+    Depends,
+    /// The input with each erased actor in it named as the marker.
+    Renamed(String),
+    /// It spells an erased id and does not read by its members, or does
+    /// not encode again: it loses its payload.
+    Scrubbed,
+}
+
+/// [`erase_verb_run`] over a saved `input` that does not decode, as over a
+/// decoded one (REVIEW-9897 round 2): an erased row its args or result name
+/// retires the run; otherwise each erased actor in it (its caller, its
+/// tail's actors) names the marker and the rest stays, the result
+/// verbatim.
+fn erase_deep_verb_input(input: &str, erased: &ErasedIds) -> DeepInputErase {
+    let Some(mut deep) = DeepInput::read(input) else {
+        return if erased.spelled_in(input) {
+            DeepInputErase::Scrubbed
+        } else {
+            DeepInputErase::Unchanged
+        };
+    };
+    let mut named = BTreeSet::new();
+    deep.named_rows(&mut named);
+    if !named.is_disjoint(&erased.ids) {
+        return DeepInputErase::Depends;
+    }
+    if !name_erased_verb_actors(&mut deep.fields, erased) {
+        return DeepInputErase::Unchanged;
+    }
+    deep.to_text()
+        .map_or(DeepInputErase::Scrubbed, DeepInputErase::Renamed)
+}
+
+/// Door seam for `test_doors::typed_reply_handle`: what an erase of `ids`
+/// does to a verb run whose saved input `input` does not decode.
+#[cfg(oneiron_test_support)]
+pub(in crate::runtime_hooks) fn erase_deep_input_for_test(
+    input: &str,
+    ids: &[EntityId],
+) -> (&'static str, Option<String>) {
+    match erase_deep_verb_input(input, &ErasedIds::new(ids.iter().copied().collect())) {
+        DeepInputErase::Unchanged => ("unchanged", None),
+        DeepInputErase::Depends => ("depends", None),
+        DeepInputErase::Renamed(input) => ("renamed", Some(input)),
+        DeepInputErase::Scrubbed => ("scrubbed", None),
+    }
 }
 
 /// The rows a fact run's whole `input` names anywhere but as the fact's
@@ -401,12 +516,18 @@ fn erase_verb_run(record: &mut HookVerbRunRecord, erased: &ErasedIds) -> RunEras
         return RunErase::Unchanged;
     };
     let Ok(mut value) = serde_json::from_str::<Value>(input) else {
-        // Text that does not decode loses its payload when it spells one.
-        if !erased.spelled_in(input) {
-            return RunErase::Unchanged;
-        }
-        scrub_verb_payload(record);
-        return RunErase::Rewritten;
+        return match erase_deep_verb_input(input, erased) {
+            DeepInputErase::Unchanged => RunErase::Unchanged,
+            DeepInputErase::Depends => RunErase::Depends,
+            DeepInputErase::Renamed(input) => {
+                record.input_json = Some(input);
+                RunErase::Rewritten
+            }
+            DeepInputErase::Scrubbed => {
+                scrub_verb_payload(record);
+                RunErase::Rewritten
+            }
+        };
     };
     if ["args", "result"]
         .into_iter()

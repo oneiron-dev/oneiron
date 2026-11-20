@@ -545,3 +545,13 @@ pub(crate) fn redact_text_for_test(text: &str, paths: &[String]) -> Result<Optio
 pub(crate) fn rows_named_by_input_for_test(input: &str) -> Vec<EntityId> {
     super::store::rows_named_by_call(input, None)
 }
+
+// Door seam for `test_doors::typed_reply_handle`: what an erase does to a
+// verb run's saved input that does not decode (REVIEW-9897 round 2).
+#[cfg(oneiron_test_support)]
+pub(crate) fn erase_deep_input_for_test(
+    input: &str,
+    ids: &[EntityId],
+) -> (&'static str, Option<String>) {
+    super::store::erase_deep_input_for_test(input, ids)
+}

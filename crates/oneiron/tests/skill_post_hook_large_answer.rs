@@ -2118,3 +2118,94 @@ fn a_deep_hook_input_names_no_row_inside_a_longer_hex_run() {
         "a longer hex run names no row",
     );
 }
+
+/// A verb run's saved hook input whose `result` nests past what a value
+/// reads: its caller `actor`, one receipt in its tail by `actor`, its args
+/// naming `arg_row`, and its result spelling `result_row` beside the deep
+/// part.
+fn deep_hook_input(actor: EntityId, arg_row: EntityId, result_row: EntityId) -> String {
+    let input = format!(
+        "{{\"actor\":\"{actor}\",\"receipt_tail\":[{{\"actor_ref\":\"{actor}\",\"fields\":{{\"on_behalf_of\":\"{actor}\"}}}}],\"args\":{{\"row\":\"{arg_row}\"}},\"result\":{{\"output\":{{\"row\":\"{result_row}\",\"deep\":{}0{}}}}}}}",
+        "[".repeat(DEEP_LEVELS),
+        "]".repeat(DEEP_LEVELS),
+        actor = actor.to_hex(),
+        arg_row = arg_row.to_hex(),
+        result_row = result_row.to_hex(),
+    );
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&input).is_err(),
+        "the input nests past what a value reads",
+    );
+    input
+}
+
+/// REVIEW-9897 round 2: a deep hook input names rows only through its args
+/// and result, as a decoded input does: its caller and its tail's actors
+/// name none. Red at e167b6da268: the flat scan of the whole input named
+/// the caller too.
+#[test]
+fn a_deep_hook_input_names_no_row_through_its_caller() {
+    let (actor, arg_row, result_row) = (fresh_id(), fresh_id(), fresh_id());
+    let input = deep_hook_input(actor, arg_row, result_row);
+    let mut rows = vec![arg_row, result_row];
+    rows.sort();
+    assert_eq!(
+        handle_doors::rows_named_by_hook_input(&input),
+        rows,
+        "only the args and the result name rows",
+    );
+}
+
+/// REVIEW-9897 round 2: erasing the caller of a run whose saved input is
+/// too deep for a value renames the caller and its tail's actors as the
+/// erased marker and keeps the rest, the deep result verbatim, as a decoded
+/// input keeps it. Red at e167b6da268: the input lost its whole payload.
+#[test]
+fn an_erase_of_a_deep_hook_inputs_caller_renames_it_and_keeps_the_run() {
+    let (actor, arg_row, result_row) = (fresh_id(), fresh_id(), fresh_id());
+    let input = deep_hook_input(actor, arg_row, result_row);
+    let (erase, kept) = handle_doors::erase_of_deep_hook_input(&input, &[actor]);
+    assert_eq!(erase, "renamed", "only the caller's id leaves");
+    let kept = kept.expect("the renamed input stays");
+    assert!(
+        !kept.contains(&actor.to_hex()),
+        "no field keeps the caller's id"
+    );
+    assert_eq!(
+        kept.matches(oneiron::receipt::ERASED_CALL_IDENTITY).count(),
+        3,
+        "the caller, the tail receipt's actor and whom it was made for name the marker",
+    );
+    assert!(
+        kept.contains(&format!(
+            "{{\"output\":{{\"row\":\"{}\",\"deep\":{}0{}}}}}",
+            result_row.to_hex(),
+            "[".repeat(DEEP_LEVELS),
+            "]".repeat(DEEP_LEVELS)
+        )),
+        "the result stays verbatim",
+    );
+    assert!(kept.contains(&arg_row.to_hex()), "the args stay",);
+}
+
+/// REVIEW-9897 round 2: erasing a row a deep hook input's args or result
+/// names retires the run, as a decoded input's does; a row named nowhere
+/// leaves it unchanged. Red at e167b6da268: the input lost its payload and
+/// the run stood.
+#[test]
+fn an_erase_of_a_row_a_deep_hook_input_names_retires_the_run() {
+    let (actor, arg_row, result_row) = (fresh_id(), fresh_id(), fresh_id());
+    let input = deep_hook_input(actor, arg_row, result_row);
+    assert_eq!(
+        handle_doors::erase_of_deep_hook_input(&input, &[arg_row]).0,
+        "depends",
+    );
+    assert_eq!(
+        handle_doors::erase_of_deep_hook_input(&input, &[result_row]).0,
+        "depends",
+    );
+    assert_eq!(
+        handle_doors::erase_of_deep_hook_input(&input, &[fresh_id()]).0,
+        "unchanged",
+    );
+}

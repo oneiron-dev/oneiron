@@ -290,6 +290,15 @@ pub fn rows_named_by_hook_input(input: &str) -> Vec<EntityId> {
     crate::runtime_hooks::verb::rows_named_by_input_for_test(input)
 }
 
+/// What a permanent erase of `ids` does to a verb run whose saved hook
+/// `input` does not decode (it nests past a value's limit): `"depends"` when
+/// its args or result name one (the run retires), `"renamed"` with the input
+/// it keeps when only an actor in it is one (that actor names the erased
+/// marker), `"unchanged"`, or `"scrubbed"` when it loses its payload.
+pub fn erase_of_deep_hook_input(input: &str, ids: &[EntityId]) -> (&'static str, Option<String>) {
+    crate::runtime_hooks::verb::erase_deep_input_for_test(input, ids)
+}
+
 /// Hands `vault`'s verb hooks the [`CappedRedactRuntime`] redacting `paths`
 /// over inputs up to `message_bytes`. The runtime is per vault: each test
 /// vault installs its own.
