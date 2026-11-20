@@ -438,17 +438,32 @@ pub(crate) fn merge_replicated_responses_in_txn(
         ));
     }
     // REVIEW-9956 round 2: the answered claim stands. A speaker this vault
-    // erased answers as no one, so its claim seals nothing.
+    // erased answers as no one, so its claim seals nothing. Own review: nor
+    // does a receipt whose copy here names no one (FIX 4870: the erased form
+    // wins where copies meet), so the seal never writes a live copy back
+    // over the erased form.
     let held_claim = CLAIMS.get_lenient(store, txn, &parent)?;
-    let sealed = claims
-        .into_iter()
-        .chain(held_claim.as_ref())
+    let copies: Vec<_> = claims.into_iter().chain(held_claim.as_ref()).collect();
+    let mut erased = Vec::new();
+    for copy in &copies {
+        let names_no_one = match named(&copy.actor) {
+            Some(actor) => vault.carrier_actor_erased_in_txn(txn, &actor)?,
+            None => true,
+        };
+        if names_no_one {
+            erased.push((copy.at, copy.receipt_ref.as_str()));
+        }
+    }
+    let sealed = copies
+        .iter()
+        .copied()
         .filter(|claim| {
-            named(&claim.actor).is_some_and(|holder| {
-                candidates
-                    .iter()
-                    .any(|(_, speaker, _)| *speaker == Some(holder))
-            })
+            !erased.contains(&(claim.at, claim.receipt_ref.as_str()))
+                && named(&claim.actor).is_some_and(|holder| {
+                    candidates
+                        .iter()
+                        .any(|(_, speaker, _)| *speaker == Some(holder))
+                })
         })
         .min_by(|a, b| {
             (a.generation, a.at, &a.receipt_ref).cmp(&(b.generation, b.at, &b.receipt_ref))
