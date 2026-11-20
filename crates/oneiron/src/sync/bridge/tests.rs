@@ -2807,10 +2807,11 @@ fn forged_update_against(local: &LoroDoc, craft: impl FnOnce(&LoroDoc)) -> Vec<u
 /// F24 round 4 (H219): a task authority fact's link is permanent, so a
 /// replicated removal of it is quarantined and the cancellation still reads,
 /// while a replicated removal of an ordinary link of the same kind applies.
+/// The receiving install writes the facts itself, so they count without a carrier signature.
 #[test]
 fn observer_b_quarantines_a_replicated_fact_link_removal() {
     use crate::task_authority::{
-        TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
+        TaskAuthorityFact, TaskAuthorityFactKind, TaskMaker, put_task_authority_fact_in_txn,
     };
     let (_dir_vault, vault) = test_vault();
     let learned_at = 1_772_400_000u64; // 2026-03 window
@@ -2818,7 +2819,18 @@ fn observer_b_quarantines_a_replicated_fact_link_removal() {
         start: learned_at,
         end: learned_at,
     };
-    let (owner, task, other) = (EntityId::now(), EntityId::now(), EntityId::now());
+    let owner = EntityId::now();
+    let maker = TaskMaker {
+        maker_ref: owner,
+        nonce: EntityId::now(),
+    };
+    let task = maker.task_ref(owner).unwrap();
+    let other = TaskMaker {
+        maker_ref: owner,
+        nonce: EntityId::now(),
+    }
+    .task_ref(owner)
+    .unwrap();
     vault
         .put_entity(
             &owner,
@@ -2848,7 +2860,7 @@ fn observer_b_quarantines_a_replicated_fact_link_removal() {
         assigned_generation: None,
         answered_heads: None,
         occurred_at: learned_at,
-        maker: None,
+        maker: (kind == TaskAuthorityFactKind::Owner).then_some(maker),
     };
     let cancelled = vault
         .with_write_txn(|wtxn| {
@@ -2911,15 +2923,17 @@ fn observer_b_quarantines_a_replicated_fact_link_removal() {
 }
 
 /// The owner, tasks and Owner facts the replayed-fact checks below share,
-/// written in the 2026-03 window: `(owner, [(task, owner_fact)])`.
+/// written in the 2026-03 window: `(owner, [(task, owner_fact)])`. The vault's
+/// enrolled install signs the Owner facts so a recovered window can count them.
 fn owned_tasks_for_fact_replay(
     vault: &Vault,
     learned_at: u64,
     n: usize,
 ) -> (EntityId, Vec<(EntityId, EntityId)>) {
     use crate::task_authority::{
-        TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
+        TaskAuthorityFact, TaskAuthorityFactKind, TaskMaker, put_task_authority_fact_in_txn,
     };
+    root_task_fact_receiver(vault);
     let at = TimeRange {
         start: learned_at,
         end: learned_at,
@@ -2936,7 +2950,11 @@ fn owned_tasks_for_fact_replay(
         .unwrap();
     let mut tasks = Vec::with_capacity(n);
     for _ in 0..n {
-        let task = EntityId::now();
+        let maker = TaskMaker {
+            maker_ref: owner,
+            nonce: EntityId::now(),
+        };
+        let task = maker.task_ref(owner).unwrap();
         vault
             .put_entity(
                 &task,
@@ -2960,7 +2978,7 @@ fn owned_tasks_for_fact_replay(
                         assigned_generation: None,
                         answered_heads: None,
                         occurred_at: learned_at,
-                        maker: None,
+                        maker: Some(maker),
                     },
                 )
             })
@@ -2968,6 +2986,32 @@ fn owned_tasks_for_fact_replay(
         tasks.push((task, owner_fact));
     }
     (owner, tasks)
+}
+
+/// Root a vault from `test_vault` and enrol its already-loaded install signer.
+fn root_task_fact_receiver(vault: &Vault) {
+    let issuer = crate::test_support::test_host_issuer();
+    vault.ensure_host_root_slip(&issuer).expect("host root");
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    vault
+        .bind_host_owner_for_test(&issuer, owner)
+        .expect("host owner binding");
+    vault
+        .ensure_serving_install_profile(&issuer, crate::authority::MachineRole::Unanswered)
+        .expect("receiving install's machine profile");
+}
+
+/// Sign a replica body for its final row id, without writing or admitting the row.
+#[cfg(oneiron_test_support)]
+fn signed_task_fact_body(
+    vault: &Vault,
+    fact_ref: &EntityId,
+    fact: &crate::task_authority::TaskAuthorityFact,
+) -> Vec<u8> {
+    let txn = vault.store.env.read_txn().unwrap();
+    crate::task_authority::carried_task_authority_fact_body_in_txn(vault, &txn, fact_ref, fact)
+        .expect("encode carried fact")
+        .expect("the rooted install signs the fact")
 }
 
 fn task_reads_cancelled(vault: &Vault, task: EntityId) -> bool {
@@ -2991,6 +3035,7 @@ fn tombstone_value(reason: crate::deletion::TombstoneReason, deleted_at: u64) ->
 /// fact, soft or hard, is refused by the replay's protection gate and
 /// quarantined, with no retry flagged; the cancellation still reads. Positive
 /// control: the same delta's hard tombstone for an ordinary TASK applies.
+/// The receiving install signs and writes the facts, so they count as its own writes.
 #[test]
 fn observer_b_refuses_a_replayed_tombstone_for_a_fact() {
     use crate::deletion::TombstoneReason;
@@ -3075,9 +3120,10 @@ fn observer_b_refuses_a_replayed_tombstone_for_a_fact() {
 
 /// F24 round 6 (H219): a tombstone that reaches this vault before its fact
 /// row suppresses the row, and a suppressed fact reads as a refusal, never
-/// as a cancellation never made. A soft and a hard tombstone name two
-/// cancellations in one import, the rows arrive in the next, and both tasks'
-/// authority reads refuse; a third task with no suppressed fact still reads.
+/// as a cancellation never made. The receiving install signs two cancellations;
+/// its fold admits its machine profile, so both count after their soft and hard
+/// tombstones. A third task whose deleted cancellation arrives unsigned still reads.
+#[cfg(oneiron_test_support)]
 #[test]
 fn a_fact_tombstoned_before_it_arrives_reads_as_a_refusal() {
     use crate::deletion::TombstoneReason;
@@ -3091,28 +3137,11 @@ fn a_fact_tombstoned_before_it_arrives_reads_as_a_refusal() {
         end: learned_at,
     };
     let (owner, tasks) = owned_tasks_for_fact_replay(&vault, learned_at, 3);
-    let cancellations: Vec<_> = tasks[..2]
-        .iter()
-        .map(|(task, _)| (EntityId::now(), *task))
-        .collect();
-
-    let doc = LoroDoc::new();
-    let materializer = Arc::new(Materializer::new());
-    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
-    let tombstones = forged_update_against(&doc, |fork| {
-        let map = fork.get_map("tombstones");
-        for ((fact, _), reason) in cancellations
-            .iter()
-            .zip([TombstoneReason::UserDelete, TombstoneReason::GdprDelete])
-        {
-            map_insert_bytes(&map, &fact.to_hex(), &tombstone_value(reason, learned_at)).unwrap();
-        }
-    });
-    import_doc(&doc, &tombstones).unwrap();
-    let rows = forged_update_against(&doc, |fork| {
-        for (fact, task) in &cancellations {
-            let body = encode_task_authority_fact_body(&TaskAuthorityFact {
-                task_ref: *task,
+    let [soft, hard, unsigned] = [tasks[0], tasks[1], tasks[2]].map(|(task, _)| {
+        (
+            EntityId::now(),
+            TaskAuthorityFact {
+                task_ref: task,
                 kind: TaskAuthorityFactKind::Cancelled,
                 actor_ref: owner,
                 assigned_ref: None,
@@ -3121,7 +3150,30 @@ fn a_fact_tombstoned_before_it_arrives_reads_as_a_refusal() {
                 answered_heads: None,
                 occurred_at: learned_at,
                 maker: None,
-            });
+            },
+        )
+    });
+
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    let tombstones = forged_update_against(&doc, |fork| {
+        let map = fork.get_map("tombstones");
+        for (fact, reason) in [
+            (soft.0, TombstoneReason::UserDelete),
+            (hard.0, TombstoneReason::GdprDelete),
+            (unsigned.0, TombstoneReason::UserDelete),
+        ] {
+            map_insert_bytes(&map, &fact.to_hex(), &tombstone_value(reason, learned_at)).unwrap();
+        }
+    });
+    import_doc(&doc, &tombstones).unwrap();
+    let rows = forged_update_against(&doc, |fork| {
+        for (fact, body) in [
+            (soft.0, signed_task_fact_body(&vault, &soft.0, &soft.1)),
+            (hard.0, signed_task_fact_body(&vault, &hard.0, &hard.1)),
+            (unsigned.0, encode_task_authority_fact_body(&unsigned.1)),
+        ] {
             map_insert_bytes(
                 &fork.get_map("entities"),
                 &fact.to_hex(),
@@ -3132,20 +3184,20 @@ fn a_fact_tombstoned_before_it_arrives_reads_as_a_refusal() {
     });
     import_doc(&doc, &rows).unwrap();
 
-    for (_, task) in &cancellations {
+    for task in [soft.1.task_ref, hard.1.task_ref] {
         assert_matches!(
-            vault.task_authority_state(*task),
+            vault.task_authority_state(task),
             Err(Error::InvariantViolation("task authority fact suppressed")),
             "a cancellation tombstoned before it arrived reads as a refusal"
         );
     }
     assert_eq!(
         vault
-            .task_authority_state(tasks[2].0)
+            .task_authority_state(unsigned.1.task_ref)
             .unwrap()
             .map(|state| (state.owner_ref, state.cancelled)),
         Some((owner, false)),
-        "positive control: a task with no suppressed fact still reads"
+        "an unsigned peer cancellation at a deleted id leaves its task readable"
     );
 }
 
@@ -6788,5 +6840,6 @@ fn provenance_claim_tombstone_notifies_both_subject_endpoints_after_commit() {
     }
 }
 
+#[cfg(oneiron_test_support)]
 mod fact_suppression;
 mod resident;
