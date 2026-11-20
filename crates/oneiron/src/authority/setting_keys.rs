@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use super::SUPPORT_GRANT_MAX_TTL_SECS;
 use super::step_up::STEP_UP_CHALLENGE_TTL_SECS;
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, SettingValue};
 
 /// One day: the cap until the owner sets another.
 fn one_day() -> u64 {
@@ -102,7 +102,7 @@ crate::setting::setting_keys! {
     /// A longer cap is the looser value, so only the owner raises it; an agent's raise waits
     /// on the owner's answer.
     pub(crate) SUPPORT_GRANT_MAX_TTL: u64 = "support.grant.max_ttl_secs" {
-        kind: Kind::new(one_day).strictest(one_day).tighter(lower_is_tighter::<u64>),
+        kind: Kind::new(one_day).strictest(one_day).lower(),
     };
 
     /// How long a step-up ceremony stays open, in seconds: a passkey challenge, and an
@@ -113,7 +113,7 @@ crate::setting::setting_keys! {
     pub(crate) STEP_UP_CHALLENGE_TTL: LifetimeSecs = "step_up.challenge.ttl_secs" {
         kind: Kind::new(step_up_challenge_default)
             .strictest(step_up_challenge_default)
-            .tighter(lower_is_tighter::<LifetimeSecs>),
+            .lower(),
     };
 
     /// The longest the owner's mesh grant to a paired machine runs, in seconds. One year by
@@ -123,7 +123,7 @@ crate::setting::setting_keys! {
     pub(crate) MESH_GRANT_MAX_TTL: LifetimeSecs = "mesh.grant.max_ttl_secs" {
         kind: Kind::new(mesh_grant_default)
             .strictest(mesh_grant_default)
-            .tighter(lower_is_tighter::<LifetimeSecs>),
+            .lower(),
     };
 
     /// How long a pairing code can be redeemed, in seconds: an enrolment link's code, and an
@@ -134,6 +134,6 @@ crate::setting::setting_keys! {
     pub(crate) PAIRING_CODE_TTL: PairingCodeSecs = "pairing.code.ttl_secs" {
         kind: Kind::new(pairing_code_default)
             .strictest(pairing_code_default)
-            .tighter(lower_is_tighter::<PairingCodeSecs>),
+            .lower(),
     };
 }

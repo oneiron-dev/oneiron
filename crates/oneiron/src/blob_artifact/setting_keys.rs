@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, SettingValue};
 
 /// The ops one image edit has always taken.
 const DEFAULT_IMAGE_EDIT_MAX_OPS: u32 = 256;
@@ -51,7 +51,7 @@ crate::setting::setting_keys! {
     pub(crate) ORGAN_HOST_IMAGE_MAX_OPS: ImageEditOpLimit = "organ_host.image.max_ops" {
         kind: Kind::new(default_image_edit_max_ops)
             .strictest(fewest_image_edit_ops)
-            .tighter(lower_is_tighter::<ImageEditOpLimit>),
+            .lower(),
     };
 }
 

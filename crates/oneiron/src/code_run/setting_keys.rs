@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, SettingValue};
 
 /// The most a result search may show on each side of a match unless the owner sets it.
 pub(crate) const DEFAULT_SEARCH_CONTEXT_BYTES: u64 = 1024;
@@ -45,7 +45,7 @@ crate::setting::setting_keys! {
     /// search asks: 1024 unless the owner sets it, and never past 32768. A search that names no
     /// context gets 80, inside this bound.
     pub(crate) RESULT_SEARCH_MAX_CONTEXT: SearchContextBytes = "code_run.result_search.max_context" {
-        kind: Kind::new(default_search_context).tighter(lower_is_tighter),
+        kind: Kind::new(default_search_context).lower(),
     };
 }
 

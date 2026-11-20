@@ -2,7 +2,7 @@
 //! catalogue reads from this file.
 
 use super::{MAX_DELEGATE_TTL_SECS, SHARED_INVITATION_TTL_SECS};
-use crate::setting::{Kind, lower_is_tighter};
+use crate::setting::Kind;
 
 /// Fourteen days: an invitation's lifetime until the owner sets another.
 fn fourteen_days() -> u64 {
@@ -22,7 +22,7 @@ crate::setting::setting_keys! {
     /// days. A longer lifetime is the looser value, so only the owner raises it; an agent's
     /// raise waits on the owner's answer.
     pub(crate) SHARED_INVITATION_TTL: u64 = "federation.invitation.ttl_secs" {
-        kind: Kind::new(fourteen_days).strictest(fourteen_days).tighter(lower_is_tighter::<u64>),
+        kind: Kind::new(fourteen_days).strictest(fourteen_days).lower(),
     };
     /// The longest lifetime a one-hop Delegate grant takes, in seconds past its mint. The
     /// delegate doors read it in their own writer and refuse a later expiry; a Delegate
@@ -31,6 +31,6 @@ crate::setting::setting_keys! {
     /// days. A longer cap is the looser value, so only the owner raises it; an agent's raise
     /// waits on the owner's answer.
     pub(crate) DELEGATE_MAX_TTL: u64 = "federation.delegate.max_ttl_secs" {
-        kind: Kind::new(ninety_days).strictest(ninety_days).tighter(lower_is_tighter::<u64>),
+        kind: Kind::new(ninety_days).strictest(ninety_days).lower(),
     };
 }

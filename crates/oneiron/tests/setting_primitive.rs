@@ -3,12 +3,14 @@
 //!   read names the row that decided it, a revision guards a change, an equal value writes
 //!   nothing, a family key takes only its items, and the key's hook runs once per change;
 //! - every change is one entry on the feeds' `settings` source, with the prior and new values;
-//! - a live holder of the key's `engine.controls` class sets it inside the owner's cap, never
-//!   replaces the owner's own row, and never pins; a key read by members reads for any agent;
+//! - a live holder of the key's `engine.controls` class tightens it at once, over the owner's row
+//!   too, asks to loosen it, and never pins (stage 6.0); a key read by members reads for any
+//!   agent;
 //! - any other agent's change waits on a check-in under its own Grant, and applies once when the
 //!   owner approves it; an agent whose Grant does not list the verb is refused;
-//! - the owner's pin decides over every value row, and a row that does not decode reads the
-//!   key's strictest value, never its default;
+//! - the owner's pin releases the rows wider than itself and a stricter row at its scope still
+//!   narrows it, and a row that does not decode reads the key's strictest value, never its
+//!   default;
 //! - a subject tightens its own row and asks to loosen it;
 //! - changes made in one caller's write commit together or not at all, and an optional key's
 //!   `None` is a value a narrower row holds;
@@ -379,7 +381,7 @@ fn every_change_is_one_entry_on_the_settings_feed() {
 }
 
 #[test]
-fn a_class_holder_sets_inside_the_owners_cap_and_never_replaces_the_owners_row() {
+fn a_class_holder_tightens_at_once_asks_to_loosen_and_never_pins() {
     let fx = Fixture::rooted();
     let me = fx.as_owner();
     let holder = fx.agent();
@@ -398,13 +400,19 @@ fn a_class_holder_sets_inside_the_owners_cap_and_never_replaces_the_owners_row()
     assert_eq!(
         above["status"],
         json!("pending"),
-        "above the owner's cap: {above}"
+        "raising its own row is a loose move: {above}"
     );
     let owners = call(&them, SET, set(key, vault_scope(), json!(5)));
     assert_eq!(
         owners["status"],
+        json!("applied"),
+        "a tighter vault value is a safe move, over the owner's row too: {owners}"
+    );
+    let looser = call(&them, SET, set(key, vault_scope(), json!(7)));
+    assert_eq!(
+        looser["status"],
         json!("pending"),
-        "the owner's own row: {owners}"
+        "a looser vault value asks: {looser}"
     );
     let pin = call(
         &them,
@@ -530,21 +538,38 @@ fn the_owners_pin_decides_and_an_unreadable_row_reads_the_strictest_value() {
     let place = EntityId::now();
     let key = "test.work_budget";
 
+    call(&me, SET, set(key, vault_scope(), json!(3)));
     call(
+        &me,
+        SET,
+        json!({ "key": key, "scope": project(place), "pin": true, "value": 9 }),
+    );
+    let pinned = get(&me, key, json!([project(place)]));
+    assert_eq!(
+        pinned["value"],
+        json!(9),
+        "the pin releases the vault's row: {pinned}"
+    );
+    assert_eq!(
+        pinned["source"],
+        json!({ "from": "pin", "scope": project(place) })
+    );
+    let narrowed = call(
         &fx.as_agent(holder),
         SET,
         set(key, project(place), json!(6)),
     );
-    call(
-        &me,
-        SET,
-        json!({ "key": key, "scope": vault_scope(), "pin": true, "value": 9 }),
-    );
-    let pinned = get(&me, key, json!([project(place)]));
-    assert_eq!(pinned["value"], json!(9), "{pinned}");
+    assert_eq!(narrowed["status"], json!("applied"), "{narrowed}");
+    let under = get(&me, key, json!([project(place)]));
     assert_eq!(
-        pinned["source"],
-        json!({ "from": "pin", "scope": { "kind": "vault" } })
+        under["value"],
+        json!(6),
+        "a stricter row at the pin's scope still narrows it: {under}"
+    );
+    assert_eq!(
+        get(&me, key, json!([]))["value"],
+        json!(3),
+        "the vault reads its own row"
     );
 
     plant_undecodable_row(&fx.vault, "test.owner_number", SettingScope::Vault)
@@ -715,18 +740,32 @@ fn an_agents_change_the_owner_approved_reads_as_the_owners_answer() {
     let fx = Fixture::rooted();
     let me = fx.as_owner();
 
-    // A subject's loosening of its own row, below the owner's tighter vault row.
+    // A key whose rows meet (stage 6.0; DESIGN 1.5 "The read", step 2, and the move table of
+    // 1.6): a subject's own row below the owner's vault row only narrows the read, so adding it
+    // lands at once, and loosening it asks. The owner's yes lands the row as his answer (FIX
+    // SETTING-APPROVED-WIDENING-READS-CAP: it is not held at the row's old value), and the read
+    // meets it with his vault row, since no value row replaces another, whoever set it.
     let subject = fx.agent();
     fx.grant(subject, &[SET, GET]);
     let them = fx.as_agent(subject);
     let quiet = "test.agent_quiet";
-    call(&me, SET, set(quiet, vault_scope(), json!(true)));
+    call(&me, SET, set(quiet, vault_scope(), json!(false)));
+    let added = call(&them, SET, set(quiet, agent_scope(subject), json!(true)));
+    assert_eq!(
+        added["status"],
+        json!("applied"),
+        "a row below the vault only narrows: {added}"
+    );
+    assert_eq!(
+        get(&them, quiet, json!([agent_scope(subject)]))["value"],
+        json!(true)
+    );
     let ask = set(quiet, agent_scope(subject), json!(false));
     let pending = call(&them, SET, ask.clone());
     assert_eq!(
         pending["status"],
         json!("pending"),
-        "loosening asks: {pending}"
+        "loosening its own row asks: {pending}"
     );
     let mut spend = ask;
     spend["check_in_ref"] = json!(approve_ask(&fx, &pending));
@@ -736,32 +775,14 @@ fn an_agents_change_the_owner_approved_reads_as_the_owners_answer() {
     assert_eq!(
         read["value"],
         json!(false),
-        "the owner's yes is not held inside the owner's own vault row: {read}"
+        "the owner's yes reads as his answer: {read}"
     );
 
-    // A holder's value above the catalogue default, where the owner set no row.
-    let holder = fx.agent();
-    fx.grant(holder, &[SET, GET]);
-    fx.controls(holder, EngineControlClass::WorkBudget);
-    let them = fx.as_agent(holder);
-    let budget = "test.work_budget";
-    let place = EntityId::now();
-    let ask = set(budget, project(place), json!(12));
-    let pending = call(&them, SET, ask.clone());
+    call(&me, SET, set(quiet, vault_scope(), json!(true)));
+    let met = get(&them, quiet, json!([agent_scope(subject)]));
     assert_eq!(
-        pending["status"],
-        json!("pending"),
-        "above the default asks: {pending}"
+        met["value"],
+        json!(true),
+        "the owner's stricter vault row still meets the approved row: {met}"
     );
-    let mut spend = ask;
-    spend["check_in_ref"] = json!(approve_ask(&fx, &pending));
-    let applied = call(&them, SET, spend);
-    assert_eq!(applied["status"], json!("applied"), "{applied}");
-    let read = get(&me, budget, json!([project(place)]));
-    assert_eq!(
-        read["value"],
-        json!(12),
-        "the owner's yes is not held inside the catalogue default: {read}"
-    );
-    assert_eq!(read["source"]["from"], json!("row"), "{read}");
 }

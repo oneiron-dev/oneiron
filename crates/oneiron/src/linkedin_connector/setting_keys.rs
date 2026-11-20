@@ -16,7 +16,7 @@ use super::{DEFAULT_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS, MAX_LINKEDIN_INBOX_BACK
 use crate::commitment_wake::CommitmentReminderRoute;
 use crate::error::{Error, Result};
 use crate::linkedin_connector::LinkedInSeatSandboxPolicy;
-use crate::setting::{Kind, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, SettingValue};
 
 /// The day a LinkedIn seat's daily caps count over when its host names no reset instant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -79,7 +79,7 @@ crate::setting::setting_keys! {
     pub(crate) LINKEDIN_SWEEPS_ALLOWED: bool = "linkedin.sweeps_allowed" {
         kind: Kind::new(no_sweeps)
             .strictest(no_sweeps)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
     };
     /// The midnight at which a LinkedIn seat's daily caps reset when its host names no reset
     /// instant (default utc_midnight; owner_local_midnight is the owner's clock: the reminder
@@ -97,7 +97,7 @@ crate::setting::setting_keys! {
         "linkedin.inbox.backfill_default_secs" {
         kind: Kind::new(backfill_default)
             .strictest(no_backfill)
-            .tighter(lower_is_tighter::<InboxBackfillSecs>),
+            .lower(),
     };
     /// The longest history any LinkedIn inbox sync reads, whatever its own config names (default
     /// 31,622,400: 366 days, the ceiling every sync config keeps). Shorter is tighter: fewer
@@ -106,7 +106,7 @@ crate::setting::setting_keys! {
         "linkedin.inbox.backfill_max_secs" {
         kind: Kind::new(backfill_max)
             .strictest(no_backfill)
-            .tighter(lower_is_tighter::<InboxBackfillSecs>),
+            .lower(),
     };
 }
 
