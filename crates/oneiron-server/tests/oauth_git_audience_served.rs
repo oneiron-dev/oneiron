@@ -29,6 +29,7 @@ use base64::Engine as _;
 use engine_stack::run_on_engine_stack;
 use oneiron::authority::{ActSurface, AgentTier, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::federation::GitPushRepo;
 use oneiron::origin::smart_http;
 use oneiron::store::GateDecisionId;
 use oneiron::verbs::{
@@ -101,7 +102,7 @@ struct Served {
     owner: AuthenticatedOwner,
     origin: String,
     http: reqwest::Client,
-    push_repo: EntityId,
+    push_repo: GitPushRepo,
 }
 
 /// What one sign-in names and what the owner allows it.
