@@ -315,13 +315,6 @@ pub(crate) fn finish_residence_directive_in_txn(
     let key = crate::identity::read_machine_signing_key_in_txn(vault, txn)?
         .ok_or_else(|| refused("this install has no machine key"))?;
     let fold = vault.authority_view_readonly_in_txn(txn)?;
-    // The directive must still count in this transaction's fold. The fold
-    // takes a forked directive out once a key it rests on is revoked (row
-    // SEQ-FLOOR-S-WITHHELD-COSIGN), which may land after the run read it as
-    // pending: then neither its result nor the act beside it commits.
-    if !fold.valid_entries.contains(&pending.entry) {
-        return Err(refused("the residence directive no longer counts"));
-    }
     let now = vault.instant_in_txn(txn)?.secs();
     let result = ResidenceResult {
         directive: pending.directive.id,
