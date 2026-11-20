@@ -17,10 +17,13 @@ pub(crate) struct Request {
 
 /// The fixture page and the peer's logs.
 struct State {
+    target_id: &'static str,
+    session_id: &'static str,
     current_url: String,
     title: String,
     heading: String,
     password_field: bool,
+    otp_field: Option<Option<String>>,
     refuse_page_enable: bool,
     page_exists: bool,
     log: Vec<Request>,
@@ -36,13 +39,31 @@ pub(crate) struct ScriptedChromium {
 impl ScriptedChromium {
     /// Starts the peer at `url` on a new socket pair.
     pub(crate) fn start(url: &str, refuse_page_enable: bool) -> (UnixStream, Self) {
+        Self::start_peer(url, refuse_page_enable, "page-1", "session-1")
+    }
+
+    /// Starts the replay peer on a blank document, without watching Page events.
+    pub(crate) fn start_replay() -> (UnixStream, Self) {
+        Self::start_peer("about:blank", true, "page-2", "session-2")
+    }
+
+    /// Opens a pipe with independent state, identity and request logs.
+    fn start_peer(
+        url: &str,
+        refuse_page_enable: bool,
+        target_id: &'static str,
+        session_id: &'static str,
+    ) -> (UnixStream, Self) {
         let (host, guest) = UnixStream::pair().expect("the CDP socket pair binds");
         let control = guest.try_clone().expect("the peer control socket clones");
         let state = Arc::new(Mutex::new(State {
+            target_id,
+            session_id,
             current_url: url.to_owned(),
             title: "Ready".to_owned(),
             heading: "Ready".to_owned(),
             password_field: false,
+            otp_field: None,
             refuse_page_enable,
             page_exists: false,
             log: Vec::new(),
@@ -56,6 +77,18 @@ impl ScriptedChromium {
     /// Adds a blank password field to the fixture page.
     pub(crate) fn show_password_field(&self) {
         self.state.lock().expect("peer state locks").password_field = true;
+    }
+
+    /// Gives this peer independent labels for its page and heading.
+    pub(crate) fn set_page_labels(&self, title: &str, heading: &str) {
+        let mut state = self.state.lock().expect("peer state locks");
+        state.title = title.to_owned();
+        state.heading = heading.to_owned();
+    }
+
+    /// Shows a one-time-code field, blank unless the fixture gives it a value.
+    pub(crate) fn show_otp_field(&self, value: Option<&str>) {
+        self.state.lock().expect("peer state locks").otp_field = Some(value.map(str::to_owned));
     }
 
     /// The log length now, for a test's mark before its door call.
@@ -164,6 +197,7 @@ fn answer_request(state: &mut State, method: &str, params: &Value) -> Result<Val
         Some("Emulation") => emulation_answer(state, method),
         Some("Network") => network_answer(state, method),
         Some("Fetch") => fetch_answer(state, method),
+        Some("Input") => input_answer(state, method, params),
         _ => unknown_answer(state, method),
     }
 }
@@ -174,11 +208,11 @@ fn target_answer(state: &mut State, method: &str) -> Result<Value, (i32, String)
         "Target.getTargets" => Ok(target_list(state)),
         "Target.createTarget" => {
             state.page_exists = true;
-            Ok(json!({"targetId": "page-1"}))
+            Ok(json!({"targetId": state.target_id}))
         }
-        "Target.attachToTarget" => Ok(json!({"sessionId": "session-1"})),
+        "Target.attachToTarget" => Ok(json!({"sessionId": state.session_id})),
         "Target.getTargetInfo" => Ok(json!({"targetInfo": {
-            "targetId": "page-1",
+            "targetId": state.target_id,
             "type": "page",
             "url": &state.current_url,
             "title": &state.title,
@@ -192,7 +226,7 @@ fn target_answer(state: &mut State, method: &str) -> Result<Value, (i32, String)
 fn target_list(state: &State) -> Value {
     if state.page_exists {
         json!({"targetInfos": [{
-            "targetId": "page-1",
+            "targetId": state.target_id,
             "type": "page",
             "url": &state.current_url,
             "title": &state.title,
@@ -225,6 +259,7 @@ fn page_answer(state: &mut State, method: &str, params: &Value) -> Result<Value,
             Ok(json!({"frameId": "main", "loaderId": "loader-1"}))
         }
         "Page.createIsolatedWorld" => Ok(json!({"executionContextId": 1})),
+        "Page.addScriptToEvaluateOnNewDocument" => Ok(json!({"identifier": "storage-exit"})),
         _ => unknown_answer(state, method),
     }
 }
@@ -233,6 +268,10 @@ fn page_answer(state: &mut State, method: &str, params: &Value) -> Result<Value,
 fn dom_answer(state: &mut State, method: &str, params: &Value) -> Result<Value, (i32, String)> {
     match method {
         "DOM.enable" => return Ok(json!({})),
+        "DOM.resolveNode" if password_node(state, params) => {
+            return Ok(json!({"object": {"objectId": "password-node"}}));
+        }
+        "DOM.focus" if password_node(state, params) => return Ok(json!({})),
         "DOM.getDocument" => {}
         _ => return unknown_answer(state, method),
     }
@@ -256,6 +295,11 @@ fn dom_answer(state: &mut State, method: &str, params: &Value) -> Result<Value, 
     }
 }
 
+/// Whether a request names the fixture's password input.
+fn password_node(state: &State, params: &Value) -> bool {
+    state.password_field && params["backendNodeId"].as_u64() == Some(3)
+}
+
 /// The heading and any input in the full DOM read.
 fn dom_children(state: &State) -> Vec<Value> {
     let mut children = vec![json!({
@@ -276,13 +320,32 @@ fn dom_children(state: &State) -> Vec<Value> {
             "attributes": ["type", "password"],
         }));
     }
+    if state.otp_field.is_some() {
+        children.push(json!({
+            "nodeId": 4,
+            "backendNodeId": 4,
+            "nodeType": 1,
+            "nodeName": "INPUT",
+            "localName": "input",
+            "attributes": ["autocomplete", "one-time-code"],
+        }));
+    }
     children
 }
 
 /// Answers Runtime calls.
 fn runtime_answer(state: &mut State, method: &str, params: &Value) -> Result<Value, (i32, String)> {
-    if method != "Runtime.evaluate" {
-        return unknown_answer(state, method);
+    match method {
+        "Runtime.addBinding" => return Ok(json!({})),
+        "Runtime.callFunctionOn"
+            if state.password_field
+                && params["objectId"] == "password-node"
+                && params["functionDeclaration"] == "function() { return this.isConnected; }" =>
+        {
+            return Ok(json!({"result": {"value": true}}));
+        }
+        "Runtime.evaluate" => {}
+        _ => return unknown_answer(state, method),
     }
     let expression = params
         .get("expression")
@@ -294,6 +357,14 @@ fn runtime_answer(state: &mut State, method: &str, params: &Value) -> Result<Val
         Err((-32000, "fixture omits viewport reads".to_owned()))
     } else if expression == PAGE_SIGNALS {
         Ok(json!({"result": {"value": [&state.current_url, 0, 0, 0]}}))
+    } else if expression.starts_with("(() => { let d = false;")
+        && (expression.contains("const s = window.localStorage;")
+            || expression.contains("const s = window.sessionStorage;"))
+        && let Some((scheme, rest)) = state.current_url.split_once("://")
+    {
+        let host = rest.split('/').next().expect("the fixture URL has a host");
+        let origin = format!("{scheme}://{host}");
+        Ok(json!({"result": {"value": [origin, 0, [], 0, false, 0]}}))
     } else {
         unknown_answer(state, method)
     }
@@ -308,11 +379,14 @@ fn accessibility_answer(state: &mut State, method: &str) -> Result<Value, (i32, 
     }
 }
 
-/// The fixture page's AX nodes, with an optional blank textbox.
+/// The fixture page's AX nodes, with its configured textboxes.
 fn accessibility_nodes(state: &State) -> Vec<Value> {
     let mut child_ids = vec!["ax1"];
     if state.password_field {
         child_ids.push("ax2");
+    }
+    if state.otp_field.is_some() {
+        child_ids.push("ax3");
     }
     let mut nodes = vec![
         json!({
@@ -337,6 +411,19 @@ fn accessibility_nodes(state: &State) -> Vec<Value> {
             "name": {"value": "Password"},
         }));
     }
+    if let Some(value) = &state.otp_field {
+        let mut node = json!({
+            "nodeId": "ax3",
+            "parentId": "ax0",
+            "backendDOMNodeId": 4,
+            "role": {"value": "textbox"},
+            "name": {"value": "Verification code"},
+        });
+        if let Some(value) = value {
+            node["value"] = json!({"value": value});
+        }
+        nodes.push(node);
+    }
     nodes
 }
 
@@ -353,6 +440,7 @@ fn network_answer(state: &mut State, method: &str) -> Result<Value, (i32, String
     match method {
         "Network.enable" => Ok(json!({})),
         "Network.setBypassServiceWorker" => Ok(json!({})),
+        "Network.getAllCookies" => Ok(json!({"cookies": []})),
         _ => unknown_answer(state, method),
     }
 }
@@ -361,6 +449,14 @@ fn network_answer(state: &mut State, method: &str) -> Result<Value, (i32, String
 fn fetch_answer(state: &mut State, method: &str) -> Result<Value, (i32, String)> {
     match method {
         "Fetch.enable" => Ok(json!({})),
+        _ => unknown_answer(state, method),
+    }
+}
+
+/// Accepts the password Type's input without echoing its bytes in later reads.
+fn input_answer(state: &mut State, method: &str, params: &Value) -> Result<Value, (i32, String)> {
+    match method {
+        "Input.insertText" if state.password_field && params["text"].is_string() => Ok(json!({})),
         _ => unknown_answer(state, method),
     }
 }
