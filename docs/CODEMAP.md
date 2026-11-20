@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 8238 | 1985 | 302 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 8239 | 1986 | 302 |
 | [oneiron-agent-runtime](codemap/oneiron-agent-runtime.md) | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) | 23 | 11 | 1 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 74 | 7 | 0 |
@@ -226,7 +226,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `model_step_context` | file | 1 | s | — | Caller-owned model-step context and terminal outcomes |
 | `model_step_effect` | file | 1 | s | — | Durable model-step identity frozen into outbound effects |
 | `model_step_error` | file | 1 | s | — | Durable model-step failure and reply-check contracts |
-| `note` | file+dir | 84 | L | yes | Attributed NOTE records with built-in, plugin and registered PACK kinds |
+| `note` | file+dir | 86 | L | yes | Attributed NOTE records with built-in, plugin and registered PACK kinds |
 | `off_record` | dir | 45 | L | yes | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
 | `office_body` | dir | 49 | L | yes | Live office body records and Vault doors |
 | `origin` | dir | 160 | L | yes | Vault-as-origin serving plane (ARCH-0068 Phase A) |
