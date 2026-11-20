@@ -90,7 +90,9 @@ use super::beside::{
     BesideHeld, BesideRead, beside_row_id, beside_row_read_in_txn, put_beside_value_in_txn,
     slot_value, watch_rows_in_txn,
 };
-use super::change::{record_change_in_txn, record_receipt_in_txn, record_signed_entry_in_txn};
+use super::change::{
+    change_in_txn, record_change_in_txn, record_receipt_in_txn, record_signed_entry_in_txn,
+};
 use super::pack::layer_default_in_txn;
 use super::read::{StoredRow, table_of};
 use super::{
@@ -1254,16 +1256,12 @@ pub(super) fn project_target_in_txn(
         }
         Err(why) => return leave_in_txn(vault, txn, inert(why), reads),
     };
-    let kept = match slot.mode {
-        SettingMode::Carried => carried_row_in_txn(vault, txn, spec, &slot, &heads)?,
+    let local = match slot.mode {
+        SettingMode::Carried => own_carry_bound_in_txn(vault, txn, spec, &slot, &heads)?,
         SettingMode::Value | SettingMode::Pin => None,
     };
-    let bound = kept
-        .as_ref()
-        .map(|row| row.local.clone().unwrap_or_else(|| row.value.clone()))
-        .filter(|bound| spec.kind.decodes(bound));
-    let projected = met_with_local(spec, projected, bound.as_ref());
-    let local = kept.and_then(|row| row.local);
+    let bound = local.as_ref().filter(|bound| spec.kind.decodes(bound));
+    let projected = met_with_local(spec, projected, bound);
     let changed = write_row_in_txn(vault, txn, spec, &slot, &projected, local.as_ref(), now)?;
     // A pin keeps its release only while every act it comes from counts in full here: one that
     // counts as a safe move keeps its value and is read as a value row (DESIGN 1.6, "The read
@@ -1293,24 +1291,35 @@ pub(super) fn project_target_in_txn(
     })
 }
 
-/// The carried row `slot` as stored here, which bounds its projection (stage 7a-4): by the bound
-/// this install's own carry wrote (`StoredRow::local`), or, for a row with none (one a copy
-/// wrote, or an older build's carry), by its value, so a carried row only tightens until it is
-/// released. `None` once the owner released it (every head a clear of it), and where no row
-/// decodes.
-fn carried_row_in_txn(
+/// The bound this install's own carry keeps on the carried row `slot`, which bounds its
+/// projection (stage 7a-4, RULING SETTING-7A-4-COPY Q2 = A): what its carry wrote
+/// (`StoredRow::local`), or, on a row an older build's carry wrote with none, the row's value,
+/// which the projection then writes as `local`. A row the projection wrote from a copy keeps no
+/// bound: every other machine reads the copy alone, so a value a copy gave never holds a later
+/// read of it, as one that arrives after the copy. `None` once the owner released the row
+/// (every head a clear of it), and where no row decodes.
+fn own_carry_bound_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     spec: &SettingSpec,
     slot: &RowKey,
     heads: &[Head],
-) -> Result<Option<StoredRow>> {
+) -> Result<Option<EncodedValue>> {
     if heads.iter().all(|head| !head.carries_value()) {
         return Ok(None);
     }
-    Ok(table_of(spec)
+    let Some(row) = table_of(spec)
         .get_bytes(&vault.store, txn, &slot.encode())?
-        .and_then(|bytes| rmp_serde::from_slice::<StoredRow>(&bytes).ok()))
+        .and_then(|bytes| rmp_serde::from_slice::<StoredRow>(&bytes).ok())
+    else {
+        return Ok(None);
+    };
+    if row.local.is_some() {
+        return Ok(row.local);
+    }
+    let projected = change_in_txn(&vault.store, txn, row.change)?
+        .is_some_and(|change| change.standing.is_some());
+    Ok((!projected && spec.kind.decodes(&row.value)).then_some(row.value))
 }
 
 /// `projected` met with the bound a carried row keeps here ([`carried_row_in_txn`], stage 7a-4):
