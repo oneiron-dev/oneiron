@@ -415,9 +415,9 @@ fn discovery_passes_a_linked_project_folder_over() {
     std::fs::create_dir_all(&elsewhere).expect("make the linked folder");
     std::os::unix::fs::symlink(&elsewhere, projects.path().join(project_folder(&here)))
         .expect("link the subfolder's project folder");
-    let now = SystemTime::now();
-    let ours = log_in(&real, SESSION, &main, now - Duration::from_secs(60));
-    log_in(&elsewhere, OTHER_SESSION, &here, now);
+    let newest = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let ours = log_in(&real, SESSION, &main, newest - Duration::from_secs(60));
+    log_in(&elsewhere, OTHER_SESSION, &here, newest);
 
     assert_eq!(
         discovered_session(projects.path(), &here),

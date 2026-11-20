@@ -979,18 +979,23 @@ fn a_bridge_that_stops_reading_is_ended_at_the_deadline() {
     // More than a pipe holds, so the write itself waits on the bridge.
     std::fs::write(&log, noisy_turn(1024 * 1024, 17)).expect("test fixture");
     bench.session_start(&[], &log);
-    let began = std::time::Instant::now();
-    bench.hand_over(
-        "claude-code",
-        &["--timeout", "3"],
-        &[],
-        &claude_code_stop(&log),
-    );
-    let took = began.elapsed();
-    assert!(
-        took < std::time::Duration::from_secs(30),
-        "the hand-over outlived its 3 s deadline by far: {took:?}"
-    );
+    let (ended, done) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            bench.hand_over(
+                "claude-code",
+                &["--timeout", "3"],
+                &[],
+                &claude_code_stop(&log),
+            );
+            let _ = ended.send(());
+        });
+        assert!(
+            done.recv_timeout(std::time::Duration::from_secs(30))
+                .is_ok(),
+            "the hand-over outlived its 3 s deadline by far"
+        );
+    });
     let pid = bench.recorded("pid");
     let alive = Command::new("kill")
         .args(["-0", pid.trim()])
