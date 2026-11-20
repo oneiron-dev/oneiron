@@ -2,7 +2,8 @@
 //! and its subagents' logs, each gzip-compressed in standard base64, as
 //! `vault.imports.hook_transcript` takes them. The hooks' hand-over to a
 //! selected hosted vault sends the log its event names the same way
-//! ([`read_hook_log`]).
+//! ([`read_hook_log`]), and another host's one log by its source
+//! ([`read_one_below`]).
 //!
 //! The log is the one `--transcript` names, as the hook's `transcript_path`
 //! does, or else the newest session log of the project folder Claude Code
@@ -42,7 +43,7 @@ use std::time::{Instant, SystemTime};
 use base64::Engine as _;
 use oneiron::ingest::history::{
     HOOK_TRANSCRIPT_MAX_BYTES, HOOK_TRANSCRIPT_MAX_SUBAGENTS, HookSubagentTranscript,
-    HookTranscriptImportRequest,
+    HookTranscriptImportRequest, HookTranscriptSource,
 };
 use rustix::fs::{CWD, Dir, Mode, OFlags, openat};
 
@@ -99,6 +100,49 @@ pub(super) fn read_hook_log(path: &Path, session: &str) -> anyhow::Result<Sessio
     read_below(&projects_dir()?, path)
 }
 
+/// The one log at `path`, below `root`, of a host whose log holds its
+/// subagents, as `source`'s import reads the file it names `session`: read
+/// through one descriptor, every folder below `root` and the log opened
+/// through no link ([`confined`]), at most [`HOOK_TRANSCRIPT_MAX_BYTES`],
+/// as one call carries, and encoded.
+pub(super) fn read_one_below(
+    root: &Path,
+    path: &Path,
+    session: String,
+    source: HookTranscriptSource,
+) -> anyhow::Result<SessionLogs> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| anyhow::anyhow!("{} is not under {}", path.display(), root.display()))?;
+    let (_, log) = confined::open_below(root, relative)?;
+    let most = u64::try_from(HOOK_TRANSCRIPT_MAX_BYTES)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let mut bytes = Vec::new();
+    log.take(most)
+        .read_to_end(&mut bytes)
+        .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
+    anyhow::ensure!(
+        bytes.len() <= HOOK_TRANSCRIPT_MAX_BYTES,
+        "{} is longer than the {HOOK_TRANSCRIPT_MAX_BYTES} bytes one call to the hosted vault \
+         inflates; import the session on the machine it ran on: oneiron import {} {}",
+        path.display(),
+        source.history_source().source_id(),
+        path.display()
+    );
+    Ok(SessionLogs {
+        path: path.to_path_buf(),
+        request: HookTranscriptImportRequest {
+            session,
+            transcript_gzip_base64: encode(path, &bytes)?,
+            subagents: Vec::new(),
+            source: Some(source),
+        },
+        log_bytes: bytes.len(),
+        subagent_bytes: Vec::new(),
+    })
+}
+
 /// The calls that land `logs`: each spec at most `carried` bytes, as the
 /// selection's carrier takes one call, and its logs at most
 /// [`HOOK_TRANSCRIPT_MAX_BYTES`] inflated, as the vault takes one. The
@@ -116,7 +160,15 @@ pub(super) fn calls_within(
         session: logs.request.session.clone(),
         transcript_gzip_base64: logs.request.transcript_gzip_base64.clone(),
         subagents: Vec::new(),
+        source: logs.request.source,
     };
+    // The import that lands the session on the machine it ran on.
+    let source = logs
+        .request
+        .source
+        .unwrap_or_default()
+        .history_source()
+        .source_id();
     let base = serde_json::to_vec(&alone)?.len();
     let fits =
         |bytes: usize, inflated: usize| bytes <= carried && inflated <= HOOK_TRANSCRIPT_MAX_BYTES;
@@ -124,7 +176,7 @@ pub(super) fn calls_within(
         fits(base, logs.log_bytes),
         "{} is too long for one call to the hosted vault over this sign-in (at most {carried} \
          bytes encoded and {HOOK_TRANSCRIPT_MAX_BYTES} inflated); import the session on the \
-         machine it ran on: oneiron import claude-code {}",
+         machine it ran on: oneiron import {source} {}",
         logs.path.display(),
         logs.path.display()
     );
@@ -139,7 +191,7 @@ pub(super) fn calls_within(
             "{}'s subagent log {} is too long to go with it in one call to the hosted vault \
              over this sign-in (at most {carried} bytes encoded and {HOOK_TRANSCRIPT_MAX_BYTES} \
              inflated); import the session on the machine it ran on: oneiron import \
-             claude-code {}",
+             {source} {}",
             logs.path.display(),
             subagent.stem,
             logs.path.display()
@@ -208,6 +260,7 @@ fn read_below(root: &Path, path: &Path) -> anyhow::Result<SessionLogs> {
             session,
             transcript_gzip_base64,
             subagents,
+            source: None,
         },
         log_bytes,
         subagent_bytes,
@@ -421,11 +474,16 @@ fn encoded(mut file: File, path: &Path) -> anyhow::Result<(String, usize)> {
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
-    whole_records(path, &bytes)?;
+    Ok((encode(path, &bytes)?, bytes.len()))
+}
+
+/// `bytes`, the log at `path`, gzip-compressed, in standard base64, once
+/// every record of them is whole ([`whole_records`]).
+fn encode(path: &Path, bytes: &[u8]) -> anyhow::Result<String> {
+    whole_records(path, bytes)?;
     let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-    gzip.write_all(&bytes)?;
-    let text = base64::engine::general_purpose::STANDARD.encode(gzip.finish()?);
-    Ok((text, bytes.len()))
+    gzip.write_all(bytes)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(gzip.finish()?))
 }
 
 /// Refuses a log with a line that is not a whole JSON record as the

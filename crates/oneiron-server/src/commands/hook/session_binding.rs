@@ -1,11 +1,14 @@
-//! What a session's starts bound, recorded by each `session-start` of a
-//! Claude Code session for its hand-over (REVIEW-9834). A hand-over sends a
-//! session's log to a hosted vault only when every start of that session
-//! bound that one vault and it is still the one selected; it never finds a
-//! destination of its own.
+//! What a session's starts bound, recorded by each `session-start` for the
+//! session's hand-over (REVIEW-9834). A hand-over sends a session's log to a
+//! hosted vault only when every start of that session bound that one vault
+//! and it is still the one selected; it never finds a destination of its
+//! own.
 //!
-//! Each session has a folder, `<run folder>/hook-sessions/<session id>/`,
-//! with one file per distinct binding its starts made:
+//! Each session has a folder, `<run folder>/<host's folder>/<session id>/`,
+//! where the host's folder is `hook-sessions` for Claude Code, as before,
+//! and `hook-sessions-<host>` for each other host ([`folder`]), so two hosts'
+//! sessions of one id never share a record. It holds one file per distinct
+//! binding the session's starts made:
 //! - `local`: a pin, a local vault or no vault, whose log the local queue
 //!   takes, as before;
 //! - `hosted-<16 hex digits>`: a hosted vault, the file naming its origin
@@ -24,8 +27,12 @@
 //! writer uses and renamed into place, so starts of one session running at
 //! once never replace or remove each other's file, and a writer that fails
 //! removes only its own staging file. A file anyone else could write is
-//! never read. The folders of sessions whose files are all older than
-//! [`KEEP_FOR`] are removed when another session records.
+//! never read. No record other than `local` is ever removed, so a session
+//! that bound a hosted vault, or more than one vault, hands over by its
+//! whole record however long it waited (REVIEW-9914). The folders of
+//! sessions whose every file is a `local` record or a staging file, all
+//! older than [`KEEP_FOR`], are removed when another session records: such
+//! a session queues locally with its record or without it.
 
 use std::ffi::OsStr;
 use std::fs;
@@ -38,10 +45,8 @@ use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use super::hosted_selection::HostedVault;
+use crate::cli::HookHost;
 use crate::commands::{credential_file, local_servers};
-
-/// The folder in the run folder the sessions' folders are in.
-const FOLDER: &str = "hook-sessions";
 /// The file of a session that bound a pin, a local vault or no vault.
 const LOCAL: &str = "local";
 /// The file of a session whose earlier turns' vault is not known.
@@ -52,7 +57,8 @@ const HOSTED_PREFIX: &str = "hosted-";
 const MAX_RECORD_BYTES: u64 = 4 * 1024;
 /// The longest session id a folder is named by.
 const MAX_SESSION_ID_BYTES: usize = 128;
-/// How long a session's files are kept after the newest was written.
+/// How long a session's `local` records are kept after the newest was
+/// written.
 const KEEP_FOR: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 /// A hosted vault a session bound: its origin and vault id.
@@ -100,14 +106,26 @@ pub(super) enum SessionBinding {
     Mixed,
 }
 
-/// Records that a start of the session `session` bound the hosted vault
-/// `hosted`, or, with `None`, a pin, a local vault or no vault. `resumed`
-/// says the start goes on from turns that ran before it (a resume or a
-/// compaction); when no earlier start of the session recorded anything,
-/// that their vault is not known is recorded first, and a start that cannot
-/// record that records nothing.
-pub(super) fn record(session: &str, hosted: Option<&HostedVault>, resumed: bool) {
-    let Some(folder) = session_folder(session) else {
+/// The folder in the run folder `host`'s sessions' folders are in. Hermes
+/// asks only `bind`, and a hand-over under its name reads a Claude Code
+/// log, so its sessions are Claude Code's.
+const fn folder(host: HookHost) -> &'static str {
+    match host {
+        HookHost::ClaudeCode | HookHost::Hermes => "hook-sessions",
+        HookHost::Codex => "hook-sessions-codex",
+        HookHost::Cursor => "hook-sessions-cursor",
+        HookHost::Copilot => "hook-sessions-copilot",
+    }
+}
+
+/// Records that a start of `host`'s session `session` bound the hosted
+/// vault `hosted`, or, with `None`, a pin, a local vault or no vault.
+/// `resumed` says the start goes on from turns that ran before it (a resume
+/// or a compaction); when no earlier start of the session recorded
+/// anything, that their vault is not known is recorded first, and a start
+/// that cannot record that records nothing.
+pub(super) fn record(host: HookHost, session: &str, hosted: Option<&HostedVault>, resumed: bool) {
+    let Some(folder) = session_folder(host, session) else {
         return;
     };
     if resumed && !recorded(&folder) && add(&folder, UNKNOWN, b"").is_err() {
@@ -125,11 +143,11 @@ pub(super) fn record(session: &str, hosted: Option<&HostedVault>, resumed: bool)
     remove_old(&folder);
 }
 
-/// What the starts of the session `session` bound; `None` when none
+/// What the starts of `host`'s session `session` bound; `None` when none
 /// recorded anything. A file that anyone else could write, or that this
 /// version does not read, reads as a mixed log, which no vault takes.
-pub(super) fn bound(session: &str) -> Option<SessionBinding> {
-    let folder = session_folder(session)?;
+pub(super) fn bound(host: HookHost, session: &str) -> Option<SessionBinding> {
+    let folder = session_folder(host, session)?;
     let mut files = fs::read_dir(&folder)
         .ok()?
         .filter_map(Result::ok)
@@ -163,10 +181,10 @@ pub(super) fn bound(session: &str) -> Option<SessionBinding> {
     Some(binding)
 }
 
-/// The folder of `session`, when its id is a plain name: ASCII letters,
-/// digits, dashes and underscores, as hosts name sessions, so it names no
-/// folder outside the run folder's.
-fn session_folder(session: &str) -> Option<PathBuf> {
+/// The folder of `host`'s session `session`, when its id is a plain name:
+/// ASCII letters, digits, dashes and underscores, as hosts name sessions, so
+/// it names no folder outside the run folder's.
+fn session_folder(host: HookHost, session: &str) -> Option<PathBuf> {
     let plain = !session.is_empty()
         && session.len() <= MAX_SESSION_ID_BYTES
         && session
@@ -175,7 +193,7 @@ fn session_folder(session: &str) -> Option<PathBuf> {
     if !plain {
         return None;
     }
-    Some(local_servers::run_dir()?.join(FOLDER).join(session))
+    Some(local_servers::run_dir()?.join(folder(host)).join(session))
 }
 
 /// Whether a start of the session whose folder is `folder` recorded
@@ -197,8 +215,11 @@ fn staging(name: &OsStr) -> bool {
 /// replaced by the same bytes. A writer that fails removes its staging file
 /// alone.
 fn add(folder: &Path, name: &str, body: &[u8]) -> anyhow::Result<()> {
-    let sessions = local_servers::ensure_run_dir()?.join(FOLDER);
-    for dir in [sessions.as_path(), folder] {
+    local_servers::ensure_run_dir()?;
+    let sessions = folder
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("{} is in no folder", folder.display()))?;
+    for dir in [sessions, folder] {
         match fs::DirBuilder::new().mode(0o700).create(dir) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -221,7 +242,10 @@ fn add(folder: &Path, name: &str, body: &[u8]) -> anyhow::Result<()> {
 }
 
 /// Removes the folders of sessions other than the one at `own` whose files
-/// were all written more than [`KEEP_FOR`] ago.
+/// are all `local` records or staging files, written more than [`KEEP_FOR`]
+/// ago. A folder holding any other record stays: removing it, or any part
+/// of it, could leave a session that may still hand over with no record, or
+/// with one of the vaults it bound alone (REVIEW-9914).
 fn remove_old(own: &Path) {
     let Some(sessions) = own.parent() else {
         return;
@@ -237,6 +261,10 @@ fn remove_old(own: &Path) {
             .and_then(|metadata| metadata.modified())
             .is_ok_and(|modified| modified < cutoff)
     };
+    let held = |path: &Path| {
+        path.file_name()
+            .is_some_and(|name| !staging(name) && name != OsStr::new(LOCAL))
+    };
     for entry in entries.filter_map(Result::ok) {
         let folder = entry.path();
         if folder == own || !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
@@ -249,7 +277,7 @@ fn remove_old(own: &Path) {
             .filter_map(Result::ok)
             .map(|file| file.path())
             .collect();
-        if files.iter().all(|file| old(file)) {
+        if files.iter().all(|file| old(file) && !held(file)) {
             for file in &files {
                 let _ = fs::remove_file(file);
             }
