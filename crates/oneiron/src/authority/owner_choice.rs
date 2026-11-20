@@ -482,6 +482,81 @@ fn counts_here<P>(
         )
 }
 
+/// What a recorded choice counts for on this install (DESIGN 15-setting-primitive 1.6, "What
+/// an act counts for"; the Setting's stage 7b-2). Every recorded choice passed the gate of who
+/// decided ([`choice_landing`]): its owner, proved, or an engine statement. A choice that needs
+/// a proof and has none waits in no frontier: a proposal, which has no effect and so no count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) enum ChoiceCount {
+    /// It counts at full strength here ([`counts_here`]): any move.
+    Full,
+    /// Its decider is proved and the entry is in doubt here (its carrier raced its removal, it
+    /// landed restriction only, this install's holds keep its carrier back, or two copies of it
+    /// disagree): a safe move, which gives no more than what it replaced. `held` when only this
+    /// install's own counting makes the doubt, so a machine with the same log may count it in
+    /// full; not held when the log alone shows it (the removal race fails pin-free, or two copies
+    /// disagree).
+    Safe { held: bool },
+}
+
+/// One choice's count, with the choices it replaced.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct CountedChoice {
+    pub(crate) count: ChoiceCount,
+    /// The live choices at its parents, which it replaced.
+    pub(crate) replaced: BTreeSet<AuthorityEntryHash>,
+}
+
+/// What each choice a reader of one frontier meets counts for, by its hash.
+pub(crate) type ChoiceCounts = BTreeMap<AuthorityEntryHash, CountedChoice>;
+
+fn count_of<P>(
+    standing: &Standing<'_>,
+    hash: &AuthorityEntryHash,
+    choice: &FrontierEdit<SignedOwnerChoice<P>>,
+) -> ChoiceCount {
+    if counts_here(standing, hash, choice) {
+        return ChoiceCount::Full;
+    }
+    let logged = choice.disputed
+        || !standing.owner_act_race(
+            choice.machine,
+            hash,
+            &choice.key,
+            &choice.marks,
+            StandingView::Under(MachineAdmitter::Roster),
+        );
+    ChoiceCount::Safe { held: !logged }
+}
+
+/// What each choice a reader of `frontier` meets counts for here: each live choice, and for one
+/// that does not count in full, each choice it replaced, judged the same way, until every path
+/// ends at a choice that counts in full or replaced nothing.
+fn choice_counts<P>(standing: &Standing<'_>, frontier: &ChoiceFrontier<P>) -> ChoiceCounts {
+    let mut counts = BTreeMap::new();
+    let mut stack: Vec<_> = frontier.live.keys().copied().collect();
+    while let Some(hash) = stack.pop() {
+        if counts.contains_key(&hash) {
+            continue;
+        }
+        let Some(choice) = choice_of(frontier, &hash) else {
+            continue;
+        };
+        let count = count_of(standing, &hash, choice);
+        if count != ChoiceCount::Full {
+            stack.extend(choice.replaced.iter().copied());
+        }
+        counts.insert(
+            hash,
+            CountedChoice {
+                count,
+                replaced: choice.replaced.clone(),
+            },
+        );
+    }
+    counts
+}
+
 /// Every choice `hash` descends from, through the choices each replaced.
 fn ancestors<P>(
     frontier: &ChoiceFrontier<P>,
@@ -623,6 +698,26 @@ pub(super) fn folded_owner_choices<P: Clone + PartialEq>(
             fold_frontier(&standing, frontier, &mut folded);
             (*target, folded)
         })
+        .collect()
+}
+
+/// What each choice a reader of each target meets counts for here, under this install's pin
+/// and holds ([`ChoiceCount`]; the Setting's stage 7b-2, which reads it beside
+/// [`folded_owner_choices`]).
+pub(super) fn owner_choice_counts<P>(
+    state: &FoldState,
+    register: &OwnerChoiceState<P>,
+    pin: Option<&PinnedRoot>,
+    counted: InstallCounted<'_>,
+) -> BTreeMap<EntityId, ChoiceCounts> {
+    if register.frontiers.is_empty() {
+        return BTreeMap::new();
+    }
+    let standing = Standing::new(state, pin, counted);
+    register
+        .frontiers
+        .iter()
+        .map(|(target, frontier)| (*target, choice_counts(&standing, frontier)))
         .collect()
 }
 
