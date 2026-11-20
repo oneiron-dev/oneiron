@@ -18,6 +18,15 @@
 //! writer finds the Δ gone and lands nothing under the skeleton (REVIEW-10051
 //! P1-1). The race is set up through a test door that runs the erase there.
 //!
+//! What a dropped judgment held up goes on the next gate-decision
+//! housekeeping sweep, with no later settle (FIX
+//! [AMENDMENT-TARGET-RETRACT-WAITS-FOR-NEXT-SETTLE]): a judged execution
+//! lapse charges the MACHINE's own edit-cost cell and earns it a lesson, and
+//! after the erase of the claim, or a re-judgment that withdraws the lapse,
+//! the owner's housekeeping pass leaves the cell counting no run and the
+//! lesson retracted. On main both stood until some later amendment settled.
+//! A sweep over a lapse nothing dropped leaves both as they were.
+//!
 //! The cause rows have no public read that shows a row whose judgment is
 //! gone, so they are counted through a test door:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -26,18 +35,23 @@
 #![cfg(all(feature = "test-support", oneiron_test_support))]
 
 use ed25519_dalek::{Signer as _, SigningKey};
+use oneiron::actor_claims::PREDICATE_ACTOR_LESSON;
 use oneiron::authority::HostSlipIssuer;
 use oneiron::edit_distance::attribution::{
-    AmendmentCause, AmendmentEvidence, amendment_evidence, amendment_judgments, judge_amendment,
-    pending_preference_proposals, record_amendment_evidence,
+    AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment, amendment_evidence,
+    amendment_judgments, edit_cost_for, judge_amendment, pending_preference_proposals,
+    project_amendment_lessons, project_edit_cost_claims, record_amendment_evidence,
 };
+use oneiron::housekeeping::HousekeepingBudget;
 use oneiron::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
+use oneiron::skill::{SkillLifecycle, SkillRecord, canonical_skill_tree_hash};
 use oneiron::test_doors::gate_amendment_attribution as door;
 use oneiron::test_support::bind_host_owner;
 use oneiron::write_envelope::MachineWriteSignature;
 use oneiron::{
-    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, DeleteReason, EdgeActorClass,
-    EntityId, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
+    ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    DeleteReason, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor,
+    WriteEnvelope, WriteProvenance,
 };
 
 const SECRET: &[u8] = b"gate-amendment-attribution-erase-test-owner";
@@ -317,5 +331,209 @@ fn an_erase_that_overtakes_the_evidence_doors_reads_leaves_no_evidence() {
     assert!(
         recorded.is_err(),
         "the evidence door refuses a receipt whose Δ the erase took: {recorded:?}"
+    );
+}
+
+/// A SKILL the vault holds Active: the one the lapse evidence says the
+/// MACHINE had for the step and did not follow.
+fn active_skill(vault: &Vault) -> EntityId {
+    let id = EntityId::now();
+    let tree = canonical_skill_tree_hash([("SKILL.md", b"# lapse fixture\n".as_slice())])
+        .expect("FIXTURE: the skill tree hash");
+    let candidate = SkillRecord::new(
+        "gate-amendment.lapse",
+        "a skill the machine did not follow",
+        "1.0.0",
+        ClaimApprovalStatus::Approved,
+        SkillLifecycle::Candidate,
+        ClaimSource::UserStated,
+        0.9,
+        false,
+        true,
+        Vec::new(),
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("source"),
+            rmpv::Value::from("gate-amendment-lapse-fixture"),
+        )]),
+    )
+    .with_content_hash(tree);
+    vault
+        .put_skill_record(&id, &candidate, at(10), 11)
+        .expect("FIXTURE: the skill");
+    let mut active = candidate;
+    active.lifecycle_status = SkillLifecycle::Active;
+    vault
+        .update_skill_record(&id, &active, at(12), 13)
+        .expect("FIXTURE: the skill goes Active");
+    id
+}
+
+/// The routing facts for the amendment under `receipt`, naming `skill`:
+/// the proposal was wrong, and with `followed` unset the judge has a fact
+/// unsettled and abstains. `Some(false)`: the MACHINE had the skill for the
+/// step and did not follow it, an execution lapse.
+fn lapse_evidence(
+    seeded: &Seeded,
+    receipt: &str,
+    skill: EntityId,
+    followed: Option<bool>,
+) -> AmendmentEvidence {
+    let evidence = AmendmentEvidence::new(receipt, seeded.machine, SCOPE)
+        .at(seeded.now)
+        .with_skill(skill)
+        .with_cause(AmendmentCause::ProposalWrong);
+    match followed {
+        Some(followed) => evidence.with_routing_facts(followed, true),
+        None => evidence,
+    }
+}
+
+/// An owner-amended claim whose amendment the judge settles as one
+/// execution lapse of the MACHINE, projected: its charge on the MACHINE's
+/// own edit-cost cell and its lesson. Returns the claim, its receipt, the
+/// skill and the judgment.
+fn projected_lapse(seeded: &Seeded) -> (EntityId, String, EntityId, AmendmentJudgment) {
+    let vault = &seeded.vault;
+    let skill = active_skill(vault);
+    let (target, receipt) = owner_amended_claim(seeded);
+    record_amendment_evidence(vault, &lapse_evidence(seeded, &receipt, skill, Some(false)))
+        .expect("FIXTURE: the lapse evidence");
+    let judgment = judge_amendment(vault, &receipt)
+        .expect("FIXTURE: the judging pass")
+        .expect("FIXTURE: a skill the machine did not follow is a lapse");
+    assert_eq!(
+        judgment.sole_class(),
+        Some(AmendmentClass::ExecutionLapse),
+        "FIXTURE: the judgment is one execution lapse"
+    );
+    project_edit_cost_claims(vault, std::slice::from_ref(&judgment))
+        .expect("FIXTURE: the edit-cost pass");
+    project_amendment_lessons(vault, std::slice::from_ref(&judgment))
+        .expect("FIXTURE: the lesson pass");
+    assert!(
+        machine_cell_runs(seeded, &judgment) > 0.0,
+        "FIXTURE: the lapse charges the MACHINE's own edit-cost cell"
+    );
+    assert_eq!(
+        active_lessons(seeded),
+        vec![format!("execution_lapse:{receipt}")],
+        "FIXTURE: the lapse earns the MACHINE one lesson citing the receipt"
+    );
+    (target, receipt, skill, judgment)
+}
+
+/// The own runs the MACHINE's edit-cost cell counts where `judgment`
+/// charged it: none while the cell holds no row.
+fn machine_cell_runs(seeded: &Seeded, judgment: &AmendmentJudgment) -> f64 {
+    edit_cost_for(
+        &seeded.vault,
+        &seeded.machine,
+        &seeded.machine.to_hex(),
+        &judgment.scope,
+        judgment.type_ref.as_ref(),
+        judgment.project,
+    )
+    .expect("edit-cost read")
+    .map_or(0.0, |estimate| estimate.runs)
+}
+
+/// The text of each Active lesson the MACHINE holds.
+fn active_lessons(seeded: &Seeded) -> Vec<String> {
+    let vault = &seeded.vault;
+    let mut lessons = Vec::new();
+    for id in vault
+        .claims_for_subject(&seeded.machine)
+        .expect("claim read")
+    {
+        let Some(body) = vault.get_claim(&id).expect("claim read") else {
+            continue;
+        };
+        if body.predicate == PREDICATE_ACTOR_LESSON
+            && body.lifecycle == ClaimLifecycleStatus::Active
+            && let Some(text) = body.value.as_str()
+        {
+            lessons.push(text.to_owned());
+        }
+    }
+    lessons
+}
+
+/// The owner's housekeeping pass: every engine sweep now, the gate-decision
+/// sweep among them.
+fn housekeeping(seeded: &Seeded) {
+    seeded
+        .vault
+        .housekeeping_all(HousekeepingBudget::unbounded())
+        .expect("the owner's housekeeping pass");
+}
+
+#[test]
+fn an_erased_amendments_charge_and_lesson_go_on_the_next_gate_decision_sweep() {
+    let seeded = seed();
+    let (target, _, _, judgment) = projected_lapse(&seeded);
+    seeded
+        .vault
+        .delete_entity_with_reason(&target, DeleteReason::UserHardDelete)
+        .expect("the owner's erase of the claim");
+
+    housekeeping(&seeded);
+
+    assert_eq!(
+        machine_cell_runs(&seeded, &judgment),
+        0.0,
+        "the sweep after the erase leaves the MACHINE's cell counting no run of the erased receipt"
+    );
+    assert!(
+        active_lessons(&seeded).is_empty(),
+        "the sweep after the erase retracts the erased receipt's lesson: {:?}",
+        active_lessons(&seeded)
+    );
+}
+
+#[test]
+fn a_withdrawn_lapses_charge_and_lesson_go_on_the_next_gate_decision_sweep() {
+    let seeded = seed();
+    let (_, receipt, skill, judgment) = projected_lapse(&seeded);
+    record_amendment_evidence(
+        &seeded.vault,
+        &lapse_evidence(&seeded, &receipt, skill, None),
+    )
+    .expect("FIXTURE: the routing facts recorded again, unsettled");
+    assert!(
+        judge_amendment(&seeded.vault, &receipt)
+            .expect("the re-judging pass")
+            .is_none(),
+        "FIXTURE: a judge with a fact unsettled abstains, which withdraws the lapse"
+    );
+
+    housekeeping(&seeded);
+
+    assert_eq!(
+        machine_cell_runs(&seeded, &judgment),
+        0.0,
+        "the sweep after the withdrawal leaves the MACHINE's cell counting no run of the receipt"
+    );
+    assert!(
+        active_lessons(&seeded).is_empty(),
+        "the sweep after the withdrawal retracts the lapse's lesson: {:?}",
+        active_lessons(&seeded)
+    );
+}
+
+#[test]
+fn a_gate_decision_sweep_keeps_a_standing_lapses_charge_and_lesson() {
+    let seeded = seed();
+    let (_, receipt, _, judgment) = projected_lapse(&seeded);
+
+    housekeeping(&seeded);
+
+    assert!(
+        machine_cell_runs(&seeded, &judgment) > 0.0,
+        "a sweep over a judgment nothing dropped leaves its charge in the MACHINE's cell"
+    );
+    assert_eq!(
+        active_lessons(&seeded),
+        vec![format!("execution_lapse:{receipt}")],
+        "a sweep over a judgment nothing dropped leaves its lesson standing"
     );
 }
