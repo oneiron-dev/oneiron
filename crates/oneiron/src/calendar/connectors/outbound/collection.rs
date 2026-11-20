@@ -11,16 +11,17 @@
 //! and no upsert of the UID is in flight; else it stays owed. A pulled
 //! cancelled version of a member an upsert in flight writes cancelled
 //! ([`cancelled_members_in_flight`]) stays owed the same way, and so does a
-//! pulled copy of a first write in flight ([`first_write_in_flight`]).
+//! pulled copy of a first write any seat has not settled
+//! ([`first_write_unsettled`]).
 
 use super::super::door::CalendarConnectorOperation;
 use super::super::remote::ics_content_hash;
 use super::super::resource::read_blob_ref;
 use super::super::seat::CalendarConnectorError;
 use super::{
-    CalendarWriteAction, CalendarWriteOutboxState, OUTBOX, OutboxKey, REMOTE_OBJECT,
-    REMOTE_OBJECT_TAG, RemoteObjectKey, derive_outbox_id, open_cursor, remote_object_digest,
-    remote_projection,
+    CalendarWriteAction, CalendarWriteOutboxState, LOCAL_UID_DOMAIN, OUTBOX, OUTBOX_ROW_TAG,
+    OutboxKey, REMOTE_OBJECT, REMOTE_OBJECT_TAG, RemoteObjectKey, derive_outbox_id, local_uid,
+    open_cursor, remote_object_digest, remote_projection,
 };
 use crate::entity_id::EntityId;
 use crate::vault::Vault;
@@ -137,7 +138,7 @@ pub(crate) fn omission_observed(
 /// once the write settles (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
 /// The pull matches its VEVENTs to them by that identity, whatever
 /// exception claims a member holds now; a first write's copy is held back
-/// before, whole ([`first_write_in_flight`]).
+/// before, whole ([`first_write_unsettled`]).
 ///
 /// The caller holds the vault's calendar admission turn, in which a write
 /// publishes its prepared row and settles, so neither lands between this
@@ -168,15 +169,21 @@ pub(crate) fn cancelled_members_in_flight(
         .collect()
 }
 
-/// Whether an upsert of `uid` still in flight on this seat (prepared or
-/// remotely applied, not yet settled) is the first write of its EVENT,
-/// under the UID it minted, which no EVENT carries yet
-/// ([`super::is_first_write`]): no passport names it before the write
-/// settles. A pulled resource of `uid`
-/// may be that write coming back, and would import a second EVENT, so the
-/// pull leaves it owed and reads it again once the write settles or its
-/// refused replay publishes it
+/// Whether a first write of `uid` on any seat of the vault has not bound
+/// the UID yet: prepared or remotely applied, or refused with its stored
+/// copy's proof owed ([`super::CalendarWriteOutboxRow::stored_copy_unproven`]).
+/// A first write stages under the UID it minted for its EVENT
+/// ([`super::is_first_write`]), and no passport names that UID before the
+/// write binds it, so a pulled resource of `uid` may be that write coming
+/// back, and would import a second EVENT. Another seat may read the same
+/// collection under another system name, and its outbox holds no row of
+/// the write, so the check reads every seat's rows. The pull leaves the
+/// resource owed and reads it again once the write settles, or its writing
+/// seat's pull proves the copy
 /// (CAL-FIRST-WRITE-COPY-PULLED-UNSETTLED-IMPORTS-DUPLICATE-EVENT).
+///
+/// Only a UID of the minted form that resolves to no EVENT reads the
+/// outbox, and the check opens no row's sealed values.
 ///
 /// The caller holds the vault's calendar admission turn, in which a write
 /// publishes its prepared row and settles, so neither lands between this
@@ -184,22 +191,35 @@ pub(crate) fn cancelled_members_in_flight(
 ///
 /// # Errors
 ///
-/// Scope and storage failures, and a stored row that does not decode.
-pub(crate) fn first_write_in_flight(
+/// Resolution and storage failures, and a stored row that does not decode.
+pub(crate) fn first_write_unsettled(
     vault: &Vault,
-    operation: &CalendarConnectorOperation,
     uid: &str,
 ) -> Result<bool, CalendarConnectorError> {
-    let scope = operation.literal_scope()?;
-    // Drop the table reader before the UID is resolved.
-    let stored = {
-        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        upsert_in_flight(vault, &txn, &scope, operation, uid)?
-    };
-    let Some(row) = stored else {
+    // Only a first write mints a UID of the form `<event>@calendar.invalid`
+    // ([`local_uid`]); one that resolves to an EVENT is bound already.
+    let minted_form = uid
+        .strip_suffix(LOCAL_UID_DOMAIN)
+        .and_then(|event| event.strip_suffix('@'))
+        .is_some();
+    if !minted_form || crate::calendar::passport::resolve_event_by_uid(vault, uid)?.is_some() {
         return Ok(false);
+    }
+    let rows = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        OUTBOX.scan_from(&vault.store, &txn, OUTBOX_ROW_TAG)?
     };
-    super::is_first_write(vault, &row.into_row()?)
+    Ok(rows.into_iter().any(|(_, row)| {
+        let unsettled = match row.state {
+            CalendarWriteOutboxState::Prepared | CalendarWriteOutboxState::RemoteApplied => true,
+            CalendarWriteOutboxState::ReconcileRequired => row.stored_copy_unproven,
+            CalendarWriteOutboxState::Committed => false,
+        };
+        unsettled
+            && row.action == CalendarWriteAction::Upsert
+            && row.uid == uid
+            && EntityId::from_bytes(row.event_ref).is_ok_and(|event| local_uid(&event) == uid)
+    }))
 }
 
 /// This seat's outbox row of a replayed upsert of `uid` whose precondition

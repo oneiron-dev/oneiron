@@ -2,7 +2,7 @@
 
 use super::door::CalendarConnectorOperation;
 use super::outbound::{
-    CalendarRemoteObjectRow, cancelled_members_in_flight, first_write_in_flight, ingest_error,
+    CalendarRemoteObjectRow, cancelled_members_in_flight, first_write_unsettled, ingest_error,
     omission_observed, prove_unproven_replay, write_remote_object,
 };
 use super::remote::{
@@ -202,13 +202,14 @@ fn apply_remote_change(
             // (BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY), nor a first
             // write's as a second EVENT.
             prove_unproven_replay(vault, operation, provider, object, &primary.uid, now)?;
-            // A first write's copy coming back before the write settles
-            // resolves no EVENT: nothing names the UID the write minted
+            // A first write's copy coming back before the write binds its
+            // UID resolves no EVENT: nothing names the UID the write minted
             // until its passport lands. The resource stays owed and unread,
-            // so it never imports a second EVENT, and the next pull after
-            // the settlement reads it on the written EVENT
+            // so it never imports a second EVENT, on this seat or on any
+            // other seat of the collection, and the next pull after the
+            // write binds the UID reads it on the written EVENT
             // (CAL-FIRST-WRITE-COPY-PULLED-UNSETTLED-IMPORTS-DUPLICATE-EVENT).
-            if first_write_in_flight(vault, operation, &primary.uid)? {
+            if first_write_unsettled(vault, &primary.uid)? {
                 counters.owed_first_write_copies += 1;
                 return Ok(());
             }

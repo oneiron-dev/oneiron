@@ -9,7 +9,7 @@ pub use self::collection::{
     calendar_collection_members_for_operation,
 };
 pub(super) use self::collection::{
-    cancelled_members_in_flight, first_write_in_flight, omission_observed,
+    cancelled_members_in_flight, first_write_unsettled, omission_observed,
 };
 
 use serde::{Deserialize, Serialize};
