@@ -20,7 +20,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::super::checkpoint_image::parents_first_of;
 use super::*;
 
 /// The covered rows `tail` floors, where the tail's rows of each signer and
@@ -191,17 +190,19 @@ fn vouch_tip_free(
 /// (`rows_floor::rows_sequence_floors`). A row that names a side row of
 /// another world is left out and never walked.
 ///
-/// Cost: one parents-first order of the covered rows; then each pair of a
-/// signer's rows next to each other in a scope walks only rows that order
-/// puts between the two, so one signer's walks in a scope pass each covered
-/// row and parent link at most once. Different signers' walks share no such
-/// bound (Astra round 2 F1: signers whose rows sit either side of one long
-/// chain each walk all of it): the check costs O(K (rows + links) log rows)
-/// for the K signers with two or more covered rows in one scope. Each walk
-/// stays inside its upper row's ancestry, and a row is the upper of at most
-/// one pair, so the check does no more work than building the covered rows'
-/// ancestor index (`entry_ancestor_index`) for the whole fold a false answer
-/// falls back to. It holds one visited set at a time.
+/// One pass over the rows such a walk could pass
+/// (`rows_floor::highest_key_row_below`), not one walk per pair (FIX
+/// [ADOPTED-FOLD-GATE-SIGNER-COST]; Astra round 2 F1: signers whose rows sat
+/// either side of one long chain each walked all of it). Where a key's rows
+/// rise strictly, they form one chain exactly when each row's highest row of
+/// its key below it is the row before it: on a chain, the rows below a row
+/// are those before it, and a row after it below it would close a cycle,
+/// which no hash-linked log holds. The pass answers None on a cycle, which
+/// sends the tail to the whole history as a false answer always may.
+///
+/// Cost: O((rows + links) log rows) for the order, O(log K) per row for the
+/// K keys with two or more rows, and O(K log K) at most per join, in place
+/// of a walk per key over the rows between each two of its rows.
 pub(super) fn covered_rows_unfloored(
     image: &AuthorityCheckpointV2,
     signer: impl Fn(&AuthorityKey) -> bool,
@@ -224,37 +225,42 @@ pub(super) fn covered_rows_unfloored(
                 .push((row.seq, *hash));
         }
     }
-    if scopes.values().all(|rows| rows.len() < 2) {
+    scopes.retain(|_, rows| rows.len() >= 2);
+    for rows in scopes.values_mut() {
+        rows.sort_unstable();
+        if !rows.windows(2).all(|pair| pair[0].0 < pair[1].0) {
+            return false;
+        }
+    }
+    if scopes.is_empty() {
         return true;
     }
-    let parents: BTreeMap<_, _> = image
+    let keys: BTreeMap<_, usize> = scopes
+        .keys()
+        .enumerate()
+        .map(|(index, key)| (*key, index))
+        .collect();
+    let worlds: BTreeSet<_> = scopes.keys().map(|(_, world)| *world).collect();
+    let walked: BTreeMap<_, _> = image
         .rows
         .iter()
-        .map(|(hash, row)| (*hash, row.parents.clone()))
-        .collect();
-    let rank: BTreeMap<_, _> = parents_first_of(&parents)
-        .into_iter()
-        .enumerate()
-        .map(|(rank, hash)| (hash, rank))
-        .collect();
-    scopes.into_iter().all(|((_, world), mut rows)| {
-        rows.sort_unstable();
-        rows.windows(2).all(|pair| {
-            let ((lower_seq, lower), (upper_seq, upper)) = (pair[0], pair[1]);
-            // A row before `lower` in the order has no path to it.
-            let lower_rank = rank[&lower];
-            lower_seq < upper_seq
-                && crate::authority::rows_floor::descends_within_scope(
-                    &lower,
-                    &image.rows[&upper].parents,
-                    world,
-                    |hash| {
-                        let row = image.rows.get(hash)?;
-                        (rank[hash] > lower_rank && !violates(row.world, &row.parents))
-                            .then_some((row.parents.as_slice(), row.world))
-                    },
-                )
+        .filter(|(_, row)| worlds.contains(&row.world) && !violates(row.world, &row.parents))
+        .map(|(hash, row)| {
+            let scope_row = crate::authority::rows_floor::ScopeRow {
+                parents: &row.parents,
+                scope: row.world,
+                seq: row.seq,
+                key: keys.get(&(&row.signer, row.world)).copied(),
+            };
+            (*hash, scope_row)
         })
+        .collect();
+    let Some(below) = crate::authority::rows_floor::highest_key_row_below(&walked) else {
+        return false;
+    };
+    scopes.values().all(|rows| {
+        rows.windows(2)
+            .all(|pair| below.get(&pair[1].1) == Some(&pair[0].1))
     })
 }
 
