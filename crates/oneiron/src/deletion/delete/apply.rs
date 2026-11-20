@@ -160,6 +160,8 @@ impl Vault {
                 .hold(window_label, id, &tombstone)
         });
         wtxn.commit()?;
+        // The scrub linearized this delete: its brief fence stays.
+        self.store.brief_delete_fences.settle(id);
         if existed {
             self.notify_local_delete_materialized(&changed);
             gate.as_ref()

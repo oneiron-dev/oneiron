@@ -35,7 +35,8 @@ use crate::write_envelope::WriteActor;
 const ADMISSIONS: SideTable<EntityId, Vec<u8>, Raw> =
     SideTable::new(&side_table::SHARE_BRIEF_ADMISSION);
 
-/// A one-way identity fence. Its exact stored marker is the single byte `1`.
+/// A deleting brief's identity fence ([`reserve_brief_delete`]). Its exact
+/// stored marker is the single byte `1`.
 const DELETE_RESERVATIONS: SideTable<EntityId, [u8; 1], Raw> =
     SideTable::new(&side_table::SHARE_BRIEF_DELETE_RESERVATION);
 
@@ -242,16 +243,33 @@ fn decode_refs(value: &Value) -> Result<BTreeSet<EntityId>> {
 // Local, engine-written provenance. Generic grant writes cannot touch a reserved id,
 // even after deletion or a foreign overwrite. A replayed row with no local admission
 // never becomes a usable share. No rendered bytes or claim values live here.
-// A one-way admission fence for a deleted brief identity. It is staged in the
-// same writer that rechecks direct shares, before the CRDT tombstone can publish.
-// A failed delete may leave the fence, but cannot leave an unshared new grant
-// racing ahead of a later retry at the same id.
+// An admission fence for a deleted brief identity. It is staged in the same
+// writer that rechecks direct shares, before the CRDT tombstone can publish, and
+// stays once a delete of the id linearizes. A delete refused before that point
+// releases a fence its own flight created ([`crate::deletion::BriefDeleteFences`]),
+// so it leaves no unshared new grant racing ahead of a later retry at the same
+// id, and no live brief that can never be shared again. A crash keeps the fence.
+// Returns whether this put created the row.
 pub(crate) fn reserve_brief_delete(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
-) -> Result<()> {
+) -> Result<bool> {
+    if DELETE_RESERVATIONS.contains(store, txn, id)? {
+        return Ok(false);
+    }
     DELETE_RESERVATIONS.put(store, txn, id, &[1])?;
+    Ok(true)
+}
+
+/// Removes the fence [`reserve_brief_delete`] created for a delete refused
+/// before it linearized.
+pub(crate) fn release_brief_delete(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    DELETE_RESERVATIONS.delete(store, txn, id)?;
     Ok(())
 }
 

@@ -127,6 +127,11 @@ impl Vault {
             owner,
             &mut doc_mutated,
         );
+        // A committed publication, or a live document it changed, linearized
+        // this delete: its brief fence stays.
+        if outcome.is_ok() || doc_mutated {
+            self.store.brief_delete_fences.settle(id);
+        }
         crate::sync::note::deleted_elsewhere(self, window_label, outcome.is_ok().then_some(*id));
         if outcome.is_err() && !doc_mutated {
             // Pre-CRDT errors have no document mutation to recover: drop
@@ -1030,7 +1035,7 @@ impl Vault {
     #[allow(clippy::unnecessary_wraps, clippy::too_many_arguments)]
     pub(super) fn write_crdt_tombstone_due(
         &self,
-        _id: &EntityId,
+        id: &EntityId,
         _window_ts: u64,
         _window_label: &str,
         _value: &TombstoneValueV2,
@@ -1049,6 +1054,9 @@ impl Vault {
         // sync-enabled boot that later replays it replays a deletion that WAS
         // authorized when its transaction committed — the value of `false` must
         // never be faked to `true` to "simplify" the callers.
+        // The brief fence settles here all the same: with no publication to
+        // bracket, a refusal past this point keeps the fence, fail-closed.
+        self.store.brief_delete_fences.settle(id);
         Ok(false)
     }
 }
