@@ -59,6 +59,20 @@
 //!   so every landed summary read as not the Dreamer's and none could be
 //!   reverted. The revert now reads the summary's resolved body.
 //!
+//! Round 1 of #9808 found three more, each red at #9808's head 8a75c5cf0c2:
+//! - P1 revert.rs:469: the owner's edit leaves a summary's text blank. The
+//!   revert decoded the whole body, which refuses a blank text, so the owner's
+//!   list of the Dreamer's changes left the summary out and the revert said
+//!   the Dreamer did not write it. The revert now reads only its producer.
+//! - P1 revert.rs:286: a header the owner lands for a summary after its
+//!   declaration (`Vault::land_header`) stood after the revert archived the
+//!   summary; only the header the declaration landed was retracted. The
+//!   revert now retracts every standing header that lands the summary.
+//! - P1 derivation.rs:325: the revert restored the predecessor of a summary
+//!   declared over another source set with the reverted summary's set, so
+//!   the predecessor re-derived from the reverted summary's records. A
+//!   rollback now restores the predecessor's own declaration.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test conversation_summary_requester_lane`.
 #![cfg(oneiron_test_support)]
@@ -73,12 +87,13 @@ use oneiron::authority::{
 };
 use oneiron::claim::ScopedRead;
 use oneiron::conversation_dag::{ScopePath, ScopeSelector};
-use oneiron::dreamer_consolidation::ScopeSummaryExecutor;
+use oneiron::dreamer_consolidation::{DreamerChangeKind, ScopeSummaryExecutor};
 use oneiron::dreamer_runner::{
     AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, DreamerAdmissionOutcome,
     DreamerAdmittedAttempt, DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
     DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerRunnerStore,
 };
+use oneiron::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb};
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext, ReplyAssertions};
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
@@ -779,6 +794,76 @@ fn owner_reverts(
         .map_err(|error| format!("{error} ({error:?})"))
 }
 
+/// The owner declares a summary of `target` on their own lane.
+fn owner_declares(fixture: &Fixture, target: ScopeSummaryTarget) -> ScopeSummaryQueued {
+    fixture
+        .vault
+        .request_scope_summary(&ScopeSummaryRequest {
+            target,
+            requester: WriteActor::new(fixture.owner, EdgeActorClass::Human),
+        })
+        .expect("the owner declares a summary on their own lane")
+}
+
+/// The owner's summary of the whole conversation, composed by `model` and
+/// landed on no turn: its SUMMARY.
+fn owner_landed_summary(fixture: &Fixture, model: &ScriptedSummaryModel<'_>) -> EntityId {
+    let queued = owner_declares(
+        fixture,
+        ScopeSummaryTarget::Scope {
+            scope: canonical(fixture.conversation),
+            land_on: None,
+            as_record: false,
+        },
+    );
+    let run = run_summary(fixture, queued, model);
+    landed_summary(fixture, queued, &run)
+}
+
+/// The owner, in person, replaces the whole text of `summary` with a space
+/// through the document door: the edit merges, and the text is blank.
+fn owner_blanks_summary(fixture: &Fixture, summary: EntityId) {
+    let vault = &fixture.vault;
+    let end = vault
+        .entity_text(&summary)
+        .expect("the landed summary's text")
+        .chars()
+        .count();
+    vault
+        .edit_entity_text(
+            &summary,
+            &[AnchoredEdit {
+                actor: Some(WriteActor::new(fixture.owner, EdgeActorClass::Human)),
+                verb: EditVerb::ReplaceQuotedSpan {
+                    span: vault
+                        .entity_text_anchor(&summary, 0, end)
+                        .expect("an anchor over the summary's whole text"),
+                    text: " ".to_owned(),
+                },
+            }],
+            &DocAuthorization::Owner(&fixture.owner_proof),
+            vault.now_recorded_at(),
+        )
+        .expect("the owner's edit of the summary's text");
+    assert!(
+        vault
+            .entity_text(&summary)
+            .expect("the edited summary's text")
+            .trim()
+            .is_empty(),
+        "FIXTURE: the owner's edit left the summary's text blank"
+    );
+}
+
+/// Whether the CLAIM `claim` stands.
+fn claim_stands(fixture: &Fixture, claim: EntityId) -> bool {
+    fixture
+        .vault
+        .get_claim(&claim)
+        .expect("read the claim")
+        .is_some_and(|body| body.lifecycle.as_str() == "active")
+}
+
 #[test]
 fn a_conversation_summary_whose_credential_ends_before_the_dreamer_runs_is_not_composed() {
     let fixture = fixture();
@@ -1094,4 +1179,147 @@ fn a_reverted_summary_restores_its_predecessor_under_the_predecessors_own_lane()
         later.to_hex()
     );
     assert_eq!(rederive.calls(), 1, "expected one model call");
+}
+
+#[test]
+fn the_owner_lists_and_reverts_a_summary_whose_text_an_edit_left_blank() {
+    let fixture = fixture();
+    let model = ScriptedSummaryModel::new(&fixture, false);
+    let summary = owner_landed_summary(&fixture, &model);
+    owner_blanks_summary(&fixture, summary);
+    let listed = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .dreamer_changes(&fixture.owner_proof, 50)
+        .expect("the owner's list of the Dreamer's changes");
+    assert!(
+        listed
+            .changes
+            .iter()
+            .any(|change| change.change == summary && change.kind == DreamerChangeKind::Summary),
+        "actor=the owner; their edit left the text of the Dreamer's SUMMARY {} blank; expected their list of the Dreamer's changes to name it; listed {:?}",
+        summary.to_hex(),
+        listed
+            .changes
+            .iter()
+            .map(|change| (change.change.to_hex(), change.kind))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        owner_reverts(&fixture, summary),
+        Ok((Some(summary), None)),
+        "actor=the owner; their edit left the text of the Dreamer's SUMMARY {} blank; expected their revert to archive it",
+        summary.to_hex()
+    );
+}
+
+#[test]
+fn the_owners_revert_retracts_a_header_landed_after_the_summarys_declaration() {
+    let fixture = fixture();
+    let model = ScriptedSummaryModel::new(&fixture, false);
+    let summary = owner_landed_summary(&fixture, &model);
+    let header = fixture
+        .vault
+        .land_header(
+            &summary,
+            &fixture.turn,
+            WriteActor::new(fixture.owner, EdgeActorClass::Human),
+            false,
+        )
+        .expect("the owner lands the summary's header on the conversation's TURN")
+        .claim;
+    assert!(
+        claim_stands(&fixture, header),
+        "FIXTURE: the summary's header {} stands",
+        header.to_hex()
+    );
+    let receipt = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .revert_dreamer_change(
+            &fixture.owner_proof,
+            summary,
+            fixture.vault.now_recorded_ms(),
+        )
+        .expect("the owner's revert of the summary");
+    assert_eq!(
+        receipt.reverted.archived,
+        Some(summary),
+        "FIXTURE: the revert archived the summary"
+    );
+    assert!(
+        !claim_stands(&fixture, header) && receipt.reverted.retracted == vec![header],
+        "actor=the owner; SUMMARY {} landed on no turn, then the owner landed its header {} on TURN {}; expected the revert to retract that header with the summary; retracted {:?}",
+        summary.to_hex(),
+        header.to_hex(),
+        fixture.turn.to_hex(),
+        receipt
+            .reverted
+            .retracted
+            .iter()
+            .map(EntityId::to_hex)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_reverted_summary_restores_its_predecessor_with_the_predecessors_own_sources() {
+    let fixture = fixture();
+    let (later, _) = witness_turn(
+        &fixture.vault,
+        fixture.owner,
+        fixture.conversation,
+        LATER_TEXT,
+    );
+    let model = ScriptedSummaryModel::new(&fixture, false);
+    // Two source sets of the one conversation: the later set's summary
+    // continues the earlier set's, its predecessor (FIX 3198).
+    let landed_from = |turn: EntityId| {
+        let queued = owner_declares(
+            &fixture,
+            ScopeSummaryTarget::Sources {
+                scope: Some(canonical(fixture.conversation)),
+                sources: vec![turn],
+            },
+        );
+        let run = run_summary(&fixture, queued, &model);
+        landed_summary(&fixture, queued, &run)
+    };
+    let first = landed_from(fixture.turn);
+    let second = landed_from(later);
+    let covers = |summary: EntityId| {
+        fixture
+            .vault
+            .scope_summary_covers(&summary)
+            .expect("the summary's covers")
+    };
+    let (restored, reverted) = (covers(first), covers(second));
+    assert!(
+        !restored.is_empty() && !restored.iter().any(|id| reverted.contains(id)),
+        "FIXTURE: the two source sets' summaries cover different records: {restored:?} and {reverted:?}"
+    );
+    assert_eq!(
+        owner_reverts(&fixture, second),
+        Ok((Some(second), Some(first))),
+        "FIXTURE: the owner's revert archives SUMMARY {} and restores its predecessor {}",
+        second.to_hex(),
+        first.to_hex()
+    );
+    // The owner's edit of the restored summary re-derives it from its
+    // projection's declaration.
+    owner_edits_summary(&fixture, first, fixture.message);
+    let rederive = ScriptedSummaryModel::new(&fixture, false);
+    let (rederived, run) = run_next(&fixture, &rederive);
+    let third = landed_summary(&fixture, rederived, &run);
+    let rederived_covers = covers(third);
+    assert!(
+        restored.iter().all(|id| rederived_covers.contains(id))
+            && !reverted.iter().any(|id| rederived_covers.contains(id)),
+        "actor=the owner; SUMMARY {} of TURN {} was restored by the revert of SUMMARY {} of TURN {}; the owner edited it; expected its re-derivation {} to cover {restored:?}, its own source set's records, not {reverted:?}; covers {rederived_covers:?}",
+        first.to_hex(),
+        fixture.turn.to_hex(),
+        second.to_hex(),
+        later.to_hex(),
+        third.to_hex()
+    );
 }
