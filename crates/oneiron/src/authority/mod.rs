@@ -163,6 +163,7 @@ mod principal_standing;
 mod readonly_fold;
 mod recover_many;
 mod recovery;
+mod recovery_authority_generation;
 mod restored_join;
 mod restored_join_door;
 mod retired_signers;

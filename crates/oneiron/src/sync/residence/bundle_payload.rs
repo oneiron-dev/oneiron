@@ -409,7 +409,7 @@ impl WindowManager {
         vault.import_signed_authority_history_judged(
             &authority,
             |txn| checkpoint::adopt_in_txn(vault, txn, vault_id, carried, trust, seed, confirm),
-            |fold| vault.kit_root_authority_signer(fold, seed).map(drop),
+            |txn, fold| vault.kit_root_authority_signer(txn, fold, seed).map(drop),
         )?;
         {
             let txn = vault.store.env.read_txn()?;
@@ -466,7 +466,7 @@ impl WindowManager {
         let kit_root_live = || -> Result<()> {
             let txn = vault.store.env.read_txn()?;
             let fold = vault.authority_view_readonly_in_txn(&txn)?;
-            vault.kit_root_authority_signer(&fold, seed).map(drop)
+            vault.kit_root_authority_signer(&txn, &fold, seed).map(drop)
         };
         // Base windows first: a window of a world read everywhere may name a
         // base row.

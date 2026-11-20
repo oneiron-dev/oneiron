@@ -217,15 +217,16 @@ impl Vault {
     /// of a vault that stored a stranger's row before #1449 imports without
     /// them.
     pub fn import_signed_authority_history(&self, blobs: &[Vec<u8>]) -> Result<Vec<EntityId>> {
-        self.import_signed_authority_history_judged(blobs, |_| Ok(()), |_| Ok(()))
+        self.import_signed_authority_history_judged(blobs, |_| Ok(()), |_, _| Ok(()))
     }
 
-    /// The import with `prelude` first in its write txn and `judge` on the fold it would commit.
+    /// The import with `prelude` first in its write txn and `judge` on the fold it would commit,
+    /// read in that txn.
     pub(crate) fn import_signed_authority_history_judged(
         &self,
         blobs: &[Vec<u8>],
         prelude: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
-        judge: impl FnOnce(&AuthorityFold) -> Result<()>,
+        judge: impl FnOnce(&heed::RoTxn<'_>, &AuthorityFold) -> Result<()>,
     ) -> Result<Vec<EntityId>> {
         let mut decoded = Vec::with_capacity(blobs.len());
         for bytes in blobs {
@@ -328,7 +329,7 @@ impl Vault {
         if fold.vault_root_is_conflicted() {
             return Err(invalid_authority());
         }
-        judge(&fold)?;
+        judge(&txn, &fold)?;
         #[cfg(feature = "sync")]
         self.mark_pending_mirrors_in_txn(&mut txn, &ids.iter().copied().collect())?;
         txn.commit()?;
