@@ -619,24 +619,7 @@ pub(crate) fn machine_history_authority_descends_with_image(
     successor: &[u8; 32],
     image: Option<&super::checkpoint_image::AuthorityCheckpointV2>,
 ) -> Result<bool> {
-    let mut by_hash = std::collections::BTreeMap::new();
-    for id in
-        store.port_entity_ids_by_type(txn, crate::registry::ENTITY_TYPE_AUTHORITY_LOG, None)?
-    {
-        let id = id?;
-        let Some(raw) = EntityStoreRead::port_entity_raw(store, txn, &id)? else {
-            return Err(Error::CorruptedIndex("authority history row"));
-        };
-        let body = raw
-            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-            .ok_or(Error::CorruptedIndex("authority history header"))?;
-        let entry = super::decode_authority_log_entry_body(body)?;
-        let hash = super::authority_entry_hash(&entry)?;
-        if super::authority_log_entity_id_from_hash(&hash)? != id {
-            return Err(Error::CorruptedIndex("authority history key"));
-        }
-        by_hash.insert(hash, entry);
-    }
+    let by_hash = stored_authority_rows_by_hash(store, txn)?;
     let stands = |hash: &[u8; 32]| {
         by_hash.contains_key(hash)
             || image.is_some_and(|image| covered_endpoint_stands(image, hash))
@@ -663,6 +646,87 @@ pub(crate) fn machine_history_authority_descends_with_image(
             let Some(next) = parents(&hash) else {
                 return Ok(false);
             };
+            stack.extend(next.iter().copied());
+        }
+    }
+    Ok(false)
+}
+
+/// Every authority row this vault stores, by its hash, each checked against the key it is
+/// stored under.
+fn stored_authority_rows_by_hash(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<std::collections::BTreeMap<[u8; 32], super::AuthorityLogEntry>> {
+    let mut by_hash = std::collections::BTreeMap::new();
+    for id in
+        store.port_entity_ids_by_type(txn, crate::registry::ENTITY_TYPE_AUTHORITY_LOG, None)?
+    {
+        let id = id?;
+        let Some(raw) = EntityStoreRead::port_entity_raw(store, txn, &id)? else {
+            return Err(Error::CorruptedIndex("authority history row"));
+        };
+        let body = raw
+            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(Error::CorruptedIndex("authority history header"))?;
+        let entry = super::decode_authority_log_entry_body(body)?;
+        let hash = super::authority_entry_hash(&entry)?;
+        if super::authority_log_entity_id_from_hash(&hash)? != id {
+            return Err(Error::CorruptedIndex("authority history key"));
+        }
+        by_hash.insert(hash, entry);
+    }
+    Ok(by_hash)
+}
+
+/// Whether any of `successors` descends from `ancestor` through the rows' signed parent hashes,
+/// as [`machine_history_authority_descends`] judges one successor, with the log read once. A
+/// successor that does not stand here is passed over, and a walk that reaches a row whose parents
+/// this vault cannot read ends that path only: descent is shown only through parents it reads.
+/// No advisory timestamp or signed date takes part.
+pub(crate) fn any_authority_row_descends(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    ancestor: &[u8; 32],
+    successors: &[[u8; 32]],
+) -> Result<bool> {
+    if successors.is_empty() {
+        return Ok(false);
+    }
+    let adopted = super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(store, txn)?;
+    let image = adopted
+        .as_deref()
+        .map(super::VerifiedAuthorityCheckpoint::image);
+    let by_hash = stored_authority_rows_by_hash(store, txn)?;
+    let stands = |hash: &[u8; 32]| {
+        by_hash.contains_key(hash)
+            || image.is_some_and(|image| covered_endpoint_stands(image, hash))
+    };
+    let parents = |hash: &[u8; 32]| match by_hash.get(hash) {
+        Some(entry) => Some(entry.parent_hashes.as_slice()),
+        None => image
+            .and_then(|image| image.rows.get(hash))
+            .map(|row| row.parents.as_slice()),
+    };
+    if !stands(ancestor) {
+        return Ok(false);
+    }
+    let mut stack = Vec::new();
+    for successor in successors {
+        if stands(successor)
+            && let Some(start) = parents(successor)
+        {
+            stack.extend_from_slice(start);
+        }
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(hash) = stack.pop() {
+        if hash == *ancestor {
+            return Ok(true);
+        }
+        if seen.insert(hash)
+            && let Some(next) = parents(&hash)
+        {
             stack.extend(next.iter().copied());
         }
     }

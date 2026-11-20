@@ -1153,13 +1153,14 @@ fn a_prediction_without_its_live_parent_is_refused() {
     );
 }
 
-/// A prediction dated ahead by another home's clock (the home moved, or its clock runs fast)
-/// replaces no later prediction while this machine's own clock has not reached its date: this
-/// home's next prediction, dated before it, still applies (FIX PREDICTED-FUTURE-DATED-BLOCKS-LATER).
+/// A prediction dated ahead by another home's clock (the home moved, or its clock runs fast) is
+/// replaced by the home's next prediction, which follows it in the signed log though it is dated
+/// before it: the machine applies the one that follows and refuses the one dated ahead, though it
+/// runs them in date order (FIX PREDICTED-FUTURE-DATED-BLOCKS-LATER).
 #[test]
-fn a_prediction_dated_ahead_replaces_none_before_its_date() {
+fn a_prediction_dated_ahead_is_replaced_by_the_one_that_follows_it() {
     run_async(
-        "a_prediction_dated_ahead_replaces_none_before_its_date",
+        "a_prediction_dated_ahead_is_replaced_by_the_one_that_follows_it",
         || async {
             let predicted = Arc::new(PredictedHome::default());
             let (url, _seen) = start_home(Arc::clone(&predicted)).await;
@@ -1189,49 +1190,136 @@ fn a_prediction_dated_ahead_replaces_none_before_its_date() {
                 now_secs() + 86_400,
             )
             .expect("the prediction dated a day ahead");
-            assert_eq!(
-                apply_residence_directives(&connection)
-                    .await
-                    .expect("the prediction dated ahead runs"),
-                1
-            );
-            assert_eq!(
-                result_of(&device, ahead),
-                Some(ResidenceResultStatus::Applied)
-            );
-
-            let due_set = predicted_set(
+            let next_set = predicted_set(
                 &[
                     WindowKey::for_world(now_secs(), device.founder),
                     WindowKey::for_world(now_secs(), device.granted),
                 ],
                 &[],
             );
-            serve(&predicted, &due_set);
-            let due = append_prediction(
+            serve(&predicted, &next_set);
+            let next = append_prediction(
                 &device.vault,
                 &issuer(),
                 local_machine(&device.vault),
                 parent,
-                &due_set,
+                &next_set,
             )
-            .expect("the prediction dated now");
+            .expect("the prediction that follows, dated now");
             assert_eq!(
                 apply_residence_directives(&connection)
                     .await
-                    .expect("the prediction dated now runs"),
+                    .expect("both predictions run"),
+                2
+            );
+            assert_eq!(
+                reason_of(&device, next),
+                None,
+                "a prediction that follows one dated ahead applies"
+            );
+            assert_eq!(
+                result_of(&device, next),
+                Some(ResidenceResultStatus::Applied)
+            );
+            assert_eq!(
+                count_of(&device, next),
+                2,
+                "the set that follows is adopted"
+            );
+            assert_eq!(
+                result_of(&device, ahead),
+                Some(ResidenceResultStatus::Refused)
+            );
+            let reason = reason_of(&device, ahead).expect("a refusal reason");
+            assert!(
+                reason.contains("a newer prediction replaced it"),
+                "the newer reason: {reason}"
+            );
+        },
+    );
+}
+
+/// A prediction a home whose clock lags signs after taking in the last one is dated before it,
+/// and still applies: what it follows replaces nothing (FIX PREDICTED-FUTURE-DATED-BLOCKS-LATER).
+#[test]
+fn a_prediction_dated_before_the_one_it_follows_still_applies() {
+    run_async(
+        "a_prediction_dated_before_the_one_it_follows_still_applies",
+        || async {
+            let predicted = Arc::new(PredictedHome::default());
+            let (url, _seen) = start_home(Arc::clone(&predicted)).await;
+            let device = Device::open();
+            let connection = device_connection(&device, url);
+            let parent = issue(
+                &device,
+                ResidenceAct::SyncPredicted {
+                    window_budget: 8,
+                    document_budget: 16,
+                },
+            );
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the level applies"),
+                1
+            );
+            let first_set = predicted_set(&[WindowKey::for_world(now_secs(), device.founder)], &[]);
+            serve(&predicted, &first_set);
+            let first = append_prediction(
+                &device.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &first_set,
+            )
+            .expect("the first prediction, dated now");
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the first prediction runs"),
                 1
             );
             assert_eq!(
-                reason_of(&device, due),
-                None,
-                "a prediction dated ahead replaces nothing before its date"
-            );
-            assert_eq!(
-                result_of(&device, due),
+                result_of(&device, first),
                 Some(ResidenceResultStatus::Applied)
             );
-            assert_eq!(count_of(&device, due), 2, "the set dated now is adopted");
+            let lagging_set = predicted_set(
+                &[
+                    WindowKey::for_world(now_secs(), device.founder),
+                    WindowKey::for_world(now_secs(), device.granted),
+                ],
+                &[],
+            );
+            serve(&predicted, &lagging_set);
+            let lagging = append_prediction_dated(
+                &device.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &lagging_set,
+                now_secs() - 3_600,
+            )
+            .expect("the prediction that follows, dated an hour back");
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the prediction that follows runs"),
+                1
+            );
+            assert_eq!(
+                reason_of(&device, lagging),
+                None,
+                "a prediction dated before the one it follows applies"
+            );
+            assert_eq!(
+                result_of(&device, lagging),
+                Some(ResidenceResultStatus::Applied)
+            );
+            assert_eq!(
+                count_of(&device, lagging),
+                2,
+                "the set that follows is adopted"
+            );
         },
     );
 }

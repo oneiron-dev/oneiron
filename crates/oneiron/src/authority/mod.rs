@@ -633,6 +633,7 @@ use machine_profile::{
     KeyClaim, MachineChain, MarkProof, apply_anchor_profile, apply_machine_profile,
     merge_machine_maps,
 };
+pub(crate) use machine_write::any_authority_row_descends;
 pub(crate) use machine_write::{
     MACHINE_SIGNATURE_KEY, evidence_without_machine_signature, history_control_read_admitted,
     machine_claim_needs_history, machine_claim_needs_history_observing,

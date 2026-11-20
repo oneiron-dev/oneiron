@@ -73,7 +73,7 @@ pub fn append_prediction_dated(
 ) -> crate::error::Result<EntityId> {
     let owner = SyncConnection::directives_naming_machine(vault, machine)?
         .into_iter()
-        .find_map(|directive| (directive.id == parent).then_some(directive.owner))
+        .find_map(|state| (state.directive.id == parent).then_some(state.directive.owner))
         .ok_or_else(|| {
             crate::error::Error::InvalidConfig(
                 "a prediction names its owner's directive".to_owned(),
