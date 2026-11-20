@@ -266,7 +266,19 @@ fn apply_remote_change(
             // Only a copy that carries a cancelled VEVENT asks: no other copy
             // is held back here.
             let in_flight = if feed.events.iter().any(|parsed| parsed.cancelled) {
-                cancelled_members_in_flight(vault, system, &primary.uid)?
+                let lowest_sequence = feed
+                    .events
+                    .iter()
+                    .map(|parsed| parsed.sequence)
+                    .min()
+                    .unwrap_or(primary.sequence);
+                cancelled_members_in_flight(
+                    vault,
+                    system,
+                    &seat.config.calendar_ref,
+                    &primary.uid,
+                    lowest_sequence,
+                )?
             } else {
                 Vec::new()
             };
