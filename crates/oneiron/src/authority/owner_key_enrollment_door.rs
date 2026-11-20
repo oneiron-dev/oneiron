@@ -364,9 +364,10 @@ fn passkey_enrollment_device(input: &OwnerPasskeyEnrollment) -> Result<(Vec<u8>,
     Ok((public_key.clone(), enrolled_passkey(public_key, evidence)))
 }
 
-/// An unsigned entry as [`Vault::prepare_owner_key_enrollment_as`] encoded
-/// it: one MessagePack value, and exactly its canonical encoding.
-fn decode_unsigned_entry(bytes: &[u8]) -> Option<AuthorityLogEntry> {
+/// An unsigned entry as [`Vault::prepare_owner_key_enrollment_as`] (or the
+/// passkey Cancel's prepare, `Vault::prepare_recovery_hold_cancel_as`)
+/// encoded it: one MessagePack value, and exactly its canonical encoding.
+pub(super) fn decode_unsigned_entry(bytes: &[u8]) -> Option<AuthorityLogEntry> {
     let mut cursor = std::io::Cursor::new(bytes);
     let value = rmpv::decode::read_value(&mut cursor).ok()?;
     if usize::try_from(cursor.position()).ok()? != bytes.len() {

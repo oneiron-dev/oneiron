@@ -5,7 +5,8 @@
 //! After a box recovery the root's door holds the vouch instead of writing
 //! it: one [`RecoveryHold`] signed by R, judged here, read by
 //! [`Vault::recovery_holds_in_txn`], landed lazily by
-//! [`Vault::land_due_recovery_holds`], and answered by owner devices and the
+//! [`Vault::land_due_recovery_holds`], and answered by owner devices, an
+//! owner's passkey (a Cancel alone, in two steps: `passkey_cancel`) and the
 //! kit. A hold or an answer changes no roster, no grant and no anchor.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -27,9 +28,11 @@ mod answers;
 mod box_cancel;
 mod hold_view;
 mod landing;
+mod passkey_cancel;
 
 pub use box_cancel::RecoveryBoxCancelProof;
 pub use hold_view::{RecoveryHoldState, RecoveryHoldView};
+pub use passkey_cancel::PreparedRecoveryHoldCancel;
 
 /// The hold's signer and successor, judged at the parents' state: the
 /// signer is the recovery root's authority key R (the generic transition
@@ -65,6 +68,10 @@ pub(super) fn judge_recovery_hold(
 /// owner device (WAYBACK-7: no staff override). Whose `ItIsMe` ends a wait
 /// is the hold view's rule, not this judge's: the fold counts a co-owner's
 /// `ItIsMe` row, and the view gives it no weight (`hold_view::key_is_the_owners`).
+/// An owner's passkey answers here as any owner key does, with a `Cancel`
+/// alone (the shape check refuses its `ItIsMe`; row
+/// RECOVERY-HOLD-PASSKEY-ANSWER), its assertion made where its enrollment
+/// pinned it (the generic passkey context rule).
 pub(super) fn judge_recovery_hold_answer(
     state: &FoldState,
     entry: &AuthorityLogEntry,
@@ -105,6 +112,43 @@ pub(super) fn judge_recovery_hold_answer(
 /// any posture. The fold and the answer door both ask it.
 pub(super) fn answers_recovery_holds(device: &FoldedDevice) -> bool {
     folded_device_can_authority_consent(device) && device.roles & ROLE_OWNER != 0
+}
+
+/// The `RecoveryHoldAnswer` entry `key` signs for `body` on vault
+/// `vault_id`: `fold`'s main-log heads as parents, `key`'s next sequence,
+/// the stamp `now`, no cosign, and a zero signature until the signer's goes
+/// in. The one shape both answer doors write.
+///
+/// # Errors
+/// No heads, or more than one entry may name.
+fn unsigned_recovery_hold_answer(
+    vault_id: AuthorityVaultId,
+    fold: &AuthorityFold,
+    key: &AuthorityKey,
+    body: RecoveryHoldAnswer,
+    now: u64,
+) -> Result<AuthorityLogEntry> {
+    let parents = fold.append_heads.clone();
+    if parents.is_empty() {
+        return Err(invalid_authority());
+    }
+    if parents.len() > MAX_PARENTS {
+        return Err(authority_refused(ANSWER_TOO_MANY_HEADS));
+    }
+    Ok(AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(vault_id),
+        seq: next_sequence(fold, key)?,
+        parent_hashes: parents.into_iter().collect(),
+        op: AuthorityOp::RecoveryHoldAnswer(body),
+        signer: AuthoritySignature {
+            suite: key.suite(),
+            public_key: key.clone(),
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: now,
+    })
 }
 
 /// A recovery hold's seed slot this install may hold, by successor key:
@@ -405,30 +449,25 @@ impl Vault {
         let fold = self
             .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
-        let parents = fold.append_heads.clone();
-        if parents.is_empty() {
-            return Err(invalid_authority());
-        }
-        if parents.len() > MAX_PARENTS {
-            return Err(authority_refused(ANSWER_TOO_MANY_HEADS));
-        }
-        let mut entry = AuthorityLogEntry {
-            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
-            vault_id: Some(vault_id),
-            seq: next_sequence(&fold, key)?,
-            parent_hashes: parents.into_iter().collect(),
-            op: AuthorityOp::RecoveryHoldAnswer(body),
-            signer: AuthoritySignature {
-                suite: key.suite(),
-                public_key: key.clone(),
-                signature: vec![0; 64],
-            },
-            cosigns: Vec::new(),
-            ts: now,
-        };
+        let mut entry = unsigned_recovery_hold_answer(vault_id, &fold, key, body, now)?;
         entry.validate_shape().map_err(|_| invalid_authority())?;
         entry.signer.signature = sign(&authority_transcript(&entry)?)?;
+        self.put_recovery_hold_answer_in_txn(txn, entry)
+    }
+
+    /// Stores the signed answer `entry` in the caller's write transaction,
+    /// at its own stamp, and answers its hash once this install's fold
+    /// counts it. The caller commits.
+    ///
+    /// # Errors
+    /// An entry the fold does not count; the log's.
+    fn put_recovery_hold_answer_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        entry: AuthorityLogEntry,
+    ) -> Result<AuthorityEntryHash> {
         let hash = authority_entry_hash(&entry)?;
+        let now = entry.ts;
         let at = TimeRange {
             start: now,
             end: now,
