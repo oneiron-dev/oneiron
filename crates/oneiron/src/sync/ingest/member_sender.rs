@@ -5,8 +5,13 @@
 //! replaces, as this span's sender. Only a federation import of a member's
 //! update opens one: own-device replay names no sender and stays trust-blind
 //! (ARCH-0040:261).
+//!
+//! The writer's refusal outlives no import: a cold replay of the window
+//! names no sender. So the span also notes that its writer refused a room
+//! body, and the import that opened it lands nothing of its update in the
+//! window's document ([`member_body_refused`]).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 
 use crate::{EntityId, Vault};
@@ -15,10 +20,12 @@ thread_local! {
     static MEMBER_SENDER: RefCell<Option<MemberSender>> = const { RefCell::new(None) };
 }
 
-/// One import's member sender, and the vault the import lands in.
+/// One import's member sender, the vault the import lands in, and whether
+/// the writer refused a room body the import brought.
 struct MemberSender {
     vault: PathBuf,
     sender: EntityId,
+    refused: Cell<bool>,
 }
 
 /// Puts back the span an outer import installed, on every exit.
@@ -43,6 +50,7 @@ pub(in crate::sync) fn with_member_sender<T>(
     let span = sender.map(|sender| MemberSender {
         vault: vault.store.env.path().to_path_buf(),
         sender,
+        refused: Cell::new(false),
     });
     let _restore =
         Restore(MEMBER_SENDER.with(|slot| std::mem::replace(&mut *slot.borrow_mut(), span)));
@@ -56,5 +64,31 @@ pub(super) fn member_sender(vault: &Vault) -> Option<EntityId> {
             .as_ref()
             .filter(|span| span.vault.as_path() == vault.store.env.path())
             .map(|span| span.sender)
+    })
+}
+
+/// Notes that the writer refused a room body of the member import landing in
+/// `vault` on this thread.
+pub(super) fn note_member_body_refused(vault: &Vault) {
+    MEMBER_SENDER.with(|slot| {
+        if let Some(span) = slot
+            .borrow()
+            .as_ref()
+            .filter(|span| span.vault.as_path() == vault.store.env.path())
+        {
+            span.refused.set(true);
+        }
+    });
+}
+
+/// Whether the writer refused a room body of the member import landing in
+/// `vault` on this thread. The import then keeps none of its update in the
+/// window's document: the refused carrier would otherwise be persisted, sent
+/// on, and landed by a cold replay that names no sender.
+pub(in crate::sync) fn member_body_refused(vault: &Vault) -> bool {
+    MEMBER_SENDER.with(|slot| {
+        slot.borrow().as_ref().is_some_and(|span| {
+            span.vault.as_path() == vault.store.env.path() && span.refused.get()
+        })
     })
 }
