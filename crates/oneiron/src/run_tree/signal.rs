@@ -70,6 +70,10 @@ impl RunTreeAdapter<'_> {
 
     /// Creates an ask under the worker's lease. It is a durable handle: hosts
     /// unable to receive an observer invalidation may read it via `peek_ask`.
+    ///
+    /// Answers the ask as the side-row wall stored it, which `peek_ask` reads
+    /// and the identical ask opened again replays, as `signal` answers its
+    /// receipt (FIX KNOWN-ASK-REOPEN-ANSWERS-MASKED-ROW).
     pub fn open_ask(
         &self,
         branch: AttemptId,
@@ -121,7 +125,15 @@ impl RunTreeAdapter<'_> {
         self.save(&mut txn, &mut record)?;
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
-        Ok(ask)
+        // The ask as the side-row wall stored it: a secret it lifted, or a
+        // value base custody holds, reads as its handle there. Answering the
+        // questions as written would give the identical ask opened again
+        // another ask than its first open gave.
+        Ok(record
+            .asks
+            .into_iter()
+            .find(|held| held.handle == handle)
+            .unwrap_or(ask))
     }
 
     /// Non-blocking Signal admission. Reusing a key with identical input
