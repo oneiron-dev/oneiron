@@ -83,7 +83,7 @@ pub struct StoreClock {
     /// clock is made.
     monotonic_domain: MonotonicDomain,
     /// The highest reading [`Self::monotonic_now`] took in the source's
-    /// domain ([`MonotonicDomain::Source`]).
+    /// domain ([`MonotonicDomain::Source`]), from the reading that chose it.
     monotonic_floor: Arc<Mutex<Duration>>,
 }
 /// The clock domain a [`StoreClock`] reads elapsed time in. Only the
@@ -117,11 +117,12 @@ impl Default for StoreClock {
 impl StoreClock {
     /// A store clock over `source` and `ids`. Its elapsed-time clock reads
     /// the source's own monotonic reading when the source gives one now,
-    /// else the host's, for the store clock's whole life.
+    /// else the host's, for the store clock's whole life. In the source's
+    /// domain, that first reading is the floor.
     pub fn new(source: Arc<dyn Clock>, ids: Arc<dyn IdGen>) -> Self {
-        let monotonic_domain = match source.monotonic_now() {
-            Some(_) => MonotonicDomain::Source,
-            None => MonotonicDomain::Host(Instant::now()),
+        let (monotonic_domain, monotonic_floor) = match source.monotonic_now() {
+            Some(reading) => (MonotonicDomain::Source, reading),
+            None => (MonotonicDomain::Host(Instant::now()), Duration::ZERO),
         };
         Self {
             system: false,
@@ -134,7 +135,7 @@ impl StoreClock {
             lease_journal: Arc::new(Mutex::new(None)),
             last_id: Arc::new(Mutex::new(0)),
             monotonic_domain,
-            monotonic_floor: Arc::new(Mutex::new(Duration::ZERO)),
+            monotonic_floor: Arc::new(Mutex::new(monotonic_floor)),
         }
     }
     /// Fork construction state: sharing the source must not share a vault's floor.
