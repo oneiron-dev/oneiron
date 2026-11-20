@@ -63,7 +63,7 @@ impl From<Error> for MemoryError {
             return Self {
                 reason_codes: vec![
                     OWNER_PRESENCE_REQUIRED.to_owned(),
-                    format!("{OWNER_PRESENCE_HERE_REASON_PREFIX}{}", here.as_str()),
+                    format!("not_{OWNER_PRESENCE_HERE_REASON_PREFIX}{}", here.as_str()),
                 ],
                 ..Self::new(
                     MEMORY_CODE_INVALID_STATE,
