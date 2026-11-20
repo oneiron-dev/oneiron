@@ -74,6 +74,7 @@ use serde_json::Value;
 
 use super::wave_door::resume_held_wave;
 use super::{SyncServer, wave_plan, wave_receipt};
+use crate::ai_host::CodeModeRoute;
 use crate::ai_host::live_lease::LeaseLine;
 use crate::api::{
     BriefHostFacts, RunGuests, VerdictAsker, deliver_run_board_hooks, drop_run_board,
@@ -138,6 +139,11 @@ pub(crate) struct RunHostDoor {
     /// The read shape the run's attempt woke under (census L9-37), which its
     /// self brief names; empty for a turn program and a run left unstamped.
     read_shape: Mutex<Option<oneiron::store::ReadShape>>,
+    /// What the code-mode calls of the run's entry in flight are bound to,
+    /// which decides the caller its brief's PEOPLE are read for
+    /// (RUN-BRIEF-ROUTE-AWARE-ROSTER); empty between entries and for a turn
+    /// program, whose brief PEOPLE read off this device.
+    code_mode_route: Mutex<Option<CodeModeRoute>>,
     media_step: Mutex<Option<RunMediaStep>>,
     /// The live, verified slip whose turn woke a Dreamer turn program this
     /// door serves (FIX 8717): the reads this door admits for the run take
@@ -176,6 +182,7 @@ impl RunHostDoor {
             attempt: Mutex::new(None),
             run_ceiling: Mutex::new(None),
             read_shape: Mutex::new(None),
+            code_mode_route: Mutex::new(None),
             media_step: Mutex::new(None),
             server: Arc::clone(server),
             actor,
@@ -369,9 +376,9 @@ impl AgentVerbDoor for RunHostDoor {
         let resident = resident_row(call.verb, &call.input);
         // What the door holds for the run's own brief (FIX 17594), read only
         // for `describe(self)`.
-        let brief = match resident {
-            Some(ResidentRow::SelfBrief) => self.brief_host_facts(),
-            _ => BriefHostFacts::default(),
+        let (brief, people_at) = match resident {
+            Some(ResidentRow::SelfBrief) => (self.brief_host_facts(), self.brief_people_locality()),
+            _ => (BriefHostFacts::default(), CallerLocality::OffDevice),
         };
         let (board, run_id) = (self.board.clone(), self.run_id);
         // The run's thread drives its own reactor; the row runs on the
@@ -403,6 +410,7 @@ impl AgentVerbDoor for RunHostDoor {
                     &board,
                     line.as_ref(),
                     &brief,
+                    people_at,
                     input,
                 )
                 .map(|(output, rows)| (output, Some(rows))),
