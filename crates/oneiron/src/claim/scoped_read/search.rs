@@ -892,9 +892,10 @@ impl<'v> ScopedRead<'v> {
     }
 }
 
-/// The most rows one snapshot's recall gate keeps a judgement for. A row past
-/// it is judged in full each time it is asked: a scoped text scan can visit the
-/// whole corpus, and the gate does not keep that corpus.
+/// The most rows one snapshot's recall gate keeps an answer for (about 2.4 MB).
+/// A row first asked after the map is full is judged in full each time it is
+/// asked: a scoped text scan can visit the whole corpus, and the gate keeps no
+/// more of it than this.
 const RECALL_GATE_KEPT_JUDGEMENTS_MAX: usize = 1 << 16;
 
 /// [`ScopedRead::recall_candidate_gate`].
@@ -917,11 +918,13 @@ impl crate::store::retrieval_values::CandidateGate for RecallCandidateGate<'_, '
         // for the snapshot (row [RECALL-EXPANDED-ROW-FACTS-REREAD]): the PPR
         // walk asks once for each edge it meets, and the post-blend filters
         // ask again for every fused row. An error is never kept. A row asked
-        // in another transaction is judged there, as before. A conjunct that
-        // reads the clock (an actor proof's expiry, `proof_live_in`) is read
-        // at a row's first ask; the pack's own fresh admission still refuses
-        // a proof or grant that lapses during the call
-        // (`context_pack/builder/assembly.rs`).
+        // in another transaction is judged there, as before. The conjuncts
+        // that read the clock are read at a row's first ask: an actor proof's
+        // expiry and its slip, share and support-delegation checks
+        // (`proof_live_in`), and a mined preference's decay
+        // (`preference_in_force_in`). The pack's own fresh admission at
+        // assembly (`filter_context_pack_listing_producers`) still refuses a
+        // row whose proof, grant or share lapses during the call.
         let judged = std::cell::RefCell::new(std::collections::HashMap::<EntityId, bool>::new());
         #[cfg(oneiron_test_support)]
         let snapshot = crate::test_doors::recall_gate_judgements::open_snapshot();
