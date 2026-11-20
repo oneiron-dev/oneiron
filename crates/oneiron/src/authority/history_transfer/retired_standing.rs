@@ -7,13 +7,13 @@ use super::*;
 /// in `fold` ([`retired_standing`]).
 pub(super) fn refuse_retired_standing(
     store: &crate::store::Store,
+    posture: crate::HostingPrivacyPosture,
     fold: &AuthorityFold,
     merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
     evidence: Option<&AdoptedEvidence>,
     arriving: &[AuthorityEntryHash],
-    held: &mut dyn FnMut(&AuthorityEntryHash) -> Result<bool>,
 ) -> Result<()> {
-    match retired_standing(store, fold, merged, evidence, arriving, held)? {
+    match retired_standing(store, posture, fold, merged, evidence, arriving)? {
         Some(_) => Err(retired_standing_refusal()),
         None => Ok(()),
     }
@@ -57,17 +57,18 @@ pub(super) fn retired_standing_refusal() -> Error {
 /// vault that adopted a checkpoint image (`evidence`), an ancestor `merged`
 /// lacks is what the image holds of it
 /// ([`crate::authority::adopted_evidence::AdoptedEvidence::ancestor`]), its refusal
-/// for history the image does not carry included. `held` says whether this
-/// vault held a row before the import
-/// ([`crate::authority::retired_signers::import_row_held`]): only such a handoff stands
-/// in the refusal's equivocation evidence.
+/// for history the image does not carry included. The door reads the vault's
+/// committed state under `posture`. It records a fenced signer only if a
+/// handoff or appointment fence held it before the write or it signed a
+/// handoff `fold` holds closed. It names only handoffs the signer signed and
+/// the vault held before the write, never the refused row itself.
 pub(super) fn retired_standing(
     store: &crate::store::Store,
+    posture: crate::HostingPrivacyPosture,
     fold: &AuthorityFold,
     merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
     evidence: Option<&AdoptedEvidence>,
     arriving: &[AuthorityEntryHash],
-    held: &mut dyn FnMut(&AuthorityEntryHash) -> Result<bool>,
 ) -> Result<Option<AuthorityEntryHash>> {
     for hash in arriving {
         let Some((_, entry)) = merged.get(hash) else {
@@ -75,6 +76,7 @@ pub(super) fn retired_standing(
         };
         if crate::authority::door_refuses_retired_standing(
             store,
+            posture,
             fold,
             hash,
             entry,
@@ -82,7 +84,6 @@ pub(super) fn retired_standing(
                 Some((_, row)) => Ok(Some(row.clone())),
                 None => evidence.map_or(Ok(None), |evidence| evidence.ancestor(parent)),
             },
-            held,
         )? {
             return Ok(Some(*hash));
         }
