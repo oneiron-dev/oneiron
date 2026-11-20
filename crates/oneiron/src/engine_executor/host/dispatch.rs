@@ -717,7 +717,7 @@ impl RecordingJsHost<'_, '_> {
                 // caller's chain and a room's still read one value, so
                 // `skill_answer` refuses it there with its cause, before any
                 // of it is read.
-                let as_text = hooked.is_some() && self.gated_write.post_chain_reads_text();
+                let as_text = false && hooked.is_some() && self.gated_write.post_chain_reads_text();
                 let output = match self.skill_answer(seq, answer, whole_for_hooks, as_text)? {
                     ReadAnswer::Value(output) => output,
                     // The call's own chain judges its text here, and the
