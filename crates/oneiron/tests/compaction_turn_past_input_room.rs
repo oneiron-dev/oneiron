@@ -22,6 +22,16 @@
 //!
 //! Red on main 315a7f87ba6 with this file and its door alone: the two pieced
 //! flights and the stalled one read `no_window`. The guards hold on both.
+//!
+//! #10050 review, round 1. A piece summary may quote a home part its
+//! self-written pass wore; the entry sends the piece summaries only while
+//! every such part still reads at the revision its words were read at, and
+//! the entry's receipt carries those parts (the harness cannot land, so only
+//! the send is tested). And a piece budget equal to the gate's floor is a
+//! legal plan: the gate accepts a summary of exactly the floor. Red at the
+//! PR's head 2dfe011cd05 with these tests and their door: the moved part's
+//! piece summaries ride the entry, and the floor budget reads
+//! `turn_past_input_room`. The standing-part guard holds on both.
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron --all-features --test compaction_turn_past_input_room`.
 
@@ -31,11 +41,12 @@ use std::time::Duration;
 use oneiron::agent_def::{CompactionOwnership, MemoryProfile};
 use oneiron::compaction::{
     CompactionBackend, CompactionBackendRegistry, CompactionCheck, CompactionDriver,
-    CompactionGatePolicy, CompactionProduct, CompactionRefusal, CompactionRequest,
-    CompactionSuppression, CompactionTierClass, ConversationCompactionUnavailable,
-    ConversationFlightOutcome, compaction_request_input, seal_conversation_flight,
+    CompactionExecution, CompactionGatePolicy, CompactionProduct, CompactionRefusal,
+    CompactionRequest, CompactionSuppression, CompactionTierClass,
+    ConversationCompactionUnavailable, ConversationFlightOutcome, compaction_request_input,
+    seal_conversation_flight,
 };
-use oneiron::test_doors::compaction_request::chat_log_window;
+use oneiron::test_doors::compaction_request::{chat_log_window, writer_receipt_wearing};
 use oneiron::{
     EdgeActorClass, EntityId, FinishReason, ModelTierRef, Vault, VaultConfig, WriteActor,
     count_context_pack_tokens,
@@ -59,6 +70,8 @@ const PIN: &str = "gate code four four one seven";
 /// What every summary the writer writes says, before its call number.
 const SUMMARY_WORDS: &str =
     "The person listed the shed beds by number and the day of the week each one needs water";
+/// How a piece's marker line ends.
+const PIECE_MARKER_END: &str = "; summarise only these bytes]";
 
 /// A turn of a few thousand tokens that ends with [`PIN`].
 fn long_turn() -> String {
@@ -75,10 +88,13 @@ fn window_text(words: &str) -> String {
 
 /// A network-free writer with a set input room: it answers each request
 /// with a one-line summary naming its call and every pin of the request,
-/// refuses the call numbered `refuse_call`, and records every request.
+/// refuses the call numbered `refuse_call`, and records every request. It
+/// answers each piece call with `piece_receipt` as its record, when set,
+/// and every other call with none.
 struct ScriptedWriter {
     room: Option<u64>,
     refuse_call: Option<usize>,
+    piece_receipt: Option<CompactionExecution>,
     requests: Mutex<Vec<CompactionRequest>>,
 }
 
@@ -93,6 +109,22 @@ impl CompactionBackend for ScriptedWriter {
 
     fn input_token_limit(&self, _summary_token_budget: u64) -> Option<u64> {
         self.room
+    }
+
+    fn compact_as_writer(
+        &self,
+        request: &CompactionRequest,
+        retry: Option<CompactionCheck>,
+    ) -> Result<(CompactionProduct, Option<CompactionExecution>), CompactionRefusal> {
+        let piece = request.window.first().is_some_and(|message| {
+            message
+                .content
+                .lines()
+                .next()
+                .is_some_and(|marker| marker.ends_with(PIECE_MARKER_END))
+        });
+        let product = self.compact(request, retry)?;
+        Ok((product, self.piece_receipt.clone().filter(|_| piece)))
     }
 
     fn compact(
@@ -137,11 +169,21 @@ struct Fixture {
 }
 
 fn fixture(room: Option<u64>, refuse_call: Option<usize>) -> Fixture {
+    fixture_with_receipt(room, refuse_call, None)
+}
+
+/// [`fixture`], its writer answering each piece call with `piece_receipt`.
+fn fixture_with_receipt(
+    room: Option<u64>,
+    refuse_call: Option<usize>,
+    piece_receipt: Option<CompactionExecution>,
+) -> Fixture {
     let dir = tempfile::tempdir().expect("FIXTURE: a temporary vault directory");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("FIXTURE: a fresh vault");
     let writer = Arc::new(ScriptedWriter {
         room,
         refuse_call,
+        piece_receipt,
         requests: Mutex::new(Vec::new()),
     });
     let mut registry = CompactionBackendRegistry::new();
@@ -175,6 +217,18 @@ fn breakpoint(
     Result<ConversationFlightOutcome, &'static str>,
     Vec<CompactionRequest>,
 ) {
+    breakpoint_under(fixture, turns, CompactionGatePolicy::default())
+}
+
+/// [`breakpoint`] under the gate `policy`.
+fn breakpoint_under(
+    fixture: &Fixture,
+    turns: &[&str],
+    policy: CompactionGatePolicy,
+) -> (
+    Result<ConversationFlightOutcome, &'static str>,
+    Vec<CompactionRequest>,
+) {
     let mut driver = CompactionDriver::for_profile(&fixture.profile, &fixture.registry)
         .expect("FIXTURE: the driver resolves")
         .expect("FIXTURE: an engine-owned profile compacts");
@@ -182,7 +236,7 @@ fn breakpoint(
     let outcome = seal_conversation_flight(
         &fixture.vault,
         &mut driver,
-        CompactionGatePolicy::default(),
+        policy,
         fixture.byline,
         None,
         &log,
@@ -413,5 +467,111 @@ fn a_writer_with_no_bound_takes_the_long_turn_whole() {
             window_text(SHORT_TURN).as_str()
         ],
         "nothing bounds the input, so no turn is read in pieces"
+    );
+}
+
+/// The entry of a pieced flight over the long turn whose piece calls each
+/// answer with a record wearing `receipt`'s home part: every piece request,
+/// then the entry request's one message.
+fn pieced_entry(receipt: CompactionExecution) -> (Vec<CompactionRequest>, String) {
+    let fixture = fixture_with_receipt(Some(INPUT_ROOM), None, Some(receipt));
+    let long = long_turn();
+    let (outcome, mut requests) = breakpoint(&fixture, &[&long, SHORT_TURN]);
+    assert_eq!(
+        outcome,
+        accepted(),
+        "the over-room turn compacts: its entry passes the gate"
+    );
+    let entry = requests
+        .pop()
+        .expect("the writer was sent the turn's pieces and its entry");
+    let [message] = entry.window.as_slice() else {
+        panic!("the entry holds one message, got {}", entry.window.len());
+    };
+    assert!(
+        requests.len() >= 2,
+        "the turn is read in at least two pieces, got {}",
+        requests.len()
+    );
+    (requests, message.content.clone())
+}
+
+#[test]
+fn a_piece_summary_whose_worn_home_part_moved_never_rides_the_entry() {
+    // A row the vault never stored reads at no revision: a part worn at a
+    // revision no longer stands, as when it is erased after the piece read it.
+    let (pieces, entry) = pieced_entry(writer_receipt_wearing(EntityId::now(), Some([7; 16])));
+    for call in 0..pieces.len() {
+        assert!(
+            !entry.contains(&format!("{SUMMARY_WORDS}, call {call}.")),
+            "piece {call}'s summary, written wearing the moved part, is not sent on: {entry}"
+        );
+    }
+    let text = window_text(&long_turn());
+    let (head, cut) = entry
+        .rsplit_once('\n')
+        .expect("the entry holds the turn's head, then the marker naming the cut");
+    assert!(
+        text.starts_with(head) && head.len() < text.len(),
+        "the entry falls back to the turn's head"
+    );
+    assert!(
+        cut.starts_with(&format!(
+            "[cut: this turn's text is {} bytes (about ",
+            text.len()
+        )),
+        "the marker names the cut: {cut}"
+    );
+}
+
+#[test]
+fn a_piece_summary_whose_worn_home_part_still_stands_rides_the_entry() {
+    // A part worn at no revision, of a row that has none, still reads so.
+    let (pieces, entry) = pieced_entry(writer_receipt_wearing(EntityId::now(), None));
+    for call in 0..pieces.len() {
+        assert!(
+            entry.contains(&format!("{SUMMARY_WORDS}, call {call}.")),
+            "piece {call}'s summary rides the entry: {entry}"
+        );
+    }
+}
+
+#[test]
+fn a_piece_budget_equal_to_the_gate_floor_is_still_read_in_pieces() {
+    let long = long_turn();
+    let (_, probe) = breakpoint(&fixture(Some(INPUT_ROOM), None), &[&long, SHORT_TURN]);
+    let budget = probe
+        .first()
+        .expect("under the default floor the turn is read in pieces")
+        .summary_token_budget;
+    assert!(
+        budget > CompactionGatePolicy::default().floor_tokens,
+        "the probe's piece budget, {budget}, is above the default floor"
+    );
+    let at_floor = CompactionGatePolicy {
+        floor_tokens: budget,
+        ..CompactionGatePolicy::default()
+    };
+    let (outcome, requests) = breakpoint_under(
+        &fixture(Some(INPUT_ROOM), None),
+        &[&long, SHORT_TURN],
+        at_floor,
+    );
+    assert_ne!(
+        outcome,
+        Err("turn_past_input_room"),
+        "a piece budget equal to the floor is a plan the gate can accept"
+    );
+    let first = requests
+        .first()
+        .expect("the writer was sent the turn's first piece");
+    assert!(
+        first.window[0].content.starts_with("[bytes 0.."),
+        "the first request is the turn's first piece: {}",
+        first.window[0].content
+    );
+    assert_eq!(
+        first.summary_token_budget, budget,
+        "each piece summary is held to the floor"
     );
 }

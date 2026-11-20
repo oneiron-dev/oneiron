@@ -6,7 +6,8 @@
 //! conversation summary's receipt says wrote it. And for `oneiron`'s
 //! `tests/compaction_turn_past_input_room.rs` (FIX-LIST
 //! COMPACTION-FIRST-TURN-PAST-INPUT-ROOM-STALLS): a chat log whose window
-//! holds turns the test writes. Compiled only under
+//! holds turns the test writes, and a self-writer's record that wore one
+//! home part. Compiled only under
 //! `--cfg oneiron_test_support`; never API.
 
 use crate::compaction::{ChatLog, CompactionExecution, CompactionRequest, CompactionWindowMessage};
@@ -72,4 +73,37 @@ pub fn chat_log_window(conversation: EntityId, texts: &[&str], uncompacted_token
         texts,
         uncompacted_tokens,
     )
+}
+
+/// A self-writer's record of one accepted call that wore one home part
+/// whole: the `diary` row `row` at the live revision `revision`, `None` for
+/// a row read at no revision. Every other field is a fixture's: no usage,
+/// no step, no snapshot.
+#[must_use]
+pub fn writer_receipt_wearing(row: EntityId, revision: Option<[u8; 16]>) -> CompactionExecution {
+    CompactionExecution {
+        writer: EntityId::now(),
+        caller_origin: crate::agent_dispatch::CallerOrigin::Unknown,
+        source: oneiron_model::llm::SelfCompactionSource::RetainedTurns,
+        admitted_model: "test-model".to_owned(),
+        served_provider: None,
+        served_model: None,
+        usage: crate::compaction::CompactionUsage::default(),
+        rejected_tries: Vec::new(),
+        step_hash: None,
+        home: vec![crate::compaction::CompactionHomeRef {
+            part: "diary".to_owned(),
+            row: Some(row),
+            state: crate::compaction::HOME_PART_WORN.to_owned(),
+            revision: revision.map(crate::store::revision_ref::RevisionRef),
+        }],
+        prefix_sources: Vec::new(),
+        snapshot_hash: None,
+        snapshot_len: None,
+        step: None,
+        rejected_steps: Vec::new(),
+        step_unfiled: None,
+        evidence: None,
+        calls: Vec::new(),
+    }
 }
