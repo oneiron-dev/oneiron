@@ -27,8 +27,8 @@
 //! pass reads the target again once one holds otherwise: the value arrived, was erased here, or
 //! no longer matches its act. It also names each such row in [`WATCH`]: a put of
 //! a row named there, or of any row whose body is a value beside an act, notes that pass, whatever
-//! the row's body ([`notes_projection_pass_in_txn`]); an erase here is read at the next one (the
-//! next authority commit, or the open).
+//! the row's body ([`notes_projection_pass_in_txn`]), and so does an erase of a row named there,
+//! which also takes the value out of the setting history (`change::erase_setting_entity_in_txn`).
 
 use oneiron_authority::authority::{
     AuthorityEntryHash, POLICY_SETTING_INLINE_MAX, setting_slot_target, setting_value_digest,
@@ -178,6 +178,34 @@ pub(crate) fn notes_projection_pass_in_txn(
     (id, body): (&EntityId, &[u8]),
 ) -> Result<bool> {
     Ok(is_beside_value_body(body) || WATCH.contains(dbs, txn, id)?)
+}
+
+/// The target whose last projection read the row beside an act `row` ([`WATCH`]); `None` where
+/// none reads it now.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn watched_target_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    row: &EntityId,
+) -> Result<Option<EntityId>> {
+    WATCH.get(dbs, txn, row)
+}
+
+/// Whether a target's last projection read the row `id` beside an act: its erase notes the
+/// projection pass, which reads the target again once the erase commits.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn beside_row_watched_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    WATCH.contains(dbs, txn, id)
 }
 
 /// Puts the ASSET row `id` holding the JSON bytes `json` beside an act, in `txn`.

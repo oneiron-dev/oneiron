@@ -14,6 +14,12 @@
 //! - each act's value has a row of its own: the owner sets again a value whose row was erased;
 //! - a row a key's hook refuses on this install keeps no other row of the pass from landing,
 //!   and the owner's resident route lands on an install with no model manifest;
+//! - review round 2: an erase of a value the row read has it read again before the erase
+//!   returns, takes the value out of the setting history, and reaches a value a quarantine kept;
+//!   a value that arrives after an erase names no erased entity; a pass on a thread that holds
+//!   the calendar admission turn leaves a feed for the pass after the turn; seat installs that
+//!   meet with no common act leave no seat; a seat taken out of service keeps its system from
+//!   an ICS feed;
 //! - an act on a key this build does not know is read once, whether it carries its value or
 //!   keeps only a digest, also when its value comes beside it later: a pass reads it again only
 //!   once its acts move or a build knows the key;
@@ -39,11 +45,11 @@ use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::setting::{
     EnrolledMachine, SignedSettingAct, SlotName, enroll_machine_with_key,
-    forget_projected_setting_rows, land_setting_batch_from, land_setting_beside_act_from,
-    land_setting_beside_untagged, land_setting_beside_value, land_setting_beside_value_before,
-    land_setting_beside_value_holding, land_signed_setting_act, member_banner_read,
-    permit_list_read, setting_beside_row, setting_beside_value_here, setting_change,
-    setting_frontier_of, sign_setting_beside_act_from,
+    forget_projected_setting_rows, hold_setting_write_turn, land_setting_batch_from,
+    land_setting_beside_act_from, land_setting_beside_untagged, land_setting_beside_value,
+    land_setting_beside_value_before, land_setting_beside_value_holding, land_signed_setting_act,
+    member_banner_read, permit_list_read, setting_beside_row, setting_beside_value_here,
+    setting_change, setting_changes, setting_frontier_of, sign_setting_beside_act_from,
 };
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_authority::authority::{
@@ -735,4 +741,284 @@ fn the_owners_resident_route_lands_on_an_install_with_no_model_manifest() {
     )
     .expect("the owner reads the route");
     assert_eq!(read["value"], json!("on_device"));
+}
+
+const MENTIONED: &str = "test.mentioned_ids";
+const SEAT: &str = "calendar.connector_seat";
+const FEED: &str = "calendar.ics_feed";
+
+/// `key`'s vault value row of `item`.
+fn item_row<'a>(key: &'a str, item: &'a str) -> SlotName<'a> {
+    (key, Some(item), SettingMode::Value, SettingScope::Vault)
+}
+
+/// The setup of the CalDAV seat `work`, which imports under the system `caldav-work`, of the
+/// calendar `calendar_ref`.
+fn seat_setup(calendar_ref: &str) -> Value {
+    json!({
+        "config": {
+            "seat_ref": "work",
+            "secret_ref": "caldav-work",
+            "system": "caldav-work",
+            "calendar_ref": calendar_ref,
+            "cadence_jitter_min_seconds": 300,
+            "cadence_jitter_max_seconds": 900,
+        },
+        "endpoint": "https://dav.example.test/",
+    })
+}
+
+/// The configuration of an ICS feed that imports under `system`.
+fn feed(system: &str) -> Value {
+    json!({
+        "secret_ref": "ics-feed:work",
+        "system": system,
+        "cadence_min_seconds": 600,
+        "cadence_max_seconds": 1200,
+    })
+}
+
+/// The owner's `vault.settings.get` of `key` at `item`: the value it answers.
+fn owner_reads(fx: &Fixture, key: &str, item: Option<&str>) -> Value {
+    let input = match item {
+        Some(item) => json!({ "key": key, "item": item }),
+        None => json!({ "key": key }),
+    };
+    invoke(&fx.as_owner(), "vault.settings.get", input).expect("the owner reads the key")["value"]
+        .clone()
+}
+
+/// The owner's `vault.settings.set` of `key`'s vault value row of `item` to `value`: its answer,
+/// or its refusal as the error prints it.
+fn owner_sets_item(fx: &Fixture, key: &str, item: &str, value: Value) -> Result<Value, String> {
+    invoke(
+        &fx.as_owner(),
+        "vault.settings.set",
+        json!({ "key": key, "item": item, "scope": { "kind": "vault" }, "value": value }),
+    )
+    .map_err(|error| format!("{error:?}"))
+}
+
+#[test]
+fn a_value_erased_after_the_row_read_it_reads_the_strictest_value_once_the_erase_returns() {
+    let fx = Fixture::rooted();
+    let machine = fx.second_machine(7);
+    let read_only = json!(["read"]);
+    let act = fx.sign_beside_act_from(&machine, PERMITS, &read_only);
+    land_setting_beside_value_before(
+        &fx.vault,
+        vault_row(PERMITS),
+        (&read_only, &read_only),
+        &act,
+    )
+    .expect("the value lands before its act");
+    fx.land(&act);
+    assert_eq!(
+        fx.permits(),
+        (vec!["read".to_owned()], SettingStanding::Settled)
+    );
+
+    let row = setting_beside_row(&fx.vault, vault_row(PERMITS), &read_only).expect("the row's id");
+    assert!(
+        fx.vault
+            .delete_entity_with_options(&row, DeleteEntityOptions { purge: true })
+            .expect("the erase"),
+        "the row was here"
+    );
+    // No other commit and no pass: the erase itself has the row read again.
+    assert_eq!(
+        fx.permits(),
+        (Vec::new(), SettingStanding::Quarantined),
+        "the key's strictest value"
+    );
+}
+
+#[test]
+fn an_erased_value_leaves_the_setting_history() {
+    let fx = Fixture::rooted();
+    let label = "the owner's own label 4f1c";
+    let set = fx.change_of(&fx.owner_sets(SetSetting::vault_value(BANNER, json!(label))));
+    assert!(
+        set.value
+            .as_ref()
+            .is_some_and(|value| value.0.windows(label.len()).any(|w| w == label.as_bytes())),
+        "the change row holds the value before the erase"
+    );
+    let row = setting_beside_row(&fx.vault, vault_row(BANNER), &json!(label)).expect("the row");
+    assert!(
+        fx.vault
+            .delete_entity_with_options(&row, DeleteEntityOptions { purge: true })
+            .expect("the erase"),
+        "the row was here"
+    );
+    fx.vault.project_settings().expect("the pass");
+    assert_eq!(fx.banner(), (String::new(), SettingStanding::Quarantined));
+
+    let holds = |value: Option<&oneiron::setting::EncodedValue>| {
+        value.is_some_and(|value| value.0.windows(label.len()).any(|w| w == label.as_bytes()))
+    };
+    for change in setting_changes(&fx.vault).expect("the change stream") {
+        assert!(
+            !holds(change.value.as_ref()) && !holds(change.prior.as_ref()),
+            "no change row keeps the erased value: {change:?}"
+        );
+    }
+}
+
+#[test]
+fn an_erased_value_a_quarantine_kept_reads_the_default() {
+    let fx = Fixture::rooted();
+    let machine = fx.second_machine(7);
+    let hello = json!("hello");
+    fx.owner_sets(SetSetting::vault_value(BANNER, hello.clone()));
+    let kept = setting_beside_row(&fx.vault, vault_row(BANNER), &hello).expect("the row");
+
+    // A later act whose value is here and matches its digest, but is no banner: the row is
+    // quarantined, and `test.member_banner` names no strictest value, so it keeps "hello".
+    let no_banner = json!(42);
+    let act = fx.sign_beside_act_from(&machine, BANNER, &no_banner);
+    land_setting_beside_value_before(&fx.vault, vault_row(BANNER), (&no_banner, &no_banner), &act)
+        .expect("the value lands before its act");
+    fx.land(&act);
+    assert_eq!(
+        fx.banner(),
+        ("hello".to_owned(), SettingStanding::Quarantined)
+    );
+
+    // The value the quarantine kept is erased here: no read takes it.
+    assert!(
+        fx.vault
+            .delete_entity_with_options(&kept, DeleteEntityOptions { purge: true })
+            .expect("the erase"),
+        "the row was here"
+    );
+    fx.vault.project_settings().expect("the pass");
+    assert_eq!(
+        fx.banner(),
+        (String::new(), SettingStanding::Quarantined),
+        "the key's default"
+    );
+}
+
+#[test]
+fn a_value_that_arrives_after_an_erase_names_no_erased_entity() {
+    let fx = Fixture::rooted();
+    let machine = fx.second_machine(7);
+    // An entity erased here: the row of the owner's banner value, hard-deleted.
+    let hello = json!("hello");
+    fx.owner_sets(SetSetting::vault_value(BANNER, hello.clone()));
+    let erased = setting_beside_row(&fx.vault, vault_row(BANNER), &hello).expect("the row");
+    assert!(
+        fx.vault
+            .delete_entity_with_options(&erased, DeleteEntityOptions { purge: true })
+            .expect("the erase"),
+        "the row was here"
+    );
+
+    // Another machine's value names it, and reaches this install after the erase.
+    let other = EntityId::now();
+    let ids = json!([erased.to_hex(), other.to_hex()]);
+    let act = fx.sign_beside_act_from(&machine, MENTIONED, &ids);
+    fx.land(&act);
+    land_setting_beside_value(&fx.vault, vault_row(MENTIONED), &ids).expect("the value lands");
+    assert_eq!(
+        owner_reads(&fx, MENTIONED, None),
+        json!([other.to_hex()]),
+        "the erased entity is out of the value"
+    );
+}
+
+#[test]
+fn a_pass_on_a_thread_that_holds_the_calendar_turn_leaves_a_feed_until_the_turn_is_released() {
+    let fx = Fixture::rooted();
+    let machine = fx.second_machine(7);
+    let config = feed("work-ics");
+    let frontier = setting_frontier_of(&fx.vault, &[item_row(FEED, "work-ics")]).expect("frontier");
+    let act = sign_setting_beside_act_from(
+        &fx.vault,
+        (&machine, fx.owner),
+        &frontier,
+        item_row(FEED, "work-ics"),
+        &config,
+        T0,
+    )
+    .expect("the act signs");
+    land_setting_beside_value_before(
+        &fx.vault,
+        item_row(FEED, "work-ics"),
+        (&config, &config),
+        &act,
+    )
+    .expect("the value lands before its act");
+
+    // A running calendar admission holds the turn: the pass the act's commit runs on its thread
+    // leaves the feed as it is.
+    let turn = hold_setting_write_turn(&fx.vault, FEED).expect("the turn");
+    fx.land(&act);
+    assert_eq!(owner_reads(&fx, FEED, Some("work-ics")), Value::Null);
+    drop(turn);
+
+    fx.vault.project_settings().expect("the pass");
+    assert_eq!(owner_reads(&fx, FEED, Some("work-ics")), config);
+}
+
+#[test]
+fn seat_installs_that_meet_with_no_common_act_leave_no_seat_and_keep_its_system() {
+    let fx = Fixture::rooted();
+    let machine = fx.second_machine(7);
+    let before = setting_frontier_of(&fx.vault, &[item_row(SEAT, "work")]).expect("frontier");
+    let ours = seat_setup("calendars/ours");
+    owner_sets_item(&fx, SEAT, "work", ours.clone()).expect("the owner installs the seat");
+    assert_eq!(owner_reads(&fx, SEAT, Some("work")), ours);
+
+    // His other device installed another calendar at the same seat ref, on the acts as they
+    // stood before: the two installs meet with no act both descend from.
+    let theirs = seat_setup("calendars/theirs");
+    assert!(
+        land_setting_beside_act_from(
+            &fx.vault,
+            (&machine, fx.owner),
+            &before,
+            item_row(SEAT, "work"),
+            &theirs,
+            T0,
+        )
+        .expect("the act lands"),
+        "the fold here counts the act"
+    );
+    land_setting_beside_value(&fx.vault, item_row(SEAT, "work"), &theirs).expect("the value");
+    assert_eq!(
+        owner_reads(&fx, SEAT, Some("work")),
+        Value::Null,
+        "no machine serves either seat"
+    );
+
+    // The seat's imported events keep their passports: no ICS feed takes its system.
+    let refused =
+        owner_sets_item(&fx, FEED, "caldav-work", feed("caldav-work")).expect_err("refused");
+    assert!(refused.contains("CalDAV seat"), "{refused}");
+}
+
+#[test]
+fn a_seat_taken_out_of_service_keeps_its_system_from_an_ics_feed() {
+    let fx = Fixture::rooted();
+    let ours = seat_setup("calendars/ours");
+    owner_sets_item(&fx, SEAT, "work", ours.clone()).expect("the owner installs the seat");
+    let row = setting_beside_row(&fx.vault, item_row(SEAT, "work"), &ours).expect("the row");
+    assert!(
+        fx.vault
+            .delete_entity_with_options(&row, DeleteEntityOptions { purge: true })
+            .expect("the erase"),
+        "the row was here"
+    );
+    fx.vault.project_settings().expect("the pass");
+    assert_eq!(
+        owner_reads(&fx, SEAT, Some("work")),
+        Value::Null,
+        "the seat is out of service"
+    );
+
+    let refused =
+        owner_sets_item(&fx, FEED, "caldav-work", feed("caldav-work")).expect_err("refused");
+    assert!(refused.contains("CalDAV seat"), "{refused}");
 }
