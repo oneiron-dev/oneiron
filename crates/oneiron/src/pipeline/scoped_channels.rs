@@ -307,12 +307,13 @@ impl PipelineBuilder<'_> {
     /// Keeps the rows of a ranked list that a clamped pack's audience could
     /// read were they live, before the list joins a blend
     /// (D19-GATE-COUNTS-CLAIMS-THE-DISCLOSURE-CLAMP-REFUSES). A list no
-    /// bounded fetch asked (an unnarrowed vector, text or temporal list) held
-    /// every row it ranked, so a dead claim the audience could not read whatever
-    /// its status took a fusion rank, counted as a candidate in scope, and the
-    /// run's D19 gate over the fused union counted its suppression and made an
-    /// empty pack read `AllActivated`: the audience learned that a claim it may
-    /// not read matched. Such a row now takes no rank, as at a bounded fetch
+    /// bounded fetch asked (an unnarrowed text or temporal list; a pack's
+    /// vector walk is narrowed to its memory lane) held every row it ranked,
+    /// so a dead claim the audience could not read whatever its status took a
+    /// fusion rank, counted as a candidate in scope, and the run's D19 gate
+    /// over the fused union counted its suppression and made an empty pack
+    /// read `AllActivated`: the audience learned that a claim it may not read
+    /// matched. Such a row now takes no rank, as at a bounded fetch
     /// and as the phonetic code rung's hits since #9911
     /// ([`Self::retain_phonetic_hits_in_scope`]); one that meets every other
     /// check of the call, judged in caches of its own, is returned, and the

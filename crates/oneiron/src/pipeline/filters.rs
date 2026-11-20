@@ -711,16 +711,17 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
         return Ok(false);
     };
     // A clamped pack: a row its audience could not read whatever its status
-    // leaves no trace in the run. The clamp's own-row test comes before every
-    // check below that records a refusal (entity-type authority, the D19
-    // gate), so a hidden dead claim counts in no `claims_suppressed` and
-    // moves no empty reason. The clamp's test with the decoded claim body
-    // still runs after the gate.
-    if let Some(clamp) = filters.disclosure
-        && !clamp.admits_row_ignoring_status(store, rtxn, id, meta.entity_type)?
-    {
-        return Ok(false);
-    }
+    // leaves no trace in the run. A check that records a refusal (entity-type
+    // authority, the D19 gate) asks the clamp's own-row test first, so a
+    // hidden dead claim counts in no `claims_suppressed` and moves no empty
+    // reason; the checks that record nothing run first, as before. The
+    // clamp's test with the decoded claim body still runs after the gate.
+    let clamp_hides = || -> Result<bool> {
+        let Some(clamp) = filters.disclosure else {
+            return Ok(false);
+        };
+        Ok(!clamp.admits_row_ignoring_status(store, rtxn, id, meta.entity_type)?)
+    };
 
     if !super::authority::type_allowed(
         filters.authority_filter,
@@ -728,7 +729,9 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
         store,
         meta.entity_type,
     ) {
-        metadata_cache.read_suppressed.insert(*id);
+        if !clamp_hides()? {
+            metadata_cache.read_suppressed.insert(*id);
+        }
         return Ok(false);
     }
     if let Some(types) = filters.type_filter
@@ -766,6 +769,9 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     }
 
     if !candidate_matches_criticality(store, rtxn, id, meta.entity_type, filters.criticality)? {
+        return Ok(false);
+    }
+    if clamp_hides()? {
         return Ok(false);
     }
     if !claim_status_gate_allows_with_row(
