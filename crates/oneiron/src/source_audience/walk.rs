@@ -14,8 +14,9 @@
 //! - a CLAIM's entity subject, and for a machine birth control also the
 //!   entity subject of the signed initial body it embeds (FIX
 //!   MACHINE-HISTORY-SOURCE-LINEAGE-SUBJECT-MOVE);
-//! - for the hold walk ([`lineage_held_in`]) alone, the records a
-//!   PSYCH_PROFILE's typed sources name.
+//! - the records a PSYCH_PROFILE's typed sources name: each CLAIM it read,
+//!   which profile landing names in the body and the dependency index,
+//!   never as an edge (FIX SOURCE-AUDIENCE-WALK-MISSES-PSYCH-PROFILE-SOURCES).
 //!
 //! Each of those must read: a summary of a private thread is as private as
 //! the thread. A CLAIM is the one union: its supporting sources (`Supports`
@@ -120,6 +121,11 @@ fn word_sources(
     if let Ok(Some(summary)) = crate::scope_summary::carried_summary(bytes) {
         every.push(summary);
     }
+    // A profile is as private as each claim it copies, as a summary is as
+    // private as its thread; a cited CLAIM keeps its own support union.
+    if header.entity_type == ENTITY_TYPE_PSYCH_PROFILE {
+        every.extend(profile_sources(body));
+    }
     let mut supports = Vec::new();
     if header.entity_type == ENTITY_TYPE_CLAIM {
         if let Ok(claim) = crate::claim::decode_claim_body(body, true) {
@@ -144,21 +150,14 @@ fn word_sources(
     Ok((every, supports))
 }
 
-/// The records a PSYCH_PROFILE row `bytes` read its words from: each typed
+/// The records a PSYCH_PROFILE row's `body` read its words from: each typed
 /// source's record and revision. Profile landing names them in the body and
 /// the dependency index, never as a `DerivedFrom` edge, so a profile that
-/// copies a held CLAIM's prose is held with it (REVIEW-9874 round 2). Any
-/// other row, and a profile of an earlier schema, whose sources name no
-/// record, names none.
-fn profile_sources(bytes: &[u8]) -> Vec<EntityId> {
-    let Some(header) = EntityMetadataHeader::parse(bytes) else {
-        return Vec::new();
-    };
-    if header.entity_type != ENTITY_TYPE_PSYCH_PROFILE {
-        return Vec::new();
-    }
-    let body = bytes.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
-    crate::psych_profile::decode_psych_profile_body(body)
+/// copies a CLAIM's prose reads where the claim does and is held with it
+/// (REVIEW-9874 round 2). A profile of an earlier schema, whose sources
+/// name no record, and a body that does not decode, name none.
+fn profile_sources(body: &[u8]) -> Vec<EntityId> {
+    let mut sources: Vec<EntityId> = crate::psych_profile::decode_psych_profile_body(body)
         .map(|profile| {
             profile
                 .sources
@@ -166,7 +165,10 @@ fn profile_sources(bytes: &[u8]) -> Vec<EntityId> {
                 .flat_map(|source| [source.document_ref, source.revision_ref])
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    sources.sort_unstable();
+    sources.dedup();
+    sources
 }
 
 /// The lane a row would leave this vault on.
@@ -217,11 +219,7 @@ pub(crate) fn lineage_held_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityI
             continue;
         };
         let (every, supports) = word_sources(vault, &dbs, txn, row, &bytes)?;
-        for source in every
-            .into_iter()
-            .chain(supports)
-            .chain(profile_sources(&bytes))
-        {
+        for source in every.into_iter().chain(supports) {
             if seen.insert(source) {
                 pending.push(source);
             }
