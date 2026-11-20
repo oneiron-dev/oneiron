@@ -18,6 +18,7 @@ use crate::deletion::decode_tombstone_value;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::ports::{WindowAddress, WindowDeletionRows};
+use crate::sync::manager::PublicationWindow;
 use crate::sync::window_rows::{PENDING_TOMBSTONE, WINDOW_FULL_RESYNC_MARKER};
 use loro::{CommitOptions, LoroDoc};
 
@@ -265,13 +266,21 @@ pub fn replay_pending_tombstones(
 /// window (FIX 343). It takes `Vault::write_crdt_tombstone`'s two paths: the
 /// live doc under the materializer lock when the window is open here, else
 /// a transient load, whose persist also keeps the delta as a `u:` row so an
-/// open racing it still loads the tombstones.
+/// open racing it still loads the tombstones. The transient load holds the
+/// window closed until its persist has committed, so no replacement installs
+/// over it the state from before it ([`Vault::publication_window`]).
 pub(crate) fn publish_pending_tombstones(vault: &Vault, window_key: &WindowKey) -> Result<u32> {
     let markers = pending_tombstone_markers(vault, window_key)?;
     if markers.is_empty() {
         return Ok(0);
     }
-    let replayed = if let Some((window, materializer, _manager)) = vault.live_window(window_key) {
+    let publication = vault.publication_window(window_key);
+    let replayed = if let PublicationWindow::Live {
+        window,
+        materializer,
+        ..
+    } = &publication
+    {
         // The live-window turn first (L7-45): the replay builds a tombstone
         // index over the shared doc, so no peer import lands in it from the
         // merge to the commit. Both drop before the scrub of other windows.
@@ -300,6 +309,7 @@ pub(crate) fn publish_pending_tombstones(vault: &Vault, window_key: &WindowKey) 
         let merged_update_keys = merge_persisted_state_into_doc(vault, &doc, window_key)?;
         replay_tombstone_markers(vault, &doc, window_key, &markers, &merged_update_keys, true)?
     };
+    drop(publication);
     // Once the lock is down, a deleted NOTE's attachments leave the other
     // live windows too (FIX 8878).
     crate::sync::note::deleted_elsewhere(vault, window_key.as_str(), marker_ids(&markers));
