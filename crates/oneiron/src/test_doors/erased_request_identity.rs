@@ -141,10 +141,19 @@ fn call_is(
     note: Value,
     custody: bool,
 ) -> Result<bool> {
-    let offered = note_row(agent, note)?.request;
     let read: BaseKnownRead<'_> = &|| vault.known_values_now();
-    let known = CompareKnown::new(custody.then_some(read));
-    stored.request_identity_is(&offered, &known)
+    call_is_read(stored, agent, note, custody.then_some(read))
+}
+
+/// [`call_is`] with the values `read` reads, or none.
+fn call_is_read(
+    stored: &CodeRunBridgeCall,
+    agent: EntityId,
+    note: Value,
+    read: Option<BaseKnownRead<'_>>,
+) -> Result<bool> {
+    let offered = note_row(agent, note)?.request;
+    stored.request_identity_is(&offered, &CompareKnown::new(read))
 }
 
 /// Whether the call `run`'s stored record holds is in its erased form.
@@ -210,25 +219,47 @@ pub fn stored_body_call_is(
     )
 }
 
-/// [`stored_call_is`] for the record `session`'s room holds.
+/// [`stored_call_is`] for the record `session`'s room holds, read as a run
+/// bound to the room reads it: with the values base custody holds and the
+/// values the room keeps in its own custody (ROOM-LOCAL-CUSTODY) when
+/// `custody` is in reach, else with none.
 ///
 /// # Errors
 ///
 /// The record cannot be read in the room, or the compare fails.
 pub fn room_stored_call_is(
-    vault: &Vault,
+    _vault: &Vault,
     session: &OffRecordSession<'_>,
     [agent, run]: [EntityId; 2],
     words: &str,
     custody: bool,
 ) -> Result<bool> {
-    call_is(
-        vault,
+    let read: BaseKnownRead<'_> = &|| session.base_known_values();
+    call_is_read(
         &room_stored_call(session, run)?,
         agent,
         Value::from(words),
-        custody,
+        custody.then_some(read),
     )
+}
+
+/// Whether the request of the call `run`'s record holds in `session`'s room
+/// holds `text` in one of its texts.
+///
+/// # Errors
+///
+/// The record cannot be read in the room.
+pub fn room_stored_call_holds(
+    session: &OffRecordSession<'_>,
+    run: EntityId,
+    text: &str,
+) -> Result<bool> {
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &room_stored_call(session, run)?.request)
+        .map_err(|_| Error::InvariantViolation("a stored call's request did not encode"))?;
+    Ok(encoded
+        .windows(text.len())
+        .any(|window| window == text.as_bytes()))
 }
 
 /// The handle custody gives `record`, or `None` when it gives none.
