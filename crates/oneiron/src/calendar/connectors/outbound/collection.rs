@@ -141,8 +141,12 @@ pub(crate) struct UnsettledWrites {
     pub(crate) copy_unproven: bool,
 }
 
-/// [`UnsettledWrites`] of `uid` under `system`, read across every seat's
-/// outbox rows without opening their sealed values.
+/// [`UnsettledWrites`] of `uid` under the pulling seat's system, read
+/// across every seat's outbox rows without opening their sealed values. A
+/// row is one of them when its readable strings name them or its key is the
+/// one its writing seat derives for them on the pulling seat's calendar
+/// (`upsert_row_of`): a side-table write may hold a string as a custody
+/// handle (CAL-OUTBOX-SCAN-MASKED-SYSTEM-MISSES-ROW).
 ///
 /// The caller holds the vault's calendar admission turn, in which a write
 /// publishes its prepared row and settles, so neither lands between this
@@ -153,16 +157,19 @@ pub(crate) struct UnsettledWrites {
 /// Storage failures.
 pub(crate) fn unsettled_writes_of(
     vault: &Vault,
-    system: &str,
+    operation: &CalendarConnectorOperation,
     uid: &str,
 ) -> Result<UnsettledWrites, CalendarConnectorError> {
+    let seat = &operation.registration().seat;
+    let system = seat.config.system.as_str();
+    let calendar_ref = seat.config.calendar_ref.as_str();
     let rows = {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         OUTBOX.scan_from(&vault.store, &txn, OUTBOX_ROW_TAG)?
     };
     let mut writes = UnsettledWrites::default();
     for (_, row) in rows {
-        if row.action != CalendarWriteAction::Upsert || row.system != system || row.uid != uid {
+        if !upsert_row_of(&row, system, calendar_ref, uid) {
             continue;
         }
         match row.state {
@@ -348,6 +355,11 @@ fn upsert_row_of(
 /// seat's pull proves the copy
 /// (CAL-FIRST-WRITE-COPY-PULLED-UNSETTLED-IMPORTS-DUPLICATE-EVENT).
 ///
+/// A row stages under `uid` when its readable UID is `uid`, or its key is
+/// the one its writing seat derives for `uid` under its readable system and
+/// calendar, or under the pulling seat's: a side-table write may hold a
+/// string as a custody handle (CAL-OUTBOX-SCAN-MASKED-SYSTEM-MISSES-ROW).
+///
 /// Only a UID of the minted form that resolves to no EVENT reads the
 /// outbox, and the check opens no row's sealed values.
 ///
@@ -360,6 +372,7 @@ fn upsert_row_of(
 /// Resolution and storage failures, and a stored row that does not decode.
 pub(crate) fn first_write_unsettled(
     vault: &Vault,
+    operation: &CalendarConnectorOperation,
     uid: &str,
 ) -> Result<bool, CalendarConnectorError> {
     // Only a first write mints a UID of the form `<event>@calendar.invalid`
@@ -371,6 +384,9 @@ pub(crate) fn first_write_unsettled(
     if !minted_form || crate::calendar::passport::resolve_event_by_uid(vault, uid)?.is_some() {
         return Ok(false);
     }
+    let seat = &operation.registration().seat;
+    let system = seat.config.system.as_str();
+    let calendar_ref = seat.config.calendar_ref.as_str();
     let rows = {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         OUTBOX.scan_from(&vault.store, &txn, OUTBOX_ROW_TAG)?
@@ -383,8 +399,17 @@ pub(crate) fn first_write_unsettled(
         };
         unsettled
             && row.action == CalendarWriteAction::Upsert
-            && row.uid == uid
             && EntityId::from_bytes(row.event_ref).is_ok_and(|event| local_uid(&event) == uid)
+            && (row.uid == uid
+                || row.outbox_id
+                    == derive_outbox_id(
+                        &row.carrier.seat,
+                        &row.system,
+                        &row.calendar_ref,
+                        uid,
+                        CalendarWriteAction::Upsert,
+                    )
+                || upsert_row_of(&row, system, calendar_ref, uid))
     }))
 }
 
