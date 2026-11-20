@@ -218,16 +218,16 @@ pub(crate) async fn vault_members_accept_with_credential(
 /// `vault.members.accept_with_inquiry_edge`: accepts the invitee's own
 /// invitation and the company's half of the inquiry edge their personal
 /// vault offers, in one writer, signed with the host's slip issuer; the
-/// counter goes back in the answer only.
+/// counter goes back in the answer only. The invitee comes on their own
+/// independent credential: an invitation's own slip does not reach this door
+/// (`auth::INVITEE_DOORS`), since the acceptance spends it before a retry.
 pub(crate) async fn vault_members_accept_with_inquiry_edge(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SharedInvitationAcceptWithInquiryEdgeRequest,
 ) -> MaybeListed<SharedInvitationAcceptedWithInquiryEdge> {
     const VERB: &str = "vault.members.accept_with_inquiry_edge";
-    let invitee = person(server, auth, VERB).and_then(|invitee| {
-        require_slip_invitation(auth, VERB, &input.invitation).map(|()| invitee)
-    });
+    let invitee = person(server, auth, VERB);
     let vault = Arc::clone(server);
     as_person_naming(
         server,
