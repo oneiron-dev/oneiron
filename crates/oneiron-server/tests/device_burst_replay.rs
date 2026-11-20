@@ -12,8 +12,11 @@
 //! one of them scrubs its held bytes (#9226 review round 2).
 //!
 //! One batch has one landing at a time (FIX DEVICE-BURST-ALLOW-DRAIN-OVERLAP):
-//! the drain leaves a batch whose landing a socket claimed, and a send of
-//! bytes whose batch another landing holds is answered as held.
+//! the drain leaves a batch whose landing a socket claimed. A send of bytes
+//! whose batch another landing holds is answered by the batch's record at the
+//! home (#9954 review round 1): as held while the batch is retained, by its
+//! receipt once it settled, and with a Try Again Later close while nothing of
+//! it is retained.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --features oneiron/test-support
@@ -25,9 +28,13 @@ mod device_burst_home;
 mod engine_stack;
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use device_burst_home::{BURST_ROWS, Device, Home, WINDOW, held_answer, operations, send_update};
+use device_burst_home::{
+    BURST_ROWS, Device, Home, WINDOW, WsStream, held_answer, operations, send_update,
+};
 use engine_stack::run_on_engine_stack;
+use futures_util::StreamExt;
 use oneiron::DeleteReason;
 use oneiron::sync::WindowKey;
 use oneiron::sync::federation_burst::{
@@ -37,6 +44,11 @@ use oneiron::sync::federation_burst::{
 use oneiron_server::test_doors::device_burst_drain::{
     claim_device_burst_landing, drain_device_bursts_once,
 };
+use tokio_tungstenite::tungstenite::Message;
+
+/// RFC 6455 "Try Again Later": the close the home answers a send with while
+/// another landing holds its batch and nothing of it is retained.
+const TRY_AGAIN_LATER: u16 = 1013;
 
 #[test]
 fn a_held_device_burst_lands_by_its_homes_drain_without_a_human() {
@@ -254,18 +266,24 @@ async fn drain_leaves_claimed_batch() {
     );
 }
 
-/// FIX DEVICE-BURST-ALLOW-DRAIN-OVERLAP, the socket's side. While another
-/// landing holds a batch (the drain, landing the same bytes held from an
-/// earlier send), the device's send of those bytes is answered as held and
-/// lands nothing from the socket. Once that landing ends, the same send
-/// lands. Red when the socket ignores the claim: it lands the bytes the other
-/// landing holds, and the device gets no held answer.
+/// FIX DEVICE-BURST-ALLOW-DRAIN-OVERLAP and #9954 review round 1, the
+/// socket's side with nothing retained. While another landing holds a batch
+/// that nothing at the home retains yet (that landing's admission has not
+/// committed, or failed before it retained the bytes), the device's send of
+/// the bytes is closed with Try Again Later, never answered as held: a held
+/// answer names the bytes in the window's version, and a device that clears
+/// its queue on it loses them. Nothing lands from that send. Once the other
+/// landing ended, a new socket's send of the same bytes lands. Red when the
+/// socket answers by the claim alone: it answers as held and stays open.
 #[test]
-fn a_send_of_a_batch_another_landing_holds_is_answered_as_held() {
-    run_on_engine_stack("device-burst-claim-socket", send_of_claimed_batch_is_held);
+fn a_send_of_an_unretained_batch_another_landing_holds_is_closed_to_be_sent_again() {
+    run_on_engine_stack(
+        "device-burst-claim-unretained",
+        send_of_unretained_claimed_batch,
+    );
 }
 
-async fn send_of_claimed_batch_is_held() {
+async fn send_of_unretained_claimed_batch() {
     let device = Device::new();
     let (trickle, trickle_rows) = device.rows_update(1);
     let home = Home::new(DevicePeer::Unproven, operations(&trickle)).await;
@@ -277,9 +295,63 @@ async fn send_of_claimed_batch_is_held() {
         .expect("no landing holds a batch nobody sent");
     let mut socket = home.connect_root().await;
     send_update(&mut socket, &trickle).await;
+    assert_eq!(
+        close_code(&mut socket).await,
+        Some(TRY_AGAIN_LATER),
+        "the home closes the send to be sent again while nothing of its batch is retained"
+    );
+    assert_eq!(
+        home.held_rows(&trickle_rows),
+        0,
+        "nothing of the send lands"
+    );
+
+    // That landing ended: the device's next send of the bytes lands.
+    drop(claim);
+    let mut socket = home.connect_root().await;
+    send_update(&mut socket, &trickle).await;
+    assert!(
+        home.until_committed(|| home.held_rows(&trickle_rows) == 1)
+            .await,
+        "the send lands once no other landing holds its batch"
+    );
+}
+
+/// #9954 review round 1, the socket's side with the batch retained, then
+/// settled. While another landing holds a batch the burst core retained
+/// (its receipt Pending), the device's send of the bytes is answered as
+/// held: the batch is durable, and that landing, or the drain after it,
+/// lands it. Once the batch settled, a send while a landing holds it is
+/// answered by its receipt: no held answer, and nothing lands twice. The
+/// settled half is red when the socket answers by the claim alone.
+#[test]
+fn a_send_of_a_retained_or_settled_batch_another_landing_holds_is_answered_by_its_record() {
+    run_on_engine_stack(
+        "device-burst-claim-retained",
+        send_of_retained_claimed_batch,
+    );
+}
+
+async fn send_of_retained_claimed_batch() {
+    let device = Device::new();
+    let (trickle, trickle_rows) = device.rows_update(1);
+    let home = Home::new(DevicePeer::Unproven, operations(&trickle)).await;
+    let key = WindowKey::try_new(WINDOW).unwrap();
+    let batch_ref = device_update_batch_ref(&DevicePeer::Unproven, &key, &trickle, false).unwrap();
+    // Another landing claims the batch, and the burst core retains it.
+    let claim = claim_device_burst_landing(&home.server, batch_ref.clone())
+        .expect("no landing holds a batch nobody sent");
+    match admit_device_window_update(&home.vault, &DevicePeer::Unproven, &key, &trickle, &[])
+        .unwrap()
+    {
+        DeviceBurstAdmission::Allow(_) => {}
+        other => panic!("the trickle at the baseline is allowed: {other:?}"),
+    }
+    let mut socket = home.connect_root().await;
+    send_update(&mut socket, &trickle).await;
     assert!(
         held_answer(&mut socket).await,
-        "the home answers the send as held while another landing holds its batch"
+        "the home answers the send of a retained batch as held"
     );
     assert_eq!(
         home.held_rows(&trickle_rows),
@@ -287,12 +359,50 @@ async fn send_of_claimed_batch_is_held() {
         "nothing of the send lands from the socket"
     );
 
-    // That landing ended: the device's next send of the bytes lands.
+    // That landing gave up with the batch retained: the drain lands it.
     drop(claim);
-    send_update(&mut socket, &trickle).await;
+    home.clock.set(home.now + 2);
+    assert_eq!(
+        drain_device_bursts_once(&home.server).await.unwrap(),
+        1,
+        "the drain lands the retained batch"
+    );
     assert!(
         home.until_committed(|| home.held_rows(&trickle_rows) == 1)
             .await,
-        "the send lands once no other landing holds its batch"
+        "the batch's row lands at the home"
     );
+    assert_eq!(
+        home.receipt(DevicePeer::Unproven, &batch_ref).state,
+        FederationBurstWorkState::Imported
+    );
+
+    // Settled: a send while a landing holds the batch is answered by its
+    // receipt.
+    let _claim =
+        claim_device_burst_landing(&home.server, batch_ref).expect("the drain's landing ended");
+    send_update(&mut socket, &trickle).await;
+    assert!(
+        !held_answer(&mut socket).await,
+        "a send of a settled batch gets no held answer"
+    );
+    assert_eq!(
+        home.held_rows(&trickle_rows),
+        1,
+        "nothing of the batch lands twice"
+    );
+}
+
+/// The code the home closes `ws` with within five seconds, past any frame
+/// before it; `None` when no close comes by then.
+async fn close_code(ws: &mut WsStream) -> Option<u16> {
+    // testkit-lint: allow(wall-clock) hang guard for the close
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match tokio::time::timeout_at(deadline, ws.next()).await.ok()?? {
+            Ok(Message::Close(frame)) => return frame.map(|frame| u16::from(frame.code)),
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+    }
 }
