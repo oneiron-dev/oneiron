@@ -15,9 +15,10 @@
 //! are the project's born rows, each naming the source key's heads (the live acts of its vault
 //! value row, and the head act of each pack whose layer holds it). Every machine's fold checks
 //! that the copy is the first act on its row and names the source's heads; every machine reads it
-//! as the named acts read there ([`super::project`]). Without a root, or where nothing names a
-//! default (no pack head act could be had), the row stays this install's, and another machine
-//! reads the project strictest, pending.
+//! as the named acts read there ([`super::project`]). Without a root, or where no pack holds the
+//! source or one that does has no head act to name (a birth naming part of the layer would read
+//! looser than the layer's meet), the row stays this install's, and another machine reads the
+//! project strictest, pending.
 
 use oneiron_authority::authority::{SettingCopyName, setting_slot_target};
 use oneiron_setting_contract::RowKey;
@@ -144,10 +145,10 @@ pub(crate) fn write_born_rows_in_txn(
 /// copy, and projects each row from the fold, in the creation's write `txn`, at `now` (stage
 /// 7c-3b; module doc). A row names the live acts of its source's vault value row and the head act
 /// of each pack whose layer holds the source ([`pack_head_act_in_txn`], which appends this
-/// install's head where none of its table is live). A row with no pack head to name stays this
-/// install's alone. Best effort, as a move's copy: without a root or a carrier nothing is
-/// appended, and whatever stops the append is logged and rolled back alone, so a creation never
-/// fails for its copy.
+/// install's head where none of its table is live). A row stays this install's alone where no
+/// pack holds its source, or one that does has no head act to name ([`pack_names_in_txn`]). Best
+/// effort, as a move's copy: without a root or a carrier nothing is appended, and whatever stops
+/// the append is logged and rolled back alone, so a creation never fails for its copy.
 ///
 /// # Errors
 ///
@@ -164,22 +165,13 @@ fn append_birth_in_txn(
     }
     let mut rows = Vec::with_capacity(born.len());
     for (spec, source) in born {
-        let mut packs = Vec::new();
-        for pack in packs_holding_in_txn(&vault.store, txn, source)? {
-            if let Some(act) = pack_head_act_in_txn(vault, txn, &pack)? {
-                packs.push(SettingCopyName {
-                    slot: source_row(source, SettingScope::Pack(pack)),
-                    act,
-                });
-            }
-        }
-        if packs.is_empty() {
+        let Some(packs) = pack_names_in_txn(vault, txn, source)? else {
             tracing::warn!(
                 key = spec.name,
-                "a born row names no pack head: it stands on this install alone"
+                "a born row cannot name each pack that holds its source: it stands here alone"
             );
             continue;
-        }
+        };
         let vault_row = source_row(source, SettingScope::Vault);
         let mut names: Vec<SettingCopyName> = vault
             .setting_slot_live_in_txn(txn, setting_slot_target(&vault_row)?)?
@@ -216,6 +208,31 @@ fn append_birth_in_txn(
         project_target_in_txn(vault, txn, target, now)?;
     }
     Ok(())
+}
+
+/// The head act of each pack whose layer holds `source`, as a birth names them
+/// ([`pack_head_act_in_txn`]). `None` where none holds it, or where one that holds it has no head
+/// act to name: a birth naming part of the layer would read its meet, looser than the layer's.
+///
+/// # Errors
+///
+/// Storage errors.
+fn pack_names_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    source: &SettingSpec,
+) -> Result<Option<Vec<SettingCopyName>>> {
+    let mut names = Vec::new();
+    for pack in packs_holding_in_txn(&vault.store, txn, source)? {
+        let Some(act) = pack_head_act_in_txn(vault, txn, &pack)? else {
+            return Ok(None);
+        };
+        names.push(SettingCopyName {
+            slot: source_row(source, SettingScope::Pack(pack)),
+            act,
+        });
+    }
+    Ok((!names.is_empty()).then_some(names))
 }
 
 /// The item-less value row of `source` at `scope`: a row a birth names.

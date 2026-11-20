@@ -576,12 +576,31 @@ fn copy_value_in_txn(
     names: &[SettingCopyName],
     depth: usize,
 ) -> Result<std::result::Result<Option<EncodedValue>, Short>> {
+    Ok(copy_meet_in_txn(vault, txn, (reads, name_counts), spec, names, depth)?.map(|(met, _)| met))
+}
+
+/// [`copy_value_in_txn`], and whether a name gave no bound (a clear, or a copy that leaves
+/// none). A copy of a project row skips such a name, since that row's empty slot gives no bound;
+/// a birth's copy of a vault value row meets it as that row's empty slot, the accepted default
+/// ([`birth_value_in_txn`]).
+fn copy_meet_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    (reads, name_counts): (&BesideReads, &NameCounts),
+    spec: &SettingSpec,
+    names: &[SettingCopyName],
+    depth: usize,
+) -> Result<std::result::Result<(Option<EncodedValue>, bool), Short>> {
     let mut met: Option<EncodedValue> = None;
+    let mut unbound = false;
     for name in names {
         let read = name_value_in_txn(vault, txn, (reads, name_counts), spec, name, depth)?;
         let value = match read {
             Ok(Some(value)) => value,
-            Ok(None) => continue,
+            Ok(None) => {
+                unbound = true;
+                continue;
+            }
             Err(Short::Unreadable) => match spec.kind.strictest_value()? {
                 Some(strictest) => strictest,
                 None => return Ok(Err(Short::Unreadable)),
@@ -596,19 +615,22 @@ fn copy_value_in_txn(
             },
         });
     }
-    Ok(Ok(met))
+    Ok(Ok((met, unbound)))
 }
 
 /// A birth's value (stage 7c-3b; DESIGN 1.6, `born`), and whether it is a copy of a pack's
 /// default (seeded). The born key `spec` copies the key its `born` names: a birth that names
 /// another key's rows reads as one this install cannot read ([`Short::Unreadable`]). Its vault
-/// names read as a copy of the source's vault value row, under the source's own spec
-/// ([`copy_value_in_txn`]): a bound there is the value, explicit. Else its pack names give the
-/// value ([`pack_name_value_in_txn`]), met as the layer meets them, seeded. A pack name whose
-/// table this install does not prove leaves the row as it is for now ([`Inert::ForNow`]: the
-/// born thing reads strictest, pending, until a pass proves it), and on a row a copy names reads
-/// as one this install cannot read. `None` when no name gives a bound. A value the born key does
-/// not decode is unreadable.
+/// names read as the source's vault value row reads them, under the source's own spec
+/// ([`copy_meet_in_txn`]): a bound there is the value, explicit. A name there that gives no
+/// bound (a clear) gives what that row's empty slot gives, the accepted default: where it stands
+/// beside a bound, the value is their meet with the default its pack names give, still explicit;
+/// with no pack name it reads as one this install cannot read. Where the vault names give no
+/// bound, its pack names give the value ([`pack_name_value_in_txn`]), met as the layer meets
+/// them, seeded. A pack name whose table this install does not prove leaves the row as it is for
+/// now ([`Inert::ForNow`]: the born thing reads strictest, pending, until a pass proves it), and
+/// on a row a copy names reads as one this install cannot read. `None` when no name gives a
+/// bound. A value the born key does not decode is unreadable.
 fn birth_value_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -632,13 +654,12 @@ fn birth_value_in_txn(
         .iter()
         .cloned()
         .partition(|name| name.slot.scope == SettingScope::Vault);
-    if !at_vault.is_empty() {
-        match copy_value_in_txn(vault, txn, (reads, name_counts), source, &at_vault, depth)? {
-            Ok(Some(value)) => return Ok(decoded(value, false)),
-            Ok(None) => {}
+    let explicit =
+        match copy_meet_in_txn(vault, txn, (reads, name_counts), source, &at_vault, depth)? {
+            Ok((Some(value), false)) => return Ok(decoded(value, false)),
+            Ok((explicit, _)) => explicit,
             Err(short) => return Ok(Err(short)),
-        }
-    }
+        };
     let mut rows = Vec::with_capacity(at_packs.len());
     for name in &at_packs {
         let SettingScope::Pack(pack) = &name.slot.scope else {
@@ -655,9 +676,15 @@ fn birth_value_in_txn(
         };
         rows.push((pack.clone(), value));
     }
-    Ok(match fold_layer(source, &rows) {
-        Some(value) => decoded(value, true),
-        None => Ok((None, false)),
+    Ok(match (explicit, fold_layer(source, &rows)) {
+        (None, Some(layer)) => decoded(layer, true),
+        (None, None) => Ok((None, false)),
+        // A bound beside a clear on the vault row: the clear gives the default.
+        (Some(value), Some(layer)) => match source.kind.meet(&value, &layer) {
+            Some(met) => decoded(met, false),
+            None => Err(Short::Unreadable),
+        },
+        (Some(_), None) => Err(Short::Unreadable),
     })
 }
 
@@ -1468,8 +1495,10 @@ fn moved_since(
 
 /// Writes `projected` as the row `slot` of `spec` when it differs from the stored row, or the
 /// stored row is not the deciding act's: the row, one change row credited to the deciding act,
-/// and the key's hook. Whether it wrote. A carried row, and a row a copy decided, is the
-/// engine's, with its `local` bound (stage 7a-4); every other row is the deciding owner's.
+/// and the key's hook. A birth that reads here (`birth`, [`birth_of_in_txn`]) over no stored row
+/// is the thing's start, as the creation door writes it (stage 7c-3b): the row alone, change 0,
+/// with no change row and no hook. Whether it wrote. A carried row, and a row a copy decided, is
+/// the engine's, with its `local` bound (stage 7a-4); every other row is the deciding owner's.
 fn write_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

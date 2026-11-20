@@ -10,14 +10,19 @@
 //!   strictest until it can;
 //! - the fold counts a birth only as the first act on its row and only when it names the source's
 //!   live heads; a birth that copies another key than the one `born` names reads strictest;
-//! - a vault with no authority root appends nothing: the row is this install's alone.
+//! - a vault with no authority root appends nothing: the row is this install's alone;
+//! - a clear beside a set on the source's vault row gives the default there, so a birth of that
+//!   row reads the set met with the default, on every machine;
+//! - a birth names each pack that holds the source or none: where one has no head act to name,
+//!   the row is this install's alone, since a part of the layer reads looser than the whole.
 //!
 //! "Another machine" here is this install after it forgets every row the projection wrote: it
 //! holds the log and none of those rows, as a machine that took the log from another does.
 //!
 //! Test keys: `test.born_depth` (lower is stricter, default 10, strictest 0, vault and project;
 //! born from `test.born_depth_default`), `test.born_depth_default` (vault, default 7),
-//! `test.ordered_cap` (vault and project, default 10).
+//! `test.ordered_cap` (vault and project, default 10). Test pack: `test.pre_version`, whose door
+//! ran with no version before the vault had a root, so no head act can name it.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test
 //! setting_birth_copy`.
@@ -36,8 +41,8 @@ use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::setting::{
     EnrolledMachine, SlotName, apply_pack_defaults_at, enroll_machine_with_key,
-    forget_projected_setting_rows, land_setting_copy_from, pack_head_digest, setting_copy_names,
-    setting_frontier_of, setting_pack_heads, setting_slot_heads,
+    forget_projected_setting_rows, land_setting_act_from, land_setting_copy_from, pack_head_digest,
+    setting_copy_names, setting_frontier_of, setting_pack_heads, setting_slot_heads,
 };
 use oneiron::workspace_roster::ProjectRecord;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
@@ -50,6 +55,7 @@ const GET: &str = "vault.settings.get";
 const BORN: &str = "test.born_depth";
 const BORN_DEFAULT: &str = "test.born_depth_default";
 const CAP: &str = "test.ordered_cap";
+const PRE_VERSION_PACK: &str = "test.pre_version";
 const T0: u64 = 1_790_000_000;
 
 struct Fixture {
@@ -91,16 +97,26 @@ impl Fixture {
     /// no head act names that run.
     fn rooted() -> Self {
         let mut fx = Self::unrooted();
-        let issuer = fx.vault.bootstrap_host_slip_issuer().expect("host issuer");
-        fx.vault.ensure_host_root_slip(&issuer).expect("host root");
-        fx.vault
+        fx.root();
+        fx
+    }
+
+    /// Gives the vault its authority root, and this install the identities that carry acts.
+    fn root(&mut self) {
+        let issuer = self
+            .vault
+            .bootstrap_host_slip_issuer()
+            .expect("host issuer");
+        self.vault
+            .ensure_host_root_slip(&issuer)
+            .expect("host root");
+        self.vault
             .provision_engine_machine_identities(&issuer)
             .expect("engine machine identities");
-        fx.vault
+        self.vault
             .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
             .expect("serving install profile");
-        fx.issuer = Some(issuer);
-        fx
+        self.issuer = Some(issuer);
     }
 
     fn as_owner(&self) -> Memory<'_> {
@@ -423,5 +439,58 @@ fn a_vault_with_no_root_appends_no_birth() {
     assert_eq!(
         setting_pack_heads(&fx.vault, ENGINE_PACK).expect("heads"),
         Vec::new()
+    );
+}
+
+#[test]
+fn a_birth_of_a_set_beside_a_clear_on_the_vault_row_reads_their_meet_with_the_default() {
+    let fx = Fixture::rooted();
+    let other = fx.second_machine(0x65);
+    let vault_row = (BORN_DEFAULT, None, SettingMode::Value, SettingScope::Vault);
+    let empty = setting_frontier_of(&fx.vault, &[vault_row.clone()]).expect("frontier");
+    fx.owner_sets(BORN_DEFAULT, json!(9));
+    // Another machine's clear, signed before it saw the owner's 9: the two stand side by side,
+    // and the row reads 9 met with the default 7 the clear gives.
+    land_setting_act_from(&fx.vault, &other, fx.owner, &empty, vault_row, None, T0)
+        .expect("the clear lands");
+    assert_eq!(fx.source_heads().len(), 2, "the set and the clear");
+
+    let made = fx.new_project();
+    let read = fx.born_at(made);
+    assert_eq!(read["value"], json!(7), "{read}");
+    assert_eq!(read["source"], source("row", made), "{read}");
+    let names = fx.birth_names(made);
+    assert_eq!(names.len(), 3, "both acts and the pack's head: {names:?}");
+
+    fx.as_another_machine();
+    let read = fx.born_at(made);
+    assert_eq!(
+        read["value"],
+        json!(7),
+        "the clear gives the default, never no bound: {read}"
+    );
+    assert_eq!(read["source"], source("row", made), "{read}");
+}
+
+#[test]
+fn a_birth_whose_source_a_pack_with_no_head_act_holds_stays_on_this_install() {
+    let mut fx = Fixture::unrooted();
+    apply_pack_defaults_at(&fx.vault, PRE_VERSION_PACK, "", &[(BORN_DEFAULT, json!(3))])
+        .expect("the pack door runs")
+        .expect("new defaults");
+    fx.root();
+
+    let made = fx.new_project();
+    let read = fx.born_at(made);
+    assert_eq!(
+        read["value"],
+        json!(3),
+        "the layer's meet of the engine's 7 and the pack's 3: {read}"
+    );
+    assert_eq!(read["source"], source("seeded", made), "{read}");
+    assert_eq!(
+        setting_slot_heads(&fx.vault, born_row(made)).expect("heads"),
+        Vec::new(),
+        "a birth naming the engine pack alone would read 7"
     );
 }
