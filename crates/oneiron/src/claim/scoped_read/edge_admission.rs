@@ -85,7 +85,7 @@ impl ScopedRead<'_> {
     ) -> Result<ReadAdmission<AdmittedEdge>> {
         let target = edge.target;
         let admit = |id: &EntityId| {
-            self.admit_in(txn, id, || {
+            self.admit_held_in(txn, id, authority, || {
                 self.is_entity_retrievable_held_in(txn, policy, filter, id, authority)
                     .map(|allowed| allowed.then_some(()))
             })
@@ -155,7 +155,7 @@ impl ScopedRead<'_> {
         authority: &HeldAuthority,
     ) -> Result<AdmittedEdgeScan> {
         let admit = |id: &EntityId| {
-            self.admit_in(txn, id, || {
+            self.admit_held_in(txn, id, authority, || {
                 self.is_entity_retrievable_held_in(txn, policy, filter, id, authority)
                     .map(|allowed| allowed.then_some(()))
             })
@@ -365,7 +365,7 @@ impl ScopedRead<'_> {
         // this txn (FIX 7462).
         let held = self.held_for(None);
         let read_node = |id: &EntityId| {
-            self.admit_in(&txn, id, || {
+            self.admit_held_in(&txn, id, &held, || {
                 self.entity_raw_with_mode_held_in(&txn, &policy, &filter, id, ReadMode::Live, &held)
             })
         };

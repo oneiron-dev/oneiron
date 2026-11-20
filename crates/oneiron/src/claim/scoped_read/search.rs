@@ -493,7 +493,7 @@ impl ScopedRead<'_> {
         }
         for result in results {
             let id = result.id;
-            let admitted = self.admit_in(&txn, &result.id, || {
+            let admitted = self.admit_held_in(&txn, &result.id, &held, || {
                 let allowed = self
                     .is_entity_retrievable_held_in(&txn, policy, filter, &result.id, &held)?
                     && self.is_entity_retrievable_held_in(
@@ -544,7 +544,7 @@ impl ScopedRead<'_> {
                     self.within_ceilings_in(&txn, id, &ceilings, &ceiling_held)
                         .unwrap_or(false)
                         && self
-                            .admit_in(&txn, id, || Ok(None::<()>))
+                            .admit_held_in(&txn, id, &held, || Ok(None::<()>))
                             .map(|admitted| admitted.suppression() > 0)
                             .unwrap_or(false)
                 })
@@ -672,7 +672,7 @@ impl ScopedRead<'_> {
         let mut suppressed = 0;
         for result in results {
             let id = result.id;
-            let admitted = self.admit_in(&txn, &result.id, || {
+            let admitted = self.admit_held_in(&txn, &result.id, &held, || {
                 self.is_entity_retrievable_held_in(&txn, &policy, &filter, &result.id, &held)
                     .map(|visible| visible.then_some(result))
             })?;

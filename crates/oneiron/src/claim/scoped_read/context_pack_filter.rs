@@ -83,7 +83,7 @@ impl ScopedRead<'_> {
                 // under a deny-all receipt.
                 let mut admitted = true;
                 for id in summary.evidence_ids() {
-                    let evidence = self.admit_in(&rtxn, id, || {
+                    let evidence = self.admit_held_in(&rtxn, id, &held, || {
                         self.is_entity_retrievable_held_in(&rtxn, &policy, &filter, id, &held)
                             .map(|visible| visible.then_some(()))
                     })?;
@@ -100,7 +100,7 @@ impl ScopedRead<'_> {
             let mut capabilities = Vec::new();
             for hit in std::mem::take(&mut pack.capabilities) {
                 let mut floor_readable = false;
-                let item = self.admit_in(&rtxn, &hit.id, || {
+                let item = self.admit_held_in(&rtxn, &hit.id, &held, || {
                     floor_readable = self
                         .is_entity_retrievable_held_in(&rtxn, &policy, &filter, &hit.id, &held)?;
                     if !floor_readable {
@@ -245,7 +245,7 @@ impl ScopedRead<'_> {
         let mut suppressed = 0;
         for mut entity in entities {
             let mut floor_readable = false;
-            let admission = self.admit_in(rtxn, &entity.id, || {
+            let admission = self.admit_held_in(rtxn, &entity.id, held, || {
                 floor_readable =
                     self.is_entity_retrievable_held_in(rtxn, policy, filter, &entity.id, held)?;
                 Ok((floor_readable

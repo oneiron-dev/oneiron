@@ -259,7 +259,7 @@ impl ScopedRead<'_> {
         let mut kept = Vec::new();
         let mut suppressed = 0;
         for record in timeline.records {
-            let admitted = self.admit_in(&txn, &record.id, || {
+            let admitted = self.admit_held_in(&txn, &record.id, &held, || {
                 Ok((self
                     .vault
                     .room_structure_admitted_held_in(self, &txn, &record.id, &rooms)?
@@ -313,7 +313,7 @@ impl ScopedRead<'_> {
                 value.push(None);
                 continue;
             }
-            let admitted = self.admit_in(&txn, &record.id, || {
+            let admitted = self.admit_held_in(&txn, &record.id, &held, || {
                 self.timeline_record_allowed_in(&txn, &policy, &filter, record, &held)
                     .map(|visible| visible.then_some(()))
             })?;
@@ -635,7 +635,7 @@ impl ScopedRead<'_> {
                 header.entity_type,
                 crate::registry::ENTITY_TYPE_CLAIM | crate::registry::ENTITY_TYPE_NOTE
             )
-            && !(self.relationship_gated_in(txn)?
+            && !(self.relationship_gated_in(txn, held)?
                 && matches!(
                     header.entity_type,
                     crate::registry::ENTITY_TYPE_MESSAGE | crate::registry::ENTITY_TYPE_SUMMARY
@@ -770,7 +770,7 @@ impl ScopedRead<'_> {
             let scope_erased = matches!(
                 header.entity_type,
                 crate::registry::ENTITY_TYPE_CLAIM | crate::registry::ENTITY_TYPE_NOTE
-            ) || (self.relationship_gated_in(txn)?
+            ) || (self.relationship_gated_in(txn, held)?
                 && matches!(
                     header.entity_type,
                     crate::registry::ENTITY_TYPE_MESSAGE | crate::registry::ENTITY_TYPE_SUMMARY
