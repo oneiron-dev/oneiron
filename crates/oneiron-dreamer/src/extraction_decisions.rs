@@ -32,6 +32,9 @@ pub struct Input<'a> {
     pub now_ms: u64,
     /// Borrows the decoded bound extraction reply.
     pub reply: &'a BoundExtractionReply,
+    /// Red-form shim: the field the fix adds, so the test file that sets it compiles on
+    /// the base. The base's run never reads it.
+    pub step: Option<&'a str>,
     /// Borrows the effective selection configuration served to the caller.
     pub config: &'a ExtractionSelectionConfig,
     /// Pins the effective policy required by every observations read.
