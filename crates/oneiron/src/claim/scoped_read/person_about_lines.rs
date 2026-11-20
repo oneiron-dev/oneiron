@@ -16,7 +16,9 @@
 //! The key's own floor is one such alternative too: its line shows only where
 //! that floor alone reads the PERSON and every fact, in the same snapshot,
 //! since a line written from a world follows its strictest input (DEC-0005;
-//! FIX-LIST PEOPLE-ABOUT-OWN-FLOOR-FACTS-UNJUDGED). No Grant lends it a fact.
+//! FIX-LIST PEOPLE-ABOUT-OWN-FLOOR-FACTS-UNJUDGED). No Grant lends it a fact,
+//! and where the owner's agent Grants bind the key, one of them alone reads
+//! every row the line stands on.
 
 use super::ScopedRead;
 use super::access_gate::HeldAuthority;
@@ -116,9 +118,12 @@ impl ScopedRead<'_> {
     /// resolved (B), and each row it was written from at the key's floor, as
     /// the row gate judges a source. No live Grant stands in for B here, so
     /// none lends the own-floor line a fact; a line a Grant reads is that
-    /// Grant's alternative. The owner's key, which no Grant stands for, takes
-    /// the row gate itself, with the owner's own rule for what a row was
-    /// written from.
+    /// Grant's alternative. Where the owner's agent Grants bind the key, B
+    /// is their envelope and the row gate finds a Grant for each row on its
+    /// own, so one of those Grants alone must also admit the PERSON, every
+    /// fact and every source ([`Self::one_grant_alternative_admits_each_in`]).
+    /// The owner's key, which no Grant stands for, takes the row gate itself,
+    /// with the owner's own rule for what a row was written from.
     ///
     /// # Errors
     /// B's: a store or decode failure judging a row, as the row gate fails.
@@ -140,18 +145,21 @@ impl ScopedRead<'_> {
             return Ok(true);
         }
         let floor = self.actor_retrieval_floor(policy)?;
+        let mut rows = Vec::new();
         for id in std::iter::once(&person).chain(&line.fact_claim_ids) {
             let Some(raw) = self.entity_record_in(txn, id)?.map(|row| row.encode()) else {
                 return Ok(false);
             };
             if !self.own_row_readable_in(txn, policy, id, &raw, filter, held, None)?
                 || !self.written_from_each_readable_in(txn, id, &raw, |source, raw| {
+                    rows.push((*source, raw.to_vec()));
                     self.own_row_readable_in(txn, policy, source, raw, &floor, held, None)
                 })?
             {
                 return Ok(false);
             }
+            rows.push((*id, raw));
         }
-        Ok(true)
+        self.one_grant_alternative_admits_each_in(txn, &rows, held)
     }
 }
