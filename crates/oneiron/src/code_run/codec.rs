@@ -173,7 +173,17 @@ pub(crate) fn continuation_prefix_digest(
 /// Encodes a deterministic code-run replay record as pinned MessagePack.
 pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec<u8>> {
     validate_code_run_replay_record(record)?;
-    let value = Value::Map(vec![
+    encode_value(
+        &replay_record_value(record),
+        "code-run replay record MessagePack encode failed",
+    )
+}
+
+/// The pinned MessagePack tree of `record`, unvalidated: a fenced put's
+/// projection, its erased parts taken out, is no valid record (FIX
+/// FENCE-ERASED-FORM-THROUGH-WALL).
+pub(in crate::code_run) fn replay_record_value(record: &CodeRunReplayRecord) -> Value {
+    Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(CODE_RUN_REPLAY_SCHEMA_VERSION),
@@ -242,8 +252,7 @@ pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec
                 .as_ref()
                 .map_or(Value::Nil, encode_pending_step),
         ),
-    ]);
-    encode_value(&value, "code-run replay record MessagePack encode failed")
+    ])
 }
 
 /// The replay record is its own pinned MessagePack layout: the side table
@@ -260,6 +269,16 @@ impl crate::side_table::RawValue for CodeRunReplayRecord {
 
 /// Decodes a deterministic code-run replay record.
 pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord> {
+    let record = decode_code_run_replay_unvalidated(bytes)?;
+    validate_code_run_replay_record(&record)?;
+    Ok(record)
+}
+
+/// [`decode_code_run_replay_record`] before its validation: a fenced put
+/// reads its projection so, puts its erased parts back, then validates.
+pub(in crate::code_run) fn decode_code_run_replay_unvalidated(
+    bytes: &[u8],
+) -> Result<CodeRunReplayRecord> {
     let value = decode_value(bytes)?;
     let fields = pinned_map(
         &value,
@@ -309,7 +328,6 @@ pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord
         pending_step: decode_pending_step(fields[11])?,
         verb_rows_cache: Default::default(),
     };
-    validate_code_run_replay_record(&record)?;
     Ok(record)
 }
 
@@ -630,7 +648,9 @@ fn decode_live_run(value: &Value) -> Result<Option<CodeRunLiveRunBinding>> {
     }))
 }
 
-fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
+pub(in crate::code_run) fn validate_code_run_replay_record(
+    record: &CodeRunReplayRecord,
+) -> Result<()> {
     let mut expected_seq = 0_u64;
     for call in &record.bridge_calls {
         if call.seq != expected_seq {

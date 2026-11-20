@@ -217,6 +217,12 @@ pub enum MentionLinkView {
     Candidates { kind: u8, entity_refs: Vec<String> },
     /// The provisional entity the save minted for this span.
     Minted { kind: u8, entity_ref: String },
+    /// The reader's own decision, over the entities it reads, matches the
+    /// span to no entity of `kind`, where the save linked it to one the
+    /// reader does not read: to this reader the span names someone new, and
+    /// no entity was minted for it. A person the reader cannot read counts as
+    /// absent (FIX TAG-LINK-DECIDED-OVER-UNREADABLE-PERSONS).
+    Unmatched { kind: u8 },
 }
 
 /// Who a speaker reference says a span is.

@@ -460,7 +460,10 @@ impl Vault {
         issue: &KitIssue<'_>,
         passkey: Option<KitPasskey<'_>>,
     ) -> Result<IssuedVaultKeyKit> {
-        let mut drawn = self.draw_vault_key_kit(owner, issue, passkey)?;
+        let held = self
+            .held_vault_key()
+            .ok_or_else(|| refused("the vault key is not held on this handle: unlock it first"))?;
+        let mut drawn = self.draw_vault_key_kit(&held, owner, issue, passkey)?;
         if let Some(point) = drawn.point.take() {
             let transition = self.begin_wrap_transition()?;
             self.with_write_txn(|txn| {
@@ -495,14 +498,16 @@ impl Vault {
         })
     }
 
-    /// Draws a data-key kit of the held key over `issue`'s homes, as
+    /// Draws a data-key kit of `key` over `issue`'s homes, as
     /// [`Self::issue_vault_key_recovery_kit_as`] reads them: the owner proof,
     /// the key's commitment and the machine roster in one snapshot. A
     /// `Passkey` home's piece is sealed under `passkey` as its `kit_point`
     /// wrap's envelope, and taken out of the pieces. Nothing is written or
-    /// kept yet.
+    /// kept yet. Callers pass the held key; the commitment checks keep
+    /// comparing the held key's commitment.
     pub(super) fn draw_vault_key_kit(
         &self,
+        key: &VaultDataKey,
         owner: &AuthenticatedOwner,
         issue: &KitIssue<'_>,
         passkey: Option<KitPasskey<'_>>,
@@ -521,9 +526,6 @@ impl Vault {
         if let Some(passkey) = passkey {
             check_name(passkey.credential)?;
         }
-        let key = self
-            .held_vault_key()
-            .ok_or_else(|| refused("the vault key is not held on this handle: unlock it first"))?;
         let vault_id = self.vault_key_vault_id();
         let commitment = key.commitment(&vault_id);
         let store = self.this_machine_piece_store(&issue.homes)?;

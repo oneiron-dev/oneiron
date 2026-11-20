@@ -2,9 +2,10 @@
 //! that key does: once the owner's binding lapses, it reads nothing (FIX
 //! SAVED-LANE-MEET-DROPS-OWNER-LIVENESS, Astra F2 on #8061).
 //!
-//! The host binds a PERSON other than the embedded owner as the vault's human
-//! owner, and that PERSON witnesses a MESSAGE that names no relationship. Its
-//! ungated principal key, held to the base world, saves its lane: the lane
+//! The vault is shared, and a PERSON other than the embedded owner is one of
+//! its Owners, whom the host binds as the vault's human owner. That PERSON
+//! witnesses a MESSAGE that names no relationship. Its ungated principal
+//! key, held to the base world, saves its lane: the lane
 //! keeps a grant basis with no owner standing. Rebuilt over the PERSON's own
 //! owner key, the lane takes that key's floor away (the meet keeps a floor
 //! only under a floor's basis). The owner key re-proves its owner binding at
@@ -15,8 +16,17 @@
 //! the binding lapsed or before it and held past it. While the binding
 //! holds, the rebuilt lane still reads the MESSAGE.
 //!
-//! Red on main 41a670f4677: both rebuilt lanes read the MESSAGE after the
-//! binding lapsed. Guard: the rebuilt lane's read while the binding holds.
+//! Only such an Owner's floor proves a binding. The live owner census of a
+//! personal vault names the embedded owner alone, so a PERSON the host binds
+//! there holds no floor; and the embedded owner's own floor asks the census,
+//! not the binding (`embedded_owner_shortcut_holds_in_txn`), so it outlives
+//! a rebind. The first form of this file bound a PERSON on a personal vault,
+//! and every case stopped at the owner key's precondition (FIX
+//! FLOOR-OWNER-LIVENESS-TEST-FIXTURE-PRECONDITION).
+//!
+//! Red on 41a670f4677, the fix's base, with this file: both rebuilt lanes
+//! read the MESSAGE after the binding lapsed. Guard: the rebuilt lane's read
+//! while the binding holds.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test saved_lane_floor_owner_liveness`.
 #![cfg(oneiron_test_support)]
@@ -25,19 +35,33 @@ use std::sync::Arc;
 
 use oneiron::authority::{HostSlipIssuer, MachineRole};
 use oneiron::claim::{FrozenReadLane, ScopedRead, ScopedReadActorKey};
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::federation::{FederationGrantRole, InitialSharedMember};
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::store::GateDecisionId;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WorldAuthoritySet};
 use serde_json::json;
 
-/// A vault whose host binds a PERSON other than the embedded owner as its
-/// human owner, and that PERSON's MESSAGE that names no relationship.
+/// The shared vault's id.
+const SHARED: u64 = 46;
+
+/// A shared vault with a second Owner, a PERSON other than the embedded
+/// owner, whom the host binds as its human owner, and that PERSON's MESSAGE
+/// that names no relationship.
 struct Fixture {
     vault: Vault,
     _dir: tempfile::TempDir,
     issuer: HostSlipIssuer,
     person: EntityId,
     message: EntityId,
+}
+
+/// An owner proof for `person`, as each owner act carries one.
+fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
+    vault
+        .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
+        .expect("an owner proof")
 }
 
 fn fixture() -> Fixture {
@@ -51,6 +75,23 @@ fn fixture() -> Fixture {
     vault
         .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
         .expect("this install's live machine profile");
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner");
+    oneiron::test_support::bind_host_owner(&vault, &issuer, owner)
+        .expect("the host binds the embedded owner");
+    vault
+        .initialize_shared_vault(
+            &proof(&vault, owner),
+            SHARED,
+            None,
+            &[InitialSharedMember {
+                member_ref: owner,
+                role: Some(FederationGrantRole::Owner),
+            }],
+            1,
+        )
+        .expect("the vault is shared, the embedded owner its Owner");
     let person = EntityId::now();
     vault
         .put_entity(
@@ -61,6 +102,13 @@ fn fixture() -> Fixture {
             b"person fixture",
         )
         .expect("the PERSON lands");
+    let owner_proof = proof(&vault, owner);
+    let act = vault
+        .propose_add_owner(&owner_proof, SHARED, person)
+        .expect("the embedded owner starts add_owner");
+    vault
+        .execute_completed_shared_act(&owner_proof, &act.id, Some(&issuer))
+        .expect("add_owner runs at once: the PERSON is an Owner");
     oneiron::test_support::bind_host_owner(&vault, &issuer, person)
         .expect("the host binds the PERSON as the vault's human owner");
     let message = EntityId::now();
@@ -148,7 +196,8 @@ fn saved_lane(fixture: &Fixture) -> FrozenReadLane {
 
 /// Ends the bound PERSON's owner binding: the host key holds one live
 /// binding, so binding another actor unbinds the owner
-/// (`test_support::bind_host_actor`).
+/// (`test_support::bind_host_actor`). The PERSON stays an Owner by the
+/// census; only its binding lapses.
 fn end_owner_binding(fixture: &Fixture) {
     oneiron::test_support::bind_host_actor(
         &fixture.vault,

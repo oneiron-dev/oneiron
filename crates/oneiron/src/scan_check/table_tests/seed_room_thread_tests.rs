@@ -425,6 +425,7 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
                             actor: owner.to_hex(),
                             receipt_ref: "rooms.claim:retry-scan".to_owned(),
                             at: 2,
+                            generation: 0,
                         },
                     )?;
                     rr_response().put(&vault.store, txn, &parent, &slot)?;

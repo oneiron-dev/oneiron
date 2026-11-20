@@ -178,7 +178,7 @@ impl GrantedAct {
 /// and an agent's free-time policy, any set or clear (FIX 5660, CALLS "FIX
 /// 5660 agent free-time act"); each other door takes agents when its lane
 /// writes the Grant line that names its act (contract §4).
-const AGENT_GRANTABLE_ACTS: [OwnerActKind; 4] = [
+const AGENT_GRANTABLE_ACTS: [OwnerActKind; 6] = [
     OwnerActKind::TopologySeal,
     OwnerActKind::WorldPrivacy,
     OwnerActKind::FreeTimePolicy,
@@ -186,6 +186,14 @@ const AGENT_GRANTABLE_ACTS: [OwnerActKind; 4] = [
     // "An agent whose Grant names vault.models.bindings.propose may propose
     // a binding. It is a proposal, and the owner still decides."
     OwnerActKind::ModelBindingPropose,
+    // The Engine's ruling Sat 14 Nov 20:57 (L10-17-WHO = B): "The owner may
+    // start a continue, and so may an outside agent whose grant names
+    // vault.runners.continue. The grant is checked live at each call."
+    OwnerActKind::RunnerContinue,
+    // The Engine's ruling Tue 17 Nov 06:50 (L10-17-PR3-MEMORY = B): "Callers:
+    // the owner, or an agent whose live Grant names the verb (Substrate
+    // behind grants, as every verb)."
+    OwnerActKind::HookTranscriptImport,
 ];
 
 /// The verb a Grant names a world-settings act by. A Grant can only ever name
@@ -201,17 +209,40 @@ pub(crate) const FREE_TIME_POLICY_SET_VERB: &str = "free_time_policy_set";
 /// verb itself, since the proposal is the verb's whole act.
 pub(crate) const MODEL_BINDING_PROPOSE_VERB: &str = "vault.models.bindings.propose";
 
+/// The verb a Grant names an agent's start of a continued outside session
+/// by: the facade verb itself, since the start is the verb's whole act
+/// (Engine ruling Sat 14 Nov 20:57, L10-17-WHO = B).
+pub(crate) const RUNNER_CONTINUE_VERB: &str = "vault.runners.continue";
+
+/// The verb a Grant names an agent's import of a Claude Code session's
+/// transcript by: the facade verb itself, since the import is the verb's
+/// whole act (Engine ruling Tue 17 Nov 06:50, L10-17-PR3-MEMORY = B).
+pub(crate) const HOOK_TRANSCRIPT_IMPORT_VERB: &str = "vault.imports.hook_transcript";
+
 /// The verb an agent's Grant lists to name `act`: the act's wire tag, but for
 /// a world's settings, whose one grantable direction is the tighten, the
-/// free-time policy, whose verb names the set, and a model-binding proposal,
-/// whose verb is the facade verb.
+/// free-time policy, whose verb names the set, a model-binding proposal,
+/// whose verb is the facade verb, and a runner continue and a hook
+/// transcript import, whose verbs are the facade verbs too.
 fn grant_verb(act: OwnerActKind) -> &'static str {
     match act {
         OwnerActKind::WorldPrivacy => WORLD_PRIVACY_TIGHTEN_VERB,
         OwnerActKind::FreeTimePolicy => FREE_TIME_POLICY_SET_VERB,
         OwnerActKind::ModelBindingPropose => MODEL_BINDING_PROPOSE_VERB,
+        OwnerActKind::RunnerContinue => RUNNER_CONTINUE_VERB,
+        OwnerActKind::HookTranscriptImport => HOOK_TRANSCRIPT_IMPORT_VERB,
         other => other.as_str(),
     }
+}
+
+/// The verbs an agent's Grant lists to name the acts it may carry, one per
+/// act in [`AGENT_GRANTABLE_ACTS`]. The Grant mint refuses a Grant that lists
+/// one of them without `read` (Engine ANSWER
+/// AGENT-GRANTABLE-ACT-GRANT-NEEDS-READ-VERB = A, 20 Nov 20:32):
+/// [`scope_names_act`] asks the Grant to confer, which needs `read`, so such a
+/// Grant would look live and never carry its act.
+pub(crate) fn agent_grantable_act_verbs() -> impl Iterator<Item = &'static str> {
+    AGENT_GRANTABLE_ACTS.into_iter().map(grant_verb)
 }
 
 /// Whether a scope of `kind` with `expires_at` and `member` names `act`

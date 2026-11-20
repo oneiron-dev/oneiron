@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use xmltree::{Element, EmitterConfig, XMLNode};
 
 use crate::docx::{DocxArchive, DocxError};
-use crate::docx_package::{DocxPackage, RelationshipSet};
+use crate::docx_package::{DocxPackage, RelationshipSet, relationship_target_from};
 use crate::domain::{
     BlockNode, Border, CanonDoc, DecorationNode, DecorationType, DocFingerprint, DocHandle,
     HeaderFooterKind, IStr, InlineNode, NodeId, OpaqueKind, PageOrientation, ParagraphNode,
@@ -2356,6 +2356,41 @@ fn set_relationship_target(
     Ok(())
 }
 
+/// Reserve the main part's relationship ids that the source references without a binding.
+///
+/// A relationship the writer adds to the main part's set never takes an id that
+/// the source main part references and that set does not hold, so a dangling
+/// reference stays dangling for the reconciler below. Both the normalized main
+/// part in `base_pkg` and the raw (pre-normalization) bytes are read because a
+/// reference inside tracked markup that normalization removes can still reach
+/// the output through the model. This must run before the first allocation.
+fn reserve_unbound_main_document_relationship_references(
+    base_pkg: &mut DocxPackage,
+    raw_main_part: Option<&[u8]>,
+) -> Result<(), RuntimeError> {
+    let main_part_name = base_pkg.main_document_part_name().to_string();
+    let referenced_ids = {
+        let main_bytes = base_pkg.get_part(&main_part_name).ok_or_else(|| {
+            relationship_reconciliation_error("output main document part is absent")
+        })?;
+        let root = word_xml::parse_document_xml(main_bytes).map_err(map_word_xml_error)?;
+        let mut referenced_ids = Vec::new();
+        crate::docx_validate::collect_relationship_namespace_attributes(&root, &mut referenced_ids);
+        if let Some(raw) = raw_main_part
+            && raw != main_bytes
+        {
+            let raw_root = word_xml::parse_document_xml(raw).map_err(map_word_xml_error)?;
+            crate::docx_validate::collect_relationship_namespace_attributes(
+                &raw_root,
+                &mut referenced_ids,
+            );
+        }
+        referenced_ids
+    };
+    base_pkg.document_rels.reserve_unbound(referenced_ids);
+    Ok(())
+}
+
 fn reconcile_main_document_relationship_references(
     base_pkg: &mut DocxPackage,
     target_pkg: &DocxPackage,
@@ -2387,6 +2422,11 @@ fn reconcile_main_document_relationship_references(
                     "output main document references relationship {relationship_id:?}, but neither source package supplies that binding"
                 ))
             })?;
+        if base_pkg.document_rels.is_reserved(&relationship_id) {
+            return Err(relationship_reconciliation_error(format!(
+                "output main document references relationship {relationship_id:?}, which the source main document references without a binding; the target package's relationship of that id is not its binding"
+            )));
+        }
         let output_target = if target_relationship.target_mode.as_deref() == Some("External") {
             target_relationship.target.clone()
         } else {
@@ -5129,6 +5169,41 @@ pub(crate) const REVISION_IDS_REL: &str = "http://stemma.sh/2026/relationships/r
 pub(crate) const REVISION_IDS_CONTENT_TYPE: &str = "application/vnd.stemma.revisionids+xml";
 pub(crate) const REVISION_IDS_NS: &str = "http://stemma.sh/2026/revisionIds";
 
+/// Resolve the revision-identity part named by the main part's first internal
+/// revision-identity relationship, if there is one.
+pub(crate) fn related_revision_ids_part(relationships: &RelationshipSet) -> Option<String> {
+    relationships
+        .entries
+        .iter()
+        .find(|relationship| {
+            relationship.rel_type == REVISION_IDS_REL
+                && crate::docx_package::relationship_target_mode_is_internal(
+                    relationship.target_mode.as_deref(),
+                )
+        })
+        .map(|relationship| relationships.resolve_internal_target(&relationship.target))
+}
+
+/// Write to the part already owned through an internal revision-identity
+/// relationship. Otherwise use the conventional name if free, then the first
+/// free numbered name starting at `word/stemmaRevisionIds2.xml`.
+fn revision_ids_part_for_write(package: &DocxPackage) -> String {
+    if let Some(owned) = related_revision_ids_part(&package.document_rels) {
+        return owned;
+    }
+    if !package.has_part(REVISION_IDS_PART) {
+        return REVISION_IDS_PART.to_string();
+    }
+    let mut suffix = 2;
+    loop {
+        let candidate = format!("word/stemmaRevisionIds{suffix}.xml");
+        if !package.has_part(&candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
 /// Build the revision-identity sidecar: the engine identity for every revision
 /// this save emits, keyed by the wire id it was written with plus its author
 /// and date.
@@ -5780,6 +5855,13 @@ pub(crate) fn serialize_canonical_docx(
         .max(max_target_wid)
         .max(max_sdt_id)
         + 1;
+
+    // Reserve dangling main-part ids before the first allocation below.
+    // A new relationship must never take an id the source already references.
+    reserve_unbound_main_document_relationship_references(
+        &mut base_pkg,
+        raw_base_archive.get(&main_part_name),
+    )?;
 
     // Import every target relationship referenced by inserted opaque body
     // content and remap its package-local id. Must happen before body
@@ -6621,13 +6703,16 @@ pub(crate) fn serialize_canonical_docx(
     // reopening adopts it instead of re-deriving it (see build_revision_ids_xml
     // for why derivation alone cannot satisfy H7's two requirements).
     let revision_ids_xml = build_revision_ids_xml(doc);
-    base_pkg.set_part(REVISION_IDS_PART, revision_ids_xml.into_bytes());
+    let revision_ids_part = revision_ids_part_for_write(&base_pkg);
+    let revision_ids_target =
+        relationship_target_from(base_pkg.main_document_part_name(), &revision_ids_part);
+    base_pkg.set_part(&revision_ids_part, revision_ids_xml.into_bytes());
     base_pkg
         .document_rels
-        .add(REVISION_IDS_REL, "stemmaRevisionIds.xml");
+        .add(REVISION_IDS_REL, &revision_ids_target);
     base_pkg
         .content_types
-        .add_override("/word/stemmaRevisionIds.xml", REVISION_IDS_CONTENT_TYPE);
+        .set_override(&format!("/{revision_ids_part}"), REVISION_IDS_CONTENT_TYPE);
 
     // Reconcile the output as an OPC graph after every modeled/story part has
     // been written. Imported main-story XML may still carry target-owned rIds,
@@ -10097,6 +10182,21 @@ fn import_and_anchor(
 
     // Parse document relationships and stories
     let rels = parse_document_relationships(&archive, &main_part)?;
+    // A main part with no relationships part holds no relationship reference.
+    // Each one would dangle, and the writer numbers the relationships it adds
+    // from `rId1`: one could take the dangling id and bind the reference to a
+    // part it never named. Such a package is refused, as every package with no
+    // relationships part was before an absent part was read as empty.
+    let main_rels_path = crate::docx_package::rels_part_path(&main_part);
+    if archive.get(&main_rels_path).is_none() {
+        let mut referenced_ids = Vec::new();
+        crate::docx_validate::collect_relationship_namespace_attributes(&root, &mut referenced_ids);
+        if let Some(referenced) = referenced_ids.first() {
+            return Err(invalid_docx(&format!(
+                "missing {main_rels_path}: the main part references relationship {referenced:?}"
+            )));
+        }
+    }
     let (header_refs, footer_refs) = parse_header_footer_refs(&root)?;
 
     // Preserve every header/footer part explicitly referenced by sectPr.
@@ -10171,7 +10271,7 @@ fn import_and_anchor(
         endnotes,
         comments,
         even_and_odd_headers,
-        Some(&archive),
+        Some((&archive, &main_part)),
     )?;
     // Empty-running-head tolerances were recorded while parsing the story parts
     // above, before the diagnostics sink existed; fold them in.
@@ -14061,6 +14161,83 @@ mod tests {
                 base_pkg.get_part(&imported_path),
                 Some(chart_bytes.as_slice())
             );
+        }
+
+        #[test]
+        fn reserving_main_references_takes_every_unbound_relationships_namespace_value() {
+            let mut pkg = minimal_pkg(None);
+            let document_xml = format!(
+                r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="{STYLES_NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><w:body>
+<w:p><w:hyperlink r:id="rId1"><w:r><w:t>held</w:t></w:r></w:hyperlink></w:p>
+<w:altChunk r:id="rId9"/>
+<w:p><w:r><w:drawing><a:blip r:embed="rIdEmbed"/></w:drawing></w:r></w:p>
+<w:p r:custom="rIdOuter"><w:r><w:t>outer</w:t></w:r></w:p>
+<w:altChunk r:id="rId&#49;2"/>
+<w:sectPr/>
+</w:body></w:document>"#
+            );
+            pkg.set_part("word/document.xml", document_xml.into_bytes());
+            let raw_xml: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:altChunk r:id="rIdRaw"/><w:sectPr/></w:body></w:document>"#;
+            reserve_unbound_main_document_relationship_references(&mut pkg, Some(raw_xml))
+                .expect("seeding must succeed");
+            assert!(
+                !pkg.document_rels.is_reserved("rId1"),
+                "a held id is never reserved"
+            );
+            for id in ["rId9", "rIdEmbed", "rIdOuter", "rId12", "rIdRaw"] {
+                assert!(
+                    pkg.document_rels.is_reserved(id),
+                    "dangling {id} must be reserved"
+                );
+            }
+        }
+
+        #[test]
+        fn reconcile_refuses_a_target_binding_for_a_reserved_base_reference() {
+            let mut base_pkg = minimal_pkg(None);
+            let document_xml = format!(
+                r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="{STYLES_NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:altChunk r:id="rId7"/><w:sectPr/></w:body></w:document>"#
+            );
+            base_pkg.set_part("word/document.xml", document_xml.into_bytes());
+            assert!(base_pkg.document_rels.find_by_id("rId7").is_none());
+
+            let mut target_pkg = minimal_pkg(None);
+            let chart_bytes = b"target chart bytes".to_vec();
+            target_pkg.set_part("word/charts/chart1.xml", chart_bytes.clone());
+            target_pkg.content_types.add_override(
+                "/word/charts/chart1.xml",
+                "application/vnd.openxmlformats-officedocument.drawingml.chart+xml",
+            );
+            assert!(target_pkg.document_rels.insert_exact(
+                "rId7",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart",
+                "charts/chart1.xml",
+                None,
+            ));
+
+            reserve_unbound_main_document_relationship_references(&mut base_pkg, None)
+                .expect("seeding must succeed");
+            assert!(base_pkg.document_rels.is_reserved("rId7"));
+
+            let mut imports = HashMap::new();
+            let err = reconcile_main_document_relationship_references(
+                &mut base_pkg,
+                &target_pkg,
+                &mut imports,
+            )
+            .expect_err("a reserved base reference must not import the target binding");
+            assert!(
+                err.message.contains(
+                    "output main document references relationship \"rId7\", which the source main document references without a binding; the target package's relationship of that id is not its binding"
+                ),
+                "unexpected error: {}",
+                err.message
+            );
+            assert!(base_pkg.document_rels.find_by_id("rId7").is_none());
+            assert!(base_pkg.get_part("word/charts/chart1.xml").is_none());
         }
 
         // (c) fail-loud: empty bytes, unknown/empty content-type, sha mismatch —

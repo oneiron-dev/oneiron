@@ -30,6 +30,7 @@ pub(crate) mod forward_version;
 mod kit;
 mod kit_piece;
 mod machine;
+mod owner_presence;
 mod owner_signing;
 mod owner_work;
 mod pad_custody;
@@ -86,8 +87,9 @@ pub use self::kit::{
 };
 pub use self::machine::{existing_machine_secret, machine_encryption_key, machine_secret};
 pub(crate) use self::machine::{keystore_error, slot_seed};
+pub use self::owner_presence::{OwnerActImportance, OwnerPresenceBasis, OwnerPresenceWitness};
 pub use self::owner_signing::OwnerRootSigner;
-pub(crate) use self::owner_signing::OwnerSigningSlot;
+pub(crate) use self::owner_signing::{OwnerSigningSlot, SlotRenewal};
 pub use self::owner_work::{
     BundleHomeWarning, CapsuleRead, DeviceSyncStart, EnsureDiagnostics, EnsureView,
     ExecutorObservation, LatestRead, OwnerWorkCancelNote, OwnerWorkCancelState,
@@ -167,10 +169,11 @@ pub use self::vault_key::{
     DATA_KEY_GENERATION_PAGE_SEAL_NOTICE, DataKeyGenerationCause, DataKeyGenerationDraft,
     DataKeyGenerationKeptWays, DataKeyGenerationOutcome, DataKeyGenerationProposal,
     DataKeyGenerationWays, EscrowAddWarning, EscrowAdded, EscrowRetirement, KitPasskey,
-    NOTIFICATION_PRODUCER_DATA_KEY_GENERATION_PROPOSAL, NewVaultKeyWrap, RecoveryPreset,
-    RecoveryPresetAnyTwoChange, RecoveryPresetChange, RecoverySheet, ResealedEscrowCapsule,
-    VaultKeyEscrowCapsule, VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo, VaultKeyWrapKind,
-    escrow_recipient, passkey_prf_input, reseal_escrow_capsule,
+    NOTIFICATION_PRODUCER_DATA_KEY_GENERATION_PROPOSAL, NewVaultKeyWrap, NoRecoveryBox,
+    RecoveryBoxHold, RecoveryBoxHoldPending, RecoveryPreset, RecoveryPresetAnyTwoChange,
+    RecoveryPresetChange, RecoverySheet, ResealedEscrowCapsule, VaultKeyEscrowCapsule,
+    VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo, VaultKeyWrapKind, escrow_recipient,
+    passkey_prf_input, reseal_escrow_capsule,
 };
 pub(crate) use self::wrap::{open_world_key, seal_world_key};
 pub use crate::error::KitRecord;

@@ -128,7 +128,12 @@ fn pin_call(
     signal: RetrievalBlendSignal,
     value: Option<f32>,
 ) -> Result<serde_json::Value, ScorecardFailure> {
-    let input = serde_json::to_value(RetrievalPolicyPinRequest { signal, value })
+    let request = RetrievalPolicyPinRequest {
+        signal: Some(signal),
+        value,
+        read_shape: None,
+    };
+    let input = serde_json::to_value(request)
         .map_err(|error| ScorecardFailure::Run(format!("pin call encode failed: {error}")))?;
     Ok(serde_json::json!({ "verb": PIN_VERB, "input": input }))
 }

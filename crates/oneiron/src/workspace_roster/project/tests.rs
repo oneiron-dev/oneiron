@@ -473,6 +473,31 @@ fn approved_project_card_mints_one_atomic_branch_and_grant() -> Result<()> {
     assert_eq!(envelope.budget(), Some(1200));
     assert!(envelope.receipt_required());
     assert_eq!(envelope.selectors(), &[format!("project:{}", id.to_hex())]);
+    // The room reads only what every member may read (FIX 5545): the roster
+    // agent peer needs its own core:read, or the opening header is withheld.
+    let scope = crate::federation::scope_codec::read_preset();
+    let grants: Vec<_> = project
+        .roster
+        .iter()
+        .map(|actor_ref| {
+            serde_json::json!({
+                "actor_ref": actor_ref, "effector": "core:read",
+                "scope": scope, "receipt_required": false
+            })
+        })
+        .collect();
+    let policy = serde_json::json!({
+        "schema_version": "1.2", "pack_id": "mint-read-fixture",
+        "pack_version": "1", "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {"criticality": "normal", "sensitivity": "normal"},
+        "rules": [],
+        "scoped_grants": grants
+    });
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        EntityId::now(),
+        &rmp_serde::to_vec_named(&policy).expect("read policy"),
+    )?;
     let room = EntityId::from_hex(&project.home_room)?;
     let history = vault
         .memory(owner.actor(), crate::edge::EdgeActorClass::Human)

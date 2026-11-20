@@ -7,8 +7,9 @@ pub use oneiron_contracts::error::{
     ErasedHoldTarget, Error, ErrorKind, GateDenial, GateDenialOutcome, GateDenialReason, GateError,
     HOLD_TARGET_ERASED_SUGGESTION, KitRecord, LEGAL_HOLD_SUGGESTION, LegalHoldBound,
     LegalHoldBoundKind, LegalHoldNotice, LegalHoldState, LiveDeckRefusal, MaintenanceError,
-    OWNER_KEY_REQUIRED, OffRecordError, OwnerKeyMoveStep, RecordError, RegistryError, RelayError,
-    Result, RoomLiveSpeakersHold, SecretError, SideTableRowProblem, StoreError, SyncError,
+    OWNER_KEY_REQUIRED, OWNER_PRESENCE_HERE_REASON_PREFIX, OWNER_PRESENCE_REQUIRED, OffRecordError,
+    OwnerKeyMoveStep, OwnerPresenceRefusal, RecordError, RegistryError, RelayError, Result,
+    RoomLiveSpeakersHold, SecretError, SideTableRowProblem, StoreError, SyncError,
     TASK_ASSIGNMENT_CONFLICT_SUGGESTION, VaultRootEntry, VaultRootProblem, VerbHookStop,
 };
 #[cfg(feature = "sync")]

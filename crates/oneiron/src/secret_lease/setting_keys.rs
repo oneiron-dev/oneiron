@@ -2,7 +2,7 @@
 //! catalogue reads from this file.
 
 use super::grant::SECRET_GRANT_MAX_TTL_SECS;
-use crate::setting::{Kind, lower_is_tighter};
+use crate::setting::Kind;
 
 /// One hour: the cap until the owner sets another.
 fn one_hour() -> u64 {
@@ -19,6 +19,6 @@ crate::setting::setting_keys! {
     /// agent's raise waits on the owner's answer. A T1 or T2 grant for a door effector still
     /// meets the credential door's own lease ceiling (`secret.door.max_lease_ttl_secs`).
     pub(crate) SECRET_GRANT_MAX_TTL: u64 = "secrets.grant.max_ttl_secs" {
-        kind: Kind::new(one_hour).strictest(one_hour).tighter(lower_is_tighter::<u64>),
+        kind: Kind::new(one_hour).strictest(one_hour).lower(),
     };
 }

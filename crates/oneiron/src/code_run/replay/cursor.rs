@@ -15,6 +15,7 @@ use super::super::support::invalid_code_run_replay;
 use super::super::types::{SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfEffect};
 use super::{CodeRunBridgeCall, CodeRunReplayRecord};
 use crate::Result;
+use crate::code_run::RESPONSE_ERASED;
 
 impl CodeRunBridgeCall {
     /// This row's stored outcome for `call`, the call made at bridge
@@ -106,6 +107,9 @@ pub struct CodeRunReplayCursor<'a> {
     /// How each call's compare reads the values base custody holds (FIX
     /// REPLAY-COMPARE-KNOWN-MATCHER); `None` for a record read in memory.
     base_known: Option<BaseKnownRead<'a>>,
+    /// Whether a row whose call failed answers that failure rather than the
+    /// replay trap (FIX ACTION-REPLAY-FAILED-ANSWERS-TRAP).
+    failed_answered: bool,
 }
 
 impl<'a> CodeRunReplayCursor<'a> {
@@ -115,6 +119,7 @@ impl<'a> CodeRunReplayCursor<'a> {
             record,
             next: Cell::new(0),
             base_known: None,
+            failed_answered: false,
         }
     }
 
@@ -124,6 +129,17 @@ impl<'a> CodeRunReplayCursor<'a> {
     #[must_use]
     pub(crate) const fn with_base_known(mut self, base_known: BaseKnownRead<'a>) -> Self {
         self.base_known = Some(base_known);
+        self
+    }
+
+    /// This cursor, each row whose call failed answering that failure as
+    /// its first making did, never the trap a guest program's replay raises
+    /// (FIX ACTION-REPLAY-FAILED-ANSWERS-TRAP, Engine ANSWER 20 Nov 09:10 =
+    /// A): an agent action made again under its idempotency key. A row whose
+    /// reply an erase took still traps as erased, since its effect ran.
+    #[must_use]
+    pub(crate) const fn answering_failed_calls(mut self) -> Self {
+        self.failed_answered = true;
         self
     }
 
@@ -190,6 +206,13 @@ impl CodeRunReplayCursor<'_> {
                 Ok(SelfDispatchOutcome::Denied(result))
             }
             SelfDispatchOutcome::Denied(result) => Err(replay_denied_trap_error(&result)),
+            // An action made again answers its failed call as its first making
+            // did; an erased reply still traps, since its effect ran.
+            SelfDispatchOutcome::Failed(result)
+                if self.failed_answered && result.error != RESPONSE_ERASED =>
+            {
+                Ok(SelfDispatchOutcome::Failed(result))
+            }
             SelfDispatchOutcome::Failed(result) => Err(replay_failed_trap_error(&result)),
             outcome => Ok(outcome),
         }

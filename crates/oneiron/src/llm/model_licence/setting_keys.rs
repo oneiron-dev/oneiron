@@ -3,7 +3,7 @@
 //! from.
 
 use super::{refuse_off_self_host, refused};
-use crate::setting::{Kind, SettingSync, lower_is_tighter};
+use crate::setting::{Kind, SettingSync};
 
 crate::setting::setting_keys! {
     /// Whether this self-hosted node installs a model whose licence is non-commercial or not in
@@ -15,7 +15,7 @@ crate::setting::setting_keys! {
         "models.install.allow_noncommercial_licences" {
         kind: Kind::new(refused)
             .strictest(refused)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
         sync: SettingSync::Install,
         on_change: Some(refuse_off_self_host),
     };

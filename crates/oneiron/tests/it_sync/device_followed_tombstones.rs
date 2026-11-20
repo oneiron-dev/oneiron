@@ -19,7 +19,7 @@ use std::sync::Arc;
 use loro::ExportMode;
 use oneiron::EntityId;
 use oneiron::sync::connection::{ConnectionConfig, SyncConnection};
-use oneiron::sync::schema::create_root_doc;
+use oneiron::sync::schema::{create_root_doc, create_window_doc};
 use oneiron::sync::transport::{TAG_SYNC_UPDATE, window_sub_tags};
 use oneiron::sync::{
     SyncClientConfig, SyncResidenceMode, SyncSelector, SyncSelectorWorld, WindowKey,
@@ -554,10 +554,45 @@ fn a_delete_during_a_live_session_reaches_a_refused_window_on_upkeep() {
 }
 
 async fn delete_during_a_live_session_reaches_a_refused_window_on_upkeep() {
+    delete_during_a_live_session_reaches_the_window_on_upkeep(false).await;
+}
+
+/// Case 8: case 5 with the window's rows held here, from a follow the home
+/// granted on an earlier socket. The home refuses the follow on this one, so
+/// the window's exchange brings no tombstone either. The upkeep asks for the
+/// window's set again all the same, and the device writes `dt:E` with no
+/// reconnect (FOLLOWED-TOMBSTONE-HELD-WINDOW-REFUSED-LIVE). Before, the
+/// upkeep asked only for windows held nowhere here, and the marker waited
+/// for the next connection.
+#[test]
+fn a_delete_during_a_live_session_reaches_a_held_refused_window_on_upkeep() {
+    on_engine_stack(
+        "a_delete_during_a_live_session_reaches_a_held_refused_window_on_upkeep",
+        delete_during_a_live_session_reaches_a_held_refused_window_on_upkeep,
+    );
+}
+
+async fn delete_during_a_live_session_reaches_a_held_refused_window_on_upkeep() {
+    delete_during_a_live_session_reaches_the_window_on_upkeep(true).await;
+}
+
+/// Cases 5 and 8: a delete the home makes in a followed window it refuses on
+/// the live socket reaches the device on the upkeep's next pass, whether or
+/// not the device holds the window's rows (`held`).
+async fn delete_during_a_live_session_reaches_the_window_on_upkeep(held: bool) {
     let device = Device::open();
     let at = now_secs();
     let founder = WindowKey::for_world(at, device.founder);
     let item = EntityId::now();
+    if held {
+        let snapshot = create_window_doc("device", &founder)
+            .export(ExportMode::snapshot())
+            .expect("the window's snapshot");
+        device
+            .vault
+            .sync_state_put(&format!("d:w:{founder}"), &snapshot)
+            .expect("FIXTURE: the device holds the window's rows");
+    }
     let tombstones = Arc::new(TombstoneHome {
         refuse_follows: true,
         serve_after_asks: 1,
@@ -626,4 +661,13 @@ async fn delete_during_a_live_session_reaches_a_refused_window_on_upkeep() {
         .filter(|event| matches!(event, HomeEvent::SyncOpened(_)))
         .count();
     assert_eq!(sockets, 1, "the marker came with no reconnect");
+    assert_eq!(
+        device
+            .vault
+            .sync_state_get(&format!("d:w:{founder}"))
+            .expect("read the window row")
+            .is_some(),
+        held,
+        "FIXTURE: the window's rows are held here only in the held case",
+    );
 }

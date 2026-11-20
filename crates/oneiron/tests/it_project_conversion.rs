@@ -1,11 +1,16 @@
 use oneiron::authority::HostSlipIssuer;
 use oneiron::claim::{ClaimApprovalStatus, ClaimSource};
 use oneiron::edge::EdgeActorClass;
+use oneiron::federation::Scope;
 use oneiron::genui::{
     ConsentActionKind, ConsentActionRequest, ConsentActorIdentity, ConsentSurface,
     PROJECT_PROPOSAL_MINT_ACTION_ID, ProjectGoalDraft, ProjectProposalCard, ProjectProposalPicks,
 };
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::policy_manifest_doors::{
+    PolicyManifestPut, PolicyManifestRead, PolicyScopedGrantRow, policy_manifests_as_owner,
+    put_policy_manifest_as_owner,
+};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SKILL};
 use oneiron::skill::{SkillLifecycle, SkillRecord};
 use oneiron::store::GateDecisionId;
@@ -59,6 +64,50 @@ fn host_issuer(vault: &Vault) -> HostSlipIssuer {
     issuer
 }
 
+/// A `core:read` scoped grant for each room member that is not the
+/// vault's owner. The room lane reads only what every member may read
+/// (ARCH-0067 section 8), and a non-owner key that no scoped grant names
+/// reads nothing, so without these the source room's turns stay hidden
+/// from every reader. The grant rows follow `room_thread_task_parity.rs`.
+fn grant_room_reads(vault: &Vault, owner: EntityId, members: &[EntityId]) {
+    let proof = vault
+        .memory(owner, EdgeActorClass::Human)
+        .embedded_owner("vault.rooms.messages")
+        .expect("owner proof for read grants");
+    let view = policy_manifests_as_owner(vault, &proof, &PolicyManifestRead { manifest_ref: None })
+        .expect("policy manifests");
+    let default = view
+        .manifests
+        .iter()
+        .find(|entry| entry.manifest_ref == view.default_manifest_ref)
+        .expect("default policy manifest");
+    let mut manifest = default.manifest.clone();
+    let mut rows = manifest.scoped_grants.clone().unwrap_or_default();
+    for member in members {
+        rows.push(PolicyScopedGrantRow {
+            // Bare census keys carry no actor class.
+            actor_class: None,
+            actor_ref: Some(member.to_hex()),
+            effector: "core:read".into(),
+            scope: Scope::top(),
+            selectors: None,
+            budget: None,
+            receipt_required: false,
+        });
+    }
+    manifest.scoped_grants = Some(rows);
+    put_policy_manifest_as_owner(
+        vault,
+        &proof,
+        PolicyManifestPut {
+            manifest_ref: Some(default.manifest_ref.clone()),
+            expected_body_hash: Some(default.body_hash.clone()),
+            manifest,
+        },
+    )
+    .expect("read grants");
+}
+
 /// The conversion debits the source's depth budget by one, as a spawn
 /// does: a root child carries the root's budget minus one.
 fn grant_source_budget(vault: &Vault, source: &mut ProjectRecord) -> Result<()> {
@@ -73,7 +122,8 @@ fn grant_source_budget(vault: &Vault, source: &mut ProjectRecord) -> Result<()> 
 #[test]
 fn conversion_moves_open_task_and_projects_thread_origin_without_copy() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), oneiron::VaultConfig::default())?;
+    // `open_owned` holds the writer lease the read-grant door below asks for.
+    let vault = Vault::open_owned(dir.path(), oneiron::VaultConfig::default())?;
     let host = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let owner = vault.authenticate_owner(host, "principal:owner", true, GateDecisionId::now())?;
     let holder = EntityId::from_bytes([0xE1; 16])?;
@@ -95,6 +145,8 @@ fn conversion_moves_open_task_and_projects_thread_origin_without_copy() -> Resul
     source.roster.push(holder.to_hex());
     grant_source_budget(&vault, &mut source)?;
     vault.put_project(source_id, &source, 1)?;
+    // The holder sits on the source roster, so the room lane needs its read.
+    grant_room_reads(&vault, host, &[holder]);
     // Rooted after the source's birth: a project new to a rooted vault needs
     // an owner-signed birth, which this fixture's source does not carry.
     let issuer = host_issuer(&vault);
@@ -598,7 +650,8 @@ struct HeldThread {
 /// (OF-522), so the holder is a member.
 fn held_thread(leader_in_roster: bool) -> Result<HeldThread> {
     let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), oneiron::VaultConfig::default())?;
+    // `open_owned` holds the writer lease the read-grant door below asks for.
+    let vault = Vault::open_owned(dir.path(), oneiron::VaultConfig::default())?;
     let host = EntityId::now();
     let owner = vault
         .ensure_embedded_owner_actor()
@@ -625,6 +678,9 @@ fn held_thread(leader_in_roster: bool) -> Result<HeldThread> {
     }
     grant_source_budget(&vault, &mut source)?;
     vault.put_project(source_id, &source, 1)?;
+    // The speaker and the holder sit on the source roster, so the room lane
+    // needs each one's read.
+    grant_room_reads(&vault, owner, &[host, holder]);
     let room = EntityId::from_hex(&source.home_room)?;
     let trunk = EntityId::now();
     speak(&vault, host, room, trunk, EntityId::now(), None);

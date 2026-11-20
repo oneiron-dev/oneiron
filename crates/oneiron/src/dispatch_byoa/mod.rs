@@ -73,6 +73,11 @@ pub use seat_quota::{
 };
 #[cfg(oneiron_test_support)]
 pub(crate) use seat_quota::{plant_spent_credit_for_test, topped_up_by_for_test};
+mod continue_work;
+pub use continue_work::{
+    ContinueOutsideWorkCheckRequest, ContinueOutsideWorkCheckView, ContinueOutsideWorkRequest,
+    ContinueOutsideWorkView, RunnerContinueCaller,
+};
 mod owner_doors;
 pub use owner_doors::{
     RUNNER_SEAT_QUOTAS_VERB, RUNNER_SEAT_TOP_UP_VERB, RUNNER_WORK_RESUME_VERB,

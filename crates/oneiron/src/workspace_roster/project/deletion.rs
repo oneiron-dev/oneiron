@@ -103,6 +103,9 @@ pub(crate) fn deindex_project_room(
     }
     origin::deindex_origin(store, txn, *id)?;
     let room_id = home_room_id(*id)?;
+    // The room's rows stop naming it below; a standing answer on one may
+    // sit in a facet only the room placed it in.
+    super::room_narrowing::queue_unbound_room_in(store, txn, room_id)?;
     super::super::rooms::delete_room_metadata(store, txn, room_id)?;
     let owner = ROOM_PROJECT.get(store, txn, &room_id)?;
     if owner.is_some_and(|owner| owner != *id) {

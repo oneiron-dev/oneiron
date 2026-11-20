@@ -158,6 +158,15 @@ pub(crate) use crate::write_envelope::person_identity::body_fields;
 use crate::serialize::person_identity::field;
 pub(crate) use crate::serialize::person_identity::validated_persona_baseline;
 
+/// The PERSON `body`, a stored FACET body, is a scenario mask of, read as
+/// [`Vault::put_persona_scenario`] writes it; `None` for any other FACET and
+/// for a mask that does not read.
+pub(crate) fn scenario_mask_person(body: &[u8]) -> Option<EntityId> {
+    let entries = body_fields(body).ok()?;
+    let mask: ScenarioWire = from_value(field(&entries, SCENARIO_KEY).ok()?).ok()?;
+    Some(mask.person_ref.0)
+}
+
 fn put_field(entries: &mut Vec<(Value, Value)>, name: &str, value: Value) {
     entries.retain(|(key, _)| key.as_str() != Some(name));
     entries.push((name.into(), value));

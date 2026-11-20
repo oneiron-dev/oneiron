@@ -19,6 +19,14 @@
 //! then removed on another branch; and an anchor's mark over the answer
 //! stands once the machine joins.
 //!
+//! Row RESTORED-HELD-RESTRICTION-REVIEW-TESTS adds the case review round 1
+//! of #9632 found (P1 :166): an owner anchor this install does not pin
+//! removes a machine whose floored answer is held, and no entry joins it.
+//! The removal's chain stands, removed, as a removal of a machine that never
+//! joined does, and admits nothing: the held answer stands no roster chain,
+//! so the machine's own install key, which the pin-free carrier check would
+//! then read as a live roster carrier, joins no frontier.
+//!
 //! Each case lays a demotion from "yours" to "work/school" below its
 //! carrier's floor: the same install signs a sibling of a higher sequence
 //! that does not descend from it. The rows come from the door
@@ -36,15 +44,16 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    ActSurface, AuthorityEntryHash, AuthorityOp, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
-    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
-    MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole, OwnerAct, OwnerActKind,
-    RestoredJoinEnrolment, RestoredMachineJoin, restored_machine_join_seen,
+    ActSurface, AuthorityEntryHash, AuthorityFoldIssue, AuthorityOp, HostSlipIssuer,
+    MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
+    MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole,
+    OwnerAct, OwnerActKind, RestoredJoinEnrolment, RestoredMachineJoin, restored_machine_join_seen,
     restored_machine_profile_proof_transcript,
 };
 use oneiron::test_doors::restored_enrolment::file_restored_enrolment_in_role;
 use oneiron::test_doors::restored_enrolment::forged_rows::{
-    RowSigner, SignedRow, install_key, publish_unpinned_root_and_mark, put_signed_row,
+    RowSigner, SignedRow, install_key, publish_unpinned_root_and_mark,
+    publish_unpinned_root_and_removal, put_signed_row,
 };
 use oneiron::test_support::test_host_issuer;
 use oneiron::{EntityId, Vault, VaultConfig};
@@ -681,5 +690,70 @@ fn an_anchors_mark_over_a_held_demotion_stands_once_the_machine_joins() {
             .is_some_and(|folded| folded.anchored.values().any(|head| head.entry == mark)),
         "an anchor's mark over the held demotion stands once the machine joins, \
          as it stands without the floor"
+    );
+}
+
+#[test]
+fn an_unpinned_anchors_removal_beside_a_held_demotion_admits_no_carrier() {
+    let host = rooted_host();
+    let seed = 0x69;
+    let request = restored_request(host.vault_id, seed);
+    let target = request.machine;
+    let before = rows_before(&host);
+    let enrolment = yours_enrolment(&host, &request);
+    let (_, sibling) = floored_demotion(&host, target, enrolment, before);
+
+    // An owner anchor this install does not pin removes the machine over the
+    // log's heads, the held demotion among them. No entry joins anything.
+    let removal = publish_unpinned_root_and_removal(&host.vault, host.owner, &request)
+        .expect("FIXTURE: an unpinned owner anchor removes the machine");
+    assert!(
+        counted(&host.vault, &removal),
+        "FIXTURE: the anchor's removal counts"
+    );
+    assert!(
+        waits(&host.vault, &enrolment),
+        "FIXTURE: no entry joined the enrolment"
+    );
+    assert!(
+        host.vault
+            .authority_fold()
+            .expect("FIXTURE: the host's fold")
+            .machine(target)
+            .is_some_and(|folded| folded
+                .anchored
+                .values()
+                .any(|head| head.entry == removal && head.removed)),
+        "FIXTURE: the removed anchor chain stands"
+    );
+
+    // The machine's own install key joins the frontier over the removal.
+    let machine_key = SigningKey::from_bytes(&[seed; 32]);
+    let join = put_signed_row(
+        &host.vault,
+        RowSigner::Install(&machine_key),
+        AuthorityOp::FrontierJoin(FrontierJoin {
+            family: FrontierJoinFamily::Install(target),
+            scope: FrontierJoinScope::Main,
+        }),
+        None,
+        BTreeSet::from([removal, sibling.entry]),
+    )
+    .expect("FIXTURE: the machine's frontier join is stored");
+
+    let fold = host.vault.authority_fold().expect("the fold");
+    assert!(
+        !fold.valid_entries.contains(&join.entry)
+            && fold
+                .issues
+                .contains(&AuthorityFoldIssue::SignerNotInAncestry(join.entry)),
+        "a removal under an anchor this install does not pin admits no carrier: the machine's \
+         own frontier join is refused as a signer not in its ancestry; issues {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.machine(target)
+            .is_some_and(|folded| folded.roster.is_none()),
+        "the held demotion stands no roster chain of the machine"
     );
 }

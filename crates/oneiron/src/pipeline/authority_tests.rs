@@ -740,6 +740,7 @@ fn authority_bounded_candidates_inherit_resolved_stale_and_keep_filters() -> Res
                 device_local: None,
                 deadline: None,
                 disclosure: None,
+                made_by: crate::provenance::made_by::MadeByPredicate::All,
             };
             let mut metadata = EntityMetadataCache::default();
             // Bounded scans must use local decisions and resolved authority,

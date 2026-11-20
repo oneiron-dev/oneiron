@@ -269,6 +269,7 @@ impl<'v> Memory<'v> {
                 session_key: self.session_key,
                 machine_signer: self.machine_signer,
                 read_proof: self.read_proof.clone(),
+                account_key_read: self.account_key_read,
                 phone_reads: self.phone_reads.clone(),
                 host_action: self.host_action.clone(),
                 room_turn: Some(ceiling),
@@ -304,6 +305,7 @@ impl<'v> Memory<'v> {
                 external_git_source_host: None,
                 repo_tool_recipient: self.repo_tool_recipient.clone(),
                 read_filter: self.read_filter.clone(),
+                dispatch_attempt: self.dispatch_attempt,
             },
         })
     }

@@ -75,6 +75,41 @@ impl<'store> FloorWrites<'store> {
         ))
     }
 
+    /// `ops`, this save's writes, with each room handle (`[secret r1]`) a
+    /// row they write names moved into the vault's custody in `wtxn`
+    /// (ROOM-LOCAL-CUSTODY): the value the room keeps under it takes a base
+    /// custody record, and only that teaches the known-value index its
+    /// fingerprint. A floor that saves out of no room writes `ops` as given.
+    fn carry_room_secrets_in_txn(
+        &self,
+        vault: &Vault,
+        wtxn: &mut RwTxn<'_>,
+        ops: Vec<BatchOp>,
+    ) -> Result<Vec<BatchOp>> {
+        match &self.room {
+            Some(room) => {
+                crate::batch::secret_scan::carry_room_secrets_in_txn(vault, wtxn, room, ops)
+            }
+            None => Ok(ops),
+        }
+    }
+
+    /// The carry of the room this floor saves out of, for the NOTE, CLAIM
+    /// and conversation shell a selected save lands
+    /// (ROOM-CUSTODY-SAVED-ARTIFACTS): each room handle they name takes a
+    /// base custody record, as a saved turn's rows do. `None` for a floor
+    /// that saves out of no room, or out of one that keeps no secret.
+    ///
+    /// # Errors
+    ///
+    /// A poisoned room custody lock.
+    pub(crate) fn room_carry(&self) -> Result<Option<crate::batch::secret_scan::RoomCarry>> {
+        match &self.room {
+            Some(room) => crate::batch::secret_scan::RoomCarry::of(room),
+            None => Ok(None),
+        }
+    }
+
     /// Floor operation 1/3 (K1): append one evaluated EGRESS gate decision.
     ///
     /// Egress decisions are floor survivors and never conflate with the
@@ -411,6 +446,7 @@ impl FloorWrites<'_> {
         let grant = PromoteReplayGrant::mint(plan);
         let stream_messages = self.promoted_stream_messages_in_txn(vault, wtxn, plan, None)?;
         let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, plan.ops.iter())?;
+        let replay_ops = self.carry_room_secrets_in_txn(vault, wtxn, replay_ops)?;
         let replay_ops =
             crate::batch::secret_scan::seal_promoted_message_ops_in_txn(vault, wtxn, replay_ops)?;
         crate::conversation_dag::promote_replay_in_txn(vault, wtxn, plan, replay_ops, &grant)?;
@@ -656,6 +692,7 @@ impl FloorWrites<'_> {
         let stream_messages =
             self.promoted_stream_messages_in_txn(vault, wtxn, plan, Some(&fresh))?;
         let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, fresh_ops())?;
+        let replay_ops = self.carry_room_secrets_in_txn(vault, wtxn, replay_ops)?;
         let replay_ops =
             crate::batch::secret_scan::seal_promoted_message_ops_in_txn(vault, wtxn, replay_ops)?;
         crate::conversation_dag::promote_replay_in_txn(vault, wtxn, plan, replay_ops, &grant)?;

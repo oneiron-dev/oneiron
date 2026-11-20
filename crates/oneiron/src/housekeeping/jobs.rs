@@ -229,8 +229,11 @@ fn run_sweep_job(vault: &Vault, armed: &Armed, pass: &JobPass<'_>) -> Result<Job
         Some(super::tests::Injected::Fail) => {
             return Err(Error::InvariantViolation("test: an injected sweep failure"));
         }
-        Some(super::tests::Injected::Panic | super::tests::Injected::Crash) => {
-            panic!("test: an injected sweep panic")
+        Some(super::tests::Injected::Panic) => panic!("test: an injected sweep panic"),
+        // The runner lets this one unwind past its catch: the process dies
+        // after the start marker committed.
+        Some(super::tests::Injected::Crash) => {
+            std::panic::panic_any(crate::schedule::InjectedCrash)
         }
         None => {}
     }

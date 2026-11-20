@@ -391,6 +391,7 @@ fn keyed_bodies_never_surface_through_generic_facade_scoped_or_pack_reads() {
         deny_all: false,
         caller_excludes_stale: false,
         credential: None,
+        work_talk_room: None,
     };
     for include_stale in [false, true] {
         filter.include_stale = include_stale;

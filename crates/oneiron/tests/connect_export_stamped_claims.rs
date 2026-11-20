@@ -23,6 +23,13 @@
 //! - A summary in the granted world whose covered claim is use-limited (a
 //!   privacy erase a standing customer hold refused) is withheld, as the
 //!   claim itself is.
+//! - The Connect guest's own envelope fetch (`vault.guests.export_envelope`)
+//!   reads what the export selects under its grant: the private claim at the
+//!   ceiling, not the sensitive one above it. E2E FEDERATION-04 (20 Nov
+//!   night, fe3867d90f5a) found the fetch refused whole (403), because the
+//!   guest credential's conversation home still withheld the private claim
+//!   the selector now carries. The guest credential on any other read door
+//!   still reads no stamped claim.
 //!
 //! Traced red/green (not executed): on main `9622dba76276` the private carry
 //! and same-world summary control fail; the cross-world and MACHINE LEAK
@@ -40,7 +47,8 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use loro::{LoroDoc, LoroValue, ValueOrContainer};
-use oneiron::authority::{CausalWriteDisposition, HostSlipIssuer, PeerMachine};
+use oneiron::authority::{CausalWriteDisposition, HostSlipIssuer, PeerMachine, VerifiedSlip};
+use oneiron::claim::CallerLocality;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::LegalHoldTarget;
 use oneiron::federation::{
@@ -49,9 +57,13 @@ use oneiron::federation::{
 };
 use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
+use oneiron::settings::ReadDestination;
 use oneiron::store::GateDecisionId;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::manager::WindowManager;
+use oneiron::sync::selector::{
+    GuestDocumentShareRequest, export_guest_document_for_guest, guest_document_rows_still_readable,
+};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::{
     ConnectExportRequest, SyncClient, SyncSelector, SyncSelectorWorld, filtered_window_doc_for_peer,
@@ -349,6 +361,110 @@ fn connect_export_from<T>(
         &Claims,
     ) -> TestResult<T>,
 ) -> TestResult<(LoroDoc, Claims, T)> {
+    pact_window_from(config, ceiling, prepare, connect_window_update)
+}
+
+/// The source side of an accepted Connect pact over its world `world`.
+struct SourcePact<'a> {
+    vault: &'a Vault,
+    owner: &'a AuthenticatedOwner,
+    issuer: &'a HostSlipIssuer,
+    manager: &'a Arc<WindowManager>,
+    world: EntityId,
+    grant: EntityId,
+    pact: String,
+    claims: &'a Claims,
+}
+
+/// The owner's Connect export of the pact's world: its Loro update.
+fn connect_window_update(pact: &SourcePact<'_>) -> TestResult<Vec<u8>> {
+    let delivery = SyncClient::export_connect_window_as(
+        pact.manager,
+        pact.owner,
+        pact.issuer,
+        ConnectExportRequest {
+            pact: pact.pact.clone(),
+            window_key: WINDOW.to_owned(),
+            world_ref: pact.world,
+            facets: vec![],
+            bands: vec![],
+        },
+    )?;
+    Ok(delivery.body.update)
+}
+
+/// The Connect guest's credential, as `vault.guests.mint_slip` mints it for
+/// the pact's guest grant and the guest proves it with its own key.
+fn guest_proof(pact: &SourcePact<'_>) -> TestResult<VerifiedSlip> {
+    let holder = SigningKey::from_bytes(&[0x47; 32]);
+    let expires_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs()
+        + 3600;
+    let slip = pact.vault.mint_guest_slip(
+        pact.owner,
+        pact.issuer,
+        pact.grant,
+        Some(holder.verifying_key().to_bytes()),
+        expires_at,
+        None,
+    )?;
+    let challenge = b"oneiron-request:connect-guest-fetch";
+    let signature = holder.sign(&slip.binding_transcript(challenge)?).to_bytes();
+    Ok(pact.vault.verify_capability_slip_with_host_key(
+        &pact.issuer.public_key(),
+        &slip,
+        challenge,
+        &signature,
+    )?)
+}
+
+/// The guest's own fetch of the pact's world under `proof`, as
+/// `vault.guests.export_envelope` serves it off the device: its Loro update.
+fn guest_fetched_update(pact: &SourcePact<'_>, proof: &VerifiedSlip) -> TestResult<Vec<u8>> {
+    let (envelope, _) = export_guest_document_for_guest(
+        pact.manager,
+        proof,
+        CallerLocality::OffDevice,
+        pact.issuer,
+        &GuestDocumentShareRequest {
+            grant_ref: pact.grant,
+            world_ref: pact.world,
+            window_key: WINDOW.to_owned(),
+            facets: vec![],
+            bands: vec![],
+        },
+    )?;
+    Ok(envelope.envelope.body.update)
+}
+
+/// The guest's fetch of the world of a pact whose guest grant reads up to
+/// `ceiling`, imported as a Loro document, with the claims it was cut from.
+fn guest_fetch(ceiling: Sensitivity) -> TestResult<(LoroDoc, Claims)> {
+    let (doc, claims, ()) = pact_window_from(
+        VaultConfig::default(),
+        ceiling,
+        |_, _, _, _, _| Ok(()),
+        |pact| guest_fetched_update(pact, &guest_proof(pact)?),
+    )?;
+    Ok((doc, claims))
+}
+
+/// Builds the source vault (opened with `config`), its world and claims and
+/// `prepare`'s extra rows, accepts a Connect pact whose guest grant reads up
+/// to `ceiling`, and imports the update `window` takes of the world.
+fn pact_window_from<T>(
+    config: VaultConfig,
+    ceiling: Sensitivity,
+    prepare: impl FnOnce(
+        &Vault,
+        &AuthenticatedOwner,
+        &HostSlipIssuer,
+        EntityId,
+        &Claims,
+    ) -> TestResult<T>,
+    window: impl FnOnce(&SourcePact<'_>) -> TestResult<Vec<u8>>,
+) -> TestResult<(LoroDoc, Claims, T)> {
     let (_source_dir, vault) = open_vault_with(config)?;
     let owner = authenticate_owner(&vault)?;
     // The raw claim door needs an ordinary rule to land a summary. Install
@@ -413,20 +529,18 @@ fn connect_export_from<T>(
         .collect::<String>();
     let manager = manager(&vault);
     manager.open_window(&WindowKey::new(WINDOW))?;
-    let delivery = SyncClient::export_connect_window_as(
-        &manager,
-        &owner,
-        &issuer,
-        ConnectExportRequest {
-            pact,
-            window_key: WINDOW.to_owned(),
-            world_ref: world,
-            facets: vec![],
-            bands: vec![],
-        },
-    )?;
+    let update = window(&SourcePact {
+        vault: &vault,
+        owner: &owner,
+        issuer: &issuer,
+        manager: &manager,
+        world,
+        grant: minted.grant,
+        pact,
+        claims: &claims,
+    })?;
     let doc = LoroDoc::new();
-    doc.import(&delivery.body.update)
+    doc.import(&update)
         .expect("import the exported Loro update");
     Ok((doc, claims, extra))
 }
@@ -677,5 +791,130 @@ fn a_guest_without_a_connect_grant_still_reads_no_stamped_claim() -> TestResult 
         !carries(&doc, claims.sensitive),
         "a member homed in another vault and outside a Connect grant reads no stamped claim"
     );
+    Ok(())
+}
+
+/// Pins the guest fetch under the Connect ceiling (E2E FEDERATION-04, 20 Nov
+/// night): fails on main 81a36044d112, where the fetch refuses whole
+/// (`guest_document_scope`) because the credential's conversation home
+/// withholds the private claim the selector carries; passes with the fix.
+#[test]
+fn a_connect_guest_fetches_a_private_claim_up_to_its_ceiling() -> TestResult {
+    let (doc, claims) = guest_fetch(Sensitivity::Private)?;
+    assert!(
+        carries(&doc, claims.public),
+        "the guest's fetch carries the world's public claim"
+    );
+    assert!(
+        carries(&doc, claims.private),
+        "a guest grant at most private fetches the private stamped claim"
+    );
+    assert!(
+        !carries(&doc, claims.sensitive),
+        "a guest grant at most private fetches no sensitive stamped claim"
+    );
+    Ok(())
+}
+
+/// Pins the grant's ceiling on the guest fetch: a grant at most public
+/// fetches no stamped claim. Passes on main 81a36044d112 and with the fix.
+#[test]
+fn a_connect_guest_fetch_carries_no_stamped_claim_above_a_public_ceiling() -> TestResult {
+    let (doc, claims) = guest_fetch(Sensitivity::Public)?;
+    assert!(
+        carries(&doc, claims.public),
+        "the guest's fetch carries the world's public claim"
+    );
+    assert!(
+        !carries(&doc, claims.private),
+        "a guest grant at most public fetches no private stamped claim"
+    );
+    assert!(
+        !carries(&doc, claims.sensitive),
+        "a guest grant at most public fetches no sensitive stamped claim"
+    );
+    Ok(())
+}
+
+/// Pins the fetch-only scope of the Connect ceiling: the same guest
+/// credential's ordinary read key still reads no stamped claim (RULING
+/// SECREAD-HOME-READ-DOORS = B). Passes on main 81a36044d112 and with the fix.
+#[test]
+fn a_connect_guest_credential_reads_no_stamped_claim_on_another_door() -> TestResult {
+    let (_, _, ()) = pact_window_from(
+        VaultConfig::default(),
+        Sensitivity::Private,
+        |_, _, _, _, _| Ok(()),
+        |pact| {
+            let proof = guest_proof(pact)?;
+            let key = pact
+                .vault
+                .credential_read_key(&proof)?
+                .expect("FIXTURE: the guest's credential has a read key");
+            let read = pact.vault.scoped_read(key.at(CallerLocality::OffDevice));
+            assert!(
+                read.all_refs_readable(&[pact.claims.public])?,
+                "FIXTURE: the guest's credential reads the world's public claim"
+            );
+            assert!(
+                !read.all_refs_readable(&[pact.claims.private])?,
+                "LEAK: the guest's credential reads a private stamped claim outside its fetch"
+            );
+            connect_window_update(pact)
+        },
+    )?;
+    Ok(())
+}
+
+/// Pins the replay of the guest fetch (#9657 review round 1): an HTTP
+/// invocation replay reads the rows its first answer listed again through
+/// the fetch's own grant-bound check, so the private stamped claim the fetch
+/// carried still reads. Before, the replay judged each row with the
+/// credential's ordinary key, which withholds that claim
+/// (`a_connect_guest_credential_reads_no_stamped_claim_on_another_door`),
+/// and answered with no envelope. The grant's ceiling still holds: a
+/// sensitive claim above it reads to no replay.
+#[test]
+fn a_replayed_connect_guest_fetch_reads_its_rows_through_the_grant_ceiling() -> TestResult {
+    let (_, _, ()) = pact_window_from(
+        VaultConfig::default(),
+        Sensitivity::Private,
+        |_, _, _, _, _| Ok(()),
+        |pact| {
+            let proof = guest_proof(pact)?;
+            let (envelope, rows) = export_guest_document_for_guest(
+                pact.manager,
+                &proof,
+                CallerLocality::OffDevice,
+                pact.issuer,
+                &GuestDocumentShareRequest {
+                    grant_ref: pact.grant,
+                    world_ref: pact.world,
+                    window_key: WINDOW.to_owned(),
+                    facets: vec![],
+                    bands: vec![],
+                },
+            )?;
+            assert!(
+                rows.contains(&pact.claims.private),
+                "FIXTURE: the guest's fetch lists the private stamped claim"
+            );
+            let off_device = ReadDestination::from(CallerLocality::OffDevice);
+            assert!(
+                guest_document_rows_still_readable(pact.vault, &proof, &off_device, &rows),
+                "the replay reads every row the guest's fetch listed"
+            );
+            assert!(
+                !guest_document_rows_still_readable(
+                    pact.vault,
+                    &proof,
+                    &off_device,
+                    &[pact.claims.sensitive]
+                ),
+                "LEAK: a replay reads a sensitive stamped claim above the grant's ceiling"
+            );
+            Ok(envelope.envelope.body.update)
+        },
+    )?;
     Ok(())
 }

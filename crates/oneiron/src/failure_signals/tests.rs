@@ -441,7 +441,8 @@ fn retrieval_miss_uses_published_base_run_not_entity_impersonation() -> Result<(
             .expect("retrieval producer"),
         input(FailureClassV1::MemoryMiss),
     )?;
-    assert_eq!(vault.export_tier1_failure_counts()?.len(), 1);
+    // Live counting (OF-380, FIX 2146): detector auto-count plus explicit public-door record = 2 rows.
+    assert_eq!(vault.export_tier1_failure_counts()?.len(), 2);
     vault.store.delete_retrieval_run(run.run_id)?;
     assert!(
         vault
@@ -584,7 +585,8 @@ fn real_retrieval_abstention_is_a_ledger_backed_failure_signal() -> Result<()> {
             .expect("retrieval producer"),
         input(FailureClassV1::MemoryMiss),
     )?;
-    assert_eq!(vault.export_tier1_failure_counts()?.len(), 1);
+    // Live counting (OF-380, FIX 2146): detector auto-count plus explicit public-door record = 2 rows.
+    assert_eq!(vault.export_tier1_failure_counts()?.len(), 2);
     Ok(())
 }
 
@@ -600,7 +602,8 @@ fn failure_signals_consolidation_requires_base_receipt_not_caller_copy() -> Resu
         version: 0,
         decision_id: GateDecisionId::now(),
         created_at: 3_601,
-        outcome: "denied".into(),
+        // UC-03 stage 1f (GATE-OUTCOME-DENIED-TWO-MEANINGS): engine Deny is "deny"; "denied" on a claim reads Rejected.
+        outcome: "deny".into(),
         reason_codes: vec!["gate.deny.dreamer_precommit.degenerate_output".into()],
         receipt_reasons: vec![],
         system_notices: vec![],
@@ -618,6 +621,7 @@ fn failure_signals_consolidation_requires_base_receipt_not_caller_copy() -> Resu
     vault.with_write_txn(|txn| vault.store.append_gate_decision_in_txn(txn, &decision))?;
     let receipt = crate::receipt::gate_decision_receipt(&decision);
     let ids = vault.project_receipt_tripwires("run", std::slice::from_ref(&receipt), 3_601)?;
+    // UC-03 stage 1f (GATE-OUTCOME-DENIED-TWO-MEANINGS): corrected Deny receipt now projects one observation.
     assert_eq!(ids.len(), 1);
     let observation = vault
         .tier1_observation(ids[0])?
@@ -631,7 +635,8 @@ fn failure_signals_consolidation_requires_base_receipt_not_caller_copy() -> Resu
     assert_eq!(forged_ids.len(), 1);
     assert_ne!(forged_ids[0], ids[0]);
     assert!(vault.tier1_observation(forged_ids[0])?.is_none());
-    assert_eq!(vault.export_tier1_failure_counts()?.len(), 1);
+    // Live counting (OF-380, FIX 2146): auto TaskFailure plus manual record = 2 rows (after Deny fix).
+    assert_eq!(vault.export_tier1_failure_counts()?.len(), 2);
     Ok(())
 }
 
@@ -778,7 +783,8 @@ fn a_failed_turn_exports_as_counts_never_its_text() -> Result<()> {
     )?;
 
     let rows = vault.export_tier1_failure_counts()?;
-    assert_eq!(rows.iter().map(Tier1FailureCount::count).sum::<u64>(), 1);
+    // Live counting (OF-380, FIX 2146): detector auto-count plus explicit public-door record sums to 2.
+    assert_eq!(rows.iter().map(Tier1FailureCount::count).sum::<u64>(), 2);
     let wire = serde_json::to_string(&rows).expect("tier-1 export");
     assert!(
         !wire.contains(SENTINEL),

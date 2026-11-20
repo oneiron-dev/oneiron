@@ -699,6 +699,9 @@ fn owner_grade_door(row: &Dict) -> Result<String, GenerateError> {
 /// under the credential the call presented; a restrictive call's args that do not decode as the door's typed input
 /// give way to the caller's own (`facade_door_input`, FIX 5076).
 fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
+    if flag(row, "host_door_transport_only") {
+        return transport_door(row, method);
+    }
     let name_value = item(row, "name")?;
     let lands = flag(row, "lands_turn");
     let landed = if lands {
@@ -734,6 +737,13 @@ fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
     } else {
         ""
     };
+    // Only the admitted skill call's entry needs this call's own pre chain
+    // state: its post chain here may still run on the skill's answer.
+    let skill_hooks_arg = if name_value.is_str("self.skills.call") {
+        ", !hooks.passed_through()"
+    } else {
+        ""
+    };
     let paced_arg = if flag(row, "host_door_paced") {
         "Some(super::FacadePacedCall::of(call)?), "
     } else {
@@ -745,7 +755,7 @@ fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
         ""
     };
     let door = format!(
-        "super::host_doors::{method}(server, auth, {session_arg}{caller}{lens_arg}{client_surface_arg}{surface_arg}{paced_arg}facade_door_input(&mut hooks)?{fold_hooks_arg}).await"
+        "super::host_doors::{method}(server, auth, {session_arg}{caller}{lens_arg}{client_surface_arg}{surface_arg}{paced_arg}facade_door_input(&mut hooks)?{fold_hooks_arg}{skill_hooks_arg}).await"
     );
     // A door that fails after the pre chain ran keeps a session-only call's pre hook records and runs no post chain
     // (FIX 5527).
@@ -773,15 +783,38 @@ fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
         "output?"
     };
     let answer = if flag(row, "host_door_lists") {
-        format!(
-            "let ran = async {{
+        // The admitted skill call's post-hook view spills to its run past
+        // the inline size, bound as a readable result; a small view answers
+        // inline, as every other row's does. An answer nesting past what a
+        // value may hold comes back as JSON text, and its post chain judges
+        // it as text (SKILL-ANSWER-DEEP-JSON-STACK-SAFE).
+        if name_value.is_str("self.skills.call") {
+            format!(
+                "let ran = async {{
+                    let (output, listed) = {door};
+                    Ok::<_, FacadeApiError>(({door_output}, listed))
+                }}.await;
+                let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+                let (output, listed) = match ran {{ Ok(ran) => ran, {failed} }};{landed}
+                let spill_run = super::host_doors::skill_call_spill_run(&hooks);
+                let spill_rows = listed.clone();
+                let value = match output {{
+                    oneiron::engine_executor::AdmittedSkillAnswer::Value(output) => super::host_doors::spill_admitted_skill_view(server, spill_run, {post_hooks}.await.map_err(|error| error.with_hook_notice(hook_notice))?, spill_rows).await,
+                    oneiron::engine_executor::AdmittedSkillAnswer::Text(text) => super::host_doors::admitted_skill_text_post(server, hooks, text, spill_run, spill_rows).await.map_err(|error| FacadeApiError::from(error).with_hook_notice(hook_notice))?,
+                }};
+                Ok(FacadeCallOutput {{ value, rows: super::host_doors::support::ListedRows::rows(listed), hook_notice }})"
+            )
+        } else {
+            format!(
+                "let ran = async {{
                     let (output, listed) = {door};
                     Ok::<_, FacadeApiError>((facade_output({door_output})?, listed))
                 }}.await;
                 let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
                 let (output, listed) = match ran {{ Ok(ran) => ran, {failed} }};{landed}
                 Ok(FacadeCallOutput {{ value: {post_hooks}.await.map_err(|error| error.with_hook_notice(hook_notice))?, rows: super::host_doors::support::ListedRows::rows(listed), hook_notice }})"
-        )
+            )
+        }
     } else {
         format!(
             "let ran = async {{ Ok::<_, FacadeApiError>(facade_output({door}?)?) }}.await;
@@ -790,18 +823,7 @@ fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
                 Ok(FacadeCallOutput::unlisted({post_hooks}.await.map_err(|error| error.with_hook_notice(hook_notice))?).with_hook_notice(hook_notice))"
         )
     };
-    let scope_guard = if flag(row, "proposes") && admits(row, "credential_record_scope")? {
-        "auth.require_granted(CoreScope::Write).or_else(|_| auth.require_granted(CoreScope::Propose))?;"
-            .to_owned()
-    } else if admits(row, "require_granted_scope")? {
-        // FIX 6867: a lane door judges its records in its engine door.
-        format!(
-            "auth.require_granted(CoreScope::{})?;",
-            item(row, "scope")?.str()
-        )
-    } else {
-        format!("auth.require(CoreScope::{})?;", item(row, "scope")?.str())
-    };
+    let scope_guard = host_door_scope_guard(row)?;
     let record_scope = record_scope_guard(row)?;
     let caller_line = if flag(row, "host_door_caller") {
         " let caller = facade_actor(server, auth)?;"
@@ -821,6 +843,45 @@ fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
                 oneiron::task_verb::sdk::validate_input({name}, &value)?;
                 {pre_hooks}
                 {answer}
+            }}
+"
+    ))
+}
+
+/// A host door's scope check.
+fn host_door_scope_guard(row: &Dict) -> Result<String, GenerateError> {
+    Ok(
+        if flag(row, "proposes") && admits(row, "credential_record_scope")? {
+            "auth.require_granted(CoreScope::Write).or_else(|_| auth.require_granted(CoreScope::Propose))?;"
+                .to_owned()
+        } else if admits(row, "require_granted_scope")? {
+            // FIX 6867: a lane door judges its records in its engine door.
+            format!(
+                "auth.require_granted(CoreScope::{})?;",
+                item(row, "scope")?.str()
+            )
+        } else {
+            format!("auth.require(CoreScope::{})?;", item(row, "scope")?.str())
+        },
+    )
+}
+
+/// A transport-only host door's dispatch (`host_door_transport_only`, FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER): the
+/// row's scope, record scope and input checks, the hosted operator's refusal and the row's own door admission, then
+/// its door, which crosses no hook chain of its own: it stages what it carries and runs it as a call of another
+/// verb, whose hooks judge it, and answers as that call answers.
+fn transport_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
+    let name = json(item(row, "name")?);
+    let scope_guard = host_door_scope_guard(row)?;
+    let record_scope = record_scope_guard(row)?;
+    Ok(format!(
+        "{scope_guard}
+                {record_scope}
+                facade_outside_room_turn(call, {name})?;
+                let value = input?;
+                oneiron::task_verb::sdk::validate_input({name}, &value)?;
+                facade_transport_admits(server, auth, {name})?;
+                super::host_doors::{method}(server, call, facade_input(value)?).await
             }}
 "
     ))

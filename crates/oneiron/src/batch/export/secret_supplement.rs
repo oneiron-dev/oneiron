@@ -15,7 +15,11 @@
 //! relays the sealed copy any more. A skipped or refused import marks
 //! nothing. A mark this install cannot sign there stays owed, value-free,
 //! and a later pass signs it (FIX 12291); only a failure to file that intent
-//! refuses the import.
+//! refuses the import. The owner's own import, his undelegated, unnarrowed
+//! proof revalidated in that writer as his own write, lends the mark that
+//! write, so the mark carries the owner key's proof this install holds (row
+//! OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS); a narrowed or delegated
+//! proof, or one bound to a request's slip, marks it unproven, as before.
 
 use base64::Engine as _;
 use zeroize::Zeroizing;
@@ -25,7 +29,7 @@ use crate::Vault;
 use crate::batch::export::secret_supplement_record::{
     OpenedSecretSupplement, SecretSupplementImport,
 };
-use crate::consent::AuthenticatedOwner;
+use crate::consent::{AuthenticatedOwner, OwnerAuthoredWrite};
 use crate::error::{Error, Result};
 use crate::secret_custody::archive_same_custody_in_txn;
 use crate::secret_record::ArchiveSameId;
@@ -33,6 +37,27 @@ use oneiron_authority::authority::ActSurface;
 
 fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("secret supplement import: {reason}"))
+}
+
+/// The owner's own write of this import, his proof `owner` revalidated in
+/// the import's writer `txn` ([`AuthenticatedOwner::owner_answer_in_txn`]):
+/// the import mark then carries the owner key's proof. A narrowed or
+/// delegated proof, or one that does not read (logged), marks it unproven;
+/// the import stands either way.
+fn owner_authored_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    owner: &AuthenticatedOwner,
+) -> Option<OwnerAuthoredWrite> {
+    owner
+        .owner_answer_in_txn(vault, txn)
+        .unwrap_or_else(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "secret supplement import: the owner's proof did not read; its mark is carried unproven"
+            );
+            None
+        })
 }
 
 impl Vault {
@@ -93,15 +118,21 @@ impl Vault {
             } else {
                 SecretSupplementImport::Skipped
             };
-            let marked = matches!(
+            let marked = if matches!(
                 outcome,
                 SecretSupplementImport::Restored | SecretSupplementImport::Unchanged
-            ) && self.mark_supplement_imported_in_txn(
-                wtxn,
-                actor,
-                surface,
-                supplement.request,
-            )?;
+            ) {
+                let owner_authored = owner_authored_in_txn(self, wtxn, owner);
+                self.mark_supplement_imported_in_txn(
+                    wtxn,
+                    actor,
+                    surface,
+                    supplement.request,
+                    owner_authored.as_ref(),
+                )?
+            } else {
+                false
+            };
             Ok((outcome, marked))
         });
         zeroize::Zeroize::zeroize(&mut record.value_bytes);

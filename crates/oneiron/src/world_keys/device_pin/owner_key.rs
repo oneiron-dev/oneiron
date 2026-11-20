@@ -171,7 +171,9 @@ impl Vault {
     /// its seed with the device PIN key: sealed bytes that were never opened
     /// here answer [`OwnerKeyRest::DevicePinUnopened`]. On a device whose
     /// PIN was forgotten and that has none now, a seed left in the slot is
-    /// no key: [`OwnerKeyRest::NoKey`].
+    /// no key: [`OwnerKeyRest::NoKey`]. The slot is read under this vault's
+    /// owner signing slot lock, so a door that renews the slot is never seen
+    /// between its delete and its create.
     ///
     /// # Errors
     /// `KeystoreUnavailable` while no keystore is installed; the keystore's
@@ -180,6 +182,11 @@ impl Vault {
         let keystore = self.device_keystore()?;
         let machine = self.prepare_install_signing()?;
         let slot = self.owner_signing_slot(machine);
+        let _slot_lock = self
+            .store
+            .owner_signing_slot_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let seed_in_slot = keystore.get(&slot).map_err(keystore_error)?.is_some();
         let tier = match slot_seed_bar(keystore.as_ref()).map_err(keystore_error)? {
             None if seed_in_slot => return Ok(OwnerKeyRest::Slot),
@@ -372,21 +379,36 @@ impl Vault {
         keystore: &dyn DeviceKeystore,
         slot: &KeystoreSlot,
     ) -> Result<bool> {
+        let live = self.live_pin_bound_owner_key(step, pin, keystore, slot)?;
+        if let Some(public_key) = live {
+            self.hold_opened_pin_bound_owner_key(pin, *slot, public_key);
+        }
+        Ok(live.is_some())
+    }
+
+    /// [`Vault::hold_pin_bound_owner_signer`] up to its hold: the public
+    /// half of the key this handle opened, when the roster lists it live.
+    /// [`Vault::hold_device_owner_signer_logged`] reads it under the owner
+    /// signing slot lock and holds the key once that lock is let go.
+    pub(in crate::world_keys) fn live_pin_bound_owner_key(
+        &self,
+        step: &DevicePinStep<'_>,
+        pin: &Arc<DevicePin>,
+        keystore: &dyn DeviceKeystore,
+        slot: &KeystoreSlot,
+    ) -> Result<Option<[u8; 32]>> {
         if pin.window_is_open() {
             self.bind_slot_owner_seed(step, pin, keystore, slot)?;
             let opened = resting_owner_seed(pin, slot)?.map(|rests| rests.public_key);
             self.note_pin_bound_owner_key(opened.map(|key| (key, pin.key_generation())));
         }
         let Some(public_key) = self.opened_pin_bound_owner_key() else {
-            return Ok(false);
+            return Ok(None);
         };
         let live = self
             .listed_owner_key(&public_key)?
             .is_some_and(|listed| listed.live);
-        if live {
-            self.hold_opened_pin_bound_owner_key(pin, *slot, public_key);
-        }
-        Ok(live)
+        Ok(live.then_some(public_key))
     }
 
     /// [`Vault::enrol_device_owner_signing_key`] on a device whose PIN is
@@ -519,7 +541,7 @@ impl Vault {
 
     /// Notes `public_key` as the key this handle opened under the device
     /// PIN, and holds it as a checkpoint root signer.
-    fn hold_opened_pin_bound_owner_key(
+    pub(in crate::world_keys) fn hold_opened_pin_bound_owner_key(
         &self,
         pin: &Arc<DevicePin>,
         slot: KeystoreSlot,

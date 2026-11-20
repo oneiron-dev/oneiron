@@ -18,7 +18,9 @@ pub(super) struct Settled<'a> {
     /// Already filtered to the settled branches.
     pub(super) revoke_facts: &'a RevokeFacts,
     pub(super) retired_keys: BTreeSet<AuthorityKey>,
+    pub(super) handoff_or_appointment_retired_keys: BTreeSet<AuthorityKey>,
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    pub(super) crossed_revocations: BTreeSet<AuthorityEntryHash>,
     pub(super) unsettled: bool,
     pub(super) counted_ancestor_pairs: u64,
     pub(super) issues: Vec<AuthorityFoldIssue>,
@@ -97,7 +99,9 @@ pub(super) fn project_once(
         by_hash,
         revoke_facts,
         retired_keys,
+        handoff_or_appointment_retired_keys,
         closed_handoffs,
+        crossed_revocations,
         unsettled,
         counted_ancestor_pairs,
         mut issues,
@@ -197,9 +201,13 @@ pub(super) fn project_once(
             .as_ref()
             .map_or_else(BTreeMap::new, |state| state.roster.to_btree_map()),
         retired_keys,
+        handoff_or_appointment_retired_keys,
         host_custody: merged
             .as_ref()
             .map_or_else(BTreeSet::new, super::machine_profile::host_custody_closure),
+        host_vouched_passkey_owners: merged.as_ref().map_or_else(BTreeMap::new, |state| {
+            state.host_vouched_passkey_owners.clone()
+        }),
         passkey_limited_keys: merged.as_ref().map_or_else(BTreeSet::new, |state| {
             state
                 .roster
@@ -209,6 +217,7 @@ pub(super) fn project_once(
                 .collect()
         }),
         closed_handoffs,
+        crossed_revocations,
         genesis_fragile: merged.as_ref().is_some_and(|state| {
             state.genesis_recovery_dismissed && !state.recovery_redundancy_established
         }),
