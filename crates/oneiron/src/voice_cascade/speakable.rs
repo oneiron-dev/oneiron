@@ -6,7 +6,7 @@
 
 /// The byte length of `text`'s first piece within `max_bytes`: all of it
 /// when it fits. A single character wider than the bound goes alone.
-pub(super) fn first_piece(text: &str, max_bytes: usize) -> usize {
+pub fn first_piece(text: &str, max_bytes: usize) -> usize {
     if text.len() <= max_bytes {
         return text.len();
     }

@@ -22,6 +22,7 @@
 //! or none, is unknown, warned and never a refusal.
 
 use getrandom::SysRng;
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_crypto::backup::{HostHoldsBinding, SealedHostHolds, seal_host_holds};
 use serde::{Deserialize, Serialize};
 
@@ -85,7 +86,7 @@ impl<'de> Deserialize<'de> for HostHoldsMember {
 impl HostHoldsMember {
     /// BLAKE3 of the member's bytes: what a restore's tag names.
     fn digest(&self) -> [u8; 32] {
-        *blake3::hash(&self.0).as_bytes()
+        *ContentHash::of(&self.0).as_bytes()
     }
 }
 

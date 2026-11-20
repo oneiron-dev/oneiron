@@ -120,6 +120,16 @@ impl Vault {
             projection.to_definition(world)?
         };
         self.put_agent_definition_in_txn(txn, &agent, &definition, occurred, at)?;
+        // An agent's own pack: the agent made the definition its pack minted
+        // (`agent_def::record_creating_agent_in_txn`).
+        if let Some(author) = agent_author {
+            crate::agent_def::record_creating_agent_in_txn(
+                &self.store,
+                txn,
+                &agent,
+                &author.entity_ref(),
+            )?;
+        }
         for (index, row) in (0u32..).zip(&projection.knowledge) {
             let mut body = ClaimBody::new(
                 row.predicate.clone(),

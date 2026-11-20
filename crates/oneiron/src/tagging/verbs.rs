@@ -10,7 +10,7 @@
 //! and counts no hidden row (FIX 10170). Saved tags read from text the turn
 //! no longer shows stay readable, said to be stale and pending their retag
 //! (FIX 10169). Nothing here authors a claim: the tagger's saved spans,
-//! coreference, mood and labels stay derived tags.
+//! coreference, relations, mood and labels stay derived tags.
 
 use super::freshness::{
     TaggingFreshness, mood_freshness, mood_part_views, tagging_freshness_in_txn,
@@ -32,10 +32,10 @@ use crate::{EntityId, Error};
 #[doc(hidden)]
 pub use oneiron_verb_wire::tagging::verbs::{
     DerivationEnvelopeView, MentionLinkView, MentionReferenceView, MergeEvidenceView,
-    TaggedMentionView, TaggingFailureView, TaggingHistoryView, TaggingMarkerState,
-    TaggingMarkerView, TaggingMentionHitView, TaggingMentionsRequest, TaggingMentionsView,
-    TaggingOutcomeView, TaggingSpeakerTarget, TaggingStatusView, TaggingTagsView, TaggingTraceView,
-    TaggingTurnRequest, TaggingVadView, TurnTagsView,
+    TaggedMentionView, TaggedRelationView, TaggingFailureView, TaggingHistoryView,
+    TaggingMarkerState, TaggingMarkerView, TaggingMentionHitView, TaggingMentionsRequest,
+    TaggingMentionsView, TaggingOutcomeView, TaggingSpeakerTarget, TaggingStatusView,
+    TaggingTagsView, TaggingTraceView, TaggingTurnRequest, TaggingVadView, TurnTagsView,
 };
 
 fn refusal_str(refusal: OutputRefusal) -> &'static str {
@@ -49,6 +49,7 @@ fn refusal_str(refusal: OutputRefusal) -> &'static str {
         OutputRefusal::UnknownContext => "unknown_context",
         OutputRefusal::SpanOrder => "span_order",
         OutputRefusal::OtherStack => "other_stack",
+        OutputRefusal::BadRelation => "bad_relation",
     }
 }
 
@@ -244,6 +245,17 @@ fn tags_view(tags: &TurnTags, freshness: TaggingFreshness) -> TurnTagsView {
                 confidence: evidence.confidence,
             })
             .collect(),
+        relations: tags.relations.as_ref().map(|relations| {
+            relations
+                .iter()
+                .map(|relation| TaggedRelationView {
+                    head: relation.head,
+                    tail: relation.tail,
+                    label: relation.label.clone(),
+                    confidence: relation.confidence,
+                })
+                .collect()
+        }),
         mood: tags.mood.map(|mood| TaggingVadView {
             valence: mood.valence,
             arousal: mood.arousal,
@@ -294,8 +306,8 @@ impl LaneTags {
 /// `tags` as the lane whose point read is `reads` sees them: a mention shows
 /// only while the lane reads its MESSAGE, and its link names only the
 /// entities the lane reads (a provisional entity, local to this vault,
-/// shows with its mention). A coreference or merge evidence naming a
-/// mention left out goes with it. The mood, its parts and the surprise are
+/// shows with its mention). A coreference, merge evidence or relation naming
+/// a mention left out goes with it. The mood, its parts and the surprise are
 /// measured over every MESSAGE of the set, so they show only while the lane
 /// reads them all. Every mention keeps its stored index.
 fn lane_tags(
@@ -345,6 +357,9 @@ fn lane_tags(
     shown
         .merge_evidence
         .retain(|evidence| is_kept(evidence.span) && is_kept(evidence.antecedent));
+    if let Some(relations) = shown.relations.as_mut() {
+        relations.retain(|relation| is_kept(relation.head) && is_kept(relation.tail));
+    }
     if messages.len() != tags.messages.len() {
         shown.mood = None;
         shown.mood_carried = false;

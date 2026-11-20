@@ -7,9 +7,6 @@
 //! for it (`training_runs`).
 //! `/v1/owner/identity/asks` (OF-123) is the needs-you strip's identity asks,
 //! each with its one-tap choice card, and their answers.
-//! `/v1/owner/proactivity/action-mode` (OF-335) is the owner's action-mode
-//! policy: the state-index window with its targets and the mode bands the
-//! nightly refresh proposes from.
 //! `/v1/owner/self-heal/findings` (OF-418) lists one detector's raised T3
 //! findings with the owner's labels and takes the owner's one label on each,
 //! which a `t2` detector of the same family learns from.
@@ -34,7 +31,6 @@ use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
-use oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy;
 use oneiron::dreamer_runner::maintenance::code_fix::{CodeFixSettled, MAX_CODE_FIX_WORK};
 use oneiron::dreamer_runner::maintenance::digest::ProactivityDigestView;
 use oneiron::dreamer_runner::maintenance::identity::{
@@ -50,6 +46,7 @@ use oneiron::self_heal::detector_pass::MAX_T3_FINDINGS;
 use oneiron::self_heal::distillation::{MintedRegistration, ReviewedFinding};
 use oneiron::skill_optimize::offer_doors::OfferAnswerReply;
 use oneiron::skill_optimize::{OfferAnswer, OfferSwitchReceipt, TrainingOffer};
+use oneiron_base::unix_seconds_now;
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
@@ -57,7 +54,6 @@ use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
-use crate::owner::stamp::now_unix_ms;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
@@ -68,13 +64,9 @@ mod training_runs;
 mod table;
 pub(super) use self::table::owner_table;
 
-fn now_secs() -> u64 {
-    now_unix_ms() / 1_000
-}
-
 /// A digest or ask id as 64 hex.
 fn hex_id(id: &[u8; 32]) -> String {
-    id.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(id)
 }
 
 /// A digest id, as 64 hex.
@@ -163,45 +155,11 @@ async fn assemble_digest(
     let view = blocking(move || -> OwnerResult<Option<DigestView>> {
         Ok(server
             .vault()
-            .proactivity_digest(&owner, now_secs(), None)?
+            .proactivity_digest(&owner, unix_seconds_now(), None)?
             .map(DigestView::new))
     })
     .await?;
     Ok(Json(view))
-}
-
-/// `GET /v1/owner/proactivity/action-mode`: the owner's action-mode policy.
-async fn action_mode(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-) -> OwnerReply<Option<ActionModePolicy>> {
-    owner(&auth, &server)?;
-    let policy = blocking(move || Ok(server.vault().action_mode_policy()?)).await?;
-    Ok(Json(policy))
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct SetActionMode {
-    /// None clears the policy, and no night refreshes an index for it.
-    policy: Option<ActionModePolicy>,
-}
-
-/// `POST /v1/owner/proactivity/action-mode`: replaces the whole policy.
-async fn set_action_mode(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<SetActionMode>,
-) -> OwnerReply<Option<ActionModePolicy>> {
-    let owner = owner(&auth, &server)?;
-    let request = payload.read(&server).await?;
-    let policy = blocking(move || {
-        Ok(server
-            .vault()
-            .set_action_mode_policy(&owner, request.policy)?)
-    })
-    .await?;
-    Ok(Json(policy))
 }
 
 /// `GET /v1/owner/stewardship`: the owner's keep-in-touch rules.
@@ -231,7 +189,7 @@ async fn set_stewardship(
     let rules = blocking(move || {
         Ok(server
             .vault()
-            .set_stewardship_rules(&owner, request.rules, now_secs())?)
+            .set_stewardship_rules(&owner, request.rules, unix_seconds_now())?)
     })
     .await?;
     Ok(Json(rules))
@@ -314,7 +272,7 @@ async fn approve_representation(
     let view = blocking(move || -> OwnerResult<ApprovedView> {
         let vault = server.vault();
         let id = entity_id("proposal", &request.proposal)?;
-        let now = now_secs();
+        let now = unix_seconds_now();
         let review = vault.review_representation(&owner, &id)?;
         let approved = vault.approve_representation(&owner, &review, now)?;
         let facade = vault.memory(
@@ -357,7 +315,7 @@ async fn decline_representation(
         let vault = server.vault();
         let id = entity_id("proposal", &request.proposal)?;
         let review = vault.review_representation(&owner, &id)?;
-        vault.decline_representation(&owner, &review, now_secs())?;
+        vault.decline_representation(&owner, &review, unix_seconds_now())?;
         Ok(())
     })
     .await?;
@@ -415,7 +373,7 @@ async fn answer_training_offer(
             &request.digest,
             request.answer,
             training.as_ref(),
-            now_secs(),
+            unix_seconds_now(),
         )?;
         Ok(OfferAnswerReply::current(server.vault(), answer)?)
     })
@@ -445,7 +403,7 @@ async fn undo_training_offer_switch(
             server.vault(),
             &owner,
             &offer,
-            now_secs(),
+            unix_seconds_now(),
         )?)
     })
     .await?;
@@ -537,7 +495,7 @@ async fn pick_judge_ask(
             &owner,
             ask,
             matches!(request.choice, JudgeAskChoice::B),
-            now_secs(),
+            unix_seconds_now(),
         )?;
         Ok(JudgeLabelView {
             ask: hex_id(&label.ask.id),
@@ -700,7 +658,7 @@ async fn answer_identity_ask(
             surface,
             &request.ask,
             &request.choice,
-            now_secs(),
+            unix_seconds_now(),
         )?))
     })
     .await??;

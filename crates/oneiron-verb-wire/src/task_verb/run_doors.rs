@@ -25,6 +25,15 @@ pub struct RunBranchesRequest {
     pub task_ref: EntityId,
 }
 
+/// The read of one job: one attempt row, by its id.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunJobRequest {
+    /// The attempt id as 32 hex, as the run tree names a job; a `job:`
+    /// prefix is accepted.
+    pub job: String,
+}
+
 /// The owner's read of one consult TASK.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

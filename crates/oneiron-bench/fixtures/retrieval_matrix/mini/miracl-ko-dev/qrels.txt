@@ -1,0 +1,3 @@
+q1 Q0 sejong#0 1
+q1 Q0 sejong#1 0
+q1 Q0 sejong#2 0

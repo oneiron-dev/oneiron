@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use super::ApnsEnvironment;
 use crate::{EntityId, Error, Result};
 
-const ADDRESS_PREFIX: &str = "apns-address:";
-const TARGET_PREFIX: &str = "apns-device:";
+#[doc(hidden)]
+use oneiron_records::outbound::served_sink::apns::address::{ADDRESS_PREFIX, TARGET_PREFIX};
 
 /// Store this complete address in an `apns` ChannelIdentity. Its assignment
 /// key is immutable; rotating a token or changing its app creates a new address.

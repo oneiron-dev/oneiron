@@ -37,19 +37,12 @@ use crate::llm::decision::{DecisionReceipt, EvidenceVersion};
 use crate::sync::home_handoff::ActorContent;
 use crate::vault::Vault;
 
-/// One place a fact keeps: its value, or the place of an actor's piece.
-#[derive(Serialize, Deserialize)]
-pub(super) enum Slot<T> {
-    Fact(T),
-    Actor,
-}
-
-/// Which row a decision receipt belongs to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub(crate) enum ReceiptOf {
-    Selection,
-    Result,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::identity_topology::post_hoc_review::home::partition::Slot;
+#[doc(hidden)]
+pub(crate) use oneiron_records::identity_topology::post_hoc_review::home::partition::{
+    ReceiptOf, TopologyAuditActorPiece,
+};
 
 /// A decision receipt's facts: its JSON body without its principal and its
 /// evidence versions, the principal's place, and each version's place.
@@ -84,27 +77,6 @@ pub(super) struct ResultFacts {
     reviewer: Option<Slot<EntityId>>,
     receipt: Option<ReceiptFacts>,
     evidence_refs: Vec<Slot<EntityId>>,
-}
-
-/// One piece of an actor's content, on the candidate it belongs to.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum TopologyAuditActorPiece {
-    /// The actor is the candidate's subject at `index`.
-    Subject { audit_id: [u8; 32], index: u32 },
-    /// The actor is the record at `index` its review read.
-    Evidence { audit_id: [u8; 32], index: u32 },
-    /// The actor reviewed the candidate.
-    Reviewer { audit_id: [u8; 32] },
-    /// The actor is the principal of a decision receipt.
-    ReceiptPrincipal { audit_id: [u8; 32], of: ReceiptOf },
-    /// The evidence version at `index` of a decision receipt is of the
-    /// actor's body, at this hash.
-    ReceiptVersion {
-        audit_id: [u8; 32],
-        of: ReceiptOf,
-        index: u32,
-        body_hash: [u8; 32],
-    },
 }
 
 /// One actor's pieces of the section.

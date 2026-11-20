@@ -29,7 +29,7 @@ use crate::error::{Error, Result};
 use crate::federation::{SharedActOutcome, SharedVaultChange, SignedSharedActOutcome};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::shared_leave_receipt::LEAVE_RECEIPTS;
-pub use crate::store::shared_leave_receipt::{SharedLeaveKind, SharedLeaveReceipt};
+pub use oneiron_records::store::shared_leave_receipt::{SharedLeaveKind, SharedLeaveReceipt};
 
 mod collect;
 

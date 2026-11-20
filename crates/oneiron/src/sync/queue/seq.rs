@@ -3,7 +3,7 @@
 use super::codec::{
     decode_delete_bearing_key, decode_embed_job_value, decode_last_update_seq_metadata,
     decode_update_key, encode_delete_bearing_key, encode_embed_job_value, encode_embed_key,
-    encode_update_key, encode_update_value, unix_millis_now,
+    encode_update_key, encode_update_value,
 };
 use super::{DELETE_BEARING_PREFIX, LAST_UPDATE_SEQ_KEY, UPDATE_PREFIX};
 use crate::Vault;
@@ -34,9 +34,9 @@ pub(crate) fn push_embed_job_in_txn(
             Ok((existing_priority, existing_queued_at)) if existing_priority <= priority => {
                 (existing_priority, existing_queued_at)
             }
-            _ => (priority, unix_millis_now()),
+            _ => (priority, crate::unix_millis_now()),
         },
-        None => (priority, unix_millis_now()),
+        None => (priority, crate::unix_millis_now()),
     };
     let value = encode_embed_job_value(priority, queued_at);
     store.sync_queue.put(wtxn, &key, &value)?;

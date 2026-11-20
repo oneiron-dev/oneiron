@@ -15,6 +15,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::gate::{PolicyRowScope, default_policy_manifest_id};
 use crate::{EntityId, Vault};
+use oneiron_contracts::msgpack::Entries;
 
 const RULE_KEY: &str = crate::gate::POLICY_OWNER_POLICY_NOTIFY_KEY;
 const PREF: &[u8] = b"owner_policy:notification:preference:v1:";
@@ -72,42 +73,12 @@ impl PolicyNotificationTarget {
     }
 }
 
-/// Recipient-owned delivery override. Absence inherits the manifest rule.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PolicyNotificationMode {
-    Inherit,
-    PushAll,
-    Digest,
-    LogOnly,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PolicyQueuedNotification {
-    pub receipt_id: String,
-    pub recipient: String,
-    pub author: String,
-    /// Exact source policy scope and grant target, revalidated before delivery.
-    pub scope: PolicyRowScope,
-    pub grant_target: String,
-    pub mode: PolicyNotificationMode,
-    pub followup_task: Option<String>,
-    /// Digest window shared by all pending changes for this recipient.
-    #[serde(default)]
-    pub digest_due_at: Option<u64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PolicyNotificationFailure {
-    pub receipt_id: String,
-    pub recipient: String,
-    pub attempts: u64,
-    pub last_attempt_at: u64,
-    pub next_retry_at: u64,
-    pub last_error_kind: String,
-}
+#[doc(hidden)]
+use oneiron_records::policy_model::owner_rows::notifications::invalid;
+#[doc(hidden)]
+pub use oneiron_records::policy_model::owner_rows::notifications::{
+    PolicyNotificationFailure, PolicyNotificationMode, PolicyQueuedNotification,
+};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -116,9 +87,6 @@ struct NotificationPreference {
     digest_interval_seconds: Option<u64>,
 }
 
-fn invalid() -> Error {
-    Error::InvalidConfig("invalid owner policy notification row".to_owned())
-}
 fn key(prefix: &[u8], suffix: &[u8]) -> Vec<u8> {
     [prefix, suffix].concat()
 }
@@ -145,12 +113,7 @@ fn decode<T: serde::de::DeserializeOwned>(raw: &[u8]) -> Result<T> {
     rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("policy notification"))
 }
 fn field<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<&'a Value> {
-    let mut found = entries.iter().filter(|(key, _)| key.as_str() == Some(name));
-    let value = &found.next().ok_or_else(invalid)?.1;
-    if found.next().is_some() {
-        return Err(invalid());
-    }
-    Ok(value)
+    Entries::new(entries).require(name).map_err(|_| invalid())
 }
 fn manifest_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<(EntityId, Vec<u8>, Value)> {
     let id = default_policy_manifest_id()?;

@@ -18,7 +18,7 @@ use crate::edit::transaction::{
     AssetRef, Assets, DeckTransaction, Digest, IdMarks, StepRefusal, TransactionError,
     run_transaction,
 };
-use crate::emit::{EmitError, EmitInputs, Names, StoredAsset, emit};
+use crate::emit::{EmitError, EmitInputs, FitEvidence, Names, StoredAsset, Unverified, emit};
 use crate::fonts::{FontBook, FontError};
 use crate::graphic::{AssetRecord, GraphicLimits, Origin};
 use crate::pptx_comments::{
@@ -458,9 +458,15 @@ fn deck_create(
             limits: args
                 .graphics
                 .map_or_else(GraphicLimits::default, super::GraphicSettings::graphic),
+            fit_evidence: FitEvidence::stored(),
         },
     )
     .map_err(emit_error)?;
+    let unit = |unit: &Unverified| UnverifiedUnit {
+        slide: unit.slide.clone(),
+        block: unit.block.clone(),
+        shape: unit.shape,
+    };
     let created = DeckCreated {
         hash: Digest(candidate.hash).to_hex(),
         slides: candidate
@@ -476,16 +482,19 @@ fn deck_create(
             .collect(),
         write_set: candidate.report.write_set.clone(),
         omitted: candidate.report.omitted.clone(),
-        fit_unverified: candidate.fit.as_ref().err().map_or_else(Vec::new, |fit| {
-            fit.units
-                .iter()
-                .map(|unit| UnverifiedUnit {
-                    slide: unit.slide.clone(),
-                    block: unit.block.clone(),
-                    shape: unit.shape,
-                })
-                .collect()
-        }),
+        fit_unverified: candidate
+            .fit
+            .as_ref()
+            .err()
+            .map_or_else(Vec::new, |fit| fit.units.iter().map(unit).collect()),
+        fit_overflows: candidate
+            .fit
+            .as_ref()
+            .err()
+            .map_or_else(Vec::new, |fit| fit.overflows.iter().map(unit).collect()),
+        fit_receipt: candidate
+            .fit_receipt
+            .map(|receipt| Digest(receipt).to_hex()),
     };
     Ok(Done::with(
         Reply::DeckCreated(created),

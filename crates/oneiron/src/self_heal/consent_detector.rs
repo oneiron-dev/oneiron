@@ -11,6 +11,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
 use rmpv::Value;
 
 /// Records an explicit consent refusal, not a heuristic about whether a
@@ -58,13 +59,33 @@ impl DeterministicDetector for ConsentDeniedDetector {
 
 impl DiagnosticObservation {
     /// Projects a scoped receipt into a bounded fact. Only the exact consent
-    /// content kind, denied outcome and engine reason code denote a refusal.
+    /// content kind, the owner's no and engine reason code denote a refusal.
+    /// The no reads `rejected` through the one table (UC-03 D1 = A), which
+    /// reads a consent row's `denied`, written before UC-03 1f-2, the same
+    /// way (M-1: a held row keeps its meaning).
     /// Other Gate outcomes and other receipt families produce no finding.
     /// The digest addresses the named MessagePack encoding of the receipt
     /// projection (its fields are ordered), without retaining a second log.
     pub fn from_consent_receipt(receipt: &ReceiptRecord) -> Result<Option<Self>> {
+        let refused = match receipt.gate_outcome() {
+            Some(GateReceiptOutcome::Rejected) => true,
+            Some(
+                GateReceiptOutcome::Allow
+                | GateReceiptOutcome::Pending
+                | GateReceiptOutcome::Deny
+                | GateReceiptOutcome::Approved
+                | GateReceiptOutcome::ApprovedAmended
+                | GateReceiptOutcome::LetGo
+                | GateReceiptOutcome::Superseded
+                | GateReceiptOutcome::Retracted
+                | GateReceiptOutcome::Invalidated
+                | GateReceiptOutcome::Revoked
+                | GateReceiptOutcome::Noted,
+            )
+            | None => false,
+        };
         if receipt.receipt_kind != ReceiptKind::Gate
-            || receipt.outcome != "denied"
+            || !refused
             || receipt.fields.get("content_kind").map(String::as_str) != Some(CONSENT_CONTENT_KIND)
             || !receipt
                 .policy_trace

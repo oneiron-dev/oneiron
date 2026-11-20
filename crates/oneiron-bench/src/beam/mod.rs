@@ -125,6 +125,7 @@ mod ablations;
 mod arms;
 mod chroma;
 mod citations;
+mod code_bench;
 mod community;
 mod comparability;
 mod corpus_clock;
@@ -153,6 +154,8 @@ mod tests_jsonl_contract;
 mod tests_judge_cost;
 #[cfg(test)]
 mod tests_ppr_vad;
+#[cfg(test)]
+mod tests_replicate_pass;
 #[cfg(test)]
 mod tests_smoke_manifest;
 mod tiers;

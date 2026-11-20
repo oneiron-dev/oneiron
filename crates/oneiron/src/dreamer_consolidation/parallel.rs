@@ -17,7 +17,7 @@ use super::failure_rules::{self, Stage};
 use super::partition::decode_partition_payload;
 use super::resources::{BranchResources, ExtractionSlice, FallbackOutputPin};
 use super::roles::DREAMER_EXTRACTION_ROLE;
-use super::sieve_ports::{NeighbourhoodExtraction, SliceCall, SliceStep};
+use super::sieve_ports::{NeighbourhoodExtraction, SliceStep};
 use super::stage_log::{PartitionStages, ms_since};
 use super::step_charge::{SliceFate, StepChargeTally, tally_slice_outcome};
 use super::thing_agent::{ThingPass, ThingPassEnd};
@@ -35,10 +35,10 @@ use crate::dreamer_tournament::{
     DreamerTournamentCandidate, DreamerTournamentJudgeClaim, DreamerTournamentRound,
     DreamerTournamentRun, DreamerTournamentSynthesisArtifact, run_dreamer_claim_tournament,
 };
-use crate::dreamer_wake::{BoundClaimAuthoringSelector, WakeAttemptContext};
+use crate::dreamer_wake::{BoundClaimAuthoringSelector, WakeAttemptContext, build_boxed_future};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::learning::{LearningCell, LearningPredicate, TypeRef};
-use crate::model_step_context::DurableStepContext;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
 use crate::model_step_error::{DurableStepError, DurableStepResult};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
@@ -68,6 +68,18 @@ pub(super) struct ExtractedPartition {
     run_id: Option<String>,
 }
 
+impl ExtractedPartition {
+    /// Whether its steps alone decide its finish: a slice that did not
+    /// finish (a trap, a checkpoint, a refusal) ends the finish at its
+    /// step tally, before any read of state another partition's commit
+    /// could change (FIX 21927).
+    pub(super) fn steps_decide_finish(&self) -> bool {
+        self.steps
+            .iter()
+            .any(|step| !matches!(step.outcome, Ok(StepOutcome::Finished { .. })))
+    }
+}
+
 impl ConsolidationExecutor<'_> {
     /// The partition's model work; `stages` takes the wall ms of its
     /// correction read and its conflict resolution.
@@ -85,15 +97,27 @@ impl ConsolidationExecutor<'_> {
         charges: &mut StepChargeTally,
         stages: &mut PartitionStages,
     ) -> DurableStepResult<PartitionRun> {
-        let prefix = self
-            .extract_partition_prefix(payload_input, resources, ctx, attempt_id, run_id, charges)
-            .await?;
+        let prefix = build_boxed_future(|| {
+            self.extract_partition_prefix(
+                payload_input,
+                resources,
+                ctx,
+                attempt_id,
+                run_id,
+                charges,
+            )
+        })
+        .await?;
         stages.mark_prefix_ended(Instant::now());
         match prefix {
             PartitionPrefix::Done(run) => Ok(run),
             PartitionPrefix::Extracted(extracted) => {
-                self.finish_partition_run(*extracted, resources, ctx, attempt_id, charges, stages)
-                    .await
+                build_boxed_future(|| {
+                    self.finish_partition_run(
+                        *extracted, resources, ctx, attempt_id, charges, stages,
+                    )
+                })
+                .await
             }
         }
     }
@@ -103,7 +127,8 @@ impl ConsolidationExecutor<'_> {
     /// read set and run the extraction port. Everything it writes is
     /// scoped to this attempt (its memoized steps, its pin, its read
     /// set); the first read of state another partition's commit could
-    /// change is in the serial finish.
+    /// change is in the finish, whose run a window lands only while no
+    /// earlier slot committed (FIX 21927).
     pub(super) async fn extract_partition_prefix(
         &self,
         payload_input: &Value,
@@ -139,8 +164,8 @@ impl ConsolidationExecutor<'_> {
             resources.known(),
         )?;
         let config = ctx.vault.consolidation_selection()?;
-        let (slices, serial_width) =
-            resources.extraction_slices(&turn_ids, config.extraction_turns_per_child)?;
+        let bound = self.extraction_bound(ctx.vault, &config)?;
+        let (slices, serial_width) = resources.extraction_slices(&turn_ids, bound)?;
         // The attempt's read set: every row its slices' calls read and
         // every row its branch pinned, which every later read of this branch
         // reads within (FIX 7019).
@@ -229,7 +254,9 @@ impl ConsolidationExecutor<'_> {
                 citations: &citations,
                 attempt_id,
             };
-            if let ThingPassEnd::Run(run) = self.thing_agent_pass(&pass, charges).await? {
+            if let ThingPassEnd::Run(run) =
+                build_boxed_future(|| self.thing_agent_pass(&pass, charges)).await?
+            {
                 return Ok(PartitionPrefix::Done(run));
             }
         }
@@ -242,15 +269,7 @@ impl ConsolidationExecutor<'_> {
                 guard: self.guard,
                 call,
                 prompt: &self.decisions.extraction_prompt,
-                slices: slices
-                    .iter()
-                    .map(|slice| SliceCall {
-                        transcript: &slice.transcript,
-                        labels: &slice.labels,
-                        scope: &slice.scope,
-                        sources: &slice.sources,
-                    })
-                    .collect(),
+                slices: slices.iter().map(ExtractionSlice::call).collect(),
                 namespace: namespace.clone(),
                 rules: rules.as_ref(),
                 citations,
@@ -275,13 +294,16 @@ impl ConsolidationExecutor<'_> {
         })))
     }
 
-    /// The serial finish of one extracted partition: account the steps,
-    /// parse and mint, read corrections, build and resolve candidates.
-    /// `resources` is the branch as this finish opens it, so its live
-    /// reads (admitted priors, candidate signals) see exactly what a
-    /// serial run in this position would see.
+    /// The finish of one extracted partition: account the steps, parse
+    /// and mint, read corrections, build and resolve candidates. It
+    /// commits nothing; the run it returns is what its settle commits.
+    /// `resources` is the branch its live reads (admitted priors,
+    /// candidate signals) see: the serial run's own branch, a window
+    /// slot's branch as it opened (FIX 21927: its settle lands the run
+    /// only while no earlier slot committed), or a branch re-opened in
+    /// the slot's place.
     pub(super) async fn finish_partition_run(
-        &mut self,
+        &self,
         extracted: ExtractedPartition,
         resources: &BranchResources<'_>,
         ctx: &WakeAttemptContext<'_>,
@@ -448,9 +470,10 @@ impl ConsolidationExecutor<'_> {
             wake_pass_bound: true,
         };
         let corrections_started = Instant::now();
-        let decided = self
-            .decide_corrections(&step_ctx, ctx.deadline, &parsed, resources, charges)
-            .await;
+        let decided = build_boxed_future(|| {
+            self.decide_corrections(&step_ctx, ctx.deadline, &parsed, resources, charges)
+        })
+        .await;
         stages.corrections_ms = ms_since(corrections_started);
         let corrects = match decided {
             Ok(Some(corrects)) => corrects,
@@ -479,8 +502,8 @@ impl ConsolidationExecutor<'_> {
         // Assembly verifies and collapses evidence across ALL child slots
         // before counting corroboration or routing coupled conflicts.
         let resolve_started = Instant::now();
-        let run = self
-            .resolve_conflicts(
+        let run = build_boxed_future(|| {
+            self.resolve_conflicts(
                 candidates,
                 resources,
                 ctx,
@@ -488,7 +511,8 @@ impl ConsolidationExecutor<'_> {
                 charges,
                 stages,
             )
-            .await;
+        })
+        .await;
         stages.resolve_ms = ms_since(resolve_started).saturating_sub(stages.gap_ms);
         let run = run?;
         // The tournament arm (FIX 9009) refines survivors only when the

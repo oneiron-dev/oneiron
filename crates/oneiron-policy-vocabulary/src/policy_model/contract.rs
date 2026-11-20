@@ -11,6 +11,7 @@
 //! Parsing is strict on purpose. Notes the engine cannot read are no notes:
 //! the verdict stands and the audit fields stay empty.
 
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
 
@@ -22,9 +23,19 @@ use oneiron_model::llm::ResponseFormat;
 /// `non_exhaustive` on purpose: a new preset is how this list grows, and a
 /// downstream exhaustive match would turn that into a breaking change.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, Deserialize, schemars::JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("policy.output.contract")]
 #[non_exhaustive]
 pub enum PolicyOutputContract {
     /// Exactly `0` or `1`, nothing else. Carries no category, so a violation
@@ -39,25 +50,11 @@ pub enum PolicyOutputContract {
 }
 
 impl PolicyOutputContract {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Binary => "binary",
-            Self::CategoryJson => "category_json",
-            Self::RationaleJson => "rationale_json",
-        }
-    }
-
     /// Parses the wire spelling; `None` for anything else, so a manifest
     /// naming an unknown contract fails closed.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "binary" => Some(Self::Binary),
-            "category_json" => Some(Self::CategoryJson),
-            "rationale_json" => Some(Self::RationaleJson),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 
     /// The response format the request declares. `Binary` is plain text: a
@@ -183,19 +180,17 @@ pub fn parse_rationale_notes(text: &str) -> Result<PolicyModelAnswer> {
             "rule_ids carries more entries than an answer may cite",
         ));
     }
+    let mut confidence = wire.confidence;
+    confidence.truncate(confidence.floor_char_boundary(POLICY_CONFIDENCE_MAX_LEN));
+    let mut rationale = wire.rationale;
+    rationale.truncate(rationale.floor_char_boundary(POLICY_RATIONALE_MAX_LEN));
     Ok(PolicyModelAnswer {
         // Bounded above only as a flood stop. WHICH ids survive, and the
         // dedupe, belong to `retain_resolvable_rule_ids`: this reader sees an
         // answer, not the plane it was answered against.
         rule_ids: wire.rule_ids,
-        confidence: Some(truncate_on_char_boundary(
-            wire.confidence,
-            POLICY_CONFIDENCE_MAX_LEN,
-        )),
-        rationale: Some(truncate_on_char_boundary(
-            wire.rationale,
-            POLICY_RATIONALE_MAX_LEN,
-        )),
+        confidence: Some(confidence),
+        rationale: Some(rationale),
         ..PolicyModelAnswer::default()
     })
 }
@@ -215,18 +210,6 @@ pub fn rationale_notes_format() -> ResponseFormat {
             },
         }),
     }
-}
-
-fn truncate_on_char_boundary(mut value: String, max_len: usize) -> String {
-    if value.len() <= max_len {
-        return value;
-    }
-    let mut end = max_len;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value.truncate(end);
-    value
 }
 
 fn unreadable(reason: &str) -> Error {

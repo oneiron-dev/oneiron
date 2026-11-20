@@ -12,21 +12,16 @@
 //! is ([`super::join_door::caller_stands_for_in_txn`], OF-531). Removing
 //! someone else is the vault owner's, as an invitation is (OF-529).
 
-use serde::{Deserialize, Serialize};
-
 use super::JoinSubject;
-use crate::error::{ClaimError, Error};
+use crate::error::{ClaimError, Error, Result};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::workspace_roster::room_leave::RoomLeaveRequest;
 
-/// The room's members once the leave committed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RoomLeaveOutcome {
-    pub member_ids: Vec<EntityId>,
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::room_leave::RoomLeaveOutcome;
 
 impl Memory<'_> {
     /// Ends a person's current membership of a room for the bound actor, at
@@ -36,18 +31,7 @@ impl Memory<'_> {
         let caller = self.write_actor();
         let member_ids = vault.try_with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-            let own = match super::join_door::caller_stands_for_in_txn(
-                vault,
-                txn,
-                caller,
-                &JoinSubject::Person(request.person),
-                now,
-            ) {
-                Ok(_) => true,
-                Err(Error::Claim(ClaimError::ActorLacksClaimAuthority { .. })) => false,
-                Err(error) => return Err(error.into()),
-            };
-            if !own && !owner_removes_in_txn(vault, txn, caller) {
+            if !removes_member_in_txn(vault, txn, caller, request.person, now)? {
                 return Err(MemoryError::new(
                     MEMORY_CODE_FORBIDDEN,
                     "a room leave is the person's own, or the vault owner's removal",
@@ -59,6 +43,32 @@ impl Memory<'_> {
         })?;
         Ok(RoomLeaveOutcome { member_ids })
     }
+}
+
+/// Whether `caller` may end `person`'s membership of a room, judged at `now`
+/// as this door judges it: the leave is the person's own, filed by them or
+/// their principal, or `caller` is the vault's owner. A federation peer's
+/// room body that drops a member is judged so too, as its sender's
+/// (ROOM-BODY-REPLICA-SETTINGS).
+pub(in crate::workspace_roster) fn removes_member_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    caller: WriteActor,
+    person: EntityId,
+    now: u64,
+) -> Result<bool> {
+    let own = match super::join_door::caller_stands_for_in_txn(
+        vault,
+        txn,
+        caller,
+        &JoinSubject::Person(person),
+        now,
+    ) {
+        Ok(_) => true,
+        Err(Error::Claim(ClaimError::ActorLacksClaimAuthority { .. })) => false,
+        Err(error) => return Err(error),
+    };
+    Ok(own || owner_removes_in_txn(vault, txn, caller))
 }
 
 /// Whether `caller` is the vault's owner: a Human actor the authority log

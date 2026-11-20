@@ -4,7 +4,7 @@
 
 use super::tests::{
     PublicationTestOrigin, advertise, commit_file, fixture_intent, git, landed_repo_id,
-    pushed_outcome, ref_update, seeded_repo, served_repo, temp_vault,
+    owner_principal, pushed_outcome, ref_update, seeded_repo, served_repo, temp_vault,
 };
 use super::*;
 use crate::config::VaultConfig;
@@ -58,7 +58,7 @@ fn a_repository_keeps_serving_past_every_scan_row() {
         vault.set_scan_threshold(scan, ROW).expect("lower the row");
     }
     let (source, repo_dir, first, second) = served_repo(&vault);
-    let origin = PublicationTestOrigin::start(&vault, EntityId::now());
+    let origin = PublicationTestOrigin::start(&vault, owner_principal(&vault));
     let url = origin.url();
     git(&repo_dir, &["update-ref", "-d", "refs/heads/main"]);
     git(source.path(), &["push", &url, "refs/heads/main"]);
@@ -167,7 +167,7 @@ fn no_origin_scan_refuses_for_its_row_count() {
                             OriginKeepRefKind::Snapshot,
                             &format!("snapshot-{index}"),
                             &commit,
-                            now_secs(),
+                            crate::unix_seconds_now(),
                         )
                         .expect("pin");
                 }
@@ -186,7 +186,12 @@ fn no_origin_scan_refuses_for_its_row_count() {
                     .published_origin_refs(&wire, *repo_id, handle)
                     .map(|refs| refs.len()),
                 Door::Census(repo_id, handle) => vault
-                    .reconcile_origin_publications(&wire, *repo_id, handle, now_secs())
+                    .reconcile_origin_publications(
+                        &wire,
+                        *repo_id,
+                        handle,
+                        crate::unix_seconds_now(),
+                    )
                     .map(|_| past),
             };
             match read {

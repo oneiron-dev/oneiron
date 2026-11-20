@@ -25,7 +25,30 @@ pub(crate) fn validate_transition(
     posture: crate::HostingPrivacyPosture,
 ) -> Result<()> {
     let next: ProjectRecord = decode(bytes).map_err(|_| refused("invalid project body"))?;
+    // Only a v4 proof signs a room facet set; a row carries none without one.
+    if next.room_facets.is_some()
+        && (next.write_proof.as_ref()).is_none_or(|proof| proof.version != ProjectProofVersion::V4)
+    {
+        return Err(refused("a room facet set needs a v4 project proof"));
+    }
     let prior = stored(store, txn, id, kind)?;
+    // A parent whose hard delete has published reads deleted, and its purge
+    // refuses a live child: a new link to it would leave it fenced, unpurged.
+    let linked = prior.as_ref().map_or(&[][..], |old| old.parents.as_slice());
+    let added = next
+        .parents
+        .iter()
+        .filter(|parent| !linked.contains(parent));
+    for parent in added {
+        let parent = EntityId::from_hex(parent).map_err(|_| refused("invalid parent id"))?;
+        if crate::deletion::ROW_DELETION_FENCE.contains(
+            store,
+            txn,
+            &crate::side_table::HexId(parent),
+        )? {
+            return Err(refused("parent project is deleted"));
+        }
+    }
     if let Some(old) = &prior {
         // OF-389: a subproject's wrapper TASK is fixed at its spawn.
         if old.wrapper_task != next.wrapper_task {
@@ -269,6 +292,12 @@ fn verify_live(
         &proof.holder_signature,
     )
     .map_err(|_| refused("invalid project write proof"))?;
+    // A deleted holder signs nothing live: its slip follows its row here as
+    // at every other live door (RULING DELETED-ACTOR-SLIP-AUTH = A). A
+    // replicated or stored revision is history and is not judged here.
+    if crate::authority::slip_holder_is_deleted_in_txn(store, txn, &slip.claims.holder_ref)? {
+        return Err(refused("project write slip's holder is deleted"));
+    }
     Ok(())
 }
 

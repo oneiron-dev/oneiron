@@ -17,17 +17,15 @@
 
 use super::machine_standing::InstallCounted;
 use super::owner_choice::{
-    FoldedOwnerChoice, OwnerChoiceHead, OwnerChoiceOp, OwnerChoiceState, folded_owner_choice,
-    owner_choice_landing,
+    FoldedOwnerChoice, OwnerChoiceOp, OwnerChoiceState, folded_owner_choice, owner_choice_landing,
 };
 use super::*;
 
 /// The vault's checkpoint policy choices in one fold state.
 pub(super) type CheckpointChoiceState = OwnerChoiceState<CheckpointRootChoice>;
 
-/// One choice as a surface shows it: its roots and quorum, `None` for a
-/// clear.
-pub type CheckpointPolicyHead = OwnerChoiceHead<CheckpointRootChoice>;
+#[doc(hidden)]
+pub use oneiron_records::authority::checkpoint_choice::CheckpointPolicyHead;
 
 /// The vault's folded checkpoint policy choices, as this install counts
 /// them.
@@ -42,12 +40,15 @@ pub(super) fn apply_checkpoint_policy(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let op = OwnerChoiceOp {
         act: &set.act,
         machine: set.machine,
         choice: set.choice.as_ref(),
         context: CHECKPOINT_POLICY_REVISION_CONTEXT,
+        needs_proof_off_the_line,
+        persons_own_narrowing: false,
     };
     let landing = owner_choice_landing(
         state,

@@ -2,12 +2,12 @@
 
 use super::document::{NoteDocument, invalid};
 use super::document_store::{
-    load, persist_authoritative, require_note_writer, validate_pin_source,
+    load, persist_authoritative, require_note_writer_with_landing, validate_pin_source,
 };
 use super::pin_index::NOTE_PIN_SOURCE;
 use super::side_keys::HexPair;
 use super::sync_rows::{NOTE_RECEIPT_BY_REQUEST, SYNC_DS_E};
-use super::{NoteActor, NotePin, NoteScalarEdit, NoteScalarEditOutcome};
+use super::{NoteActor, NotePin, NoteScalarEditOutcome};
 use crate::memory::{CommitReceipt, Memory, MemoryResult};
 use crate::provenance::ActorStamp;
 use crate::provenance::birth::RowBirth;
@@ -16,30 +16,8 @@ use crate::side_table::HexId;
 use crate::{EdgeActorClass, EntityId};
 use serde::{Deserialize, Serialize};
 
-/// Idempotent command carried by the canonical document frame. There is no
-/// actor field: the receiving host obtains that from its authenticated session.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NoteOperation {
-    #[serde(with = "super::id_codec")]
-    pub request_id: EntityId,
-    pub change: NoteChange,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum NoteChange {
-    Edit {
-        base: Vec<u8>,
-        edits: Vec<NoteScalarEdit>,
-    },
-    Cite {
-        pin: NotePin,
-    },
-    SetTitle {
-        title: String,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_records::note::operations::{NoteChange, NoteOperation};
 
 /// Durable provenance authored only by the admission door. Commit messages
 /// remain diagnostic text; neither grants nor actor classes are read from them.
@@ -94,21 +72,6 @@ pub struct NoteOperationReceipt {
     pub request_id: EntityId,
     pub command_hash: [u8; 32],
     pub outcome: NoteScalarEditOutcome,
-}
-
-/// No length refuses an operation (rule 5, FIX 10345). A peer's bytes are
-/// bounded by the frame that carried them, and a JSON decode allocates no
-/// more than they hold.
-impl NoteOperation {
-    pub fn encode(&self) -> crate::Result<Vec<u8>> {
-        serde_json::to_vec(self).map_err(|_| invalid("NOTE operation encode"))
-    }
-    pub fn decode(bytes: &[u8]) -> crate::Result<Self> {
-        serde_json::from_slice(bytes).map_err(|_| invalid("invalid NOTE operation"))
-    }
-    pub(super) fn hash(&self) -> crate::Result<[u8; 32]> {
-        Ok(*blake3::hash(&self.encode()?).as_bytes())
-    }
 }
 
 pub(super) fn authorship(doc: &loro::LoroDoc) -> crate::Result<Vec<NoteAuthorship>> {
@@ -354,6 +317,7 @@ impl Memory<'_> {
                     operation,
                     Some(selector.grant_id),
                     lane,
+                    super::NoteEditLanding::Grant,
                 )
             })
         })?;
@@ -383,7 +347,14 @@ impl Memory<'_> {
                 }
                 self.verify_owner_in_txn(txn)?;
                 crate::sync::documents::owner_note_admission(self.vault(), txn, note)?;
-                self.apply_note_operation_in_lane(txn, note, operation, None, lane)
+                self.apply_note_operation_in_lane(
+                    txn,
+                    note,
+                    operation,
+                    None,
+                    lane,
+                    super::NoteEditLanding::Grant,
+                )
             })
         })?;
         self.vault().notify_note_document(note);
@@ -403,7 +374,14 @@ impl Memory<'_> {
                     )
                     .into());
                 }
-                self.apply_note_operation_in_lane(txn, note, operation, None, lane)
+                self.apply_note_operation_in_lane(
+                    txn,
+                    note,
+                    operation,
+                    None,
+                    lane,
+                    super::NoteEditLanding::Grant,
+                )
             })
         })?;
         #[cfg(feature = "sync")]
@@ -424,9 +402,14 @@ impl Memory<'_> {
             operation,
             grant,
             crate::core_write::CoreWriteLaneRef::Unbound,
+            super::NoteEditLanding::Grant,
         )
     }
 
+    /// Applies `operation` to `note` when the writer may write it through
+    /// `landing` ([`require_note_writer_with_landing`]): every door passes
+    /// [`super::NoteEditLanding::Grant`] but the program edit, which passes
+    /// the landing it already decided with.
     pub(super) fn apply_note_operation_in_lane(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -434,8 +417,32 @@ impl Memory<'_> {
         operation: &NoteOperation,
         grant: Option<EntityId>,
         lane: crate::core_write::CoreWriteLaneRef<'_>,
+        landing: super::NoteEditLanding<'_>,
     ) -> MemoryResult<NoteOperationReceipt> {
-        self.apply_note_candidate_in_lane(txn, note, operation, grant, None, lane)
+        self.apply_note_candidate_in_lane(txn, note, operation, grant, None, None, lane, landing)
+    }
+
+    /// [`Self::apply_note_operation_in_txn`] for the text a merge of the
+    /// pending `fork` lands from (`NoteFork::recovery_merge`): once the write
+    /// gate admits it, the fork's found keys move to `note` before the text
+    /// is stored (REVIEW-9471 F2).
+    pub(super) fn apply_fork_merge_text_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        note: EntityId,
+        fork: EntityId,
+        operation: &NoteOperation,
+    ) -> MemoryResult<NoteOperationReceipt> {
+        self.apply_note_candidate_in_lane(
+            txn,
+            note,
+            operation,
+            None,
+            None,
+            Some(fork),
+            crate::core_write::CoreWriteLaneRef::Unbound,
+            super::NoteEditLanding::Grant,
+        )
     }
 
     /// Loads the actual native fork under the same writer as admission. There
@@ -461,6 +468,13 @@ impl Memory<'_> {
             &candidate.doc,
             &super::documents::snapshot(&proposed.doc)?,
         )?;
+        super::found_key_restore::restore_kept_handles_in_candidate_in_txn(
+            self.vault(),
+            txn,
+            &candidate,
+            &fork,
+            self.write_actor(),
+        )?;
         let operation = NoteOperation {
             request_id: self.vault().store.clock.entity_id()?,
             change: NoteChange::Edit {
@@ -477,10 +491,16 @@ impl Memory<'_> {
             &operation,
             None,
             Some(candidate),
+            Some(fork.fork),
             crate::core_write::CoreWriteLaneRef::Unbound,
+            super::NoteEditLanding::Grant,
         )
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a NOTE operation applies in its lane, under its grant and through its landing"
+    )]
     fn apply_note_candidate_in_lane(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -488,7 +508,9 @@ impl Memory<'_> {
         operation: &NoteOperation,
         grant: Option<EntityId>,
         native: Option<NoteDocument>,
+        custody_from: Option<EntityId>,
         lane: crate::core_write::CoreWriteLaneRef<'_>,
+        landing: super::NoteEditLanding<'_>,
     ) -> MemoryResult<NoteOperationReceipt> {
         if SYNC_DS_E.contains(&self.vault().store, txn, &HexId(note))? {
             return Err(invalid("replica NOTE edits require authenticated authority").into());
@@ -496,7 +518,7 @@ impl Memory<'_> {
         super::lifecycle::refuse_sealed_note_in_txn(&self.vault().store, txn, note)?;
         self.vault()
             .authorize_shared_note_write_in_txn(txn, note, &self.write_actor())?;
-        require_note_writer(self, txn, note)?;
+        require_note_writer_with_landing(self, txn, note, landing)?;
         let doc = load(self.vault(), txn, note)?;
         let hash = operation.hash()?;
         let receipt_key = HexPair(HexId(note), HexId(operation.request_id));
@@ -583,6 +605,19 @@ impl Memory<'_> {
         let outcome = match outcome {
             Some(proposed) => proposed,
             None => {
+                // A landing fork's found keys and their rulings go to the
+                // NOTE once the gate admits its text, before the text is
+                // stored: a value ruled in the fork is admitted kept, and a
+                // key still open is answered on the NOTE. A landing the gate
+                // holds moves none (REVIEW-9471 F2).
+                if let Some(fork) = custody_from {
+                    crate::secret_custody::move_side_row_custody_in_txn(
+                        &self.vault().store,
+                        txn,
+                        &fork,
+                        &note,
+                    )?;
+                }
                 let applied = if let Some(candidate) = &native {
                     candidate
                 } else {

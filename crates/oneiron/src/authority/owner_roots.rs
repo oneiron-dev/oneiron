@@ -28,20 +28,31 @@ pub struct OwnerRootView {
     pub foreign_total: u64,
     /// Foreign roots that admit no machine.
     pub inert_foreign: u64,
-    /// The owner item a pin door left: the root it awaits, once it can
-    /// finish.
+    /// The root this install awaits: the owner's own wait, left at a pin
+    /// door, or the wait of a pending root request, which the owner has not
+    /// confirmed ([`AwaitedRoot::request`] says which).
     pub awaiting: Option<AwaitedRoot>,
 }
 
-/// A root `pin_owner_root` awaits (Astra #1422e F1; the Engine, r23): one
-/// the owner pinned by its fingerprint before this install stored it, or
-/// the pin, while this machine is not mine under it yet.
+/// A root this install awaits (Astra #1422e F1; the Engine, r23): one the
+/// owner pinned by its fingerprint before this install stored it; one a
+/// root request carried here asks it to pin, which waits for the owner's
+/// confirm at `pin_owner_root` (HOSTED-CARRIER-FIRST-PIN); or the pin,
+/// while this machine is not mine under it yet. Awaiting trusts nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AwaitedRoot {
     pub root: RecoveryRootId,
-    /// The root's row is stored now, and under the pin this machine is mine:
-    /// pinning it again finishes.
+    /// For a root other than the pin: its row is stored now, so pinning it
+    /// can run. For the pin: this machine is mine under it, so pinning it
+    /// again finishes. It says nothing about trust: a root a request asks
+    /// for arrives like any other.
     pub arrived: bool,
+    /// The root request whose pickup left this wait, by its signed entry;
+    /// its listing names who carried it
+    /// ([`Vault::pending_root_request_listing`]). For a root other than the
+    /// pin, the owner never pinned it here. `None` for a wait the owner made
+    /// at this install's pin door.
+    pub request: Option<AuthorityEntryHash>,
 }
 
 impl Vault {
@@ -77,15 +88,21 @@ impl Vault {
         }
         // A wait a root request committed ends with the request (FIX 5582).
         let row = super::pinned_root::read_pin_row_in_txn(&self.store, &txn)?;
+        let request = row.awaited_for;
         let awaiting = match super::pinned_root::effective_awaited_root(&row, &fold) {
             Some(root) if pinned == Some(root) => {
                 let me = crate::identity::read_machine_id_in_txn(self, &txn)?;
                 let arrived = me.is_some_and(|me| fold.trusted_machine(me).is_some());
-                Some(AwaitedRoot { root, arrived })
+                Some(AwaitedRoot {
+                    root,
+                    arrived,
+                    request,
+                })
             }
             Some(root) => Some(AwaitedRoot {
                 root,
                 arrived: fold.root_anchors().values().any(|ids| ids.contains(&root)),
+                request,
             }),
             None => None,
         };

@@ -34,18 +34,17 @@ mod settle;
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::doors::world_recovery_state_in;
 use super::kit_piece::keep_this_machine_piece;
 use super::page_seal::WrapTransition;
+use super::root_doors::ACTIVATION_OWNER_ONLY;
 use super::state::world_pad_availability_in;
 use super::{
     ActivatedRoot, KitConfirmation, OwnerWorkReceipt, OwnerWorkStatus, PreparedRoot, RecoveryRoot,
     RecoveryRootId, RecoveryRootSeed, RootRestore, VaultKeyStatus, VaultKeyWrapInfo,
     WorldPadAvailability, WorldRecoveryState, refused,
 };
-use crate::authority::AuthorityEntryHash;
+use crate::authority::{ActAuthority, ActSurface, AuthorityEntryHash, authority_refused};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
@@ -53,13 +52,13 @@ use crate::{EntityId, Vault};
 use crate::{
     recovery::{issue_recovery_root_kit, restore_kit},
     store::recovery_kit::{
-        CodeKeeping, KitCoverage, KitError, KitId, KitIssue, KitMachine, KitManifest,
-        KitPassphrase, KitPiece, KitPiecePair, KitSecretKind, PieceHome, RestoredKitSecret,
+        CodeKeeping, KitError, KitId, KitIssue, KitMachine, KitManifest, KitPassphrase, KitPiece,
+        KitPiecePair, KitSecretKind, PieceHome, RestoredKitSecret,
     },
 };
 
-/// The label of the vault key's escrow wrap to the current world kit's root.
-pub const WORLD_KIT_ESCROW: &str = "world-kit";
+#[doc(hidden)]
+pub use oneiron_records::world_keys::kit::{StoredCost, StoredKit, WORLD_KIT_ESCROW};
 
 const KITS: SideTable<String, StoredKit, Named> = SideTable::new(&side_table::RECOVERY_KIT);
 
@@ -68,61 +67,6 @@ const KITS: SideTable<String, StoredKit, Named> = SideTable::new(&side_table::RE
 /// deletes each piece (FIX 12202). Key: [`kit_key`]; the row holds the kit id.
 pub(super) const UNLISTED_KITS: SideTable<String, KitId, Named> =
     SideTable::new(&side_table::RECOVERY_KIT_UNLISTED_SWEEP);
-
-/// The passphrase piece's Argon2id cost, as the inventory keeps it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct StoredCost {
-    pub memory_mib: u32,
-    pub passes: u8,
-}
-
-/// One kit this vault issued, public facts only: never a piece, point, tag,
-/// passphrase, seed or export.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct StoredKit {
-    pub kit_id: KitId,
-    pub kind: KitSecretKind,
-    /// The owner's pick per point: `homes[i]` holds x = i + 1.
-    pub homes: [PieceHome; 3],
-    pub cost: Option<StoredCost>,
-    /// What losing one machine leaves, judged from the homes at issue.
-    pub coverage: KitCoverage,
-    /// The id of the root the kit's seed grows into; `None` for a data-key
-    /// kit, which carries the vault data key and no root.
-    pub root: Option<[u8; 32]>,
-    /// The vault clock, in seconds, at issue.
-    pub created_at: u64,
-    /// When the owner re-entered pieces and the root went live; `None` while
-    /// pending, and always for a data-key kit, which has no confirm. A
-    /// pending kit never counts as coverage.
-    pub confirmed_at: Option<u64>,
-    /// The kit confirmed after this one. Its pieces still rebuild its own
-    /// seed: a replaced kit is not a revoked one.
-    pub replaced_by: Option<KitId>,
-    /// The kits this one's confirm replaced whose pending piece this install
-    /// may still keep: a crash before that confirm's settle leaves them, and
-    /// the keystore cannot list its slots. The next settle here deletes each
-    /// and takes it off the list (FIX 12135). Empty while the kit is
-    /// pending, and always for a data-key kit.
-    pub stale_pending_pieces: Vec<KitId>,
-    /// The root request whose activation issued this kit, by its signed
-    /// authority-log entry; `None` for a kit issued at this install's own
-    /// kit door, and for a data-key kit (FIX 5585). No confirm reads it.
-    pub issued_for: Option<AuthorityEntryHash>,
-}
-
-impl StoredKit {
-    /// A world kit, confirmed, and no later kit replaced it. A data-key kit
-    /// is never current: no world kit replaces it, nor it one.
-    #[must_use]
-    pub fn current(&self) -> bool {
-        self.kind == KitSecretKind::RecoveryRoot
-            && self.confirmed_at.is_some()
-            && self.replaced_by.is_none()
-    }
-}
 
 /// A world kit just issued: its pieces for the owner to place, and its public
 /// facts. Nothing is published until [`Vault::confirm_world_kit`].
@@ -472,13 +416,31 @@ impl Vault {
         passphrase: Option<&KitPassphrase>,
         carry: &BTreeSet<EntityId>,
     ) -> Result<ConfirmedWorldKit> {
+        let authority = ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall);
+        self.confirm_world_kit_as(&authority, pieces, passphrase, carry)
+    }
+
+    /// [`Self::confirm_world_kit`] as `authority`, which carries the true act
+    /// surface for R's enrolment row: `ThisInstall` on the CLI chain,
+    /// `act_surface_admitted` on the two HTTP chains.
+    pub fn confirm_world_kit_as(
+        &self,
+        authority: &ActAuthority,
+        pieces: &[&KitPiece],
+        passphrase: Option<&KitPassphrase>,
+        carry: &BTreeSet<EntityId>,
+    ) -> Result<ConfirmedWorldKit> {
+        let owner = match authority {
+            ActAuthority::Owner(owner, _) => owner,
+            ActAuthority::Agent(_) => return Err(authority_refused(ACTIVATION_OWNER_ONLY)),
+        };
         let (row, prepared) = self.draw_kit_confirm(owner, pieces, passphrase)?;
         // The `world-kit` wrap is a wrap change: a sealed vault's page-seal
         // mirror is staged in the activation's transaction and rewritten
         // after it commits (OF-570).
         let transition = self.begin_wrap_transition()?;
         let (activated, (replaced, escrow)) =
-            self.activate_owner_root_with(owner, prepared, carry, |txn| {
+            self.activate_owner_root_with(authority, prepared, carry, |txn| {
                 self.confirm_kit_rows_in_txn(txn, &transition, &row)
             })?;
         self.settle_pending_kit_pieces(Some(row.kit));

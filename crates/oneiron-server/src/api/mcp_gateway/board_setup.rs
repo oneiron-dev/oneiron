@@ -4,6 +4,9 @@ pub(super) use self::assembly::*;
 // The connector's self brief reads its pins as its keyframe does (FIX 17594).
 pub(crate) use self::assembly::mcp_brief_pins;
 pub(super) use self::carrier::*;
+pub(super) use self::children::bare_child_served_rows;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::children::bare_child_served_rows_for_test;
 // A connection's self brief, as its setup page one carries it (FIX 17594 D4).
 use self::connection_brief::{acknowledge_connection_brief, stage_connection_brief};
 pub(crate) use self::run::*;
@@ -232,4 +235,29 @@ pub(super) struct McpPageDispatchState {
     pub(super) continuation: Option<McpPageCursorState>,
     continuable: bool,
     pub(super) producer_epoch: Option<u64>,
+    /// The vault's authority, read before a fresh continuable page one's
+    /// producer ran. `None` for a continuation, a call that is not
+    /// continuable, or an authority that could not be read.
+    pub(super) produced_under: Option<McpAuthorityReading>,
+}
+
+/// One reading of the vault's authority: its authority generation, which
+/// every authority commit moves (a Grant's create, narrow or revoke among
+/// them), and the time its authorization decisions judge at, which a Grant's
+/// expiry is judged against with no write. While neither moves, every read
+/// decision between two readings judges alike.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct McpAuthorityReading {
+    generation: u64,
+    authorization_time: u64,
+}
+
+impl McpAuthorityReading {
+    /// The vault's authority now; `None` when either part cannot be read.
+    pub(super) fn read(vault: &oneiron::Vault) -> Option<Self> {
+        Some(Self {
+            generation: vault.authority_generation().ok()?,
+            authorization_time: vault.authorization_time().ok()?,
+        })
+    }
 }

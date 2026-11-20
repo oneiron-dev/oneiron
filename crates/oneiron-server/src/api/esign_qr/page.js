@@ -24,6 +24,41 @@
     reading.append(paragraph);
   };
   const when = (seconds) => new Date(seconds * 1000).toISOString();
+  // The owner let this QR download the sealed PDF: one button per item,
+  // each posting the capability in its header, never in a URL.
+  const download = (item) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = `Download sealed item ${item + 1}`;
+    button.addEventListener("click", () =>
+      fetch("/esign/verify/pdf", {
+        method: "POST",
+        credentials: "omit",
+        cache: "no-store",
+        referrerPolicy: "no-referrer",
+        headers: {
+          "x-oneiron-esign-qr-capability": token,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ item }),
+      })
+        .then((response) =>
+          response.ok ? response.blob() : Promise.reject(response.status),
+        )
+        .then((pdf) => {
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(pdf);
+          link.download = `sealed-document-${item + 1}.pdf`;
+          link.click();
+          // A revoke at once can cancel the download in some browsers.
+          setTimeout(() => URL.revokeObjectURL(link.href), 40000);
+        })
+        .catch(() => {
+          status.textContent = "The sealed PDF is not available from this page.";
+        }),
+    );
+    reading.append(button);
+  };
   if (!/^[0-9a-f]{64}$/.test(token)) {
     status.textContent = "This verification link is not valid.";
     return;
@@ -77,6 +112,19 @@
       say(
         "If the SHA-256 of your copy differs from the item's SHA-256 above, this document was changed after signing. If it is the same, nothing has changed since it was sealed.",
       );
+      // The QR capability is no possession factor: the sealed PDF is read
+      // only through a party's own signing link (ARCH-0064a section 6),
+      // unless the owner turned on this document's QR PDF download.
+      if (page.pdf_download === true) {
+        say(
+          "The owner lets this page download the sealed PDF. Each party can also download the sealed copy from their own signing link.",
+        );
+        for (const item of page.items) download(item.item);
+      } else {
+        say(
+          "This page never shows the signed PDF. Each party downloads the sealed copy from their own signing link.",
+        );
+      }
     })
     .catch(() => {
       status.textContent =

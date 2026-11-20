@@ -105,42 +105,13 @@ pub(super) struct BytesReply {
     pub(super) held: ReplyBytes,
 }
 
-/// A media exchange whose answer is taken as it arrives
-/// ([`ProviderHttp::send_media_streamed`]).
-pub(super) enum StreamedReply {
-    /// A 2xx answer, its body still to read.
-    Body(MediaStream),
-    /// Any other status, its body read whole on the media-reply line, for
-    /// the caller to classify.
-    Refused(BytesReply),
-}
-
-/// A 2xx media reply's body, taken a chunk at a time as it arrives and never
-/// held whole here (FIX 6122).
-pub(super) struct MediaStream(reqwest::Response);
-
-impl MediaStream {
-    /// The body's next bytes as they arrive; `None` at its end.
-    pub(super) async fn chunk(&mut self) -> Result<Option<Vec<u8>>, HttpFailure> {
-        Ok(self.0.chunk().await?.map(Vec::from))
-    }
-}
-
 /// What one media exchange sends.
 pub(super) enum MediaSend {
     Get,
     Delete,
     Json(JsonValue),
     Multipart(reqwest::multipart::Form),
-    /// A framed binary body (`application/octet-stream`) carrying an upload
-    /// its admission allowed for one request (FIX 9517): a refused
-    /// compressed body's plain resend asks it again and goes only while it
-    /// still allows the upload.
-    Octets(Vec<u8>, UploadAdmission),
 }
-
-/// Asked right before an upload goes again: `false` sends nothing more.
-pub(super) type UploadAdmission = Arc<dyn Fn() -> bool + Send + Sync>;
 
 /// A finished, non-streamed exchange.
 pub(super) struct JsonReply {

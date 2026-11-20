@@ -671,7 +671,8 @@ pub struct NapiRetrievalMeta {
 pub struct NapiTemporalHint {
     /// The phrase, lowercased with punctuation dropped.
     pub phrase: String,
-    /// `used` narrowed the window; `unresolved` and `future` were skipped.
+    /// `used` re-anchored the temporal search (a phrase never filters);
+    /// `unresolved` and `future` were skipped.
     pub status: String,
     /// Inclusive Unix-second start, when the phrase resolved.
     pub start: Option<i64>,

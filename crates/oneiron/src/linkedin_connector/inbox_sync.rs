@@ -138,24 +138,8 @@ pub struct LinkedInConversationMessageEvent {
     pub event_input: InboundSurfaceEventInput,
 }
 
-/// Stable provenance marker persisted beside each seen LinkedIn message row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LinkedInInboxSyncProvenanceRow {
-    pub schema_version: u64,
-    pub source: String,
-    pub tier: String,
-    pub channel: String,
-    pub receiving_address_or_handle: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_ref: Option<String>,
-    pub thread_id: String,
-    pub message_id: String,
-    pub surface_event_id: String,
-    pub payload_ref: Option<String>,
-    pub received_at: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub occurred_at: Option<u64>,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::linkedin_connector::inbox_sync::LinkedInInboxSyncProvenanceRow;
 
 /// Result of one LinkedIn inbox sync execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -293,6 +277,11 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
     pub fn run_once(&mut self, now: u64) -> Result<LinkedInInboxSyncReport> {
         self.config.validate()?;
         validate_inbox_sync_config_matches_adapter(&self.adapter, &self.config)?;
+        // The owner's ceiling bounds the history this poll reads, whatever its config names
+        // (`linkedin.inbox.backfill_max_secs`). The window is in no key of the cursor.
+        self.config.backfill_window_secs =
+            super::setting_keys::LinkedInInboxBackfill::read(self.vault)?
+                .bounded_window_secs(self.config.backfill_window_secs);
         let mut report = LinkedInInboxSyncReport::empty();
         let mut cursor = load_linkedin_inbox_sync_cursor(self.vault, &self.config)?;
         if cursor.pending_threads.is_empty() {

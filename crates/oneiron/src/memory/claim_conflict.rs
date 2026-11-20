@@ -13,11 +13,12 @@ use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, GateError};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
-use crate::store::GateDecisionId;
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionId, PolicyBasis};
 use crate::temporal::TimeRange;
 use crate::{EntityId, WriteActor, WriteEnvelope, WriteProvenance};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
-use serde::{Deserialize, Serialize};
 
 /// Content-addressed claim-conflict review packet. Key: bytes32 (bundle id).
 const PACKET: SideTable<[u8; 32], ClaimConflictBundle, LegacyJson> =
@@ -28,54 +29,10 @@ const RESOLUTION: SideTable<[u8; 32], [u8; 16], Raw> =
     SideTable::new(&side_table::CLAIM_CONFLICT_RESOLUTION);
 const KIND: &str = "consent_bundle:claim_conflict";
 
-/// Typed question, not a prompt string or an instruction hidden in a claim.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ClaimConflictQuestion {
-    ConflictOfInterest,
-}
-
-/// One immutable context member. Bytes include the entity metadata header.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClaimConflictMember {
-    #[serde(with = "super::authorship::entity_serde")]
-    pub entity: EntityId,
-    pub row_digest: [u8; 32],
-    /// Read projection only. Persistence strips this field's bytes.
-    pub raw: Vec<u8>,
-}
-
-/// One packet: disputed claim, proposed revision, author and subject context.
-/// Only the parties and authenticated owner/delegated reviewer can read it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClaimConflictBundle {
-    pub bundle_id: [u8; 32],
-    pub question: ClaimConflictQuestion,
-    #[serde(with = "super::authorship::entity_serde")]
-    pub raised_by: EntityId,
-    #[serde(with = "super::authorship::entity_serde")]
-    pub author: EntityId,
-    #[serde(with = "super::authorship::entity_serde")]
-    pub subject: EntityId,
-    #[serde(with = "super::authorship::entity_serde")]
-    pub disputed: EntityId,
-    #[serde(with = "super::authorship::entity_serde")]
-    pub proposal: EntityId,
-    pub authority_root: String,
-    pub policy_frontier: [u8; 32],
-    pub members: Vec<ClaimConflictMember>,
-}
-
-/// A ruling joins the existing Gate ledger. Both old and new claims survive.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClaimConflictReceipt {
-    pub bundle_id: [u8; 32],
-    pub receipt_ref: String,
-    #[serde(with = "super::authorship::entity_serde")]
-    pub superseded_claim: EntityId,
-    #[serde(with = "super::authorship::entity_serde")]
-    pub ruling_claim: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_records::memory::claim_conflict::{
+    ClaimConflictBundle, ClaimConflictMember, ClaimConflictQuestion, ClaimConflictReceipt,
+};
 
 /// Replaying a ruled dispute rebuilds its receipt from the recorded Gate
 /// decision, so the retention sweep keeps every decision a marker names.
@@ -105,10 +62,22 @@ fn encode(bundle: &ClaimConflictBundle) -> Result<Vec<u8>, Error> {
 fn digest(bundle: &ClaimConflictBundle) -> Result<[u8; 32], Error> {
     let mut input = bundle.clone();
     input.bundle_id = [0; 32];
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron.consent_bundle.claim_conflict.v1\0");
-    hash.update(&encode(&input)?);
-    Ok(*hash.finalize().as_bytes())
+    Ok(packet_digest(&encode(&input)?))
+}
+/// A packet's content address: BLAKE3 over
+/// `purposes::claim::CONFLICT_PACKET`'s tag (its NUL included) and then the
+/// stripped packet's bytes, with its own id zeroed. The packet row is keyed
+/// by it and every load checks it, so it keeps its bytes (K, PLAN-UC-04
+/// stage 6).
+fn packet_digest(stripped: &[u8]) -> [u8; 32] {
+    LegacyDigest::new(purposes::claim::CONFLICT_PACKET)
+        .raw(stripped)
+        .finish()
+}
+/// The content address of a packet whose stripped bytes are `stripped`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn claim_conflict_packet_digest_for_test(stripped: &[u8]) -> [u8; 32] {
+    packet_digest(stripped)
 }
 fn load(
     vault: &crate::Vault,
@@ -253,11 +222,10 @@ impl Memory<'_> {
             let receipt = decision(
                 self.write_actor(),
                 KIND,
-                "pending",
+                GateReceiptOutcome::Pending,
                 "gate.memory.conflict_of_interest",
                 Some(disputed),
                 packet.bundle_id.to_vec(),
-                crate::unix_seconds_now(),
             );
             PACKET.put(
                 &self.vault.store,
@@ -265,9 +233,7 @@ impl Memory<'_> {
                 &packet.bundle_id,
                 &stripped(&packet),
             )?;
-            self.vault
-                .store
-                .append_gate_decision_in_txn(txn, &receipt)?;
+            self.vault.store.record_gate_receipt_in_txn(txn, receipt)?;
             Ok(packet)
         })
     }
@@ -382,7 +348,23 @@ impl Memory<'_> {
                     .gate_decision_in_txn(txn, decision_id)?
                     .ok_or(Error::CorruptedIndex("conflict ruling receipt"))?;
                 if receipt.content_kind != KIND
-                    || receipt.outcome != "approved"
+                    || match receipt.gate_outcome() {
+                        Some(GateReceiptOutcome::Approved) => false,
+                        Some(
+                            GateReceiptOutcome::Allow
+                            | GateReceiptOutcome::Pending
+                            | GateReceiptOutcome::Deny
+                            | GateReceiptOutcome::ApprovedAmended
+                            | GateReceiptOutcome::Rejected
+                            | GateReceiptOutcome::LetGo
+                            | GateReceiptOutcome::Superseded
+                            | GateReceiptOutcome::Retracted
+                            | GateReceiptOutcome::Invalidated
+                            | GateReceiptOutcome::Revoked
+                            | GateReceiptOutcome::Noted,
+                        )
+                        | None => true,
+                    }
                     || receipt.diff_handle.as_slice() != id.as_slice()
                     || receipt.redacted_at.is_some()
                 {
@@ -480,8 +462,7 @@ impl Memory<'_> {
             self.vault.store.close_pending_gate_consent_in_txn(
                 txn,
                 &packet.disputed,
-                now,
-                "superseded",
+                GateReceiptOutcome::Superseded,
                 vec!["gate.memory.admin_conflict_ruling".to_owned()],
                 None,
             )?;
@@ -493,8 +474,7 @@ impl Memory<'_> {
             self.vault.store.close_pending_gate_consent_in_txn(
                 txn,
                 &packet.disputed,
-                now,
-                "superseded",
+                GateReceiptOutcome::Superseded,
                 vec!["gate.memory.admin_conflict_ruling".to_owned()],
                 None,
             )?;
@@ -506,21 +486,18 @@ impl Memory<'_> {
             let mut receipt = decision(
                 envelope.actor(),
                 KIND,
-                "approved",
+                GateReceiptOutcome::Approved,
                 "gate.memory.admin_conflict_ruling",
                 Some(ruling_id),
                 id.to_vec(),
-                now,
             );
             receipt.grant_ref = grant_ref;
-            receipt.read_frontier_hash = packet.policy_frontier;
-            self.vault
-                .store
-                .append_gate_decision_in_txn(txn, &receipt)?;
-            RESOLUTION.put(&self.vault.store, txn, &id, &receipt.decision_id.as_bytes())?;
+            receipt.basis = PolicyBasis::frontier(packet.policy_frontier);
+            let record = self.vault.store.record_gate_receipt_in_txn(txn, receipt)?;
+            RESOLUTION.put(&self.vault.store, txn, &id, &record.decision_id.as_bytes())?;
             Ok(ClaimConflictReceipt {
                 bundle_id: id,
-                receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
+                receipt_ref: format!("gate:{}", record.decision_id.to_hex()),
                 superseded_claim: packet.disputed,
                 ruling_claim: ruling_id,
             })

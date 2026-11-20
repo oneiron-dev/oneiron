@@ -40,6 +40,7 @@ pub(crate) fn remove_claim_projection_index(
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
 ) -> Result<()> {
+    crate::campaign::member_index::deindex_campaign_member_claim_in_txn(store, txn, id)?;
     let Some(keys) = PROJECTION_REVERSE.get(store, txn, &id)? else {
         return Ok(());
     };
@@ -198,6 +199,7 @@ pub(crate) fn maintain_claim_projection_index(
     }
     PREDICATE_NAME.put(store, txn, &body.predicate, &())?;
     PROJECTION_REVERSE.put(store, txn, &id, &reverse_keys)?;
+    crate::campaign::member_index::index_campaign_member_claim_in_txn(store, txn, id, body)?;
     Ok(())
 }
 /// Hands every claim id in `predicate`'s posting list to `visit`, in id order,

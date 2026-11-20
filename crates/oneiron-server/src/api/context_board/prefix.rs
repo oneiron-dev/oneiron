@@ -97,9 +97,7 @@ pub(crate) fn pending_notifications(
 pub(crate) fn pending_unprocessed_items(
     read: &oneiron::claim::ScopedRead<'_>,
 ) -> Result<Vec<UnprocessedItem>, ApiError> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
+    let now = oneiron_base::unix_seconds_now();
     oneiron::context_board::unprocessed_items(read, now)
         .inspect_err(|e| {
             tracing::error!(kind = ?e.kind(), "pending unprocessed scan failed");

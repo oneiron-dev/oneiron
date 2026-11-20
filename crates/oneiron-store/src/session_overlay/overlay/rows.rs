@@ -1,4 +1,5 @@
 //! Row staging, preflight, budget checks, read probes.
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use oneiron_contracts::entity_id::EntityId;
@@ -43,7 +44,7 @@ impl Drop for NetBudgetGuard {
                 return;
             };
             if let Some(checkpoint) = segment.net_budget.take() {
-                segment.preview = checkpoint.preview;
+                segment.replace_preview(checkpoint.preview);
                 segment.mutations.truncate(checkpoint.mutations_len);
                 segment.journal.truncate(checkpoint.journal_len);
                 segment.journal_bytes = checkpoint.journal_bytes;
@@ -356,11 +357,12 @@ impl SessionOverlay {
                     "the active txn segment belongs to another session overlay",
                 ));
             }
-            segment.preview = Self::apply_preflighted_to_state(
+            let preview = Self::apply_preflighted_to_state(
                 segment.preview.clone(),
                 std::slice::from_ref(&mutation),
                 &[],
             )?;
+            segment.replace_preview(preview);
             segment.mutations.push(mutation);
             Ok(())
         })
@@ -454,31 +456,50 @@ impl SessionOverlay {
     /// negative between classification and the write-door decision.
     pub fn contains_entity(&self, id: &EntityId) -> Result<bool> {
         let state = self.state.load();
-        let KeyspaceState::Single { rows, .. } =
-            state.keyspaces[OverlayKeyspace::Entities.slot()].as_ref()
-        else {
-            return Err(Error::InvariantViolation(
-                "entities overlay keyspace unexpectedly uses DUP_SORT",
-            ));
-        };
         Ok(matches!(
-            rows.get(id.as_bytes().as_slice()),
+            entity_rows(&state)?.get(id.as_bytes().as_slice()),
             Some(OverlayValue::Present(_))
         ))
     }
 
     pub fn has_entities(&self) -> Result<bool> {
         let state = self.state.load();
-        let KeyspaceState::Single { rows, .. } =
-            state.keyspaces[OverlayKeyspace::Entities.slot()].as_ref()
-        else {
-            return Err(Error::InvariantViolation(
-                "entities overlay keyspace unexpectedly uses DUP_SORT",
-            ));
-        };
-        Ok(rows
+        Ok(entity_rows(&state)?
             .values()
             .any(|value| matches!(value, OverlayValue::Present(_))))
+    }
+
+    /// K4 membership includes committed rows and this overlay's open segment
+    /// (ARCH-0052, the open-segment window). Other readers stay committed-only.
+    pub fn contains_committed_or_staged_entity(&self, id: &EntityId) -> Result<bool> {
+        // Commit stores the committed state before clearing the publication.
+        // A reader that finds no publication then reads committed state that
+        // already holds the segment's rows.
+        let preview = self.open_segment_preview.load();
+        if let Some(preview) = preview.as_ref()
+            && matches!(
+                entity_rows(preview)?.get(id.as_bytes().as_slice()),
+                Some(OverlayValue::Present(_))
+            )
+        {
+            return Ok(true);
+        }
+        self.contains_entity(id)
+    }
+
+    /// Whether K4 can find any committed or open-segment entity row.
+    pub fn has_committed_or_staged_entities(&self) -> Result<bool> {
+        // Read the publication before committed state, as in the per-id probe:
+        // commit stores the rows before it clears the publication.
+        let preview = self.open_segment_preview.load();
+        if let Some(preview) = preview.as_ref()
+            && entity_rows(preview)?
+                .values()
+                .any(|value| matches!(value, OverlayValue::Present(_)))
+        {
+            return Ok(true);
+        }
+        self.has_entities()
     }
 
     /// Whether this overlay stages anything at all, in any keyspace: a row,
@@ -568,5 +589,15 @@ impl SessionOverlay {
     )]
     pub const fn budget_bytes(&self) -> usize {
         self.budget_bytes
+    }
+}
+
+/// The single-valued entity rows shared by committed and K4 membership probes.
+fn entity_rows(state: &OverlayState) -> Result<&BTreeMap<Vec<u8>, OverlayValue>> {
+    match state.keyspaces[OverlayKeyspace::Entities.slot()].as_ref() {
+        KeyspaceState::Single { rows, .. } => Ok(rows),
+        KeyspaceState::DupSort { .. } => Err(Error::InvariantViolation(
+            "entities overlay keyspace unexpectedly uses DUP_SORT",
+        )),
     }
 }

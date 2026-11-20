@@ -28,6 +28,9 @@ async fn an_ask_wakes_its_responder_and_the_answer_rides_the_askers_next_result(
     let actor = seeded_test_entity_id(0xd2b1_0004);
     let credential = "d2b1-board-publisher";
     register_mcp_actor(&server, credential, actor, oneiron::EdgeActorClass::Human).await;
+    // Asker and responder both read the question TURN and the answer's
+    // result (FIX 9917).
+    put_actor_read_grant(server.vault(), actor, None);
     let connection = {
         let registry = server.mcp_registry.lock().await;
         registry
@@ -225,7 +228,8 @@ fn ask(
 }
 
 /// `actor` asks itself and answers at once: the answer queues a done delta
-/// for `actor`. Returns the ask's TASKs.
+/// for `actor`. Returns the ask's TASKs. The answer names the question TURN,
+/// a record a TURN-only reader reads too (FIX 9917).
 fn ask_and_answer(
     server: &SyncServer,
     actor: oneiron::EntityId,
@@ -237,7 +241,7 @@ fn ask_and_answer(
         .memory(actor, oneiron::EdgeActorClass::Human)
         .tasks_answer(
             &receipt.handle,
-            &oneiron::task_verb::TaskAskWord::new(actor),
+            &oneiron::task_verb::TaskAskWord::new(seeded_test_entity_id(seed)),
         )
         .expect("answer lands");
     receipt.task_refs
@@ -253,6 +257,7 @@ async fn publisher_passed(
     connection: &oneiron::context_board::StreamConnectionId,
     seed: u128,
 ) {
+    put_actor_read_grant(server.vault(), witness, None);
     let asked = ask(server, witness, seed)
         .task_refs
         .iter()
@@ -301,28 +306,14 @@ fn names_any(rows: &[Value], tasks: &[oneiron::EntityId]) -> bool {
 }
 
 /// A matching core:read grant narrows `actor`'s read to TURNs; without one,
-/// its slip alone would read its own TASK.
-fn reads_turns_only(server: &SyncServer, actor: oneiron::EntityId, seed: u128) {
-    let mut read = oneiron::federation::Scope::top();
-    read.verbs = oneiron::federation::ScopeAxis::Some(["read".to_owned()].into());
-    let owner = server.vault().ensure_embedded_owner_actor().expect("owner");
-    oneiron::conversation_dag::test_support::put_test_policy_manifest(
+/// its slip alone would read its own TASK. It replaces any read grant
+/// `put_actor_read_grant` gave `actor` before (one manifest per actor).
+fn reads_turns_only(server: &SyncServer, actor: oneiron::EntityId) {
+    put_actor_read_grant(
         server.vault(),
-        oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
-        seeded_test_entity_id(seed),
-        &json!({
-            "schema_version": "1.2", "pack_id": "turns-only", "pack_version": "1",
-            "min_engine_version": "0.0.0", "defaults": {}, "rules": [], "actor_ceilings": [],
-            "scoped_grants": [{
-                "actor_ref": actor.to_hex(),
-                "effector": "core:read",
-                "scope": serde_json::to_value(read).unwrap(),
-                "selectors": {"entity_types": [oneiron::registry::ENTITY_TYPE_TURN]},
-                "receipt_required": false,
-            }],
-        }),
-    )
-    .expect("turns-only read grant");
+        actor,
+        Some(&[oneiron::registry::ENTITY_TYPE_TURN]),
+    );
 }
 
 /// Astra #1353 finding 1: a subscription is not a read grant. The owner's
@@ -334,7 +325,7 @@ async fn a_task_outside_its_owners_read_grant_never_reaches_their_stream() {
     let _publisher = server.spawn_board_publisher();
     let (actor, connection) = stream_actor(&server, 0xd2b1_0010, "d2b1-turns-only").await;
     let (witness, witness_connection) = stream_actor(&server, 0xd2b1_0011, "d2b1-witness").await;
-    reads_turns_only(&server, actor, 0xd2b1_0012);
+    reads_turns_only(&server, actor);
 
     // An open consult would wake its owner; a done one would ride a result.
     ask(&server, actor, 0xd2b1_0015);
@@ -369,6 +360,7 @@ async fn an_erased_tasks_queued_line_is_never_delivered() {
     let (actor, _) = stream_actor(&server, 0xd2b1_0020, "d2b1-erased").await;
     let (witness, witness_connection) =
         stream_actor(&server, 0xd2b1_0021, "d2b1-erase-witness").await;
+    put_actor_read_grant(server.vault(), actor, None);
 
     let tasks = ask_and_answer(&server, actor, 0xd2b1_0022);
     publisher_passed(&server, witness, &witness_connection, 0xd2b1_0023).await;
@@ -568,6 +560,7 @@ async fn a_world_narrowed_connection_hears_its_own_tasks_only_inside_its_world()
         wake.event_ref
             .starts_with(&format!("{}:failed:", failed.to_hex()))
     );
+    put_actor_read_grant(server.vault(), actor, None);
     let done = ask_and_answer(&server, actor, 0xb0a1_0013);
     publisher_passed(&server, witness, &witness_connection, 0xb0a1_0014).await;
 
@@ -607,6 +600,7 @@ async fn a_narrowed_connection_never_carries_an_erased_or_unreadable_task() {
     .await;
     let (witness, witness_connection) =
         stream_actor(&server, 0xb0a1_0021, "wake-reads-witness").await;
+    put_actor_read_grant(server.vault(), actor, None);
 
     let kept = ask_and_answer(&server, actor, 0xb0a1_0022);
     let erased = ask_and_answer(&server, actor, 0xb0a1_0023);
@@ -623,7 +617,7 @@ async fn a_narrowed_connection_never_carries_an_erased_or_unreadable_task() {
 
     let hidden = ask_and_answer(&server, actor, 0xb0a1_0025);
     publisher_passed(&server, witness, &witness_connection, 0xb0a1_0026).await;
-    reads_turns_only(&server, actor, 0xb0a1_0027);
+    reads_turns_only(&server, actor);
     let rows = delivered_rows(&server, "wake-narrowed-reads", envelope).await;
     assert!(!names_any(&rows, &hidden), "{rows:?}");
 }

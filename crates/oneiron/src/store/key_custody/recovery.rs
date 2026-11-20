@@ -31,6 +31,7 @@ mod source;
 mod takeover;
 mod unopened;
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -62,9 +63,8 @@ pub(crate) const ROLLBACK_NOT_PROVEN: &str = "rollback not proven: no custody an
 /// [`ROLLBACK_NOT_PROVEN`] in its report; `false` would refuse it.
 pub(crate) const CUSTODY_ANCHOR_UNSET_RESTORE: bool = true;
 
-fn refused(reason: String) -> Error {
-    Error::InvalidConfig(reason)
-}
+#[doc(hidden)]
+use oneiron_records::store::key_custody::recovery::refused;
 
 /// What a sealed image needs of its custody: the position it had reached
 /// and every id live in it then. Never a key, and never a frozen head.
@@ -355,7 +355,7 @@ impl CustodyLanding {
             anchor_read: admitted
                 .anchor
                 .as_deref()
-                .map(|record| *blake3::hash(record).as_bytes()),
+                .map(|record| *ContentHash::of(record).as_bytes()),
             anchor_advanced: None,
             retired_ids: admitted.retired.len() + admitted.retired_through.len(),
         })

@@ -7,22 +7,19 @@
 //! verifies the try (FIX 3014); a page the peer does not take settles the
 //! try as its answer would. The claim takes this host's root key, so a try
 //! an earlier root signed goes signed again by the live one (FIX 5088).
+//! The same pass answers each filed ask that has no answer yet as the
+//! owner's standing `erase_request_reply` row says (L7-09).
 
 use std::time::Duration;
 
 use oneiron::deletion::CooperativeDeletionTry;
+use oneiron_base::unix_seconds_now;
 
 use super::SyncServer;
 
 /// Tries per pass; the rest wait for the next tick.
 const TRIES_PER_PASS: usize = 16;
 const TRY_TIMEOUT: Duration = Duration::from_secs(30);
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
-}
 
 /// One POST of `body` to `destination`, read as a try's result.
 fn post(
@@ -52,6 +49,25 @@ fn post(
 }
 
 impl SyncServer {
+    /// Answers each filed courtesy ask that has no answer yet as the owner's
+    /// standing `erase_request_reply` row says; under `ask`, or with no row,
+    /// nothing. Blocking: call it off the runtime.
+    pub(super) fn answer_filed_asks_by_setting(&self) {
+        match self
+            .vault()
+            .answer_filed_asks_by_setting(unix_seconds_now())
+        {
+            Ok(answered) if answered.is_empty() => {}
+            Ok(answered) => tracing::info!(
+                answered = answered.len(),
+                "courtesy asks answered by the owner's setting"
+            ),
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "courtesy ask setting answer failed");
+            }
+        }
+    }
+
     /// One bounded delivery pass. Blocking: call it off the runtime.
     pub(super) fn deliver_cooperative_deletions(&self) {
         let vault = self.vault();
@@ -60,15 +76,18 @@ impl SyncServer {
         let issuer = self.host_issuer();
         let mut client = None;
         for _ in 0..TRIES_PER_PASS {
-            let delivery =
-                match vault.claim_cooperative_deletion_delivery(&lease_owner, unix_now(), issuer) {
-                    Ok(Some(delivery)) => delivery,
-                    Ok(None) => return,
-                    Err(error) => {
-                        tracing::warn!(kind = ?error.kind(), "courtesy delete claim failed");
-                        return;
-                    }
-                };
+            let delivery = match vault.claim_cooperative_deletion_delivery(
+                &lease_owner,
+                unix_seconds_now(),
+                issuer,
+            ) {
+                Ok(Some(delivery)) => delivery,
+                Ok(None) => return,
+                Err(error) => {
+                    tracing::warn!(kind = ?error.kind(), "courtesy delete claim failed");
+                    return;
+                }
+            };
             if client.is_none() {
                 client = reqwest::blocking::Client::builder()
                     .redirect(reqwest::redirect::Policy::none())
@@ -96,7 +115,8 @@ impl SyncServer {
                         .unwrap_or_else(|| post(client, &delivery.destination, &delivery.bytes)),
                 },
             };
-            match vault.settle_cooperative_deletion_delivery(&delivery, result, unix_now()) {
+            match vault.settle_cooperative_deletion_delivery(&delivery, result, unix_seconds_now())
+            {
                 Ok(status) => {
                     tracing::info!(status = status.as_str(), "courtesy delete try settled")
                 }

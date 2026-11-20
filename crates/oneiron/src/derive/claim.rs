@@ -1,8 +1,10 @@
 //! The claim item (kind 1): a derived claim through the shared claim gate as
 //! the committing actor, held to the derivation floors and to that actor's
 //! own read. Its source is the trust of the rows it cites, folded from the
-//! `Generated` floor, or Observed for a preference supported by three user
-//! TURNs across two sessions. Its caller never chooses the source.
+//! `Generated` floor, or Observed for a preference supported by the
+//! observed-preference bar's user TURNs and sessions (three across two; the
+//! owner moves it for a preference about the owner). Its caller never chooses
+//! the source.
 
 use rmpv::Value;
 
@@ -31,9 +33,15 @@ use crate::{ClaimCandidate, EntityId, TimeRange, Vault};
 ///
 /// The engine computes the source, never taking one from its caller. It
 /// stamps Observed on a `preference.*` claim with a Generated evidence meet
-/// and three live, nonimported user TURNs across two live sessions. Otherwise
+/// and live, nonimported user TURNs across live sessions that meet the
+/// observed-preference bar (`observed_preference_bar_in_txn`: three across
+/// two, or the owner's keys for a preference about the owner). Otherwise
 /// the source stays the cited rows' meet ([`evidence_meet_in_txn`]): imported
 /// words remain Imported, held for review whatever the Generated permit grants.
+///
+/// When the committing actor's read credential is not live, the item is
+/// refused with `gate.deny.derive.read_not_live` before it stages: the gate
+/// would fail it on its first read, and only hard errors abort the batch.
 ///
 /// # Errors
 ///
@@ -54,7 +62,7 @@ pub(super) fn stage_in_txn(
     let meet = evidence_meet_in_txn(vault, txn, &evidence)?;
     let beside_stated = meet == ClaimSource::Generated
         && is_preference_predicate(&claim.predicate)
-        && observed_preference_support_in_txn(vault, txn, &evidence)?;
+        && observed_preference_support_in_txn(vault, txn, &subject, &evidence)?;
     let source = if beside_stated {
         ClaimSource::Observed
     } else {
@@ -80,6 +88,15 @@ pub(super) fn stage_in_txn(
     // earlier item of this batch landed still reads to the item citing it.
     let read = super::actor_read(vault, context.stamp.actor)?
         .with_claim_status(crate::ports::ClaimReadStatus::Recorded);
+    // A read whose credential is not live serves nothing, so the gate would
+    // fail the item on its first read: refuse it with its row token instead
+    // of aborting the batch, as the settle and supersede items do.
+    if !read.proof_live_in(txn)? {
+        let id = EntityId::now();
+        let reasons = vec![super::READ_NOT_LIVE.to_owned()];
+        let receipt = refusal_receipt_in_txn(vault, txn, context, Some(id), &reasons)?;
+        return Ok(ItemOutcome::Refused { reasons, receipt });
+    }
     stage_candidate_in_txn(
         vault,
         txn,

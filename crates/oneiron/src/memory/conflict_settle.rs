@@ -39,6 +39,7 @@ use crate::dreamer_consolidation::{
 };
 use crate::edge::EdgeActorClass;
 use crate::error::Error;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::{EntityId, Vault, WriteActor, WriteEnvelope, WriteProvenance};
 use rmpv::Value;
 
@@ -144,7 +145,11 @@ impl Memory<'_> {
     /// again, the alternative is born Proposed and the responder approves it
     /// as its own act (an Owner, co-Owners included, or a delegate under its
     /// Grant; never the Dreamer), and the settlement commits with it. The
-    /// receipt then names that approval. A retry whose write is discarded
+    /// receipt then names that approval. A retained curator finding whose
+    /// rung would retract, weaken or mark stale a claim restricting
+    /// someone's access is a person's to approve: a responder that is no
+    /// person has its retry refused (RULING
+    /// RESTRICTION-CLOSE-BY-CURATOR-APPROVAL). A retry whose write is discarded
     /// answers with the first refusal, the retained alternative intact; one
     /// that committed answers with what it committed, even when the writer's
     /// post-commit work then fails. A VAD consolidation that fails after the
@@ -294,7 +299,9 @@ impl Memory<'_> {
         let keep_as = approval
             .as_ref()
             .map_or(KeepAs::Auto(held), KeepAs::Approved);
-        let person = self.actor_class == EdgeActorClass::Human;
+        // A person's slip handed on to an agent's key is no person's: it
+        // never closes user-stated truth or a restriction here.
+        let person = self.acts_as_own_person();
         let mut provenance = vec![
             (Value::from("surface"), Value::from(KIND)),
             (
@@ -348,20 +355,20 @@ impl Memory<'_> {
                 let mut receipt = decision(
                     actor,
                     KIND,
-                    "pending",
+                    GateReceiptOutcome::Pending,
                     REASON,
                     None,
                     marker.as_bytes().to_vec(),
-                    now / 1_000,
                 );
                 let (context, claim_refs) =
                     decision_context::answering_members(self.vault, &*txn, &members, marker, None)?;
                 receipt.context = context;
                 receipt.grant_ref = grant_ref;
-                decision_context::append(self.vault, txn, &receipt, &claim_refs)?;
+                let record = self.vault.store.mint_gate_receipt_in_txn(txn, receipt)?;
+                decision_context::append(self.vault, txn, &record, &claim_refs)?;
                 return Ok(ConflictSettleOutcome::ImportReviewPending {
                     staged,
-                    receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
+                    receipt_ref: format!("gate:{}", record.decision_id.to_hex()),
                 });
             }
         };
@@ -378,17 +385,16 @@ impl Memory<'_> {
                 }
                 *consolidate = approved.dreamer_run.then_some(approved.claim);
                 let members = [marker, approved.claim];
-                let mut record = decision(
+                let mut receipt = decision(
                     actor,
                     APPROVAL_KIND,
-                    "approved",
+                    GateReceiptOutcome::Approved,
                     APPROVAL_REASON,
                     None,
                     [marker, selector, approved.claim]
                         .iter()
                         .flat_map(|id| *id.as_bytes())
                         .collect(),
-                    now / 1_000,
                 );
                 let (context, claim_refs) = decision_context::answering_members(
                     self.vault,
@@ -397,8 +403,9 @@ impl Memory<'_> {
                     approved.claim,
                     None,
                 )?;
-                record.context = context;
-                record.grant_ref.clone_from(&grant_ref);
+                receipt.context = context;
+                receipt.grant_ref.clone_from(&grant_ref);
+                let record = self.vault.store.mint_gate_receipt_in_txn(txn, receipt)?;
                 decision_context::append(self.vault, txn, &record, &claim_refs)?;
                 Some(format!("gate:{}", record.decision_id.to_hex()))
             }
@@ -413,23 +420,23 @@ impl Memory<'_> {
         let mut receipt = decision(
             actor,
             KIND,
-            "approved",
+            GateReceiptOutcome::Approved,
             REASON,
             None,
             marker.as_bytes().to_vec(),
-            now / 1_000,
         );
         let (context, claim_refs) =
             decision_context::answering_members(self.vault, &*txn, &members, marker, None)?;
         receipt.context = context;
         receipt.grant_ref = grant_ref;
-        decision_context::append(self.vault, txn, &receipt, &claim_refs)?;
+        let record = self.vault.store.mint_gate_receipt_in_txn(txn, receipt)?;
+        decision_context::append(self.vault, txn, &record, &claim_refs)?;
         Ok(ConflictSettleOutcome::Settled(ConflictSettleReceipt {
             marker,
             settlement,
             resolved: settled.resolved,
             superseded: settled.superseded,
-            receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
+            receipt_ref: format!("gate:{}", record.decision_id.to_hex()),
             approval_ref,
             warnings: Vec::new(),
         }))
@@ -563,11 +570,10 @@ impl Memory<'_> {
             let mut receipt = decision(
                 actor,
                 REVERT_KIND,
-                "approved",
+                GateReceiptOutcome::Approved,
                 REVERT_REASON,
                 None,
                 reverted.marker.as_bytes().to_vec(),
-                now / 1_000,
             );
             let (context, claim_refs) = decision_context::answering_members(
                 self.vault,
@@ -577,11 +583,12 @@ impl Memory<'_> {
                 Some(KIND),
             )?;
             receipt.context = context;
-            decision_context::append(self.vault, txn, &receipt, &claim_refs)?;
+            let record = self.vault.store.mint_gate_receipt_in_txn(txn, receipt)?;
+            decision_context::append(self.vault, txn, &record, &claim_refs)?;
             Ok(ConflictRevertReceipt {
                 resolved,
                 reverted,
-                receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
+                receipt_ref: format!("gate:{}", record.decision_id.to_hex()),
             })
         })
     }
@@ -770,6 +777,23 @@ pub(crate) fn conflict_review_held_in(
     subject: EntityId,
 ) -> Result<Option<String>, Error> {
     live_review_bound(vault, txn, actor, HOLD_VERB, subject)
+}
+
+/// The owner's live hold on the Dreamer's conflict review of `subject`, its
+/// own or the whole vault's, by the Grant's ref. It is the one hold an owner
+/// mints ([`Memory::hold_dreamer_conflict_review`]), so the open conflicts
+/// page asks it for every reader but the owner: a held subject's conflicts
+/// are the owner's to answer.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn dreamer_conflict_review_held_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: EntityId,
+) -> Result<Option<String>, Error> {
+    live_review_bound(vault, txn, dreamer_principal()?, HOLD_VERB, subject)
 }
 
 /// The live standing Grant of `verb` naming `actor` on `subject`, its own or

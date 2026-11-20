@@ -4,25 +4,8 @@
 
 use super::*;
 
-/// What an escrow add warns of (FIX 2857). The wrap is sealed either way;
-/// a warning names labels only, never a key or a value.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "warning")]
-pub enum EscrowAddWarning {
-    /// The recipient's key is one an escrow label was released to and then
-    /// retired under: a released recipient is not meant to be sealed to
-    /// again. Seal to a new key, and remove this wrap.
-    RetiredRecipient { retired_label: String },
-}
-
-/// One escrow wrap added, and what the add warns of.
-#[derive(Debug, Clone, Serialize)]
-pub struct EscrowAdded {
-    pub wrap: VaultKeyWrapInfo,
-    /// Empty when nothing warns.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub warnings: Vec<EscrowAddWarning>,
-}
+#[doc(hidden)]
+pub use oneiron_records::world_keys::vault_key::escrow::{EscrowAddWarning, EscrowAdded};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::world_keys::vault_key::escrow::EscrowRetirement;

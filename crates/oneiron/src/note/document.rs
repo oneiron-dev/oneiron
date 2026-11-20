@@ -1,21 +1,30 @@
 //! NOTE entity-document operations, stable cursors and citation provenance.
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 
 use crate::EntityId;
 use crate::config::bm25::NoteTextField;
 use crate::entity_doc::{decode_metadata_value, encode_metadata_value};
-use crate::error::{Error, RecordError, Result};
+use crate::error::Result;
 use crate::memory::CommitReceipt;
 use crate::ports::{is_metadata_field, validate_metadata_shape};
 use crate::provenance::ActorStamp;
-use loro::cursor::{Cursor, Side};
+use loro::cursor::Side;
 use loro::{
     CommitOptions, Container, ExportMode, Frontiers, LoroDoc, LoroMap, LoroValue, ValueOrContainer,
 };
 use serde::{Deserialize, Serialize};
 
-const BODY: &str = "body";
+#[doc(hidden)]
+use oneiron_records::note::document::{BODY, quoted_cursor};
+#[doc(hidden)]
+pub use oneiron_records::note::document::{NotePin, NoteScalarEdit};
+#[doc(hidden)]
+pub(super) use oneiron_records::note::document::{frontier, invalid};
+
+mod splice;
+
 /// The common root map (FIX 7784): the NOTE's immutable identity, its
 /// editable fields and its pins.
 const META: &str = "meta";
@@ -33,32 +42,6 @@ const AUTHORSHIP: &str = "authorship";
 /// write is refused past it: a size never refuses the user's own NOTE (rule
 /// 5, FIX 10345).
 pub(crate) const MAX_NOTE_BYTES: usize = 1024 * 1024;
-
-/// Positions use Unicode scalar indices in the named base frontier. Batches
-/// are ordered, so each operation sees the preceding operations in its batch.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NoteScalarEdit {
-    pub start: usize,
-    pub delete: usize,
-    pub insert: String,
-}
-
-/// A citation is data, not a rendered view. Its cursors are bound to one
-/// document and frontier. The original quote is retained even after drift.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NotePin {
-    #[serde(with = "super::id_codec")]
-    pub claim: EntityId,
-    #[serde(with = "super::id_codec")]
-    pub document: EntityId,
-    pub frontier: Vec<u8>,
-    pub start_cursor: Vec<u8>,
-    pub end_cursor: Vec<u8>,
-    pub quote_hash: [u8; 32],
-    pub quote_text: String,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NoteSpanResolution {
@@ -89,17 +72,6 @@ pub struct NoteDocumentView {
 pub enum NoteScalarEditOutcome {
     Applied(NoteDocumentView),
     Proposed(CommitReceipt),
-}
-
-pub(super) fn invalid(reason: &'static str) -> Error {
-    Error::Record(RecordError::InvalidNoteBody(reason))
-}
-
-/// Decodes a NOTE frontier. No length refuses it (rule 5, FIX 10345): a NOTE
-/// many devices edited at once has a wide one, and its decode allocates no
-/// more than its bytes hold.
-pub(super) fn frontier(bytes: &[u8]) -> Result<Frontiers> {
-    Frontiers::decode(bytes).map_err(|_| invalid("invalid NOTE frontier"))
 }
 
 /// What a store-aware entrance measures of a NOTE document (`note::scan`):
@@ -256,37 +228,6 @@ pub(super) fn insert_value_meta(
             .map_err(|_| invalid("proposal metadata"))?;
     }
     Ok(())
-}
-
-impl NotePin {
-    /// Checks the citation's shape: its frontier, its two cursors and its
-    /// quote's hash. No quote length refuses it (rule 5, FIX 10345); a cursor
-    /// past its shape check is a body cursor, small by construction.
-    pub fn validate(&self) -> Result<()> {
-        frontier(&self.frontier)?;
-        quoted_cursor(&self.start_cursor, Side::Left)?;
-        quoted_cursor(&self.end_cursor, Side::Right)?;
-        if self.quote_hash != *blake3::hash(self.quote_text.as_bytes()).as_bytes() {
-            return Err(invalid("NOTE quote hash mismatch"));
-        }
-        Ok(())
-    }
-}
-
-/// A cited span's endpoint, decoded and checked for its shape: in the body
-/// text, on a quoted character, on `side`. A pin's validation and a live
-/// span's read judge it alike (FIX 10747).
-fn quoted_cursor(bytes: &[u8], side: Side) -> Result<Cursor> {
-    let cursor = Cursor::decode(bytes).map_err(|_| invalid("invalid NOTE cursor"))?;
-    if cursor.container != loro::ContainerID::new_root(BODY, loro::ContainerType::Text) {
-        return Err(invalid("NOTE cursor is not in the body"));
-    }
-    // Both endpoints name quoted characters, never a moving document
-    // boundary. The sides describe the edges of those characters.
-    if cursor.id.is_none() || cursor.side != side {
-        return Err(invalid("NOTE cursor is not a quoted character boundary"));
-    }
-    Ok(cursor)
 }
 
 pub(super) struct NoteDocument {
@@ -472,20 +413,17 @@ impl NoteDocument {
         editable_fields(&self.doc.get_map(META))
     }
 
-    /// Rewrites the live body to `text` by the smallest edits that make it:
-    /// a mask on write's handles in place of the spans it lifted (OF-067).
-    /// Every other character keeps its identity, and the cursors on it.
-    pub(super) fn mask_body(&self, text: &str) -> Result<()> {
-        self.doc
-            .get_text(BODY)
-            .update(
-                text,
-                loro::UpdateOptions {
-                    timeout_ms: None,
-                    use_refined_diff: true,
-                },
-            )
-            .map_err(|_| invalid("NOTE mask update"))?;
+    /// Puts a mask on write's handles in the live body in place of the spans
+    /// it lifted (OF-067): `replaced` holds, in order, each span of the body
+    /// the mask lifted and the span its handle takes in `masked`, the body
+    /// as masked. Every other character keeps its identity, and the cursors
+    /// on it ([`splice::splice_handles`]).
+    pub(super) fn mask_body(
+        &self,
+        replaced: &[(Range<usize>, Range<usize>)],
+        masked: &str,
+    ) -> Result<()> {
+        splice::splice_handles(&self.doc.get_text(BODY), replaced, masked)?;
         self.doc
             .commit_with(CommitOptions::new().commit_msg("oneiron.note/v1 mask_on_write"));
         Ok(())
@@ -501,6 +439,18 @@ impl NoteDocument {
             .map_err(|_| invalid("NOTE title mask"))?;
         self.doc
             .commit_with(CommitOptions::new().commit_msg("oneiron.note/v1 mask_on_write"));
+        Ok(())
+    }
+
+    /// Puts found keys' values back where the mask left their handles, its
+    /// commit naming the ruling person's stamp token `stamp` (FIX
+    /// L6-03-NOTE-RULING-KEEPS-DOC-HANDLE): for each `(text_form, value)` of
+    /// `values` in turn, each place the live body then holds `text_form`
+    /// takes `value`, as [`str::replace`] puts it. Every other character
+    /// keeps its identity, and the cursors on it ([`splice::splice_values`]).
+    pub(super) fn restore_body(&self, values: &[(&str, &str)], stamp: ActorStamp) -> Result<()> {
+        splice::splice_values(&self.doc.get_text(BODY), values)?;
+        commit_stamped(&self.doc, stamp);
         Ok(())
     }
 
@@ -755,6 +705,76 @@ fn stamp_birth(doc: &LoroDoc) {
 /// Commits `doc` under the engine stamp naming `named`.
 fn commit_naming(doc: &LoroDoc, named: &str) {
     doc.commit_with(CommitOptions::new().commit_msg(&format!("oneiron.note/v1 actor={named}")));
+}
+
+/// The command hash of the checkpoint-pins door's authorship records:
+/// fixed bytes, since no capture or restore checks it against a command.
+#[cfg(oneiron_test_support)]
+const PINS_COMMAND_HASH: [u8; 32] = [0x63; 32];
+
+/// Builds a proposal document's snapshot bytes for the checkpoint-pins
+/// door: `note`'s birth document holding `body`, as `birth_by` builds it
+/// but with `peer`, `at` and the command hash fixed, so two processes build
+/// the same bytes. `live` adds one authorship record of `operation` naming
+/// `actor`, the atoms the capture splits out; without it the snapshot names
+/// no one.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pins_note_proposal_snapshot(
+    note: &EntityId,
+    body: &str,
+    live: Option<(EntityId, EntityId)>,
+    peer: u64,
+    at: i64,
+) -> Result<Vec<u8>> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(peer)
+        .map_err(|_| invalid("NOTE pins peer"))?;
+    let meta = doc.get_map(META);
+    meta.insert(ID, note.to_hex())
+        .map_err(|_| invalid("NOTE pins identity"))?;
+    meta.insert_container(PINS, LoroMap::new())
+        .map_err(|_| invalid("NOTE pins insert"))?;
+    doc.get_text(BODY)
+        .insert(0, body)
+        .map_err(|_| invalid("NOTE pins insert"))?;
+    let stamp = |named: &str| {
+        doc.commit_with(
+            CommitOptions::new()
+                .commit_msg(&format!("oneiron.note/v1 actor={named}"))
+                .timestamp(at),
+        );
+    };
+    stamp(&super::NoteActor::Erased.to_wire());
+    let birth = super::operations::NoteAuthorship {
+        operation: *note,
+        actor: super::NoteActor::Erased,
+        actor_class: "ledger".to_owned(),
+        grant: None,
+        command_hash: PINS_COMMAND_HASH,
+    };
+    let stored = birth.stored_for_note(*note);
+    let value = serde_json::to_string(&stored).map_err(|_| invalid("NOTE pins authorship"))?;
+    doc.get_map(AUTHORSHIP)
+        .insert(&stored.operation.to_hex(), value)
+        .map_err(|_| invalid("NOTE pins authorship"))?;
+    stamp(&super::NoteActor::Erased.to_wire());
+    if let Some((operation, actor)) = live {
+        let record = super::operations::NoteAuthorship {
+            operation,
+            actor: super::NoteActor::Actor(actor),
+            actor_class: "ledger".to_owned(),
+            grant: None,
+            command_hash: PINS_COMMAND_HASH,
+        };
+        let value = serde_json::to_string(&record).map_err(|_| invalid("NOTE pins authorship"))?;
+        doc.get_map(AUTHORSHIP)
+            .insert(&record.operation.to_hex(), value)
+            .map_err(|_| invalid("NOTE pins authorship"))?;
+        stamp(&actor.to_hex());
+    }
+    NoteDocument::from_loro(*note, doc.fork())?.view()?;
+    doc.export(ExportMode::Snapshot)
+        .map_err(|_| invalid("NOTE pins snapshot"))
 }
 
 /// A title is human metadata, not a body hash: one line, not blank. No

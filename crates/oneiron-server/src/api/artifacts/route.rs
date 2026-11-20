@@ -247,8 +247,8 @@ fn decode_component(raw: &str) -> Result<String, EnvelopedApiError> {
             if pos + 2 >= bytes.len() {
                 return Err(missing());
             }
-            let a = hex(bytes[pos + 1]).ok_or_else(missing)?;
-            let b = hex(bytes[pos + 2]).ok_or_else(missing)?;
+            let a = oneiron_hex::nibble_any_case(bytes[pos + 1]).ok_or_else(missing)?;
+            let b = oneiron_hex::nibble_any_case(bytes[pos + 2]).ok_or_else(missing)?;
             decoded.push((a << 4) | b);
             pos += 3;
         } else {
@@ -257,15 +257,6 @@ fn decode_component(raw: &str) -> Result<String, EnvelopedApiError> {
         }
     }
     String::from_utf8(decoded).map_err(|_| missing())
-}
-
-fn hex(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

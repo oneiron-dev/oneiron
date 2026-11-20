@@ -141,7 +141,7 @@ fn unfenced(reply: &str) -> &str {
 }
 
 fn is_hex32(text: &str) -> bool {
-    text.len() == 32 && text.bytes().all(|b| b.is_ascii_hexdigit())
+    oneiron_hex::is_hex_any_case(text, Some(32))
 }
 
 /// [`PREDICATE_PATTERN`] by hand: two or more `.`-joined segments, each a

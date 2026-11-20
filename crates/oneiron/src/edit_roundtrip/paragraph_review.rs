@@ -9,44 +9,15 @@ use super::artifact_question::{ArtifactAsk, ArtifactAskRun, UnitAbstention, Unit
 use super::slides_review::SlideReviewLabels;
 use super::{EditOp, EditOutcome, EditProposal, OfficeFormat};
 use crate::llm::decision::questions::keep_artifact_unit_ask;
-use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionRung, EvidenceVersion, PairedReading, TypedDecision,
-};
+use crate::llm::decision::{DecisionAnswer, DecisionRung, EvidenceVersion, PairedReading};
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_docedit::docx_body::{DocxBlockKind, DocxStoryScope, read_docx_scoped_blocks};
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
-/// One answered paragraph, bound to its native comment and the exact source
-/// version. Settlement keeps it with the consume-once receipt. Its hashes
-/// are hex on a JSON wire (FIX 9342).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ParagraphJudgment {
-    /// The paragraph's stable block id: the comment's target.
-    pub block: String,
-    /// The actual native story, omitted for the main body.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope: Option<DocxStoryScope>,
-    /// Hash of the paragraph text the call read, which the comment quotes.
-    #[serde(with = "oneiron_docedit::hex_digest")]
-    pub text_hash: [u8; 32],
-    /// The shared ladder's decision and receipt.
-    pub decision: TypedDecision,
-    /// The immutable primitive selected by the question version for this run.
-    pub answer_contract: AnswerContract,
-    pub comment: String,
-    pub author: String,
-    /// Runtime display words pinned so settle can recheck comment semantics.
-    pub labels: SlideReviewLabels,
-    #[serde(with = "oneiron_docedit::hex_digest")]
-    pub frontier: [u8; 32],
-    pub judged_version: Option<u64>,
-    /// The document's live body when it was asked: an edit to it never
-    /// exported withdraws the paragraphs it changed (FIX 2115).
-    #[serde(default)]
-    pub judged_live: Option<crate::office_body::LivePin>,
-}
+#[doc(hidden)]
+pub use oneiron_records::edit_roundtrip::paragraph_review::ParagraphJudgment;
 
 /// One typed ask over paragraphs, by their stable block ids.
 #[derive(Clone, Copy)]
@@ -118,7 +89,7 @@ impl Vault {
             .map_err(|error| {
                 crate::office_body::document_error(error.resource(), "paragraph ask document")
             })?;
-        let frontier = *blake3::hash(&bytes).as_bytes();
+        let frontier = *ContentHash::of(&bytes).as_bytes();
         let sources = [EvidenceVersion {
             id: *artifact,
             body_hash: frontier,
@@ -214,7 +185,7 @@ impl Vault {
             judgments.push(ParagraphJudgment {
                 block: id.clone(),
                 scope: request.scope.cloned(),
-                text_hash: *blake3::hash(block.text.as_bytes()).as_bytes(),
+                text_hash: *ContentHash::of(block.text.as_bytes()).as_bytes(),
                 decision,
                 answer_contract: ask.question.contract.clone(),
                 comment,
@@ -305,7 +276,7 @@ pub(crate) fn carry_paragraph_judgments(
             let block = blocks
                 .iter()
                 .find(|block| block.id == row.block)
-                .filter(|block| *blake3::hash(block.text.as_bytes()).as_bytes() == row.text_hash)
+                .filter(|block| *ContentHash::of(block.text.as_bytes()).as_bytes() == row.text_hash)
                 .ok_or_else(|| invalid("a carried paragraph changed"))?;
             Ok(paragraph_comment_op(
                 row.scope.as_ref(),
@@ -405,7 +376,7 @@ fn verify_rows(proposal: &EditProposal, carried: bool) -> Result<()> {
             || row.scope != rows[0].scope
             || op.get("scope").filter(|value| !value.is_null())
                 != row.scope.as_ref().map(|scope| json!(scope)).as_ref()
-            || text(op, "expect").map(|quote| *blake3::hash(quote.as_bytes()).as_bytes())
+            || text(op, "expect").map(|quote| *ContentHash::of(quote.as_bytes()).as_bytes())
                 != Some(row.text_hash)
             || text(op, "body").as_deref() != Some(row.comment.as_str())
             || text(op, "author").as_deref() != Some(row.author.as_str())

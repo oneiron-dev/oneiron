@@ -45,12 +45,14 @@ impl fmt::Display for Slice {
     }
 }
 
-/// The kind of a record. Only conversation turns exist today.
+/// The kind of a record: a conversation turn or a collection passage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecordKind {
     /// One conversation turn.
     Turn,
+    /// One passage of a document collection (MIRACL, Mr.TyDi).
+    Passage,
 }
 
 /// One slice manifest: the queries of the slice and the records they need.
@@ -113,11 +115,11 @@ pub struct Record {
     pub record_id: String,
     /// The kind of the record.
     pub kind: RecordKind,
-    /// `user` or `assistant` for LongMemEval.
+    /// `user` or `assistant` for LongMemEval; `document` for a passage.
     pub speaker: String,
     /// The text that is embedded. Never blank.
     pub text: String,
-    /// `<session_id>#<turn_index>` for LongMemEval.
+    /// `<session_id>#<turn_index>` for LongMemEval; the docid `<article>#<n>` for a passage.
     pub source_ref: String,
 }
 
@@ -649,7 +651,7 @@ impl PackSlice {
             if embedding.dims == 0 {
                 return Err(PackError::BadDims);
             }
-            if !is_digest(&embedding.vectors_sha256) {
+            if !oneiron_hex::is_lower_hex(&embedding.vectors_sha256, Some(64)) {
                 return Err(PackError::BadDigest {
                     value: embedding.vectors_sha256.clone(),
                 });
@@ -803,12 +805,7 @@ pub fn write_slice(
 
 /// Lowercase hex sha256 of bytes.
 pub fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut out = String::with_capacity(Sha256::output_size() * 2);
-    for byte in digest {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
+    oneiron_hex::encode(&Sha256::digest(bytes))
 }
 
 /// True for exactly `YYYY-MM-DDTHH:MM:SSZ` with plausible ranges: month
@@ -843,12 +840,4 @@ fn is_time(value: &str) -> bool {
         && hour <= 23
         && minute <= 59
         && second <= 59
-}
-
-/// True for 64 lowercase hex digits.
-fn is_digest(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }

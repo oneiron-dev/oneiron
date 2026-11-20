@@ -1,7 +1,5 @@
 //! Shipped preset defaults (`defaults.json`) and the campaign's reply-snooze resolver.
 
-use serde::{Deserialize, Serialize};
-
 use super::shape::SnoozePolicyData;
 use super::validate::validate_snooze_policy;
 use crate::campaign::surface::load_registered_campaign;
@@ -15,17 +13,8 @@ use crate::{EntityId, Result, Vault};
 /// runs.
 pub const CAMPAIGN_PRESET_DEFAULTS_JSON: &str = include_str!("defaults.json");
 
-/// The shipped policy dials [`CAMPAIGN_PRESET_DEFAULTS_JSON`] holds.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CampaignPresetDefaults {
-    /// The positive-later pause a campaign takes until its owner sets another.
-    pub reply_snooze_policy: SnoozePolicyData,
-    /// The audit window a preset starts from, in days.
-    pub audit_window_days: u32,
-    /// The desk rhythm's period token a preset starts from.
-    pub desk_period: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::campaign::presets::defaults::CampaignPresetDefaults;
 
 /// Parses the shipped defaults.
 ///

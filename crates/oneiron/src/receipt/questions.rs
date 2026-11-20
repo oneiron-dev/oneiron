@@ -256,12 +256,8 @@ pub struct QuestionEditRequest {
     pub definition: QuestionDefinitionInput,
 }
 
-/// `vault.questions.pause`'s answer: the question and the state it now has.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QuestionPaused {
-    pub id: EntityId,
-    pub paused: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::receipt::questions::QuestionPaused;
 
 /// One entry of `vault.questions.answers`, tagged by `kind`: a graph
 /// question's answer receipt, or one ask a standing artifact question made of

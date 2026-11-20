@@ -38,6 +38,7 @@ use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::replay_judge::{self, JournalRow, ServeAxisBandit};
 use crate::server::SyncServer;
+use oneiron_base::unix_seconds_now;
 
 mod tradeoff_resolve;
 
@@ -594,7 +595,7 @@ async fn pick(
             &proposal,
             &request.question_digest,
             request.choice,
-            unix_seconds(),
+            unix_seconds_now(),
         )?;
         Ok(Settled {
             proposal: request.proposal,
@@ -658,7 +659,7 @@ async fn swap_pick(
             &request.receipt,
             &request.case_ref,
             &request.judge,
-            unix_seconds(),
+            unix_seconds_now(),
         )?)
     })
     .await?;
@@ -695,7 +696,7 @@ async fn pair_pick(
             &owner,
             &request.pair_ref,
             request.preferred,
-            unix_seconds(),
+            unix_seconds_now(),
         )?)
     })
     .await?;
@@ -731,11 +732,4 @@ async fn set_swap_policy(
     })
     .await?;
     Ok(Json(policy))
-}
-
-/// Unix seconds now, the time a pick is learned at.
-fn unix_seconds() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }

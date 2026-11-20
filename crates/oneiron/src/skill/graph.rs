@@ -2,11 +2,10 @@
 
 use super::SkillRole;
 use crate::attempt_queue::{AttemptId, AttemptRecord, ReadSetProducer};
-use crate::error::{ArtifactError, Error, Result};
+use crate::error::{Error, Result};
 use crate::llm::decision::questions::{
     AnswerRecord, GraphAnswerer, run_graph_question_with_current,
 };
-use crate::model_decision::questions::{GraphQuestionInput, GraphQuestionRef};
 use crate::{EntityId, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -19,29 +18,10 @@ pub struct GraphSkillProgram {
     pub stages: Vec<GraphSkillStage>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GraphSkillStage {
-    pub question: GraphQuestionRef,
-    pub inputs: Vec<GraphSkillInput>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GraphSkillInput {
-    pub context: GraphQuestionInput,
-    /// Answers from earlier stages become ordinary, scoped evidence. A missing
-    /// answer holds this input back; an abstention never becomes a negative.
-    pub answers: Vec<GraphSkillAnswerRef>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GraphSkillAnswerRef {
-    pub stage: usize,
-    /// None selects all inputs in the stage (for a campaign rollup).
-    pub input: Option<usize>,
-}
+#[doc(hidden)]
+use oneiron_records::skill::graph::invalid;
+#[doc(hidden)]
+pub use oneiron_records::skill::graph::{GraphSkillAnswerRef, GraphSkillInput, GraphSkillStage};
 
 /// Entries retain their input positions, including abstentions. The last
 /// stage is still only proposed work; this API neither keeps nor sends it.
@@ -57,10 +37,6 @@ pub struct GraphSkillFailure {
     pub input: Option<usize>,
     pub error: Box<Error>,
     pub completed: GraphSkillResult,
-}
-
-fn invalid(reason: &'static str) -> Error {
-    Error::Artifact(ArtifactError::InvalidSkillBody(reason))
 }
 
 fn record_graph_input_rows(vault: &Vault, attempt: AttemptId, mut rows: Option<Vec<EntityId>>) {

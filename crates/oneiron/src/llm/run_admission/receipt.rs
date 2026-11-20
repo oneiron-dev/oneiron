@@ -5,10 +5,7 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 
-use super::super::{
-    BrokerIsolation, BudgetDenied, InferenceCallReceipt, LlmInputUsage, LlmOutputUsage, ModelId,
-    ModelLocality,
-};
+use super::super::{BrokerIsolation, BudgetDenied, InferenceCallReceipt, ModelId, ModelLocality};
 use super::admission::{RunAttribution, RunDenied};
 use super::declaration::{DeclarationEditor, LeaseUnit};
 use super::host::{AllocationRef, Payer, PayerPerson};
@@ -39,6 +36,15 @@ pub enum RunEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         lease: Option<String>,
         reason: RunDenied,
+        /// The world the call named in its scope, as its `Admitted` row
+        /// names it (DEC-0005 world privacy, fix 12). For a refusal before
+        /// admission, the world the refused call named.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        world: Option<EntityId>,
+        /// The live worlds of the rows the call's input was assembled from,
+        /// as its `Admitted` row names them ([`PermitFacts::source_worlds`]).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_worlds: Option<Vec<EntityId>>,
     },
     /// The call passed the dispatch check and went out.
     Dispatched {
@@ -54,6 +60,15 @@ pub enum RunEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         broker_isolation: Option<BrokerIsolation>,
         answered: bool,
+        /// The world the call named in its scope, as its `Admitted` row
+        /// names it (DEC-0005 world privacy, fix 12). For a refusal before
+        /// admission, the world the refused call named.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        world: Option<EntityId>,
+        /// The live worlds of the rows the call's input was assembled from,
+        /// as its `Admitted` row names them ([`PermitFacts::source_worlds`]).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_worlds: Option<Vec<EntityId>>,
     },
     Settled {
         lease: String,
@@ -91,6 +106,15 @@ pub enum RunEvent {
         /// A settlement the allocation's meter refused.
         #[serde(skip_serializing_if = "Option::is_none")]
         allocation_error: Option<BudgetDenied>,
+        /// The world the call named in its scope, as its `Admitted` row
+        /// names it (DEC-0005 world privacy, fix 12). For a refusal before
+        /// admission, the world the refused call named.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        world: Option<EntityId>,
+        /// The live worlds of the rows the call's input was assembled from,
+        /// as its `Admitted` row names them ([`PermitFacts::source_worlds`]).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_worlds: Option<Vec<EntityId>>,
     },
     Revised {
         editor: DeclarationEditor,
@@ -118,55 +142,10 @@ pub enum RunEvent {
     },
 }
 
-/// One metered stream's audio: the milliseconds it admitted and the bound
-/// its permit reserved for. Admitted audio is what the stream sent, not what
-/// the provider billed or the person heard.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct RunStreamUsage {
-    pub admitted_ms: u64,
-    pub bound_ms: u64,
-}
-
-/// One answered call's normalized billing counters, which can contain default
-/// zeros. Provider measurement presence is recorded separately. Cache passes
-/// and identity remain on the settlement's `inference_calls`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct RunTokenUsage {
-    pub input: LlmInputUsage,
-    pub output: LlmOutputUsage,
-    /// Parse-time provider measurements, independent of normalized counters
-    /// and budget charges. No complete physical-call or scope coverage implied.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider_token_measurement: Option<super::super::ProviderTokenMeasurement>,
-}
-
-/// What a settled call ran past its reservation (FIX 11481), in the
-/// run line's units as `units` is: the settled figure — the provider's
-/// report or the host/caller's own count, per `source` — against what the
-/// permit reserved. On the settlement only when the settled figure ran
-/// past the reservation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct RunUsageOverage {
-    /// What the call settled at, as charged.
-    pub reported_units: u64,
-    /// What the permit reserved.
-    pub reserved_units: u64,
-    /// `reported_units - reserved_units`.
-    pub overage_units: u64,
-    /// Where the reported figure came from.
-    pub source: RunOverageSource,
-}
-
-/// Where a settled overage's reported figure came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RunOverageSource {
-    /// The provider's own usage report for the call.
-    ProviderReported,
-    /// The host/caller's own count for the call (bytes, audio, fixed
-    /// units, requested length), at its row's rates.
-    Counted,
-}
+#[doc(hidden)]
+pub use oneiron_records::llm::run_admission::receipt::{
+    CalledTeacher, RunOverageSource, RunStreamUsage, RunTokenUsage, RunUsageOverage, TeacherReport,
+};
 
 /// Everything one permit binds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -240,6 +219,19 @@ pub struct PermitFacts {
     /// here.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub world: Option<EntityId>,
+    /// The live worlds of `source_rows`, each row's as the run's receipt
+    /// sink read it when the call was admitted
+    /// ([`RunReceiptSink::source_worlds`]): the provenance of a call that
+    /// names no world, from rows host code named, never from the caller
+    /// (DEC-0005 :457). Base reality is named by its own id. `None`,
+    /// unknown, when the host named no rows, the sink reads no vault, or one
+    /// row proves no world; never an empty list. A caller's own text (its
+    /// message, history or question) has no world here and never makes the
+    /// list unknown (UNBUILT-RECEIPT-CALLER-TEXT = A): the list names the
+    /// worlds of every row the vault fed the call. A call fed only caller
+    /// text names `None`: the vault fed this call no row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_worlds: Option<Vec<EntityId>>,
 }
 
 /// Where a run admission writes its receipts. The host persists or ships
@@ -252,6 +244,16 @@ pub trait RunReceiptSink: Send + Sync {
     /// the line's meter. A sink with no vault runs no hooks.
     fn budget_hit(&self, seat: &str, guard: &super::super::BudgetGuard, denied: &BudgetDenied) {
         let _ = (seat, guard, denied);
+    }
+
+    /// The live worlds of `rows`, the rows a call's input was assembled
+    /// from, as this sink's vault reads them now, for the call's receipts
+    /// (DEC-0005 world privacy, fix 12): every world each row is in, base
+    /// reality by its own id, sorted. `None` when one row proves no world,
+    /// never an empty list. A sink with no vault knows no worlds.
+    fn source_worlds(&self, rows: &[EntityId]) -> Option<Vec<EntityId>> {
+        let _ = rows;
+        None
     }
 }
 
@@ -275,23 +277,4 @@ impl RunReceiptSink for MemoryReceipts {
             .expect("receipt mutex poisoned")
             .push(receipt);
     }
-}
-
-/// The declared teachers next to the teachers called.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct TeacherReport {
-    pub declared: Vec<ModelId>,
-    pub called: Vec<CalledTeacher>,
-}
-
-/// One dispatched model call of the run.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct CalledTeacher {
-    pub model: ModelId,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub served_model: Option<String>,
-    pub request_digest: String,
-    pub lease: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub settled_units: Option<u64>,
 }

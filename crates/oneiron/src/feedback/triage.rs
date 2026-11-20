@@ -50,6 +50,9 @@ mod target;
 mod work;
 mod work_store;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use self::work::triage_digest_for_test;
+
 pub(crate) use self::erased::{
     erase_handoff_actor_in_txn, erase_handoff_as_in_txn, erase_handoff_in_txn, refuse_erased_in_txn,
 };
@@ -119,8 +122,9 @@ pub const FEEDBACK_TRIAGE_FINDING_PREDICATE: &str = "coach.feedback_triage.findi
 const INBOX_PAGE: usize = 256;
 /// The domain a note's revision digest is taken under.
 const REVISION_DOMAIN: &[u8] = b"oneiron:feedback-triage:revision:v1";
-/// The domain a handoff row's key is taken under.
-const HANDOFF_DOMAIN: &[u8] = b"oneiron:feedback-triage:handoff:v1";
+#[doc(hidden)]
+use oneiron_records::feedback::triage::HANDOFF_DOMAIN;
+
 /// The domain a revision's evidence ASSET id is taken under.
 const EVIDENCE_DOMAIN: &[u8] = b"oneiron:feedback-triage:evidence:v1";
 /// The `seen` a binding change named is not the current revision.

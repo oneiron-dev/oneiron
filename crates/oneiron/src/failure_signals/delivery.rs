@@ -40,7 +40,8 @@ use crate::{Result, Vault};
 
 pub use crate::gate::failure_signal_delivery::FAILURE_SIGNALS_CHANNEL;
 pub use crate::gate::failure_signal_delivery::FAILURE_SIGNALS_SEND_VERB;
-pub const FAILURE_SIGNAL_BATCH_VERSION: u16 = 1;
+#[doc(hidden)]
+pub use oneiron_records::failure_signals::delivery::FAILURE_SIGNAL_BATCH_VERSION;
 
 /// What one delivery carries, as the publisher receives it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

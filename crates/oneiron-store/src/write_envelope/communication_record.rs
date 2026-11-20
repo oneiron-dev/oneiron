@@ -1,7 +1,5 @@
 //! Communication event, gate and receipt wire values and their strict MessagePack codec.
 
-use std::io::Cursor;
-
 mod source_position;
 pub use source_position::ScopedTouchSource;
 
@@ -13,6 +11,7 @@ use super::communication::{
 };
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::error::{Error, RecordError, Result};
+use oneiron_contracts::msgpack::{self, Entries, MsgpackError};
 
 /// Longest `send_ref` a one-shot override may bind.
 pub const MAX_SEND_REF_BYTES: usize = 256;
@@ -217,11 +216,7 @@ pub fn encode_comm_record(record: &CommRecord) -> CommResult<Vec<u8>> {
 }
 
 pub fn decode_comm_record(bytes: &[u8]) -> CommResult<CommRecord> {
-    let mut cursor = Cursor::new(bytes);
-    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| CommError::InvalidRecord)?;
-    if cursor.position() != bytes.len() as u64 {
-        return Err(CommError::InvalidRecord);
-    }
+    let value = msgpack::decode(bytes).map_err(|_| CommError::InvalidRecord)?;
     let entries = value_map(&value).map_err(|_| CommError::InvalidRecord)?;
     validate_keys_with_optional(entries, &COMM_RECORD_KEYS, &COMM_RECORD_OPTIONAL_KEYS)
         .map_err(|_| CommError::InvalidRecord)?;
@@ -359,16 +354,12 @@ pub fn value_map(value: &Value) -> Result<&[(Value, Value)]> {
 }
 
 fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
-    let mut matches = entries
-        .iter()
-        .filter_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value));
-    let value = matches
-        .next()
-        .ok_or_else(|| invalid_claim("comm value missing required key"))?;
-    if matches.next().is_some() {
-        return Err(invalid_claim("comm value contains duplicate key"));
-    }
-    Ok(value)
+    Entries::new(entries).require(key).map_err(|error| {
+        invalid_claim(match error {
+            MsgpackError::DuplicateKey(_) => "comm value contains duplicate key",
+            _ => "comm value missing required key",
+        })
+    })
 }
 
 pub fn required_string<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a str> {
@@ -394,16 +385,9 @@ fn optional_string(entries: &[(Value, Value)], key: &str) -> Result<Option<Strin
 /// [`required_value`], so an absent-or-once contract cannot be forged by
 /// writing the key twice.
 fn elided_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<Option<&'a Value>> {
-    let mut matches = entries
-        .iter()
-        .filter_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value));
-    let Some(value) = matches.next() else {
-        return Ok(None);
-    };
-    if matches.next().is_some() {
-        return Err(invalid_claim("comm value has duplicate key"));
-    }
-    Ok(Some(value))
+    Entries::new(entries)
+        .get(key)
+        .map_err(|_| invalid_claim("comm value has duplicate key"))
 }
 
 pub fn elided_string<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<Option<&'a str>> {
@@ -510,10 +494,7 @@ pub fn validate_channel_class(value: &str) -> Result<()> {
 }
 
 pub fn encode_value(value: &Value) -> Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, value)
-        .map_err(|_| Error::InvariantViolation("comm MessagePack encode failed"))?;
-    Ok(bytes)
+    Ok(msgpack::encode(value))
 }
 
 pub fn invalid_claim(reason: &'static str) -> Error {

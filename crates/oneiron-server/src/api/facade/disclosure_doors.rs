@@ -1,8 +1,11 @@
-//! Owner registry and reveal-settlement doors, shared by HTTP and MCP.
+//! Owner registry, home-clearance and reveal-settlement doors, shared by HTTP and MCP.
 use super::host_doors::support::{Listed, internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
-use oneiron::disclosure::{DisclosureCeilingRequest, DisclosureCeilingSet, DisclosureCeilingView};
+use oneiron::disclosure::{
+    DisclosureCeilingRequest, DisclosureCeilingSet, DisclosureCeilingView, HomeClearanceRequest,
+    HomeClearanceSet, HomeClearanceView,
+};
 use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::{
     RevealAnswerRequest, RevealAnsweredView, RevealAskView, RevealAsksRequest,
@@ -67,6 +70,69 @@ pub(crate) async fn vault_disclosure_ceiling_clear(
         })
         .await
         .map_err(|_| internal("vault.disclosure.ceiling.clear"))?
+    }
+    .await;
+    (answer, Vec::new())
+}
+
+pub(crate) async fn vault_disclosure_home_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: HomeClearanceRequest,
+) -> Listed<HomeClearanceView> {
+    let answer = async {
+        let owner = owner_proof(auth, server, "vault.disclosure.home.get")?;
+        let server = Arc::clone(server);
+        super::clock_ingress::run_blocking(move || {
+            server
+                .vault()
+                .home_disclosure_clearance(&owner, input)
+                .map_err(Into::into)
+        })
+        .await
+        .map_err(|_| internal("vault.disclosure.home.get"))?
+    }
+    .await;
+    (answer, Vec::new())
+}
+
+pub(crate) async fn vault_disclosure_home_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: HomeClearanceSet,
+) -> Listed<HomeClearanceView> {
+    let answer = async {
+        let owner = owner_proof(auth, server, "vault.disclosure.home.set")?;
+        let server = Arc::clone(server);
+        super::clock_ingress::run_blocking(move || {
+            server
+                .vault()
+                .set_home_disclosure_clearance(&owner, input)
+                .map_err(Into::into)
+        })
+        .await
+        .map_err(|_| internal("vault.disclosure.home.set"))?
+    }
+    .await;
+    (answer, Vec::new())
+}
+
+pub(crate) async fn vault_disclosure_home_clear(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: HomeClearanceRequest,
+) -> Listed<HomeClearanceView> {
+    let answer = async {
+        let owner = owner_proof(auth, server, "vault.disclosure.home.clear")?;
+        let server = Arc::clone(server);
+        super::clock_ingress::run_blocking(move || {
+            server
+                .vault()
+                .clear_home_disclosure_clearance(&owner, input)
+                .map_err(Into::into)
+        })
+        .await
+        .map_err(|_| internal("vault.disclosure.home.clear"))?
     }
     .await;
     (answer, Vec::new())

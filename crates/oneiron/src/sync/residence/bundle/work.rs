@@ -7,6 +7,7 @@ pub use self::memory::{sealed_bundle_work_memory_bytes, sealed_bundle_work_memor
 pub use self::storage::cleanup_sealed_bundle_work;
 pub(super) use self::storage::stages_in;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use super::super::bundle_turn::{hold_turn_in, published_in};
@@ -31,16 +32,9 @@ const WORK: SideTable<String, Vec<u8>, Raw> =
 const WORK_PREFIX: &str = "work:";
 const RESERVATION_PREFIX: &str = "generation:";
 pub const SEALED_BUNDLE_WORK_PART_BYTES: u64 = STORED_PART as u64;
-const WORK_ID_CONTEXT: &str = "oneiron sealed bundle commit work v1";
 
-/// The immutable publication a caller asks the home to finish.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SealedBundleCommitInput {
-    pub generation: SealedBundleGeneration,
-    pub parent: Option<SealedBundleGeneration>,
-    pub root: Option<RecoveryRootId>,
-    pub request: Option<AuthorityEntryHash>,
-}
+#[doc(hidden)]
+pub use oneiron_records::sync::residence::bundle::work::SealedBundleCommitInput;
 
 /// Execution outcome, distinct from an owner-request publication receipt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -220,28 +214,28 @@ pub fn sealed_bundle_work_id(
     input: SealedBundleCommitInput,
     objects: [(u64, [u8; 32]); 2],
 ) -> [u8; 32] {
-    let mut hash = blake3::Hasher::new_derive_key(WORK_ID_CONTEXT);
-    hash.update(&[u8::from(home.is_some())]);
+    let mut hash = LegacyDigest::new(purposes::sync::SEALED_BUNDLE_WORK_ID);
+    hash.raw(&[u8::from(home.is_some())]);
     if let Some(home) = home {
-        hash.update(home.as_bytes());
+        hash.raw(home.as_bytes());
     }
-    hash.update(executor.as_bytes());
-    hash.update(&input.generation.to_bytes());
-    hash.update(&[u8::from(input.parent.is_some())]);
+    hash.raw(executor.as_bytes());
+    hash.raw(&input.generation.to_bytes());
+    hash.raw(&[u8::from(input.parent.is_some())]);
     if let Some(parent) = input.parent {
-        hash.update(&parent.to_bytes());
+        hash.raw(&parent.to_bytes());
     }
     for value in [input.root.map(|root| root.0), input.request] {
-        hash.update(&[u8::from(value.is_some())]);
+        hash.raw(&[u8::from(value.is_some())]);
         if let Some(value) = value {
-            hash.update(&value);
+            hash.raw(&value);
         }
     }
     for (len, digest) in objects {
-        hash.update(&len.to_be_bytes());
-        hash.update(&digest);
+        hash.raw(&len.to_be_bytes());
+        hash.raw(&digest);
     }
-    *hash.finalize().as_bytes()
+    hash.finish()
 }
 
 /// Atomically accepts an immutable attempt and detaches its stage handles.

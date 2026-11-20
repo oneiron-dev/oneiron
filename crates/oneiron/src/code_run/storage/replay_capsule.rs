@@ -46,6 +46,8 @@ mod start_pieces;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(oneiron_test_support)]
+pub(crate) use self::pieces::piece_ref_for_test;
 use self::pieces::{PieceScope, held_request_bytes};
 use self::start_pieces::held_start_bytes_in_txn;
 use super::super::contribution::{
@@ -157,9 +159,8 @@ fn kept_in_txn(
         .filter(|capsule| capsule.content.actor().is_some()))
 }
 
-/// What a fork writer kept, or why it kept nothing (FIX 6256). The writer
-/// that meets the fence names the reason, and the runner keeps it as it is.
-type ForkWrite<T> = std::result::Result<T, ContributionReplayUnavailable>;
+#[doc(hidden)]
+use oneiron_records::code_run::storage::replay_capsule::ForkWrite;
 
 /// The capsule at `key` and its actor, as a fork writer reads it in `txn`
 /// (FIX 6256). A capsule row that is gone is `Unreadable`. A capsule whose

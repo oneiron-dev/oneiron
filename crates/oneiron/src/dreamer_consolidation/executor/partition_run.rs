@@ -81,8 +81,8 @@ impl ConsolidationExecutor<'_> {
             mut charges,
         } = started;
         let run_started = Instant::now();
-        let run = self
-            .run_partition_attempt(
+        let run = build_boxed_future(|| {
+            self.run_partition_attempt(
                 &payload,
                 &resources,
                 ctx,
@@ -91,19 +91,22 @@ impl ConsolidationExecutor<'_> {
                 &mut charges,
                 stages,
             )
-            .await;
+        })
+        .await;
         stages.close_model_run(run_started);
-        self.settle_partition_run(
-            &resources,
-            run,
-            &widened,
-            widened_round,
-            &originals,
-            &returned,
-            ctx,
-            &mut charges,
-            stages,
-        )
+        build_boxed_future(|| {
+            self.settle_partition_run(
+                &resources,
+                run,
+                &widened,
+                widened_round,
+                &originals,
+                &returned,
+                ctx,
+                &mut charges,
+                stages,
+            )
+        })
         .await
     }
 
@@ -182,7 +185,10 @@ impl ConsolidationExecutor<'_> {
 
     /// Settles one partition run's outcome: an accepted commit, a
     /// checkpoint, a park or a deferral, each carrying what the attempt
-    /// already spent.
+    /// already spent. The escalation rows a window slot's early finish
+    /// held on `resources` (FIX 21927) are written only by the two arms
+    /// that land the run, ahead of its commit; every other arm drops them,
+    /// a deadline checkpoint among them (review round 2 of #7855).
     pub(super) async fn settle_partition_run(
         &mut self,
         resources: &BranchResources<'_>,
@@ -195,6 +201,9 @@ impl ConsolidationExecutor<'_> {
         charges: &mut StepChargeTally,
         stages: &mut PartitionStages,
     ) -> Result<DreamerAttemptExecution> {
+        // Empty unless this branch's finish ran early in a window; from
+        // here on the branch writes its rows at once.
+        let held = resources.take_held_escalations();
         match run {
             // A finished partition lands while its landing window is still
             // open, even past the pass ceiling (FIX 11570): its model steps
@@ -227,8 +236,11 @@ impl ConsolidationExecutor<'_> {
             // A turn demoted after the model answered waits too (FIX 6060),
             // settling what the attempt already spent.
             Ok(PartitionRun::Completed { candidates }) => {
-                if let Err(error) = self
-                    .commit_candidates(
+                if let Err(error) = held.publish(ctx.vault, self.actor, resources) {
+                    return super::super::residency::spent_or_deferred(error, ctx, &charges);
+                }
+                if let Err(error) = build_boxed_future(|| {
+                    self.commit_candidates(
                         &resources,
                         candidates,
                         widened,
@@ -238,7 +250,8 @@ impl ConsolidationExecutor<'_> {
                         ctx,
                         stages,
                     )
-                    .await
+                })
+                .await
                 {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
                 }
@@ -251,8 +264,11 @@ impl ConsolidationExecutor<'_> {
                 candidates,
                 retry_at_ms,
             }) => {
-                if let Err(error) = self
-                    .commit_candidates(
+                if let Err(error) = held.publish(ctx.vault, self.actor, resources) {
+                    return super::super::residency::spent_or_deferred(error, ctx, &charges);
+                }
+                if let Err(error) = build_boxed_future(|| {
+                    self.commit_candidates(
                         &resources,
                         candidates,
                         &[],
@@ -262,7 +278,8 @@ impl ConsolidationExecutor<'_> {
                         ctx,
                         stages,
                     )
-                    .await
+                })
+                .await
                 {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
                 }

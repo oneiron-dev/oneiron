@@ -3,6 +3,7 @@
 use crate::claim::ClaimApprovalStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
+use crate::request_limits::{ZeroLimitRefused, page_limit_zero_refused};
 use crate::skill::{SkillLifecycle, SkillRecord};
 use crate::skill_convert::{ConvertOutcome, ConvertRequest, SkillRefiner};
 use crate::skill_hub::HubAdmissionDisposition;
@@ -222,19 +223,29 @@ pub(crate) fn skill_package_view(
     }
 }
 
+/// The page size `vault.skills.list` serves an ask of `limit` skills at,
+/// for the owner and every other reader alike: the refusing rule
+/// ([`page_limit_zero_refused`]); the ask is required, so it is its own
+/// default, and a larger one is cut to the type index's page maximum.
+pub(crate) fn skill_library_page_size(limit: usize) -> MemoryResult<usize> {
+    Ok(
+        page_limit_zero_refused(Some(limit), limit, crate::vault::MAX_TYPE_QUERY_RESULTS)
+            .map_err(|ZeroLimitRefused| MemoryError::bad_request("limit must be positive"))?
+            .rows,
+    )
+}
+
 pub fn skill_library_list_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: &SkillLibraryListRequest,
 ) -> MemoryResult<SkillLibraryPage> {
     owner.revalidate(vault)?;
-    if input.limit == 0 {
-        return Err(MemoryError::bad_request("limit must be positive"));
-    }
+    let page_size = skill_library_page_size(input.limit)?;
     let ids = vault.entities_by_type_page(
         crate::registry::ENTITY_TYPE_SKILL,
         input.after.as_ref(),
-        input.limit,
+        page_size,
     )?;
     let next_after = ids.last().copied();
     let mut skills = Vec::new();

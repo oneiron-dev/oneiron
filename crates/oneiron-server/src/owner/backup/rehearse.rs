@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 use oneiron::recovery::checkpoint::{CheckpointKey, SideRestoreSource};
 use serde::Serialize;
 
-use super::super::stamp::now_unix_ms;
 use super::{RestoreTarget, kind_counts, restore_target_seal, write_budget};
 use crate::machine::DiskFloor;
+use oneiron_base::unix_millis_now;
 
 /// What a rehearsal found in one backup.
 #[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
@@ -191,7 +191,7 @@ fn rehearse_into(
         scratch,
         config,
         source,
-        now_unix_ms() / 1_000,
+        unix_millis_now() / 1_000,
         &room,
     )
     .map_err(|error| {

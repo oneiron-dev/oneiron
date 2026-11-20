@@ -38,6 +38,7 @@ mod marker;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oneiron_crypto::backup::CheckpointSigner;
 pub use oneiron_crypto::backup::{inspect_backup, verify_with_pins};
@@ -277,29 +278,225 @@ impl BackupMarker {
     /// size. It reads the whole file. Anything short of that is `false`,
     /// which reads as changed.
     pub fn held(&self, dir: &Path) -> bool {
-        let mut options = std::fs::OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::custom_flags(
-            &mut options,
-            libc::O_NOFOLLOW | libc::O_NONBLOCK,
-        );
-        let Ok(file) = options.open(dir.join(&self.file)) else {
-            return false;
-        };
-        let Ok(metadata) = file.metadata() else {
-            return false;
-        };
-        if !metadata.is_file() || metadata.len() != self.size {
-            return false;
-        }
-        inspect_backup(std::io::BufReader::new(&file)).is_ok_and(|evidence| {
-            evidence.size == self.size
-                && oneiron_vault_contract::hex(&evidence.commitment_digest)
-                    == self.commitment_digest
-                && oneiron_vault_contract::hex(&evidence.outer_blake3) == self.outer_blake3
+        open_backup(&dir.join(&self.file))
+            .is_some_and(|(file, metadata)| self.reads_as_recorded(&file, &metadata))
+    }
+
+    /// [`Self::held`], with `verdict` in place of the read when it answers
+    /// (HELD-WHOLE-READ-OFF-PRE-IDLE): the file is opened once, as
+    /// [`Self::held`] opens it, and when `verdict` was made for this marker,
+    /// its read began less than `within` ago, and the open file's stat shows
+    /// the identity that read saw ([`HeldVerdict::answers`]), it is held with
+    /// no read of its bytes. Otherwise, with no verdict or one that does not
+    /// answer, that same open file is read whole, so a verdict that does not
+    /// answer costs no file call [`Self::held`] does not make (Astra
+    /// fixperf-8419-r2 F2).
+    pub fn held_by_verdict_or_read(
+        &self,
+        dir: &Path,
+        verdict: Option<&HeldVerdict>,
+        within: Duration,
+    ) -> bool {
+        let verdict =
+            verdict.filter(|verdict| verdict.marker == *self && verdict.younger_than(within));
+        open_backup(&dir.join(&self.file)).is_some_and(|(file, metadata)| {
+            verdict.is_some_and(|verdict| verdict.matches_open(&metadata, within))
+                || self.reads_as_recorded(&file, &metadata)
         })
     }
+
+    /// [`Self::held`], kept as a verdict that a later check asks in place of
+    /// a second whole read (HELD-WHOLE-READ-OFF-PRE-IDLE): `None` when the
+    /// file is not held, when its identity moved while it was read, and
+    /// where the platform gives no file identity (only unix does) or no
+    /// boot clock (time since boot, the time suspended included). The
+    /// verdict is for this marker, so for the outer digest the read found
+    /// every byte to match. Only this samples the file's identity, so
+    /// [`Self::held`] makes the same calls it always made.
+    pub fn verify(&self, dir: &Path) -> Option<HeldVerdict> {
+        let started_boot = boot_clock()?;
+        let started_ms = wall_clock_ms()?;
+        let (file, metadata) = open_backup(&dir.join(&self.file))?;
+        let identity = FileIdentity::of(&metadata)?;
+        if !self.reads_as_recorded(&file, &metadata) {
+            return None;
+        }
+        let after = file
+            .metadata()
+            .ok()
+            .and_then(|metadata| FileIdentity::of(&metadata));
+        (after == Some(identity)).then(|| HeldVerdict {
+            marker: self.clone(),
+            identity,
+            started_boot,
+            started_ms,
+        })
+    }
+
+    /// Whether the open `file`, with its `metadata`, reads whole as the
+    /// backup this marker recorded: a regular file of its size whose
+    /// evidence is its commitment digest, BLAKE3 and size.
+    fn reads_as_recorded(&self, file: &std::fs::File, metadata: &std::fs::Metadata) -> bool {
+        metadata.is_file()
+            && metadata.len() == self.size
+            && inspect_backup(std::io::BufReader::new(file)).is_ok_and(|evidence| {
+                evidence.size == self.size
+                    && oneiron_vault_contract::hex(&evidence.commitment_digest)
+                        == self.commitment_digest
+                    && oneiron_vault_contract::hex(&evidence.outer_blake3) == self.outer_blake3
+            })
+    }
+}
+
+/// A whole read's finding that the file a marker names was, as read, the
+/// backup it recorded (HELD-WHOLE-READ-OFF-PRE-IDLE): the marker it was read
+/// for, the file's identity, the same at open and after the read, and when
+/// the read began by the boot clock, which counts time suspended, and by the
+/// wall clock. Only [`BackupMarker::verify`] makes one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeldVerdict {
+    marker: BackupMarker,
+    identity: FileIdentity,
+    started_boot: Duration,
+    started_ms: u64,
+}
+
+impl HeldVerdict {
+    /// The backup's file name in its directory.
+    pub fn file(&self) -> &str {
+        &self.marker.file
+    }
+
+    /// The backup artifact's commitment digest, in hex: the backup's id.
+    pub fn commitment_digest(&self) -> &str {
+        &self.marker.commitment_digest
+    }
+
+    /// BLAKE3 of the artifact's every byte, in hex: the outer digest the read
+    /// found.
+    pub fn outer_blake3(&self) -> &str {
+        &self.marker.outer_blake3
+    }
+
+    /// When the read began, in Unix milliseconds by the wall clock.
+    pub fn verified_at_ms(&self) -> u64 {
+        self.started_ms
+    }
+
+    /// Whether it answers for `marker`'s backup in `dir` with no read of its
+    /// bytes: it was made for that same marker, the file opens as it did, a
+    /// regular file never reached through a symlink, with the identity the
+    /// read saw, and then, once the file has answered, its read began less
+    /// than `within` ago by the boot clock, so a suspend counts, and by the
+    /// wall clock (a clock behind the read's start answers nothing). The age
+    /// is read before the open, so a verdict past `within` opens nothing, and
+    /// again after the open and its stat, so a slow file system never carries
+    /// a verdict past `within`. A change that keeps the file's identity is
+    /// not seen here. Once `within` has passed since the read began, by
+    /// either clock, it answers nothing, and a reuse reads the file whole
+    /// ([`BackupMarker::held_by_verdict_or_read`], on the file it opened).
+    pub fn answers(&self, marker: &BackupMarker, dir: &Path, within: Duration) -> bool {
+        self.marker == *marker
+            && self.younger_than(within)
+            && open_backup(&dir.join(&marker.file))
+                .is_some_and(|(_, metadata)| self.matches_open(&metadata, within))
+    }
+
+    /// Whether `metadata`, the stat of the open file, shows a regular file
+    /// with the identity the read saw, and then, by clocks read after that
+    /// stat, whether the read began less than `within` ago.
+    fn matches_open(&self, metadata: &std::fs::Metadata, within: Duration) -> bool {
+        metadata.is_file()
+            && FileIdentity::of(metadata) == Some(self.identity)
+            && self.younger_than(within)
+    }
+
+    /// Whether its read began less than `within` ago by the boot clock and
+    /// by the wall clock; `false` where either does not read or reads before
+    /// the read's start.
+    fn younger_than(&self, within: Duration) -> bool {
+        let within_ms = u64::try_from(within.as_millis()).unwrap_or(u64::MAX);
+        boot_clock()
+            .and_then(|now| now.checked_sub(self.started_boot))
+            .is_some_and(|age| age < within)
+            && wall_clock_ms()
+                .and_then(|now| now.checked_sub(self.started_ms))
+                .is_some_and(|age| age < within_ms)
+    }
+}
+
+/// A file's identity as a verdict keeps it: device, inode, size, and
+/// modification and status-change times to the nanosecond.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(unix), allow(dead_code))]
+struct FileIdentity {
+    device: u64,
+    inode: u64,
+    size: u64,
+    modified: (i64, i64),
+    changed: (i64, i64),
+}
+
+impl FileIdentity {
+    #[cfg(unix)]
+    fn of(metadata: &std::fs::Metadata) -> Option<Self> {
+        use std::os::unix::fs::MetadataExt;
+        Some(Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            size: metadata.size(),
+            modified: (metadata.mtime(), metadata.mtime_nsec()),
+            changed: (metadata.ctime(), metadata.ctime_nsec()),
+        })
+    }
+
+    #[cfg(not(unix))]
+    fn of(_: &std::fs::Metadata) -> Option<Self> {
+        None
+    }
+}
+
+/// Opens the backup at `path` for reading, never through a symlink and
+/// never waiting on a FIFO, with its metadata from the open file.
+fn open_backup(path: &Path) -> Option<(std::fs::File, std::fs::Metadata)> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(
+        &mut options,
+        libc::O_NOFOLLOW | libc::O_NONBLOCK,
+    );
+    let file = options.open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    Some((file, metadata))
+}
+
+/// Now in Unix milliseconds by the wall clock; `None` before the epoch.
+fn wall_clock_ms() -> Option<u64> {
+    let since = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
+    Some(u64::try_from(since.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// Time since boot, the time suspended included: `CLOCK_BOOTTIME` on Linux
+/// and Android, and `CLOCK_MONOTONIC` on Apple systems, which counts sleep.
+/// [`std::time::Instant`] leaves a suspend out on both, so a verdict aged by
+/// it alone would outlive its window across a suspend once the wall clock
+/// was set back. `None` on every other platform, where no verdict is made.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn boot_clock() -> Option<Duration> {
+    use rustix::time::{ClockId, clock_gettime};
+    Duration::try_from(clock_gettime(ClockId::Boottime)).ok()
+}
+
+#[cfg(target_vendor = "apple")]
+fn boot_clock() -> Option<Duration> {
+    use rustix::time::{ClockId, clock_gettime};
+    Duration::try_from(clock_gettime(ClockId::Monotonic)).ok()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android", target_vendor = "apple")))]
+fn boot_clock() -> Option<Duration> {
+    None
 }
 
 /// [`last_backed_up`] whole: the backup the marker names and when it landed

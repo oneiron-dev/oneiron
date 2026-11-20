@@ -6,6 +6,7 @@
 //! [`QueueRevisionLink`] only; the full inventory lives in the revision. A
 //! green pointer earns a tested record, never review authority over bytes
 //! nobody reviewed, so the export of a seal waits on its own named holds.
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use crate::repo_fork::RepoForkHash;
@@ -131,8 +132,9 @@ impl QueueRevisionLink {
 
 /// Why a seal or a green export holds (CALLS D and E). None is a red
 /// verdict; each keeps the work and names its way out.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("queue.export.hold.reason")]
 pub enum QueueExportHoldReason {
     /// The current green's tested revision is not sealed yet.
     SealPending,
@@ -159,27 +161,6 @@ pub enum QueueExportHoldReason {
     Unenrolled,
     /// The queue's rows could not be read.
     Unavailable,
-}
-
-impl QueueExportHoldReason {
-    /// Its wire name.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::SealPending => "seal_pending",
-            Self::HeldSealAncestor => "held_seal_ancestor",
-            Self::HeldBinding => "held_binding",
-            Self::HeldObject => "held_object",
-            Self::HeldUnsupportedTree => "held_unsupported_tree",
-            Self::HeldUnreviewedChange => "held_unreviewed_change",
-            Self::HeldStore => "held_store",
-            Self::HeldUntouchedPromotion => "held_untouched_promotion",
-            Self::AuthorErased => "author_erased",
-            Self::AuthorUnavailable => "author_unavailable",
-            Self::Unenrolled => "unenrolled",
-            Self::Unavailable => "unavailable",
-        }
-    }
 }
 
 /// A named hold and how out of it.

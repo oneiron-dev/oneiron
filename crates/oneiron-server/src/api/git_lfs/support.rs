@@ -173,6 +173,7 @@ pub(super) fn href_base(headers: &HeaderMap) -> String {
     format!("{scheme}://{host}")
 }
 
+// Not oneiron_base::unix_seconds_now: a clock before 1970 is refused with a 500, not read as 0.
 pub(super) fn now_secs() -> Result<u64, ApiError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

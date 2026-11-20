@@ -60,6 +60,8 @@ mod restore;
 mod scratch;
 pub(crate) mod write_budget;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use self::custody::unhex;
 pub(crate) use self::custody::{
     CustodyAnchorCredentials, custody_from_home, custody_recovery, custody_status, take_publishing,
 };
@@ -70,12 +72,12 @@ pub(crate) use self::rehearse::rehearse_in;
 use self::rehearse::rehearse_in_with;
 pub(crate) use self::rehearse::{Rehearsal, rehearse, rehearse_keyed};
 pub(crate) use self::relay_hold::VaultRelayHoldGuard;
+#[cfg(all(test, unix))]
+use self::restore::restore_over_syncing;
 pub(crate) use self::restore::{
     RestoreTarget, RestoredFresh, activate, restore_fresh, restore_over, restore_over_keyed,
     restore_target_seal,
 };
-#[cfg(test)]
-use self::restore::{exchange, restore_over_syncing};
 #[cfg(unix)]
 pub(crate) use self::scratch::sweep_rehearsals;
 

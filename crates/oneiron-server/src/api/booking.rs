@@ -41,9 +41,9 @@ use oneiron::booking::agent_api::{
     BookingOperationRequest, BookingOperationResponse, BookingRescheduleInput, SelectedSlot,
 };
 use oneiron::booking::{
-    BookingError, BookingVerbReceipt, BookingVerbRequest, CancelSpec, ConfirmSpec,
-    ConstraintObject, HoldLeaseSpec, HoldSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken,
-    RescheduleSpec, SlotOracle, SolveRequest, SolveResult, token_page_ref,
+    BookingCapOverride, BookingError, BookingVerbReceipt, BookingVerbRequest, CancelSpec,
+    ConfirmSpec, ConstraintObject, HoldLeaseSpec, HoldSpec, OpaqueLifecycleToken, RescheduleSpec,
+    SlotOracle, SolveRequest, SolveResult, token_page_ref,
 };
 use oneiron::{EntityId, Vault};
 
@@ -51,10 +51,11 @@ use super::booking_anti_abuse::{enforce_amend, enforce_hold, enforce_slot_list};
 use super::{json_payload, scoped_auth::check_request_owner_act};
 use crate::auth::ClientAddress;
 use crate::error::ApiError;
-use crate::server::SyncServer;
+use crate::server::{LinePlace, SyncServer};
 
 mod admission;
 mod constants;
+mod deposit;
 mod email_evidence;
 mod execute;
 mod free_text;
@@ -101,6 +102,11 @@ pub(crate) use self::transport::{
     BookingAdmissionContext, booking_payer_verbs, credential_transport_context,
     is_booking_payer_door,
 };
+// The integration tests' door to the booking turn's line (census L3-11).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::lifecycle::write_holding_line_place;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::turn::Turn as BookingTurn;
 use self::validate::validate_operation_shape;
 
 // The pre-split root path stays callable. Minting and resolution both live in
@@ -154,6 +160,12 @@ pub(crate) struct BookingTransportContext {
     /// owner and is not held to the per-email cap on active bookings, which
     /// sheds anonymous visitors.
     pub(crate) owner_grade: bool,
+    /// Whether the owner door verified the caller as the vault's live owner
+    /// (`owner_routes::owner`): a human owner's own full slip, the host root
+    /// or the dev mode, or a managed vault's attested live owner. Only such
+    /// a caller may hold past a meeting cap (RULING BK-CAP-OVERRIDE-WHO = B);
+    /// an owner-grade agent slip is not one.
+    pub(crate) owner_verified: bool,
     /// Who a model call this request makes is paid by: the credential's
     /// principal, or the owner for an owner-grade credential naming none.
     /// `None` (an anonymous visitor) is sponsored by the vault owner.
@@ -166,6 +178,9 @@ pub(crate) struct BookingTransportContext {
     /// 5327): rechecked before a model call spends, by this module alone.
     payer_guard: Option<transport::BookingPayerGuard>,
     pub(crate) transport: BookingTransport,
+    /// Where this request's answer goes (DEC-0005): a public page it books
+    /// on is judged for it ([`resolve_public_booking_page_listing`]).
+    pub(crate) destination: oneiron::settings::ReadDestination,
 }
 
 impl BookingTransportContext {
@@ -247,7 +262,11 @@ pub(crate) async fn booking_agent_instructions(
     let block = booking_agent_instructions_block(&server, &page_token, page_ref)?;
     if wants_html_fragment(&parts.headers) {
         let fragment = render_booking_agent_instructions_block(&block)?;
-        return Ok(([(CONTENT_TYPE, "text/html; charset=utf-8")], fragment).into_response());
+        // First-party HTML on the API's origin (ARCH-0050 #artifact-origin-open).
+        return Ok(super::first_party_html::isolated_html(
+            super::first_party_html::DATA_FRAGMENT_CONTENT_SECURITY_POLICY.to_owned(),
+            fragment,
+        ));
     }
     let document = booking_agent_instructions_json(&block)?;
     Ok(([(CONTENT_TYPE, BOOKING_AGENT_INSTRUCTIONS_MIME)], document).into_response())
@@ -496,8 +515,27 @@ async fn execute_hold(
     mut input: BookingHoldInput,
     now: u64,
     public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
+    owner_verified: bool,
+    place: Option<LinePlace>,
 ) -> Result<(BookingOperationResponse, Vec<EntityId>), ApiError> {
     let session_key = session_key(page_ref, &input.session_ref);
+    // The owner's own hold past a full day (RULING BK-CAP-OVERRIDE-WHO = B):
+    // only a caller the owner door verified names a reason, and then the
+    // offerability probe and the confirm solve past the meeting caps.
+    let cap_override = match input.cap_override_reason.take() {
+        Some(_) if !owner_verified => {
+            return Err(ApiError::bad_request(
+                "only the vault's owner may book past a meeting cap",
+                Some("cap_override_reason"),
+            ));
+        }
+        Some(reason) => {
+            let cap_override = BookingCapOverride { reason };
+            cap_override.validate()?;
+            Some(cap_override)
+        }
+        None => None,
+    };
     // Taken rather than copied: the canonical object is the only constraint
     // with a reader after this line — the verb carries it, and the offerability
     // probe below asks the oracle with exactly the same bytes.
@@ -515,16 +553,15 @@ async fn execute_hold(
         constraint.as_ref(),
         session_key,
         now,
+        cap_override.is_some(),
     )?;
     if let Some(unofferable) = unofferable {
         return Ok((unofferable, rows));
     }
-    let lease = match input.checkout_lease_token {
-        Some(token) => HoldLeaseSpec::CheckoutExtension {
-            server_issued_lease: OpaqueCheckoutLeaseToken(token),
-        },
-        None => HoldLeaseSpec::Ordinary,
-    };
+    // A deposit event type's hold opens its checkout first (BK-DEPOSITS),
+    // so the hold presents a lease bound to the session and the payment.
+    let (lease, deposit): (HoldLeaseSpec, _) =
+        self::deposit::hold_lease(server, page_ref, &input, session_key, now).await?;
     let (receipt, _) = run_booking_verb(
         server,
         BookingVerbRequest::Hold(HoldSpec {
@@ -536,10 +573,12 @@ async fn execute_hold(
             constraint,
             lease,
             idempotency_key: Some(input.idempotency_key),
+            cap_override,
         }),
         Some(session_key),
         now,
         public_authority,
+        place,
     )
     .await?;
     // The hold writer reads only node-local hold and lease rows beside the
@@ -553,6 +592,7 @@ async fn execute_hold(
                 end_utc: held.slot.end,
             },
             expires_at: held.expires_at,
+            deposit,
         }),
         BookingVerbReceipt::SlotTaken { alternatives } => {
             BookingOperationResponse::Book(BookingBookResult::SlotTaken { alternatives })
@@ -584,6 +624,8 @@ async fn execute_confirm(
     )?;
     let booker_contact =
         resolve_booker_contact(server, &input.booker_email, now, public_authority.as_ref())?;
+    // The visitor's card may be authorized before Stripe's webhook says so.
+    self::deposit::before_confirm(server, session_key, now).await;
     let (receipt, unkept) = run_booking_verb(
         server,
         BookingVerbRequest::Confirm(ConfirmSpec {
@@ -596,16 +638,21 @@ async fn execute_confirm(
         Some(session_key),
         now,
         public_authority,
+        None,
     )
     .await?;
     match receipt {
-        BookingVerbReceipt::Confirmed(confirmed) => Ok((
-            BookingOperationResponse::Book(BookingBookResult::Confirmed {
-                reschedule_token: confirmed.reschedule_token.0,
-                cancel_token: confirmed.cancel_token.0,
-            }),
-            confirmed.reads,
-        )),
+        BookingVerbReceipt::Confirmed(confirmed) => {
+            // Capture at confirm; a failure leaves it to the settle worker.
+            self::deposit::after_confirm(server, confirmed.calendar.event_ref, now).await;
+            Ok((
+                BookingOperationResponse::Book(BookingBookResult::Confirmed {
+                    reschedule_token: confirmed.reschedule_token.0,
+                    cancel_token: confirmed.cancel_token.0,
+                }),
+                confirmed.reads,
+            ))
+        }
         BookingVerbReceipt::SlotTaken { alternatives } => Ok((
             BookingOperationResponse::Book(BookingBookResult::SlotTaken { alternatives }),
             unkept,
@@ -642,6 +689,7 @@ async fn execute_reschedule(
         None,
         now,
         public_authority,
+        None,
     )
     .await?;
     match receipt {
@@ -681,6 +729,7 @@ async fn execute_cancel(
         None,
         now,
         public_authority,
+        None,
     )
     .await?;
     match receipt {

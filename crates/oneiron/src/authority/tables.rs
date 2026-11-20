@@ -30,6 +30,12 @@ crate::side_table::side_tables! {
     /// never synced, and dropped wherever the machine id is. Key: ().
     IDENTITY_PINNED_ROOT: SyncState b"m:pinned_root" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// A held machine answer whose ask the owner dismissed on this install (row
+    /// CARRIER-OWNER-PROOF): presence only, an empty value. Local like the machine id: never
+    /// synced, and dropped wherever the machine id is, so the answer stays held and his other
+    /// devices still ask. Key: hex64 (the held answer's log entry).
+    AUTHORITY_HELD_ANSWER_DISMISSED: SyncState b"authority:held-answer-dismissed:v1:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// What this home's root signed for a linked machine's own checkpoint image (FIX 5195): the
     /// image id, the posture and policy it was made under, the attestation and the local second
     /// the machine last asked for it. A reply cache, so a last part whose answer the machine's RPC
@@ -60,6 +66,14 @@ crate::side_table::side_tables! {
     /// evidence. Key: bytes32 (its digest).
     AUTHORITY_LEAVE_NOTICE_DELEGATION: VaultMeta b"authority:leave-notice-delegation:v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// The MACHINE rows by the endpoint key their mesh address names (ARCH-0044 H336, census
+    /// L3-28B): one empty row per MACHINE row whose body is a valid address envelope. Key: bytes32
+    /// (the endpoint key) + id16 (the MACHINE).
+    AUTHORITY_MESH_MACHINE_ENDPOINT_INDEX: VaultMeta b"authority:mesh-machine-endpoint:v1:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// Completeness flag of the endpoint index above (u64 version). Key: ().
+    AUTHORITY_MESH_MACHINE_ENDPOINT_INDEX_STATE: VaultMeta b"authority:mesh-machine-endpoint-state:v1" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// An ask guest's FEDERATION_GRANT the owner withdrew: the guest it conferred on and when, so
     /// a repeat revoke reports the first (OF-232). Key: id16 (grant).
     FEDERATION_GUEST_REVOKE: VaultMeta b"federation:guest_revoke:v1:" Named

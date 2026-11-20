@@ -25,10 +25,6 @@ pub use oneiron_verb_wire::verbs::repo_copy_edit::{
     RepoCopyEditSettleView,
 };
 
-fn hex32(bytes: &[u8; 32]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 fn parse_revision(text: &str) -> Option<[u8; 32]> {
     if text.len() != 64 || !text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
         return None;
@@ -46,7 +42,7 @@ fn view(review: &RepoCopyEditReview) -> RepoCopyEditReviewView {
         source: review.source().to_hex(),
         cause: review.cause().as_str().to_owned(),
         submitted: review.submitted().to_owned(),
-        revision: hex32(review.revision()),
+        revision: oneiron_hex::encode(review.revision()),
     }
 }
 

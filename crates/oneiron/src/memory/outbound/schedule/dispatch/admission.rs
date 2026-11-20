@@ -45,10 +45,15 @@ pub(super) fn outbound_trigger(draft: &OutboundDraftInput) -> MemoryResult<Outbo
         }
         "gap_queue" => OutboundIntentTrigger::gap_queue(draft.trigger_ref.clone()),
         "agent_immediate" => OutboundIntentTrigger::agent_immediate(draft.trigger_ref.clone()),
+        // The send of an approved meeting follow-up draft: the connector
+        // executor re-checks that approval before every attempt.
+        "meeting_follow_up" => OutboundIntentTrigger::meeting_follow_up(draft.trigger_ref.clone()),
         other => {
             return Err(MemoryError::bad_request_with(
                 format!("unknown outbound trigger {other:?}"),
-                &["Use one of: commitment_timer_wake, gap_queue, agent_immediate."],
+                &[
+                    "Use one of: commitment_timer_wake, gap_queue, agent_immediate, meeting_follow_up.",
+                ],
             ));
         }
     };

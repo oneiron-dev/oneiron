@@ -228,15 +228,8 @@ pub struct RelayClassifiedPass {
     pub hosted_evidence: Option<HostedPassEvidence>,
 }
 
-/// What a hosted pass examined: the policy's version AND hash, the pair an
-/// attestation is matched on, and the request's identity-free verification
-/// content hash, the one a CloudVault carrier is bound to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
-pub struct HostedPassEvidence {
-    pub version: String,
-    pub policy_hash: String,
-    pub verify_content_hash: [u8; 32],
-}
+#[doc(hidden)]
+pub use oneiron_records::policy_model::relay::outcome::HostedPassEvidence;
 
 impl RelayBoundaryPass {
     /// A pass that reached a verdict. Every degrade in the crate is minted by

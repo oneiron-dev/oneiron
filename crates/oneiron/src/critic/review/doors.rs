@@ -38,17 +38,8 @@ pub use oneiron_verb_wire::critic::review::doors::{
     CriticFindingsRequest, CriticOutcomeAnchor, CriticOutcomeSubmit,
 };
 
-/// A standing critique outcome as the engine recorded it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CriticOutcomeRecord {
-    /// `owner_verdict`, `seal_recheck`, `held_out_eval` or `beam`.
-    pub source: String,
-    /// Whether the critique held.
-    pub accepted: bool,
-    /// The sealed try a seal recheck judged, 32-hex.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seal_attempt_ref: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::critic::review::doors::CriticOutcomeRecord;
 
 /// One critique's standing outcome and the calibration evidence it gave.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

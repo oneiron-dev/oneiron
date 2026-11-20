@@ -258,20 +258,29 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         record: &mut GateDecisionRecord,
     ) -> Result<()> {
-        let seed = record.decision_id;
+        record.decision_id = self.fresh_gate_decision_id_in_txn(&*wtxn, record.decision_id)?;
+        self.append_gate_decision_in_txn(wtxn, record)
+    }
+
+    /// `seed`, or its first free logical UUIDv7 successor past the durable
+    /// same-millisecond tail when `seed` is at or behind that tail.
+    pub(super) fn fresh_gate_decision_id_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        seed: GateDecisionId,
+    ) -> Result<GateDecisionId> {
         let tail = LEDGER
-            .scan_keys(self, &*wtxn, &seed.as_bytes()[..6])?
+            .scan_keys(self, txn, &seed.as_bytes()[..6])?
             .last()
             .copied();
         let mut decision_id = match tail {
             Some(tail) if tail.as_bytes() >= seed.as_bytes() => logical_uuid_v7_successor(tail)?,
             _ => seed,
         };
-        while self.gate_decision_in_txn(&*wtxn, decision_id)?.is_some() {
+        while self.gate_decision_in_txn(txn, decision_id)?.is_some() {
             decision_id = logical_uuid_v7_successor(decision_id)?;
         }
-        record.decision_id = decision_id;
-        self.append_gate_decision_in_txn(wtxn, record)
+        Ok(decision_id)
     }
 
     /// The ONLY route that removes a primary `gate_decision:v0:` row. Sidecar

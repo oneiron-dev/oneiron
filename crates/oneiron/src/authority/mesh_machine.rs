@@ -22,15 +22,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::temporal::TimeRange;
 
 mod doors;
+mod endpoint_index;
 mod enrolment;
 pub use doors::{MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding};
+pub(crate) use endpoint_index::reindex_mesh_machine_endpoint;
 pub use enrolment::{MeshBindRefusal, MeshEnrolment};
 
 const DOMAIN: &str = "oneiron/mesh-machine/v1";
 const AUTH_DOMAIN: &[u8] = b"oneiron/mesh-authority/v1\0";
 const BIND_DOMAIN: &[u8] = b"oneiron/mesh-machine-binding/v1\0";
-/// MACHINE rows a lookup any endpoint key can make reads before it refuses:
-/// a stranger's work stays bounded until an endpoint index serves it.
+/// MACHINE rows a lookup any endpoint key can make walks before it refuses,
+/// when the endpoint index cannot serve it (its open rebuild failed or never
+/// ran): a stranger's work stays bounded. The index reads only the rows that
+/// name the key ([`endpoint_index`], census L3-28B).
 const MAX_LOOKUP_MACHINES: usize = 1024;
 
 #[doc(hidden)]
@@ -134,8 +138,8 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         self.mesh_machine_in_txn(&txn, machine)
     }
-    /// Resolve against a single snapshot, including the type index and all bodies.
-    /// Any key may ask, so this read raises no owner check.
+    /// Resolve against a single snapshot: the endpoint index, else the type
+    /// index and all bodies. Any key may ask, so this read raises no owner check.
     pub fn mesh_machine_by_endpoint(
         &self,
         key: [u8; 32],
@@ -143,10 +147,25 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         self.mesh_machine_by_endpoint_in_txn(&txn, key, None)
     }
-    /// The owner's bind reads every MACHINE, however many the owner keeps
-    /// (rule 5), and counts them in `count`. A lookup any endpoint key can
-    /// make (`count` is `None`) is a stranger's work and stays bounded.
+    /// The endpoint index answers whenever it can, for the owner and a
+    /// stranger alike: it reads only the MACHINE rows that name `key`
+    /// (census L3-28B). On any doubt the walk below answers: the owner's
+    /// bind reads every MACHINE, however many the owner keeps (rule 5), and
+    /// counts them in `count`; a lookup any endpoint key can make (`count`
+    /// is `None`) is a stranger's work and stays bounded.
     fn mesh_machine_by_endpoint_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        key: [u8; 32],
+        count: Option<&mut ScanCount>,
+    ) -> Result<Option<(EntityId, MeshMachineAddress)>> {
+        if let Some(answer) = endpoint_index::indexed_machine_by_endpoint_in_txn(self, txn, key) {
+            return answer;
+        }
+        self.walk_machines_by_endpoint_in_txn(txn, key, count)
+    }
+    /// Every MACHINE row's body, read for the one that names `key`.
+    fn walk_machines_by_endpoint_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         key: [u8; 32],
@@ -234,9 +253,9 @@ impl Vault {
             && pair.parent_id.is_none()
             && fold.vault_id == Some(pair.vault_id)
             // A removed MACHINE's binding admits nothing (FIX 3374).
-            && !fold
-                .machine(claims.machine)
-                .is_some_and(enrolment::machine_removed))
+            && !fold.machine(claims.machine).is_some_and(|folded| {
+                enrolment::machine_removed(folded, fold.pinned_root.as_ref())
+            }))
     }
     /// A fresh, single-snapshot check of signed grant, live pairing and current row.
     pub fn mesh_grant_permits(
@@ -356,7 +375,7 @@ impl Vault {
         // the owner's door, another door, or a sync (FIX 3374, L02 05:3x).
         if fold
             .machine(machine)
-            .is_some_and(enrolment::machine_removed)
+            .is_some_and(|folded| enrolment::machine_removed(folded, fold.pinned_root.as_ref()))
         {
             return Ok(false);
         }
@@ -415,6 +434,7 @@ mod tests {
     ) {
         let dir = tempfile::tempdir().unwrap();
         let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let host = HostSlipIssuer::from_secret(b"mesh grant host root").unwrap();
         vault.ensure_host_root_slip(&host).unwrap();
         let machine = EntityId::now();

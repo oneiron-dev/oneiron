@@ -12,7 +12,7 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::{WriteActor, provenance::made_by::MadeByClass};
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 
 mod body;
 mod body_admission;
@@ -23,14 +23,10 @@ pub(crate) use body::body_with_document;
 pub(crate) use history::{record_bodies_at_in_txn, record_body_history_in_txn};
 pub(crate) use repo_index::reindex_repo_document_in_txn;
 
-/// Location of the body text. Editable metadata shares its owning document.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TextField {
-    /// A body containing only UTF-8 text.
-    Utf8Body,
-    /// A named UTF-8 string in a MessagePack map.
-    MapField(String),
-}
+#[doc(hidden)]
+pub use oneiron_records::entity_doc::storage::TextField;
+#[doc(hidden)]
+pub(super) use oneiron_records::entity_doc::storage::decode;
 
 /// The kind of owner a document head belongs to (FIX 11535). The head is
 /// keyed by its owner's id either way; only a stored entity has a ledger row.
@@ -78,14 +74,49 @@ pub(super) struct Head {
 pub(super) const ENTITY_DOC_HEAD: SideTable<HexId, Head, Named> =
     SideTable::new(&side_table::ENTITY_DOC_HEAD);
 
-pub(super) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
-    let mut reader = std::io::Cursor::new(bytes);
-    let value = T::deserialize(&mut rmp_serde::Deserializer::new(&mut reader))
-        .map_err(|_| Error::CorruptedIndex("entity document row"))?;
-    if usize::try_from(reader.position()).ok() != Some(bytes.len()) {
-        return Err(Error::CorruptedIndex("trailing entity document row bytes"));
-    }
-    Ok(value)
+/// One head's fixed fields for the checkpoint-pins door: a head with a
+/// fixed incarnation and slot, never a minted one.
+#[cfg(oneiron_test_support)]
+pub(crate) struct PinsEntityDocHead {
+    /// The document's incarnation id, fixed hex.
+    pub incarnation: String,
+    /// The document's slot, fixed hex.
+    pub document: String,
+    /// Where the body text lives.
+    pub field: TextField,
+    /// The head's generation.
+    pub generation: u64,
+    /// The head's pending count.
+    pub pending: u64,
+    /// The birth frontier, when the seed knows it.
+    pub birth_frontier: Option<Vec<u8>>,
+}
+
+/// Puts a document head for the checkpoint-pins door: `entity`'s head
+/// with `head`'s fixed fields.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_head_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    head: &PinsEntityDocHead,
+) -> Result<()> {
+    ENTITY_DOC_HEAD.put(
+        store,
+        txn,
+        &HexId(*entity),
+        &Head {
+            entity: entity.to_hex(),
+            owner_kind: DocumentOwnerKind::Entity,
+            incarnation: head.incarnation.clone(),
+            document: head.document.clone(),
+            field: head.field.clone(),
+            generation: head.generation,
+            pending: head.pending,
+            birth_frontier: head.birth_frontier.clone(),
+            succeeds: None,
+        },
+    )
 }
 
 pub(super) fn require_live(

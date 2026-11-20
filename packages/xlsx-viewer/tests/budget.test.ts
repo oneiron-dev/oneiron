@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import * as XLSX from "xlsx";
 import { PREVIEW_BUDGET, WorkbookBudgetError, preflightPackage, type BudgetLine } from "../src/bridge/budget";
 import { ParseSessionStore } from "../src/bridge/handler";
-import { readSheet, readWorkbook, readWorkbookOutline, sheetId, worksheetToCellData } from "../src/bridge/parse";
+import { readSheet, readWorkbookOutline, worksheetToCellData } from "../src/bridge/parse";
 import { createWorkerWorkbookSource, type ParseWorkerLike } from "../src/bridge/source";
 import type { ParseRequest, ParseResponse } from "../src/bridge/protocol";
 import { makeXlsxBytes } from "./helpers";
@@ -173,7 +173,6 @@ describe("preview budgets: a package is refused from its ZIP records, before She
     expect(bomb.length).toBeLessThan(MIB);
     refusedWith("entryBytes", () => readWorkbookOutline(bomb));
     refusedWith("entryBytes", () => readSheet(bomb, "S1"));
-    refusedWith("entryBytes", () => readWorkbook(bomb));
     const worker = recordingWorker();
     const source = createWorkerWorkbookSource(bomb, () => worker);
     await expect(source.outline()).rejects.toBeInstanceOf(WorkbookBudgetError);
@@ -282,10 +281,10 @@ describe("preview budgets: a package is refused from its ZIP records, before She
   });
 
   it("previews a streamed package, which leaves its local sizes at zero, from its declared sizes", () => {
-    const plain = readWorkbook(workbook(deflated(text(SHEET_XML))));
-    const streamed = readWorkbook(workbook(deflated(text(SHEET_XML)), true));
+    const plain = readSheet(workbook(deflated(text(SHEET_XML))), "S1");
+    const streamed = readSheet(workbook(deflated(text(SHEET_XML)), true), "S1");
     expect(streamed).toEqual(plain);
-    const cells = streamed.sheets[sheetId("S1")]?.cellData as Record<number, Record<number, { v?: unknown }>>;
+    const cells = streamed.cellData as Record<number, Record<number, { v?: unknown }>>;
     expect(cells[0]?.[0]?.v).toBe(42);
     expect(cells[0]?.[1]?.v).toBe("kept");
   });
@@ -297,7 +296,6 @@ describe("preview budgets: sheets, cells and text", () => {
   it("refuses a workbook over the sheet, cell, text or input budget, typed", async () => {
     refusedWith("inputBytes", () => readWorkbookOutline(bytes, "w", { ...PREVIEW_BUDGET, inputBytes: 100 }));
     refusedWith("sheets", () => readWorkbookOutline(bytes, "w", { ...PREVIEW_BUDGET, sheets: 2 }));
-    refusedWith("sheets", () => readWorkbook(bytes, { budget: { ...PREVIEW_BUDGET, sheets: 2 } }));
     refusedWith("sheets", () => readSheet(bytes, "S1", { budget: { ...PREVIEW_BUDGET, sheets: 2 } }));
     refusedWith("sheetCells", () => readSheet(bytes, "S1", { budget: { ...PREVIEW_BUDGET, sheetCells: 15 } }));
     refusedWith("sheetTextChars", () =>
@@ -327,14 +325,9 @@ describe("preview budgets: sheets, cells and text", () => {
     expect(Object.keys(cells)).toEqual(["0"]);
   });
 
-  it("reads every sheet in one pass exactly as the lazy path reads each", () => {
-    const eager = readWorkbook(bytes);
-    for (const sid of eager.sheetOrder) {
-      const name = eager.sheets[sid]!.name!;
-      expect(eager.sheets[sid]).toEqual(readSheet(bytes, name));
-    }
-    // At the limits themselves, a sheet still previews.
+  it("previews a workbook at the limits themselves", () => {
     const exact = { ...PREVIEW_BUDGET, sheets: 3, sheetCells: 16 };
-    expect(readWorkbook(bytes, { budget: exact }).sheetOrder).toHaveLength(3);
+    expect(readWorkbookOutline(bytes, "w", exact).sheetOrder).toHaveLength(3);
+    expect(readSheet(bytes, "S3", { budget: exact }).rowCount).toBe(4);
   });
 });

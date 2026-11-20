@@ -46,6 +46,43 @@ pub(crate) fn split_recipient_copies_in_txn(
     if wanted.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
+    let delivered = covered_in_txn(vault, txn, pact_id, worlds, epoch_cutoff, Some(&wanted))?;
+    Ok(records
+        .iter()
+        .copied()
+        .partition(|record| delivered.contains(record)))
+}
+
+/// Every record a courtesy ask under pact `pact_id` covers here, naming the
+/// requester's own `worlds` and `epoch_cutoff`, by the same rule as
+/// [`split_recipient_copies_in_txn`]: each once, in id order. A covered
+/// record this vault no longer holds is still named; the caller reads that.
+///
+/// # Errors
+///
+/// Storage errors, and a delivery row whose key or world does not decode.
+pub(crate) fn recipient_copies_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    pact_id: &[u8; 32],
+    worlds: &[EntityId],
+    epoch_cutoff: u64,
+) -> Result<Vec<EntityId>> {
+    let covered = covered_in_txn(vault, txn, pact_id, worlds, epoch_cutoff, None)?;
+    Ok(covered.into_iter().collect())
+}
+
+/// The records of pact `pact_id`'s delivery rows a courtesy ask naming
+/// `worlds` and `epoch_cutoff` covers, only those in `wanted` when it is
+/// given.
+fn covered_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    pact_id: &[u8; 32],
+    worlds: &[EntityId],
+    epoch_cutoff: u64,
+    wanted: Option<&BTreeSet<EntityId>>,
+) -> Result<BTreeSet<EntityId>> {
     let fold = vault.authority_view_readonly_in_txn(txn)?;
     let worlds = super::foreign_world::courtesy_ask_worlds_here(&fold, pact_id, worlds)?;
     let prefix = format!("{}:", bytes_to_hex_lower(pact_id));
@@ -68,7 +105,7 @@ pub(crate) fn split_recipient_copies_in_txn(
             .world
             .unwrap_or(base);
         if epoch > epoch_cutoff
-            || !wanted.contains(&record)
+            || wanted.is_some_and(|wanted| !wanted.contains(&record))
             || worlds
                 .as_ref()
                 .is_some_and(|worlds| !worlds.contains(&world))
@@ -77,8 +114,5 @@ pub(crate) fn split_recipient_copies_in_txn(
         }
         delivered.insert(record);
     }
-    Ok(records
-        .iter()
-        .copied()
-        .partition(|record| delivered.contains(record)))
+    Ok(delivered)
 }

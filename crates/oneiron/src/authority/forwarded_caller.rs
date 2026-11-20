@@ -27,7 +27,6 @@
 //! the carrier machine.
 
 use ed25519_dalek::{Signature, Signer, VerifyingKey};
-use serde::{Deserialize, Serialize};
 
 use super::*;
 use crate::claim::ScopedReadActorKey;
@@ -51,42 +50,10 @@ const CALLER_NOT_LIVE: &str =
 /// Authority: the caller's own scope admits no read.
 const CALLER_SCOPE: &str = "caller scope does not admit this read";
 
-/// A caller's own holder proof, as its device forwards it: the slip token it
-/// presented and the fields of the `x-oneiron-binding` header it signed,
-/// unchanged. Not a credential of its own: the home verifies it again.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ForwardedCallerProof {
-    /// The caller's `v2.slip.` token.
-    pub token: String,
-    /// The holder proof's signed timestamp.
-    pub timestamp: u64,
-    /// The holder proof's nonce: 32 lowercase hex characters.
-    pub nonce: String,
-    /// The holder's Ed25519 signature, 128 lowercase hex characters.
-    pub signature: String,
-}
-
-/// Hand-written so the token cannot reach a log through a derive.
-impl std::fmt::Debug for ForwardedCallerProof {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ForwardedCallerProof")
-            .field("timestamp", &self.timestamp)
-            .finish_non_exhaustive()
-    }
-}
-
-/// The forwarding device's machine and its install key's signature over
-/// [`forwarded_request_transcript`], in the [`MACHINE_PROOF_HEADER`] value's
-/// encoding.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ForwardingMachineProof {
-    /// The MACHINE id, canonical hex.
-    pub machine: String,
-    /// 128 lowercase hex characters.
-    pub signature: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::authority::forwarded_caller::{
+    ForwardedCallerProof, ForwardingMachineProof,
+};
 
 /// The request a device forwards: the RPC and its fields, in the order the
 /// RPC defines, as the device sends them. The device signs exactly these, so
@@ -276,16 +243,21 @@ impl Vault {
         }
         let signature = signature_hex(&machine.signature).ok_or_else(proof_invalid)?;
         let transcript = forwarded_request_transcript(&vault_id, machine_id, request, caller);
-        // The live profile whose install key verified the request; the one
-        // carrier rule then judges that key: any role, no chain removed, never
-        // a roster or root key (FIX 2222). An install the owner has not
-        // answered for forwards nothing, as an unprofiled one (selfprofile).
+        // The live profile whose install key verified the request, on a head
+        // it stands under here (never another anchor's chain, whose owner
+        // field any fresh root writes: FIX
+        // FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES); the one
+        // carrier rule then judges that key: any role, no head it believes
+        // removed, never a roster or root key (FIX 2222). An install the
+        // owner has not answered for forwards nothing, as an unprofiled one
+        // (selfprofile).
         let folded = fold.machine(machine_id);
+        let pin = fold.pinned_root.as_ref();
         let profile = folded
             .into_iter()
-            .flat_map(FoldedMachine::chains)
-            .filter(|(_, chain)| chain.is_live() && chain.profile.role.answered())
-            .map(|(_, chain)| &chain.profile)
+            .flat_map(|folded| folded.standing_heads(pin))
+            .filter(|chain| chain.is_live() && chain.profile.role.answered())
+            .map(|chain| &chain.profile)
             .find(|profile| {
                 VerifyingKey::from_bytes(&profile.machine_key).is_ok_and(|key| {
                     key.verify_strict(&transcript, &Signature::from_bytes(&signature))
@@ -293,7 +265,7 @@ impl Vault {
                 })
             })
             .ok_or_else(proof_invalid)?;
-        if !owner_act_signer_admits(folded, &fold.roster, &profile.machine_key) {
+        if !owner_act_signer_admits(folded, &fold.roster, &profile.machine_key, pin) {
             return Err(proof_invalid());
         }
         let owner = profile.owner;

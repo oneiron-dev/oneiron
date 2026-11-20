@@ -4,8 +4,6 @@
 //! envelope. The store decodes it without the Dreamer runner; the runner and
 //! its other row codecs re-export these items at their old paths.
 
-use std::io::Cursor;
-
 use rmpv::Value;
 
 use crate::attempt_id::AttemptId;
@@ -13,6 +11,7 @@ use crate::dreamer_attempt_kind::{
     DREAMER_ATTEMPT_PAYLOAD_KEYS, DREAMER_ATTEMPT_PAYLOAD_SCHEMA_VERSION,
 };
 use oneiron_base::error::{ArtifactError, Error, Result};
+use oneiron_contracts::msgpack::{self, MsgpackError};
 
 /// Typed Dreamer attempt payload stored in the generic queue row.
 #[derive(Debug, Clone, PartialEq)]
@@ -110,22 +109,16 @@ pub fn decode_dreamer_attempt_payload_value(value: &Value) -> Result<DreamerAtte
     })
 }
 
-pub fn encode_value(value: &Value, reason: &'static str) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, value).map_err(|_| Error::InvariantViolation(reason))?;
-    Ok(out)
+/// The context named a write error, which writing into a Vec cannot raise; kept for the callers.
+pub fn encode_value(value: &Value, _reason: &'static str) -> Result<Vec<u8>> {
+    Ok(msgpack::encode(value))
 }
 
 pub fn decode_value(bytes: &[u8]) -> Result<Value> {
-    let mut cursor = Cursor::new(bytes);
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| invalid_dreamer_runner("dreamer runner row is not valid MessagePack"))?;
-    if cursor.position() != bytes.len() as u64 {
-        return Err(invalid_dreamer_runner(
-            "trailing bytes after dreamer runner row",
-        ));
-    }
-    Ok(value)
+    msgpack::decode(bytes).map_err(|error| match error {
+        MsgpackError::Trailing => invalid_dreamer_runner("trailing bytes after dreamer runner row"),
+        _ => invalid_dreamer_runner("dreamer runner row is not valid MessagePack"),
+    })
 }
 
 pub fn encode_attempt_id(attempt_id: AttemptId) -> Value {

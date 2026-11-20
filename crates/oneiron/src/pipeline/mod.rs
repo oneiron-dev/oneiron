@@ -22,7 +22,9 @@ pub(crate) use types::{CandidateFilter, CandidateGate, SnapshotCandidateFilter, 
 mod l2_evidence;
 mod media_channel;
 mod media_query_memory;
+mod named_rows;
 mod params;
+mod phonetic_vector_channel;
 pub mod retrieval_policy;
 mod support;
 mod temporal_bound;
@@ -33,7 +35,8 @@ mod types;
 pub use oneiron_store::vector_refinement::VectorRefinement;
 mod world_authority;
 pub(crate) use world_authority::{
-    ResolvedWorldScope, WorldGrantIndex, reading_default, resolve_world_authority,
+    FoldedWorldAccess, ResolvedWorldScope, WorldGrantIndex, folded_world_access, reading_default,
+    resolve_world_authority,
 };
 
 pub use self::builder::PipelineBuilder;
@@ -68,8 +71,6 @@ mod tests;
 #[cfg(test)]
 mod decay_tests;
 
-// FIX [LIBTEST-QUARANTINE-PIPELINE-AUTHORITY-TESTS]: the lib test target's type check fails here (2 errors: E0063 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod authority_tests;
 

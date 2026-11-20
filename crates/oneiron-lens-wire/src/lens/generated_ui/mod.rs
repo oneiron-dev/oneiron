@@ -1,8 +1,8 @@
 //! The Generated-UI protocol: the [`GeneratedLens`] envelope, catalog/primitive
 //! negotiation and app-declared catalogs, the engine-authored action manifest,
-//! the typed `$state` schema and its patch rules, card lifecycle, the
-//! card/render/segment wire frames, the staged version boundary, and the
-//! incremental stream reader.
+//! the typed `$state` schema and its patch rules, the closed expression tier of
+//! app-component props, card lifecycle, the card/render/segment wire frames, the
+//! staged version boundary, and the incremental stream reader.
 //!
 //! Everything here is data the trusted renderer interprets. Turning a client
 //! action event into an approved host write is the job of [`super::mediation`].
@@ -12,6 +12,7 @@ mod genui_card;
 mod genui_catalog;
 mod genui_decode;
 mod genui_envelope;
+mod genui_expr;
 mod genui_fingerprint;
 mod genui_heal;
 mod genui_json_patch;
@@ -34,6 +35,7 @@ pub use self::genui_envelope::{
     GENERATED_UI_SEGMENT_CONTENT_TYPE, GENERATED_UI_WIRE_VERSION, GeneratedLens,
     LENS_APPS_CONTRACT_VERSION, LensLoadAction, LensVersionStamp, lens_load_action,
 };
+pub use self::genui_expr::{GeneratedUiComputedFunction, GeneratedUiExpressionProfile};
 pub use self::genui_fingerprint::{
     LensAtomInventoryChange, LensBehaviorDiff, LensBehaviorFingerprint, LensBehaviorHandle,
     LensHandleRoleChange,

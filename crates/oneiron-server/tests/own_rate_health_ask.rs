@@ -8,11 +8,9 @@
 //! and the ask the check raised drops the burst it was asked over and leaves
 //! the owner's queue, also when the erase lands between a pass's read of the
 //! check and its ask (FIX 3520). The crossing unit claim an ask binds, which
-//! the erase does not reach, never names the actor. The owner's answer settling a check is main's poll path, which
-//! this slice does not change; its test is ignored until FIX
-//! [WIRE-HEALTH-OWNER-ANSWER-FLOOR] lands: the poll's outcome write is an
-//! Approved claim with no owner proof, which keeps the criticality floor on a
-//! seeded vault, so the check stays Asked for every crossing source.
+//! the erase does not reach, never names the actor. The owner's answer at the
+//! decision door lands the check's outcome label under his proof, and the
+//! next pass settles the check (FIX [WIRE-HEALTH-OWNER-ANSWER-FLOOR]).
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support
 //! --no-fail-fast --test own_rate_health_ask`.
@@ -293,7 +291,6 @@ async fn later_crossing_counts_on_the_open_check() -> TestResult {
 }
 
 #[test]
-#[ignore = "FIX [WIRE-HEALTH-OWNER-ANSWER-FLOOR]: the poll's outcome write keeps the criticality floor"]
 fn the_owner_answer_settles_an_own_rate_check() -> TestResult {
     on_engine_stack(owner_answer_settles_an_own_rate_check)
 }

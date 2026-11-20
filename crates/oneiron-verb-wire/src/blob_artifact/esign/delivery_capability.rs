@@ -1,14 +1,18 @@
 //! Moved from `crates/oneiron/src/blob_artifact/esign/delivery_capability.rs` (lib split W3: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 
 /// Why one delivery stays unexported for now (FIX 6423, 6455, 6482). It
 /// waits on its own; no other delivery waits on it. The exporter logs its
 /// code, and the owner reads it on `vault.esign.get`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("esign.delivery.wait")]
 pub enum EsignDeliveryWait {
     /// An event of the document awaits its owner's answer.
     DocumentAwaitsOwner,
@@ -32,12 +36,6 @@ impl EsignDeliveryWait {
     /// The reason's code, as the exporter logs it and the owner reads it.
     #[must_use]
     pub const fn code(self) -> &'static str {
-        match self {
-            Self::DocumentAwaitsOwner => "document_awaits_owner",
-            Self::DocumentUnreadable => "document_unreadable",
-            Self::NoticeUnreadable => "notice_unreadable",
-            Self::SendUnreadable => "send_unreadable",
-            Self::LinksUnreadable => "links_unreadable",
-        }
+        self.as_str()
     }
 }

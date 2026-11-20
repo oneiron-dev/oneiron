@@ -39,10 +39,19 @@ class EmbeddedVault private constructor() : AutoCloseable {
     /**
      * Opens the vault at [path] on its own, with no server, as the [deviceClass] its host
      * declares: a phone's host passes [DeviceClass.PHONE] before this install enrols.
+     * [machineReportedName] and [machineReportedModel] are the name and model this install
+     * reports for itself, as the host declares them; display only.
      */
     @JvmOverloads
-    constructor(path: String, deviceClass: DeviceClass = DeviceClass.COMPUTER) : this() {
-        synchronized(this) { openNative(path, deviceClass == DeviceClass.PHONE) }
+    constructor(
+        path: String,
+        deviceClass: DeviceClass = DeviceClass.COMPUTER,
+        machineReportedName: String? = null,
+        machineReportedModel: String? = null,
+    ) : this() {
+        synchronized(this) {
+            openNative(path, deviceClass == DeviceClass.PHONE, machineReportedName, machineReportedModel)
+        }
     }
 
     /** The vault [engine] serves: the same open vault, never opened again. */
@@ -191,7 +200,12 @@ class EmbeddedVault private constructor() : AutoCloseable {
         if (!closed) { closeNative(); closed = true }
     }
 
-    private external fun openNative(path: String, phone: Boolean)
+    private external fun openNative(
+        path: String,
+        phone: Boolean,
+        machineReportedName: String?,
+        machineReportedModel: String?,
+    )
     private external fun shareNative(engine: EmbeddedEngine)
     private external fun bindNative(source: EmbeddedVault, actorKey: String?, session: String?)
     private external fun putNative(id: String, kind: Int, occurredSeconds: Long, body: ByteArray)

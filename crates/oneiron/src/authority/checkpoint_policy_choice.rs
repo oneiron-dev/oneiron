@@ -38,31 +38,18 @@ const TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than o
 /// The fold did not count the signed choice here: it never reports success.
 const NOT_COUNTED: &str = "this install's fold does not count the checkpoint policy choice";
 
-const HOSTED_SELECTION_ADVANCED_ONLY: &str =
-    "hosted checkpoint root selection requires the operator's enterprise/advanced capability";
+/// The owner's QUORUM-HOST-ROOT = C: the host key signs a hosted vault's
+/// checkpoints, and dropping it is an enterprise/advanced setting the
+/// operator grants per vault. Neither law, a provider's term nor capacity,
+/// so it names no bound kind, only the rule and where the choice is the
+/// owner's own (DEC-0005 #will-sweep; RULING L9-61-CHECKPOINT = A).
+const HOSTED_SELECTION_ADVANCED_ONLY: &str = "hosted checkpoint root selection requires \
+     the operator's enterprise/advanced capability: on a hosted vault the host key signs its \
+     checkpoints unless the operator grants this vault that setting; a self-hosted or relay \
+     vault's owner chooses its roots";
 
-/// The vault's checkpoint root policy as the owner's surface shows it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct CheckpointPolicyView {
-    /// Whether this operator permits owner checkpoint root selection here.
-    pub selection_available: bool,
-    /// The revision to present back as `seen`: the digest of the live
-    /// choices, zero when none.
-    pub revision: [u8; 32],
-    /// The policy in force; `None` when the roster cannot fix it.
-    pub policy: Option<CheckpointRootPolicy>,
-    /// Why the roster cannot fix the policy in force, when it cannot.
-    pub refusal: Option<String>,
-    /// The owner's choice in force; `None` while the hosting posture fixes
-    /// the policy.
-    pub selected: Option<CheckpointPolicyHead>,
-    /// Every live choice.
-    pub heads: Vec<CheckpointPolicyHead>,
-    /// The live choices in conflict, empty when none: the choice in force
-    /// stays the last one they agreed on until a choice that saw them all
-    /// supersedes them.
-    pub conflict: Vec<CheckpointPolicyHead>,
-}
+#[doc(hidden)]
+pub use oneiron_records::authority::checkpoint_policy_choice::CheckpointPolicyView;
 
 impl Vault {
     /// Self-host and relay owners choose their roots. A hosted owner needs
@@ -171,11 +158,22 @@ impl Vault {
         let key = crate::identity::read_machine_signing_key_in_txn(self, &txn)?
             .ok_or_else(|| authority_refused(NO_CARRIER))?;
         let public_key = key.verifying_key().to_bytes();
-        if !super::owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+        if !super::owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
             return Err(authority_refused(NO_CARRIER));
         }
         // FIX 7908: join a frontier wider than one entry names, else today's path.
-        let joiner = FrontierSigner::Install(machine, &key);
+        // The owner key this install holds proves the act; its join carries
+        // the proof only for the owner's own write (row
+        // OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, REVIEW-9962 P1).
+        let proof = self.owner_proof_signer(&fold);
+        let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
+        let joiner =
+            FrontierSigner::install(machine, &key, proof.as_ref().filter(|_| proves_joins));
         let fold = self
             .prepare_authority_frontier_in_txn(&mut txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
@@ -196,7 +194,7 @@ impl Vault {
             current,
         );
         let now = self.instant_in_txn(&txn)?.secs();
-        let entry = sign_side_entry(
+        let entry = sign_side_entry_with_owner_proof(
             &fold,
             &key,
             seq,
@@ -207,6 +205,7 @@ impl Vault {
                 choice,
             }),
             now,
+            proof.as_ref(),
         )?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
@@ -215,6 +214,7 @@ impl Vault {
         };
         self.put_authority_log_entries_in_txn(&mut txn, &[(entry, at, now)])?;
         let after = self.authority_view_readonly_in_txn(&txn)?;
+        after.refuse_waiting_choice(&entry_hash)?;
         if !after.checkpoint_policy.live.contains_key(&entry_hash)
             || after.install.held_back.contains(&entry_hash)
         {

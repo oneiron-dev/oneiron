@@ -735,23 +735,15 @@ pub(super) async fn board_people(
     session_id: Option<&str>,
     people_budget_tok: Option<usize>,
 ) -> Result<(oneiron::context_board::People, BTreeSet<EntityId>), ApiError> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        });
+    let now = oneiron_base::unix_millis_now();
     let mut people = oneiron::context_board::People::load(&server.vault, now, &mut |person| {
         read.is_entity_readable(&person)
     })
     .map_err(|error| core_engine_error("board people failed", error))?;
-    // Each `about` is the stored line of the highest band the reader reads.
-    let applied = read
-        .read_receipt(None, 0)
-        .map_err(|error| core_engine_error("board people failed", error))?
-        .applied;
-    let ceiling = (!applied.deny_all).then_some(applied.max_sensitivity_band);
+    // Each `about` is the stored line of the highest band the reader reads,
+    // by its own floor or by one of its live Grants alone.
     people
-        .set_about(&mut |person| server.vault.person_about_sourced(person, ceiling))
+        .set_about_for_reader(read)
         .map_err(|error| core_engine_error("board people failed", error))?;
     people
         .disclose_names(&server.vault, read.actor_key())

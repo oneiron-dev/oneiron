@@ -24,12 +24,11 @@
 //! for a stable reason, either of which settles the device's queue. An error
 //! leaves the upload queued for the next send.
 
-use serde::{Deserialize, Serialize};
-
 use super::documents::{
     NOTE_HEAD_DOC, NOTE_PROPOSAL_DOC, NoteDocument, head_in, invalid, live_doc, load_head,
     load_retained_head, store_doc,
 };
+use super::operations::NoteAuthorship;
 use super::proposals::{NOTE_FORK, NoteActor, remember_fork};
 use super::side_keys::HexPair;
 use super::sync_rows::SYNC_DS_E;
@@ -38,93 +37,10 @@ use crate::side_table::HexId;
 use crate::sync::transport::document_sub_tags;
 use crate::{EntityId, Vault};
 
-/// What identifies one fork upload: the fork, the parent head it forked
-/// from, the frontier of that head it forked at, and whether it rewrites.
-/// The NOTE is the frame's entity; the fork id is the request id.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NoteForkUpload {
-    #[serde(with = "super::id_codec")]
-    pub fork: EntityId,
-    #[serde(with = "super::id_codec")]
-    pub parent: EntityId,
-    pub frontier: Vec<u8>,
-    pub rewrite: bool,
-}
-
-/// What the authority did with one fork upload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum NoteForkUploadOutcome {
-    /// The fork is stored here, pending; a replay answers the same.
-    Accepted,
-    /// The fork cannot be admitted here as it is, for `reason`.
-    Refused { reason: String },
-}
-
-/// The authority's answer to one fork upload: the fork, the hash of the
-/// upload's identity as it was sent, and the outcome.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NoteForkUploadReceipt {
-    #[serde(with = "super::id_codec")]
-    pub fork: EntityId,
-    pub command_hash: [u8; 32],
-    pub outcome: NoteForkUploadOutcome,
-}
-
-impl NoteForkUpload {
-    /// The upload's payload: `[identity length: u32 BE][identity JSON]` then
-    /// the fork's own operations. A queued upload keeps the payload with no
-    /// operations.
-    ///
-    /// # Errors
-    ///
-    /// An identity that does not encode.
-    pub fn encode_payload(&self, operations: &[u8]) -> crate::Result<Vec<u8>> {
-        let identity = self.identity()?;
-        let len = u32::try_from(identity.len()).map_err(|_| invalid("NOTE fork upload"))?;
-        let mut payload = Vec::with_capacity(4 + identity.len() + operations.len());
-        payload.extend_from_slice(&len.to_be_bytes());
-        payload.extend_from_slice(&identity);
-        payload.extend_from_slice(operations);
-        Ok(payload)
-    }
-
-    /// The upload, its command hash and its operations, from `payload`. The
-    /// identity must be the canonical encoding of what it decodes to.
-    ///
-    /// # Errors
-    ///
-    /// A payload that does not read.
-    pub fn decode_payload(payload: &[u8]) -> crate::Result<(Self, [u8; 32], &[u8])> {
-        let (len, rest) = payload
-            .split_first_chunk::<4>()
-            .ok_or(invalid("NOTE fork upload"))?;
-        let (identity, operations) = rest
-            .split_at_checked(u32::from_be_bytes(*len) as usize)
-            .ok_or(invalid("NOTE fork upload"))?;
-        let upload: Self =
-            serde_json::from_slice(identity).map_err(|_| invalid("NOTE fork upload"))?;
-        if upload.identity()? != identity {
-            return Err(invalid("NOTE fork upload"));
-        }
-        Ok((upload, *blake3::hash(identity).as_bytes(), operations))
-    }
-
-    /// The hash a receipt names this upload by.
-    ///
-    /// # Errors
-    ///
-    /// An identity that does not encode.
-    pub fn command_hash(&self) -> crate::Result<[u8; 32]> {
-        Ok(*blake3::hash(&self.identity()?).as_bytes())
-    }
-
-    fn identity(&self) -> crate::Result<Vec<u8>> {
-        serde_json::to_vec(self).map_err(|_| invalid("NOTE fork upload"))
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::note::fork_upload::{
+    NoteForkUpload, NoteForkUploadOutcome, NoteForkUploadReceipt,
+};
 
 /// The upload `note`'s fork `fork` makes from this device, while it makes
 /// one: a native fork of `note` no one decided, in no bundle, whose author
@@ -192,6 +108,37 @@ pub(crate) fn fork_upload_frame_in_txn(
         .into_result()
         .map(Some)
         .map_err(|_| invalid("NOTE fork exceeds the document frame"))
+}
+
+/// Why the NOTE's authority would refuse `fork` of `note` as this install
+/// now holds it, as far as the fork's own operations go
+/// ([`own_authorship_entry`]); `None` when it would admit them. A test
+/// door's read, on a vault that holds both the fork and its parent head.
+///
+/// # Errors
+///
+/// A fork that makes no upload from here, a parent head not kept here, a
+/// frontier not in the parent's history, and storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn fork_upload_refusal_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    fork: EntityId,
+) -> crate::Result<Option<&'static str>> {
+    let upload = uploadable_fork_in_txn(vault, txn, note, fork)?
+        .ok_or(invalid("NOTE fork makes no upload"))?;
+    let parent = if upload.parent == head_in(&vault.store, txn, note)?.0 {
+        live_doc(vault, txn, note)?.doc
+    } else {
+        load_retained_head(vault, txn, note, upload.parent)?
+            .ok_or(invalid("NOTE fork parent is not a head kept here"))?
+    };
+    let opening = parent
+        .fork_at(&super::document::frontier(&upload.frontier)?)
+        .map_err(|_| invalid("NOTE fork frontier is not in its parent's history"))?;
+    let fork_doc = load_head(vault, txn, note, upload.fork)?;
+    Ok(own_authorship_entry(&opening, &fork_doc.doc, upload.fork).err())
 }
 
 impl Memory<'_> {
@@ -317,36 +264,12 @@ impl Memory<'_> {
         }) {
             return Ok(Err("NOTE fork rewrites its parent's operations"));
         }
+        let record = match own_authorship_entry(&opening, &basis, upload.fork) {
+            Ok(record) => record,
+            Err(reason) => return Ok(Err(reason)),
+        };
         // Its author is the uploader: the fork's authorship entry names a
         // stamp token that resolves here to the authenticated actor.
-        // Its operations edit its text alone: every other part of the NOTE,
-        // its citations and title among them, stands as the parent held it
-        // at the frontier, for a later merge carries the fork into the NOTE.
-        if !same_outside_text(&opening, &basis) {
-            return Ok(Err("NOTE fork changes more than its text"));
-        }
-        // Every authorship entry the parent held at the frontier stands
-        // unchanged, and the fork adds its own entry alone: a later merge
-        // carries the fork's authorship map into the NOTE.
-        let (Ok(inherited), Ok(records)) = (
-            super::operations::authorship(&opening),
-            super::operations::authorship(&basis),
-        ) else {
-            return Ok(Err("NOTE fork authorship does not read"));
-        };
-        if inherited.iter().any(|kept| !records.contains(kept)) {
-            return Ok(Err("NOTE fork changes its parent's authorship"));
-        }
-        let added: Vec<_> = records
-            .iter()
-            .filter(|record| !inherited.contains(record))
-            .collect();
-        let [record] = added.as_slice() else {
-            return Ok(Err("NOTE fork must add its own authorship entry alone"));
-        };
-        if record.operation != upload.fork {
-            return Ok(Err("NOTE fork names no author"));
-        }
         let NoteActor::Actor(token) = record.actor else {
             return Ok(Err("NOTE fork author was erased"));
         };
@@ -379,6 +302,46 @@ impl Memory<'_> {
         )?;
         Ok(Ok(()))
     }
+}
+
+/// The authorship entry a fork's own operations add to `opening`, its
+/// parent at the frontier it forked at, to make `fork`, when they edit its
+/// text alone and add that one entry alone, under the fork's id `id`; the
+/// stable reason the authority refuses them, else.
+fn own_authorship_entry(
+    opening: &loro::LoroDoc,
+    fork: &loro::LoroDoc,
+    id: EntityId,
+) -> std::result::Result<NoteAuthorship, &'static str> {
+    // Its operations edit its text alone: every other part of the NOTE, its
+    // citations and title among them, stands as the parent held it at the
+    // frontier, for a later merge carries the fork into the NOTE.
+    if !same_outside_text(opening, fork) {
+        return Err("NOTE fork changes more than its text");
+    }
+    // Every authorship entry the parent held at the frontier stands
+    // unchanged, and the fork adds its own entry alone: a later merge
+    // carries the fork's authorship map into the NOTE.
+    let (Ok(inherited), Ok(records)) = (
+        super::operations::authorship(opening),
+        super::operations::authorship(fork),
+    ) else {
+        return Err("NOTE fork authorship does not read");
+    };
+    if inherited.iter().any(|kept| !records.contains(kept)) {
+        return Err("NOTE fork changes its parent's authorship");
+    }
+    let added: Vec<_> = records
+        .into_iter()
+        .filter(|record| !inherited.contains(record))
+        .collect();
+    let Ok([record]) = <[NoteAuthorship; 1]>::try_from(added) else {
+        return Err("NOTE fork must add its own authorship entry alone");
+    };
+    if record.operation != id {
+        return Err("NOTE fork names no author");
+    }
+    Ok(record)
 }
 
 /// Whether `fork` holds what `opening` holds in every root container but the

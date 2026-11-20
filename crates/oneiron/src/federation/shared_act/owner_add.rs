@@ -2,13 +2,8 @@
 
 use super::*;
 
-/// Payload of an `add_owner` act: `owner` gains the Owner role; nobody loses it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AddOwnerPlan {
-    pub v: u8,
-    pub owner: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::federation::shared_act::owner_add::AddOwnerPlan;
 
 impl Vault {
     /// Start an `add_owner` act for a live person who is not already an Owner.
@@ -20,6 +15,28 @@ impl Vault {
         vault_id: u64,
         owner: EntityId,
     ) -> Result<PendingAuthorityAct> {
+        self.propose_add_owner_with_check_in(starter, vault_id, owner, None)
+    }
+
+    /// [`Self::propose_add_owner`], judged by check-in (2k1; P25-SHAPE Q1 and
+    /// Q4 = A; the door names the act class `ownership_transfer`): the act
+    /// records the Owner's decision, and with `check_in_ref`, an asker's
+    /// approved check-in for making `owner` an Owner
+    /// ([`crate::check_in::owner_add_effect_digest`]), which the Owner applies
+    /// on their own proof: it is spent in the start's writer and the act
+    /// names its requester. The add rule, the policy row's wait and the Owner
+    /// executors stay.
+    ///
+    /// # Errors
+    /// As [`Self::propose_add_owner`]; a `check_in_ref` that names no
+    /// approved, unspent check-in for this add.
+    pub fn propose_add_owner_with_check_in(
+        &self,
+        starter: &AuthenticatedOwner,
+        vault_id: u64,
+        owner: EntityId,
+        check_in_ref: Option<EntityId>,
+    ) -> Result<PendingAuthorityAct> {
         {
             let txn = self.store.env.read_txn()?;
             let starter = starter.revalidate_person_in_txn(self, &txn)?;
@@ -28,15 +45,110 @@ impl Vault {
                 self.live_act_holders(&txn, vault_id, self.store.clock.now_recorded_at())?;
             self.check_add_owner_in_txn(&txn, &live_owners(&holders, None), starter, owner)?;
         }
-        self.start_authority_act(
+        self.start_authority_act_checked(
             starter,
             vault_id,
             SharedActKind::AddOwner.as_str(),
             encode(&AddOwnerPlan {
                 v: PLAN_VERSION,
                 owner: owner.to_hex(),
+                house_workspace: None,
             })?,
+            crate::federation::pending_act::StartCheckIn {
+                verb: "vault.shared.propose_add_owner",
+                act: crate::check_in::ActClass::OwnershipTransfer,
+                effect_digest: crate::check_in::owner_add_effect_digest(vault_id, &owner),
+                applies: check_in_ref,
+            },
         )
+    }
+
+    /// Starts the `add_owner` act that seats `workspace_ref`'s house mind,
+    /// `house`, at the Owner role in shared vault `vault_id`
+    /// (HOUSE-UNBIND-AUTHORITY = A; FIX HOUSE-OWNER-ROLE-VIA-ADD-OWNER): the
+    /// act a person's Owner add starts, under the same policy row,
+    /// owner-change wait and objection window, judged by the same check-in.
+    /// The starter must be a live Owner; [`Vault::propose_house_owner_role`]
+    /// checks the house and the role table first.
+    pub(crate) fn propose_house_owner_seat(
+        &self,
+        starter: &AuthenticatedOwner,
+        vault_id: u64,
+        workspace_ref: &str,
+        house: EntityId,
+    ) -> Result<PendingAuthorityAct> {
+        {
+            let txn = self.store.env.read_txn()?;
+            let starter = starter.revalidate_person_in_txn(self, &txn)?;
+            check_vault(self, &txn, vault_id)?;
+            let holders =
+                self.live_act_holders(&txn, vault_id, self.store.clock.now_recorded_at())?;
+            if !live_owners(&holders, None).contains(&starter) {
+                return Err(invalid());
+            }
+        }
+        self.start_authority_act_checked(
+            starter,
+            vault_id,
+            SharedActKind::AddOwner.as_str(),
+            encode(&AddOwnerPlan {
+                v: PLAN_VERSION,
+                owner: house.to_hex(),
+                house_workspace: Some(workspace_ref.to_owned()),
+            })?,
+            crate::federation::pending_act::StartCheckIn {
+                verb: "vault.shared.propose_add_owner",
+                act: crate::check_in::ActClass::OwnershipTransfer,
+                effect_digest: crate::check_in::owner_add_effect_digest(vault_id, &house),
+                applies: None,
+            },
+        )
+    }
+
+    /// The effect of a completed `add_owner` act whose plan names a
+    /// workspace, in its executor's writer: that workspace's house seated at
+    /// the Owner role by its link, with no person's owner keys or own-device
+    /// grant and no signed Owner handover, as a link written at once writes
+    /// none. Its receipt reads as the membership change it is.
+    pub(super) fn house_owner_seat_effect_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        act: &PendingAuthorityAct,
+        now: u64,
+    ) -> Result<Effect> {
+        let plan: AddOwnerPlan = decode(&act.payload)?;
+        let workspace_ref = plan.house_workspace.as_deref().ok_or_else(invalid)?;
+        if plan.v != PLAN_VERSION {
+            return Err(invalid());
+        }
+        let (before, grants) = crate::workspace_roster::seat_house_owner_by_act_in_txn(
+            self,
+            txn,
+            act.vault_id,
+            workspace_ref,
+            hex_id(&plan.owner)?,
+            hex_id(&act.starter)?,
+            now,
+        )?;
+        let member = plan.owner.clone();
+        let change = match before {
+            Some(from) => SharedVaultChange::MemberRoleChanged {
+                member,
+                from,
+                to: Role::Owner,
+            },
+            None => SharedVaultChange::MemberAdded {
+                member,
+                role: Role::Owner,
+            },
+        };
+        Ok(Effect {
+            change,
+            grants,
+            revoked_slips: Vec::new(),
+            detach: None,
+            notify: BTreeSet::new(),
+        })
     }
 
     pub(super) fn check_add_owner_in_txn(

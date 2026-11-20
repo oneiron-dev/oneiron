@@ -16,14 +16,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/bin/oneiron-seal-organ.rs` | src | s | — | — | The seal organ's process: serves the host on the socket it passes |
 | `src/buffers.rs` | src | m | 2 struct · 6 fn · 2 type · 12 crate-vis | AdmittedBytes, AdmittedStr | Shared output buffers; native accounting constructors are feature-gated |
 | `src/error.rs` | src | s | 5 enum · 1 fn | FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage | Stable seal error classes and codes (ONE-1837 §6) |
-| `src/lib.rs` | src | s | 2 mod · 7 re-export | — | Native Rust PAdES seal and verification engine (ONE-1837) |
-| `src/memory.rs` | src | m | 1 struct · 1 enum · 1 trait · 2 fn · 31 crate-vis | SealMemory, SealMemoryProvider, SealMemoryRefusal | Memory the native seal reserves before its PDF decodes allocate it (FIX 7654) |
+| `src/lib.rs` | src | s | 3 mod · 7 re-export | — | Native Rust PAdES seal and verification engine (ONE-1837) |
+| `src/memory.rs` | src | m | 1 struct · 1 enum · 1 trait · 2 fn · 32 crate-vis | SealMemory, SealMemoryProvider, SealMemoryRefusal | Memory the native seal reserves before its PDF decodes allocate it (FIX 7654) |
 | `src/native/cms/assemble.rs` | src | s | 9 crate-vis | — | Signed-attribute builders and detached SignedData assembly |
 | `src/native/cms/der.rs` | src | s | 11 crate-vis | — | Strict-DER TLV writer/reader plus the shared sha256 helper |
 | `src/native/cms/mod.rs` | src | s | 7 crate-vis | — | CMS/CAdES SignedData assembly and parsing with exact byte control (§7.3) |
 | `src/native/cms/oids.rs` | src | s | 14 crate-vis | — | Canonical CMS, suite, and attribute OID constants |
-| `src/native/cms/parse.rs` | src | m | 7 crate-vis | — | Strict CMS ContentInfo/SignerInfo parsing with version gating |
-| `src/native/cms/policy.rs` | src | s | 10 crate-vis | — | Attribute/ESS binding and frozen signature-suite verification gates |
+| `src/native/cms/parse.rs` | src | m | 8 crate-vis | — | Strict CMS ContentInfo/SignerInfo parsing with version gating |
+| `src/native/cms/parse/issuer_link.rs` | src | m | 3 crate-vis | — | Bounded certificate-signature issuer walks for CMS certificate bags |
+| `src/native/cms/policy.rs` | src | s | 11 crate-vis | — | Attribute/ESS binding and frozen signature-suite verification gates |
 | `src/native/cms/tests.rs` | test | m | — | — | CMS assembly/parsing round-trip, canonicality, and version-gating tests |
 | `src/native/engine.rs` | src | m | 1 struct · 3 fn | NativeSealEngine | `NativeSealEngine`: composition of config, backend, fetcher, and clock |
 | `src/native/fetch.rs` | src | m | 1 struct · 1 fn · 1 re-export · 2 crate-vis | SsrfGuardedHttpFetcher | SSRF-guarded fetcher (§5) |
@@ -33,19 +34,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/pdf/decode.rs` | src | s | 3 crate-vis | — | Strict loads with every stream decoded whole (Rule 5), each decode's memory reserved before it is allocated… |
 | `src/native/pdf/incremental.rs` | src | m | 5 crate-vis | — | Byte-exact incremental append: xref table/stream emitters, EOF glue, ByteRange/Contents patch, hash and… |
 | `src/native/pdf/lex.rs` | src | m | 12 crate-vis | — | PDF structural tokens |
-| `src/native/pdf/mod.rs` | src | s | 15 crate-vis | — | Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2) |
+| `src/native/pdf/mod.rs` | src | s | 16 crate-vis | — | Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2) |
 | `src/native/pdf/objects.rs` | src | m | 6 crate-vis | — | Revision object graphs (§7.2): PDF value serializers, sig-dict placeholders, AcroForm/page updates, checked… |
 | `src/native/pdf/parse.rs` | src | m | 17 crate-vis | — | Prepared-input validation (§7.1): object/catalog scans, strict load, xref consistency, and RevisionState… |
 | `src/native/pdf/revision_chain.rs` | src | s | 6 crate-vis | — | Shared PDF revision discovery from the actual xref /Prev chain |
 | `src/native/pdf/revision_facts.rs` | src | m | 8 crate-vis | — | One structural account of PDF revisions, definitions and xref roles |
 | `src/native/pdf/tests.rs` | test | m | — | — | Inline test mod: fixture loaders, doc builders, validation and writer round-trip tests |
 | `src/native/pdf/walk.rs` | src | s | 7 crate-vis | — | Reference chains and the page tree, followed whole (Rule 5) |
-| `src/native/pdf/work.rs` | src | s | 5 crate-vis | — | Shared types for the ported prepare/inspect PDF pipeline (FIX 7980/8157) |
-| `src/native/pdf/work_burn.rs` | src | L | 9 crate-vis | — | Ported field burn-in and annotation-appearance flattening (FIX 7980/8157) |
+| `src/native/pdf/work.rs` | src | s | 9 crate-vis | — | Shared types for the ported prepare/inspect PDF pipeline (FIX 7980/8157) |
+| `src/native/pdf/work_burn.rs` | src | s | 9 crate-vis | — | Ported field burn-in and annotation-appearance flattening (FIX 7980/8157) |
 | `src/native/pdf/work_evidence.rs` | src | m | 4 crate-vis | — | Ported certificate/complete-trail PDF appendices (FIX 7980/8157) |
 | `src/native/pdf/work_preflight.rs` | src | L | 2 crate-vis | — | Exact xref framing and lossless object-stream expansion before rewriting (FIX 7980/8157) |
 | `src/native/pdf/work_prepare.rs` | src | m | 4 crate-vis | — | Ported esign PDF preparation orchestration (FIX 7980/8157) |
-| `src/native/pdf/work_present.rs` | src | m | 10 crate-vis | — | Ported page geometry, field marks, and Win1252 text encoding (FIX 7980/8157) |
+| `src/native/pdf/work_present.rs` | src | s | 6 crate-vis | — | Ported page geometry over the shared renderer (FIX 7980/8157) |
 | `src/native/pdf/work_source.rs` | src | L | 12 crate-vis | — | Ported static page-tree and resource-graph admission and copying (FIX 7980/8157) |
 | `src/native/pdf/work_streams.rs` | src | s | 3 crate-vis | — | — |
 | `src/native/profile/assembly.rs` | src | m | 6 crate-vis | — | B-B/B-T/B-LTA orchestration: backend signing, TSA failover, capacity ladder, DocTimeStamp, degrade warnings |
@@ -56,12 +57,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/profile/tests.rs` | test | m | — | — | Profile assembly tests: operation ids, error mapping, DSS bounds, CRL freshness and gather rows |
 | `src/native/tsp.rs` | src | m | 8 crate-vis | — | RFC 3161 timestamp requests and token validation (§7.4, §7.6) |
 | `src/native/verify/evidence_time.rs` | src | s | 7 crate-vis | — | Resolve signer history separately from archival material coverage |
-| `src/native/verify/mod.rs` | src | s | 3 crate-vis | — | Native verifier and profile classifier (§7.7) |
+| `src/native/verify/mod.rs` | src | s | 4 crate-vis | — | Native verifier and profile classifier (§7.7) |
 | `src/native/verify/review_1842_tests.rs` | test | m | — | — | SGN-05 public verifier regressions retained across the ONE-1941 report merge |
 | `src/native/verify/timestamp_evidence.rs` | src | s | 7 crate-vis | — | Total private RFC 3161 outcomes; one projection emits crypto and TSA trust |
 | `src/native/verify/verify_chain_gates.rs` | src | m | 12 crate-vis | — | Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and… |
 | `src/native/verify/verify_dss_core.rs` | src | L | 14 crate-vis | — | DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage… |
-| `src/native/verify/verify_evidence.rs` | src | s | 6 crate-vis | — | Private, bounded evidence collected before trust, time, and profile decisions |
+| `src/native/verify/verify_evidence.rs` | src | s | 7 crate-vis | — | Private, bounded evidence collected before trust, time, and profile decisions |
 | `src/native/verify/verify_report_build.rs` | src | s | 2 crate-vis | — | Project completed evidence into the public per-envelope report once |
 | `src/native/verify/verify_revisions.rs` | src | m | 1 crate-vis | — | Bounded revision snapshots and default-deny classification of post-sign changes |
 | `src/native/verify/verify_revocation.rs` | src | m | 11 crate-vis | — | CRL/OCSP evidence validators: issuer key-binding, freshness windows and clock-skew bounds |
@@ -78,11 +79,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/verify/verify_tests_timestamp_evidence.rs` | src | s | — | — | Public native-verifier regressions for both RFC 3161 timestamp forms |
 | `src/organ.rs` | src | L | 1 struct · 12 const | SealOrgan | The seal organ: `seal.pdf` (schema 2) and `seal.verify`, `seal.inspect` and `seal.prepare` (schema 1), run… |
 | `src/organ/report.rs` | src | s | 2 crate-vis | — | A verdict as the engine reads it: the native report's coarse fields, its full JSON, and the revision… |
-| `tests/esign_host_e2e.rs` | test | L | — | — | The engine's seal task over the real organ host and the real seal organ process, not a simulated sealer: a… |
+| `src/test_doors/burn_parity.rs` | src | s | 3 struct · 1 enum · 1 fn | BurnedPage, LentField, LentRaster, LentValue | The door for `tests/burn_parity.rs`, under the parent's `--cfg oneiron_test_support`: no `--all-features`… |
+| `src/test_doors/mod.rs` | src | s | 1 enum · 1 fn · 1 re-export | OcspDoorRejection | Doors from the integration tests to crate-private items |
+| `tests/burn_parity.rs` | test | s | — | — | Both e-sign field burn-in ports draw one field set identically |
+| `tests/esign_host_e2e.rs` | test | XL | — | — | The engine's seal task over the real organ host and the real seal organ process, not a simulated sealer: a… |
 | `tests/it/fetch_policy.rs` | test | m | — | — | Fetch-policy tests (§5, §10), all behind `network-fetch`: the guarded client's pre-network denials |
 | `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary for the vector suites |
 | `tests/it/seal_vectors.rs` | test | m | — | — | Seal-path vectors: B-B/B-T/B-LT/B-LTA assembly, degradation warnings, evidence digests, and backend seam… |
 | `tests/it/verify_vectors.rs` | test | s | — | — | Verify-path vectors: mutation matrix, prepared-input rejection codes, and structural failure classification… |
 | `tests/oracle.rs` | test | s | — | — | CI differential oracle (§9, amendment A6) |
+| `tests/seal_covered_set_includes_unrelated_cms_certs.rs` | test | m | — | — | An unrelated certificate carried in a CMS certificate bag is on no selected certification path |
+| `tests/seal_delta_crl_oid.rs` | test | s | — | — | Seal-path rows for the CRL complete-scope OID gate (FIX-LIST [SEAL-DELTA-CRL-OID]): a delta CRL (carrying… |
+| `tests/seal_ocsp_byname_responder_first_match.rs` | test | s | — | — | [SEAL-OCSP-BYNAME-RESPONDER-FIRST-MATCH] (FIX-LIST line 22803): a ByName OCSP responder used to be the first… |
 | `tests/support/mod.rs` | test | m | 45 crate-vis | — | Shared test support: ephemeral identities, fixture backend/fetcher/clock, and a functional fixture TSA |
-| `tests/support/rogue_seal_organ.rs` | test | L | 4 crate-vis | — | A hostile seal organ for the seal binding's checks (feature `hostile-organ-tests`; never shipped) |
+| `tests/support/rogue_evidence.rs` | test | s | 1 crate-vis | — | What a test hands the hostile seal organ's evidence modes (feature `hostile-organ-tests`): a timestamp… |
+| `tests/support/rogue_seal_organ.rs` | test | XL | 4 crate-vis | — | A hostile seal organ for the seal binding's checks (feature `hostile-organ-tests`; never shipped) |

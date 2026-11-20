@@ -15,6 +15,7 @@
 
 use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use oneiron::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext,
@@ -284,6 +285,7 @@ fn a_run_step_a_closed_carve_refuses_shows_its_typed_refusal_in_its_run_tree_and
             &backend,
             &guard,
             Some(&spend),
+            Duration::ZERO,
         )
         .await?;
         assert_eq!(

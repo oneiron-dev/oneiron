@@ -280,6 +280,7 @@ impl<'v> Memory<'v> {
                 // A thread's read writes nothing as the owner in person.
                 owner_authorship: None,
                 owner_surface: crate::authority::ActSurface::ThisInstall,
+                answers_as_owner_device: false,
                 host_slip_issuer: None,
                 invocation: self.invocation,
                 drain_permit: self.drain_permit.clone(),

@@ -1,17 +1,24 @@
 //! Which window tombstones a selector export carries beside the rows it keeps
 //! (FIX 10161). A grant that reads every record takes every tombstone the
 //! open fallback carries, as before. A narrower grant takes one only where the
-//! scope its delete captured is a scope the grant reads.
+//! scope its delete captured is a scope the grant reads. A selector narrowed
+//! to one world, or to base reality, takes one only where the position its
+//! delete captured lies in the worlds it selects (FOLLOWED-WORLD-TIER1-
+//! TOMBSTONE-IDS, blind review 2 of #9592): a hard delete took the row's
+//! carrier out of the window, so the selector keeps no row to judge. A member
+//! who is not an Owner takes one only of a row it reads at the relationship
+//! gate (OPUS-LEAKS, SELECTOR-TOMBSTONE-LABEL).
 
 use std::collections::BTreeSet;
 
 use heed::RoTxn;
 
 use crate::Vault;
+use crate::access_grant::AccessContext;
 use crate::deletion::decode_tombstone_value;
-use crate::deletion::tombstone_scope::deleted_scope_in;
+use crate::deletion::tombstone_scope::{deleted_relationship_read_in, deleted_scope_in};
 use crate::entity_id::EntityId;
-use crate::federation::{Scope, ScopeAxis};
+use crate::federation::{Scope, ScopeAxis, ScopeId};
 
 /// What a narrower grant gets of a tombstone whose delete left no scope it
 /// can judge here: no captured row, a row bound to another request, a value
@@ -22,16 +29,23 @@ const UNPROVEN_TOMBSTONE_EXPORTED: bool = false;
 /// keep.
 pub(super) struct TombstoneExport<'g> {
     grant: &'g Scope,
-    /// No facet filter, no band filter and the All-world selector: the
-    /// fallback that carries tombstones beyond the kept rows.
+    /// No facet filter and no band filter: the fallback that carries
+    /// tombstones beyond the kept rows.
     open: bool,
+    /// The worlds a selector narrowed to one world or to base reality
+    /// selects; `None` for the All-world selector, which bounds no world.
+    worlds: Option<&'g ScopeAxis<ScopeId>>,
     /// The grant reads every record, so the fallback shows it nothing it
     /// could not read.
     unrestricted: bool,
 }
 
 impl<'g> TombstoneExport<'g> {
-    pub(super) fn new(grant: &'g Scope, open: bool) -> Self {
+    pub(super) fn new(
+        grant: &'g Scope,
+        open: bool,
+        worlds: Option<&'g ScopeAxis<ScopeId>>,
+    ) -> Self {
         // Judged as the kept rows are, with every axis open but the verb.
         let every_record = Scope {
             verbs: ScopeAxis::Some(BTreeSet::from(["read".to_owned()])),
@@ -40,12 +54,16 @@ impl<'g> TombstoneExport<'g> {
         Self {
             grant,
             open,
+            worlds,
             unrestricted: grant.admits("read", &every_record, &Scope::top()),
         }
     }
 
     /// Whether the tombstone `value` of `id`, a row this export does not
-    /// keep, still travels.
+    /// keep, still travels. Under a selector narrowed to some worlds, it
+    /// travels only where its delete's captured position lies in them or in
+    /// base reality, which every such selector selects (`SyncSelectorWorld`),
+    /// so an unrestricted grant's export proves that position too.
     pub(super) fn admits(
         &self,
         vault: &Vault,
@@ -56,15 +74,48 @@ impl<'g> TombstoneExport<'g> {
         if !self.open {
             return false;
         }
-        if self.unrestricted {
+        if self.unrestricted && self.worlds.is_none() {
             return true;
         }
         let Some(request) = decode_tombstone_value(value).request_id else {
             return UNPROVEN_TOMBSTONE_EXPORTED;
         };
         match deleted_scope_in(&vault.store, txn, id, &request) {
-            Ok(Some(scope)) => self.grant.admits("read", &scope, &Scope::top()),
+            Ok(Some(scope)) => {
+                self.worlds.is_none_or(|worlds| {
+                    scope.worlds == crate::federation::base_world_axis()
+                        || scope.worlds.is_narrowing_of(worlds)
+                }) && (self.unrestricted || self.grant.admits("read", &scope, &Scope::top()))
+            }
             Ok(None) | Err(_) => UNPROVEN_TOMBSTONE_EXPORTED,
         }
+    }
+}
+
+/// Whether the selector's member reads the row that the tombstone `value` of
+/// `id` removes, as the relationship read its delete captured decides
+/// (OPUS-LEAKS, SELECTOR-TOMBSTONE-LABEL). The capture was taken while the
+/// row was live, so it decides before any body the window still holds.
+/// `Some(true)` for an Owner's member (`None`), which reads every row, and for
+/// a capture older than the read, whose tombstone travels as the rules above
+/// judge it. `Some(false)` for a failed read. `None` when no capture is bound
+/// to the tombstone's request (it names none, there is no row, or the row is
+/// bound to another request): the caller judges what the window still holds.
+pub(super) fn member_reads_by_capture(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    member: Option<&AccessContext<'_>>,
+    id: &EntityId,
+    value: &[u8],
+) -> Option<bool> {
+    let Some(member) = member else {
+        return Some(true);
+    };
+    let request = decode_tombstone_value(value).request_id?;
+    match deleted_relationship_read_in(&vault.store, txn, id, &request) {
+        Ok(Some(Some(read))) => Some(read.allowed_by(member)),
+        Ok(Some(None)) => Some(true),
+        Ok(None) => None,
+        Err(_) => Some(false),
     }
 }

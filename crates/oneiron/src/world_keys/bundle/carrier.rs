@@ -2,15 +2,11 @@
 //! The entry point is `Vault::seal_vault_bundle`.
 //! `super` owns the private frame codec and shared carrier storage.
 
-use serde::Serialize;
-use serde::ser::SerializeStruct as _;
-
 #[cfg(feature = "sync")]
 use super::frame_seal::WrittenPayload;
 use super::frame_seal::{BodySource, bundle_body};
 use super::sections::FreshSection;
 use super::*;
-use crate::error::ErrorKind;
 
 impl SealedVaultBundle {
     /// Strict parse of a frame: a positive multiple of the size step, the bundle
@@ -83,74 +79,8 @@ pub struct SealedVaultUpload {
     pub unmerged_sections: Vec<UnmergedSection>,
 }
 
-/// Where a readable world section stopped before it merged here (FIX 19525).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum UnmergedStage {
-    /// The section did not open with the world key held here.
-    Open,
-    /// The section opened, and its payload did not decode.
-    Decode,
-    /// One window of the section did not merge into its mirror here.
-    Merge,
-}
-
-impl UnmergedStage {
-    /// The words a surface shows.
-    #[must_use]
-    pub fn text(self) -> &'static str {
-        match self {
-            Self::Open => {
-                "the world's section did not open here: it is carried unchanged, the erased-actor \
-                 cleanup did not run on it, and the owner repairs it"
-            }
-            Self::Decode => {
-                "the world's section opened but did not decode here: it is carried unchanged, the \
-                 erased-actor cleanup did not run on it, and the owner repairs it"
-            }
-            Self::Merge => {
-                "a window of the world's section did not merge here: the section is carried \
-                 unchanged, the erased-actor cleanup did not run on it, and the owner repairs it"
-            }
-        }
-    }
-}
-
-/// A section of the latest generation that a publisher may read and carries
-/// unchanged, because it did not open, decode or merge here (FIX 19525). No
-/// unique history is dropped and no publication stops, but the erased-actor
-/// cleanup that every merged section takes did not run on it: a repair case
-/// for the owner. It names the world, the window when one window's merge
-/// failed, the stage and the error's kind: never a section byte, a row or an
-/// error message.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnmergedSection {
-    pub world: EntityId,
-    /// The label of the window whose merge failed; `None` when the section
-    /// did not open or decode.
-    pub window: Option<String>,
-    pub stage: UnmergedStage,
-    /// The kind of the error that stopped it.
-    pub kind: ErrorKind,
-}
-
-impl Serialize for UnmergedSection {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        let mut out = serializer.serialize_struct("UnmergedSection", 5)?;
-        out.serialize_field("world", &self.world)?;
-        match &self.window {
-            Some(window) => out.serialize_field("window", window)?,
-            None => out.skip_field("window")?,
-        }
-        out.serialize_field("stage", &self.stage)?;
-        out.serialize_field("kind", &self.kind)?;
-        out.serialize_field("text", self.stage.text())?;
-        out.end()
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::world_keys::bundle::carrier::{UnmergedSection, UnmergedStage};
 
 /// What an ordinary take imported from the world capsules this machine opens
 /// (FIX 4495).
@@ -348,25 +278,29 @@ impl Vault {
     /// base section carries no pad row). Each row keeps the time it was first
     /// learned, so it rides the same month's window as on every other replica
     /// (FIX 3790). A world whose keys were destroyed here gets none. Returns
-    /// how many it stored.
+    /// how many it stored. In the caller's write transaction: a sealed
+    /// bundle's kit restore lands them in the one that judges the kit's R
+    /// last (REVIEW-9488 round 2 P1 2).
     #[cfg(feature = "sync")]
-    pub(crate) fn restore_key_pads(&self, pads: &OpenedKeyPads) -> Result<usize> {
-        self.with_write_txn(|txn| {
-            let fold = self.authority_view_readonly_in_txn(txn)?;
-            let mut stored = 0;
-            for (key, pad, learned_at) in &pads.entries {
-                if fold.world_key(key).is_none()
-                    || pad_row_in_txn(&self.store, txn, key)?.is_some()
-                    || world_keys_destroyed_in_txn(&self.store, txn, key.world)?
-                {
-                    continue;
-                }
-                let pad = WorldKeyPad::from_bytes(Zeroizing::new(**pad));
-                self.put_pad_in_txn(txn, key, &pad, *learned_at)?;
-                stored += 1;
+    pub(crate) fn restore_key_pads_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        pads: &OpenedKeyPads,
+    ) -> Result<usize> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let mut stored = 0;
+        for (key, pad, learned_at) in &pads.entries {
+            if fold.world_key(key).is_none()
+                || pad_row_in_txn(&self.store, txn, key)?.is_some()
+                || world_keys_destroyed_in_txn(&self.store, txn, key.world)?
+            {
+                continue;
             }
-            Ok(stored)
-        })
+            let pad = WorldKeyPad::from_bytes(Zeroizing::new(**pad));
+            self.put_pad_in_txn(txn, key, &pad, *learned_at)?;
+            stored += 1;
+        }
+        Ok(stored)
     }
 
     /// The sections of `opened` this machine may read now, opened. A key whose pad

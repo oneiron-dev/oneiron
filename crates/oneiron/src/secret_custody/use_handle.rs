@@ -51,7 +51,6 @@ use std::sync::{Mutex, PoisonError};
 use serde_json::{Value, json};
 
 use super::doors::{read_secret_custody_admission_in_txn, resolve_secret_ref_in_txn};
-use super::reveal::parse_secret_handle;
 use super::run_bound::{RunSecretHolder, run_secret_effector};
 use super::types::{SecretBinding, SecretCustodyStatus};
 use crate::connector_key::{
@@ -789,31 +788,15 @@ impl Vault {
     }
 }
 
-/// Resolves a handle to its short id and the custody record it names.
+/// Resolves a handle to its short id and the custody record it names, as
+/// the reveal door does: a record a merge retired here names the record that
+/// holds its value now (REVIEW2 #8875 P2-1).
 pub(crate) fn handle_record_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     handle: &str,
 ) -> Result<(String, EntityId)> {
-    let (short, hash) = parse_secret_handle(handle)?;
-    // A forward key is the short id and one content-hash byte; a bare handle
-    // names whichever hash the record holds now.
-    let mut found = None;
-    for row in store.short_ids.prefix_iter(txn, short.as_bytes())? {
-        let (key, value) = row?;
-        if key.len() != short.len() + 1 || hash.is_some_and(|hash| key[short.len()] != hash) {
-            continue;
-        }
-        let bytes = <[u8; 16]>::try_from(&*value)
-            .map_err(|_| Error::CorruptedIndex("short id entity id"))?;
-        found = Some(EntityId::from_bytes(bytes)?);
-        break;
-    }
-    let id = found.ok_or_else(|| unknown(short))?;
-    match crate::ports::ShortIdStoreRead::port_short_id_reference(store, txn, &id)? {
-        Some((name, _)) if name == short => Ok((short.to_owned(), id)),
-        _ => Err(unknown(short)),
-    }
+    super::reveal::resolve_handle_in_txn(store, txn, handle)
 }
 
 /// A provider check: `check` on the secret, with the auth kind its pack

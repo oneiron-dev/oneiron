@@ -45,13 +45,8 @@ use crate::{Error, Result, Vault};
 pub(super) const CHECK: SideTable<String, ContributionAdmission, Named> =
     SideTable::new(&side_table::SKILL_ATTRIBUTION_CONTRIBUTION_CHECK);
 
-/// One fork of a matched pair: its receipt, and whether it passed the
-/// anchor both forks were scored against.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ContributionFork {
-    pub receipt: String,
-    pub passed: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::skill_attribution::contribution::ContributionFork;
 
 /// A finished matched-fork pair for one target on one run's outcome axis.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
