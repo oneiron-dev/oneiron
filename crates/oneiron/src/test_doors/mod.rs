@@ -47,6 +47,7 @@ pub mod call_receipt_damage;
 pub mod callable_skill;
 pub mod campaign_member_index;
 pub mod campaign_opt_out_line;
+pub mod candidate_scope;
 #[cfg(feature = "sync")]
 pub mod carrier_proof;
 pub mod check_in;
