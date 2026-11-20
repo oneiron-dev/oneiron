@@ -1,0 +1,286 @@
+//! A state signal (`state.engagement`, `state.goal_velocity`) is an aggregate
+//! number, not a quotation of the records it counted (FIX
+//! AFFECT-SIGNAL-HEX-REFS-FAIL-LIVE-SUPPORT; Engine AFFECT-SIGNAL-REFS-CITATION
+//! = B). Its evidence lists those records under `counted_refs`, an audit list,
+//! so the read-time live-support test asks nothing of it: the signals the
+//! production refresh writes are served like any Auto Observed claim, and stay
+//! served after every record they counted is deleted, as the composite index
+//! that carries the same numbers does.
+//!
+//! Needs the doors:
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
+//! --all-features --test affect_state_signal_live_support`.
+#![cfg(oneiron_test_support)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+use std::sync::Arc;
+
+use oneiron::authority::{HostSlipIssuer, MachineOwnership, MachineRole};
+use oneiron::memory::state_index::StateWindow;
+use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
+use oneiron::task_verb::TaskCreateSpec;
+use oneiron::test_doors::affect_state_signals::{RefreshedStateSignals, refresh_state_signals};
+use oneiron::test_doors::derive::claim_has_live_support;
+use oneiron::{
+    DeleteReason, EdgeActorClass, EntityId, Vad, VadAnnotation, VadAnnotationSource, Vault,
+    VaultConfig, WriteActor,
+};
+use oneiron_keystore::MemoryKeystore;
+use rmpv::Value;
+use serde_json::json;
+
+/// The pack id of the shipped default policy manifest.
+const SHIPPED_POLICY_PACK: &str = "oneiron-default-policy";
+
+/// One day, one expected completion and one expected engaged day: the turn
+/// the owner spoke today and the TASK it owns both fall in the window.
+const WINDOW: StateWindow = StateWindow {
+    window_secs: 86_400,
+    expected_goal_completions: 1,
+    expected_engaged_days: 1,
+};
+
+/// A personal vault rooted under its host, with a device keystore (a delete
+/// signs its receipt with this install's key), and its embedded owner PERSON,
+/// as `archive_task_authority_facts.rs` builds one.
+fn owned_vault() -> (tempfile::TempDir, Vault, EntityId) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open_owned(dir.path(), VaultConfig::default()).expect("owned vault");
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let issuer =
+        HostSlipIssuer::from_secret(b"affect state signal live support").expect("host issuer");
+    vault.install_device_keystore(Arc::new(MemoryKeystore::default()));
+    vault.ensure_host_root_slip(&issuer).expect("host root");
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Owned(MachineOwnership::Yours))
+        .expect("serving install profile");
+    (dir, vault, owner)
+}
+
+/// Declares each `(prefix, exact)` rule normal in the stored default policy,
+/// as an owner's rule would: a predicate no rule names takes the criticality
+/// floor, so its write pends for the owner instead of landing (as
+/// `claim_facet_birth.rs` does).
+fn declare_predicates_normal(vault: &Vault, declared: &[(&str, bool)]) {
+    let axes = json!({ "criticality": "normal", "sensitivity": "normal" });
+    for id in vault
+        .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+        .expect("policy manifests")
+    {
+        let Some(bytes) = vault.get(&id).expect("policy manifest read") else {
+            continue;
+        };
+        let mut manifest: serde_json::Value =
+            rmp_serde::from_slice(&bytes).expect("policy manifest body");
+        if manifest["pack_id"] != SHIPPED_POLICY_PACK {
+            continue;
+        }
+        let rules = manifest
+            .as_object_mut()
+            .expect("policy manifest map")
+            .entry("rules")
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+            .expect("policy rules list");
+        for &(prefix, exact) in declared {
+            let found = rules.iter().position(|rule| rule["prefix"] == prefix);
+            let index = match found {
+                Some(index) => index,
+                None => {
+                    rules.push(json!({ "prefix": prefix }));
+                    rules.len() - 1
+                }
+            };
+            rules[index]["axes"] = axes.clone();
+            if exact {
+                rules[index]["exact"] = json!(true);
+            }
+        }
+        oneiron::test_support::put_policy_manifest_bytes(
+            vault,
+            id,
+            &rmp_serde::to_vec_named(&manifest).expect("policy manifest encode"),
+        )
+        .expect("policy manifest put");
+        return;
+    }
+    panic!("the vault holds no shipped policy manifest");
+}
+
+/// One turn the owner says in `room` now, with a self-reported VAD on it:
+/// the turn the engagement signal counts and the affect the index reads.
+fn spoken_turn(vault: &Vault, owner: EntityId, room: EntityId) -> EntityId {
+    let now = vault.now_recorded_at();
+    let turn = vault
+        .memory(owner, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: room.to_hex(),
+            turn_ref: None,
+            thread_audience: None,
+            project: None,
+            messages: vec![WitnessMessage {
+                id: None,
+                author: WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: "the garden plan is done".to_owned(),
+                parts: None,
+                metadata: None,
+                is_visible: true,
+                order: 0,
+                quote: None,
+            }],
+            occurred_at: now,
+            assertions: WitnessAssertions::default(),
+        })
+        .expect("the owner's turn lands")
+        .turn_id;
+    let annotation = VadAnnotation::new(
+        Vad {
+            valence: 0.5,
+            arousal: 0.6,
+            dominance: 0.9,
+        },
+        VadAnnotationSource::UserSelfReport,
+        now,
+    )
+    .expect("annotation");
+    vault
+        .annotate_turn_vad(&turn, annotation)
+        .expect("the turn is annotated");
+    turn
+}
+
+/// One TASK the owner creates through the task door and owns: the TASK the
+/// goal-velocity signal counts.
+fn owned_task(vault: &Vault, owner: EntityId) -> EntityId {
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_create(&TaskCreateSpec::new(
+            Value::from("plant the spring beds"),
+            None,
+            Some(owner),
+            None,
+        ))
+        .expect("the owner creates the task")
+        .task_ref
+        .expect("the TASK creation took effect")
+}
+
+/// The hex ids a signal's evidence lists under `key`, or `None` when the
+/// evidence holds no such key.
+fn evidence_list(vault: &Vault, signal: &EntityId, key: &str) -> Option<Vec<String>> {
+    let body = vault
+        .get_claim(signal)
+        .expect("signal read")
+        .expect("the signal is stored");
+    let Some(Value::Map(fields)) = body.evidence.as_ref() else {
+        panic!("a signal's evidence is a map: {:?}", body.evidence);
+    };
+    fields
+        .iter()
+        .find(|(name, _)| name.as_str() == Some(key))
+        .map(|(_, value)| {
+            value
+                .as_array()
+                .expect("a ref list")
+                .iter()
+                .map(|item| item.as_str().expect("a hex ref").to_owned())
+                .collect()
+        })
+}
+
+/// The owner speaks one annotated turn and owns one TASK; the production
+/// refresh writes both signals and the composite. Each signal has live
+/// support, lists what it counted under `counted_refs`, and keeps live support
+/// once the turn and the TASK are both deleted.
+/// Red on main: the signals list their counted records under `refs`, which
+/// the live-support test reads as a malformed consolidation envelope, so no
+/// read door serves either signal.
+#[test]
+fn a_state_signal_keeps_live_support_after_every_counted_record_is_deleted() {
+    let (_dir, vault, owner) = owned_vault();
+    declare_predicates_normal(&vault, &[("state.", false)]);
+    let room = EntityId::now();
+    let turn = spoken_turn(&vault, owner, room);
+    let task = owned_task(&vault, owner);
+
+    let RefreshedStateSignals {
+        composite,
+        goal_velocity,
+        engagement,
+    } = refresh_state_signals(&vault, &owner, &WINDOW, vault.now_recorded_at())
+        .expect("the refresh")
+        .expect("an annotated turn the owner spoke and a TASK it owns make the refresh measure");
+    for (signal, predicate) in [
+        (goal_velocity, "state.goal_velocity"),
+        (engagement, "state.engagement"),
+    ] {
+        assert_eq!(
+            vault
+                .get_claim(&signal)
+                .expect("read")
+                .expect("stored")
+                .predicate,
+            predicate,
+            "the composite's evidence ends in the goal-velocity and engagement signals"
+        );
+    }
+
+    for (signal, name) in [(goal_velocity, "goal velocity"), (engagement, "engagement")] {
+        assert_eq!(
+            claim_has_live_support(&vault, &signal).expect("read"),
+            Some(true),
+            "FAILBEFORE AFFECT-SIGNAL-HEX-REFS-FAIL-LIVE-SUPPORT: the {name} signal is an \
+             Auto Observed claim the read doors serve"
+        );
+        assert_eq!(
+            evidence_list(&vault, &signal, "refs"),
+            None,
+            "the {name} signal holds no consolidation-envelope key"
+        );
+    }
+    assert_eq!(
+        evidence_list(&vault, &engagement, "counted_refs"),
+        Some(vec![turn.to_hex()]),
+        "the engagement signal lists the turn it counted"
+    );
+    assert_eq!(
+        evidence_list(&vault, &goal_velocity, "counted_refs"),
+        Some(vec![task.to_hex()]),
+        "with no completion in the window, the goal-velocity signal lists the TASK it owns"
+    );
+    assert_eq!(
+        claim_has_live_support(&vault, &composite).expect("read"),
+        Some(true),
+        "the composite index is served"
+    );
+
+    vault
+        .delete_room_record(
+            room,
+            turn,
+            WriteActor::new(owner, EdgeActorClass::Human),
+            DeleteReason::UserDelete,
+        )
+        .expect("the owner deletes the turn");
+    assert!(
+        vault
+            .delete_entity(&task)
+            .expect("the owner deletes the task"),
+        "the TASK existed"
+    );
+
+    for (signal, name) in [(goal_velocity, "goal velocity"), (engagement, "engagement")] {
+        assert_eq!(
+            claim_has_live_support(&vault, &signal).expect("read"),
+            Some(true),
+            "the {name} signal stays served after every record it counted is deleted"
+        );
+    }
+    assert_eq!(
+        claim_has_live_support(&vault, &composite).expect("read"),
+        Some(true),
+        "the composite carrying the same numbers stays served too"
+    );
+}
