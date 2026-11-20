@@ -172,7 +172,8 @@ impl SyncClient {
     /// device already holds is done: it is not applied again. A soft one with
     /// no full local row to scrub (none here, or already its shell) drops
     /// the thin read copy this device fetched of the item in `window`, if it
-    /// holds one, and writes no delete marker (review round 2 of #8364).
+    /// holds one, and the item's row in `window`'s thin index, and writes no
+    /// delete marker (review rounds 2 of #8364 and #9924).
     fn apply_followed_tombstone(
         &self,
         window: &WindowKey,
@@ -231,7 +232,10 @@ impl SyncClient {
 /// takes its deletes through its own exchange; a refused one has none
 /// (FOLLOWED-TOMBSTONE-HELD-WINDOW-REFUSED-LIVE). An opened-item device
 /// lane only. A member lane, which runs no owner-machine upkeep, calls it on
-/// a tick of its own (review round 2 of #8364).
+/// a tick of its own (review round 2 of #8364), and asks every window it
+/// holds a thin copy of: a window it opened and unloaded keeps a snapshot
+/// here, yet no exchange of it runs unless it is promoted (review round 2
+/// of #9924).
 pub(crate) async fn refresh_followed_tombstones(
     manager: &std::sync::Arc<WindowManager>,
     config: &SyncClientConfig,
@@ -243,7 +247,8 @@ pub(crate) async fn refresh_followed_tombstones(
         .map_err(|error| TransportError::Storage(error.to_string()))?;
     let mut asked = Vec::new();
     for window in client.followed_tombstone_windows()? {
-        if manager.follow_refused(&window)
+        if config.member_lane
+            || manager.follow_refused(&window)
             || !window_rows_held(&client.vault, &window)
                 .map_err(|error| TransportError::Storage(error.to_string()))?
         {
@@ -254,12 +259,16 @@ pub(crate) async fn refresh_followed_tombstones(
 }
 
 /// Drops the thin read copy of `item` that a soft tombstone of `window`
-/// names: its cached body, text document and the rest of the fetched copy go
+/// names, and its row in `window`'s thin index (`ri:w:{window}:{item}`): its
+/// cached body, text document and the rest of the fetched copy go
 /// ([`crate::sync::residence::clear_thin_item_cache_in_txn`]), so its next
-/// open asks the home again. No delete marker is written: a soft delete may
-/// be restored. A copy fetched from another window, or none, stays; so does
-/// one a legal hold names, or a cached pad whose world a hold names, as a
-/// prune keeps them (OF-470, FIX 3061). Whether a copy was dropped.
+/// open asks the home again, and the index lists it no more, as the home's
+/// own index no longer does (review round 2 of #9924). No delete marker is
+/// written: a soft delete may be restored, and the next index fetch lists a
+/// restored item again. A copy fetched from another window stays, and so
+/// does another window's index row; everything stays for an item a legal
+/// hold names, or a cached pad whose world a hold names, as a prune keeps
+/// them (OF-470, FIX 3061). Whether a copy or an index row was dropped.
 fn drop_soft_deleted_thin_copy(
     vault: &crate::Vault,
     window: &WindowKey,
@@ -267,12 +276,14 @@ fn drop_soft_deleted_thin_copy(
 ) -> crate::Result<bool> {
     vault.with_write_txn_grouped(|txn| {
         let hex = item.to_hex();
-        if vault
+        let listed = format!("ri:w:{window}:{hex}");
+        let indexed = vault.store.sync_state.get(txn, &listed)?.is_some();
+        let cached = vault
             .store
             .sync_state
             .get(txn, &format!("ro:e:{hex}"))?
-            .is_none_or(|cached_in| cached_in != window.as_str().as_bytes())
-        {
+            .is_some_and(|cached_in| cached_in == window.as_str().as_bytes());
+        if !indexed && !cached {
             return Ok(false);
         }
         match vault
@@ -288,7 +299,12 @@ fn drop_soft_deleted_thin_copy(
         {
             return Ok(false);
         }
-        crate::sync::residence::clear_thin_item_cache_in_txn(&vault.store, txn, item)?;
+        if cached {
+            crate::sync::residence::clear_thin_item_cache_in_txn(&vault.store, txn, item)?;
+        }
+        if indexed {
+            vault.store.sync_state.delete(txn, &listed)?;
+        }
         Ok(true)
     })
 }
