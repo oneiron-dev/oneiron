@@ -15,6 +15,7 @@ use super::super::super::{ConflictSet, PriorHead};
 use super::super::ConsolidationExecutor;
 use super::ParsedCandidate;
 use crate::attempt_queue::AttemptId;
+use crate::dreamer_consolidation::call_labels::LabelKind;
 use crate::dreamer_runner::DreamerConsolidationScope;
 use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
@@ -215,7 +216,7 @@ pub(crate) async fn native_extraction_decisions_for_test(
 
 /// Builds one parsed candidate per operand as the reply parser builds it for a reply naming the same candidate.
 ///
-/// Each operand cites turns of exactly one native slice; that slice's scope and sources become the candidate's. Confidence and prospective queries ride no decision, so they stay at their neutral values. An operand that proposes a relationship is refused: no parity case carries one, and the oracle maps none.
+/// Each operand cites turns of exactly one native slice; that slice's scope and sources become the candidate's. A cited claim binds as a reply's CLAIM label binds: the slice's call must label the claim and its scope must read the claim's branch pin, so an operand takes the first slice whose turns hold its cited TURNs and whose call labels its cited claims. The pin version an operand offers is not read here, since a native reply names a label and no version, and the checked step's citation check is not run. Confidence and prospective queries ride no decision, so they stay at their neutral values. An operand that proposes a relationship is refused: no parity case carries one, and the oracle maps none.
 fn parse_operands<'s>(
     operands: &[CandidateOperand],
     slices: &'s [ExtractionSlice],
@@ -239,9 +240,12 @@ fn parse_operands<'s>(
         let slice = slices
             .iter()
             .find(|slice| {
-                evidence_turn_refs
-                    .iter()
-                    .all(|turn| slice.turns.contains(turn))
+                locators.iter().all(|entry| match entry {
+                    EvidenceLocator::Claim { claim_id, .. } => {
+                        slice.labels.label(LabelKind::Claim, *claim_id).is_some()
+                    }
+                    turn => slice.turns.contains(&turn.source_id()),
+                })
             })
             .ok_or_else(|| invalid_consolidation("extracted evidence crossed its child slice"))?;
         for id in &evidence_turn_refs {
@@ -280,17 +284,17 @@ fn parse_operands<'s>(
     Ok(parsed)
 }
 
-/// Builds one operand's TURN locators: the span it quotes, or the whole cited text when it quotes none.
+/// Builds one operand's locators: for each cited TURN the span it quotes, or the whole cited text when it quotes none, then one claim locator for each distinct cited claim.
 fn operand_locators(
     operand: &CandidateOperand,
     resources: &BranchResources<'_>,
 ) -> Result<Vec<EvidenceLocator>> {
-    if operand.evidence.is_empty() {
+    if operand.evidence.is_empty() && operand.claim_evidence.is_empty() {
         return Err(invalid_consolidation(
-            "extracted candidate needs TURN evidence",
+            "extracted candidate needs TURN or claim evidence",
         ));
     }
-    let mut locators = Vec::with_capacity(operand.evidence.len());
+    let mut locators = Vec::with_capacity(operand.evidence.len() + operand.claim_evidence.len());
     for cited in &operand.evidence {
         let turn = parse_reference(&cited.turn)?;
         let (start, end) = match cited.span.as_ref() {
@@ -307,6 +311,16 @@ fn operand_locators(
             }
         };
         locators.push(EvidenceLocator::turn_range(turn, start, end)?);
+    }
+    let mut cited = operand
+        .claim_evidence
+        .iter()
+        .map(|pin| parse_reference(&pin.claim))
+        .collect::<Result<Vec<_>>>()?;
+    cited.sort_unstable();
+    cited.dedup();
+    for claim in cited {
+        locators.push(EvidenceLocator::claim(claim, claim)?);
     }
     Ok(locators)
 }

@@ -46,7 +46,7 @@ pub(super) fn extraction_observation_facts(
     for (index, (operand, row)) in input.candidates.iter().zip(checked.rows.iter()).enumerate() {
         let candidate = bound.verify_observation_candidate_in_txn(
             memory,
-            turn_read,
+            (read, turn_read),
             txn,
             operand,
             &row.proposal,
