@@ -67,6 +67,13 @@
 //! since a hold asks every signer held for its root, and a signer's answer
 //! may read where the owner key rests. Red with the lock held through the
 //! hold: the hold never ends.
+//!
+//! REVIEW-9678 round 2 P1: a held signer is asked its root once, at its
+//! hold. A later hold and an owner act's pick of its owner proof inside its
+//! writer read that answer, so neither waits for a signer's root, which may
+//! wait for the owner signing slot lock a recovery holds while it waits for
+//! the writer. Red with the signers asked again: the hold and the owner's
+//! clear of the checkpoint policy wait for the held signer's root.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test owner_anchor_appointment`.
 #![cfg(oneiron_test_support)]
@@ -119,6 +126,10 @@ const SUCCESSOR_SEED: u8 = 36;
 const AGENT_SEED: u8 = 37;
 /// The seed of the root signer whose root reads where the owner key rests.
 const REST_READER_SEED: u8 = 38;
+/// The seed of the root signer whose root waits while its gate is held.
+const GATED_ROOT_SEED: u8 = 39;
+/// The seed of a root signer held beside the gated one.
+const SECOND_ROOT_SEED: u8 = 40;
 
 /// The device PIN a test sets.
 const PIN: &[u8] = b"271828";
@@ -1201,6 +1212,124 @@ fn a_hold_lets_the_owner_signing_slot_lock_go_before_it_holds_the_key() {
         .recv_timeout(PAUSE_WAIT)
         .expect("the hold ends: it asks the signers held for their roots after the slot lock");
     assert!(held, "the install's live owner signing key is held");
+}
+
+/// A root signer whose root waits while the test holds its gate, as a
+/// host's signer whose root reads where this install's owner signing key
+/// rests waits for a door that holds the owner signing slot lock.
+struct GatedRootSigner {
+    gate: Arc<Mutex<()>>,
+    key: SigningKey,
+}
+
+impl CheckpointRootSigner for GatedRootSigner {
+    fn root(&self) -> AuthorityKey {
+        let _gate = self.gate.lock().unwrap_or_else(PoisonError::into_inner);
+        key_of(&self.key)
+    }
+
+    fn sign_checkpoint_statement(
+        &self,
+        _vault: &Vault,
+        statement: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
+        Ok(self.key.sign(statement).to_bytes().to_vec())
+    }
+
+    fn sign_owner_proof(
+        &self,
+        _vault: &Vault,
+        _fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
+        Ok(self.key.sign(transcript).to_bytes().to_vec())
+    }
+
+    fn sign_ask_word_proof(
+        &self,
+        _vault: &Vault,
+        _fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
+        Ok(self.key.sign(transcript).to_bytes().to_vec())
+    }
+}
+
+/// [`owned`], holding a [`GatedRootSigner`] ahead of the install's owner
+/// signing key, so an owner proof's pick comes to it first. Answers the
+/// vault, the owner, the signer's gate (not held) and the vault's directory.
+fn gated_root_ahead_of_the_owner_key() -> (Arc<Vault>, EntityId, Arc<Mutex<()>>, tempfile::TempDir)
+{
+    let Owned {
+        _dir: dir,
+        vault,
+        person,
+        ..
+    } = owned();
+    let gate = Arc::new(Mutex::new(()));
+    vault.hold_checkpoint_root_signer(Arc::new(GatedRootSigner {
+        gate: Arc::clone(&gate),
+        key: signing(GATED_ROOT_SEED),
+    }));
+    assert!(
+        vault.hold_device_owner_signer_logged(),
+        "the install's live owner signing key is held again, after the gated signer"
+    );
+    (Arc::new(vault), person, gate, dir)
+}
+
+/// REVIEW-9678 round 2 P1: a hold asks no signer it already holds for its
+/// root. The install holds a signer whose root waits; a hold of another
+/// signer ends beside that wait, so it never waits under the lock of the
+/// signers' list, which an owner act's door takes inside its writer.
+#[test]
+fn a_hold_asks_no_held_signer_its_root() {
+    let (vault, _person, gate, _dir) = gated_root_ahead_of_the_owner_key();
+    let waiting = gate.lock().unwrap_or_else(PoisonError::into_inner);
+    let (hold_ended, hold_heard) = mpsc::channel();
+    let holding = Arc::clone(&vault);
+    // Not joined: a hold that waits for the gate would keep the test waiting.
+    let _hold = thread::spawn(move || {
+        holding.hold_checkpoint_root_signer(Arc::new(GatedRootSigner {
+            gate: Arc::new(Mutex::new(())),
+            key: signing(SECOND_ROOT_SEED),
+        }));
+        let _heard = hold_ended.send(());
+    });
+    let ended = hold_heard.recv_timeout(PAUSE_WAIT).is_ok();
+    drop(waiting);
+    assert!(
+        ended,
+        "the hold ends while a held signer's root waits: it asks no held signer its root under \
+         the list's lock"
+    );
+}
+
+/// REVIEW-9678 round 2 P1: an owner act's door picks its owner proof inside
+/// its writer by the roots its signers named when held. The install holds a
+/// signer whose root waits, ahead of its owner signing key; the owner's
+/// clear of the checkpoint policy ends beside that wait, so the door never
+/// waits for a signer's root while it holds the writer that a recovery
+/// holding the owner signing slot lock waits for.
+#[test]
+fn an_owner_proof_pick_asks_no_held_signer_its_root() {
+    let (vault, person, gate, _dir) = gated_root_ahead_of_the_owner_key();
+    let authority = ActAuthority::Owner(proof(&vault, person), ActSurface::ThisInstall);
+    let waiting = gate.lock().unwrap_or_else(PoisonError::into_inner);
+    let (door_ended, door_heard) = mpsc::channel();
+    let acting = Arc::clone(&vault);
+    // Not joined: a door that waits for the gate would keep the test waiting.
+    let _door = thread::spawn(move || {
+        let _answer = acting.set_checkpoint_policy_as(&authority, None, None);
+        let _heard = door_ended.send(());
+    });
+    let ended = door_heard.recv_timeout(PAUSE_WAIT).is_ok();
+    drop(waiting);
+    assert!(
+        ended,
+        "the owner's clear ends while a held signer's root waits: its owner proof's pick inside \
+         the writer asks no held signer its root"
+    );
 }
 
 /// The owner's second install: enrolled as his through the hosted console,
