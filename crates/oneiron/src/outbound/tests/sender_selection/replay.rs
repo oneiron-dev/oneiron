@@ -78,8 +78,7 @@ fn admitted_sender_replays_after_new_facet_without_another_effect_or_debit()
         let receipts_before = vault.receipts(ReceiptQuery::new(100))?;
         let key_before = vault.get_connector_key(&entity(0xB7))?;
 
-        // Same paid logical send, but a fresh sink-facing scheduled reference.
-        request.intent_ref = "intent:task:sender-retry-new-attempt".to_owned();
+        // Same paid logical send with a fresh receipt; intent_ref stays pinned (FIX6424).
         request.receipt_id = "outbound:sender-retry-new-attempt".to_owned();
         request.occurred_at += 1;
         let retried = vault.dispatch_outbound_intent(request.clone(), &mut sink)?;
