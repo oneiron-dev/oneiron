@@ -698,9 +698,10 @@ fn step_record_strings(
 }
 
 /// The terminal record of a bound step keeps what its call showed, in ids and offsets: the row
-/// behind each call label in label order, the served byte range of each cited turn, and every row
-/// the call was read from in id order. The step cites a part of its turn, so the range is the
-/// served part and not the whole turn. The receipt and the memo read the record as before.
+/// behind each call label in label order, the served byte range of each cited turn, every row
+/// the call was read from in id order, and the listed entities of the native slice its turns
+/// lie in. The step cites a part of its turn, so the range is the served part and not the whole
+/// turn. The receipt and the memo read the record as before.
 #[test]
 fn a_bound_step_record_keeps_the_labels_ranges_and_sources_its_call_showed()
 -> ExtractionStepTestResult<()> {
@@ -793,6 +794,16 @@ fn a_bound_step_record_keeps_the_labels_ranges_and_sources_its_call_showed()
             "every labelled row is a source: {id} in {sources:?}"
         );
     }
+
+    let slice: Vec<String> = serde_json::from_str(
+        record
+            .get("input_slice")
+            .expect("the record names its native slice"),
+    )?;
+    assert!(
+        slice.iter().any(|id| *id == subject.to_hex()),
+        "the slice names the listed subject its turn mentions: {slice:?}"
+    );
 
     let receipt =
         invoke_bound_step_receipt(&binding, &step_ref).expect("the receipt reads the record");
