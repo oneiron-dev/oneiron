@@ -128,6 +128,23 @@ pub fn held_inquiry_answer_count(vault: &Vault) -> usize {
     vault.inquiry_answers.held_count()
 }
 
+/// Whether the filed courtesy ask (`pact_id`, `nonce`) still runs the
+/// standing setting's delete operation `operation_id`: the check each of
+/// that operation's delete writes reads
+/// (`deletion/coop_delivery/setting_answer.rs`).
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn setting_delete_runs(
+    vault: &Vault,
+    pact_id: &[u8; 32],
+    nonce: &[u8; 16],
+    operation_id: EntityId,
+) -> Result<bool> {
+    vault.setting_delete_runs(pact_id, nonce, operation_id)
+}
+
 /// The tables whose actor scrub [`erase_actor_in_inquiry_tables`] runs.
 const INQUIRY_TABLES: [&str; 2] = ["INQUIRY_LOG", "INQUIRY_RECEIPT"];
 
@@ -201,21 +218,4 @@ pub fn retained_copy_admits(vault: &Vault, record: EntityId) -> Result<bool> {
         None,
         &row.body,
     )
-}
-
-/// Whether the filed courtesy ask (`pact_id`, `nonce`) still runs the
-/// standing setting's delete operation `operation_id`: the check each of
-/// that operation's delete writes reads
-/// (`deletion/coop_delivery/setting_answer.rs`).
-///
-/// # Errors
-///
-/// Storage errors.
-pub fn setting_delete_runs(
-    vault: &Vault,
-    pact_id: &[u8; 32],
-    nonce: &[u8; 16],
-    operation_id: EntityId,
-) -> Result<bool> {
-    vault.setting_delete_runs(pact_id, nonce, operation_id)
 }
