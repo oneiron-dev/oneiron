@@ -1905,6 +1905,7 @@ fn machine_profile(
         seen_world_edits: std::collections::BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     })
 }
 
