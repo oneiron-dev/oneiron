@@ -532,6 +532,11 @@ impl PollAdmission<'_> {
     /// ([`crate::claim::claim_surfaceable`]), so it does not block the
     /// omission, and the omission is admitted beside it without superseding
     /// it, so the owner's answer to it stays owed (review round 2 of #9677).
+    /// The other way round, a status whose body the screen flagged waits on
+    /// the owner too (the standing consent holds it), so it supersedes no
+    /// admitted status: that one stays live beside it until the owner's
+    /// approval closes it as the review's conflict head, and a decline leaves
+    /// it standing (CAL-HELD-STATUS-SUPERSEDES-ADMITTED-STATUS).
     /// Returns the new claim's id, or `None` when nothing was written.
     fn admit_status_if_changed(
         &mut self,
@@ -541,7 +546,7 @@ impl PollAdmission<'_> {
         status: CalendarStatus,
         basis: CalendarStatusBasis,
     ) -> Result<Option<EntityId>, CalendarError> {
-        let mut prior_live: Option<EntityId> = None;
+        let mut prior_live: Option<(EntityId, bool)> = None;
         for claim_id in self.vault.claims_for_subject(&event_ref)? {
             let Some(claim) = self.vault.get_claim(&claim_id)? else {
                 continue;
@@ -564,7 +569,7 @@ impl PollAdmission<'_> {
                     return Ok(None);
                 }
             }
-            prior_live = Some(claim_id);
+            prior_live = Some((claim_id, crate::claim::claim_surfaceable(&claim)));
         }
         let value = preflight::status_value(status, basis, self.now);
         let new_id = self.admit_screened(
@@ -574,7 +579,13 @@ impl PollAdmission<'_> {
             PREDICATE_CALENDAR_STATUS,
             value,
         )?;
-        if let Some(old_id) = prior_live {
+        if let Some((old_id, admitted)) = prior_live
+            && !(admitted
+                && self
+                    .vault
+                    .get_claim(&new_id)?
+                    .is_some_and(|body| super::consent::screen_flagged(&body)))
+        {
             self.vault.supersede_claim(&new_id, &old_id, self.now)?;
         }
         Ok(Some(new_id))

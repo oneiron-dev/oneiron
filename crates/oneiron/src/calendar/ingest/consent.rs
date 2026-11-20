@@ -539,8 +539,10 @@ fn waiting_in_txn(
 }
 
 /// Whether the inbound screen flagged the body this claim was admitted on, by
-/// the verdict its admission keeps on the claim's evidence (CAL-09).
-fn screen_flagged(body: &ClaimBody) -> bool {
+/// the verdict its admission keeps on the claim's evidence (CAL-09). Such a
+/// claim waits on the owner, so its status admission supersedes no admitted
+/// status (`admission.rs`, `admit_status_if_changed`).
+pub(super) fn screen_flagged(body: &ClaimBody) -> bool {
     body.evidence
         .as_ref()
         .and_then(crate::ingest::imported_screen_verdict)
