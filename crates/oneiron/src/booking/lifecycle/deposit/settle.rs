@@ -46,6 +46,59 @@ const DEPOSIT_SETTLE_OWED_RECHECK_SECONDS: u64 = 3_600;
 /// it asks again.
 const DEPOSIT_SETTLE_PENDING_RECHECK_SECONDS: u64 = 3_600;
 
+/// FIX [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE] (BK-HOME-MOVE-CARRIES-BOOKINGS = A,
+/// lead 21 Nov 06:2x: "Money follows the home"): whether this node still settles its
+/// deposits, by the home-move fence (`sync::home_handoff::guard_in_txn`). A node that froze
+/// its booking rows for a move does not: its deposit rows are history, the new home holds
+/// them and owes their moves, so the old home moves no money. A node draining toward a move
+/// still settles the deposits it admitted, so its settle rows can end before it freezes.
+#[cfg(feature = "sync")]
+pub(super) fn settles_deposits_here(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<bool, BookingError> {
+    crate::sync::home_handoff::takes_home_write_in_txn(
+        vault,
+        txn,
+        crate::sync::home_handoff::HomeWrite::Settle,
+    )
+    .map_err(|error| engine_failure("home move fence read", error))
+}
+
+/// Without the home handoff no move ever freezes a deposit.
+#[cfg(not(feature = "sync"))]
+pub(super) fn settles_deposits_here(
+    _vault: &Vault,
+    _txn: &heed::RoTxn<'_>,
+) -> Result<bool, BookingError> {
+    Ok(true)
+}
+
+/// Whether this node admits a new deposit checkout, by the home-move fence: not while it
+/// drains its booking rows toward a move, nor once it froze them. The visitor starts the
+/// checkout on the new home.
+#[cfg(feature = "sync")]
+pub(super) fn admits_deposits_here(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<bool, BookingError> {
+    crate::sync::home_handoff::takes_home_write_in_txn(
+        vault,
+        txn,
+        crate::sync::home_handoff::HomeWrite::Admit,
+    )
+    .map_err(|error| engine_failure("home move fence read", error))
+}
+
+/// Without the home handoff no move ever drains a node.
+#[cfg(not(feature = "sync"))]
+pub(super) fn admits_deposits_here(
+    _vault: &Vault,
+    _txn: &heed::RoTxn<'_>,
+) -> Result<bool, BookingError> {
+    Ok(true)
+}
+
 /// One provider move a deposit owes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DepositSettleMove {
@@ -132,7 +185,8 @@ pub trait DepositSettlementPort {
 /// What one deposit's settle step did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DepositSettleStep {
-    /// Nothing is owed: no such deposit, or it stands settled.
+    /// Nothing is owed here: no such deposit, it stands settled, or this
+    /// node froze it for a home move and the new home owes its moves.
     Nothing,
     /// Still in its checkout window; due again at this instant.
     Wait { due_at: u64 },
@@ -159,8 +213,16 @@ enum SettlePlan {
 /// Decides one deposit's next move in a writer. An open deposit whose
 /// checkout window has ended turns void-due here, so no confirm can take it
 /// after the decision.
+///
+/// A node that froze its booking rows for a home move plans nothing: the new
+/// home holds the deposit and its owed move (FIX
+/// [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]), so the old home's settle row
+/// ends with no provider call.
 fn plan_settle(vault: &Vault, key: &[u8; 32], now_utc: u64) -> Result<SettlePlan, BookingError> {
     booking_writer(vault, |wtxn| {
+        if !settles_deposits_here(vault, &*wtxn)? {
+            return Ok(SettlePlan::Nothing);
+        }
         let Some(mut row) = DEPOSIT
             .get(&vault.store, &*wtxn, key)
             .map_err(|error| engine_failure("meta read", error))?
@@ -210,6 +272,11 @@ fn plan_settle(vault: &Vault, key: &[u8; 32], now_utc: u64) -> Result<SettlePlan
 /// Either records what the provider captured. A refund adds to what was
 /// refunded before it; when the owner's return came while it was owed, the
 /// balance of the capture is owed next, queued in the same commit.
+///
+/// A node that froze its booking rows for a home move while the call ran
+/// records nothing: the new home holds the deposit as it stood at the freeze,
+/// owes this same move, and asks it under the same idempotency key, which the
+/// provider answers as the move already done.
 fn record_settled(
     vault: &Vault,
     key: &[u8; 32],
@@ -218,6 +285,9 @@ fn record_settled(
     now_utc: u64,
 ) -> Result<(), BookingError> {
     booking_writer(vault, |wtxn| {
+        if !settles_deposits_here(vault, &*wtxn)? {
+            return Ok(());
+        }
         let Some(mut row) = DEPOSIT
             .get(&vault.store, &*wtxn, key)
             .map_err(|error| engine_failure("meta read", error))?

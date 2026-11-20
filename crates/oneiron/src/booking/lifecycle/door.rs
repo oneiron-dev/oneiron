@@ -178,7 +178,9 @@ pub struct BookingLifecycleConsumerInput {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum BookingLifecycleTurn {
-    /// No home node is elected, so no node may write bookings.
+    /// No home node is elected, so no node may write bookings. Also this
+    /// node's answer while it holds booking rows a home move froze and no
+    /// move has carried back: they are history, not its rows to write.
     NoHomeNode,
     /// Another node holds the designation.
     NotHomeNode { home_node_id: u64 },
@@ -347,8 +349,30 @@ fn home_node_refusal(
                 home_node_id: designation.node_id,
             })
         }
-        Some(_) => None,
+        Some(_) => froze_booking_rows(vault)?.then_some(BookingLifecycleTurn::NoHomeNode),
     })
+}
+
+/// FIX [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE] (BK-HOME-MOVE-CARRIES-BOOKINGS = A,
+/// lead 21 Nov 06:2x): whether this node froze its booking rows for a home move and adopted
+/// none since. Its election can name it home again before the move that carries them back
+/// lands; until then its rows are the old home's history, and a transition on them would
+/// write what the lineage already moved past.
+#[cfg(feature = "sync")]
+fn froze_booking_rows(vault: &Vault) -> Result<bool, BookingError> {
+    let txn = vault
+        .store
+        .env
+        .read_txn()
+        .map_err(|error| engine_failure("read transaction", error))?;
+    crate::sync::home_handoff::froze_home_state_in_txn(vault, &txn)
+        .map_err(|error| engine_failure("home move state read", error))
+}
+
+/// Without the home handoff no move ever freezes booking rows.
+#[cfg(not(feature = "sync"))]
+fn froze_booking_rows(_vault: &Vault) -> Result<bool, BookingError> {
+    Ok(false)
 }
 
 /// Runs one claimed attempt to a receipt and finalizes its row.

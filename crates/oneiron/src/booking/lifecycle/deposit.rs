@@ -58,6 +58,7 @@ pub use self::settle::{
     DepositSettleMove, DepositSettleRequest, DepositSettleStep, DepositSettlementPort,
     run_booking_deposit_settlement, settle_booking_deposit,
 };
+use self::settle::{admits_deposits_here, settles_deposits_here};
 
 /// The checkout window a deposit's lease opens: the hold lives this long
 /// while the visitor pays ("~15min", ARCH-0062:225). A checkout started
@@ -273,6 +274,11 @@ pub fn begin_deposit_checkout(
     let key = deposit_key(&start.payment_id);
     let session_hash = session_digest(&start.session_key);
     booking_writer(vault, |wtxn| {
+        if !admits_deposits_here(vault, &*wtxn)? {
+            return Err(refused(
+                "this node is moving its booking rows to a new home: the checkout starts there",
+            ));
+        }
         let config = crate::booking::config::load_event_type_config_in_txn(
             vault,
             &*wtxn,
@@ -346,12 +352,20 @@ pub fn begin_deposit_checkout(
     })
 }
 
+/// Writes one deposit row. Every deposit write comes here, so it asks the
+/// home-move fence first ([`settles_deposits_here`]): a node that froze its
+/// booking rows for a home move writes no deposit, whichever writer asks.
 fn put_deposit(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     key: &[u8; 32],
     row: &DepositRow,
 ) -> Result<(), BookingError> {
+    if !settles_deposits_here(vault, &*wtxn)? {
+        return Err(refused(
+            "this node froze its booking rows for a home move: the new home holds the deposit",
+        ));
+    }
     DEPOSIT
         .put(&vault.store, wtxn, key, row)
         .map_err(|error| engine_failure("meta write", error))
