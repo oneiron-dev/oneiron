@@ -588,15 +588,15 @@ pub(in crate::sync::selector) fn filter_window_doc(
     });
 
     let out_tombstones = out.get_map("tombstones");
-    // A selector narrowed to some worlds, facets or bands takes the tombstone
-    // of a row it does not keep where its delete's captured position lies in
-    // them (blind review 2 of #9592; SELECTOR-FACET-BAND-EXPORT-DROPS-
-    // BODYLESS-TOMBSTONES): a hard delete took the row's carrier with it.
+    // A selector narrowed to some worlds or bands takes the tombstone of a row
+    // it does not keep where its delete's captured position lies in them
+    // (blind review 2 of #9592; SELECTOR-FACET-BAND-EXPORT-DROPS-BODYLESS-
+    // TOMBSTONES): a hard delete took the row's carrier with it.
     let worlds =
         (!matches!(selector.world, SyncSelectorWorld::All)).then_some(&scope_position.worlds);
     let export = super::super::tombstones::TombstoneExport::new(
         &grant.authority_scope,
-        facets,
+        facets.is_some(),
         band_filter(scope_position),
         worlds,
     );
