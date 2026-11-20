@@ -13,6 +13,7 @@ use super::covered_floors::{CoveredFloors, NoVouchPast};
 use super::*;
 use crate::EntityId;
 use crate::error::Result;
+use oneiron_contracts::authority::AuthorityHistoryReason;
 
 /// The tail's seeded fold past the image, settled and projected: what this
 /// install's fold past the image and a later image built past it share.
@@ -220,16 +221,16 @@ pub(super) fn folds_rejected_op(image: &AuthorityCheckpointV2, entry: &Authority
 
 /// The tail's fold on the image's frontier states, merged into the image's
 /// fold and projected, with `confirms` the confirms once the tail joined
-/// them and `floors` the covered rows it floors ([`tail_folds_past`]); None
-/// wherever only the whole history folds the tail. A carried body that does
-/// not decode is corruption.
+/// them and `floors` the covered rows it floors ([`tail_folds_past`]).
+/// Wherever only the whole history folds the tail, why: the first guard
+/// below that refuses it. A carried body that does not decode is corruption.
 pub(super) fn settle_tail(
     image: &AuthorityCheckpointV2,
     tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
     log: AdoptedTail<'_>,
     confirms: ConfirmKeys,
     mut floors: CoveredFloors,
-) -> Result<Option<SettledTail>> {
+) -> Result<std::result::Result<SettledTail, AuthorityHistoryReason>> {
     let mut issues = image.safety.issues.clone();
     let judged = judged_tail(image, tail, &mut issues);
     // Every body the image carries, decoded once.
@@ -240,7 +241,7 @@ pub(super) fn settle_tail(
         .map(|(hash, body)| -> Result<_> { Ok((hash, decode_authority_log_entry_body(body)?)) })
         .collect::<Result<BTreeMap<_, _>>>()?;
     let Some(issuers) = tail_issuers(image, &carried, &judged) else {
-        return Ok(None);
+        return Ok(Err(AuthorityHistoryReason::IssuersRecounted));
     };
     let uncounted: BTreeSet<_> = image
         .safety
@@ -260,7 +261,7 @@ pub(super) fn settle_tail(
     if crate::authority::log_budget::fold_projected_bytes(image.covered.len() + judged.len(), pairs)
         > memory_floor_bytes
     {
-        return Ok(None);
+        return Ok(Err(AuthorityHistoryReason::FoldOverMemoryFloor));
     }
     // Each tail row folds on its parents' states as the scheduler folds it,
     // the frontier's kept states seeding it.
@@ -305,7 +306,7 @@ pub(super) fn settle_tail(
             continue;
         }
         let Some(Some(state)) = image.state_at(parent) else {
-            return Ok(None);
+            return Ok(Err(AuthorityHistoryReason::LateForkWithoutState));
         };
         seed.insert(*parent, state);
     }
@@ -318,7 +319,7 @@ pub(super) fn settle_tail(
     // A key record's request walk that met a row the image shows nothing of
     // judged nothing here (FIX 5464): only the whole history does.
     if causal.incomplete() {
-        return Ok(None);
+        return Ok(Err(AuthorityHistoryReason::CausalWalkIncomplete));
     }
     // A world key record, or a restrictive main-log choice (a world edit,
     // grant travel, checkpoint policy, home pick or training choice), on a
@@ -339,7 +340,7 @@ pub(super) fn settle_tail(
                 .iter()
                 .any(|parent| !states.contains_key(parent))
     }) {
-        return Ok(None);
+        return Ok(Err(AuthorityHistoryReason::RejectedRowCrossed));
     }
     // A restrictive withdrawal (a slip burn, a slip, Grant or actor
     // revocation, a machine removal) waiting here on a row with no state (a
@@ -354,7 +355,7 @@ pub(super) fn settle_tail(
                 .iter()
                 .any(|parent| !states.contains_key(parent))
     }) {
-        return Ok(None);
+        return Ok(Err(AuthorityHistoryReason::RejectedRowCrossed));
     }
     // No tail row vouches for a covered row past its floor
     // (`tail_signers_covered_rows_unfloored`), so every covered verdict
@@ -366,7 +367,7 @@ pub(super) fn settle_tail(
         .iter()
         .any(|(hash, entry)| states.contains_key(hash) && folds_rejected_op(image, entry))
     {
-        return Ok(None);
+        return Ok(Err(AuthorityHistoryReason::OpNotFoldedPast));
     }
     // A pact the tail moves is read only on a row that folds serially
     // (FIX 11760), whose parents' states are the whole fold's own; on any
@@ -377,7 +378,7 @@ pub(super) fn settle_tail(
                 .get(hash)
                 .is_some_and(|entry| super::folds_serially(image, tail, log, entry))
     }) {
-        return Ok(None);
+        return Ok(Err(AuthorityHistoryReason::UnsettledMove));
     }
     // A serial row's tail folds whole, every row of it on its own parents'
     // states (FIX 11760): a row the fold rejects could still carry a
@@ -392,7 +393,7 @@ pub(super) fn settle_tail(
             .values()
             .any(|entry| serial_fold_past_op(&entry.op) || serial_handoff_op(&entry.op));
     if serial && tail.keys().any(|hash| !states.contains_key(hash)) {
-        return Ok(None);
+        return Ok(Err(AuthorityHistoryReason::RejectedRowCrossed));
     }
     // A tail that floors covered rows folds past them only counted whole and
     // with no issue of its own: the image's issues then stand in the whole
@@ -401,7 +402,7 @@ pub(super) fn settle_tail(
         if issues.len() != image.safety.issues.len()
             || tail.keys().any(|hash| !states.contains_key(hash))
         {
-            return Ok(None);
+            return Ok(Err(AuthorityHistoryReason::SequenceFloorMoved));
         }
         issues = floors.issues_past(image);
     }
@@ -421,7 +422,7 @@ pub(super) fn settle_tail(
     // settlement does; one that could refuse a tail row leaves the tail to
     // the whole history.
     let Some(revoked) = serial_revocation_fences(&judged, &states) else {
-        return Ok(None);
+        return Ok(Err(AuthorityHistoryReason::RetirementFence));
     };
     let mut retired_keys = image.safety.retired_keys.clone();
     retired_keys.extend(revoked);
@@ -438,7 +439,7 @@ pub(super) fn settle_tail(
             continue;
         }
         let Some(fenced) = serial_handoff_fence(hash, &judged, &states, &seed) else {
-            return Ok(None);
+            return Ok(Err(AuthorityHistoryReason::RetirementFence));
         };
         retired_keys.extend(fenced.iter().cloned());
         handoff_or_appointment_retired_keys.extend(fenced);
@@ -522,9 +523,11 @@ pub(super) fn settle_tail(
             image_fold,
             judged.iter().map(|(hash, entry)| (*hash, entry)),
         )
-        || approves_on_revoked_key(&fold, &judged, &states)
     {
-        return Ok(None);
+        return Ok(Err(AuthorityHistoryReason::UnsettledMove));
+    }
+    if approves_on_revoked_key(&fold, &judged, &states) {
+        return Ok(Err(AuthorityHistoryReason::StaleRosterWindow));
     }
     let no_vouch = if floors.is_empty() {
         NoVouchPast::Idle
@@ -541,11 +544,11 @@ pub(super) fn settle_tail(
         let no_vouch =
             floors.no_vouch_past(image, tail, log.observations, &states, &fold, &read_whole);
         let Some(no_vouch) = no_vouch else {
-            return Ok(None);
+            return Ok(Err(AuthorityHistoryReason::SequenceFloorMoved));
         };
         no_vouch
     };
-    Ok(Some(SettledTail {
+    Ok(Ok(SettledTail {
         judged,
         states,
         merged,
