@@ -10,7 +10,8 @@ pub(crate) use claims::validate_board_claim;
 pub use epoch::{BoardTurnEpoch, BoardTurnHistory};
 pub(crate) use ledger::fold_board_turns_in_txn;
 pub use types::{
-    BoardHistoryError, BoardSelection, BoardTurn, BoardTurnReceipt, ReconstructedBoard,
+    BoardHistoryError, BoardSelection, BoardTurn, BoardTurnReceipt, BoardTurnTarget,
+    ReconstructedBoard,
 };
 
 #[cfg(test)]

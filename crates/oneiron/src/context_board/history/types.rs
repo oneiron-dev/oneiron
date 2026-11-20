@@ -87,6 +87,17 @@ pub struct BoardTurn {
     pub selection: BoardSelection,
 }
 
+/// What a per-turn board records against: the TURN, the owner whose board
+/// it is, and the room the board read in, if it read in one. The room is
+/// kept with the turn's anchor, so the turn-history read-back meets the
+/// reader's authority in that same room as it stands then.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoardTurnTarget {
+    pub turn: EntityId,
+    pub owner: EntityId,
+    pub room: Option<EntityId>,
+}
+
 #[doc(hidden)]
 pub(super) use oneiron_records::context_board::history::types::TurnAnchor;
 

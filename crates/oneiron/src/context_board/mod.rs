@@ -59,7 +59,7 @@ mod hydration;
 mod self_brief;
 pub use history::{
     BoardHistoryError, BoardSelection, BoardTurn, BoardTurnEpoch, BoardTurnHistory,
-    BoardTurnReceipt, ReconstructedBoard,
+    BoardTurnReceipt, BoardTurnTarget, ReconstructedBoard,
 };
 pub(crate) use history::{fold_board_turns_in_txn, validate_board_claim};
 pub use self_brief::{

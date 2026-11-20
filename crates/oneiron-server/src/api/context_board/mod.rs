@@ -774,7 +774,14 @@ async fn hydrate_inner(
         // The turn's record is part of the response the budget counts, so the
         // check runs inside the recording transaction, with the real record:
         // a refused hydration leaves the turn free to record its board.
-        Some(target) => {
+        Some((turn, owner)) => {
+            // The anchor keeps the room this board read in, so its read-back
+            // resolves the reader's authority in the same room.
+            let target = oneiron::context_board::BoardTurnTarget {
+                turn,
+                owner,
+                room: targets.room_id(),
+            };
             record_board_turn_with_layout(
                 &server,
                 &read,

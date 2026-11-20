@@ -151,10 +151,14 @@ impl Vault {
         input: &BoardTurn,
         learned_at: u64,
     ) -> Result<BoardTurnReceipt> {
-        let (txn, receipt) =
-            self.stage_board_turn(input.turn, input.owner, &input.selection, None, |_| {
-                (input.at, learned_at)
-            })?;
+        let (txn, receipt) = self.stage_board_turn(
+            input.turn,
+            input.owner,
+            None,
+            &input.selection,
+            None,
+            |_| (input.at, learned_at),
+        )?;
         txn.commit()?;
         Ok(receipt)
     }
@@ -172,11 +176,18 @@ impl Vault {
         caller: &ScopedRead<'_>,
         accept: impl FnOnce(&BoardTurnReceipt) -> bool,
     ) -> Result<Option<BoardTurnReceipt>> {
-        self.record_board_turn_with_layout_now(turn, owner, memories, worlds, caller, None, accept)
+        let target = BoardTurnTarget {
+            turn,
+            owner,
+            room: None,
+        };
+        self.record_board_turn_with_layout_now(target, memories, worlds, caller, None, accept)
     }
 
     /// The per-turn board path: `caller`, the board owner, records the board
-    /// `memories` rendered for its own `turn`, at the vault clock. A turn
+    /// `memories` rendered for its own `turn` (`target`), at the vault clock.
+    /// The anchor keeps `target.room`, the room the board read in, so the
+    /// turn's read-back resolves the reader's authority in that room again. A turn
     /// recorded in the same second as the owner's last one moves one second
     /// past it, so turn order stays strict.
     ///
@@ -209,14 +220,14 @@ impl Vault {
     /// pass the exact candidate their admitted board captured.
     pub fn record_board_turn_with_layout_now(
         &self,
-        turn: EntityId,
-        owner: EntityId,
+        target: BoardTurnTarget,
         memories: Option<&crate::context_board::MemoriesSection>,
         worlds: Option<&crate::claim::world_access::ResolvedWorldAuthority>,
         caller: &ScopedRead<'_>,
         candidate: Option<BoardLayoutCandidate>,
         accept: impl FnOnce(&BoardTurnReceipt) -> bool,
     ) -> Result<Option<BoardTurnReceipt>> {
+        let BoardTurnTarget { turn, owner, room } = target;
         if EntityId::from_hex(caller.actor_key().actor_ref()).ok() != Some(owner) {
             return Err(BoardHistoryError::NotTurnAuthor(turn));
         }
@@ -251,13 +262,17 @@ impl Vault {
             selection.served_revisions(memories)
         });
         let now = self.now_recorded_at();
-        let (mut txn, receipt) =
-            self.stage_board_turn(turn, owner, &selection, Some((caller, &served)), |last| {
-                match last {
-                    Some((at, learned_at)) => (now.max(at.saturating_add(1)), now.max(learned_at)),
-                    None => (now, now),
-                }
-            })?;
+        let (mut txn, receipt) = self.stage_board_turn(
+            turn,
+            owner,
+            room,
+            &selection,
+            Some((caller, &served)),
+            |last| match last {
+                Some((at, learned_at)) => (now.max(at.saturating_add(1)), now.max(learned_at)),
+                None => (now, now),
+            },
+        )?;
         if let Some(candidate) = candidate {
             activate_board_layout_in_txn(self, &mut txn, &owner, &turn, &candidate)?;
         }
@@ -276,6 +291,7 @@ impl Vault {
         &self,
         turn: EntityId,
         owner: EntityId,
+        room: Option<EntityId>,
         selection: &BoardSelection,
         caller: Option<(&ScopedRead<'_>, &BTreeMap<EntityId, RevisionRef>)>,
         stamp: impl FnOnce(Option<(u64, u64)>) -> (u64, u64),
@@ -477,6 +493,7 @@ impl Vault {
             learned_at,
             source_revision_ref: anchor_ref,
             frontier,
+            room,
         };
         write_anchor(self, &mut txn, &input.turn, &anchor)?;
         let snapshot = doc
@@ -720,6 +737,17 @@ impl Vault {
         Ok(TURN
             .get(&self.store, &txn, turn)?
             .map(|anchor| anchor.owner))
+    }
+
+    /// The room the board `turn` anchored read in, if it named one: the room
+    /// its read-back resolves the reader's authority in. `None` for an
+    /// unknown turn, a board that read in no room, and a turn recorded before
+    /// the anchor kept its room.
+    pub fn board_turn_room(&self, turn: &EntityId) -> Result<Option<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(TURN
+            .get(&self.store, &txn, turn)?
+            .and_then(|anchor| anchor.room))
     }
 
     /// Advances the retained window monotonically. Anchors remain as compact

@@ -20,7 +20,9 @@ use axum::response::IntoResponse;
 use axum::response::Json;
 use base64::Engine;
 use oneiron::EntityId;
-use oneiron::context_board::{BoardHistoryError, BoardLayoutCandidate, BoardTurnHistory};
+use oneiron::context_board::{
+    BoardHistoryError, BoardLayoutCandidate, BoardTurnHistory, BoardTurnTarget,
+};
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -366,8 +368,9 @@ fn current_board_authority<'a>(
     Ok((audience.read, audience.disclosure))
 }
 
-/// Records the board `response` served for the caller's own TURN, under the
-/// caller's read capability, and puts the record in it. The engine writes
+/// Records the board `response` served for the caller's own TURN (`target`,
+/// with the room the board read in), under the caller's read capability, and
+/// puts the record in it. The engine writes
 /// selection claims only for families that changed, and pins each document
 /// at the revision served. `worlds` is the world authority the board
 /// resolved, recorded as the selection's world tiers. `check` judges the
@@ -379,7 +382,7 @@ fn current_board_authority<'a>(
 pub(super) fn record_board_turn_with_layout(
     server: &SyncServer,
     read: &oneiron::claim::ScopedRead<'_>,
-    (turn, owner): (EntityId, EntityId),
+    target: BoardTurnTarget,
     worlds: &oneiron::pipeline::ResolvedWorldAuthority,
     response: &mut ContextBoardResponse,
     candidate: Option<BoardLayoutCandidate>,
@@ -390,8 +393,7 @@ pub(super) fn record_board_turn_with_layout(
     let recorded = server
         .vault
         .record_board_turn_with_layout_now(
-            turn,
-            owner,
+            target,
             memories.as_ref(),
             Some(worlds),
             read,
@@ -410,7 +412,7 @@ pub(super) fn record_board_turn_with_layout(
                 refused.is_none()
             },
         )
-        .map_err(|error| board_history_error(&turn, error))?;
+        .map_err(|error| board_history_error(&target.turn, error))?;
     match (recorded, refused) {
         (Some(_), _) => Ok(()),
         (None, refused) => {
@@ -461,8 +463,14 @@ pub(crate) async fn context_board_turn_history(
     }
     // Every item passes the caller's read scope and disclosure clamp as they
     // stand now, the ones a new board would apply: a past board never hands
-    // back a document the caller can no longer read or be shown.
-    let (read, disclosure) = current_board_authority(&server.vault, &auth, None)?;
+    // back a document the caller can no longer read or be shown. A board that
+    // read in a room is read back in that room, as a new board there would
+    // read: its audience, and the home of a reader standing in it now.
+    let room = server
+        .vault
+        .board_turn_room(&id)
+        .map_err(|error| board_history_error(&id, error))?;
+    let (read, disclosure) = current_board_authority(&server.vault, &auth, room)?;
     let history = server
         .vault
         .board_turn_history_for(&id, &read, disclosure.as_ref())

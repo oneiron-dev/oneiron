@@ -13,7 +13,8 @@ use std::sync::Arc;
 
 use oneiron::claim::{PointRead, ScopedRead};
 use oneiron::context_board::{
-    BoardHistoryError, BoardLayoutCandidate, BoardRender, MemoryRow, MemoryTier, SectionView,
+    BoardHistoryError, BoardLayoutCandidate, BoardRender, BoardTurnTarget, MemoryRow, MemoryTier,
+    SectionView,
 };
 use oneiron::memory::ReadMode;
 use oneiron::pipeline::ResolvedWorldAuthority;
@@ -561,9 +562,15 @@ fn keep_chat_history(
             return Err("a captured row or world is not readable by the answering agent");
         }
     }
+    // The answering agent reads its own board back homed here: its anchor
+    // keeps no room, and its read-back meets no room, as before.
+    let target = BoardTurnTarget {
+        turn: answered.turn,
+        owner: answered.agent,
+        room: None,
+    };
     match vault.record_board_turn_with_layout_now(
-        answered.turn,
-        answered.agent,
+        target,
         capture.memories.as_ref(),
         Some(&capture.worlds),
         &author,
