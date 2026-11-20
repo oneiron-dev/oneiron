@@ -9,7 +9,7 @@
 // cargo test --locked -p oneiron-docedit --all-features --test contract
 
 use std::cell::RefCell;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
 use oneiron_docedit::contract::{
@@ -101,6 +101,8 @@ fn document() -> Vec<u8> {
 /// The relationships part of the main part `word/document.xml`.
 const MAIN_PART_RELATIONSHIPS: &str = "word/_rels/document.xml.rels";
 const PACKAGE_RELATIONSHIPS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+const RELATIONSHIPS_TYPE: &str = "application/vnd.openxmlformats-package.relationships+xml";
+const CONTENT_TYPES: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
 
 fn has_part(bytes: &[u8], name: &str) -> bool {
     let archive = zip::ZipArchive::new(Cursor::new(bytes)).expect("open archive");
@@ -117,6 +119,72 @@ fn document_with_no_relationships_part() -> Vec<u8> {
         "the fixture gained the part these tests need absent"
     );
     bytes
+}
+
+/// `bytes` with the part `name` holding `data`, and every other part as it was.
+fn with_part(bytes: &[u8], name: &str, data: &[u8]) -> Vec<u8> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).expect("open archive");
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let mut replaced = false;
+    for index in 0..archive.len() {
+        let mut part = archive.by_index(index).expect("archive part");
+        let part_name = part.name().to_owned();
+        let mut held = Vec::new();
+        part.read_to_end(&mut held).expect("read archive part");
+        if part_name == name {
+            held = data.to_vec();
+            replaced = true;
+        }
+        writer
+            .start_file(part_name, zip::write::FileOptions::default())
+            .expect("start archive part");
+        writer.write_all(&held).expect("write archive part");
+    }
+    assert!(replaced, "the archive holds no part {name}");
+    writer.finish().expect("finish archive").into_inner()
+}
+
+/// The content type the package declares for `part`: its Override, or else
+/// the Default of its extension.
+fn content_type_of(bytes: &[u8], part: &str) -> Option<String> {
+    let xml = xml_part(bytes, "[Content_Types].xml");
+    let tree = roxmltree::Document::parse(&xml).expect("content types XML");
+    let declared = |tag: &str, attribute: &str, value: &str| {
+        tree.descendants()
+            .find(|node| {
+                node.has_tag_name((CONTENT_TYPES, tag))
+                    && node
+                        .attribute(attribute)
+                        .is_some_and(|held| held.eq_ignore_ascii_case(value))
+            })
+            .and_then(|node| node.attribute("ContentType"))
+            .map(str::to_owned)
+    };
+    let extension = part.rsplit_once('.').map_or("", |(_, extension)| extension);
+    declared("Override", "PartName", &format!("/{part}"))
+        .or_else(|| declared("Default", "Extension", extension))
+}
+
+/// `docx.revise` of `bytes` that replaces its paragraph "second." by
+/// SECOND-AS-REVISED.
+fn revise_second_paragraph(bytes: &[u8]) -> Done {
+    let parsed = oneiron_docedit::Document::parse(bytes).expect("parse base document");
+    let view = parsed.read();
+    let block = view
+        .blocks
+        .iter()
+        .find(|block| block.text == "second.")
+        .expect("the second paragraph");
+    run(
+        "docx.revise",
+        json!({
+            "document": 0, "limits": docx_limits(),
+            "transaction": {"ops": [{"op": "replace", "target": block.id, "guard": block.guard,
+                "content": {"type": "paragraph", "content": [{"type": "text", "text": "SECOND-AS-REVISED"}]}}],
+                "revision": {"author": "Editor", "date": REVISION_DATE}}
+        }),
+        &[bytes],
+    )
 }
 
 /// The part that a relationship of `word/document.xml` names by `target`: a
@@ -426,23 +494,7 @@ fn docx_read_takes_a_main_part_with_no_relationships_part() {
 #[test]
 fn docx_revise_writes_the_relationships_part_its_input_lacked() {
     let bytes = document_with_no_relationships_part();
-    let parsed = oneiron_docedit::Document::parse(&bytes).expect("parse base document");
-    let view = parsed.read();
-    let block = view
-        .blocks
-        .iter()
-        .find(|block| block.text == "second.")
-        .expect("the second paragraph");
-    let done = run(
-        "docx.revise",
-        json!({
-            "document": 0, "limits": docx_limits(),
-            "transaction": {"ops": [{"op": "replace", "target": block.id, "guard": block.guard,
-                "content": {"type": "paragraph", "content": [{"type": "text", "text": "SECOND-AS-REVISED"}]}}],
-                "revision": {"author": "Editor", "date": REVISION_DATE}}
-        }),
-        &[&bytes],
-    );
+    let done = revise_second_paragraph(&bytes);
     match &done.reply {
         Reply::DocxRevised { transaction, .. } => {
             assert_eq!(transaction["revision"]["date"], REVISION_DATE);
@@ -480,6 +532,74 @@ fn docx_revise_writes_the_relationships_part_its_input_lacked() {
             "no part {target}: {relationships}"
         );
     }
+}
+
+/// A package may type its relationships parts one by one, with no `rels`
+/// Default. The relationships part the revision creates is then typed too.
+#[test]
+fn docx_revise_types_the_relationships_part_it_creates() {
+    let base = document_with_no_relationships_part();
+    let content_types = xml_part(&base, "[Content_Types].xml");
+    let default = format!(r#"<Default Extension="rels" ContentType="{RELATIONSHIPS_TYPE}"/>"#);
+    assert!(
+        content_types.contains(&default),
+        "FIXTURE: the base types its relationships parts by the Default: {content_types}"
+    );
+    let one_by_one = content_types.replace(
+        &default,
+        &format!(r#"<Override PartName="/_rels/.rels" ContentType="{RELATIONSHIPS_TYPE}"/>"#),
+    );
+    let bytes = with_part(&base, "[Content_Types].xml", one_by_one.as_bytes());
+    assert_eq!(
+        content_type_of(&bytes, MAIN_PART_RELATIONSHIPS),
+        None,
+        "FIXTURE: the input types no relationships part of the main part"
+    );
+    let done = revise_second_paragraph(&bytes);
+    let changed = output(&done, "document", contract::DOCX_MEDIA_TYPE);
+    assert!(has_part(changed, MAIN_PART_RELATIONSHIPS));
+    assert_eq!(
+        content_type_of(changed, MAIN_PART_RELATIONSHIPS).as_deref(),
+        Some(RELATIONSHIPS_TYPE)
+    );
+    assert_eq!(
+        content_type_of(changed, "_rels/.rels").as_deref(),
+        Some(RELATIONSHIPS_TYPE)
+    );
+}
+
+/// A main part that references a relationship needs its relationships part.
+/// Without the part the reference dangles, and a relationship the writer adds
+/// later could take its id. The package is refused at the parse that
+/// `docx.read`, `docx.revise` and `docx.project` share.
+#[test]
+fn docx_read_refuses_a_reference_with_no_relationships_part() {
+    let base = document_with_no_relationships_part();
+    let document = xml_part(&base, "word/document.xml");
+    let referencing = document
+        .replace(
+            r#"xmlns:u="urn:unfamiliar""#,
+            r#"xmlns:u="urn:unfamiliar" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#,
+        )
+        .replace("<w:sectPr/>", r#"<w:altChunk r:id="rId1"/><w:sectPr/>"#);
+    assert!(
+        referencing.contains("xmlns:r=") && referencing.contains(r#"<w:altChunk r:id="rId1"/>"#),
+        "FIXTURE: the main part references rId1: {referencing}"
+    );
+    let bytes = with_part(&base, "word/document.xml", referencing.as_bytes());
+    let text = call_text("docx.read", json!({"document": 0, "limits": docx_limits()}));
+    assert_error(
+        contract::execute_json(text.as_bytes(), &[&bytes], Ports::default()),
+        ErrorCode::InvalidDocument,
+    );
+    let refusal = match oneiron_docedit::Document::parse(&bytes) {
+        Ok(_) => panic!("a main part with a dangling reference parsed"),
+        Err(error) => format!("{error:?}"),
+    };
+    assert!(
+        refusal.contains(MAIN_PART_RELATIONSHIPS) && refusal.contains("rId1"),
+        "the refusal names neither the absent part nor the reference: {refusal}"
+    );
 }
 
 #[test]

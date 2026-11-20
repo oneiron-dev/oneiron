@@ -10097,6 +10097,21 @@ fn import_and_anchor(
 
     // Parse document relationships and stories
     let rels = parse_document_relationships(&archive, &main_part)?;
+    // A main part with no relationships part holds no relationship reference.
+    // Each one would dangle, and the writer numbers the relationships it adds
+    // from `rId1`: one could take the dangling id and bind the reference to a
+    // part it never named. Such a package is refused, as every package with no
+    // relationships part was before an absent part was read as empty.
+    let main_rels_path = crate::docx_package::rels_part_path(&main_part);
+    if archive.get(&main_rels_path).is_none() {
+        let mut referenced_ids = Vec::new();
+        crate::docx_validate::collect_relationship_references(&root, &mut referenced_ids);
+        if let Some(referenced) = referenced_ids.first() {
+            return Err(invalid_docx(&format!(
+                "missing {main_rels_path}: the main part references relationship {referenced:?}"
+            )));
+        }
+    }
     let (header_refs, footer_refs) = parse_header_footer_refs(&root)?;
 
     // Preserve every header/footer part explicitly referenced by sectPr.

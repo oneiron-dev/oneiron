@@ -731,6 +731,9 @@ fn main_document_part_from_root_rels(
     Ok(part_name)
 }
 
+/// The content type of a relationships part (OPC §9.3).
+const RELATIONSHIPS_CONTENT_TYPE: &str = "application/vnd.openxmlformats-package.relationships+xml";
+
 impl DocxPackage {
     /// Parse all metadata from a `DocxArchive`, consuming the metadata parts
     /// into typed structures and keeping everything else as raw bytes.
@@ -820,8 +823,24 @@ impl DocxPackage {
 
     /// Serialize all metadata back to XML and combine with raw parts into a
     /// `DocxArchive` ready for ZIP writing.
-    pub fn into_archive(self) -> Result<DocxArchive, PackageError> {
+    pub fn into_archive(mut self) -> Result<DocxArchive, PackageError> {
         let mut files = Vec::new();
+
+        // Every relationships part written below carries a content type (OPC
+        // §10.1.2). The `rels` Default covers them all. A package that types
+        // its relationships parts one by one gets an Override for each part
+        // that has none, so a part this writer creates is typed too: the main
+        // part's, when the input had none.
+        let mut relationships_parts: Vec<String> = self.story_rels.keys().cloned().collect();
+        relationships_parts.sort();
+        relationships_parts.insert(0, self.document_rels_path.clone());
+        relationships_parts.insert(0, ROOT_RELS_PATH.to_string());
+        for part in relationships_parts {
+            if self.content_types.content_type_for_part(&part).is_none() {
+                self.content_types
+                    .add_override(&format!("/{part}"), RELATIONSHIPS_CONTENT_TYPE);
+            }
+        }
 
         // Serialize [Content_Types].xml first (convention: it's the first entry).
         files.push(crate::docx::DocxFile {
