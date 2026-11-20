@@ -15,6 +15,7 @@ use super::{
     SettingMode, SettingScope, SettingSource, SettingSpec, SettingValue,
 };
 use crate::Vault;
+use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -616,6 +617,29 @@ pub(crate) enum SettingReader {
     Actor(EntityId),
 }
 
+/// Who asks a door for a read, as [`super::SettingCaller`] asks for a change.
+#[derive(Debug, Clone)]
+pub(crate) enum SettingReadCaller {
+    /// The owner, by a proof the read revalidates in the snapshot it reads: a proof that no
+    /// longer holds there (a co-owner's slip revoked since the door took it) reads nothing.
+    Owner(AuthenticatedOwner),
+    /// An agent whose binding the caller verified.
+    Agent(EntityId),
+}
+
+impl SettingReadCaller {
+    /// Who reads in `txn`: the owner only while its proof holds in `txn`.
+    fn reader_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<SettingReader> {
+        Ok(match self {
+            Self::Owner(owner) => {
+                owner.revalidate_in_txn(vault, txn)?;
+                SettingReader::Owner
+            }
+            Self::Agent(agent) => SettingReader::Actor(*agent),
+        })
+    }
+}
+
 /// Whether `reader` may read `spec`'s rows at `scope` (all its rows when `None`), in `txn`: the
 /// owner always; a member of the vault for a key read by members; a live holder of the key's
 /// `engine.controls` class; for a dials key, a live whole-vault Steward grant naming any
@@ -734,21 +758,23 @@ pub(crate) struct SettingListFilter {
 }
 
 impl Vault {
-    /// The value in force for `key` (and `item`) at the places `at`, when `reader` may read it.
+    /// The value in force for `key` (and `item`) at the places `at`, when `caller` may read it.
     ///
     /// # Errors
     ///
     /// `InvalidConfig` for an unknown key, a place or item it does not admit, or a reader who may
-    /// not read it; storage errors.
+    /// not read it; a gate error for an owner proof that does not hold in this read; storage
+    /// errors.
     pub(crate) fn setting_view_for(
         &self,
-        reader: SettingReader,
+        caller: &SettingReadCaller,
         key: &str,
         item: Option<&str>,
         at: &[SettingScope],
     ) -> Result<SettingView> {
         let spec = super::spec_named(key)?;
         let txn = self.store.env.read_txn()?;
+        let reader = caller.reader_in_txn(self, &txn)?;
         let own = match reader {
             SettingReader::Owner => None,
             SettingReader::Actor(actor) => at.iter().find(|scope| names_subject(scope, actor)),
@@ -762,17 +788,19 @@ impl Vault {
         view_in_txn(&self.store, &txn, spec, at, item)
     }
 
-    /// Every catalogue key `filter` takes that `reader` may read, wholly or for its own rows.
+    /// Every catalogue key `filter` takes that `caller` may read, wholly or for its own rows.
     ///
     /// # Errors
     ///
-    /// A place no key admits only skips that key's value; storage errors.
+    /// A place no key admits only skips that key's value; a gate error for an owner proof that
+    /// does not hold in this read; storage errors.
     pub(crate) fn setting_catalogue_for(
         &self,
-        reader: SettingReader,
+        caller: &SettingReadCaller,
         filter: &SettingListFilter,
     ) -> Result<Vec<SettingCatalogueEntry>> {
         let txn = self.store.env.read_txn()?;
+        let reader = caller.reader_in_txn(self, &txn)?;
         let mut proposed = proposed_defaults_in_txn(&self.store, &txn)?;
         let mut entries = Vec::new();
         for spec in super::catalogue() {
