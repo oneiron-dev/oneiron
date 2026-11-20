@@ -179,6 +179,8 @@ fn write_carried_in_txn(
             why: Some(why.to_owned()),
             weight_runs: None,
             direction: Some(direction),
+            surface: None,
+            signed: None,
         },
     )?;
     let row = StoredRow {

@@ -44,6 +44,7 @@ mod pack;
 mod page_max;
 mod read;
 mod set;
+mod signed_act;
 pub(crate) mod tables;
 
 use std::marker::PhantomData;
