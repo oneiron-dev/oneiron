@@ -473,8 +473,11 @@ impl ScopedRead<'_> {
     }
 }
 
+/// Whether a kept row's edge makes its peer a reachable neighbor: a kind
+/// the pack walk expands across ([`crate::context_pack::walk_expands_edge_kind`])
+/// and not retracted, as the walk judges each edge.
 fn context_pack_edge_can_reach_neighbor(edge: &EdgeInfo) -> bool {
-    !matches!(edge.kind, EdgeKind::ChildOf | EdgeKind::AssignedTo)
+    crate::context_pack::walk_expands_edge_kind(edge.kind)
         && !edge
             .provenance
             .is_some_and(|flags| flags.confirmation_status == EdgeConfirmationStatus::Retracted)
