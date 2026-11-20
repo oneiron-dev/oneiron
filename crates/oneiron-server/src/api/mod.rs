@@ -206,6 +206,8 @@ pub(crate) use self::owner_routes::engine_refusal_statuses_for_test;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::owner_routes::owner_route_refusals_for_test;
 pub(crate) use owner_routes::owner;
+#[cfg(oneiron_test_support)]
+pub(crate) use owner_routes::owner_check_failure;
 // FIX 5911: an owner's own program proves its waking person the live
 // recorded owner, and takes the owner's media and hook-replay doors; its
 // media spends on its run's line (FIX 6083).

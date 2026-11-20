@@ -13,7 +13,7 @@
 //! last row: whether an agent may install compliance rows and reject a pending proposal.
 
 use crate::error::Result;
-use crate::setting::{Kind, lower_is_tighter};
+use crate::setting::Kind;
 use crate::store::Store;
 
 const fn contact_without_recorded_objection() -> bool {
@@ -34,7 +34,7 @@ crate::setting::setting_keys! {
         "campaign.contact_without_recorded_objection" {
         kind: Kind::new(contact_without_recorded_objection)
             .strictest(recorded_consent_required)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
     };
 }
 
@@ -71,7 +71,7 @@ crate::setting::setting_keys! {
     pub(crate) CAMPAIGN_COMPLIANCE_AGENT_MAY_DECIDE: bool = "campaign.compliance.agent_may_decide" {
         kind: Kind::new(owner_decides)
             .strictest(owner_decides)
-            .tighter(crate::setting::lower_is_tighter::<bool>),
+            .lower(),
         scopes: &[crate::setting::ScopeKind::Vault, crate::setting::ScopeKind::Agent],
         act: crate::check_in::ActClass::GrantWiden,
     };

@@ -2,7 +2,7 @@
 //! catalogue reads from this file.
 
 use super::quote_strips::PAGE_LIMIT;
-use crate::setting::{Kind, PageMax, lower_is_tighter};
+use crate::setting::{Kind, PageMax};
 
 /// 256 strips: a reply-strip page's maximum before it became a key.
 fn reply_strips_page_max_default() -> PageMax {
@@ -17,6 +17,6 @@ crate::setting::setting_keys! {
     pub(crate) REPLY_STRIPS_PAGE_MAX: PageMax = "conversation_dag.reply_strips.max_page" {
         kind: Kind::new(reply_strips_page_max_default)
             .strictest(reply_strips_page_max_default)
-            .tighter(lower_is_tighter::<PageMax>),
+            .lower(),
     };
 }

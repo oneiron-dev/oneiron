@@ -5,10 +5,11 @@ use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
+use oneiron_authority::authority::{ActSurface, AuthorityEntryHash};
 use oneiron_setting_contract::RowKey;
 
 use super::read::{CONTENT_ROWS, ROWS, StoredRow};
-use super::{EncodedValue, Setter, SettingMode, SettingScope};
+use super::{ChangeDirection, EncodedValue, Setter, SettingMode, SettingScope};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -48,6 +49,18 @@ pub struct SettingChange {
     /// change, whose bytes it leaves as they were.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weight_runs: Option<f64>,
+    /// Which way the change moved its row, by the key's order (DESIGN 1.5): `Looser` and
+    /// `Unordered` are the receipts of a widening. Absent on a change written before stage 6.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<ChangeDirection>,
+    /// Where the owner said so, on an owner's change whose host named it (audit only: no rule
+    /// reads it). Absent on every other change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<ActSurface>,
+    /// The main-log entry that signed the change, a `PolicySettingSet` (stage 7a-1). Absent where
+    /// none was appended: the change named no act surface, or its record could not be signed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed: Option<AuthorityEntryHash>,
 }
 
 /// Writes `change` under the next sequence, in the caller's write; returns its sequence.
@@ -65,6 +78,25 @@ pub(super) fn record_change_in_txn(
     change.sequence = sequence;
     CHANGES.put(store, txn, &sequence, &change)?;
     Ok(change)
+}
+
+/// Names `signed`, the main-log entry that signed `change`, on its change row, in the caller's
+/// write (the signed act's savepoint, [`super::signed_act`]).
+pub(super) fn record_signed_entry_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    change: &SettingChange,
+    signed: AuthorityEntryHash,
+) -> Result<()> {
+    CHANGES.put(
+        store,
+        txn,
+        &change.sequence,
+        &SettingChange {
+            signed: Some(signed),
+            ..change.clone()
+        },
+    )
 }
 
 /// The change of sequence `sequence`, while it stands: the record of the act that wrote the row a

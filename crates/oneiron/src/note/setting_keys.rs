@@ -2,7 +2,7 @@
 //! in the setting catalogue.
 
 use super::write_gate::AUTO_NOTE_MIN_CHARS;
-use crate::setting::{Kind, higher_is_tighter};
+use crate::setting::Kind;
 
 fn default_agent_min_chars() -> u32 {
     u32::try_from(AUTO_NOTE_MIN_CHARS).unwrap_or(u32::MAX)
@@ -13,6 +13,6 @@ crate::setting::setting_keys! {
     /// auto-note length): Unicode scalar values of the trimmed markdown. 0 turns the floor off; a
     /// person's or the engine's own NOTE has none, and a kind that never feeds extraction sets none.
     pub(crate) AGENT_NOTE_MIN_CHARS: u32 = "note.birth.agent_min_chars" {
-        kind: Kind::new(default_agent_min_chars).tighter(higher_is_tighter::<u32>),
+        kind: Kind::new(default_agent_min_chars).higher(),
     };
 }

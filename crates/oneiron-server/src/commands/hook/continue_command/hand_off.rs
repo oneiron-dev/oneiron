@@ -1,9 +1,11 @@
 //! The workspace half of `oneiron continue --cloud` (census L10-17): a
 //! hand-off commit of the working tree as git sees it, built in an index of
-//! its own, and its push to the hosted vault's custody repo.
+//! its own, and its push to the hosted vault's custody repo, the Git-LFS
+//! objects of the pointers it adds first ([`lfs`]).
 
 use std::ffi::{OsStr, OsString};
 use std::io::{IsTerminal as _, Read as _, Write as _};
+use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -13,6 +15,8 @@ use std::time::{Duration, Instant};
 use oneiron_vault_contract::BINDING_HEADER;
 
 use crate::commands::api::signed_binding_for_seed;
+
+mod lfs;
 
 /// Who a hand-off commit names when the repo names no one: git refuses a
 /// commit with no identity, and the hand-off is this command's own commit.
@@ -45,10 +49,9 @@ pub(crate) fn hand_off_commit(
 ) -> anyhow::Result<HandOff> {
     let top = repo_top(dir, deadline)?;
     // The repo's own index, wherever a worktree keeps it; relative to `top`.
-    let index = top.join(git(
+    let index = top.join(git_path(
         &top,
         ["rev-parse", "--git-path", "index"],
-        &[],
         deadline,
     )?);
     let scratch = tempfile::Builder::new()
@@ -81,12 +84,7 @@ pub(crate) fn hand_off_commit(
 
 /// The top directory of the repo that holds `dir`, as git names it.
 pub(super) fn repo_top(dir: &Path, deadline: Instant) -> anyhow::Result<PathBuf> {
-    Ok(PathBuf::from(git(
-        dir,
-        ["rev-parse", "--show-toplevel"],
-        &[],
-        deadline,
-    )?))
+    git_path(dir, ["rev-parse", "--show-toplevel"], deadline)
 }
 
 /// The custody repo a hand-off goes to, and the paired slip that pushes it.
@@ -107,12 +105,16 @@ pub(crate) struct CustodyRepo<'a> {
 /// request it admits), and stock git repeats one static header on every
 /// request of a push. So the ref advertisement and the push each carry the
 /// slip and a fresh proof; the pack is `git pack-objects` of what the commit
-/// reaches and the advertised refs do not. The ref is the conversation's own
-/// hand-off ref, so a later hand-off of it replaces it whatever it held. The
-/// repo's pre-push hook does not run: it guards pushes to the user's own
-/// remotes, and a hand-off ref is none of them. The requests go straight to
-/// the vault, never through a proxy the environment names: they carry the
-/// slip, a fresh proof and the workspace. Each request ends by `deadline`.
+/// reaches and the advertised refs do not. Before the pack, the Git-LFS
+/// objects of the pointers the push adds go up through the custody repo's
+/// LFS door, each request with the slip and a fresh proof too
+/// ([`lfs::send_objects`]): the landing refuses a pointer whose object the
+/// vault lacks. The ref is the conversation's own hand-off ref, so a later
+/// hand-off of it replaces it whatever it held. The repo's pre-push hook does
+/// not run: it guards pushes to the user's own remotes, and a hand-off ref is
+/// none of them. The requests go straight to the vault, never through a proxy
+/// the environment names: they carry the slip, a fresh proof and the
+/// workspace. Each request ends by `deadline`.
 pub(crate) fn push(
     top: &Path,
     custody: &CustodyRepo<'_>,
@@ -154,11 +156,35 @@ pub(crate) fn push(
     if old == commit {
         return Ok(());
     }
+    let held = held(
+        top,
+        advertised.refs.iter().map(|(oid, _)| oid.as_str()),
+        deadline,
+    )?;
+    let old_tip = if old.bytes().all(|byte| byte == b'0') {
+        lfs::OldTip::Created
+    } else if held.contains(&old) {
+        lfs::OldTip::Held(&old)
+    } else {
+        lfs::OldTip::Unheld
+    };
+    let unsent = lfs::send_objects(
+        top,
+        old_tip,
+        commit,
+        &lfs::LfsDoor {
+            client: &client,
+            base: &base,
+            proven: &proven,
+        },
+        deadline,
+    )?;
 
     let mut pack = Command::new("git")
         .arg("-C")
         .arg(top)
         .args(["pack-objects", "--stdout", "--revs", "--delta-base-offset"])
+        .env(STORED_OBJECTS.0, STORED_OBJECTS.1)
         .arg(if std::io::stderr().is_terminal() {
             "--progress"
         } else {
@@ -169,7 +195,7 @@ pub(crate) fn push(
         .stderr(Stdio::inherit())
         .spawn()?;
     let mut revisions = format!("{commit}\n");
-    for oid in held(top, advertised.refs.iter().map(|(oid, _)| oid.as_str()))? {
+    for oid in &held {
         revisions.push_str(&format!("^{oid}\n"));
     }
     pack.stdin
@@ -196,9 +222,14 @@ pub(crate) fn push(
     let packed = pack.wait()?;
     let report = answered(sent?, RESULT_TYPE)?;
     anyhow::ensure!(packed.success(), "git pack-objects failed ({packed})");
-    pushed(&report, git_ref)
+    pushed(&report, git_ref).map_err(|refused| lfs::naming_unsent(refused, &unsent))
 }
 
+/// Git reads each object as stored, never through a `refs/replace/` stand-in
+/// of this repo: the pack, the Git-LFS pointers read beside it and the custody
+/// repo's pre-receive (which reads with `--no-replace-objects`) then all name
+/// the same bytes.
+const STORED_OBJECTS: (&str, &str) = ("GIT_NO_REPLACE_OBJECTS", "1");
 /// The receive-pack advertisement's content type.
 const ADVERTISEMENT_TYPE: &str = "application/x-git-receive-pack-advertisement";
 /// The receive-pack request's content type.
@@ -317,35 +348,25 @@ fn pkt_line(payload: &str) -> Vec<u8> {
 }
 
 /// Which of `oids` this repo holds as commits, so the pack leaves out what
-/// they reach.
-fn held<'a>(top: &Path, oids: impl Iterator<Item = &'a str>) -> anyhow::Result<Vec<String>> {
+/// they reach. It ends by `deadline` ([`run_git_fed`]).
+fn held<'a>(
+    top: &Path,
+    oids: impl Iterator<Item = &'a str>,
+    deadline: Instant,
+) -> anyhow::Result<Vec<String>> {
     let asked: String = oids.map(|oid| format!("{oid}^{{commit}}\n")).collect();
     if asked.is_empty() {
         return Ok(Vec::new());
     }
-    let mut check = Command::new("git")
-        .arg("-C")
-        .arg(top)
-        .args(["cat-file", "--batch-check=%(objectname) %(objecttype)"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
-    let mut stdin = check
-        .stdin
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("no stdin for git cat-file"))?;
-    // Fed apart from the read, so a long answer never stalls the question.
-    let fed = std::thread::spawn(move || stdin.write_all(asked.as_bytes()));
-    let output = check.wait_with_output()?;
-    fed.join()
-        .map_err(|_| anyhow::anyhow!("feeding git cat-file failed"))??;
-    anyhow::ensure!(
-        output.status.success(),
-        "git cat-file failed ({})",
-        output.status
-    );
-    Ok(String::from_utf8_lossy(&output.stdout)
+    let ran = run_git_fed(
+        top,
+        ["cat-file", "--batch-check=%(objectname) %(objecttype)"],
+        &[],
+        Some(asked.into_bytes()),
+        deadline,
+    )?;
+    anyhow::ensure!(ran.status.success(), "git cat-file failed ({})", ran.status);
+    Ok(String::from_utf8_lossy(&ran.stdout)
         .lines()
         .filter_map(|line| line.strip_suffix(" commit"))
         .map(str::to_owned)
@@ -407,6 +428,25 @@ where
     Ok(String::from_utf8_lossy(&ran.stdout).trim().to_owned())
 }
 
+/// `git -C dir <args>`'s stdout as a path, byte for byte but for the newline
+/// git ends it with: a path may hold any byte but NUL, so it is never decoded
+/// as UTF-8 or trimmed. A failure names git's own words. It ends by
+/// `deadline` ([`run_git`]).
+fn git_path<I, S>(dir: &Path, args: I, deadline: Instant) -> anyhow::Result<PathBuf>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let ran = run_git(dir, args, &[], deadline)?;
+    anyhow::ensure!(
+        ran.status.success(),
+        "git: {}",
+        String::from_utf8_lossy(&ran.stderr).trim()
+    );
+    let path = ran.stdout.strip_suffix(b"\n").unwrap_or(&ran.stdout);
+    Ok(PathBuf::from(OsStr::from_bytes(path)))
+}
+
 /// How one git run ended, with what it wrote.
 struct GitRun {
     status: ExitStatus,
@@ -429,6 +469,23 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    run_git_fed(dir, args, env, None, deadline)
+}
+
+/// [`run_git`] with `input`, when there is one, written to git's stdin on a
+/// thread of its own, so a long answer never stalls the question; a git that
+/// stops reading ends the write, and its status says why.
+fn run_git_fed<I, S>(
+    dir: &Path,
+    args: I,
+    env: &[(OsString, OsString)],
+    input: Option<Vec<u8>>,
+    deadline: Instant,
+) -> anyhow::Result<GitRun>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
     let args: Vec<OsString> = args
         .into_iter()
         .map(|arg| arg.as_ref().to_owned())
@@ -438,11 +495,20 @@ where
         .arg(dir)
         .args(&args)
         .envs(env.iter().map(|(name, value)| (name, value)))
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0)
         .spawn()?;
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(&input);
+        });
+    }
     let stdout = drained(child.stdout.take());
     let stderr = drained(child.stderr.take());
     let left = || deadline.saturating_duration_since(Instant::now());
@@ -495,4 +561,37 @@ fn stop_group(child: &mut Child) {
         let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
     }
     let _ = child.wait();
+}
+
+/// Seam for `tests/continue_command.rs`, reached through
+/// `crate::test_doors::continue_command`: the push of a hand-off commit to a
+/// custody repo the test serves.
+#[cfg(oneiron_test_support)]
+pub(crate) mod test_support {
+    use super::*;
+
+    /// Builds the hand-off commit of the repo that holds `dir` and pushes it
+    /// to `git_ref` of the custody repo `repo` at `origin` with the slip
+    /// `token` and its holder `seed`, as `continue --cloud` does, Git-LFS
+    /// objects first; answers the commit.
+    pub fn push_hand_off(
+        dir: &Path,
+        origin: &str,
+        repo: &str,
+        (token, seed): (&str, &str),
+        git_ref: &str,
+    ) -> Result<String, String> {
+        let deadline = Instant::now() + super::super::DEADLINE;
+        let hand_off = hand_off_commit(dir, "a test hand-off", deadline)
+            .map_err(|error| format!("{error:#}"))?;
+        let custody = CustodyRepo {
+            origin,
+            repo,
+            token,
+            seed,
+        };
+        push(&hand_off.top, &custody, &hand_off.commit, git_ref, deadline)
+            .map_err(|error| format!("{error:#}"))?;
+        Ok(hand_off.commit)
+    }
 }

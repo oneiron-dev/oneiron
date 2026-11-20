@@ -1,7 +1,7 @@
 //! Memory watches' owner Setting keys (DESIGN 15-setting-primitive): rows the setting
 //! catalogue reads from this file.
 
-use crate::setting::{Kind, lower_is_tighter};
+use crate::setting::Kind;
 
 /// Off: only the vault owner sets, clears and reads a per-claim watch.
 fn owner_watches_alone() -> bool {
@@ -18,6 +18,6 @@ crate::setting::setting_keys! {
     pub(crate) MEMORY_WATCH_AGENT_MAY_WATCH: bool = "memory.watch.agent_may_watch" {
         kind: Kind::new(owner_watches_alone)
             .strictest(owner_watches_alone)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
     };
 }

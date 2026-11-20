@@ -444,6 +444,15 @@ impl ScopedRead<'_> {
         FrozenReadLane::freeze(self)
     }
 
+    /// This lane, frozen in the caller's snapshot `txn` of its vault
+    /// ([`FrozenReadLane::freeze_in`]).
+    ///
+    /// # Errors
+    /// As [`FrozenReadLane::freeze`].
+    pub(crate) fn freeze_in(&self, txn: &heed::RoTxn<'_>) -> Result<FrozenReadLane> {
+        FrozenReadLane::freeze_in(self, txn)
+    }
+
     /// Which of `sets` resolve whole for this lane, as
     /// [`Self::refs_readable_each`] judges them, and the scope ids this
     /// lane's own bounds cover, both in one snapshot (FIX 12285): what a

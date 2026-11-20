@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingValue, higher_is_tighter, lower_is_tighter};
+use crate::setting::{Kind, SettingValue};
 
 /// A pace of the identity pass, at least one: a count of tag sets or asks, or seconds.
 #[derive(
@@ -75,19 +75,19 @@ crate::setting::setting_keys! {
     pub(crate) SCAN_TURNS: IdentityPace = "dreamer.identity.scan_turns" {
         kind: Kind::new(scan_turns_default)
             .strictest(least_pace)
-            .tighter(lower_is_tighter::<IdentityPace>),
+            .lower(),
     };
     /// Identity asks open at once, besides those kept separate (64 by default). Past this a pass
     /// stops at the turn that would open one, and the next pass starts there.
     pub(crate) MAX_OPEN_ASKS: IdentityPace = "dreamer.identity.max_open_asks" {
         kind: Kind::new(max_open_asks_default)
             .strictest(least_pace)
-            .tighter(lower_is_tighter::<IdentityPace>),
+            .lower(),
     };
     /// Seconds a failed identity decision waits before the host tries it again (3600 by default).
     pub(crate) RETRY_SECS: IdentityPace = "dreamer.identity.retry_secs" {
         kind: Kind::new(retry_secs_default)
             .strictest(longest_retry_secs)
-            .tighter(higher_is_tighter::<IdentityPace>),
+            .higher(),
     };
 }

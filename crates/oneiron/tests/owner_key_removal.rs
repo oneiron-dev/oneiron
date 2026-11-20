@@ -3240,3 +3240,154 @@ fn an_image_of_a_ring_of_removals_names_each_crossed_removal() {
         "a later image keeps the ring's removals as crossed"
     );
 }
+
+/// A removal that crossed another and that the fold refused for a row below
+/// it, not for its own signer, still lists: its key ended, so the owner's
+/// list says why (row OWNER-KEY-CHANGES-CROSSED-REMOVAL-BELOW-REFUSED-ROW,
+/// Engine ANSWER 20 Nov 20:44 = A). From one past, A removes B on one branch;
+/// on another, B removes D and C removes A on top of that. A's removal fences
+/// B, so it refuses B's removal of D and, with it, C's removal of A, which
+/// stands on that row; C's removal fences A, so it refuses A's removal of B.
+/// The two fences close together: A and B end, and C and D stay. The list
+/// names A's removal of B as removed by an ended key, and C's removal of A as
+/// a change of its own kind that C signed: C did not end.
+#[test]
+fn a_crossing_removal_refused_for_a_row_below_it_shows_in_the_changes_list() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let install = removal_vault.install();
+    let [a, b, c, d] = [111, 112, 113, 114].map(signing);
+    let [a_key, b_key, c_key, d_key] = [&a, &b, &c, &d].map(|signing_key| {
+        removal_vault
+            .enrol_owner_key_on_machine(install, signing_key)
+            .0
+    });
+    let parents = removal_vault.authority_heads();
+    assert!(
+        !parents.is_empty(),
+        "the three removals have their common past"
+    );
+    let sequence = |signing_key: &SigningKey| {
+        removal_vault.next_sequence_for(&AuthorityKey::Ed25519(
+            signing_key.verifying_key().to_bytes(),
+        ))
+    };
+    let now = removal_vault.clock.now();
+    let (a_removes_b, a_removes_b_hash) =
+        removal_vault.sibling_revoke_row(parents.clone(), sequence(&a), &a, b_key, now);
+    let (b_removes_d, b_removes_d_hash) =
+        removal_vault.sibling_revoke_row(parents, sequence(&b), &b, d_key, now);
+    let (c_removes_a, c_removes_a_hash) =
+        removal_vault.sibling_revoke_row(vec![b_removes_d_hash], sequence(&c), &c, a_key, now);
+    let batch: Vec<(AuthorityLogEntry, TimeRange, u64)> = [a_removes_b, b_removes_d, c_removes_a]
+        .into_iter()
+        .map(|entry| {
+            (
+                entry,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )
+        })
+        .collect();
+    removal_vault
+        .vault
+        .put_authority_log_entries(&batch)
+        .expect("the three removals land in one batch");
+    let fold = removal_vault
+        .vault
+        .authority_fold()
+        .expect("authority fold");
+    for (removal, row) in [
+        (a_removes_b_hash, "A's removal of B"),
+        (b_removes_d_hash, "B's removal of D"),
+        (c_removes_a_hash, "C's removal of A"),
+    ] {
+        assert!(
+            !fold.valid_entries.contains(&removal),
+            "guard: the fold counts none of the three removals: {row}"
+        );
+    }
+    for (removal, row) in [
+        (a_removes_b_hash, "A's removal of B"),
+        (b_removes_d_hash, "B's removal of D"),
+    ] {
+        assert!(
+            fold.issues
+                .contains(&AuthorityFoldIssue::RetiredSigner(removal)),
+            "guard: the fold refused {row} for its signer: {:?}",
+            fold.issues
+        );
+    }
+    assert!(
+        fold.issues
+            .contains(&AuthorityFoldIssue::InvalidAncestry(c_removes_a_hash))
+            && !fold
+                .issues
+                .contains(&AuthorityFoldIssue::RetiredSigner(c_removes_a_hash)),
+        "guard: the fold refused C's removal of A for the row below it, not for its signer: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        fold.crossed_revocations,
+        BTreeSet::from([a_removes_b_hash, c_removes_a_hash]),
+        "guard: A's removal of B and C's removal of A crossed; B's removal of D yielded"
+    );
+    let enrolled_keys = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys");
+    let live = |key: [u8; 32]| {
+        enrolled_keys
+            .iter()
+            .find(|enrolled| enrolled.public_key == key)
+            .expect("the key is enrolled")
+            .live
+    };
+    assert!(
+        !live(a_key) && !live(b_key),
+        "guard: the crossing ends keys A and B"
+    );
+    assert!(live(c_key) && live(d_key), "guard: keys C and D stay");
+    let changes = removal_vault
+        .vault
+        .owner_key_changes(&removal_vault.owner)
+        .expect("the owner reads the key changes");
+    assert!(
+        changes.iter().any(|change| change.entry == a_removes_b_hash
+            && change.public_key == AuthorityKey::Ed25519(b_key)
+            && change.signed_by == AuthorityKey::Ed25519(a.verifying_key().to_bytes())
+            && change.change == OwnerKeyChangeKind::RemovedByEndedKey),
+        "guard: A's removal of B shows as RemovedByEndedKey, signed by A: {changes:?}"
+    );
+    assert!(
+        changes
+            .iter()
+            .all(|change| change.entry != b_removes_d_hash),
+        "guard: B's removal of D, which yielded and ended nothing, lists nothing: {changes:?}"
+    );
+    let line = changes
+        .iter()
+        .find(|change| change.entry == c_removes_a_hash)
+        .unwrap_or_else(|| {
+            panic!("C's removal of A conflicted and key A ended, so the list names it: {changes:?}")
+        });
+    assert_eq!(
+        line.public_key,
+        AuthorityKey::Ed25519(a_key),
+        "the line names key A"
+    );
+    assert_eq!(
+        line.signed_by,
+        AuthorityKey::Ed25519(c.verifying_key().to_bytes()),
+        "the line names C, whose key stands, as its signer"
+    );
+    assert_eq!(
+        line.change,
+        OwnerKeyChangeKind::RemovedInConflict,
+        "the line is a removal in conflict: the vault counted no removal of A, and C did not \
+         end: {line:?}"
+    );
+}

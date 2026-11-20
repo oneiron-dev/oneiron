@@ -47,8 +47,9 @@ impl<'v> ScopedRead<'v> {
     }
 
     /// [`Self::refs_readable_each`] in the caller's snapshot `rtxn`, opened
-    /// as [`Self::grant_read_txn`] opens one.
-    pub(super) fn refs_readable_each_in(
+    /// as [`Self::with_grant_read_snapshot`] opens one, so a door that reads
+    /// its items and judges their rows does both at one instant.
+    pub(crate) fn refs_readable_each_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         sets: &[Vec<EntityId>],
@@ -122,7 +123,7 @@ impl<'v> ScopedRead<'v> {
     ) -> Result<bool> {
         // A read by id matches no meaning, so it takes the row predicate
         // alone; the doors that find rows take the TURN rule as well
-        // (`is_entity_retrievable_with_policy_in`).
+        // (`is_entity_retrievable_held_in`).
         let filter = self.actor_retrieval_floor(policy)?;
         let authority = HeldAuthority::for_request(None);
         self.is_entity_readable_held_in(rtxn, policy, id, &filter, &authority)

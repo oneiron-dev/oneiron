@@ -1,9 +1,8 @@
 //! Vault commitment write verbs over the gated claim path.
 
 use crate::ports::EntityStoreRead;
-use std::sync::atomic::Ordering;
 
-use crate::batch::{ApplyOpsGateMode, BatchOp, EntityMetadataHeader, apply_ops_with_gate_mode};
+use crate::batch::{ApplyOpsGateMode, BatchOp, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -316,10 +315,7 @@ fn apply_commitment_ops(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<()> {
-    apply_ops_with_gate_mode(
-        &vault.store,
-        &vault.config,
-        &vault.analyzer,
+    vault.apply_ops_restoring_claim_subjects_in_txn(
         wtxn,
         vec![
             BatchOp::ClaimCandidate {
@@ -335,7 +331,6 @@ fn apply_commitment_ops(
                 keep: Vec::new(),
             },
         ],
-        vault.text_index_trusted.load(Ordering::Acquire),
         ApplyOpsGateMode::new(true, true).with_source_in_gate_input(),
     )
 }

@@ -1,7 +1,7 @@
 //! The setting keys `deletion` declares (DESIGN 15-setting-primitive): the crate's build script
 //! lists each row in the setting catalogue.
 
-use crate::setting::{Kind, higher_is_tighter};
+use crate::setting::Kind;
 
 /// On: a delete under a live brief share goes through the confirmed door.
 const fn brief_share_delete_confirmed() -> bool {
@@ -23,7 +23,7 @@ crate::setting::setting_keys! {
     pub(crate) COOP_DELIVERY_GIVE_UP_SECS: u64 = "deletion.coop_delivery.give_up_secs" {
         kind: Kind::new(courtesy_delete_give_up_default)
             .strictest(courtesy_delete_give_up_default)
-            .tighter(higher_is_tighter::<u64>),
+            .higher(),
     };
     /// Whether the owner's delete of a record under a live brief share must go through the
     /// confirmed door, which shows what the delete retracts before it runs. On by default: the
@@ -34,6 +34,6 @@ crate::setting::setting_keys! {
     pub(crate) BRIEF_SHARE_REQUIRES_CONFIRMED: bool = "deletion.brief_share.require_confirmed" {
         kind: Kind::new(brief_share_delete_confirmed)
             .strictest(brief_share_delete_confirmed)
-            .tighter(higher_is_tighter::<bool>),
+            .higher(),
     };
 }

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::gpu_pod_hours::PodHoursWait;
 use super::space_move::SPACE_MOVE_UNDO_WINDOW_SECS;
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, SettingValue};
 
 /// The longest undo window a value may name: ten years, in seconds.
 pub(crate) const SPACE_MOVE_UNDO_WINDOW_CEILING_SECS: u64 = 10 * 365 * 24 * 60 * 60;
@@ -58,7 +58,7 @@ crate::setting::setting_keys! {
     pub(crate) SPACE_MOVE_UNDO_WINDOW: SpaceMoveUndoWindowSecs = "embed.space_move.undo_window_secs" {
         kind: Kind::new(thirty_days)
             .strictest(thirty_days)
-            .tighter(lower_is_tighter::<SpaceMoveUndoWindowSecs>),
+            .lower(),
     };
 
     /// Wait for the night box: which queued embeds wait for the GPU pods' hours while every pod
@@ -67,6 +67,6 @@ crate::setting::setting_keys! {
     pub(crate) POD_HOURS_WAIT: PodHoursWait = "embed.pod_hours_wait" {
         kind: Kind::new(backfill_only)
             .strictest(everything)
-            .tighter(PodHoursWait::holds_at_least_as_much),
+            .custom(PodHoursWait::holds_at_least_as_much),
     };
 }

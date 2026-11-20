@@ -370,18 +370,99 @@ pub(crate) fn read_authority_clock_floor_in_txn(
     }
 }
 
+thread_local! {
+    /// The authority readings this thread holds, innermost last: the store
+    /// and the snapshot each was read in, by address, and the reading
+    /// ([`hold_authority_reading_in_txn`]).
+    static HELD_READINGS: std::cell::RefCell<Vec<(usize, usize, u64)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// One reading of a store's authority clock, held on this thread for one
+/// snapshot while a reply read in it is judged (FIX
+/// QUESTION-OUTCOMES-REPLY-SPANS-SNAPSHOTS, blind review round 2 of #9864).
+/// While it is held, every reading of that store's clock in that snapshot on
+/// this thread ([`authority_clock_reading_in_txn`]) is this one: each
+/// credential, slip and grant the reply judges, under its caller's lane and
+/// under each saved lane, is judged at one second, so an expiry that falls
+/// while the reply is read drops every item it bounds or none. The floor
+/// does not move inside one snapshot, so the held reading never sits below
+/// it. A writer's reading ([`advance_authority_clock_in_txn`]) never takes
+/// it.
+#[must_use = "the snapshot reads the held second only while this is held"]
+pub(crate) struct HeldAuthorityReading {
+    store: usize,
+    txn: usize,
+}
+
+/// Holds `store`'s authority reading in `txn` on this thread until the guard
+/// drops ([`HeldAuthorityReading`]). A reading already held for the same
+/// snapshot stays the one read.
+///
+/// # Errors
+///
+/// As [`authority_clock_reading_in_txn`].
+pub(crate) fn hold_authority_reading_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> crate::error::Result<HeldAuthorityReading> {
+    let secs = authority_clock_reading_in_txn(store, txn, store.clock.now_recorded_at())?;
+    let held = HeldAuthorityReading {
+        store: std::ptr::from_ref(store).addr(),
+        txn: std::ptr::from_ref(txn).addr(),
+    };
+    HELD_READINGS.with(|readings| {
+        readings.borrow_mut().push((held.store, held.txn, secs));
+    });
+    Ok(held)
+}
+
+impl Drop for HeldAuthorityReading {
+    fn drop(&mut self) {
+        HELD_READINGS.with(|readings| {
+            let mut readings = readings.borrow_mut();
+            if let Some(at) = readings
+                .iter()
+                .rposition(|(store, txn, _)| *store == self.store && *txn == self.txn)
+            {
+                readings.remove(at);
+            }
+        });
+    }
+}
+
+/// The reading this thread holds for `store`'s clock in `txn`, when it holds
+/// one.
+fn held_authority_reading(store: &crate::store::Store, txn: &heed::RoTxn<'_>) -> Option<u64> {
+    let (store, txn) = (
+        std::ptr::from_ref(store).addr(),
+        std::ptr::from_ref(txn).addr(),
+    );
+    HELD_READINGS.with(|readings| {
+        readings
+            .borrow()
+            .iter()
+            .find(|(held_store, held_txn, _)| *held_store == store && *held_txn == txn)
+            .map(|(_, _, secs)| *secs)
+    })
+}
+
 /// The authority clock's reading for `candidate_wall_secs` in `txn`: the
 /// floor read strictly ([`read_authority_clock_floor_in_txn`]), raised
 /// through [`authority_observation_secs`]. Over a damaged floor it is this
 /// handle's anchored reading, a clock it measured from a floor it read whole;
 /// with no anchor it is [`RecordError::AuthorityClockCorrupt`], but inside a
 /// restriction-only act (CALLS `FIX 10106 authority clock corrupt policy`).
-/// Pure: it writes nothing.
+/// While this thread holds a reading of `store`'s clock in `txn`
+/// ([`HeldAuthorityReading`]), it is that one. Pure: it writes nothing.
 pub(crate) fn authority_clock_reading_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     candidate_wall_secs: u64,
 ) -> crate::error::Result<u64> {
+    if let Some(held) = held_authority_reading(store, txn) {
+        return Ok(held);
+    }
     match read_authority_clock_floor_in_txn(store, txn) {
         Ok(floor) => Ok(authority_observation_secs(
             store,

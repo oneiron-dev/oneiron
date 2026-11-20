@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, SettingValue};
 
 /// Off: drafts pre-fill `always ask` or `never allow` only, as ARCH-0072 says.
 fn drafts_never_offer() -> bool {
@@ -55,14 +55,14 @@ crate::setting::setting_keys! {
     pub(crate) DRAFTS_OFFER_ALWAYS_ALLOW: bool = "connectors.slate.drafts_offer_always_allow" {
         kind: Kind::new(drafts_never_offer)
             .strictest(drafts_never_offer)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
     };
 
     /// How many memory rows each turn through the OpenAI-compatible proxy recalls at most: 8
     /// unless the owner sets it, at least 1. The rows reach the proxied model as data, under the
     /// same read destination checks as before; only how many may come changes.
     pub(crate) OPENAI_PROXY_RECALL_LIMIT: ProxyRecallRows = "proxy.openai.recall_limit" {
-        kind: Kind::new(default_openai_proxy_recall_limit).tighter(lower_is_tighter),
+        kind: Kind::new(default_openai_proxy_recall_limit).lower(),
     };
 }
 

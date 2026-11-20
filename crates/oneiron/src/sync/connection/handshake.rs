@@ -17,11 +17,12 @@ use super::session::SessionFault;
 use super::{LocalUpdate, LoopExit, SyncConnection};
 
 mod acks;
+mod forbidden_park;
 mod replay;
 mod resync_markers;
 mod upgrade;
 
-pub(super) use self::upgrade::upgrade_request;
+pub(super) use self::upgrade::{upgrade_carries_credential, upgrade_request};
 
 impl SyncConnection {
     /// Queue-overflow check, run between reconnect attempts.
@@ -190,6 +191,10 @@ impl SyncConnection {
         self.running.send_replace(true);
         // Every connection's upkeep, owned here across reconnects (FIX 12785).
         let mut upkeep = super::steady::UpkeepTasks::default();
+        // Whether the home refused this credential the socket, on a dial or a
+        // peer session's probe (MEMBER-SELECTOR-SOCKET): the run never
+        // redials on it, and parks below once its loop has ended.
+        let mut forbidden = false;
 
         loop {
             // A member who left the shared vault this env holds never
@@ -298,7 +303,26 @@ impl SyncConnection {
                             reach.home_returned();
                             home_returned = true;
                         }
+                        // The home refused this credential a peer session's
+                        // probe (MEMBER-SELECTOR-SOCKET): the peer session
+                        // ends, and the run stops as on a home dial's 403.
+                        LoopExit::Forbidden => {
+                            let _ =
+                                event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
+                            forbidden = true;
+                            break;
+                        }
                     }
+                }
+                // The home refused this credential the socket
+                // (MEMBER-SELECTOR-SOCKET): the run never redials on it, and
+                // the home counts neither served nor down, so no peer
+                // session follows.
+                Err(e) if e.is_forbidden() => {
+                    let _ = event_tx.send(SyncEvent::Error(format!("Connection failed: {e}")));
+                    let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
+                    forbidden = true;
+                    break;
                 }
                 Err(e) => {
                     // The first peer is dialed on the first backoff step, not
@@ -358,6 +382,20 @@ impl SyncConnection {
             receipt.close(self.manager.vault());
         }
         client.reset_root_parts();
+        // A refused credential (MEMBER-SELECTOR-SOCKET) parks the run until
+        // its shutdown or a confirmed leave, its sink attached and each
+        // commit queued as it arrives (forbidden_park.rs); the run then ends
+        // as below. A host that renews the credential opens a new connection
+        // on it (device sync, FIX 3377).
+        if forbidden && self.config.auto_reconnect {
+            self.park_forbidden(
+                &mut local_rx,
+                &mut debounce_buffer,
+                &mut shutdown_rx,
+                &mut left_rx,
+            )
+            .await;
+        }
         // Detach before draining: the sink serializes sends with detach, so
         // this receiver's backlog is finite and no update can arrive later.
         self.manager.outbound().detach(attachment);

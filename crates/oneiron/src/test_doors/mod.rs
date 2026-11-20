@@ -253,6 +253,7 @@ pub mod outbound_wait_setting_keys;
 pub mod own_device_grant;
 pub mod own_device_message_replay;
 pub mod owner_device_answer;
+pub mod owner_exemption_judgements;
 pub mod owner_key_enrolment_read;
 pub mod owner_key_line;
 pub mod owner_key_release;
@@ -336,6 +337,8 @@ pub mod skill_package;
 pub mod skill_read_hold;
 pub mod slack_install_rows;
 pub mod slate_scope_signals;
+#[cfg(feature = "sync")]
+pub mod slim_drop_note_scrub;
 pub mod slip_store_fault;
 pub mod snapshot_page_accounting;
 pub mod sound_match_birth;
@@ -380,6 +383,8 @@ pub mod world_access;
 #[cfg(feature = "sync")]
 pub mod world_follow;
 pub mod world_key_record_signature;
+#[cfg(feature = "sync")]
+pub use crate::sync::connection::home_probe;
 #[cfg(feature = "sync")]
 pub use crate::sync::connection::sync_outbox;
 #[cfg(feature = "sync")]

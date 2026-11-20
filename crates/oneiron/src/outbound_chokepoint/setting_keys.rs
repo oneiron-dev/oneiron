@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingValue, higher_is_tighter};
+use crate::setting::{Kind, SettingValue};
 
 /// The shipped semantic dedupe window: 24 hours.
 pub(crate) const DEFAULT_DEDUPE_COOLDOWN_SECS: u64 = 86_400;
@@ -53,6 +53,6 @@ crate::setting::setting_keys! {
     pub(crate) DEDUPE_COOLDOWN: DedupeCooldownSecs = "outbound.dedupe.cooldown_secs" {
         kind: Kind::new(shipped_cooldown)
             .strictest(shipped_cooldown)
-            .tighter(higher_is_tighter::<DedupeCooldownSecs>),
+            .higher(),
     };
 }

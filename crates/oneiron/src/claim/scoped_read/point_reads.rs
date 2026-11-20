@@ -717,7 +717,7 @@ impl ScopedRead<'_> {
     ) -> Result<bool> {
         Ok(self.audience_readable_in(txn, id)?
             && entity_type != crate::registry::ENTITY_TYPE_NOTE
-            && !(self.relationship_gated_in(txn)?
+            && !(self.relationship_gated_in(txn, authority)?
                 && matches!(
                     entity_type,
                     crate::registry::ENTITY_TYPE_CLAIM
