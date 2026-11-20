@@ -8,6 +8,7 @@
 //! (`weave_lens.rs`), whose render lands on the row.
 //! Glossary: `WeaveDigestSchedule` is one reader's digest cadence and due
 //! time; it is not the commitment `Schedule` in `crate::commitment_schedule`.
+use super::access_gate::HeldAuthority;
 use super::weave_lens::{
     KeptLiveLens, WeaveLensRefusal, WeaveLensRender, settle_live_weave_lens, settle_weave_lens_axes,
 };
@@ -62,7 +63,7 @@ pub use settings::{
     WeaveDigestFeedback, WeaveDigestSettingAnswer, WeaveDigestSettingChange,
     WeaveDigestSettingChangeStatus, WeaveDigestSettingUndo, WeaveDigestSettings,
 };
-use wire::{WireDigest, WireSchedule, report_sources, source_key};
+use wire::{WireDigest, WireSchedule, item_sources, report_sources, source_key};
 
 #[doc(hidden)]
 use oneiron_verb_wire::claim::scoped_read::weave_digest::SCHEDULE_PREFIX;
@@ -1077,6 +1078,43 @@ impl ScopedRead<'_> {
         self.render_due_weave_digest_with(reader, now, || Ok(()))
     }
 
+    /// The live report under `held` in `txn` as a period saves it: each row
+    /// whose sources ([`item_sources`]) this read's row gate refuses is left
+    /// out, as a reopen of the period checks them
+    /// ([`Self::saved_weave_digest_in_txn`]) and withholds the whole period
+    /// for one. The live report keeps such a row: an owner's claim about an
+    /// agent reads under a Grant whose entity types leave out the agent's
+    /// own definition, which the reopen reads as the claim's subject.
+    pub(super) fn weave_report_publishable_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reader: WeaveReader<'_>,
+        recipe: &[WeaveSectionSpec],
+        held: &HeldAuthority,
+    ) -> Result<ScopedReadResult<WeaveReport>> {
+        let mut report = self.weave_report_held_in_txn(txn, reader, recipe, held)?;
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        for section in &mut report.value.sections {
+            let mut kept = Vec::with_capacity(section.items.len());
+            for item in std::mem::take(&mut section.items) {
+                let mut sources = std::collections::BTreeSet::new();
+                item_sources(&item, &mut sources)?;
+                let mut reopens = true;
+                for source in &sources {
+                    if !self.is_entity_retrievable_held_in(txn, &policy, &filter, source, held)? {
+                        reopens = false;
+                        break;
+                    }
+                }
+                if reopens {
+                    kept.push(item);
+                }
+            }
+            section.items = kept;
+        }
+        Ok(report)
+    }
+
     // The callback is used only by same-module tests to place a concurrent
     // mutation precisely between projection and the publication transaction.
     fn render_due_weave_digest_with(
@@ -1174,7 +1212,7 @@ impl ScopedRead<'_> {
             // ledger gained since joins the next period (FIX 7694). One
             // authority for this writer's rows and its served copy.
             let held = self.held_for(None);
-            let current = self.weave_report_held_in_txn(txn, reader, &row.recipe, &held)?;
+            let current = self.weave_report_publishable_in_txn(txn, reader, &row.recipe, &held)?;
             if current.receipt != report.receipt
                 || !super::weave_lens::snapshot_still_served(&report.value, &current.value)
             {
