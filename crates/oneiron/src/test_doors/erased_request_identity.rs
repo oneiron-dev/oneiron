@@ -450,8 +450,7 @@ pub fn fenced_body_call_erased_before_is(
 }
 
 /// `call`'s request erased as an erase took it before FIX
-/// REQUEST-IDENTITY-NESTED-SHAPED-KEY-AS-WRITTEN: on the fix's base, the
-/// erase itself.
+/// REQUEST-IDENTITY-NESTED-SHAPED-KEY-AS-WRITTEN.
 fn erase_as_before(call: &mut CodeRunBridgeCall, custody: &CompareKnown<'_>) -> Result<bool> {
-    call.erase_request(custody)
+    call.erase_request_with_nested_bodies_as_written(custody)
 }
