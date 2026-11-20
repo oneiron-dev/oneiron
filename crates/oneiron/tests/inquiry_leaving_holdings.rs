@@ -19,6 +19,12 @@
 //!   nothing, no row leaves the ask for the owner, and the owner's own
 //!   answer is never rewritten. Filing erases nothing under any setting.
 //!   The owner's own delete choice runs through the same delete run.
+//! - review round 1 of #9902: a delete that erased a record a concurrent
+//!   pass read missing still saves it removed; the owner's own delete choice
+//!   over the setting's records takes the setting's operation over, and no
+//!   setting delete runs under it (the door case, cfg-gated);
+//! - review round 2 of #9902: a record a delete found gone reads removed by
+//!   its hard-delete marker.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test inquiry_leaving_holdings`.
 
@@ -29,7 +35,8 @@ use oneiron::authority::{
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::{
-    COOP_DELETION_PEER_PATH, CooperativeDeletionAnswer, CooperativeDeletionDeliveryStatus,
+    COOP_DELETION_PEER_PATH, CooperativeDeleteOperation, CooperativeDeleteRecordState,
+    CooperativeDeletionAnswer, CooperativeDeletionDeliveryStatus,
     CooperativeDeletionDispositionKind, CooperativeDeletionIngress,
     ERASE_REQUEST_SETTING_DECLINE_CODE, ERASE_REQUEST_SETTING_DECLINE_REVIEW_SECS,
     ERASE_REQUEST_SETTING_HONOUR_CODE, EraseRequestReply, EraseRequestReplySource,
@@ -1113,4 +1120,220 @@ fn the_owners_delete_choice_erases_what_it_names() {
         "nothing stays pending"
     );
     assert_eq!(fx.held_copies(), vec![copies[0]]);
+}
+
+/// Review round 2 of #8379: the leave action's nonce takes no hand-picked
+/// ask, not even one in the leave ask's own shape (the whole pact, at the
+/// terminal epoch), whose signer the peer may never have pinned.
+#[test]
+fn a_hand_picked_whole_pact_ask_cannot_take_the_leave_actions_nonce() {
+    let fx = leaving();
+    fx.land_copy();
+    fx.leave();
+    let pact = fx.pact();
+    let now = fx.member.vault.now_recorded_at();
+    let fold = fx.member.vault.authority_fold().expect("authority fold");
+    let ended = fold.federation_pacts.get(&pact).expect("the ended pact");
+    let terminal_epoch = ended.terminal_epoch.unwrap_or(ended.pact_epoch);
+    let whole_pact = fx
+        .member
+        .issuer
+        .sign_cooperative_deletion_request(
+            &fx.member.vault,
+            &pact,
+            Vec::new(),
+            terminal_epoch,
+            leave_ask_nonce(&pact, terminal_epoch),
+        )
+        .expect("the owner signs a whole-pact ask by hand");
+    assert_eq!(whole_pact.len(), 1, "one page");
+    let refused = fx
+        .member
+        .vault
+        .queue_cooperative_deletion_request_as(
+            &fx.member.proof,
+            &whole_pact[0],
+            &courtesy_route(COMPANY_HOST),
+            now,
+        )
+        .expect_err("only the leave action queues under its nonce");
+    assert!(
+        refused.to_string().contains("leave action"),
+        "refused as the leave action's nonce: {refused}"
+    );
+    assert!(
+        fx.member
+            .vault
+            .cooperative_deletion_notices()
+            .expect("sent asks")
+            .is_empty(),
+        "nothing queued"
+    );
+}
+
+/// Review round 1 of #9902: two passes run one pending record of the same
+/// operation. The pass whose delete found the copy gone settles it missing
+/// first; the pass whose delete erased it then still saves it removed, so
+/// the erased copy reads in `deleted`. A removed record stays removed.
+#[test]
+fn a_removed_record_outranks_a_concurrent_missing_read() {
+    let operation_id = EntityId::from_bytes([0x51; 16]).expect("an operation id");
+    let record = EntityId::from_bytes([0x52; 16]).expect("a record id");
+    let mut operation = CooperativeDeleteOperation::new(operation_id, &[record]);
+    assert!(
+        operation.settle(record, CooperativeDeleteRecordState::Missing),
+        "the pass whose delete found the copy gone settles first"
+    );
+    assert!(
+        operation.settle(record, CooperativeDeleteRecordState::Removed),
+        "the pass whose delete erased the copy still saves it"
+    );
+    assert_eq!(
+        operation.records[0].state,
+        CooperativeDeleteRecordState::Removed
+    );
+    assert_eq!(
+        operation.removed_hex(),
+        vec![record.to_hex()],
+        "the erased copy reads in deleted"
+    );
+    assert!(operation.pending().is_empty());
+    assert!(
+        !operation.settle(record, CooperativeDeleteRecordState::Missing),
+        "a removed record stays removed"
+    );
+    assert_eq!(
+        operation.records[0].state,
+        CooperativeDeleteRecordState::Removed
+    );
+}
+
+/// Review round 1 of #9902: the owner's own delete choice over the setting's
+/// records takes the setting's operation over but carries no reason code,
+/// so a setting delete a pass selected before it no longer runs.
+#[cfg(oneiron_test_support)]
+#[test]
+fn the_owners_delete_choice_over_the_settings_records_stops_the_setting_delete() {
+    let fx = leaving();
+    fx.land_copy();
+    fx.install_erase_request_reply(EraseRequestReply::Honour);
+    let filed = fx.file_leave_ask();
+    let pact = fx.pact();
+    let nonce = request_nonce(&filed.request_id);
+    let answered = fx
+        .company
+        .vault
+        .answer_filed_asks_by_setting(fx.company.vault.now_recorded_at())
+        .expect("the setting answers");
+    let setting = answered[0]
+        .disposition
+        .as_ref()
+        .and_then(|answer| answer.delete_operation.clone())
+        .expect("the setting's operation");
+    assert!(
+        oneiron::test_doors::inquiry::setting_delete_runs(
+            &fx.company.vault,
+            &pact,
+            &nonce,
+            setting.operation_id,
+        )
+        .expect("the check reads"),
+        "the setting's delete runs under its own choice"
+    );
+
+    let records: Vec<EntityId> = setting.records.iter().map(|saved| saved.record).collect();
+    let owners = fx
+        .company
+        .vault
+        .answer_cooperative_deletion_as(
+            &fx.company.proof,
+            &pact,
+            &nonce,
+            &CooperativeDeletionAnswer {
+                kind: CooperativeDeletionDispositionKind::Delete,
+                reason_code: None,
+                review_at: None,
+                delete: records,
+                hold: Vec::new(),
+                retention: None,
+                restrict: Vec::new(),
+                restriction_notice_given: Vec::new(),
+                redact: Vec::new(),
+            },
+            fx.company.vault.now_recorded_at(),
+        )
+        .expect("the company Owner deletes the same copies");
+    let answer = owners.disposition.as_ref().expect("the owner's answer");
+    assert_eq!(
+        answer
+            .delete_operation
+            .as_ref()
+            .map(|operation| operation.operation_id),
+        Some(setting.operation_id),
+        "the owner's choice takes the setting's operation over"
+    );
+    assert!(
+        answer.reason_code.is_none(),
+        "the owner's choice carries no reason code"
+    );
+    assert!(
+        !oneiron::test_doors::inquiry::setting_delete_runs(
+            &fx.company.vault,
+            &pact,
+            &nonce,
+            setting.operation_id,
+        )
+        .expect("the check reads"),
+        "no setting delete runs under the owner's choice"
+    );
+}
+
+/// Review round 2 of #9902: a delete that found its record gone saves it
+/// removed when the record's hard-delete marker is here, so a copy a
+/// concurrent run erased reads in `deleted` even when that run stopped
+/// before it settled. A hard delete that finds nothing local writes the
+/// marker too, so the owner's delete choice naming a record never stored
+/// here reads it removed, as the run's first check reads a marked record.
+#[test]
+fn a_record_a_delete_found_gone_reads_removed_by_its_marker() {
+    let fx = leaving();
+    let copies = fx.land_copy();
+    let filed = fx.file_leave_ask();
+    let absent = EntityId::from_bytes([0x53; 16]).expect("a record id");
+    let answered = fx
+        .company
+        .vault
+        .answer_cooperative_deletion_as(
+            &fx.company.proof,
+            &fx.pact(),
+            &request_nonce(&filed.request_id),
+            &CooperativeDeletionAnswer {
+                kind: CooperativeDeletionDispositionKind::Delete,
+                reason_code: None,
+                review_at: None,
+                delete: vec![copies[1], absent],
+                hold: Vec::new(),
+                retention: None,
+                restrict: Vec::new(),
+                restriction_notice_given: Vec::new(),
+                redact: Vec::new(),
+            },
+            fx.company.vault.now_recorded_at(),
+        )
+        .expect("the company Owner deletes a copy and a record never stored here");
+    let answer = answered.disposition.as_ref().expect("an answer");
+    assert!(
+        answer
+            .delete_operation
+            .as_ref()
+            .expect("the operation")
+            .pending()
+            .is_empty(),
+        "nothing stays pending"
+    );
+    assert_eq!(
+        answer.deleted,
+        vec![copies[1].to_hex(), absent.to_hex()],
+        "both read removed: the copy erased, the absent record by its marker"
+    );
 }

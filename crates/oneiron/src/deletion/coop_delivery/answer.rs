@@ -252,7 +252,11 @@ impl Vault {
     }
 
     /// Saves what became of `record` to operation `operation_id`, while it
-    /// is still the answer's.
+    /// is still the answer's. A record a delete found gone reads removed
+    /// when its hard-delete marker is here: a concurrent run's delete erased
+    /// it, and that run may stop before it settles (review round 2 of
+    /// #9902). A hard delete that found nothing local writes the marker too,
+    /// as the run's first check already reads any marked record removed.
     fn settle_courtesy_record(
         &self,
         key: &AskKey,
@@ -261,6 +265,13 @@ impl Vault {
         state: CooperativeDeleteRecordState,
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
+            let state = if state == CooperativeDeleteRecordState::Missing
+                && self.local_hard_delete_marker_exists_in_txn(txn, &record)?
+            {
+                CooperativeDeleteRecordState::Removed
+            } else {
+                state
+            };
             let Some(mut filed) = INCOMING.get(&self.store, txn, key)? else {
                 return Ok(());
             };
