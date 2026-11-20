@@ -358,13 +358,19 @@ impl Vault {
         let projects = map_project_root(self, &wtxn, &mut archive)?;
         omit_project_revisions(self, &mut archive)?;
         // ARCHIVE-IMPORT-ACTORLESS-SEATED-ROOM = B: every door but the owner's
-        // restore keeps an archived room it cannot seat as archive data, and
-        // every room the import keeps out keeps its speech out with it
-        // (`unseated_rooms`).
+        // restore keeps an archived room it cannot seat as archive data; the
+        // owner's restore keeps out a room whose archived ledger seat would
+        // not stand here (REVIEW-9446); and every room the import keeps out
+        // keeps its speech out with it (`unseated_rooms`).
         let mut room_omissions = if owner.is_none() {
             unseated_rooms::omit_rooms_not_seated_here(self, &wtxn, &mut archive)?
         } else {
-            Vec::new()
+            unseated_rooms::omit_rooms_owner_restore_cannot_seat(
+                self,
+                &wtxn,
+                &mut archive,
+                secrets,
+            )?
         };
         room_omissions.extend(unseated_rooms::omit_speech_of_omitted_rooms(&mut archive)?);
         // Each runtime pack row maps onto this vault's pack handles; the

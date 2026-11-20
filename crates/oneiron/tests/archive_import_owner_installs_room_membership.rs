@@ -38,6 +38,19 @@
 //!   into a vault that holds yuki's soft-deleted shell, each goes on, keeps the room out under
 //!   `RoomNotSeatedHere`, lands no ledger row and counts the three ledger envelopes held back
 //!   as `missing_live_entity`; owen still lands.
+//! * `an_incomplete_room_ledger_keeps_the_room_out_of_the_owner_restore` (REVIEW-9446 P1-3;
+//!   door `test_doors::archive_room_ledger`): the source's ledger lost its revision row, so
+//!   the archive carries two ledger rows and no `CONVERSATION_MEMBERSHIP_SEQ`; the owner
+//!   restore goes on, keeps the room out under `RoomNotSeatedHere` and counts the two rows
+//!   held back as `missing_companion`.
+//! * `a_join_visible_after_its_time_keeps_the_room_out_of_the_owner_restore` (REVIEW-9446
+//!   P1-4; same door): owen's archived Join opens his window ten units after his join, which
+//!   the membership door never writes; the owner restore goes on, keeps the room out and
+//!   counts the three ledger envelopes held back as `invalid_value`.
+//!
+//! Tests 5 and 6 use public doors only and run red at the review test commit (the round-1
+//! head with #9721 merged, plus tests 5 and 6), where tests 1-4 pass. Tests 7 and 8 use the
+//! door the fix commit adds and run green only.
 //!
 //! New report counts are read through `serde_json::to_value` of the SIDE-1 summary, so this
 //! file compiles where the landing is absent; an absent field fails its assertion as a
@@ -57,6 +70,7 @@ use oneiron::conversation::{
 use oneiron::deletion::LegalHoldTarget;
 use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::test_doors::archive_room_ledger;
 use oneiron::{
     EdgeActorClass, EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig, WriteActor,
 };
@@ -869,5 +883,111 @@ fn a_room_whose_member_is_no_live_person_here_stays_out_of_the_owner_restore() {
     assert!(
         stored(&shell, owen),
         "owen lands on a destination with yuki's shell"
+    );
+}
+
+#[test]
+fn an_incomplete_room_ledger_keeps_the_room_out_of_the_owner_restore() {
+    let (_source_dir, source) = open_source_vault();
+    let now = source.now_recorded_at();
+    let (room, owen, yuki) = seat_room(
+        &source,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+    );
+    archive_room_ledger::drop_room_ledger_sequence(&source, room)
+        .expect("FIXTURE: drop the source ledger's revision row");
+    let archive = export_whole(&source);
+    let rows = retained_rows(&archive);
+    assert_eq!(
+        room_tuples(&rows, "CONVERSATION_MEMBERSHIP_ROW", room),
+        2,
+        "FIXTURE: the archive carries the room's two ledger rows"
+    );
+    assert_eq!(
+        room_tuples(&rows, "CONVERSATION_MEMBERSHIP_SEQ", room),
+        0,
+        "FIXTURE: the archive carries no revision row for the room"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner_proof(&dest))
+        .expect("the owner restore goes on past a room whose ledger is incomplete");
+    assert_room_kept_out(&dest, &receipt, room, "the destination");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        held_back(&summary, "CONVERSATION_MEMBERSHIP_ROW"),
+        vec![("missing_companion".to_owned(), 2)],
+        "the two ledger rows are held back for their missing revision: {summary}"
+    );
+    assert!(
+        stored(&dest, owen) && stored(&dest, yuki),
+        "owen and yuki still land"
+    );
+}
+
+#[test]
+fn a_join_visible_after_its_time_keeps_the_room_out_of_the_owner_restore() {
+    let (_source_dir, source) = open_source_vault();
+    let now = source.now_recorded_at();
+    let (room, owen, yuki) = seat_room(
+        &source,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+    );
+    let joined = source
+        .membership_ledger(room)
+        .expect("FIXTURE: read the source ledger");
+    assert_eq!(
+        (joined[0].action, joined[0].person),
+        (MembershipAction::Join, owen),
+        "FIXTURE: row 0 is owen's Join"
+    );
+    archive_room_ledger::set_room_ledger_row_visible_from(
+        &source,
+        room,
+        0,
+        Some(joined[0].at + 10),
+    )
+    .expect("FIXTURE: open owen's window after his join");
+    let archive = export_whole(&source);
+    assert_eq!(
+        room_tuples(
+            &retained_rows(&archive),
+            "CONVERSATION_MEMBERSHIP_ROW",
+            room
+        ),
+        2,
+        "FIXTURE: the archive carries the room's two ledger rows"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner_proof(&dest))
+        .expect("the owner restore goes on past a room whose Join the door forbids");
+    assert_room_kept_out(&dest, &receipt, room, "the destination");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    for (table, rows) in [
+        ("CONVERSATION_MEMBERSHIP_ROW", 2),
+        ("CONVERSATION_MEMBERSHIP_SEQ", 1),
+    ] {
+        assert_eq!(
+            held_back(&summary, table),
+            vec![("invalid_value".to_owned(), rows)],
+            "the {table} envelopes are held back as an invalid ledger: {summary}"
+        );
+    }
+    assert!(
+        stored(&dest, owen) && stored(&dest, yuki),
+        "owen and yuki still land"
     );
 }

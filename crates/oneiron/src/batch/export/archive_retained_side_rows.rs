@@ -131,10 +131,49 @@ pub(crate) fn retained_envelope_source_table(value: &[u8]) -> Option<String> {
         .map(|envelope| envelope.source_table)
 }
 
+/// The room a room-keyed retained row belongs to: the membership ledger, its revision and the
+/// room role grants are keyed by their room first.
+fn retained_row_room(source_table: &str, source_key: &[u8]) -> Option<EntityId> {
+    use crate::side_table::{
+        CONVERSATION_MEMBERSHIP_ROW, CONVERSATION_MEMBERSHIP_SEQ, CONVERSATION_ROLE_GRANT,
+    };
+    if [
+        &CONVERSATION_MEMBERSHIP_ROW,
+        &CONVERSATION_MEMBERSHIP_SEQ,
+        &CONVERSATION_ROLE_GRANT,
+    ]
+    .iter()
+    .any(|decl| decl.name == source_table)
+    {
+        <EntityId as SideKey>::decode_key(source_key.get(..16)?)
+    } else {
+        None
+    }
+}
+
+/// Whether the whole-vault export withholds a room-keyed retained row, live or inert: its room
+/// is a record the export keeps out (off the record, or use-limited by a customer hold that
+/// refused its privacy erase), so no row of its membership history or roles goes either
+/// (REVIEW-9446 P1-1).
+fn retained_row_withheld(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    source_table: &str,
+    source_key: &[u8],
+) -> Result<bool> {
+    match retained_row_room(source_table, source_key) {
+        Some(room) => {
+            super::export_egress::whole_vault_export_excludes_entity_in_txn(store, rtxn, &room)
+        }
+        None => Ok(false),
+    }
+}
+
 /// Every retained row this export carries, in physical key order: the live rows of the
 /// retained source tables read raw and marked `source_live`, unioned with the inert envelopes
-/// already stored, deduplicated by [`retained_side_row_key`] with the live row kept. Collected
-/// into memory like the 41-family writer.
+/// already stored, deduplicated by [`retained_side_row_key`] with the live row kept. A row of a
+/// room the export keeps out is withheld ([`retained_row_withheld`]). Collected into memory
+/// like the 41-family writer.
 pub(crate) fn collect_retained_side_rows_in_txn(
     store: &Store,
     rtxn: &RoTxn<'_>,
@@ -143,6 +182,9 @@ pub(crate) fn collect_retained_side_rows_in_txn(
     for decl in retained_decls() {
         for row in decl.iter_raw(store, rtxn)? {
             let (source_key, source_value) = row?;
+            if retained_row_withheld(store, rtxn, decl.name, &source_key)? {
+                continue;
+            }
             let envelope = ArchiveRetainedSideRow {
                 source_table: decl.name.to_owned(),
                 source_key,
@@ -168,6 +210,9 @@ pub(crate) fn collect_retained_side_rows_in_txn(
             ));
         }
         let envelope = RETAINED_SIDE_ROWS.decode_value(&value)?;
+        if retained_row_withheld(store, rtxn, &envelope.source_table, &envelope.source_key)? {
+            continue;
+        }
         rows.entry(retained_side_row_key(&envelope))
             .or_insert(SideRowBytes {
                 family: ArchiveSideFamily::RetainedSideRow,

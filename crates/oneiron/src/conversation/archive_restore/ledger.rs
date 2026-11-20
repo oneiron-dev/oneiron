@@ -7,7 +7,9 @@ use super::*;
 use crate::batch::export::archive_retained_side_rows::visit_retained_side_rows;
 use crate::batch::export::{IndexedArchive, Tag};
 use crate::conversation::body::ConversationBody;
-use crate::conversation::membership::{self, MEMBERSHIP_ROWS, MEMBERSHIP_SEQ, MembershipRow};
+use crate::conversation::membership::{
+    self, MEMBERSHIP_ROWS, MEMBERSHIP_SEQ, MembershipAction, MembershipRow,
+};
 use crate::conversation::membership_index;
 use crate::serialize::ExportSecrets;
 use crate::side_table::{self, SideKey};
@@ -64,6 +66,13 @@ fn decode_ledger<'a>(
     }
     let mut windows = BTreeMap::new();
     for row in &rows {
+        // The membership door opens a Join's window at its join time at the latest
+        // (REVIEW-9446 P1-4); the stored read never re-checks that, so the archive does.
+        if matches!(row.action, MembershipAction::Join)
+            && row.visible_from.is_none_or(|from| from > row.at)
+        {
+            return Err(InvalidValue);
+        }
         membership::apply_window_row(windows.entry(row.person).or_default(), row)
             .map_err(|_| InvalidValue)?;
     }
@@ -98,6 +107,14 @@ fn land_ledger_in_txn(
             .zip(ledger.envelopes.values())
             .all(|((key, value), row)| *key == row.source_key && *value == row.source_value);
     if same {
+        // The pre-pass kept out every room whose seat would not stand
+        // ([`rooms_owner_restore_cannot_seat`]), so a prelanded room counts as installed only
+        // while it, each member and its roster stand live here (REVIEW-9446 P1-2).
+        if prelanded && ledger_companion_holdback(vault, txn, room, &ledger.rows)?.is_some() {
+            return Err(Error::InvariantViolation(
+                "a prelanded room ledger lost a live companion",
+            ));
+        }
         return Ok(if prelanded {
             ArchivedSideRowOutcome::Installed
         } else {
@@ -224,14 +241,10 @@ pub(super) fn land_rows_in_txn(
     Ok(outcomes)
 }
 
-/// Owner-only preparation for the unchanged body guard; accounting stays in the late pass.
-pub(crate) fn preland_room_ledgers_in_txn<R: Read + Seek>(
-    vault: &crate::Vault,
-    txn: &mut heed::RwTxn<'_>,
-    permit: &OwnerArchiveRestorePermit,
+/// The live ledger envelopes the archive carries, by room.
+fn archived_live_ledgers<R: Read + Seek>(
     archive: &IndexedArchive<'_, R>,
-    secrets: ExportSecrets,
-) -> Result<BTreeSet<EntityId>> {
+) -> Result<BTreeMap<EntityId, Vec<ArchiveRetainedSideRow>>> {
     let mut rooms: BTreeMap<EntityId, Vec<ArchiveRetainedSideRow>> = BTreeMap::new();
     visit_retained_side_rows(archive, |_, row| {
         if row.source_live
@@ -242,6 +255,111 @@ pub(crate) fn preland_room_ledgers_in_txn<R: Read + Seek>(
         }
         Ok(())
     })?;
+    Ok(rooms)
+}
+
+/// The archived rooms the owner's restore cannot seat (REVIEW-9446 P1-2, P1-3): each archived
+/// room this vault does not hold, kept in by every earlier pass, whose roster names a member
+/// and whose seat would not stand here. A seat stands when the room's archived ledger lands
+/// whole and its current members are the roster (or this vault already holds a ledger whose
+/// current members are), and each member is a live PERSON here or an archived PERSON the
+/// import puts, which then lands live or aborts the import. Read in `txn` before the entity
+/// pass, so the caller keeps each such room out with its speech, and the late pass counts its
+/// ledger as held back.
+pub(crate) fn rooms_owner_restore_cannot_seat<R: Read + Seek>(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    archive: &IndexedArchive<'_, R>,
+    secrets: ExportSecrets,
+) -> Result<Vec<EntityId>> {
+    let ledgers = archived_live_ledgers(archive)?;
+    let mut unseated = Vec::new();
+    let mut after = None;
+    while let Some(room) = archive.next_of_type(ENTITY_TYPE_CONVERSATION, after.as_ref())? {
+        after = Some(room);
+        if archive.index.contains(Tag::Omitted, room.as_bytes())?
+            || !matches!(
+                live_entity_row_in_txn(&vault.store, txn, &room)?,
+                LiveEntityRow::Absent
+            )
+        {
+            continue;
+        }
+        let Some((_, record)) = archive.entity(&room)? else {
+            continue;
+        };
+        // A body that does not read as a room fails its own put, as before.
+        let bytes = record.body.to_bytes_in_with(&archive.files, secrets)?;
+        let Ok(body) = ConversationBody::from_bytes(&bytes) else {
+            continue;
+        };
+        let roster: BTreeSet<EntityId> = body.member_ids.into_iter().collect();
+        if !roster.is_empty() && !seat_stands(vault, txn, archive, room, &roster, &ledgers)? {
+            unseated.push(room);
+        }
+    }
+    Ok(unseated)
+}
+
+/// Whether absent room `room`'s nonempty `roster` would stand here after the prelanding:
+/// see [`rooms_owner_restore_cannot_seat`].
+fn seat_stands<R: Read + Seek>(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    archive: &IndexedArchive<'_, R>,
+    room: EntityId,
+    roster: &BTreeSet<EntityId>,
+    ledgers: &BTreeMap<EntityId, Vec<ArchiveRetainedSideRow>>,
+) -> Result<bool> {
+    let held_here = MEMBERSHIP_SEQ.get_bytes(vault, txn, &room)?.is_some()
+        || MEMBERSHIP_ROWS
+            .iter_raw_from(vault, txn, room.as_bytes())?
+            .next()
+            .is_some();
+    let members = if held_here {
+        // The prelanding keeps a destination ledger; the room guard reads it.
+        membership::current_members_in(&vault.store, txn, room)?
+    } else {
+        let Some(envelopes) = ledgers.get(&room) else {
+            return Ok(false);
+        };
+        let indexed: Vec<_> = envelopes.iter().enumerate().collect();
+        match decode_ledger(room, &indexed) {
+            Ok(ledger) => membership::members_at_rows(&ledger.rows, u64::MAX),
+            Err(_) => return Ok(false),
+        }
+    };
+    if members != *roster {
+        return Ok(false);
+    }
+    for person in roster {
+        let lands_live = match live_entity_row_in_txn(&vault.store, txn, person)? {
+            LiveEntityRow::Live { entity_type, .. } => entity_type == ENTITY_TYPE_PERSON,
+            LiveEntityRow::Absent => {
+                archive
+                    .entity_at(person)?
+                    .is_some_and(|at| at.entity_type == ENTITY_TYPE_PERSON)
+                    && !archive.index.contains(Tag::Omitted, person.as_bytes())?
+            }
+            LiveEntityRow::DeletedShell => false,
+        };
+        if !lands_live {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Owner-only preparation for the unchanged body guard; accounting stays in the late pass.
+/// Each room [`rooms_owner_restore_cannot_seat`] named is omitted by then and skipped here.
+pub(crate) fn preland_room_ledgers_in_txn<R: Read + Seek>(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    archive: &IndexedArchive<'_, R>,
+    secrets: ExportSecrets,
+) -> Result<BTreeSet<EntityId>> {
+    let rooms = archived_live_ledgers(archive)?;
     let mut prelanded = BTreeSet::new();
     for (room, envelopes) in rooms {
         if !matches!(
@@ -301,4 +419,36 @@ pub(crate) fn remove_orphaned_prelanded_rooms_in_txn(
         prelanded.remove(&room);
     }
     Ok(())
+}
+
+/// Raw ledger edits for tests/archive_import_owner_installs_room_membership.rs: a source room
+/// ledger the membership door never writes, so its whole-vault archive carries one. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) mod test_support {
+    use super::*;
+
+    /// Deletes room `room`'s ledger revision row and keeps its rows.
+    pub(crate) fn drop_sequence(vault: &crate::Vault, room: EntityId) -> Result<()> {
+        let mut txn = vault.store.env.write_txn()?;
+        MEMBERSHIP_SEQ.delete(vault, &mut txn, &room)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Rewrites row `ordinal` of room `room`'s ledger with `visible_from`.
+    pub(crate) fn set_row_visible_from(
+        vault: &crate::Vault,
+        room: EntityId,
+        ordinal: u64,
+        visible_from: Option<u64>,
+    ) -> Result<()> {
+        let mut txn = vault.store.env.write_txn()?;
+        let mut row = MEMBERSHIP_ROWS
+            .get(vault, &txn, &(room, ordinal))?
+            .ok_or(Error::InvariantViolation("no such membership row"))?;
+        row.visible_from = visible_from;
+        MEMBERSHIP_ROWS.put(vault, &mut txn, &(room, ordinal), &row)?;
+        txn.commit()?;
+        Ok(())
+    }
 }

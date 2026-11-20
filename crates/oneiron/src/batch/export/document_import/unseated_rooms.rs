@@ -12,6 +12,12 @@
 //! `RoomNotSeatedHere`, and the import goes on: one archived row never
 //! aborts the import.
 //!
+//! The owner's restore writes under those marks and lands an archived room's
+//! whole membership ledger before the room
+//! (`conversation::archive_restore`), so it keeps out only a room whose seat
+//! would not stand here ([`omit_rooms_owner_restore_cannot_seat`];
+//! REVIEW-9446), named the same way.
+//!
 //! A room the import keeps out keeps its speech out with it
 //! ([`omit_speech_of_omitted_rooms`]): each TURN that is its child and each
 //! MESSAGE that belongs to it or is part of such a TURN, so no TURN or
@@ -29,6 +35,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::serialize::ExportSecrets;
 
 /// Keeps out each archived room this vault does not hold whose body the room
 /// guard would refuse as a first put no room door marks
@@ -64,6 +71,34 @@ pub(super) fn omit_rooms_not_seated_here<R: Read + Seek>(
                 .put(Tag::RoomNotSeatedHere, room.as_bytes(), &[])?;
             omissions.push(room_not_seated_here(room));
         }
+    }
+    Ok(omissions)
+}
+
+/// Keeps out each archived room the owner's restore cannot seat
+/// (`conversation::archive_restore::rooms_owner_restore_cannot_seat`): one
+/// this vault does not hold whose roster names a member, and whose archived
+/// ledger does not land whole, whose ledger's members are not its roster, or
+/// one of whose members is no live PERSON here and no archived PERSON the
+/// import puts. Returns one omission for each, under `RoomNotSeatedHere`; the
+/// late side-row pass counts its ledger held back. Runs on the owner's
+/// restore only, before the entity pass.
+pub(super) fn omit_rooms_owner_restore_cannot_seat<R: Read + Seek>(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    archive: &mut IndexedArchive<'_, R>,
+    secrets: ExportSecrets,
+) -> Result<Vec<ExportImportOmission>> {
+    let rooms = crate::conversation::archive_restore::rooms_owner_restore_cannot_seat(
+        vault, txn, archive, secrets,
+    )?;
+    let mut omissions = Vec::with_capacity(rooms.len());
+    for room in rooms {
+        archive.index.put(Tag::Omitted, room.as_bytes(), &[])?;
+        archive
+            .index
+            .put(Tag::RoomNotSeatedHere, room.as_bytes(), &[])?;
+        omissions.push(room_not_seated_here(room));
     }
     Ok(omissions)
 }
