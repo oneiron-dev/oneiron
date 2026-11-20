@@ -126,7 +126,8 @@ fn authority_log_entity_id_is_first_sixteen_bytes_of_entry_hash() {
 #[test]
 fn sub_second_readonly_folds_still_advance_the_observed_clock() {
     let mut clock = AuthorityLocalClock::default();
-    let now = Instant::now();
+    // A monotonic reading: only the differences between readings count.
+    let now = Duration::from_secs(5);
     let first = clock.observation_secs_at(0, 1_000, now);
     assert_eq!(first, 1_000);
 
