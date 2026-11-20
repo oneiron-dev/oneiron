@@ -264,7 +264,7 @@ mod cb_t {
 
     /// Cancel semantics across the auto-approval ladder.
     struct CancelLadderOutcome {
-        /// Ladder modes available on `cancel`, sorted.
+        /// Check-in modes available on `cancel`, strictest first.
         ladder_modes: Vec<String>,
         /// Mode in effect with no explicit policy set.
         default_mode: String,
@@ -288,8 +288,8 @@ mod cb_t {
         use oneiron::edge::EdgeActorClass;
         use oneiron::registry::ENTITY_TYPE_PERSON;
         use oneiron::{
-            EntityId, TimeRange, Vault, genui::GrantMintIntent, genui::GrantMintIntentScope,
-            task_verb::DEFAULT_TASK_CANCEL_MODE, task_verb::TaskCancelMode,
+            EntityId, TimeRange, Vault, check_in::CheckInMode, genui::GrantMintIntent,
+            genui::GrantMintIntentScope, task_verb::DEFAULT_TASK_CANCEL_MODE,
             task_verb::TaskCancelTarget, task_verb::TaskCreateSpec,
         };
 
@@ -365,8 +365,8 @@ mod cb_t {
         let decisions = vault.gate_decisions(512).expect("gate decisions");
 
         CancelLadderOutcome {
-            ladder_modes: TaskCancelMode::ALL
-                .map(TaskCancelMode::as_str)
+            ladder_modes: CheckInMode::ALL
+                .map(CheckInMode::as_str)
                 .into_iter()
                 .map(str::to_owned)
                 .collect(),

@@ -19,8 +19,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/anthropic/transport.rs` | src | s | 2 struct · 2 enum · 1 trait · 2 type | AnthropicMessagesHttpRequest, AnthropicMessagesHttpResponse, AnthropicMessagesStreamFrame, AnthropicMessagesTransport, AnthropicMessagesTransportError | Host-owned execution seam: future/stream aliases, HTTP envelope types, stream frame, transport trait, error… |
 | `src/anthropic/wire.rs` | src | m | 4 fn · 2 crate-vis | — | Anthropic Messages protocol mapping: request build, response parse, message/part/tool codecs, usage, status… |
 | `src/anthropic/wire/cache.rs` | src | s | 1 crate-vis | — | Prompt-cache boundaries on the Messages wire (FIX 4465 C): the host's descriptor, rendered as… |
-| `src/gemini/mod.rs` | src | s | 1 struct · 2 fn · 2 re-export | GeminiBackend | Gemini wire adapter |
-| `src/gemini/stream.rs` | src | s | 5 crate-vis | — | Gemini typed stream decoding |
+| `src/gemini/mod.rs` | src | s | 1 struct · 2 fn · 3 re-export | GeminiBackend | Gemini wire adapter |
+| `src/gemini/stream.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | GeminiEventStream | Gemini typed stream decoding |
 | `src/gemini/tests.rs` | test | s | — | — | Decoder checks over provider-shaped replies |
 | `src/gemini/transport.rs` | src | s | 2 struct · 1 enum · 1 trait · 2 type | GeminiFrame, GeminiHttpRequest, GeminiHttpResponse, GeminiTransport | Lease-bearing host transport; no SDK, retries, or call policy |
 | `src/gemini/wire.rs` | src | s | 3 fn | — | Gemini generateContent request and response mapping plus status taxonomy |
@@ -53,12 +53,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/openai_compat/responses/output.rs` | src | s | 4 fn | — | Response output parsing and socket event inspection |
 | `src/openai_compat/responses/stream.rs` | src | s | 6 fn | — | Responses stream accumulation and polling |
 | `src/openai_compat/responses/turn.rs` | src | s | 5 fn | — | Turn construction and input-message mapping |
-| `src/openai_compat/stream.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | OpenAiCompatLlmStream, OpenAiCompatStreamAccumulator | OpenAI chunk decoding with correlated text, reasoning, and tool fragments |
+| `src/openai_compat/stream.rs` | src | s | 2 struct · 6 fn | OpenAiCompatLlmStream, OpenAiCompatStreamAccumulator | OpenAI chunk decoding with correlated text, reasoning, and tool fragments |
 | `src/openai_compat/tests.rs` | test | m | — | — | The adapter under a run admission's gate: its preflight refuses what its send would, before the call's… |
 | `src/openai_compat/transport.rs` | src | s | 2 struct · 2 enum · 1 trait · 2 type | OpenAiCompatHttpRequest, OpenAiCompatHttpResponse, OpenAiCompatStreamFrame, OpenAiCompatTransport, OpenAiCompatTransportError | Host-owned execution seam: future/stream aliases, HTTP envelope types, stream frame, transport trait, error… |
 | `src/openai_compat/wire.rs` | src | m | 4 fn · 3 crate-vis | — | Chat-completions protocol mapping: request build, response parse, message/tool codecs, usage, status… |
-| `src/systemone/mod.rs` | src | m | 3 struct · 1 trait · 3 fn · 1 type · 2 const · 1 re-export | SystemOneHttpRequest, SystemOneHttpResponse, SystemOneSeat, SystemOneTransport | The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision` |
+| `src/systemone/mod.rs` | src | m | 4 struct · 1 trait · 6 fn · 1 type · 4 const · 1 re-export | SealedSystemOneRequest, SystemOneHttpRequest, SystemOneHttpResponse, SystemOneSeat, SystemOneTransport | The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision` |
 | `src/systemone/pack.rs` | src | s | 4 struct · 2 fn | SystemOnePackAnswer, SystemOnePackPrediction, SystemOnePackQuestion, SystemOnePackRequest | One native System One request over a shared state and ordered typed questions |
 | `src/systemone/tests.rs` | test | s | — | — | — |
+| `tests/native_budget_wire.rs` | test | m | — | — | L9-19 (ARCH-0036 #decision-deadline part 4, #system-one-codec): a System One server that takes a native… |
 | `tests/openai_compat_family.rs` | test | s | — | — | L9-25 PR 4 (ARCH-0036 `#adapters`, MED-1 = A): the OpenAI-compatible media backend splits by family over one… |
 | `tests/remote_transport.rs` | test | s | — | — | Own-server conformance through the shipped HTTP transport, not a trait-only fake |
