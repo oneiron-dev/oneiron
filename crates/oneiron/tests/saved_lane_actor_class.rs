@@ -52,6 +52,27 @@
 //! human-class row that admits the base world, the classless lane's asker
 //! and source readers, its rebuild over the owner's own key and over the
 //! principal's human-class key under its access gate each read the claim.
+//!
+//! A live owner's key that names no class freezes with its grant basis too,
+//! even where nothing narrows its lane (FIX
+//! OWNER-LANE-WITHOUT-CLASS-REBUILDS-AS-HUMAN, Sol F2 on #8134): only a
+//! human-class key of a live owner freezes as its principal's own. Its
+//! question, saved through `create_question_with_lane`, froze as the
+//! principal's own lane, and each rebuild read as the owner's human PERSON.
+//! Red at 07a1b03a9b1 (#9711's head) plus these cases: the saved question's
+//! asker and source readers, and the owner's own key met with its lane, each
+//! read the claim only the human-class row admits. Guard: the owner's own
+//! human-class key still saves its question as its principal's own lane.
+//!
+//! That basis keeps the reach its live key had past the relationship gate
+//! (blind review P1 on #9716, rebuild.rs:117). No gate binds that key, so
+//! under a class-neutral row it reads the owner's claim inside a
+//! relationship the owner holds no grant on and is no member of. Each
+//! rebuild from the principal's row starts under the relationship gate,
+//! lifted by the owner's exemption, and the meet with the basis kept the
+//! gate and dropped the exemption: the saved question's asker and source
+//! readers refused that claim. Red at 2aa095cbe59 (#9716's head) plus this
+//! case: both readers refuse it.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test saved_lane_actor_class`.
 #![cfg(oneiron_test_support)]
@@ -68,6 +89,8 @@ use oneiron::claim::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::Scope;
 use oneiron::memory::{AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput};
+use oneiron::registry::ENTITY_TYPE_RELATIONSHIP;
+use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::question_saved_lane::{
     question_read, saved_question_reader, saved_source_reader,
@@ -97,16 +120,21 @@ enum ReadRow {
     HumanHeldToReceipt,
     /// The human class, in the base world, with no receipt.
     HumanAdmitsBaseWorld,
+    /// No class, in the base world, with no receipt: a key of any class, or
+    /// of none, reads through it.
+    ClassNeutralAdmitsBaseWorld,
 }
 
 /// A vault whose owner wrote a base-world claim open to every relationship,
 /// paired an agent-class credential and a human-class device on their own
-/// PERSON, and keeps one read row, bound to one class.
+/// PERSON, and keeps one read row, bound to one class or to none.
 struct Fixture {
     vault: Vault,
     _dir: tempfile::TempDir,
     issuer: HostSlipIssuer,
     owner: EntityId,
+    /// The owner's proof the fixture's claims were written under.
+    owner_proof: AuthenticatedOwner,
     claim: EntityId,
     agent_slip: CapabilitySlip,
     device_slip: CapabilitySlip,
@@ -123,7 +151,12 @@ fn fixture(row: ReadRow) -> Fixture {
         .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
         .expect("this install's live machine profile");
     let (owner, owner_proof) = embedded_owner(&vault).expect("authenticated embedded owner");
-    let claim = write_owner_claim(&vault, owner, &owner_proof);
+    let claim = write_owner_claim(
+        &vault,
+        owner,
+        &owner_proof,
+        ClaimRelationships::All(AllRelationships::All),
+    );
     let agent_slip = paired_slip(
         &vault,
         &issuer,
@@ -146,13 +179,21 @@ fn fixture(row: ReadRow) -> Fixture {
         _dir: dir,
         issuer,
         owner,
+        owner_proof,
         claim,
         agent_slip,
         device_slip,
     }
 }
 
-fn write_owner_claim(vault: &Vault, owner: EntityId, owner_proof: &AuthenticatedOwner) -> EntityId {
+/// A base-world claim the owner writes about themselves, inside
+/// `relationships`.
+fn write_owner_claim(
+    vault: &Vault,
+    owner: EntityId,
+    owner_proof: &AuthenticatedOwner,
+    relationships: ClaimRelationships,
+) -> EntityId {
     let id = EntityId::now();
     vault
         .memory(owner, EdgeActorClass::Human)
@@ -167,7 +208,7 @@ fn write_owner_claim(vault: &Vault, owner: EntityId, owner_proof: &Authenticated
             scope: ClaimScope {
                 world_id: base_world_id().to_hex(),
                 scope_facet_id: vault.default_facet().expect("owner default facet").to_hex(),
-                scope_relationship_id: ClaimRelationships::All(AllRelationships::All),
+                scope_relationship_id: relationships,
                 scope_project_id: default_project_id().to_hex(),
             }
             .into(),
@@ -228,11 +269,12 @@ fn paired_slip(
 }
 
 /// Keeps the shipped policy, but replaces every read row with `row`, which
-/// binds one class alone, to the base world.
+/// binds one class alone, or none, to the base world.
 fn keep_one_read_row(vault: &Vault, row: ReadRow) {
     let class = match row {
-        ReadRow::AgentHeldToReceipt | ReadRow::AgentAdmitsBaseWorld => "agent",
-        ReadRow::HumanHeldToReceipt | ReadRow::HumanAdmitsBaseWorld => "human",
+        ReadRow::AgentHeldToReceipt | ReadRow::AgentAdmitsBaseWorld => Some("agent"),
+        ReadRow::HumanHeldToReceipt | ReadRow::HumanAdmitsBaseWorld => Some("human"),
+        ReadRow::ClassNeutralAdmitsBaseWorld => None,
     };
     let id = oneiron_store::policy_record::default_policy_manifest_id()
         .expect("the default manifest id");
@@ -251,16 +293,19 @@ fn keep_one_read_row(vault: &Vault, row: ReadRow) {
             Some("core:read" | "oneiron:read")
         )
     });
-    grants.push(json!({
-        "actor_class": class,
+    let mut grant = json!({
         "effector": "core:read",
         "scope": oneiron_authority::federation::scope_codec::read_preset(),
         "selectors": { "world_ref": "base" },
-        "receipt_required": !matches!(
+        "receipt_required": matches!(
             row,
-            ReadRow::AgentAdmitsBaseWorld | ReadRow::HumanAdmitsBaseWorld
+            ReadRow::AgentHeldToReceipt | ReadRow::HumanHeldToReceipt
         ),
-    }));
+    });
+    if let Some(class) = class {
+        grant["actor_class"] = json!(class);
+    }
+    grants.push(grant);
     oneiron::test_support::put_policy_manifest_bytes(
         vault,
         id,
@@ -747,6 +792,215 @@ fn a_classless_saved_lane_over_a_human_class_key_reads_nothing() {
         assert!(
             !read,
             "actor=a key of the owner's id that names no class; expected its saved lane, rebuilt over {reader}, to read nothing, not the claim only the human-class row admits; seen {seen}"
+        );
+    }
+}
+
+/// A key of the owner's id that names no class and holds no proof, floor,
+/// exemption, Scope or bound (`ScopedReadActorKey::new`): unlike the
+/// classless lane above, nothing narrows its lane.
+fn unbound_classless_key(fixture: &Fixture) -> ScopedReadActorKey {
+    let key = ScopedReadActorKey::new(fixture.owner.to_hex()).expect("a key that names no class");
+    assert!(
+        key.actor_class().is_none() && !key.reads_as_vault_owner(),
+        "precondition: the key names no class and reads below the owner's floor; seen class {:?}",
+        key.actor_class()
+    );
+    key
+}
+
+/// The lane the owner's standing question over the claim keeps, saved
+/// through `key`'s live lane (`create_question_with_lane`) and read back
+/// from the store, as the question's own reads find it.
+fn stored_question_lane(fixture: &Fixture, key: ScopedReadActorKey) -> FrozenReadLane {
+    use oneiron::WriteActor;
+    use oneiron::llm::decision::questions::{
+        QuestionActivation, QuestionDefinitionInput, RefreshPolicy, create_question_with_lane,
+        read_question,
+    };
+    use oneiron::llm::decision::{
+        AnswerContract, DecisionBand, DecisionClass, DecisionDial, DecisionQuestionInput,
+        DecisionRung,
+    };
+    let definition = QuestionDefinitionInput {
+        question: DecisionQuestionInput {
+            text: "Does the owner still prefer the saved lane?".into(),
+            class: DecisionClass::Judgment,
+            contract: AnswerContract::Noul,
+            accept_type: false,
+        },
+        adapter: "graph".into(),
+        units: vec![fixture.claim],
+        recipe: "unit".into(),
+        profile: "fixture".into(),
+        dial: DecisionDial {
+            first: DecisionRung::Local,
+            ceiling: DecisionRung::Local,
+            band: DecisionBand::default(),
+        },
+        activation: QuestionActivation::Standing,
+        refresh: RefreshPolicy {
+            on_arrival: false,
+            every_seconds: None,
+        },
+        delivery: "none".into(),
+        learning: false,
+        binding: None,
+        criteria: Default::default(),
+        audience: Default::default(),
+        posture: None,
+        media: Default::default(),
+        deadline_ms: None,
+        artifacts: Vec::new(),
+    };
+    let record = create_question_with_lane(
+        &fixture.vault,
+        WriteActor::new(fixture.owner, EdgeActorClass::Human),
+        &fixture.vault.scoped_read(key),
+        definition,
+        2,
+    )
+    .expect("the owner's standing question over the claim is stored");
+    read_question(
+        &fixture.vault,
+        fixture.owner,
+        record.definition.question.id,
+        None,
+    )
+    .expect("the stored question reads back")
+    .expect("the stored question is found")
+    .read_lane
+}
+
+/// A live owner's key that names no class, under no bound, refuses the
+/// claim only the human-class row admits, as no row binds a key of no
+/// class. Its question saved through that lane froze as its principal's
+/// own, since the census names its actor a live owner, and every rebuild
+/// read as the owner's PERSON, human, and read the claim (FIX
+/// OWNER-LANE-WITHOUT-CLASS-REBUILDS-AS-HUMAN, Sol F2 on #8134). The lane
+/// now keeps its grant basis, and each rebuild reads with no class, as its
+/// live key did: the asker reader, the source reader, and the owner's own
+/// human-class key met with the lane.
+#[test]
+fn an_unbound_classless_owner_key_saved_question_reads_no_claim_a_human_class_row_admits() {
+    let fixture = fixture(ReadRow::HumanAdmitsBaseWorld);
+    let (control, seen) = reads(
+        &held_lane(&fixture, attenuated_device_key(&fixture)),
+        fixture.claim,
+    );
+    assert!(
+        control,
+        "control: the human-class row admits the claim to the device's attenuated human-class credential; seen {seen}"
+    );
+    let key = unbound_classless_key(&fixture);
+    let (live, seen) = reads(&held_lane(&fixture, key.clone()), fixture.claim);
+    assert!(
+        !live,
+        "precondition: the unbound classless key's live lane, with no Scope and no row of its class, refuses the owner's claim; seen {seen}"
+    );
+    let frozen = stored_question_lane(&fixture, key);
+    for (reader, (read, seen)) in [
+        ("asker", asker_reads(&fixture, &frozen, fixture.claim)),
+        ("source", source_reads(&fixture, &frozen, fixture.claim)),
+        (
+            "owner's own key",
+            owner_key_reads(&fixture, &frozen, fixture.claim),
+        ),
+    ] {
+        assert!(
+            !read,
+            "actor=a live owner's key that names no class, under no bound; expected its saved question's lane, rebuilt for the {reader} reader, to read with no class as its live key did and refuse the claim only the human-class row admits, not to read it as the owner's human PERSON; seen {seen}"
+        );
+    }
+}
+
+/// Guard: the owner's own human-class key still saves its question as its
+/// principal's own lane, and the asker reader reads the claim.
+#[test]
+fn the_owners_own_key_saved_question_still_reads_as_its_principal() {
+    let fixture = fixture(ReadRow::HumanAdmitsBaseWorld);
+    let key = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .read_key()
+        .expect("owner read key");
+    let frozen = stored_question_lane(&fixture, key);
+    assert!(
+        frozen.is_principal(),
+        "actor=the owner's own human-class key; expected its saved question to keep its principal's own lane"
+    );
+    let (read, seen) = asker_reads(&fixture, &frozen, fixture.claim);
+    assert!(
+        read,
+        "actor=the owner's own human-class key; expected its saved question's asker reader to read the owner's claim; seen {seen}"
+    );
+}
+
+/// A base-world claim the owner writes inside a relationship that no grant
+/// names the owner on and that the owner is no member of: only a key no
+/// gate binds, or one an owner's live binding lifts the gate of, reads it.
+fn write_relationship_claim(fixture: &Fixture) -> EntityId {
+    let relationship = EntityId::now();
+    fixture
+        .vault
+        .put_entity(
+            &relationship,
+            ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"relationship",
+        )
+        .expect("a relationship");
+    write_owner_claim(
+        &fixture.vault,
+        fixture.owner,
+        &fixture.owner_proof,
+        ClaimRelationships::Relationships(vec![relationship.to_hex()]),
+    )
+}
+
+/// A live owner's key that names no class, under no bound, reads the
+/// owner's claim inside a relationship the owner holds no grant on: no gate
+/// binds the key, and the class-neutral row admits a key of no class. Its
+/// saved question keeps that reach while the owner's binding holds: each
+/// rebuild from its principal's row lifts the relationship gate on that
+/// binding, as the live key read past the gate, and reads with no class
+/// and below the owner's floor (blind review P1 on #9716, rebuild.rs:117).
+#[test]
+fn an_unbound_classless_owner_key_saved_question_still_reads_its_ungated_relationship_claim() {
+    let fixture = fixture(ReadRow::ClassNeutralAdmitsBaseWorld);
+    let relationship_claim = write_relationship_claim(&fixture);
+    let key = unbound_classless_key(&fixture);
+    let (live, seen) = reads(&held_lane(&fixture, key.clone()), relationship_claim);
+    assert!(
+        live,
+        "precondition: the unbound classless key's live lane, which no gate binds, reads the owner's relationship claim the class-neutral row admits; seen {seen}"
+    );
+    let frozen = stored_question_lane(&fixture, key);
+    assert!(
+        !frozen.is_principal() && !frozen.reads_as_principal(),
+        "precondition: the classless key's saved question keeps its grant basis, not its principal's own lane"
+    );
+    for (reader, rebuilt) in [
+        (
+            "asker",
+            saved_question_reader(&fixture.vault, fixture.owner, &frozen),
+        ),
+        (
+            "source",
+            saved_source_reader(&fixture.vault, fixture.owner, &frozen),
+        ),
+    ] {
+        let rebuilt = rebuilt.expect("the saved question's reader rebuilds");
+        assert!(
+            rebuilt.actor_class().is_none() && !rebuilt.reads_as_vault_owner(),
+            "actor=a live owner's key that names no class, under no bound; expected its saved question's {reader} reader to read with no class and below the owner's floor; seen class {:?}",
+            rebuilt.actor_class()
+        );
+        let (read, seen) = reads(&question_lane(&fixture, rebuilt), relationship_claim);
+        assert!(
+            read,
+            "actor=a live owner's key that names no class, under no bound; expected its saved question's {reader} reader to read the relationship claim its live lane read past the relationship gate, while the owner's binding holds; seen {seen}"
         );
     }
 }

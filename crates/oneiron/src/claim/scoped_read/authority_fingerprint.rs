@@ -124,6 +124,15 @@ impl ScopedReadActorKey {
                 fold_scope(&mut hasher, bound)?;
             }
         }
+        // A key a saved lane's basis lifted the relationship gate of on its
+        // owner's live binding alone (blind review P1 on #9716): that owner,
+        // and whether the binding lifts the gate in this snapshot. Any other
+        // key folds nothing more, so its fingerprint is as before.
+        if let Some(owner) = self.relationship_gate_owner {
+            hasher.update(b"relationship_gate_owner");
+            fold_id(&mut hasher, Some(owner));
+            hasher.update([u8::from(!self.relationship_gated_in(vault, &txn)?)]);
+        }
         // A reader homed in no conversation of this vault reads no stamped
         // claim outside a room (RULING SECREAD-HOME-READ-DOORS = B); any
         // other key folds nothing more, so its fingerprint is as before.
@@ -420,6 +429,12 @@ impl ScopedReadActorKey {
             && let Some(owner) = self.owner_binding_ref()
         {
             hasher.update(b"withdrawn_floor_owner");
+            key_fold_id(&mut hasher, Some(owner));
+        }
+        // Then a key a saved lane's basis lifted the relationship gate of on
+        // that owner's live binding alone (blind review P1 on #9716).
+        if let Some(owner) = self.relationship_gate_owner {
+            hasher.update(b"relationship_gate_owner");
             key_fold_id(&mut hasher, Some(owner));
         }
         *hasher.finalize().as_bytes()

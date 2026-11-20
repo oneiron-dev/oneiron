@@ -234,7 +234,10 @@ impl ScopedReadActorKey {
     /// Whether a read under this key meets the relationship gate in `txn`. A
     /// narrower credential of the owner's is exempt only while its holder
     /// still exists and is the vault's owner in this snapshot (Astra
-    /// #1413-003, Sol R5-007).
+    /// #1413-003, Sol R5-007), and so is a key a saved lane's basis lifted
+    /// the gate of on that owner's binding alone
+    /// ([`ScopedReadActorKey::relationship_gate_lift_owner`], blind review
+    /// P1 on #9716).
     pub(super) fn relationship_gated_in(
         &self,
         vault: &crate::Vault,
@@ -243,7 +246,7 @@ impl ScopedReadActorKey {
         if !self.enforce_access_grants {
             return Ok(false);
         }
-        let Some(owner) = self.owner_exemption else {
+        let Some(owner) = self.relationship_gate_lift_owner() else {
             return Ok(true);
         };
         crate::memory::owner_exemption_holds_in_txn(vault, txn, owner)
