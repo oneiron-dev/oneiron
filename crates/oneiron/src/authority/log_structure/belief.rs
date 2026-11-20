@@ -92,7 +92,7 @@ pub(in crate::authority) fn fold_belief_structure_in_txn(
         entries.push(decode_authority_log_entry_body(&body)?);
     }
     entries.extend(arriving.values().cloned());
-    STAGED_BATCH.with(|staged| entries.extend(staged.borrow().iter().flatten().cloned()));
+    // RED PIN: the staged batch left out of the belief.
     let carried = evidence
         .iter()
         .flat_map(|evidence| evidence.bodies().values());
