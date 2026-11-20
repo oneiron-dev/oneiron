@@ -1,8 +1,10 @@
-//! SELECTOR-TOMBSTONE-REVIEW-10024-PROOFS (REVIEW-10024 P1-1/P1-4).
+//! SELECTOR-TOMBSTONE-REVIEW-10024-PROOFS (REVIEW-10024 P1-1/P1-4,
+//! REVIEW-10042 P1).
 //!
 //! A hard-deleted NOTE stays off a destination that could not receive its
 //! world's words. It still sends its delete under a world selector that kept
-//! the live NOTE, even when the NOTE was also in another world.
+//! the live NOTE, even when the NOTE was also in another world, and to a
+//! grant that reads only that world when the NOTE was also in base reality.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test selector_note_tombstone_after_hard_delete`
@@ -14,10 +16,12 @@ use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer};
 use oneiron::batch::EntityMetadataHeader;
+use oneiron::claim::base_world_id;
 use oneiron::deletion::{TombstoneReason, decode_tombstone_value};
 use oneiron::entity_id::LocalWorldId;
 use oneiron::federation::{
-    FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
+    FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope, Scope,
+    ScopeId,
 };
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD};
 use oneiron::sync::schema::create_window_doc;
@@ -42,6 +46,17 @@ struct MemberVault {
 
 impl MemberVault {
     fn new() -> Self {
+        Self::reading(read_preset())
+    }
+
+    /// A member whose grant reads the records of `worlds` alone.
+    fn reading_only(worlds: &[EntityId]) -> Self {
+        let mut authority_scope = read_preset();
+        authority_scope.worlds = worlds.iter().map(|world| ScopeId(*world)).collect();
+        Self::reading(authority_scope)
+    }
+
+    fn reading(authority_scope: Scope) -> Self {
         let dir = tempfile::tempdir().expect("FIXTURE: a temporary directory");
         let member = EntityId::now();
         let vault = open_member_vault(dir.path(), VaultConfig::device(), &[member.to_hex()])
@@ -65,7 +80,7 @@ impl MemberVault {
             FederationGrantRole::Member,
             FederationGrantPreset::Member,
         );
-        grant.authority_scope = read_preset();
+        grant.authority_scope = authority_scope;
         put_selector_test_federation_grant(&vault, &grant_id, &grant, now)
             .expect("FIXTURE: the member's federation grant is stored");
         Self {
@@ -78,11 +93,15 @@ impl MemberVault {
 
     fn put_world(&self) -> EntityId {
         let world = EntityId::now();
+        self.store_world(world);
+        world
+    }
+
+    fn store_world(&self, world: EntityId) {
         let now = self.vault.now_recorded_at();
         self.vault
             .put_entity(&world, ENTITY_TYPE_WORLD, at(now), now, b"world")
             .expect("FIXTURE: the WORLD is stored");
-        world
     }
 
     fn put_note(&self, worlds: &[EntityId]) -> EntityId {
@@ -297,5 +316,49 @@ fn a_note_in_two_worlds_carries_its_delete_under_either_world_selector() {
     assert!(
         deleted_y.get_map("tombstones").get(&hex).is_none(),
         "LEAK: World(Y) carried the tombstone of a NOTE it never kept"
+    );
+}
+
+#[test]
+fn a_note_in_base_and_a_world_carries_its_delete_to_a_grant_reading_only_that_world() {
+    let w = EntityId::now();
+    let x = EntityId::now();
+    let base = base_world_id();
+    let fixture = MemberVault::reading_only(&[w]);
+    fixture.store_world(w);
+    fixture.store_world(x);
+    let kept = fixture.put_note(&[base, w]);
+    let unkept = fixture.put_note(&[base, x]);
+    let (kept_hex, unkept_hex) = (kept.to_hex(), unkept.to_hex());
+    let selector = fixture.selector(SyncSelectorWorld::World(
+        LocalWorldId::from_entity_id(w).expect("FIXTURE: the WORLD has a local id"),
+    ));
+    let (key, packed) = fixture.pack(&kept);
+    assert!(
+        packed.get_map("entities").get(&unkept_hex).is_some(),
+        "FIXTURE: the base month window also holds the live NOTE in base and X"
+    );
+    let withhold_none = BTreeSet::new();
+    let export = |window: &LoroDoc| fixture.export(window, &key, &selector, &withhold_none);
+
+    let live = export(&packed);
+    assert!(
+        live.get_map("entities").get(&kept_hex).is_some(),
+        "FIXTURE: the grant reading only W keeps the live NOTE in base and W"
+    );
+    assert!(
+        live.get_map("entities").get(&unkept_hex).is_none(),
+        "FIXTURE: the grant reading only W does not keep the live NOTE in base and X"
+    );
+
+    fixture.hard_delete(&kept, &key);
+    let deleted = export(&fixture.hard_delete(&unkept, &key));
+    assert!(
+        deleted.get_map("tombstones").get(&kept_hex).is_some(),
+        "MISSED-DELETE: the grant reading only W dropped the tombstone of the NOTE in base and W it kept"
+    );
+    assert!(
+        deleted.get_map("tombstones").get(&unkept_hex).is_none(),
+        "LEAK: the grant reading only W carried the tombstone of a NOTE in base and X it never kept"
     );
 }
