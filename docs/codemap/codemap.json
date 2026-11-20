@@ -1343,7 +1343,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/mod.rs",
@@ -1759,7 +1759,7 @@
      "path": "src/agent_dispatch/run_handover.rs",
      "purpose": "The agent run's handover when its machine closes or vanishes (FIX 4747 slice 6; canon CROSS-ARCH-0019 \"Where…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
      }
@@ -1804,7 +1804,7 @@
      "purpose": "The agent-run TASK (FIX 4747 slice 5; canon CROSS-ARCH-0019 \"Where work runs\", items 02-05): the synced…",
      "surface": {
       "const": 1,
-      "crate-vis": 56,
+      "crate-vis": 59,
       "fn": 2,
       "re-export": 1,
       "struct": 1
@@ -5607,7 +5607,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 85,
+      "crate-vis": 86,
       "mod": 2,
       "re-export": 93
      }
@@ -6592,7 +6592,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 37,
       "fn": 22,
       "re-export": 3
      }
@@ -6617,7 +6617,7 @@
      "path": "src/authority/slip_vault/connect.rs",
      "purpose": "Connect, signed by each vault's own host-root key (FIX 323, ARCH-0043 #relationship-lifecycle)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 8,
       "fn": 5,
       "struct": 2
      }
@@ -25786,7 +25786,7 @@
      "path": "src/consent/doors/invitee_credential.rs",
      "purpose": "The invitee's own credential (FIX 8745): the key an invitation's slips bind comes from the invitee, never…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -27751,7 +27751,7 @@
      "path": "src/context_pack/edge_walk.rs",
      "purpose": "Edge loading and multi-hop neighbor expansion during pack assembly",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -27812,7 +27812,7 @@
      "path": "src/context_pack/mod.rs",
      "purpose": "Context-pack assembly: retrieval results in, a hydrated, validated, budget-clamped pack out",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 2,
       "re-export": 9
      }
@@ -29431,10 +29431,10 @@
      "purpose": "Courtesy unsend (OF-273, ARCH-0043 #relationship-lifecycle)",
      "surface": {
       "const": 4,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 3,
       "fn": 10,
-      "re-export": 2,
+      "re-export": 4,
       "struct": 2
      }
     },
@@ -29445,7 +29445,18 @@
      "path": "src/deletion/coop_delivery/answer.rs",
      "purpose": "The owner's answer to a filed courtesy ask (OF-273, BIZ-LEGAL-0004 B2)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/coop_delivery/leave.rs",
+     "purpose": "The one action that asks a former peer to erase what it holds from this vault (ARCH-0043 #leaving-a-company…",
+     "surface": {
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -29472,11 +29483,41 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "EraseRequestReply",
+      "EraseRequestReplyPolicy",
+      "EraseRequestReplySetting",
+      "EraseRequestReplySource"
+     ],
+     "path": "src/deletion/coop_delivery/reply_setting.rs",
+     "purpose": "The `erase_request_reply` policy row (ARCH-0043 #leaving-a-company: \"The reply to an erase request is each…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 2,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/deletion/coop_delivery/restrict.rs",
      "purpose": "User-selected Art18 restriction and truthful prior-external-notice attestation",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/coop_delivery/setting_answer.rs",
+     "purpose": "The owner's standing answer to a filed courtesy ask (ARCH-0043 #leaving-a-company: \"The reply to an erase…",
+     "surface": {
+      "const": 2,
+      "fn": 1
      }
     },
     {
@@ -35985,13 +36026,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/psych_profile.rs",
      "purpose": "Psych Mirror profiles run on the maintenance lane with a host's lent job runner (untangle 6.9i, RULING…",
      "surface": {
       "const": 2,
+      "crate-vis": 3,
       "fn": 5
      }
     },
@@ -42320,7 +42362,7 @@
      "purpose": "The guest grant a vault-to-vault Connect pact governs (FIX 3016, ARCH-0043 #guest-grants…",
      "surface": {
       "const": 1,
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 3,
       "struct": 2
      }
@@ -42389,7 +42431,7 @@
      "path": "src/federation/courtesy_scope.rs",
      "purpose": "Which records a courtesy deletion ask covers here, read in the caller's own transaction (FIX 2927): this…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -42411,7 +42453,7 @@
      "path": "src/federation/delivery_record.rs",
      "purpose": "Native federation delivery history, not current grant or content authority",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1,
       "struct": 1
      }
@@ -42713,6 +42755,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HeldWorld",
+      "Holdings"
+     ],
+     "path": "src/federation/holdings.rs",
+     "purpose": "What this vault holds from one other vault, by attribution (ARCH-0043 #leaving-a-company: \"Each side gets a…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -42744,7 +42800,7 @@
      "surface": {
       "crate-vis": 59,
       "mod": 2,
-      "re-export": 24
+      "re-export": 25
      }
     },
     {
@@ -43160,7 +43216,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SharedInvitation"
@@ -43170,7 +43226,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 10,
-      "fn": 7,
+      "fn": 8,
       "re-export": 1,
       "struct": 1
      }
@@ -43356,7 +43412,7 @@
      "purpose": "Terminal-pact per-world stale stamping (FED-04)",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 9,
       "re-export": 1,
@@ -45754,7 +45810,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 72
+      "crate-vis": 73
      }
     },
     {
@@ -49832,12 +49888,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "InquiryEdge",
       "InquiryEdgeReciprocalGrant",
       "InquiryEdgeRequest",
+      "InquiryJoinOffer",
+      "InquiryJoinPrepared",
       "InquiryScopeItem",
       "InquiryTermsChange",
       "InquiryTermsChangeOutcome",
@@ -49847,10 +49905,10 @@
      "purpose": "The inquiry edge and its opened scope (federation.md #inquiry-scope, #inquiry-first-build; Engine ruling…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
-      "fn": 12,
-      "struct": 6
+      "fn": 15,
+      "struct": 8
      }
     },
     {
@@ -66546,7 +66604,7 @@
      "path": "src/pipeline/scoped_channels.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 9
      }
     },
     {
@@ -66566,7 +66624,7 @@
      "path": "src/pipeline/temporal_bound.rs",
      "purpose": "The scoped temporal bound (ARCH-0004 #temporal-bound): how far a scoped call's temporal channel widens, the…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 20
      }
     },
     {
@@ -88696,7 +88754,7 @@
      "path": "src/sync/note.rs",
      "purpose": "Native NOTE carriers for ordinary window sync, distinct from history-free recovery",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
      }
     },
     {
@@ -90443,7 +90501,7 @@
      "path": "src/sync/source_audiences/mod.rs",
      "purpose": "Source audiences on the owner's full-window lane (Engine A, 6 Nov 03:46; SYNC-3)",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 29
      }
     },
     {
@@ -90875,7 +90933,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 42,
+      "crate-vis": 43,
       "fn": 7,
       "mod": 1,
       "re-export": 11,
@@ -91061,6 +91119,16 @@
       "crate-vis": 4,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/use_limited.rs",
+     "purpose": "Egress withholding of a row a record use limit keeps for storage only on this vault…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -94081,9 +94149,9 @@
       "PeerWriter"
      ],
      "path": "src/test_doors/agent_run_handover.rs",
-     "purpose": "Fixture doors for the run TASK writer proof test (FIX AGENT-RUN-HANDOVER-TRUSTS-REPLICATED-PAYLOAD): the run…",
+     "purpose": "Fixture doors for the run TASK writer proof tests (FIX AGENT-RUN-HANDOVER-TRUSTS-REPLICATED-PAYLOAD, FIX…",
      "surface": {
-      "fn": 4,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -96815,12 +96883,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "PsychProfileSweepRead"
+     ],
      "path": "src/test_doors/psych_profile.rs",
      "purpose": "Psych Mirror profile attempts for the host's job adapter, and the reads the named test asserts (untangle 6.9i)",
      "surface": {
       "const": 1,
-      "fn": 6
+      "fn": 9,
+      "struct": 1
      }
     },
     {
@@ -97455,9 +97526,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/test_doors/sound_match_birth.rs",
-     "purpose": "Doors for `tests/phonetic_g2p_npd.rs`: an entity born with a stamped Rule A class, which only crate-private…",
+     "purpose": "Doors for `tests/phonetic_g2p_npd.rs` and `tests/made_by_bounded_channels.rs`: an entity born with a stamped…",
      "surface": {
-      "fn": 1
+      "fn": 4
      }
     },
     {
@@ -99723,7 +99794,7 @@
      "path": "src/vault_shape/apply.rs",
      "purpose": "Apply: the gated landing of a plan, one item at a time, through the named doors the vault already has",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 5,
       "re-export": 1,
@@ -101087,11 +101158,15 @@
       "InquireRequest",
       "InquiryAnswerRequest",
       "InquiryAnswerView",
+      "InquiryEdgeEndRequest",
       "InquiryEdgeMintRequest",
+      "InquiryEdgePrepareJoinRequest",
       "InquiryEdgeRef",
       "InquiryEdgeTermsChangeRequest",
       "InquiryEdgeTermsChanged",
       "InquiryEdgeView",
+      "InquiryEdgesEnded",
+      "InquiryJoinPreparedView",
       "InquiryKeepModesInput",
       "InquiryKeepModesView",
       "InquiryLog",
@@ -101110,8 +101185,26 @@
      "path": "src/verbs/inquiry.rs",
      "purpose": "The inquiry verbs (INQUIRE-1 PR 5; federation.md #inquiry; Engine ruling INQUIRE-SHAPE Q2, Q4, Q7 = A): the…",
      "surface": {
-      "fn": 22,
-      "struct": 23
+      "crate-vis": 3,
+      "fn": 28,
+      "struct": 27
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LeaveEraseRequestsSendRequest",
+      "LeaveEraseRequestsSent",
+      "LeaveHeldWorld",
+      "LeaveHoldings",
+      "LeaveHoldingsRequest"
+     ],
+     "path": "src/verbs/leave.rs",
+     "purpose": "The inputs and answers of the leaving rows (ARCH-0043 #leaving-a-company, L7-09): `vault.leave.holdings`…",
+     "surface": {
+      "fn": 3,
+      "struct": 5
      }
     },
     {
@@ -101229,7 +101322,7 @@
       "crate-vis": 3,
       "fn": 9,
       "mod": 1,
-      "re-export": 149,
+      "re-export": 150,
       "struct": 9
      }
     },
@@ -101893,6 +101986,7 @@
       "SharedActExecuted",
       "SharedDeleteProposeRequest",
       "SharedInvitationAcceptedWithCredential",
+      "SharedInvitationAcceptedWithInquiryEdge",
       "SharedMemberAddRequest",
       "SharedMemberAskRequest",
       "SharedMemberRemoveRequest",
@@ -101906,7 +102000,7 @@
       "crate-vis": 3,
       "fn": 23,
       "re-export": 1,
-      "struct": 11
+      "struct": 12
      }
     },
     {
@@ -101936,7 +102030,7 @@
      "purpose": "The invitation rows of a shared vault (OF-531 / OF-158): `vault.members.add` invites, and the invitee lists…",
      "surface": {
       "crate-vis": 1,
-      "fn": 20,
+      "fn": 24,
       "re-export": 1,
       "struct": 1
      }
@@ -106275,6 +106369,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/agent_grant_context_pack_edges.rs",
+     "purpose": "An agent that reads through its own live read Grant keeps, in a context pack filtered for it, the edge…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/agent_grant_expiry_wall_clock.rs",
      "purpose": "An owner-agent grant's end is wall time (census L7-18)",
      "surface": {}
@@ -106445,6 +106547,14 @@
      "notable": [],
      "path": "tests/agent_run_handover_writer_proof.rs",
      "purpose": "The run TASK's writer proof (FIX AGENT-RUN-HANDOVER-TRUSTS-REPLICATED-PAYLOAD): the handover re-creates an…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_run_outlived_root_writer_proof.rs",
+     "purpose": "An outlived root's run TASK counts only behind a writer proof (FIX…",
      "surface": {}
     },
     {
@@ -110441,6 +110551,30 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/inquiry_edge_at_join.rs",
+     "purpose": "L7-04 (federation.md #inquiry-first-build: \"the edge is created at joining\"; ARCH-0043 #inquiry-edge: \"every…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/inquiry_edge_join_verbs.rs",
+     "purpose": "L7-04 PR 2: the join rows (federation.md #inquiry-first-build: \"the edge is created at joining\"; Engine…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/inquiry_leaving_holdings.rs",
+     "purpose": "L7-09, leaving a company, engine half (ARCH-0043 #leaving-a-company: \"The member seat and the inquiry edge…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/inquiry_records.rs",
      "purpose": "INQUIRE-1 PR 1 (federation.md #inquiry, ruled 2026-11-11; Engine ruling INQUIRE-SHAPE = A): the inquiry…",
      "surface": {}
@@ -111438,7 +111572,7 @@
      "path": "tests/it_sync/sync_harness/mod.rs",
      "purpose": "Two-vault sync test harness (ONE-1136 / M4-14)",
      "surface": {
-      "crate-vis": 42
+      "crate-vis": 43
      }
     },
     {
@@ -111799,6 +111933,14 @@
      "notable": [],
      "path": "tests/machine_peer_binding_facet.rs",
      "purpose": "A MACHINE's actor bookkeeping lands in the vault default facet (FIX 23050, PRIVACY-02's Dreamer summary…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/made_by_bounded_channels.rs",
+     "purpose": "[MADE-BY-BOUNDED-CHANNELS]: a call's `made_by` predicate (Rule A, OF-466) decides inside the bounded vector…",
      "surface": {}
     },
     {
@@ -112431,6 +112573,14 @@
      "notable": [],
      "path": "tests/owner_root_recovery.rs",
      "purpose": "Pass 27 R4: the recovery root's one door, `Vault::recover_owner_root` (Engine RULINGs WAYBACK-E2 = A and…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/owner_window_withholds_use_limited_rows.rs",
+     "purpose": "A row a refused privacy erase keeps for storage only leaves the owner's full window and the owner's text…",
      "surface": {}
     },
     {
@@ -114694,7 +114844,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/skill_post_hook_large_answer.rs",
@@ -116501,7 +116651,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 71,
+     "files": 74,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116683,7 +116833,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 107,
+     "files": 108,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116867,7 +117017,7 @@
     "inquiry": {
      "files": 13,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Inquiry: a company vault asks a member's vault (federation.md #inquiry, ARCH-0082 #inquiry; owner…"
     },
@@ -117523,7 +117673,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 438,
+     "files": 439,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -117698,7 +117848,7 @@
      "purpose": "Core's view of the verb table (untangle slice 5.0a, S5-2 = A, S50A-3 = A): the per-verb behaviour core's…"
     },
     "verbs": {
-     "files": 164,
+     "files": 165,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -117761,10 +117911,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 300,
+   "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8279,
-   "test_files": 2034
+   "source_files": 8285,
+   "test_files": 2041
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -126247,7 +126397,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 109,
+      "const": 110,
       "crate-vis": 1
      }
     },
@@ -156926,7 +157076,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/api/booking/public_deposit_tests.rs",
@@ -158678,7 +158828,7 @@
      "path": "src/api/facade/courtesy_delete_doors.rs",
      "purpose": "The host doors of the owner's courtesy delete rows (OF-273): `vault.courtesy_delete.send`, `.sent`…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -159392,13 +159542,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/inquiry_doors.rs",
      "purpose": "The host doors of the inquiry rows (INQUIRE-1 PR 5; federation.md #inquiry; Engine ruling INQUIRE-SHAPE Q2…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -160178,7 +160328,7 @@
      "path": "src/api/facade/shared_member_doors.rs",
      "purpose": "The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -168704,13 +168854,13 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/embedder/mod.rs",
      "purpose": "The embedder provider slot",
      "surface": {
-      "crate-vis": 41
+      "crate-vis": 40
      }
     },
     {
@@ -168791,6 +168941,16 @@
      "purpose": "Census L10-10 (CROSS-ARCH-0019 #dm-xaccount-embedder): \"One bearer key covers every caller",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/slot_build.rs",
+     "purpose": "Builds the embedder slot from a serve configuration: the slot itself, the paid door of an endpoint provider…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -169053,7 +169213,7 @@
      "path": "src/handler/connection.rs",
      "purpose": "Upgrade route, hello bootstrap, and the single-owner connection event loop",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -169433,7 +169593,7 @@
      "path": "src/handler/window_ready.rs",
      "purpose": "The served host's side of ready windows (fix list row 19634): a window a policy wake persisted again here is…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -174466,13 +174626,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/courtesy_delete.rs",
      "purpose": "Courtesy unsend (OF-273, ARCH-0043 #relationship-lifecycle): after a disconnect the owner asks a former peer…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -175648,7 +175808,7 @@
      "path": "src/server/courtesy_delete.rs",
      "purpose": "Delivers queued courtesy deletion asks and answers (OF-273)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -181187,7 +181347,7 @@
      "purpose": "The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened…"
     },
     "embedder": {
-     "files": 33,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -181593,9 +181753,9 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 69,
+   "over_bar": 68,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2054,
+   "source_files": 2055,
    "test_files": 517
   },
   "oneiron-setting-contract": {
@@ -208845,18 +209005,22 @@
       "EraseProposeRequest",
       "GuestSlipMintRequest",
       "GuestSlipMinted",
+      "InquiryEdgeOffer",
       "InvitationCodeRequest",
       "InvitationSlipRequest",
       "SharedEraseAskCloseRequest",
       "SharedEraseAskRequest",
+      "SharedInquiryEdgeAttachRequest",
+      "SharedInquiryEdgeAttached",
       "SharedInvitationAcceptWithCredentialRequest",
+      "SharedInvitationAcceptWithInquiryEdgeRequest",
       "SharedInvitationRequest",
       "SharedInvitationWithdrawRequest"
      ],
      "path": "src/verbs/shared_members.rs",
      "purpose": "Moved from `crates/oneiron/src/verbs/shared_members.rs` (lib split W3: wire types below the lib)",
      "surface": {
-      "struct": 10
+      "struct": 14
      }
     },
     {
