@@ -373,8 +373,16 @@ fn authorized_base_edge_endpoints(
             // Read only for what it selects, with the parent's own reach:
             // a row the release rule withholds from another vault is no
             // endpoint there, and the owner's own machines keep theirs.
-            let selected =
-                filter_window_doc(vault, &base, &base_key, selector, position, withhold, reach)?;
+            let selected = filter_window_doc(
+                vault,
+                &base,
+                &base_key,
+                selector,
+                position,
+                withhold,
+                reach,
+                GuestTombstones::Omitted,
+            )?;
             selected_by_month.insert(base_key.to_string(), selected);
         }
         if selected_by_month[base_key.as_str()]

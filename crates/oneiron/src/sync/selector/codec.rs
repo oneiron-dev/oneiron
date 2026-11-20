@@ -323,6 +323,7 @@ pub fn filtered_window_doc_for_peer(
         &position,
         Withhold::Peer(peer),
         reach,
+        GuestTombstones::Omitted,
     )?;
     // Beside the masked births goes the text the grant's owner lets travel,
     // and each TASK's and SUMMARY's birth placement (FIX 3656).
@@ -365,6 +366,7 @@ pub fn filtered_window_doc_for(
         &position,
         withhold,
         BirthReach::OwnMachines,
+        GuestTombstones::Omitted,
     )
 }
 
@@ -391,6 +393,7 @@ pub(in crate::sync) fn granted_window_doc(
         &position,
         Withhold::Nothing,
         BirthReach::OwnMachines,
+        GuestTombstones::Omitted,
     )
 }
 
@@ -459,6 +462,7 @@ pub(crate) fn guest_share_envelope_body_listing(
         &position,
         Withhold::Unknown,
         BirthReach::OtherVault(&withheld),
+        tombstones,
     )?;
     let stripped = strip_guest_share_metadata(&filtered, key, &withheld, tombstones)?;
     carry_born_with(

@@ -9,6 +9,11 @@ use crate::workspace_roster::project::extra_room_redaction;
 /// export door withholds; promotion authority asks only what the grant
 /// covers. `reach` says where the shipped rows' births may go.
 /// Live rows and their text sources honor current use limits; tombstones still propagate.
+/// `tombstones` says whether a copy to another vault carries the record
+/// deletes released to its grant's peer (a Connect delivery) or none (a
+/// selector answer, a guest document, an endpoint read); a copy to the
+/// owner's own machines judges its tombstones by the selection alone.
+#[expect(clippy::too_many_arguments)]
 pub(in crate::sync::selector) fn filter_window_doc(
     vault: &Vault,
     source: &LoroDoc,
@@ -17,6 +22,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
     position: &Position,
     withhold: Withhold<'_>,
     reach: BirthReach<'_>,
+    tombstones: GuestTombstones,
 ) -> Result<LoroDoc> {
     let scope_position = position.as_scope();
     // A selector must not trigger Observer A with unselected NOTE sidecars.
@@ -641,15 +647,18 @@ pub(in crate::sync::selector) fn filter_window_doc(
             }
         });
     }
-    // A copy to another vault carries a record's delete only of a row this
-    // vault released to the grant's peer (CROSS-VAULT-DELETE-NEVER-ADMITTED =
-    // A): that release, not this export's selection, decides it, so a delete
-    // reaches every copy the peer was sent. The peer's admission lands it
-    // only where its own delivery ledger proves the copy; a guest document
-    // drops every one (`strip_guest_share_metadata`).
-    let mut peer_release = other_vault
+    // A copy to another vault carries a record's delete only on a Connect
+    // delivery, and only of a row this vault released to the grant's peer
+    // (CROSS-VAULT-DELETE-NEVER-ADMITTED = A): that release, not this export's
+    // selection, decides it, so a delete reaches every copy the peer was sent.
+    // The peer's admission lands it only where its own delivery ledger proves
+    // the copy. Every other copy to another vault carries none.
+    let mut peer_release = (other_vault && tombstones == GuestTombstones::Released)
         .then(|| super::peer_tombstone_release::PeerTombstoneRelease::new(&selector.grant_id));
     map_for_each_tombstone_value(&source_tombstones, |raw_key, value| {
+        if other_vault && peer_release.is_none() {
+            return;
+        }
         let Ok(id) = EntityId::from_hex(raw_key) else {
             return;
         };

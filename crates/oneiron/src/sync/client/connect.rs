@@ -93,7 +93,8 @@ impl SyncClient {
         request: ConnectExportRequest,
     ) -> Result<ConnectDelivery> {
         let vault = manager.vault();
-        let (local, state) = active(vault, owner, &id(&request.pact)?)?;
+        let pact = id(&request.pact)?;
+        let (local, state) = active(vault, owner, &pact)?;
         let by = owner.actor_for_read(vault)?;
         let local_world = crate::entity_id::LocalWorldId::try_from(request.world_ref)?;
         let grant = grant(vault, state.grant_ref)?;
@@ -131,6 +132,14 @@ impl SyncClient {
                 None
             }
         };
+        // The delivery leaves only under the standing it was filtered by: a
+        // disconnect, re-pact or grant change meanwhile refuses it, as the
+        // guest-document door rereads its context before it signs.
+        let (local_now, state_now) = active(vault, owner, &pact)?;
+        if local_now != local || state_now != state || self::grant(vault, state.grant_ref)? != grant
+        {
+            return Err(refused());
+        }
         let body = ConnectWindow {
             pact: request.pact,
             epoch: state.pact_epoch,

@@ -1,7 +1,7 @@
-//! Which record tombstones a filter for another vault releases
-//! (CROSS-VAULT-DELETE-NEVER-ADMITTED = A, Oneiron lead 21 Nov 06:1x): while
-//! the share is live, the owner's delete travels as an update and removes the
-//! peer's copy; membership and topology tombstones stay out.
+//! Which record tombstones a Connect delivery's filter releases to another
+//! vault (CROSS-VAULT-DELETE-NEVER-ADMITTED = A, Oneiron lead 21 Nov 06:1x):
+//! while the share is live, the owner's delete travels as an update and
+//! removes the peer's copy; membership and topology tombstones stay out.
 //!
 //! A tombstone names a row's id and its delete's reason and time. The row's
 //! body is gone, so the checks that released the live row to another vault
@@ -25,13 +25,15 @@ use crate::error::Result;
 use crate::share_travel::guest_window_rows_prepared_for_grant;
 use crate::sync::selector::admission::is_membership_or_topology_kind;
 
-/// The record tombstones one filter for another vault releases under its
+/// The record tombstones one Connect delivery's filter releases under its
 /// selector's grant.
 pub(super) struct PeerTombstoneRelease<'g> {
     grant: &'g EntityId,
     /// The rows the prepared exports under `grant` listed, read once, at the
-    /// first tombstone that gets that far.
-    prepared: Option<BTreeSet<EntityId>>,
+    /// first tombstone that gets that far: `Some(None)` once that read
+    /// failed, which withholds every later tombstone of this filter too,
+    /// without a second scan.
+    prepared: Option<Option<BTreeSet<EntityId>>>,
 }
 
 impl<'g> PeerTombstoneRelease<'g> {
@@ -90,11 +92,10 @@ impl<'g> PeerTombstoneRelease<'g> {
         {
             return Ok(false);
         }
-        if self.prepared.is_none() {
-            self.prepared = Some(guest_window_rows_prepared_for_grant(
-                vault, txn, self.grant,
-            )?);
-        }
-        Ok(self.prepared.as_ref().is_some_and(|rows| rows.contains(id)))
+        let grant = self.grant;
+        let prepared = self
+            .prepared
+            .get_or_insert_with(|| guest_window_rows_prepared_for_grant(vault, txn, grant).ok());
+        Ok(prepared.as_ref().is_some_and(|rows| rows.contains(id)))
     }
 }
