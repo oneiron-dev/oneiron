@@ -120,7 +120,8 @@ pub use admission_disposition::{AdmissionDisposition, AdmissionVerdict, Proposer
 pub(crate) use admission_disposition::{SealTrust, core_digest, decision_in_force_by_seal_in_txn};
 pub(crate) use archive_restore::{
     archived_topology_decision, current_merge_and_split_events_in_txn,
-    is_inline_merge_or_split_body, is_topology_refusal, restored_merge_or_split,
+    is_inline_merge_or_split_body, is_one_part_merge_or_split_manifest, is_topology_refusal,
+    one_part_merge_or_split_payload, operation_part_root, restored_merge_or_split,
 };
 pub(crate) use attribution::{
     admitted_author_in_txn, author_carrier_actor, drop_unheld_author_marks_in_txn,
