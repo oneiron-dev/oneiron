@@ -131,7 +131,8 @@ fn brief_pins_editor_proposals_purge_and_fresh_views() {
     use crate::lens::{LensPrincipalBinding, LensRenderFrame, LensRenderId};
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
-    let author = person(&vault, 0x41);
+    // NOTE-SCALAR-NO-GRANT=A: scalar edits without a Grant use the embedded owner.
+    let author = vault.ensure_embedded_owner_actor().unwrap();
     vault
         .install_read_permit_for_test(WriteActor::new(author, EdgeActorClass::Human))
         .unwrap();
