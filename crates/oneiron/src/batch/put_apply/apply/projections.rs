@@ -97,9 +97,9 @@ pub(super) fn stage_put_projections(
     // A setting value beside its signed act is part of that act (stage 7c-1): its row, local or a
     // peer's, notes the pass an authority row notes, so the transaction's owner projects the
     // setting rows once it commits, and a row whose act read this value's row (or waited for it)
-    // is read again.
+    // is read again. A put at a row a projection read notes it whatever its body.
     if fixed.entity_type == crate::registry::ENTITY_TYPE_ASSET
-        && crate::setting::is_beside_value_body(data)
+        && crate::setting::notes_projection_pass_in_txn(store, &*wtxn, (&fixed.id, data))?
     {
         store.record_hooks.note_authority_row();
     }
