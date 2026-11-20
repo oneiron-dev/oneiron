@@ -21,6 +21,7 @@
 //! `cargo test --locked -p oneiron --all-features --test receipts_credential_pin`
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use oneiron::authority::{HostSlipIssuer, VerifiedSlip};
@@ -390,9 +391,14 @@ fn assert_identity_page_names_only_readable_claims(
 #[test]
 fn an_identity_receipt_reaches_only_a_credential_that_reads_its_distinct_claim() -> TestResult {
     let fixture = fixture()?;
-    // The engine's MACHINE writers, as a host provisions them after its
-    // root: an Auto assertion's engine seal counts only under one of them,
-    // and a decision whose seal does not count projects no receipt.
+    // This install's signer and the engine's MACHINE writers, as a host
+    // loads and provisions them after its root: a topology op seals with
+    // this install's machine key, and the seal it writes here stands as
+    // this vault's own, so each Auto assertion projects its receipt.
+    fixture
+        .vault
+        .install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    fixture.vault.prepare_install_signing()?;
     fixture
         .vault
         .provision_engine_machine_identities(&fixture.issuer)?;
