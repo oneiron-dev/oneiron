@@ -18,7 +18,7 @@ use crate::off_record::promote::PromoteInitiator;
 use crate::{EdgeActorClass, Vault, WriteActor};
 
 use super::on_record::SaverProof;
-use super::room::{Hearing, SavedTurns, post_notice};
+use super::room::{Hearing, SavedTurns, not_in_room, post_notice};
 use super::session::OffRecordSession;
 use super::types::OffRecordNoticeAct;
 
@@ -125,6 +125,18 @@ pub(super) fn not_a_holder(session_ref: &str, actor: EntityId) -> Error {
     })
 }
 
+/// Whether, in `txn`, the owner's setting `off_record.flip_alone.by_holder`
+/// lets a creator put a stretch entered alone on record on their own slip
+/// (restriction wave 7, C24). The flip and every landing of its saving read
+/// it.
+pub(super) fn flip_alone_admitted_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(
+        crate::off_record::setting_keys::OFF_RECORD_FLIP_ALONE_BY_HOLDER
+            .read_in_txn(vault, txn, &[], None)?
+            .value,
+    )
+}
+
 /// Whether this vault is shared and, in `txn`, `person`'s membership there
 /// writes its content over the whole vault. Any refusal holds no grant.
 fn writes_shared_content_in_txn(
@@ -146,15 +158,22 @@ fn writes_shared_content_in_txn(
 }
 
 /// Whether this vault's authority log minted `credential` as it shows
-/// itself, holder key and bounds alike. A slip narrowed or handed on to
-/// another key since shows other claims than its mint; and a proof verified
-/// against a snapshot other than this vault's may name a live slip id, but
-/// not the claims this vault minted under it.
-fn minted_as_shown(
+/// itself, holder key and bounds alike, with no caveat since. A slip
+/// narrowed or handed on to another key carries a caveat, even one that
+/// only shortens its lifetime, which the claims cannot show (verification
+/// trims the lifetime anyway); and a proof verified against a snapshot
+/// other than this vault's may name a live slip id, but not the claims this
+/// vault minted under it. Every door whose effect outlives the room under
+/// the slip's authority asks it: a save here, and an export
+/// ([`OffRecordSession::export_talk_by`]).
+pub(super) fn minted_as_shown(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     credential: &VerifiedSlip,
 ) -> Result<bool> {
+    if !credential.is_unattenuated() {
+        return Ok(false);
+    }
     let shown = credential.claims();
     let fold = vault.authority_view_readonly_in_txn(txn)?;
     Ok(fold.slips.mints.get(&shown.slip_id).is_some_and(|mint| {
@@ -230,24 +249,65 @@ impl OffRecordSession<'_> {
     /// still holds the grant on a live slip and is still in the room, in the
     /// membership they flipped in.
     ///
+    /// A stretch entered alone (restriction wave 7, C24): its creator puts it
+    /// on record the same way while the owner's setting
+    /// `off_record.flip_alone.by_holder` is on, and every landing checks that
+    /// setting again beside the grant. With the setting off, and for anyone
+    /// but its creator, it is refused as a stretch with no room always was.
+    ///
     /// # Errors
     ///
     /// [`OffRecordError::OffRecordPromoteUnauthenticated`] when `credential`
     /// does not carry this vault's write grant for `holder`,
-    /// [`OffRecordError::OffRecordNotInRoom`] when they are not in the room.
+    /// [`OffRecordError::OffRecordNotInRoom`] when they are not in the room,
+    /// or, for a stretch entered alone, are not its creator or the setting is
+    /// off.
     pub fn flip_on_record_by(&self, holder: EntityId, credential: &VerifiedSlip) -> Result<()> {
-        self.require_in_room(holder)?;
+        let alone = self.room()?.is_none();
+        if alone {
+            self.require_flip_alone_by(holder)?;
+        } else {
+            self.require_in_room(holder)?;
+        }
         let grant = SaveGrant::claimed(holder, credential)
             .ok_or_else(|| not_a_holder(&self.session_ref, holder))?;
         let recheck = || {
-            grant.require_in_txn(
-                self.vault,
-                &self.vault.store.env.read_txn()?,
-                &self.session_ref,
-            )
+            let txn = self.vault.store.env.read_txn()?;
+            grant.require_in_txn(self.vault, &txn, &self.session_ref)?;
+            if alone && !flip_alone_admitted_in_txn(self.vault, &txn)? {
+                return Err(not_in_room(&self.session_ref, holder));
+            }
+            Ok(())
         };
         recheck()?;
         self.put_on_record(holder, SaverProof::Grant(Box::new(grant.clone())), recheck)
+    }
+
+    /// Whether the owner's setting `off_record.flip_alone.by_holder` lets the
+    /// creator of a stretch entered alone put it on record on their own slip
+    /// ([`Self::flip_on_record_by`]), read now. A door reads it to name the
+    /// setting in its refusal; the flip reads it again itself.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn flip_alone_by_holder_admitted(&self) -> Result<bool> {
+        flip_alone_admitted_in_txn(self.vault, &self.vault.store.env.read_txn()?)
+    }
+
+    /// For a stretch entered alone: `holder` entered it and the owner's
+    /// setting `off_record.flip_alone.by_holder` is on. Anything else is the
+    /// refusal a stretch with no room always gave, whatever the slip.
+    fn require_flip_alone_by(&self, holder: EntityId) -> Result<()> {
+        if self
+            .creator()
+            .is_some_and(|creator| creator.actor == holder)
+            && self.flip_alone_by_holder_admitted()?
+        {
+            Ok(())
+        } else {
+            Err(not_in_room(&self.session_ref, holder))
+        }
     }
 
     /// The whole-talk save of a holder on their slip; with `answering`, only

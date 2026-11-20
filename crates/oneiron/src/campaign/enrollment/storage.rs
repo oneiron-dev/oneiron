@@ -48,25 +48,7 @@ pub(super) fn hash_from_hex(value: &str, context: &'static str) -> Result<[u8; 3
 }
 
 pub(super) fn bytes_from_hex(value: &str, context: &'static str) -> Result<Vec<u8>> {
-    if !value.len().is_multiple_of(2) {
-        return Err(Error::CorruptedIndex(context));
-    }
-    let bytes = value.as_bytes();
-    let mut out = Vec::with_capacity(value.len() / 2);
-    for pair in bytes.chunks_exact(2) {
-        let hi = hex_nibble(pair[0]).ok_or(Error::CorruptedIndex(context))?;
-        let lo = hex_nibble(pair[1]).ok_or(Error::CorruptedIndex(context))?;
-        out.push((hi << 4) | lo);
-    }
-    Ok(out)
-}
-
-const fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
-    }
+    oneiron_hex::decode_vec(value).ok_or(Error::CorruptedIndex(context))
 }
 
 pub(super) fn invalid(reason: &str) -> Error {

@@ -63,13 +63,8 @@ impl ContributionTarget {
     }
 }
 
-/// The used edge an ancestor check measured, as recorded: each end `None`
-/// once that entity is erased (FIX 8988).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CheckedEdge {
-    pub derived: Option<EntityId>,
-    pub source: Option<EntityId>,
-}
+#[doc(hidden)]
+pub use oneiron_records::skill_attribution::contribution_targets::CheckedEdge;
 
 impl ContributionPair {
     /// The pair `candidate`'s forks make, finished at `at`.

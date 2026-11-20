@@ -49,26 +49,18 @@ impl Vault {
                     decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
                     grant_ref: grant_ref.to_owned(),
                 };
-                let record = GateDecisionRecord {
-                    version: GATE_DECISION_LEDGER_VERSION,
-                    decision_id: receipt.decision_id(),
-                    created_at: crate::ports::recorded_at_in_txn(&self.store, &mut wtxn)?,
-                    outcome: receipt.gate_outcome().to_owned(),
-                    reason_codes: vec![receipt.reason_code().to_owned()],
-                    receipt_reasons: Vec::new(),
-                    system_notices: Vec::new(),
-                    actor_class: caller_class.to_owned(),
-                    actor_ref: Some(caller.clone()),
-                    content_kind: CONSENT_CONTENT_KIND.to_owned(),
-                    policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-                    claim_id: None,
-                    grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
-                    diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),
-                    read_frontier_hash: [0_u8; 32],
-                    context: Default::default(),
-                    redacted_at: None,
-                };
-                self.store.append_gate_decision_in_txn(&mut wtxn, &record)?;
+                let mut gate_receipt = GateReceipt::new(
+                    GateReceiptOutcome::Revoked,
+                    CONSENT_CONTENT_KIND,
+                    receipt.reason_code(),
+                    ReceiptActor::Row(WriteActor::new(actor, actor_class)),
+                    crate::consent::consent_receipt_diff_handle(&receipt),
+                    PolicyBasis::NOT_READ,
+                );
+                gate_receipt.id = Some(receipt.decision_id());
+                gate_receipt.grant_ref = crate::consent::consent_receipt_grant_ref(&receipt);
+                self.store
+                    .record_gate_receipt_in_txn(&mut wtxn, gate_receipt)?;
                 wtxn.commit()?;
                 Ok(ConsentRevocation {
                     receipt: Some(receipt),

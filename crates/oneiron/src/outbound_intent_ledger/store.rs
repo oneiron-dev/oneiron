@@ -11,6 +11,7 @@ use crate::attempt_queue::AttemptId;
 use crate::connector_key::BudgetBlock;
 use crate::error::Error;
 use crate::side_table::{self, Raw, SideKey, SideTable};
+use oneiron_contracts::lifecycle::Lifecycle;
 
 mod approval;
 pub(crate) mod checkpoint;
@@ -50,27 +51,23 @@ const INTENT_ATTEMPT_FORMAT: SideTable<(), [u8; 1], Raw> =
     SideTable::new(&side_table::OUTBOUND_INTENT_ATTEMPT_FORMAT);
 
 /// One logical dispatch call's index key: `attempt_id.as_bytes()` (16) then `call_seq` big-endian
-/// (8) — spelled explicitly because [`AttemptId`] is a foreign type this module cannot implement
-/// [`SideKey`] on directly.
-#[derive(Debug, Clone, Copy)]
+/// (8).
+#[derive(Debug, Clone, Copy, SideKey)]
 struct AttemptCallKey {
     attempt_id: AttemptId,
     call_seq: u64,
 }
 
-impl SideKey for AttemptCallKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.attempt_id.as_bytes());
-        out.extend_from_slice(&self.call_seq.to_be_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (attempt, seq) = bytes.split_at_checked(16)?;
-        Some(Self {
-            attempt_id: AttemptId::from_bytes(attempt).ok()?,
-            call_seq: u64::from_be_bytes(seq.try_into().ok()?),
-        })
-    }
+/// One [`AttemptCallKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn attempt_call_key_pin_for_test(
+    attempt_id: AttemptId,
+    call_seq: u64,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&AttemptCallKey {
+        attempt_id,
+        call_seq,
+    })
 }
 
 /// Reads and fully decodes one ledger row, checking that the row found under `id` actually
@@ -575,7 +572,7 @@ pub(crate) fn reconcile_connector_intent_in_txn(
         // A pre-send authority refusal cannot negate a prior in-flight call.
         // Pending/None is durable admission and may have crossed the wire.
         record.delivery_uncertain |= record.recorded_outcome.is_none();
-        record.state = IntentState::Abandoned;
+        record.state.transition_to(IntentState::Abandoned)?;
         record.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(reason));
         record.updated_ms = now_ms.max(record.created_ms);
         put_ledger_record(vault, wtxn, &record)?;
@@ -719,7 +716,7 @@ fn update_pending_recorded_outcome(
     {
         // A newer semantic attempt took over after the no-wire window. The
         // old permit must never reopen that sender after the takeover.
-        record.state = IntentState::Abandoned;
+        record.state.transition_to(IntentState::Abandoned)?;
         record.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(
             IntentEscalationReason::DedupeReservationReplaced,
         ));

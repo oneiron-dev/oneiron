@@ -78,16 +78,10 @@ pub(crate) struct ProjectDetectionSource {
     pub(crate) at: u64,
 }
 
-/// What the project question answered on one source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ProjectDetectionAnswer {
-    /// Yes: the house mind drafts a card.
-    Yes,
-    /// The ladder asked a person; the source stays pending. A person's yes to
-    /// the question is not the mint tap.
-    AskedPerson,
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::project::proposal::ProjectCardState;
+#[doc(hidden)]
+pub(crate) use oneiron_records::workspace_roster::project::proposal::ProjectDetectionAnswer;
 
 /// The question's kept answer on one source, with its decision receipt.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -98,15 +92,6 @@ pub(crate) struct ProjectDetectionVerdict {
     pub(crate) receipt: DecisionReceipt,
     /// The house agent dispatched to draft the card; none when none resolves.
     pub(crate) house: Option<EntityId>,
-}
-
-/// Where a host-held card stands. A dismissed card never mints.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectCardState {
-    Proposed,
-    Minted { project: EntityId },
-    Dismissed,
 }
 
 /// One host-held card: what the drafting agent proposed on its source message,

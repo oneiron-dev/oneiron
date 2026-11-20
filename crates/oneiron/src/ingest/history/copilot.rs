@@ -201,7 +201,7 @@ fn user_event(thread: &mut Thread, event: &Value, data: &Value, delegated: bool)
         role: HistoryRole::User,
         text: text.to_owned(),
         at_ms: time_field(event, "timestamp"),
-        said_by,
+        said_by: said_by.map(str::to_owned),
         tools: Vec::new(),
         alias: None,
     });

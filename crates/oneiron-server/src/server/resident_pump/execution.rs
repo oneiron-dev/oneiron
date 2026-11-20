@@ -14,7 +14,7 @@ use super::{
     browser_workflow, child_pin, craft, ensure_listed, enter_engine_native_run,
     finalize_step_captures, fork_executor_run, note_stale_listed_models, note_unbound_listed_run,
     pattern_launch, pump_caller, run_continuation, scope_funding, task_engine_run_seat,
-    task_run_seat, text, unix_now,
+    task_run_seat, text, unix_seconds_now,
 };
 use crate::mcp::LiveLeaseRunner;
 use oneiron::engine_executor::SelfBriefPort;
@@ -94,7 +94,7 @@ pub(super) fn run_bound(
             actor,
             &status.attempt,
             run_id,
-            unix_now(),
+            unix_seconds_now(),
         )? {
             browser_workflow::BeforeSeat::Unbound => {}
             browser_workflow::BeforeSeat::Done(receipt) => return Ok(BoundRun::Library(receipt)),
@@ -227,9 +227,14 @@ pub(super) fn run_bound(
     // DOOR-111 S4c-5: a planned team's leader runs with the exact pattern
     // pack its launch froze, its SKILL.md before any other skill's body; a
     // continued run's task, its source's fork, already holds it there.
-    let leader =
-        pattern_launch::leader_exposure(vault, &status.attempt, &mut config, continues, unix_now())
-            .map_err(text)?;
+    let leader = pattern_launch::leader_exposure(
+        vault,
+        &status.attempt,
+        &mut config,
+        continues,
+        unix_seconds_now(),
+    )
+    .map_err(text)?;
     craft::append_resident_craft(vault, &status.attempt, actor, &mut config, continues)
         .map_err(text)?;
     // A project conversation run runs with its skill's SKILL.md (OF-501); a
@@ -243,7 +248,7 @@ pub(super) fn run_bound(
         .prepare_default_project_conversation_run(
             &status.attempt,
             config.model.as_str(),
-            unix_now(),
+            unix_seconds_now(),
         )
         .map_err(text)?
         && let Some(body) = skill
@@ -336,6 +341,9 @@ pub(super) fn run_bound(
     // managed issuer, else this install's own self-host root (FIX-LIST 3018).
     let issuer = server.host_issuer();
     let mut full = 0;
+    // L2-37: the prefix the last entry's turn left cached. An entry that
+    // resumes a Yielded program may park with no turn of its own.
+    let mut horizon = None;
     loop {
         let outcome = enter_run(
             vault,
@@ -355,6 +363,7 @@ pub(super) fn run_bound(
             &exposures,
             &server.ai,
             planned.as_ref(),
+            horizon.take(),
         );
         // The first step's capsule takes the rung that answered it, on the
         // thread the entry ran its calls on.
@@ -366,6 +375,7 @@ pub(super) fn run_bound(
         // Every input producer reports at each stop. Any unknown constituent
         // keeps the whole set unknown, and the run goes on (FIX 7020).
         record_resident_read_sets(vault, &status.attempt, &outcome, &exposures);
+        horizon.clone_from(&outcome.cache_horizon);
         match outcome.status {
             EngineExecutorStatus::Yielded { .. } => full = 0,
             EngineExecutorStatus::WindowFull { .. }
@@ -578,6 +588,7 @@ fn enter_run(
     exposures: &[TaskExposure],
     ai: &crate::ai_host::AiHandle,
     planned: Option<&PlannedModel>,
+    horizon: Option<oneiron::idle_fold::CachedPrefixHorizon>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let mut bound = HostSelfDispatcher::for_leased_agent_attempt(vault, actor, &status.attempt)
         .map_err(text)?
@@ -699,6 +710,7 @@ fn enter_run(
         planned,
         status.input.definition.models.clone(),
         brief.as_ref().map(|brief| brief as &dyn SelfBriefPort),
+        horizon,
     );
     door.bind_meter(None);
     door.bind_lease(None);

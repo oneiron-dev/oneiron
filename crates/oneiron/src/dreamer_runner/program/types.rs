@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::AttemptId;
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::entity_id::EntityId;
 
 use super::authority::TurnProgramAuthority;
 
@@ -15,17 +15,12 @@ pub use oneiron_verb_wire::dreamer_runner::program::types::{
     ArmTurnProgram, DisarmTurnProgram, ProgramRecipePin, ProgramTrigger, TurnProgramRegistration,
 };
 
-const ADMISSION_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-admission:v1";
-const CODE_RUN_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-code-run:v1";
-/// The committed turn that woke a program: the TURN, its conversation, and
-/// when it landed on the vault's recording clock, in seconds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LandedTurnRef {
-    pub turn: EntityId,
-    pub conversation: EntityId,
-    pub landed_at: u64,
-}
+#[doc(hidden)]
+use oneiron_records::dreamer_runner::program::types::ADMISSION_DOMAIN;
+#[doc(hidden)]
+pub use oneiron_records::dreamer_runner::program::types::LandedTurnRef;
+#[doc(hidden)]
+pub(super) use oneiron_records::dreamer_runner::program::types::{code_run_bytes, run_id};
 
 /// What admitting one wake decided.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -250,22 +245,4 @@ pub(super) struct TurnProgramAttemptStamp {
     pub(super) actor: EntityId,
     pub(super) actor_class: u8,
     pub(super) receipt_id: [u8; 16],
-}
-
-/// The queue run id one admission's attempt carries: its code run's id, as
-/// the callable it calls checks it against the caller's leased run.
-pub(super) fn run_id(admission: &[u8; 32]) -> String {
-    bytes_to_hex_lower(&code_run_bytes(admission))
-}
-
-/// The code run one admission's program runs as (DOOR-141 PR2), fixed by
-/// the admission so every try of it names the same run.
-pub(super) fn code_run_bytes(admission: &[u8; 32]) -> [u8; 16] {
-    let digest = blake3::Hasher::new()
-        .update(CODE_RUN_DOMAIN)
-        .update(admission)
-        .finalize();
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&digest.as_bytes()[..16]);
-    bytes
 }

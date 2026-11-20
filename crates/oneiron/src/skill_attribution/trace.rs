@@ -4,9 +4,9 @@
 //! judges how the attempt used each skill; this reader only gathers what the
 //! vault recorded, and says `None` rather than guess a part it lacks.
 
-use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::attempt_queue::AttemptQueue;
 use crate::limit_ask::EngineLimit;
-use crate::receipt::{ReceiptRecord, attempt_pack_receipt_id};
+use crate::receipt::{ReceiptRecord, parse_attempt_pack_receipt_id};
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::skill_optimize::union_source_rows;
 use crate::{EntityId, Result, Vault};
@@ -73,7 +73,7 @@ pub fn receipt_attribution_trace(
     let Some(skills) = loaded_revisions(vault, &receipt.receipt_id, &actor, wires, pinned)? else {
         return Ok(None);
     };
-    let Some(attempt) = receipt_attempt(&receipt.receipt_id) else {
+    let Some(attempt) = parse_attempt_pack_receipt_id(&receipt.receipt_id) else {
         return Ok(None);
     };
     let Some(record) = AttemptQueue::new(vault).get(attempt)? else {
@@ -136,7 +136,7 @@ pub fn receipt_attribution_trace_sourced(
     let Some(trace) = receipt_attribution_trace(vault, receipt)? else {
         return Ok(None);
     };
-    let run = receipt_attempt(&receipt.receipt_id)
+    let run = parse_attempt_pack_receipt_id(&receipt.receipt_id)
         .and_then(|attempt| EntityId::from_bytes(*attempt.as_bytes()).ok())
         .map(|run| vec![run]);
     let skills = trace.skills.iter().map(|skill| skill.skill).collect();
@@ -165,7 +165,7 @@ pub(crate) fn receipt_attribution_known_rows(
 ) -> Result<Vec<EntityId>> {
     let mut rows = receipt.pack_source_rows().unwrap_or_default();
     rows.extend(
-        receipt_attempt(&receipt.receipt_id)
+        parse_attempt_pack_receipt_id(&receipt.receipt_id)
             .and_then(|attempt| EntityId::from_bytes(*attempt.as_bytes()).ok()),
     );
     rows.extend(crate::skill::resident::receipt_resident(
@@ -266,11 +266,4 @@ fn loaded_revisions(
         });
     }
     Ok(Some(skills))
-}
-
-/// The attempt a stamped receipt id names.
-pub(super) fn receipt_attempt(receipt: &str) -> Option<AttemptId> {
-    let (_, hex) = receipt.rsplit_once(':')?;
-    let attempt = AttemptId::from_bytes(EntityId::from_hex(hex).ok()?.as_bytes()).ok()?;
-    (attempt_pack_receipt_id(&attempt) == receipt).then_some(attempt)
 }

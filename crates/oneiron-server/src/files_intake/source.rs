@@ -93,9 +93,9 @@ pub(crate) fn files_rescan(
                         limit: *limit,
                         observed: *observed,
                     }),
-                    ImportWarning::HardLinked { .. } | ImportWarning::OriginalsUnkept { .. } => {
-                        None
-                    }
+                    ImportWarning::HardLinked { .. }
+                    | ImportWarning::OriginalsUnkept { .. }
+                    | ImportWarning::ArchiveEntrySkipped { .. } => None,
                 })
                 .collect();
             (Some(report.into()), crossed, unkept, None)

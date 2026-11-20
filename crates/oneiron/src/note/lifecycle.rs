@@ -65,15 +65,8 @@ pub(crate) fn erase_seal_actor_in_txn(
     Ok(())
 }
 
-/// Whether a NOTE is reachable, orthogonal to its mutability (ARCH-0032).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NoteLifecycleStatus {
-    Active,
-    Sealed,
-    Archived,
-    Tombstoned,
-}
+#[doc(hidden)]
+pub use oneiron_records::note::lifecycle::NoteLifecycleStatus;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::note::lifecycle::NoteRefRequest;

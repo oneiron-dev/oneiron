@@ -2,13 +2,17 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 
 /// The three answers canon's confirm offers (DEC-0006): approve once (the
-/// default), approve and stop asking, deny (CALLS: outcome names).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// default), approve and stop asking, deny (CALLS: outcome names). A
+/// Register: its `as_str` is the stable word, which is also the option id the
+/// wait's ask offers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("code.consent.choice")]
 pub enum CodeConsentChoice {
     ApproveOnce,
     ApproveAndStopAsking,
@@ -18,16 +22,6 @@ pub enum CodeConsentChoice {
 impl CodeConsentChoice {
     /// Every choice, in the order the wait's ask offers them.
     pub const ALL: [Self; 3] = [Self::ApproveOnce, Self::ApproveAndStopAsking, Self::Deny];
-
-    /// The stable word, which is also the option id the wait's ask offers.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::ApproveOnce => "approve_once",
-            Self::ApproveAndStopAsking => "approve_and_stop_asking",
-            Self::Deny => "deny",
-        }
-    }
 
     /// The choice an ask option id names, if any.
     #[must_use]
@@ -46,8 +40,9 @@ impl CodeConsentChoice {
 /// What one settled code consent wait came to (CALLS: outcome names). A
 /// settlement is its own fact: it is not the answer, and it is not the
 /// run's consumption of the reply, which 1b records.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("code.consent.settle.outcome")]
 pub enum CodeConsentSettleOutcome {
     /// The effect ran and its connector acknowledged it.
     Delivered,
@@ -59,16 +54,6 @@ pub enum CodeConsentSettleOutcome {
 }
 
 impl CodeConsentSettleOutcome {
-    /// The stable word.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Delivered => "delivered",
-            Self::Refused => "refused",
-            Self::DeliveryUnknown => "delivery_unknown",
-        }
-    }
-
     /// The one-byte tag the settlement receipt carries.
     pub const fn tag(self) -> u8 {
         match self {

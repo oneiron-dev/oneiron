@@ -36,7 +36,7 @@ use oneiron::llm::{
     SchedulingReceipt, SessionOp,
 };
 use oneiron_driver::{DeviceGrant, InferenceWorker, WorkerLease};
-use oneiron_llm_openai::OpenAiCompatTransportError;
+use oneiron_llm::openai_compat::OpenAiCompatTransportError;
 use rustix::net::{
     RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags, SendAncillaryBuffer,
     SendAncillaryMessage, SendFlags, recvmsg, sendmsg,

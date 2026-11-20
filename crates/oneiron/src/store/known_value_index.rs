@@ -56,7 +56,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::ShortIdStoreRead;
 use crate::secret_record::SecretCustodyRecord;
-use crate::store::{KNOWN_TAG_BYTES, KnownEntry, KnownHistory, KnownHistoryIds, Store};
+use crate::store::{KnownEntry, KnownHistory, KnownHistoryIds, Store};
 use crate::vault::Vault;
 
 pub(crate) use self::forms::{decodings, occurrences};
@@ -72,8 +72,8 @@ pub const KNOWN_VALUE_MIN_BYTES: usize = 1;
 /// A window this long keeps each tag's candidates few.
 const TAG_WINDOW: usize = 12;
 
-/// How many bytes of a value's first window its tag keeps.
-const TAG_BYTES: usize = KNOWN_TAG_BYTES;
+#[doc(hidden)]
+use oneiron_records::store::known_value_index::TAG_BYTES;
 
 /// How many of an open stream's last bytes, at most, are held back unseen
 /// because no window can tell yet whether a known value starts there (FIX
@@ -395,8 +395,23 @@ impl KnownValues {
         data: &[u8],
         keep: impl Fn(&[u8]) -> bool,
     ) -> Vec<MatchedSpan<'_>> {
+        self.matched_spans_by(data, keep, &|_| true, self.reach())
+    }
+
+    /// [`Self::matched_spans_except`] over the values `admits` takes alone:
+    /// every other value is out before the longest at a place is chosen. A
+    /// base64 run longer than `reach` reads as none: the reach of the values
+    /// `admits` takes, so a value it leaves out never changes what is read
+    /// (blind review round 2 of #9528).
+    fn matched_spans_by(
+        &self,
+        data: &[u8],
+        keep: impl Fn(&[u8]) -> bool,
+        admits: &dyn Fn(&Known) -> bool,
+        reach: usize,
+    ) -> Vec<MatchedSpan<'_>> {
         let mut spans: Vec<_> = self
-            .raw_spans(data)
+            .raw_spans(data, admits)
             .into_iter()
             .filter(|hit| !keep(&data[hit.span.clone()]))
             .collect();
@@ -405,7 +420,7 @@ impl KnownValues {
             .into_iter()
             .flatten()
         {
-            for hit in self.raw_spans(&view.bytes) {
+            for hit in self.raw_spans(&view.bytes, admits) {
                 if keep(&view.bytes[hit.span.clone()]) {
                     continue;
                 }
@@ -417,7 +432,7 @@ impl KnownValues {
         // FIX 6671: a form-encoded spelling reads `+` as a space; every hit
         // maps back, since `+` reads as one byte from one.
         if let Some(view) = forms::form_view(data) {
-            for hit in self.raw_spans(&view.bytes) {
+            for hit in self.raw_spans(&view.bytes, admits) {
                 if keep(&view.bytes[hit.span.clone()]) {
                     continue;
                 }
@@ -429,10 +444,10 @@ impl KnownValues {
         let fits = |len: usize| self.lengths.binary_search(&len).is_ok();
         // One decode: base64_runs is base64_views + fits filter, so reuse
         // the same views for the whole-run and in-run passes (identical output).
-        let b64_views = forms::base64_views(data, self.reach());
+        let b64_views = forms::base64_views(data, reach);
         for (run, view) in &b64_views {
             if fits(view.bytes.len()) && !keep(&view.bytes) {
-                if let Some(known) = self.whole(&view.bytes) {
+                if let Some(known) = self.whole(&view.bytes, admits) {
                     spelled.push(MatchedSpan {
                         span: run.clone(),
                         origin: known.origin,
@@ -444,7 +459,7 @@ impl KnownValues {
         // FIX 6671: a value spelled inside a longer run, at any offset, over
         // folds, maps back through the run's own source map.
         for (_, view) in &b64_views {
-            for hit in self.raw_spans(&view.bytes) {
+            for hit in self.raw_spans(&view.bytes, admits) {
                 if keep(&view.bytes[hit.span.clone()]) {
                     continue;
                 }
@@ -517,11 +532,11 @@ impl KnownValues {
     /// The known value `data` is, whole.
     /// Exact raw whole-value identity, without exposing its keyed fingerprint.
     pub(crate) fn is_exact_value(&self, data: &[u8]) -> bool {
-        self.whole(data).is_some()
+        self.whole(data, &|_| true).is_some()
     }
 
-    fn whole(&self, data: &[u8]) -> Option<&Known> {
-        self.longest_at(data)
+    fn whole(&self, data: &[u8], admits: &dyn Fn(&Known) -> bool) -> Option<&Known> {
+        self.longest_in(data, u32::MAX, admits)
             .filter(|known| known.len == data.len())
     }
 
@@ -625,7 +640,7 @@ impl KnownValues {
 
     /// Each known value in `data` as its bytes are, leftmost first, never
     /// overlapping: at each place the longest value there wins.
-    fn raw_spans(&self, data: &[u8]) -> Vec<MatchedSpan<'_>> {
+    fn raw_spans(&self, data: &[u8], admits: &dyn Fn(&Known) -> bool) -> Vec<MatchedSpan<'_>> {
         let mut spans = Vec::new();
         // FIX 12209: only an offset where some window's rolling value is one
         // the index holds is read; the offset a known value starts at always
@@ -637,7 +652,7 @@ impl KnownValues {
             let known = if hits == 0 {
                 None
             } else {
-                self.longest_in(&data[at..], hits)
+                self.longest_in(&data[at..], hits, admits)
             };
             match known {
                 Some(known) => {
@@ -663,16 +678,16 @@ impl KnownValues {
         Some(&self.buckets[at].known)
     }
 
-    /// The longest known value `rest` starts with.
-    fn longest_at(&self, rest: &[u8]) -> Option<&Known> {
-        self.longest_in(rest, u32::MAX)
-    }
-
-    /// The longest known value `rest` starts with whose first window's
-    /// length `hits` names: bit n for the n-th of `self.windows` (FIX
-    /// 12209). Each named window's tag is hashed once, the shorter ones on
-    /// the way to the longer.
-    fn longest_in(&self, rest: &[u8], hits: u32) -> Option<&Known> {
+    /// The longest known value `admits` takes that `rest` starts with whose
+    /// first window's length `hits` names: bit n for the n-th of
+    /// `self.windows` (FIX 12209). Each named window's tag is hashed once,
+    /// the shorter ones on the way to the longer.
+    fn longest_in(
+        &self,
+        rest: &[u8],
+        hits: u32,
+        admits: &dyn Fn(&Known) -> bool,
+    ) -> Option<&Known> {
         let mut hasher = blake3::Hasher::new_keyed(&self.keys.tag);
         let mut tags = [None; TAG_WINDOW];
         let mut hashed = 0;
@@ -692,6 +707,7 @@ impl KnownValues {
             self.bucket(&tag)?.iter().find(|known| {
                 known.len.min(TAG_WINDOW) == window
                     && known.len <= rest.len()
+                    && admits(known)
                     && self.keys.fingerprint(&rest[..known.len]) == known.fingerprint
             })
         })
@@ -853,10 +869,37 @@ impl Vault {
         &self,
         read: impl FnOnce(Option<&KnownValues>, &RoTxn<'_>) -> Result<T>,
     ) -> Result<T> {
+        let snapshot = self.known_snapshot()?;
+        read(snapshot.known(), snapshot.txn())
+    }
+
+    /// [`Self::with_known_snapshot`]'s snapshot and matcher, held by a
+    /// reader that serves several calls in that one snapshot (FIX
+    /// REPO-ASSET-KNOWN-PASS-NESTED-SNAPSHOT). Keep it short-lived, as the
+    /// closure form is: the custody read guard is held until it drops.
+    ///
+    /// # Errors
+    /// The pass's own.
+    pub(crate) fn known_snapshot(&self) -> Result<KnownSnapshot<'_>> {
         let snapshot = self.store.custody_snapshot()?;
-        let txn: &RoTxn<'_> = &snapshot;
-        let known = self.known_values_in_snapshot(txn)?;
-        read(known.as_ref(), txn)
+        let known = self.known_values_in_snapshot(&snapshot)?;
+        Ok(KnownSnapshot { known, snapshot })
+    }
+
+    /// The values custody knows now, as one matcher its caller holds once the
+    /// custody read guard is released (FIX REPLAY-COMPARE-KNOWN-MATCHER):
+    /// built from one snapshot taken under the guard, as
+    /// [`Self::with_known_values`] builds it, for a replay's compare that
+    /// reads it once and drops it. `None` when custody knows no value. Call
+    /// it outside any write transaction.
+    ///
+    /// # Errors
+    /// The custody snapshot's, or the index's read.
+    pub(crate) fn known_values_now(&self) -> Result<Option<Arc<KnownValues>>> {
+        let snapshot = self.store.custody_snapshot()?;
+        let known = self.known_values_in_snapshot(&snapshot)?;
+        drop(snapshot);
+        Ok(known.map(Arc::new))
     }
 
     /// The matcher of the history `txn` holds, a snapshot taken under the
@@ -871,6 +914,27 @@ impl Vault {
                 .port_short_id_reference(txn, holder)?
                 .map(|(handle, _)| handle))
         })
+    }
+}
+
+/// A snapshot taken under the custody read guard and the matcher built
+/// from it (FIX 8966): bytes read in it and the values matched against them
+/// are one state. The matcher is wiped first when it drops, then the
+/// snapshot closes, then the guard releases.
+pub(crate) struct KnownSnapshot<'a> {
+    known: Option<KnownValues>,
+    snapshot: super::key_custody::GuardedSnapshot<'a>,
+}
+
+impl<'a> KnownSnapshot<'a> {
+    /// The snapshot the matcher was built from.
+    pub(crate) fn txn(&self) -> &RoTxn<'a> {
+        &self.snapshot
+    }
+
+    /// The values custody knows in this snapshot; `None` when it knows none.
+    pub(crate) const fn known(&self) -> Option<&KnownValues> {
+        self.known.as_ref()
     }
 }
 

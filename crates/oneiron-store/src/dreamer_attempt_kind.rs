@@ -59,9 +59,11 @@ pub const DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND: &str = "dreamer.skill_optimize";
 
 /// ARCH-0073 vault auto-cleanup queue kind (ONE-1931). Private per-device
 /// attempt rows, like MICRO/MESO and SKILL-OPT: the pass reads one vault's own
-/// rows and, in the default propose-first posture, only DRAFTS a proposal, so
-/// a second device running it is a second question for a human, never a
-/// second archive.
+/// rows. In the default automatic posture each device archives its own copy:
+/// an archive is local hygiene and publishes no CRDT tombstone. In the
+/// owner's propose-first posture the pass only DRAFTS a proposal, so a second
+/// device running it is a second question for a human, never a second
+/// archive.
 ///
 /// Doubles as the payload `job_type` this attempt carries, following the same
 /// dotted-name convention as [`DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND`], so the

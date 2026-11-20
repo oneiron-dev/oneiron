@@ -68,7 +68,7 @@ pub(crate) async fn vault_booking_constraint_turn(
         let transport = credential_transport_context(server, auth)
             .map_err(|error| FacadeApiError::from(error).into_memory_error())?;
         let (page_ref, publication, mut rows) =
-            resolve_public_booking_page_listing(server, &input.page_token)
+            resolve_public_booking_page_listing(server, &input.page_token, &auth.destination())
                 .map_err(|error| FacadeApiError::from(error).into_memory_error())?;
         let authority = oneiron::booking::publication::PublicBookingAuthority {
             page_ref,

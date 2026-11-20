@@ -169,6 +169,20 @@ impl EngineNativeExecutor<'_> {
         &mut self,
         run_id: EntityId,
     ) -> EngineExecutorResult<Option<String>> {
+        // L2-37: folds an idle call landed while the run was parked are a
+        // batch the run committed with no executor to hear of it (Engine
+        // call FOLD B). Its first request in this entry is prepared past
+        // them, as if they had landed here.
+        if self
+            .self_brief
+            .as_ref()
+            .is_some_and(|brief| brief.born != Some(run_id))
+            && let crate::code_run::ExecutorStorage::Canonical(vault) = &self.storage
+            && let Some(folds) = crate::idle_fold::take_parked_fold_boundary(vault, run_id)?
+            && let Some(boundary) = FoldBoundary::landed(run_id, folds)
+        {
+            self.brief_fold_committed(boundary);
+        }
         let Some(brief) = self.self_brief.as_mut() else {
             return Ok(None);
         };

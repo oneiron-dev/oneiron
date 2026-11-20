@@ -1,6 +1,6 @@
 //! Owner/vault keys and validation for the durable meter queue.
 use super::codec::UsageError;
-use std::time::{SystemTime, UNIX_EPOCH};
+pub(super) use oneiron_base::unix_seconds_now;
 pub(super) const MAX_DIMENSION_LEN: usize = 256;
 pub(super) const MAX_IDEMPOTENCY_KEY_LEN: usize = 256;
 /// What every stored usage event's key starts with, before its billing
@@ -132,10 +132,4 @@ pub(super) fn validate_dimension(
         });
     }
     Ok(())
-}
-
-pub(super) fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs())
 }

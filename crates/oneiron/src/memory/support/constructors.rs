@@ -32,6 +32,7 @@ impl Vault {
             birth_position: Default::default(),
             owner_authorship: None,
             owner_surface: crate::authority::ActSurface::ThisInstall,
+            answers_as_owner_device: false,
             host_slip_issuer: None,
             invocation: None,
             drain_permit: None,
@@ -91,6 +92,7 @@ impl Vault {
             birth_position: Default::default(),
             owner_authorship: None,
             owner_surface: crate::authority::ActSurface::ThisInstall,
+            answers_as_owner_device: false,
             host_slip_issuer: None,
             invocation: None,
             drain_permit: None,
@@ -158,6 +160,7 @@ impl<'v> Memory<'v> {
                 // in person.
                 owner_authorship: None,
                 owner_surface: crate::authority::ActSurface::ThisInstall,
+                answers_as_owner_device: false,
                 host_slip_issuer: None,
                 // The same logical verb, run inside the turn.
                 invocation: self.invocation,

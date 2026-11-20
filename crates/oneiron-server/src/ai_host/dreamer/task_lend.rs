@@ -12,7 +12,7 @@ use oneiron::llm::HostInferenceContext;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::{DreamerAdmittedAttempt, DreamerAttemptExecution, WakeAttemptContext, WriteActor};
 
-use crate::runtime::wall_clock_ms as now_ms;
+use oneiron_base::unix_millis_now;
 
 use super::request_sources::ServedRealization;
 use super::{RoleSends, extraction_egress};
@@ -126,7 +126,7 @@ impl TaskLend<'_> {
         // receipt failure logs and the render stands.
         if matches!(rendered, DreamerAttemptExecution::Completed { .. })
             && let Err(error) =
-                oneiron::team::record_solo_receipt(ctx.vault, record.id, now_ms() / 1_000)
+                oneiron::team::record_solo_receipt(ctx.vault, record.id, unix_millis_now() / 1_000)
         {
             tracing::warn!(kind = ?error.kind(), "a weave lens render's solo receipt was not recorded");
         }

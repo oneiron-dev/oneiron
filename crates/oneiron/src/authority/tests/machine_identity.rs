@@ -28,6 +28,20 @@ pub(super) fn host() -> Host {
         .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
         .unwrap();
     let vault_id = vault.authority_fold().unwrap().vault_id.unwrap();
+    // The handle holds the host's root as a serving host does, so the owner
+    // acts it carries are proven (row CARRIER-OWNER-PROOF).
+    vault.hold_checkpoint_root_signer(std::sync::Arc::new(issuer.duplicate().unwrap()));
+    vault.install_device_keystore(HOST_KEYS.with(std::sync::Arc::clone));
+    vault.prepare_install_signing().expect("install signing");
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("serving install profile");
+    vault
+        .enrol_device_owner_signing_key(
+            &ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall),
+            &issuer,
+        )
+        .expect("this install's device owner key");
     Host {
         _dir: dir,
         vault,
@@ -52,6 +66,7 @@ thread_local! {
 /// `vault`'s own encryption key for `vault_id`, from this test's host keystore.
 pub(super) fn own_encryption_key(vault: &Vault, vault_id: [u8; 32]) -> MachineEncryptionKey {
     vault.install_device_keystore(HOST_KEYS.with(std::sync::Arc::clone));
+    vault.prepare_install_signing().expect("install signing");
     vault.machine_encryption_key(vault_id).unwrap()
 }
 
@@ -93,6 +108,7 @@ pub(super) fn request_for(
                 &encryption_key(),
             ))
             .to_bytes(),
+        restored_from: None,
     }
 }
 
@@ -118,6 +134,8 @@ fn only_the_owners_yours_makes_a_machine_mine() {
         let folded = host
             .vault
             .enroll_machine(&host.owner, ActSurface::ThisInstall, &request, role, None)
+            .unwrap()
+            .into_standing()
             .unwrap();
         assert_eq!(folded.is_mine(None), mine, "{role:?}");
         assert_eq!(is_mine(&host.vault, request.machine), mine, "{role:?}");
@@ -224,6 +242,8 @@ fn a_removed_machine_never_comes_back() {
             MachineRole::Removed,
             None,
         )
+        .unwrap()
+        .into_standing()
         .unwrap();
     assert!(removed.roster_chain().removed && !removed.roster_chain().is_live());
     assert!(!is_mine(&host.vault, request.machine));
@@ -294,6 +314,8 @@ fn a_machine_never_changes_its_key() {
                 machine_key: request.machine_key,
                 machine_proof: request.machine_proof,
                 revision: 2,
+                carrier: None,
+                act: None,
                 ..fold
                     .machine(machine)
                     .unwrap()
@@ -351,6 +373,7 @@ fn a_forged_mark_never_makes_a_machine_mine() {
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     };
     let forge = |signer: &SigningKey| {
         let fold = host.vault.authority_fold().unwrap();
@@ -449,10 +472,10 @@ fn enrolled_machine(host: Host) -> (tempfile::TempDir, Vault, MachineEnrolmentRe
         .machine_enrolment_request(vault_id, own_encryption_key(&vault, vault_id))
         .unwrap();
     vault
-        .enroll_machine(
+        .set_machine_role(
             &owner,
             ActSurface::ThisInstall,
-            &request,
+            request.machine,
             MachineRole::Owned(MachineOwnership::Yours),
             None,
         )
@@ -500,6 +523,7 @@ fn a_restored_image_never_carries_the_machine_to_another_install() {
     let (_dir, vault, request) = enrolled_machine(host());
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("image");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100).unwrap();
     let checkpoint_key = vault.checkpoint_key().unwrap();
 
@@ -512,6 +536,10 @@ fn a_restored_image_never_carries_the_machine_to_another_install() {
         200,
     )
     .unwrap();
+    replacement.install_device_keystore(HOST_KEYS.with(std::sync::Arc::clone));
+    replacement
+        .prepare_install_signing()
+        .expect("install signing");
     assert_eq!(
         replacement
             .local_machine()
@@ -548,12 +576,14 @@ fn a_restored_image_never_carries_the_machine_to_another_install() {
 /// The vault a restore replaced, activated as a side vault of its
 /// replacement, is a second live vault: it joins as a new machine, and only
 /// the replacement answers as the machine both were (wp-keys I8).
+#[cfg(unix)]
 #[test]
 fn an_activated_archive_joins_as_a_new_machine() {
     let (_dir, vault, request) = enrolled_machine(host());
     let home = vault.store.env.path().to_path_buf();
     let backups = crate::test_support::restore_tempdir();
     let (image, staged) = (backups.path().join("image"), backups.path().join("staged"));
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100).unwrap();
     let checkpoint_key = vault.checkpoint_key().unwrap();
     let (replacement, _) = Vault::restore_checkpoint_replacing(
@@ -567,15 +597,14 @@ fn an_activated_archive_joins_as_a_new_machine() {
     .unwrap();
     // As `oneiron restore` exchanges the two directories.
     vault
-        .swap_in_replacement(&replacement, || {
-            let between = home.with_extension("exchange");
-            std::fs::rename(&home, &between)?;
-            std::fs::rename(&staged, &home)?;
-            std::fs::rename(&between, &staged)
-        })
+        .swap_in_replacement(&replacement, crate::store::exchange_held)
         .unwrap();
     drop((vault, replacement));
     let replacement = Vault::open(&home, VaultConfig::default()).unwrap();
+    replacement.install_device_keystore(HOST_KEYS.with(std::sync::Arc::clone));
+    replacement
+        .prepare_install_signing()
+        .expect("install signing");
     Vault::activate_archived(
         &staged,
         VaultConfig::default(),
@@ -642,6 +671,7 @@ fn pair_and_bind(
             request,
         )
         .unwrap();
+    let folded = folded.into_standing().unwrap();
     assert!(folded.is_mine(None));
     let address = MeshMachineAddress {
         endpoint_key: transport.verifying_key().to_bytes(),
@@ -741,11 +771,16 @@ fn a_mesh_address_bind_keeps_the_mark() {
 /// H336: an owner keeps binding mesh addresses past the 1,024 MACHINE rows
 /// the endpoint read once refused at (rule 5). Past the scan's threshold row
 /// the bind raises the owner's check. A lookup any endpoint key may make is
-/// a stranger's work: it stays bounded and raises none.
+/// a stranger's work: it stays bounded and raises none. This pins the walk,
+/// which runs only when the endpoint index cannot serve (census L3-28B;
+/// `tests/mesh_machine_endpoint_index.rs` covers the index).
 #[test]
 fn a_mesh_bind_reads_past_the_old_machine_cap() {
     const PAST_THE_OLD_CAP: usize = 1_025;
     let host = host();
+    host.vault
+        .drop_mesh_machine_endpoint_index_for_test()
+        .unwrap();
     let at = TimeRange { start: 1, end: 1 };
     for _ in 0..PAST_THE_OLD_CAP {
         host.vault

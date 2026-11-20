@@ -15,21 +15,13 @@
 //! still reads as it did.
 //! Entry: `Vault::hand_off_speaker_entry`.
 
-use serde::{Deserialize, Serialize};
-
 use super::*;
 use crate::disclosure::AttendeeIdentityChoice;
 
-/// Where a handed-off speaker's new PERSON window is visible from.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SpeakerHandoffBoundary {
-    /// From the join on: the membership door's own boundary.
-    #[default]
-    JoinTime,
-    /// From the speaker's entry: the entry's cut carries into the window.
-    EntryEnteredAt,
-}
+#[doc(hidden)]
+pub use oneiron_records::conversation::speaker_handoff::{
+    SpeakerHandoffBoundary, SpeakerHandoffReceipt,
+};
 
 /// The handoff the caller asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,22 +33,6 @@ pub struct SpeakerHandoff {
     pub boundary: SpeakerHandoffBoundary,
     /// Who grants the membership: one the membership door admits today.
     pub actor: WriteActor,
-}
-
-/// What a handoff did, retained on the new membership's ledger row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SpeakerHandoffReceipt {
-    pub entry_ref: EntityId,
-    pub container: EntityId,
-    /// The contact the owner named the speaker.
-    pub contact: EntityId,
-    pub person: EntityId,
-    /// The boundary the caller picked.
-    pub boundary: SpeakerHandoffBoundary,
-    /// When the PERSON's new window is visible from.
-    pub visible_from: u64,
-    /// When the PERSON joined.
-    pub joined_at: u64,
 }
 
 impl Vault {

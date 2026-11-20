@@ -19,6 +19,16 @@
 //! The owner revokes a document's QR capabilities or sets their expiry
 //! ([`Vault::revoke_esign_qr_capabilities`],
 //! [`Vault::set_esign_qr_capability_expiry`]); a revoked one stays revoked.
+//!
+//! The PDF stays behind a separate possession factor, each party's own
+//! signing link (ARCH-0064a section 6, "for sensitive envelopes"). Every
+//! envelope counts as sensitive until the vault owner turns on its QR PDF
+//! download (`qr_pdf_download` at drafting, or
+//! [`Vault::set_esign_qr_pdf_download`] at any time): then a usable QR
+//! capability also reads the sealed PDF it was printed in
+//! ([`Vault::esign_qr_sealed_pdf`]). The switch is read live on each read,
+//! so turning it off closes the download at once; without it the download
+//! answers the one refusal.
 use super::{
     ledger::{events_in, state_in},
     model::*,
@@ -41,9 +51,50 @@ const QR_TOKENS: SideTable<[u8; 32], QrCapabilityBinding, Named> =
 const DOCUMENT_QR: SideTable<EntityId, QrDigests, Raw> =
     SideTable::new(&side_table::ESIGN_DOCUMENT_QR_CAPABILITY_INDEX);
 
+/// The documents whose QR capabilities download the sealed PDF: a row
+/// means the vault owner turned the download on. Key: id16 (document).
+const DOCUMENT_QR_PDF_DOWNLOAD: SideTable<EntityId, QrPdfDownload, Raw> =
+    SideTable::new(&side_table::ESIGN_DOCUMENT_QR_PDF_DOWNLOAD);
+
 /// The digests one document's QR capabilities go by, stored as
 /// concatenated 32-byte digests.
 struct QrDigests(Vec<[u8; 32]>);
+
+/// The QR PDF download switch's row: one byte, 1.
+struct QrPdfDownload;
+
+impl RawValue for QrPdfDownload {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(vec![1])
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        if bytes != [1_u8].as_slice() {
+            return Err(crate::Error::CorruptedIndex("esign document QR PDF download").into());
+        }
+        Ok(Self)
+    }
+}
+
+/// Turns `document`'s QR PDF download on or off in `txn`, and answers
+/// whether it was on before.
+///
+/// # Errors
+/// The store's.
+pub(super) fn set_pdf_download_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    document: EntityId,
+    on: bool,
+) -> Result<bool> {
+    if on {
+        let was = DOCUMENT_QR_PDF_DOWNLOAD.contains(&vault.store, txn, &document)?;
+        DOCUMENT_QR_PDF_DOWNLOAD.put(&vault.store, txn, &document, &QrPdfDownload)?;
+        Ok(was)
+    } else {
+        DOCUMENT_QR_PDF_DOWNLOAD.delete(&vault.store, txn, &document)
+    }
+}
 
 impl RawValue for QrDigests {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
@@ -217,6 +268,10 @@ pub struct EsignQrPage {
     /// Who signed, and when, in signing order. Names and roles only.
     pub signers: Vec<EsignQrSigner>,
     pub items: Vec<EsignQrItem>,
+    /// Whether the vault owner lets this capability download the sealed
+    /// PDF ([`Vault::esign_qr_sealed_pdf`]): off unless the owner turned it
+    /// on, so each party's own signing link stays the possession factor.
+    pub pdf_download: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -251,6 +306,28 @@ pub struct EsignQrItem {
 }
 
 impl Vault {
+    /// The binding of `token` when it may be read now, and the document it
+    /// names: unknown, revoked, expired and erased all get the one refusal.
+    fn usable_qr_binding_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        token: &EsignQrCapability,
+    ) -> Result<(QrCapabilityBinding, EntityId)> {
+        let binding = QR_TOKENS
+            .get(&self.store, txn, &token.digest())?
+            .ok_or_else(refused)?;
+        if !binding.usable_at(self.now_recorded_at()) {
+            return Err(refused());
+        }
+        let document = EntityId::from_hex(&binding.sealed.document)?;
+        // Sealed artifacts and the audit survive erasure; the bearer
+        // authority to read them does not.
+        if self.get_blob_artifact_in_txn(txn, &document)?.is_none() {
+            return Err(refused());
+        }
+        Ok((binding, document))
+    }
+
     /// The QR page `token` opens: the projection of the seal it was printed
     /// in. Reads only; refuses nothing for its rate.
     ///
@@ -259,18 +336,8 @@ impl Vault {
     /// otherwise the store's.
     pub fn esign_qr_page(&self, token: &EsignQrCapability) -> Result<EsignQrPage> {
         let txn = self.store.env.read_txn()?;
-        let binding = QR_TOKENS
-            .get(&self.store, &txn, &token.digest())?
-            .ok_or_else(refused)?;
-        if !binding.usable_at(self.now_recorded_at()) {
-            return Err(refused());
-        }
-        let document = EntityId::from_hex(&binding.sealed.document)?;
-        // Sealed artifacts and the audit survive erasure; the bearer
-        // authority to read them does not.
-        if self.get_blob_artifact_in_txn(&txn, &document)?.is_none() {
-            return Err(refused());
-        }
+        let (binding, document) = self.usable_qr_binding_in(&txn, token)?;
+        let pdf_download = DOCUMENT_QR_PDF_DOWNLOAD.contains(&self.store, &txn, &document)?;
         let state = state_in(self, &txn, document)?;
         let signers = events_in(self, &txn, document)?
             .into_iter()
@@ -314,6 +381,56 @@ impl Vault {
                     self_verify: SealVerdict::Passed,
                 })
                 .collect(),
+            pdf_download,
+        })
+    }
+
+    /// The sealed PDF of `item` that `token` was printed in, hash-checked,
+    /// when the vault owner turned on the document's QR PDF download. The
+    /// switch is read in the same snapshot as the capability, so turning it
+    /// off closes the next read. Reads only; refuses nothing for its rate.
+    ///
+    /// # Errors
+    /// The one refusal for an unknown, revoked, expired or erased
+    /// capability, a document whose download is off, or an item the seal
+    /// did not print; a sealed file whose hash no longer matches; otherwise
+    /// the store's.
+    pub fn esign_qr_sealed_pdf(&self, token: &EsignQrCapability, item: usize) -> Result<Vec<u8>> {
+        let txn = self.store.env.read_txn()?;
+        let (binding, document) = self.usable_qr_binding_in(&txn, token)?;
+        if !DOCUMENT_QR_PDF_DOWNLOAD.contains(&self.store, &txn, &document)? {
+            return Err(refused());
+        }
+        let sealed = binding.sealed.items.get(item).ok_or_else(refused)?;
+        let artifact = EntityId::from_hex(&sealed.sealed_artifact)?;
+        let bytes = self
+            .read_blob_artifact_version_in_txn(&txn, &artifact, sealed.sealed_version)?
+            .ok_or_else(|| invalid("sealed artifact version missing"))?;
+        if <[u8; 32]>::from(Sha256::digest(&bytes)) != sealed.sha256 {
+            return Err(invalid("sealed artifact hash mismatch"));
+        }
+        Ok(bytes)
+    }
+
+    /// Turns `document`'s QR PDF download on or off: with it on, each usable
+    /// QR capability its seals printed also reads the sealed PDF; off, the
+    /// signing links stay the only way to the PDF. Answers whether it was
+    /// on before.
+    ///
+    /// # Errors
+    /// Not the live owner, no signing document `document`, or the store's.
+    pub fn set_esign_qr_pdf_download(
+        &self,
+        owner: &AuthenticatedOwner,
+        document: EntityId,
+        on: bool,
+    ) -> Result<bool> {
+        self.with_write_txn_grouped(|txn| {
+            verify_owner(self, txn, owner)?;
+            if events_in(self, txn, document)?.is_empty() {
+                return Err(invalid("no such signing document"));
+            }
+            set_pdf_download_in_txn(self, txn, document, on)
         })
     }
 

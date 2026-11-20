@@ -22,8 +22,8 @@ use crate::agent_dispatch::LivePlanRequest;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::learning_setting::{
-    SettingMode, SettingScope, check_row_terms, names_no_actor, parse_row_key, project_row_keys,
-    read_scopes_in_txn, scoped_row_key,
+    SettingMode, SettingScope, check_row_key_reads_back, check_row_terms, names_no_actor,
+    parse_row_key, project_row_keys, read_scopes_in_txn, scoped_row_key,
 };
 use crate::learning_setting_doors::{LearningSettingMode, LearningSettingScope};
 use crate::receipt::ERASED_CALL_IDENTITY;
@@ -34,35 +34,10 @@ use crate::team::team_shape::CoordinationPattern;
 use crate::write_envelope::WriteActor;
 use oneiron_model::llm::ModelId;
 
-/// The four spawn fields an owner row may steer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SpawnChoice {
-    Model,
-    Width,
-    Pattern,
-    Budget,
-}
-
-impl SpawnChoice {
-    pub const ALL: [Self; 4] = [Self::Model, Self::Width, Self::Pattern, Self::Budget];
-
-    /// The row key: canon's choice name.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Model => "model",
-            Self::Width => "width",
-            Self::Pattern => "pattern",
-            Self::Budget => "budget",
-        }
-    }
-
-    /// The choice a row key names, if it names one.
-    #[must_use]
-    pub fn from_key(key: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|choice| choice.as_str() == key)
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::learning_setting_choice::SpawnChoice;
+#[doc(hidden)]
+use oneiron_records::learning_setting_choice::{ROW_LABEL, ROW_VERSION};
 
 /// One choice's value, in its own type.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -148,9 +123,6 @@ impl SpawnChoiceSource {
 const CHOICE: SideTable<String, StoredChoiceRow, Raw> =
     SideTable::new(&side_table::LEARNING_CHOICE);
 
-const ROW_VERSION: u8 = 1;
-const ROW_LABEL: &str = "learning choice row";
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredChoiceRow {
     v: u8,
@@ -199,6 +171,7 @@ pub fn put_choice_row(
     if let SettingScope::Type(type_ref) = scope {
         type_ref.validate()?;
     }
+    check_row_key_reads_back(row.value.choice().as_str(), row.mode, scope)?;
     check_row_terms(row.mode, row.weight_runs, &row.why)?;
     match row.value {
         ChoiceValue::Width(0) => return Err(invalid("a spawn width is at least one agent")),

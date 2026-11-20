@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{SeatCandidate, SeatTask, invalid};
@@ -12,7 +11,7 @@ use crate::agent_dispatch::MeasuredRate;
 use crate::llm::decision::catalogue::SEAT_PICK;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionQuestion, HeldLadder,
-    Reversibility, TypedDecision, cut_text, fit_state,
+    Reversibility, cut_text, fit_state,
 };
 use crate::llm::{ModelId, ReasoningEffort};
 use crate::retrieval_depth::RetrievalDeadline;
@@ -25,16 +24,8 @@ const FIRST_RUNG: &str = "default";
 /// bound): a larger catalog is picked in rounds of reads this size (FIX 9925).
 const PICK_ROUND: usize = 64;
 
-/// The pick's complete typed reads (FIX 9926): every model-pick decision in
-/// the order asked (one for 64 or fewer candidates; for more, each round's
-/// batch reads, the final one last), and the effort decision when that pick
-/// ran.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SeatPickReadings {
-    pub model_decisions: Vec<TypedDecision>,
-    pub effort_decision: Option<TypedDecision>,
-}
+#[doc(hidden)]
+pub use oneiron_records::llm::seat::decisions::SeatPickReadings;
 
 /// Generation beside a decided seat pick: the plain-language `why` the seat's receipt
 /// keeps, from the host's own model transport. The model and effort are already decided;

@@ -15,6 +15,7 @@ mod items;
 mod paid;
 mod presentation;
 mod render_budget;
+mod replay;
 mod scope_honesty;
 mod selection;
 mod speculative;
@@ -442,13 +443,15 @@ impl Memory<'_> {
         // as_of, never at the wall clock (FIX 12226).
         let census = census
             .with_judged_at(execution.as_of)
-            .with_read_filter(self.read_filter.as_ref());
+            .with_read_filter(self.read_filter.as_ref())
+            .with_live_grant_receipts();
         // The caller's own filter rides every lane the recall reads (FIX
         // 3977): a session lane is built afresh from the key, so it binds
         // the handle's filter again; a rebind only meets it.
         let lane = lane
             .with_judged_at(execution.as_of)
-            .with_read_filter(self.read_filter.as_ref());
+            .with_read_filter(self.read_filter.as_ref())
+            .with_live_grant_receipts();
         // The receipt of a search: the candidates it ranks, the key's own
         // rows and those its own live Grants read (FIX 7528). A key that
         // reads nothing by itself still recalls what a Grant of its own reads.
@@ -677,6 +680,9 @@ impl Memory<'_> {
             }
             if !execution.phonetic_codes.is_empty() {
                 builder = builder.search_phonetic(execution.phonetic_codes);
+            }
+            if !execution.phonetic_mentions.is_empty() {
+                builder = builder.search_phonetic_mentions(execution.phonetic_mentions);
             }
             if effective.requires_rerank()
                 && let Some(reranker) = execution.reranker

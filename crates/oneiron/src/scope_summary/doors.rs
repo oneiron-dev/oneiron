@@ -259,6 +259,13 @@ pub(crate) fn validate_summary_put(
     if was_summary || kind == ENTITY_TYPE_SUMMARY && super::codec::is_scope_summary(bytes) {
         let logical = crate::entity_doc::resolve_record_body(store, txn, id, bytes)?;
         let body = decode_scope_summary_body(&logical)?;
+        // Only a summary's document may hold a blank text, left by an edit
+        // or a sync merge of it. A body with no document is as the Dreamer
+        // minted it, and the mint never writes a blank text (review P1 of
+        // #9931): a replicated row skips the producer check below.
+        if body.text.trim().is_empty() && !crate::entity_doc::has_record_head(store, txn, id)? {
+            return Err(invalid("summary text is blank"));
+        }
         let unchanged = previous
             .as_ref()
             .and_then(|raw| raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..))
@@ -355,12 +362,7 @@ pub(super) fn note_sources_in_txn(
     if notes.is_empty() {
         return Err(invalid("summary source set is empty"));
     }
-    let read = requester_read_in(vault, txn, requester, basis)?;
-    let read = if lane.is_principal() {
-        read
-    } else {
-        vault.scoped_read(lane.narrow_in_txn(vault, txn, read.actor_key().clone())?)
-    };
+    let read = declared_requester_read_in(vault, txn, requester, lane, basis)?;
     let rows = read.get_entities_parts_in_txn(txn, &notes)?;
     for (note, row) in notes.iter().zip(rows) {
         if !note_source_admitted(vault, txn, note, row.is_some())? {
@@ -455,6 +457,24 @@ fn requester_read_in<'v>(
         }
     };
     Ok(vault.scoped_read(key))
+}
+
+/// The requester's read under the lane its declaration froze, rebuilt in
+/// `txn`: its base read ([`requester_read_in`]) narrowed by `lane`, which
+/// reads nothing once the lane's credential no longer holds there (FIX
+/// 6322); the base read alone for a principal declaration.
+pub(super) fn declared_requester_read_in<'v>(
+    vault: &'v Vault,
+    txn: &RoTxn<'_>,
+    requester: WriteActor,
+    lane: &crate::claim::FrozenReadLane,
+    basis: RequesterReadBasis,
+) -> Result<ScopedRead<'v>> {
+    let read = requester_read_in(vault, txn, requester, basis)?;
+    if lane.is_principal() {
+        return Ok(read);
+    }
+    Ok(vault.scoped_read(lane.narrow_row_key_in_txn(vault, txn, read.actor_key().clone())?))
 }
 
 /// What a summary body says, and what it was written from.
@@ -639,6 +659,26 @@ pub(super) fn header_landed_in_txn(
         }
     }
     Ok(false)
+}
+
+/// Every standing `merge.summary` header that lands `summary`, on any turn:
+/// the one its declaration landed and each later landing of it, a reused
+/// composition's or [`Vault::land_header`]'s (review P1 of #9808). A header
+/// that names no summary is not one of them.
+pub(super) fn standing_headers_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    summary: &EntityId,
+) -> Result<Vec<EntityId>> {
+    Ok(vault
+        .claims_with_predicate_in_txn(txn, "merge.summary")?
+        .into_iter()
+        .filter(|(_, body)| {
+            body.lifecycle == oneiron_contracts::claim::ClaimLifecycleStatus::Active
+                && matches!(merge_summary_ref(body), Ok(Some((_, landed))) if landed == *summary)
+        })
+        .map(|(claim, _)| claim)
+        .collect())
 }
 
 /// The read lane a header's reply TURN is checked against (OF-063): its
@@ -936,50 +976,67 @@ pub(crate) fn merge_word_sources_through_in(
 }
 
 impl Vault {
+    /// Mints an independent retained SESSION with id `id` inside the
+    /// caller's write transaction, hung off its spawning TURN by a
+    /// `SpawnedBy` edge: the one sub-session shape sync admission checks.
+    /// The caller mints the id; an approved plan's run hangs its derived
+    /// SESSION here (agent-runtime-v1.md:342).
+    pub(crate) fn spawn_dag_sub_session_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        turn: &EntityId,
+        actor: WriteActor,
+        id: EntityId,
+        now: u64,
+    ) -> Result<()> {
+        actor_in_txn(&self.store, txn, actor)?;
+        let conversation = conversation_of(&self.store, txn, turn)?;
+        crate::conversation_dag::migrate_in_txn(self, txn, &conversation)?;
+        let mut body = Vec::new();
+        rmpv::encode::write_value(
+            &mut body,
+            &Value::Map(vec![
+                (
+                    Value::from("actor"),
+                    Value::from(actor.entity_ref().to_hex()),
+                ),
+                (Value::from("dag_spawning_turn"), Value::from(turn.to_hex())),
+            ]),
+        )
+        .map_err(|_| invalid("session encode failed"))?;
+        self.batch_in()
+            .put(
+                &id,
+                ENTITY_TYPE_SESSION,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                &body,
+            )
+            .edge_with_value_fields(
+                &id,
+                EdgeKind::SpawnedBy,
+                turn,
+                EdgeValueFields {
+                    weight: 1.0,
+                    created_at: now,
+                    vad: Vad::NEUTRAL,
+                    provenance: None,
+                },
+            )
+            .apply(txn)?;
+        Ok(())
+    }
+
     /// Mints an independent retained SESSION. It never takes the global
     /// open-session pointer or aliases an existing sitting.
     pub fn spawn_dag_sub_session(&self, turn: &EntityId, actor: WriteActor) -> Result<EntityId> {
         let now = self.store.clock.now_recorded_at();
         self.with_write_txn_grouped(|txn| {
-            actor_in_txn(&self.store, txn, actor)?;
-            let conversation = conversation_of(&self.store, txn, turn)?;
-            crate::conversation_dag::migrate_in_txn(self, txn, &conversation)?;
             let id = self.store.clock.entity_id()?;
-            let mut body = Vec::new();
-            rmpv::encode::write_value(
-                &mut body,
-                &Value::Map(vec![
-                    (
-                        Value::from("actor"),
-                        Value::from(actor.entity_ref().to_hex()),
-                    ),
-                    (Value::from("dag_spawning_turn"), Value::from(turn.to_hex())),
-                ]),
-            )
-            .map_err(|_| invalid("session encode failed"))?;
-            self.batch_in()
-                .put(
-                    &id,
-                    ENTITY_TYPE_SESSION,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &body,
-                )
-                .edge_with_value_fields(
-                    &id,
-                    EdgeKind::SpawnedBy,
-                    turn,
-                    EdgeValueFields {
-                        weight: 1.0,
-                        created_at: now,
-                        vad: Vad::NEUTRAL,
-                        provenance: None,
-                    },
-                )
-                .apply(txn)?;
+            self.spawn_dag_sub_session_in_txn(txn, turn, actor, id, now)?;
             Ok(id)
         })
     }

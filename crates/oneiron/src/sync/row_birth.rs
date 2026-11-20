@@ -240,21 +240,37 @@ pub(in crate::sync) fn drop_orphan_births(doc: &LoroDoc) -> Result<bool> {
     Ok(!orphans.is_empty())
 }
 
-/// Window admission for one inserted birth: the key is a canonical id, the
-/// value is a canonical envelope, and the admitted document carries its
-/// owner entity. A birth for a row the sender did not ship is refused before
-/// import.
+/// Window admission for one inserted birth: the key is a canonical id and
+/// the value is a canonical envelope. A birth still live in the admitted
+/// document's latest state must find its owner entity live there too: that
+/// carrier waits in the document and is stamped when its row lands, so no
+/// earlier state may excuse it. `also_carried` (the state the inspected
+/// range starts from and the entity inserts it carries, as window admission
+/// collects them) excuses only a birth the latest state no longer carries:
+/// a later delete in the same range takes a shipped owner and its birth
+/// out of the latest maps, so the latest maps alone would refuse its
+/// earlier birth, and a birth carrier that is gone by the end stamps
+/// nothing. A birth for a row the sender did not ship in any of those
+/// states is refused before import.
 pub(crate) fn validate_carried_birth(
     candidate: &LoroDoc,
     key: &str,
     value: &LoroValue,
+    also_carried: &std::collections::BTreeSet<EntityId>,
 ) -> Result<()> {
+    let owner_live = matches!(
+        candidate.get_map("entities").get(key),
+        Some(ValueOrContainer::Value(LoroValue::Binary(_)))
+    );
+    let birth_live = matches!(
+        births(candidate).get(key),
+        Some(ValueOrContainer::Value(LoroValue::Binary(_)))
+    );
+    let owner_carried =
+        owner_live || (!birth_live && owner(key).is_some_and(|id| also_carried.contains(&id)));
     let well_formed = owner(key).is_some()
         && matches!(value, LoroValue::Binary(bytes) if decode(bytes).is_some())
-        && matches!(
-            candidate.get_map("entities").get(key),
-            Some(ValueOrContainer::Value(LoroValue::Binary(_)))
-        );
+        && owner_carried;
     if !well_formed {
         return Err(Error::InvalidConfig(
             "a carried row birth is malformed or names a row the window does not carry".into(),
@@ -267,7 +283,9 @@ pub(crate) fn validate_carried_birth(
 /// `doc` carries that row as one of the same kind, and of a kind that
 /// replicates. A carrier the ladder skips because its kind never replicates
 /// (a local diagnostic observation, internal LFS chunk bytes) lends its birth
-/// to no local row.
+/// to no local row, and neither does one for a record a refused privacy erase
+/// keeps or a cooperative review restricts, or one the ladder dropped for such
+/// a record: the kept row takes no change from a peer (REVIEW-9881 round 1).
 fn carried_row_lands_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -285,7 +303,9 @@ fn carried_row_lands_in_txn(
         .is_some_and(|header| header.entity_type == entity_type)
         && entity_type != ENTITY_TYPE_DIAGNOSTIC
         && !crate::origin::lfs::is_lfs_chunk_blob(id, &carrier)
-        && !crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, txn, id)?)
+        && !crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, txn, id)?
+        && vault.store.use_restricted_in_txn(txn, id)?.is_none()
+        && !crate::sync::ingest::carrier_dropped_in_txn(&vault.store, txn, id, &carrier)?)
 }
 
 /// Stamps the birth `doc` carries for `id` in `wtxn`, beside the row the same

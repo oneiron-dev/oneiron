@@ -269,7 +269,7 @@ impl Vault {
     /// Host timer door. Call about once per second even while no tokens arrive.
     /// The sync connection calls this on its own independent housekeeping tick.
     pub fn pump_message_streams(&self) -> MessageStreamResult<MessageStreamPump> {
-        self.pump_message_streams_at(now_ms())
+        self.pump_message_streams_at(crate::unix_millis_now())
     }
     /// Deterministic clock door for runtimes with their own wall-clock service.
     /// Passing an earlier time never expires a handle early.

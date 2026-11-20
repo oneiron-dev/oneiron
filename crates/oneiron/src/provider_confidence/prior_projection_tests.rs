@@ -7,7 +7,7 @@ use crate::identity_topology::{
     IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
 };
 use crate::provider_confidence::write_provider_prior;
-use crate::registry::ENTITY_TYPE_PERSON;
+use crate::registry::ENTITY_TYPE_MACHINE;
 use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
 
 fn put_actor(vault: &Vault, id: EntityId, provider: &str) -> Result<()> {
@@ -17,7 +17,7 @@ fn put_actor(vault: &Vault, id: EntityId, provider: &str) -> Result<()> {
     )]))?;
     vault.put_entity(
         &id,
-        ENTITY_TYPE_PERSON,
+        ENTITY_TYPE_MACHINE,
         TimeRange { start: 1, end: 1 },
         1,
         &bytes,
@@ -43,6 +43,7 @@ fn malformed_prior_on_shell_raises_the_same_structural_error_as_on_actor() -> Re
     for merged in [false, true] {
         for cached in [false, true] {
             let (_dir, vault) = open_test_vault_with(embedding_test_config());
+            vault.prepare_install_signing().expect("install signing");
             let provider = "provider_malformed_projection";
             let actor = entity(0x22);
             put_actor(&vault, actor, provider)?;
@@ -94,6 +95,7 @@ fn malformed_prior_on_shell_raises_the_same_structural_error_as_on_actor() -> Re
 #[test]
 fn valid_actor_cache_cannot_hide_another_shells_stranded_prior_from_a_write() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    vault.prepare_install_signing().expect("install signing");
     let provider = "provider_cached_with_strand";
     let actor = entity(0x22);
     let shell = entity(0x23);
@@ -206,6 +208,7 @@ fn valid_actor_cache_cannot_hide_another_shells_stranded_prior_from_a_write() ->
 fn a_merge_with_a_missing_or_nonactive_head_strands_its_prior() -> Result<()> {
     for missing in [false, true] {
         let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        vault.prepare_install_signing().expect("install signing");
         let provider = "provider_missing_head";
         let actor = entity(0x22);
         let head = entity(0x23);
@@ -237,6 +240,7 @@ fn a_merge_with_a_missing_or_nonactive_head_strands_its_prior() -> Result<()> {
 #[test]
 fn waterfall_rejects_a_merged_claim_whose_canonical_head_is_missing() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    vault.prepare_install_signing().expect("install signing");
     let shell = entity(0x22);
     let head = entity(0x23);
     let claim = entity(0x24);

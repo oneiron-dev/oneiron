@@ -576,19 +576,23 @@ impl Vault {
 /// stored `body` records: a named agent (`oneiron token agent`, or an OAuth client's sign-in,
 /// FIX 4902), never any other person.
 pub(crate) fn is_named_agent_principal_body(principal: &EntityId, body: &[u8]) -> bool {
+    named_agent_principal_name(principal, body).is_some()
+}
+
+/// The name a named agent's stored PERSON `body` records, when `principal` is the PERSON
+/// [`Vault::ensure_agent_principal`] derives for that name; None for any other person.
+pub(crate) fn named_agent_principal_name(principal: &EntityId, body: &[u8]) -> Option<String> {
     let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut &body[..]) else {
-        return false;
+        return None;
     };
-    let Some(name) = fields
+    let name = fields
         .iter()
         .find(|(key, _)| key.as_str() == Some("name"))
-        .and_then(|(_, value)| value.as_str())
-    else {
-        return false;
-    };
+        .and_then(|(_, value)| value.as_str())?;
     EntityId::derive(
         crate::entity_id::derived_domains::AGENT_PRINCIPAL,
         &[name.as_bytes()],
     )
     .is_ok_and(|derived| derived == *principal)
+    .then(|| name.to_owned())
 }

@@ -53,8 +53,10 @@ impl CommunicationLimits {
     }
 }
 
-/// The head of the line that names each brief field no host produced.
-const UNAVAILABLE_HEAD: &str = "unavailable (no producer yet)";
+#[doc(hidden)]
+use oneiron_records::context_board::self_brief::UNAVAILABLE_HEAD;
+#[doc(hidden)]
+pub use oneiron_records::context_board::self_brief::{BriefPlacement, BriefSkillRow};
 
 /// Inputs must be the effective, already-authorized run/session reads. In
 /// particular, this renderer cannot decide which classes or worlds are visible.
@@ -83,16 +85,6 @@ pub struct SelfBriefInput<'a> {
     /// `people` a share (BOARD-LAYOUT); `None` keeps
     /// [`super::PEOPLE_PREFIX_BUDGET_TOK`].
     pub people_budget_tok: Option<usize>,
-}
-
-/// A skill index row is resolved from the skill record and reliability claim;
-/// the mutable confidence cache is never an authority for this number.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub struct BriefSkillRow {
-    pub id: EntityId,
-    pub hash: Option<String>,
-    pub reliability: f32,
-    pub loaded_hash: Option<String>,
 }
 
 /// A field no host produced is `None`: identity leaves it out, and the
@@ -319,15 +311,6 @@ impl SelfBrief {
         rows.dedup();
         Ok(rows)
     }
-}
-
-/// The cached prefix is replaced only at turn one or an epoch fold. A mid-run
-/// call returns an append-only tail update without touching the prefix.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BriefPlacement {
-    TurnOne,
-    Fold,
-    MidRun,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

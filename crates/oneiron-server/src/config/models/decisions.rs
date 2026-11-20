@@ -117,6 +117,9 @@ struct SystemOneFile {
     /// Owner opt-in for unit state to leave a non-hosted vault.
     remote_opt_in: Option<bool>,
     budget_units: Option<u64>,
+    /// The seat's server takes a native budget: each call's body carries its
+    /// time left as `budget_ms` (ARCH-0036 #system-one-codec). Off by default.
+    native_budget: Option<bool>,
 }
 
 /// `[models.decisions.big]`: the big model on the Big rung, through a seat
@@ -223,6 +226,9 @@ pub struct SystemOneSettings {
     pub remote_opt_in: bool,
     /// The seat's own meter; the raw routes' units when unset.
     pub budget_units: Option<u64>,
+    /// The binding's codec row: its server takes a native budget, so each
+    /// call's body carries the time left as `budget_ms`.
+    pub native_budget: bool,
 }
 
 impl DecisionsFile {
@@ -283,6 +289,7 @@ impl DecisionsFile {
                     version: filled("system_one.version", seat.version)?,
                     remote_opt_in: seat.remote_opt_in.unwrap_or(false),
                     budget_units: seat.budget_units,
+                    native_budget: seat.native_budget.unwrap_or(false),
                 })
             })
             .transpose()?;

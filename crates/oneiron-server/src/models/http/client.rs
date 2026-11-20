@@ -173,14 +173,13 @@ impl ProviderHttp {
         body: &JsonValue,
     ) -> Sending {
         let plain = serde_json::to_vec(body).unwrap_or_default();
-        self.send_body(path, || self.request(path, headers), plain, None)
+        self.send_body(path, || self.request(path, headers), plain)
     }
 
     /// Sends `plain` on a request `request` builds, compressed when this
     /// provider's route takes it. A 400 or 415 to a compressed body is sent
-    /// once more, plain, while `admission`, when there is one, still allows
-    /// the upload, and otherwise stands; when the plain answer differs, the
-    /// encoding was the cause and compression turns off for this process.
+    /// once more, plain; when the plain answer differs, the encoding was the
+    /// cause and compression turns off for this process.
     /// Each send that never reached the upstream goes once more on a fresh
     /// connection ([`never_sent::send`]).
     pub(super) fn send_body(
@@ -188,28 +187,28 @@ impl ProviderHttp {
         path: &str,
         request: impl Fn() -> reqwest::RequestBuilder,
         plain: Vec<u8>,
-        admission: Option<UploadAdmission>,
     ) -> Sending {
         let encoded = self.compression.as_ref().and_then(|compressor| {
             Some((Arc::clone(compressor), compressor.encode(path, &plain)?))
         });
         let Some((compressor, encoded)) = encoded else {
+            log_sent_body(&plain);
             return never_sent::send(&self.fresh, request().body(plain));
         };
         let (request, resend) = (request(), request());
         let fresh = self.fresh.clone();
         Box::pin(async move {
+            log_sent_body(&encoded);
             let request = request
                 .header(reqwest::header::CONTENT_ENCODING, compressor.token())
                 .body(encoded);
             let response = never_sent::send(&fresh, request).await?;
-            if !matches!(response.status().as_u16(), 400 | 415)
-                || admission.is_some_and(|admits| !admits())
-            {
+            if !matches!(response.status().as_u16(), 400 | 415) {
                 return Ok(response);
             }
             let refused = response.status();
             drop(response);
+            log_sent_body(&plain);
             let response = never_sent::send(&fresh, resend.body(plain)).await?;
             if response.status() != refused {
                 compressor.on.store(false, Ordering::Relaxed);
@@ -237,11 +236,13 @@ impl ProviderHttp {
             Some((Arc::clone(compressor), compressor.encode(path, &plain)?))
         });
         let Some((compressor, encoded)) = encoded else {
+            log_sent_body(&plain);
             return never_sent::send_released(&self.fresh, request().body(plain), release, lease);
         };
         let (request, resend) = (request(), request());
         let fresh = self.fresh.clone();
         Box::pin(async move {
+            log_sent_body(&encoded);
             let request = request
                 .header(reqwest::header::CONTENT_ENCODING, compressor.token())
                 .body(encoded);
@@ -252,6 +253,7 @@ impl ProviderHttp {
             }
             let refused = response.status();
             drop(response);
+            log_sent_body(&plain);
             let response =
                 never_sent::send_released(&fresh, resend.body(plain), release, lease).await?;
             if response.status() != refused {
@@ -431,73 +433,6 @@ impl ProviderHttp {
         })
     }
 
-    /// [`Self::send_media`], its 2xx reply's body left for the caller to
-    /// take as it arrives ([`MediaStream::chunk`]), never held whole here
-    /// (FIX 6122). Any other status's body is read whole, as `send_media`
-    /// reads it.
-    pub(in crate::models) async fn send_media_streamed(
-        &self,
-        path: &str,
-        send: MediaSend,
-    ) -> Result<StreamedReply, HttpFailure> {
-        let response = self.media_response(path, send).await?;
-        Self::streamed_response(response).await
-    }
-
-    async fn streamed_response(response: reqwest::Response) -> Result<StreamedReply, HttpFailure> {
-        if response.status().is_success() {
-            return Ok(StreamedReply::Body(MediaStream(response)));
-        }
-        let status = response.status().as_u16();
-        let headers = reply_headers(&response);
-        let (body, held) = read_booked(response).await?;
-        Ok(StreamedReply::Refused(BytesReply {
-            status,
-            headers,
-            body,
-            held,
-        }))
-    }
-
-    /// A reference upload whose bank and call-local release both hold at every send.
-    pub(in crate::models) async fn send_octets_streamed_released(
-        &self,
-        path: &str,
-        octets: Vec<u8>,
-        admission: &UploadAdmission,
-        release: DispatchRelease<'_>,
-        lease: &BudgetLease,
-    ) -> Result<StreamedReply, HttpReleaseError> {
-        let url = self.url(path);
-        let request = || {
-            self.client
-                .post(url.as_str())
-                .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
-        };
-        let dispatch = || {
-            if !admission() {
-                return Err(oneiron::FatalLlmError::InvalidRequest.into());
-            }
-            release()
-        };
-        let response = self
-            .send_body_released(path, request, octets, &dispatch, lease)
-            .await?;
-        Self::streamed_response(response)
-            .await
-            .map_err(HttpReleaseError::Transport)
-    }
-
-    /// Sends one media exchange at `path`: its answer, its body unread.
-    pub(super) async fn media_response(
-        &self,
-        path: &str,
-        send: MediaSend,
-    ) -> Result<reqwest::Response, HttpFailure> {
-        self.media_response_with_headers(path, send, &BTreeMap::new())
-            .await
-    }
-
     async fn media_response_with_headers(
         &self,
         path: &str,
@@ -522,7 +457,7 @@ impl ProviderHttp {
             }
             MediaSend::Json(json) => {
                 let plain = serde_json::to_vec(&json).unwrap_or_default();
-                self.send_body(path, body("application/json"), plain, None)
+                self.send_body(path, body("application/json"), plain)
                     .await?
             }
             MediaSend::Multipart(form) => {
@@ -530,10 +465,6 @@ impl ProviderHttp {
                     .multipart(form)
                     .send()
                     .await?
-            }
-            MediaSend::Octets(octets, admission) => {
-                let send = body("application/octet-stream");
-                self.send_body(path, send, octets, Some(admission)).await?
             }
         })
     }
@@ -680,4 +611,19 @@ impl ProviderHttp {
         });
         Box::pin(opening.try_flatten())
     }
+}
+
+/// Logs one physical send's body (FIX DREAMER-CALL-ATTEMPT-ID): 16 hex of its
+/// plain BLAKE3 and its length, never its bytes. Debug under
+/// `oneiron::model::send`; a durable step's send prints inside its
+/// `model_step` span (attempt and step), so a recording proxy's body digest
+/// of the same bytes names the attempt and step that sent the call. Nothing
+/// is hashed while the level is off.
+fn log_sent_body(body: &[u8]) {
+    tracing::debug!(
+        target: "oneiron::model::send",
+        body = %&oneiron_contracts::fingerprint::ContentHash::of(body).to_hex()[..16],
+        bytes = body.len(),
+        "model request sent"
+    );
 }

@@ -119,8 +119,9 @@ impl BatchBuilder<'_> {
         }
         let vault = self.vault;
         // An agent's batch: each definition it creates is the one its author
-        // writer gives it (ARCH-0053:20), before anything stages.
-        vault.bound_agent_authored_puts_in_txn(
+        // writer gives it (ARCH-0053:20), before anything stages. Each one
+        // the batch lands is stamped with its author after the apply.
+        let creates = vault.bound_agent_authored_puts_in_txn(
             &*wtxn,
             self.agent_authoring.as_ref(),
             &mut self.ops,
@@ -157,10 +158,10 @@ impl BatchBuilder<'_> {
             if let Some(scope) = scope {
                 super::vad_postcommit::merge_postcommit_work(vault, wtxn, scope.finish());
             }
-            Ok(())
         } else {
-            self.apply_staged(wtxn, gate_mode, None, lane, authority_beside, own_device)
+            self.apply_staged(wtxn, gate_mode, None, lane, authority_beside, own_device)?;
         }
+        vault.stamp_agent_authored_creates_in_txn(wtxn, creates)
     }
 
     fn apply_staged(
@@ -301,6 +302,11 @@ impl BatchBuilder<'_> {
         rows.extend(routed);
         #[cfg(feature = "sync")]
         let removed_edges = super::vad_postcommit::ops_removed_edges(&self.ops);
+        // An edge that binds a TURN's words, read before the apply, re-dirties
+        // that TURN after it (ARCH-0026 #sieve-open).
+        let rewired = crate::dreamer_consolidation::redirty::RewiredTurnEdges::before(
+            vault, wtxn, &self.ops,
+        )?;
         // Taken only now: until here a refusal leaves a promotion replay's
         // ops to the builder's drop, which wipes them (Sol on engine-prs-30).
         let ops = std::mem::take(&mut self.ops);
@@ -323,6 +329,7 @@ impl BatchBuilder<'_> {
                 self.origin,
             )?;
         } else {
+            let claims = crate::vault_cleanup::candidate_claim_subjects(&ops);
             apply_ops_with_authority_beside(
                 &vault.store,
                 &vault.config,
@@ -335,7 +342,12 @@ impl BatchBuilder<'_> {
                 authority_beside,
                 own_device,
             )?;
+            // A claim about a PERSON the cleanup archived restores her in
+            // this write, as the actor's apply above does in its own (FIX
+            // PUT-CLAIM-LANDS-ON-ARCHIVED-PERSON).
+            vault.restore_subjects_of_landed_claims_in_txn(wtxn, &claims)?;
         }
+        rewired.redirty_in_txn(vault, wtxn)?;
         if let (Some(actor), Some(original)) = (actor, original) {
             original.admit_routed_inputs(vault, wtxn, actor, &original_bodies)?;
         }
@@ -380,7 +392,9 @@ impl BatchBuilder<'_> {
         // marker; the write door marks the rows.
         #[cfg(feature = "sync")]
         vault.mark_pending_edge_removals_in_txn(wtxn, &removed_edges)?;
-        Ok(())
+        // A room the batch narrowed leaves no standing answer wider than its
+        // rows (FIX STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS).
+        vault.mark_answers_in_narrowed_rooms_in_txn(wtxn)
     }
 }
 

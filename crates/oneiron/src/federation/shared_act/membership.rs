@@ -24,7 +24,7 @@ pub(super) use pending_execution::UnsignedExecution;
 
 use super::{
     ChangeRecord, DetachOutcome, DetachReport, Effect, RemoveOwnerPlan, SharedActExecutionReceipt,
-    SharedActKind, SharedVaultChange, decode, invalid, live_owners, non_root,
+    SharedActKind, SharedVaultChange, admin_act_recipients, decode, invalid, live_owners, non_root,
 };
 use crate::authority::{
     CapabilitySlip, HostSlipIssuer, MembershipExecutionCause, OwnerHandover, OwnerHandoverCause,
@@ -456,11 +456,20 @@ impl Vault {
         slips: Option<&HostSlipIssuer>,
         receipt: &str,
     ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
+        // [MEMBER-REMOVAL-KEEPS-ACTOR-GRANTS]: a removed member's roster
+        // actor keeps no Grant naming it; a role change that keeps the member
+        // drops nothing new.
+        let actors = if leaves {
+            crate::workspace_roster::member_actor_refs_in_txn(self, txn, &member)?
+        } else {
+            Vec::new()
+        };
         let dropped: Vec<(EntityId, bool)> = self
             .member_grants_in_txn(txn, vault_id)?
             .into_iter()
             .filter(|(_, grant)| {
-                (leaves && grant.member_ref == member) || grant.delegated_by == Some(member)
+                (leaves && (grant.member_ref == member || actors.contains(&grant.member_ref)))
+                    || grant.delegated_by == Some(member)
             })
             .map(|(id, grant)| (id, grant.is_git_push() || grant.owner_agent))
             .collect();
@@ -491,7 +500,10 @@ impl Vault {
     }
     /// Move `member` from `from` to `to` (`None` leaves the vault), dropping
     /// the delegates it can no longer parent, the own-device grant a former
-    /// Owner held (FIX 3294) and, with `slips`, its slips.
+    /// Owner held (FIX 3294) and, with `slips`, its slips and, when its
+    /// Owner standing ends or it leaves, the owner keys and `human` bindings
+    /// that name it (OWNER-ENROL); without `slips` such a move is refused
+    /// while any of those is live (REVIEW-7931).
     #[allow(clippy::too_many_arguments)]
     fn move_member_in_txn(
         &self,
@@ -533,6 +545,19 @@ impl Vault {
             }
             _ => Vec::new(),
         };
+        // Owner authority on the log retires with Owner standing, whatever
+        // role the member keeps (OWNER-ENROL-TRANSFER-REVOKE = A, as the
+        // own-device grant does), and a member who leaves keeps none: an owner
+        // root of theirs signs any authority entry, and a binding passes every
+        // owner verb. Only the vault's live host root signs that revocation,
+        // so a move with no issuer is refused while the member holds either
+        // (REVIEW-7931).
+        if to.is_none() || (from == Role::Owner && to != Some(Role::Owner)) {
+            match slips {
+                Some(issuer) => self.revoke_owner_authority_in_txn(txn, issuer, member)?,
+                None => self.refuse_unrevoked_owner_authority_in_txn(txn, member)?,
+            }
+        }
         let mut detach = None;
         if to.is_none() {
             // A genuine leave: the departure is built here, after the
@@ -560,6 +585,9 @@ impl Vault {
     }
 
     /// Add one Owner without moving or revoking any existing Owner's grants.
+    /// The embedded owner added back is bound again under `slips`
+    /// ([`Vault::restore_embedded_owner_binding_in_txn`]).
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn add_owner_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -567,11 +595,14 @@ impl Vault {
         owners: &BTreeSet<EntityId>,
         starter: EntityId,
         owner: EntityId,
+        slips: Option<&HostSlipIssuer>,
         now: u64,
     ) -> Result<MemberMove> {
         self.check_add_owner_in_txn(txn, owners, starter, owner)?;
+        let grants = self.set_member_role_in_txn(txn, vault_id, owner, Role::Owner, now)?;
+        self.restore_embedded_owner_binding_in_txn(txn, slips, owner)?;
         Ok(MemberMove {
-            grants: self.set_member_role_in_txn(txn, vault_id, owner, Role::Owner, now)?,
+            grants,
             retired_own_device: Vec::new(),
             revoked_slips: Vec::new(),
             detach: None,
@@ -599,6 +630,7 @@ impl Vault {
         let mut grants = Vec::new();
         if let Some(gainer) = gainer {
             grants.extend(self.set_member_role_in_txn(txn, vault_id, gainer, Role::Owner, now)?);
+            self.restore_embedded_owner_binding_in_txn(txn, slips, gainer)?;
         }
         let mut moved = self.move_member_in_txn(
             txn,
@@ -756,7 +788,13 @@ impl Vault {
             }
             None => None,
         };
-        let owners = live_owners(&holders, None);
+        // An admin power's change is told to every live Owner, Admin and
+        // Deputy, a seated house mind among them; any other change to the
+        // live Owners.
+        let recipients = match power {
+            Some(_) => admin_act_recipients(&self.live_notice_holders(&txn, vault_id, now)?),
+            None => live_owners(&holders, None),
+        };
         let id = self.store.clock.entity_id()?.to_hex();
         let (effect, unsigned) = apply(&mut txn, actor_id, now, &id)?;
         let record = match unsigned {
@@ -766,7 +804,7 @@ impl Vault {
             None => ChangeRecord::Unnamed,
         };
         let mut receipt = self.record_shared_change_in_txn(
-            &mut txn, id, vault_id, None, actor_id, owners, effect, None, record, None, now,
+            &mut txn, id, vault_id, None, actor_id, recipients, effect, None, record, None, now,
         )?;
         self.record_receipt_check_in_in_txn(&mut txn, &mut receipt, decision)?;
         if let Some(ask) = ask {
@@ -1116,6 +1154,7 @@ impl Vault {
         let id = self.store.clock.entity_id()?.to_hex();
         let mut grants =
             self.set_member_role_in_txn(&mut txn, vault_id, claimant, Role::Owner, now)?;
+        self.restore_embedded_owner_binding_in_txn(&mut txn, Some(issuer), claimant)?;
         let mut moved = self.move_member_in_txn(
             &mut txn,
             vault_id,

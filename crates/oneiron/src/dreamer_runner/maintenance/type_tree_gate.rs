@@ -127,7 +127,9 @@ pub(super) fn record_team_shape_outcomes(
         match recorded {
             Ok(()) if outcome.success => write.report.wins += 1,
             Ok(()) => write.report.losses += 1,
-            Err(Error::Artifact(ArtifactError::InvalidSkillBody(_))) => {
+            Err(Error::Artifact(
+                ArtifactError::InvalidSkillBody(_) | ArtifactError::SkillVersionKept(_),
+            )) => {
                 write.report.skipped += 1;
                 continue;
             }

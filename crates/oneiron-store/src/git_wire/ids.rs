@@ -77,11 +77,7 @@ impl GitOid {
     /// Parses a 40-character lower-hex object id.
     pub fn parse_hex(value: impl Into<String>) -> GitWireResult<Self> {
         let value = value.into();
-        if value.len() != GIT_WIRE_OID_HEX_LEN
-            || !value
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-        {
+        if !oneiron_hex::is_lower_hex(&value, Some(GIT_WIRE_OID_HEX_LEN)) {
             return Err(invalid("git oid must be 40 lower-hex characters"));
         }
         if value.bytes().all(|byte| byte == b'0') {

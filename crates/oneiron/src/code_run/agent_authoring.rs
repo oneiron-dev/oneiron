@@ -15,11 +15,6 @@ use super::SelfAgentDefinitionPutCall;
 #[doc(hidden)]
 pub use oneiron_verb_wire::code_run::agent_authoring::{AgentPutInput, AgentPutOutput};
 
-// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
-#[cfg(any())]
-#[cfg(test)]
-mod tests;
-
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Draft {

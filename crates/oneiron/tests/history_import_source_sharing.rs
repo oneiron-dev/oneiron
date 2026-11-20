@@ -76,7 +76,9 @@ fn message(native_id: &str, role: HistoryRole, text: &str, at_ms: u64) -> Histor
 fn member(provider_id: &str, person: Option<EntityId>) -> HistoryMember {
     HistoryMember {
         provider_id: provider_id.to_owned(),
+        name: None,
         person,
+        importer: false,
     }
 }
 

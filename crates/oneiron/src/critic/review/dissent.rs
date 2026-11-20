@@ -3,50 +3,21 @@
 use super::*;
 use crate::learning::{Anchor, LearningEvidence, Observation};
 use crate::llm::decision::questions::{
-    self, OutcomeBinding, QuestionActivation, QuestionDefinitionInput, RefreshPolicy,
-    StandingAnswer,
+    self, QuestionActivation, QuestionDefinitionInput, RefreshPolicy, StandingAnswer,
 };
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestionInput, ProviderPin,
 };
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CriticPrediction {
-    pub what: String,
-    /// Absolute Unix seconds; absence of a fact by this time is not a negative label.
-    pub by_when: u64,
-    pub how_checked: OutcomeBinding,
-}
-
-impl CriticPrediction {
-    pub(in crate::critic) fn validate(&self, predicted_at: u64) -> Result<()> {
-        self.how_checked.validate()?;
-        if self.what.trim().is_empty()
-            || self.what.len() > MAX_SUGGESTED_EDIT_BYTES
-            || self.by_when <= predicted_at
-            || self.by_when - predicted_at != self.how_checked.horizon
-        {
-            return Err(invalid_critic_config(
-                "prediction requires what, a future horizon and an outcome binding",
-            ));
-        }
-        Ok(())
-    }
-}
-
-/// Retained beside the private review, not a vault claim.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ReviewDissent {
-    pub artifact_id: String,
-    pub note: Option<EntityId>,
-    pub question: Option<EntityId>,
-    pub settled_fact: Option<EntityId>,
-}
+#[doc(hidden)]
+pub use oneiron_records::critic::review::dissent::{CriticPrediction, ReviewDissent};
 
 /// Retain a prediction when triage or an anchored outcome overruled its critique.
 /// A critique without a prediction stays in its run-tree branch. A caller
 /// claims the dissent before it authors any of it (FIX 12161): while another
 /// caller in this run keeps it, this one does nothing and gives back `None`.
+/// A dissent whose question's lane does not read the reviewed target keeps
+/// its question unanswered, and its review stands.
 pub fn preserve_review_dissent(
     vault: &Vault,
     result: &ReviewResult,
@@ -88,8 +59,24 @@ pub fn preserve_review_dissent(
     let actor = artifact.provenance.actor()?;
     let unit = EntityId::from_hex(&artifact.candidate_ref)?;
     let question = state.question.ok_or(Error::EntityNotFound)?;
-    let frontier =
-        questions::standing_source_frontier(vault, principal, question, 1, actor, unit, &[])?;
+    // The question keeps its principal's own lane, which rebuilds under the
+    // access gate for a principal that is no live owner (FIX
+    // SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS). A target that lane does not
+    // read gives the question nothing to answer from: the dissent keeps its
+    // NOTE and its question unanswered, and the review it belongs to stands.
+    let frontier = match questions::standing_source_frontier(
+        vault,
+        principal,
+        question,
+        1,
+        actor,
+        unit,
+        &[],
+    ) {
+        Ok(frontier) => frontier,
+        Err(Error::EntityNotFound) => return Ok(Some(state)),
+        Err(error) => return Err(error),
+    };
     let providers = artifact
         .provenance
         .model_revision

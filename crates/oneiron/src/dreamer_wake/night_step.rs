@@ -32,19 +32,9 @@ impl NightStepRequestId {
     /// anything else.
     #[must_use]
     pub fn parse_hex(text: &str) -> Option<Self> {
-        if text.len() != 32 {
-            return None;
-        }
-        let mut bytes = [0_u8; 16];
-        for (byte, pair) in bytes.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
-            *byte = (lower_hex_nibble(pair[0])? << 4) | lower_hex_nibble(pair[1])?;
-        }
-        Some(Self(bytes))
+        oneiron_hex::decode::<16>(text).map(Self)
     }
 }
-
-#[doc(hidden)]
-use oneiron_verb_wire::dreamer_wake::night_step::lower_hex_nibble;
 
 impl serde::Serialize for NightStepRequestId {
     fn serialize<S: serde::Serializer>(

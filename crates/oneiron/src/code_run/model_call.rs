@@ -16,19 +16,22 @@ use crate::{EntityId, Error, ModelLocality, Result, Vault};
 
 mod signed_reasoning;
 
-pub const MODEL_CALL_SCHEMA: u8 = 2;
+#[doc(hidden)]
+use oneiron_records::code_run::model_call::invalid;
+#[doc(hidden)]
+pub use oneiron_records::code_run::model_call::{
+    MODEL_CALL_SCHEMA, ModelCallDigests, ModelCallInputPart, ModelCallKind, ModelCallPartRef,
+    NativeReadDigests, NativeReadFailure, NativeReadOutcome, NativeReadRunSource,
+};
+
 const MODEL_CALLS: SideTable<(EntityId, u64, u64), ModelCallRecord, Named> =
     SideTable::new(&side_table::CODE_RUN_MODEL_CALL);
 
-/// Where a model output part is owned. A code-run output and a witnessed
-/// MESSAGE are distinct stores; neither reference is synthesized from the other.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ModelCallPartRef {
-    Output { occurrence: OutputRef },
-    Message { message: EntityId, part_index: u64 },
-    Custody { handle: String },
-}
+/// TURN-MODEL-LINK: each saved reply MESSAGE's answering calls, keyed by the
+/// MESSAGE, then the call's own key, so one prefix read lists them in key
+/// order. Ids only; the call row keeps every fact about the call.
+const MODEL_CALL_REPLIES: SideTable<(EntityId, (EntityId, u64, u64)), (), Named> =
+    SideTable::new(&side_table::CODE_RUN_MODEL_CALL_REPLY);
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -199,32 +202,6 @@ impl ModelCallReasoningPart {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ModelCallInputPart {
-    Reference {
-        row: EntityId,
-        occurrence: OutputRef,
-    },
-    NewBytes {
-        body: Vec<u8>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        media_type: Option<String>,
-    },
-    Unknown {
-        reason: String,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ModelCallDigests {
-    pub request_hash: [u8; 32],
-    pub messages_digest: [u8; 32],
-    pub system_digest: [u8; 32],
-    pub tools_digest: [u8; 32],
-}
-
 /// Canonical request and prefix fingerprints used by replay admission.
 pub fn model_call_digests(request: &crate::LlmRequest) -> Result<ModelCallDigests> {
     let invalid = || Error::InvalidConfig("model call request did not canonicalize".to_owned());
@@ -249,12 +226,6 @@ pub fn model_call_digests(request: &crate::LlmRequest) -> Result<ModelCallDigest
         system_digest,
         tools_digest,
     })
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NativeReadDigests {
-    pub request_hash: [u8; 32],
 }
 
 #[derive(Serialize)]
@@ -304,60 +275,6 @@ pub fn native_seat_read_digests(body: &serde_json::Value) -> Result<NativeReadDi
     Ok(NativeReadDigests {
         request_hash: *blake3::hash(&canonical).as_bytes(),
     })
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NativeReadFailure {
-    InvalidRequest,
-    Auth,
-    RateLimited,
-    Timeout,
-    ServerError,
-    LabelRead(crate::llm::LabelReadFailure),
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "outcome", rename_all = "snake_case", deny_unknown_fields)]
-pub enum NativeReadOutcome {
-    Completed {
-        usage: crate::LlmUsage,
-    },
-    Failed {
-        failure: NativeReadFailure,
-        usage: Option<crate::LlmUsage>,
-    },
-}
-
-/// The actual admission source of a native read, not a caller or payer guess.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NativeReadRunSource {
-    Probe,
-    Caller,
-    HouseGate,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ModelCallKind {
-    Generate {
-        digests: ModelCallDigests,
-        usage: crate::LlmUsage,
-        finish_reason: crate::FinishReason,
-    },
-    LabelRead {
-        run_source: NativeReadRunSource,
-        digests: NativeReadDigests,
-        revision: String,
-        outcome: NativeReadOutcome,
-    },
-    SeatDecision {
-        run_source: NativeReadRunSource,
-        digests: NativeReadDigests,
-        revision: String,
-        outcome: NativeReadOutcome,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -630,11 +547,9 @@ pub(crate) fn erase_message_model_calls_in_txn(
         crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, act)?;
         MODEL_CALLS.put_erased(&vault.store, wtxn, &key, erased)?;
     }
+    // TURN-MODEL-LINK: the erased MESSAGE names no answering call any more.
+    MODEL_CALL_REPLIES.delete_from(&vault.store, wtxn, message.as_bytes())?;
     Ok(())
-}
-
-fn invalid(message: &str) -> Error {
-    Error::InvalidConfig(message.to_owned())
 }
 
 /// Writes one immutable call record. A retry must name a new call index; an
@@ -666,6 +581,24 @@ pub fn record_model_call_in_txn(
     MODEL_CALLS.put(vault, &mut savepoint, &key, &stored)?;
     savepoint.commit()?;
     Ok(())
+}
+
+/// [`record_model_call_in_txn`] for a call whose answer streams into the
+/// MESSAGE `reply` (TURN-MODEL-LINK), linked in the same transaction: a link
+/// names only a call row that exists. A call whose actor is gone keeps no
+/// record, so it keeps no link either.
+pub fn record_reply_model_call_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    record: &ModelCallRecord,
+    reply: EntityId,
+) -> Result<()> {
+    record_model_call_in_txn(vault, txn, record)?;
+    let key = record.key();
+    if !MODEL_CALLS.contains(&vault.store, txn, &key)? {
+        return Ok(());
+    }
+    MODEL_CALL_REPLIES.put(&vault.store, txn, &(reply, key), &())
 }
 
 pub fn model_call_in_txn(

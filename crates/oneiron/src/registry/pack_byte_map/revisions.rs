@@ -8,58 +8,13 @@
 //! identity, or a changed schema, still collides, and import and remap never
 //! add a revision: only the local install door does.
 
-use super::types::{
-    PackByteMapSnapshot, PackInstanceEnvelope, PackKindIdentity, PackKindRegistration, invalid,
-};
+use super::types::{PackByteMapSnapshot, PackInstanceEnvelope};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::{TypeByteZone, zone_of};
 use crate::store::Store;
 use heed::RoTxn;
-use std::collections::BTreeSet;
-
-impl PackKindIdentity {
-    /// Whether `other` is a same-pack revision of this identity: the same
-    /// global name, pack and kind schema under another exact source.
-    pub(super) fn same_pack_revision(&self, other: &Self) -> bool {
-        self.name == other.name
-            && self.pack == other.pack
-            && self.schema_hash == other.schema_hash
-            && self.source_hash != other.source_hash
-    }
-}
-
-impl PackKindRegistration {
-    /// Takes `next` as the active identity and retains the one it replaces;
-    /// a retained identity admitted again is active, not kept twice.
-    pub(super) fn revise(&mut self, next: &PackKindIdentity) {
-        let replaced = std::mem::replace(&mut self.identity, next.clone());
-        self.retained.retain(|kept| kept != next);
-        if !self.retained.contains(&replaced) {
-            self.retained.push(replaced);
-        }
-    }
-
-    /// Whether an instance pinned to `kind` is this registration's: its
-    /// active identity, or one an admitted revision retained.
-    pub(super) fn admits(&self, kind: &PackKindIdentity) -> bool {
-        self.identity == *kind || self.retained.contains(kind)
-    }
-
-    /// Every retained identity is a distinct same-pack revision of the
-    /// active one.
-    pub(super) fn validate_retained(&self) -> Result<()> {
-        let mut sources = BTreeSet::new();
-        for kept in &self.retained {
-            kept.validate()?;
-            if !self.identity.same_pack_revision(kept) || !sources.insert(kept.source_hash) {
-                return Err(invalid("pack map retained revision conflict"));
-            }
-        }
-        Ok(())
-    }
-}
 
 impl PackByteMapSnapshot {
     /// The envelope a write to `id` stores: an instance already written under

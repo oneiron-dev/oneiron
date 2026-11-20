@@ -14,18 +14,14 @@ use oneiron::deletion::{
 };
 use oneiron::task_verb::sdk::{
     CourtesyDeleteAnswerRequest, CourtesyDeleteIncoming, CourtesyDeleteSendRequest,
-    CourtesyDeleteSent, courtesy_delete_incoming_ask, courtesy_delete_sent_ask,
+    CourtesyDeleteSent, LeaveEraseRequestsSendRequest, LeaveEraseRequestsSent,
+    courtesy_delete_incoming_ask, courtesy_delete_sent_ask, leave_erase_requests_sent,
 };
+use oneiron_base::unix_seconds_now;
 use rand_core::RngCore;
 
 use super::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
-
-fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
-}
 
 fn hex_field<const N: usize>(field: &str, value: &str) -> OwnerResult<[u8; N]> {
     parse_hex(value).ok_or_else(|| OwnerError::Invalid(format!("{field} must be {} hex", N * 2)))
@@ -117,6 +113,29 @@ pub(crate) fn send(
     send_with(&CourtesySender::of(server), owner, request)
 }
 
+/// The one action of a leave (ARCH-0043 #leaving-a-company, L7-09): asks
+/// `peer_vault` to erase what it holds from this vault, one ask per pact
+/// with it that this vault ended, each about all the pact delivered, signed
+/// with this host's key and queued for the peer's courtesy route.
+pub(crate) fn send_leave(
+    server: &SyncServer,
+    owner: &AuthenticatedOwner,
+    request: &LeaveEraseRequestsSendRequest,
+) -> OwnerResult<LeaveEraseRequestsSent> {
+    let peer_vault = hex_field::<32>("peer_vault", &request.peer_vault)?;
+    let destination = peer_url("peer", &request.peer, COOP_DELETION_PEER_PATH)?;
+    let notices = with_issuer(server, |issuer| {
+        server.vault().send_leave_erase_requests(
+            owner,
+            issuer,
+            &peer_vault,
+            &destination,
+            unix_seconds_now(),
+        )
+    })?;
+    Ok(leave_erase_requests_sent(notices))
+}
+
 /// [`send`] with the vault and key `sender` lends.
 pub(crate) fn send_with(
     sender: &CourtesySender<'_>,
@@ -168,8 +187,12 @@ pub(crate) fn send_with(
     let mut queued = Vec::with_capacity(pages.len());
     let mut first = None;
     for signed in &pages {
-        let notice =
-            vault.queue_cooperative_deletion_request_as(owner, signed, &destination, now())?;
+        let notice = vault.queue_cooperative_deletion_request_as(
+            owner,
+            signed,
+            &destination,
+            unix_seconds_now(),
+        )?;
         queued.push(notice.request_id.clone());
         first = first.or(Some(notice));
     }
@@ -263,7 +286,7 @@ pub(crate) fn answer(
             .transpose()?,
     };
     let mut filed = vault
-        .answer_cooperative_deletion_as(owner, &pact, &nonce, &answer, now())
+        .answer_cooperative_deletion_as(owner, &pact, &nonce, &answer, unix_seconds_now())
         .map_err(|error| {
             if let Err(refusal) = vault.recheck_owner(owner) {
                 return OwnerError::from(refusal);
@@ -282,7 +305,12 @@ pub(crate) fn answer(
                 request.choice.reply_outcome(),
             )
         })?;
-        filed = vault.queue_cooperative_deletion_reply_as(owner, &reply, &destination, now())?;
+        filed = vault.queue_cooperative_deletion_reply_as(
+            owner,
+            &reply,
+            &destination,
+            unix_seconds_now(),
+        )?;
     }
     let fold = vault.authority_fold()?;
     Ok(courtesy_delete_incoming_ask(vault, &fold, filed)?)

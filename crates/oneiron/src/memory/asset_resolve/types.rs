@@ -65,14 +65,8 @@ pub struct PulledImage {
     pub evidence: Option<super::EvidenceVersion>,
 }
 
-/// The rows one generated image landed as.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LandedImage {
-    /// 32-hex ASSET id; the ref every consumer resolves.
-    pub asset_ref: String,
-    /// 32-hex id of its precomputed ASSET_TEXT.
-    pub asset_text_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::memory::asset_resolve::types::LandedImage;
 
 /// What a hydrate serves, for one ASSET its lane admitted live.
 #[derive(Debug, Clone, PartialEq, Eq)]

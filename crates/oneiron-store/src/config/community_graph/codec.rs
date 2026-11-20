@@ -281,17 +281,5 @@ fn array<const N: usize>(bytes: &[u8]) -> Result<[u8; N]> {
 }
 
 fn hex_id(hex: &str) -> Result<[u8; 16]> {
-    if hex.len() != 32
-        || !hex
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
-        return Err(CommunityError::Cache);
-    }
-    let mut bytes = [0; 16];
-    for (i, byte) in bytes.iter_mut().enumerate() {
-        *byte =
-            u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).map_err(|_| CommunityError::Cache)?;
-    }
-    Ok(bytes)
+    oneiron_hex::decode(hex).ok_or(CommunityError::Cache)
 }

@@ -60,7 +60,7 @@ use crate::ai_host::scoped_child::{
     ReaderParentClock, ReaderParentHost, ScopedChildDoor, scoped_child_service,
 };
 use crate::mcp::{McpCodeExecutionHost, McpCodeModeProvider, run_seat};
-use crate::runtime::wall_clock_ms as unix_millis_now;
+use oneiron_base::unix_millis_now;
 
 mod child;
 mod nested;

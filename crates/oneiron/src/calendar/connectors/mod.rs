@@ -66,6 +66,8 @@ mod outbound;
 mod remote;
 mod resource;
 mod seat;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::literal::literal_digest_for_test;
 
 // `super::` paths inside the moved bodies still name the calendar level
 // (one body reads provider keys, one reads ICS transparency constants), so

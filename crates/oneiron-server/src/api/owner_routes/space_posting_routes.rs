@@ -142,9 +142,7 @@ async fn set(
     let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<SpacePosting> {
         let identity = entity_id("identity", &request.identity)?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_secs());
+        let now = oneiron_base::unix_seconds_now();
         let receipt = server
             .vault()
             .set_space_posting_preset(identity, &request.space, request.preset, &owner, now)

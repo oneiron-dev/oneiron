@@ -7,6 +7,7 @@
     "personal_hours": true,
     "generous_flex": true,
     "email_otp_enabled": false,
-    "group_intersection": true
+    "group_intersection": true,
+    "max_choices": 5
   }
 }

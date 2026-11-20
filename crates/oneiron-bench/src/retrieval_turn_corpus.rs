@@ -193,17 +193,8 @@ fn replay(rows: &[TurnRow]) -> Vec<ReplayTurn> {
 
 fn parse_hex(value: &str) -> Result<[u8; 16]> {
     let value = value.strip_prefix("0x").unwrap_or(value);
-    if value.len() != 32 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(CorpusError::Argument(format!(
-            "expected a 32-digit turn id, got `{value}`"
-        )));
-    }
-    let mut out = [0; 16];
-    for (n, byte) in out.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&value[n * 2..n * 2 + 2], 16)
-            .map_err(|_| CorpusError::Argument("invalid turn id".into()))?;
-    }
-    Ok(out)
+    oneiron_hex::decode_any_case::<16>(value)
+        .ok_or_else(|| CorpusError::Argument(format!("expected a 32-digit turn id, got `{value}`")))
 }
 
 fn argument<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str> {

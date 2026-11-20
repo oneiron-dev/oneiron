@@ -328,7 +328,7 @@ impl VoiceHost {
         });
         match accepted {
             Ok((Some(BrainEvent::TextDelta(text)), _)) => {
-                let now = bridge.now_ms();
+                let now = bridge.elapsed_ms();
                 let sentences = speech_mut(bridge, generation)
                     .map(|speech| {
                         let delta = LlmStreamEvent::TextDelta {
@@ -385,7 +385,7 @@ impl VoiceHost {
             };
             return self.brain_out(held, bridge, outputs);
         }
-        let now = bridge.now_ms();
+        let now = bridge.elapsed_ms();
         let Some((generation, text)) = bridge
             .speech
             .as_mut()

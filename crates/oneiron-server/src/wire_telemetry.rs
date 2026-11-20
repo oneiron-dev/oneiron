@@ -21,6 +21,12 @@ const LIMIT_QUESTION: &str = "wire:limit-question:v1:";
 /// A row keeps one question for each window of this many seconds, and counts
 /// every crossing in the window in it.
 const LIMIT_QUESTION_WINDOW_SECS: u64 = 60;
+/// How many counts may wait on the blocking pool at once
+/// (`record_on_blocking_pool`). A call past it waits for a count to end
+/// before it hands its own over, and that wait ends with the call, so calls
+/// dropped while the counter is held leave at most this many counts behind
+/// (FIX [WIRE-TELEMETRY-SYNC-PERSIST-ON-ASYNC-PATH]).
+pub const MAX_PENDING_COUNTS: usize = 64;
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WireWindowReceipt {
     pub started_at: u64,
@@ -39,6 +45,13 @@ pub struct WireWindowReceipt {
     /// category and under no caller.
     #[serde(default)]
     pub mcp_errors: BTreeMap<String, u64>,
+    /// Capabilities a keyless route refused (unknown, revoked, expired or
+    /// erased alike), by matched route and under no caller: guesses at a
+    /// capability, beside the calls that carried them. Past the per-verb row
+    /// they ask the call-volume question too; nothing is refused for its
+    /// rate, and no refusal writes to the vault on its own.
+    #[serde(default)]
+    pub capability_refusals: BTreeMap<String, u64>,
 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -69,9 +82,14 @@ pub struct WireQuestion {
 pub struct WireCrossed {
     pub actors: BTreeSet<String>,
     pub verbs: BTreeSet<String>,
+    /// Every keyless route whose refused capabilities are past the per-verb
+    /// row.
+    #[serde(default)]
+    pub capability_refusals: BTreeSet<String>,
 }
 impl WireCrossed {
-    /// Every actor and verb `window` counts past its row in `thresholds`.
+    /// Every actor, verb and refusing route `window` counts past its row in
+    /// `thresholds`.
     fn of(window: &WireWindowReceipt, thresholds: &WireThresholds) -> Self {
         let over = |counts: &BTreeMap<String, u64>, row: u64| {
             counts
@@ -83,6 +101,7 @@ impl WireCrossed {
         Self {
             actors: over(&window.by_actor, thresholds.per_actor),
             verbs: over(&window.by_verb, thresholds.per_verb),
+            capability_refusals: over(&window.capability_refusals, thresholds.per_verb),
         }
     }
 }
@@ -327,6 +346,9 @@ pub struct WireTelemetry {
     saving: Mutex<()>,
     flusher_started: std::sync::atomic::AtomicBool,
     limits: Arc<LimitQuestions>,
+    /// One permit for each count on the blocking pool, held until the count
+    /// ends (`record_on_blocking_pool`): `MAX_PENDING_COUNTS` of them.
+    pending_counts: Arc<tokio::sync::Semaphore>,
 }
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| Error::CorruptedIndex("wire observation"))
@@ -359,6 +381,7 @@ fn resume(window: &mut WireWindowReceipt, kept: &WireWindowReceipt) {
     further(&mut window.by_actor, &kept.by_actor);
     further(&mut window.mcp_envelopes, &kept.mcp_envelopes);
     further(&mut window.mcp_errors, &kept.mcp_errors);
+    further(&mut window.capability_refusals, &kept.capability_refusals);
     for (actor, tools) in &kept.by_actor_tool {
         further(
             window.by_actor_tool.entry(actor.clone()).or_default(),
@@ -379,6 +402,17 @@ fn count_call(
     (verb_crossed && !asked.verbs.contains(verb))
         || (actor_crossed && !asked.actors.contains(actor))
 }
+/// Whether a keyless route's refused capabilities are past the per-verb row
+/// and the window's questions do not name the route yet: a new crossing.
+fn refusal_crossed(
+    window: &WireWindowReceipt,
+    thresholds: &WireThresholds,
+    asked: &WireCrossed,
+) -> bool {
+    window.capability_refusals.iter().any(|(route, refused)| {
+        *refused > thresholds.per_verb && !asked.capability_refusals.contains(route)
+    })
+}
 impl WireTelemetry {
     pub fn new(vault: Arc<Vault>) -> Self {
         Self {
@@ -387,6 +421,7 @@ impl WireTelemetry {
             saving: Mutex::new(()),
             flusher_started: std::sync::atomic::AtomicBool::new(false),
             limits: Arc::new(LimitQuestions::with_pool_pressure()),
+            pending_counts: Arc::new(tokio::sync::Semaphore::new(MAX_PENDING_COUNTS)),
         }
     }
     /// Where this server's `[limits]` rows ask when they are crossed.
@@ -438,7 +473,11 @@ impl WireTelemetry {
         }
         self.save_limit_questions()
     }
-    pub fn set_thresholds(&self, thresholds: &WireThresholds) -> Result<()> {
+    /// Writes the thresholds manifest with no owner proof. Only the unit
+    /// tests and the `test_doors::wire_thresholds` door call it, so the build
+    /// without `--cfg oneiron_test_support` leaves it out (FIX 23188).
+    #[cfg(any(test, oneiron_test_support))]
+    pub(crate) fn set_thresholds(&self, thresholds: &WireThresholds) -> Result<()> {
         self.write_thresholds(thresholds, |txn| {
             self.vault
                 .sync_state_put_in_write_txn(txn, MANIFEST, &encode(thresholds)?)
@@ -525,10 +564,20 @@ impl WireTelemetry {
             count_in(&mut window.mcp_errors, category);
         })
     }
+    /// Records one capability a keyless route refused, on its matched route
+    /// and under no caller. Its call already counted on the route; past the
+    /// per-verb row the refusals ask the call-volume question as well, and
+    /// the count is kept with the window, never per refusal.
+    pub(crate) fn record_capability_refusal(&self, route: &str, now: u64) -> Result<()> {
+        self.observe(now, None, |window| {
+            count_in(&mut window.capability_refusals, route);
+        })
+    }
     /// Counts in the window `now` falls in, kept and rolled over first: a
     /// `call`'s verb and actor in the totals the rows read, and `count`'s
     /// evidence beside them. Each call that puts another verb or actor past
-    /// its row asks: the window as it stands is kept as the next question.
+    /// its row asks, and so does a refusing route past the per-verb row: the
+    /// window as it stands is kept as the next question.
     fn observe(
         &self,
         now: u64,
@@ -572,7 +621,8 @@ impl WireTelemetry {
         let window = active.window.as_mut().expect("installed above");
         count(window);
         active.persisted = false;
-        let crossed = call.is_some_and(|call| count_call(window, &thresholds, &active.asked, call));
+        let crossed = call.is_some_and(|call| count_call(window, &thresholds, &active.asked, call))
+            || refusal_crossed(window, &thresholds, &active.asked);
         if crossed {
             let crossed = WireCrossed::of(window, &thresholds);
             let seq = self.keep_question(window, &crossed, active.next_seq)?;
@@ -730,6 +780,14 @@ impl WireTelemetry {
         active.frozen = false;
         Ok(())
     }
+    /// Runs `held` while the window's counter lock is held, as `observe`
+    /// holds it across a rollover's persist: the door for the test that a
+    /// call never waits for it on a runtime worker.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn while_counter_held<T>(&self, held: impl FnOnce() -> T) -> T {
+        let _active = lock(&self.active);
+        held()
+    }
     pub fn snapshot(&self) -> Result<Option<WireWindowReceipt>> {
         Ok(self
             .active
@@ -783,7 +841,7 @@ impl Drop for WireTelemetry {
 }
 
 mod http;
-pub(crate) use self::http::{observe_http, start_window_receipts};
+pub(crate) use self::http::{observe_http, record_on_blocking_pool, start_window_receipts};
 
 #[cfg(test)]
 mod tests;

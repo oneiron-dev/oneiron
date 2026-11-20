@@ -1,13 +1,18 @@
 //! Whole-vault manifest egress doors and the Vault export surface.
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
 use crate::Vault;
+use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::registry::ENTITY_TYPE_PERSON;
+use crate::store::legal_hold::person_content_subjects;
 
+use super::checked_archive_manifest;
 use super::export_authority::{
     NO_LOCAL_AUTHORITY_ROOT, VaultImportReceipt, authority_manifest_for_vault,
-    classify_vault_import_manifest, validate_export_vault_label,
+    classify_vault_archive_manifest, classify_vault_import_manifest, validate_export_vault_label,
 };
 use super::export_manifest::{
     ExportManifest, ExportManifestArtifact, ExportSecretsNulledManifest,
@@ -38,15 +43,77 @@ use super::export_manifest::{
 /// use-limit (FIX 1496 S5): a use-limited row exports nowhere, same as an
 /// off-record row, and names nothing. Every caller holds the txn; no nested
 /// txn is opened here.
+///
+/// The third conjunct is the source-audience hold (FIX
+/// WHOLE-VAULT-EXPORT-CARRIES-HELD-BACK-ROWS): a row this vault holds back
+/// (its binding waits for its policy, or the vault it came from withheld it
+/// after it travelled) reads to no one here and never leaves while held, and
+/// no read of a row whose words came from it passes either
+/// (`source_audience::HeldBack`). The door asks the read judge's own walk
+/// (`source_audience::lineage_held_in`), so such a row is kept out and named
+/// nowhere, as an off-record or use-limited row is. The archive carries no
+/// hold, so a restore would read it openly.
+///
+/// A row whose content is about a PERSON the door keeps out goes with that
+/// PERSON (Engine ANSWER WITHHELD-PERSON-CONTENT-RULE = A, 20 Nov; FIX
+/// WHOLE-VAULT-EXPORT-CARRIES-CONTENT-ABOUT-A-WITHHELD-PERSON): a
+/// PSYCH_PROFILE or PERSONA_SNAPSHOT_EXPORT whose subject it is, a FACET
+/// scenario mask of it, and a CLAIM whose subject, or either end of whose
+/// subject link, it is (`person_content_subjects`). Each is kept out and
+/// named nowhere, as the PERSON row is. Every other row that names the
+/// PERSON keeps travelling: there the id is an opaque reference (Q2 = C).
 pub fn whole_vault_export_excludes_entity_in_txn(
-    store: &crate::store::Store,
+    vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
+    if egress_keeps_id_out_in_txn(vault, txn, id)? {
+        return Ok(true);
+    }
+    let subjects =
+        crate::ports::EntityStoreRead::port_entity_with_raw(&vault.store, txn, id, |raw| {
+            Ok(person_content_subjects(raw))
+        })?
+        .unwrap_or_default();
+    for subject in &subjects {
+        if withheld_person_in_txn(vault, txn, subject)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The door's question about `id` itself: a member of a live session
+/// overlay, a record a customer hold use-limits, or a row held back here or
+/// whose words came from one.
+fn egress_keeps_id_out_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    let store = &vault.store;
     if store.off_record_sessions.contains_entity(id)? {
         return Ok(true);
     }
-    Ok(crate::store::legal_hold::use_limit_in_txn(store, txn, id)?.is_some())
+    if crate::store::legal_hold::use_limit_in_txn(store, txn, id)?.is_some() {
+        return Ok(true);
+    }
+    crate::source_audience::lineage_held_in(vault, txn, id)
+}
+
+/// Whether the door keeps `subject` out by its own id and `subject` is a
+/// PERSON. A row with no stored header to type it (an overlay member has no
+/// base row) counts as one: the door keeps it out whatever it is.
+fn withheld_person_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: &EntityId,
+) -> Result<bool> {
+    if !egress_keeps_id_out_in_txn(vault, txn, subject)? {
+        return Ok(false);
+    }
+    let entity_type =
+        crate::ports::EntityStoreRead::port_entity_with_raw(&vault.store, txn, subject, |raw| {
+            Ok(EntityMetadataHeader::parse(raw).map(|header| header.entity_type))
+        })?
+        .flatten();
+    Ok(entity_type.is_none_or(|entity_type| entity_type == ENTITY_TYPE_PERSON))
 }
 
 /// THE EGRESS DOOR FOR RUN RESULT BODIES (OF-190 B++): why an export
@@ -230,12 +297,39 @@ impl Vault {
     }
 
     /// Classifies an export manifest against this vault. Reads the manifest
-    /// only — nothing is staged, admitted, or trusted.
+    /// only — nothing is staged, admitted, or trusted. A storage manifest
+    /// names no content, so it never proves provenance: a same-chain one
+    /// reads `ReviewRequired`. An archive goes to
+    /// [`Self::classify_vault_archive`].
     pub fn classify_vault_import_manifest(
         &self,
         manifest_bytes: &[u8],
         expected_label: Option<&str>,
     ) -> Result<VaultImportReceipt> {
         classify_vault_import_manifest(self, manifest_bytes, expected_label)
+    }
+
+    /// Classifies a whole-vault archive (OF-222) read from `archive` against
+    /// this vault, its provenance signature included (L2-23): the owner's
+    /// own device's signature over this vault's chain makes it a
+    /// `ByteFaithfulOwnerRestore` when nothing else differs. Each member is
+    /// checked against the archive's manifest (length and BLAKE3) before the
+    /// manifest is classified, since the signature binds the members only
+    /// through their digests (OPUS-SECREAD-A N1). No row is read, nothing is
+    /// staged, admitted or trusted, as [`Self::classify_vault_import_manifest`].
+    /// The verdict speaks for the members as this pass read them: an import
+    /// reads them again and checks each as it reads it, and its receipt
+    /// carries its own verdict.
+    ///
+    /// # Errors
+    /// The archive does not read, a member does not match the manifest, the
+    /// manifest is one this build cannot read, or the classification fails.
+    pub fn classify_vault_archive<R: Read + Seek>(
+        &self,
+        archive: R,
+        expected_label: Option<&str>,
+    ) -> Result<VaultImportReceipt> {
+        let manifest = checked_archive_manifest(archive)?;
+        classify_vault_archive_manifest(self, &manifest, expected_label)
     }
 }

@@ -266,6 +266,19 @@ pub struct MergeEvidenceView {
     pub confidence: f32,
 }
 
+/// A relation the tagger read between two saved mentions: a derived tag,
+/// never a claim.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TaggedRelationView {
+    /// The head mention's place in its tag set.
+    pub head: usize,
+    /// The tail mention's place in its tag set.
+    pub tail: usize,
+    /// The model's relation class.
+    pub label: String,
+    pub confidence: f32,
+}
+
 /// A turn mood the tagger returned: valence -1..=1, arousal/dominance 0..=1.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TaggingVadView {
@@ -283,6 +296,9 @@ pub struct TurnTagsView {
     pub message_refs: Vec<String>,
     pub mentions: Vec<TaggedMentionView>,
     pub merge_evidence: Vec<MergeEvidenceView>,
+    /// The relations the tagger read between the mentions, when its model
+    /// returns relations; empty when it read the turn and found none.
+    pub relations: Option<Vec<TaggedRelationView>>,
     /// The turn's mood, when the tagger returned one.
     pub mood: Option<TaggingVadView>,
     /// How current the mood is, when there is one: stale too when it is an

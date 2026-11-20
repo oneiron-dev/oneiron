@@ -64,6 +64,28 @@ impl DecisionLadder<'_> {
         self
     }
 
+    /// The ladder with every slot emptied whose provider does not run on this device
+    /// ([`DecisionProvider::runs_on_device`]), for a call about a world that stays on this
+    /// device (DEC-0005 fix 6: the world's model order covers every model call on it). A
+    /// slot whose route keeps unit text on the host is emptied too: an owner-hosted
+    /// endpoint is not this device. A step up skips an emptied slot as it skips any absent
+    /// one.
+    #[must_use]
+    pub fn on_device_only(mut self) -> Self {
+        for slot in [
+            &mut self.rule,
+            &mut self.local,
+            &mut self.system_one,
+            &mut self.escalation,
+            &mut self.big,
+        ] {
+            if slot.is_some_and(|provider| !provider.runs_on_device()) {
+                *slot = None;
+            }
+        }
+        self
+    }
+
     pub(super) fn slot(&self, rung: DecisionRung) -> Option<&dyn DecisionProvider> {
         match rung {
             DecisionRung::Rule => self.rule,

@@ -406,6 +406,25 @@ pub(crate) fn set_head(
     NOTE_HEAD_DOC.put(store, txn, &(note, head), &())?;
     Ok(())
 }
+
+/// Puts a proposal document's snapshot bytes for the checkpoint-pins door:
+/// the Loro snapshot of `note`'s head `head`, built with a fixed peer and
+/// fixed commit times (see `pins_note_proposal_snapshot`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_note_proposal_doc_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    note: &EntityId,
+    head: &EntityId,
+    bytes: &[u8],
+) -> Result<()> {
+    NOTE_PROPOSAL_DOC.put(
+        store,
+        txn,
+        &HexPair(HexId(*note), HexId(*head)),
+        &bytes.to_vec(),
+    )
+}
 #[cfg(any(feature = "sync", test))]
 pub(crate) fn doc_key(note: EntityId, head: EntityId) -> String {
     format!("note_proposal_doc:v1:{}:{}", note.to_hex(), head.to_hex())
@@ -491,11 +510,23 @@ pub(crate) fn load_doc(
 ) -> Result<Option<NoteDocument>> {
     super::verbs::note_core(vault, txn, note)?;
     super::ensure_citations_ready(&vault.store, txn, note)?;
-    let slot = crate::ports::DocumentSlot::of(head_in(&vault.store, txn, note)?.0);
-    if !crate::ports::DocumentRowStore::port_document_present(&vault.store, txn, slot)? {
+    if !head_document_held_in(&vault.store, txn, note)? {
         return Ok(None);
     }
     live_doc(vault, txn, note).map(Some)
+}
+
+/// Whether `store` holds any part of `note`'s head document: its snapshot
+/// or an update. A replica holds a NOTE's row before its authority sends
+/// that document ([`super::storage::stored_document`]); a slot with updates
+/// and no snapshot counts as held, so its strict load still refuses it.
+pub(crate) fn head_document_held_in(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+) -> Result<bool> {
+    let slot = crate::ports::DocumentSlot::of(head_in(store, txn, note)?.0);
+    crate::ports::DocumentRowStore::port_document_present(store, txn, slot)
 }
 
 pub(crate) fn live_doc(

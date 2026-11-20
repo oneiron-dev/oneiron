@@ -221,6 +221,12 @@ pub(super) enum SessionFault {
     /// for its URL (FIX 22217), a read or write of its store or queue, its
     /// full-resync markers, an encode, or the recovery it needs first.
     Local(String),
+    /// The home's HTTP 403 to the session's upgrade, or to a member lane's
+    /// residence upgrade (MEMBER-SYNC threat F5): it accepted the credential
+    /// and refuses that credential this socket, so no redial on it opens one
+    /// (MEMBER-SELECTOR-SOCKET). The far end's answer, yet no outage: it
+    /// counts the home neither served nor unserved.
+    Forbidden(String),
 }
 
 impl SessionFault {
@@ -248,8 +254,17 @@ impl SessionFault {
     }
 
     /// The fault of a residence index fetch, told as `message`, on the side
-    /// the fetch named ([`IndexFetchFault`], FIX 22153).
+    /// the fetch named ([`IndexFetchFault`], FIX 22153). A member dial's HTTP
+    /// 403 keeps its park as the main upgrade's 403 does, and its 401 redials
+    /// (MEMBER-SYNC threat F5); only a member lane's dial names either, so an
+    /// owner or federation fetch maps as it did before.
     pub(super) fn of_index_fetch(fault: &IndexFetchFault, message: String) -> Self {
+        if let Some(refusal) = fault.upgrade_refusal() {
+            if matches!(refusal, crate::sync::carrier::UpgradeRefusal::Forbidden(_)) {
+                return Self::Forbidden(message);
+            }
+            return Self::Remote(message);
+        }
         if fault.is_local() {
             Self::Local(message)
         } else {
@@ -261,12 +276,19 @@ impl SessionFault {
     pub(super) const fn is_local(&self) -> bool {
         matches!(self, Self::Local(_))
     }
+
+    /// Whether the home refused this credential the socket.
+    pub(super) const fn is_forbidden(&self) -> bool {
+        matches!(self, Self::Forbidden(_))
+    }
 }
 
 impl std::fmt::Display for SessionFault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Remote(message) | Self::Local(message) => f.write_str(message),
+            Self::Remote(message) | Self::Local(message) | Self::Forbidden(message) => {
+                f.write_str(message)
+            }
         }
     }
 }

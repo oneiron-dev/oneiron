@@ -177,9 +177,11 @@ pub(crate) fn refuse_unbound_births_in(
 ///
 /// - a body that names the key in any shape is refused, unless it is a
 ///   valid stamp on a bound kind ([`bound_kind`]) that a source landing
-///   marked born in this write, or a replicated put of the owner's own
-///   import tier (`ImportTier::OwnDevice`, chosen by the authenticated
-///   import context: a federated tier's put meets
+///   marked born in this write, that the stored row already states in its
+///   own bytes (a rewrite that keeps the stamp, as a host's taint mark keeps
+///   a mail attachment's: census L6-32; it births none), or a replicated put
+///   of the owner's own import tier (`ImportTier::OwnDevice`, chosen by the
+///   authenticated import context: a federated tier's put meets
 ///   [`refuse_written_obligation`] in its own admission before it reaches
 ///   here, so every replicated put that does reach here is the owner's own,
 ///   a forward replay and a pending retry included);
@@ -205,11 +207,27 @@ pub(crate) fn admit_obligation_in_txn(
     if incoming.is_present()
         && !(incoming == SourceAudienceObligation::Required
             && bound_kind(entity_type)
-            && (replicated || BIRTHS.contains(dbs, txn, id)?))
+            && (replicated
+                || BIRTHS.contains(dbs, txn, id)?
+                || stored_obligation(dbs, txn, id)? == SourceAudienceObligation::Required))
     {
         return Err(write_refusal(entity_type, UNBORN_STAMP));
     }
     keep_stored_obligation(dbs, txn, id, entity_type, incoming_body, incoming)
+}
+
+/// The obligation the stored row `id` states in its own bytes; none for an
+/// id `txn` holds no row for.
+fn stored_obligation(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<SourceAudienceObligation> {
+    Ok(dbs
+        .port_entity_raw_wiped(txn, id)?
+        .map_or(SourceAudienceObligation::Absent, |stored| {
+            row_obligation(&stored)
+        }))
 }
 
 /// [`admit_obligation_in_txn`] for a row an off-record session stages in
@@ -247,10 +265,7 @@ fn keep_stored_obligation(
     if incoming_body.is_empty() {
         return Ok(());
     }
-    let Some(stored) = dbs.port_entity_raw_wiped(txn, id)? else {
-        return Ok(());
-    };
-    let held = row_obligation(&stored);
+    let held = stored_obligation(dbs, txn, id)?;
     if held.is_present() && held != incoming {
         return Err(write_refusal(entity_type, KEPT_STAMP));
     }
@@ -259,7 +274,7 @@ fn keep_stored_obligation(
 
 /// Refuses a raw put of `body`, of `entity_type`, that names the key in any
 /// shape: the early check of every raw door but the two a source landing
-/// writes its stamped rows through.
+/// writes its stamped rows through and the stored-stamp door.
 ///
 /// # Errors
 ///

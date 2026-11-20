@@ -772,7 +772,7 @@ export interface CalibrationPair { prediction: unknown; probability: number; out
 export type TaskAssignee = "dreamer" | {agent_def: {agent_def_ref: string}} | {peer: {actor_ref: string}} | {child: {actor_ref: string}} | {human: {actor_ref: string}};
 export type ConsultPayloadRef = {claim: string} | {turn: string};
 export type TaskAskOptionId = string;
-export type TaskAskTarget = {responder: TaskAssignee} | {people: string[]} | {authority: {class: string; selectors: string[]; target: string | null; budget: number | null; receipt_required: boolean}};
+export type TaskAskTarget = {responder: TaskAssignee} | {people: string[]} | {authority: {class: string; selectors: string[]; target: string | null; budget: number | null; receipt_required: boolean}} | {role: {role: {role: "responsible"; actor: string; project?: string | null} | {role: "board"; project: string} | {role: "owner"}; ceiling: "responsible" | "board" | "owner"; act: "judgment"}};
 export interface TaskAskLadderPrediction { option: TaskAskOptionId; rung: "rule" | "system_one"; probability: number | null }
 export interface TaskAskQuestion { reference: ConsultPayloadRef; revision: number; options: Record<TaskAskOptionId, string>; context_refs: ConsultPayloadRef[]; label?: string | null; outcome_binding?: OutcomeBinding | null; ladder_answer?: TaskAskLadderPrediction | null; class_key?: string | null }
 export type TaskAskElectorate = "any" | {people: string[]};
@@ -1077,10 +1077,10 @@ mod tests {
         }
     }
 
-    // python3 -I -c "import ast; ...": len(AGENT_VERBS_TS) == 5987, 38 newlines, the last character a newline.
+    // python3 -I -c "import ast; ...": len(AGENT_VERBS_TS) == 6181, 38 newlines, the last character a newline.
     #[test]
     fn agent_verbs_ts_is_the_python_literal() {
-        assert_eq!(AGENT_VERBS_TS.chars().count(), 5987);
+        assert_eq!(AGENT_VERBS_TS.chars().count(), 6181);
         assert_eq!(AGENT_VERBS_TS.matches('\n').count(), 38);
         assert!(
             AGENT_VERBS_TS

@@ -4,11 +4,14 @@
 //!
 //! The confirm carries a typed echo of what the owner was shown: the title
 //! and prompt, the records, and every standing customer hold on them, whole.
-//! Its writer reads the same state again before it links, logs or lifts
-//! anything, and acts only on an exact match. Anything else changes nothing
-//! and answers with what the confirm shows now, so the owner confirms again
-//! in one step. No token, expiry or second press is kept, and no host order
-//! is ever part of the echo: one under a secrecy order stays unseen (C2).
+//! The verb reads that state fresh, and the shared owner confirm
+//! (`vault.owner_confirm.preview`) binds it; its writer reads the same state
+//! again before it links, logs or lifts anything, and acts only on an exact
+//! match. Anything else changes nothing and answers with what the confirm
+//! shows now, so the owner confirms again in one step. The shared confirm
+//! asks no second press and keeps no expiry: its row lives until a confirm
+//! uses it or the owner previews again (Engine 11:34). No host order is
+//! ever part of the echo: one under a secrecy order stays unseen (C2).
 //!
 //! In a shared vault with two or more Owners an explicit erase waits out the
 //! vault's `erase` veto window first (ARCH-0043, FIX 9781): each record
@@ -208,7 +211,8 @@ impl Vault {
 
     /// The owner's one confirm: [`LIFT_AND_ERASE_TITLE`], showing
     /// [`LIFT_AND_ERASE_PROMPT`], bound to `shown`, what it showed (FIX
-    /// 1462). Lifts every customer hold on `records` (a hold naming more
+    /// 1462; the verb admits the shared confirm of that same state first).
+    /// Lifts every customer hold on `records` (a hold naming more
     /// keeps the rest), and on the claim-free gate-decision partition with
     /// `claim_free_partition` (FIX 9782), and erases the records through the
     /// owner delete rail; the confirm, the lift and each scope change are
@@ -237,6 +241,43 @@ impl Vault {
         claim_free_partition: bool,
         shown: &LiftAndEraseShownState,
     ) -> Result<LiftAndEraseOutcome> {
+        self.confirm_lift_legal_hold_and_erase_with_check_in(
+            owner,
+            records,
+            claim_free_partition,
+            shown,
+            None,
+        )
+    }
+
+    /// [`Self::confirm_lift_legal_hold_and_erase`], judged by check-in (2k2;
+    /// P25-SHAPE Q1 = A): the confirm records the Owner's decision on its
+    /// outcome and on each `erase` act a veto window starts, and with
+    /// `check_in_ref`, an asker's approved check-in for this confirm
+    /// ([`crate::check_in::legal_hold_erase_effect_digest`]), which the
+    /// Owner applies on their own proof: it is spent in the confirm's writer,
+    /// with the lift, and the decision names its requester. A confirm whose
+    /// shown state changed spends nothing.
+    ///
+    /// # Errors
+    /// As [`Self::confirm_lift_legal_hold_and_erase`]; a `check_in_ref` that
+    /// names no approved, unspent check-in for this confirm.
+    pub fn confirm_lift_legal_hold_and_erase_with_check_in(
+        &self,
+        owner: &AuthenticatedOwner,
+        records: &[EntityId],
+        claim_free_partition: bool,
+        shown: &LiftAndEraseShownState,
+        check_in_ref: Option<EntityId>,
+    ) -> Result<LiftAndEraseOutcome> {
+        let applied = check_in_ref.map(|id| crate::check_in::AppliedCheckIn {
+            id,
+            verb: "vault.legal_holds.lift_and_erase",
+            effect_digest: crate::check_in::legal_hold_erase_effect_digest(
+                records,
+                claim_free_partition,
+            ),
+        });
         let records: BTreeSet<EntityId> = records.iter().copied().collect();
         if records.is_empty() && !claim_free_partition {
             return Err(Error::InvalidConfig(
@@ -250,16 +291,23 @@ impl Vault {
             if current != shown {
                 return Ok(Err(current));
             }
+            let decision = crate::check_in::owner_act_decision_in_txn(
+                self,
+                txn,
+                crate::check_in::ActClass::Erase,
+                applied.as_ref(),
+            )?;
             self.lift_for_erase_in_txn(txn, actor, &records, claim_free_partition)
-                .map(Ok)
+                .map(|settled| Ok((settled, decision)))
         })?;
-        let settled = match settled {
+        let (settled, decision) = match settled {
             Ok(settled) => settled,
             Err(current) => {
                 return Ok(LiftAndEraseOutcome {
                     holds: Vec::new(),
                     records: Vec::new(),
                     changed: Some(current),
+                    check_in: None,
                 });
             }
         };
@@ -275,7 +323,9 @@ impl Vault {
         let mut failed = false;
         for record in records {
             let status = match settled.veto_vault {
-                Some(vault_id) => self.wait_out_veto(owner, vault_id, record, &settled.waiting),
+                Some(vault_id) => {
+                    self.wait_out_veto(owner, vault_id, record, &settled.waiting, &decision)
+                }
                 None => match memory.owner_confirmed_erase(owner, record, reason) {
                     Ok(receipt) => erase_status(&memory, owner, receipt.receipt_ref),
                     Err(error) => {
@@ -295,6 +345,7 @@ impl Vault {
             holds: settled.holds,
             records: statuses,
             changed: None,
+            check_in: Some(decision),
         })
     }
 
@@ -530,6 +581,7 @@ impl Vault {
         vault_id: u64,
         record: EntityId,
         waiting: &BTreeMap<EntityId, PendingErase>,
+        decision: &crate::check_in::CheckInDecision,
     ) -> LiftAndEraseStatus {
         let Some(pending) = waiting.get(&record) else {
             return LiftAndEraseStatus::Failed {
@@ -539,7 +591,7 @@ impl Vault {
         let started = match pending.veto_act {
             Some(_) => Ok(()),
             None => self
-                .start_record_erase_act(owner, vault_id, record)
+                .start_record_erase_act(owner, vault_id, record, Some(decision))
                 .and_then(|act| self.name_erase_act(&record, &pending.generation, &act)),
         };
         if let Err(error) = started {
@@ -656,7 +708,7 @@ impl Vault {
                     true,
                     crate::store::GateDecisionId::now(),
                 )
-                .and_then(|proof| self.start_record_erase_act(&proof, vault_id, record))
+                .and_then(|proof| self.start_record_erase_act(&proof, vault_id, record, None))
                 .and_then(|act| self.name_erase_act(&record, &pending.generation, &act));
             if let Err(error) = started {
                 tracing::warn!(

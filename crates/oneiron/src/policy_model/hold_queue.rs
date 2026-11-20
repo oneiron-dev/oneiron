@@ -6,7 +6,6 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, RelayError};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{Result, Vault};
-use serde::{Deserialize, Serialize};
 const PREFIX: &str = "policy-hold:v1:";
 
 /// The device-local moderation queue, keyed by the hex digest after `PREFIX`
@@ -22,24 +21,9 @@ fn hold_key(reference: &str) -> String {
         .unwrap_or(reference)
         .to_owned()
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HeldPolicyItem {
-    pub queue_ref: String,
-    pub row_ref: String,
-    /// Authenticated principal reference assigned by the policy, not a display label.
-    pub human: String,
-    pub content_hash: [u8; 32],
-    pub policy_frontier: [u8; 32],
-    pub held_at: u64,
-    pub receipt_ref: String,
-    pub resolution: Option<PolicyHoldResolution>,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PolicyHoldResolution {
-    Cleared,
-    Declined,
-}
+#[doc(hidden)]
+pub use oneiron_records::policy_model::hold_queue::{HeldPolicyItem, PolicyHoldResolution};
+
 fn queue_ref(request: &PolicyClassifyRequest, verdict: &PolicyClassifyVerdict) -> Option<String> {
     let PolicyVerdictCategory::OwnerPolicy { row_ref } = &verdict.category else {
         return None;
@@ -159,38 +143,19 @@ impl Vault {
         }
         item.resolution = Some(resolution);
         HOLD_QUEUE.put(&self.store, &mut txn, &hold_key(reference), &item)?;
-        self.store.append_gate_decision_in_txn(
-            &mut txn,
-            &crate::store::GateDecisionRecord {
-                version: 0,
-                decision_id: crate::store::GateDecisionId::now(),
-                created_at: crate::unix_seconds_now(),
-                outcome: match resolution {
-                    PolicyHoldResolution::Cleared => "allow",
-                    PolicyHoldResolution::Declined => "block",
-                }
-                .to_owned(),
-                reason_codes: vec![
-                    match resolution {
-                        PolicyHoldResolution::Cleared => "gate.policy_model.hold_cleared",
-                        PolicyHoldResolution::Declined => "gate.policy_model.hold_declined",
-                    }
-                    .to_owned(),
-                ],
-                receipt_reasons: Vec::new(),
-                system_notices: Vec::new(),
-                actor_class: "human".to_owned(),
-                actor_ref: Some(actor.to_hex()),
-                content_kind: "policy_hold".to_owned(),
-                policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-                claim_id: None,
-                grant_ref: Some(reference.to_owned()),
-                diff_handle: item.content_hash.to_vec(),
-                read_frontier_hash: item.policy_frontier,
-                context: Default::default(),
-                redacted_at: None,
+        let mut receipt = crate::store::GateReceipt::new(
+            resolution.ledger_outcome(),
+            "policy_hold",
+            match resolution {
+                PolicyHoldResolution::Cleared => "gate.policy_model.hold_cleared",
+                PolicyHoldResolution::Declined => "gate.policy_model.hold_declined",
             },
-        )?;
+            crate::store::ReceiptActor::human(actor),
+            item.content_hash.to_vec(),
+            crate::store::PolicyBasis::frontier(item.policy_frontier),
+        );
+        receipt.grant_ref = Some(reference.to_owned());
+        self.store.record_gate_receipt_in_txn(&mut txn, receipt)?;
         txn.commit()?;
         Ok(())
     }

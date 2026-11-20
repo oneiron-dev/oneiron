@@ -66,31 +66,25 @@ const BUDGET_STEP_CHARGE: SideTable<(AttemptId, [u8; 32]), EntityId, Raw> =
     SideTable::new(&side_table::DREAMER_BUDGET_STEP_CHARGE);
 
 /// `dreamer:budget_reservation:` row key: a big-endian u16 length, the budget
-/// id's own bytes, then the reserving child attempt id — not a
-/// [`crate::side_table::FixedSideKey`] tuple because the budget id is neither
-/// fixed-width nor last.
+/// id's own bytes, then the reserving child attempt id. The budget id is
+/// neither fixed-width nor last, so it carries its length.
+#[derive(SideKey)]
 pub(super) struct BudgetReservationKey {
+    #[side_key(len = u16)]
     pub(super) budget_id: String,
     pub(super) attempt_id: AttemptId,
 }
 
-impl SideKey for BudgetReservationKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        let budget_id_len = u16::try_from(self.budget_id.len()).unwrap_or(u16::MAX);
-        out.extend_from_slice(&budget_id_len.to_be_bytes());
-        out.extend_from_slice(self.budget_id.as_bytes());
-        out.extend_from_slice(self.attempt_id.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (len_bytes, rest) = bytes.split_at_checked(2)?;
-        let len = usize::from(u16::from_be_bytes(len_bytes.try_into().ok()?));
-        let (id_bytes, attempt_bytes) = rest.split_at_checked(len)?;
-        Some(Self {
-            budget_id: String::from_utf8(id_bytes.to_vec()).ok()?,
-            attempt_id: AttemptId::decode_key(attempt_bytes)?,
-        })
-    }
+/// One [`BudgetReservationKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn budget_reservation_key_pin_for_test(
+    budget_id: &str,
+    attempt_id: AttemptId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&BudgetReservationKey {
+        budget_id: budget_id.to_owned(),
+        attempt_id,
+    })
 }
 
 struct DreamerKindAdmissionResult {
@@ -149,11 +143,12 @@ impl DreamerRunnerStore<'_> {
     /// Atomically admits the next queued vault-cleanup attempt (ONE-1931).
     ///
     /// Per-device, like SKILL-OPT and for the same reason: the queue rows are
-    /// private runner state, and in the default propose-first posture the
-    /// pass's only output is a PROPOSAL. There is no home-node gate because
-    /// there is no canon to serialize — the rows a cleanup pass reads are this
-    /// vault's own, and two devices proposing the same archive is one question
-    /// asked twice, not two archives.
+    /// private runner state. There is no home-node gate because there is no
+    /// canon to serialize — the rows a cleanup pass reads are this vault's
+    /// own. In the default automatic posture each device archives its own
+    /// copy, as local hygiene that publishes no CRDT tombstone; in the
+    /// owner's propose-first posture two devices proposing the same archive
+    /// is one question asked twice, not two archives.
     ///
     /// # Errors
     ///

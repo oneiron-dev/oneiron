@@ -100,6 +100,8 @@ pub(super) fn accept_cleanup_proposal_in_txn(
         archived: live_slots(applied.archived.clone()),
         skipped: live_slots(applied.skipped.clone()),
         rejected: Vec::new(),
+        // The owner's accept is not an automatic run: no teeth badge.
+        integrity_teeth: None,
     };
     put_digest_in_txn(vault, wtxn, &digest)?;
     // What the accept archived joins the RUN row of the run that opened the
@@ -356,6 +358,17 @@ impl Vault {
                     },
                 ));
             }
+        }
+        // A delete applied here whose publication was refused withdrew its
+        // pending tombstone and kept its row fence: neither check below sees
+        // it. The store's removal predicate reads the fence, and it never
+        // counts the archive marker itself.
+        if crate::ports::removed_in_txn(&self.store, wtxn, entity)? {
+            return Err(Error::Maintenance(
+                MaintenanceError::VaultCleanupRestoreNotArchived {
+                    entity: entity.to_hex(),
+                },
+            ));
         }
         self.clear_archive_tombstone_in_txn(wtxn, entity)?;
         crate::browser_library::reindex_restored_source_in_txn(self, wtxn, entity)?;

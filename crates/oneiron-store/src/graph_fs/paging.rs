@@ -6,6 +6,7 @@ use rand_core::{OsRng, RngCore};
 
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
+use oneiron_contracts::cursor_text::parse_hex_cursor_vec;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::entity_id::bytes_to_hex_lower;
 
@@ -141,13 +142,7 @@ impl CursorScope {
     }
 
     pub fn open_bytes(&self, token: &str) -> Option<Vec<u8>> {
-        if !token.len().is_multiple_of(2) || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return None;
-        }
-        let bytes = (0..token.len())
-            .step_by(2)
-            .map(|at| u8::from_str_radix(&token[at..at + 2], 16).ok())
-            .collect::<Option<Vec<u8>>>()?;
+        let bytes = parse_hex_cursor_vec(token)?;
         let (nonce, rest) = bytes.split_first_chunk::<SEALED_NONCE_LEN>()?;
         let (tag, sealed) = rest.split_first_chunk::<SEALED_TAG_LEN>()?;
         let mut position = sealed.to_vec();

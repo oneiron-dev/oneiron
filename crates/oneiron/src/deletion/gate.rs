@@ -4,7 +4,10 @@ use std::cell::Cell;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::{GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionId, GateDecisionRecord, GateReceipt, PolicyBasis, ReceiptActor};
+use crate::write_envelope::WriteActor;
+use oneiron_contracts::RecordedSeconds;
 
 use super::tombstone::{DeleteReason, TombstoneReason};
 
@@ -117,6 +120,11 @@ pub(crate) struct GatedDeletion<'a> {
 impl<'a> GatedDeletion<'a> {
     pub(super) fn actor_principal(&self) -> EntityId {
         self.context.actor
+    }
+
+    /// The actor this delete runs as, as a write names it: the revoker of a share it retracts.
+    pub(super) fn write_actor(&self) -> crate::write_envelope::WriteActor {
+        crate::write_envelope::WriteActor::new(self.context.actor, self.context.actor_class)
     }
 
     /// The owner act the delete carries out, when its door bound one.
@@ -373,6 +381,75 @@ pub(super) fn reverify_deletion_authority_when_unpublished(
     reverify_deletion_authority_before_publication(gate, txn)
 }
 
+/// Re-proves `owner`, the proof the vault owner's own delete carries
+/// ([`crate::Vault::delete_entity_with_reason_as_owner`]), against `txn`'s
+/// view: the owner's credential is still live and its person still owns this
+/// vault, so a request admitted on an owner credential that is revoked, or
+/// whose person stops owning the vault, while it waits on a writer tears and
+/// publishes nothing (FIX MEMORY-DELETE-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
+/// It runs beside [`reverify_deletion_authority_before_publication`], at the
+/// same pre-publication call sites and under the same rule. `None`, every
+/// other delete, re-proves nothing here.
+pub(super) fn reverify_owner_proof_before_publication(
+    vault: &crate::Vault,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
+    txn: &heed::RoTxn<'_>,
+) -> Result<()> {
+    owner.map_or(Ok(()), |owner| {
+        owner.revalidate_in_txn(vault, txn).map(drop)
+    })
+}
+
+/// [`reverify_owner_proof_before_publication`] IF AND ONLY IF this delete
+/// published nothing, as [`reverify_deletion_authority_when_unpublished`]
+/// re-runs a gate's check.
+pub(super) fn reverify_owner_proof_when_unpublished(
+    vault: &crate::Vault,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
+    crdt_persisted: bool,
+    txn: &heed::RoTxn<'_>,
+) -> Result<()> {
+    if crdt_persisted {
+        return Ok(());
+    }
+    reverify_owner_proof_before_publication(vault, owner, txn)
+}
+
+/// The owner's proof a delete's publication re-proves, and whether this
+/// delete's own scrub committed before it: a soft delete scrubs and then
+/// publishes, every other delete publishes before it tears.
+#[derive(Clone, Copy)]
+pub(crate) enum OwnerAtPublication<'a> {
+    /// Published before this delete tore anything: re-proved as each
+    /// pre-publication writer re-proves it
+    /// ([`reverify_owner_proof_before_publication`]).
+    BeforeScrub(&'a crate::consent::AuthenticatedOwner),
+    /// Published after this delete's own soft scrub committed: the owner's
+    /// delete of their own PERSON re-proves with that PERSON taken as live
+    /// ([`crate::consent::AuthenticatedOwner::revalidate_after_own_scrub_in_txn`]).
+    AfterOwnScrub(&'a crate::consent::AuthenticatedOwner),
+}
+
+/// Re-proves `owner` in the publish transaction of the delete of `id`
+/// ([`OwnerAtPublication`]). `None`, every other delete, re-proves nothing.
+#[cfg(feature = "sync")]
+pub(super) fn reverify_owner_at_publication(
+    vault: &crate::Vault,
+    owner: Option<OwnerAtPublication<'_>>,
+    id: &EntityId,
+    txn: &heed::RoTxn<'_>,
+) -> Result<()> {
+    match owner {
+        None => Ok(()),
+        Some(OwnerAtPublication::BeforeScrub(owner)) => {
+            reverify_owner_proof_before_publication(vault, Some(owner), txn)
+        }
+        Some(OwnerAtPublication::AfterOwnScrub(owner)) => owner
+            .revalidate_after_own_scrub_in_txn(vault, txn, id)
+            .map(drop),
+    }
+}
+
 impl DeletionGateContext {
     pub(crate) fn new(
         actor: EntityId,
@@ -438,7 +515,7 @@ impl DeletionGateContext {
         target: &EntityId,
         reason: DeleteReason,
         created_at: u64,
-    ) -> GateDecisionRecord {
+    ) -> Result<GateDecisionRecord> {
         let mut diff = Sha256::new();
         diff.update(b"oneiron.gate.deletion.v0");
         diff.update(self.actor.as_bytes());
@@ -447,41 +524,47 @@ impl DeletionGateContext {
             diff.update(room.as_bytes());
         }
         diff.update([TombstoneReason::from(reason).wire_byte()]);
-        GateDecisionRecord {
-            version: 0,
-            // The ledger key is the deletion request id, so recovery and
-            // REDACTION_AUDIT correlation never need a second identifier.
-            decision_id: GateDecisionId::from_bytes(request_id),
-            created_at,
-            outcome: "allow".to_owned(),
-            reason_codes: match self.admitted {
-                Some((admitted, AdmittedDeleteDoor::Archive)) => vec![format!(
-                    "gate.allow.archive_delete_{}",
-                    admitted.role().as_str()
-                )],
-                Some((admitted, AdmittedDeleteDoor::Record)) => {
-                    vec![format!("gate.allow.delete_{}", admitted.role().as_str())]
-                }
-                None => self.room_role.map_or_else(
-                    || vec!["gate.allow.owner_delete".to_owned()],
-                    |role| vec![format!("gate.allow.room_{role:?}").to_lowercase()],
-                ),
-            },
-            receipt_reasons: Vec::new(),
-            system_notices: Vec::new(),
-            actor_class: self.actor_class.gate_actor_class().to_owned(),
-            actor_ref: Some(self.actor.to_hex()),
-            content_kind: "deletion".to_owned(),
-            policy_manifest_version: self.policy_manifest_version.clone(),
-            claim_id: None,
-            grant_ref: self
-                .admitted
-                .and_then(|(admitted, _)| admitted.grant())
-                .map(|grant| grant.to_hex()),
-            diff_handle: diff.finalize().to_vec(),
-            read_frontier_hash: self.read_frontier_hash,
-            context: Default::default(),
-            redacted_at: None,
-        }
+        // The owner's own delete is the owner's yes; a delete a Grant or a room
+        // role admitted is the rule's `allow` (UC-03 PR 5b, D2).
+        let (outcome, reason_code) = match (self.admitted, self.room_role) {
+            (Some((admitted, AdmittedDeleteDoor::Archive)), _) => (
+                GateReceiptOutcome::Allow,
+                format!("gate.allow.archive_delete_{}", admitted.role().as_str()),
+            ),
+            (Some((admitted, AdmittedDeleteDoor::Record)), _) => (
+                GateReceiptOutcome::Allow,
+                format!("gate.allow.delete_{}", admitted.role().as_str()),
+            ),
+            (None, Some(role)) => (
+                GateReceiptOutcome::Allow,
+                format!("gate.allow.room_{role:?}").to_lowercase(),
+            ),
+            (None, None) => (
+                GateReceiptOutcome::Approved,
+                "gate.allow.owner_delete".to_owned(),
+            ),
+        };
+        let mut receipt = GateReceipt::new(
+            outcome,
+            "deletion",
+            reason_code,
+            ReceiptActor::Row(WriteActor::new(self.actor, self.actor_class)),
+            diff.finalize().to_vec(),
+            PolicyBasis::versioned(
+                self.read_frontier_hash,
+                self.policy_manifest_version.clone(),
+            ),
+        );
+        receipt.grant_ref = self
+            .admitted
+            .and_then(|(admitted, _)| admitted.grant())
+            .map(|grant| grant.to_hex());
+        // The ledger key is the deletion request id, so recovery and
+        // REDACTION_AUDIT correlation never need a second identifier.
+        receipt.id = Some(GateDecisionId::from_bytes(request_id));
+        // The plan builds the row before any write transaction opens: the
+        // request's own time.
+        receipt.decided_at = Some(RecordedSeconds::from_secs(created_at));
+        receipt.mint_bound()
     }
 }

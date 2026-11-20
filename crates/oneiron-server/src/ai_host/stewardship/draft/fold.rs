@@ -5,7 +5,9 @@ use oneiron::dreamer_runner::maintenance::representation::{
 use oneiron::dreamer_runner::maintenance::stewardship::StewardshipDraftRequest;
 use oneiron::{Error, Vault};
 
-use super::{DraftFailure, DraftPass, DraftStage, GeneratedDraft, at, generate_draft, now};
+use super::{
+    DraftFailure, DraftPass, DraftStage, GeneratedDraft, at, generate_draft, unix_seconds_now,
+};
 use crate::ai_host::stewardship::Drafter;
 use crate::ai_host::stewardship::sources::contains_sources;
 use crate::models::ModelRuntime;
@@ -77,7 +79,7 @@ fn schedule_parts(
         expected,
         inner: PrematerializedDraft { text },
     };
-    match vault.schedule_stewardship_draft(&served, &mut planner, now()) {
+    match vault.schedule_stewardship_draft(&served, &mut planner, unix_seconds_now()) {
         Ok(outcome) => Ok(DraftPass::Done(outcome)),
         Err(error) => failed(vault, draft, at(DraftStage::Schedule)(error)),
     }

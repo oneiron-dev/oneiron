@@ -11,8 +11,8 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::time::{SystemTime, UNIX_EPOCH};
 
+pub(super) use oneiron_base::unix_seconds_now;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -179,7 +179,7 @@ impl Row {
             skipped,
             timing_max_window_tokens: key.timing_max_window_tokens,
             timing_cases: 0,
-            measured_at: unix_now(),
+            measured_at: unix_seconds_now(),
         }
     }
 
@@ -356,10 +356,4 @@ pub(super) fn write_rows(path: &Path, rows: &[Row]) {
 
 pub(super) fn sha16(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))[..16].to_owned()
-}
-
-pub(super) fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs())
 }

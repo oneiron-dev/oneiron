@@ -1,34 +1,24 @@
-//! Release gate for automatic cleanup. Owner posture cannot close release blockers.
+//! The integrity-teeth badge an automatic cleanup run records on its digest.
+//!
+//! The automatic posture does not wait on these teeth: the owner ruled that
+//! the Dreamer applies its cleanup and reverts if needed, in every vault from
+//! birth, with no grant step and no holdout (2026-10-18, ARCH-0073
+//! #arm-ruled; DEC-0006). Each automatic run takes a snapshot first and the
+//! owner can revert it. ARCH-0066 teeth #5 and #9 ride each automatic run's
+//! digest and receipt as a proof badge instead. Each flag flips in the PR
+//! that closes its tooth.
 
-use super::*;
-#[cfg(test)]
-use crate::side_table::{self, Raw, SideTable};
+use super::CleanupIntegrityTeeth;
 
 /// ARCH-0066 tooth #5: read/fold verification coverage at consumption.
 const READ_FOLD_COVERAGE_CLOSED: bool = false;
 /// ARCH-0066 tooth #9: OS-level separation of the vault's files.
-const OS_SANDBOX_CLOSED: bool = false;
+const OS_SEPARATION_CLOSED: bool = false;
 
-/// Test-only marker closing both release blockers. Key: (); value: `b"1"`.
-#[cfg(test)]
-const TEST_BLOCKERS_CLOSED: SideTable<(), Vec<u8>, Raw> =
-    SideTable::new(&side_table::VAULT_CLEANUP_TEST_BLOCKERS_CLOSED);
-
-#[cfg_attr(not(test), allow(clippy::unnecessary_wraps))]
-pub(super) fn auto_enabled(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
-    #[cfg(test)]
-    if TEST_BLOCKERS_CLOSED.contains(&vault.store, txn, &())? {
-        return Ok(true);
+/// The badge an automatic run records: both teeth as they stand now.
+pub(super) const fn integrity_teeth() -> CleanupIntegrityTeeth {
+    CleanupIntegrityTeeth {
+        read_fold_coverage_closed: READ_FOLD_COVERAGE_CLOSED,
+        os_separation_closed: OS_SEPARATION_CLOSED,
     }
-    let _ = (vault, txn);
-    Ok(READ_FOLD_COVERAGE_CLOSED && OS_SANDBOX_CLOSED)
-}
-
-#[cfg(test)]
-pub(super) fn close_blockers_for_test(vault: &Vault) {
-    vault
-        .with_write_txn_grouped(|txn| {
-            TEST_BLOCKERS_CLOSED.put(&vault.store, txn, &(), &b"1".to_vec())
-        })
-        .expect("test-only rollout closure");
 }

@@ -19,14 +19,8 @@ pub(super) const PACK_QUARANTINE_ROW: &str = "sync quarantine row";
 /// The value is never read (only presence-under-prefix matters), so this binds `()`.
 const REMAT_MARKERS: SideTable<String, (), Raw> = SideTable::new(&side_table::SYNC_REMAT_MARKER);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum PackQuarantineContainer {
-    Entities,
-    Edges,
-    Tombstones,
-    Leases,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::context_pack::quarantine::PackQuarantineContainer;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(super) struct PackQuarantineRecord {

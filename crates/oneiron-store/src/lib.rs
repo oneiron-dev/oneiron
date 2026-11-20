@@ -1,5 +1,9 @@
 //! The store layer of the oneiron engine.
 
+// `#[derive(SideKey)]` writes paths from `::oneiron_store`, so the keys this crate derives
+// name it the way every other crate does.
+extern crate self as oneiron_store;
+
 pub mod active_write_txn;
 pub mod agent_birth_identity;
 pub mod agent_definition_codec;
@@ -81,6 +85,7 @@ pub mod embedding_vocabulary;
 pub mod entity_doc;
 pub mod esign_rate_thresholds;
 pub mod executor_speech_identity;
+pub mod expiry;
 pub mod extraction_work;
 pub mod file_secret_marks;
 pub mod gate_decision;
@@ -148,6 +153,7 @@ pub mod query_memos;
 pub mod reaction_predicate;
 pub mod reader_fold_receipt;
 pub mod receipt_identity;
+pub mod receipt_ref;
 pub mod receipt_row;
 pub mod receive_scan;
 pub mod record_links;

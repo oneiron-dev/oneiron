@@ -98,6 +98,29 @@ impl VerifiedAuthorityCheckpoint {
         })
     }
 
+    /// `image` taken as verified with no attestation, under a pin naming its
+    /// own genesis, policy and id: the adopted-fold door's cold install,
+    /// whose fold past the image reads the image and its id alone.
+    #[cfg(oneiron_test_support)]
+    pub(in crate::authority) fn unattested_for_door(image: AuthorityCheckpointV2) -> Result<Self> {
+        let id = checkpoint_image_id(&image.encode()?);
+        let pin = AuthorityCheckpointPin {
+            challenge: [0; 32],
+            vault_id: image.vault_id,
+            genesis: image.genesis,
+            checkpoint: id,
+            policy: image.root_policy.clone(),
+            bindings: Vec::new(),
+        };
+        Ok(Self {
+            id,
+            image,
+            pin,
+            attestations: Vec::new(),
+            roots: BTreeSet::new(),
+        })
+    }
+
     /// The image id, equal to the pin's checkpoint.
     #[must_use]
     pub fn id(&self) -> [u8; 32] {
@@ -507,6 +530,34 @@ impl Vault {
         fixed: [u8; 32],
         kit_root: PinnedRoot,
     ) -> Result<[u8; 32]> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let id = self.adopt_recovered_authority_checkpoint_in_txn(
+            &mut wtxn,
+            (pin, bytes, attestations),
+            fixed,
+            kit_root,
+        )?;
+        wtxn.commit()?;
+        self.store.notify_proactivity_changes();
+        Ok(id)
+    }
+
+    /// [`Self::adopt_recovered_authority_checkpoint`] in the caller's write
+    /// transaction, which commits it or not: a sealed kit restore adopts the
+    /// image in its history import's transaction
+    /// ([`Self::import_signed_authority_history_judged`]). The caller owes
+    /// the proactivity wake once it commits.
+    pub(crate) fn adopt_recovered_authority_checkpoint_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        (pin, bytes, attestations): (
+            &AuthorityCheckpointPin,
+            &[u8],
+            &[AuthorityCheckpointAttestation],
+        ),
+        fixed: [u8; 32],
+        kit_root: PinnedRoot,
+    ) -> Result<[u8; 32]> {
         if pin.digest()? != fixed {
             return Err(adopt_refused(
                 "the checkpoint pin is not the one the owner fixed",
@@ -514,20 +565,16 @@ impl Vault {
         }
         let verified = VerifiedAuthorityCheckpoint::verify(pin, bytes, attestations)?;
         let store = &self.store;
-        let mut wtxn = store.env.write_txn()?;
         let RecoveryPin::KitRootFirst = RECOVERY_CHECKPOINT_PIN;
         if verified.image().building_pin == Some(kit_root)
-            && super::pinned_root::read_pinned_root_in_txn(store, &wtxn)?.is_none()
-            && super::machine_identity::resident_genesis_vault_id_in_txn(store, &wtxn)?.is_none()
+            && super::pinned_root::read_pinned_root_in_txn(store, wtxn)?.is_none()
+            && super::machine_identity::resident_genesis_vault_id_in_txn(store, wtxn)?.is_none()
         {
-            super::pinned_root::write_pinned_root_in_txn(store, &mut wtxn, kit_root, None)?;
+            super::pinned_root::write_pinned_root_in_txn(store, wtxn, kit_root, None)?;
         }
         // Read after the pin, which moves the generation.
-        let expected = expectation_in_txn(store, &wtxn)?;
-        let id = self.adopt_authority_checkpoint_in_txn(&mut wtxn, &verified, &expected)?;
-        wtxn.commit()?;
-        self.store.notify_proactivity_changes();
-        Ok(id)
+        let expected = expectation_in_txn(store, wtxn)?;
+        self.adopt_authority_checkpoint_in_txn(wtxn, &verified, &expected)
     }
 
     /// The image this vault adopted, verified again; None when nothing was

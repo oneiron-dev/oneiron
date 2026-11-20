@@ -44,9 +44,8 @@ pub const WILDCARD_PATTERN: &str = "*/*/*";
 ///
 /// Splits on UNESCAPED separators only, and rejects an escape that names
 /// nothing or escapes an unreserved character. The second half is what keeps
-/// the encoding canonical: one axis has exactly one spelling, so one pattern
-/// has exactly one [`pattern_key`], and two rows can never mean the same thing
-/// under two keys.
+/// the encoding canonical: one axis has exactly one spelling, so two rows of
+/// the thresholds setting can never mean the same thing under two patterns.
 pub(super) fn pattern_axes(pattern: &str) -> Option<[&str; 3]> {
     let mut axes = [""; 3];
     let mut filled = 0;

@@ -2,6 +2,8 @@
 //! rest on beside it, judged by the scope law a written answer is held to,
 //! and the ones it leaves out, named with why.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::super::records::{OmittedNeighbor, SourceConflict};
 use super::super::standing::{ScopeFold, Source};
 use super::{GraphContextSource, GraphUnitContext, asker, source, source_eligible};
@@ -21,7 +23,12 @@ pub(super) fn same_fitted_neighbors(
     let (Some(neighbors), Some(unit)) = (neighbors, context.sources.first()) else {
         return Ok(false);
     };
-    let eligible = eligible_sources(lane.vault(), txn, neighbors)?;
+    let eligible = eligible_sources(
+        lane.vault(),
+        txn,
+        lane.reads_stored_bodies_in(txn)?,
+        neighbors,
+    )?;
     let Some((kept, omitted)) = fit_neighbors(lane, txn, unit, eligible)? else {
         return Ok(false);
     };
@@ -29,16 +36,18 @@ pub(super) fn same_fitted_neighbors(
     Ok(omitted == context.omitted && kept.iter().map(|source| source.id).eq(shown))
 }
 
-/// Each of `neighbors` that may inform an answer.
+/// Each of `neighbors` that may inform an answer, as an asker that
+/// `reads_stored` bodies or not is shown it ([`source`]).
 pub(super) fn eligible_sources(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    reads_stored: bool,
     neighbors: Vec<(EntityId, u8, Vec<u8>)>,
 ) -> Result<Vec<GraphContextSource>> {
     let mut sources = Vec::with_capacity(neighbors.len());
     for (id, kind, body) in neighbors {
         if source_eligible(vault, txn, &id, kind)? {
-            sources.push(source(id, kind, body));
+            sources.push(source(reads_stored, id, kind, body)?);
         }
     }
     Ok(sources)
@@ -116,7 +125,7 @@ pub(super) fn source_in_txn(
     // hash the supplied row; an older revision's manifest bytes miss the
     // recorded hash and read as changed (FIX 5398).
     if kind != shown.entity_type
-        || *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes() != shown.hash
+        || *ContentHash::of(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes() != shown.hash
         || !source_eligible(lane.vault(), txn, &shown.id, kind)?
     {
         return Ok(None);
@@ -136,5 +145,15 @@ pub(super) fn source_in_txn(
         scope,
         &[&lane.actor_key().world_ceiling().worlds],
     );
-    Source::fitted(kind, &raw, &scope).map(Some)
+    Source::fitted(
+        lane.vault(),
+        &lane.store_read(),
+        txn,
+        shown.id,
+        kind,
+        &raw,
+        &scope,
+        &[lane.actor_key()],
+    )
+    .map(Some)
 }

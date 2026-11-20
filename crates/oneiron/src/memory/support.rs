@@ -80,6 +80,9 @@ pub struct Memory<'v> {
     /// it (`with_owner_surface`): the audit record of an owner act this
     /// surface makes, never authority (FIX 4650).
     pub(super) owner_surface: crate::authority::ActSurface,
+    /// Whether this surface answers asks as this install's owner device
+    /// (`answering_as_owner_device`, UC-05 PR 2b).
+    pub(super) answers_as_owner_device: bool,
     /// The host's own slip issuer, when a host bound it
     /// (`with_host_slip_issuer`, FIX 3875).
     pub(super) host_slip_issuer: Option<&'v crate::authority::HostSlipIssuer>,

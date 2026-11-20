@@ -38,6 +38,12 @@ impl TextAnchor {
     pub fn cursors(&self) -> (&[u8], &[u8]) {
         (&self.start, &self.end)
     }
+    /// The hash an anchor keeps of its quote: the BLAKE3 of the quote's
+    /// bytes. Every write and every check of `hash` goes through here.
+    #[must_use]
+    pub(crate) fn quote_hash(quote: &str) -> [u8; 32] {
+        *blake3::hash(quote.as_bytes()).as_bytes()
+    }
 }
 
 /// Three anchored verbs. Each uses the live cursor, never stale integer offsets.
@@ -366,7 +372,7 @@ impl Vault {
         let (from, to) = (selection.shown.start, selection.shown.end);
         let mut anchor = make_anchor(&doc, *entity, selection.stored.start, selection.stored.end)?;
         let quote: String = shown.text().chars().skip(from).take(to - from).collect();
-        anchor.hash = *blake3::hash(quote.as_bytes()).as_bytes();
+        anchor.hash = TextAnchor::quote_hash(&quote);
         anchor.quote = quote;
         Ok((anchor, (from, to)))
     }
@@ -408,7 +414,7 @@ pub(super) fn make_anchor(
         frontier: doc.frontier(),
         start,
         end,
-        hash: *blake3::hash(quote.as_bytes()).as_bytes(),
+        hash: TextAnchor::quote_hash(&quote),
         quote,
     })
 }
@@ -579,9 +585,7 @@ pub(super) fn apply(
 /// was issued with: as stored, or as a reader who reads each lifted key as
 /// its handle read it, in that reader's own text (FIX 2936).
 fn quotes(anchor: &TextAnchor, current: &str, lifted: &LiftedKeys) -> bool {
-    let same = |text: &str| {
-        blake3::hash(text.as_bytes()).as_bytes() == &anchor.hash && text == anchor.quote
-    };
+    let same = |text: &str| TextAnchor::quote_hash(text) == anchor.hash && text == anchor.quote;
     same(current) || lifted.masked(current).is_some_and(|shown| same(&shown))
 }
 
