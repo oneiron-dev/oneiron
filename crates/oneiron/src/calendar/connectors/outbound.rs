@@ -9,7 +9,7 @@ pub use self::collection::{
     calendar_collection_members_for_operation,
 };
 pub(super) use self::collection::{
-    cancelled_members_in_flight, first_write_unsettled, omission_observed,
+    cancelled_members_in_flight, first_write_unsettled, omission_observed, unsettled_writes_of,
 };
 
 use serde::{Deserialize, Serialize};
@@ -1923,23 +1923,6 @@ pub(super) fn derive_outbox_id(
     let mut out = [0_u8; 32];
     out.copy_from_slice(&hasher.finalize());
     out
-}
-
-/// Whether this seat's write of `uid` is a replayed cancelled write whose precondition
-/// refusal read no copy ([`CalendarWriteOutboxRow::stored_copy_unproven`]). The provider may
-/// then hold the write's own copy, or may have deleted it as a provider that keeps a cancelled
-/// event as a deleted one does, so the resource gone from the seat proves nothing about whose
-/// cancellation it was (BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY).
-///
-/// # Errors
-///
-/// Scope and storage failures, and a stored row that does not decode.
-pub(super) fn replay_copy_unproven(
-    vault: &Vault,
-    operation: &CalendarConnectorOperation,
-    uid: &str,
-) -> Result<bool, CalendarConnectorError> {
-    Ok(self::collection::unproven_replay(vault, operation, uid)?.is_some())
 }
 
 pub(super) fn ingest_reason(reason: &'static str) -> CalendarError {

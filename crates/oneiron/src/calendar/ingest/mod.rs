@@ -47,7 +47,7 @@ pub(in crate::calendar) use admission::{
     ConnectorAdmissionSource, ConnectorScreen, admit_connector_event, connector_event_ref,
     defer_connector_cancel, defer_connector_delete, delete_connector_resource,
     preflight_connector_feed, repeat_connector_echo, sweep_connector_resource,
-    sweep_connector_uids,
+    sweep_connector_uids, tombstone_cancels_written_only_event,
 };
 pub(crate) use calendar_source::{
     CalendarSourceChange, apply_calendar_source_change, apply_calendar_source_feed,

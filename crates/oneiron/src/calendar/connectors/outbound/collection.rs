@@ -12,7 +12,9 @@
 //! cancelled version of a member an upsert in flight writes cancelled
 //! ([`cancelled_members_in_flight`]) stays owed the same way, and so does a
 //! pulled copy of a first write any seat has not settled
-//! ([`first_write_unsettled`]).
+//! ([`first_write_unsettled`]). A provider's report of a resource gone stays
+//! held while an upsert of its UID on any seat of the calendar is unsettled
+//! ([`unsettled_writes_of`]).
 
 use super::super::door::CalendarConnectorOperation;
 use super::super::remote::ics_content_hash;
@@ -55,7 +57,10 @@ pub struct CalendarCollectionMember {
 ///
 /// A row only a write made (a local create no read has seen) is no member:
 /// its resource may postdate the listing, so the listing's silence about it
-/// proves nothing.
+/// proves nothing. It is one, unread, while a pull holds back a tombstone of
+/// its UID that only a full listing's omission settles (`tombstone_held`):
+/// the wire reads its resource back first, and only a gone answer makes the
+/// omission (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING).
 ///
 /// # Errors
 ///
@@ -67,6 +72,7 @@ pub fn calendar_collection_members_for_operation(
 ) -> Result<Vec<CalendarCollectionMember>, CalendarConnectorError> {
     operation.revalidate(vault)?;
     let scope = operation.literal_scope()?;
+    let system = &operation.registration().seat.config.system;
     // Drop the table reader before any custody snapshot is acquired.
     let rows = {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
@@ -74,18 +80,24 @@ pub fn calendar_collection_members_for_operation(
     };
     let mut members = Vec::new();
     for (key, stored) in rows {
-        if stored.carrier.seat != scope || stored.source_blob_ref.is_none() {
+        if stored.carrier.seat != scope {
             continue;
         }
         let observation = CalendarRemoteObjectObservation(stored.carrier.instance);
         let mut row = remote_projection(stored);
         open_cursor(vault, operation, key.0, &mut row)?;
-        let (Some(href), Some(source)) = (row.href, row.source_blob_ref.as_deref()) else {
+        let Some(href) = row.href else {
             continue;
         };
-        let read_observed = read_blob_ref(vault, source)?
-            .and_then(|archived| ics_content_hash(&archived, &row.uid).ok())
-            == Some(row.content_hash);
+        let read_observed = match row.source_blob_ref.as_deref() {
+            Some(source) => {
+                read_blob_ref(vault, source)?
+                    .and_then(|archived| ics_content_hash(&archived, &row.uid).ok())
+                    == Some(row.content_hash)
+            }
+            None if tombstone_held(vault, system, &row.uid)? => false,
+            None => continue,
+        };
         members.push(CalendarCollectionMember {
             uid: row.uid,
             href,
@@ -94,6 +106,75 @@ pub fn calendar_collection_members_for_operation(
         });
     }
     Ok(members)
+}
+
+/// Whether a live passport of `system` for `uid` holds a removal report a
+/// pull held back unread (`deferred_cancel_seen_at`), which a full listing's
+/// omission of the resource settles as the tombstone it was.
+fn tombstone_held(vault: &Vault, system: &str, uid: &str) -> Result<bool, CalendarConnectorError> {
+    let Some(event) = crate::calendar::passport::resolve_event_by_uid(vault, uid)? else {
+        return Ok(false);
+    };
+    Ok(
+        crate::calendar::passport::live_passport_for(vault, &event, system, uid)?
+            .is_some_and(|(_, passport)| passport.deferred_cancel_seen_at.is_some()),
+    )
+}
+
+/// What the outbox rows of every seat of the vault hold of upserts of `uid`
+/// under `system`, which a provider's report of the resource gone may be
+/// coming back from. Seats of one calendar share its system and its
+/// passports, but not their outboxes: a seat's cadence is part of its outbox
+/// scope (`CalendarConnectorOperation::literal_scope`), so another seat of
+/// the calendar may hold the write
+/// (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct UnsettledWrites {
+    /// An upsert that writes a member cancelled is prepared or remotely
+    /// applied: its settlement has not marked the member's passport yet.
+    pub(crate) cancelled_in_flight: bool,
+    /// A replayed upsert's precondition refusal read no copy
+    /// ([`super::CalendarWriteOutboxRow::stored_copy_unproven`]): the
+    /// provider may hold the write's own copy, or have deleted it as a
+    /// provider that keeps a cancelled event as a deleted one does.
+    pub(crate) copy_unproven: bool,
+}
+
+/// [`UnsettledWrites`] of `uid` under `system`, read across every seat's
+/// outbox rows without opening their sealed values.
+///
+/// The caller holds the vault's calendar admission turn, in which a write
+/// publishes its prepared row and settles, so neither lands between this
+/// read and the admission it guards.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn unsettled_writes_of(
+    vault: &Vault,
+    system: &str,
+    uid: &str,
+) -> Result<UnsettledWrites, CalendarConnectorError> {
+    let rows = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        OUTBOX.scan_from(&vault.store, &txn, OUTBOX_ROW_TAG)?
+    };
+    let mut writes = UnsettledWrites::default();
+    for (_, row) in rows {
+        if row.action != CalendarWriteAction::Upsert || row.system != system || row.uid != uid {
+            continue;
+        }
+        match row.state {
+            CalendarWriteOutboxState::Prepared | CalendarWriteOutboxState::RemoteApplied => {
+                writes.cancelled_in_flight |= !row.cancelled_members.is_empty();
+            }
+            CalendarWriteOutboxState::ReconcileRequired => {
+                writes.copy_unproven |= row.stored_copy_unproven;
+            }
+            CalendarWriteOutboxState::Committed => {}
+        }
+    }
+    Ok(writes)
 }
 
 /// Whether the omission of `uid` a full listing reported may land now: this

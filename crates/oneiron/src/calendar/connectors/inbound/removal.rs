@@ -17,10 +17,9 @@ pub(super) enum RemovalEvidence {
     /// A full listing that no longer carries it (fix list row 19192): an
     /// absence, as an omitted feed item is.
     Omission {
-        /// Whether it settles a cancellation this seat reported while a
-        /// cancelled write of the UID was in flight, which the pull held back
-        /// ([`apply_remote_deletion`]): false while that write is a replay
-        /// whose refusal read no copy.
+        /// Whether it settles a removal report a pull held back
+        /// ([`apply_remote_deletion`]): false while a replayed write of the
+        /// UID, on any seat of the calendar, read no stored copy.
         settles_held_cancel: bool,
     },
 }
@@ -87,15 +86,18 @@ pub(super) fn apply_remote_deletion(
         source: None,
     };
     // A full listing can only leave a gone resource out, never send its
-    // tombstone again. So an omission of a resource whose cancellation this
-    // seat reported while a cancelled write of the UID was in flight, held
-    // back as `deferred_cancel_seen_at`, settles that report as the tombstone
-    // it was, dated by its first sighting: no write is in flight any more (an
-    // omission waits on one), a write that settled dropped the sighting, and
-    // a refusal that stored nothing, or whose read proved the stored copy
-    // another writer's, leaves the host's report. A replay whose read proved
-    // nothing leaves it held, since the gone copy may be the engine's own
-    // cancelled write (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING).
+    // tombstone again. So an omission of a resource whose removal a pull of
+    // the calendar held back as `deferred_cancel_seen_at` (a cancelled write
+    // of the UID was in flight, or the report alone would have concluded the
+    // cancel of an EVENT no inbound source carries) settles that report as
+    // the tombstone it was, dated by its first sighting: no write is in
+    // flight on any seat any more (an omission waits on one), a write that
+    // settled dropped the sighting, a copy the listing still carries took the
+    // report back, and a refusal that stored nothing, or whose read proved
+    // the stored copy another writer's, leaves the host's report. A replay
+    // whose read proved nothing leaves it held, since the gone copy may be
+    // the engine's own cancelled write
+    // (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING).
     let evidence = match evidence {
         RemovalEvidence::Omission {
             settles_held_cancel: true,

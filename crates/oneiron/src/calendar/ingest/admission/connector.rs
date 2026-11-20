@@ -222,6 +222,40 @@ pub(in crate::calendar) fn defer_connector_delete<'a>(
     Ok(())
 }
 
+/// Whether a provider tombstone of `uid` from `system` would conclude, by
+/// itself, the host's cancel of an EVENT no inbound source carries (RULING
+/// CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING = A): a live
+/// passport of `system` names a calendar the EVENT was written to by a write
+/// that was no cancel of the engine's ([`cancel_moves_deposit`]), no
+/// tombstone has dated it yet, and no passport of the EVENT is
+/// inbound-bearing. A sync delta can report such a resource gone on a page
+/// before the one carrying the new href the host moved it to, so the pull
+/// holds the tombstone ([`defer_connector_delete`]) until a full listing,
+/// which lists every member whole, leaves the resource out.
+pub(in crate::calendar) fn tombstone_cancels_written_only_event(
+    vault: &Vault,
+    system: &str,
+    uid: &str,
+) -> Result<bool, CalendarError> {
+    for event_ref in list_event_ids(vault)? {
+        let passports = live_passports_for_event(vault, &event_ref)?;
+        let written = passports.iter().any(|(_, value)| {
+            value.system == system
+                && value.uid == uid
+                && value.cancelled_since.is_none()
+                && cancel_moves_deposit(system, value)
+        });
+        if written
+            && !passports
+                .iter()
+                .any(|(_, value)| value.direction.is_inbound_bearing())
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// A live passport a tombstone dated, whose calendar shows the uncancelled
 /// EVENT again at the same version, drops that date: the host took the
 /// deletion back, so it can no longer date a host cancel that another
