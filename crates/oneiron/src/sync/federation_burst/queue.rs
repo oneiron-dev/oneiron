@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use super::payload::FederationPayloadBytes;
 
+use oneiron_contracts::fingerprint::{ContentHash, ContentHasher};
 use oneiron_contracts::host_memory::{MachineMemory, MemoryRefusal};
 
 use super::schedule::{self, RetainedWorkQueue, Waiting};
@@ -76,8 +77,23 @@ fn prefix(peer: BurstPeer<'_>) -> Result<Vec<u8>> {
     // Delivery is additionally bound to the exact requested selector (a
     // device's to its proven key). The observation bucket intentionally is
     // not: narrowing cannot reset rate.
-    prefix.extend_from_slice(blake3::hash(&peer.lane_bytes()?).as_bytes());
+    prefix.extend_from_slice(ContentHash::of(&peer.lane_bytes()?).as_bytes());
     Ok(prefix)
+}
+
+/// The tag a retained batch's identity hashes for its kind. An own device's
+/// update is one batch whichever socket sent it: the same bytes for the same
+/// window, from a residence socket or a full-window one, share one id, so a
+/// receipt one of them settled answers the other (an update its owner
+/// rejected stays rejected), and a held row answers both as held. The row
+/// keeps the kind it arrived with, which its replay judges by (#9691 review).
+fn identity_tag(kind: WorkKind) -> u8 {
+    match kind {
+        WorkKind::Selector => 0,
+        WorkKind::MemberUpdate => 1,
+        WorkKind::GuestUpdate => 2,
+        WorkKind::DeviceUpdate | WorkKind::DeviceResidenceUpdate => 3,
+    }
 }
 
 /// Every own device with retained work, as its connection proved it.
@@ -158,20 +174,14 @@ impl DeferredWork {
         payload: &[u8],
     ) -> Result<([u8; 32], Vec<u8>)> {
         let selector = peer.lane_bytes()?;
-        let mut hash = blake3::Hasher::new();
+        let mut hash = ContentHasher::new();
         hash.update(b"oneiron/federation-work/v1");
         hash.update(&peer.digest());
-        hash.update(blake3::hash(&selector).as_bytes());
+        hash.update(ContentHash::of(&selector).as_bytes());
         hash.update(key.as_str().as_bytes());
-        hash.update(&[match kind {
-            WorkKind::Selector => 0,
-            WorkKind::MemberUpdate => 1,
-            WorkKind::GuestUpdate => 2,
-            WorkKind::DeviceUpdate => 3,
-            WorkKind::DeviceResidenceUpdate => 4,
-        }]);
+        hash.update(&[identity_tag(kind)]);
         hash.update(payload);
-        Ok((*hash.finalize().as_bytes(), selector))
+        Ok((hash.finish().into_bytes(), selector))
     }
 
     /// Starts this batch's wait in the admitting writer: its arrival, and its
@@ -196,7 +206,7 @@ impl DeferredWork {
     pub(super) fn key(&self) -> Vec<u8> {
         let mut key = DEFERRED_PREFIX.to_vec();
         key.extend_from_slice(&self.peer);
-        key.extend_from_slice(blake3::hash(&self.selector).as_bytes());
+        key.extend_from_slice(ContentHash::of(&self.selector).as_bytes());
         key.extend_from_slice(&self.id);
         key
     }
@@ -232,7 +242,7 @@ impl DeferredWork {
             || saved.peer != self.peer
             || saved.selector != self.selector
             || saved.window != self.window
-            || saved.kind != self.kind
+            || identity_tag(saved.kind) != identity_tag(self.kind)
             || saved.payload != self.payload
         {
             return Err(corrupt());
