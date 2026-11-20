@@ -28,12 +28,18 @@ use serde_json::json;
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::EntityId;
 use crate::deletion::decode_tombstone_value;
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::legal_hold::{HoldActor, is_hold_refusal};
 use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
 use crate::sync::manager::WindowManager;
 use crate::sync::selector::encode_sync_selector;
 use crate::sync::transport::TransportError;
 use crate::sync::types::{TombstoneResidence, WindowKey, tombstone_residence_in};
+
+/// A window's thin index rows (`ri:w:`). Key: `{window}:{item hex}`. Value:
+/// the index entry as the home listed it (MessagePack), unread here.
+const RESIDENCE_INDEX: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::SYNC_RESIDENCE_INDEX);
 
 /// One page of a window's tombstone id set, as the home answers it.
 #[derive(Deserialize)]
@@ -276,8 +282,8 @@ fn drop_soft_deleted_thin_copy(
 ) -> crate::Result<bool> {
     vault.with_write_txn_grouped(|txn| {
         let hex = item.to_hex();
-        let listed = format!("ri:w:{window}:{hex}");
-        let indexed = vault.store.sync_state.get(txn, &listed)?.is_some();
+        let listed = format!("{window}:{hex}");
+        let indexed = RESIDENCE_INDEX.contains(&vault.store, txn, &listed)?;
         let cached = vault
             .store
             .sync_state
@@ -303,7 +309,7 @@ fn drop_soft_deleted_thin_copy(
             crate::sync::residence::clear_thin_item_cache_in_txn(&vault.store, txn, item)?;
         }
         if indexed {
-            vault.store.sync_state.delete(txn, &listed)?;
+            RESIDENCE_INDEX.delete(&vault.store, txn, &listed)?;
         }
         Ok(true)
     })
