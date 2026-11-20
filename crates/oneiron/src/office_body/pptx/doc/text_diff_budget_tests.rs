@@ -29,6 +29,7 @@ fn syncing_a_large_paragraph_to_unrelated_runs_is_refused_within_the_budget() {
     doc.commit();
     let new = "\u{e9}dited tail \u{2713}";
     paragraph.runs[0].text = new.to_owned();
+    // testkit-lint: allow(wall-clock) the elapsed time is the budget under test
     let started = Instant::now();
     let result = sync_paragraph(&para, &paragraph);
     let elapsed = started.elapsed();

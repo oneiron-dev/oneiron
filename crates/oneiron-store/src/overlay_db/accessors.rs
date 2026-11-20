@@ -307,6 +307,27 @@ impl OverlayDb {
         })
     }
 
+    /// [`Self::len`], but at most `cap`. A composed view counts by walking
+    /// its merged rows, so it stops at `cap` instead of reading every row;
+    /// a canonical view reads LMDB's own count.
+    pub fn len_at_most(&self, txn: &RoTxn<'_>, cap: u64) -> Result<u64> {
+        if self.overlay.is_none() {
+            return Ok(self.base.len(txn)?.min(cap));
+        }
+        let mut rows = self.iter(txn)?;
+        let mut count = 0_u64;
+        while count < cap {
+            let Some(row) = rows.next() else {
+                break;
+            };
+            row?;
+            count = count
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("overlay database row count"))?;
+        }
+        Ok(count)
+    }
+
     #[allow(
         dead_code,
         reason = "completed composed accessor; first session caller lands with ONE-1728 retrieval"

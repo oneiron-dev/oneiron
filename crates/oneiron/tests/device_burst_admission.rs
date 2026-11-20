@@ -61,6 +61,7 @@ const GRANT_WALL_LIFETIME_SECS: u64 = 5;
 /// The wall clock's second, which the home's row admission judges a grant's
 /// end on.
 fn wall_secs() -> TestResult<u64> {
+    // testkit-lint: allow(wall-clock) grant expiry is judged on real wall time
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
 }
 
@@ -561,6 +562,7 @@ fn a_held_burst_stops_standing_once_the_wall_clock_passes_a_grant_end_the_grant_
 
     // The wall clock passes the grant's end.
     while wall_secs()? <= ends {
+        // testkit-lint: allow(sleep) grant expiry is judged on real wall time
         std::thread::sleep(Duration::from_millis(100));
     }
     assert!(
