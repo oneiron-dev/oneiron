@@ -25,11 +25,9 @@
 //! memory, at most [`HOOK_TRANSCRIPT_STAGED_MAX_BYTES`] of the request's
 //! JSON text, and no verb hook sees a part; its last part runs the request
 //! as one call of `vault.imports.hook_transcript`, whose hooks judge it as
-//! they judge any call of it. A call too long for its carrier never arrives
-//! as one call; the person imports that session on the machine it ran on
-//! (`oneiron import <source> <log>`). All the logs of one request inflate
-//! to at most [`HOOK_TRANSCRIPT_MAX_BYTES`], read through a bounded reader;
-//! past that the request is refused before anything lands.
+//! they judge any call of it. All the logs of one request inflate to at most
+//! [`HOOK_TRANSCRIPT_MAX_BYTES`], read through a bounded reader; past that
+//! the request is refused before anything lands.
 
 use std::collections::BTreeSet;
 use std::io::Read;
