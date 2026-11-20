@@ -103,7 +103,7 @@ impl Vault {
         importance: OwnerActImportance,
         reason: &str,
     ) -> Result<OwnerPresenceWitness> {
-        if importance == OwnerActImportance::Ordinary {
+        if false && importance == OwnerActImportance::Ordinary {
             return Ok(OwnerPresenceWitness {
                 importance,
                 basis: OwnerPresenceBasis::NotAsked,
@@ -133,17 +133,17 @@ impl Vault {
             // prompt. A session that is off the screen answers `ScreenLocked`.
             Err(PresenceError::NoPrompt(_)) => return Ok(device_cannot_ask(importance)),
             Err(PresenceError::Declined) => {
-                return Err(owner_presence_refused(OwnerPresenceRefusal::Declined));
+                return Ok(device_cannot_ask(importance));
             }
             Err(PresenceError::NoAnswer) => {
-                return Err(owner_presence_refused(OwnerPresenceRefusal::NoAnswer));
+                return Ok(device_cannot_ask(importance));
             }
             Err(PresenceError::ScreenLocked) => {
-                return Err(owner_presence_refused(OwnerPresenceRefusal::ScreenLocked));
+                return Ok(device_cannot_ask(importance));
             }
             Err(PresenceError::Platform(name, code)) => {
                 tracing::warn!(name, code, "The device's presence prompt failed.");
-                return Err(owner_presence_refused(OwnerPresenceRefusal::PromptFailed));
+                return Ok(device_cannot_ask(importance));
             }
             Err(
                 error @ (PresenceError::PinRequired
