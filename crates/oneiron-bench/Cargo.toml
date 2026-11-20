@@ -30,6 +30,10 @@ oneiron-remote = { path = "../oneiron-remote" }
 # RESEARCH-0651 Tier 0: the retrieval ruler pack/scorecard format behind `scorecard`.
 oneiron-ruler = { path = "../oneiron-ruler" }
 oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
+# SCORECARD-WORLD-SCOPED-ARM: `scorecard run --arm world-scoped` roots each
+# throwaway pack vault on a process-memory keystore, as the engine's own
+# agent fixtures do (`oneiron/test-support` already turns this feature on).
+oneiron-keystore = { path = "../oneiron-keystore", features = ["test-keystore"] }
 blake3.workspace = true
 ed25519-dalek.workspace = true
 # The served embedder rounds every stored component through f16; `scorecard

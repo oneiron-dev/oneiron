@@ -169,3 +169,28 @@ The stamp prints no pin call for a rank-profile proposal: BM25F weights
 are compiled defaults, and the stamp's effect is the freeze PR's merge,
 which applies the stamped profile. Open that PR only after the stamp
 exists.
+
+## 7. A world-scoped reader, before and after a statistic change
+
+Every arm above reads as the vault's owner. `scorecard run --arm
+world-scoped` reads as an agent whose one Grant reads the base world: in
+each corpus vault, `--hidden-share` per mille of the records (default 500)
+land as the owner's claims in a second world, chosen from the record id
+and `--partition-seed` (default 0) alone, and the rest in the base world.
+It grades the scoped text channel alone (BM25 under the agent's world
+scope, no vectors, no recency blend), on the readable records only: a
+hidden relevant record leaves the qrels, a query left with none is
+dropped, and a second-world record served to the agent fails the run.
+Run it with the same flags on the build before and after a change to the
+scoped term statistics; the two cards then share `pack_digest` (the
+readable view's) and `params_digest`:
+
+```sh
+oneiron-bench scorecard run --arm world-scoped \
+    --pack-dir <data-root>/packs --slice held_out \
+    --hidden-share 500 --partition-seed 0 \
+    --budget-rows 100 --engine-commit <sha> \
+    --out <data-root>/world-scoped.<sha>.held_out.json
+```
+
+The arm takes the search and held_out slices only, and needs no vectors.

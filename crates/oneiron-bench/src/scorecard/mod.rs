@@ -2,7 +2,8 @@
 //!
 //! Nine subcommands: `convert` and `convert-trec` turn datasets into pack
 //! slices, `pack-embed` fills a slice's vectors from the served embedder,
-//! `run` replays a slice into a `oneiron.retrieval_scorecard.v1`,
+//! `run` replays a slice into a `oneiron.retrieval_scorecard.v1` (its
+//! `world-scoped` arm as an agent whose Grant reads the base world),
 //! `tune-bm25f` tunes the BM25F rank profile on the search slice,
 //! `grade-run` grades a TREC run file, `compare` judges a candidate against
 //! the incumbent, `proposals` lists every proposal, and `stamp` records the
@@ -20,6 +21,7 @@ mod profile;
 mod record;
 mod run;
 mod tune;
+mod world_scoped;
 
 use std::collections::BTreeMap;
 use std::process::ExitCode;
