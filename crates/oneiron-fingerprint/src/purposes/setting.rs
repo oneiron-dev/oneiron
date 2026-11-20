@@ -41,6 +41,11 @@ purposes! {
     /// act in hash order, its hash and its count as a u64 (0 in full, 1 a safe move, 2 a safe
     /// move held by this install's own counting).
     PROJECTION_BASIS = "oneiron.setting.projection_basis.v1";
+
+    /// The target a pack's head act names (`oneiron-authority`,
+    /// `setting_pack_head::setting_pack_target`; stage 7c-3a): one frontier per pack. Parts: the
+    /// pack's name. The target is the first 16 bytes.
+    PACK_TARGET = "oneiron.setting.pack_target.v1";
 }
 
 legacy_purposes! {}

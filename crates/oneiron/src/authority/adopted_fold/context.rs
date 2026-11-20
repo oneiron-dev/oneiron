@@ -101,6 +101,7 @@ pub(super) fn reads_pin(op: &AuthorityOp) -> bool {
             | AuthorityOp::MembershipExecution(_)
             | AuthorityOp::PolicySettingSet(_)
             | AuthorityOp::SettingCopy(_)
+            | AuthorityOp::SettingPackHead(_)
             | AuthorityOp::ExportAct(_)
             | AuthorityOp::MachineProfile(_)
             | AuthorityOp::OwnerWorkRequest(_)
