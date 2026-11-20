@@ -445,9 +445,13 @@ fn run_people_read(
 /// prepared at, that no longer stand for `read`, the reader its PEOPLE were
 /// read under ([BRIEF-PREFIX-STALE-PAST-REVOKE]): each of `sources` that is
 /// deleted, erased or withdrawn now
-/// ([`oneiron::code_run::withdrawn_source_rows`]), and each person its
-/// roster holds, `resident`, that `read` no longer reads, judged as
-/// [`read_people`] admits a person.
+/// ([`oneiron::code_run::withdrawn_source_rows`]), each person its roster
+/// holds, `resident`, that `read` no longer reads, judged as
+/// [`read_people`] admits a person, and each fact of an `about` line the
+/// prefix may show that the key's own floor no longer reads with its PERSON
+/// under `read`, judged as [`read_people`] shows a line
+/// ([`oneiron::claim::ScopedRead::fallen_own_floor_about_facts`]; review
+/// round 2 of #10015: a world switched to read on this install only).
 ///
 /// # Errors
 ///
@@ -464,6 +468,8 @@ pub(crate) fn fallen_brief_rows(
             fallen.insert(*person);
         }
     }
+    let shown: BTreeSet<oneiron::EntityId> = sources.iter().copied().collect();
+    fallen.extend(read.fallen_own_floor_about_facts(resident, &shown)?);
     Ok(fallen)
 }
 

@@ -20,6 +20,8 @@
 //! and where the owner's agent Grants bind the key, one of them alone reads
 //! every row the line stands on.
 
+use std::collections::BTreeSet;
+
 use super::ScopedRead;
 use super::access_gate::HeldAuthority;
 use super::agent_grants::GrantAlternative;
@@ -77,6 +79,47 @@ impl ScopedRead<'_> {
         run: impl FnOnce(&mut dyn FnMut(EntityId) -> Result<SourcedAbout>) -> Result<T>,
     ) -> Result<T> {
         self.with_about_lines_from(AboutAlternatives::OwnFloor, run)
+    }
+
+    /// The rows of `shown`, the rows a staged brief showed, that stand
+    /// behind an own-floor `about` line of a person in `people` that this
+    /// read's own floor no longer reads: the facts of each stored line of the
+    /// person (each band's current line and each line the Dreamer's newest
+    /// landing replaced) whose facts the brief all showed, where that floor
+    /// alone no longer reads the PERSON and every one of those facts under
+    /// this read, at its locality. A brief held past its boundary goes again
+    /// only while each line it may show still reads as a fresh staging judges
+    /// it (`with_own_floor_about_lines`): a fact whose world now reads on
+    /// this install only withholds the line from a brief read off this
+    /// device (BRIEF-PREFIX-STALE-PAST-REVOKE; review round 2 of #10015).
+    ///
+    /// # Errors
+    /// A credential no longer live, or a store or decode failure judging a
+    /// row.
+    pub fn fallen_own_floor_about_facts(
+        &self,
+        people: &BTreeSet<EntityId>,
+        shown: &BTreeSet<EntityId>,
+    ) -> Result<BTreeSet<EntityId>> {
+        let txn = self.vault.person_about_snapshot()?;
+        let (own, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
+        let held = self.held_for(None);
+        let mut fallen = BTreeSet::new();
+        for &person in people {
+            for line in self.vault.person_about_stored_lines_in(&txn, person)? {
+                if line.fact_claim_ids.is_empty()
+                    || !line.fact_claim_ids.iter().all(|fact| shown.contains(fact))
+                {
+                    continue;
+                }
+                if own.deny_all
+                    || !self.own_floor_reads_all_in(&txn, &policy, &held, &own, person, &line)?
+                {
+                    fallen.extend(line.fact_claim_ids.iter().copied());
+                }
+            }
+        }
+        Ok(fallen)
     }
 
     /// Runs `run` with the line each person shows this read under the
