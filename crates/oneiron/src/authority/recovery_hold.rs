@@ -429,8 +429,11 @@ impl Vault {
     /// One `RecoveryHoldAnswer` row in the caller's write transaction,
     /// signed by `key` through `sign`: the frontier join when the frontier
     /// is wide, the main-log heads as parents, the signer's next sequence,
-    /// the stamped `now`. Answers the answer's hash once this install's
-    /// fold counts it. The caller commits.
+    /// the stamped `now`. `sign` takes the fold each entry is signed on, as
+    /// an owner key's proof needs it: a join carries no op, so each join is
+    /// signed on the fold before it, and the answer on the joined fold.
+    /// Answers the answer's hash once this install's fold counts it. The
+    /// caller commits.
     ///
     /// # Errors
     /// An all-zero or over-wide write; an entry the fold does not count;
@@ -439,19 +442,19 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         key: &AuthorityKey,
-        sign: &dyn Fn(&[u8]) -> Result<Vec<u8>>,
+        sign: &dyn Fn(&AuthorityFold, &[u8]) -> Result<Vec<u8>>,
         body: RecoveryHoldAnswer,
         now: u64,
     ) -> Result<AuthorityEntryHash> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-        let joiner = FrontierSigner::Callback(key, sign);
-        let fold = self
-            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
-            .unwrap_or(fold);
+        let join_sign = |transcript: &[u8]| sign(&fold, transcript);
+        let joiner = FrontierSigner::Callback(key, &join_sign);
+        let joined = self.prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?;
+        let fold = joined.unwrap_or(fold);
         let mut entry = unsigned_recovery_hold_answer(vault_id, &fold, key, body, now)?;
         entry.validate_shape().map_err(|_| invalid_authority())?;
-        entry.signer.signature = sign(&authority_transcript(&entry)?)?;
+        entry.signer.signature = sign(&fold, &authority_transcript(&entry)?)?;
         self.put_recovery_hold_answer_in_txn(txn, entry)
     }
 
@@ -497,7 +500,7 @@ impl Vault {
         holds: &[AuthorityEntryHash],
     ) -> Result<Vec<AuthorityEntryHash>> {
         let r_key = r.authority_key();
-        let sign = |transcript: &[u8]| r.sign_authority_transcript(transcript);
+        let sign = |_: &AuthorityFold, transcript: &[u8]| r.sign_authority_transcript(transcript);
         let mut answers = Vec::with_capacity(holds.len());
         for hold in holds {
             let now = self.instant_in_txn(txn)?.secs();
@@ -542,11 +545,14 @@ enum AnswerKey {
 }
 
 impl AnswerKey {
-    /// The key's owner proof over an answer's transcript.
-    fn sign(&self, transcript: &[u8]) -> Result<Vec<u8>> {
+    /// The key's owner proof over an answer's transcript on `vault`, with
+    /// the roster read from `fold`, the fold the entry is signed on: the key
+    /// refuses where its owner proof refuses (a key off the live roster; a
+    /// slot key under a device PIN or out of its slot).
+    fn sign(&self, vault: &Vault, fold: &AuthorityFold, transcript: &[u8]) -> Result<Vec<u8>> {
         match self {
-            Self::Held(signer) => signer.sign_owner_proof(transcript),
-            Self::Slot(signer) => signer.sign_owner_proof(transcript),
+            Self::Held(signer) => signer.sign_owner_proof(vault, fold, transcript),
+            Self::Slot(signer) => signer.sign_owner_proof(vault, fold, transcript),
         }
     }
 }

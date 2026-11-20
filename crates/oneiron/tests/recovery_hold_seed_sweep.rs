@@ -20,10 +20,10 @@ use std::time::Duration;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    AUTHORITY_TRANSCRIPT_DOMAIN, ActAuthority, ActSurface, AuthorityEntryHash, AuthorityKey,
-    CheckpointRootSigner, HostSlipIssuer, MachineRole, OwnerKeyEnrollment, RecoveryHoldAnswerKind,
-    RecoveryHoldLanding, RecoveryHoldState, RecoveryHoldView, RootMaterial, RootRecovery,
-    RootSuccessor,
+    AUTHORITY_TRANSCRIPT_DOMAIN, ActAuthority, ActSurface, AuthorityEntryHash, AuthorityFold,
+    AuthorityKey, CheckpointRootSigner, HostSlipIssuer, MachineRole, OwnerKeyEnrollment,
+    RecoveryHoldAnswerKind, RecoveryHoldLanding, RecoveryHoldState, RecoveryHoldView, RootMaterial,
+    RootRecovery, RootSuccessor,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::recovery::{
@@ -72,12 +72,30 @@ impl CheckpointRootSigner for KeySigner {
         key_of(&self.0)
     }
 
-    fn sign_checkpoint_statement(&self, statement: &[u8]) -> oneiron::Result<Vec<u8>> {
+    fn sign_checkpoint_statement(
+        &self,
+        _vault: &Vault,
+        statement: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
         Ok(self.0.sign(statement).to_bytes().to_vec())
     }
 
-    fn sign_owner_proof(&self, transcript: &[u8]) -> oneiron::Result<Vec<u8>> {
+    fn sign_owner_proof(
+        &self,
+        _vault: &Vault,
+        _fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
         assert!(transcript.starts_with(AUTHORITY_TRANSCRIPT_DOMAIN));
+        Ok(self.0.sign(transcript).to_bytes().to_vec())
+    }
+
+    fn sign_ask_word_proof(
+        &self,
+        _vault: &Vault,
+        _fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
         Ok(self.0.sign(transcript).to_bytes().to_vec())
     }
 }
