@@ -21,6 +21,9 @@ use oneiron_contracts::retrieval_telemetry::{
 
 use crate::pipeline::ScoredEntity;
 
+#[cfg(oneiron_test_support)]
+pub mod body_parse_work;
+
 /// Sorts scores descending, ties broken by ascending id bytes: the one score order every
 /// ranked list in the engine uses.
 pub fn sort_scored_entities_desc(scores: &mut [ScoredEntity]) {
@@ -428,6 +431,8 @@ pub fn decode_msgpack_float(raw: &[u8], field: &str) -> Option<f32> {
         return None;
     }
 
+    #[cfg(oneiron_test_support)]
+    body_parse_work::record_body_parse(&raw[ENTITY_METADATA_HEADER_LEN..]);
     let mut cursor = Cursor::new(&raw[ENTITY_METADATA_HEADER_LEN..]);
     let value = rmpv::decode::read_value(&mut cursor).ok()?;
     let Value::Map(entries) = value else {

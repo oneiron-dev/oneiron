@@ -161,6 +161,10 @@ pub(super) fn blended_retrieval_scores(
                 .port_entity_record(rtxn, &input.id)?
                 .map(|row| row.encode())
         {
+            #[cfg(oneiron_test_support)]
+            fusion::body_parse_work::record_scalar_read(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            );
             if config.salience
                 && let Some(salience) = fusion::decode_msgpack_float(&raw, crate::claim::KEY_SAL)
             {
