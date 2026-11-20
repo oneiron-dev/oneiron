@@ -1600,6 +1600,64 @@ fn a_second_seat_s_cancelled_version_of_the_first_seat_s_write_in_flight_is_no_h
 }
 
 #[test]
+fn a_second_seat_s_cancelled_version_of_the_first_seat_s_unproven_replay_is_no_host_cancel() {
+    // CAL-SECOND-SEAT-CANCELLED-VERSION-MISSES-OTHER-SEAT-WRITE (own review
+    // of #10020): as above, but the first seat's replay is refused and its
+    // reconciliation read fails, so its row owes the proof of the stored copy
+    // and is no longer in flight. The second seat cannot prove the first
+    // seat's row, and pulls that copy before the first seat's pull proves it:
+    // it stays owed until that proof, and is then the engine's own cancel.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let second = seat.install_second_seat(&fixture.vault, "seat:host-second");
+    let (booked, _, _) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"second-seat-unproven-replay",
+        "pi_second_seat_unproven_replay",
+    );
+    seat.write_with_lost_answer(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    seat.replay_refused_unread(&fixture.vault, booked.calendar.event_ref, NOW + 170);
+
+    second
+        .pull(
+            &fixture.vault,
+            &[seat.stored_own_write(&booked.calendar.uid)],
+            NOW + 180,
+        )
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_second_seat_unproven_replay"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the second seat's cancelled version of a write whose proof is owed moves no money"
+    );
+
+    seat.pull(
+        &fixture.vault,
+        &[seat.stored_own_write(&booked.calendar.uid)],
+        NOW + 190,
+    )
+    .expect("seat pull");
+    second
+        .pull(
+            &fixture.vault,
+            &[seat.stored_own_write(&booked.calendar.uid)],
+            NOW + 200,
+        )
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_second_seat_unproven_replay"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the cancelled version of the engine's own proven cancelled write moves no money"
+    );
+}
+
+#[test]
 fn a_copy_whose_sync_answer_names_a_deleted_booking_s_uid_keeps_the_delete() {
     // Review round 2 of #9936: a sync answer carries the host's delete of a
     // booking written only to their seat beside a copy whose answer names
