@@ -73,11 +73,16 @@ pub(super) struct AnswerAct {
     pub(super) surface: ActSurface,
     pub(super) kind: OwnerActKind,
     pub(super) seen: Option<[u8; 32]>,
+    /// Whether the owner confirmed that a removal may end the last owner key
+    /// held on a device (the owner's ruling AUTH-5); no other answer reads
+    /// it.
+    pub(super) last_device_key: LastDeviceKeyConfirmation,
 }
 
 impl AnswerAct {
     /// The owner's own answer from `surface`: a removal for `Removed`, an
-    /// answer for any other role.
+    /// answer for any other role. It carries no confirmation of a last
+    /// device key's end.
     pub(super) fn by_owner(
         owner: EntityId,
         surface: ActSurface,
@@ -95,6 +100,7 @@ impl AnswerAct {
             surface,
             kind,
             seen,
+            last_device_key: LastDeviceKeyConfirmation::NotGiven,
         }
     }
 }
@@ -323,10 +329,22 @@ impl Vault {
     /// pinned anchor's. The mark of an anchor this install does not pin
     /// changes none of the three.
     ///
+    /// A removal that stands on an install that holds an owner key also ends
+    /// every live owner key whose enrolment names the machine, in the same
+    /// transaction (the owner's ruling AUTH-5). This door cannot ask, so it
+    /// refuses a removal that would end the last owner key held on a device;
+    /// [`Self::remove_machine`] asks first and takes the owner's
+    /// confirmation. The rows the write counted (the answer, each
+    /// revocation, a frontier join) are marked for the vault's loaded
+    /// windows in the write and announced once it committed, as at
+    /// [`Self::remove_machine`].
+    ///
     /// # Errors
     /// As [`Self::enroll_machine`], and [`invalid_authority`] for a machine no
     /// roster revision and no mark of the pinned anchor names, or one already
-    /// removed there.
+    /// removed there; an authority refusal for a removal that would end the
+    /// last owner key held on a device, or whose key revocation the fold does
+    /// not count.
     pub fn set_machine_role(
         &self,
         owner: &AuthenticatedOwner,
@@ -338,6 +356,32 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let answer = AnswerAct::by_owner(actor, surface, role, seen);
+        let (landing, _) =
+            self.machine_role_answer_in_txn(&mut txn, &fold, answer, machine, role)?;
+        let rows = self.mark_rows_counted_since_in_txn(&mut txn, &fold)?;
+        txn.commit()?;
+        self.note_committed_authority_rows(rows);
+        #[cfg(feature = "sync")]
+        if landing.held().is_none() {
+            self.reseal_after_machine_admission()?;
+        }
+        Ok(landing)
+    }
+
+    /// The owner's answer `role` about `machine`, a machine a revision
+    /// names, in the caller's transaction: its next revision under his act
+    /// `answer`, carried by this install; the caller has checked
+    /// `answer.owner`. Answers the landing and the owner keys the write
+    /// ended ([`Self::append_owner_answer_ending_keys_in_txn`]).
+    pub(super) fn machine_role_answer_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fold: &AuthorityFold,
+        answer: AnswerAct,
+        machine: EntityId,
+        role: MachineRole,
+    ) -> Result<(MachineAnswerLanding, Vec<EndedOwnerKey>)> {
         let folded = fold.machine(machine).ok_or_else(invalid_authority)?;
         // The machine's identity as the newest head it stands under names
         // it, the roster's or the pinned anchor's; the next revision tops
@@ -349,7 +393,7 @@ impl Vault {
             return Err(invalid_authority());
         }
         let profile = MachineProfile {
-            owner: actor,
+            owner: answer.owner,
             role,
             revision: current
                 .profile
@@ -360,14 +404,7 @@ impl Vault {
             act: None,
             ..current.profile.clone()
         };
-        let answer = AnswerAct::by_owner(actor, surface, role, seen);
-        let landing = self.append_owner_answer_in_txn(&mut txn, &fold, answer, profile)?;
-        txn.commit()?;
-        #[cfg(feature = "sync")]
-        if landing.held().is_none() {
-            self.reseal_after_machine_admission()?;
-        }
-        Ok(landing)
+        self.append_owner_answer_ending_keys_in_txn(txn, fold, answer, profile)
     }
 
     /// Enrols in the caller's transaction under the owner's act, carried by
@@ -537,14 +574,44 @@ impl Vault {
     /// a replica may not store. The fold is the judge: an answer it refused
     /// never reports success, and one it holds for the owner's proof reports
     /// held.
+    ///
+    /// A removal that stands also ends the machine's owner keys here, under
+    /// the owner key this install holds (Engine RULING
+    /// AUTH-5-PR-B-REMOVE-DEVICE = A): every landing of a removal passes
+    /// this writer, the confirm of a held removal among them. A revocation
+    /// the fold does not count is an error, so the caller writes nothing. A
+    /// removal that would end the last owner key held on a device needs the
+    /// owner's confirmation in `answer`.
     pub(super) fn append_owner_answer_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
         answer: AnswerAct,
-        mut profile: MachineProfile,
+        profile: MachineProfile,
     ) -> Result<MachineAnswerLanding> {
+        self.append_owner_answer_ending_keys_in_txn(txn, fold, answer, profile)
+            .map(|(landing, _)| landing)
+    }
+
+    /// [`Self::append_owner_answer_in_txn`], answering also the owner keys
+    /// the write ended: each one whose revocation it wrote and the fold
+    /// counted, none when the answer is held or no owner key of this
+    /// install signs. The writer judges the signer here, after any question
+    /// a door asked first, so a door builds its receipt from this answer.
+    pub(super) fn append_owner_answer_ending_keys_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fold: &AuthorityFold,
+        answer: AnswerAct,
+        mut profile: MachineProfile,
+    ) -> Result<(MachineAnswerLanding, Vec<EndedOwnerKey>)> {
         let (carrier, key) = self.carrier_in_txn(txn, fold)?;
+        let ending = if profile.role == MachineRole::Removed {
+            self.owner_keys_ending_with_machine_in_txn(txn, fold, profile.machine)?
+        } else {
+            Vec::new()
+        };
+        self.refuse_unconfirmed_last_device_key_in_txn(txn, fold, &ending, answer.last_device_key)?;
         let target = fold.machine(profile.machine);
         let current = target.map_or([0; 32], |target| {
             target.answer_revision(fold.pinned_root.as_ref())
@@ -593,7 +660,13 @@ impl Vault {
             now,
             proof.as_ref(),
         )?;
-        self.land_machine_profile_in_txn(txn, entry, &profile, now)
+        let landing = self.land_machine_profile_in_txn(txn, entry, &profile, now)?;
+        let ended = if landing.held().is_none() && !ending.is_empty() {
+            self.end_owner_keys_in_txn(txn, ending)?
+        } else {
+            Vec::new()
+        };
+        Ok((landing, ended))
     }
 
     /// Signs every live root-signed roster standing again under `next`, in
