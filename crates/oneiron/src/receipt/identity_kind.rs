@@ -303,7 +303,9 @@ fn identity_topology_receipt(
             fields.insert("pair_a".to_owned(), a.to_hex());
             fields.insert("pair_b".to_owned(), b.to_hex());
             fields.insert("claim".to_owned(), claim.to_hex());
-            Some(format!("claim:{}", claim.to_hex()))
+            // MUTATION (proof of the pin, never merged): no trigger row.
+            let _ = claim;
+            None
         }
         StoredIdentityOpAction::Undo { target } => {
             fields.insert("undo_of".to_owned(), target.to_hex());
