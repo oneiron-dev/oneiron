@@ -14,8 +14,8 @@
 //!
 //! A session-bound run's reply takes this same admission ([`ReplySpool`])
 //! in its routed writer (FIX 6647, FIX 5718 part 3). An off-record room
-//! holds no custody of its own yet, so a reply there with a fresh key is
-//! withheld until room-local custody exists.
+//! keeps a fresh key in a reply there in its own custody, in memory only,
+//! and the reply holds its room handle (ROOM-LOCAL-CUSTODY).
 
 use std::sync::Arc;
 
