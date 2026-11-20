@@ -165,7 +165,7 @@ pub struct SettingsProjected {
 /// 7c-1, [`slot_value_in_txn`]). A carried row travels too (stage 7a-4): a move's copy brings it
 /// to every machine, and the owner's clear of it is his act.
 pub(super) fn travels(spec: &SettingSpec) -> bool {
-    spec.sync == SettingSync::Vault && !spec.is_learned()
+    spec.sync == SettingSync::Vault && spec.kind.travels_inline() && !spec.is_learned()
 }
 
 /// The most copies one read follows through the copies they name (stage 7a-4): a name deeper
@@ -396,7 +396,7 @@ fn head_of(head: &SettingSlotHead) -> std::result::Result<Head, Inert> {
         return Err(Inert::ForGood);
     }
     let body = match (set.value, &set.inline) {
-        (Some(digest), None) => HeadBody::Beside(digest),
+        (Some(_), None) => return Err(Inert::ForGood),
         (_, inline) => HeadBody::Inline(inline.clone()),
     };
     let slot = match &set.slot {
