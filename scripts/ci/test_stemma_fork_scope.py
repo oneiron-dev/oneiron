@@ -1,7 +1,8 @@
 """The vendored stemma fork's own unit tests in scoped CI.
 
 Three parts, each driven without a real cargo:
-  * scripts/ci/ci_scope.py: which changed paths set the `stemma_fork` output;
+  * scripts/ci/ci_scope.py: which changed paths set the `stemma_fork` output, and how the changed paths are
+    read from git (a path git would quote, a file moved out of the fork);
   * scripts/ci/run_scoped.sh: which modes and scopes call the fork runner;
   * scripts/docedit/run_stemma_fork_unit_tests.sh: the lock it resolves from, the
     resolved lock it refuses, the cargo calls it makes and what it leaves behind.
@@ -122,6 +123,52 @@ class ScopeOutputTests(unittest.TestCase):
         text = WORKFLOW.read_text()
         self.assertIn("      stemma_fork: ${{ steps.scope.outputs.stemma_fork }}\n", text)
         self.assertIn("      SCOPE_STEMMA_FORK: ${{ needs.changes.outputs.stemma_fork }}\n", text)
+
+
+class ChangedPathTests(unittest.TestCase):
+    """ci_scope.changed_files over a disposable git repository, with git's default settings."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="oneiron-ci-scope-")
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name).resolve()
+        for patched in (mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}),
+                        mock.patch.object(ci_scope, "ROOT", self.repo)):
+            patched.start()
+            self.addCleanup(patched.stop)
+        self.git("init", "-q", "-b", "main")
+        self.commit({f"{FORK}/stemma-engine/README.md": "the fork\n", "docs/notes.md": "notes\n"})
+
+    def git(self, *args):
+        subprocess.run(["git", "-c", "user.name=owen", "-c", "user.email=owen@example.com", "-c", "commit.gpgsign=false", *args],
+                       cwd=self.repo, capture_output=True, text=True, check=True)
+
+    def commit(self, files):
+        for name, text in files.items():
+            path = self.repo / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "change")
+
+    def last_commit(self):
+        files = ci_scope.changed_files("HEAD^1", "HEAD")
+        with mock.patch.object(ci_scope, "workspace_reverse_dependencies", return_value={}):
+            return files, ci_scope.scope(files, False)["stemma_fork"]
+
+    def test_a_fork_path_git_would_quote_is_read_as_it_is(self):
+        name = f"{FORK}/stemma-engine/testdata/m\u00e9tadata.json"
+        self.commit({name: "{}\n"})
+        files, fork = self.last_commit()
+        self.assertEqual(files, [name])
+        self.assertTrue(fork)
+
+    def test_a_file_moved_out_of_the_fork_counts_at_the_path_it_left(self):
+        self.git("mv", f"{FORK}/stemma-engine/README.md", "docs/stemma-readme.md")
+        self.git("commit", "-q", "-m", "move")
+        files, fork = self.last_commit()
+        self.assertEqual(sorted(files), [f"{FORK}/stemma-engine/README.md", "docs/stemma-readme.md"])
+        self.assertTrue(fork)
 
 
 class ScopedRunnerTests(unittest.TestCase):
@@ -273,6 +320,21 @@ class ForkRunnerTests(unittest.TestCase):
 
     def test_a_path_package_other_than_the_fork_s_own_is_refused(self):
         self.assert_refused(("stemma-mcp", "0.6.0", None), "stemma-mcp 0.6.0 - -")
+
+    def test_a_lock_file_already_beside_a_manifest_refuses_the_run_and_is_left_as_it_is(self):
+        for package in self.packages:
+            with self.subTest(package=package):
+                self.log.unlink(missing_ok=True)
+                mine = self.tree / FORK / package / "Cargo.lock"
+                mine.write_text("mine\n")
+                result, calls = self.run_runner()
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(f"{FORK}/{package}/Cargo.lock exists", result.stderr)
+                # Refused before any cargo call, and before a copy is made beside the other manifest.
+                self.assertEqual(calls, [])
+                self.assertEqual(mine.read_text(), "mine\n")
+                mine.unlink()
+                self.assert_no_lock_copy_left()
 
     def test_a_failed_test_run_fails_the_script_and_still_removes_the_copies(self):
         result, calls = self.run_runner(STUB_TEST_EXIT="101")

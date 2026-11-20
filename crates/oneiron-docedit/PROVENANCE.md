@@ -1014,7 +1014,8 @@ Neither package has a lock file. For its run the script copies the workspace's
 product builds the fork with. It refuses a resolved lock that holds a package
 the workspace lock does not hold, apart from the fork's own two (`stemma` has
 `stemma-diff` as a dev-dependency, which the workspace never resolves), and it
-removes the copies when it ends.
+removes the copies when it ends. A lock file that is already beside a manifest
+refuses the run: the script neither overwrites nor removes it.
 
 The script does not run the integration targets. As measured on 2026-11-20
 from the fork's manifests: `stemma`'s `suite` (371 files) compiles and passes in

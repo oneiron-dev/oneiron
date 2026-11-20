@@ -45,8 +45,14 @@ STEMMA_FORK_RUNNER = "scripts/docedit/run_stemma_fork_unit_tests.sh"
 
 
 def changed_files(base, head):
-    out = subprocess.run(["git", "diff", "--name-only", base, head], cwd=ROOT, capture_output=True, text=True, check=True)
-    return [line for line in out.stdout.splitlines() if line]
+    """The paths the diff touches, each as it is.
+
+    -z: git quotes a path that holds a non-ASCII byte unless the names end in NUL. --no-renames: a moved file is
+    listed at the path it left and at its new path, so the place it left counts as changed too.
+    """
+    out = subprocess.run(["git", "diff", "--no-renames", "--name-only", "-z", base, head], cwd=ROOT,
+                         capture_output=True, encoding="utf-8", errors="surrogateescape", check=True)
+    return [path for path in out.stdout.split("\0") if path]
 
 
 def package_of(crate_dir):

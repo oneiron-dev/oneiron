@@ -13,7 +13,8 @@
 # manifest and lets cargo resolve from it: cargo keeps every version the copy names and drops the entries the
 # package does not use. The run is refused when the resolved lock holds a package the workspace lock does not
 # hold (the fork's own two packages apart), and the tests then run with --locked. The copies are removed when
-# the script ends.
+# the script ends. A lock file that is already beside a manifest refuses the run: the script neither overwrites
+# nor removes a file it did not make.
 #
 # Usage: scripts/docedit/run_stemma_fork_unit_tests.sh   (no arguments; from any directory)
 set -euo pipefail
@@ -25,11 +26,20 @@ packages=(stemma-engine stemma-diff)
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$root/target}/stemma-fork"
 
 work=$(mktemp -d)
+# The lock copies this run made; only these are removed.
+created=()
 remove_copies() {
   rm -rf -- "$work"
-  for package in "${packages[@]}"; do rm -f -- "$fork/$package/Cargo.lock"; done
+  for lock in ${created[@]+"${created[@]}"}; do rm -f -- "$lock"; done
 }
 trap remove_copies EXIT
+
+for package in "${packages[@]}"; do
+  if [ -e "$fork/$package/Cargo.lock" ] || [ -L "$fork/$package/Cargo.lock" ]; then
+    echo "error: $fork/$package/Cargo.lock exists and this run did not make it. The script writes a copy of the workspace's Cargo.lock at that path and removes it at the end; move the file away and run again." >&2
+    exit 2
+  fi
+done
 
 # One line for each [[package]] table of a lock file: name, version, source, checksum ("-" where it has none).
 lock_packages() {
@@ -52,6 +62,7 @@ lock_packages() {
 lock_packages Cargo.lock > "$work/workspace.packages"
 for package in "${packages[@]}"; do
   manifest=$fork/$package/Cargo.toml
+  created+=("$fork/$package/Cargo.lock")
   cp Cargo.lock "$fork/$package/Cargo.lock"
   # Resolve only; nothing is built.
   cargo metadata --manifest-path "$manifest" --format-version 1 > /dev/null
