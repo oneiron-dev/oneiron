@@ -2113,6 +2113,75 @@ fn a_withdrawal_in_its_grants_second_still_offers_the_members_tap() {
     });
 }
 
+/// The member's tap stays on offer when the agent-logged withdrawal is
+/// backdated before the member's grant (VOICE-BACKDATED-WITHDRAWAL-SHAPE = B
+/// with VOICE-WITHDRAW-UNDO-SHAPE = B): the withdrawal voided that grant, so
+/// the grant is no decision after it, and the withdrawal is still the
+/// member's latest word. The restore, dated one second after the withdrawal,
+/// stands and enrols afresh; the voided grant stays void.
+#[test]
+fn a_backdated_withdrawal_that_voids_the_members_grant_still_offers_the_tap() {
+    run_on_engine_stack("voices-recognition-withdraw-backdated-tap", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        // `enroll_print` dates the member's grant `now - 20`.
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        served
+            .ok(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("member-backdated-withdrawal", now - 600, Some(member)),
+            )
+            .await;
+        assert_eq!(
+            served.recognized("after-backdated-member-withdrawal", &axis_vector(1)),
+            None,
+            "setup: the backdated withdrawal stops recognition"
+        );
+        assert_eq!(
+            served.member_withdrawal_notices().await.len(),
+            1,
+            "setup: the member is told"
+        );
+
+        let taps = served.member_withdrawal_taps().await;
+        assert_eq!(
+            taps.len(),
+            1,
+            "a grant the withdrawal voided does not hide the tap: {taps:?}"
+        );
+        let tap = &taps[0];
+        let at = tap["args"]["occurred_at"]
+            .as_u64()
+            .expect("the restore's date");
+        assert_eq!(at, now - 599, "the restore is dated one second after it");
+        let restored = served
+            .ok(Caller::Person, RECOGNITION_CONSENT, tap["args"].clone())
+            .await;
+        assert_eq!(restored["replayed"], false, "{restored}");
+        assert!(
+            served
+                .vault
+                .enroll_voice_print(&enrollment(member, "member-grant", &axis_vector(1), now))
+                .is_err(),
+            "the voided grant stays void after the restore"
+        );
+        let event_id = tap["args"]["event_id"]
+            .as_str()
+            .expect("the restore's event id");
+        served
+            .vault
+            .enroll_voice_print(&enrollment(member, event_id, &axis_vector(1), at + 10))
+            .expect("a fresh enrolment on the restored grant");
+        assert_eq!(
+            served.recognized("after-backdated-restore", &axis_vector(1)),
+            Some(member)
+        );
+    });
+}
+
 impl Served {
     /// A fresh live PERSON holding one human-class slip with core read and
     /// write, minted on the host issuer; `single_use` makes it one-shot.
