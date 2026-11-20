@@ -440,6 +440,7 @@ fn witness_control_message(fixture: &Fixture) -> TestResult<EntityId> {
         conversation_ref: EntityId::now().to_hex(),
         turn_ref: None,
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: None,
             author: WitnessAuthor::User,
