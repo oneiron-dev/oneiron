@@ -5753,7 +5753,7 @@
      "path": "src/authority/owner_act.rs",
      "purpose": "The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 1,
       "fn": 4,
       "re-export": 1,
@@ -30631,6 +30631,25 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "ContinueOutsideWorkCheckRequest",
+      "ContinueOutsideWorkCheckView",
+      "ContinueOutsideWorkRequest",
+      "ContinueOutsideWorkView",
+      "RunnerContinueCaller"
+     ],
+     "path": "src/dispatch_byoa/continue_work.rs",
+     "purpose": "The engine door that continues an outside session on this node (census L10-17): from the hand-off commit the…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
       "ByoEndpointBackendFactory",
       "ByoEndpointBinding",
       "ByoaCliExecutor",
@@ -30749,7 +30768,7 @@
      "surface": {
       "crate-vis": 6,
       "mod": 1,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -30943,7 +30962,7 @@
      "path": "src/dispatch_byoa/staged_input.rs",
      "purpose": "A CLI run's job carried as a file in its checkout, never in argv: one argv entry has an OS limit (Linux…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 1,
       "re-export": 1,
       "trait": 1
@@ -30956,7 +30975,7 @@
      "path": "src/dispatch_byoa/staged_input/dispatch.rs",
      "purpose": "A staged job stored and its first attempt landed in one write (FIX 7613)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -31036,7 +31055,7 @@
      "path": "src/dispatch_byoa/work_binding.rs",
      "purpose": "A Dreamer's runner work, bound once and handed seat to seat (OF-137): \"the router mints the next attempt on…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 5,
       "fn": 6,
       "struct": 4
@@ -92929,6 +92948,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/runner_continue.rs",
+     "purpose": "The TASK a continued outside session realizes (census L10-17)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -107762,6 +107791,22 @@
      "bucket": "L",
      "kind": "test",
      "notable": [],
+     "path": "tests/continue_outside_work.rs",
+     "purpose": "An outside session continues on this node from its pushed commit (census L10-17, PR 1: the engine door; no…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/continue_work_spill.rs",
+     "purpose": "A continued outside session's spent seat hands its work on only to a CLI seat of the runner the continue…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
      "path": "tests/conversation_summary_requester_lane.rs",
      "purpose": "A conversation summary queued under a narrowed lane is composed and landed only while that lane reads its…",
      "surface": {}
@@ -110043,7 +110088,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/authority/receipts_credential_pin.rs",
@@ -115782,7 +115827,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116804,7 +116849,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 189,
+     "files": 190,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -117014,10 +117059,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 301,
+   "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8246,
-   "test_files": 1991
+   "source_files": 8248,
+   "test_files": 1993
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -159125,9 +159170,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/runner_seat_doors.rs",
-     "purpose": "The owner's runner seat doors (FIX 7451, FIX 11067): `vault.runners.seats.quotas`…",
+     "purpose": "The owner's runner seat doors (FIX 7451, FIX 11067) and the continue rows (census L10-17)…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 7
      }
     },
     {
@@ -177610,6 +177655,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/continue_outside_work_served.rs",
+     "purpose": "The continue rows serve this node's own runner seats (census L10-17, PR 2): `vault.runners.continue` and…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -180539,7 +180592,7 @@
    "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2044,
-   "test_files": 508
+   "test_files": 509
   },
   "oneiron-setting-contract": {
    "files": [
@@ -186286,7 +186339,7 @@
      "purpose": "ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors",
      "surface": {
       "crate-vis": 3,
-      "fn": 33,
+      "fn": 34,
       "struct": 2
      }
     },
