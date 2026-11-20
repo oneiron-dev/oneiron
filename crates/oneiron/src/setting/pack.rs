@@ -25,15 +25,17 @@
 //! table's digest and the keys he accepts, on a target of its own per pack and table, so no pack
 //! door's later head replaces it; it is appended in the yes's own write, and the act is the
 //! write, so a yes this install cannot carry, or one that would wait for his proof, is refused.
-//! The table's bytes travel beside every head act ([`super::beside::pack_table_row_id`]). Each
-//! machine reads a yes that counts in full there ([`project_pack_in_txn`]): where its head names
-//! the yes's table, the keys its waiting proposal holds land as the owner's; where the yes names
-//! a newer table of the `engine` pack, the yes proves that table, and the door weighs it from the
-//! bytes beside it first, as a build that ships it would, so an older build reads the newer
-//! defaults at once. A yes to an older table changes nothing: that machine's own proposal waits
-//! for a holder. A door that weighs a table lands the yeses to it that came first. A row a yes
-//! landed stands while a yes that counts in full here names its key; once none does (a later
-//! entry held it back), the row it replaced stands again ([`revert_landings_in_txn`]).
+//! The table's bytes travel beside each act that carries them, the door's head and the owner's yes,
+//! in a row per act ([`super::beside::pack_table_row_id`]), and a reader takes any copy here that
+//! is the table ([`table_acts_in_txn`]). Each machine reads a yes that counts in full there
+//! ([`project_pack_in_txn`]): where its head names the yes's table, the keys its waiting proposal
+//! holds land as the owner's; where the yes names a newer table of the `engine` pack, the yes
+//! proves that table, and the door weighs it from the bytes beside it first, as a build that ships
+//! it would, so an older build reads the newer defaults at once. A yes to an older table changes
+//! nothing: that machine's own proposal waits for a holder. A door that weighs a table lands the
+//! yeses to it that came first. A row a yes landed stands while a yes that counts in full here
+//! names its key; once none does (a later entry held it back), the row it replaced stands again
+//! ([`revert_landings_in_txn`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -566,7 +568,8 @@ fn shipped_table(pack: &str, digest: &[u8; 32]) -> Result<Option<Vec<u8>>> {
 }
 
 /// Appends `pack`'s head as one act in `txn`, with its table's bytes `table` beside it where
-/// given (stage 7c-3c), in one savepoint: both, or neither. The entry's hash.
+/// given (stage 7c-3c), in one savepoint: both, or neither. The row is the act's own, put after
+/// the append (stage 7c-3c review). The entry's hash.
 ///
 /// # Errors
 ///
@@ -578,13 +581,41 @@ fn append_head_with_table_in_txn(
     table: Option<Vec<u8>>,
 ) -> Result<AuthorityEntryHash> {
     let mut savepoint = vault.store.env.nested_write_txn(txn)?;
-    if let Some(table) = &table {
-        put_pack_table_in_txn(vault, &mut savepoint, (pack, &digest), table)?;
-    }
     let hash =
         vault.append_setting_pack_head_in_txn(&mut savepoint, pack, version, digest, held)?;
+    if let Some(table) = &table {
+        put_pack_table_in_txn(vault, &mut savepoint, (pack, &digest, &hash), table)?;
+    }
     savepoint.commit()?;
     Ok(hash)
+}
+
+/// The acts here whose rows may hold `pack`'s table `digest`, `act` first where given (stage
+/// 7c-3c review): `act`, the live yeses to that table, and the live heads of the pack that name
+/// it. A reader takes any copy beside them that is the table ([`pack_table_read_in_txn`]).
+///
+/// # Errors
+///
+/// A target that does not encode; an entry that does not decode; storage errors.
+fn table_acts_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    (pack, digest): (&str, &[u8; 32]),
+    act: Option<AuthorityEntryHash>,
+) -> Result<Vec<AuthorityEntryHash>> {
+    let mut acts: Vec<AuthorityEntryHash> = act.into_iter().collect();
+    let yeses = vault.setting_slot_live_in_txn(txn, setting_pack_accept_target(pack, digest)?)?;
+    let heads = vault
+        .setting_pack_heads_in_txn(txn, pack)?
+        .into_iter()
+        .filter(|(_, head)| head.digest == *digest)
+        .map(|(hash, _)| hash);
+    for hash in yeses.into_iter().chain(heads) {
+        if !acts.contains(&hash) {
+            acts.push(hash);
+        }
+    }
+    Ok(acts)
 }
 
 /// Whether the pack door acts on `head` for a build that ships `version` of the pack, whose
@@ -1133,8 +1164,10 @@ fn accept_pack_defaults_in_txn(
 
 /// Appends the owner `owner`'s yes to the keys `accepted` of the table `head` (`pack`'s, after
 /// the yes) names, in the yes's write `txn` (stage 7c-3c): one head act with his act, naming the
-/// head's version and digest and the keys still held, with the table beside it where this build
-/// ships it and no row of it is here. The act is the write: an append this install cannot make,
+/// head's version and digest and the keys still held, with the table's bytes in a row of its own
+/// beside it where this build ships the table or a copy of it here is the table (stage 7c-3c
+/// review: so a build that weighed the table from the bytes beside a yes passes them on). The act
+/// is the write: an append this install cannot make,
 /// or a yes that would wait for his proof, refuses the yes, as an owner's change of a row that
 /// travels is refused (ruling CARRIER-CHOICE-DOOR-WAIT-OR-REFUSE = B). A head from before
 /// versions names no version an act carries: that yes stays on this install, as such a head's
@@ -1166,9 +1199,19 @@ fn append_yes_in_txn(
         );
         return Ok(None);
     }
-    if let Some(table) = shipped_table(pack, &digest)? {
-        put_pack_table_in_txn(vault, txn, (pack, &digest), &table)?;
-    }
+    // The bytes are read before the append, while the yeses it replaces are live.
+    let table = match shipped_table(pack, &digest)? {
+        Some(table) => Some(table),
+        None => {
+            let acts = table_acts_in_txn(vault, txn, (pack, &digest), None)?;
+            match pack_table_read_in_txn(vault, txn, (pack, &digest), &acts, |bytes| {
+                table_of_bytes(pack, &digest, bytes).is_some()
+            })? {
+                BesideRead::Here(table) => Some(table),
+                BesideRead::Absent | BesideRead::Unreadable => None,
+            }
+        }
+    };
     accepted.extend(counted_accepts_in_txn(vault, txn, pack, &digest)?.unwrap_or_default());
     let held: BTreeSet<String> = head
         .proposal
@@ -1191,6 +1234,9 @@ fn append_yes_in_txn(
     )?;
     if vault.setting_act_waits_in_txn(txn, signed)? {
         return Err(Error::Record(RecordError::OwnerKeyRequired));
+    }
+    if let Some(table) = table {
+        put_pack_table_in_txn(vault, txn, (pack, &digest, &signed), &table)?;
     }
     Ok(Some(signed))
 }
@@ -1310,12 +1356,14 @@ fn take_live_accepts_in_txn(
 /// - Where this install's head names the yes's table, each key of the yes that this install's
 ///   waiting proposal holds lands ([`take_accepted_in_txn`]).
 /// - Where the yes names a table of the `engine` pack of a version newer than this install's
-///   head's, the yes proves that table, and its bytes come from beside it: absent, the yes waits
-///   and every row reads as before it; not that table, or erased here, each key the yes accepts
-///   reads its strictest value ([`quarantine_in_txn`]); that table, where this build knows each
-///   of its keys and reads each of its defaults, the door weighs it as a build that ships it
-///   would, records the yes's version and digest, appends no head (no build of this install
-///   shipped it), and lands every yes to it that counts here, this one with them.
+///   head's, the yes proves that table, and its bytes come from any copy here that is the table,
+///   beside the yes or another act that names it ([`table_acts_in_txn`]). With none, the yes's
+///   own row decides: absent, the yes waits and every row reads as before it; not that table, or
+///   erased here, each key the yes accepts reads its strictest value ([`quarantine_in_txn`]).
+///   With that table, where this build knows each of its keys and reads each of its defaults,
+///   the door weighs it as a build that ships it would, records the yes's version and digest,
+///   appends no head (no build of this install shipped it), and lands every yes to it that
+///   counts here, this one with them.
 /// - Otherwise (an older table, an equal version with another table, a newer table with a key
 ///   this build does not know or a default it cannot read, a pack whose door never ran here)
 ///   nothing changes here: this install's own proposal waits for a holder, and the door of a
@@ -1340,7 +1388,8 @@ fn land_yes_in_txn(
         if pack != ENGINE_PACK || !newer {
             return Ok(Some(moved));
         }
-        let read = pack_table_read_in_txn(vault, txn, (pack, &yes.digest), |bytes| {
+        let acts = table_acts_in_txn(vault, txn, (pack, &yes.digest), Some(act))?;
+        let read = pack_table_read_in_txn(vault, txn, (pack, &yes.digest), &acts, |bytes| {
             table_of_bytes(pack, &yes.digest, bytes).is_some()
         })?;
         let table = match read {
