@@ -170,12 +170,23 @@ fn message_audience_in_txn(
     }
 }
 
+/// What a settle wrote ([`apply_in_txn`]).
+pub(super) struct SettleWrite {
+    /// The entity the mention is settled as.
+    pub(super) entity: EntityId,
+    /// The role edge a someone-new answer's confirm asserted on the role
+    /// phrase's possessor, when it asserted one.
+    pub(super) role_edge: Option<EntityId>,
+}
+
 /// Settles the ask's mention as `answer` and saves the hint: a chosen
 /// candidate takes the span (and absorbs the mention's own provisional
 /// entity, everywhere it is named); someone new keeps that provisional
 /// entity, or mints one for the span, confirms it as a real person and
 /// asserts it distinct from the real candidates, said by `source` and
-/// decided by `seal`.
+/// decided by `seal`. A role phrase's person someone new confirms is
+/// asserted as its possessor's role edge: Approved when `seal` is the
+/// owner's own decision under the owner's proof, unsure otherwise.
 pub(super) fn apply_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -183,9 +194,10 @@ pub(super) fn apply_in_txn(
     answer: Answer,
     (source, seal): (ClaimSource, &TopologySeal),
     now: u64,
-) -> Result<EntityId> {
+) -> Result<SettleWrite> {
     let original = evidence::snapshot_in_txn(vault, txn, ask)?;
     let span = (&ask.message, ask.start, ask.end);
+    let mut role_edge = None;
     let entity = match answer {
         Answer::Is(chosen) => {
             let absorbed = match ask.provisional {
@@ -221,14 +233,23 @@ pub(super) fn apply_in_txn(
                 }
             };
             crate::tagging::settle_mention_in_txn(vault, txn, &ask.turn, span, fresh)?;
-            crate::tagging::confirm_provisional_in_txn(vault, txn, &fresh)?;
+            // The edge is the owner's own word only under the owner's proof;
+            // any other answer is the engine's seal, and its edge the
+            // Dreamer's unsure one.
+            let by = crate::tagging::ConfirmedBy {
+                owner: seal.deciding_owner(),
+                writer: None,
+                source,
+            };
+            role_edge = crate::tagging::confirm_provisional_in_txn(vault, txn, &fresh, by)?
+                .and_then(|confirmed| confirmed.role_edge);
             assert_distinct_in_txn(vault, txn, ask, fresh, (source, seal), now)?;
             fresh
         }
     };
     put_hint_in_txn(vault, txn, ask, entity, now)?;
     evidence::record_in_txn(vault, txn, ask, entity, source, now, original)?;
-    Ok(entity)
+    Ok(SettleWrite { entity, role_edge })
 }
 
 /// Settles an open ask and closes it.
@@ -241,7 +262,7 @@ pub(super) fn settle_ask_in_txn(
     said: (ClaimSource, &TopologySeal),
     now: u64,
 ) -> Result<EntityId> {
-    let entity = apply_in_txn(vault, txn, ask, answer, said, now)?;
+    let entity = apply_in_txn(vault, txn, ask, answer, said, now)?.entity;
     ASKS.delete(&vault.store, txn, key)?;
     index::sync_ask_membership(&vault.store, txn, key, Some(ask), None)?;
     Ok(entity)
