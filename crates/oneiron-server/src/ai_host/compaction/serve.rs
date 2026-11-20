@@ -8,10 +8,11 @@
 //! (FIX 6029).
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::agent_dispatch::AgentDispatcher;
-use oneiron::code_run::LiveCompactionFork;
+use oneiron::code_run::{LiveCompactionFork, source_rows_withdrawn};
 use oneiron::compaction::{
     CompactionBackend, CompactionCheck, CompactionOff, CompactionProduct, CompactionRefusal,
     CompactionRequest, CompactionSuppression, CompactionTierClass, compaction_reply_schema,
@@ -22,7 +23,7 @@ use oneiron::llm::run_admission::PayerPerson;
 use oneiron::llm::{
     BudgetDenied, CallClass, CallEnvelope, CallPurpose, ContentPart, FatalLlmError, LlmCapability,
     LlmError, LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef,
-    ResponseFormat, TierPrecedence, WorkClass, WorkContext,
+    OwnedDispatchRelease, ResponseFormat, TierPrecedence, WorkClass, WorkContext,
 };
 use oneiron::skill_optimize::union_source_rows;
 use oneiron::{BudgetGuard, EntityId, LlmResponse};
@@ -85,6 +86,12 @@ impl ServedCompactionBackend {
         }
     }
 }
+
+/// Why a call was stopped before it was sent with a row its text was read
+/// from that is deleted or withdrawn since (FIX-LIST
+/// ERASE-SERVED-KV-CACHE-OUTLIVES-SOURCE).
+const SOURCE_ROW_WITHDRAWN: &str =
+    "a row the call was read from was deleted since or withdrawn; nothing more is sent";
 
 /// How a pass's call is admitted: on the role's live route, as the house
 /// compaction's calls are, or as exactly the model the host resolved, on its
@@ -214,6 +221,7 @@ impl ServedCompactionBackend {
             call,
             dispatch,
             sources,
+            request.sources.clone(),
             request.summary_token_budget,
             dress,
         )?
@@ -232,13 +240,24 @@ impl ServedCompactionBackend {
     /// the run's meter with a permit of its own, and booked. `None` only for
     /// a [`Dispatch::Live`] call `while_warm`, when anything stopped it
     /// before it went out, a cold prefix included: nothing was sent, and
-    /// the flight's cheap writer runs instead (FIX 6029).
+    /// the flight's cheap writer runs instead (FIX 6029). `sources` is the
+    /// set the receipt names, when the host read it whole (FIX 9463);
+    /// `read_rows` every row the call's text is known to be read from, whole
+    /// or not. A call one of whose rows, or the home's, was deleted or
+    /// withdrawn since is never sent with it: it is asked before the call is
+    /// dispatched, before each rung, retry and wait for an offer back, and at
+    /// each physical send (FIX-LIST ERASE-SERVED-KV-CACHE-OUTLIVES-SOURCE).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each argument is one fact about the call the send needs"
+    )]
     pub(super) fn send<D>(
         &self,
         started: Instant,
         mut call: RoleCall,
         dispatch: Dispatch<'_>,
         sources: Option<Vec<EntityId>>,
+        read_rows: Vec<EntityId>,
         summary_token_budget: u64,
         dress: impl FnOnce(
             &mut LlmRequest,
@@ -253,6 +272,45 @@ impl ServedCompactionBackend {
                 Err(_) if dispatch.while_warm() => return Ok(None),
                 Err(refusal) => return Err(refusal.into()),
             };
+        // Every row the call's text is known to be read from: the window's
+        // (caller-asserted ids too), a live fork's prefix's and the home's. A
+        // row deleted or withdrawn since would reach the provider, and its
+        // prompt cache, again in it; the receipt still names only a set the
+        // host read whole (REVIEW-9900 round 2).
+        let mut known = read_rows;
+        known.extend(sources.iter().chain(home_rows.iter()).flatten().copied());
+        known.sort_unstable();
+        known.dedup();
+        let fresh: Arc<dyn Fn() -> bool + Send + Sync> = {
+            let vault = Arc::clone(&self.vault);
+            Arc::new(move || !source_rows_withdrawn(&vault, &known))
+        };
+        if !fresh() {
+            // Under `auto` the flight's cheap writer asks the same of its
+            // own window (FIX 6029).
+            if dispatch.while_warm() {
+                return Ok(None);
+            }
+            return Err(refused(
+                CompactionSuppression::TurnScoped { check: None },
+                SOURCE_ROW_WITHDRAWN.to_owned(),
+            )
+            .into());
+        }
+        // Each physical send asks it again, after any wait for a key or an
+        // offer (REVIEW-9900 round 2), and the ladder before each rung,
+        // retry and wait.
+        let release: OwnedDispatchRelease = {
+            let fresh = Arc::clone(&fresh);
+            Arc::new(move || {
+                if fresh() {
+                    Ok(())
+                } else {
+                    Err(LlmError::from(FatalLlmError::InvalidRequest))
+                }
+            })
+        };
+        let may_send: &(dyn Fn() -> bool + Sync) = &*fresh;
         // Admit on the original generation before sending. The owned ticket
         // also settles zero if unwinding drops this call before a response.
         let generation = match &self.meter {
@@ -283,7 +341,8 @@ impl ServedCompactionBackend {
                     ..Default::default()
                 },
             })
-            .sourced(union_source_rows([sources, home_rows]));
+            .sourced(union_source_rows([sources, home_rows]))
+            .within_text_dispatch_release(release);
         // A chat turn that keeps no model-call record keeps none for its
         // flight's calls: their runs name no rows, so no run receipt names
         // the retained window's worlds (census L5-25; Astra delta 2).
@@ -322,14 +381,20 @@ impl ServedCompactionBackend {
         let reply = match dispatch {
             Dispatch::Walk => self
                 .handle
-                .block_on(call.ladder.generate(&run, call.request, None))
+                .block_on(
+                    call.ladder
+                        .generate_while(&run, call.request, None, may_send),
+                )
                 .map(Some),
             Dispatch::Exact
             | Dispatch::Live {
                 while_warm: false, ..
             } => self
                 .handle
-                .block_on(call.ladder.generate_exact(&run, call.request, None))
+                .block_on(
+                    call.ladder
+                        .generate_exact_while(&run, call.request, None, may_send),
+                )
                 .map(Some),
             Dispatch::Live {
                 fork,
@@ -340,6 +405,7 @@ impl ServedCompactionBackend {
                 call.request,
                 fork.rung(),
                 fork.request(),
+                may_send,
             )),
         };
         if let Some(live) = &live
@@ -390,8 +456,15 @@ impl ServedCompactionBackend {
                     step_hash,
                     worn,
                 });
+                // A call stopped because a row it was read from went since
+                // says so.
+                let why = if fresh() {
+                    error.to_string()
+                } else {
+                    SOURCE_ROW_WITHDRAWN.to_owned()
+                };
                 Err(Unserved {
-                    refusal: refused(suppression, error.to_string()),
+                    refusal: refused(suppression, why),
                     dispatched,
                 })
             }

@@ -399,6 +399,13 @@ name = "managed_mode"
 path = "tests/managed_mode.rs"
 required-features = ["oneiron/test-hooks"]
 
+# Serves its vault from a `MemoryKeystore` (`oneiron-keystore/test-keystore`, forwarded by
+# `oneiron/test-support`); its live-fork doors are `--cfg oneiron_test_support`.
+[[test]]
+name = "live_fork_refuses_erased_prefix_source"
+path = "tests/live_fork_refuses_erased_prefix_source.rs"
+required-features = ["oneiron/test-support"]
+
 # The skill library's facade doors serve the owner's root from a `MemoryKeystore` too.
 [[test]]
 name = "vault_skills_doors"
