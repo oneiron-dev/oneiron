@@ -7,6 +7,9 @@ use super::titles::TitleMoves;
 use super::*;
 use crate::xlsx_shift::retarget_linked_sheets;
 
+/// A formula text rewrite, given a cell formula's own cell.
+pub(super) type FormulaRewrite = dyn Fn(&str, Option<(u32, u32)>) -> Option<String>;
+
 impl Book {
     /// Write a sheet layout: rename, reorder, add and delete worksheets in the
     /// sheet list; carry each defined name's scope and the workbook view's
@@ -524,11 +527,7 @@ impl Book {
     /// it leaves alone. It is also given a worksheet cell formula's cell, as
     /// the part holds it. Only the formula's text changes: its comments and
     /// other markup keep their bytes (FIX 8572).
-    pub(super) fn rewrite_formulas(
-        &mut self,
-        part: &str,
-        rewrite: &dyn Fn(&str, Option<(u32, u32)>) -> Option<String>,
-    ) -> Result<()> {
+    pub(super) fn rewrite_formulas(&mut self, part: &str, rewrite: &FormulaRewrite) -> Result<()> {
         let bytes = self
             .package
             .part(part)?

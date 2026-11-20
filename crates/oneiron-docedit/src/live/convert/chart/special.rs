@@ -100,6 +100,10 @@ pub(super) fn stock(
                 *slot = None;
             }
         }
+        #[expect(
+            clippy::needless_collect,
+            reason = "a lazy filter would borrow roles across roles.slots_mut()"
+        )]
         let free: Vec<usize> = members
             .iter()
             .copied()

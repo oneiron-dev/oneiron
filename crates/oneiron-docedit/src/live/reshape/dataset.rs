@@ -148,13 +148,14 @@ pub(super) fn workbook_dataset(wanted: &Wanted) -> Dataset {
     }
 }
 
+/// An embedded workbook's main part with its sheets' names and parts.
+type WorkbookSheets = Option<(String, Vec<(String, Option<String>)>)>;
+
 /// An embedded workbook's main part and its sheets, in workbook order:
 /// each one's name and part (`None` for one its relationships do not
 /// reach). A resource refusal is `Err` (FIX 10587); any other failure is
 /// `Ok(None)`, as before.
-fn sheets(
-    package: &Package,
-) -> Result<Option<(String, Vec<(String, Option<String>)>)>, crate::resource::ResourceRefusal> {
+fn sheets(package: &Package) -> Result<WorkbookSheets, crate::resource::ResourceRefusal> {
     let relations = match package.relationships("") {
         Ok(relations) => relations,
         Err(error) => return error.resource().map_or(Ok(None), Err),
@@ -195,11 +196,14 @@ fn sheets(
     Ok(Some((book, sheets)))
 }
 
+/// A chart part's referenced sheet with its ranges' corners.
+type ReferencedRanges = (String, Vec<((u32, u32), (u32, u32))>);
+
 /// The sheet and the exact ranges every reference of the chart
 /// part `chart` names: `None` when they name more than one sheet, another
 /// workbook, or something other than a range.
-fn referenced(chart: &XmlTree) -> Option<(String, Vec<((u32, u32), (u32, u32))>)> {
-    let mut found: Option<(String, Vec<((u32, u32), (u32, u32))>)> = None;
+fn referenced(chart: &XmlTree) -> Option<ReferencedRanges> {
+    let mut found: Option<ReferencedRanges> = None;
     for node in chart.nodes.iter().filter(|node| node.is(C, "f")) {
         let text = node.text.trim();
         if text.contains('[') {

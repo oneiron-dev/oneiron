@@ -70,6 +70,10 @@ pub(super) fn rebuilt(
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one ordered render whose closures share many locals"
+)]
 fn rebuilt_pass(
     bytes: &[u8],
     tree: &XmlTree,

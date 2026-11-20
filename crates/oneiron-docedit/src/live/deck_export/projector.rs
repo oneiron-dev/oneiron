@@ -334,6 +334,9 @@ pub fn project(
 
     // 9. Own geometry and text, in model-identity order.
     for (id, node) in &deck.nodes {
+        fn changed<T: PartialEq + Copy>(live: Option<T>, held: Option<T>) -> Option<T> {
+            live.filter(|value| Some(*value) != held)
+        }
         if matches!(node.kind, NodeKind::Root | NodeKind::Slide) {
             continue;
         }
@@ -341,9 +344,6 @@ pub fn project(
         let current = work.view()?;
         let shape = shape_at(&current, &part, native).ok_or(LiveError::UnknownNode)?;
         let held = geometry_of(shape);
-        fn changed<T: PartialEq + Copy>(live: Option<T>, held: Option<T>) -> Option<T> {
-            live.filter(|value| Some(*value) != held)
-        }
         let xfrm = Xfrm {
             offset: changed(node.geometry.offset, held.offset),
             extent: changed(node.geometry.extent, held.extent),
