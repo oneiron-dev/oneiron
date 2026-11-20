@@ -20,7 +20,7 @@ use crate::edit_distance::delta::OUTCOME_APPROVED_AMENDED;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::{
-    GATE_DECISION_LEDGER_VERSION, GateDecisionContext, GateDecisionRecord,
+    GATE_DECISION_LEDGER_VERSION, GateDecisionContext, GateDecisionId, GateDecisionRecord,
     PendingGateConsentRecord, Store, TrayRemoval,
 };
 use crate::write_envelope::WriteEnvelope;
@@ -33,6 +33,12 @@ const GATE_REASON_OWNER_REVISION_AMEND: &str = "gate.consent.owner_revision_amen
 /// envelope, and the owner's proof that door kept for that envelope.
 pub(super) type RevisionWriter<'a> = (Option<&'a WriteEnvelope>, Option<&'a OwnerAuthoredWrite>);
 
+/// The decision a claim revision recorded, as the claim door holds it: the
+/// record this write appended, or the id of the one its same-transaction
+/// preflight appended. A batch commit records its verdict at preflight and
+/// applies with recording off, so the second is the commit's own landing.
+pub(super) type RevisionLanding<'a> = (Option<&'a GateDecisionRecord>, Option<GateDecisionId>);
+
 /// Redeems `id`'s tray row as the owner's amended approval when this Allow
 /// write is the owner's own revision of a held MACHINE claim: `body` settles
 /// the claim, the row binds another body than `binding`, the stored claim is
@@ -42,9 +48,10 @@ pub(super) type RevisionWriter<'a> = (Option<&'a WriteEnvelope>, Option<&'a Owne
 /// Under the owner's proof the answer also closes the owner-answer
 /// obligation the row names. Without the proof the obligation stays open,
 /// and the revision's own put shows the owner an item for it. `landing` is
-/// the revision's own recorded decision: the receipt answers the row's
-/// decision and carries the landing's read context. A write that records no
-/// decision appends no receipt.
+/// the revision's own recorded decision, appended by this write or by its
+/// preflight: the receipt answers the row's decision and carries the
+/// landing's read context. A write that records no decision in either place
+/// appends no receipt.
 pub(super) fn redeem_held_row_by_owner_revision(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -52,7 +59,7 @@ pub(super) fn redeem_held_row_by_owner_revision(
     body: &ClaimBody,
     binding: &GateConsentBinding,
     (envelope, owner_write): RevisionWriter<'_>,
-    landing: Option<&GateDecisionRecord>,
+    landing: RevisionLanding<'_>,
 ) -> Result<()> {
     if !matches!(
         body.approval,
@@ -86,10 +93,18 @@ pub(super) fn redeem_held_row_by_owner_revision(
         None => TrayRemoval::Silent,
     };
     store.remove_pending_gate_consent_in_txn(wtxn, id, removal)?;
-    let Some(landing) = landing else {
-        return Ok(());
+    let landing = match landing {
+        (Some(recorded), _) => recorded.clone(),
+        (None, Some(decision)) => {
+            store
+                .gate_decision_in_txn(&*wtxn, decision)?
+                .ok_or(Error::InvariantViolation(
+                    "owner revision preflight decision missing",
+                ))?
+        }
+        (None, None) => return Ok(()),
     };
-    let mut record = amended_approval_record(&original, &pending, landing);
+    let mut record = amended_approval_record(&original, &pending, &landing);
     store.append_fresh_gate_decision_in_txn(wtxn, &mut record)
 }
 
