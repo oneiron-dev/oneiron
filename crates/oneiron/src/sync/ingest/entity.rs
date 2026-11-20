@@ -454,9 +454,6 @@ fn admit(
     // use-limited or restricted record is dropped first, as below: the door's shared put would
     // refuse it as absent, which the window reads as a local failure (REVIEW-9881 round 1).
     if header.entity_type == ENTITY_TYPE_RECEIPT_RECORD {
-        if super::drops_changed_carrier_in_txn(vault, wtxn, &id, blob)? {
-            return Ok(EntityStep::Skip);
-        }
         let wrote = crate::sync::receipt_ingest::ingest_in_txn(
             vault,
             wtxn,
