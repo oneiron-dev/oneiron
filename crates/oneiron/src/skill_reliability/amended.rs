@@ -231,30 +231,12 @@ pub(crate) fn reconcile_amended_outcomes_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     verdicts: &[AmendedOutcome],
 ) -> Result<Vec<EntityId>> {
-    let desired = grounded_rows_in_txn(vault, wtxn, &later_verdicts(verdicts))?;
     let mut moved: Vec<(Arm, u64)> = Vec::new();
-    let mut note = |arm: Arm, at: u64| match moved.iter_mut().find(|(held, _)| *held == arm) {
-        Some((_, latest)) => *latest = (*latest).max(at),
-        None => moved.push((arm, at)),
-    };
-    let mut stored = BTreeSet::new();
-    for (outcome, row) in AMENDED.scan(&vault.store, wtxn)? {
-        let key = key_of(&outcome);
-        let next = match desired.get(&key) {
-            Some((_, _, wanted)) => wanted.clone(),
-            None => row.withdrawn(),
-        };
-        if next != row {
-            AMENDED.put(&vault.store, wtxn, &outcome, &next)?;
-            let (skill, executor) = outcome.arm();
-            note((skill, executor.map(str::to_owned)), row.at.max(next.at));
-        }
-        stored.insert(key);
-    }
-    for (key, (arm, outcome, row)) in &desired {
-        if !stored.contains(key) {
-            AMENDED.put(&vault.store, wtxn, outcome, row)?;
-            note(arm.clone(), row.at);
+    for write in amended_writes_in_txn(vault, wtxn, verdicts)? {
+        AMENDED.put(&vault.store, wtxn, &write.outcome, &write.row)?;
+        match moved.iter_mut().find(|(held, _)| *held == write.arm) {
+            Some((_, latest)) => *latest = (*latest).max(write.at),
+            None => moved.push((write.arm, write.at)),
         }
     }
 
@@ -270,6 +252,73 @@ pub(crate) fn reconcile_amended_outcomes_in_txn(
         }
     }
     Ok(projected)
+}
+
+/// Whether the stored amendment rows already say exactly what `verdicts` land, read on
+/// `rtxn`: [`reconcile_amended_outcomes_in_txn`] over the same verdicts would write nothing and
+/// reproject no arm. A caller with no verdict of its own to land asks this first, so a settled
+/// vault costs it no write transaction.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn amended_outcomes_settled_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    verdicts: &[AmendedOutcome],
+) -> Result<bool> {
+    Ok(amended_writes_in_txn(vault, rtxn, verdicts)?.is_empty())
+}
+
+/// One stored amendment row a reconcile writes, and the arm it moves.
+struct AmendedWrite {
+    outcome: OutcomeRef,
+    row: AmendedRow,
+    arm: Arm,
+    /// The latest event time the row moves the arm at: the later of the old and the new row's.
+    at: u64,
+}
+
+/// The rows a reconcile over `verdicts` writes, read on `rtxn`: each stored row that differs
+/// from the one the later verdict lands now (withdrawn when none lands one), then each row a
+/// verdict lands where none is stored. Empty when the stored rows already say exactly this.
+fn amended_writes_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    verdicts: &[AmendedOutcome],
+) -> Result<Vec<AmendedWrite>> {
+    let desired = grounded_rows_in_txn(vault, rtxn, &later_verdicts(verdicts))?;
+    let mut writes = Vec::new();
+    let mut stored = BTreeSet::new();
+    for (outcome, row) in AMENDED.scan(&vault.store, rtxn)? {
+        let key = key_of(&outcome);
+        let next = match desired.get(&key) {
+            Some((_, _, wanted)) => wanted.clone(),
+            None => row.withdrawn(),
+        };
+        if next != row {
+            let (skill, executor) = outcome.arm();
+            let arm = (skill, executor.map(str::to_owned));
+            writes.push(AmendedWrite {
+                at: row.at.max(next.at),
+                outcome,
+                row: next,
+                arm,
+            });
+        }
+        stored.insert(key);
+    }
+    for (key, (arm, outcome, row)) in desired {
+        if !stored.contains(&key) {
+            writes.push(AmendedWrite {
+                at: row.at,
+                outcome,
+                row,
+                arm,
+            });
+        }
+    }
+    Ok(writes)
 }
 
 /// The later verdict per skill and attempt, by event time and then receipt id.
