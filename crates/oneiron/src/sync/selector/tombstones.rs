@@ -17,6 +17,11 @@
 //! seeds a kept row; a row it reached only by closure, by a scope facet with
 //! no stamp, or with a stamp in a facet it does not select stays off
 //! (SELECTOR-FACET-EXPORT-DROPS-BODYLESS-TOMBSTONES).
+//! A FACET or a WORLD row is judged by its own id, as a kept one is: a
+//! selector narrowed to some facets takes a FACET's tombstone only where it
+//! selects that facet, and a selector narrowed to base reality or to one
+//! world takes a WORLD's tombstone only under that world's own selector
+//! (REVIEW-10042).
 //! A member who is not an Owner takes one only of a row it reads at the
 //! relationship gate (OPUS-LEAKS, SELECTOR-TOMBSTONE-LABEL). A purged row
 //! that carried the words of a world kept off the destination stays home,
@@ -35,6 +40,9 @@ use crate::deletion::tombstone_scope::{
 use crate::entity_id::EntityId;
 use crate::federation::record_scope::note_world::{self, NoteWorlds};
 use crate::federation::{Scope, ScopeAxis, ScopeId, SelectorRange};
+use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_WORLD};
+
+use super::codec::SyncSelectorWorld;
 
 /// What a narrower grant gets of a tombstone whose delete left no scope it
 /// can judge here: no captured row, a row bound to another request, a value
@@ -55,6 +63,8 @@ pub(super) struct TombstoneExport<'g> {
     /// The worlds a selector narrowed to one world or to base reality
     /// selects; `None` for the All-world selector, which bounds no world.
     worlds: Option<&'g ScopeAxis<ScopeId>>,
+    /// The selector's world, which selects a WORLD row by its own id.
+    world: SyncSelectorWorld,
     /// The selector's world ceiling ([`note_world::selector_world_axis`]),
     /// which with the grant's holds a row that takes live worlds at one of
     /// them, as the kept rows are held.
@@ -70,7 +80,7 @@ impl<'g> TombstoneExport<'g> {
         facets: Option<&'g ScopeAxis<ScopeId>>,
         bands: Option<&'g ScopeAxis<SelectorRange>>,
         worlds: Option<&'g ScopeAxis<ScopeId>>,
-        selector_worlds: ScopeAxis<ScopeId>,
+        world: SyncSelectorWorld,
     ) -> Self {
         // Judged as the kept rows are, with every axis open but the verb.
         let every_record = Scope {
@@ -82,7 +92,8 @@ impl<'g> TombstoneExport<'g> {
             facets,
             bands,
             worlds,
-            selector_worlds,
+            world,
+            selector_worlds: note_world::selector_world_axis(world),
             unrestricted: grant.admits("read", &every_record, &Scope::top()),
         }
     }
@@ -112,7 +123,7 @@ impl<'g> TombstoneExport<'g> {
         match deleted_record_scope_in(&vault.store, txn, id, &request) {
             Ok(Some(captured)) => {
                 let held = self.held_position(&captured);
-                self.selects(vault, &captured, &held)
+                self.selects(vault, id, &captured, &held)
                     && (self.unrestricted || self.grant.admits("read", &held, &Scope::top()))
             }
             Ok(None) | Err(_) => UNPROVEN_TOMBSTONE_EXPORTED,
@@ -150,28 +161,46 @@ impl<'g> TombstoneExport<'g> {
         )
     }
 
-    /// Whether the delete's capture `captured`, held at `held`, lies in what
-    /// the selector selects, judged as a kept row is:
+    /// Whether the delete's capture `captured` of `id`, held at `held`, lies
+    /// in what the selector selects, judged as a kept row is:
     /// - facets: `FacetOf` stamps that each name a selected facet, as a seed
     ///   is chosen and a row with an unselected stamp is withheld
     ///   ([`super::scope::facet_scope_by_source`],
     ///   [`super::scope::entity_selector_decision`]). The captured scope
-    ///   facet is not what the selector selects by.
+    ///   facet is not what the selector selects by. A FACET, which is never
+    ///   a `FacetOf` source, is selected by its own id, as the live filter
+    ///   keeps one (REVIEW-10042).
     /// - worlds: the held world position in the selected worlds or in base
     ///   reality, which every such selector selects (`SyncSelectorWorld`).
+    ///   A WORLD row sits in base reality, so it is judged by its own id
+    ///   first, as `entity_selector_decision` judges a live one: base reality
+    ///   selects none, and one world selects only itself (REVIEW-10042).
     /// - bands: the row's header type in a selected band
     ///   ([`super::scope::selector_identity`], as `entity_selector_decision`
     ///   bands a kept row). The scope's band axis is its disclosure position,
     ///   not the row's type, so it does not decide the band. A capture with
     ///   no type is in no band.
-    fn selects(&self, vault: &Vault, captured: &DeletedRecordScope, held: &Scope) -> bool {
+    fn selects(
+        &self,
+        vault: &Vault,
+        id: &EntityId,
+        captured: &DeletedRecordScope,
+        held: &Scope,
+    ) -> bool {
         let facets = self.facets.is_none_or(|facets| {
-            !captured.facet_of.is_empty()
-                && captured.facet_of.iter().all(|facet| facets.contains(facet))
+            let stamps_selected = captured.facet_of.iter().all(|facet| facets.contains(facet));
+            if captured.entity_type == Some(ENTITY_TYPE_FACET) {
+                facets.contains(&ScopeId(*id)) && stamps_selected
+            } else {
+                !captured.facet_of.is_empty() && stamps_selected
+            }
         });
         let worlds = self.worlds.is_none_or(|worlds| {
-            held.worlds == crate::federation::base_world_axis()
-                || held.worlds.is_narrowing_of(worlds)
+            let world_row_selected = captured.entity_type != Some(ENTITY_TYPE_WORLD)
+                || matches!(self.world, SyncSelectorWorld::World(world) if world.entity_id() == *id);
+            world_row_selected
+                && (held.worlds == crate::federation::base_world_axis()
+                    || held.worlds.is_narrowing_of(worlds))
         });
         let bands = self.bands.is_none_or(|bands| {
             captured
