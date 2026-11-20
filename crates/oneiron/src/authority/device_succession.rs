@@ -226,10 +226,13 @@ impl Vault {
         }
         let seen = before.device_successions.revision(target);
         // FIX 7908: join a frontier wider than one entry names.
-        // The owner key this install holds proves the act and its joins
-        // (row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS).
+        // The owner key this install holds proves the act; its join carries
+        // the proof only for the owner's own write (row
+        // OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, REVIEW-9962 P1).
         let proof = self.owner_proof_signer(&before);
-        let joiner = FrontierSigner::install(machine, &key, proof.as_ref());
+        let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
+        let joiner =
+            FrontierSigner::install(machine, &key, proof.as_ref().filter(|_| proves_joins));
         let joined =
             self.prepare_authority_frontier_in_txn(&mut txn, &before, joiner, MAX_PARENTS)?;
         let fold = joined.as_ref().unwrap_or(&before);

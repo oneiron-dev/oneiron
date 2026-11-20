@@ -356,6 +356,7 @@ impl Vault {
         if self.owner_proof_signer(&fold).is_none() {
             return Err(Error::Record(RecordError::OwnerKeyRequired));
         }
+        let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
         if seen.keys().any(|entry| !entries.contains(entry)) {
             return Err(Error::InvalidConfig(UNNAMED_SEEN.to_owned()));
         }
@@ -365,8 +366,12 @@ impl Vault {
             let profile = confirming_profile(&fold, actor, &held)?;
             // The answer door compares it with the machine's revision in
             // this transaction, before it signs.
-            let answer =
-                AnswerAct::by_owner(actor, surface, profile.role, seen.get(&entry).copied());
+            let answer = AnswerAct::by_owner(
+                (actor, proves_joins),
+                surface,
+                profile.role,
+                seen.get(&entry).copied(),
+            );
             if profile.role == MachineRole::Removed {
                 removed.push(machine);
             }
