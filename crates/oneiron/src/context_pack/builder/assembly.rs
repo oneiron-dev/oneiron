@@ -155,6 +155,7 @@ impl ContextPackBuilder<'_> {
         producers: &mut super::super::ComposedFieldProducers,
     ) -> Result<(crate::claim::ScopedReadResult<ContextPack>, PackRunStatus)> {
         let disclosure = self.disclosure.clone();
+        let edge_hops = self.edge_hop;
         let run = self
             .for_destination(lane.actor_key().destination())
             .run_unfinalized()?;
@@ -174,6 +175,7 @@ impl ContextPackBuilder<'_> {
             replay_config: run.replay_config,
             critical: run.critical,
             world_share: run.world_share,
+            edge_hops,
         };
         lane.end_recall_plan()?;
         let receipt =

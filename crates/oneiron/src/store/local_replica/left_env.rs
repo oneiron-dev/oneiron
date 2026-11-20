@@ -104,6 +104,7 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::MANAGED_LEDGER_REV,
     &side_table::VAULT_IDENTITY_LOCAL,
     &side_table::VAULT_KEY_STATE,
+    &side_table::VAULT_KEY_BOX_HOLD_PENDING,
     &side_table::VAULT_KEY_WRAP,
     &side_table::VAULT_KEY_LINK,
     &side_table::VAULT_KEY_ESCROW_SPOOLED,

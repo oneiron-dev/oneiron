@@ -84,17 +84,22 @@ impl Memory<'_> {
     ) -> MemoryResult<()> {
         let id = EntityId::from_hex(claim_ref)?;
         if outcome.verdict == RunChangeVerdict::Waiting {
+            let action = if answer.approve {
+                GateConsentBundleAction::Approve
+            } else {
+                GateConsentBundleAction::Decline
+            };
+            // A run settles once, so a member whose settlement would lift a
+            // restriction by no person refuses the whole answer, and the run
+            // waits for the owner's own (RULING HANDED-ON-SLIP-PERSON Q1 = A).
+            self.require_person_for_restriction_close_in_txn(txn, &id, action, answer.actor)?;
             // The approval spends its proof, so each claim member takes its
             // own, revalidated in this settlement's transaction.
             let owner_answer = answer.owner.owner_answer_in_txn(self.vault(), txn)?;
             let settled = self.vault().settle_proposed_claim_in_txn(
                 txn,
                 id,
-                if answer.approve {
-                    GateConsentBundleAction::Approve
-                } else {
-                    GateConsentBundleAction::Decline
-                },
+                action,
                 answer.actor,
                 owner_answer,
                 answer.now,

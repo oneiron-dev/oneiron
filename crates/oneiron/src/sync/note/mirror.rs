@@ -39,11 +39,19 @@ pub(crate) fn refresh_for(
     };
     let mut local = BTreeSet::new();
     let mut removed = BTreeSet::new();
+    // A NOTE withheld here packs no workflow and joins no bundle; a
+    // use-limited one's carrier stays for the withholding pass to take out
+    // under a marker, and a held-back one is never packed again from the
+    // store, so a device that landed the marker keeps it out of its window.
+    let withholds = any_withheld(vault, &txn)?;
     for (key, raw) in rows(doc, "entities")? {
         if EntityMetadataHeader::parse(&raw)
             .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_NOTE)
         {
             let note = id(&key)?;
+            if withholds && withheld_here(vault, &txn, &note)? {
+                continue;
+            }
             if raw.len() > ENTITY_METADATA_HEADER_LEN {
                 state.cores.entry(note).or_insert(raw);
             }
@@ -65,6 +73,9 @@ pub(crate) fn refresh_for(
         // A NOTE a device-only world keeps is never packed into a window
         // that does not already carry it.
         if !state.cores.contains_key(&note) && held(vault, &txn, &flagged, &note)? {
+            continue;
+        }
+        if withholds && withheld_here(vault, &txn, &note)? {
             continue;
         }
         local.insert(note);

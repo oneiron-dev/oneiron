@@ -58,7 +58,7 @@ pub(crate) use self::query::{
 };
 use self::query::{
     QueryTerm, apply_recency_blend, collapse_lexical_query_hint_scores, collect_query_terms,
-    compute_avgdl, lexical_query_hint_scope_id, scores_for_withdrawn,
+    compute_avgdl, lexical_query_hint_scope_id, scores_for_use_limited, scores_for_withdrawn,
 };
 #[cfg(test)]
 use crate::analyzer::AnalyzerChannel;

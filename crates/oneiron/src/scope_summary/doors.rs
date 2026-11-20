@@ -654,6 +654,26 @@ pub(super) fn header_landed_in_txn(
     Ok(false)
 }
 
+/// Every standing `merge.summary` header that lands `summary`, on any turn:
+/// the one its declaration landed and each later landing of it, a reused
+/// composition's or [`Vault::land_header`]'s (review P1 of #9808). A header
+/// that names no summary is not one of them.
+pub(super) fn standing_headers_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    summary: &EntityId,
+) -> Result<Vec<EntityId>> {
+    Ok(vault
+        .claims_with_predicate_in_txn(txn, "merge.summary")?
+        .into_iter()
+        .filter(|(_, body)| {
+            body.lifecycle == oneiron_contracts::claim::ClaimLifecycleStatus::Active
+                && matches!(merge_summary_ref(body), Ok(Some((_, landed))) if landed == *summary)
+        })
+        .map(|(claim, _)| claim)
+        .collect())
+}
+
 /// The read lane a header's reply TURN is checked against (OF-063): its
 /// requester's, opened only when a reply is asked for, and before the
 /// landing's writer, since a lane takes its own snapshot.

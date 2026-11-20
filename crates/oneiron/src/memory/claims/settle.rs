@@ -41,6 +41,8 @@ mod conflict_head;
 pub(in crate::memory) use conflict_head::ConflictHeadIndex;
 use conflict_head::{ConflictHead, conflict_head_in_txn};
 mod restored_member;
+mod restriction_close;
+use restriction_close::{restriction_close_needs_a_person, settle_in_place_lifts_restriction_in};
 
 /// Key-derivation context of the review handle.
 const CLAIM_REVIEW_DOMAIN: &str = "oneiron.claim-settle.review.v1";
@@ -330,23 +332,20 @@ impl ReviewedProposal {
         id: &EntityId,
         action: GateConsentBundleAction,
     ) -> crate::Result<bool> {
-        match action {
-            GateConsentBundleAction::Decline => Ok(!self.parked_retract
-                && crate::federation::claim_removal_widens_in(vault, txn, &self.body)?),
-            GateConsentBundleAction::Approve => {
-                if let Some(prior) = &self.prior
-                    && crate::federation::claim_removal_widens_in(vault, txn, &prior.body)?
-                {
-                    return Ok(true);
-                }
-                if crate::dreamer_runner::maintenance::curator_finding_lifts_restriction_in(
-                    vault, txn, &self.body,
-                )? {
-                    return Ok(true);
-                }
-                vault.deferred_close_lifts_restriction_in_txn(txn, id, &self.body)
-            }
+        if action == GateConsentBundleAction::Approve
+            && let Some(prior) = &self.prior
+            && crate::federation::claim_removal_widens_in(vault, txn, &prior.body)?
+        {
+            return Ok(true);
         }
+        settle_in_place_lifts_restriction_in(
+            vault,
+            txn,
+            id,
+            &self.body,
+            self.parked_retract,
+            action,
+        )
     }
 }
 
@@ -368,26 +367,6 @@ fn stale_review() -> MemoryError {
         MEMORY_CODE_INVALID_STATE,
         "the proposed claim, or the head its approval supersedes, changed since its review",
         &["Review the claim again with vault.claims.review and settle the review_id it returns."],
-    )
-}
-
-/// The refusal of a Grant holder that is no person, on a settlement that
-/// closes a claim restricting someone's access
-/// ([`ReviewedProposal::settle_lifts_restriction_in`]). The proposal stays
-/// open for a person who holds a covering Grant, or for the owner.
-fn restriction_close_needs_a_person(actor: WriteActor) -> MemoryError {
-    MemoryError::new(
-        MEMORY_CODE_FORBIDDEN,
-        format!(
-            "Grant holder {} ({}) may not settle a proposal whose settlement closes a claim \
-             that restricts someone's access: an agent's widening always asks a person",
-            actor.entity_ref().to_hex(),
-            actor.actor_class().gate_actor_class(),
-        ),
-        &[
-            "The proposal stays open: a person who holds a covering review Grant, or the vault \
-             owner, settles it.",
-        ],
     )
 }
 
@@ -609,9 +588,10 @@ impl Memory<'_> {
                 // widening"). A person who holds a covering Grant settles it
                 // as the owner's delegated act (DEC-0006 row 10); a person's
                 // slip handed on to an agent's key is no person's
-                // (`acts_as_own_person`).
-                if authorized.grant_ref.is_some()
-                    && !self.acts_as_own_person()
+                // (`acts_as_own_person`), on the owner's arm too: the owner's
+                // proof answers for the owner, not for the key that holds the
+                // slip (RULING HANDED-ON-SLIP-PERSON Q1 = A).
+                if !self.acts_as_own_person()
                     && reviewed.settle_lifts_restriction_in(self.vault, &*wtxn, &id, action)?
                 {
                     return Err(restriction_close_needs_a_person(actor));

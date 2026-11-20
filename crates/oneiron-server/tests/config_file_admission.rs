@@ -29,6 +29,11 @@ const REFUSED_SETTING: &str = "house_role = \"no-such-role\"\n";
 const READ_AND_PARSED: &str = "house_role must be";
 /// A refused command stops at once; one that runs this long was not refused.
 const STOPS_WITHIN: Duration = Duration::from_secs(120);
+/// A managed settings leaf the supervisor owns, which a managed start
+/// refuses once it has read and parsed the file that sets it.
+const SUPERVISOR_LEAF: &str = "[runtime]\nclock = \"manual\"\n";
+/// What that refusal says: the mark of a managed settings file that was read.
+const SUPERVISOR_LEAF_REFUSED: &str = "--settings-file sets `runtime.clock`";
 
 #[test]
 fn a_config_any_user_can_write_is_refused() {
@@ -189,6 +194,43 @@ fn doctor_takes_no_clock_from_a_config_any_user_can_write() {
     );
 }
 
+/// FIX [MANAGED-SETTINGS-FILE-MODE-UNCHECKED]: a managed vault's settings
+/// file is admitted as a config file is. Hypnos places it root's at mode
+/// 0640, for the vault's group, and that mode is read; one any user can write
+/// is refused before it is read. The file sets a leaf the supervisor owns,
+/// which a managed start refuses once it has read the file: the mark of a
+/// file that was read.
+#[test]
+fn a_managed_settings_file_any_user_can_write_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    for mode in [0o666, 0o602] {
+        let name = format!("managed-writable-{mode:o}.toml");
+        let settings = config_file(dir.path(), &name, SUPERVISOR_LEAF, mode);
+        let error = managed_start_refused(dir.path(), &settings);
+        assert!(error.contains("chmod o-w"), "mode {mode:o}: {error}");
+        assert!(error.contains(&name), "mode {mode:o}: {error}");
+        assert!(
+            error.contains(&format!("mode {mode:o}")),
+            "mode {mode:o}: {error}"
+        );
+        assert!(
+            !error.contains(SUPERVISOR_LEAF_REFUSED),
+            "mode {mode:o} was read: {error}"
+        );
+    }
+    // The control: Hypnos's own mode, and an owner-only file, are read.
+    for mode in [0o640, 0o600] {
+        let name = format!("managed-closed-{mode:o}.toml");
+        let settings = config_file(dir.path(), &name, SUPERVISOR_LEAF, mode);
+        let error = managed_start_refused(dir.path(), &settings);
+        assert!(
+            error.contains(SUPERVISOR_LEAF_REFUSED),
+            "mode {mode:o}: {error}"
+        );
+        assert!(!error.contains("chmod"), "mode {mode:o}: {error}");
+    }
+}
+
 /// A new file `name` in `dir` that holds `text`, its mode exactly `mode`
 /// whatever the umask of the test process.
 fn config_file(dir: &Path, name: &str, text: &str, mode: u32) -> PathBuf {
@@ -253,4 +295,46 @@ fn ran(home: &Path, args: &[&str]) -> (ExitStatus, String, String) {
     };
     let text = |path: &Path| String::from_utf8_lossy(&std::fs::read(path).unwrap()).into_owned();
     (status, text(&output), text(&error))
+}
+
+/// What a managed start (`oneiron-server serve --managed-by-hypnos`, as
+/// Hypnos starts a vault) says when it stops on `settings` as its
+/// `--settings-file`. The settings are read and refused before credentials
+/// or sockets are, so the start stops by itself.
+fn managed_start_refused(dir: &Path, settings: &Path) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_oneiron-server"))
+        .arg("serve")
+        .arg("--managed-by-hypnos")
+        .arg("--contract-version")
+        .arg(oneiron_vault_contract::CONTRACT_VERSION.to_string())
+        .arg("--vault-name")
+        .arg("settings-admission")
+        .arg("--derivation-owner")
+        .arg("09".repeat(32))
+        .arg("--data-dir")
+        .arg(dir.join("data"))
+        .arg("--http-socket")
+        .arg(dir.join("http.sock"))
+        .arg("--ctl-socket")
+        .arg(dir.join("ctl.sock"))
+        .arg("--hypnos-socket")
+        .arg(dir.join("supervisor.sock"))
+        .args(["--ready-fd", "1", "--credentials-fd", "0"])
+        .arg("--settings-file")
+        .arg(settings)
+        .env_clear()
+        .stdin(Stdio::null())
+        .output()
+        .expect("run managed oneiron-server");
+    let error = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        !output.status.success(),
+        "the managed start took {}: {error}",
+        settings.display()
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "a ready byte before a refusal: {error}"
+    );
+    error
 }

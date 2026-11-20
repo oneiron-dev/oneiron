@@ -13,8 +13,11 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 
 /// Writes into `doc` each held, unforged revision of every PROJECT row it
-/// carries that the document lacks or holds with other bytes. The caller
-/// commits. Returns whether anything was written.
+/// carries that the document lacks or holds with other bytes. A revision a
+/// record use limit keeps for storage only here is not written: the
+/// withholding pass took it out under a marker
+/// (`use_limited::withhold_use_limited_carriers`). The caller commits.
+/// Returns whether anything was written.
 pub(super) fn carry_project_history(vault: &Vault, doc: &LoroDoc) -> Result<bool> {
     let entities = doc.get_map("entities");
     let mut projects = Vec::new();
@@ -30,11 +33,18 @@ pub(super) fn carry_project_history(vault: &Vault, doc: &LoroDoc) -> Result<bool
         return Ok(false);
     }
     let rtxn = vault.store.env.read_txn()?;
+    let any_limit = crate::store::legal_hold::any_record_use_limit_in_txn(&vault.store, &rtxn)?;
     let mut wrote = false;
     for project in projects {
         for companion in
             crate::workspace_roster::exportable_revisions_in_txn(&vault.store, &rtxn, project)?
         {
+            if any_limit
+                && crate::store::legal_hold::use_limit_in_txn(&vault.store, &rtxn, &companion)?
+                    .is_some()
+            {
+                continue;
+            }
             let Some(raw) = vault.get_raw_in(&rtxn, &companion)? else {
                 continue;
             };

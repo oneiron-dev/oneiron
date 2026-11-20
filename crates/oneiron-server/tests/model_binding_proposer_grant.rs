@@ -26,6 +26,10 @@
 //! or the fix's 400 authority text (`no live Grant of this agent names this
 //! act`), since the existing authority conversion maps to `BAD_REQUEST`
 //! (never 500). Cases 4 and 5 pass on main and on the head.
+//! Case 6 (FIX CONTINUE-ADMISSION-SKIPS-LIVE-GRANT): before the admission
+//! judged the agent's live Grant, the owner's pre hook that skips the
+//! propose row answered the agent with no Grant (409, the hook's skip)
+//! before the proposal writer refused it.
 //!
 //! Deterministic: in-process vault and router (`oneshot`, no TCP ports, no
 //! sleeps, no models).
@@ -37,6 +41,8 @@
 
 #[path = "support/engine_stack.rs"]
 mod engine_stack;
+#[path = "support/owner_skip_hook.rs"]
+mod owner_skip_hook;
 
 use axum::{
     Router,
@@ -55,6 +61,7 @@ use oneiron::test_doors::model_binding_proposer::{
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
+use owner_skip_hook::put_owner_skip_hook;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -684,5 +691,44 @@ fn the_owner_still_proposes() {
             Some(fixture.trial.incumbent.as_str()),
             "the role still reads the incumbent model: {body}"
         );
+    });
+}
+
+/// Case 6: the agent's live Grant is judged at the admission, before any
+/// verb hook runs. Under the owner's pre hook that skips the propose row,
+/// the agent with no Grant gets the Grant refusal and the hook never answers
+/// it; once its Grant is minted, the agent passes the admission and meets
+/// the hook's skip. No proposal lands either way.
+#[test]
+fn an_agent_without_the_grant_is_refused_before_any_verb_hook() {
+    run_on_engine_stack("binding-proposer-before-hooks", || async {
+        let (fixture, agent) = setup().await;
+        put_owner_skip_hook(&fixture.vault, &[GRANT_VERB]);
+
+        let binding = agent_binding(&fixture, &agent);
+        let (status, body) =
+            propose_as(&fixture, &agent.token, binding, propose_input(&fixture)).await;
+        assert!(
+            body["error"]["hook"].is_null(),
+            "no hook answers a caller the admission refuses: {status} {body}"
+        );
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(
+            body["error"]["message"].as_str(),
+            Some(AUTHORITY_REFUSAL_MESSAGE),
+            "the refusal names the missing Grant: {body}"
+        );
+
+        let _grant = mint_propose_grant(&fixture, &agent.principal.to_hex()).await;
+        let binding = agent_binding(&fixture, &agent);
+        let (status, body) =
+            propose_as(&fixture, &agent.token, binding, propose_input(&fixture)).await;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "the granted agent passes the admission and meets the owner's hook: {body}"
+        );
+        assert_eq!(body["error"]["hook"]["status"], "skipped", "{body}");
+        assert_no_proposal(&fixture).await;
     });
 }

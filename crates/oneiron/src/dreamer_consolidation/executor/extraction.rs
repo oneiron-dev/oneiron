@@ -44,6 +44,12 @@ pub(in crate::dreamer_consolidation) use wire::{
 /// is the cap RESEARCH-1232 gave its largest packets.
 const EXTRACTION_ANSWER_TOKENS: u64 = 8_192;
 
+/// The output limit a claim extraction call asks an own server: the default
+/// level's thinking budget plus [`EXTRACTION_ANSWER_TOKENS`]. It is the
+/// largest output a Dreamer call asks, so the host's model windows reserve it
+/// for a provider that names no output ceiling.
+pub const EXTRACTION_MAX_TOKENS: u64 = DEFAULT_BUDGET_TOKENS + EXTRACTION_ANSWER_TOKENS;
+
 /// The output limit param every adapter folds into its provider's own field.
 const MAX_TOKENS_PARAM: &str = "max_tokens";
 
@@ -65,10 +71,7 @@ const MAX_TOKENS_PARAM: &str = "max_tokens";
 /// that answers keeps or drops them.
 fn extraction_params() -> BTreeMap<String, JsonValue> {
     let mut params = BTreeMap::from([
-        (
-            MAX_TOKENS_PARAM.to_owned(),
-            json!(DEFAULT_BUDGET_TOKENS + EXTRACTION_ANSWER_TOKENS),
-        ),
+        (MAX_TOKENS_PARAM.to_owned(), json!(EXTRACTION_MAX_TOKENS)),
         ("temperature".to_owned(), json!(0.7)),
         ("top_p".to_owned(), json!(0.8)),
         ("top_k".to_owned(), json!(20)),
@@ -100,6 +103,30 @@ impl ConsolidationExecutor<'_> {
         let mut request = Self::request_over(call, prompt, None, transcript.to_owned(), scope)?;
         labels.bind_request(&mut request, Some(&namespace.identity()));
         Ok(request)
+    }
+
+    /// How far one extraction call's input may run (FIX
+    /// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW): `config`'s TURNs per
+    /// child, and, when the host lends the extraction model's window, that
+    /// window less the prompt every call carries, by the recipe policy's
+    /// bytes-per-token estimate the follower also sizes by.
+    pub(in crate::dreamer_consolidation) fn extraction_bound(
+        &self,
+        vault: &crate::Vault,
+        config: &crate::dreamer_consolidation::selection::SelectionConfig,
+    ) -> Result<crate::dreamer_consolidation::resources::SliceBound> {
+        let room = match self.roles.follower_window_tokens() {
+            Some(window) => {
+                let bytes_per_token = vault.dreamer_recipe_policy()?.follower_sizing_token_bytes;
+                crate::dreamer_wake::follower::Sizing::new(Some(window), bytes_per_token)
+                    .room(self.decisions.extraction_prompt.frame_bytes())
+            }
+            None => None,
+        };
+        Ok(crate::dreamer_consolidation::resources::SliceBound {
+            turns: config.extraction_turns_per_child,
+            room,
+        })
     }
 
     /// The extraction request over `source` in `prompt`'s words, `source_rule`
@@ -625,6 +652,17 @@ struct WorkedExample {
 }
 
 impl ExtractionPrompt {
+    /// The bytes every extraction call carries beside its transcript: the
+    /// system text and both turns of each worked example (FIX
+    /// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW).
+    pub(in crate::dreamer_consolidation) fn frame_bytes(&self) -> usize {
+        self.examples
+            .iter()
+            .map(|example| example.user.len() + example.assistant.len())
+            .sum::<usize>()
+            + self.system.len()
+    }
+
     /// The shipped prompt (`extraction_prompt.json`), word for word what the
     /// engine asks with when the host words none.
     ///

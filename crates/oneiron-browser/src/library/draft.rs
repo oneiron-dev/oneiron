@@ -30,6 +30,12 @@
 //! run's handle. A secret a demonstration's page withheld (CUA E9a) is a
 //! slot with no arg, named withheld, for the caller to bind. No held-out
 //! value is made up: `replay_args` is empty, and the draft is never filed.
+//!
+//! A program's fill reads `{{` in any string of a step as a slot's opening.
+//! A text the record holds that has one (a typed template, an option, a
+//! URL, a locator, a Fill's field) is kept as it is and named a gap
+//! (`literal_opens_slot`): the proposal replays once the caller gives that
+//! text a parameter, whose argument is data and is never filled again.
 
 use super::ProposeInput;
 use crate::{BatchStopCause, ExpectInput, OperandGap, ReplayAction, SecretKind};
@@ -216,6 +222,11 @@ pub enum DraftGapKind {
     /// The step is a Fill whose text only the host's writer writes
     /// (`generate`), which a replay with no model never asks (FIX 9269).
     GeneratedFill,
+    /// A text the record holds for the step has `{{` in it, which a
+    /// program's fill reads as a slot's opening and never as that text.
+    /// A step the draft takes is kept as it ran; it replays once the text
+    /// is a parameter's argument (a slot candidate, where it is one).
+    LiteralOpensSlot,
     /// A demonstration saw its page navigate with no act it recorded (a
     /// typed URL, a script's history move, a navigation outside the run's
     /// verbs), so a step may be missing (FIX 9413).
