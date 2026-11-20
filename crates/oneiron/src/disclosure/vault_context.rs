@@ -658,6 +658,25 @@ impl DisclosureContext {
         )
     }
 
+    /// [`Self::admits_from`]'s test of the record's own row with the row's
+    /// status aside: whether the audience could read the record were it
+    /// live (a deleted, stale or unsurfaceable claim is judged as a live
+    /// one), not what it was written from. A run asks it before its claim
+    /// status gate judges a row for a clamped pack, so the gate records no
+    /// suppression of a row the audience may not read whatever its status.
+    pub(crate) fn admits_row_ignoring_status(
+        &self,
+        store: &StoreRead<'_>,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        entity_type: u8,
+    ) -> Result<bool> {
+        if !self.clamps() {
+            return Ok(true);
+        }
+        self.admits_row(store, rtxn, id, entity_type, None)
+    }
+
     /// [`Self::admits`] for one record's own row, not what it was written from.
     fn admits_row(
         &self,

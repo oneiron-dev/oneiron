@@ -210,14 +210,23 @@ impl PipelineBuilder<'_> {
     /// check is the post-blend filters' own. A row the candidate filter
     /// refuses is judged by nothing after it: this step adds no gate
     /// decision, no `read_suppressed` entry and no count for it. A claim
-    /// that only a check after the gate refuses (the pack's disclosure
-    /// prefilter among them) is judged by the gate first and its
-    /// suppression counts, as at a bounded channel's fetch and at main's
-    /// post-blend gate. The disclosure prefilter reads the row alone; the
-    /// pack's full sweep still asks a summary's sources. The list takes this
-    /// only once the memory lane and entity-type authority have narrowed it,
-    /// so the gate judges no row of a kind the reader may not retrieve
-    /// (REVIEW-9842 round 2). No deadline cuts it: admission always runs.
+    /// that only a check after the gate refuses is judged by the gate first
+    /// and its suppression counts, as at main's post-blend gate. The list
+    /// takes this only once the memory lane and entity-type authority have
+    /// narrowed it, so the gate judges no row of a kind the reader may not
+    /// retrieve (REVIEW-9842 round 2). No deadline cuts it: admission always
+    /// runs.
+    ///
+    /// A clamped pack's disclosure clamp is asked apart (REVIEW-9911 round
+    /// 2). A row the audience could not read whatever its status is judged
+    /// in caches of its own, so the run's gate records no suppression of it
+    /// and neither the run's count nor its empty reason changes with it. A
+    /// row the clamp refuses takes no rank in the blend, as at a bounded
+    /// channel's fetch; one that meets every other check of the scope, the
+    /// gate included, is returned, and the pack counts it among the rows its
+    /// clamp withheld (`PipelineOutput::disclosure_clamped`), as main's
+    /// preselection counted it. The clamp's test here reads the row alone;
+    /// the preselection before the cuts asks a summary's sources too.
     pub(super) fn retain_phonetic_hits_in_scope(
         &self,
         rtxn: &RoTxn<'_>,
@@ -225,30 +234,78 @@ impl PipelineBuilder<'_> {
         filters: PipelineFilterConfig<'_>,
         metadata: &mut EntityMetadataCache,
         claim_gate: &mut ClaimStatusGateCache,
-    ) -> Result<()> {
+    ) -> Result<Vec<crate::EntityId>> {
         let admission = filters.candidate_filter;
+        let clamp = filters.disclosure;
         // The candidate filter is asked here, so the predicate judges the
-        // rows it admits in the run's caches, not in caches of its own.
+        // rows it admits in the run's caches, not in caches of its own; the
+        // clamp is asked after it, so a row it refuses is counted, not lost.
         let filters = PipelineFilterConfig {
             candidate_filter: None,
             deadline: None,
+            disclosure: None,
             ..self.bounded_result_filters(filters)
         };
         let mut kept = Vec::with_capacity(results.len());
+        let mut clamped = Vec::new();
         for scored in std::mem::take(results) {
             if let Some(admits) = admission
                 && !admits(&self.read, rtxn, &scored.id)?
             {
                 continue;
             }
-            if pipeline_candidate_matches_filters_and_gate(
+            let Some(clamp) = clamp else {
+                if pipeline_candidate_matches_filters_and_gate(
+                    &self.read, rtxn, &scored.id, filters, metadata, claim_gate,
+                )? {
+                    kept.push(scored);
+                }
+                continue;
+            };
+            let Some(entity_type) = metadata
+                .get(&self.read, rtxn, &scored.id)?
+                .map(|meta| meta.entity_type)
+            else {
+                continue;
+            };
+            if !clamp.admits_row_ignoring_status(&self.read, rtxn, &scored.id, entity_type)? {
+                let mut own_metadata = EntityMetadataCache::default();
+                let mut own_gate = claim_gate.fresh(filters.authority_filter.include_stale);
+                if pipeline_candidate_matches_filters_and_gate(
+                    &self.read,
+                    rtxn,
+                    &scored.id,
+                    filters,
+                    &mut own_metadata,
+                    &mut own_gate,
+                )? {
+                    clamped.push(scored.id);
+                }
+                continue;
+            }
+            if !pipeline_candidate_matches_filters_and_gate(
                 &self.read, rtxn, &scored.id, filters, metadata, claim_gate,
             )? {
+                continue;
+            }
+            if crate::context_pack::retained_copies::clamp_prefilter_admits(
+                clamp,
+                &self.read,
+                rtxn,
+                &scored.id,
+                entity_type,
+                claim_gate
+                    .decisions
+                    .get(&scored.id)
+                    .and_then(Option::as_ref),
+            )? {
                 kept.push(scored);
+            } else {
+                clamped.push(scored.id);
             }
         }
         *results = kept;
-        Ok(())
+        Ok(clamped)
     }
 
     pub(super) fn scoped_temporal_results(
