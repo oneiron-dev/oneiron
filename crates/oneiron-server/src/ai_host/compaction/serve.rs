@@ -310,7 +310,8 @@ impl ServedCompactionBackend {
                 }
             })
         };
-        let may_send: &(dyn Fn() -> bool + Sync) = &*fresh;
+        // SCRATCH RED (not for merge): the ladder's ask always says yes.
+        let may_send: &(dyn Fn() -> bool + Sync) = &|| true;
         // Admit on the original generation before sending. The owned ticket
         // also settles zero if unwinding drops this call before a response.
         let generation = match &self.meter {
