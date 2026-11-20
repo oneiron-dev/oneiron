@@ -8,8 +8,9 @@
 //!   alone moves the row to it;
 //! - a value beside an act that does not match its digest, or was erased here, reads the key's
 //!   strictest value, `Quarantined`, also when that happens after the row read it;
-//! - an act on a key this build does not know that keeps only a digest is read again only once a
-//!   value comes beside it;
+//! - an act on a key this build does not know is read once, whether it carries its value or
+//!   keeps only a digest, also when its value comes beside it later: a pass reads it again only
+//!   once its acts move or a build knows the key;
 //! - the rows the owner set before the vault was rooted publish their free text beside the batch
 //!   act, and an install that holds the log and none of the rows writes them from it;
 //! - `vault.settings.list` shows how each key travels: inline, beside, or local.
@@ -32,9 +33,9 @@ use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::setting::{
     EnrolledMachine, SlotName, enroll_machine_with_key, forget_projected_setting_rows,
-    land_setting_beside_act_from, land_setting_beside_value, land_setting_beside_value_holding,
-    member_banner_read, permit_list_read, setting_beside_row, setting_beside_value_here,
-    setting_change, setting_frontier_of,
+    land_setting_batch_from, land_setting_beside_act_from, land_setting_beside_value,
+    land_setting_beside_value_holding, member_banner_read, permit_list_read, setting_beside_row,
+    setting_beside_value_here, setting_change, setting_frontier_of,
 };
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_authority::authority::{
@@ -386,7 +387,51 @@ fn an_act_on_a_key_this_build_does_not_know_that_keeps_only_a_digest_is_read_onc
     assert_eq!(
         fx.vault.project_settings().expect("the pass").moved,
         0,
-        "no pass reads the act again until a value comes"
+        "no pass reads the act again until a build knows its key"
+    );
+}
+
+#[test]
+fn a_value_that_comes_beside_an_act_on_a_key_this_build_does_not_know_moves_no_pass() {
+    let fx = Fixture::rooted();
+    let machine = fx.second_machine(7);
+    let value = json!("another build's value");
+    fx.beside_act_from(&machine, UNKNOWN, &value);
+    // Its commit runs the pass: the value changes nothing a build that does not know the key
+    // reads, so a later pass leaves the target alone too.
+    land_setting_beside_value(&fx.vault, vault_row(UNKNOWN), &value).expect("the value lands");
+    assert_eq!(
+        setting_beside_value_here(&fx.vault, vault_row(UNKNOWN), &value).expect("the row"),
+        Some(value),
+        "the value is here"
+    );
+    assert_eq!(
+        fx.vault.project_settings().expect("the pass").moved,
+        0,
+        "no pass reads the act again until a build knows its key"
+    );
+}
+
+#[test]
+fn an_act_on_a_key_this_build_does_not_know_that_carries_its_value_is_read_once() {
+    let fx = Fixture::rooted();
+    let machine = fx.second_machine(7);
+    let frontier = setting_frontier_of(&fx.vault, &[vault_row(UNKNOWN)]).expect("frontier");
+    let counted = land_setting_batch_from(
+        &fx.vault,
+        &machine,
+        fx.owner,
+        &frontier,
+        &[(vault_row(UNKNOWN), Some(json!(7)))],
+        T0,
+    )
+    .expect("the act lands");
+    assert!(counted, "the fold here counts the act");
+    // The act's commit ran the pass.
+    assert_eq!(
+        fx.vault.project_settings().expect("the pass").moved,
+        0,
+        "no pass reads the act again until a build knows its key"
     );
 }
 
