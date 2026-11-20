@@ -9,6 +9,9 @@
 //! profile; a profile citing a claim the reader cannot see reads as none.
 //! The engine checks the reply: a reply over its caps or with a `compact`
 //! tier no shorter than `text` is refused, paid, and lands nothing.
+//! Review round 2 of #9753: the attempt's binding reads its step's receipt
+//! while the key still serves every claim the step read, and an owner's
+//! erase of the PERSON while the step's call is in flight ends the attempt.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-driver --all-features --test dreamer_psych_profile`
 #![cfg(oneiron_test_support)]
@@ -19,10 +22,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 use oneiron::attempt_queue::{AttemptQueue, AttemptState};
 use oneiron::dreamer_consolidation::{DREAMER_NARRATIVE_ROLE, DREAMER_VERDICT_ROLE, RoleBackend};
 use oneiron::dreamer_promotion::AttemptPromotionSink;
+use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::dreamer_runner::maintenance::psych_profile::{
     PSYCH_PROFILE_REGENERATE_SECS, enqueue_due_psych_profiles,
 };
-use oneiron::memory::MEMORY_CODE_FORBIDDEN;
+use oneiron::memory::MEMORY_CODE_NOT_FOUND;
 use oneiron::psych_profile::{
     PsychProfile, PsychProfileKey, PsychProfileSourceWords, PsychProfileState,
     psych_profile_entity_id,
@@ -78,6 +82,8 @@ struct NarrativeBackend {
     reply: String,
     calls: AtomicUsize,
     messages: Mutex<Vec<Vec<String>>>,
+    /// Runs once, inside the first call, before it answers.
+    during_call: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl NarrativeBackend {
@@ -86,7 +92,16 @@ impl NarrativeBackend {
             reply: json!({"compact": compact, "text": text, "narrative": narrative}).to_string(),
             calls: AtomicUsize::new(0),
             messages: Mutex::new(Vec::new()),
+            during_call: Mutex::new(None),
         })
+    }
+
+    /// Runs `hook` inside the next call, while it is in flight.
+    fn during_call(&self, hook: Box<dyn FnOnce() + Send>) {
+        *self
+            .during_call
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(hook);
     }
 
     fn calls(&self) -> usize {
@@ -112,6 +127,14 @@ impl LlmBackend for NarrativeBackend {
         lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
+            let hook = self
+                .during_call
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+            if let Some(hook) = hook {
+                hook();
+            }
             self.messages
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
@@ -279,6 +302,17 @@ fn run_profile_attempt(
 ) -> TestResult<DreamerAttemptExecution> {
     let now = queue_profile(fixture)?;
     let admitted = admit_psych_profile_attempt(&fixture.vault, now)?;
+    execute_profile_attempt(fixture, &admitted, narrative, open)
+}
+
+/// Runs the admitted profile attempt through the production factory's job
+/// adapter, as [`run_profile_attempt`] does; the attempt stays leased.
+fn execute_profile_attempt(
+    fixture: &Fixture,
+    admitted: &DreamerAdmittedAttempt,
+    narrative: &Arc<NarrativeBackend>,
+    open: bool,
+) -> TestResult<DreamerAttemptExecution> {
     let verdict_fixture = ExtractionVerdictFixture::new(Arc::new(RefusingVerdictBackend))?;
     let pass = verdict_fixture.pass_resources();
     let verdict = pass
@@ -327,7 +361,7 @@ fn run_profile_attempt(
         spend_meter: None,
     };
     let runtime = tokio::runtime::Builder::new_current_thread().build()?;
-    Ok(runtime.block_on(executor.execute(&admitted, &mut context))?)
+    Ok(runtime.block_on(executor.execute(admitted, &mut context))?)
 }
 
 /// The profile stored at the fixture's key, if it reads.
@@ -515,28 +549,90 @@ fn with_no_step_lent_the_attempt_parks_and_calls_no_model() -> TestResult<()> {
     Ok(())
 }
 
-/// A psych profile's one step answers with its receipt at submit, so its binding admits no
-/// receipt read: `ai.steps.receipt`, whose read serves only an extraction's queued branch,
-/// answers forbidden naming the psych profile facet (review round 1 of #9753).
+/// The psych profile's step receipt read (review round 2 of #9753): on the attempt's own
+/// binding, `ai.steps.receipt` with the step's hash answers the finished step with its checked
+/// tiers while the key still serves every claim the step read, at the version it read. Once its
+/// source claim is erased, the read answers not found, as an unknown hash does.
 #[test]
-fn a_psych_profile_binding_refuses_the_step_receipt_read() -> TestResult<()> {
+fn a_psych_profile_step_receipt_reads_while_its_sources_stand() -> TestResult<()> {
     let fixture = fixture()?;
+    let narrative = NarrativeBackend::new(COMPACT, TEXT, NARRATIVE);
     let now = queue_profile(&fixture)?;
     let admitted = admit_psych_profile_attempt(&fixture.vault, now)?;
-    let binding = fixture.vault.bind_dreamer_attempt(&admitted)?;
-    let Err(refused) = binding.invoke(
-        "ai.steps.receipt",
-        json!({ "step_key": "0".repeat(64) }),
-        None,
-    ) else {
-        panic!("a psych profile binding admits no step receipt read");
+    let execution = execute_profile_attempt(&fixture, &admitted, &narrative, true)?;
+    let DreamerAttemptExecution::Completed { step_bindings, .. } = &execution else {
+        return Err(format!("FIXTURE: the profile attempt completes: {execution:?}").into());
     };
-    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN);
+    let [step] = step_bindings.as_slice() else {
+        return Err(format!("FIXTURE: one step binding, found {}", step_bindings.len()).into());
+    };
+    let step_key: String = step
+        .step_hash
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let binding = fixture.vault.bind_dreamer_attempt(&admitted)?;
+    let receipt = binding.invoke("ai.steps.receipt", json!({ "step_key": &step_key }), None)?;
+    assert_eq!(
+        receipt["result"]["status"], "finished",
+        "the receipt answers the finished step: {receipt}"
+    );
+    assert_eq!(
+        receipt["result"]["json"]["compact"], COMPACT,
+        "the receipt carries the checked tiers: {receipt}"
+    );
     assert!(
-        refused
-            .message
-            .contains("psych profile facet does not admit"),
-        "unexpected refusal: {refused:?}"
+        fixture.vault.delete_entity(&fixture.claim)?,
+        "FIXTURE: the source claim is erased"
+    );
+    let Err(gone) = binding.invoke("ai.steps.receipt", json!({ "step_key": &step_key }), None)
+    else {
+        panic!("a receipt whose source claim is erased answers not found");
+    };
+    assert_eq!(
+        gone.code, MEMORY_CODE_NOT_FOUND,
+        "unexpected refusal: {gone:?}"
+    );
+    Ok(())
+}
+
+/// An owner's erase of the profile's PERSON while the step's model call is in flight takes the
+/// step (KS-2B1): the submit answers the typed `erased` result and the job ends the attempt,
+/// never parked for a retry that would ask again (review round 2 of #9753).
+#[test]
+fn a_step_erased_while_its_call_is_in_flight_ends_the_attempt() -> TestResult<()> {
+    let fixture = fixture()?;
+    let narrative = NarrativeBackend::new(COMPACT, TEXT, NARRATIVE);
+    let erased = Arc::new(AtomicBool::new(false));
+    {
+        let vault = Arc::clone(&fixture.vault);
+        let person = fixture.person;
+        let erased = Arc::clone(&erased);
+        narrative.during_call(Box::new(move || {
+            erased.store(
+                vault.delete_entity(&person).unwrap_or(false),
+                Ordering::SeqCst,
+            );
+        }));
+    }
+    let execution = run_profile_attempt(&fixture, &narrative, true)?;
+    assert!(
+        erased.load(Ordering::SeqCst),
+        "FIXTURE: the PERSON is erased while the call is in flight"
+    );
+    assert_eq!(narrative.calls(), 1, "FIXTURE: the one call ran");
+    let DreamerAttemptExecution::Failed { reason, .. } = &execution else {
+        return Err(
+            format!("an erased step ends the attempt, never parks it: {execution:?}").into(),
+        );
+    };
+    assert!(
+        reason.contains("erase"),
+        "the attempt ends on the erase: {reason}"
+    );
+    assert!(
+        stored_profile(&fixture)?.is_none(),
+        "an erased step lands nothing"
     );
     Ok(())
 }

@@ -133,7 +133,8 @@ impl DreamerRunnerStore<'_> {
 /// [`PSYCH_PROFILE_REGENERATE_SECS`] ago. Like other parentless host
 /// maintenance, an attempt has no recipe run id. In the same write, a stored
 /// profile of a PERSON no eligible claim stands under any more is withdrawn
-/// (stale-marked, so it reads as none). The stored profiles are read on
+/// (stale-marked, so it reads as none), checked again in that write: a claim
+/// and a fresh profile that landed under its key after the read keep it. The stored profiles are read on
 /// their own for this, never through the claims the Dreamer reads, which a
 /// retracted claim has left. Returns how many attempts were enqueued.
 ///
@@ -190,6 +191,9 @@ pub fn enqueue_due_psych_profiles(vault: &Vault, now: u64) -> Result<usize> {
     }
     let enqueued = vault.with_write_txn(|txn| {
         for id in &withdrawn {
+            if profile_stands_in(vault, &read, txn, id)? {
+                continue;
+            }
             vault.port_retrieval_mark_stale(txn, id)?;
         }
         let store = DreamerRunnerStore::new(vault);
@@ -205,6 +209,25 @@ pub fn enqueue_due_psych_profiles(vault: &Vault, now: u64) -> Result<usize> {
         vault.store.notify_attempt_observers();
     }
     Ok(enqueued)
+}
+
+/// Whether an eligible claim stands under the key of the profile stored at
+/// `id` in `txn`, the sweep's write. A row that does not decode stands, left
+/// as it is.
+fn profile_stands_in(
+    vault: &Vault,
+    read: &crate::claim::ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let Ok(Some(profile)) = vault.get_psych_profile_in_txn(txn, id) else {
+        return Ok(true);
+    };
+    Ok(
+        crate::psych_profile::sources::person_claims_in(vault, read, txn, profile.subject_ref)?
+            .iter()
+            .any(|(key, _)| psych_profile_entity_id(key) == *id),
+    )
 }
 
 /// Whether the profile stored at `id` regenerates at `now`: none is stored,

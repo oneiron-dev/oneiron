@@ -12,11 +12,12 @@ use super::extraction_execution::join_extraction_thread;
 use crate::EntityId;
 use crate::claim::ClaimReadStatus;
 use crate::dreamer_consolidation::psych_profile_step::{
-    PreparedPsychProfileStep, execute_bound_psych_profile_step, prepare_psych_profile_step,
+    PreparedPsychProfileStep, attach_psych_profile_tiers, execute_bound_psych_profile_step,
+    prepare_psych_profile_step,
 };
 use crate::dreamer_consolidation::{RoleCall, StepChargeTally};
 use crate::dreamer_wake::WakePassDeadline;
-use crate::llm::model_step::ModelStepReceipt;
+use crate::llm::model_step::{ModelStepReceipt, ModelStepReceiptRequest};
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
 };
@@ -93,6 +94,55 @@ impl DreamerAttemptBinding {
             .ok_or_else(psych_profile_loan_unavailable)
     }
 
+    /// Reads the receipt of this attempt's finished profile step by its step
+    /// hash. It answers only while the attempt's key still serves every
+    /// claim the step read, at the version it read: the step's terminal
+    /// record names them. A step that read a claim the key no longer serves
+    /// at that version answers not found, as an unknown hash does. A
+    /// finished receipt carries the checked tiers as its JSON, as the submit
+    /// does.
+    pub(super) fn psych_profile_step_receipt(
+        &self,
+        input: ModelStepReceiptRequest,
+    ) -> MemoryResult<ModelStepReceipt> {
+        let key = self
+            .psych_profile_key()
+            .ok_or_else(|| super::facet_refused(self.facet))?;
+        if input.live_run.is_some() {
+            return Err(MemoryError::bad_request(
+                "a bound psych profile receipt takes no live_run",
+            ));
+        }
+        let hash = psych_profile_step_hash(&input.step_key)?;
+        let vault = &*self.vault;
+        let memory = vault.memory(self.stamp.actor, self.actor().actor_class());
+        let read = memory.read_lane(ClaimReadStatus::Recorded)?;
+        let _pins = read.prepare_point_read::<MemoryError>()?;
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        self.check_in_txn(&txn)?;
+        memory.prove_read_authority_in_txn(&txn)?;
+        let scope = psych_profile_reader_scope_in_txn(&memory, &txn)?;
+        let mut receipt = read
+            .read_projected_in_txn(&txn, &[], None, |txn, _| {
+                let served: BTreeMap<EntityId, SourceVersion> =
+                    served_profile_claims_in_txn(vault, txn, &read, scope.as_ref(), &key)?
+                        .iter()
+                        .map(|claim| (claim.claim, served_version(claim)))
+                        .collect();
+                crate::llm::request_hash_step_receipt_in_txn(
+                    vault,
+                    txn,
+                    self.lease.attempt(),
+                    &hash,
+                    |version| Ok(served.get(&version.entity) == Some(version)),
+                )
+                .map_err(MemoryError::from)
+            })?
+            .value;
+        attach_psych_profile_tiers(&mut receipt)?;
+        Ok(receipt)
+    }
+
     /// Checks every cited version against the claims the attempt's key
     /// serves now, in one snapshot, and keeps only their served words.
     fn checked_psych_profile_step(
@@ -149,6 +199,26 @@ impl DreamerAttemptBinding {
         })?;
         Ok((checked.value, key.person))
     }
+}
+
+/// The step hash a psych profile receipt read names: 64 lowercase hex
+/// digits, as the submit's receipt spells it.
+fn psych_profile_step_hash(value: &str) -> MemoryResult<[u8; 32]> {
+    let malformed =
+        || MemoryError::bad_request("a psych profile step key must be 64 lowercase hex digits");
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(malformed());
+    }
+    let mut hash = [0; 32];
+    for (out, pair) in hash.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
+        let pair = std::str::from_utf8(pair).map_err(|_| malformed())?;
+        *out = u8::from_str_radix(pair, 16).map_err(|_| malformed())?;
+    }
+    Ok(hash)
 }
 
 /// Keeps the no-loan refusal identical for every host that lends no profile

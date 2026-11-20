@@ -22,6 +22,8 @@ use crate::dreamer_runner::PsychProfileStepLoan;
 use crate::entity_id::EntityId;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::psych_profile::sources::{ProfileClaim, prompt_lines};
+use crate::snapshot_read::SourceVersion;
+use crate::snapshot_read::psych_profile_sources::served_version;
 use crate::store::model_step_submission::ModelStepResult;
 use crate::tokenizer::DEFAULT_CONTEXT_PACK_TOKENIZER;
 use oneiron_model::llm::{
@@ -50,11 +52,13 @@ struct PsychProfileTiers {
 
 /// One bound profile step's checked input, snapshotted in validation: the
 /// served claims' lines in the job's slot order, the scope of exactly those
-/// claim versions, and the claims the call reads.
+/// claim versions, the claims the call reads, and the served version of each,
+/// which the step's terminal record keeps for its receipt read.
 pub(crate) struct PreparedPsychProfileStep {
     lines: String,
     scope: Scope,
     sources: Vec<EntityId>,
+    inputs: Vec<SourceVersion>,
 }
 
 /// The step over `claims`, the served claims in the order the job cited
@@ -70,6 +74,7 @@ pub(crate) fn prepare_psych_profile_step(claims: &[ProfileClaim]) -> PreparedPsy
             ..Scope::default()
         },
         sources: claims.iter().map(|claim| claim.claim).collect(),
+        inputs: claims.iter().map(served_version).collect(),
     }
 }
 
@@ -198,10 +203,12 @@ fn check_reply(response: &LlmResponse) -> std::result::Result<(), String> {
 ///
 /// The request is the skill's body over the prepared lines, authorized for
 /// the narrative role, with reasoning bound, sent on the sourced backend
-/// bound to the cited claims. The outcome is charged into the shared tally
-/// before it moves into the shared request-hash receipt converter. A
-/// finished submit, including a memo resubmit, carries the checked tiers as
-/// the receipt's JSON.
+/// bound to the cited claims, naming the version of each it read. The
+/// outcome is charged into the shared tally before it moves into the shared
+/// request-hash receipt converter. A finished submit, including a memo
+/// resubmit, carries the checked tiers as the receipt's JSON. A step an
+/// owner's erase took while its call was in flight answers the typed
+/// `erased` result, which ends the job's attempt.
 ///
 /// # Errors
 ///
@@ -213,7 +220,8 @@ pub(crate) async fn execute_bound_psych_profile_step(
     prepared: &PreparedPsychProfileStep,
     loan: &PsychProfileStepLoan<'_>,
 ) -> MemoryResult<crate::llm::model_step::ModelStepReceipt> {
-    let request = psych_profile_request(&loan.call, prepared)?;
+    let mut request = psych_profile_request(&loan.call, prepared)?;
+    crate::llm::bind_step_input_versions(&mut request, &prepared.inputs)?;
     let mut request = ctx
         .vault
         .authorize_model_role(DREAMER_NARRATIVE_ROLE, request, &loan.call.inference)?
@@ -239,8 +247,25 @@ pub(crate) async fn execute_bound_psych_profile_step(
             &mut charges,
         )?;
     }
-    let mut receipt =
-        crate::llm::request_hash_submit_receipt(ctx.vault, ctx.attempt_id, &request, outcome)?;
+    let mut receipt = crate::llm::request_hash_submit_receipt_keeping_erased(
+        ctx.vault,
+        ctx.attempt_id,
+        &request,
+        outcome,
+    )?;
+    attach_psych_profile_tiers(&mut receipt)?;
+    Ok(receipt)
+}
+
+/// Puts the checked tiers of a finished profile step's reply on its receipt
+/// as the JSON; any other result is left as it is.
+///
+/// # Errors
+///
+/// A reply the tier check refuses.
+pub(crate) fn attach_psych_profile_tiers(
+    receipt: &mut crate::llm::model_step::ModelStepReceipt,
+) -> MemoryResult<()> {
     if let Some(ModelStepResult::Finished { response, json, .. }) = receipt.result.as_mut() {
         let tiers = check_psych_profile_reply(response).map_err(MemoryError::bad_request)?;
         *json = Some(
@@ -248,5 +273,5 @@ pub(crate) async fn execute_bound_psych_profile_step(
                 .map_err(|error| MemoryError::bad_request(error.to_string()))?,
         );
     }
-    Ok(receipt)
+    Ok(())
 }
