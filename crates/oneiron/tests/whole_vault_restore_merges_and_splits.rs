@@ -22,10 +22,17 @@
 //! * `owner_restore_into_a_vault_holding_rows_keeps_its_machine_identity`:
 //!   that restore loads no signing keys, so a keystore lacking this install's
 //!   slot does not make it forget its machine (REVIEW-9756 round 1 P1-2).
-//! * `owner_restore_of_an_archive_without_secrets_names_a_multipart_merge_incomplete`:
-//!   a merge of 256 sources is recorded over several parts; the restore of
-//!   an archive taken without secrets completes and names it
-//!   `ArchivedDecisionIncomplete` (REVIEW-9756 round 2 P1-1).
+//! * `owner_restore_of_an_archive_without_secrets_brings_a_one_part_merge_back`:
+//!   a merge of 256 sources is recorded as a manifest and one part; the
+//!   restore of an archive taken without secrets decides it again
+//!   (NO-SECRETS-ARCHIVE-MULTIPART-TOPOLOGY-DECISION).
+//! * `owner_restore_of_an_archive_without_secrets_names_a_one_part_merge_with_a_credential_incomplete`:
+//!   the same merge whose rationale holds a credential goes nulled; the
+//!   restore completes and names it `ArchivedDecisionIncomplete`.
+//! * `owner_restore_of_an_archive_without_secrets_names_a_two_part_merge_incomplete`:
+//!   a merge whose record spans two parts goes nulled too (no scan reads a
+//!   slice's text whole); the restore completes and names it incomplete
+//!   (REVIEW-9756 round 2 P1-1).
 //! * `owner_restore_into_a_fresh_vault_with_an_unheld_machine_seed_keeps_its_machine_identity`:
 //!   a fresh vault whose keystore lacks this install's slot loads no keys for
 //!   the restore and keeps its machine; each decision is `SigningUnavailable`
@@ -33,6 +40,8 @@
 //! * `a_whole_vault_export_names_no_use_limited_merge`: the manifest names a
 //!   current merge only when the archive carries its record; a held privacy
 //!   erase keeps one out (REVIEW-9756 round 2 P1-3).
+//! * `a_whole_vault_export_carries_no_part_of_a_use_limited_multipart_merge`:
+//!   an operation part goes out only where its decision's row goes.
 //!
 //! Red on main d4c26c681b6 (the tests-only commit): the first test fails at
 //! its first lifecycle check (the merged PERSON is back Active); the other
@@ -44,6 +53,12 @@
 //! multipart restore fails (the import's round-trip check refuses the part
 //! rows), the unheld-seed restore seals each decision under a machine it
 //! joined as anew, and the manifest names the use-limited merge.
+//!
+//! Red on main 4c1021cab02 (the tests-only commit of
+//! NO-SECRETS-ARCHIVE-MULTIPART-TOPOLOGY-DECISION): the one-part merge comes
+//! back `ArchivedDecisionIncomplete`, and the archive carries the part of the
+//! use-limited merge. The credential and two-part tests pass there and guard
+//! what the fix keeps nulled.
 //!
 //! Vaults in tempdirs, every step through public doors. Source and
 //! destination each sign with their own in-memory install keystore. Each
@@ -67,7 +82,8 @@ use oneiron::identity_topology::{
     IdentityTopologyOp, MergeOp, ReassignmentMap, SplitOp, SurvivorshipPlan, TopologySeal,
 };
 use oneiron::memory::{EraseOptions, EraseReason};
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::policy_model::SecretScanMode;
+use oneiron::registry::{ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::{
     ClaimSource, EdgeActorClass, EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig,
@@ -562,22 +578,26 @@ fn unrestored(receipt: &WholeVaultImportReceipt) -> Vec<(String, IdentityTopolog
     unrestored
 }
 
-#[test]
-fn owner_restore_of_an_archive_without_secrets_names_a_multipart_merge_incomplete() {
-    let (_dir, source) = open_signing_vault();
-    let survivor = put_person(&source);
-    // One record holds fewer than 256 participants besides the survivor, so
-    // this decision is stored as an operation manifest and its parts.
-    let sources: Vec<EntityId> = (0..256).map(|_| put_person(&source)).collect();
+/// A merge of 256 sources into one survivor, applied on `source` at `at`:
+/// one record holds fewer participants besides the survivor, so the decision
+/// is stored as an operation manifest and its parts. The decision, its
+/// sources and its survivor.
+fn apply_wide_merge(
+    source: &Vault,
+    rationale: &str,
+    at: u64,
+) -> (EntityId, Vec<EntityId>, EntityId) {
+    let survivor = put_person(source);
+    let sources: Vec<EntityId> = (0..256).map(|_| put_person(source)).collect();
     let decision = apply(
-        &source,
+        source,
         IdentityTopologyOp::Merge(MergeOp {
             sources: sources.clone(),
             survivor,
-            evidence: evidence("one person under many records"),
+            evidence: evidence(rationale),
             survivorship_plan: SurvivorshipPlan::ReadThrough,
         }),
-        200,
+        at,
     );
     assert_eq!(
         source
@@ -586,19 +606,31 @@ fn owner_restore_of_an_archive_without_secrets_names_a_multipart_merge_incomplet
         EntityLifecycleState::Merged,
         "precondition: the wide merge applies at the source"
     );
-    let archive = source
+    (decision, sources, survivor)
+}
+
+/// `source`'s whole-vault archive exported without secrets.
+fn archive_without_secrets(source: &Vault) -> Vec<u8> {
+    source
         .export_whole_vault(false)
         .expect("whole-vault export without secrets")
         .bytes()
-        .to_vec();
+        .to_vec()
+}
+
+/// Restores `archive` as the owner into a fresh signing vault, asserts the
+/// restore decided nothing and names `decision` alone incomplete, and that
+/// each of `persons` is back as a separate row.
+fn assert_restore_names_incomplete(archive: &[u8], decision: EntityId, persons: &[EntityId]) {
     let (_dest_dir, dest) = open_later_signing_vault();
     let owner = owner_proof(&dest);
     let receipt = dest
-        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner)
+        .import_whole_vault_archive_from_as_owner(Cursor::new(archive), &owner)
         .expect("the owner's restore of an archive without secrets completes");
     assert!(
         receipt.restored_identity_topology.is_empty(),
-        "a decision whose parts went nulled is not decided again"
+        "a decision whose part went nulled is not decided again: {:?}",
+        receipt.restored_identity_topology
     );
     assert_eq!(
         unrestored(&receipt),
@@ -606,9 +638,9 @@ fn owner_restore_of_an_archive_without_secrets_names_a_multipart_merge_incomplet
             decision.to_hex(),
             IdentityTopologyNotRestored::ArchivedDecisionIncomplete
         )],
-        "the receipt names the wide merge incomplete"
+        "the receipt names the merge incomplete"
     );
-    for row in sources.iter().chain([&survivor]) {
+    for row in persons {
         assert_eq!(
             dest.entity_lifecycle_state(row)
                 .expect("destination lifecycle"),
@@ -617,6 +649,104 @@ fn owner_restore_of_an_archive_without_secrets_names_a_multipart_merge_incomplet
             row.to_hex()
         );
     }
+}
+
+#[test]
+fn owner_restore_of_an_archive_without_secrets_brings_a_one_part_merge_back() {
+    let (_dir, source) = open_signing_vault();
+    let (decision, sources, survivor) =
+        apply_wide_merge(&source, "one person under many records", 200);
+    let archive = archive_without_secrets(&source);
+    let (_dest_dir, dest) = open_later_signing_vault();
+    let owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner)
+        .expect("the owner's restore of an archive without secrets completes");
+    assert!(
+        receipt.unrestored_identity_topology_events.is_empty(),
+        "the one-part merge is restored whole: {:?}",
+        receipt.unrestored_identity_topology_events
+    );
+    let restored: Vec<(String, IdentityTopologyRestoreKind)> = receipt
+        .restored_identity_topology
+        .iter()
+        .map(|event| (event.archived.clone(), event.kind))
+        .collect();
+    assert_eq!(
+        restored,
+        vec![(decision.to_hex(), IdentityTopologyRestoreKind::Merge)],
+        "the receipt maps the wide merge"
+    );
+    for row in &sources {
+        assert_eq!(
+            dest.entity_lifecycle_state(row)
+                .expect("destination lifecycle"),
+            EntityLifecycleState::Merged,
+            "source PERSON {} is merged again here",
+            row.to_hex()
+        );
+        assert!(
+            dest.edge_exists(row, EdgeKind::MergedInto, &survivor)
+                .expect("read the merged_into link"),
+            "source PERSON {} names the survivor",
+            row.to_hex()
+        );
+    }
+    assert_eq!(
+        dest.entity_lifecycle_state(&survivor)
+            .expect("survivor lifecycle"),
+        EntityLifecycleState::Active,
+        "the survivor stays Active"
+    );
+}
+
+#[test]
+fn owner_restore_of_an_archive_without_secrets_names_a_one_part_merge_with_a_credential_incomplete()
+{
+    let (_dir, source) = open_signing_vault();
+    // The write door keeps the rationale as written, so only the export's
+    // credential rule reads it.
+    source
+        .set_secret_scan_mode(&owner_proof(&source), SecretScanMode::Off, 150)
+        .expect("FIXTURE: switch the write-door secret scan off");
+    let (decision, sources, survivor) = apply_wide_merge(
+        &source,
+        "the same person signs in with ghp_0123456789abcdefghijklmnopqrstuvwxyz",
+        200,
+    );
+    let archive = archive_without_secrets(&source);
+    let mut persons = sources;
+    persons.push(survivor);
+    assert_restore_names_incomplete(&archive, decision, &persons);
+}
+
+#[test]
+fn owner_restore_of_an_archive_without_secrets_names_a_two_part_merge_incomplete() {
+    let (_dir, source) = open_signing_vault();
+    let merged = put_person(&source);
+    let survivor = put_person(&source);
+    // A rationale past one record's 64 KiB body bound: the decision's record
+    // spans two parts.
+    let rationale = "one person under two records. ".repeat(2_400);
+    let decision = apply(
+        &source,
+        IdentityTopologyOp::Merge(MergeOp {
+            sources: vec![merged],
+            survivor,
+            evidence: evidence(&rationale),
+            survivorship_plan: SurvivorshipPlan::ReadThrough,
+        }),
+        200,
+    );
+    assert_eq!(
+        source
+            .entity_lifecycle_state(&merged)
+            .expect("source lifecycle"),
+        EntityLifecycleState::Merged,
+        "precondition: the long merge applies at the source"
+    );
+    let archive = archive_without_secrets(&source);
+    assert_restore_names_incomplete(&archive, decision, &[merged, survivor]);
 }
 
 #[test]
@@ -755,5 +885,49 @@ fn a_whole_vault_export_names_no_use_limited_merge() {
         document.manifest.current_identity_topology_events,
         vec![carried.to_hex()],
         "the manifest names the carried merge and not the use-limited one"
+    );
+}
+
+#[test]
+fn a_whole_vault_export_carries_no_part_of_a_use_limited_multipart_merge() {
+    let (_dir, source) = open_hosted_signing_vault();
+    let (carried, ..) = apply_wide_merge(&source, "one person under many records", 200);
+    let (held, ..) = apply_wide_merge(&source, "another person under many records", 210);
+    use_limit(&source, held);
+    let archive = source
+        .export_whole_vault(true)
+        .expect("whole-vault export")
+        .bytes()
+        .to_vec();
+    let document = source
+        .read_whole_vault_archive(&archive)
+        .expect("read the archive");
+    assert!(
+        !document
+            .evidence_ledger
+            .entities
+            .iter()
+            .any(|entity| entity.id == held.to_hex()),
+        "FIXTURE: the archive keeps the use-limited merge's manifest out"
+    );
+    assert_eq!(
+        document.manifest.current_identity_topology_events,
+        vec![carried.to_hex()],
+        "the manifest names the carried merge alone"
+    );
+    let parts = document
+        .evidence_ledger
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.entity_type == ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
+                && serde_json::to_string(&entity.body)
+                    .expect("encode an archived body")
+                    .contains("\"operation_part\"")
+        })
+        .count();
+    assert_eq!(
+        parts, 1,
+        "the archive carries the carried merge's one part and no part of the use-limited merge"
     );
 }
