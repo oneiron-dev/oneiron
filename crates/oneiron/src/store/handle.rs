@@ -313,11 +313,19 @@ pub struct StoreCore {
     /// The engine's delete guards, supplied by the open door: a store never
     /// exists without them.
     pub(crate) delete_guards: &'static dyn crate::store::StoreDeleteGuards,
+    /// The user deletes in flight that hold their target's brief delete
+    /// reservation, so a delete refused before it linearizes releases one its
+    /// own flight created. Never persisted: a crash keeps each reservation.
+    pub(crate) brief_delete_fences: crate::deletion::BriefDeleteFences,
     /// The soft deletes' `pt:` markers whose own publication is in flight,
     /// which no replay publishes in its stead. Never persisted: a crash
     /// leaves each marker to the next replay.
     #[cfg(feature = "sync")]
     pub(crate) tombstone_publications_in_flight: crate::deletion::TombstonePublicationsInFlight,
+    /// When this home last pushed each machine a prediction, for the push
+    /// spacing. Never persisted: a restarted home answers the next ask.
+    #[cfg(feature = "sync")]
+    pub(crate) predicted_pushes: crate::sync::residence::PredictedPushes,
     /// The engine's record-scope stamp hooks, supplied by the open door with
     /// the delete guards.
     pub(crate) scope_stamps: &'static dyn crate::store::StoreScopeStamps,
@@ -776,6 +784,7 @@ macro_rules! manifest_dbs {
             fn gate_custody_archived(&self) -> bool { self.base.core.gate_custody_archived() }
             fn is_union(&self) -> bool { self.room.is_some() }
             fn room_base(&self) -> Option<&Store> { self.room.is_some().then_some(self.base) }
+            fn room_overlay(&self) -> Option<&crate::session_overlay::SessionOverlay> { self.room }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
                 &self.base.core.manifest_memo
             }
@@ -829,6 +838,13 @@ macro_rules! manifest_dbs {
             fn room_base(&self) -> Option<&Store> {
                 None
             }
+            /// The overlay of the room whose view this is, `None` for a
+            /// target that is no room's view: the room keeps a fresh secret
+            /// a row of its own holds in that overlay's custody, in memory
+            /// only (ROOM-LOCAL-CUSTODY).
+            fn room_overlay(&self) -> Option<&crate::session_overlay::SessionOverlay> {
+                None
+            }
             /// The vault's memo of policy manifest decodes.
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo;
         }
@@ -861,6 +877,9 @@ macro_rules! manifest_dbs {
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
             fn is_union(&self) -> bool { true }
             fn room_base(&self) -> Option<&Store> { Some(self.base) }
+            fn room_overlay(&self) -> Option<&crate::session_overlay::SessionOverlay> {
+                Some(&self.overlay)
+            }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
                 &self.core.manifest_memo
             }

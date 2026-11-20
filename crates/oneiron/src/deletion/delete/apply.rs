@@ -159,6 +159,9 @@ impl Vault {
                 .tombstone_publications_in_flight
                 .hold(window_label, id, &tombstone)
         });
+        // The scrub linearizes this delete: its brief fence settles under
+        // the scrub's writer.
+        self.store.brief_delete_fences.settle(id);
         wtxn.commit()?;
         if existed {
             self.notify_local_delete_materialized(&changed);
@@ -215,6 +218,7 @@ impl Vault {
             receipt_id: None,
             sweep_key: None,
             turn_program_details: turn_program_details.to_vec(),
+            version_release: false,
         });
     }
 
@@ -395,6 +399,8 @@ impl Vault {
                 // `scrub_is_the_linearization_point` is `!authority_settled`, so
                 // there the flag is already `true` and stays untouched.
                 authority_settled = true;
+                // The brief fence settles under this linearizing writer.
+                self.store.brief_delete_fences.settle(id);
             }
             if existed && window_label.contains('@') {
                 // The shell loses its world body in this commit. Preserve the

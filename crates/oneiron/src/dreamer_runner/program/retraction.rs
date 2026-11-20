@@ -628,11 +628,18 @@ impl RowsOwed {
     /// Clears, in one writer, each entry read here that names one of
     /// `windows` and still names it: those windows were persisted, and
     /// marked ready, holding this machine's rows as of a moment after the
-    /// entries were read. An entry noted again since under the same window
-    /// stands for the same row, which that stored window holds too: the row
-    /// a machine owes for a retraction (its own `Retracted`, or its answer
-    /// to one) does not change once it owes it. An entry noted since under
-    /// another window stays.
+    /// entries were read. An entry noted since under another window stays.
+    /// One noted again since under the same window goes too, though the row
+    /// it stands for may have moved on (a release turns into the decision
+    /// once this machine learns it). A retraction notes once; a second note
+    /// comes only from merging that window's rows while its document is
+    /// open here (`merge_wakes`), and that document takes the latest row
+    /// again by itself: the pass's live-window mirror that follows and each
+    /// later pass write it while the window stays loaded, each persist of
+    /// it (an unload's too) scrubs it in first (`scrub_turn_programs`), and
+    /// a document that leaves memory unpersisted keeps the update that
+    /// noted it past its stored snapshot, or has it sent again, so the
+    /// window is opened again before it sends a row, and the open writes it.
     pub(crate) fn clear(&self, vault: &Vault, windows: &[WindowKey]) -> Result<()> {
         let taken: Vec<&(ActorWakeKey, String)> = self
             .0

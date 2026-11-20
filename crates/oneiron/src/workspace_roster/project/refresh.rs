@@ -518,18 +518,13 @@ fn write(
     // (FIX STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS). A project with no view
     // persisted before is new: no answer rests on its room yet. A frozen
     // record's served view is checked again at each read, so it narrows
-    // with the record unchanged.
+    // with the record unchanged; and a raised budget serves the live fold
+    // over a frozen record that stays saved, so the old record need not be
+    // what the room read last (review round 1 on #9735).
     if (changed || frozen)
         && let Some(old) = &old
     {
-        super::room_narrowing::queue_narrowed_room_in(
-            store,
-            txn,
-            project,
-            old.effective.as_ref(),
-            record.effective.as_ref(),
-            frozen,
-        )?;
+        super::room_narrowing::queue_narrowed_room_in(store, txn, project, old, &record, frozen)?;
     }
     PROJECT_FRONTIER.put(store, txn, &project, &record)?;
     // A frozen record that no longer fits its parents serves nothing while

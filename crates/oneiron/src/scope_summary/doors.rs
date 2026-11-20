@@ -259,6 +259,13 @@ pub(crate) fn validate_summary_put(
     if was_summary || kind == ENTITY_TYPE_SUMMARY && super::codec::is_scope_summary(bytes) {
         let logical = crate::entity_doc::resolve_record_body(store, txn, id, bytes)?;
         let body = decode_scope_summary_body(&logical)?;
+        // Only a summary's document may hold a blank text, left by an edit
+        // or a sync merge of it. A body with no document is as the Dreamer
+        // minted it, and the mint never writes a blank text (review P1 of
+        // #9931): a replicated row skips the producer check below.
+        if body.text.trim().is_empty() && !crate::entity_doc::has_record_head(store, txn, id)? {
+            return Err(invalid("summary text is blank"));
+        }
         let unchanged = previous
             .as_ref()
             .and_then(|raw| raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..))
@@ -652,6 +659,26 @@ pub(super) fn header_landed_in_txn(
         }
     }
     Ok(false)
+}
+
+/// Every standing `merge.summary` header that lands `summary`, on any turn:
+/// the one its declaration landed and each later landing of it, a reused
+/// composition's or [`Vault::land_header`]'s (review P1 of #9808). A header
+/// that names no summary is not one of them.
+pub(super) fn standing_headers_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    summary: &EntityId,
+) -> Result<Vec<EntityId>> {
+    Ok(vault
+        .claims_with_predicate_in_txn(txn, "merge.summary")?
+        .into_iter()
+        .filter(|(_, body)| {
+            body.lifecycle == oneiron_contracts::claim::ClaimLifecycleStatus::Active
+                && matches!(merge_summary_ref(body), Ok(Some((_, landed))) if landed == *summary)
+        })
+        .map(|(claim, _)| claim)
+        .collect())
 }
 
 /// The read lane a header's reply TURN is checked against (OF-063): its

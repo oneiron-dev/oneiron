@@ -27,7 +27,7 @@ use oneiron::calendar::connectors::{
     CalendarConnectorError, CalendarConnectorSeatConfig, CalendarRemoteTransport,
     CalendarSyncOutcome, RemoteCalendarChange, RemoteCalendarObject, RemoteSyncBatch,
     RemoteWriteReceipt, RemoteWriteRequest, calendar_collection_members_for_operation,
-    run_calendar_connector_sync, write_calendar_event,
+    calendar_write_outbox_rows, run_calendar_connector_sync, write_calendar_event,
 };
 use oneiron::calendar::parse_ics_feed;
 use oneiron::consent::AuthenticatedOwner;
@@ -47,7 +47,7 @@ const CONNECTOR_SEAT_KEY: &str = "calendar.connector_seat";
 const MONDAY: u64 = 1_772_409_600;
 
 /// The vault's owner, authenticated: the seats here are the owner's (smoke :692).
-fn seat_owner(vault: &Vault) -> (EntityId, AuthenticatedOwner) {
+pub(crate) fn seat_owner(vault: &Vault) -> (EntityId, AuthenticatedOwner) {
     let id = vault
         .ensure_embedded_owner_actor()
         .expect("the vault's owner");
@@ -92,6 +92,8 @@ pub(crate) enum SeatChange {
         /// The booking's UID.
         uid: String,
     },
+    /// One resource exactly as the provider stores it.
+    Stored(RemoteCalendarObject),
 }
 
 impl SeatChange {
@@ -170,6 +172,25 @@ impl SeatChange {
             uid: uid.to_owned(),
         }
     }
+
+    /// A live resource at its slot and SEQUENCE 0 whose sync answer names
+    /// `wire_uid` while its ICS carries `ics_uid`, under `seat`'s resource
+    /// path for `ics_uid`. The transport's UID is no authority: admission
+    /// reads the one the ICS carries.
+    pub(crate) fn under_wire_uid(
+        seat: &Seat,
+        wire_uid: &str,
+        ics_uid: &str,
+        start: u64,
+        end: u64,
+    ) -> Self {
+        let href = seat.resource_href(ics_uid);
+        let ics = booking_ics(ics_uid, start, end, 0, false);
+        Self::Stored(RemoteCalendarObject {
+            uid: wire_uid.to_owned(),
+            ..remote_upsert(&href, Some(&format!("{href}-s0")), &ics)
+        })
+    }
 }
 
 /// The host's seat: its installed config plus the scripted wire its pulls
@@ -186,14 +207,36 @@ impl Seat {
     /// under another system name for a calendar the booking was never written
     /// to.
     pub(crate) fn install(vault: &Vault, system: &str) -> Self {
-        let config = CalendarConnectorSeatConfig {
-            seat_ref: format!("seat:{system}"),
-            secret_ref: format!("seat-secret:{system}"),
-            system: system.to_owned(),
-            calendar_ref: format!("{system}-calendar"),
-            cadence_jitter_min_seconds: 300,
-            cadence_jitter_max_seconds: 900,
-        };
+        Self::install_config(
+            vault,
+            CalendarConnectorSeatConfig {
+                seat_ref: format!("seat:{system}"),
+                secret_ref: format!("seat-secret:{system}"),
+                system: system.to_owned(),
+                calendar_ref: format!("{system}-calendar"),
+                cadence_jitter_min_seconds: 300,
+                cadence_jitter_max_seconds: 900,
+            },
+        )
+    }
+
+    /// Installs a second seat of this seat's calendar under `seat_ref`: the
+    /// same endpoint, credential, collection and system, polled at its own
+    /// cadence. A seat's cadence is part of its outbox scope, so the two
+    /// seats share the calendar's passports but not their outboxes.
+    pub(crate) fn install_second_seat(&self, vault: &Vault, seat_ref: &str) -> Self {
+        Self::install_config(
+            vault,
+            CalendarConnectorSeatConfig {
+                seat_ref: seat_ref.to_owned(),
+                cadence_jitter_min_seconds: self.config.cadence_jitter_min_seconds * 2,
+                cadence_jitter_max_seconds: self.config.cadence_jitter_max_seconds * 2,
+                ..self.config.clone()
+            },
+        )
+    }
+
+    fn install_config(vault: &Vault, config: CalendarConnectorSeatConfig) -> Self {
         let (_, owner) = seat_owner(vault);
         let outcome = vault
             .set_setting(
@@ -281,55 +324,62 @@ impl Seat {
     fn remote_changes(&self, vault: &Vault, changes: &[SeatChange]) -> Vec<RemoteCalendarChange> {
         changes
             .iter()
-            .map(|change| match change {
-                SeatChange::Upsert {
-                    href,
-                    uid,
-                    start,
-                    end,
-                    sequence,
-                    cancelled,
-                } => {
-                    let ics = booking_ics(uid, *start, *end, *sequence, *cancelled);
-                    RemoteCalendarChange::Upsert(remote_upsert(
+            .filter_map(|change| {
+                Some(match change {
+                    SeatChange::Upsert {
                         href,
-                        Some(&format!("{href}-s{sequence}")),
-                        &ics,
-                    ))
-                }
-                SeatChange::Undated {
-                    href,
-                    uid,
-                    sequence,
-                    cancelled,
-                } => {
-                    let ics = undated_ics(uid, *sequence, *cancelled);
-                    RemoteCalendarChange::Upsert(remote_upsert(
+                        uid,
+                        start,
+                        end,
+                        sequence,
+                        cancelled,
+                    } => {
+                        let ics = booking_ics(uid, *start, *end, *sequence, *cancelled);
+                        RemoteCalendarChange::Upsert(remote_upsert(
+                            href,
+                            Some(&format!("{href}-s{sequence}")),
+                            &ics,
+                        ))
+                    }
+                    SeatChange::Undated {
                         href,
-                        Some(&format!("{href}-s{sequence}")),
-                        &ics,
-                    ))
-                }
-                SeatChange::Tombstone { uid } => RemoteCalendarChange::Delete {
-                    href: self.resource_href(uid),
-                    uid: uid.to_string(),
-                },
-                // The omission carries the listing snapshot's observation of
-                // the UID's row (tests/calendar_google_owed_full_listing.rs).
-                SeatChange::Omitted { uid } => {
-                    let observation =
-                        calendar_collection_members_for_operation(vault, &self.operation(vault))
-                            .expect("the seat's collection members")
-                            .iter()
-                            .find(|member| member.uid == *uid)
-                            .expect("the booking is a member of the seat")
-                            .observation;
-                    RemoteCalendarChange::Omitted {
+                        uid,
+                        sequence,
+                        cancelled,
+                    } => {
+                        let ics = undated_ics(uid, *sequence, *cancelled);
+                        RemoteCalendarChange::Upsert(remote_upsert(
+                            href,
+                            Some(&format!("{href}-s{sequence}")),
+                            &ics,
+                        ))
+                    }
+                    SeatChange::Stored(object) => RemoteCalendarChange::Upsert(object.clone()),
+                    SeatChange::Tombstone { uid } => RemoteCalendarChange::Delete {
                         href: self.resource_href(uid),
                         uid: uid.to_string(),
-                        observation,
+                    },
+                    // The omission carries the listing snapshot's observation of
+                    // the UID's row (tests/calendar_google_owed_full_listing.rs).
+                    // A complete listing reports an omission only of a member of
+                    // the seat's collection, as CalDAV's does: a row the listing
+                    // does not count as a member is never omitted.
+                    SeatChange::Omitted { uid } => {
+                        let observation = calendar_collection_members_for_operation(
+                            vault,
+                            &self.operation(vault),
+                        )
+                        .expect("the seat's collection members")
+                        .iter()
+                        .find(|member| member.uid == *uid)?
+                        .observation;
+                        RemoteCalendarChange::Omitted {
+                            href: self.resource_href(uid),
+                            uid: uid.to_string(),
+                            observation,
+                        }
                     }
-                }
+                })
             })
             .collect()
     }
@@ -346,6 +396,15 @@ impl Seat {
         let ics = self.last_write_ics(&receipt.uid);
         let echo = remote_upsert(&receipt.href, receipt.etag.as_deref(), &ics);
         self.run_pull(vault, vec![RemoteCalendarChange::Upsert(echo)], now)
+    }
+
+    /// The seat's own last write of `uid` byte for byte, as the collection
+    /// stores it: what another seat installed on the same collection, under
+    /// another system name, pulls.
+    pub(crate) fn stored_own_write(&self, uid: &str) -> SeatChange {
+        let href = self.resource_href(uid);
+        let etag = format!("{href}-stored");
+        SeatChange::Stored(remote_upsert(&href, Some(&etag), &self.last_write_ics(uid)))
     }
 
     /// Pulls back the seat's own last write of one booking as a provider that
@@ -394,6 +453,104 @@ impl Seat {
             "the provider's rewrite is a new version of the written resource"
         );
         rewrite
+    }
+
+    /// The seat's own last write of one booking as a provider that rewrites
+    /// the stored resource holds it (see [`Self::pull_rewritten_own_write`]).
+    pub(crate) fn rewrite_of_own_write(
+        &self,
+        receipt: &RemoteWriteReceipt,
+        sequence: u32,
+        now: u64,
+    ) -> SeatChange {
+        SeatChange::Stored(self.rewritten_own_write(receipt, sequence, now))
+    }
+
+    /// The seat's own last write of one booking as a provider that rewrites
+    /// the stored resource and drops the properties it does not know holds
+    /// it: the rewrite without the write's marker.
+    pub(crate) fn stripped_rewrite_of_own_write(
+        &self,
+        receipt: &RemoteWriteReceipt,
+        sequence: u32,
+        now: u64,
+    ) -> SeatChange {
+        let rewrite = self.rewritten_own_write(receipt, sequence, now);
+        let rewritten = String::from_utf8(rewrite.ics).expect("rewritten ICS is UTF-8");
+        let stripped: String = rewritten
+            .split_inclusive("\r\n")
+            .filter(|line| !line.starts_with(WRITE_MARKER_LINE))
+            .collect();
+        SeatChange::Stored(remote_upsert(
+            &rewrite.href,
+            rewrite.etag.as_deref(),
+            stripped.as_bytes(),
+        ))
+    }
+
+    /// The host's own cancel of one booking at `sequence`, made in a client
+    /// over the seat's last write of it, a live one: every other line of that
+    /// write stays, and the resource carries the marker of an earlier write
+    /// of the seat ([`EARLIER_WRITE_MARKER`]), as a client that keeps the
+    /// properties it does not know keeps them.
+    pub(crate) fn host_cancel_of_own_write(
+        &self,
+        receipt: &RemoteWriteReceipt,
+        sequence: u32,
+    ) -> SeatChange {
+        let written =
+            String::from_utf8(self.last_write_ics(&receipt.uid)).expect("written ICS is UTF-8");
+        assert!(
+            !written.contains("STATUS:CANCELLED"),
+            "the last write is a live one"
+        );
+        let mut cancelled = String::new();
+        for line in written.split_inclusive("\r\n") {
+            if line.starts_with(WRITE_MARKER_LINE) {
+                continue;
+            }
+            if line == "BEGIN:VCALENDAR\r\n" {
+                cancelled.push_str(line);
+                cancelled.push_str(&format!("{WRITE_MARKER_LINE}{EARLIER_WRITE_MARKER}\r\n"));
+                continue;
+            }
+            if line.starts_with("SEQUENCE:") {
+                cancelled.push_str(&format!("SEQUENCE:{sequence}\r\n"));
+                continue;
+            }
+            if line == "END:VEVENT\r\n" {
+                cancelled.push_str("STATUS:CANCELLED\r\n");
+            }
+            cancelled.push_str(line);
+        }
+        SeatChange::Stored(remote_upsert(
+            &receipt.href,
+            Some(&format!("{}-host-cancel-s{sequence}", receipt.href)),
+            cancelled.as_bytes(),
+        ))
+    }
+
+    /// The SEQUENCE of the seat's write of `uid` that is staged and not yet
+    /// settled.
+    pub(crate) fn staged_sequence(&self, vault: &Vault, uid: &str) -> u32 {
+        calendar_write_outbox_rows(vault)
+            .expect("the outbox rows")
+            .into_iter()
+            .find(|row| row.system == self.config.system && row.uid == uid)
+            .expect("the seat's write of the booking is staged")
+            .sequence
+    }
+
+    /// The locator of the seat's resource for a booking UID no write of the
+    /// seat returned: its href and UID, in a receipt's shape.
+    pub(crate) fn resource_locator(&self, uid: &str) -> RemoteWriteReceipt {
+        RemoteWriteReceipt {
+            href: self.resource_href(uid),
+            etag: None,
+            uid: uid.to_owned(),
+            sequence: 0,
+            content_hash: [0; 32],
+        }
     }
 
     /// Writes one booking EVENT to the seat's calendar, which stores it, but
@@ -475,6 +632,134 @@ impl Seat {
             .pop()
             .expect("the stored resource");
         self.replay_refused(vault, event_ref, stored, now);
+    }
+
+    /// Sends the seat's prepared write of one booking again, and the provider
+    /// refuses it on its precondition, but the write's reconciliation pull
+    /// fails: the write reads no stored copy.
+    pub(crate) fn replay_refused_unread(&self, vault: &Vault, event_ref: EntityId, now: u64) {
+        *self.transport.fail_next_pull.lock().expect("pull switch") = true;
+        *self
+            .transport
+            .refuse_next_precondition
+            .lock()
+            .expect("precondition switch") = true;
+        let refused = write_calendar_event(
+            vault,
+            &self.operation(vault),
+            &self.transport,
+            event_ref,
+            now,
+        );
+        assert!(
+            matches!(refused, Err(CalendarConnectorError::EtagMismatch { .. })),
+            "the replayed write is refused on its precondition: {refused:?}"
+        );
+    }
+
+    /// Sends the seat's prepared write of one booking again, and the provider
+    /// refuses it on its precondition. The write's reconciliation reads
+    /// `stored`, but before the write takes it in, a pull at `restore_now`
+    /// reads the host's newer `restore` of the resource.
+    pub(crate) fn replay_refused_over_while_restored(
+        &self,
+        vault: &Vault,
+        event_ref: EntityId,
+        stored: &SeatChange,
+        restore: &SeatChange,
+        restore_now: u64,
+        now: u64,
+    ) {
+        let stored = self
+            .remote_changes(vault, std::slice::from_ref(stored))
+            .pop()
+            .expect("the stored resource");
+        self.transport
+            .batches
+            .lock()
+            .expect("scripted batches")
+            .push_back(RemoteSyncBatch {
+                next_cursor: None,
+                changes: vec![stored],
+            });
+        *self
+            .transport
+            .refuse_next_precondition
+            .lock()
+            .expect("precondition switch") = true;
+        let wire = PullDuringReconcile {
+            seat: self,
+            vault,
+            change: restore,
+            pull_now: restore_now,
+        };
+        let refused = write_calendar_event(vault, &self.operation(vault), &wire, event_ref, now);
+        assert!(
+            matches!(refused, Err(CalendarConnectorError::EtagMismatch { .. })),
+            "the replayed write is refused on its precondition: {refused:?}"
+        );
+    }
+
+    /// Writes one booking EVENT to the seat's calendar, and the provider
+    /// refuses the write's first call on its precondition, storing nothing;
+    /// a pull at `pull_now` reads `change` while that call is out.
+    pub(crate) fn write_refused_after_pull(
+        &self,
+        vault: &Vault,
+        event_ref: EntityId,
+        change: &SeatChange,
+        pull_now: u64,
+        now: u64,
+    ) {
+        let wire = PullBeforeRefusal {
+            seat: self,
+            vault,
+            change,
+            pull_now,
+        };
+        let refused = write_calendar_event(vault, &self.operation(vault), &wire, event_ref, now);
+        assert!(
+            matches!(refused, Err(CalendarConnectorError::EtagMismatch { .. })),
+            "the write is refused on its precondition: {refused:?}"
+        );
+    }
+
+    /// Writes one EVENT to the seat's calendar while another call of the
+    /// same write overlaps it: once this call has staged the write, and
+    /// before its request reaches the provider, the other call at
+    /// `replay_now` finds the write prepared and sends it again. The
+    /// provider stores that request, but its answer is lost. This call's
+    /// request then reaches the provider, which refuses it on its
+    /// precondition, since the stored copy took an ETag; its reconciliation
+    /// reads the copy the other call stored or, with `read_fails`, reads
+    /// nothing. Returns the SEQUENCE the stored copy carries.
+    pub(crate) fn write_refused_over_overlapping_replay(
+        &self,
+        vault: &Vault,
+        event_ref: EntityId,
+        read_fails: bool,
+        replay_now: u64,
+        now: u64,
+    ) -> u32 {
+        let wire = ReplayBeforeSend {
+            seat: self,
+            vault,
+            event_ref,
+            replay_now,
+            read_fails,
+        };
+        let refused = write_calendar_event(vault, &self.operation(vault), &wire, event_ref, now);
+        assert!(
+            matches!(refused, Err(CalendarConnectorError::EtagMismatch { .. })),
+            "the overlapped call is refused on its precondition: {refused:?}"
+        );
+        self.transport
+            .writes
+            .lock()
+            .expect("written requests")
+            .last()
+            .expect("the seat stored the overlapping replay")
+            .sequence
     }
 
     /// Sends the prepared write again under a refused precondition, with
@@ -576,7 +861,7 @@ impl Seat {
 /// transport failure after it stored the request; once `drop_next_request`
 /// is set, a transport failure before it stores anything, and once
 /// `refuse_next_precondition` is set, a precondition failure that stores
-/// nothing. `delete` is unused.
+/// nothing; once `fail_next_pull` is set, a pull fails. `delete` is unused.
 #[derive(Default)]
 struct ScriptedSeatTransport {
     batches: Mutex<VecDeque<RemoteSyncBatch>>,
@@ -584,6 +869,7 @@ struct ScriptedSeatTransport {
     lose_next_answer: Mutex<bool>,
     drop_next_request: Mutex<bool>,
     refuse_next_precondition: Mutex<bool>,
+    fail_next_pull: Mutex<bool>,
 }
 
 impl CalendarRemoteTransport for ScriptedSeatTransport {
@@ -597,6 +883,13 @@ impl CalendarRemoteTransport for ScriptedSeatTransport {
         _calendar_ref: &str,
         _cursor: Option<&str>,
     ) -> Result<RemoteSyncBatch, CalendarConnectorError> {
+        if std::mem::take(&mut *self.fail_next_pull.lock().expect("pull switch")) {
+            return Err(CalendarConnectorError::Transport {
+                provider: CALDAV_PROVIDER_KEY,
+                operation: "pull",
+                detail: "the pull's answer never arrived".to_owned(),
+            });
+        }
         Ok(self
             .batches
             .lock()
@@ -731,6 +1024,219 @@ impl CalendarRemoteTransport for RestoreBeforeAnswer<'_> {
         panic!("delete is not used by the host-seat fixture")
     }
 }
+
+/// The seat's scripted wire, whose pull, after it took the scripted batch
+/// and before it answers, runs a pull of `change` at `pull_now`: a seat read
+/// that lands between a write's reconciliation read and the write.
+struct PullDuringReconcile<'a> {
+    seat: &'a Seat,
+    vault: &'a Vault,
+    change: &'a SeatChange,
+    pull_now: u64,
+}
+
+impl CalendarRemoteTransport for PullDuringReconcile<'_> {
+    fn provider_key(&self) -> &'static str {
+        self.seat.transport.provider_key()
+    }
+
+    fn pull(
+        &self,
+        secret_ref: &str,
+        calendar_ref: &str,
+        cursor: Option<&str>,
+    ) -> Result<RemoteSyncBatch, CalendarConnectorError> {
+        let batch = self.seat.transport.pull(secret_ref, calendar_ref, cursor)?;
+        self.seat
+            .pull(self.vault, std::slice::from_ref(self.change), self.pull_now)
+            .expect("the pull during the reconciliation");
+        Ok(batch)
+    }
+
+    fn upsert(
+        &self,
+        secret_ref: &str,
+        calendar_ref: &str,
+        request: &RemoteWriteRequest,
+    ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+        self.seat
+            .transport
+            .upsert(secret_ref, calendar_ref, request)
+    }
+
+    fn delete(
+        &self,
+        _secret_ref: &str,
+        _calendar_ref: &str,
+        _href: &str,
+        _expected_etag: Option<&str>,
+        _uid: &str,
+        _sequence: u32,
+    ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+        panic!("delete is not used by the host-seat fixture")
+    }
+}
+
+/// The seat's scripted wire, whose upsert runs a pull of `change` at
+/// `pull_now` and then refuses the request on its precondition, storing
+/// nothing.
+struct PullBeforeRefusal<'a> {
+    seat: &'a Seat,
+    vault: &'a Vault,
+    change: &'a SeatChange,
+    pull_now: u64,
+}
+
+impl CalendarRemoteTransport for PullBeforeRefusal<'_> {
+    fn provider_key(&self) -> &'static str {
+        self.seat.transport.provider_key()
+    }
+
+    fn pull(
+        &self,
+        secret_ref: &str,
+        calendar_ref: &str,
+        cursor: Option<&str>,
+    ) -> Result<RemoteSyncBatch, CalendarConnectorError> {
+        self.seat.transport.pull(secret_ref, calendar_ref, cursor)
+    }
+
+    fn upsert(
+        &self,
+        secret_ref: &str,
+        calendar_ref: &str,
+        request: &RemoteWriteRequest,
+    ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+        self.seat
+            .pull(self.vault, std::slice::from_ref(self.change), self.pull_now)
+            .expect("the pull while the write is out");
+        *self
+            .seat
+            .transport
+            .refuse_next_precondition
+            .lock()
+            .expect("precondition switch") = true;
+        self.seat
+            .transport
+            .upsert(secret_ref, calendar_ref, request)
+    }
+
+    fn delete(
+        &self,
+        _secret_ref: &str,
+        _calendar_ref: &str,
+        _href: &str,
+        _expected_etag: Option<&str>,
+        _uid: &str,
+        _sequence: u32,
+    ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+        panic!("delete is not used by the host-seat fixture")
+    }
+}
+
+/// The seat's scripted wire, whose upsert, before the request reaches the
+/// provider, runs another call of the same write at `replay_now`: that call
+/// replays the prepared row, and the provider stores the replay but loses
+/// its answer. The request then reaches the provider, which refuses it on
+/// its precondition; the reconciliation pull reads the replay's stored
+/// copy, or fails with `read_fails`.
+struct ReplayBeforeSend<'a> {
+    seat: &'a Seat,
+    vault: &'a Vault,
+    event_ref: EntityId,
+    replay_now: u64,
+    read_fails: bool,
+}
+
+impl CalendarRemoteTransport for ReplayBeforeSend<'_> {
+    fn provider_key(&self) -> &'static str {
+        self.seat.transport.provider_key()
+    }
+
+    fn pull(
+        &self,
+        secret_ref: &str,
+        calendar_ref: &str,
+        cursor: Option<&str>,
+    ) -> Result<RemoteSyncBatch, CalendarConnectorError> {
+        self.seat.transport.pull(secret_ref, calendar_ref, cursor)
+    }
+
+    fn upsert(
+        &self,
+        secret_ref: &str,
+        calendar_ref: &str,
+        request: &RemoteWriteRequest,
+    ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+        *self
+            .seat
+            .transport
+            .lose_next_answer
+            .lock()
+            .expect("answer switch") = true;
+        let replayed = write_calendar_event(
+            self.vault,
+            &self.seat.operation(self.vault),
+            &self.seat.transport,
+            self.event_ref,
+            self.replay_now,
+        );
+        assert!(
+            matches!(replayed, Err(CalendarConnectorError::Transport { .. })),
+            "the overlapping replay's answer is lost: {replayed:?}"
+        );
+        if self.read_fails {
+            *self
+                .seat
+                .transport
+                .fail_next_pull
+                .lock()
+                .expect("pull switch") = true;
+        } else {
+            let stored = remote_upsert(
+                &self.seat.resource_href(&request.uid),
+                Some(&format!("{}-stored-by-replay", request.uid)),
+                &self.seat.last_write_ics(&request.uid),
+            );
+            self.seat
+                .transport
+                .batches
+                .lock()
+                .expect("scripted batches")
+                .push_back(RemoteSyncBatch {
+                    next_cursor: None,
+                    changes: vec![RemoteCalendarChange::Upsert(stored)],
+                });
+        }
+        *self
+            .seat
+            .transport
+            .refuse_next_precondition
+            .lock()
+            .expect("precondition switch") = true;
+        self.seat
+            .transport
+            .upsert(secret_ref, calendar_ref, request)
+    }
+
+    fn delete(
+        &self,
+        _secret_ref: &str,
+        _calendar_ref: &str,
+        _href: &str,
+        _expected_etag: Option<&str>,
+        _uid: &str,
+        _sequence: u32,
+    ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+        panic!("delete is not used by the host-seat fixture")
+    }
+}
+
+/// The VCALENDAR line that carries a connector write's marker.
+const WRITE_MARKER_LINE: &str = "X-ONEIRON-OUTBOX:";
+
+/// The marker of a write of the seat before the one a test stages.
+const EARLIER_WRITE_MARKER: &str = "0123456789abcdef0123456789abcdef";
 
 /// A UTC instant on the fixture Monday as an ICS DATE-TIME.
 fn ics_utc(ts: u64) -> String {

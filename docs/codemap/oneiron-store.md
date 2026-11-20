@@ -55,7 +55,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/home_room_project.rs` | src | s | 1 fn | — | The project a home-room body names, read by an importer to order a room after its project |
 | `src/batch/export/secret_supplement_record.rs` | src | s | 2 struct · 1 enum | HolderExportNeed, OpenedSecretSupplement, SecretSupplementImport | Snapshot needs and opened secret-supplement import values |
 | `src/batch/leader_chat_admission.rs` | src | s | 1 fn | — | Final-state leader-chat TURN candidates, independent of batch op order |
-| `src/batch/phonetic_codes.rs` | src | m | 1 struct · 4 fn · 1 const · 3 re-export | LinkingCodes | Deterministic name codes for the phonetic rungs (OF-101; CROSS-ARCH-0013 `#ladder`) |
+| `src/batch/phonetic_codes.rs` | src | m | 1 struct · 6 fn · 2 const · 3 re-export | LinkingCodes | Deterministic name codes for the phonetic rungs (OF-101; CROSS-ARCH-0013 `#ladder`) |
 | `src/batch/phonetic_codes/features.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | Segment | The articulatory features of the segments the readers emit |
 | `src/batch/phonetic_codes/ipa.rs` | src | s | 1 struct · 3 fn | IpaReading | Grapheme-to-phoneme readings of a name (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): each reading is… |
 | `src/batch/phonetic_codes/ipa/english.rs` | src | m | 1 crate-vis | — | The English reading (`eng`): the letter-to-sound rules of NRL Report 7948 (H |
@@ -222,7 +222,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_attempt_payload.rs` | src | s | 1 struct · 16 fn · 4 const | DreamerAttemptPayload | Dreamer attempt payload envelope and its MessagePack codec |
 | `src/dreamer_wake_policy.rs` | src | s | 2 struct · 3 enum | AgentWakeRole, AgentWakeSignals, AgentWakeTriggers, CadencePrecedence, WeaveRecipePriority | The owner-editable dreamer wake-policy row (`DREAMER_WAKE_POLICY`) and its parts: the recipe dials, the… |
 | `src/embedding.rs` | src | m | 8 struct · 2 enum · 1 trait · 8 fn · 1 type · 10 const · 3 re-export | EgressDecision, EgressPredicate, EmbeddedVector, EmbeddingMatchEvidence, EmbeddingProvenanceCount, EmbeddingSpace, KindSlotBindings, MediaEmbedReport +3 | Embedding space, input, provenance and host-provider vocabulary |
-| `src/embedding_vocabulary.rs` | src | s | 1 struct · 2 enum · 7 fn · 2 const | EmbeddingDevice, EmbeddingProvenance, InputKind | Embedding vocabulary the store layer writes: the input modality of a kind slot, the text-hash length, and… |
+| `src/embedding_vocabulary.rs` | src | s | 1 struct · 2 enum · 9 fn · 3 const | EmbeddingDevice, EmbeddingProvenance, InputKind | Embedding vocabulary the store layer writes: the input modality of a kind slot, the text-hash length, and… |
 | `src/entity_doc.rs` | src | s | 4 mod | — | Store-layer modules of core `entity_doc`; core re-exports each one at its old path |
 | `src/entity_doc/document_resources.rs` | src | s | 1 trait · 5 fn | DocumentMemory | The host's document memory (Rule 5; FIX 8569, 8574, 8596, 8598, 9617) |
 | `src/entity_doc/recovery.rs` | src | s | 2 mod | — | Store-layer modules of core `entity_doc::recovery`; core re-exports each one at its old path |
@@ -389,7 +389,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound_outcome.rs` | src | s | 1 enum · 1 fn | OutboundDispatchOutcome | Stable outcome vocabulary for outbound dispatch observations |
 | `src/outbound_trigger.rs` | src | s | 1 struct · 1 enum · 9 fn | OutboundIntentSource, OutboundIntentTrigger | Source tags and trigger envelopes for outbound intent records |
 | `src/overlay_bookkeeping.rs` | src | s | 3 const | — | Vault-meta row prefixes a session overlay stages as a write's bookkeeping rather than as content it stages |
-| `src/overlay_db/accessors.rs` | src | m | 2 struct · 33 fn · 3 crate-vis | OverlayDb, OverlayStrDb | ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors |
+| `src/overlay_db/accessors.rs` | src | m | 2 struct · 34 fn · 3 crate-vis | OverlayDb, OverlayStrDb | ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors |
 | `src/overlay_db/iters.rs` | src | s | 7 enum · 1 fn | OverlayDupValues, OverlayIter, OverlayPrefix, OverlayRange, OverlayRevRange, OverlayStrIter, OverlayStrPrefix | Public base-vs-merged iterator enums returned by the accessors (iter/rev/range/prefix/dup/str) |
 | `src/overlay_db/merge.rs` | src | m | 4 struct · 11 crate-vis | MergedPrefixRows, MergedRows, PrefetchedMergedRows, StrMergedRows | Base/overlay merge engine: MergedRows state machine, prefix/prefetch/str adapters, ordering and… |
 | `src/overlay_db/mod.rs` | src | s | 3 mod · 1 re-export | — | Per-database accessor seam for the session write-overlay (ARCH-0052, D2) |
@@ -473,7 +473,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/scan_kind_table.rs` | src | m | 2 fn · 2 const | — | Each engine scan's list, closed code, the threshold it asks past and its row's tag; split from `engine_scan`… |
 | `src/scope_summary.rs` | src | s | 3 mod | — | Store-layer modules of core `scope_summary`; core re-exports each one at its old path |
 | `src/scope_summary/arc_work.rs` | src | s | 4 struct · 3 enum · 4 fn · 1 const | ArcChildPlan, ArcMember, ArcRange, ArcReduceRow, ArcWorkState, ChildMode, MemberKind | An Arc composed in parts (FIX 7509 PR3, SUMMARY-SOURCE = A): an Arc whose input does not fit one call on its… |
-| `src/scope_summary/codec.rs` | src | m | 3 struct · 7 fn | ScopeSummaryBody, SummarySourceMessage, SummarySourceNote | Strict, versioned scope-summary MessagePack codec (distinct from epochs) |
+| `src/scope_summary/codec.rs` | src | m | 3 struct · 8 fn | ScopeSummaryBody, SummarySourceMessage, SummarySourceNote | Strict, versioned scope-summary MessagePack codec (distinct from epochs) |
 | `src/scope_summary/public_types.rs` | src | s | 8 struct · 1 enum | SummaryKeepRequest, SummaryKeepResult, SummaryPath, SummaryProposalRequest, SummaryQueued, SummaryReadRequest, SummaryRegenerateRequest, SummarySpan +1 | Typed SUMMARY doors over the retained scope-summary and entity-document APIs |
 | `src/secret_lease.rs` | src | s | 6 mod | — | Store-layer modules of core `secret_lease`; core re-exports each one at its old path |
 | `src/secret_lease/admission.rs` | src | s | 1 fn | — | The one cap-only admission rule, pure + door-side halves |
@@ -522,16 +522,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/session_overlay/hygiene_tests.rs` | test | s | 1 struct · 1 enum · 7 fn | ObservedAllocator, ShortIdScratch | Allocation-boundary teardown observer for session-owned buffers |
 | `src/session_overlay/journal.rs` | src | m | 4 struct · 1 enum · 10 fn · 4 crate-vis | JournalEntry, JournalRole, JournalScope, PromotePlan, PublishedEntry | Typed session-overlay journal: entries, promotion plans, and replay |
 | `src/session_overlay/keyspace.rs` | src | m | 1 enum · 1 fn · 13 crate-vis | OverlayKeyspace | Overlay keyspace manifest: the 28 named databases and their mutations |
-| `src/session_overlay/mod.rs` | src | s | 7 mod · 6 re-export | — | In-memory session write-overlay substrate (ARCH-0052, D1) |
+| `src/session_overlay/mod.rs` | src | s | 7 mod · 7 re-export | — | In-memory session write-overlay substrate (ARCH-0052, D1) |
 | `src/session_overlay/overlay/held.rs` | src | s | 11 crate-vis | — | What the overlay's readers hold beyond its published state, counted in what the overlay retains (FIX 11083)… |
 | `src/session_overlay/overlay/lifecycle.rs` | src | m | 1 struct · 8 fn · 10 crate-vis | SessionOverlay | Overlay lifecycle state machine, leases, seal/rearm/close |
-| `src/session_overlay/overlay/mod.rs` | src | s | 1 fn · 8 mod · 3 re-export · 4 crate-vis | — | Ephemeral in-memory write overlay for one live session (ARCH-0052, D1) |
+| `src/session_overlay/overlay/mod.rs` | src | s | 1 fn · 9 mod · 3 re-export · 4 crate-vis | — | Ephemeral in-memory write overlay for one live session (ARCH-0052, D1) |
 | `src/session_overlay/overlay/publication.rs` | src | s | 1 fn | — | Visibility of a segment whose base writer has already committed |
 | `src/session_overlay/overlay/repo_projection.rs` | src | s | 2 fn | — | Room-staged media vectors a later mark makes stale (FIX 7608 S3F, FIX 10407): the room's cached vectors of a… |
 | `src/session_overlay/overlay/retained.rs` | src | s | 8 crate-vis | — | The memory a room's overlay actually retains, the bytes its host's retained-memory line is charged (FIX… |
 | `src/session_overlay/overlay/retire.rs` | src | s | 1 fn | — | Promoted-closure retirement reusing the store's index-key builders |
 | `src/session_overlay/overlay/retire_selected.rs` | src | m | 1 fn | — | Selected-artifact retirement for a natively saved subset (FIX 13687) |
 | `src/session_overlay/overlay/retrieval_erase.rs` | src | m | 1 struct · 1 fn | RecordMetaRows | A room's copies of a deleted or erased record's own retrieval rows (FIX 17382) |
+| `src/session_overlay/overlay/room_secrets.rs` | src | m | 1 struct · 6 fn · 2 const · 4 crate-vis | KeptRoomSecret | An off-record room's own secret custody (ROOM-LOCAL-CUSTODY; the lead's ruling of 21 Nov, "fingerprint only… |
 | `src/session_overlay/overlay/rows.rs` | src | m | 16 fn · 2 crate-vis | — | Row staging, preflight, budget checks, read probes |
 | `src/session_overlay/overlay/segment.rs` | src | m | 1 struct · 2 fn · 1 re-export · 4 crate-vis | TxnSegmentGuard | Txn segment install, leases, commit/apply guards |
 | `src/session_overlay/overlay/segment/base_retirement.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | BaseRowRetirementGuard | Canonical reader-ledger writes that supersede rows in a sealed overlay |
@@ -556,7 +557,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/snapshot_lifecycle.rs` | src | s | 2 struct · 1 trait · 2 fn · 1 type · 4 re-export | Gate, SnapshotAdmission, SnapshotRuntime | A vault's inference snapshot lifecycle (DESIGN-V2 §7 "On vault lock", V2-R3): the admission generation and… |
 | `src/snapshot_lock_result.rs` | src | s | 3 struct · 1 const | SnapshotLockReceipt, SnapshotRelease, SnapshotWorkerAbort | Results of releasing inference snapshot state before a vault lock |
 | `src/source_audience_obligation.rs` | src | s | 1 enum · 3 fn · 1 const | SourceAudienceObligation | The source-audience obligation (fix list row 16256): one engine-owned key in a bound row's own MessagePack… |
-| `src/store_clock.rs` | src | m | 2 struct · 2 trait · 20 fn · 1 const · 1 mod | Clock, IdGen, LeaseRenewal, StoreClock | Per-store clock and id source |
+| `src/store_clock.rs` | src | m | 2 struct · 2 trait · 21 fn · 1 const · 1 mod | Clock, IdGen, LeaseRenewal, StoreClock | Per-store clock and id source |
 | `src/store_clock/lease_journal.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | LeaseJournal | The authorization clock's lease journal (FIX 12023 W0, review #4484 P1-B; L02 11-04 13:53 = A) |
 | `src/store_clock/tests.rs` | test | s | — | — | The store clock's reads, observed through what a caller gets back |
 | `src/structural_kind_registry.rs` | src | s | 1 mod | — | Store-layer modules of core `store::structural_kind_registry`; core re-exports each one at its old path |
@@ -603,7 +604,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/claim_body/evidence_refs.rs` | src | s | 2 struct · 1 enum · 3 fn · 1 const · 1 crate-vis | CursorSpan, EvidenceKind, EvidenceRef | Typed document citations a claim's evidence carries (ARCH-0032, FIX 904): the [`EvidenceRef`] vocabulary… |
 | `src/write_envelope/claim_body/lexical_query_hint.rs` | src | s | 1 struct · 6 fn · 3 const | LexicalQueryHintValue | Codec primitives for `core.lexical.query_hint` side records |
 | `src/write_envelope/claim_body/made_by.rs` | src | s | 1 enum · 3 fn | MadeByClass | The provenance class a stored claim offers to readers |
-| `src/write_envelope/claim_body/mod.rs` | src | m | 4 struct · 1 enum · 5 fn · 10 const · 2 mod · 11 re-export · 1 crate-vis | ClaimBody, ClaimSubject, SessionClaimBundle, SessionClaimBundleClaim, SessionClaimBundleMember | The stored CLAIM body, its MessagePack codec, scope stamps and citations |
+| `src/write_envelope/claim_body/mod.rs` | src | m | 4 struct · 1 enum · 5 fn · 11 const · 2 mod · 11 re-export · 1 crate-vis | ClaimBody, ClaimSubject, SessionClaimBundle, SessionClaimBundleClaim, SessionClaimBundleMember | The stored CLAIM body, its MessagePack codec, scope stamps and citations |
 | `src/write_envelope/claim_body/relationship_scope.rs` | src | s | 1 struct · 11 fn · 1 type | RelationshipSet | CLAIM relationship scope sets (ARCH-0022): the relationship key holds everything (`all`), a set of… |
 | `src/write_envelope/claim_body/scope.rs` | src | s | 1 fn · 1 crate-vis | — | The engine-RECOGNIZED entries inside a claim's otherwise opaque `scope` map, and their fail-closed… |
 | `src/write_envelope/claim_body/scope_stamp.rs` | src | s | 5 fn · 1 const · 1 re-export | — | Stable CLAIM scope identifiers and their MessagePack representation |
@@ -691,5 +692,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/side_key_hex_case.rs` | test | s | — | — | UC-06 PR 0a (HEX-CASE-POLICY = A, Engine RULING 14:31 Sun 15 Nov: "Stored and wire forms stay… |
 | `tests/side_key_pins.rs` | test | m | — | — | UC-06 PR 1 K-proof: the ten `oneiron-store` side-table keys that PR 1 derives spell the same bytes and read… |
 | `tests/source_ranking_tie_order.rs` | test | s | — | — | RERANK-GROUP-ORDER = A, at a weakest reranked score of zero (review round 2 of #8383): the rerank ladder… |
+| `tests/store_clock_monotonic_domain.rs` | test | s | — | — | A store clock reads elapsed time in one clock domain for its whole life (review round 1 of #9778, FIX-LIST… |
 | `tests/store_envelope_register_names.rs` | test | s | — | — | The names of 6 name lists in `oneiron-store`, one line per row, generated from… |
 | `tests/store_records_register_names.rs` | test | m | — | — | The names of 11 name lists in `oneiron-store`, one line per row, generated from… |

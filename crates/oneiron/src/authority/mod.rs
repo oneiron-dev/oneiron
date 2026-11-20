@@ -32,6 +32,7 @@
 
 pub use crate::gate::manifest_authenticity::ManifestContribution;
 
+mod account_key_read;
 mod act_standing;
 mod admission;
 mod adopted_build;
@@ -143,10 +144,12 @@ mod origin_cut;
 mod owner_act;
 mod owner_choice;
 mod owner_delegate;
+mod owner_key_changes;
 mod owner_key_enrollment;
 mod owner_key_enrollment_door;
 mod owner_key_line;
 mod owner_key_move_confirm;
+mod owner_key_removal_door;
 mod owner_key_vouch;
 mod owner_project_slip;
 mod owner_proof;
@@ -161,6 +164,7 @@ mod principal_standing;
 mod readonly_fold;
 mod recover_many;
 mod recovery;
+mod recovery_authority_generation;
 mod restored_join;
 mod restored_join_door;
 mod retired_signers;
@@ -451,24 +455,29 @@ pub use observation_policy::*;
 pub(crate) use origin_cut::OriginCutStanding;
 pub use owner_act::{ActAuthority, GrantedAct, KeyWork};
 pub(crate) use owner_act::{
-    GrantStanding, authority_refusal_as, authority_refused, grant_omission, grant_standing_in_txn,
-    owner_act_signer_admits,
+    GrantStanding, agent_grantable_act_verbs, authority_refusal_as, authority_refused,
+    grant_omission, grant_standing_in_txn, owner_act_signer_admits,
 };
 pub use owner_choice::OwnerChoiceHead;
 pub(crate) use owner_delegate::{
     OwnerDelegate, delegate_reads_in_txn, is_owner_delegate_verb, owner_delegate_in_txn,
 };
 pub use owner_delegate::{OwnerOrDelegate, owner_delegate_admits};
+pub use owner_key_changes::{OwnerKeyChange, OwnerKeyChangeKind};
 pub(crate) use owner_key_enrollment_door::ActivationPredecessor;
 pub use owner_key_enrollment_door::{
-    EnrolledOwnerKey, EnrolledOwnerKeyKind, EnrolledOwnerPasskey, OwnerKeyEnrollment,
-    OwnerKeyEnrollmentReceipt, OwnerPasskeyEnrollment, OwnerPasskeyEnrollmentReceipt,
-    PreparedOwnerKeyEnrollment, WaysBack,
+    EnrolledOwnerKey, EnrolledOwnerKeyKind, EnrolledOwnerPasskey, OwnerKeyBindingReceipt,
+    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, OwnerPasskeyEnrollment,
+    OwnerPasskeyEnrollmentReceipt, PreparedOwnerKeyBinding, PreparedOwnerKeyEnrollment, WaysBack,
 };
 pub use owner_key_move_confirm::{
     OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED, OWNER_KEY_MOVE_NO_HELD_KEY, OWNER_KEY_MOVE_NOT_PLANNED,
     OWNER_KEY_MOVE_NOT_SYNCED, OWNER_KEY_MOVE_PLAN_STALE, OWNER_KEY_MOVE_SIGNER_NOT_EXECUTORS,
     OwnerKeyMovePlan, OwnerKeyMoveSigner, sign_owner_key_move,
+};
+pub use owner_key_removal_door::{
+    EndedOwnerKey, LastDeviceKeyConfirmation, MachineRemoval, MachineRemovalReceipt,
+    OwnerKeyRemoval, RemainingOwnerKeys,
 };
 #[cfg(oneiron_test_support)]
 pub(crate) use owner_key_vouch::require_holding_machine;
@@ -503,6 +512,7 @@ pub use slip_vault::{
     ConnectOffer, ConnectRescopeOffer, ConnectWindow, GuestDocumentContext, GuestDocumentEnvelope,
     HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT, HostSlipIssuer, ScopeOpeningKey,
 };
+pub(crate) use slip_vault::{ConnectOfferTerms, fresh_pact_id};
 pub use step_up::{
     EnrolledPasskey, EnrolledTotp, PasskeyAssertion, PasskeyDescriptor, PasskeyRegistration,
     STEP_UP_CHALLENGE_STALE, STEP_UP_CHALLENGE_TTL_SECS, STEP_UP_NO_PASSKEY, STEP_UP_NOT_HOLDER,
@@ -581,6 +591,7 @@ pub(crate) use log_budget::{
 pub(crate) use log_structure::carried_rows_never_applied_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use owner_key_line::tail_reaches_old_parents_past_rows_for_test;
+pub(crate) use owner_proof::OwnerProofSigner;
 pub(crate) use owner_work::{RootBasisCheck, check_root_basis};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
 #[cfg(oneiron_test_support)]
@@ -591,7 +602,12 @@ pub(crate) use pinned_root::{
     end_request_wait_in_txn, ended_request_wait, read_pin_and_earlier_in_txn, read_pin_row_in_txn,
     write_awaited_root_in_txn, write_pinned_root_in_txn,
 };
-pub(crate) use policy_setting_choice::PolicySettingAct;
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use policy_setting_choice::SettingFrontier;
+pub(crate) use policy_setting_choice::{
+    ChoiceCount, ChoiceCounts, PolicySettingAct, SettingSlotAct, SettingSlotFold, SettingSlotHead,
+    SettingSlotRow,
+};
 pub(crate) use principal_standing::{
     GIT_PUSH_PACT_STANDING_LAPSED, git_push_pact_standing_lapsed_in_txn,
 };
@@ -613,9 +629,7 @@ pub(crate) use readonly_fold::{
 };
 use readonly_fold::{authority_log_rows_in_txn, decode_stored_authority_log_body};
 pub(crate) use recovery::arriving_re_root;
-pub(crate) use retired_signers::{
-    authority_row_held, authority_row_resident, door_ancestor_row, stored_authority_row,
-};
+pub(crate) use retired_signers::{authority_row_resident, door_ancestor_row, stored_authority_row};
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
 
 // Module-internal only: nothing here leaves `authority`.
@@ -626,6 +640,7 @@ use machine_profile::{
     KeyClaim, MachineChain, MarkProof, apply_anchor_profile, apply_machine_profile,
     merge_machine_maps,
 };
+pub(crate) use machine_write::authority_heads_with_ancestor_counts;
 pub(crate) use machine_write::{
     MACHINE_SIGNATURE_KEY, evidence_without_machine_signature, history_control_read_admitted,
     machine_claim_needs_history, machine_claim_needs_history_observing,

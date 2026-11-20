@@ -775,6 +775,38 @@ impl Vault {
                     "the seeded policy manifest was not upgraded; the vault keeps its own until the next open"
                 ),
             }
+            // The engine pack weighs this build's setting defaults against what the vault
+            // accepted: a tighter one lands, a looser one waits for the owner's yes. A failure
+            // leaves the accepted defaults as they are; the next open tries again.
+            match vault.apply_engine_pack() {
+                Ok(Some(applied)) => tracing::info!(
+                    landed = applied.landed.len(),
+                    moved = applied.moved.len(),
+                    proposed = applied.proposed.len(),
+                    lost = applied.lost.len(),
+                    "the engine pack weighed this build's setting defaults"
+                ),
+                Ok(None) => {}
+                Err(error) => tracing::warn!(
+                    kind = ?error.kind(),
+                    "the engine pack's setting defaults were not weighed; the vault keeps the ones it accepted until the next open"
+                ),
+            }
+            // Setting rows are written again from their signed acts where those moved since the
+            // last pass, or where this build learned a key an act names (stage 7a-2). A failure
+            // leaves the rows as they are; the next authority commit or open tries again.
+            match vault.project_settings() {
+                Ok(projected) if projected.rows_changed > 0 => tracing::info!(
+                    moved = projected.moved,
+                    rows_changed = projected.rows_changed,
+                    "setting rows were written from their signed acts"
+                ),
+                Ok(_) => {}
+                Err(error) => tracing::warn!(
+                    kind = ?error.kind(),
+                    "the setting rows were not projected from their signed acts; the next authority commit or open tries again"
+                ),
+            }
             if seed_content {
                 crate::skill_hub::seed_bootstrap_skills(&vault)?;
                 crate::skill_hub::pack_catalog::seed_builtin_packs(&vault)?;
@@ -999,9 +1031,9 @@ impl Vault {
     }
 
     /// Shallow-compact `id`'s document row during a sweep. Returns whether the
-    /// compaction ran: an attached manager decides for its own live handles,
-    /// and an attached-but-dropped manager defers rather than rewriting a row a
-    /// live document may still persist over.
+    /// compaction ran: an attached manager compacts under its own live
+    /// handle's writer lock, and an attached-but-dropped manager defers rather
+    /// than rewriting a row a live document may still persist over.
     #[cfg(feature = "sync")]
     pub(crate) fn compact_document_for_sweep(
         &self,
@@ -1012,7 +1044,7 @@ impl Vault {
             crate::Error::InvariantViolation("document manager attachment poisoned")
         })?;
         match manager.upgrade() {
-            Some(manager) => manager.compact_closed_document(id, erased),
+            Some(manager) => manager.compact_document_for_sweep(id, erased),
             None if self
                 .live_window_manager_attached
                 .load(std::sync::atomic::Ordering::Acquire) =>

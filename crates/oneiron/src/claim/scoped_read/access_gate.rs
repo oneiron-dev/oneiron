@@ -16,6 +16,7 @@ use crate::registry::{
 use crate::store::Store;
 use oneiron_authority::federation::Scope;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 fn private_scope(scope: Option<&rmpv::Value>) -> bool {
     let Some(scope) = scope else { return false };
@@ -56,7 +57,12 @@ pub(crate) fn claim_access_axes(body: &ClaimBody) -> (RelationshipScope, bool) {
 /// ([`Self::judge_cited_coreference`]); only that row leaves its endpoint
 /// check to the walk. The seventh holds each room's admission of a
 /// retrieval hit for this read in this serving txn ([`Self::room_verdicts`],
-/// L9-52); no other row checks share it.
+/// L9-52); no other row checks share it. The eighth names the one record a
+/// named read judges through its cleanup archive
+/// ([`Self::reading_archive_of`]). The ninth holds, for the same serving
+/// txn, whether each owner's relationship exemption holds there
+/// ([`Self::owner_exemption_holds_in`]); every row check of that txn, a
+/// peer's included, shares it.
 #[derive(Default)]
 pub(super) struct HeldAuthority(
     RefCell<Option<AccessContextSnapshot>>,
@@ -66,7 +72,16 @@ pub(super) struct HeldAuthority(
     bool,
     Option<EntityId>,
     RoomVerdicts,
+    Option<EntityId>,
+    OwnerExemptions,
 );
+
+/// Whether each owner's relationship exemption holds in one serving txn, by
+/// owner ([`HeldAuthority::owner_exemption_holds_in`]). The verdict depends
+/// on that snapshot and the owner alone, so the row checks of the txn share
+/// one.
+#[derive(Clone, Default)]
+pub(super) struct OwnerExemptions(Rc<RefCell<Vec<(EntityId, bool)>>>);
 
 impl HeldAuthority {
     /// The row checks of one serving txn whose filter the read resolved from
@@ -80,6 +95,8 @@ impl HeldAuthority {
             false,
             None,
             RoomVerdicts::default(),
+            None,
+            OwnerExemptions::default(),
         )
     }
 
@@ -95,6 +112,8 @@ impl HeldAuthority {
             self.4,
             self.5,
             RoomVerdicts::default(),
+            self.7,
+            OwnerExemptions::default(),
         )
     }
 
@@ -112,13 +131,15 @@ impl HeldAuthority {
             self.4,
             self.5,
             RoomVerdicts::default(),
+            self.7,
+            self.8.clone(),
         )
     }
 
     /// A peer's row checks in this read's serving txn: its own relationship
-    /// authority and legal non-use conjunct, under its own floor alone, and
-    /// this read's Grants and class verdicts, where it reads its own actor's
-    /// entry and its own reader's verdicts.
+    /// authority, legal non-use conjunct and archive conjunct, under its own
+    /// floor alone, and this read's Grants and class verdicts, where it reads
+    /// its own actor's entry and its own reader's verdicts.
     pub(super) fn for_peer(&self) -> Self {
         Self(
             RefCell::default(),
@@ -128,7 +149,21 @@ impl HeldAuthority {
             self.4,
             self.5,
             RoomVerdicts::default(),
+            None,
+            self.8.clone(),
         )
+    }
+
+    /// These row checks for a named read of `id` through its cleanup archive
+    /// (ARCH-0055 section 10, archive-visible: "The archive stays visible to
+    /// the resolver"): `id`'s row lifts only the archive's own conjuncts, so
+    /// a removal, a stale mark, a legal-hold use limit, a stale body and a
+    /// withdrawn source still refuse it, and every other gate of the lane
+    /// judges it as before. Every other row, each source `id` was written
+    /// from and every peer's check included, keeps the archive conjunct.
+    pub(super) fn reading_archive_of(mut self, id: EntityId) -> Self {
+        self.7 = Some(id);
+        self
     }
 
     /// `judge` over the row checks of a record an `edge.provenance` or
@@ -154,6 +189,48 @@ impl HeldAuthority {
         self.judge_cited_with_coreference(Some(id), judge)
     }
 
+    /// `judge` over one ref of a batch ref check
+    /// ([`super::ScopedRead::refs_readable_each`]), in this serving txn: this
+    /// call's relationship authority, lent to `judge` and taken back after it
+    /// as [`Self::judge_cited`] lends it, and this call's owner-exemption
+    /// verdicts, with the ref's own Grants, class verdicts and room
+    /// admissions, as a lone ref check holds them (blind review round 1 of
+    /// #9925). So a Grant that ends between two refs refuses the later one,
+    /// and one ref's class verdict never stands in for another's own check.
+    /// The relationship authority is lent only while `txn`'s authorization
+    /// time stands where it was loaded; a ref judged at a later time loads
+    /// its own, as a lone ref check does, so a relationship AccessGrant that
+    /// expires between two refs refuses the later one (round 2). A load in
+    /// one txn at one time reads the same authority, so the lent one changes
+    /// no verdict.
+    pub(super) fn judge_ref<T>(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        judge: impl FnOnce(&Self) -> Result<T>,
+    ) -> Result<T> {
+        let mut held = self.0.take();
+        if let Some(loaded_at) = held.as_ref().map(AccessContextSnapshot::observed_at)
+            && loaded_at != crate::ports::authorization_floor_in_txn(&vault.store, txn)?
+        {
+            held = None;
+        }
+        let one = Self(
+            RefCell::new(held),
+            self.1,
+            HeldGrants::fresh(self.2.asked().clone()),
+            ClassVerdicts::default(),
+            self.4,
+            self.5,
+            RoomVerdicts::default(),
+            self.7,
+            self.8.clone(),
+        );
+        let judged = judge(&one);
+        *self.0.borrow_mut() = one.0.into_inner();
+        judged
+    }
+
     fn judge_cited_with_coreference<T>(
         &self,
         id: Option<EntityId>,
@@ -167,6 +244,8 @@ impl HeldAuthority {
             true,
             id,
             RoomVerdicts::default(),
+            None,
+            self.8.clone(),
         );
         let judged = judge(&cited);
         *self.0.borrow_mut() = cited.0.into_inner();
@@ -190,6 +269,12 @@ impl HeldAuthority {
     /// read that asks it on its own.
     pub(super) fn asks_use_of(&self, id: &EntityId) -> bool {
         self.1.as_ref() == Some(id)
+    }
+
+    /// Whether the read judges `id` through its cleanup archive
+    /// ([`Self::reading_archive_of`]).
+    pub(super) fn reads_archive_of(&self, id: &EntityId) -> bool {
+        self.7.as_ref() == Some(id)
     }
 
     /// The Grants this serving txn holds, by reader.
@@ -228,6 +313,33 @@ impl HeldAuthority {
         *held = Some(context);
         Ok(allowed)
     }
+
+    /// Whether `owner`'s relationship exemption holds in `txn`
+    /// ([`crate::memory::owner_exemption_holds_in_txn`]): judged at the
+    /// first row check of this serving txn that asks, then reused. Its
+    /// liveness test folds the identity lifecycle, which no row of the txn
+    /// changes (FIX OWNER-EXEMPTION-LIFECYCLE-FOLD-PER-ROW). A judgement
+    /// that fails holds nothing and is the read's error.
+    pub(super) fn owner_exemption_holds_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        owner: EntityId,
+    ) -> crate::memory::MemoryResult<bool> {
+        let held = self
+            .8
+            .0
+            .borrow()
+            .iter()
+            .find(|(id, _)| *id == owner)
+            .map(|(_, holds)| *holds);
+        if let Some(holds) = held {
+            return Ok(holds);
+        }
+        let holds = crate::memory::owner_exemption_holds_in_txn(vault, txn, owner)?;
+        self.8.0.borrow_mut().push((owner, holds));
+        Ok(holds)
+    }
 }
 
 impl ScopedReadActorKey {
@@ -243,14 +355,35 @@ impl ScopedReadActorKey {
         vault: &crate::Vault,
         txn: &heed::RoTxn<'_>,
     ) -> Result<bool> {
+        self.relationship_gated_by(|owner| {
+            crate::memory::owner_exemption_holds_in_txn(vault, txn, owner)
+        })
+    }
+
+    /// [`Self::relationship_gated_in`] for a row check of the serving txn
+    /// `authority` holds: the owner's exemption is judged once in that txn,
+    /// not once per row ([`HeldAuthority::owner_exemption_holds_in`]).
+    pub(super) fn relationship_gated_held_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        authority: &HeldAuthority,
+    ) -> Result<bool> {
+        self.relationship_gated_by(|owner| authority.owner_exemption_holds_in(vault, txn, owner))
+    }
+
+    fn relationship_gated_by(
+        &self,
+        exemption_holds: impl FnOnce(EntityId) -> crate::memory::MemoryResult<bool>,
+    ) -> Result<bool> {
         if !self.enforce_access_grants {
             return Ok(false);
         }
         let Some(owner) = self.relationship_gate_lift_owner() else {
             return Ok(true);
         };
-        crate::memory::owner_exemption_holds_in_txn(vault, txn, owner)
-            .map(|owner| !owner)
+        exemption_holds(owner)
+            .map(|holds| !holds)
             .map_err(|refusal| {
                 crate::error::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(
                     Box::new(refusal),
@@ -295,10 +428,16 @@ impl ScopedRead<'_> {
         read(&txn)
     }
 
-    /// Whether this read's relationship gate binds in `txn`; see
-    /// [`ScopedReadActorKey::relationship_gated_in`].
-    pub(super) fn relationship_gated_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
-        self.actor_key.relationship_gated_in(self.vault, txn)
+    /// Whether this read's relationship gate binds in `txn`, the serving txn
+    /// `authority` holds; see
+    /// [`ScopedReadActorKey::relationship_gated_held_in`].
+    pub(super) fn relationship_gated_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        authority: &HeldAuthority,
+    ) -> Result<bool> {
+        self.actor_key
+            .relationship_gated_held_in(self.vault, txn, authority)
     }
 
     /// Whether the relationship gate admits the claim `id` in `txn`, judged
@@ -312,7 +451,7 @@ impl ScopedRead<'_> {
         body: &ClaimBody,
         authority: &HeldAuthority,
     ) -> Result<bool> {
-        if !self.relationship_gated_in(txn)? {
+        if !self.relationship_gated_in(txn, authority)? {
             return Ok(true);
         }
         let read = RelationshipRead::claim(body);
@@ -334,8 +473,9 @@ impl ScopedRead<'_> {
         space: RelationshipScope,
         private: bool,
         record: &Scope,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
-        if !self.relationship_gated_in(txn)? {
+        if !self.relationship_gated_in(txn, authority)? {
             return Ok(true);
         }
         let read = RelationshipRead::Gated {
@@ -389,7 +529,7 @@ impl ScopedRead<'_> {
         raw: &[u8],
         authority: &HeldAuthority,
     ) -> Result<bool> {
-        if !self.relationship_gated_in(txn)? {
+        if !self.relationship_gated_in(txn, authority)? {
             return Ok(true);
         }
         // The row's position is content, read where this read reads it: a
@@ -411,6 +551,7 @@ impl ScopedRead<'_> {
         authority.relationship_allows_in(self.vault, txn, self.actor_key.principal_ref, |context| {
             read.allowed_by_snapshot(context)
                 || self.conversation_message_granted_in(txn, id, &read, context)
+                || self.work_talk_message_readable_in(txn, id, &read)
         })
     }
 
@@ -454,6 +595,105 @@ impl ScopedRead<'_> {
                     .map_or(conversation, |stretch| stretch.room_of(conversation));
                 context.allows_conversation_message_at_snapshot(conversation, record)
             })
+    }
+
+    /// Whether the MESSAGE `id` is part of a work-talk conversation whose
+    /// binding admits this lane's reader (L7-05): the binding stands in for
+    /// the relationship check alone, as a `ConversationMessages` grant does
+    /// ([`Self::conversation_message_granted_in`]), and only for a MESSAGE
+    /// that names no relationship and no private scope. Every other check on
+    /// the row still binds. Edges that do not read admit nothing.
+    fn work_talk_message_readable_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        read: &RelationshipRead,
+    ) -> bool {
+        let RelationshipRead::Gated {
+            kind: ENTITY_TYPE_MESSAGE,
+            space: None,
+            private: false,
+            ..
+        } = read
+        else {
+            return false;
+        };
+        self.work_talk_row_readable_in(txn, id, ENTITY_TYPE_MESSAGE)
+    }
+
+    /// Whether the row `id` of `kind` sits in a work-talk conversation whose
+    /// binding admits this lane's reader (L7-05): the conversation itself,
+    /// or a TURN or MESSAGE whose one room is that conversation
+    /// ([`crate::conversation::room_for_record_in`], the room a leader chat's
+    /// message scope reads). A row whose ancestry reaches a second room (an
+    /// extra `PartOf` or `ChildOf` edge into the work talk) is ambiguous and
+    /// withheld, so no edge added later lends the binding to another room's
+    /// row. The two bound PERSONs read as ledger members on any lane (the
+    /// companion's PERSON never holds a handle; the rule exists so room-turn
+    /// peer conjuncts pass); the two bound AGENT_DEF actors read only on a
+    /// lane bound to that conversation's room turn, so plain grant-gated
+    /// doors stay closed for them. Any failure to read the room or the
+    /// binding withholds the row. No grant is minted or consulted; every
+    /// other gate still binds.
+    pub(super) fn work_talk_row_readable_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        kind: u8,
+    ) -> bool {
+        self.work_talk_row_room_in(txn, id, kind).is_some()
+    }
+
+    /// The work-talk conversation whose binding admits this lane's reader
+    /// to the row `id` of `kind` ([`Self::work_talk_row_readable_in`]):
+    /// the conversation itself, or the one room of a TURN or MESSAGE.
+    /// `None` when no binding admits it there. A binding-only floor reads a
+    /// row only when this is the talk its filter names
+    /// (WORK-TALK-BINDING-RECALL-FLOOR).
+    pub(super) fn work_talk_row_room_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        kind: u8,
+    ) -> Option<EntityId> {
+        let room = match kind {
+            ENTITY_TYPE_CONVERSATION => *id,
+            ENTITY_TYPE_TURN | ENTITY_TYPE_MESSAGE => {
+                match crate::conversation::room_for_record_in(self.vault, txn, *id) {
+                    Ok(Some(room)) => room,
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        self.work_talk_conversation_admits_in(txn, &room)
+            .then_some(room)
+    }
+
+    /// Whether `conversation` carries a work-talk binding that admits this
+    /// lane's reader: a bound PERSON on any lane, or a bound actor on a lane
+    /// bound to this conversation's room turn. Fail closed.
+    fn work_talk_conversation_admits_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        conversation: &EntityId,
+    ) -> bool {
+        let Ok(reader) = EntityId::from_hex(self.actor_key.actor_ref()) else {
+            return false;
+        };
+        let Ok(Some(binding)) =
+            crate::workspace_roster::work_talk_binding_in_txn(self.vault, txn, *conversation)
+        else {
+            return false;
+        };
+        reader == binding.member_person
+            || reader == binding.companion_person
+            || ((reader == binding.member_actor || reader == binding.companion_actor)
+                && self
+                    .actor_key
+                    .room_turn
+                    .as_ref()
+                    .is_some_and(|turn| turn.room == *conversation))
     }
 
     /// The targets of `id`'s outgoing `kind` edges whose rows are of

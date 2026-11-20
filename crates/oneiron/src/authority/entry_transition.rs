@@ -335,6 +335,16 @@ fn fold_merged_entry(
     ) {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
+    // A carried act whose own transition reads no proof may carry one owner
+    // key's proof beside its carrier's install signature, judged here once at
+    // the parent state (row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS): it
+    // moves no fold state, and buys only the owner reserve at an install the
+    // act did not come from ([`super::log_budget`]).
+    if super::owner_proof::proof_judged_at_merge(&entry.op)
+        && let Err(issue) = super::owner_proof::owner_proof_key(&state, entry, hash)
+    {
+        return EntryFold::Invalid(issue);
+    }
     // A frontier join stands for its parents' merge, signed by the key that
     // signs the act it leads to (FIX 7908): only its signer's sequence moves.
     if let AuthorityOp::FrontierJoin(join) = &entry.op {
@@ -517,6 +527,23 @@ fn fold_merged_entry(
             &mut state,
             entry,
             set,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
+    // So is a move's setting copy, on each carried row's frontier, signed by
+    // its carrier alone with no owner act (stage 7a-4).
+    if let AuthorityOp::SettingCopy(copy) = &entry.op {
+        if let Err(issue) = super::policy_setting_choice::apply_setting_copy(
+            &mut state,
+            entry,
+            copy,
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
@@ -951,6 +978,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::FullCopyMark(_)
         | AuthorityOp::AgentGrantAct(_)
         | AuthorityOp::PolicySettingSet(_)
+        | AuthorityOp::SettingCopy(_)
         | AuthorityOp::ExportAct(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)

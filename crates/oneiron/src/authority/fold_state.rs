@@ -73,6 +73,15 @@ pub struct AuthorityFold {
     pub(super) passkey_limited_keys: BTreeSet<AuthorityKey>,
     /// The handoffs whose fences stand: settled, or in conflict.
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    /// The revocations (`RevokeDevice`) whose fences closed in a conflict:
+    /// each fences another of them round a cycle (two removals that cross,
+    /// or a ring of them), so the fold counts none of them and the key each
+    /// revokes ends all the same (`retired_signers`). A counted root
+    /// appointment keeps those its proof fold closed in its line. The owner's
+    /// key changes list names such a removal (row
+    /// OWNER-KEY-CHANGES-RING-CROSSING-UNLISTED).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub crossed_revocations: BTreeSet<AuthorityEntryHash>,
     /// Owner dismissed saving the recovery secret and no second device has enrolled.
     pub genesis_fragile: bool,
     /// Fold-derived federation pact states keyed by pact id.

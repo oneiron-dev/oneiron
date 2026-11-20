@@ -247,10 +247,11 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
             id: *id,
         }));
     }
-    // Structure, signature and vault are not standing: a key a handoff
-    // retired signs nothing new here, and nothing new stands on a row one
-    // signed, so its fork never reaches the log. An adopted checkpoint image
-    // answers for the history it covers.
+    // Structure, signature and vault are not standing: a retired key (one a
+    // handoff, a counted root appointment or a revocation retired) signs
+    // nothing new here, and nothing new stands on a row one signed, so its
+    // fork never reaches the log. An adopted checkpoint image answers for
+    // the history it covers.
     let evidence = if resident {
         None
     } else {
@@ -259,17 +260,15 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
     if !resident
         && crate::authority::door_refuses_retired_standing(
             store,
+            posture,
             &local_fold,
             &entry_hash,
             &entry,
             &mut |hash| crate::authority::door_ancestor_row(store, wtxn, evidence.as_deref(), hash),
-            &mut |hash| {
-                crate::authority::authority_row_held(store, wtxn, evidence.as_deref(), hash)
-            },
         )?
     {
         return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
-            "authority row signed by a key a handoff retired",
+            "authority row standing on a retired key",
         )));
     }
     // A hosted vault whose host still serves refuses a ReRoot by a key the

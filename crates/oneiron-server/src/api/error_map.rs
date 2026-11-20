@@ -143,6 +143,34 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
             },
             ["Start a work companion in this workspace; its policy refuses a brought one."],
         ),
+        ErrorKind::OneVaultSettingUnreadable => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::Forbidden {
+                required_scope: None,
+            },
+            ["Repair the vault's policy manifest, then retry onboarding."],
+        ),
+        ErrorKind::WorkTalkStaysWithMember => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::Forbidden {
+                required_scope: None,
+            },
+            ["Keep this talk in the member's vault while one-vault mode is off."],
+        ),
+        ErrorKind::OneVaultNotTold => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::Forbidden {
+                required_scope: None,
+            },
+            ["Acknowledge the one-vault notice in person before opening work talk."],
+        ),
+        ErrorKind::NoBroughtCompanion => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::Forbidden {
+                required_scope: None,
+            },
+            ["Use the existing company-homed conversation with the work companion."],
+        ),
         ErrorKind::HeadAdvanceOffTrunk => ApiError::invalid_state(Some("head_advance_off_trunk")),
         ErrorKind::DagParentOutsideConversation => {
             ApiError::invalid_state(Some("dag_parent_outside_conversation"))

@@ -23,6 +23,7 @@ mod lag_resync_tests;
 mod leaf_keys;
 mod lfs_chunks;
 mod mcp_socket;
+pub(crate) mod member_lane;
 pub(crate) mod mesh;
 #[cfg(test)]
 mod note_socket_tests;

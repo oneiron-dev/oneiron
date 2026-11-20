@@ -53,7 +53,24 @@ impl Vault {
         // any write lock. This rendezvous is a no-op in non-test builds.
         signal_after_delete_probe(self);
         signal_delete_rendezvous(self, DeleteRendezvous::BeforeFirstDeletionTxn, id, None);
-        self.reserve_user_brief_delete(id, reason, gate, owner)?;
+        let fence = self.reserve_user_brief_delete(id, reason, gate, owner)?;
+        let outcome =
+            self.delete_reserved_without_header(id, reason, requested_at, gate, due, owner);
+        crate::deletion::conclude_brief_delete(fence, &self.store, outcome)
+    }
+
+    /// [`Self::delete_entity_without_header`] past its reservation: its
+    /// tombstone publishes, its residue purges, and a hard purge writes its
+    /// receipt. Its outcome concludes the reservation's hold.
+    fn delete_reserved_without_header(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+        requested_at: u64,
+        gate: Option<&GatedDeletion<'_>>,
+        due: Option<&PendingConfirmedErase>,
+        owner: Option<&AuthenticatedOwner>,
+    ) -> Result<DeleteEntityOutcome> {
         // ONE-1149: the deletion request UUID is minted only AFTER the probe
         // above says there is something to erase.
         let request_uuid = uuid::Uuid::from_bytes(self.store.clock.ulid()?);
@@ -244,6 +261,10 @@ impl Vault {
                 &tombstone.request_id,
                 false,
             )?;
+            // With nothing published, this commit linearizes the delete: its brief
+            // fence settles under this writer (a published one settled at its
+            // publication).
+            self.store.brief_delete_fences.settle(id);
             wtxn.commit()?;
             effects.committed(self);
             pending_cloud_revokes.publish();
@@ -256,6 +277,7 @@ impl Vault {
                 receipt_id: None,
                 sweep_key: None,
                 turn_program_details: turn_program_details.clone(),
+                version_release: false,
             });
         }
         let mut affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
@@ -327,6 +349,10 @@ impl Vault {
             crate::attempt_queue::erase_feedback_triage_as_in_txn(&mut erase)?;
         }
         if !reason.writes_receipt() {
+            // With nothing published, this commit linearizes the delete: its brief
+            // fence settles under this writer (a published one settled at its
+            // publication).
+            self.store.brief_delete_fences.settle(id);
             wtxn.commit()?;
             effects.committed(self);
             pending_cloud_revokes.publish();
@@ -339,6 +365,7 @@ impl Vault {
                 receipt_id: None,
                 sweep_key: None,
                 turn_program_details: turn_program_details.clone(),
+                version_release: false,
             });
         }
 
@@ -365,6 +392,10 @@ impl Vault {
             },
             HardEraseSweepExtras::default(),
         )?;
+        // With nothing published, this commit linearizes the delete: its brief
+        // fence settles under this writer (a published one settled at its
+        // publication).
+        self.store.brief_delete_fences.settle(id);
         wtxn.commit()?;
         effects.committed(self);
         pending_cloud_revokes.publish();
@@ -378,6 +409,7 @@ impl Vault {
             receipt_id: Some(receipt_id),
             sweep_key: Some(sweep_key),
             turn_program_details,
+            version_release: false,
         })
     }
 }

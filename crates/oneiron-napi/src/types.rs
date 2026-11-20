@@ -35,6 +35,17 @@ pub struct NapiScoredEntity {
     pub score: f64,
 }
 
+/// The device and runtime that computed a vector a host puts (ARCH-0036
+/// device mark).
+#[napi(object)]
+pub struct NapiVectorProvenance {
+    /// Device family: `cpu`, `cuda`, `metal`, `remote` or `unknown`.
+    pub device: String,
+    /// The runtime's name and version, or the endpoint that answered: 1 to
+    /// 128 bytes with no control characters.
+    pub runtime: String,
+}
+
 /// A subtree entry with entity ID and depth.
 #[napi(object)]
 pub struct NapiSubtreeEntry {

@@ -113,6 +113,11 @@ pub(super) struct CheckpointSafety {
     pub(super) retired_keys: BTreeSet<AuthorityKey>,
     pub(super) handoff_or_appointment_retired_keys: BTreeSet<AuthorityKey>,
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    /// The revocations whose fences closed in a conflict, as the projected
+    /// fold holds them. Absent when empty, as in every history where no two
+    /// removals cross.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) crossed_revocations: BTreeSet<AuthorityEntryHash>,
     pub(super) unsettled: bool,
     pub(super) issues: Vec<AuthorityFoldIssue>,
     pub(super) missing_parents: BTreeSet<AuthorityEntryHash>,
@@ -198,6 +203,27 @@ pub(super) fn covered_of(bytes: &[u8]) -> Result<Vec<AuthorityEntryHash>> {
 }
 
 impl AuthorityCheckpointV2 {
+    /// The slip issuers this image's sequence index holds, for a test that
+    /// compares two images built over the same rows.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn slip_issuers_for_test(&self) -> BTreeSet<AuthorityKey> {
+        self.safety.issuers.clone()
+    }
+
+    /// The rows this image keeps as roster marks, for a test that compares
+    /// two images built over the same rows.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn roster_marks_for_test(&self) -> BTreeSet<AuthorityEntryHash> {
+        self.safety.marks.iter().map(|(hash, _)| *hash).collect()
+    }
+
+    /// The rows this image's restrictive facts were proved on, for a test
+    /// that compares two images built over the same rows.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn revoke_fact_rows_for_test(&self) -> BTreeSet<AuthorityEntryHash> {
+        self.safety.revoke_facts.rows_for_test()
+    }
+
     /// The canonical bytes: the v2 domain, then named MessagePack, after the
     /// shape check. There is no total-image policy ceiling.
     pub fn encode(&self) -> Result<Vec<u8>> {
@@ -303,6 +329,14 @@ impl AuthorityCheckpointV2 {
         {
             return Ok(self);
         }
+        self.drop_residence_bodies();
+        Ok(self)
+    }
+
+    /// What an image past [`AUTHORITY_CHECKPOINT_V2_COMPACTION_BYTES`] keeps
+    /// (FIX 11400): no residence directive's or result's body, each such row
+    /// requiring none, and the overflow marked.
+    pub(super) fn drop_residence_bodies(&mut self) {
         for row in self.rows.values_mut() {
             let is_residence = row.body.as_ref().is_some_and(|body| {
                 decode_authority_log_entry_body(body).is_ok_and(|entry| {
@@ -318,7 +352,6 @@ impl AuthorityCheckpointV2 {
             }
         }
         self.residence_overflow = AUTHORITY_RESIDENCE_BODY_OVERFLOW;
-        Ok(self)
     }
 
     fn shape(&self) -> Result<()> {
@@ -451,6 +484,8 @@ impl AuthorityCheckpointV2 {
         if !aggregate.fold.valid_entries.iter().all(covered)
             || !safety.uncounted.iter().all(covered)
             || !safety.closed_handoffs.iter().all(covered)
+            || !safety.crossed_revocations.iter().all(covered)
+            || safety.crossed_revocations != aggregate.fold.crossed_revocations
             || safety.handoff_or_appointment_retired_keys
                 != aggregate.fold.handoff_or_appointment_retired_keys
             || !safety

@@ -305,6 +305,9 @@ impl Vault {
                     owner,
                     &removed_carriers,
                 )?;
+                // The live document changes next, which linearizes this
+                // delete: its brief fence settles under the publish writer.
+                self.store.brief_delete_fences.settle(id);
                 let vv_before = window.doc.oplog_vv();
                 let (delete_update, (snapshot, owes_compaction), vv) =
                     with_deletion_tombstone_observer_a_suppressed(|| -> Result<_> {
@@ -431,6 +434,9 @@ impl Vault {
                 history_free,
             },
         )?;
+        // This commit linearizes the delete: its brief fence settles under
+        // the publish writer.
+        self.store.brief_delete_fences.settle(id);
         wtxn.commit()?;
         drop(publication);
         self.notify_tombstone_publication(id, &window_key, value);

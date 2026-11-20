@@ -60,6 +60,14 @@ use loro::{CommitOptions, LoroDoc};
 /// (`source_audiences::mirror_record`); one whose binding does not resolve,
 /// or whose words came from a row bound otherwise, stays on this vault
 /// (Engine A, 6 Nov 03:46; `source_audience::withheld_from_replication_in`).
+///
+/// A row kept for storage only under a use limit (a privacy erase a standing
+/// customer hold refused, C6, or a cooperative review restriction) stays on
+/// this vault too: the owner's devices lose it as they lose an erased row,
+/// and it packs again once the limit goes inert (Engine ANSWER
+/// SERVING-DOORS-OWNER-WINDOW-USE-LIMIT = B, 20 Nov 21:19; LEGAL-HOLD-USE = B).
+/// A row the window already carries leaves it through
+/// [`super::use_limited::withhold_use_limited_carriers`].
 /// A packing pass asks it through [`window_packing_excludes_entity_with`].
 #[cfg(test)]
 pub(super) fn window_packing_excludes_entity(
@@ -88,7 +96,9 @@ pub(super) fn window_packing_excludes_entity_with(
         |rtxn| {
             Ok(
                 crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, rtxn, id)?
-                    || crate::settings::device_only_withholds(&vault.store, rtxn, device_only, id)?,
+                    || crate::settings::device_only_withholds(&vault.store, rtxn, device_only, id)?
+                    || crate::store::legal_hold::use_limit_in_txn(&vault.store, rtxn, id)?
+                        .is_some(),
             )
         },
     )? {
@@ -632,6 +642,9 @@ pub(in crate::sync) fn export_scrubbed_window_state(
     doc: &LoroDoc,
 ) -> Result<ScrubbedWindowState> {
     crate::sync::note::refresh(vault, doc, key)?;
+    // A row a use limit keeps here leaves first, so the side-row scrubs
+    // below drop its side rows as a row the window no longer carries.
+    super::use_limited::withhold_use_limited_carriers(vault, doc, Some(key))?;
     scrub_local_claim_carriers(vault, key, doc)?;
     scrub_local_only_carriers(vault, key, doc)?;
     scrub_redacted_attribution_carriers(vault, key, doc)?;

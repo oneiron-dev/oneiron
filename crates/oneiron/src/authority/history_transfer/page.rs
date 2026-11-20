@@ -149,14 +149,11 @@ impl Vault {
         if judge_merged
             && let Some(refused) = retired_standing(
                 &self.store,
+                self.privacy_posture(),
                 &fold,
                 &merged,
                 evidence.as_deref(),
                 &arriving,
-                &mut crate::authority::retired_signers::import_row_held(
-                    &resident,
-                    evidence.as_deref(),
-                ),
             )?
         {
             return Ok(PageVerdict::Retired(refused));

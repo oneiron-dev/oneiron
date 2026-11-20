@@ -232,6 +232,14 @@ impl ExportBody {
             if entity_type == crate::registry::ENTITY_TYPE_FACET {
                 export_substrate_reference(&value, &mut exported, secrets);
             }
+            if entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+                super::export_identity_topology_references::export_identity_topology_references(
+                    bytes,
+                    &value,
+                    &mut exported,
+                    secrets,
+                );
+            }
             // The NOTE codec has one validated binary revision reference.
             // Treating it as arbitrary opaque bytes would null it and make a live
             // edited NOTE's JSON archive impossible to decode on import.
@@ -629,6 +637,13 @@ fn safe_text(text: &str, depth: usize) -> bool {
 /// first, so the mask hides no text the rule would null.
 pub(crate) fn typed_rule_keeps_text(text: &str) -> bool {
     safe_text(text, 0)
+}
+
+/// The tree an export without secrets makes of `value`, a whole body of
+/// `entity_type`, before any codec puts its typed slots back: the tree
+/// [`ExportBody::from_bytes_with`] starts from.
+pub(super) fn nulled_value_tree(value: &Mp, entity_type: u8) -> ExportValue {
+    tree::export_value_tree_with(value, entity_type, 0, ExportSecrets::Nulled)
 }
 
 /// Whether a door that ships `text` beside a row, where no typed rule reads

@@ -10,6 +10,7 @@
 //! never changed here.
 
 use serde::Serialize;
+use serde_json::value::RawValue;
 use serde_json::{Value, json};
 
 use crate::claim::{PointRead, ScopedRead};
@@ -20,6 +21,7 @@ use crate::skill_hub::pack_catalog::PackHookBinding;
 use crate::{EntityId, Error, Result};
 
 use super::super::{VerbCallScope, VerbDomain, served};
+use super::view::ResultView;
 use super::{Chain, phase_token, session};
 
 /// The field a read result gives its narrowing receipt
@@ -32,13 +34,21 @@ const NARROWING_FIELD: &str = "narrowing";
 /// the caller's own.
 pub(super) const WITHHELD: &str = "withheld_by_hook_grant";
 
-/// The host verbs' free text, whose rows no host names (CALLS, FIX 10084):
-/// a compaction window's turn text and a generated turn's text. A hook
-/// whose view is narrower than its caller's reads each as withheld; every
-/// other field of a host verb is the host's own metadata.
-const HOST_FREE_TEXT: [(&str, &[&str]); 2] = [
+/// The verbs' free text whose rows no host names (CALLS, FIX 10084): a
+/// compaction window's turn text, a generated turn's text, and the Claude
+/// Code logs a hook transcript import carries (census L10-17, review round 1
+/// of #9770), raw tool results included. A hook whose view is narrower than
+/// its caller's reads each as withheld; every other field of a host verb is
+/// the host's own metadata. A staged part's text reaches no hook: its row is
+/// transport only (FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER).
+const UNNAMED_FREE_TEXT: [(&str, &[&str]); 4] = [
     ("host.compact", &["window", "*", "content"]),
     ("host.turn.generate", &["text"]),
+    ("vault.imports.hook_transcript", &["transcript_gzip_base64"]),
+    (
+        "vault.imports.hook_transcript",
+        &["subagents", "*", "transcript_gzip_base64"],
+    ),
 ];
 
 /// What one hook may see of its call: the caller's lane, the grant reader's
@@ -122,11 +132,20 @@ struct Input<'i> {
     now: u64,
     /// The caller's view of the verb's result so far; post only.
     #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<&'i Value>,
+    result: Option<&'i Projected<'i>>,
     /// The rows that view serves, when it is a pack, as the hook's served
     /// filter takes them; post only.
     #[serde(skip_serializing_if = "Option::is_none")]
     served: Option<Vec<served::ServedRow<'i>>>,
+}
+
+/// The result as one hook's input shows it: a value projected for that
+/// hook, or a view held as JSON text, written verbatim.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum Projected<'r> {
+    Value(Value),
+    Text(&'r RawValue),
 }
 
 /// One hook's input, as JSON, and the rows whose content it shows.
@@ -171,19 +190,27 @@ impl Chain<'_> {
         id: EntityId,
         binding: &PackHookBinding,
         args: &Value,
-        result: Option<&Value>,
+        result: Option<ResultView<'_>>,
         seen: &HookView<'_>,
     ) -> Result<ProjectedInput> {
         let mut dependencies = Vec::new();
         let mut unattributed = Unattributed::default();
         let args = self.project_args(args, seen, &mut unattributed);
         let result = match result {
-            Some(result) => {
-                Some(self.project_result(result, seen, &mut dependencies, &mut unattributed)?)
-            }
+            Some(ResultView::Value(result)) => Some(Projected::Value(self.project_result(
+                result,
+                seen,
+                &mut dependencies,
+                &mut unattributed,
+            )?)),
+            Some(ResultView::Text(text)) => Some(self.project_text(text)?),
             None => None,
         };
         let tail = self.project_tail(seen, &mut dependencies)?;
+        let text_pack = match &result {
+            Some(Projected::Text(text)) => served::text_pack(text)?,
+            _ => None,
+        };
         let input = Input {
             hook: json!({
                 "binding": id.to_hex(),
@@ -205,9 +232,12 @@ impl Chain<'_> {
             receipt_tail: &tail,
             now: self.now,
             result: result.as_ref(),
-            served: result
-                .as_ref()
-                .and_then(|view| served::rows(view, &binding.selector.served)),
+            served: result.as_ref().and_then(|view| match view {
+                Projected::Value(view) => served::rows(view, &binding.selector.served),
+                Projected::Text(_) => text_pack
+                    .as_ref()
+                    .and_then(|pack| served::rows(pack, &binding.selector.served)),
+            }),
         };
         let json = serde_json::to_string(&input)
             .map_err(|_| Error::InvariantViolation("hook input encode"))?;
@@ -227,11 +257,21 @@ impl Chain<'_> {
         &self,
         id: EntityId,
         binding: &PackHookBinding,
-        result: &Value,
+        result: ResultView<'_>,
     ) -> Result<bool> {
         if binding.selector.served.is_empty() {
             return Ok(true);
         }
+        // A view held as text is a write's result, shown whole as a write's
+        // value is: the rows it serves are read off its text, flat.
+        let result = match result {
+            ResultView::Value(result) => result,
+            ResultView::Text(text) => {
+                self.project_text(text)?;
+                return Ok(served::text_pack(text)?
+                    .is_some_and(|pack| served::admits(&binding.selector.served, &pack)));
+            }
+        };
         let grant = session::hook_read(
             self.storage,
             "grant",
@@ -249,8 +289,22 @@ impl Chain<'_> {
         Ok(served::admits(&binding.selector.served, &shown))
     }
 
+    /// A view held as JSON text, as the hook sees it: a write's result is
+    /// the caller's own, so whole, as [`Self::project_result`] shows a
+    /// write's value. Only a skill answer is held as text, and that call is
+    /// a write.
+    fn project_text<'r>(&self, text: &'r RawValue) -> Result<Projected<'r>> {
+        if self.call.domain != VerbDomain::Write || self.call.verb.starts_with("host.") {
+            return Err(Error::InvariantViolation(
+                "a view held as text is a write's result",
+            ));
+        }
+        Ok(Projected::Text(text))
+    }
+
     /// The caller's args as the hook sees them: the caller's own, whole; a
-    /// host verb's free text withheld from a hook narrower than its caller.
+    /// verb's free text that no row backs withheld from a hook narrower than
+    /// its caller.
     fn project_args(
         &self,
         args: &Value,
@@ -258,14 +312,18 @@ impl Chain<'_> {
         unattributed: &mut Unattributed,
     ) -> Value {
         let mut args = args.clone();
-        self.host_text(&mut args, seen, unattributed);
+        self.unnamed_text(&mut args, seen, unattributed);
         args
     }
 
     /// Whether a Rewrite from a hook that saw `seen` was written over args
     /// with values withheld from it.
     pub(super) fn args_withheld(&self, seen: &HookView<'_>) -> bool {
-        seen.narrows() && self.call.verb.starts_with("host.")
+        seen.narrows()
+            && (self.call.verb.starts_with("host.")
+                || UNNAMED_FREE_TEXT
+                    .iter()
+                    .any(|(verb, _)| self.call.verb == *verb))
     }
 
     /// The result as the hook sees it. To a hook that sees what its caller
@@ -288,7 +346,7 @@ impl Chain<'_> {
         let origin = self.origin.as_ref().unwrap_or(result);
         let mut shown = result.clone();
         if self.call.verb.starts_with("host.") {
-            self.host_text(&mut shown, seen, unattributed);
+            self.unnamed_text(&mut shown, seen, unattributed);
             return Ok(shown);
         }
         if self.call.domain == VerbDomain::Write {
@@ -515,11 +573,16 @@ impl Chain<'_> {
             .map(|(_, sources)| sources.as_slice())
     }
 
-    /// This host verb's free text in `value`: withheld in place from a hook
-    /// narrower than its caller; else shown, as content no host names rows
-    /// for.
-    fn host_text(&self, value: &mut Value, seen: &HookView<'_>, unattributed: &mut Unattributed) {
-        for (verb, path) in HOST_FREE_TEXT {
+    /// This verb's free text in `value` ([`UNNAMED_FREE_TEXT`]): withheld in
+    /// place from a hook narrower than its caller; else shown, as content no
+    /// host names rows for.
+    fn unnamed_text(
+        &self,
+        value: &mut Value,
+        seen: &HookView<'_>,
+        unattributed: &mut Unattributed,
+    ) {
+        for (verb, path) in UNNAMED_FREE_TEXT {
             if self.call.verb != verb {
                 continue;
             }

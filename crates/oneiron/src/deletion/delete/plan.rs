@@ -3,6 +3,7 @@ use uuid::Uuid;
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::consent::AuthenticatedOwner;
+use crate::deletion::BriefDeleteFence;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::GateDecisionRecord;
@@ -27,17 +28,16 @@ pub(super) struct DeletePlan {
 }
 
 impl Vault {
-    /// Signs the install, reserves the delete, and mints its tombstone,
-    /// gate decision and provenance capture.
-    pub(super) fn delete_plan_phase(
+    /// Signs the install and reserves the delete; a user delete gets its hold
+    /// on the brief fence, which the caller concludes with the delete's
+    /// outcome.
+    pub(super) fn delete_reserve_phase(
         &self,
         id: &EntityId,
         reason: DeleteReason,
         gate: &Option<GatedDeletion<'_>>,
         owner: Option<&AuthenticatedOwner>,
-        requested_at: u64,
-        header: EntityMetadataHeader,
-    ) -> Result<DeletePlan> {
+    ) -> Result<Option<BriefDeleteFence<'_>>> {
         // ONE-1149 race-test rendezvous: the header is proven `Some` (the
         // lock-free `read_entity_header` read_txn has completed and committed
         // the headerful path) but no write lock is held yet. The deterministic
@@ -49,7 +49,19 @@ impl Vault {
         self.prepare_install_signing()?;
         signal_after_delete_probe(self);
         signal_delete_rendezvous(self, DeleteRendezvous::BeforeFirstDeletionTxn, id, None);
-        self.reserve_user_brief_delete(id, reason, gate.as_ref(), owner)?;
+        self.reserve_user_brief_delete(id, reason, gate.as_ref(), owner)
+    }
+
+    /// Mints the reserved delete's tombstone, gate decision and provenance
+    /// capture.
+    pub(super) fn delete_plan_phase(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+        gate: &Option<GatedDeletion<'_>>,
+        requested_at: u64,
+        header: EntityMetadataHeader,
+    ) -> Result<DeletePlan> {
         // ONE-1132: ONE deletion request UUID correlates the CRDT tombstone's
         // `request_id` with the REDACTION_AUDIT receipt's `request_id`.
         // ONE-1149: minted only AFTER the header read proves there is

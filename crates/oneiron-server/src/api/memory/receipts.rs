@@ -58,19 +58,30 @@ pub(super) fn core_memory_retract_by_facade(
 /// refusal FORBIDDEN and naming its reason. A token that names no actor is
 /// refused `unresolved_actor`.
 ///
+/// A person whose role makes the delete wait (a Steward's delete of
+/// another's item in scope) gets `CHECK_IN_PENDING` naming the check-in;
+/// once the Owner approves it, the same call naming it as `check_in_ref`
+/// deletes and spends it, and the receipt's `check_in` names it
+/// (ROLES-CHECKIN 2k5; FIX-LIST CHECK-IN-CORE-DELETE-ROUTE-NO-CHECK-IN-REF).
+/// A delete that goes at once spends none, so a check-in it names is refused
+/// `BAD_REQUEST` and nothing is deleted.
+///
 /// An account API key (OF-448) names its person and no actor class: it is
 /// judged as that person, a human (Engine rulings 13 Nov 08:20 and 08:30 =
-/// C). The owner's own key deletes on the owner's path, within its scopes.
-/// The key carries no vault slip, so on a rooted vault no other person
-/// stands by it: the engine's owner refusal there answers
-/// `account_key_unbound`, and so does the reference admission's refusal of a
-/// target that key cannot read ([`account_key_target_unreadable`]). On a
-/// rootless vault the role table judges a target the key reads.
+/// C), and with `core:read` it reads as that person
+/// (DEL2-ROOTLESS-MEMBER-KEY-READ = B). The owner's own key deletes on the
+/// owner's path, within its scopes. The key carries no vault slip, so on a
+/// rooted vault no other person stands by it: the engine's owner refusal
+/// there answers `account_key_unbound`, and so does the reference
+/// admission's refusal of a target that key cannot read
+/// ([`account_key_target_unreadable`]). On a rootless vault the role table
+/// judges a target the key reads.
 pub(super) fn core_memory_delete_by_role(
     server: &SyncServer,
     auth: &CoreAuth,
     id: &oneiron::EntityId,
     reason: CoreMemoryVerbDeleteReason,
+    check_in_ref: Option<&str>,
 ) -> Result<(Option<String>, Value), DagWriteError> {
     let (actor, class, by_account_key) = core_memory_caller(server, auth, "delete")?;
     let memory = scoped_auth::credential_memory(server.vault(), Some(auth), actor, class);
@@ -80,12 +91,16 @@ pub(super) fn core_memory_delete_by_role(
         CoreMemoryVerbDeleteReason::Gdpr => oneiron::memory::SafeDeleteReason::GdprDelete,
         CoreMemoryVerbDeleteReason::Policy => oneiron::memory::SafeDeleteReason::PolicyDelete,
     };
+    let mut input = serde_json::json!({ "entity_ref": id.to_hex(), "reason": reason.as_str() });
+    if let Some(check_in_ref) = check_in_ref {
+        input["check_in_ref"] = Value::String(check_in_ref.to_owned());
+    }
     let mut committed = None;
     let deleted = oneiron::task_verb::verb_hook_boundary::row(
         &memory,
         &oneiron::task_verb::sdk::VERB_TABLE,
         "vault.delete",
-        serde_json::json!({ "entity_ref": id.to_hex(), "reason": reason.as_str() }),
+        input,
         |value| {
             let input: SafeDeleteRequest = serde_json::from_value(value).map_err(|error| {
                 oneiron::memory::MemoryError::bad_request(format!("invalid SDK request: {error}"))
@@ -114,13 +129,13 @@ pub(super) fn core_memory_delete_by_role(
 
 /// Whether `refusal` is `vault.delete`'s `/entity_ref` reference admission
 /// (FIX-LIST 25699) refusing a target to an account key that is not the
-/// owner's, on a rooted vault. The key carries no vault slip, so its read
-/// lane holds no Scope and reads no row the vault's policy does not grant its
-/// person; the admission then refuses the target before the delete judge,
-/// which on a rooted vault stands no person but the owner by a slip-less key
-/// (FIX-LIST DEL2-DOOR-MEMBER-ACCOUNT-KEY-INVENTED-REFERENCE). The owner's
-/// key reads every row, so its refusal passes unchanged, as does every
-/// refusal on a rootless vault.
+/// owner's, on a rooted vault. The key reads only what its person reads
+/// (DEL2-ROOTLESS-MEMBER-KEY-READ = B); the admission refuses any other
+/// target before the delete judge, which on a rooted vault stands no person
+/// but the owner by a slip-less key (FIX-LIST
+/// DEL2-DOOR-MEMBER-ACCOUNT-KEY-INVENTED-REFERENCE). The owner's key reads
+/// every row, so its refusal passes unchanged, as does every refusal on a
+/// rootless vault.
 fn account_key_target_unreadable(
     server: &SyncServer,
     memory: &oneiron::memory::Memory<'_>,

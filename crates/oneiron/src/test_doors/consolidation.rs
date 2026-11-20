@@ -287,6 +287,23 @@ pub fn consolidate_tagged_turn(
     tags: &crate::memory::extraction::EncoderOutput,
     reply: &str,
 ) -> Result<UnboundPass> {
+    consolidate_tagged_turn_in_window(vault, words, tags, reply, None)
+}
+
+/// [`consolidate_tagged_turn`] with the extraction model's input window
+/// lent as `window_tokens` when given, as the host's factory lends it (FIX
+/// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW).
+///
+/// # Errors
+///
+/// As [`consolidate_tagged_turn`].
+pub fn consolidate_tagged_turn_in_window(
+    vault: &Vault,
+    words: &str,
+    tags: &crate::memory::extraction::EncoderOutput,
+    reply: &str,
+    window_tokens: Option<u64>,
+) -> Result<UnboundPass> {
     let speaker = EntityId::now();
     vault.put_entity(&speaker, ENTITY_TYPE_PERSON, occurred(1), 1, b"witness")?;
     let turn = EntityId::now();
@@ -320,7 +337,7 @@ pub fn consolidate_tagged_turn(
             "the held tags were not saved: {outcome:?}"
         )));
     }
-    consolidate_witnessed_turns(vault, turn, &[], reply)
+    consolidate_witnessed_turns_in_window(vault, turn, &[], reply, window_tokens)
 }
 
 /// Witnesses `words` as one visible user MESSAGE carrying `metadata` into a
@@ -342,6 +359,23 @@ pub fn consolidate_unbound_turn(
 ) -> Result<UnboundPass> {
     let (turn, _) = witness_user_turn(vault, EntityId::now(), words, metadata, 10)?;
     consolidate_witnessed_turns(vault, turn, readable_space.as_slice(), reply)
+}
+
+/// [`consolidate_unbound_turn`] with no metadata and no readable space, the
+/// extraction model's input window lent as `window_tokens` when given (FIX
+/// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW).
+///
+/// # Errors
+///
+/// As [`consolidate_unbound_turn`].
+pub fn consolidate_unbound_turn_in_window(
+    vault: &Vault,
+    words: &str,
+    reply: &str,
+    window_tokens: Option<u64>,
+) -> Result<UnboundPass> {
+    let (turn, _) = witness_user_turn(vault, EntityId::now(), words, None, 10)?;
+    consolidate_witnessed_turns_in_window(vault, turn, &[], reply, window_tokens)
 }
 
 /// Witnesses `first_words`, then `second_words`, each spoken by a person of
@@ -484,6 +518,18 @@ fn consolidate_witnessed_turns(
     readable_spaces: &[EntityId],
     reply: &str,
 ) -> Result<UnboundPass> {
+    consolidate_witnessed_turns_in_window(vault, turn, readable_spaces, reply, None)
+}
+
+/// [`consolidate_witnessed_turns`] with the extraction model's input window
+/// lent as `window_tokens` when given.
+fn consolidate_witnessed_turns_in_window(
+    vault: &Vault,
+    turn: EntityId,
+    readable_spaces: &[EntityId],
+    reply: &str,
+    window_tokens: Option<u64>,
+) -> Result<UnboundPass> {
     let actor = vault.dreamer_authority()?;
     for &space in readable_spaces {
         vault.create_access_grant(
@@ -548,7 +594,8 @@ fn consolidate_witnessed_turns(
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     {
         let mut executor = ConsolidationExecutor {
-            roles: Default::default(),
+            roles: crate::dreamer_consolidation::RoleBackends::default()
+                .with_follower_window(window_tokens),
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,

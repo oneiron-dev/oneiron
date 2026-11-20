@@ -122,12 +122,25 @@ pub(super) fn outcome_labels_with_rows(
     destination: impl Into<crate::settings::ReadDestination>,
 ) -> Result<Vec<(OutcomeLabel, Vec<EntityId>)>> {
     let txn = vault.store.env.read_txn()?;
-    owned_head(vault, &txn, principal, question)?;
-    let kept = crate::settings::device_local_worlds_for(vault, &txn, &destination.into())?;
-    let answers = stored_answers(vault, &txn, question)?;
-    let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+    outcome_labels_with_rows_in_txn(vault, &txn, principal, question, &destination.into())
+}
+
+/// [`outcome_labels_with_rows`] in the caller's snapshot `txn`, so a reply
+/// that serves labels beside other reads of the question reads them all at
+/// one instant (FIX QUESTION-OUTCOMES-REPLY-SPANS-SNAPSHOTS).
+pub(super) fn outcome_labels_with_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    question: EntityId,
+    destination: &crate::settings::ReadDestination,
+) -> Result<Vec<(OutcomeLabel, Vec<EntityId>)>> {
+    owned_head(vault, txn, principal, question)?;
+    let kept = crate::settings::device_local_worlds_for(vault, txn, destination)?;
+    let answers = stored_answers(vault, txn, question)?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
     Ok(
-        standing_labels_in_txn(vault, &txn, &policy, principal, question, &answers, &kept)?
+        standing_labels_in_txn(vault, txn, &policy, principal, question, &answers, &kept)?
             .into_iter()
             .map(|standing| (standing.label, standing.derived_from))
             .collect(),

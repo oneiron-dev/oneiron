@@ -56,8 +56,10 @@ mod hook;
 // The runtime files `serve` registers in and `oneiron hook` reads.
 #[cfg(unix)]
 mod local_servers;
+#[cfg(all(unix, oneiron_test_support))]
+pub(crate) use self::hook::continue_test_support;
 #[cfg(unix)]
-pub use self::hook::{hook, hosted};
+pub use self::hook::{continue_work, hook, hosted};
 // The user service runs the local vault the hook binds through its runtime
 // file, so it is Unix-only too.
 #[cfg(unix)]
@@ -75,6 +77,13 @@ pub fn hook(_: crate::cli::HookArgs) {}
 #[cfg(not(unix))]
 pub fn hosted(_: crate::cli::HostedCommand) -> anyhow::Result<()> {
     anyhow::bail!("`oneiron hosted` publishes what `oneiron hook` binds, on Unix alone")
+}
+
+/// `oneiron continue --cloud` reads the hosted selection `oneiron hosted`
+/// publishes, which is Unix-only.
+#[cfg(not(unix))]
+pub fn continue_work(_: crate::cli::ContinueArgs) -> anyhow::Result<()> {
+    anyhow::bail!("`oneiron continue --cloud` reads what `oneiron hosted` publishes, on Unix alone")
 }
 
 /// `oneiron user-service` keeps running the local vault `oneiron hook`

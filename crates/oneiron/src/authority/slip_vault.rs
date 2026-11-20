@@ -16,6 +16,7 @@ pub use connect_lifecycle::{
 mod courtesy;
 mod host_root;
 pub use connect::{ConnectOffer, ScopeOpeningKey};
+pub(crate) use connect::{ConnectOfferTerms, fresh_pact_id};
 mod issuer_custody;
 mod issuer_seed;
 pub use issuer_seed::{HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT, HostSlipIssuer};
@@ -714,9 +715,71 @@ impl Vault {
         issuer: &HostSlipIssuer,
         slip_id: [u8; 32],
     ) -> Result<bool> {
+        self.revoke_capability_slip_by(issuer, SlipRevoker::Host, slip_id)
+    }
+    /// [`Self::revoke_capability_slip_once`] asked by the vault's owner, who
+    /// revokes any slip: `owner` is revalidated as the vault's owner in the
+    /// revoking transaction (FIX 8216, lead ruling
+    /// FIX-8216-PAIRING-OWNER-ACT = A).
+    pub fn revoke_capability_slip_as_owner(
+        &self,
+        issuer: &HostSlipIssuer,
+        owner: &crate::consent::AuthenticatedOwner,
+        slip_id: [u8; 32],
+    ) -> Result<bool> {
+        self.revoke_capability_slip_by(issuer, SlipRevoker::Owner(owner), slip_id)
+    }
+    /// [`Self::revoke_capability_slip_once`] asked by a holder that is not
+    /// the owner, on the credential its request authenticated: only a slip
+    /// whose logged mint names that credential's holder (FIX 8216). The
+    /// credential is judged live again in the revoking transaction, so a
+    /// revoke queued behind its own slip's revocation or expiry writes
+    /// nothing (Sol review of #8342, P2). Any other id, one with no logged
+    /// mint included, is refused with `AuthorityRefused` before anything is
+    /// written, already revoked or not, so the answer says nothing about
+    /// another holder's slips.
+    pub fn revoke_capability_slip_held_by(
+        &self,
+        issuer: &HostSlipIssuer,
+        credential: &VerifiedSlip,
+        slip_id: [u8; 32],
+    ) -> Result<bool> {
+        self.revoke_capability_slip_by(issuer, SlipRevoker::Holder(credential), slip_id)
+    }
+    /// Appends one signed revocation of `slip_id` for `by`, judged in the
+    /// revoking transaction.
+    fn revoke_capability_slip_by(
+        &self,
+        issuer: &HostSlipIssuer,
+        by: SlipRevoker<'_>,
+        slip_id: [u8; 32],
+    ) -> Result<bool> {
         let mut txn = self.store.env.write_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
+        match by {
+            SlipRevoker::Host => {}
+            SlipRevoker::Owner(owner) => {
+                owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+            }
+            SlipRevoker::Holder(credential) => {
+                // The request's own slip stands in this writer, as the owner
+                // arm revalidates its proof: judged before the target, so a
+                // lapsed caller learns nothing about the id it names.
+                if !self.capability_slip_is_live_in_txn(&txn, credential)? {
+                    return Err(invalid_authority());
+                }
+                let holder_ref = &credential.claims().holder_ref;
+                let held = fold
+                    .slips
+                    .mints
+                    .get(&slip_id)
+                    .is_some_and(|mint| &mint.action.claims.holder_ref == holder_ref);
+                if !held {
+                    return Err(super::owner_act::authority_refused(SLIP_REVOKE_NOT_HOLDER));
+                }
+            }
+        }
         if fold.slips.explicit_revoked.contains(&slip_id) {
             return Ok(false);
         }
@@ -1164,6 +1227,115 @@ impl Vault {
         self.put_authority_log_entries(&[(entry, at, now)])?;
         Ok(())
     }
+
+    /// Signs `op` as the host root's row at `seq` on `parents`, without
+    /// storing it: a row on a parent no head names, such as a rejected one.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn sign_host_op_at_for_test(
+        &self,
+        issuer: &HostSlipIssuer,
+        op: AuthorityOp,
+        seq: u64,
+        parents: Vec<AuthorityEntryHash>,
+    ) -> Result<AuthorityLogEntry> {
+        let mut entry = self.sign_host_op_for_test(issuer, op)?;
+        entry.seq = seq;
+        entry.parent_hashes = parents;
+        issuer.resign_entry(&mut entry)?;
+        Ok(entry)
+    }
+
+    /// Signs `op` as the host root's next row without storing it.
+    #[cfg(any(test, oneiron_test_support))]
+    pub(crate) fn sign_host_op_for_test(
+        &self,
+        issuer: &HostSlipIssuer,
+        op: AuthorityOp,
+    ) -> Result<AuthorityLogEntry> {
+        let fold = self.authority_fold()?;
+        let now = self.now_recorded_at();
+        next_entry(issuer, &fold, op, now)
+    }
+
+    /// Signs `op` as the host root's row one sequence past its next, on this
+    /// vault's heads, without storing it: a row beside the one
+    /// [`Self::sign_host_op_for_test`] signs on the same heads.
+    #[cfg(any(test, oneiron_test_support))]
+    pub(crate) fn sign_host_op_after_next_for_test(
+        &self,
+        issuer: &HostSlipIssuer,
+        op: AuthorityOp,
+    ) -> Result<AuthorityLogEntry> {
+        let mut entry = self.sign_host_op_for_test(issuer, op)?;
+        entry.seq = entry.seq.checked_add(1).ok_or_else(invalid_authority)?;
+        issuer.resign_entry(&mut entry)?;
+        Ok(entry)
+    }
+
+    /// Signs `op` as the host root's next row, cosigned by `cosigner`,
+    /// without storing it.
+    #[cfg(any(test, oneiron_test_support))]
+    pub(crate) fn sign_host_op_cosigned_for_test(
+        &self,
+        issuer: &HostSlipIssuer,
+        op: AuthorityOp,
+        cosigner: &ed25519_dalek::SigningKey,
+    ) -> Result<AuthorityLogEntry> {
+        let mut entry = self.sign_host_op_for_test(issuer, op)?;
+        let public_key = AuthorityKey::Ed25519(cosigner.verifying_key().to_bytes());
+        entry.cosigns = vec![AuthoritySignature {
+            suite: AuthoritySignatureSuite::Ed25519,
+            public_key: public_key.clone(),
+            signature: vec![0; 64],
+        }];
+        // The transcript names the cosigners' keys, never their signatures.
+        issuer.resign_entry(&mut entry)?;
+        let signature = cosigner
+            .sign(&authority_transcript(&entry)?)
+            .to_bytes()
+            .to_vec();
+        entry.cosigns = vec![AuthoritySignature {
+            suite: AuthoritySignatureSuite::Ed25519,
+            public_key,
+            signature,
+        }];
+        Ok(entry)
+    }
+
+    /// Signs `op` as `signing`'s next row on this vault's heads, without
+    /// storing it.
+    #[cfg(any(test, oneiron_test_support))]
+    pub(crate) fn sign_op_as_for_test(
+        &self,
+        signing: &ed25519_dalek::SigningKey,
+        op: AuthorityOp,
+    ) -> Result<AuthorityLogEntry> {
+        let fold = self.authority_fold()?;
+        let public_key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+        let seq = fold
+            .append_sequences
+            .get(&public_key)
+            .map_or(0, |seq| seq.saturating_add(1));
+        let mut entry = AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: fold.vault_id,
+            seq,
+            parent_hashes: fold.append_heads.iter().copied().collect(),
+            op,
+            signer: AuthoritySignature {
+                suite: AuthoritySignatureSuite::Ed25519,
+                public_key,
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: self.now_recorded_at(),
+        };
+        entry.signer.signature = signing
+            .sign(&authority_transcript(&entry)?)
+            .to_bytes()
+            .to_vec();
+        Ok(entry)
+    }
 }
 pub(super) fn require_host(fold: &AuthorityFold, issuer: &HostSlipIssuer) -> Result<()> {
     if fold.vault_id.is_none()
@@ -1173,6 +1345,19 @@ pub(super) fn require_host(fold: &AuthorityFold, issuer: &HostSlipIssuer) -> Res
         return Err(invalid_authority());
     }
     Ok(())
+}
+/// The refusal of a holder's revoke of a slip whose logged mint names
+/// another holder, or no logged mint at all (FIX 8216).
+const SLIP_REVOKE_NOT_HOLDER: &str = "a holder revokes only the slips its own logged mints name";
+/// Who asks a slip's revocation, judged in the revoking transaction.
+enum SlipRevoker<'a> {
+    /// The host itself: an engine path, or a door that judged its caller.
+    Host,
+    /// The vault's owner, for any slip.
+    Owner(&'a crate::consent::AuthenticatedOwner),
+    /// A holder that is not the owner, on the credential its request
+    /// authenticated, for the slips minted to that credential's holder.
+    Holder(&'a VerifiedSlip),
 }
 pub(super) fn random_slip_id() -> [u8; 32] {
     use rand_core::{OsRng, RngCore};

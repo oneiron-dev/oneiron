@@ -24,6 +24,8 @@ impl crate::vault::Vault {
             records_cover: Default::default(),
             judged_at: None,
             read_filter: None,
+            receipts_include_live_grants: false,
+            cited_support: crate::claim::evidence_support::CitedSupport::Served,
         }
     }
 
@@ -57,6 +59,8 @@ impl crate::vault::Vault {
             records_cover: Default::default(),
             judged_at: None,
             read_filter: None,
+            receipts_include_live_grants: false,
+            cited_support: crate::claim::evidence_support::CitedSupport::Served,
         }
     }
 
@@ -533,11 +537,38 @@ impl<T> ReadAdmission<T> {
 
 impl ScopedRead<'_> {
     /// Resolve value and denial metadata in the SAME transaction. A caller
-    /// never tests stored existence separately after this projection.
+    /// never tests stored existence separately after this projection. A
+    /// withheld row judges the owner's relationship exemption on its own;
+    /// a batch read's rows share one judgement through
+    /// [`Self::admit_held_in`].
     pub(super) fn admit_in<T>(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
+        read: impl FnOnce() -> Result<Option<T>>,
+    ) -> Result<ReadAdmission<T>> {
+        self.admit_with_held_in(txn, id, None, read)
+    }
+
+    /// [`Self::admit_in`] for a row of the serving txn `authority` holds: a
+    /// withheld row's relationship gate takes the owner's exemption judged
+    /// once in that txn (`HeldAuthority::owner_exemption_holds_in`, FIX
+    /// OWNER-EXEMPTION-LIFECYCLE-FOLD-PER-ROW).
+    pub(super) fn admit_held_in<T>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        authority: &super::access_gate::HeldAuthority,
+        read: impl FnOnce() -> Result<Option<T>>,
+    ) -> Result<ReadAdmission<T>> {
+        self.admit_with_held_in(txn, id, Some(authority), read)
+    }
+
+    fn admit_with_held_in<T>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        authority: Option<&super::access_gate::HeldAuthority>,
         read: impl FnOnce() -> Result<Option<T>>,
     ) -> Result<ReadAdmission<T>> {
         if let Some(value) = read()? {
@@ -566,14 +597,14 @@ impl ScopedRead<'_> {
         if self.actor_key.room_turn.is_none()
             && self.credential_allows_row_in(txn, id)
             && self.private_threads_readable_in(txn, id, &raw)?
-            && !self.relationship_private_claim_in(txn, id, &raw)?
+            && !self.relationship_private_claim_in(txn, id, &raw, authority)?
             && self.guest_bound_admits_in(txn, id, &raw)
             && !self.stretch_staged_in(txn, id, &row)?
             && !self.outside_asked_worlds_in(txn, id, &row)?
             && !self.outside_credential_worlds_in(txn, id, &row)?
             && !self.device_withholds_in(txn, id, None)?
             && !self.outside_credential_task_position_in(txn, id, &row)?
-            && !self.outside_credential_facets_in(txn, id, &row)?
+            && !self.outside_credential_facets_in(txn, id, &row, authority)?
             && crate::note::countable_read_suppression(row.entity_type, &row.body)
             && matches!(
                 self.vault.room_structure_admitted_held_in(
@@ -602,8 +633,13 @@ impl ScopedRead<'_> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
+        authority: Option<&super::access_gate::HeldAuthority>,
     ) -> Result<bool> {
-        if !self.relationship_gated_in(txn)? {
+        let gated = match authority {
+            Some(authority) => self.relationship_gated_in(txn, authority)?,
+            None => self.actor_key.relationship_gated_in(self.vault, txn)?,
+        };
+        if !gated {
             return Ok(false);
         }
         let read = super::access_gate::relationship_read_keyed(
@@ -685,8 +721,29 @@ impl ScopedRead<'_> {
         filter: &crate::gate::ResolvedRetrievalFilter,
         id: &EntityId,
     ) -> Result<ReadAdmission<()>> {
-        self.admit_in(txn, id, || {
-            self.is_entity_retrievable_with_policy_in(txn, policy, filter, id)
+        self.admit_entity_held_in(
+            txn,
+            policy,
+            filter,
+            id,
+            &super::access_gate::HeldAuthority::default(),
+        )
+    }
+
+    /// [`Self::admit_entity_in`] under the authority one serving txn holds
+    /// for all its rows (FIX 7462): a key A may stand for then reads a row
+    /// one of its own live Grants admits alone, as its point reads do
+    /// (FIX-LIST SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS).
+    pub(super) fn admit_entity_held_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &crate::gate::PolicyManifestResolution,
+        filter: &crate::gate::ResolvedRetrievalFilter,
+        id: &EntityId,
+        authority: &super::access_gate::HeldAuthority,
+    ) -> Result<ReadAdmission<()>> {
+        self.admit_held_in(txn, id, authority, || {
+            self.is_entity_retrievable_held_in(txn, policy, filter, id, authority)
                 .map(|allowed| allowed.then_some(()))
         })
     }

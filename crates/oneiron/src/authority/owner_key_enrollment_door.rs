@@ -38,6 +38,9 @@ pub(crate) use revoke_device::EntrySigner;
 
 mod owner_authority_closure;
 
+mod owner_key_binding;
+pub use owner_key_binding::{OwnerKeyBindingReceipt, PreparedOwnerKeyBinding};
+
 mod recovery_authority;
 pub(crate) use recovery_authority::ActivationPredecessor;
 pub use recovery_authority::WaysBack;
@@ -65,7 +68,6 @@ const NOT_ON_ROSTER: &str = "the vault's roster does not name this key; a confir
 /// that would sign its own entry.
 const NOT_VALID: &str = "the enrollment does not verify: the proof must be the new key's own \
                          signature over its challenge for this vault, machine, key and owner";
-
 /// The enrollment would name more rows than one authority entry may: the
 /// log's encoding bound, never a possession test.
 const TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than one key enrollment \
@@ -152,12 +154,26 @@ pub struct EnrolledOwnerKey {
     pub at: u64,
     /// What the key is, as its enrollment's attestation kind says.
     pub kind: EnrolledOwnerKeyKind,
+    /// Every machine a counted enrollment names as holding the key as a
+    /// device's key. While the key is live, the removal of one of them ends
+    /// it, when that removal stands on an install that holds an owner key.
+    /// A key enrolled on two branches may name two. A key enrolled only as
+    /// the recovery root's names none.
+    pub device_machines: BTreeSet<EntityId>,
+    /// A counted enrollment marks the key the recovery root's authority key,
+    /// whatever [`Self::kind`] says of the listed one. With a machine in
+    /// [`Self::device_machines`] the key is both, and the recovery kit ends
+    /// when that machine's removal ends the key; the key door refuses it.
+    pub recovery_authority: bool,
 }
 
 /// What an enrolled owner key is, read from its enrollment row alone (pass
 /// 27 R4): a device's own key, or the recovery root's authority key. The
-/// owner's "last key held on a device" counts the first kind only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// owner's "last key held on a device" counts the first kind only. A reply
+/// names a kind by its serde name, `device` or `recovery_authority`: the
+/// enum is the one place that spells them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EnrolledOwnerKeyKind {
     /// A device's own owner signing key, held in its keystore
     /// ([`OWNER_KEY_POSSESSION_KIND`]).
@@ -177,7 +193,7 @@ impl EnrolledOwnerKeyKind {
     }
 
     /// The kind an enrollment row names.
-    fn of(enroll: &OwnerKeyEnroll) -> Self {
+    pub(super) fn of(enroll: &OwnerKeyEnroll) -> Self {
         if enroll.is_recovery_authority() {
             Self::RecoveryAuthority
         } else {
@@ -415,7 +431,9 @@ impl Vault {
     /// entry, which the predecessor signs too (OWNER-ENROL: an added Owner of
     /// a shared vault binds with their first owner key). The host root binds
     /// its embedded owner there already, so that owner's keys bind no one. A
-    /// hosted or relay root binds no one (`host_actor`).
+    /// hosted or relay root binds no one (`host_actor`): there the owner's
+    /// device binds them with the key it enrolled, which signs the binding
+    /// itself ([`Self::prepare_owner_key_binding_as`]).
     ///
     /// # Errors
     /// [`RecordError::AuthorityRefused`] for an agent's act, an install that
@@ -1392,6 +1410,11 @@ impl Vault {
     /// checkpoint image), the smallest entry for a key enrolled on two
     /// branches, joined to the roster now, a revoked or ineligible key
     /// included. Empty before any enrollment.
+    ///
+    /// A row also says what every counted enrollment of its key says, the
+    /// listed one or not ([`EnrolledOwnerKey::device_machines`],
+    /// [`EnrolledOwnerKey::recovery_authority`]). It is the one reading of
+    /// those two facts: the removal doors decide by the same rows.
     pub fn enrolled_owner_keys(&self) -> Result<Vec<EnrolledOwnerKey>> {
         let txn = self.store.env.read_txn()?;
         self.enrolled_owner_keys_in_txn(&txn)
@@ -1418,8 +1441,16 @@ impl Vault {
     /// its key as a predecessor. Empty before any passkey enrollment.
     pub fn enrolled_owner_passkeys(&self) -> Result<Vec<EnrolledOwnerPasskey>> {
         let txn = self.store.env.read_txn()?;
+        self.enrolled_owner_passkeys_in_txn(&txn)
+    }
+
+    /// [`Self::enrolled_owner_passkeys`] in the caller's transaction.
+    pub(super) fn enrolled_owner_passkeys_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<EnrolledOwnerPasskey>> {
         let mut keys = BTreeMap::new();
-        self.visit_authority_entries_in_txn(&txn, |fold, hash, entry| {
+        self.visit_authority_entries_in_txn(txn, |fold, hash, entry| {
             keep_enrolled_passkey(&mut keys, fold, hash, entry);
         })?;
         Ok(keys.into_values().collect())
@@ -1493,6 +1524,15 @@ impl Vault {
     /// enrolment refuses on a Hosted vault), so there the move refuses until
     /// a device can confirm it (FIX HOSTED-OWNER-MOVE-TWO-PHASE).
     ///
+    /// A hosted fold counts a revoke of a person's binding only with an
+    /// owner key's proof too (row HOSTED-OWNER-BIND-ROOT-REVOKE), so each
+    /// `RevokeActor` carries the same cosign where this install holds such
+    /// a key, before the proof key's own `RevokeDevice`. Where it holds
+    /// none, the root's revoke counts only where the fold takes the root as
+    /// the owner's (a self-host root folded as hosted), and the move
+    /// otherwise refuses with the uncounted entry: the device-confirmed move
+    /// signs no `RevokeActor` (row HOSTED-MOVE-REVOKE-ACTOR-MIGRATED-BINDING).
+    ///
     /// # Errors
     /// An `issuer` that is not this vault's live host root, as the log
     /// refuses it; [`RecordError::OwnerKeyMoveRefused`], before this writes
@@ -1508,42 +1548,47 @@ impl Vault {
     ) -> Result<()> {
         let root = issuer.public_key();
         let closure = self.owner_authority_closure_in_txn(txn, person)?;
-        let mut keys: Vec<AuthorityKey> = closure
+        let keys: Vec<AuthorityKey> = closure
             .keys
             .into_iter()
             .filter(|key| *key != root)
             .collect();
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let hosted = self.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
+        // Under the Hosted posture no host root this install holds is
+        // offered as the owner's proof, a self-host root a move carried
+        // here included (HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A).
+        let offers = fold.offers_owner_proof(&root, issuer.is_host_root(), hosted);
+        let proof = if offers {
+            None
+        } else {
+            self.owner_proof_signer(&fold)
+        };
         if !keys.is_empty() {
-            let fold = self.authority_view_readonly_in_txn(txn)?;
             super::slip_vault::require_host(&fold, issuer)?;
-            let hosted = self.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
-            // Under the Hosted posture no host root this install holds is
-            // offered as the owner's proof, a self-host root a move carried
-            // here included (HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A).
-            let proof =
-                if fold.offers_owner_proof(&issuer.public_key(), issuer.is_host_root(), hosted) {
-                    None
-                } else {
-                    let proof = self.owner_proof_signer(&fold).ok_or(Error::Record(
-                        RecordError::OwnerKeyMoveRefused {
-                            member: person,
-                            step: OwnerKeyMoveStep::Unavailable,
-                            act: None,
-                        },
-                    ))?;
-                    let proof_key = proof.key();
-                    keys.sort_by_key(|key| *key == proof_key);
-                    Some(proof)
-                };
-            for revoked_key in keys {
-                let signer = match &proof {
-                    Some(proof) => EntrySigner::HostWithOwnerProof(issuer, proof),
-                    None => EntrySigner::Host(issuer),
-                };
-                self.append_revoke_device_in_txn(txn, signer, revoked_key)?;
+            if !offers && proof.is_none() {
+                return Err(Error::Record(RecordError::OwnerKeyMoveRefused {
+                    member: person,
+                    step: OwnerKeyMoveStep::Unavailable,
+                    act: None,
+                }));
             }
         }
+        // A proof key the move ends ends last, after it proved the other
+        // revokes and every binding's.
+        let proof_key = proof.as_ref().map(OwnerProofSigner::key);
+        let (last, first): (Vec<AuthorityKey>, Vec<AuthorityKey>) = keys
+            .into_iter()
+            .partition(|key| proof_key.as_ref() == Some(key));
+        let signer = || match &proof {
+            Some(proof) => EntrySigner::HostWithOwnerProof(issuer, proof),
+            None => EntrySigner::Host(issuer),
+        };
+        for revoked_key in first {
+            self.append_revoke_device_in_txn(txn, signer(), revoked_key)?;
+        }
         let fold = self.authority_view_readonly_in_txn(txn)?;
+        // A binding on the proof key the move ends ends with its revoke.
         let bindings: Vec<(AuthorityKey, u64)> = fold
             .actor_bindings
             .iter()
@@ -1551,18 +1596,24 @@ impl Vault {
                 binding.status == ActorBindingStatus::Active
                     && (binding.actor_ref == person || closure.signed_bindings.contains(*key))
                     && binding.actor_class == ACTOR_CLASS_HUMAN
+                    && !last.contains(*key)
             })
             .map(|(key, binding)| (key.clone(), binding.epoch))
             .collect();
         for (authority_key, epoch) in bindings {
-            self.append_slip_op_in_txn(
-                txn,
-                issuer,
-                AuthorityOp::RevokeActor {
-                    authority_key,
-                    epoch,
-                },
-            )?;
+            let op = AuthorityOp::RevokeActor {
+                authority_key,
+                epoch,
+            };
+            match &proof {
+                Some(proof) => {
+                    self.append_hashed_slip_op_with_owner_proof_in_txn(txn, issuer, op, proof)?;
+                }
+                None => self.append_slip_op_in_txn(txn, issuer, op)?,
+            }
+        }
+        for revoked_key in last {
+            self.append_revoke_device_in_txn(txn, signer(), revoked_key)?;
         }
         Ok(())
     }
@@ -1699,8 +1750,11 @@ fn keep_enrolled_passkey(
     );
 }
 
-/// Keeps `entry`, at `hash`, in `keys` when it is a valid owner key
-/// enrollment on `fold` whose key no smaller entry already stands for.
+/// Adds `entry`, at `hash`, to the row `keys` holds of the key it enrols,
+/// when it is a valid owner key enrollment on `fold`. The row lists the
+/// smallest such entry of the key, and gathers what every one of them says
+/// of it: the machine a device's enrollment names, and the recovery root's
+/// mark. Any other entry adds nothing.
 fn keep_enrolled(
     keys: &mut BTreeMap<[u8; 32], EnrolledOwnerKey>,
     fold: &AuthorityFold,
@@ -1717,12 +1771,9 @@ fn keep_enrolled(
     if !fold.valid_entries.contains(&hash) {
         return;
     }
-    if keys.get(public_key).is_some_and(|kept| kept.entry <= hash) {
-        return;
-    }
-    let device = fold.roster.get(&enroll.device.key);
-    keys.insert(
-        *public_key,
+    let kind = EnrolledOwnerKeyKind::of(enroll);
+    let row = keys.entry(*public_key).or_insert_with(|| {
+        let device = fold.roster.get(&enroll.device.key);
         EnrolledOwnerKey {
             entry: hash,
             machine: enroll.machine,
@@ -1733,7 +1784,23 @@ fn keep_enrolled(
             eligible: device
                 .is_some_and(|device| super::checkpoint_policy::selectable_root(device, managed)),
             at: entry.ts,
-            kind: EnrolledOwnerKeyKind::of(enroll),
-        },
-    );
+            kind,
+            device_machines: BTreeSet::new(),
+            recovery_authority: false,
+        }
+    });
+    if hash < row.entry {
+        row.entry = hash;
+        row.machine = enroll.machine;
+        row.carrier = enroll.carrier;
+        row.owner = enroll.act.owner;
+        row.at = entry.ts;
+        row.kind = kind;
+    }
+    match kind {
+        EnrolledOwnerKeyKind::Device => {
+            row.device_machines.insert(enroll.machine);
+        }
+        EnrolledOwnerKeyKind::RecoveryAuthority => row.recovery_authority = true,
+    }
 }

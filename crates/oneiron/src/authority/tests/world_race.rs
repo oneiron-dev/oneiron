@@ -1193,7 +1193,11 @@ fn a_removal_of_a_conflicted_mark_keeps_a_seen_widening_unless_contested() {
                 current.revision + 1,
                 BTreeSet::from([authority_entry_hash(&narrow).unwrap()]),
                 heads,
-                base_seq + 1,
+                // The same sequence: two siblings of one signer, neither the
+                // other's floor, so the conflict alone holds the mark (a
+                // higher sibling would floor the lower answer and hold the
+                // widening narrow-only at its own parents).
+                base_seq,
             ),
         ];
         land(&host, &siblings);

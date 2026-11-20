@@ -156,15 +156,25 @@ pub(in crate::api::facade) fn door_admits(
         Proof::ClaimSettler => {
             crate::api::facade::claim_settle_doors::settler_admits(server, auth, verb)
         }
-        // The owner's proof, or an actor-bound credential whose own live Grant the proposal
-        // writer checks. A caller bound to no actor keeps the owner refusal.
+        // The owner's proof, or an actor-bound credential whose own live Grant naming the act
+        // the engine judges here, before any verb hook runs, and again in the proposal writer.
+        // A caller bound to no actor keeps the owner refusal.
         Proof::ModelBindingProposer => {
-            owner_proof(auth, server, verb)
+            crate::api::facade::model_catalog_doors::binding_proposer_admits(server, auth, verb)
+        }
+        // The continue rows (census L10-17): the owner's proof, or an actor-bound credential
+        // whose own live Grant naming vault.runners.continue the engine judges here, before any
+        // verb hook runs, and again in the door. A caller bound to no actor keeps the owner
+        // refusal.
+        Proof::RunnerContinuer => {
+            crate::api::facade::runner_seat_doors::continue_caller(server, auth, verb).map(drop)
+        }
+        // `vault.imports.hook_transcript` (census L10-17): the owner's proof, or an actor-bound
+        // credential whose own live Grant naming the verb the engine judges here, before any verb
+        // hook runs, and again in the import. A caller bound to no actor keeps the owner refusal.
+        Proof::TranscriptImporter => {
+            crate::api::facade::hosted_import_doors::transcript_importer(server, auth, verb)
                 .map(drop)
-                .or_else(|refusal| {
-                    crate::api::facade::owner_binding::facade_caller_or(server, auth, || refusal)
-                        .map(drop)
-                })
         }
         Proof::SharedPerson => {
             crate::api::facade::shared_act_doors::person(server, auth, verb).map(drop)

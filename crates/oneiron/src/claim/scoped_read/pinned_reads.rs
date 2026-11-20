@@ -1,5 +1,4 @@
 //! Manifest-derived safety pins bypass query relevance, never actor authority.
-use super::access_gate::HeldAuthority;
 use super::{ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::decode_claim_body;
@@ -14,8 +13,11 @@ impl ScopedRead<'_> {
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let mut value = Vec::new();
-        // One relationship authority for every pinned row (FIX 11648).
-        let held = HeldAuthority::default();
+        // One relationship authority for every pinned row (FIX 11648),
+        // held under the key's own floor and then each of its own live
+        // Grants alone, as its point reads (FIX-LIST
+        // SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS).
+        let held = self.held_for(None);
         crate::claim::projection_index::for_each_pinned_claim_id_in_txn(
             &self.vault.store,
             &txn,
@@ -35,7 +37,8 @@ impl ScopedRead<'_> {
                 if !policy.pins_predicate(&body.predicate) {
                     return Ok(());
                 }
-                // No requested filter: a pin this key denies stays opaque.
+                // No requested filter: a pin neither this key's floor nor one
+                // of its live Grants admits stays opaque.
                 if !self.is_entity_retrievable_held_in(&txn, &policy, &filter, &id, &held)? {
                     return Ok(());
                 }
@@ -49,7 +52,7 @@ impl ScopedRead<'_> {
         )?;
         Ok(ScopedReadResult {
             value,
-            receipt: self.receipt_for(None, &policy, &filter, 0),
+            receipt: self.receipt_in(&txn, None, &policy, &filter, 0, Some(&held)),
         })
     }
 }

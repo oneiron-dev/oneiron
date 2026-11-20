@@ -283,6 +283,13 @@ required-features = ["oneiron/test-support", "mesh"]
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
 
+# Its server's vault holds a `MemoryKeystore` (`oneiron-keystore/test-keystore`, forwarded by
+# `oneiron/test-support`).
+[[test]]
+name = "pairing_owner_act"
+path = "tests/pairing_owner_act.rs"
+required-features = ["oneiron/test-support"]
+
 [dev-dependencies]
 oneiron-remote = { path = "../oneiron-remote" }
 # `util` carries `ServiceExt::oneshot`, which the router-level rows in
@@ -391,6 +398,14 @@ required-features = ["oneiron/test-support"]
 name = "managed_mode"
 path = "tests/managed_mode.rs"
 required-features = ["oneiron/test-hooks"]
+
+# Serves its vault from a `MemoryKeystore` (`oneiron-keystore/test-keystore`, forwarded by
+# `oneiron/test-support`); its live-fork doors are `--cfg oneiron_test_support`; its broker
+# case answers from the broker's TLS fake provider (`oneiron-broker/test-support`).
+[[test]]
+name = "live_fork_refuses_erased_prefix_source"
+path = "tests/live_fork_refuses_erased_prefix_source.rs"
+required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 
 # The skill library's facade doors serve the owner's root from a `MemoryKeystore` too.
 [[test]]
@@ -585,10 +600,52 @@ name = "note_session_bind_reply"
 path = "tests/note_session_bind_reply.rs"
 required-features = ["oneiron/test-support"]
 
+# OWNER-GRADE H1's quota answer cases root the owner's home on a `MemoryKeystore` too.
+[[test]]
+name = "quota_answer_requires_vault_owner"
+path = "tests/quota_answer_requires_vault_owner.rs"
+required-features = ["oneiron/test-support"]
+
+# OWNER-GRADE H2-H8's owner act cases root the owner's home on a `MemoryKeystore` too.
+[[test]]
+name = "owner_acts_require_vault_owner"
+path = "tests/owner_acts_require_vault_owner.rs"
+required-features = ["oneiron/test-support"]
+
+# A shared env's lane reach seeds its member grant with `put_selector_test_federation_grant`.
+[[test]]
+name = "shared_env_lane_reach"
+path = "tests/shared_env_lane_reach.rs"
+required-features = ["oneiron/test-hooks"]
+
+# Member socket fixtures use a MemoryKeystore and seed grant rows through the selector hook.
+[[test]]
+name = "member_sync_socket"
+path = "tests/member_sync_socket.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
+# The member lane's client half uses the same HOME fixture and grant hook.
+[[test]]
+name = "member_sync_lane"
+path = "tests/member_sync_lane.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
 # L1-02's named-client OAuth acceptance roots its served vault on a `MemoryKeystore`.
 [[test]]
 name = "oauth_named_client_acceptance"
 path = "tests/oauth_named_client_acceptance.rs"
+required-features = ["oneiron/test-support"]
+
+# CONTINUE-PUSH-NON-SLIP-SELECTION's `/git` audience roots its served vault on a `MemoryKeystore`.
+[[test]]
+name = "oauth_git_audience_served"
+path = "tests/oauth_git_audience_served.rs"
+required-features = ["oneiron/test-support"]
+
+# CONTINUE-PUSH-NON-SLIP-SELECTION PR 2's continue sign-in roots its served vault on a `MemoryKeystore`.
+[[test]]
+name = "hosted_continue_sign_in"
+path = "tests/hosted_continue_sign_in.rs"
 required-features = ["oneiron/test-support"]
 
 # L1-07's lost host root: the test door empties this install's issuer seed slot
@@ -608,6 +665,12 @@ required-features = ["oneiron/test-support"]
 [[test]]
 name = "delete_authority_served_door"
 path = "tests/delete_authority_served_door.rs"
+required-features = ["oneiron/test-support"]
+
+# A waiting delete finished on its core route roots its server on a `MemoryKeystore` too.
+[[test]]
+name = "core_memory_delete_check_in_ref"
+path = "tests/core_memory_delete_check_in_ref.rs"
 required-features = ["oneiron/test-support"]
 
 # The off-record room door promise tests serve the owner's root from a `MemoryKeystore` too.

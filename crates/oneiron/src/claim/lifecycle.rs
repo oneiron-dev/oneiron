@@ -461,7 +461,31 @@ impl Vault {
     /// predicate semantics stay above the engine (ARCH-0003 §G.1, D20) —
     /// this method is transition mechanics only.
     pub fn supersede_claim(&self, new_id: &EntityId, old_id: &EntityId, now: u64) -> Result<()> {
-        self.supersede_claim_checked(None, new_id, old_id, now)
+        self.supersede_claim_checked(None, new_id, old_id, now, |_, _| Ok(true))
+            .map(|_| ())
+    }
+
+    /// [`Vault::supersede_claim`] only when `close(new, old)` holds for the two
+    /// claims as the writer that closes `old_id` reads them. A caller that
+    /// chose on a view another write may since have changed (the owner's
+    /// answer to `old_id` while `new_id` was screened, say) chooses again in
+    /// the transaction of the close. Returns whether it superseded; `false`
+    /// writes nothing. A missing claim is the supersession's own refusal.
+    pub(crate) fn supersede_claim_when(
+        &self,
+        new_id: &EntityId,
+        old_id: &EntityId,
+        now: u64,
+        close: impl FnOnce(&ClaimBody, &ClaimBody) -> bool,
+    ) -> Result<bool> {
+        self.supersede_claim_checked(None, new_id, old_id, now, |vault, txn| {
+            let new = vault.get_claim_in_txn(txn, new_id)?;
+            let old = vault.get_claim_in_txn(txn, old_id)?;
+            Ok(match (new, old) {
+                (Some(new), Some(old)) => close(&new, &old),
+                _ => true,
+            })
+        })
     }
 
     /// [`Vault::supersede_claim`] as the vault owner's act: `owner` is
@@ -476,26 +500,33 @@ impl Vault {
         old_id: &EntityId,
         now: u64,
     ) -> Result<()> {
-        self.supersede_claim_checked(Some(owner), new_id, old_id, now)
+        self.supersede_claim_checked(Some(owner), new_id, old_id, now, |_, _| Ok(true))
+            .map(|_| ())
     }
 
+    /// The supersession in a write of its own, once `close` agrees in that
+    /// write; `Ok(false)` when it declined and nothing was written.
     fn supersede_claim_checked(
         &self,
         owner: Option<&crate::consent::AuthenticatedOwner>,
         new_id: &EntityId,
         old_id: &EntityId,
         now: u64,
-    ) -> Result<()> {
+        close: impl FnOnce(&Self, &heed::RwTxn<'_>) -> Result<bool>,
+    ) -> Result<bool> {
         let mut wtxn = self.store.env.write_txn()?;
         if let Some(owner) = owner {
             owner.revalidate_in_txn(self, &wtxn)?;
+        }
+        if !close(self, &wtxn)? {
+            return Ok(false);
         }
         let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
         self.supersede_claim_in_txn(&mut wtxn, new_id, old_id, now)?;
         rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
         self.store.notify_proactivity_changes();
-        Ok(())
+        Ok(true)
     }
 
     /// Supersedes `old_id` with `new_id` INSIDE the caller's write

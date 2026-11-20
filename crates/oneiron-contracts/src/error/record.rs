@@ -506,6 +506,21 @@ pub enum RecordError {
         "workspace work_companion policy is require: start a work companion; a brought one is refused"
     )]
     WorkCompanionRequired,
+    /// The vault's `one_vault` row is unreadable, so onboarding refuses to
+    /// say which joining line applies. The journal stays resumable: retry
+    /// once the manifest reads again. The Complete step writes nothing on
+    /// this refusal; prior journal progress stays resumable.
+    #[error("workspace one_vault setting is unreadable: repair the policy manifest, then retry")]
+    OneVaultSettingUnreadable,
+    /// The company is not in one-vault mode; work talk stays with the member.
+    #[error("workspace one_vault mode is off: work talk stays with the member")]
+    WorkTalkStaysWithMember,
+    /// The member must acknowledge the company's one-vault notice first.
+    #[error("workspace one_vault notice has not been acknowledged by this member")]
+    OneVaultNotTold,
+    /// A born work companion already holds its talk in the company vault.
+    #[error("work talk requires a brought companion; a work companion is already company-homed")]
+    NoBroughtCompanion,
     /// A CounterpartyContact record failed pinned structural validation.
     /// Nothing was written.
     #[error("invalid counterparty contact body: {0}")]
@@ -578,9 +593,9 @@ pub enum RecordError {
     /// The authority fold needs history this vault does not hold (OF-469):
     /// no fold answers until an import closes it. `missing` ascends; on a
     /// vault that adopted a checkpoint image it may name covered rows, which
-    /// a late fork or an op the image cannot fold past needs. Fetching them
-    /// may name further ancestors: ask for the vault's history request again
-    /// after each import.
+    /// a late fork or an op the image cannot fold past needs, and `reason`
+    /// says which. Fetching them may name further ancestors: ask for the
+    /// vault's history request again after each import.
     #[error("authority history incomplete: {} rows required", missing.len())]
     AuthorityHistoryRequired {
         /// The authority vault (its genesis hash) the history belongs to.
@@ -589,6 +604,8 @@ pub enum RecordError {
         checkpoint: Option<[u8; 32]>,
         /// The authority entry hashes the fold needs, ascending.
         missing: Vec<[u8; 32]>,
+        /// Why it needs them; None only where a refusal names none.
+        reason: Option<crate::authority::AuthorityHistoryReason>,
     },
     /// The persisted authority clock floor is present and does not decode
     /// (FIX 10106): the vault no longer knows the least second it has
@@ -693,6 +710,10 @@ impl RecordError {
                 ErrorKind::WorkspaceMailboxAutonomyNotReady
             }
             Self::WorkCompanionRequired => ErrorKind::WorkCompanionRequired,
+            Self::OneVaultSettingUnreadable => ErrorKind::OneVaultSettingUnreadable,
+            Self::WorkTalkStaysWithMember => ErrorKind::WorkTalkStaysWithMember,
+            Self::OneVaultNotTold => ErrorKind::OneVaultNotTold,
+            Self::NoBroughtCompanion => ErrorKind::NoBroughtCompanion,
             Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
             Self::InvalidCommRecordBody(_) => ErrorKind::InvalidCommRecordBody,
             Self::InvalidDiagnosticBody(_) => ErrorKind::InvalidDiagnosticBody,

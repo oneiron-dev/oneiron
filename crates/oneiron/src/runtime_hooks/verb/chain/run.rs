@@ -19,6 +19,7 @@ use crate::{EntityId, Error, Result};
 
 use super::super::VerbArgsCheck;
 use super::projection::{HookView, merge_withheld};
+use super::view::ResultView;
 use super::{Chain, run_key, session};
 
 /// One run, as its receipt tells it, and what its saved copy keeps.
@@ -67,6 +68,8 @@ pub(super) struct RunRecord<'c> {
     pub(super) reads: Vec<HookReadPin>,
     /// The outcome the body returned, before the engine's own checks.
     pub(super) outcome_json: Option<String>,
+    /// The runtime never started the body on this input.
+    pub(super) input_not_taken: bool,
 }
 
 impl RunRecord<'_> {
@@ -99,7 +102,7 @@ impl<'c> Chain<'c> {
         id: EntityId,
         binding: &'c PackHookBinding,
         args: &Value,
-        result: Option<&Value>,
+        result: Option<ResultView<'_>>,
         check: Option<VerbArgsCheck<'_>>,
     ) -> Result<Option<HookOutcome>> {
         let key = run_key(self.call.invocation, id, self.phase);
@@ -206,6 +209,7 @@ impl<'c> Chain<'c> {
             preparation: verdict.preparation.clone(),
             reads: pins,
             outcome_json: verdict.outcome_json.clone(),
+            input_not_taken: context.input_not_taken(),
         };
         // A room does no canonical work: an outcome that needs it is this
         // hook's own, and the call goes on as after a Continue (CALLS-3).
