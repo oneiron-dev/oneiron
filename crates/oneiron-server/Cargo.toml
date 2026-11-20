@@ -597,6 +597,12 @@ name = "owner_acts_require_vault_owner"
 path = "tests/owner_acts_require_vault_owner.rs"
 required-features = ["oneiron/test-support"]
 
+# A shared env's lane reach seeds its member grant with `put_selector_test_federation_grant`.
+[[test]]
+name = "shared_env_lane_reach"
+path = "tests/shared_env_lane_reach.rs"
+required-features = ["oneiron/test-hooks"]
+
 # L1-02's named-client OAuth acceptance roots its served vault on a `MemoryKeystore`.
 [[test]]
 name = "oauth_named_client_acceptance"

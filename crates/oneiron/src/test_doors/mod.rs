@@ -381,6 +381,8 @@ pub mod world_access;
 pub mod world_follow;
 pub mod world_key_record_signature;
 #[cfg(feature = "sync")]
+pub use crate::sync::connection::home_probe;
+#[cfg(feature = "sync")]
 pub use crate::sync::connection::sync_outbox;
 #[cfg(feature = "sync")]
 pub use crate::sync::queue::sync_queue_rows;
