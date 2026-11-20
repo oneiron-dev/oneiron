@@ -617,7 +617,8 @@ impl Vault {
     /// first ([`Vault::confirm_device_pin`]); outside a window nothing new
     /// is held. A host that installed no device PIN holds no key there, and
     /// that is logged. On a device whose PIN was forgotten and that has none
-    /// now, a seed left in the slot is no key, and nothing is held.
+    /// now, a seed left in the slot is no key, and nothing is held. It waits
+    /// for a door that holds this vault's owner signing slot lock.
     pub fn hold_device_owner_signer_logged(&self) -> bool {
         held_logged(self.hold_device_owner_signer())
     }
@@ -628,6 +629,14 @@ impl Vault {
         let slot = self.owner_signing_slot(machine);
         let pin = self.device_pin();
         let step = pin.as_deref().map(DevicePin::step);
+        // The slot is read under the vault's owner signing slot lock, taken
+        // inside the step as at every door that takes both, so a door that
+        // renews the slot is never seen between its delete and its create.
+        let _slot_lock = self
+            .store
+            .owner_signing_slot_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         match slot_seed_bar(keystore.as_ref()).map_err(super::keystore_error)? {
             Some(SlotSeedBar::PinSet) => match (pin.as_ref(), step) {
                 (Some(pin), Some(step)) => {

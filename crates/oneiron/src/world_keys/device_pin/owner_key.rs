@@ -171,7 +171,9 @@ impl Vault {
     /// its seed with the device PIN key: sealed bytes that were never opened
     /// here answer [`OwnerKeyRest::DevicePinUnopened`]. On a device whose
     /// PIN was forgotten and that has none now, a seed left in the slot is
-    /// no key: [`OwnerKeyRest::NoKey`].
+    /// no key: [`OwnerKeyRest::NoKey`]. The slot is read under this vault's
+    /// owner signing slot lock, so a door that renews the slot is never seen
+    /// between its delete and its create.
     ///
     /// # Errors
     /// `KeystoreUnavailable` while no keystore is installed; the keystore's
@@ -180,6 +182,11 @@ impl Vault {
         let keystore = self.device_keystore()?;
         let machine = self.prepare_install_signing()?;
         let slot = self.owner_signing_slot(machine);
+        let _slot_lock = self
+            .store
+            .owner_signing_slot_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let seed_in_slot = keystore.get(&slot).map_err(keystore_error)?.is_some();
         let tier = match slot_seed_bar(keystore.as_ref()).map_err(keystore_error)? {
             None if seed_in_slot => return Ok(OwnerKeyRest::Slot),
