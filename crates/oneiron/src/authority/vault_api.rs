@@ -228,6 +228,7 @@ impl Vault {
                 && !resident
                 && super::door_refuses_retired_standing(
                     &self.store,
+                    self.privacy_posture(),
                     fold,
                     &authority_entry_hash(entry)?,
                     entry,
@@ -239,14 +240,6 @@ impl Vault {
                             evidence.as_deref(),
                             hash,
                         ),
-                    },
-                    &mut |hash| {
-                        super::retired_signers::authority_row_held(
-                            &self.store,
-                            wtxn,
-                            evidence.as_deref(),
-                            hash,
-                        )
                     },
                 )?
             {
