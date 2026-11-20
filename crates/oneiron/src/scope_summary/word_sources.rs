@@ -22,8 +22,9 @@ pub(crate) enum WordSources {
 /// The word sources of the stored revision `raw` of `id`: an epoch summary,
 /// a scope summary, a TURN that copies one, a claim whose merge header names
 /// one, a `conversation.summary` claim's typed coverage, a native conflict
-/// pair's two claims, the MESSAGE an owner's stated intent cites, or the
-/// finding and subject a Dreamer finding's notice points at.
+/// pair's two claims, the MESSAGE an owner's stated intent cites, the
+/// finding and subject a Dreamer finding's notice points at, or the records
+/// a psych profile's typed sources name.
 pub(crate) fn word_sources_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -155,6 +156,7 @@ pub(crate) fn word_sources_through_in(
         {
             return Ok(finding_notice_sources(body));
         }
+        crate::registry::ENTITY_TYPE_PSYCH_PROFILE => return Ok(profile_word_sources(body)),
         _ => return Ok(WordSources::Own),
     };
     Ok(match sources {
@@ -281,6 +283,31 @@ fn finding_notice_sources(body: &[u8]) -> WordSources {
         }
         _ => WordSources::Unresolved,
     }
+}
+
+/// The word sources of a PSYCH_PROFILE body (FIX
+/// PSYCH-PROFILE-DERIVED-SOURCE-CONJUNCT-MISSES-CITED-CLAIMS): the record each
+/// typed source names, whose words the profile was built from (FIX 11766).
+/// Profile landing names them in the body and the dependency index, never as
+/// a `DerivedFrom` edge, so a reader reads the profile only while it reads
+/// each one, and a C6 use limit on one withholds it from the owner too (FIX
+/// 1496 S8). A body of an earlier schema, or one that does not decode, names
+/// no source a reader can judge; a profile with no source is its own.
+fn profile_word_sources(body: &[u8]) -> WordSources {
+    let Ok(profile) = crate::psych_profile::decode_psych_profile_body(body) else {
+        return WordSources::Unresolved;
+    };
+    let mut sources = profile
+        .sources
+        .iter()
+        .map(|source| source.document_ref)
+        .collect::<Vec<_>>();
+    if sources.is_empty() {
+        return WordSources::Own;
+    }
+    sources.sort_unstable();
+    sources.dedup();
+    WordSources::From(sources)
 }
 
 /// The predicate an owner's stated intent is kept under
