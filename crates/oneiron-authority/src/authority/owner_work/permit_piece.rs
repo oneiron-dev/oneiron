@@ -92,11 +92,11 @@ impl CustodyPermitPiece {
     }
 
     /// Signed by one Ed25519 key: the carrier's install key, alone or beside
-    /// one owner key's proof ([`validate_carried_signers`]), or alone the
+    /// one owner key's proof ([`AuthorityLogEntry::validate_carried_signers`]), or alone the
     /// anchor of the root a kit request names.
     pub(in crate::authority) fn validate_entry(&self, entry: &AuthorityLogEntry) -> Result<()> {
         match self.carrier {
-            Some(_) => validate_carried_signers(entry),
+            Some(_) => entry.validate_carried_signers(),
             None => signed_alone_by_install_key(entry),
         }
     }

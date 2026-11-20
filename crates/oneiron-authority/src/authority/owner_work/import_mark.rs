@@ -70,9 +70,9 @@ impl ExportSupplementImported {
     }
 
     /// Signed by an Ed25519 install key, the carrier's, alone or beside one
-    /// owner key's proof ([`validate_carried_signers`]).
+    /// owner key's proof ([`AuthorityLogEntry::validate_carried_signers`]).
     pub(in crate::authority) fn validate_entry(&self, entry: &AuthorityLogEntry) -> Result<()> {
-        validate_carried_signers(entry)
+        entry.validate_carried_signers()
     }
 }
 
