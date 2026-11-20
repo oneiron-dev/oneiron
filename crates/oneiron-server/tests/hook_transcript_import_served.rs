@@ -47,8 +47,12 @@ use oneiron::authority::{
 };
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::ingest::history::{HistoryFile, HistorySource};
+use oneiron::receipt::{ReceiptKind, ReceiptQuery};
+use oneiron::skill_hub::HubFile;
+use oneiron::skill_hub::pack_catalog::PackInstallDisposition;
 use oneiron::store::GateDecisionId;
-use oneiron::{EntityId, Vault, VaultConfig};
+use oneiron::task_verb::{TaskAskHandle, TaskAskOptionId, TaskAskWord};
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
@@ -1253,4 +1257,392 @@ fn staged_uploads_keep_their_bounds() {
             .contains("no hook transcript upload"),
         "the upload past the cap was dropped"
     );
+}
+
+/// The pack the owner's hooks of the staged-import hook cases come in.
+const HOOK_PACK: &str = "example.stagedimporthooks";
+
+/// The tool-first MCP endpoint, and the protocol version its calls name.
+const MCP_PATH: &str = "/mcp/tool-first";
+const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
+
+/// The owner puts a pack whose one hook `hook`, in `phase`, answers
+/// `outcome` through `body` on every call of `verbs`, by any caller (a hook
+/// that names no actors selects every one); answers the hook's binding.
+fn put_owner_hook(
+    vault: &Vault,
+    hook: &str,
+    verbs: &[&str],
+    phase: &str,
+    outcome: &str,
+    body: &str,
+) -> EntityId {
+    vault
+        .prepare_install_signing()
+        .expect("load this install's signing keys");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner actor");
+    let proof = vault
+        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+        .expect("owner proof");
+    let verbs_json = serde_json::to_string(verbs).expect("the verb list as JSON");
+    let files = vec![
+        HubFile::new(
+            "PACK.md",
+            format!(
+                "---\nname: {HOOK_PACK}\ndescription: One hook on the hook transcript import.\nversion: 1.0.0\nkind: capability\nhooks: [\"{hook}\"]\n---\nA pack whose one hook judges hook transcript imports.\n"
+            ),
+        ),
+        HubFile::new(
+            format!("hooks/{hook}/HOOK.md"),
+            format!(
+                "---\nname: {hook}\nversion: 1.0.0\nverbs: {verbs_json}\nphase: {phase}\noutcomes: [\"{outcome}\"]\n---\nThe hook answers {outcome}.\n"
+            ),
+        ),
+        HubFile::new(format!("hooks/{hook}/body.js"), body.to_owned()),
+    ];
+    match vault
+        .put_pack(&proof, files)
+        .expect("the owner puts the hook pack")
+    {
+        PackInstallDisposition::Installed(receipt) => {
+            assert_eq!(receipt.pack_name, HOOK_PACK, "the put installs the pack");
+        }
+        other => panic!("the owner's hook pack installs and binds its hook: {other:?}"),
+    }
+    let (binding, row) = vault
+        .pack_hook_bindings()
+        .expect("list the hook bindings")
+        .into_iter()
+        .find(|(_, row)| row.pack == HOOK_PACK && row.hook == hook)
+        .expect("the owner's hook binds");
+    assert!(row.enabled, "the hook's binding runs");
+    binding
+}
+
+/// One part of the owner's upload `upload` over the HTTP facade.
+async fn owner_part(
+    fixture: &Fixture,
+    upload: &str,
+    offset: usize,
+    text: &str,
+    last: bool,
+) -> (StatusCode, Value) {
+    post(
+        fixture,
+        &format!("/v1/core/facade/{PART_VERB}"),
+        &fixture.owner_token,
+        owner_binding(fixture),
+        json!({"upload": upload, "offset": offset, "text": text, "last": last}),
+    )
+    .await
+}
+
+/// Every Hook receipt the vault holds, as its debug text.
+fn hook_receipts(fixture: &Fixture) -> Vec<String> {
+    fixture
+        .vault
+        .receipts(ReceiptQuery::new(1000).with_kind(ReceiptKind::Hook))
+        .expect("read the hook receipts")
+        .iter()
+        .map(|receipt| format!("{receipt:?}"))
+        .collect()
+}
+
+/// The owner's JSON-RPC call `method` on the tool-first MCP endpoint.
+async fn owner_mcp(fixture: &Fixture, id: u64, method: &str, params: Value) -> Value {
+    let request = Request::post(MCP_PATH)
+        .header("authorization", format!("Bearer {}", fixture.owner_token))
+        .header("x-oneiron-binding", owner_binding(fixture))
+        .header("content-type", "application/json")
+        .header("mcp-protocol-version", MCP_PROTOCOL_VERSION)
+        .body(Body::from(
+            json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string(),
+        ))
+        .expect("MCP request");
+    let response = fixture
+        .app
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("MCP response");
+    let bytes = to_bytes(response.into_body(), 16 * 1024 * 1024)
+        .await
+        .expect("MCP response body");
+    serde_json::from_slice(&bytes)
+        .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()))
+}
+
+/// Case 10 (FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER, REVIEW-9963 round 2
+/// P1 one): a pre hook naming only `vault.imports.hook_transcript` that
+/// answers Skip stops a staged import over the HTTP facade, as it stops one
+/// call of the verb: the last part's answer is the hook's skip, nothing
+/// lands, and the upload ended. On the part-verb code before the fix, the
+/// last part lands the request past the hook.
+#[test]
+fn a_whole_verb_pre_hook_skip_stops_a_staged_import() {
+    run_on_engine_stack("hook-transcript-staged-skip", || async {
+        let (fixture, _agent) = setup().await;
+        put_owner_hook(
+            &fixture.vault,
+            "skip-imports",
+            &[VERB],
+            "pre",
+            "skip",
+            "return { kind: \"skip\", reason: \"held by the owner hook\" };\n",
+        );
+        let request = session_body().to_string();
+        let cut = request.len() / 2;
+
+        let (status, body) = owner_part(&fixture, UPLOAD, 0, &request[..cut], false).await;
+        assert_eq!(status, StatusCode::OK, "the first part stages: {body}");
+        let (_, body) = owner_part(&fixture, UPLOAD, cut, &request[cut..], true).await;
+        assert!(
+            body.to_string().contains("held by the owner hook"),
+            "the last part answers the whole verb's hook skip: {body}"
+        );
+        assert_eq!(ledger(&fixture), 0, "nothing lands past the hook's skip");
+
+        let (_, body) = owner_part(&fixture, UPLOAD, cut, &request[cut..], true).await;
+        assert!(
+            body.to_string().contains("no hook transcript upload"),
+            "a skipped landing ends the upload: {body}"
+        );
+        assert_eq!(ledger(&fixture), 0, "nothing landed");
+    });
+}
+
+/// Case 11 (as case 10, over MCP): the owner's `tools/call` of the part
+/// verb on the tool-first endpoint, the way `oneiron mcp` carries the hooks'
+/// hand-over, meets the same hook: the last part's result is the hook's
+/// skip and nothing lands.
+#[test]
+fn a_whole_verb_pre_hook_skip_stops_a_staged_import_over_mcp() {
+    run_on_engine_stack("hook-transcript-staged-skip-mcp", || async {
+        let (fixture, _agent) = setup().await;
+        put_owner_hook(
+            &fixture.vault,
+            "skip-imports",
+            &[VERB],
+            "pre",
+            "skip",
+            "return { kind: \"skip\", reason: \"held by the owner hook\" };\n",
+        );
+        let reply = owner_mcp(
+            &fixture,
+            1,
+            "initialize",
+            json!({
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "hook-transcript-import-served", "version": "1"},
+            }),
+        )
+        .await;
+        assert!(
+            reply.get("error").is_none(),
+            "the owner's connection initializes: {reply}"
+        );
+        let listed = owner_mcp(&fixture, 2, "tools/list", json!({})).await;
+        let version = listed["result"]["tools"]
+            .as_array()
+            .expect("tools/list lists tools")
+            .iter()
+            .find(|tool| tool["name"] == PART_VERB)
+            .map(|tool| tool["inputSchema"]["properties"]["schema_version"]["const"].clone())
+            .unwrap_or_else(|| panic!("the tool-first endpoint lists {PART_VERB}: {listed}"));
+        let request = session_body().to_string();
+        let cut = request.len() / 2;
+        let part = |offset: usize, text: &str, last: bool| {
+            json!({
+                "name": PART_VERB,
+                "arguments": {
+                    "schema_version": version,
+                    "consent": {
+                        "policy_ref": "policy:agent-session",
+                        "purpose": "land this session's log in the selected vault",
+                    },
+                    "arguments": {
+                        "spec": {"upload": UPLOAD, "offset": offset, "text": text, "last": last},
+                    },
+                },
+            })
+        };
+
+        let reply = owner_mcp(&fixture, 3, "tools/call", part(0, &request[..cut], false)).await;
+        assert_eq!(
+            reply["result"]["structuredContent"]["output"]["staged"].as_u64(),
+            Some(cut as u64),
+            "the first part stages: {reply}"
+        );
+        let reply = owner_mcp(&fixture, 4, "tools/call", part(cut, &request[cut..], true)).await;
+        assert!(
+            reply.to_string().contains("held by the owner hook"),
+            "the last part's result is the whole verb's hook skip: {reply}"
+        );
+        assert_eq!(ledger(&fixture), 0, "nothing lands past the hook's skip");
+    });
+}
+
+/// Case 12 (REVIEW-9963 round 2 P1 two): no part reaches a hook, even one
+/// whose binding takes every import verb and whose view is the caller's:
+/// staging a part runs no hook, so no hook receipt or saved run holds the
+/// part's text, and an upload abandoned before its last part leaves nothing
+/// of it in the vault. On the part-verb code before the fix, the part's own
+/// hook chain runs and records it.
+#[test]
+fn no_part_of_a_staged_import_reaches_a_hook() {
+    run_on_engine_stack("hook-transcript-staged-part-hooks", || async {
+        let (fixture, _agent) = setup().await;
+        put_owner_hook(
+            &fixture.vault,
+            "see-imports",
+            &["vault.imports.*"],
+            "pre",
+            "continue",
+            "return { kind: \"continue\" };\n",
+        );
+        let request = session_body().to_string();
+        let cut = request.len() / 2;
+        let part = &request[..cut];
+        let needle = &part[cut / 2..cut / 2 + 48];
+        let before = hook_receipts(&fixture);
+
+        let (status, body) = owner_part(&fixture, UPLOAD, 0, part, false).await;
+        assert_eq!(status, StatusCode::OK, "the part stages: {body}");
+        let after = hook_receipts(&fixture);
+        assert_eq!(
+            after.len(),
+            before.len(),
+            "no hook ran on the part: {after:?}"
+        );
+        assert!(
+            after.iter().all(|receipt| !receipt.contains(needle)),
+            "no hook receipt holds the part's text"
+        );
+        assert_eq!(ledger(&fixture), 0, "the abandoned upload landed nothing");
+    });
+}
+
+/// Case 13: the whole verb's post hook judges a staged import's answer as
+/// it judges one call's: a Redact of `/conversation` reaches the last
+/// part's `imported`, and the import itself landed (a post hook changes
+/// the caller's view only). On the part-verb code before the fix, the
+/// answer comes back whole.
+#[test]
+fn a_whole_verb_post_redact_reaches_a_staged_import_answer() {
+    run_on_engine_stack("hook-transcript-staged-redact", || async {
+        let (fixture, _agent) = setup().await;
+        put_owner_hook(
+            &fixture.vault,
+            "redact-conversation",
+            &[VERB],
+            "post",
+            "redact",
+            "return { kind: \"redact\", paths: [\"/conversation\"] };\n",
+        );
+        let request = session_body().to_string();
+        let cut = request.len() / 2;
+
+        let (status, body) = owner_part(&fixture, UPLOAD, 0, &request[..cut], false).await;
+        assert_eq!(status, StatusCode::OK, "the first part stages: {body}");
+        let (status, body) = owner_part(&fixture, UPLOAD, cut, &request[cut..], true).await;
+        assert_eq!(status, StatusCode::OK, "the last part lands: {body}");
+        let imported = &body["imported"];
+        assert!(imported.is_object(), "the import's view comes back: {body}");
+        assert!(
+            imported.get("conversation").is_none(),
+            "the whole verb's post Redact reaches the part's caller: {body}"
+        );
+        assert!(
+            total(imported, "new") > 0,
+            "the import landed under the redacted view: {body}"
+        );
+        assert_eq!(ledger(&fixture) as u64, total(imported, "new"));
+    });
+}
+
+/// Case 14: a whole-verb pre hook that asks holds a staged import, and the
+/// request lands at most once. The last part answers Pending and lands
+/// nothing; sent again, it reaches the same ask. Once the owner answers
+/// proceed, the last part sent again lands the request (or answers what
+/// the settled call did), and sent once more finds the upload ended, with
+/// nothing landed twice. On the part-verb code before the fix, the last
+/// part lands past the hook.
+#[test]
+fn a_held_staged_import_lands_at_most_once() {
+    run_on_engine_stack("hook-transcript-staged-ask", || async {
+        let (fixture, _agent) = setup().await;
+        let binding = put_owner_hook(
+            &fixture.vault,
+            "ask-imports",
+            &[VERB],
+            "pre",
+            "ask",
+            "return { kind: \"ask\", question: \"May this session's log land?\" };\n",
+        );
+        let request = session_body().to_string();
+        let cut = request.len() / 2;
+
+        let (status, body) = owner_part(&fixture, UPLOAD, 0, &request[..cut], false).await;
+        assert_eq!(status, StatusCode::OK, "the first part stages: {body}");
+        let (status, held) = owner_part(&fixture, UPLOAD, cut, &request[cut..], true).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "the hook asks first: {held}");
+        let ask = held["error"]["hook"]["ask"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the Pending names its ask: {held}"))
+            .to_owned();
+        assert_eq!(ledger(&fixture), 0, "nothing lands while the ask is open");
+
+        let (status, again) = owner_part(&fixture, UPLOAD, cut, &request[cut..], true).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "still held: {again}");
+        assert_eq!(
+            again["error"]["hook"]["ask"].as_str(),
+            Some(ask.as_str()),
+            "the last part sent again reaches the same ask: {again}"
+        );
+        assert_eq!(ledger(&fixture), 0, "nothing lands while the ask is open");
+
+        let owner = fixture.vault.ensure_embedded_owner_actor().expect("owner");
+        let mut word = TaskAskWord::new(binding);
+        word.option = Some(TaskAskOptionId::new("proceed").expect("the proceed option"));
+        fixture
+            .vault
+            .memory(owner, EdgeActorClass::Human)
+            .tasks_answer(
+                &TaskAskHandle {
+                    group_ref: EntityId::from_hex(&ask).expect("a 32-hex ask handle"),
+                },
+                &word,
+            )
+            .expect("the owner answers proceed");
+
+        let mut settled = None;
+        for _ in 0..50 {
+            let (status, body) = owner_part(&fixture, UPLOAD, cut, &request[cut..], true).await;
+            if status != StatusCode::ACCEPTED {
+                settled = Some((status, body));
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        let (status, body) = settled.expect("the held import settles once answered");
+        // The retry runs the call, or, when settlement's drain ran it
+        // first, answers what that run did.
+        let drained = body
+            .to_string()
+            .contains("already ran once its hook's ask was answered");
+        assert!(
+            status == StatusCode::OK || drained,
+            "the answered ask lets the request land: {status} {body}"
+        );
+        let landed = ledger(&fixture);
+        assert!(landed > 0, "the request landed once answered: {body}");
+
+        let (_, body) = owner_part(&fixture, UPLOAD, cut, &request[cut..], true).await;
+        assert!(
+            body.to_string().contains("no hook transcript upload"),
+            "the landing ended the upload: {body}"
+        );
+        assert_eq!(ledger(&fixture), landed, "nothing landed twice");
+    });
 }
