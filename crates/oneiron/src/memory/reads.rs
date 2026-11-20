@@ -398,7 +398,8 @@ impl Memory<'_> {
     pub fn claim_history(&self, claim_ref: &str) -> MemoryResult<ScopedReadResult<Vec<ClaimView>>> {
         let lane = self
             .read_lane(ClaimReadStatus::Recorded)?
-            .with_live_grant_receipts();
+            .with_live_grant_receipts()
+            .for_claim_history();
         let id = self.resolve_ref_in_lane(&lane, claim_ref)?;
         let ScopedReadResult {
             value: timeline,

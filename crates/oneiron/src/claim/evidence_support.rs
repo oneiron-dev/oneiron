@@ -28,10 +28,38 @@ enum SlotSupport {
     Malformed,
 }
 
+/// Which rule a read applies to a cited CLAIM the owner retracted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum CitedSupport {
+    /// Every serving read: a retracted cited claim supports nothing, so a
+    /// claim derived only from it is not served (Engine ANSWER
+    /// DERIVED-CLAIM-RETRACTED-SOURCE-SUPPORT = A).
+    #[default]
+    Served,
+    /// The claim history door (`Memory::claim_history`): a retraction ends
+    /// serving, not the record, so a retracted cited claim still counts
+    /// while its row lives. Every other support rule applies as served.
+    History,
+}
+
+/// A derived claim's live support on every serving read:
+/// [`has_live_support_under_in_txn`] under [`CitedSupport::Served`].
+pub(crate) fn has_live_support_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    body: &ClaimBody,
+) -> Result<bool> {
+    has_live_support_under_in_txn(store, txn, body, CitedSupport::Served)
+}
+
 /// A derived claim with typed TURN citations is readable while at least one
-/// cited turn remains live. This is a read-time test: sync can deliver a claim
-/// after the deletion that erased its source. Ordinary claims have no such
-/// evidence obligation, and claim history remains available through get_claim.
+/// cited turn remains live. Under [`CitedSupport::Served`] a cited CLAIM the
+/// owner retracted is not live (`retracted_claim`); a superseded one is.
+/// Under [`CitedSupport::History`] a retracted one counts. This is a
+/// read-time test: sync can deliver a claim after the deletion that erased
+/// its source, or before the retraction of the claim it cites. Ordinary
+/// claims have no such evidence obligation, and claim history remains
+/// available through get_claim.
 /// A stamped successor of a raw claim keeps that claim's obligation: the
 /// evidence it carries is read as the raw claim's own. A stamped claim's
 /// writer evidence (`candidate_evidence`, where the Dreamer's promotion and a
@@ -39,10 +67,11 @@ enum SlotSupport {
 /// envelope does. Every citing slot asks together: one live cited row among
 /// them supports the claim, and one malformed slot fails it. `store` is the
 /// content read: a room's view finds a turn the room holds.
-pub(crate) fn has_live_support_in_txn(
+pub(crate) fn has_live_support_under_in_txn(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     body: &ClaimBody,
+    rule: CitedSupport,
 ) -> Result<bool> {
     let mut slots = vec![written_support(body)];
     if let Some(candidate) = body.evidence.as_ref().and_then(stamped_candidate_evidence) {
@@ -61,9 +90,12 @@ pub(crate) fn has_live_support_in_txn(
     }
     for (refs, turns_only) in cited {
         for id in refs {
-            if let crate::vault::LiveEntityRow::Live { entity_type, .. } =
-                crate::vault::live_entity_row_in_txn(store, txn, &id)?
+            if let crate::vault::LiveEntityRow::Live {
+                entity_type,
+                body: row,
+            } = crate::vault::live_entity_row_in_txn(store, txn, &id)?
                 && (!turns_only || entity_type == crate::registry::ENTITY_TYPE_TURN)
+                && (rule == CitedSupport::History || !retracted_claim(entity_type, &row))
             {
                 return Ok(true);
             }
@@ -178,4 +210,16 @@ fn candidate_support(evidence: &Value) -> SlotSupport {
         Ok(_) => SlotSupport::Unasked,
         Err(_) => SlotSupport::Malformed,
     }
+}
+
+/// Whether a live row of `entity_type` holding `body` is a retracted CLAIM,
+/// which supports nothing: a retraction says the claim was wrong (Engine
+/// ANSWER DERIVED-CLAIM-RETRACTED-SOURCE-SUPPORT = A; canon ARCH-0004
+/// hydration). A superseded claim still supports, because a newer version
+/// replaced it and no one refuted it. A body that does not decode is read as
+/// before this rule, by its row alone.
+fn retracted_claim(entity_type: u8, body: &[u8]) -> bool {
+    entity_type == crate::registry::ENTITY_TYPE_CLAIM
+        && super::decode_claim_body(body, true)
+            .is_ok_and(|claim| claim.lifecycle == super::ClaimLifecycleStatus::Retracted)
 }
