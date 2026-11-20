@@ -134,9 +134,10 @@ impl Memory<'_> {
             prior,
             ..
         } = *write;
-        // OF-023: every standing stated peer on this key, read in
-        // this transaction rather than taken from the advisory
-        // lookup. Each one whose answer differs opens a conflict.
+        // OF-023, and a generated claim beside user-stated truth: every
+        // standing stated peer on this key, read in this transaction rather
+        // than taken from the advisory lookup. Each one whose answer differs
+        // opens a conflict.
         let stated_conflicts = if beside_stated {
             self.stated_preference_conflicts_in_txn(content.read(), key, id, value)?
         } else {
@@ -265,14 +266,15 @@ impl Memory<'_> {
         // A claim that stands at commit is lexically live in the same batch,
         // as a promoted Dreamer claim is (FIX 11914): a light recall finds it
         // at once, with no idle pass or embedder. A held (proposed) claim
-        // stages no text. Its text is the claim's as the embedder projects a
-        // claim (`embed::claim_text`): a string value as it is, any other
-        // value rendered whole.
+        // stages no text. Its text is the claim's index text, the one the
+        // embedder projects (`claim::claim_index_text`): a reaction's glyph
+        // alone, an echo none, a string value as it is, any other value
+        // rendered whole.
         let surfaces = matches!(
             envelope.approval(),
             ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
         );
-        let text = crate::claim::claim_value_index_text(&write.value);
+        let text = crate::claim::claim_index_text(&write.input.predicate, &write.value);
         let mut ops = Vec::new();
         if !signed_replay_no_put {
             ops.push(BatchOp::ClaimCandidate {

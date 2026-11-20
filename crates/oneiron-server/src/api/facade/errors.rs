@@ -28,6 +28,8 @@ impl FacadeApiError {
                     reason_codes: Vec::new(),
                     legal_hold: None,
                     room_join_hold: None,
+                    pending: None,
+                    reap_pause: None,
                     program_steps: Vec::new(),
                 },
                 narrowing: None,
@@ -112,6 +114,11 @@ impl From<MemoryError> for FacadeApiError {
             // OF-123: the person the effect names is not settled yet; the
             // same request succeeds once `self.identity.settle` settles it.
             oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED => StatusCode::CONFLICT,
+            // A one-way act's call carried no confirm, or not the caller's
+            // live preview of this call: the owner previews it first.
+            oneiron::memory::MEMORY_CODE_OWNER_CONFIRM_REQUIRED => {
+                StatusCode::PRECONDITION_REQUIRED
+            }
             // FIX 7463a: the owner's world read setting keeps a row the call
             // reads from where its answer goes, or its placement cannot be
             // verified. The row's state refuses, named, never a row not found.
@@ -141,6 +148,9 @@ impl From<MemoryError> for FacadeApiError {
             // FIX 10011: the owner's model pin stands and no offered seat
             // serves it. The owner's setting refuses it, as `error_map` does.
             oneiron_contracts::memory::MEMORY_CODE_MODEL_PIN_UNAVAILABLE => StatusCode::CONFLICT,
+            // L3-39: this machine holds no bytes of the revision a memory
+            // fork names; the row stands, so the state refuses, not the call.
+            oneiron_contracts::memory::MEMORY_CODE_HISTORY_NOT_HELD => StatusCode::CONFLICT,
             // FIX 8189: an OpenAI proxy call the caller's own deadline cut,
             // as its raw door answers it.
             crate::api::openai_proxy::TIMEOUT_CODE => StatusCode::GATEWAY_TIMEOUT,
@@ -250,6 +260,10 @@ impl From<MemoryError> for FacadeApiError {
         } else if browser_doors::browser_refusal_status(&error.code).is_some() {
             tracing::info!(code = %error.code, error = %error.message, "browser verb refused");
         }
+        // L9-61: a reap pause names its capacity bound and the self-host
+        // route here as on every door that serves it.
+        let reap_pause = (error.code == crate::managed::WRITES_FROZEN_TAG)
+            .then(|| Box::new(crate::managed::REAP_PAUSE_BOUND));
         Self {
             status,
             hook_notice: matches!(
@@ -278,6 +292,8 @@ impl From<MemoryError> for FacadeApiError {
                     reason_codes: error.reason_codes,
                     legal_hold: error.legal_hold,
                     room_join_hold: error.room_join_hold,
+                    pending: error.pending,
+                    reap_pause,
                     program_steps: Vec::new(),
                 },
                 narrowing: error.read_receipt,
@@ -294,6 +310,7 @@ impl From<ApiError> for FacadeApiError {
     fn from(error: ApiError) -> Self {
         let legal_hold = error.legal_hold().cloned().map(Box::new);
         let room_join_hold = error.room_join_hold().cloned().map(Box::new);
+        let pending = error.pending().cloned().map(Box::new);
         let mut refusal = Self::new(
             error.status(),
             error.code().as_str(),
@@ -302,6 +319,7 @@ impl From<ApiError> for FacadeApiError {
         );
         refusal.body.error.legal_hold = legal_hold;
         refusal.body.error.room_join_hold = room_join_hold;
+        refusal.body.error.pending = pending;
         refusal
     }
 }
@@ -383,6 +401,7 @@ impl FacadeApiError {
         replayed.reason_codes = replayed_field(error, "reasonCodes").unwrap_or_default();
         replayed.legal_hold = replayed_field(error, "legal_hold").map(Box::new);
         replayed.room_join_hold = replayed_field(error, "room_join_hold").map(Box::new);
+        replayed.pending = replayed_field(error, "pending").map(Box::new);
         replayed.program_steps = replayed_field(error, "programSteps").unwrap_or_default();
         refusal.body.narrowing = replayed_field(body, "narrowing").map(Box::new);
         Some(refusal)
@@ -422,6 +441,7 @@ impl FacadeApiError {
         refusal.reason_codes = error.reason_codes;
         refusal.legal_hold = error.legal_hold;
         refusal.room_join_hold = error.room_join_hold;
+        refusal.pending = error.pending;
         refusal
     }
 
@@ -453,7 +473,7 @@ impl IntoResponse for FacadeApiError {
 
 /// Every member a facade refusal's `error` states on the wire
 /// ([`FacadeErrorBody`], its wrong-root correction flattened in).
-const REPLAYED_ERROR_FIELDS: [&str; 15] = [
+const REPLAYED_ERROR_FIELDS: [&str; 16] = [
     "code",
     "message",
     "requestId",
@@ -468,6 +488,7 @@ const REPLAYED_ERROR_FIELDS: [&str; 15] = [
     "reasonCodes",
     "legal_hold",
     "room_join_hold",
+    "pending",
     "programSteps",
 ];
 

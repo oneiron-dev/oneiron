@@ -20,24 +20,23 @@ pub(crate) fn dispatch_observation_accepts_masked(bytes: &[u8]) -> bool {
 /// Where the side-row wall says it found a secret in an observation (OF-067).
 const OBSERVATION_PLACE: &str = "side:DISPATCH_OBSERVATION";
 
-#[derive(Debug, Clone, Copy)]
+/// The attempt id's 16 bytes, then the attempt count big-endian (4).
+#[derive(Debug, Clone, Copy, SideKey)]
 pub(crate) struct DispatchObservationKey {
     pub(crate) attempt_id: AttemptId,
     pub(crate) attempt_count: u32,
 }
-impl SideKey for DispatchObservationKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.attempt_id.as_bytes());
-        out.extend_from_slice(&self.attempt_count.to_be_bytes());
-    }
 
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (id, count) = bytes.split_at_checked(16)?;
-        Some(Self {
-            attempt_id: AttemptId::from_bytes(id).ok()?,
-            attempt_count: u32::from_be_bytes(count.try_into().ok()?),
-        })
-    }
+/// One [`DispatchObservationKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn dispatch_observation_key_pin_for_test(
+    attempt_id: AttemptId,
+    attempt_count: u32,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&DispatchObservationKey {
+        attempt_id,
+        attempt_count,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

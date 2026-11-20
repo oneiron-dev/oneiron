@@ -3,7 +3,7 @@ use super::{GeminiFrame, GeminiProviderStream, classify_status};
 use futures_core::Stream;
 use oneiron::{
     FatalLlmError, FinishReason, LlmInputUsage, LlmOutputUsage, LlmResult, LlmStreamEvent,
-    LlmUsage, llm::StreamAssembly,
+    LlmUsage, llm::StreamAssembly, provider_finish_reason,
 };
 use serde_json::Value;
 use std::{
@@ -191,7 +191,7 @@ impl GeminiAccumulator {
                 "SAFETY" | "RECITATION" | "BLOCKLIST" | "PROHIBITED_CONTENT" => {
                     FinishReason::ContentFiltered
                 }
-                other => FinishReason::Other { name: other.into() },
+                other => provider_finish_reason(other),
             };
             events.extend(
                 self.assembly

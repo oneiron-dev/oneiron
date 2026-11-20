@@ -30,6 +30,7 @@ use crate::scope_summary::{
 };
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_model::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
     LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat, ScopeResource,
@@ -58,6 +59,11 @@ mod durable_labels;
 mod host;
 mod output;
 mod window;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    arc_children::arc_parts_params_hash_for_test,
+    arc_compose::arc_composition_params_hash_for_test, chunks::session_pages_params_hash_for_test,
+};
 
 use window::summary_input;
 
@@ -649,7 +655,7 @@ fn source_pin(
             vault
                 .store
                 .port_entity_raw(txn, &id)?
-                .map(|raw| *blake3::hash(&raw).as_bytes())
+                .map(|raw| *ContentHash::of(&raw).as_bytes())
         } else {
             None
         },

@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 
 use super::storage::{CAMPAIGN_ENROLLMENT_SCHEMA_VERSION, hash_from_hex, id_from_hex, pin_schema};
 use crate::Vault;
+use crate::campaign::compliance::{OptOutLanguage, recipient_opt_out_language_in_txn};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::saved_query::{
@@ -493,6 +494,11 @@ struct EventRow {
     scope_digest: String,
     /// The review hold detection decided (FIX 9661).
     review_hold: bool,
+    /// The tag of the opt-out line's language detection decided, when it is
+    /// not English (FIX [CAMPAIGN-OPT-OUT-LINE-LOCALE]). A row written
+    /// before it names none and reads as English.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opt_out_language: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -512,7 +518,11 @@ pub(super) fn put_event(vault: &Vault, event: &CampaignEnrollmentEvent) -> Resul
     vault.with_write_txn_grouped(|wtxn| put_event_in_txn(vault, wtxn, event))
 }
 
-fn event_row(event: &CampaignEnrollmentEvent, review_hold: bool) -> EventRow {
+fn event_row(
+    event: &CampaignEnrollmentEvent,
+    review_hold: bool,
+    opt_out_language: OptOutLanguage,
+) -> EventRow {
     EventRow {
         schema_version: CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
         query_ref: event.query_ref.to_hex(),
@@ -528,24 +538,51 @@ fn event_row(event: &CampaignEnrollmentEvent, review_hold: bool) -> EventRow {
         definition_version: event.definition_version,
         scope_digest: bytes_to_hex_lower(&event.scope_digest),
         review_hold,
+        opt_out_language: (opt_out_language != OptOutLanguage::English)
+            .then(|| opt_out_language.as_tag().to_owned()),
     }
 }
 
-/// [`put_event`] inside the caller's writer, with the review hold decided
-/// there.
+/// [`put_event`] inside the caller's writer, with the review hold and the
+/// member's opt-out language decided there. Each event row is written once,
+/// at its detection, so both stay what detection decided.
 pub(super) fn put_event_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     event: &CampaignEnrollmentEvent,
 ) -> Result<()> {
     let review_hold = review_hold_in_txn(vault, wtxn, event)?;
+    let opt_out_language =
+        recipient_opt_out_language_in_txn(&vault.store, wtxn, &event.entity_ref)?;
     EVENT.put(
         &vault.store,
         wtxn,
         &event.event_ref,
-        &event_row(event, review_hold),
+        &event_row(event, review_hold, opt_out_language),
     )?;
     Ok(())
+}
+
+/// The opt-out line's language detection decided for the event `event_ref`
+/// (FIX [CAMPAIGN-OPT-OUT-LINE-LOCALE]); English for a row that names none,
+/// and for an event this vault does not hold.
+///
+/// # Errors
+///
+/// Storage errors propagate; a row naming an unknown language is
+/// [`Error::CorruptedIndex`].
+pub(super) fn event_opt_out_language_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event_ref: EntityId,
+) -> Result<OptOutLanguage> {
+    let Some(tag) = EVENT
+        .get(&vault.store, txn, &event_ref)?
+        .and_then(|row| row.opt_out_language)
+    else {
+        return Ok(OptOutLanguage::English);
+    };
+    OptOutLanguage::parse(&tag).ok_or(Error::CorruptedIndex("campaign enrollment event"))
 }
 
 fn decode_event(event_ref: EntityId, row: EventRow) -> Result<CampaignEnrollmentEvent> {

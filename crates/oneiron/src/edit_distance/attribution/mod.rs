@@ -78,6 +78,8 @@
 
 mod audit;
 mod causes;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::causes::receipt_key_for_test as cause_receipt_key_for_test;
 mod cells;
 mod evidence_judge;
 mod origin;
@@ -154,8 +156,6 @@ pub fn amendments_by_attempt(
     Ok(by_attempt)
 }
 
-// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-ATTRIBUTION-TESTS]: the lib test target's type check fails here (2 errors: E0308 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

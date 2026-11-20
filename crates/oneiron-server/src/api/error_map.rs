@@ -143,6 +143,34 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
             },
             ["Start a work companion in this workspace; its policy refuses a brought one."],
         ),
+        ErrorKind::OneVaultSettingUnreadable => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::Forbidden {
+                required_scope: None,
+            },
+            ["Repair the vault's policy manifest, then retry onboarding."],
+        ),
+        ErrorKind::WorkTalkStaysWithMember => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::Forbidden {
+                required_scope: None,
+            },
+            ["Keep this talk in the member's vault while one-vault mode is off."],
+        ),
+        ErrorKind::OneVaultNotTold => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::Forbidden {
+                required_scope: None,
+            },
+            ["Acknowledge the one-vault notice in person before opening work talk."],
+        ),
+        ErrorKind::NoBroughtCompanion => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::Forbidden {
+                required_scope: None,
+            },
+            ["Use the existing company-homed conversation with the work companion."],
+        ),
         ErrorKind::HeadAdvanceOffTrunk => ApiError::invalid_state(Some("head_advance_off_trunk")),
         ErrorKind::DagParentOutsideConversation => {
             ApiError::invalid_state(Some("dag_parent_outside_conversation"))
@@ -162,6 +190,16 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
                 "Remove public access, preserve evidence, and follow the known-CSAM hosted media runbook.",
             ],
         ),
+        ErrorKind::LastBoundOwnerDelete => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some("last_bound_owner_delete".to_owned()),
+            },
+            [
+                "Erase the vault if ending it is the goal.",
+                "To keep the vault, bind another owner first: have another Owner enrol an owner signing key of their own, which binds them (to add an Owner, share the vault first if it is not shared yet); then this person can be deleted.",
+            ],
+        ),
         ErrorKind::GateWriteRejected => ApiError::new(
             error.to_string(),
             ApiErrorDetails::InvalidState {
@@ -175,6 +213,17 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
                 state: Some("gate_consent_stale".to_owned()),
             },
             ["Restart policy review from the current diff and read frontier."],
+        ),
+        // L3-39: a memory fork names a revision this machine holds no bytes
+        // of; the reader may read the row now.
+        ErrorKind::HistoryNotHeld => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some("history_not_held".to_owned()),
+            },
+            [
+                "Read the row at the live head, or read this frontier where the row's history is held.",
+            ],
         ),
         // FIX 10011: the owner's model pin stands and no offered seat
         // serves it; no other model is put in its place.

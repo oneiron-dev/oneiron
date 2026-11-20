@@ -2,6 +2,9 @@
 use super::support::*;
 use super::*;
 
+/// The managed root's consent counts on a hosted fold, for its genesis and a
+/// confirm it signs, and for nothing on a self-host or relay fold. It binds
+/// no person alone (`crates/oneiron/tests/hosted_root_human_bind.rs`).
 #[test]
 fn managed_host_genesis_passes_consent_and_self_host_refuses_it() {
     let signing = ed_key(81);
@@ -25,22 +28,11 @@ fn managed_host_genesis_passes_consent_and_self_host_refuses_it() {
         ),
         &signing,
     );
-    let bind = sign_ed(
+    let confirm = sign_ed(
         unsigned_entry(
             Some(genesis_vault_id(&genesis).unwrap()),
             1,
             vec![authority_entry_hash(&genesis).unwrap()],
-            bind_op(&key, scope_entity(1), "human", 1),
-            key.clone(),
-            2,
-        ),
-        &signing,
-    );
-    let confirm = sign_ed(
-        unsigned_entry(
-            Some(genesis_vault_id(&genesis).unwrap()),
-            2,
-            vec![authority_entry_hash(&bind).unwrap()],
             AuthorityOp::CriticalWriteConfirm(CriticalWriteConfirmAction {
                 schema_version: CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION,
                 confirm_id: [1; 32],
@@ -58,7 +50,7 @@ fn managed_host_genesis_passes_consent_and_self_host_refuses_it() {
         ),
         &signing,
     );
-    let entries = vec![genesis, bind, confirm];
+    let entries = vec![genesis, confirm];
     let managed = fold_authority_log_for_posture(
         &entries,
         &BTreeMap::new(),
@@ -66,12 +58,8 @@ fn managed_host_genesis_passes_consent_and_self_host_refuses_it() {
         &BTreeMap::new(),
         crate::HostingPrivacyPosture::Hosted,
     );
-    assert_eq!(managed.valid_entries.len(), 3);
+    assert_eq!(managed.valid_entries.len(), 2);
     assert_eq!(managed.critical_write_confirms.len(), 1);
-    assert_eq!(
-        managed.actor_bindings[&key].status,
-        ActorBindingStatus::Active
-    );
     for posture in [
         crate::HostingPrivacyPosture::Relay,
         crate::HostingPrivacyPosture::SelfHostLocal,

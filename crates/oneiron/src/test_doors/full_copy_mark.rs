@@ -1,7 +1,10 @@
-//! Fixture doors for the peer-route full-copy test (L7-47): a machine the
-//! owner marks as their own, another machine's home candidacy and full-copy
-//! mark signed under that machine's own key, and the fold reads the peer
-//! order runs on.
+//! Fixture doors for the full-copy tests (L7-47): a machine the owner marks
+//! as their own, another machine's home candidacy and full-copy mark signed
+//! under that machine's own key, the fold reads the peer order runs on, the
+//! mark a connection's first round writes, and an election raced into a
+//! residence switch.
+
+use std::cell::Cell;
 
 use ed25519_dalek::{Signer, SigningKey};
 
@@ -12,6 +15,7 @@ use crate::authority::{
     invalid_authority, machine_profile_proof_transcript,
 };
 use crate::consent::AuthenticatedOwner;
+use crate::dreamer_runner::{DreamerHomeNodeCandidate, DreamerRunnerStore};
 use crate::error::Result;
 use crate::{EntityId, Vault};
 
@@ -19,10 +23,17 @@ use crate::{EntityId, Vault};
 /// and answers its id with the install key that signs as it. The request is
 /// the enrolment proof its own key signs for this vault, computer class.
 ///
+/// The answer stands only on a handle that holds an owner key's proof, as a
+/// self-host server holds its host root
+/// ([`Vault::hold_checkpoint_root_signer`]); elsewhere it is held for the
+/// owner and names no machine yet (row CARRIER-OWNER-PROOF), so nothing the
+/// machine signs would count.
+///
 /// # Errors
 ///
-/// A vault with no id yet, an enrolment the fold refuses, and storage
-/// errors.
+/// A vault with no id yet, an enrolment the fold refuses,
+/// [`crate::error::RecordError::OwnerKeyRequired`] for an answer held for
+/// the owner's proof, and storage errors.
 pub fn enroll_mine_machine(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -55,14 +66,20 @@ pub fn enroll_mine_machine(
                 &encryption_key,
             ))
             .to_bytes(),
+        restored_from: None,
     };
-    vault.enroll_machine(
+    let landing = vault.enroll_machine(
         owner,
         ActSurface::ThisInstall,
         &request,
         MachineRole::Owned(MachineOwnership::Yours),
         None,
     )?;
+    if landing.held().is_some() {
+        return Err(crate::error::Error::Record(
+            crate::error::RecordError::OwnerKeyRequired,
+        ));
+    }
     Ok((machine, key))
 }
 
@@ -182,6 +199,20 @@ pub fn holds_full_copy(vault: &Vault, machine: EntityId) -> Result<bool> {
     Ok(vault.authority_fold()?.holds_full_copy(machine))
 }
 
+/// The full-copy mark this install's connection writes once a home session's
+/// first round completes under sync all, with `configured` the host's
+/// configured mode (L7-47).
+///
+/// # Errors
+///
+/// A mark the fold refuses; storage errors.
+pub fn mark_first_round_full_copy(
+    vault: &Vault,
+    configured: crate::sync::SyncResidenceMode,
+) -> Result<Option<AuthorityEntryHash>> {
+    vault.mark_first_round_full_copy(configured)
+}
+
 /// The peer order over `granted` in one snapshot: every machine that holds
 /// a full copy before every machine that does not, and the election's order
 /// within each group.
@@ -196,4 +227,35 @@ pub fn rank_sync_peers(
     down_home: EntityId,
 ) -> Result<Vec<EntityId>> {
     crate::sync::peer_route::rank_sync_peers(vault, granted, local, down_home)
+}
+
+thread_local! {
+    /// The election the next residence switch on this thread commits at its
+    /// race point, and the clock it elects at; taken once.
+    static ELECTION_AT_RESIDENCE_SWITCH: Cell<Option<(DreamerHomeNodeCandidate, u64)>> =
+        const { Cell::new(None) };
+}
+
+/// Arms the next residence switch on this thread to elect `candidate` home
+/// at `now` after it planned and before it records the owner's choice: the
+/// point a switch to sync opened reaches once the home granted its held
+/// windows again, seconds of network after it read the home (FIX
+/// RESIDENCE-SWITCH-STALE-HOME). Fires once.
+pub fn elect_home_at_next_residence_switch(candidate: DreamerHomeNodeCandidate, now: u64) {
+    ELECTION_AT_RESIDENCE_SWITCH.with(|slot| slot.set(Some((candidate, now))));
+}
+
+/// The race point in `SyncConnection::switch_residence_mode`, between the
+/// switch's planning read of the home and its recording transaction: runs
+/// the election [`elect_home_at_next_residence_switch`] armed, if any.
+///
+/// # Errors
+///
+/// An election the store refuses; storage errors.
+pub(crate) fn at_residence_switch_record(vault: &Vault) -> Result<()> {
+    let Some((candidate, now)) = ELECTION_AT_RESIDENCE_SWITCH.with(Cell::take) else {
+        return Ok(());
+    };
+    DreamerRunnerStore::new(vault).elect_home_node(&[candidate], now)?;
+    Ok(())
 }

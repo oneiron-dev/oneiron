@@ -290,3 +290,12 @@ pub enum ReasoningEffort {
 /// seat's effort pin. An OpenAI-compatible own server (llama.cpp) reads it
 /// per request; an adapter whose wire has no such field drops it.
 pub const REASONING_BUDGET_PARAM: &str = "reasoning_budget_tokens";
+
+/// The request param that names, as an array of their keys, the params only
+/// an own server or this device's model is sent: a Dreamer extraction call's
+/// answer cap and sampling. A seat may serve a call on a hosted rung after an
+/// own server's, so the call carries them whichever rung answers, and the
+/// wire of the rung that answers sends them only to an own server or this
+/// device ([`super::LlmRequest::wire_params`]). The param itself never
+/// reaches a wire.
+pub const OWN_SERVER_ONLY_PARAM: &str = "own_server_only";

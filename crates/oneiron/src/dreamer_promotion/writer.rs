@@ -451,6 +451,12 @@ pub(super) fn promote_one_answering(
                 .ok_or(Error::InvalidClaimBody(
                     "consolidation claim is missing inside its own write transaction",
                 ))?;
+        // A claim this writer writes about a PERSON under a cleanup archive
+        // is a new mention of that person: the same record is restored in
+        // the claim's own transaction, where it is restorable (ARCH-0073 §6;
+        // FIX NATIVE-CLAIM-LANDS-ON-ARCHIVED-PERSON). A replay that finds its
+        // claim already reviewed returns before this writer.
+        vault.restore_mentioned_subject_in_txn(wtxn, landed.subject)?;
         // Never Auto, and never Proposed where no review holds it.
         if imported
             && (landed.approval == ClaimApprovalStatus::Auto
@@ -628,13 +634,10 @@ pub(super) fn promote_one_answering(
     verify_landed(vault, &candidate.claim_id, &probe_body.predicate, source)
 }
 
-/// What a promoted claim's birth batch indexes under `val`: its value as the
-/// embedder projects a claim (embed.rs `claim_text`), then `queries`.
+/// What a promoted claim's birth batch indexes under `val`: its index text,
+/// the one the embedder projects (`claim::claim_index_text`), then `queries`.
 fn birth_lexical_text(body: &crate::claim::ClaimBody, queries: &[String]) -> String {
-    let mut text = body
-        .value
-        .as_str()
-        .map_or_else(|| body.value.to_string(), str::to_owned);
+    let mut text = crate::claim::claim_index_text(&body.predicate, &body.value);
     for query in queries {
         text.push(' ');
         text.push_str(query);

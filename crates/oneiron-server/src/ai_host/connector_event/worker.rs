@@ -26,7 +26,7 @@ use std::sync::Arc;
 use oneiron::agent_def::AgentDefinition;
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::claim::CallerLocality;
-use oneiron::compaction::{ChatLog, ConversationCompactionUnavailable};
+use oneiron::compaction::{ChatLog, ChatLogLine, ConversationCompactionUnavailable};
 use oneiron::context_board::{TurnWake, turn_wake_line};
 use oneiron::ingest::{ConnectorLogLine, ConnectorWitness, connector_reply_message_id};
 use oneiron::limit_ask::EngineLimit;
@@ -166,15 +166,45 @@ fn answer(
             });
             // The whole conversation so far, as the agent's lane admits it;
             // one the vault cannot read answers from the message alone.
-            let mut context: Vec<LlmMessage> = match &self_log {
-                Some((_, log)) => log.lines.iter().map(log_message).collect(),
+            let history: Vec<TranscriptMessage> = match &self_log {
+                Some((_, log)) => log
+                    .lines
+                    .iter()
+                    .filter_map(|line| match line {
+                        ConnectorLogLine::Message(retained) => Some(retained.clone()),
+                        ConnectorLogLine::Summary { .. } => None,
+                    })
+                    .collect(),
                 None => match vault.connector_conversation_history(agent, &origin, REPLY_REF) {
-                    Ok(history) => history.iter().map(history_message).collect(),
+                    Ok(history) => history,
                     Err(error) => {
                         tracing::warn!(%error, "connector reply history did not read; the reply goes on");
                         Vec::new()
                     }
                 },
+            };
+            // The rows the prompt is read from: its receipts name their
+            // worlds (DEC-0005 world privacy, fix 12), a self agent's
+            // standing summaries among them. An id that does not derive
+            // leaves them unknown.
+            let sources =
+                oneiron::Vault::connector_reply_source_rows(agent, &origin, REPLY_REF, &history)
+                    .ok()
+                    .flatten()
+                    .map(|mut rows| {
+                        if let Some((_, log)) = &self_log {
+                            rows.extend(log.log.lines.iter().filter_map(|line| match line {
+                                ChatLogLine::Summary { summary, .. } => Some(*summary),
+                                ChatLogLine::Message { .. } => None,
+                            }));
+                            rows.sort_unstable();
+                            rows.dedup();
+                        }
+                        rows
+                    });
+            let mut context: Vec<LlmMessage> = match &self_log {
+                Some((_, log)) => log.lines.iter().map(log_message).collect(),
+                None => history.iter().map(history_message).collect(),
             };
             // The budget messages the wake's charge fired are the engine's
             // own words, not the inbound's: they lead the turn (FIX 3761).
@@ -200,7 +230,10 @@ fn answer(
                 runtime,
                 agent,
                 &definition,
-                context,
+                ReplyContext {
+                    messages: context,
+                    sources,
+                },
                 reply_run_id(agent, event_id),
                 result,
             )?;
@@ -288,10 +321,19 @@ fn answer(
     Ok(())
 }
 
+/// What a reply's call reads after the agent's instructions: the
+/// conversation's history and the message, and the rows they were read
+/// from ([`oneiron::Vault::connector_reply_source_rows`]).
+struct ReplyContext {
+    messages: Vec<LlmMessage>,
+    sources: Option<Vec<EntityId>>,
+}
+
 /// One admitted call of the chat role on `agent`'s own line, blocking on
 /// the server's runtime from the reply worker's blocking thread: the
 /// agent's instructions, then `context` (the conversation's history and the
-/// message). What the call's rungs spent on the line, failed rungs
+/// message), whose receipts name the worlds of the rows it was read from.
+/// What the call's rungs spent on the line, failed rungs
 /// included, is kept in `result.actual_units` whether or not it answered.
 /// Returns the answer's text and the call as it was admitted, which the
 /// thread's breakpoint holds as the answer's own.
@@ -300,7 +342,7 @@ fn generate(
     runtime: &tokio::runtime::Handle,
     agent: EntityId,
     definition: &AgentDefinition,
-    context: Vec<LlmMessage>,
+    context: ReplyContext,
     run_id: String,
     result: &mut ConnectorReplyJobResult,
 ) -> oneiron::Result<(String, RoleCall)> {
@@ -321,7 +363,7 @@ fn generate(
     {
         messages.push(message(LlmMessageRole::System, instructions.clone()));
     }
-    messages.extend(context);
+    messages.extend(context.messages);
     // Read whole; past its `[limits]` row it asks whether all is well.
     let context_bytes: usize = messages
         .iter()
@@ -378,7 +420,9 @@ fn generate(
         BudgetExhaustionPolicy::Suspend,
         WriteActor::new(agent, EdgeActorClass::Agent),
     )?;
-    let run = models.undeclared_run(run_id, guard);
+    let run = models
+        .undeclared_run(run_id, guard)
+        .sourced(context.sources);
     let before = run.read().used_units;
     let answered = runtime.block_on(ladder.generate_served(&run, request, None));
     result.actual_units = run.read().used_units.saturating_sub(before);

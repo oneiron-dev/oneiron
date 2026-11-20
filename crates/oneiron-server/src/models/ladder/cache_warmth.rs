@@ -485,15 +485,18 @@ impl OfferLadder {
     /// the rung is admitted and again once it is; a rung that rests, has its
     /// probation request out or is held on the device; a refused admission;
     /// a gate that refused it unsent), its permit settled unstarted first,
-    /// for nothing: the flight's cheap writer then writes as the agent. Once
-    /// the rung went out, its failure is its own, never read as cold, and
-    /// the call goes on as [`Self::generate_exact_within`] would.
+    /// for nothing: the flight's cheap writer then writes as the agent.
+    /// `may_send` is asked with the warmth, before and after admission, and
+    /// a no stops it the same way. Once the rung went out, its failure is
+    /// its own, never read as cold, and the call goes on as
+    /// [`Self::generate_exact_within`] would, asking `may_send` there too.
     pub(crate) async fn generate_exact_while_warm(
         &self,
         run: &RunAdmission,
         request: LlmRequest,
         captured: &LiveForkRung,
         prefix: &LlmRequest,
+        may_send: &(dyn Fn() -> bool + Sync),
     ) -> LlmResult<Option<LlmResponse>> {
         let [rung] = self.rungs.as_slice() else {
             return Ok(None);
@@ -516,7 +519,7 @@ impl OfferLadder {
                 .rests
                 .probing(&rung.offer.binding, &rung.wire_model)
                 .is_none();
-        if !takes_now || !warm() {
+        if !takes_now || !warm() || !may_send() {
             return Ok(None);
         }
         // The run is live until this call ends: the host stays awake for it.
@@ -532,7 +535,10 @@ impl OfferLadder {
         // Admission can wait on the run's receipts: the prefix, the
         // world's order and the world are judged again right before the rung
         // is sent.
-        if !warm() || !self.route_admitted(&routes, 0) || self.kept_on_device(0, &request).is_some()
+        if !warm()
+            || !may_send()
+            || !self.route_admitted(&routes, 0)
+            || self.kept_on_device(0, &request).is_some()
         {
             settle_failed(permit);
             return Ok(None);
@@ -561,7 +567,7 @@ impl OfferLadder {
                 drop(probe);
                 self.failed(0, error, true, &mut walk)?;
                 let budget = Duration::from_secs(self.rests.max_wait_secs());
-                self.generate_exact_within(run, request, None, &|| true, budget)
+                self.generate_exact_within(run, request, None, may_send, budget)
                     .await
                     .map(Some)
             }

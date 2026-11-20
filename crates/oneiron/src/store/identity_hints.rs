@@ -92,3 +92,19 @@ pub(crate) fn reindex_identity_hints(
     }
     Ok(())
 }
+
+/// Doors for `tests/scrub_keeps_hint_and_name_rows.rs`.
+#[cfg(oneiron_test_support)]
+impl crate::Vault {
+    /// Every `(kind, hint digest, entity)` row the index holds.
+    pub(crate) fn identity_hint_index_rows_for_test(
+        &self,
+    ) -> Result<Vec<([u8; 1], [u8; 32], EntityId)>> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(IDENTITY_HINT
+            .scan(&self.store, &rtxn)?
+            .into_iter()
+            .map(|(key, ())| key)
+            .collect())
+    }
+}

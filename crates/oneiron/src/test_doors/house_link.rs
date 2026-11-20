@@ -60,3 +60,28 @@ pub fn put_claim_made_by(
     txn.commit()?;
     Ok(())
 }
+
+/// Stamps `made_by` as the stated birth of the live row `id`, without writing
+/// the row again. `Vault::react` births a reaction CLAIM with no birth, so
+/// `tests/reaction_claim_reactor_withheld.rs` stamps one naming the reactor to
+/// read the Memory view's birth gate (FIX REACTION-CLAIM-VALUE-REACTOR-ID).
+///
+/// # Errors
+///
+/// The birth's shape refusal, a different birth already stamped, or the
+/// store's.
+pub fn stamp_stated_birth(
+    vault: &Vault,
+    id: EntityId,
+    made_by: crate::provenance::made_by::MadeBy,
+) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    crate::store::birth_record::stamp_row_birth_in_txn(
+        &vault.store,
+        &mut txn,
+        &id,
+        &crate::store::row_birth::RowBirth::stated(made_by),
+    )?;
+    txn.commit()?;
+    Ok(())
+}
