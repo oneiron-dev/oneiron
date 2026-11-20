@@ -170,7 +170,7 @@ impl DecodedTombstoneValue {
     /// reason. Fail-closed — over-purge, never under-delete.
     #[must_use]
     pub fn is_hard(&self) -> bool {
-        self.reason.is_none_or(TombstoneReason::is_hard)
+        self.reason.is_some_and(TombstoneReason::is_hard)
     }
 
     /// `request_id` recorded on the LOCAL receipt for a replayed HARD apply
