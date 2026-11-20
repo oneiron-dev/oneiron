@@ -71,6 +71,7 @@ pub mod replay_admission;
 pub mod residence;
 pub mod residence_connection;
 pub mod resident_pump;
+pub mod run_brief_people;
 #[cfg(target_os = "linux")]
 pub mod sandbox_vendor;
 pub mod seal_judge;
