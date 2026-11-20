@@ -170,9 +170,10 @@ impl Vault {
         let Some(row) = self.store.port_entity_record(wtxn, id)? else {
             return Ok(false);
         };
-        // The door looks for a hard-delete marker and a pending or published
-        // tombstone. A delete applied here whose publication was withdrawn
-        // leaves neither, only its row fence: `removed_in_txn` reads that too.
+        // The door refuses a record a delete removes (its row fence, a
+        // hard-delete marker, a pending or published tombstone), and its
+        // refusal would fail the caller's transaction: the same checks here
+        // answer `false` first.
         if row.entity_type != ENTITY_TYPE_PERSON
             || crate::ports::removed_in_txn(&self.store, wtxn, id)?
             || self.local_hard_delete_marker_exists_in_txn(wtxn, id)?
