@@ -428,6 +428,18 @@ pub(super) fn refuse_off_home_booking_write_in_txn(
     Ok(())
 }
 
+/// Whether this node takes a booking write now, as a fact: it holds the booking rows and its
+/// own election names no other node home, the two refusals of
+/// [`refuse_off_home_booking_write_in_txn`]. A writer that holds an item back for a later try
+/// in place of a refusal reads it: the calendar feed's move of a booking (review round 2 of
+/// #10060).
+pub(super) fn takes_booking_write_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<bool, BookingError> {
+    Ok(holds_booking_rows_in_txn(vault, txn)? && !elected_home_elsewhere_in_txn(vault, txn)?)
+}
+
 /// Whether this node's own election names another node home, read in a writer.
 #[cfg(feature = "sync")]
 fn elected_home_elsewhere_in_txn(

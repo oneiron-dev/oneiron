@@ -30,7 +30,13 @@
 //!
 //! Each row's content travels sealed under its actor's erasable key (FIX 8875). A hold whose
 //! content does not open here cannot stand without its session key, so it lands nothing; a
-//! receipt whose content does not open lands as its facts alone.
+//! receipt whose content does not open lands as its facts alone, and so does one whose EVENT
+//! this node holds erased: the erase scrubbed this node's receipts of it (FIX 9636), and
+//! carried content never stands over that scrub (review round 2 of #10060).
+//!
+//! A restore keeps each deposit settle row as the live vault holds it
+//! ([`settle_attempt_restore_keys`]), as it keeps the deposits these tables carry, so the
+//! settle row an adoption queued is never lost under a live deposit that still owes it.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -52,7 +58,7 @@ use super::{
     entity_ref_serde, entity_refs_serde, opt_digest_serde, time_range_serde,
 };
 use crate::Vault;
-use crate::attempt_queue::{AttemptQueue, AttemptState};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptState, decode_record};
 use crate::booking::{ConstraintObject, EventTypeKey};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -64,6 +70,48 @@ use crate::temporal::TimeRange;
 
 fn invalid(detail: &str) -> Error {
     Error::InvalidConfig(detail.to_owned())
+}
+
+/// The `job_records` keys of every deposit settle row `vault` or `image` (the restore image's
+/// rows by database) holds (review round 2 of #10060): a restore keeps them as `vault` holds
+/// them, beside the `booking.token.v1:` deposits that restore live as a home table's rows, so a
+/// settle row an adoption queued after the image was taken stays with the deposit it settles.
+/// A row only the image holds is named, so its absence here wins.
+///
+/// # Errors
+///
+/// A live attempt row that does not read or decode. An image row that does not decode names
+/// nothing.
+pub(crate) fn settle_attempt_restore_keys(
+    vault: &Vault,
+    image: &BTreeMap<String, Vec<(Vec<u8>, Vec<u8>)>>,
+) -> Result<BTreeSet<Vec<u8>>> {
+    let mut keys = BTreeSet::new();
+    let txn = vault.store.env.read_txn()?;
+    for row in vault.store.attempt_records.iter(&txn)? {
+        let (key, raw) = row?;
+        if decode_record(&raw, AttemptId::from_bytes(&key)?)?.kind
+            == BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND
+        {
+            keys.insert(key.to_vec());
+        }
+    }
+    let job_records = image.get("job_records").map_or(&[][..], Vec::as_slice);
+    for (key, value) in job_records {
+        if AttemptId::from_bytes(key)
+            .and_then(|id| decode_record(value, id))
+            .is_ok_and(|record| record.kind == BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND)
+        {
+            keys.insert(key.clone());
+        }
+    }
+    Ok(keys)
+}
+
+/// Whether this node holds an erasure of `event`, pending or published, with or without its
+/// row (FIX 9636): its eraser scrubbed this node's receipts of the EVENT's parties.
+fn event_erased_here(vault: &Vault, txn: &RoTxn<'_>, event: &EntityId) -> Result<bool> {
+    Ok(crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, event)?.deleted)
 }
 
 /// A 32-byte key suffix of one of the three tables.
@@ -547,7 +595,10 @@ impl HomeTable for BookingReceiptRows {
         let mut carried = BTreeSet::new();
         for facts in rows.facts.receipts {
             carried.insert(facts.key);
-            let content = contents.remove(&facts.key);
+            // An erased EVENT's scrub wins on every merge path below: its receipt lands, stays
+            // or replaces this node's as its facts alone.
+            let erased = event_erased_here(vault, txn, &facts.event_ref)?;
+            let content = contents.remove(&facts.key).filter(|_| !erased);
             let receipt = LifecycleReceiptRow {
                 event_ref: facts.event_ref,
                 uid: facts.uid.clone(),

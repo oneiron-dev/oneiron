@@ -405,7 +405,7 @@ impl PollAdmission<'_> {
             }
             FeedMoveOutcome::HeldBack => {
                 tracing::debug!(
-                    "a pending emergency delivery holds a calendar feed's booking move"
+                    "a pending emergency delivery or a home move holds a calendar feed's booking move"
                 );
             }
             FeedMoveOutcome::NotBooking | FeedMoveOutcome::Unchanged => {}
