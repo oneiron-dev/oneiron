@@ -42,6 +42,14 @@ const MAX_STRIPE_ID_BYTES: usize = 255;
 const SETTLE_KEY_FORM_FIELD: &str = "metadata[oneiron_settle_key]";
 const SETTLE_KEY_METADATA: &str = "oneiron_settle_key";
 
+/// The most refunds one list call asks for: Stripe's own page bound.
+const REFUND_PAGE_LIMIT: usize = 100;
+
+/// The most pages of a payment's refunds one settle pass reads. A payment
+/// with more refunds than these pages hold is refused, never decided on a
+/// part of its list.
+const MAX_REFUND_PAGES: usize = 100;
+
 /// Why a deposit cannot use Stripe on this server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DepositSetupError {
@@ -215,6 +223,9 @@ struct RefundView {
 #[derive(Deserialize)]
 struct RefundList {
     data: Vec<RefundView>,
+    /// Whether more refunds follow the last one on this page.
+    #[serde(default)]
+    has_more: bool,
 }
 
 impl RefundView {
@@ -461,24 +472,20 @@ impl<'v> StripeClient<'v> {
     /// as if it were not there, and a hand refund that covers what is owed
     /// ends the row. With none, that ended refund answers for itself, and no
     /// second one is made under the key.
+    ///
+    /// Every page of the payment's refunds is read first
+    /// ([`Self::payment_refunds`]): the row's own refund past the first page
+    /// is still its own (FIX [BK-DEPOSIT-REFUND-LIST-ONE-PAGE]).
     fn refund_once(
         &self,
         payment_id: &str,
         amount_minor: u64,
         key: &str,
     ) -> Result<OwedRefund, StripeCallError> {
-        payment_path(payment_id, "")?;
-        let listed = self.call(
-            &format!("/v1/refunds?payment_intent={payment_id}&limit=100"),
-            None,
-            None,
-        )?;
-        let listed: RefundList = serde_json::from_slice(&listed)
-            .map_err(|_| StripeCallError::Malformed("no refund list in the reply".to_owned()))?;
         let mut succeeded = 0_u64;
         let mut held = 0_u64;
         let mut keyed_unpaid = None;
-        for refund in listed.data {
+        for refund in self.payment_refunds(payment_id)? {
             if refund.metadata.get(SETTLE_KEY_METADATA).map(String::as_str) == Some(key) {
                 if !refund.ended_unpaid() {
                     return Ok(OwedRefund::Keyed(refund));
@@ -511,6 +518,47 @@ impl<'v> StripeClient<'v> {
         serde_json::from_slice(&body)
             .map(OwedRefund::Keyed)
             .map_err(|_| StripeCallError::Malformed("no refund in the reply".to_owned()))
+    }
+
+    /// Every refund the payment holds, newest first, page by page: Stripe
+    /// answers at most [`REFUND_PAGE_LIMIT`] refunds to a call and says
+    /// whether more follow. A list that says more follow but gives no new
+    /// refund id to go on from, or one longer than [`MAX_REFUND_PAGES`]
+    /// pages, fails the call, so no refund is made on a part of it.
+    fn payment_refunds(&self, payment_id: &str) -> Result<Vec<RefundView>, StripeCallError> {
+        payment_path(payment_id, "")?;
+        let mut refunds = Vec::new();
+        let mut starting_after: Option<String> = None;
+        for _ in 0..MAX_REFUND_PAGES {
+            let mut path =
+                format!("/v1/refunds?payment_intent={payment_id}&limit={REFUND_PAGE_LIMIT}");
+            if let Some(after) = &starting_after {
+                path.push_str("&starting_after=");
+                path.push_str(after);
+            }
+            let page = self.call(&path, None, None)?;
+            let page: RefundList = serde_json::from_slice(&page).map_err(|_| {
+                StripeCallError::Malformed("no refund list in the reply".to_owned())
+            })?;
+            let last = page.data.last().map(|refund| refund.id.clone());
+            refunds.extend(page.data);
+            if !page.has_more {
+                return Ok(refunds);
+            }
+            match last {
+                Some(last) if stripe_id(&last) && starting_after.as_ref() != Some(&last) => {
+                    starting_after = Some(last);
+                }
+                _ => {
+                    return Err(StripeCallError::Malformed(
+                        "the refund list goes on from no new refund".to_owned(),
+                    ));
+                }
+            }
+        }
+        Err(StripeCallError::Malformed(
+            "the payment's refunds exceed their bound".to_owned(),
+        ))
     }
 
     /// Captures `amount_minor` of the authorization; the amount the payment
