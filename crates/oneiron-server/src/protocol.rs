@@ -383,6 +383,13 @@ pub(crate) enum ProtocolError {
     /// `close_codes::TRY_AGAIN_LATER`, never as a persistence failure.
     #[error("waited for its turn past its deadline")]
     WaitedOut,
+    /// Another landing holds an own device's burst batch (the home's drain,
+    /// or another socket of the device), and nothing of the batch is retained
+    /// or settled at the home yet. Nothing was applied, and the update may be
+    /// sent again (#9954 review round 1). Closed with
+    /// `close_codes::TRY_AGAIN_LATER`, so the device keeps the update queued.
+    #[error("another landing holds this batch")]
+    LandingInProgress,
 }
 
 impl ProtocolError {
@@ -401,6 +408,7 @@ impl ProtocolError {
             Self::Persistence(_) => "sync_persistence_failed",
             Self::ReplacementUnsupported => "replacement_unsupported",
             Self::WaitedOut => "waited_out",
+            Self::LandingInProgress => "landing_in_progress",
         }
     }
 }

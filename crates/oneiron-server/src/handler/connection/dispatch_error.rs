@@ -66,6 +66,21 @@ pub(super) async fn close_on(
             )
             .await;
         }
+        ProtocolError::LandingInProgress => {
+            tracing::info!(
+                conn_id,
+                reason = "landing_in_progress",
+                "own device batch held by another landing, nothing retained — closing"
+            );
+            super::super::protocol_close::refuse_frame(
+                transport,
+                server,
+                close_codes::TRY_AGAIN_LATER,
+                "another landing holds this batch: nothing was applied",
+                None,
+            )
+            .await;
+        }
         ProtocolError::InvalidPayload(msg) => {
             tracing::warn!(conn_id, error = %msg, "invalid payload — closing");
             super::super::protocol_close::refuse_frame(

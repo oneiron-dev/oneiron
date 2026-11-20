@@ -480,13 +480,58 @@ pub fn device_update_batch_ref(
     update: &[u8],
     promoted: bool,
 ) -> Result<String> {
+    let id = device_update_batch_id(peer, key, update, promoted)?;
+    Ok(blake3::Hash::from(id).to_hex().to_string())
+}
+
+/// How `peer`'s window `update` to `key` is answered while another landing
+/// holds its batch (the home's drain, or another socket of the device): by
+/// the batch's durable record at its home, never by the claim alone (#9954
+/// review round 1). A batch retained `Pending` answers `Defer`, since the
+/// landing that holds it, or the drain after it, lands it; a settled batch
+/// answers `Settled` with its receipt's state. `None` when nothing of the
+/// batch is retained or settled here (the holder's admission has not
+/// committed, or failed, or the batch ended unsettled): the device must send
+/// it again. `promoted` as [`device_update_batch_ref`] reads it.
+///
+/// # Errors
+/// A device whose lane does not encode; a store error, or a receipt that
+/// does not decode.
+pub fn contended_device_update(
+    vault: &Vault,
+    peer: &DevicePeer,
+    key: &WindowKey,
+    update: &[u8],
+    promoted: bool,
+) -> Result<Option<DeviceBurstAdmission>> {
+    let id = device_update_batch_id(peer, key, update, promoted)?;
+    let txn = vault.store.env.read_txn()?;
+    let Some(receipt) = super::ledger::load(vault, &txn, BurstPeer::Device(peer), &id)? else {
+        return Ok(None);
+    };
+    let batch_ref = blake3::Hash::from(id).to_hex().to_string();
+    Ok(match receipt.state {
+        FederationBurstWorkState::Pending => Some(DeviceBurstAdmission::Defer { batch_ref }),
+        state if state.is_settled() => Some(DeviceBurstAdmission::Settled { batch_ref, state }),
+        _ => None,
+    })
+}
+
+/// The id of the batch `peer`'s window `update` to `key` is held as at its
+/// home, `promoted` as [`device_update_batch_ref`] reads it.
+fn device_update_batch_id(
+    peer: &DevicePeer,
+    key: &WindowKey,
+    update: &[u8],
+    promoted: bool,
+) -> Result<[u8; 32]> {
     let kind = if promoted {
         WorkKind::DeviceResidenceUpdate
     } else {
         WorkKind::DeviceUpdate
     };
     let (id, _) = DeferredWork::identity(BurstPeer::Device(peer), key, kind, update)?;
-    Ok(blake3::Hash::from(id).to_hex().to_string())
+    Ok(id)
 }
 
 fn admit_device_update(

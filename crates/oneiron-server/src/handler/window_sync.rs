@@ -7,7 +7,8 @@ use loro::{LoroDoc, VersionVector};
 use oneiron::authority::PeerMachine;
 use oneiron::sync::federation_burst::{
     DeviceBurstAdmission, DevicePeer, FederationBurstWorkState, admit_device_residence_update,
-    admit_device_window_update, admit_promoted_device_window_update, device_update_batch_ref,
+    admit_device_window_update, admit_promoted_device_window_update, contended_device_update,
+    device_update_batch_ref,
 };
 use oneiron::sync::residence::{admit_promoted_window_update, promotion_covers_full_window_for};
 use oneiron::sync::schema::read_window_list;
@@ -535,48 +536,51 @@ pub(super) async fn handle_window_sync(
                 None
             } else {
                 // The batch's landing is claimed before the burst core admits
-                // it, and held until the batch ends below. While another
-                // landing holds it (the home's drain, with the same bytes held
-                // from an earlier send, or another socket of the device), the
-                // device is answered as held and that landing relays them;
-                // while this socket holds it, the drain leaves the batch alone
-                // (FIX DEVICE-BURST-ALLOW-DRAIN-OVERLAP).
-                let batch_ref =
-                    device_update_batch_ref(&device, &key, update, row_admission.is_some())
-                        .map_err(map_update_admission_err)?;
-                let Some(claim) = server.claim_device_burst_landing(batch_ref.clone()) else {
+                // it, and held until the batch ends below; while this socket
+                // holds it, the drain leaves the batch alone (FIX
+                // DEVICE-BURST-ALLOW-DRAIN-OVERLAP). While another landing
+                // holds it (the home's drain, or another socket of the
+                // device), the send is answered by the batch's durable record
+                // at the home, never by the claim alone, since that landing
+                // may yet fail before it retains anything (#9954 review round
+                // 1): held while the batch is retained, by its receipt once it
+                // settled, and closed to be sent again while nothing of it is
+                // retained.
+                let promoted = row_admission.is_some();
+                let batch_ref = device_update_batch_ref(&device, &key, update, promoted)
+                    .map_err(map_update_admission_err)?;
+                let claim = server.claim_device_burst_landing(batch_ref.clone());
+                let admitted = if claim.is_none() {
                     tracing::info!(
                         window = %key,
                         batch_ref = %batch_ref,
                         "an own device's burst is landing at its home already"
                     );
-                    return super::window_copy::acknowledge_held(
-                        conn_state,
-                        &key,
-                        window_key,
-                        sub_tag,
-                        residence_seq,
-                        update,
-                        &doc.oplog_vv(),
-                        &receipt,
-                        direct_tx,
-                    );
-                };
-                let carried = inserts.ids().collect::<Vec<_>>();
-                let admitted = match row_admission {
-                    Some(admission) => admit_device_residence_update(
-                        server.vault(),
-                        &device,
-                        &key,
-                        update,
-                        &carried,
-                        admission,
-                    ),
-                    None => {
-                        admit_device_window_update(server.vault(), &device, &key, update, &carried)
+                    contended_device_update(server.vault(), &device, &key, update, promoted)
+                        .map_err(map_update_admission_err)?
+                        .ok_or(ProtocolError::LandingInProgress)?
+                } else {
+                    let carried = inserts.ids().collect::<Vec<_>>();
+                    match row_admission {
+                        Some(admission) => admit_device_residence_update(
+                            server.vault(),
+                            &device,
+                            &key,
+                            update,
+                            &carried,
+                            admission,
+                        ),
+                        None => admit_device_window_update(
+                            server.vault(),
+                            &device,
+                            &key,
+                            update,
+                            &carried,
+                        ),
                     }
+                    .map_err(map_update_admission_err)?
                 };
-                let burst = match admitted.map_err(map_update_admission_err)? {
+                let burst = match admitted {
                     DeviceBurstAdmission::Allow(burst) => burst,
                     // The same bytes already settled here (#8386 review): landed,
                     // they are acknowledged with nothing persisted, imported or
