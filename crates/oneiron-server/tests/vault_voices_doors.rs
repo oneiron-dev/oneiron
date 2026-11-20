@@ -2132,6 +2132,55 @@ fn a_withdrawal_dated_past_the_vault_clock_lands_at_the_clock() {
     });
 }
 
+/// A request under a withdrawal's event id that asks for another date is
+/// refused, never taken for the recorder's retry (REVIEW-10046 P1): the
+/// replay compares the asked date with the date the withdrawal's own request
+/// asked for. The member withdraws, consents again and enrols afresh; the
+/// same id asked again for a later date answers an error, and the fresh print
+/// still recognizes them. Red before: the second request answered a replay
+/// and deleted nothing.
+#[test]
+fn a_withdrawal_id_asked_again_for_another_date_is_refused() {
+    run_on_engine_stack("voices-recognition-withdraw-other-date", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served.enroll_print(member, "member-grant", &axis_vector(1), now - 600);
+
+        let first = served
+            .ok(
+                Caller::Person,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("member-withdrawal", now - 500, None),
+            )
+            .await;
+        assert_eq!(first["replayed"], false, "setup: {first}");
+        served.enroll_print(member, "member-again", &axis_vector(1), now - 300);
+        assert_eq!(
+            served.recognized("after-fresh-enrolment", &axis_vector(1)),
+            Some(member),
+            "setup: the yes recorded after the withdrawal enrols a fresh print"
+        );
+
+        let (status, body) = served
+            .post(
+                Caller::Person,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("member-withdrawal", now - 200, None),
+            )
+            .await;
+        assert!(
+            !status.is_success(),
+            "the same withdrawal id asked for another date is refused: {status} {body}"
+        );
+        assert_eq!(
+            served.recognized("after-refused-request", &axis_vector(1)),
+            Some(member),
+            "a refused request deletes nothing"
+        );
+    });
+}
+
 /// The member's tap stays on offer when a grant shares its withdrawal's
 /// second: enrolment and recognition let a withdrawal beat a grant dated in
 /// the same second, so that withdrawal is still the member's latest
