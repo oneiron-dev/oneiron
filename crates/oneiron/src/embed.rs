@@ -144,9 +144,11 @@ pub fn dequantize_int8_embedding(codes: &[i8], scale: f32) -> Vec<f32> {
 /// passes through borrowed; a CLAIM is decoded by the engine's own canonical
 /// claim decoder, never by a second MessagePack parser over the same bytes.
 ///
-/// A claim whose value is a string embeds that string. Any other value embeds
-/// the decoded value's `Display` form, which is the same text for the same
-/// bytes and therefore still one space — it is not an attempt at prose.
+/// A claim embeds its index text (`claim::claim_index_text`), the text it is
+/// searched by: a reaction its glyph alone, a reaction echo nothing, a string
+/// value that string, and any other value the decoded value's `Display` form,
+/// which is the same text for the same bytes and therefore still one space —
+/// it is not an attempt at prose.
 pub fn payload_text(payload: &PendingEmbeddingPayload) -> Result<Cow<'_, str>> {
     match payload {
         PendingEmbeddingPayload::SummaryText(text) | PendingEmbeddingPayload::TurnText(text) => {
@@ -160,9 +162,7 @@ pub fn payload_text(payload: &PendingEmbeddingPayload) -> Result<Cow<'_, str>> {
 
 /// A decoded claim's text, as [`payload_text`] projects it.
 fn claim_text(body: &crate::claim::ClaimBody) -> String {
-    body.value
-        .as_str()
-        .map_or_else(|| body.value.to_string(), str::to_owned)
+    crate::claim::claim_index_text(&body.predicate, &body.value)
 }
 
 #[cfg(feature = "sync")]
