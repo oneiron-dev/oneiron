@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use loro::{ExportMode, LoroDoc};
+use oneiron::attempt_queue::AttemptQueue;
 use oneiron::authority::HostSlipIssuer;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
@@ -24,6 +25,7 @@ use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
 use oneiron_server::server::SyncServer;
+use tokio::sync::broadcast::error::RecvError;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
@@ -279,10 +281,31 @@ impl Home {
             .filter(|row| self.vault.get_entity_type(row).unwrap().is_some())
             .count()
     }
+
+    /// Whether `probe` holds within five seconds: read now, then again
+    /// after each commit at the home. It subscribes before the first read,
+    /// so a commit between the two still wakes it.
+    pub(crate) async fn until_committed(&self, mut probe: impl FnMut() -> bool) -> bool {
+        let mut commits = AttemptQueue::new(&self.vault).subscribe();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if probe() {
+                    return true;
+                }
+                match commits.recv().await {
+                    Ok(()) | Err(RecvError::Lagged(_)) => {}
+                    Err(RecvError::Closed) => return false,
+                }
+            }
+        })
+        .await
+        .unwrap_or(false)
+    }
 }
 
 /// The next binary frame within `wait`, or `None`.
 async fn next_binary(ws: &mut WsStream, wait: Duration) -> Option<Vec<u8>> {
+    // testkit-lint: allow(wall-clock) hang guard across WebSocket control frames
     let deadline = tokio::time::Instant::now() + wait;
     loop {
         let msg = tokio::time::timeout_at(deadline, ws.next()).await.ok()?;
@@ -319,8 +342,10 @@ pub(crate) async fn send_update(ws: &mut WsStream, update: &[u8]) {
 /// seconds: the witness of an update it held, which a landed update on this
 /// lane never gets.
 pub(crate) async fn held_answer(ws: &mut WsStream) -> bool {
+    // testkit-lint: allow(wall-clock) hang guard for the held reply
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
+        // testkit-lint: allow(wall-clock) one deadline across unrelated frames
         let wait = deadline.saturating_duration_since(tokio::time::Instant::now());
         let Some(frame) = next_binary(ws, wait).await else {
             return false;
@@ -334,15 +359,4 @@ pub(crate) async fn held_answer(ws: &mut WsStream) -> bool {
             return true;
         }
     }
-}
-
-/// Polls `probe` for up to five seconds.
-pub(crate) async fn eventually(mut probe: impl FnMut() -> bool) -> bool {
-    for _ in 0..250 {
-        if probe() {
-            return true;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    false
 }

@@ -23,7 +23,7 @@ mod device_burst_home;
 #[path = "support/engine_stack.rs"]
 mod engine_stack;
 
-use device_burst_home::{Home, eventually, host_issuer};
+use device_burst_home::{Home, host_issuer};
 use engine_stack::run_on_engine_stack;
 use loro::ExportMode;
 use oneiron::authority::PeerMachine;
@@ -260,7 +260,8 @@ async fn replay_held_residence_edit(keep_claim_world_off: bool) {
     } else {
         assert_eq!(landed, 1, "the drain lands the held edit");
         assert!(
-            eventually(|| carries_confidence(&home.vault, claim, EDITED_CONFIDENCE)).await,
+            home.until_committed(|| carries_confidence(&home.vault, claim, EDITED_CONFIDENCE))
+                .await,
             "the edit reaches the CLAIM at the home"
         );
         assert_eq!(
