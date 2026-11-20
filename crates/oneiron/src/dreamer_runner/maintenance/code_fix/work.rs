@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
 use serde_json::json;
 
@@ -14,8 +15,7 @@ use super::candidate_run::ReplayCandidate;
 use super::instruction::{CoachReplay, CoachScrubber};
 use super::publisher_refs::publisher_candidates_with_refs;
 use super::{
-    BLOCKED_WORK_DOMAIN, CandidateRun, CodeFixJob, CodeFixSettled, CodeFixWork, PublisherCandidate,
-    SealedRun, WORK,
+    CandidateRun, CodeFixJob, CodeFixSettled, CodeFixWork, PublisherCandidate, SealedRun, WORK,
 };
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{COACH_HEAL_ATTEMPT_KIND, DreamerAttemptPayload, DreamerRunnerStore};
@@ -32,15 +32,18 @@ use crate::{EntityId, Result, Vault};
 fn work_key(source: &CodeFixSource) -> Result<EntityId> {
     match source {
         CodeFixSource::Case { case_ref } => Ok(EntityId::from_hex(case_ref)?),
-        CodeFixSource::Blocked { receipt, .. } => {
-            let mut hasher = blake3::Hasher::new();
-            hasher.update(BLOCKED_WORK_DOMAIN);
-            hasher.update(receipt.as_bytes());
-            let mut key = [0; 16];
-            key.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-            Ok(EntityId::from_bytes(key)?)
-        }
+        CodeFixSource::Blocked { receipt, .. } => blocked_work_key(receipt),
     }
+}
+
+/// A blocked report's work key: the first 16 bytes of its receipt's digest
+/// (K, PLAN-UC-04 stage 7).
+fn blocked_work_key(receipt: &EntityId) -> Result<EntityId> {
+    let mut hasher = LegacyDigest::new(purposes::dreamer_runner::CODE_FIX_BLOCKED_WORK);
+    hasher.raw(receipt.as_bytes());
+    let mut key = [0; 16];
+    key.copy_from_slice(&hasher.finish()[..16]);
+    Ok(EntityId::from_bytes(key)?)
 }
 
 /// Queues the Coach's code-fix run for a failure it just filed a heal for,
@@ -329,4 +332,9 @@ pub(in crate::dreamer_runner::maintenance) fn wake_blocked_in_txn(
         parent,
         now,
     )
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn blocked_work_key_for_test(receipt: &EntityId) -> Result<EntityId> {
+    blocked_work_key(receipt)
 }

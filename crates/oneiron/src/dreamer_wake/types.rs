@@ -74,6 +74,24 @@ pub struct WakeAttemptContext<'a> {
 }
 
 impl WakeAttemptContext<'_> {
+    /// Returns the material this wake's admitted pre-hooks already added.
+    ///
+    /// A standalone context without a prepared wake holds no material.
+    #[must_use]
+    pub fn hook_material(&self) -> &[String] {
+        self.prepared_wake.map_or(&[], |wake| wake.hook_material())
+    }
+
+    /// Returns the destination bound this wake's pass stated (FIX 12735),
+    /// which the wake's listings were read for.
+    ///
+    /// A standalone context without a prepared wake, and a pass whose
+    /// executors stated none, hold none.
+    #[must_use]
+    pub fn destination_bound(&self) -> Option<&ReadDestination> {
+        self.prepared_wake.and_then(|wake| wake.destination_bound())
+    }
+
     /// True once the pass asked this attempt to stop at its next boundary:
     /// the host paused or stopped it. An attempt that sees this parks
     /// through its checkpoint exit, and a later pass resumes it.

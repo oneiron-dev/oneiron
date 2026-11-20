@@ -3,6 +3,98 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v43 (FIX RETIRED-STANDING-REFUSAL-RECORDS-HANDOFF-ALARM-FOR-PLAIN-REVOKE;
+/// RULING REVOKED-KEY-ALARM-FIX-PATH = A): stored authority-log rows and
+/// saved handoff alarm rows keep their bytes and their meaning. A stored
+/// checkpoint image changes shape: its fold and its safety index each gain
+/// the keys a closed handoff or appointment fence holds, the only signers a
+/// door records handoff evidence for, so a refused late row of a key that
+/// only a revocation retired raises no handoff alarm. The authority fold
+/// schema moves 52 -> 53 with it, and an image of schema 52 no longer
+/// decodes. No old-shape reader or migration is provided (the lead's M-1
+/// stored-change rule, path "loud").
+///
+/// v42 (FIX HOSTED-REROOT-FOLD-RULE): stored authority-log rows keep their
+/// bytes and change meaning. A `ReRoot` signed by a key without the host's
+/// stamp (`ROLE_CLOUD` or tier `CloudCustodial`) no longer counts while the
+/// roster holds a live owner key with that stamp, a hosted vault's live host
+/// root, so such a move the vault already holds (a recovery kit's, imported
+/// or signed here) is refused, the host root stays live, and every row above
+/// the move is refused with it. The host's own move and every self-hosted
+/// vault fold as before. The authority fold schema moves 51 -> 52 with it.
+/// No old-meaning reader or migration is provided (the lead's M-1
+/// stored-change rule, path "loud").
+///
+/// v41 (row SEQ-FLOOR-S-WITHHELD-COSIGN; RULING
+/// SEQ-FLOOR-S-WITHHELD-COSIGN-SHAPE = A): stored authority-log rows keep
+/// their bytes and change meaning. A granting row the fold counts as a fork
+/// of its signer's sequence (its `SequenceFork` recorded) whose signer or
+/// any cosigner the final roster holds revoked expires at once: a binding
+/// or rebinding goes Revoked unless a live row renews the same tuple, a
+/// federation confirm other than a revoke and a critical-write clearance
+/// leave the live fold, and an owner handover or a residence directive
+/// leaves the valid rows, so it is no handover evidence and no machine lists
+/// it. A federation pact's Connect, Rescope or Promote leaves the valid rows
+/// too, and the pact it still shapes (its ceiling, or a narrowing that
+/// stands) is held suspended, its grant still bound to it. Before, a binding
+/// or a confirm counted until the stale-roster window ended, and a handover,
+/// a directive or a pact's row for ever. A stored checkpoint image
+/// keeps its bytes and still decodes: it holds the fold before this
+/// projection, which its adopter applies over the rows it carries whole, so
+/// the authority fold schema stays 51. No old-meaning reader or migration is
+/// provided (the lead's M-1 stored-change rule, path "loud").
+///
+/// v40 (row RESTORED-COPIES-ENROL-EACH-OTHER; RULING RESTORED-COPIES-JOIN-SCOPE
+/// = A): a restore that drops its image's machine identity on a vault the
+/// owner roots, and an archived vault's activation, write the install-local
+/// row `m:restored_from`, and the install's machine profiles name that image
+/// (a new optional `restored_from` key, signed under the v2 machine proof).
+/// The authority fold holds such a machine's act-free enrolment, standing
+/// for nothing, until an entry signed by a joined machine descends from it.
+/// Stored authority-log rows keep their bytes and their meaning: a profile
+/// without the key reads as a machine that never restored, as before. A
+/// stored checkpoint image written before it no longer decodes (the
+/// authority fold schema moves 50 -> 51 with it). No old-meaning reader or
+/// migration is provided (the lead's M-1 stored-change rule, path "loud").
+///
+/// v39 (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES, site S1,
+/// and FIX FOREIGN-ANCHOR-ADMIT-SIDE): stored authority-log rows keep their
+/// bytes and change meaning. Only the roster's chain admits or removes an
+/// owner act's carrier: an act whose carrier an anchor chain, and not the
+/// roster's, marked removed at the act's parents was refused and now
+/// stands, and an act whose carrier only an anchor chain admitted stood and
+/// is now refused. Every other judge all installs share reads the roster's
+/// chain alone too (Fable pass 29, step K3): an owner key's enrolment, a
+/// residence result's signer, a one-machine read pick, and the ten owner-act
+/// gates that ask whether a machine's chain names the signing key no longer
+/// count an anchor's chain, so such a row that only an anchor's chain
+/// supported is now refused, and one an anchor's removal mark refused now
+/// stands. A one-machine read pick now needs the target's live roster head
+/// in any role, not "yours" in some chain: a pick of a linked machine the
+/// owner has not answered "yours" was refused and now stands ("yours" is
+/// the writer's check under its pin). A stored checkpoint image written
+/// before it holds the old answers and no longer decodes (the authority fold
+/// schema moves 49 -> 50 with it). No old-meaning reader or migration is
+/// provided (the lead's M-1 stored-change rule, path "loud").
+///
+/// v37 (row OWNER-ANCHOR-ROOT-RECOVERY, FIX OWNER-ANCHOR-NO-ROOT-RECOVERY): the
+/// authority fold schema moves 44 -> 45, and a stored checkpoint image
+/// written before it no longer decodes. The fold names a roster with no live
+/// root key (`NoRootKey`), and it counts a root appointment that the pinned
+/// root's anchor signed: the appointment's line folds as its own ancestry's
+/// fold did. Stored authority-log rows keep their bytes. No old-meaning
+/// reader or migration is provided (the lead's M-1 stored-change rule, path
+/// "loud").
+///
+/// v36 (row WEB-PASSKEY-OWNER-KEY, owner passkeys): stored authority-log rows
+/// keep their bytes and meaning. The authority fold gains each enrolled
+/// passkey's assertion contexts, each key a passkey vouched for and each such
+/// key a second vouch confirmed, so the authority fold schema moves 43 -> 44
+/// with it: a stored checkpoint image written before it no longer decodes,
+/// and an older build refuses an image that carries them rather than dropping
+/// the passkey limits. No old-meaning reader or migration is provided (the
+/// lead's M-1 stored-change rule, path "loud").
+///
 /// v35 (FIX SEQUENCE-FLOOR-DELIVERY-ORDER, CHECKPOINT-RAW-FLOOR-CLEARED-ROW):
 /// stored authority-log rows keep their bytes and can change meaning. A
 /// row's sequence floor comes from its signer's rows in its scope, not from
@@ -194,7 +286,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 35;
+pub const STORAGE_ABI_VERSION: u16 = 43;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 

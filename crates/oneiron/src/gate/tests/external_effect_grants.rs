@@ -165,7 +165,34 @@ fn standing_outbound_grant_allows_in_scope_external_effect_and_records_join() ->
 
     let decisions = vault.store.gate_decisions(10)?;
     let grant_ref = minted_grant.grant_ref();
-    assert_eq!(decisions.len(), 1);
+    // The one gate ledger holds the consent receipts by design (no second
+    // receipt ledger): the mint's Approved, the Allow decision, and the
+    // grant's Used receipt.
+    assert_eq!(decisions.len(), 3);
+    let allow = decisions
+        .iter()
+        .find(|row| row.content_kind == "external_effect")
+        .expect("the Allow decision row");
+    assert_eq!(allow.outcome, "allow");
+    assert_eq!(allow.grant_ref.as_deref(), Some(grant_ref.as_str()));
+    let mut consent: Vec<_> = decisions
+        .iter()
+        .filter(|row| row.content_kind == crate::consent::CONSENT_CONTENT_KIND)
+        .collect();
+    assert_eq!(consent.len(), 2);
+    consent.sort_by(|left, right| left.reason_codes.cmp(&right.reason_codes));
+    assert_eq!(
+        consent[0].reason_codes,
+        vec![crate::consent::CONSENT_REASON_STANDING_CREATED]
+    );
+    assert_eq!(
+        consent[1].reason_codes,
+        vec![crate::consent::CONSENT_REASON_STANDING_USED]
+    );
+    for row in &consent {
+        assert_eq!(row.outcome, "approved");
+        assert_eq!(row.grant_ref.as_deref(), Some(grant_ref.as_str()));
+    }
     assert_eq!(decisions[0].grant_ref.as_deref(), Some(grant_ref.as_str()));
 
     let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
@@ -174,7 +201,8 @@ fn standing_outbound_grant_allows_in_scope_external_effect_and_records_join() ->
         Some(grant_ref.as_str())
     );
     let projection = vault.receipt_projection_by_grant(grant_ref, ReceiptQuery::new(10))?;
-    assert_eq!(projection.receipts.len(), 2);
+    // The three gate rows above plus the grant's own created receipt.
+    assert_eq!(projection.receipts.len(), 4);
     assert!(
         projection
             .receipts
@@ -419,10 +447,12 @@ fn standing_outbound_grant_reasks_out_of_scope_stale_and_revoked_sends() -> Resu
         check_external_effect_policy(&vault.store, wtxn, &out_of_scope, &policy, true)
     })?;
     assert_eq!(decision.outcome(), GateOutcome::Pending);
+    // The line grant holds send-class but its envelope does not reach email:
+    // an exceeded bound (invariant 3), not a first ask.
     assert_eq!(
         gate_reason_strs(&decision),
         vec![
-            "gate.pending.consent.irreversible_effect",
+            "gate.pending.consent.bound_exceeded",
             "gate.pending.external_effect_authority",
         ]
     );

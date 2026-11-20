@@ -41,6 +41,10 @@ const AX_TEXT_CUT: usize = 10_000;
 /// What one capture's DOM read gave: the read, with the charge for what
 /// of a past-threshold reply it keeps, given back as it drops (FIX
 /// 11578); or a read that failed, which keeps nothing.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "every capture but a failed one holds the read, so boxing it would add an allocation to each capture"
+)]
 pub(super) enum DomRead {
     Read(Dom, #[allow(dead_code)] Option<Held>),
     Failed,
@@ -243,7 +247,7 @@ impl Dom {
         let frames = self
             .frames
             .iter()
-            .map(|frame| frame.capacity())
+            .map(std::string::String::capacity)
             .fold(0, usize::saturating_add);
         let bases = self
             .bases

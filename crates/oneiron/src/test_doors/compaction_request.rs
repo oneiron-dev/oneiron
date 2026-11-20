@@ -1,10 +1,12 @@
 //! Doors for `oneiron-server`'s `tests/compaction_seat_exact_model.rs`
 //! (FIX-LIST SELF-WRITER-HOUSE-FALLBACK-SEAT-EXACT-REFUSED): one sealed
 //! compaction request over a window the test writes, for a pass a host's
-//! backend is sent directly. Compiled only under `--cfg oneiron_test_support`;
-//! never API.
+//! backend is sent directly. And for its `api::tests::ai_chat_self_compaction`
+//! (FIX-LIST SELF-COMPACTION-AUTO-FALLBACK-UNTESTED): what a landed
+//! conversation summary's receipt says wrote it. Compiled only under
+//! `--cfg oneiron_test_support`; never API.
 
-use crate::compaction::{CompactionRequest, CompactionWindowMessage};
+use crate::compaction::{CompactionExecution, CompactionRequest, CompactionWindowMessage};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::vault::Vault;
@@ -33,4 +35,22 @@ pub fn sealed_window(
         })
         .collect();
     CompactionRequest::for_test_window(vault, EntityId::now(), window, summary_token_budget)
+}
+
+/// The execution `summary`'s landing receipt names, as the receipt keeps it
+/// (its calls dropped): the writer, the source the flight ran on and the
+/// model it was admitted as. `None` when no receipt landed for `summary`.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn conversation_landing_execution(
+    vault: &Vault,
+    summary: &EntityId,
+) -> Result<Option<CompactionExecution>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(
+        crate::compaction::conversation_receipt_in(&vault.store, &txn, summary)?
+            .map(|receipt| receipt.execution),
+    )
 }

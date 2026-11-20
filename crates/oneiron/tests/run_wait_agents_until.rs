@@ -6,17 +6,22 @@
 //! - A wait whose `until` has passed is done as `cutoff` with its children
 //!   pending, through the host door and through the run's own call, and it
 //!   keeps that answer after its children end.
-//! - A wait whose `until` is still to come stays open. The due sweep before
-//!   it takes nothing. The sweep at it, after a restart, delivers `cutoff` as
-//!   the reply of a run parked on the wait, with the child that ended settled
-//!   and the other pending, and a later sweep finds no row.
-//! - A wait whose policy is met before its `until` leaves no due row, and a
-//!   wait with no `until` is never swept.
+//! - A wait whose `until` is still to come stays open. The housekeeping pass
+//!   before it takes nothing. The pass at it, after a restart, delivers
+//!   `cutoff` as the reply of a run parked on the wait, with the child that
+//!   ended settled and the other pending, and a later pass changes nothing.
+//! - A wait whose policy is met before its `until` is not answered again by
+//!   the pass at its `until`, and a wait with no `until` is never answered by
+//!   one.
 //!
-//! On main the agents form refuses `until`: the host door's input does not
-//! parse it, and the run's own call answers `task_wait_invalid`. Nothing
-//! sweeps due agent waits there. Public paths only:
+//! Since DESIGN 15-setting-primitive stage 5b-4, a wait's `until` is a row of
+//! the schedule's `agent_dispatch.child_wait_until` job, which the vault's
+//! own housekeeping pass runs on the recording clock; the vault here runs on
+//! a clock the test moves. Red before 5b-4: no housekeeping pass answers a
+//! due wait. Public paths only:
 //! `cargo test --locked -p oneiron --all-features --test run_wait_agents_until`.
+
+use std::sync::Arc;
 
 use oneiron::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext,
@@ -28,7 +33,9 @@ use oneiron::code_run::{
     TaskWaitInput, TaskWaitSetCall, WaitDeliveries,
 };
 use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
+use oneiron::housekeeping::HousekeepingBudget;
 use oneiron::{AttemptId, AttemptQueue, EntityId, Vault, VaultConfig, WriteActor};
+use oneiron_store::ports::manual_clock::ManualClock;
 
 type TestError = Box<dyn std::error::Error>;
 type TestResult = Result<(), TestError>;
@@ -37,22 +44,28 @@ type TestResult = Result<(), TestError>;
 const RUN: &str = "run-agent-wait-until";
 /// The lease owner this test claims rows as.
 const WORKER: &str = "run-wait-agents-until";
-/// How far ahead a deadline still to come is set: far past any test's run.
-const HOUR_MS: u64 = 60 * 60 * 1000;
+/// The instant every test's vault opens at, in vault-clock seconds.
+const T0: u64 = 4_000_000_000;
+/// How far ahead a deadline still to come is set, in seconds.
+const HOUR: u64 = 60 * 60;
+/// A deadline an hour after [`T0`], in milliseconds: the clock a wait's
+/// `until` is on.
+const UNTIL_MS: u64 = (T0 + HOUR) * 1_000;
 
-/// A process-owned vault at `dir`, as an embedded owner opens it.
-fn open_vault(dir: &std::path::Path) -> Result<Vault, TestError> {
+/// A process-owned vault at `dir` on `clock`, as an embedded owner opens it.
+fn open_vault(dir: &std::path::Path, clock: &Arc<ManualClock>) -> Result<Vault, TestError> {
     let mut config = VaultConfig::device();
     config.map_size = 32 * 1024 * 1024;
     config.dimensions = 4;
     config.embedding_model = None;
+    config.store_clock = clock.bundle();
     Ok(Vault::open_owned(dir, config)?)
 }
 
-/// Unix milliseconds now: the clock a wait's `until` is on.
-fn now_ms() -> Result<u64, TestError> {
-    let elapsed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
-    Ok(u64::try_from(elapsed.as_millis())?)
+/// One housekeeping pass at the clock's now, as the host's tick runs it.
+fn pass(vault: &Vault) -> TestResult {
+    vault.housekeeping(HousekeepingBudget::unbounded())?;
+    Ok(())
 }
 
 fn hex(id: AttemptId) -> String {
@@ -210,11 +223,12 @@ fn ended(result: &AgentWaitSetResult) -> Vec<(String, String)> {
 #[test]
 fn a_wait_whose_until_has_passed_answers_cutoff_with_its_children_pending() -> TestResult {
     let dir = tempfile::tempdir()?;
-    let vault = open_vault(dir.path())?;
-    let (parent, actor) = root_run(&vault, RUN, 1)?;
+    let clock = ManualClock::new(T0);
+    let vault = open_vault(dir.path(), &clock)?;
+    let (parent, actor) = root_run(&vault, RUN, T0)?;
     let leased = claim(&vault, parent)?;
-    let first = spawn_child(&vault, parent, RUN, "first", 2)?;
-    let second = spawn_child(&vault, parent, RUN, "second", 3)?;
+    let first = spawn_child(&vault, parent, RUN, "first", T0)?;
+    let second = spawn_child(&vault, parent, RUN, "second", T0)?;
     let both = [first, second];
     let host = HostSelfDispatcher::for_leased_agent_attempt(&vault, actor, &leased)?;
 
@@ -280,14 +294,15 @@ fn a_wait_whose_until_has_passed_answers_cutoff_with_its_children_pending() -> T
 #[test]
 fn a_wait_whose_until_comes_is_answered_cutoff_by_the_due_sweep_after_a_restart() -> TestResult {
     let dir = tempfile::tempdir()?;
-    let vault = open_vault(dir.path())?;
-    let (parent, actor) = root_run(&vault, RUN, 1)?;
+    let clock = ManualClock::new(T0);
+    let vault = open_vault(dir.path(), &clock)?;
+    let (parent, actor) = root_run(&vault, RUN, T0)?;
     let leased = claim(&vault, parent)?;
-    let first = spawn_child(&vault, parent, RUN, "first", 2)?;
-    let second = spawn_child(&vault, parent, RUN, "second", 3)?;
+    let first = spawn_child(&vault, parent, RUN, "first", T0)?;
+    let second = spawn_child(&vault, parent, RUN, "second", T0)?;
     let both = [first, second];
     let host = HostSelfDispatcher::for_leased_agent_attempt(&vault, actor, &leased)?;
-    let until = now_ms()? + HOUR_MS;
+    let until = UNTIL_MS;
 
     // Its `until` is still to come: the wait is open, and nothing is
     // delivered.
@@ -296,8 +311,9 @@ fn a_wait_whose_until_comes_is_answered_cutoff_by_the_due_sweep_after_a_restart(
     assert_eq!(open.reason, None);
     assert_eq!(open.pending, vec![hex(first), hex(second)]);
     assert_eq!(delivered(&vault, &open.wait)?, None);
-    // The sweep before its `until` takes nothing.
-    assert_eq!(vault.settle_due_agent_waits(until - 1)?, 0);
+    // The pass before its `until` takes nothing.
+    clock.set(T0 + HOUR - 1);
+    pass(&vault)?;
     assert_eq!(delivered(&vault, &open.wait)?, None);
 
     // One child ends; the wait over both still waits on the other.
@@ -308,14 +324,15 @@ fn a_wait_whose_until_comes_is_answered_cutoff_by_the_due_sweep_after_a_restart(
     assert_eq!(waiting.pending, vec![hex(second)]);
     assert_eq!(delivered(&vault, &open.wait)?, None);
 
-    // After a restart, the sweep at its `until` answers it as `cutoff` and
+    // After a restart, the pass at its `until` answers it as `cutoff` and
     // delivers that as the reply of a run parked on it.
     drop(host);
     drop(vault);
-    let vault = open_vault(dir.path())?;
-    assert_eq!(vault.settle_due_agent_waits(until)?, 1);
+    let vault = open_vault(dir.path(), &clock)?;
+    clock.set(T0 + HOUR);
+    pass(&vault)?;
     let cut =
-        delivered(&vault, &open.wait)?.ok_or("the sweep at the wait's until delivers its reply")?;
+        delivered(&vault, &open.wait)?.ok_or("the pass at the wait's until delivers its reply")?;
     assert!(cut.done);
     assert_eq!(cut.reason.as_deref(), Some("cutoff"));
     assert_eq!(cut.wait, open.wait);
@@ -323,14 +340,16 @@ fn a_wait_whose_until_comes_is_answered_cutoff_by_the_due_sweep_after_a_restart(
     assert_eq!(cut.pending, vec![hex(second)]);
 
     // The run's own call under the same key answers what was kept, and a
-    // later sweep finds no row.
+    // later pass changes nothing.
     assert_eq!(
         answer(wait_as_run(
             &vault, actor, parent, &both, None, until, "bounded"
         )?)?,
         cut
     );
-    assert_eq!(vault.settle_due_agent_waits(until + 1)?, 0);
+    clock.set(T0 + HOUR + 1);
+    pass(&vault)?;
+    assert_eq!(delivered(&vault, &open.wait)?, Some(cut.clone()));
 
     // The other child's end changes nothing kept.
     complete(&vault, second)?;
@@ -341,14 +360,15 @@ fn a_wait_whose_until_comes_is_answered_cutoff_by_the_due_sweep_after_a_restart(
 #[test]
 fn an_early_quorum_leaves_no_due_row_and_a_wait_with_no_until_is_never_swept() -> TestResult {
     let dir = tempfile::tempdir()?;
-    let vault = open_vault(dir.path())?;
-    let (parent, actor) = root_run(&vault, RUN, 1)?;
+    let clock = ManualClock::new(T0);
+    let vault = open_vault(dir.path(), &clock)?;
+    let (parent, actor) = root_run(&vault, RUN, T0)?;
     let leased = claim(&vault, parent)?;
-    let first = spawn_child(&vault, parent, RUN, "first", 2)?;
-    let second = spawn_child(&vault, parent, RUN, "second", 3)?;
+    let first = spawn_child(&vault, parent, RUN, "first", T0)?;
+    let second = spawn_child(&vault, parent, RUN, "second", T0)?;
     let both = [first, second];
     let host = HostSelfDispatcher::for_leased_agent_attempt(&vault, actor, &leased)?;
-    let until = now_ms()? + HOUR_MS;
+    let until = UNTIL_MS;
 
     let quorum =
         host.wait_agents_from_host(wait_on(&both, Some(1), Some(until), "first-in-time")?)?;
@@ -363,10 +383,12 @@ fn an_early_quorum_leaves_no_due_row_and_a_wait_with_no_until_is_never_swept() -
     assert_eq!(met.reason.as_deref(), Some("quorum"));
     assert_eq!(met.pending, vec![hex(second)]);
 
-    // No due row is left, at its `until` or at any later time, and the wait
-    // with no `until` still waits.
-    assert_eq!(vault.settle_due_agent_waits(until)?, 0);
-    assert_eq!(vault.settle_due_agent_waits(u64::MAX)?, 0);
+    // The pass at its `until` and a later one answer it nothing new, and the
+    // wait with no `until` still waits.
+    clock.set(T0 + HOUR);
+    pass(&vault)?;
+    clock.set(T0 + 2 * HOUR);
+    pass(&vault)?;
     assert_eq!(delivered(&vault, &quorum.wait)?, Some(met));
     assert_eq!(delivered(&vault, &unbounded.wait)?, None);
     let still = host.wait_agents_from_host(wait_on(&both, None, None, "every-child")?)?;

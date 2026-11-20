@@ -4,7 +4,7 @@
 //! The owner import of the retained-rows fixture installs the snapshot bounds
 //! live and reports two inert inserted rows (the standing grant and the
 //! grant's gate receipt) plus one installed row; it names each table's counts
-//! and the manifest's 23 omitted tables. A repeat import reports nothing
+//! and the manifest's 22 omitted tables. A repeat import reports nothing
 //! inserted, two inert unchanged rows and one unchanged live row. The fixture
 //! is shared from `archive_import_retained_side_rows.rs`, whose tests also
 //! run in this binary.
@@ -96,8 +96,8 @@ fn the_import_receipt_counts_retained_rows_and_names_omitted_tables() {
     );
     assert_eq!(
         summary.omissions.len(),
-        23,
-        "the receipt names 23 omitted tables: {:?}",
+        22,
+        "the receipt names 22 omitted tables: {:?}",
         summary.omissions
     );
     let healer = summary

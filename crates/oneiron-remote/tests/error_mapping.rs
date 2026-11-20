@@ -84,6 +84,7 @@ fn a_2xx_body_that_is_not_the_verb_output_is_internal() {
         messages: vec![],
         occurred_at: 1,
         thread_audience: None,
+        project: None,
         assertions: Default::default(),
     });
     // Release the peer even if the client failed before making the request.

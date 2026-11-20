@@ -193,3 +193,6 @@ mod bin {
         input.deserialize_bytes(Visitor)
     }
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::delivery::election_basis_for_test;
