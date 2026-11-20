@@ -216,6 +216,22 @@ fn world_scoped_arm_serves_and_grades_readable_records_only() {
     );
     assert_eq!(line["records_readable"], 4);
     assert_eq!(
+        line["records_written"], 7,
+        "every record lands as a claim, the corpus whose one query is dropped included"
+    );
+    let mut hidden_ids = vec![
+        ids.hidden_match.clone(),
+        ids.hidden_other.clone(),
+        ids.hidden_only.clone(),
+    ];
+    hidden_ids.sort();
+    assert_eq!(
+        line["partition_digest"],
+        sha256_hex(&serde_json::to_vec(&hidden_ids).expect("hidden ids JSON")),
+        "the partition pin hashes the sorted hidden ids as a JSON array: an id holding a \
+         newline cannot make two partitions hash alike"
+    );
+    assert_eq!(
         line["queries_dropped"], 1,
         "the query whose only relevant record is hidden is not graded"
     );
@@ -280,6 +296,7 @@ fn world_scoped_arm_with_no_hidden_share_serves_every_match() {
     let line = summary(&result);
     assert_eq!(line["records_hidden"], 0);
     assert_eq!(line["records_readable"], 7);
+    assert_eq!(line["records_written"], 7);
     assert_eq!(line["queries_dropped"], 0);
     assert_eq!(
         line["pack_digest"], line["source_pack_digest"],
@@ -297,6 +314,77 @@ fn world_scoped_arm_with_no_hidden_share_serves_every_match() {
     );
     assert_eq!(per_query[1]["query_id"], "query-mountain");
     assert_eq!(per_query[1]["returned"], 1);
+}
+
+/// Write an unembedded `search` slice of one corpus: the relevant record
+/// "orchard harvest" from 2020 and the newer "orchard harvest notes" from
+/// 2025, plus a filler, queried the day after the newer session.
+fn write_age_pack(dir: &Path) -> (String, String) {
+    let ids = pick(3, false);
+    let (old, new, filler) = (ids[0].clone(), ids[1].clone(), ids[2].clone());
+    let manifest = json!({
+        "contract": "oneiron.retrieval_pack.v1",
+        "pack_id": "world-scoped-age-fixture",
+        "revision": "r1",
+        "slice": "search",
+        "source": {
+            "dataset": "LongMemEval-S",
+            "dataset_sha256": sha256_hex(b"fixture-dataset"),
+            "license": "MIT",
+            "split_sha256": sha256_hex(b"fixture-split"),
+        },
+        "embedding": Value::Null,
+        "records": [
+            record(&old, "orchard harvest"),
+            record(&new, "orchard harvest notes"),
+            record(&filler, "city bus schedule"),
+        ],
+        "corpora": [
+            {"corpus_id": "corpus-orchard", "sessions": [
+                {"session_id": "sess-2020", "time": "2020-01-01T00:00:00Z", "record_ids": [old, filler]},
+                {"session_id": "sess-2025", "time": "2025-06-01T00:00:00Z", "record_ids": [new]},
+            ]},
+        ],
+        "queries": [
+            {"query_id": "query-orchard", "slice": "search", "corpus_id": "corpus-orchard", "category": "single-session-user", "text": "orchard harvest", "now": "2025-06-02T00:00:00Z", "qrels": {old.clone(): 2}, "expect_empty": false},
+        ],
+    });
+    let mut pretty = serde_json::to_vec_pretty(&manifest).expect("manifest JSON");
+    pretty.push(b'\n');
+    std::fs::write(dir.join("search.json"), pretty).expect("manifest write");
+    (old, new)
+}
+
+/// The arm ranks by text alone: claim age moves no record. The older record
+/// is the shorter match, so BM25 puts it first; were each claim stamped at
+/// its own session, the access-factor decay of a five-year-old claim (down
+/// to its 0.05 floor) would put the newer one ahead of it.
+#[test]
+fn world_scoped_arm_ranks_by_text_not_claim_age() {
+    let dir = tempfile::tempdir().expect("scorecard fixture dir");
+    let (old, new) = write_age_pack(dir.path());
+    let card_path = dir.path().join("world-scoped-age.json");
+    let result = run_arm(dir.path(), &card_path, 0);
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        result.status.success(),
+        "the age run succeeds: stdout {stdout} stderr {stderr}"
+    );
+    let card: Value =
+        serde_json::from_slice(&std::fs::read(&card_path).expect("scorecard file reads"))
+            .expect("scorecard file is JSON");
+    let per_query = card["per_query"].as_array().expect("per-query scores");
+    assert_eq!(per_query.len(), 1);
+    assert_eq!(
+        per_query[0]["returned"], 2,
+        "both records holding the query words are served"
+    );
+    assert_eq!(
+        per_query[0]["mrr"], 1.0,
+        "the shorter, relevant match {old} ranks first, ahead of the newer {new}: no claim \
+         age decay reorders a text-only arm"
+    );
 }
 
 #[test]
