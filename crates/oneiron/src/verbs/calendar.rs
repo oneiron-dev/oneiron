@@ -1,10 +1,17 @@
-//! Typed booking-page discovery, public lifecycle calls and calendar occupancy inputs.
+//! Typed booking-page discovery, public lifecycle calls, the owner's deposit
+//! refund and calendar occupancy inputs.
 use serde::{Deserialize, Serialize};
+
+use crate::Vault;
+use crate::consent::AuthenticatedOwner;
+use crate::entity_id::EntityId;
+use crate::memory::{Memory, MemoryError, MemoryResult};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::calendar::{
     BookingCancelRequest, BookingConstraintTurnInput, BookingConstraintTurnRequest,
-    BookingConstraintTurnWindow, BookingPageTokenRequest, BookingPageTokenResponse,
+    BookingConstraintTurnWindow, BookingDepositRefundReceipt, BookingDepositRefundRequest,
+    BookingDepositRefundState, BookingPageTokenRequest, BookingPageTokenResponse,
     BookingRescheduleRequest, CalendarFreebusyRequest,
 };
 
@@ -52,4 +59,33 @@ pub struct BookingConstraintHoldContext {
     pub visitor_tz: String,
     pub constraint: crate::booking::ConstraintObject,
     pub session_ref: String,
+}
+
+/// The owner's deposit refund verb's public spelling.
+const DEPOSIT_REFUND_VERB: &str = "vault.booking.deposit.refund";
+
+/// `vault.booking.deposit.refund` on an embedded handle, as the vault's
+/// embedded owner.
+pub fn refund_booking_deposit(
+    memory: &Memory<'_>,
+    input: &BookingDepositRefundRequest,
+) -> MemoryResult<BookingDepositRefundReceipt> {
+    let owner = memory.embedded_owner(DEPOSIT_REFUND_VERB)?;
+    refund_booking_deposit_as(memory.vault(), &owner, input)
+}
+
+/// `vault.booking.deposit.refund` under the owner's proof, which the
+/// refund's money write revalidates (BK-DEPOSIT-OWNER-RETURN-ACT = A): a
+/// host selected at the booking's confirmation gives its held deposit back
+/// whole once the booking is cancelled or has started. No agent grant and no
+/// visitor token reach it.
+pub fn refund_booking_deposit_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: &BookingDepositRefundRequest,
+) -> MemoryResult<BookingDepositRefundReceipt> {
+    let event_ref = EntityId::from_hex(input.event_ref.trim())
+        .map_err(|_| MemoryError::bad_request("event_ref is an entity id in lowercase hex"))?;
+    crate::booking::lifecycle::refund_booking_deposit_as_owner(vault, owner, &event_ref)
+        .map_err(crate::memory::booking_error)
 }

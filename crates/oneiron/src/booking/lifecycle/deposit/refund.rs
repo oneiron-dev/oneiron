@@ -1,12 +1,17 @@
 //! A deposit's refund rules, each in the booking writer's commit: a
 //! visitor's cancel or reschedule refunds by the terms the visitor paid
-//! under, and a host's cancel gives the deposit back whole.
+//! under, and a host's cancel or the owner's refund gives the deposit back
+//! whole.
 
 use super::super::claim::read_booking_facts_to_cancel;
 use super::super::storage::{booking_writer, engine_failure, read_txn};
 use super::super::types::BookingStatus;
 use super::{DEPOSIT, DEPOSIT_BOOKING, DepositState, booking_key, enqueue_settle, put_deposit};
 use crate::booking::BookingError;
+use crate::consent::AuthenticatedOwner;
+use crate::dreamer_runner::DreamerRunnerStore;
+use crate::memory::{MEMORY_CODE_FORBIDDEN, MemoryError};
+use crate::verbs::{BookingDepositRefundReceipt, BookingDepositRefundState};
 use crate::{EntityId, Vault};
 
 /// A visitor's cancel's deposit step, in the cancel's own commit: the
@@ -163,14 +168,141 @@ pub(in crate::booking::lifecycle) fn refund_on_host_cancel_in_writer(
     else {
         return Ok(());
     };
-    row.state = match row.state {
-        DepositState::CaptureDue { .. } => DepositState::VoidDue,
-        DepositState::Captured { amount_minor } => DepositState::RefundDue { amount_minor },
-        _ => return Ok(()),
+    let Some(next) = whole_return(row.state) else {
+        return Ok(());
     };
+    row.state = next;
     row.updated_at = now_utc;
     put_deposit(vault, wtxn, &link.deposit_key, &row)?;
     enqueue_settle(vault, wtxn, &link.deposit_key, "host-cancel", now_utc)
+}
+
+/// The move that gives a deposit in `state` back whole: a capture still due
+/// is released (`VoidDue`), a captured amount is owed back (`RefundDue`).
+/// `None` for a deposit already voided, refunded or owing either.
+fn whole_return(state: DepositState) -> Option<DepositState> {
+    match state {
+        DepositState::CaptureDue { .. } => Some(DepositState::VoidDue),
+        DepositState::Captured { amount_minor } => Some(DepositState::RefundDue { amount_minor }),
+        _ => None,
+    }
+}
+
+/// `vault.booking.deposit.refund` (BK-DEPOSIT-OWNER-RETURN-ACT = A and
+/// BK-DEPOSIT-OWNER-RETURN-SCOPE = A, Engine 21 Nov 02:56): the owner gives a
+/// booking's held deposit back whole, in one booking writer. The proof is
+/// the vault owner's own unattenuated, undelegated one, revalidated in this
+/// writer; only a host selected at the booking's confirmation may use it, on
+/// the lifecycle home node that holds the deposit, once the booking is
+/// effectively cancelled (its own cancel or a calendar's) or has started. A
+/// capture still due is released and a captured deposit owed back whole, as
+/// a host cancel does, with its settle row queued "owner-refund"; the
+/// booking's status and revision stay as they are. A deposit that already
+/// owes or has settled its return is left as it stands, so a retry queues
+/// nothing.
+///
+/// # Errors
+///
+/// [`BookingError::Boundary`] for a proof that no longer holds or a caller
+/// who was not a selected host; [`BookingError::InvalidConstraint`] for an
+/// EVENT that is no booking; [`BookingError::InvalidConfig`] for a live
+/// booking that has not started, one with no deposit, or a call off the
+/// lifecycle home node; [`BookingError::SlotOracle`] on a store failure.
+pub(crate) fn refund_booking_deposit_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    event_ref: &EntityId,
+) -> Result<BookingDepositRefundReceipt, BookingError> {
+    booking_writer(vault, |wtxn| {
+        let actor = owner
+            .owner_authored_write_in_txn(vault, &*wtxn)
+            .map_err(|error| BookingError::Boundary(Box::new(MemoryError::from(error))))?
+            .actor();
+        require_home_node_in_txn(vault, &*wtxn)?;
+        let booking = read_booking_facts_to_cancel(vault, &*wtxn, event_ref)?;
+        if !booking
+            .context
+            .as_ref()
+            .is_some_and(|context| context.owner_refs.contains(&actor.to_hex()))
+        {
+            return Err(BookingError::Boundary(Box::new(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "only a host selected when the booking was confirmed refunds its deposit",
+                &["Call it as one of the booking's hosts."],
+            ))));
+        }
+        let now_utc = vault.now_recorded_at();
+        if booking.effective_status() != BookingStatus::Cancelled && now_utc < booking.slot.start {
+            return Err(BookingError::InvalidConfig(
+                "a live booking that has not started keeps its deposit: cancel it to refund"
+                    .to_owned(),
+            ));
+        }
+        let Some(link) = DEPOSIT_BOOKING
+            .get(&vault.store, &*wtxn, &booking_key(event_ref))
+            .map_err(|error| engine_failure("meta read", error))?
+        else {
+            return Err(BookingError::InvalidConfig(
+                "the booking holds no deposit".to_owned(),
+            ));
+        };
+        let Some(mut row) = DEPOSIT
+            .get(&vault.store, &*wtxn, &link.deposit_key)
+            .map_err(|error| engine_failure("meta read", error))?
+        else {
+            return Err(BookingError::InvalidConfig(
+                "the booking holds no deposit".to_owned(),
+            ));
+        };
+        let queued = match whole_return(row.state) {
+            Some(next) => {
+                row.state = next;
+                row.updated_at = now_utc;
+                put_deposit(vault, wtxn, &link.deposit_key, &row)?;
+                enqueue_settle(vault, wtxn, &link.deposit_key, "owner-refund", now_utc)?;
+                true
+            }
+            None => false,
+        };
+        let (state, amount_minor) = match row.state {
+            DepositState::RefundDue { amount_minor } => {
+                (BookingDepositRefundState::RefundDue, amount_minor)
+            }
+            DepositState::VoidDue => (BookingDepositRefundState::VoidDue, 0),
+            DepositState::Refunded { amount_minor } => {
+                (BookingDepositRefundState::Refunded, amount_minor)
+            }
+            DepositState::Voided => (BookingDepositRefundState::Voided, 0),
+            _ => {
+                return Err(BookingError::InvalidConfig(
+                    "the booking's deposit was never confirmed".to_owned(),
+                ));
+            }
+        };
+        Ok(BookingDepositRefundReceipt {
+            event_ref: event_ref.to_hex(),
+            state,
+            amount_minor,
+            currency: row.terms.currency.clone(),
+            queued,
+        })
+    })
+}
+
+/// A deposit's rows live on the lifecycle home node, beside the writer that
+/// confirmed its booking: on any other node the refund would find none.
+fn require_home_node_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<(), BookingError> {
+    let home = DreamerRunnerStore::new(vault)
+        .home_node_designation_in_txn(txn)
+        .map_err(|error| engine_failure("home node designation read", error))?;
+    let local = crate::identity::read_client_id_in_txn(vault, txn)
+        .map_err(|error| engine_failure("local node identity read", error))?;
+    if local.is_none() || home.is_none_or(|home| Some(home.node_id) != local) {
+        return Err(BookingError::InvalidConfig(
+            "a booking's deposit is refunded on the lifecycle home node".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// Whether the booking `event_ref` has a deposit a host cancel would move:

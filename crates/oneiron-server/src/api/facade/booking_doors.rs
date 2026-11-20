@@ -1,4 +1,5 @@
-//! Typed booking-page discovery, published lifecycle and constraint front.
+//! Typed booking-page discovery, published lifecycle, constraint front and
+//! the owner's deposit refund.
 use std::sync::Arc;
 
 use oneiron::EntityId;
@@ -6,8 +7,9 @@ use oneiron::booking::agent_api::{BookingOperationRequest, BookingOperationRespo
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
     BookingAvailabilityRequest, BookingBookRequest, BookingCancelRequest,
-    BookingConstraintTurnRequest, BookingConstraintTurnResponse, BookingPageTokenRequest,
-    BookingPageTokenResponse, BookingRescheduleRequest,
+    BookingConstraintTurnRequest, BookingConstraintTurnResponse, BookingDepositRefundReceipt,
+    BookingDepositRefundRequest, BookingPageTokenRequest, BookingPageTokenResponse,
+    BookingRescheduleRequest,
 };
 
 use super::FacadeApiError;
@@ -185,4 +187,36 @@ pub(crate) async fn vault_booking_cancel(
         BookingOperationRequest::Cancel(input),
     )
     .await
+}
+
+/// `vault.booking.deposit.refund` (BK-DEPOSIT-OWNER-RETURN-ACT = A): the
+/// owner's own proof, as every owner door takes it, which the refund's money
+/// write revalidates in its snapshot; an agent's credential, a delegate's
+/// or a visitor's token takes no refund. It lists the booking's EVENT
+/// (`host_door_lists`), the one row its answer names; a refusal lists none.
+pub(crate) async fn vault_booking_deposit_refund(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: BookingDepositRefundRequest,
+) -> Listed<BookingDepositRefundReceipt> {
+    const VERB: &str = "vault.booking.deposit.refund";
+    let owner = match super::owner_binding::facade_owner(server, auth, VERB) {
+        Ok(owner) => owner,
+        Err(refusal) => return refused(refusal),
+    };
+    let server = Arc::clone(server);
+    super::clock_ingress::run_blocking(move || {
+        match oneiron::task_verb::sdk::refund_booking_deposit_as(server.vault(), &owner, &input) {
+            Ok(receipt) => {
+                let rows = EntityId::from_hex(&receipt.event_ref)
+                    .ok()
+                    .into_iter()
+                    .collect();
+                (Ok(receipt), rows)
+            }
+            Err(error) => refused(error),
+        }
+    })
+    .await
+    .unwrap_or_else(|_| refused(internal(VERB)))
 }

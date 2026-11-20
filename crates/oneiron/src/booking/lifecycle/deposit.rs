@@ -48,11 +48,11 @@ use crate::{EntityId, Vault};
 mod refund;
 mod settle;
 
-pub(crate) use self::refund::refund_deposit_on_host_cancel;
 pub(super) use self::refund::{
     cap_refund_on_visitor_reschedule_in_writer, refund_on_host_cancel_in_writer,
     refund_on_visitor_cancel_in_writer,
 };
+pub(crate) use self::refund::{refund_booking_deposit_as_owner, refund_deposit_on_host_cancel};
 pub use self::settle::{
     BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND, BookingDepositSettlementDrain, DepositProviderFailure,
     DepositSettleMove, DepositSettleRequest, DepositSettleStep, DepositSettlementPort,
