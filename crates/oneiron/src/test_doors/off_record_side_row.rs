@@ -135,3 +135,103 @@ pub fn vault_knows_value(vault: &Vault, value: &[u8]) -> Result<bool> {
         .known_values_now()?
         .is_some_and(|known| known.is_exact_value(value)))
 }
+
+/// Witnesses one user message saying `words` into `session` as `actor`,
+/// as a participant's message lands in the room's overlay: the turn it
+/// opens.
+///
+/// # Errors
+///
+/// The witness's refusal, as text.
+pub fn say_in_room(
+    vault: &Vault,
+    session: &OffRecordSession<'_>,
+    actor: EntityId,
+    words: &str,
+) -> std::result::Result<EntityId, String> {
+    let receipt = vault
+        .memory(actor, crate::EdgeActorClass::Human)
+        .witness_into_session(
+            session,
+            &crate::memory::WitnessTurn {
+                conversation_ref: String::new(),
+                turn_ref: None,
+                messages: vec![crate::memory::WitnessMessage {
+                    id: None,
+                    author: crate::memory::WitnessAuthor::User,
+                    message_type: "utterance".to_owned(),
+                    content: words.to_owned(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                    parts: None,
+                    quote: None,
+                }],
+                occurred_at: 1000,
+                thread_audience: None,
+                project: None,
+                assertions: Default::default(),
+            },
+            None,
+            None,
+        )
+        .map_err(|error| format!("the room refused the message: {error:?}"))?;
+    let turn = receipt
+        .receipt_ref
+        .strip_prefix("witness:")
+        .ok_or("the witness receipt names no turn")?;
+    EntityId::from_hex(turn).map_err(|error| format!("{error:?}"))
+}
+
+/// Whether the body of a base row of `ids` holds `text` in its bytes.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn base_rows_hold(vault: &Vault, ids: &[EntityId], text: &str) -> Result<bool> {
+    for id in ids {
+        if let Some(body) = vault.get(id)?
+            && body
+                .windows(text.len())
+                .any(|window| window == text.as_bytes())
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The first vault custody handle (`[secret sc12]`) the body of a base row
+/// of `ids` holds, as written.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn base_custody_handle_in_rows(vault: &Vault, ids: &[EntityId]) -> Result<Option<String>> {
+    for id in ids {
+        let Some(body) = vault.get(id)? else {
+            continue;
+        };
+        let text = String::from_utf8_lossy(&body);
+        if let Some(start) = text.find("[secret sc")
+            && let Some(len) = text[start..].find(']')
+        {
+            return Ok(Some(text[start..=start + len].to_owned()));
+        }
+    }
+    Ok(None)
+}
+
+/// The value the vault custody record `handle` names holds.
+///
+/// # Errors
+///
+/// A handle no live record holds, or storage and custody errors.
+pub fn vault_custody_value(vault: &Vault, handle: &str) -> Result<Option<Vec<u8>>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let (_, id) = crate::secret_custody::handle_record_in_txn(&vault.store, &rtxn, handle)?;
+    Ok(
+        crate::secret_custody::read_secret_custody_in_txn(&vault.store, &rtxn, &id)?
+            .map(|record| record.value_bytes.clone()),
+    )
+}
