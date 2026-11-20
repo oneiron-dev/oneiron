@@ -134,11 +134,7 @@ impl<'v> ScopedRead<'v> {
         &self,
         policy: &PolicyManifestResolution,
     ) -> Result<ResolvedRetrievalFilter> {
-        Ok(crate::gate::narrow_retrieval_filter(
-            &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
-            None,
-        )?
-        .under_credential_of(&self.actor_key))
+        self.filter_under(policy, None)
     }
 
     pub(super) fn is_entity_readable_with_filter_in(
@@ -661,20 +657,35 @@ impl<'v> ScopedRead<'v> {
         // only those two gates, and only for a reader with no explicit
         // credential or Grant Scope under a policy that has not failed
         // closed; every later gate still binds, and the record stage below
-        // judges the binding again with the row's scope.
+        // judges the binding again with the row's scope. A filter from the
+        // binding-only floor (WORK-TALK-BINDING-RECALL-FLOOR) reads no row
+        // but its own talk's: each row its kinds let through must sit in
+        // that talk under a binding that admits the reader, and the deny-all
+        // exception never applies to it, so a request that leaves it no
+        // kind reads nothing.
         let scope_refuses =
             filter.deny_all || !filter.read_scope().bands.contains(&header.entity_type);
-        let work_talk_bound = scope_refuses
-            && !policy.is_fail_closed()
+        let binding_may_lift = !policy.is_fail_closed()
             && !policy.diagnostics().loaded_manifest_forces_fail_closed()
-            && grant.or(self.actor_key.authority_scope()).is_none()
-            && self.work_talk_row_readable_in(rtxn, id, header.entity_type);
+            && grant.or(self.actor_key.authority_scope()).is_none();
+        let work_talk_bound = match filter.work_talk_room {
+            Some(room) => {
+                !scope_refuses
+                    && binding_may_lift
+                    && self.work_talk_row_room_in(rtxn, id, header.entity_type) == Some(room)
+            }
+            None => {
+                scope_refuses
+                    && binding_may_lift
+                    && self.work_talk_row_readable_in(rtxn, id, header.entity_type)
+            }
+        };
         if self
             .vault
             .store
             .validate_entity_type(header.entity_type)
             .is_err()
-            || (scope_refuses && !work_talk_bound)
+            || ((scope_refuses || filter.work_talk_room.is_some()) && !work_talk_bound)
         {
             return Ok(false);
         }
@@ -768,6 +779,13 @@ impl<'v> ScopedRead<'v> {
                 return Ok(
                     allowed && self.retained_copy_readable_in(rtxn, id, raw, header.entity_type)?
                 );
+            }
+            // The binding-only floor's row sat in its talk under the binding
+            // above, in this snapshot: the binding is its one record
+            // authority, and no policy row or Grant judges it.
+            if filter.work_talk_room.is_some() {
+                return Ok(work_talk_bound
+                    && self.retained_copy_readable_in(rtxn, id, raw, header.entity_type)?);
             }
             // A work-talk binding supplies row authority, never an escape
             // from a failed policy or an explicit credential/Grant ceiling.

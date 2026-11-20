@@ -171,6 +171,14 @@ pub(crate) struct RoomTurnCeiling {
     /// turn under CONTENT. A held ceiling, whose words reach the roster,
     /// holds every one of them to CONTENT (FIX 5636).
     pub(crate) personal: bool,
+    /// Whether the room is a work talk whose registered binding names the
+    /// caller, as a bound PERSON or a bound actor, on the room itself and
+    /// never one of its threads (WORK-TALK-BINDING-RECALL-FLOOR). A caller
+    /// with no read scope of its own then retrieves the talk's rows under
+    /// the binding ([`crate::gate::ResolvedRetrievalFilter::work_talk_room`]);
+    /// each row is still judged under the binding as its own snapshot reads
+    /// it. A refresh can only clear it.
+    pub(crate) work_talk: bool,
 }
 
 /// What `room_scope` gives for a roster, as two terms.
@@ -368,6 +376,7 @@ impl RoomTurnCeiling {
             peers,
             branch: self.branch,
             personal: self.personal,
+            work_talk: self.work_talk && now.work_talk,
         }
     }
 
