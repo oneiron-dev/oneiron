@@ -10,12 +10,10 @@ use std::collections::HashSet;
 
 use tokio::sync::mpsc;
 
-use crate::EntityId;
 use crate::Vault;
 use crate::authority::PredictedResidenceSet;
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::sync::client::SyncEvent;
-use crate::sync::residence::ResidenceDirectiveState;
 use crate::sync::transport::TransportError;
 use crate::sync::types::WindowKey;
 
@@ -176,21 +174,6 @@ impl SyncConnection {
         first_fault(
             pass,
             unless_home_offline(self.evict_predictions(&target)).await,
-        )
-    }
-
-    /// The accepted residence directives naming `machine`, oldest first, each with its signed
-    /// authority row and result, read in one transaction.
-    pub(crate) fn directives_naming_machine(
-        vault: &Vault,
-        machine: EntityId,
-    ) -> crate::error::Result<Vec<ResidenceDirectiveState>> {
-        let txn = vault.store.env.read_txn()?;
-        Ok(
-            crate::sync::residence::directive_states_in_txn(vault, &txn)?
-                .into_iter()
-                .filter(|state| state.directive.machine == machine)
-                .collect(),
         )
     }
 

@@ -16,8 +16,9 @@ use crate::authority::{ResidenceAct, ResidenceResultStatus};
 use crate::sync::TransportError;
 use crate::sync::client::{SyncEvent, SyncResidenceMode};
 use crate::sync::residence::{
-    ResidenceDirectiveState, finish_residence_directive_in_txn, load_device_sync_preference,
-    pending_residence_directives, residence_directive_counts, residence_refusal_reason,
+    ResidenceDirectiveState, directive_states_in_txn, finish_residence_directive_in_txn,
+    live_prediction_in_txn, load_device_sync_preference, pending_residence_directives,
+    residence_directive_counts, residence_refusal_reason,
 };
 
 use super::SyncConnection;
@@ -36,17 +37,6 @@ pub(super) fn refuses(error: &TransportError) -> bool {
             | TransportError::InvalidWindowKey
             | TransportError::AdmissionDenied(_)
     )
-}
-
-/// Whether any of `successors`, the signed rows of the other predictions under `pending`'s parent,
-/// descends from `pending`'s row in this machine's authority log.
-fn prediction_replaced(
-    vault: &Vault,
-    pending: &ResidenceDirectiveState,
-    successors: &[crate::authority::AuthorityEntryHash],
-) -> crate::error::Result<bool> {
-    let txn = vault.store.env.read_txn()?;
-    crate::authority::any_authority_row_descends(&vault.store, &txn, &pending.entry, successors)
 }
 
 /// Records an applied directive's result in the act's own transaction.
@@ -68,22 +58,27 @@ fn applied(
 }
 
 /// The owner's budget the prediction `pending` names through `parent`: its parent's, once the
-/// owner's live predicted level for this machine is that directive and no newer prediction
-/// replaced it (Engine ruling PLAN-SIGNER A). A newer prediction is one under the same `parent`
-/// whose signed authority row descends from `pending`'s: the home that signed it had taken
-/// `pending` in. Signed dates take no part: a prediction dated ahead by another home's clock, or
-/// one dated back by a home whose clock lags, replaces only a prediction it follows. One under
-/// another parent applies nowhere and replaces nothing (FIX PREDICTED-FUTURE-DATED-BLOCKS-LATER).
+/// owner's live predicted level for `machine` is that directive and no newer prediction replaced
+/// it (Engine ruling PLAN-SIGNER A), read in `txn`. `pending` is newest when it is the prediction
+/// the machine adopts under `parent` ([`live_prediction_in_txn`]): one that follows it in the
+/// signed log replaces it whatever their dates, and of two predictions neither of which follows
+/// the other, the later dated replaces the earlier, in whichever order they arrived. One under
+/// another parent applies nowhere and replaces nothing (FIX PREDICTED-FUTURE-DATED-BLOCKS-LATER,
+/// REVIEW-9781).
 fn check_prediction_parent(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     pending: &ResidenceDirectiveState,
-    directives: &[ResidenceDirectiveState],
+    machine: EntityId,
     parent: EntityId,
 ) -> Result<(u32, u32), TransportError> {
+    let states = directive_states_in_txn(vault, txn).map_err(storage)?;
     let mut last: Option<(EntityId, u32, u32)> = None;
-    let mut successors = Vec::new();
-    for state in directives {
-        let directive = &state.directive;
+    for directive in states
+        .iter()
+        .map(|state| &state.directive)
+        .filter(|directive| directive.machine == machine)
+    {
         match &directive.act {
             ResidenceAct::SyncPredicted {
                 window_budget,
@@ -94,17 +89,14 @@ fn check_prediction_parent(
             ResidenceAct::SyncAll | ResidenceAct::SyncOpened => {
                 last = None;
             }
-            ResidenceAct::Predicted { parent: named, .. }
-                if *named == parent && state.entry != pending.entry =>
-            {
-                successors.push(state.entry);
-            }
             _ => {}
         }
     }
     match last {
         Some((id, window_budget, document_budget)) if id == parent => {
-            if prediction_replaced(vault, pending, &successors).map_err(storage)? {
+            let live =
+                live_prediction_in_txn(vault, txn, &states, machine, parent).map_err(storage)?;
+            if live.is_none_or(|live| live.entry != pending.entry) {
                 return Err(TransportError::InvalidPayload(
                     "a newer prediction replaced it",
                 ));
@@ -287,9 +279,14 @@ impl SyncConnection {
             .ok_or(TransportError::InvalidPayload(
                 "a prediction applies under the owner's live predicted level",
             ))?;
-        let directives = Self::directives_naming_machine(vault, machine).map_err(storage)?;
-        let (window_budget, document_budget) =
-            check_prediction_parent(vault, pending, &directives, parent)?;
+        let (window_budget, document_budget) = {
+            let txn = vault
+                .store
+                .env
+                .read_txn()
+                .map_err(|error| storage(error.into()))?;
+            check_prediction_parent(vault, &txn, pending, machine, parent)?
+        };
         if window_count > window_budget || document_count > document_budget {
             return Err(TransportError::InvalidPayload(
                 "a prediction exceeds the owner's budget",
@@ -306,12 +303,19 @@ impl SyncConnection {
                 "the predicted set does not match its counts",
             ));
         }
+        // Judged again in the target's writer: a row that came in while the set was fetched may
+        // have replaced it.
         vault
             .with_write_txn_grouped(|txn| {
+                if let Err(refusal) = check_prediction_parent(vault, txn, pending, machine, parent)
+                {
+                    return Ok(Err(refusal));
+                }
                 super::predicted::PREDICTED_TARGET.put(&vault.store, txn, &(), &body)?;
-                applied(vault, txn, pending, set.windows.len() + set.documents.len())
+                applied(vault, txn, pending, set.windows.len() + set.documents.len())?;
+                Ok(Ok(()))
             })
-            .map_err(storage)?;
+            .map_err(storage)??;
         self.predicted_wake.notify_one();
         Ok(())
     }
