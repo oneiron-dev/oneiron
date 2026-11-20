@@ -281,7 +281,7 @@ fn a_held_device_burst_sent_again_before_its_rate_is_back_stays_held() -> TestRe
         other => panic!("once the rate is back, the held bytes are the same work: {other:?}"),
     }
 
-    let isolating = home(FederationBurstOutcome::IsolateAndPropose)?;
+    let isolating = self::home(FederationBurstOutcome::IsolateAndPropose)?;
     let burst = isolating.rows_update(BURST_ROWS)?;
     let (batch_ref, bundle_ref) = match isolating.admit(&burst)? {
         DeviceBurstAdmission::IsolateAndPropose {
@@ -343,7 +343,7 @@ fn a_settled_device_batch_sent_again_is_never_handed_back_to_land() -> TestResul
         );
     }
 
-    let landing = home(FederationBurstOutcome::Defer)?;
+    let landing = self::home(FederationBurstOutcome::Defer)?;
     let trickle = landing.rows_update(1)?;
     let work = match landing.admit(&trickle)? {
         DeviceBurstAdmission::Allow(work) => work,
