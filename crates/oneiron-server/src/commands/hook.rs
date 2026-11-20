@@ -405,11 +405,14 @@ fn earlier_turns(host: HookHost, event: &Map<String, Value>) -> EarlierTurns {
 /// prompt, a changed folder) with `source` `startup` and names no parent in
 /// the event, but before the hook runs it writes the fork's rollout: its own
 /// `session_meta` line first, naming the session it was forked from as
-/// `forked_from_id`, then a copy of that session's turns. A rollout not
-/// named, not there or empty holds no turn yet; one whose first line is not
-/// a whole `session_meta`, with an object payload whose `forked_from_id` is
-/// absent, null or a session id, as Codex's own meta type reads it, holds
-/// turns the start cannot tell the session of.
+/// `forked_from_id`, then a copy of that session's turns. Codex writes a
+/// session's rollout, its own meta first, before the hook gets its path
+/// (`hook_transcript_path`), so a rollout not named is no local log and
+/// holds no turn. A named one not there, empty, or whose first line is not
+/// the session's own whole `session_meta` (an object payload whose `id` is
+/// the event's `session_id` and whose `forked_from_id` is absent, null or a
+/// session id, as Codex's own meta type reads it) holds turns the start
+/// cannot tell the session of (REVIEW-9973).
 fn codex_rollout_start(event: &Map<String, Value>) -> EarlierTurns {
     let Some(rollout) = event
         .get("transcript_path")
@@ -425,7 +428,6 @@ fn codex_rollout_start(event: &Map<String, Value>) -> EarlierTurns {
         .open(rollout)
     {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return EarlierTurns::None,
         Err(_) => return EarlierTurns::Own,
     };
     if !file.metadata().is_ok_and(|metadata| metadata.is_file()) {
@@ -438,16 +440,17 @@ fn codex_rollout_start(event: &Map<String, Value>) -> EarlierTurns {
     {
         return EarlierTurns::Own;
     }
-    if line.is_empty() {
-        return EarlierTurns::None;
-    }
     let Ok(meta) = serde_json::from_slice::<Value>(&line) else {
         return EarlierTurns::Own;
     };
+    let session = event.get("session_id").and_then(Value::as_str);
     let payload = meta
         .get("payload")
         .and_then(Value::as_object)
-        .filter(|_| meta.get("type").and_then(Value::as_str) == Some("session_meta"));
+        .filter(|_| meta.get("type").and_then(Value::as_str) == Some("session_meta"))
+        .filter(|payload| {
+            session.is_some() && payload.get("id").and_then(Value::as_str) == session
+        });
     match payload.map(|payload| payload.get("forked_from_id")) {
         Some(None | Some(Value::Null)) => EarlierTurns::None,
         Some(Some(Value::String(parent))) if !parent.is_empty() => {

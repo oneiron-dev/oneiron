@@ -16,14 +16,16 @@
 //! - `unknown`: a start that goes on from earlier turns whose vault is not
 //!   known, or not one: a resumed or compacted session's start that found no
 //!   record of the session, or a fork's ([`EarlierTurns::CopiedFrom`]) of a
-//!   session that recorded nothing, more than one binding, or another
-//!   binding than the fork's start made.
+//!   session that recorded nothing, more than one binding, a `local` one, or
+//!   another binding than the fork's start made.
 //!
 //! A fork's log begins with a copy of the turns of the session it was forked
 //! from, so the first start that records the fork writes one file for its
-//! whole log: that session's one binding when the start bound the same,
-//! else `unknown`. One file, so a write that fails never leaves the copied
-//! turns' binding recorded alone.
+//! whole log: that session's one hosted vault when the start bound the
+//! same, else `unknown`. One file, so a write that fails never leaves the
+//! copied turns' binding recorded alone. A `local` record names no vault,
+//! and the parent's local vault may not be the fork's, so a fork of a
+//! session that bound one is `unknown` too (REVIEW-9973 round 2).
 //!
 //! A log holds every turn of its session, so a session whose folder holds
 //! more than one file has a log that mixes vaults: no hand-over sends it
@@ -181,16 +183,17 @@ pub(super) fn record(
 
 /// The one binding the first start of a fork of `host`'s session `parent`
 /// records for the fork's whole log, the start having bound `start`: the
-/// binding `parent`'s starts recorded when it is `start`'s, else a mixed
-/// log, which no vault takes.
+/// hosted vault `parent`'s starts recorded when it is `start`'s, else a
+/// mixed log, which no vault takes. Two `local` records may name two local
+/// vaults, so they never agree.
 fn fork_binding(host: HookHost, parent: &str, start: SessionBinding) -> SessionBinding {
-    match (bound(host, parent), start) {
-        (Some(SessionBinding::Local), SessionBinding::Local) => SessionBinding::Local,
-        (Some(SessionBinding::Hosted(copied)), SessionBinding::Hosted(own)) if copied == own => {
-            SessionBinding::Hosted(own)
-        }
-        _ => SessionBinding::Mixed,
+    if let (Some(SessionBinding::Hosted(copied)), SessionBinding::Hosted(own)) =
+        (bound(host, parent), start)
+        && copied == own
+    {
+        return SessionBinding::Hosted(own);
     }
+    SessionBinding::Mixed
 }
 
 /// What the starts of `host`'s session `session` bound; `None` when none
