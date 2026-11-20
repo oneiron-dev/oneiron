@@ -45,8 +45,8 @@ pub(crate) use events::{host_events_in_txn, log_in_txn, owner_events_in_txn};
 pub(crate) use pending::take_pending_veto_act_in_txn;
 pub(crate) use pending::{
     PendingErase, PendingEraseKind, drop_pending_erase_in_txn, due_erases_in_txn,
-    erases_without_act_in_txn, pending_erase_in_txn, put_pending_erase_in_txn,
-    set_pending_veto_act_in_txn, withdraw_pending_erase_in_txn,
+    erase_pending_erase_requester_in_txn, erases_without_act_in_txn, pending_erase_in_txn,
+    put_pending_erase_in_txn, set_pending_veto_act_in_txn, withdraw_pending_erase_in_txn,
 };
 pub(crate) use settlement::RefusalBatch;
 #[cfg(feature = "sync")]

@@ -5,14 +5,18 @@
 //! the owner asked for, and a newer request replaces an older one instead of
 //! being refused. A request the owner withdrew stays as the record of that
 //! withdrawal, who and when, and waits no more (FIX 10401): no read here
-//! returns it as waiting, and a new request replaces it.
+//! returns it as waiting, and a new request replaces it. A lift-and-erase
+//! keeps its confirm's check-in decision, which the `erase` act a legal-hold
+//! pass restarts for it records (row CHECK-IN-LEGAL-HOLD-RESTARTED-ACT-NO-DECISION).
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
+use crate::check_in::CheckInDecision;
 use crate::deletion::DeleteReason;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 
 /// An owner erase that waits. Key: id16 (record).
@@ -38,6 +42,13 @@ pub(crate) struct PendingErase {
     pub(crate) veto_act: Option<String>,
     /// The owner's withdrawal of this request, once made (FIX 10401).
     pub(crate) withdrawn: Option<EraseWithdrawalRecord>,
+    /// The check-in decision of the confirm that made or last repeated this
+    /// request before its `erase` act started: the act a legal-hold pass
+    /// starts for it records this decision (row
+    /// CHECK-IN-LEGAL-HOLD-RESTARTED-ACT-NO-DECISION). None on a row stored
+    /// before this field, which the pass restarts with no decision, as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) check_in: Option<CheckInDecision>,
 }
 
 /// Who withdrew a waiting erase, and when (FIX 10401).
@@ -65,7 +76,9 @@ impl PendingErase {
 }
 
 /// Records that the owner's erase of `record` waits. The same request again
-/// keeps the row it finds; a different one replaces it, under its own
+/// keeps the row it finds, with its generation; while that row names no
+/// `erase` act it takes the new confirm's check-in decision, the one the act
+/// started next records. A different request replaces it, under its own
 /// generation. Returns the row as stored.
 pub(crate) fn put_pending_erase_in_txn(
     dbs: &impl SideTableDbs,
@@ -73,9 +86,13 @@ pub(crate) fn put_pending_erase_in_txn(
     record: &EntityId,
     request: PendingErase,
 ) -> Result<PendingErase> {
-    if let Some(stored) = PENDING_ERASES.get(dbs, txn, record)?
+    if let Some(mut stored) = PENDING_ERASES.get(dbs, txn, record)?
         && stored.same_request(&request)
     {
+        if stored.veto_act.is_none() && stored.check_in != request.check_in {
+            stored.check_in = request.check_in;
+            PENDING_ERASES.put(dbs, txn, record, &stored)?;
+        }
         return Ok(stored);
     }
     PENDING_ERASES.put(dbs, txn, record, &request)?;
@@ -216,5 +233,40 @@ pub(super) fn erase_pending_in_txn(
     record: &EntityId,
 ) -> Result<()> {
     PENDING_ERASES.delete(dbs, txn, record)?;
+    Ok(())
+}
+
+/// The actor sweep's step over the waiting erases: a hard erase of the asker
+/// whose approved check-in a lift-and-erase's confirm applied leaves
+/// [`ERASED_CALL_IDENTITY`] where the decision its row keeps named them, as
+/// the shared-act scrub does on the act itself (P24-SHAPE Q7 = A), so the act
+/// a legal-hold pass restarts never names them. The decision, its basis and
+/// the spent check-in stay. The table declares no scrub: an actor's erase
+/// deletes each retained copy of a table that does, and this table's copies
+/// are legal-hold evidence.
+pub(crate) fn erase_pending_erase_requester_in_txn(
+    vault: &crate::Vault,
+    txn: &mut RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::deletion::names_no_actor(vault, txn, actor)? {
+        return Ok(());
+    }
+    for (record, mut pending) in PENDING_ERASES.scan(&vault.store, txn)? {
+        let Some(requester) = pending
+            .check_in
+            .as_mut()
+            .and_then(|decision| decision.requester.as_mut())
+        else {
+            continue;
+        };
+        let names_actor = *requester == actor.to_hex()
+            || EntityId::from_hex(requester).is_ok_and(|named| named == *actor);
+        if !names_actor {
+            continue;
+        }
+        ERASED_CALL_IDENTITY.clone_into(requester);
+        PENDING_ERASES.put(&vault.store, txn, &record, &pending)?;
+    }
     Ok(())
 }

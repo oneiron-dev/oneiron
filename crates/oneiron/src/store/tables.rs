@@ -656,8 +656,10 @@ crate::side_table::side_tables! {
         [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// An owner erase that waits: one the owner confirmed while a host order keeps it, or the
     /// owner's plain delete only secret orders keep (FIX 1465), with its request's kind, reason
-    /// and generation, and the `erase` act a shared vault's veto window adds (FIX 9781). It names
-    /// no hold. Key: id16 (record).
+    /// and generation, and the `erase` act a shared vault's veto window adds (FIX 9781), with the
+    /// confirm's check-in decision that act records. It names no hold. A hard erase of the asker
+    /// the decision names leaves the erased marker there: a step of the actor sweep, not a
+    /// declared scrub, so a retained copy, which is legal-hold evidence, stays. Key: id16 (record).
     LEGAL_HOLD_PENDING_ERASE: VaultMeta b"legal_hold:pending_erase:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
     /// A customer legal hold naming records or gate-decision partitions (OF-470). Key: id16

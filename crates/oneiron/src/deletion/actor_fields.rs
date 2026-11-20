@@ -109,6 +109,14 @@ const ORIGIN_CLAIMS: ActorScrub = crate::origin::actor_erase::erase_publication_
 /// hold lifts (FIX 11965).
 const ACTOR_STAMP_TOKENS: ActorScrub = crate::provenance::erase_actor_stamp_tokens_in_txn;
 
+/// The asker a waiting lift-and-erase's check-in decision names, kept for
+/// the `erase` act a legal-hold pass restarts (row
+/// CHECK-IN-LEGAL-HOLD-RESTARTED-ACT-NO-DECISION), becomes the erased marker.
+/// Not a declared table scrub: the pending-erase table's retained copies are
+/// legal-hold evidence, which an actor's erase keeps.
+const PENDING_ERASE_ASKERS: ActorScrub =
+    crate::store::legal_hold::erase_pending_erase_requester_in_txn;
+
 /// Runs in the purge's transaction: the identity ops first, then origin's
 /// claims and the actor's stamp tokens, then every declared table's scrub in
 /// catalog order; a marker-only hard erase then soft-erases the witnessed
@@ -207,6 +215,7 @@ fn scrub_actor_fields_in_txn(
     IDENTITY_OPS(vault, wtxn, actor)?;
     ORIGIN_CLAIMS(vault, wtxn, actor)?;
     ACTOR_STAMP_TOKENS(vault, wtxn, actor)?;
+    PENDING_ERASE_ASKERS(vault, wtxn, actor)?;
     vault
         .store
         .record_hooks

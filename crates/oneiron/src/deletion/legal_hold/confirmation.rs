@@ -297,7 +297,7 @@ impl Vault {
                 crate::check_in::ActClass::Erase,
                 applied.as_ref(),
             )?;
-            self.lift_for_erase_in_txn(txn, actor, &records, claim_free_partition)
+            self.lift_for_erase_in_txn(txn, actor, &records, claim_free_partition, &decision)
                 .map(|settled| Ok((settled, decision)))
         })?;
         let (settled, decision) = match settled {
@@ -351,13 +351,17 @@ impl Vault {
 
     /// The confirm's writer, once what it read matches what the owner was
     /// shown: links each record's coming erase to its holds, logs, lifts or
-    /// narrows each customer hold, and records each erase that waits.
+    /// narrows each customer hold, and records each erase that waits, with
+    /// `decision`, the confirm's check-in decision, which the `erase` act a
+    /// legal-hold pass restarts for it records (row
+    /// CHECK-IN-LEGAL-HOLD-RESTARTED-ACT-NO-DECISION).
     fn lift_for_erase_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         actor: EntityId,
         records: &BTreeSet<EntityId>,
         claim_free_partition: bool,
+        decision: &crate::check_in::CheckInDecision,
     ) -> Result<Settled> {
         let who = HoldActor::owner(actor);
         let now = self.store.clock.now_recorded_at();
@@ -444,6 +448,7 @@ impl Vault {
                     generation: self.store.clock.entity_id()?,
                     veto_act: None,
                     withdrawn: None,
+                    check_in: Some(decision.clone()),
                 };
                 let stored =
                     hold_store::put_pending_erase_in_txn(&self.store, txn, record, request)?;
@@ -683,8 +688,11 @@ impl Vault {
     /// as on a crash between the two. The legal-hold pass runs it, once per
     /// row and pass, as the owner the row records as confirming it, whose
     /// act the confirm recorded; the act's own start re-proves that owner a
-    /// live holder who may start it. A row that already names an act keeps
-    /// it. A start that fails leaves the row for the next pass, logged.
+    /// live holder who may start it, and the act records the check-in
+    /// decision the row keeps from its confirm, as the confirm's own start
+    /// does (row CHECK-IN-LEGAL-HOLD-RESTARTED-ACT-NO-DECISION). A row that
+    /// already names an act keeps it. A start that fails leaves the row for
+    /// the next pass, logged.
     pub(super) fn start_missing_erase_acts(&self) -> Result<()> {
         let txn = self.store.env.read_txn()?;
         let Some(vault_id) = self.owner_erase_veto_vault_in_txn(&txn)? else {
@@ -708,7 +716,9 @@ impl Vault {
                     true,
                     crate::store::GateDecisionId::now(),
                 )
-                .and_then(|proof| self.start_record_erase_act(&proof, vault_id, record, None))
+                .and_then(|proof| {
+                    self.start_record_erase_act(&proof, vault_id, record, pending.check_in.as_ref())
+                })
                 .and_then(|act| self.name_erase_act(&record, &pending.generation, &act));
             if let Err(error) = started {
                 tracing::warn!(
