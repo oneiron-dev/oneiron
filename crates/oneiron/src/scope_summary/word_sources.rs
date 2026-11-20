@@ -22,8 +22,9 @@ pub(crate) enum WordSources {
 /// The word sources of the stored revision `raw` of `id`: an epoch summary,
 /// a scope summary, a TURN that copies one, a claim whose merge header names
 /// one, a `conversation.summary` claim's typed coverage, a native conflict
-/// pair's two claims, the MESSAGE an owner's stated intent cites, or the
-/// finding and subject a Dreamer finding's notice points at.
+/// pair's two claims, the MESSAGE an owner's stated intent cites, the
+/// finding and subject a Dreamer finding's notice points at, or, for a
+/// machine birth control, whatever the signed body it embeds names.
 pub(crate) fn word_sources_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -48,6 +49,19 @@ pub(crate) fn word_sources_through_in(
     let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
     let names = |needle: &[u8]| body.windows(needle.len()).any(|window| window == needle);
+    // A machine birth control's words are those of the signed body it
+    // embeds (FIX MACHINE-HISTORY-SOURCE-LINEAGE-SUBJECT-MOVE).
+    if header.entity_type == ENTITY_TYPE_CLAIM
+        && names(crate::claim::history_store::MACHINE_BIRTH_PREDICATE.as_bytes())
+    {
+        match carried_machine_birth(raw, body) {
+            CarriedBirth::Revision(birth) => {
+                return word_sources_through_in(vault, dbs, txn, id, &birth);
+            }
+            CarriedBirth::Unjudged => return Ok(WordSources::Unresolved),
+            CarriedBirth::NotBirth => {}
+        }
+    }
     let epoch = match header.entity_type {
         ENTITY_TYPE_SUMMARY => {
             match crate::compaction::stored_epoch_in(&vault.store, txn, id, body)? {
@@ -163,6 +177,43 @@ pub(crate) fn word_sources_through_in(
         ) => WordSources::Unresolved,
         Err(error) => return Err(error),
     })
+}
+
+/// What a machine birth control carries for a reader of its words.
+enum CarriedBirth {
+    /// The revision is no machine birth control (or does not decode as a
+    /// CLAIM): its words are judged as before.
+    NotBirth,
+    /// A birth control whose signed birth or embedded body does not decode,
+    /// or whose embedded body is itself a machine history control: it names
+    /// nothing a reader can judge.
+    Unjudged,
+    /// The control's own metadata header, then the signed initial body it
+    /// embeds: the revision its words are those of.
+    Revision(Vec<u8>),
+}
+
+/// [`CarriedBirth`] of the stored CLAIM revision `raw`, whose body is `body`.
+fn carried_machine_birth(raw: &[u8], body: &[u8]) -> CarriedBirth {
+    let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(body, true) else {
+        return CarriedBirth::NotBirth;
+    };
+    let Some(initial) = crate::claim::history_store::machine_birth_initial_body(&claim) else {
+        return CarriedBirth::NotBirth;
+    };
+    let Ok(initial) = initial else {
+        return CarriedBirth::Unjudged;
+    };
+    let judged =
+        crate::write_envelope::claim_body::decode_claim_body(&initial, true).is_ok_and(|birth| {
+            crate::claim::history_store::machine_history_kind(&birth.predicate).is_none()
+        });
+    if !judged {
+        return CarriedBirth::Unjudged;
+    }
+    let mut revision = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
+    revision.extend_from_slice(&initial);
+    CarriedBirth::Revision(revision)
 }
 
 /// The summary whose words the stored revision `raw` carries: the summary a
