@@ -5,6 +5,12 @@
 //! its run's caller and authority, and a named pause that is gone refuses
 //! rather than running as a new call.
 //!
+//! The row holds the call's request as the side-row wall stored it: each
+//! value base custody holds as its handle, where the call made again holds
+//! the value. The two meet as the replay cursor reads them, so the call
+//! resumes its ask rather than asking again (FIX
+//! PARKED-HOOK-LIVE-EXACT-COMPARE).
+//!
 //! An erase can take the words of the row that parked a call (FIX 6534).
 //! The note keeps that row, so the same call made again still meets it: by
 //! the identity the row keeps, under the row's own host stamps. That call
@@ -112,7 +118,12 @@ impl ParkedHook {
     }
 
     /// Whether `offered` is the call this note parked. Two live requests
-    /// compare whole, less the bridge's own stamps. When an erase took
+    /// meet as the replay cursor reads a row against its call made again,
+    /// less the bridge's own stamps: whole, or with each value base custody
+    /// holds, read through `known`, meeting the handle the side-row wall
+    /// placed for it in the row, so two values custody holds apart stay two
+    /// calls (FIX PARKED-HOOK-LIVE-EXACT-COMPARE, as FIX
+    /// REPLAY-COMPARE-KNOWN-MATCHER reads a row). When an erase took
     /// the words of one side only (FIX 6534), that side's row meets the
     /// other's request as made under the row's own seq and start clock, by
     /// the identity the row keeps, each value base custody holds read through
@@ -140,8 +151,13 @@ impl ParkedHook {
             (false, ParkedOffer::Row(later)) if later.request_erased() => {
                 later.request_identity_is(&stamped_as(&row.request, later), known)
             }
-            _ => Ok(parked_call(row.effect, row.request.clone())
-                == parked_call(offered.effect(), offered.request()?)),
+            (true, ParkedOffer::Row(later)) => Ok(parked_call(row.effect, row.request.clone())
+                == parked_call(later.effect, later.request.clone())),
+            (false, _) => {
+                let (_, held) = parked_call(row.effect, row.request.clone());
+                let (_, again) = parked_call(offered.effect(), offered.request()?);
+                Ok(held == again || known.admits(&held, &again)?)
+            }
         }
     }
 }
