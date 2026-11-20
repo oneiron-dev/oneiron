@@ -4,9 +4,11 @@
 //! its root, seated in the room or not.
 //!
 //! `vault.rooms.thread_delete` runs the room's own delete rail, a policy
-//! delete of the root ([`Vault::delete_room_record`]): the root's own
+//! delete of the root (`Vault::delete_room_record_for_run`): the root's own
 //! MESSAGEs go first, then the root, every legal hold check of that rail as
-//! it is, so a held record is kept and the delete refused. The authority
+//! it is, so a held record is kept and the delete refused. A code run that
+//! asks the delete finds each of them in its change journal (ARCH-0040
+//! #revert-run), as it finds a `vault.delete`. The authority
 //! the rail meets for this one record is in
 //! `conversation::deletion::private_thread`; a room role still deletes as
 //! it did. A caller the rail refuses who is neither in the thread nor the
@@ -91,11 +93,16 @@ impl Memory<'_> {
             )
         };
         let check_in = self.thread_delete_check_in(root, standing)?;
-        let outcome = match vault.delete_room_record(
+        // The code run that asks the delete, from its own write origin: the
+        // root's delete and its MESSAGEs' join that run's change journal
+        // (ARCH-0040 #revert-run), as `vault.delete`'s do.
+        let run = self.host_run_ref();
+        let outcome = match vault.delete_room_record_for_run(
             carrier,
             root,
             crate::WriteActor::new(actor, self.actor_class()),
             DeleteReason::PolicyDelete,
+            run.as_deref(),
         ) {
             Ok(outcome) => outcome,
             Err(Error::Record(RecordError::ConversationDenied)) if !known => {

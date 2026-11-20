@@ -12,7 +12,7 @@
 //! the shortlisted id its groups read most probable, so a pack that resolved
 //! still resolves.
 
-use super::{NONE, id_options};
+use super::{ChoiceSpec, DecisionKeyPart, NONE, id_options, key_part_bytes};
 use crate::dreamer_consolidation::call_labels::CallLabelMap;
 use crate::dreamer_consolidation::executor::ConsolidationExecutor;
 use crate::dreamer_consolidation::provenance::KeptDecision;
@@ -62,13 +62,61 @@ fn most_probable(groups: &[KeptDecision]) -> Option<EntityId> {
         .map(|(id, _)| id)
 }
 
-/// How a final identity choice is asked: its question family, the key parts
-/// its questions extend, the host's wording, and whether [`NONE`] answers it.
+/// How a final identity choice is asked: its question family, the shared key
+/// parts its questions extend, the host's wording, and whether [`NONE`]
+/// answers it.
 pub(in crate::dreamer_consolidation::executor) struct FinalChoice<'a> {
     pub(in crate::dreamer_consolidation::executor) family: &'a QuestionFamily,
-    pub(in crate::dreamer_consolidation::executor) key: &'a [&'a [u8]],
+    /// The shared key parts its questions extend.
+    pub(in crate::dreamer_consolidation::executor) base: &'a [DecisionKeyPart],
     pub(in crate::dreamer_consolidation::executor) wording: &'a str,
     pub(in crate::dreamer_consolidation::executor) none: bool,
+}
+
+/// The shared key parts of one final identity round's questions: `base`
+/// extended with the final marker, the one-based `round` and each group
+/// number, one part list per group. Native rounds and the bound rebuild share
+/// these parts while native projects them to question key bytes.
+pub(in crate::dreamer_consolidation) fn identity_round_parts(
+    base: &[DecisionKeyPart],
+    round: usize,
+    groups: usize,
+) -> Vec<Vec<DecisionKeyPart>> {
+    let mut all = Vec::with_capacity(groups);
+    for group in 0..groups {
+        let mut parts = base.to_vec();
+        parts.extend([
+            DecisionKeyPart::Text("final"),
+            DecisionKeyPart::Number(round),
+            DecisionKeyPart::Number(group),
+        ]);
+        all.push(parts);
+    }
+    all
+}
+
+/// One final identity round's prepared choices: `shortlist` in option
+/// groups with `none`, keyed by `base` for the one-based `round`, each
+/// group with the shown texts its question registers. Native applies its
+/// lent wording to each spec; the bound replay maps the keys to wire text
+/// and checks the options.
+pub(in crate::dreamer_consolidation) fn identity_round_specs(
+    base: &[DecisionKeyPart],
+    none: bool,
+    shortlist: &[EntityId],
+    round: usize,
+    labels: &mut CallLabelMap,
+) -> Vec<ChoiceSpec> {
+    let grouped = id_options(shortlist, none, labels);
+    identity_round_parts(base, round, grouped.len())
+        .into_iter()
+        .zip(grouped)
+        .map(|(parts, (options, shown))| ChoiceSpec {
+            key: parts,
+            options,
+            shown: Some(shown),
+        })
+        .collect()
 }
 
 /// The id a final choice keeps, if any, and its rounds' decisions.
@@ -108,22 +156,23 @@ impl ConsolidationExecutor<'_> {
         let mut round = 0_usize;
         while shortlist.len() > 1 {
             round += 1;
-            let round_key = round.to_string();
             let mut labels = CallLabelMap::default();
             let mut questions = Vec::new();
-            for (group, (options, shown)) in id_options(&shortlist, choice.none, &mut labels)
-                .into_iter()
-                .enumerate()
-            {
-                let group = group.to_string();
-                let mut parts: Vec<&[u8]> = choice.key.to_vec();
-                parts.extend([b"final".as_slice(), round_key.as_bytes(), group.as_bytes()]);
+            let specs =
+                identity_round_specs(choice.base, choice.none, &shortlist, round, &mut labels);
+            for spec in specs {
+                let owned: Vec<Vec<u8>> = spec.key.iter().map(key_part_bytes).collect();
+                let key: Vec<&[u8]> = owned.iter().map(Vec::as_slice).collect();
                 let question = choice.family.question(
-                    &parts,
+                    &key,
                     choice.wording.to_owned(),
-                    AnswerContract::Choice { options },
+                    AnswerContract::Choice {
+                        options: spec.options,
+                    },
                 )?;
-                labels.show_choices(question.id, shown);
+                if let Some(shown) = spec.shown {
+                    labels.show_choices(question.id, shown);
+                }
                 questions.push(question);
             }
             self.label_questions(&mut labels, &questions);

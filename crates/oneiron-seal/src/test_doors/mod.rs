@@ -4,6 +4,10 @@
 //! with the `native` feature); never behind a cargo feature, so no
 //! `--all-features` build reaches them. Hidden; never API.
 
+mod burn_parity;
+
+pub use burn_parity::*;
+
 use std::sync::Arc;
 
 use crate::api::SealResourceLimits;

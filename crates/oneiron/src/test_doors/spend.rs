@@ -2,7 +2,8 @@
 //! actor reads its own scope tree through `vault.budgets.lease`; row B1 of
 //! BUDGET-TRAP-UNTYPED-NO-SENDER: a scope's ceiling refuses a step typed;
 //! LIVE-RUN-PAYER-REQUIRED: an actor erase clears a root's payer while a run
-//! still holds its lease).
+//! still holds its lease; FIX 4889: what an agent run's TASK says its
+//! machines committed of its launch).
 
 use crate::agent_dispatch::{AgentDispatcher, ChildSpend, SpendScope, SpendScopeId};
 use crate::attempt_queue::AttemptId;
@@ -34,6 +35,19 @@ pub fn reserve_child_scope(
     )?;
     txn.commit()?;
     Ok(scope)
+}
+
+/// What the machines that ran the agent run whose original try is `attempt`
+/// committed of its launch, as its run TASK reads on `vault` (FIX 4889,
+/// REVIEW-7890): every machine's share less what the custody machine folded,
+/// what a fresh take reserves the launch less. `None` for a run with no run
+/// TASK, or one launched unmetered.
+///
+/// # Errors
+///
+/// A run TASK that does not decode, and the vault's.
+pub fn agent_run_committed_units(vault: &Vault, attempt: AttemptId) -> Result<Option<u64>> {
+    AgentDispatcher::new(vault).agent_run_committed_units(attempt)
 }
 
 /// Sets `scope`'s ceiling to `ceiling_units`, as a launch that states a token

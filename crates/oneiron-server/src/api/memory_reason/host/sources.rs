@@ -77,7 +77,8 @@ pub(super) fn rerank_pins(
         refs.push(PointRead::id(candidate.id).at(ReadMode::Pinned(revision)));
     }
     let scoped = crate::api::scoped_read_for_core_auth(&backend.server.vault, &backend.auth)
-        .map_err(|_| invalid("memory reason pinned read failed"))?;
+        .map_err(|_| invalid("memory reason pinned read failed"))?
+        .with_live_grant_receipts();
     let refs = ReadRequests::new(&backend.server.memory, refs);
     let read = scoped.read(refs.as_slice(), None)?;
     drop(refs);
@@ -170,7 +171,8 @@ pub(super) fn compose_pins(
         .map(|row| PointRead::id(row.id).at(ReadMode::Pinned(row.revision)))
         .collect();
     let scoped = crate::api::scoped_read_for_core_auth(&backend.server.vault, &backend.auth)
-        .map_err(|_| invalid("memory reason pinned read failed"))?;
+        .map_err(|_| invalid("memory reason pinned read failed"))?
+        .with_live_grant_receipts();
     let refs = ReadRequests::new(&backend.server.memory, refs);
     let read = scoped.read(refs.as_slice(), None)?;
     drop(refs);
@@ -261,7 +263,8 @@ impl<'a> Sources<'a> {
             .backend
             .server
             .vault
-            .scoped_read(base.actor_key().clone().for_destination(destination));
+            .scoped_read(base.actor_key().clone().for_destination(destination))
+            .with_live_grant_receipts();
         let refs: Vec<_> = self
             .pins
             .iter()

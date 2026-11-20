@@ -111,6 +111,44 @@ pub(in crate::api::ai::chat) fn host_args_kept(
     }
 }
 
+/// What the host stamps on a turn's user witness itself: the time it ran
+/// and, on the canonical door, the TURN id it minted.
+pub(in crate::api::ai::chat) struct WitnessStamps {
+    pub(in crate::api::ai::chat) occurred_at: u64,
+    pub(in crate::api::ai::chat) turn_ref: Option<EntityId>,
+}
+
+/// The stamps the user's witness under `hooked`'s invocation was saved with
+/// when a hook's ask held it, `hooked` the turn's hooked surface: its retry
+/// rebuilds the witness from them, so the resumed chain checks the call the
+/// ask held (FIX CHAT-WITNESS-ASK-RESUME-ARGS-DRIFT). `None` for a turn that
+/// names no invocation, or whose witness no ask saved.
+pub(in crate::api::ai::chat) fn saved_witness_stamps(
+    vault: &Vault,
+    hooked: &Memory<'_>,
+) -> Result<Option<WitnessStamps>, MemoryError> {
+    if hooked.invocation().is_none() {
+        return Ok(None);
+    }
+    let session =
+        verb_hook_boundary::hook_session(Some(hooked), &oneiron::verbs::VERB_TABLE, WITNESS_ROW)?;
+    let call = VerbCall::for_memory(hooked, WITNESS_ROW, VerbDomain::Write)?;
+    let Some(args) = verb_hook_boundary::saved_args(vault, session.as_ref(), &call)? else {
+        return Ok(None);
+    };
+    // A saved call that is no witness turn keeps no stamps: the retry is
+    // checked on its own args, as before.
+    Ok(serde_json::from_value::<WitnessTurn>(args)
+        .ok()
+        .map(|turn| WitnessStamps {
+            occurred_at: turn.occurred_at,
+            turn_ref: turn
+                .turn_ref
+                .as_deref()
+                .and_then(|turn| EntityId::from_hex(turn).ok()),
+        }))
+}
+
 /// Lands the user's turn through the `vault.witness` row's boundary, so the
 /// row's verb hooks fire on it (ARCH-0080 §3), reading under `hooked`'s key.
 /// A turn that keeps no record runs them on `session` (FIX 5380). The answer

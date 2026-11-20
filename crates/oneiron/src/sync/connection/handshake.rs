@@ -17,11 +17,12 @@ use super::session::SessionFault;
 use super::{LocalUpdate, LoopExit, SyncConnection};
 
 mod acks;
+mod forbidden_park;
 mod replay;
 mod resync_markers;
 mod upgrade;
 
-pub(super) use self::upgrade::upgrade_request;
+pub(super) use self::upgrade::{upgrade_carries_credential, upgrade_request};
 
 impl SyncConnection {
     /// Queue-overflow check, run between reconnect attempts.
@@ -185,11 +186,22 @@ impl SyncConnection {
         let mut promotion_rx = self.manager.subscribe_promotions();
         let mut mode_rx = self.mode.subscribe();
         // Whether the home serves this machine's sync; while it is down,
-        // sessions go to this vault's other machines (FIX 4748).
-        let mut reach = HomeReach::new(self.config.client_config.peer_dialer.is_some());
+        // sessions go to this vault's other machines (FIX 4748). A member
+        // lane never counts the home down: its home is the shared vault's,
+        // and a peer's full-lane bytes are never its lane's (MEMBER-SYNC D7).
+        // `open_lane` sets no peer dialer, so this is unreachable there; the
+        // flag holds the invariant even if a caller supplied one.
+        let mut reach = HomeReach::new(
+            self.config.client_config.peer_dialer.is_some()
+                && !self.config.client_config.member_lane,
+        );
         self.running.send_replace(true);
         // Every connection's upkeep, owned here across reconnects (FIX 12785).
         let mut upkeep = super::steady::UpkeepTasks::default();
+        // Whether the home refused this credential the socket, on a dial or a
+        // peer session's probe (MEMBER-SELECTOR-SOCKET): the run never
+        // redials on it, and parks below once its loop has ended.
+        let mut forbidden = false;
 
         loop {
             // A member who left the shared vault this env holds never
@@ -209,7 +221,16 @@ impl SyncConnection {
             // While the home is down this session goes to a peer (FIX 4748).
             // A server's vector witnesses for the machine that sent it alone:
             // a session with another machine than the last starts with none.
-            let peer = reach.next_peer(self.config.client_config.peer_dialer.as_deref());
+            // A member lane passes no dialer: no peer session, even if one
+            // were configured (MEMBER-SYNC D7; the `HomeReach` above is
+            // already disabled there, so this is belt and braces).
+            let peer_dialer = self
+                .config
+                .client_config
+                .peer_dialer
+                .as_deref()
+                .filter(|_| !self.config.client_config.member_lane);
+            let peer = reach.next_peer(peer_dialer);
             if peer != client.peer_session {
                 client.server_vvs.clear();
             }
@@ -298,7 +319,26 @@ impl SyncConnection {
                             reach.home_returned();
                             home_returned = true;
                         }
+                        // The home refused this credential a peer session's
+                        // probe (MEMBER-SELECTOR-SOCKET): the peer session
+                        // ends, and the run stops as on a home dial's 403.
+                        LoopExit::Forbidden => {
+                            let _ =
+                                event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
+                            forbidden = true;
+                            break;
+                        }
                     }
+                }
+                // The home refused this credential the socket
+                // (MEMBER-SELECTOR-SOCKET): the run never redials on it, and
+                // the home counts neither served nor down, so no peer
+                // session follows.
+                Err(e) if e.is_forbidden() => {
+                    let _ = event_tx.send(SyncEvent::Error(format!("Connection failed: {e}")));
+                    let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
+                    forbidden = true;
+                    break;
                 }
                 Err(e) => {
                     // The first peer is dialed on the first backoff step, not
@@ -358,6 +398,20 @@ impl SyncConnection {
             receipt.close(self.manager.vault());
         }
         client.reset_root_parts();
+        // A refused credential (MEMBER-SELECTOR-SOCKET) parks the run until
+        // its shutdown or a confirmed leave, its sink attached and each
+        // commit queued as it arrives (forbidden_park.rs); the run then ends
+        // as below. A host that renews the credential opens a new connection
+        // on it (device sync, FIX 3377).
+        if forbidden && self.config.auto_reconnect {
+            self.park_forbidden(
+                &mut local_rx,
+                &mut debounce_buffer,
+                &mut shutdown_rx,
+                &mut left_rx,
+            )
+            .await;
+        }
         // Detach before draining: the sink serializes sends with detach, so
         // this receiver's backlog is finite and no update can arrive later.
         self.manager.outbound().detach(attachment);
@@ -621,7 +675,10 @@ impl SyncConnection {
         // Opened-item enrol finishes only after the grant-filtered thin index
         // is durable. A missing actor grant/session is a failure, never an
         // excuse to fall back to full-window sync. The index is the home's: a
-        // peer session reads none (FIX 4748).
+        // peer session reads none (FIX 4748). A member lane's residence
+        // upgrade refusal is told once here, as the main upgrade's is in
+        // `open_socket`, and its 403 parks through `SessionFault::Forbidden`
+        // (MEMBER-SYNC threat F5); only a member lane's dial names either.
         if peer.is_none() && client.config.residence_mode == crate::sync::SyncResidenceMode::Opened
         {
             let now_secs = crate::unix_seconds_now();
@@ -629,11 +686,27 @@ impl SyncConnection {
                 .fetch_current_index_by_side(now_secs)
                 .await
                 .map_err(|fault| {
+                    if let Some(refusal) = fault.upgrade_refusal() {
+                        let _ = event_tx.send(refusal.event());
+                    }
                     SessionFault::of_index_fetch(
                         &fault,
                         format!("Fetch residence index failed: {fault}"),
                     )
                 })?;
+        }
+
+        // Each followed world's tombstone id set (FOLLOWED-WORLD-TIER1-
+        // TOMBSTONE-IDS; ARCH-0023b :500): every delete the home lets this
+        // device read writes its marker here, even of a window the home
+        // refuses to it or that it never held. A fault never fails the
+        // session: the residence upkeep asks again.
+        if peer.is_none()
+            && let Err(error) = client.fetch_followed_tombstones().await
+        {
+            let _ = event_tx.send(SyncEvent::Error(format!(
+                "Followed tombstone fetch failed: {error}"
+            )));
         }
 
         // A followed world's window asked as a follow waits for the home's
@@ -760,7 +833,10 @@ impl SyncConnection {
             && client.config.residence_mode == crate::sync::SyncResidenceMode::All
         {
             let vault = Arc::clone(self.manager.vault());
-            match tokio::task::spawn_blocking(move || vault.declare_full_copy(true)).await {
+            let configured = self.config.client_config.residence_mode;
+            match tokio::task::spawn_blocking(move || vault.mark_first_round_full_copy(configured))
+                .await
+            {
                 Ok(Ok(_)) => {}
                 Ok(Err(error)) => tracing::warn!(
                     kind = ?error.kind(),

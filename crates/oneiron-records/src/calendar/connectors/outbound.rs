@@ -39,15 +39,20 @@ pub enum CalendarWriteOutboxState {
     Committed,
 }
 
-impl CalendarWriteOutboxState {
-    /// Wire token for this state.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Prepared => "prepared",
-            Self::RemoteApplied => "remote_applied",
-            Self::ReconcileRequired => "reconcile_required",
-            Self::Committed => "committed",
+impl oneiron_contracts::lifecycle::Lifecycle for CalendarWriteOutboxState {
+    type Kind = Self;
+
+    fn kind(&self) -> Self::Kind {
+        *self
+    }
+
+    fn next_kinds(kind: Self::Kind) -> &'static [Self::Kind] {
+        match kind {
+            Self::Prepared => &[Self::RemoteApplied, Self::ReconcileRequired],
+            Self::RemoteApplied => &[Self::Committed],
+            // A closed row restages the next owner mutation under its stable key (outbound.rs restage comment).
+            Self::Committed => &[Self::Prepared],
+            Self::ReconcileRequired => &[],
         }
     }
 }

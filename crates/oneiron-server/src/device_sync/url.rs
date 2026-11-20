@@ -1,4 +1,5 @@
-//! A verified TLS carrier for the ordinary URL sync connection.
+//! The ordinary URL sync connection: the rule its home URL keeps off the
+//! mesh (`direct`) and its verified TLS carrier (`dialer`).
 
 use std::sync::Arc;
 
@@ -61,4 +62,23 @@ impl SyncDialer for UrlDialer {
             Ok(Box::new(stream) as Box<dyn SyncStream>)
         })
     }
+}
+
+/// A home dialed at its URL, off the mesh: `wss`, or `ws` to a loopback
+/// host, as the NOTE session binds only over TLS or on this machine.
+pub(super) fn direct(url: &str) -> anyhow::Result<()> {
+    let uri: axum::http::Uri = url
+        .parse()
+        .map_err(|_| anyhow::anyhow!("home_url is not a URL"))?;
+    let loopback = uri.host().is_some_and(|host| {
+        host.trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+    });
+    anyhow::ensure!(
+        uri.scheme_str() == Some("wss") || loopback,
+        "the home has no paired mesh address here, and off the mesh its home_url must be \
+         wss:// (or ws:// to a loopback host)"
+    );
+    Ok(())
 }

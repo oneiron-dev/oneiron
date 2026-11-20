@@ -2,6 +2,8 @@
 //! Entry: `review_slides`.
 //! Review model types and shared evidence helpers remain in the parent.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::*;
 
 /// Whether a `width` by `height` image is drawn at the slide's own aspect,
@@ -99,7 +101,7 @@ pub fn review_slides(
     } else {
         None
     };
-    let frontier = *blake3::hash(base.bytes).as_bytes();
+    let frontier = *ContentHash::of(base.bytes).as_bytes();
     let deck = EvidenceVersion {
         id: base.artifact,
         body_hash: frontier,

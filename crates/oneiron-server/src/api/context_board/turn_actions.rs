@@ -62,6 +62,20 @@ pub(crate) async fn action_board(
         },
         PeerMachine::Unknown,
     );
+    // Its recall names the user TURN the reply answers and that TURN's
+    // conversation, as a live turn's does (the convention on
+    // `RetrievalTurn`), so the engine can label the run from the user's
+    // later words there. None while the vault captures no retrieval run, or
+    // when that read fails: the action runs as it did.
+    let retrieval_turn = blocking(|| {
+        server
+            .vault()
+            .conversation_retrieval_turn(&action.conversation, &action.user_turn)
+    })
+    .unwrap_or_else(|error| {
+        tracing::debug!(%error, "a turn action's recall names no turn");
+        None
+    });
     let board = match super::chat_turn_board(
         server,
         auth,
@@ -69,6 +83,7 @@ pub(crate) async fn action_board(
         agent,
         query,
         Some(agent),
+        retrieval_turn,
     )
     .await
     {

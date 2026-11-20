@@ -225,8 +225,11 @@ pub struct PermitFacts {
     /// names no world, from rows host code named, never from the caller
     /// (DEC-0005 :457). Base reality is named by its own id. `None`,
     /// unknown, when the host named no rows, the sink reads no vault, or one
-    /// row proves no world; never an empty list. Text that came from no
-    /// named row (a caller's message) has no world here.
+    /// row proves no world; never an empty list. A caller's own text (its
+    /// message, history or question) has no world here and never makes the
+    /// list unknown (UNBUILT-RECEIPT-CALLER-TEXT = A): the list names the
+    /// worlds of every row the vault fed the call. A call fed only caller
+    /// text names `None`: the vault fed this call no row.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_worlds: Option<Vec<EntityId>>,
 }

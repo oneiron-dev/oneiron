@@ -2,7 +2,9 @@
 //! owes its home. Each row is a queued update its home has not durably
 //! acknowledged, with the digest of the raw row and the home's answer to its
 //! latest send. The read drains nothing, and a receipt shows only beside the
-//! bytes the home answered.
+//! bytes the home answered. It writes nothing either: a row that does not
+//! decode stays queued for the sync push's drain to prune (FIX row
+//! SYNC-OUTBOX-READ-PRUNES-ROWS).
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -18,6 +20,7 @@ use oneiron::sync::client::{SyncClient, SyncClientConfig};
 use oneiron::sync::connection::{ConnectionConfig, SyncConnection};
 use oneiron::sync::manager::WindowManager;
 use oneiron::test_doors::sync_outbox::{clear_residence_acks, note_residence_ack};
+use oneiron::test_doors::sync_queue_rows::{put_raw_update_row, raw_update_row};
 use oneiron::verbs::{SyncOutboxReceipt, SyncOutboxRow};
 use oneiron::{EntityId, Vault, VaultConfig};
 
@@ -141,5 +144,44 @@ fn outbox_shows_the_home_answer_only_for_the_bytes_it_answered() {
         conn.queue().drain_updates().expect("queue").len(),
         4,
         "the clear retired nothing: every row is still queued"
+    );
+}
+
+#[test]
+fn outbox_read_leaves_a_row_that_does_not_decode_in_the_queue() {
+    let (_dir, manager) = open_manager();
+    let conn = open_connection(&manager);
+    let machine = machine_id();
+
+    let kept: &[u8] = b"owen-kept-row";
+    let seq1 = conn.queue().push("2026-03", kept).expect("queue row 1");
+    let seq2 = conn
+        .queue()
+        .push("2026-03", b"owen-damaged-row")
+        .expect("queue row 2");
+    // One byte is too short to decode as an update row.
+    let damaged: &[u8] = &[0];
+    put_raw_update_row(conn.queue(), seq2, damaged).expect("damage row 2");
+
+    let outbox = conn.outbox(machine).expect("outbox");
+    assert_eq!(outbox.owed, 1, "a row that does not decode is not owed");
+    assert_eq!(outbox.windows.len(), 1);
+    assert_eq!(outbox.windows[0].rows.len(), 1);
+    assert_row(&outbox.windows[0].rows[0], seq1, kept, None);
+    assert_eq!(
+        raw_update_row(conn.queue(), seq2).expect("read row 2"),
+        Some(damaged.to_vec()),
+        "the owner's read writes nothing: the row that does not decode is still stored"
+    );
+
+    let drained = conn.queue().drain_updates().expect("queue");
+    assert_eq!(
+        drained.iter().map(|row| row.seq).collect::<Vec<_>>(),
+        vec![seq1]
+    );
+    assert_eq!(
+        raw_update_row(conn.queue(), seq2).expect("read row 2"),
+        None,
+        "the sync push's drain still prunes it"
     );
 }

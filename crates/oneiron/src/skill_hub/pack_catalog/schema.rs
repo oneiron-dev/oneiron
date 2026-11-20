@@ -1,4 +1,6 @@
 //! Runtime kind descriptors are exact source files, never caller-supplied hashes.
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{PackSource, invalid};
 use crate::{error::Result, registry::pack_byte_map::PackKindIdentity};
 impl PackSource {
@@ -20,7 +22,7 @@ impl PackSource {
                     name: name.clone(),
                     pack: self.manifest.name.clone(),
                     source_hash: *self.hash.as_bytes(),
-                    schema_hash: *blake3::hash(&file.content).as_bytes(),
+                    schema_hash: *ContentHash::of(&file.content).as_bytes(),
                 };
                 identity.validate()?;
                 Ok(identity)

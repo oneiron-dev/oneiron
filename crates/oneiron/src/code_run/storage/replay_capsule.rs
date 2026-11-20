@@ -46,6 +46,8 @@ mod start_pieces;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(oneiron_test_support)]
+pub(crate) use self::pieces::piece_ref_for_test;
 use self::pieces::{PieceScope, held_request_bytes};
 use self::start_pieces::held_start_bytes_in_txn;
 use super::super::contribution::{
