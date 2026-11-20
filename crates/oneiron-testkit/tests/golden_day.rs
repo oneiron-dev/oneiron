@@ -16,6 +16,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use oneiron_testkit::clock::FAKE_EPOCH;
 use oneiron_testkit::dreamer::{PassStack, print_seen, scripted_backend};
 use oneiron_testkit::golden_day::{self, GOLDEN_FILE, GoldenDayRun, MEASURED, Normaliser, render};
 use serde_json::{Value, json};
@@ -131,6 +132,59 @@ fn two_fresh_golden_days_leave_the_same_normalised_trace() {
         "two fresh runs of the same day normalised differently in {} line(s); the first is above",
         differing.len()
     );
+}
+
+/// The authority log's times follow the fake clock: the seed's rows read the
+/// time the seed ran at, and the revoke stands as far past the mint as the
+/// day's clock moved between the two steps. Measured on the host's monotonic
+/// clock, the authority clock added the real seconds since its first read, so
+/// the two rows stood 0 or 1 s apart and the seed's read 0 or 1 s past it.
+#[test]
+fn the_authority_logs_times_follow_the_fake_clock() {
+    let backend = golden_day::backend();
+    let run = golden_day::run(&backend).unwrap_or_else(|error| panic!("{error}"));
+    backend.finish();
+    let at = |step: &str| {
+        run.raw()["steps"]
+            .as_array()
+            .and_then(|steps| steps.iter().find(|row| row["step"] == step))
+            .and_then(|row| row["at"].as_u64())
+            .unwrap_or_else(|| panic!("the day ran no step {step}"))
+    };
+    let rows = run.stream_rows("authority_audit");
+    let act = |kind: &str| {
+        rows.iter()
+            .find(|row| row["source_op"] == "agent_grant_act" && row["event_kind"] == kind)
+            .unwrap_or_else(|| panic!("no agent_grant_act {kind} row in {rows:?}"))
+    };
+    let ts = |row: &Value| {
+        row["advisory_ts"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("an authority row without its time: {row}"))
+    };
+    let (mint, revoke) = (act("grant"), act("revoke"));
+
+    assert_eq!(
+        ts(revoke).saturating_sub(ts(mint)),
+        at("grant-revoke") - at("grant-mint"),
+        "the revoke's authority time stands as far past the mint's as the day's clock moved: \
+         mint {mint}, revoke {revoke}"
+    );
+    let seeded: Vec<&Value> = rows
+        .iter()
+        .filter(|row| row["source_op"] != "agent_grant_act")
+        .collect();
+    assert!(!seeded.is_empty(), "the seed left no authority rows");
+    for row in seeded {
+        for key in [
+            "advisory_ts",
+            "learned_at",
+            "occurred_start",
+            "occurred_end",
+        ] {
+            assert_eq!(row[key], FAKE_EPOCH, "{key} of a row the seed wrote: {row}");
+        }
+    }
 }
 
 #[test]
@@ -265,30 +319,4 @@ fn run_minted_refs_are_named_in_first_seen_order_bound_refs_by_name_and_real_tim
     // short run-minted one is named only where the manifest classifies it.
     assert_eq!(steps[0]["refused"], "the owner owner refused claim c-1");
     assert_eq!(steps[1]["wall_ms"], MEASURED);
-}
-
-#[test]
-fn the_authority_clock_keys_of_a_row_are_masked_and_its_other_keys_kept() {
-    let mut rows = vec![
-        json!({"seq": 0, "source_op": "genesis", "advisory_ts": 1_800_000_001_u64,
-               "learned_at": 1_800_000_001_u64, "occurred_start": 1_800_000_001_u64,
-               "occurred_end": 1_800_000_001_u64, "expires_at": 2_115_360_001_u64}),
-        json!({"seq": 1, "source_op": "agent_grant_act", "advisory_ts": 1_800_000_003_u64,
-               "expires_at": null}),
-    ];
-
-    golden_day::mask_measured(&mut rows, golden_day::AUTHORITY_CLOCK_KEYS);
-
-    for key in golden_day::AUTHORITY_CLOCK_KEYS {
-        assert_eq!(rows[0][*key], MEASURED, "{key}");
-    }
-    assert_eq!(rows[0]["seq"], 0);
-    assert_eq!(rows[0]["source_op"], "genesis");
-    assert_eq!(rows[1]["advisory_ts"], MEASURED);
-    assert_eq!(rows[1]["expires_at"], Value::Null, "a null stays null");
-    assert!(
-        rows[1].get("learned_at").is_none(),
-        "a key the row lacks stays absent: {}",
-        rows[1]
-    );
 }
