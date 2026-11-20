@@ -56,6 +56,10 @@ const OAUTH_TOKEN_INVALID: &str = "mcp_oauth_token_invalid";
 /// The kind of the refusal of a request no cohort admits for want of a credential.
 const MCP_AUTH_REQUIRED: &str = "mcp_auth_required";
 
+/// What the refusal of an OAuth access token that does not resolve says, at every door.
+const OAUTH_TOKEN_INVALID_TEXT: &str = "the OAuth access token is unknown, lapsed or revoked, or \
+     was issued for another resource; refresh it or sign in again";
+
 /// Marks a request whose OAuth access token the binding door swapped for the slip the server
 /// holds for it ([`swap_oauth_access_token`]). Only that swap inserts it: no header names it.
 #[derive(Clone, Copy)]
@@ -173,13 +177,29 @@ impl OAuthDoor {
 /// Whether `path` is the git door's: `/git/{repo}/` and then `info/refs`, `git-upload-pack`,
 /// `git-receive-pack` or `info/lfs/...`.
 fn git_door(path: &str) -> bool {
+    git_door_tail(path).is_some_and(|tail| {
+        matches!(tail, "info/refs" | "git-upload-pack" | "git-receive-pack")
+            || tail.starts_with("info/lfs/")
+    })
+}
+
+/// What follows `/git/{repo}/` in `path`, for a `path` that names a repo.
+fn git_door_tail(path: &str) -> Option<&str> {
     path.strip_prefix("/git/")
         .and_then(|rest| rest.split_once('/'))
-        .is_some_and(|(repo, tail)| {
-            !repo.is_empty()
-                && (matches!(tail, "info/refs" | "git-upload-pack" | "git-receive-pack")
-                    || tail.starts_with("info/lfs/"))
-        })
+        .and_then(|(repo, tail)| (!repo.is_empty()).then_some(tail))
+}
+
+/// The git door's refusal of a request to `path`: on the LFS door (`info/lfs/...`) the
+/// envelope that door answers in (`crate::auth::door_refusal`), and on smart HTTP `text` as
+/// plain text with `status`, as the git gate answers a request it does not authenticate, since
+/// a git client shows that text and reads no JSON.
+fn git_door_refusal(path: &str, error: ApiError, status: StatusCode, text: &str) -> Response {
+    if git_door_tail(path).is_some_and(|tail| tail.starts_with("info/lfs/")) {
+        crate::auth::door_refusal(path, error)
+    } else {
+        (status, text.to_owned()).into_response()
+    }
 }
 
 /// The bearer and the binding header `access`'s slip goes on with: the slip's token, and a
@@ -226,8 +246,9 @@ pub(super) fn swapped(connection: &Extensions) -> bool {
 /// The answer to an OAuth access token that does not resolve at `door`: HTTP 401 with
 /// `WWW-Authenticate: Bearer error="invalid_token"`, naming the door's resource metadata on a
 /// host with an OAuth identity. At an MCP endpoint its body is a JSON-RPC error of no request
-/// id, since no body was read; at the git door, the refusal the door behind `path` gives an
-/// unauthenticated request. The client refreshes the token or signs in again.
+/// id, since no body was read; at the git door, plain text on smart HTTP and the LFS door's
+/// envelope on `info/lfs/...` ([`git_door_refusal`]). The client refreshes the token or signs
+/// in again.
 fn token_refused(server: &SyncServer, door: OAuthDoor, path: &str) -> Response {
     let challenge = match resource_metadata_url(server, door.resource()) {
         Some(metadata) => {
@@ -237,22 +258,23 @@ fn token_refused(server: &SyncServer, door: OAuthDoor, path: &str) -> Response {
     };
     let response = match door {
         OAuthDoor::Mcp => {
-            let refusal = McpGatewayError::new(
-                -32001,
-                OAUTH_TOKEN_INVALID,
-                "the OAuth access token is unknown, lapsed or revoked, or was issued for \
-                 another resource; refresh it or sign in again",
-            );
+            let refusal =
+                McpGatewayError::new(-32001, OAUTH_TOKEN_INVALID, OAUTH_TOKEN_INVALID_TEXT);
             Json(mcp_error_response(Value::Null, refusal)).into_response()
         }
-        OAuthDoor::Git => crate::auth::door_refusal(path, ApiError::unauthorized()),
+        OAuthDoor::Git => git_door_refusal(
+            path,
+            ApiError::unauthorized(),
+            StatusCode::UNAUTHORIZED,
+            OAUTH_TOKEN_INVALID_TEXT,
+        ),
     };
     challenged(response, HeaderValue::from_str(&challenge).ok())
 }
 
 /// The answer to an OAuth access token a store fault kept the ingress from judging at `door`:
-/// HTTP 500, as a JSON-RPC engine error of no request id at an MCP endpoint, and as the door
-/// behind `path` answers an engine fault at the git door.
+/// HTTP 500, as a JSON-RPC engine error of no request id at an MCP endpoint, and at the git
+/// door as [`git_door_refusal`] answers.
 fn resolution_failed(door: OAuthDoor, path: &str) -> Response {
     const RETRY: &str = "the OAuth access token could not be judged; retry";
     match door {
@@ -264,7 +286,12 @@ fn resolution_failed(door: OAuthDoor, path: &str) -> Response {
             )),
         )
             .into_response(),
-        OAuthDoor::Git => crate::auth::door_refusal(path, ApiError::internal_server_error(RETRY)),
+        OAuthDoor::Git => git_door_refusal(
+            path,
+            ApiError::internal_server_error(RETRY),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            RETRY,
+        ),
     }
 }
 

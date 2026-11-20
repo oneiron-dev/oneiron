@@ -45,6 +45,7 @@ const MCP: &str = "https://vault.example/mcp";
 const GIT: &str = "https://vault.example/git";
 const GIT_METADATA: &str = "https://vault.example/.well-known/oauth-protected-resource/git";
 const MCP_METADATA: &str = "https://vault.example/.well-known/oauth-protected-resource/mcp";
+// testkit-lint: allow(fixed-port) a registered redirect URI nothing listens on: the test reads each code from the authorize status poll.
 const CALLBACK: &str = "http://127.0.0.1:8787/oauth/callback";
 /// The served repo's name.
 const REPO: &str = "demo";
@@ -56,6 +57,7 @@ struct Answer {
     status: u16,
     challenge: Option<String>,
     location: Option<String>,
+    content_type: Option<String>,
     body: Value,
 }
 
@@ -70,12 +72,14 @@ impl Answer {
                 .map(str::to_owned)
         };
         let (challenge, location) = (header("www-authenticate"), header("location"));
+        let content_type = header("content-type");
         let text = reply.text().await.expect("the answer's body");
         let body = serde_json::from_str(&text).unwrap_or(Value::String(text));
         Self {
             status,
             challenge,
             location,
+            content_type,
             body,
         }
     }
@@ -524,13 +528,31 @@ fn a_sign_in_naming_mcp_alone_reaches_no_git_door() {
             .await;
         served.grant_push(signed.agent);
         for service in ["git-receive-pack", "git-upload-pack"] {
-            served
+            let refused = served
                 .get(
                     &format!("/git/{REPO}.git/info/refs?service={service}"),
                     Some(&signed.access),
                 )
-                .await
-                .assert_token_refused(GIT_METADATA, service);
+                .await;
+            refused.assert_token_refused(GIT_METADATA, service);
+            // Review #10026 round 1: smart HTTP answers plain text, as the git gate answers a
+            // request it does not authenticate; a git client reads no JSON.
+            assert!(
+                refused
+                    .content_type
+                    .as_deref()
+                    .is_some_and(|kind| kind.starts_with("text/plain")),
+                "{service}: the refusal is plain text: {:?}",
+                refused.content_type
+            );
+            assert!(
+                refused
+                    .body
+                    .as_str()
+                    .is_some_and(|text| text.contains("OAuth access token")),
+                "{service}: the text says the token does not stand: {}",
+                refused.body
+            );
         }
         let batch = Answer::read(
             served
@@ -545,6 +567,11 @@ fn a_sign_in_naming_mcp_alone_reaches_no_git_door() {
         )
         .await;
         batch.assert_token_refused(GIT_METADATA, "the LFS batch");
+        assert!(
+            batch.body.is_object(),
+            "the LFS door keeps its JSON envelope: {}",
+            batch.body
+        );
         let work = tempfile::tempdir().expect("work dir");
         commit(work.path(), "refused\n");
         let pushed = served.push(work.path(), &signed.access).await;
