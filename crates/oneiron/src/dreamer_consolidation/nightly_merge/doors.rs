@@ -4,17 +4,17 @@
 //! group's narrative, through the merge's own draft and writer. Compiled only
 //! under `--cfg oneiron_test_support` (`test_doors`); hidden, never API.
 
-use super::{MERGE_IDS, NightlyWrite, Proposal, merge_read, recheck_in_txn, scoped_draft};
+use super::write::MergeDraft;
+use super::{MERGE_IDS, NightlyWrite, Proposal, merge_read, recheck_in_txn};
 use crate::attempt_queue::AttemptId;
-use crate::claim::ClaimSubject;
 use crate::dreamer_runner::DreamerRunnerStore;
-use crate::{ClaimCandidate, EntityId, Error, Result, Vault};
+use crate::{EntityId, Error, Result, Vault};
 
 /// Writes `narrative` as the arc summary of `proposals` under `attempt`, as
 /// the nightly merge writes one group's narrative: the Dreamer reads each
-/// proposal live, the draft takes the first proposal's exposure, and the
-/// commit reads every proposal again before it writes. Returns the arc
-/// summary's id.
+/// proposal live, the commit reads every proposal again, and the draft takes
+/// the first proposal's exposure and cites what the proposals stand on.
+/// Returns the arc summary's id.
 ///
 /// # Errors
 ///
@@ -51,17 +51,6 @@ pub(crate) fn write_arc_summary(
         members
     };
     let members: Vec<&Proposal> = members.iter().collect();
-    let first = &members
-        .first()
-        .ok_or(Error::InvalidClaimBody("an arc summary needs a proposal"))?
-        .body;
-    let candidate = ClaimCandidate::new(
-        "dreamer.arc.summary",
-        ClaimSubject::Entity(first.scope_project),
-        narrative.into(),
-        1.0,
-    );
-    let draft = scoped_draft(candidate, first, &members);
     let writer = NightlyWrite {
         vault,
         actor,
@@ -71,6 +60,11 @@ pub(crate) fn write_arc_summary(
     };
     let outputs = vault.with_write_txn_grouped(|txn| {
         recheck_in_txn(&read, txn, &members)?;
+        let draft = MergeDraft::ArcSummary {
+            members: members.as_slice(),
+            narrative: narrative.into(),
+        }
+        .in_txn(&read, txn);
         writer.claims_in_txn(txn, vec![draft])
     })?;
     outputs.first().copied().ok_or(Error::EntityNotFound)

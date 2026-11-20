@@ -44,12 +44,8 @@ pub(crate) fn has_live_support_in_txn(
     txn: &RoTxn<'_>,
     body: &ClaimBody,
 ) -> Result<bool> {
-    let mut slots = vec![written_support(body)];
-    if let Some(candidate) = body.evidence.as_ref().and_then(stamped_candidate_evidence) {
-        slots.push(candidate_support(candidate));
-    }
     let mut cited = Vec::new();
-    for slot in slots {
+    for slot in support_slots(body) {
         match slot {
             SlotSupport::Unasked => {}
             SlotSupport::Malformed => return Ok(false),
@@ -70,6 +66,33 @@ pub(crate) fn has_live_support_in_txn(
         }
     }
     Ok(false)
+}
+
+/// The rows `body`'s live support rests on, read slot by slot as
+/// [`has_live_support_in_txn`] reads them: `None` when no slot asks, so the
+/// claim stands while its row does; an empty list when a slot is malformed,
+/// which cannot show support. A claim written from `body` cites these to
+/// stand on what `body` stands on.
+pub(crate) fn support_refs(body: &ClaimBody) -> Option<Vec<EntityId>> {
+    let mut cited: Option<Vec<EntityId>> = None;
+    for slot in support_slots(body) {
+        match slot {
+            SlotSupport::Unasked => {}
+            SlotSupport::Malformed => return Some(Vec::new()),
+            SlotSupport::Cited { refs, .. } => cited.get_or_insert_with(Vec::new).extend(refs),
+        }
+    }
+    cited
+}
+
+/// Every evidence slot of `body` and what it asks: the evidence where the
+/// claim was written, then a stamped claim's writer evidence.
+fn support_slots(body: &ClaimBody) -> Vec<SlotSupport> {
+    let mut slots = vec![written_support(body)];
+    if let Some(candidate) = body.evidence.as_ref().and_then(stamped_candidate_evidence) {
+        slots.push(candidate_support(candidate));
+    }
+    slots
 }
 
 /// What a claim's evidence asks where it was written: a raw body's own
@@ -163,7 +186,8 @@ fn keyed_as_envelope(evidence: &Value) -> bool {
 /// the source recheck read this slot. A map without both `refs` and `chain`
 /// is no envelope and asks nothing, whatever its `refs` hold: the engine's
 /// bare `refs` lists (a supersession provenance claim, its conflict-open
-/// claim, a nightly merge) and a caller's own evidence that names `refs`.
+/// claim, a nightly merge's identity link or open conflict; its arc summary
+/// cites an envelope) and a caller's own evidence that names `refs`.
 /// An envelope that cites no row asks nothing; a malformed envelope cannot
 /// show support.
 fn candidate_support(evidence: &Value) -> SlotSupport {
