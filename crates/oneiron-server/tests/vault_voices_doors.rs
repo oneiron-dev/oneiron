@@ -225,13 +225,32 @@ async fn pair(
     class: &str,
     seed: [u8; 32],
 ) -> Holder {
+    pair_with_verbs(
+        vault,
+        app,
+        issuer,
+        principal,
+        class,
+        seed,
+        &["core:read", "core:write"],
+    )
+    .await
+}
+
+/// [`pair`] with the link narrowed to `verbs`.
+async fn pair_with_verbs(
+    vault: &Vault,
+    app: &Router,
+    issuer: &HostSlipIssuer,
+    principal: EntityId,
+    class: &str,
+    seed: [u8; 32],
+    verbs: &[&str],
+) -> Holder {
     let key = SigningKey::from_bytes(&seed);
     let binding_key = key.verifying_key().to_bytes();
     let mut scope = Scope::top();
-    scope.verbs = ScopeAxis::Some(BTreeSet::from([
-        "core:read".to_owned(),
-        "core:write".to_owned(),
-    ]));
+    scope.verbs = ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect());
     let link = vault
         .issue_pairing_link_for_principal(
             issuer,
@@ -2478,6 +2497,98 @@ fn no_withdrawal_takes_the_id_a_members_tap_offers() {
         assert_eq!(
             replayed["replayed"], true,
             "a repeated tap replays: {replayed}"
+        );
+    });
+}
+
+/// The member's notice of an agent-logged withdrawal of their voice is read
+/// by its recipient alone (REVIEW-10022 P1): the member reads it by id, while
+/// neither the agent nor the owner, who holds a notice of their own, reads
+/// the member's copy. Red before: the generic read audience admitted any
+/// reader of the band, the owner's host root credential included.
+#[test]
+fn only_the_member_reads_their_withdrawal_notice_by_id() {
+    run_on_engine_stack("voices-recognition-withdraw-notice-audience", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        served
+            .ok(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("agent-logged-withdrawal", now - 5, Some(member)),
+            )
+            .await;
+        let rows = served.member_withdrawal_rows().await;
+        assert_eq!(rows.len(), 1, "setup: the member's one notice: {rows:?}");
+        let notice = rows[0]["id"].as_str().expect("the notice's id").to_owned();
+        let member_text = "recorded that you asked to stop voice recognition";
+
+        let own = served
+            .ok(Caller::Person, "vault.get", json!({"entity_ref": notice}))
+            .await;
+        assert!(
+            own.to_string().contains(member_text),
+            "setup: the member reads their own notice by id: {own}"
+        );
+        for caller in [Caller::Owner, Caller::Agent] {
+            let (status, body) = served
+                .post(caller, "vault.get", json!({"entity_ref": notice}))
+                .await;
+            assert!(
+                !body.to_string().contains(member_text),
+                "{caller:?} must not read the member's withdrawal notice by id: {status} {body}"
+            );
+        }
+    });
+}
+
+/// A member whose credential cannot call the consent door is offered no tap
+/// (REVIEW-10022 P1): on a slip narrowed to `core:read` the notice still
+/// lists, without the "that wasn't me" the door would refuse for scope. Red
+/// before: the tap was offered on the human class alone.
+#[test]
+fn a_read_only_member_credential_gets_the_notice_without_the_tap() {
+    run_on_engine_stack("voices-recognition-withdraw-read-only-tap", || async {
+        let mut served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        served
+            .ok(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("agent-logged-withdrawal", now - 5, Some(member)),
+            )
+            .await;
+        assert_eq!(
+            served.member_withdrawal_taps().await.len(),
+            1,
+            "setup: the member's read-write credential is offered the tap"
+        );
+
+        served.person = pair_with_verbs(
+            &served.vault,
+            &served.app,
+            &served.issuer,
+            member,
+            "human",
+            [0x53; 32],
+            &["core:read"],
+        )
+        .await;
+        assert_eq!(
+            served.member_withdrawal_notices().await.len(),
+            1,
+            "setup: the read-only credential lists the member's notice"
+        );
+        let taps = served.member_withdrawal_taps().await;
+        assert!(
+            taps.is_empty(),
+            "a read-only member credential must be offered no tap the consent door refuses: {taps:?}"
         );
     });
 }
