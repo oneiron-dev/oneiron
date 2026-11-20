@@ -2464,10 +2464,19 @@ fn code_run_claim_doors_preserve_owned_keyed_revisions() -> Result<()> {
         )))?;
         // Neither endpoint of an unowned code-run supersession may be keyed.
         for (new, old) in [(ordinary, id), (id, ordinary)] {
+            let e8_result = dispatcher.dispatch(SelfCall::MemorySupersedeClaim(
+                SelfMemorySupersedeClaimCall::new(new, old, 7),
+            ));
+            eprintln!(
+                "TRACE E8 thread={} session_bound={} new={} old={} result={:?}",
+                std::thread::current().name().unwrap_or("-"),
+                session_bound,
+                new.to_hex(),
+                old.to_hex(),
+                &e8_result
+            );
             assert!(matches!(
-                dispatcher.dispatch(SelfCall::MemorySupersedeClaim(
-                    SelfMemorySupersedeClaimCall::new(new, old, 7),
-                )),
+                e8_result,
                 Err(Error::Claim(ClaimError::KeyValueWriteRequiresOwnedDoor))
             ));
         }

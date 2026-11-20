@@ -122,6 +122,43 @@ impl AttemptPromotionSink {
             attempt_id,
             &outputs,
         )?;
+        {
+            static R46_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            if R46_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                eprintln!(
+                    "TRACE R46 thread={} n_rejected={} n_landed={} n_pended={} n_held={}",
+                    std::thread::current().name().unwrap_or("-"),
+                    outcome.rejected.len(),
+                    outcome.landed.len(),
+                    outcome.pended.len(),
+                    outcome.held.len()
+                );
+                for (id, reason) in outcome.rejected.iter().take(40) {
+                    let kind = outcome
+                        .rejected_kinds
+                        .iter()
+                        .find(|(rejected, _)| rejected == id)
+                        .map(|(_, kind)| *kind);
+                    let gate = outcome
+                        .rejected_gates
+                        .iter()
+                        .find(|(rejected, _, _)| rejected == id)
+                        .map(|(_, gate_outcome, codes)| (*gate_outcome, codes.clone()));
+                    eprintln!(
+                        "TRACE R46 thread={} id={} kind={:?} gate={:?} reason={}",
+                        std::thread::current().name().unwrap_or("-"),
+                        id.to_hex(),
+                        kind,
+                        gate,
+                        reason
+                            .chars()
+                            .take(300)
+                            .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+                            .collect::<String>()
+                    );
+                }
+            }
+        }
         if outcome.rejected.is_empty() {
             Ok(())
         } else {

@@ -562,6 +562,32 @@ fn enqueue_attempt(vault: &Vault, run: Option<&str>, now: u64) -> AttemptId {
     else {
         panic!("the enqueued attempt is claimable");
     };
+    match queue.get(leased.id) {
+        Ok(Some(row)) => eprintln!(
+            "TRACE L14 thread={} leased_id={:?} attempt_id={:?} present=some kind={} state={:?} ready_at={} scheduled_at={:?} backoff_until={:?}",
+            std::thread::current().name().unwrap_or("-"),
+            leased.id,
+            attempt.id,
+            row.kind,
+            row.state,
+            row.scheduled_at.or(row.backoff_until).unwrap_or(0),
+            row.scheduled_at,
+            row.backoff_until
+        ),
+        Ok(None) => eprintln!(
+            "TRACE L14 thread={} leased_id={:?} attempt_id={:?} present=none",
+            std::thread::current().name().unwrap_or("-"),
+            leased.id,
+            attempt.id
+        ),
+        Err(e) => eprintln!(
+            "TRACE L14 thread={} leased_id={:?} attempt_id={:?} present=err err={:?}",
+            std::thread::current().name().unwrap_or("-"),
+            leased.id,
+            attempt.id,
+            &e
+        ),
+    }
     assert_eq!(
         leased.id, attempt.id,
         "the fixtures leave the ready set empty between attempts"

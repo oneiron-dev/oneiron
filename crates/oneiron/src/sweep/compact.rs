@@ -375,7 +375,12 @@ fn compact_held_window(
     loop {
         let outcome = match pin_window_unless_held(vault, key)? {
             HeldWindowPin::Pinned => {
-                compact_window_with(vault, key, erased, withdrawn, full_carriers)?
+                #[cfg(test)]
+                USHAL_HELD_PATH.with(|held| held.set(true));
+                let outcome = compact_window_with(vault, key, erased, withdrawn, full_carriers);
+                #[cfg(test)]
+                USHAL_HELD_PATH.with(|held| held.set(false));
+                outcome?
             }
             HeldWindowPin::Held => return Ok(CompactOutcome::HeldDefer),
             HeldWindowPin::Raced => CompactOutcome::RacedDefer,
@@ -785,6 +790,15 @@ fn settle_unchanged_window(
     }
 }
 
+/// Test-only USHAL marker: true while this thread compacts inside the
+/// held-window fallback (`compact_held_window`), so the hook-fire print can
+/// say whether the held path is the one compacting. Set and cleared around
+/// the single `compact_window_with` call; no lock, no store read.
+#[cfg(all(feature = "sync", test))]
+thread_local! {
+    static USHAL_HELD_PATH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// The test-only points between a window's read and its compaction write:
 /// the race injection, which lands a concurrent write so the re-read guards
 /// have something to catch, then the armed hook (each one-shot).
@@ -796,6 +810,16 @@ fn before_compact_write(
 ) -> Result<()> {
     inject_race_before_compact_write(vault, key, snapshot_bytes)?;
     if let Some(hook) = BEFORE_COMPACT_WRITE.with(|hook| hook.borrow_mut().take()) {
+        static USHAL_HOOK_N: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+        if USHAL_HOOK_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+            eprintln!(
+                "TRACE USHAL thread={} site=hook window={} held_path={}",
+                std::thread::current().name().unwrap_or("-"),
+                key.as_str(),
+                USHAL_HELD_PATH.with(|held| held.get())
+            );
+        }
         hook();
     }
     Ok(())

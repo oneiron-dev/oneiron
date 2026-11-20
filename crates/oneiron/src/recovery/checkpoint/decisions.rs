@@ -101,7 +101,7 @@ const DECISIONS: &[(&str, Check)] = &[
         "campaign compliance rules",
         loosened::<campaign::CampaignCompliance>,
     ),
-    ("record audiences", loosened::<audience::RecordAudiences>),
+    ("record audiences", audience::loosened_record_audiences),
     ("disclosure clamps", loosened::<audience::DisclosureClamps>),
     ("disclosure tiers", loosened::<audience::DisclosureTiers>),
     ("leader chat admissions", loosened::<audience::LeaderChats>),

@@ -134,11 +134,51 @@ pub(super) fn execute_temporal(
         None,
     )?
     else {
+        static T23_EMPTY_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        if T23_EMPTY_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+            eprintln!(
+                "TRACE T23 thread={} window=none anchor_start={} anchor_end={} mode={:?} sigma={} limit={} n=0",
+                std::thread::current().name().unwrap_or("-"),
+                config.anchor_start,
+                config.anchor_end,
+                &config.anchor_mode,
+                config.sigma_secs,
+                config.limit
+            );
+        }
         return Ok(Vec::new());
     };
     held.scored.truncate(held.rows);
     held.rescore(store, rtxn, config, metadata_cache)?;
-    Ok(held.into_scores())
+    let t23_rows = held.rows;
+    let t23_win_sigma = held.window.sigma;
+    let t23_req_sigma = held.request.sigma;
+    let t23_scores = held.into_scores();
+    {
+        static T23_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        if T23_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+            let ids: Vec<String> = t23_scores
+                .iter()
+                .take(40)
+                .map(|scored| scored.id.to_hex())
+                .collect();
+            eprintln!(
+                "TRACE T23 thread={} window=some anchor_start={} anchor_end={} mode={:?} sigma={} limit={} rows={} win_sigma={} req_sigma={} n={} ids={:?}",
+                std::thread::current().name().unwrap_or("-"),
+                config.anchor_start,
+                config.anchor_end,
+                &config.anchor_mode,
+                config.sigma_secs,
+                config.limit,
+                t23_rows,
+                t23_win_sigma,
+                t23_req_sigma,
+                t23_scores.len(),
+                ids
+            );
+        }
+    }
+    Ok(t23_scores)
 }
 
 /// Runs a temporal call's rounds and scores what its window holds; `None`

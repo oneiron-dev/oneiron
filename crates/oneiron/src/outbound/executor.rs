@@ -64,6 +64,20 @@ const PENDING_GATE_BACKOFF_BASE_SECS: u64 = 1;
 /// Ceiling for that curve: a granted approval waits at most five minutes.
 const PENDING_GATE_BACKOFF_CAP_SECS: u64 = 300;
 
+/// TRACE marker for the O31 early exits between claim and dispatch: one
+/// capped print site shared by every named exit.
+fn o31_exit(name: &'static str, attempt_id: AttemptId) {
+    static O31_EXIT_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    if O31_EXIT_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+        eprintln!(
+            "TRACE O31 thread={} exit={} attempt_id={:?}",
+            std::thread::current().name().unwrap_or("-"),
+            name,
+            attempt_id
+        );
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectorTaskExecutorError {
     #[error(transparent)]
@@ -146,7 +160,30 @@ impl Vault {
         // opens; taken in the fair line's order, they share it by writer.
         let mut line = ConnectorSendLine::default();
         loop {
-            let Some(attempt) = line.claim_next(self, &queue, now)? else {
+            let o31_claimed = line.claim_next(self, &queue, now)?;
+            {
+                static O31_CLAIM_N: std::sync::atomic::AtomicUsize =
+                    std::sync::atomic::AtomicUsize::new(0);
+                if O31_CLAIM_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    match &o31_claimed {
+                        Some(attempt) => eprintln!(
+                            "TRACE O31 thread={} claimed=some id={:?} state={:?} scheduled_at={:?} backoff_until={:?} lease_owner={:?} attempt_count={}",
+                            std::thread::current().name().unwrap_or("-"),
+                            attempt.id,
+                            attempt.state,
+                            attempt.scheduled_at,
+                            attempt.backoff_until,
+                            attempt.lease_owner,
+                            attempt.attempt_count
+                        ),
+                        None => eprintln!(
+                            "TRACE O31 thread={} claimed=none",
+                            std::thread::current().name().unwrap_or("-")
+                        ),
+                    }
+                }
+            }
+            let Some(attempt) = o31_claimed else {
                 break;
             };
             let payload: ConnectorSendAttemptPayload =
@@ -159,6 +196,7 @@ impl Vault {
                             now,
                             "invalid_attempt_payload",
                         )?;
+                        o31_exit("invalid_attempt_payload", attempt.id);
                         continue;
                     }
                 };
@@ -166,6 +204,7 @@ impl Vault {
                 Ok(task_ref) => task_ref,
                 Err(_) => {
                     fail_connector_task_attempt(self, &attempt, now, "invalid_task_ref")?;
+                    o31_exit("invalid_task_ref", attempt.id);
                     continue;
                 }
             };
@@ -178,6 +217,7 @@ impl Vault {
                     now,
                 )?;
                 complete_connector_task_attempt(self, &attempt, now)?;
+                o31_exit("send_receipt_exists", attempt.id);
                 continue;
             }
 
@@ -185,6 +225,7 @@ impl Vault {
                 Ok(Some(task)) => task,
                 Ok(None) | Err(_) => {
                     fail_connector_task_attempt(self, &attempt, now, "invalid_connector_task")?;
+                    o31_exit("invalid_connector_task", attempt.id);
                     continue;
                 }
             };
@@ -207,12 +248,14 @@ impl Vault {
                 None,
             )?;
             if reconciled {
+                o31_exit("reconciled", attempt.id);
                 continue;
             }
             if task.outcome == Some(ConnectorSendTaskOutcome::Ambiguous) {
                 // A terminal possibly-delivered send is not a fresh send permit,
                 // even if a duplicate queue row is scheduled later.
                 complete_connector_task_attempt(self, &attempt, now)?;
+                o31_exit("ambiguous_terminal", attempt.id);
                 continue;
             }
             // FIX 4747: the owner answered this TASK's uncertain send with no
@@ -220,6 +263,7 @@ impl Vault {
             // word, and nothing is sent.
             if owner_declined_resend(task.outcome) {
                 stop_owner_declined_send(self, &attempt, &task, now)?;
+                o31_exit("owner_declined_resend", attempt.id);
                 continue;
             }
             // A commitment wake sends only while its approval stands. Asked on
@@ -234,6 +278,7 @@ impl Vault {
                     "commitment_wake_approval_withdrawn",
                     ConnectorSendTaskOutcome::Failed,
                 )?;
+                o31_exit("commitment_wake_withdrawn", attempt.id);
                 continue;
             }
             // A meeting follow-up sends only while the owner's approval of its
@@ -249,6 +294,7 @@ impl Vault {
                     "meeting_follow_up_approval_withdrawn",
                     ConnectorSendTaskOutcome::Failed,
                 )?;
+                o31_exit("meeting_follow_up_withdrawn", attempt.id);
                 continue;
             }
             #[cfg(test)]
@@ -266,10 +312,12 @@ impl Vault {
                 SendExecutorLeaseTake::HeldElsewhere(held) => {
                     log_send_executor_stand_down(task_ref, node_id, None, Some(held));
                     stand_down_connector_task_attempt(self, &attempt, &task, now)?;
+                    o31_exit("lease_held_elsewhere", attempt.id);
                     continue;
                 }
                 SendExecutorLeaseTake::Closed => {
                     complete_connector_task_attempt(self, &attempt, now)?;
+                    o31_exit("lease_closed", attempt.id);
                     continue;
                 }
                 // This process is closing: the attempt stays pending, re-armed
@@ -285,6 +333,7 @@ impl Vault {
                         "send_executor_closing",
                         None,
                     )?;
+                    o31_exit("lease_closing", attempt.id);
                     continue;
                 }
             };
@@ -302,6 +351,7 @@ impl Vault {
                     UNCERTAIN_SEND_AWAITS_OWNER_REASON,
                     now.saturating_add(UNCERTAIN_SEND_ANSWER_POLL_SECS),
                 )?;
+                o31_exit("uncertain_send_awaits_owner", attempt.id);
                 continue;
             }
             let lease = taken.lease;
@@ -329,17 +379,42 @@ impl Vault {
                 alternative_route::RoutedAttempt::Interrupt => {}
                 alternative_route::RoutedAttempt::Went => {
                     executed = executed.saturating_add(1);
+                    o31_exit("routed_went", attempt.id);
                     continue;
                 }
-                alternative_route::RoutedAttempt::Settled => continue,
+                alternative_route::RoutedAttempt::Settled => {
+                    o31_exit("routed_settled", attempt.id);
+                    continue;
+                }
             }
             let receipt_id = request.receipt_id.clone();
-            let result = match self.dispatch_outbound_intent_with_verified_actor(
+            let o31_dispatch = self.dispatch_outbound_intent_with_verified_actor(
                 request,
                 sink,
                 task.actor_ref,
                 task.actor_class,
-            ) {
+            );
+            {
+                static O31_DISPATCH_N: std::sync::atomic::AtomicUsize =
+                    std::sync::atomic::AtomicUsize::new(0);
+                if O31_DISPATCH_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    match &o31_dispatch {
+                        Ok(result) => eprintln!(
+                            "TRACE O31 thread={} dispatch=ok outcome={:?} gate_outcome={} resolution={:?}",
+                            std::thread::current().name().unwrap_or("-"),
+                            &result.outcome,
+                            result.gate_outcome,
+                            &result.resolution
+                        ),
+                        Err(error) => eprintln!(
+                            "TRACE O31 thread={} dispatch=err err={}",
+                            std::thread::current().name().unwrap_or("-"),
+                            format!("{error:?}").chars().take(300).collect::<String>()
+                        ),
+                    }
+                }
+            }
+            let result = match o31_dispatch {
                 Ok(result) => result,
                 Err(
                     OutboundDispatchError::InvalidBoundActor

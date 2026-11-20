@@ -35,6 +35,13 @@ pub(super) fn mint_extracted_people(
 ) -> Result<()> {
     let people: Vec<_> = people.bound().collect();
     if people.is_empty() {
+        static L21_EMPTY_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        if L21_EMPTY_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+            eprintln!(
+                "TRACE L21 thread={} people_len=0 empty_return=true",
+                std::thread::current().name().unwrap_or("-")
+            );
+        }
         return Ok(());
     }
     vault.with_write_txn_grouped(|txn| {
@@ -69,7 +76,27 @@ pub(super) fn mint_extracted_people(
             && !people.is_empty()
         {
             crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-            fence.validate_in_txn(vault, txn)?;
+            let l21_validated = fence.validate_in_txn(vault, txn);
+            {
+                static L21_FENCE_N: std::sync::atomic::AtomicUsize =
+                    std::sync::atomic::AtomicUsize::new(0);
+                if L21_FENCE_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    match &l21_validated {
+                        Ok(()) => eprintln!(
+                            "TRACE L21 thread={} people_len={} fence=ok",
+                            std::thread::current().name().unwrap_or("-"),
+                            people.len()
+                        ),
+                        Err(e) => eprintln!(
+                            "TRACE L21 thread={} people_len={} fence=err err={}",
+                            std::thread::current().name().unwrap_or("-"),
+                            people.len(),
+                            e.to_string().chars().take(300).collect::<String>()
+                        ),
+                    }
+                }
+            }
+            l21_validated?;
         }
         for person in &people {
             let name = person.name.trim();

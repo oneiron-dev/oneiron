@@ -1497,6 +1497,14 @@ fn predicate_root_never_bucket_key_conflict_key_confusion() {
     assert_eq!(buckets[0].candidate_indexes, vec![0, 1]);
 }
 
+/// First 300 chars of `text` on one line (TRACE lines must not embed newlines).
+fn l17_head(text: &str) -> String {
+    text.chars()
+        .take(300)
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .collect()
+}
+
 struct ScriptedBackend {
     calls: AtomicUsize,
     script: Mutex<VecDeque<LlmResult<crate::LlmResponse>>>,
@@ -1524,17 +1532,58 @@ impl LlmBackend for ScriptedBackend {
         request: LlmRequest,
         _lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
+        let l17_call = self.calls.fetch_add(1, Ordering::SeqCst);
         self.models
             .lock()
             .expect("models mutex")
             .push(request.model.as_str().to_owned());
-        let next = self
-            .script
-            .lock()
-            .expect("script mutex")
-            .pop_front()
-            .expect("scripted backend exhausted");
+        let (l17_next, l17_left_before, l17_left) = {
+            let mut script = self.script.lock().expect("script mutex");
+            let before = script.len();
+            let popped = script.pop_front();
+            (popped, before, script.len())
+        };
+        {
+            let mut system = "";
+            let mut user = "";
+            for message in &request.messages {
+                let is_system = matches!(message.role, LlmMessageRole::System);
+                let is_user = matches!(message.role, LlmMessageRole::User);
+                if !is_system && !is_user {
+                    continue;
+                }
+                let mut first_text = None;
+                for part in &message.content {
+                    if let ContentPart::Text { text, .. } = part {
+                        first_text = Some(text.as_str());
+                        break;
+                    }
+                }
+                if is_system && system.is_empty() {
+                    if let Some(t) = first_text {
+                        system = t;
+                    }
+                }
+                if is_user && user.is_empty() {
+                    if let Some(t) = first_text {
+                        user = t;
+                    }
+                }
+            }
+            let l17_combined = format!("system={system} user={user}");
+            eprintln!(
+                "TRACE L17 thread={} call={} model={} hit={} left_before={} left={} purpose={:?} head={}",
+                std::thread::current().name().unwrap_or("-"),
+                l17_call,
+                request.model.as_str(),
+                l17_next.is_some(),
+                l17_left_before,
+                l17_left,
+                &request.envelope.purpose,
+                l17_head(&l17_combined)
+            );
+        }
+        let next = l17_next.expect("scripted backend exhausted");
         Box::pin(async move { next })
     }
 

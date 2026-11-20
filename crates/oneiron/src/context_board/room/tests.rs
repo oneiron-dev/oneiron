@@ -1196,12 +1196,35 @@ fn p7_follows_a_conversation_summary_to_the_turns_it_covers() -> Result<()> {
     let note = host
         .claim_upsert(&note(room, "lantern ledger", None))
         .expect("note");
-    let note = host
+    let note_view = host
         .get_entity(&note.claim_short_id)
         .expect("note read")
         .value
-        .expect("owner reads the note")
-        .id_hex;
+        .expect("owner reads the note");
+    eprintln!(
+        "TRACE T28 thread={} kind={} short_ref={:?} life={} appr={} body={}",
+        std::thread::current().name().unwrap_or("-"),
+        note_view.kind,
+        note_view.short_ref,
+        note_view
+            .body
+            .as_ref()
+            .and_then(|body| body.get("life"))
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_owned()),
+        note_view
+            .body
+            .as_ref()
+            .and_then(|body| body.get("appr"))
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_owned()),
+        note_view
+            .body
+            .as_ref()
+            .map(|body| body.to_string().chars().take(300).collect::<String>())
+            .unwrap_or_else(|| "-".to_owned())
+    );
+    let note = note_view.id_hex;
 
     let clearance = |bands: &[u8]| Scope {
         bands: ScopeAxis::Some(bands.iter().copied().collect()),

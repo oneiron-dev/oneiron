@@ -155,6 +155,22 @@ pub(super) struct StandingLabel<'a> {
     pub(super) derived_from: Vec<EntityId>,
 }
 
+/// TRACE marker for the O37 filters that drop a calibration pair: one capped
+/// print site shared by every named filter.
+fn o37_drop(question: EntityId, answer: EntityId, fact: EntityId, reason: &'static str) {
+    static O37_DROP_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    if O37_DROP_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+        eprintln!(
+            "TRACE O37 thread={} question={} answer={} fact={} standing=false drop={}",
+            std::thread::current().name().unwrap_or("-"),
+            question.to_hex(),
+            answer.to_hex(),
+            fact.to_hex(),
+            reason
+        );
+    }
+}
+
 /// The stored labels of `question` that still stand in `txn`, in label order
 /// (FIX STORED-OUTCOME-READS-SKIP-SAVED-LANE). A label stands when it labels
 /// one of `answers`, the question's stored answers, the version that answer
@@ -173,11 +189,23 @@ pub(super) fn standing_labels_in_txn<'a>(
     answers: &'a [AnswerRecord],
     kept: &std::collections::BTreeSet<EntityId>,
 ) -> Result<Vec<StandingLabel<'a>>> {
-    let mut standing = Vec::new();
-    for (_, outcome) in
-        QUESTION_LABEL.scan_from(&vault.store, txn, &family_prefix(question, b"label"))?
+    let o37_scanned =
+        QUESTION_LABEL.scan_from(&vault.store, txn, &family_prefix(question, b"label"))?;
     {
+        static O37_SCAN_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        if O37_SCAN_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+            eprintln!(
+                "TRACE O37 thread={} question={} labels_scanned={}",
+                std::thread::current().name().unwrap_or("-"),
+                question.to_hex(),
+                o37_scanned.len()
+            );
+        }
+    }
+    let mut standing = Vec::new();
+    for (_, outcome) in o37_scanned {
         let Some(answer) = answers.iter().find(|a| a.claim == outcome.answer) else {
+            o37_drop(question, outcome.answer, outcome.fact, "no_answer");
             continue;
         };
         let Some(record) = QUESTION_VERSION.get(
@@ -189,14 +217,17 @@ pub(super) fn standing_labels_in_txn<'a>(
             },
         )?
         else {
+            o37_drop(question, outcome.answer, outcome.fact, "no_version");
             continue;
         };
         if record.principal != principal {
+            o37_drop(question, outcome.answer, outcome.fact, "principal_mismatch");
             continue;
         }
         let Some(raw) =
             crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &outcome.fact)?
         else {
+            o37_drop(question, outcome.answer, outcome.fact, "fact_missing");
             continue;
         };
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
@@ -204,6 +235,7 @@ pub(super) fn standing_labels_in_txn<'a>(
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
             || raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
         {
+            o37_drop(question, outcome.answer, outcome.fact, "fact_not_claim");
             continue;
         }
         let body = crate::claim::decode_claim_body(
@@ -213,6 +245,7 @@ pub(super) fn standing_labels_in_txn<'a>(
         let mut derived_from = derived_rows(question, answer, outcome.fact, &body);
         derived_from.extend(crate::reaction::outcome_sources(&body)?);
         if !kept.is_empty() && kept_any(vault, txn, kept, &derived_from)? {
+            o37_drop(question, outcome.answer, outcome.fact, "kept_withheld");
             continue;
         }
         let fact = super::arrival::Fact {
@@ -232,7 +265,22 @@ pub(super) fn standing_labels_in_txn<'a>(
         .as_ref()
             != Some(&outcome)
         {
+            o37_drop(question, outcome.answer, outcome.fact, "reeval_mismatch");
             continue;
+        }
+        {
+            static O37_STAND_N: std::sync::atomic::AtomicUsize =
+                std::sync::atomic::AtomicUsize::new(0);
+            if O37_STAND_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                eprintln!(
+                    "TRACE O37 thread={} question={} answer={} fact={} standing=true probability={:?}",
+                    std::thread::current().name().unwrap_or("-"),
+                    question.to_hex(),
+                    outcome.answer.to_hex(),
+                    outcome.fact.to_hex(),
+                    answer.decision.probability
+                );
+            }
         }
         standing.push(StandingLabel {
             answer,
@@ -294,7 +342,27 @@ pub(crate) fn calibration_pairs_in_txn(
     for standing in
         standing_labels_in_txn(vault, txn, &policy, principal, question, &answers, &kept)?
     {
+        {
+            static O37_PAIR_N: std::sync::atomic::AtomicUsize =
+                std::sync::atomic::AtomicUsize::new(0);
+            if O37_PAIR_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                eprintln!(
+                    "TRACE O37 thread={} question={} answer={} fact={} standing=true probability={:?}",
+                    std::thread::current().name().unwrap_or("-"),
+                    question.to_hex(),
+                    standing.answer.claim.to_hex(),
+                    standing.label.fact.to_hex(),
+                    standing.answer.decision.probability
+                );
+            }
+        }
         let Some(probability) = standing.answer.decision.probability else {
+            o37_drop(
+                question,
+                standing.answer.claim,
+                standing.label.fact,
+                "no_probability",
+            );
             continue;
         };
         pairs.push(super::route_calibration::answer_pair(

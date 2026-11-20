@@ -228,6 +228,15 @@ pub(super) fn receive_pack_stats_value(stats: PackStats) -> Value {
     ])
 }
 
+/// 300-char one-line head of an `rmpv::Value` Debug rendering (O39 TRACE).
+fn o39_head(value: &Value) -> String {
+    format!("{value:?}")
+        .chars()
+        .take(300)
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .collect()
+}
+
 fn receive_pack_claim(subject: ClaimSubject, predicate: &str, value: Value) -> Result<ClaimBody> {
     let mut body = ClaimBody::new(
         predicate,
@@ -594,6 +603,60 @@ impl Vault {
         attribution: &ReceivePackAttribution,
     ) -> Result<()> {
         let body = self.receive_pack_source(repo_id, &outcome.repo_root, attribution)?;
+        {
+            static O39_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            if O39_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                let journal_updates = receive_pack_field(&body, "realized_updates").ok();
+                let observed_updates = receive_pack_updates_value(&outcome.ref_updates);
+                let journal_lfs = receive_pack_field(&body, "lfs_pointers").ok();
+                let observed_lfs = receive_pack_lfs_value(&outcome.lfs_pointers);
+                let journal_stats = receive_pack_field(&body, "pack_stats").ok();
+                let observed_stats = receive_pack_stats_value(outcome.pack_stats);
+                let journal_staged = receive_pack_field(&body, "staged_objects_dir").ok();
+                let observed_staged = path_arg(&outcome.staged_objects_dir).map(Value::from).ok();
+                eprintln!(
+                    "TRACE O39 thread={} repo={} pair=realized_updates eq={} journal={} observed={}",
+                    std::thread::current().name().unwrap_or("-"),
+                    repo_id.to_hex(),
+                    journal_updates == Some(&observed_updates),
+                    journal_updates
+                        .map(o39_head)
+                        .unwrap_or_else(|| "-".to_owned()),
+                    o39_head(&observed_updates)
+                );
+                eprintln!(
+                    "TRACE O39 thread={} repo={} pair=lfs_pointers eq={} journal={} observed={}",
+                    std::thread::current().name().unwrap_or("-"),
+                    repo_id.to_hex(),
+                    journal_lfs == Some(&observed_lfs),
+                    journal_lfs.map(o39_head).unwrap_or_else(|| "-".to_owned()),
+                    o39_head(&observed_lfs)
+                );
+                eprintln!(
+                    "TRACE O39 thread={} repo={} pair=pack_stats eq={} journal={} observed={}",
+                    std::thread::current().name().unwrap_or("-"),
+                    repo_id.to_hex(),
+                    journal_stats == Some(&observed_stats),
+                    journal_stats
+                        .map(o39_head)
+                        .unwrap_or_else(|| "-".to_owned()),
+                    o39_head(&observed_stats)
+                );
+                eprintln!(
+                    "TRACE O39 thread={} repo={} pair=staged_objects_dir eq={} journal={} observed={}",
+                    std::thread::current().name().unwrap_or("-"),
+                    repo_id.to_hex(),
+                    journal_staged == observed_staged.as_ref(),
+                    journal_staged
+                        .map(o39_head)
+                        .unwrap_or_else(|| "-".to_owned()),
+                    observed_staged
+                        .as_ref()
+                        .map(o39_head)
+                        .unwrap_or_else(|| "-".to_owned())
+                );
+            }
+        }
         if receive_pack_field(&body, "realized_updates")?
             != &receive_pack_updates_value(&outcome.ref_updates)
             || receive_pack_field(&body, "lfs_pointers")?

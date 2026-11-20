@@ -114,6 +114,41 @@ pub(super) fn blended_retrieval_scores(
     access_now_secs: u64,
     weights: RetrievalBlendWeights,
 ) -> Result<BlendedRetrievalScores> {
+    {
+        static BLEND_ENTRY_N: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+        let blend_call = BLEND_ENTRY_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if blend_call < 40 {
+            for (index, list) in ranked_lists.iter().enumerate() {
+                let channel = if Some(index) == channel_indexes.vector {
+                    "vector"
+                } else if Some(index) == channel_indexes.text {
+                    "text"
+                } else if Some(index) == channel_indexes.phonetic {
+                    "phonetic"
+                } else if Some(index) == channel_indexes.ppr {
+                    "ppr"
+                } else {
+                    "other"
+                };
+                let pairs = list
+                    .iter()
+                    .take(40)
+                    .map(|scored| format!("{}:{:.6}", scored.id.to_hex(), scored.score))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                eprintln!(
+                    "TRACE BLEND thread={} site=blend call={} ch_index={} ch={} n={} pairs={}",
+                    std::thread::current().name().unwrap_or("-"),
+                    blend_call,
+                    index,
+                    channel,
+                    list.len(),
+                    pairs
+                );
+            }
+        }
+    }
     let mut inputs = fusion::retrieval_candidates_from_ranked_lists(
         ranked_lists,
         channel_indexes.phonetic.as_slice(),

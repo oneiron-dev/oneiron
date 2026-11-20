@@ -95,6 +95,64 @@ impl Decision for RecordAudiences {
     }
 }
 
+/// `Everyone` or `Only(n, [hex…])` rendering of a `Readers` answer (`Readers`
+/// has no `Debug`; UAUD TRACE).
+fn readers_text(readers: &Readers) -> String {
+    match readers {
+        Readers::Everyone => "Everyone".to_owned(),
+        Readers::Only(ids) => {
+            let shown: Vec<String> = ids.iter().take(30).map(|id| id.to_hex()).collect();
+            format!("Only(n={} [{}])", ids.len(), shown.join(","))
+        }
+    }
+}
+
+/// `super::loosened::<RecordAudiences>` with concrete types plus a TRACE line
+/// per loosening subject: the same `subjects`/`answers`/`refusal` calls in
+/// the same order and the same final `any` over the same pure predicate, so
+/// the verdict is identical and only capped print lines are added.
+pub(super) fn loosened_record_audiences(current: &Vault, restored: &Vault) -> Result<bool> {
+    let subjects = RecordAudiences::subjects([current, restored])?;
+    let live = RecordAudiences::answers(current, &subjects)?;
+    let restored = RecordAudiences::answers(restored, &subjects)?;
+    let refusal = RecordAudiences::refusal();
+    {
+        static UAUD_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        if UAUD_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+            for ((subject, live), restored) in subjects.iter().zip(&live).zip(&restored) {
+                let loosens = match (live, restored) {
+                    (_, None) => false,
+                    (None, Some(answer)) => refusal
+                        .as_ref()
+                        .is_none_or(|refusal| RecordAudiences::loosens(refusal, answer)),
+                    (Some(live), Some(restored)) => RecordAudiences::loosens(live, restored),
+                };
+                if loosens {
+                    eprintln!(
+                        "TRACE UAUD thread={} subject={} live={} restored={}",
+                        std::thread::current().name().unwrap_or("-"),
+                        subject.to_hex(),
+                        live.as_ref()
+                            .map(readers_text)
+                            .unwrap_or_else(|| "read-failed".to_owned()),
+                        restored
+                            .as_ref()
+                            .map(readers_text)
+                            .unwrap_or_else(|| "read-failed".to_owned())
+                    );
+                }
+            }
+        }
+    }
+    Ok(live.iter().zip(&restored).any(|answers| match answers {
+        (_, None) => false,
+        (None, Some(restored)) => refusal
+            .as_ref()
+            .is_none_or(|refusal| RecordAudiences::loosens(refusal, restored)),
+        (Some(live), Some(restored)) => RecordAudiences::loosens(live, restored),
+    }))
+}
+
 /// Everyone `vault`'s rows can admit to `room`'s records: its ledger's
 /// members past and present, and the roster a project room takes its
 /// audience from. Where neither reads, the audience check fails on the room

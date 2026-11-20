@@ -41,6 +41,7 @@ pub(super) fn apply_claim_status_gate(
     metadata_cache: &mut EntityMetadataCache,
     gate: &mut ClaimStatusGateCache,
 ) -> Result<()> {
+    let blend_before: Vec<EntityId> = scores.iter().map(|scored| scored.id).collect();
     let mut kept = Vec::with_capacity(scores.len());
 
     for scored in scores.iter().copied() {
@@ -50,6 +51,26 @@ pub(super) fn apply_claim_status_gate(
     }
 
     *scores = kept;
+    {
+        static BLEND_GATE_N: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+        if BLEND_GATE_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+            let removed: Vec<String> = blend_before
+                .iter()
+                .filter(|id| !scores.iter().any(|scored| &scored.id == *id))
+                .take(40)
+                .map(|id| id.to_hex())
+                .collect();
+            eprintln!(
+                "TRACE BLEND thread={} site=d19gate n_before={} n_after={} n_removed={} removed={:?}",
+                std::thread::current().name().unwrap_or("-"),
+                blend_before.len(),
+                scores.len(),
+                blend_before.len() - scores.len(),
+                removed
+            );
+        }
+    }
     Ok(())
 }
 

@@ -55,26 +55,74 @@ impl ScopedRead<'_> {
             true,
             &held,
         )?;
+        {
+            static L20_ADMITTED_N: std::sync::atomic::AtomicUsize =
+                std::sync::atomic::AtomicUsize::new(0);
+            if L20_ADMITTED_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                eprintln!(
+                    "TRACE L20 thread={} unit={} source_visible={} n_edges={} suppressed={}",
+                    std::thread::current().name().unwrap_or("-"),
+                    unit.to_hex(),
+                    admitted.source.visible(),
+                    admitted.edges.len(),
+                    admitted.suppressed
+                );
+            }
+        }
         if !admitted.source.visible() {
             return Ok(None);
         }
         let mut kept = Vec::new();
         for edge in admitted.edges {
             let edge = edge.info();
-            let Some(raw) = self.entity_raw_with_mode_held_in(
+            let l20_raw = self.entity_raw_with_mode_held_in(
                 txn,
                 &policy,
                 &filter,
                 &edge.target,
                 crate::vault::ReadMode::Live,
                 &held,
-            )?
-            else {
+            )?;
+            let Some(raw) = l20_raw else {
+                static L20_NONE_N: std::sync::atomic::AtomicUsize =
+                    std::sync::atomic::AtomicUsize::new(0);
+                if L20_NONE_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    eprintln!(
+                        "TRACE L20 thread={} target={} raw=none",
+                        std::thread::current().name().unwrap_or("-"),
+                        edge.target.to_hex()
+                    );
+                }
                 continue;
             };
             let header = EntityMetadataHeader::parse(&raw.raw)
                 .ok_or(Error::CorruptedIndex("graph ask neighbor header"))?;
             let body = &raw.raw[ENTITY_METADATA_HEADER_LEN..];
+            let l20_reason = if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+                && (64..100).contains(&header.entity_type)
+            {
+                "type"
+            } else if body.is_empty() {
+                "empty"
+            } else if body.len() > max_body_bytes {
+                "big"
+            } else {
+                "keep"
+            };
+            {
+                static L20_SOME_N: std::sync::atomic::AtomicUsize =
+                    std::sync::atomic::AtomicUsize::new(0);
+                if L20_SOME_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    eprintln!(
+                        "TRACE L20 thread={} target={} raw=some entity_type={} body_len={} reason={}",
+                        std::thread::current().name().unwrap_or("-"),
+                        edge.target.to_hex(),
+                        header.entity_type,
+                        body.len(),
+                        l20_reason
+                    );
+                }
+            }
             if (header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
                 && (64..100).contains(&header.entity_type))
                 || body.is_empty()

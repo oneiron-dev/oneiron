@@ -299,10 +299,39 @@ fn a_window_opened_during_its_compaction_reads_the_compacted_window() {
         other_went_through.load(Ordering::Acquire),
         "an open of another window waited on this window's compaction"
     );
+    let ushal_open = shallow
+        .recv_timeout(Duration::from_secs(30))
+        .expect("the open ends");
+    let ushal_key = WindowKey::from_timestamp(learned_at);
+    let ushal_persisted = vault
+        .store
+        .env
+        .read_txn()
+        .ok()
+        .and_then(|rtxn| {
+            crate::sync::window_rows::WINDOW_SNAPSHOT
+                .get(&vault.store, &rtxn, &ushal_key.as_str().to_owned())
+                .ok()
+                .flatten()
+        })
+        .and_then(|bytes| {
+            crate::sync::loro_support::doc_from_snapshot(&bytes)
+                .ok()
+                .map(|doc| doc.is_shallow())
+        })
+        .map(|is_shallow| is_shallow.to_string())
+        .unwrap_or_else(|| "unknown".to_owned());
+    eprintln!(
+        "TRACE USHAL thread={} site=test open_key={} windows_compacted={} windows_compacted_held={} opener_is_shallow={} persisted_is_shallow={}",
+        std::thread::current().name().unwrap_or("-"),
+        ushal_key.as_str(),
+        run.windows_compacted,
+        run.windows_compacted_held,
+        ushal_open,
+        ushal_persisted
+    );
     assert!(
-        shallow
-            .recv_timeout(Duration::from_secs(30))
-            .expect("the open ends"),
+        ushal_open,
         "the window opened during its compaction holds the dropped history"
     );
 }
