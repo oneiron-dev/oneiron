@@ -125,8 +125,9 @@ pub struct OpenConflict {
     /// that is no stored claim (a candidate its round dropped) is left out.
     /// A Keep staged at a fresh id, after a revert or after the owner
     /// declined one (FIX 7072), linked to the marker, follows them (FIX
-    /// 6152). A staged Keep the owner declined stays a member. Fresh MACHINE
-    /// copies restored by a settlement revert are members at their actual ids.
+    /// 6152). A staged Keep the owner declined, or one that was retracted,
+    /// stays a member. Fresh MACHINE copies restored by a settlement revert
+    /// are members at their actual ids.
     pub members: Vec<EntityId>,
     /// The candidates the marker's round dropped, retained on it whole (FIX
     /// 496): none is a stored claim or active truth. Keeping one lands it.
@@ -332,8 +333,8 @@ fn open_conflict_from(
     // A landing a reverted settlement made of a retained candidate is no
     // member: the candidate stays keepable (FIX 5752). A Keep of it staged
     // since in its import's review is one, standing for it (FIX 6152)
-    // unless the owner declined it there; a declined one stays a member
-    // standing for nothing (FIX 7072).
+    // unless the owner declined it there or it was retracted; such a one
+    // stays a member standing for nothing (FIX 7072).
     let named = named_claim_ids_in_txn(vault, txn, &body)?;
     let kept =
         super::retained_keep::keep_history_in_txn(vault, txn, marker, subject, &named, reverted)?;
