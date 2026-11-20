@@ -80,6 +80,11 @@
 //! * `a_whole_vault_export_withholds_the_role_grant_of_a_use_limited_grantee` (Q1 = A): on a
 //!   hosted source a customer hold refuses the Admin grantee yuki's privacy erase; the export
 //!   still carries the room but no role grant naming yuki, where it carried one before.
+//! * `a_malformed_inert_ledger_copy_is_withheld_alone` (REVIEW-9739 P1-2; door
+//!   `retain_inert_side_row`): the source keeps two inert copies an archive could carry, its
+//!   room's revision row under a key one byte too long and one of its ledger rows with a value
+//!   that reads as no ledger row; the export carries neither copy and still carries the room's
+//!   two live ledger rows and its revision.
 //!
 //! Tests 5 and 6 use public doors only and run red at the review test commit (the round-1
 //! head with #9721 merged, plus tests 5 and 6), where tests 1-4 pass. Tests 7 and 8 use the
@@ -87,6 +92,9 @@
 //! commit (the round-2 head with these tests and the round-2 doors, no fix), where tests 1 to
 //! 8 pass. Tests 14 and 15 run red at the round-2 head (1adbb2714bf), which withholds a role
 //! grant only for a room the export keeps out, where tests 1 to 13 pass.
+//! Test 16 runs red at the review-1 test commit (ec7407c4e2a with this test and its door, no
+//! fix), whose export withholds the room's whole ledger for either copy, where tests 1 to 15
+//! pass.
 //!
 //! New report counts are read through `serde_json::to_value` of the SIDE-1 summary, so this
 //! file compiles where the landing is absent; an absent field fails its assertion as a
@@ -1088,7 +1096,7 @@ fn a_whole_vault_export_withholds_the_ledger_of_a_deleted_room() {
     for (table, rows) in tables {
         assert_eq!(
             table_count(&summary, table, "inserted_rows"),
-            Some(rows),
+            Some(rows as u64),
             "FIXTURE: the source keeps an inert copy of each {table} envelope: {summary}"
         );
     }
@@ -1489,4 +1497,55 @@ fn a_whole_vault_export_withholds_the_role_grant_of_a_use_limited_grantee() {
         0,
         "LEAK: the archive carries no role grant naming the use-limited yuki"
     );
+}
+
+#[test]
+fn a_malformed_inert_ledger_copy_is_withheld_alone() {
+    let (_source_dir, source) = open_source_vault();
+    let now = source.now_recorded_at();
+    let (room, _owen, _yuki) = seat_room(
+        &source,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+    );
+    let before = retained_rows(&export_whole(&source));
+    let live_row = |table: &str| {
+        rows_for(&before, table)
+            .into_iter()
+            .find(|(_, key, _)| key.starts_with(room.as_bytes()))
+            .unwrap_or_else(|| panic!("FIXTURE: the archive carries a {table} row of the room"))
+    };
+    let (_, sequence_key, sequence_value) = live_row("CONVERSATION_MEMBERSHIP_SEQ");
+    let (_, row_key, _) = live_row("CONVERSATION_MEMBERSHIP_ROW");
+    let mut long_key = sequence_key.clone();
+    long_key.push(0);
+    archive_room_ledger::retain_inert_side_row(
+        &source,
+        "CONVERSATION_MEMBERSHIP_SEQ",
+        long_key,
+        sequence_value,
+    )
+    .expect("FIXTURE: keep an inert revision copy whose key is one byte too long");
+    archive_room_ledger::retain_inert_side_row(
+        &source,
+        "CONVERSATION_MEMBERSHIP_ROW",
+        row_key,
+        b"no ledger row".to_vec(),
+    )
+    .expect("FIXTURE: keep an inert ledger row copy whose value reads as no ledger row");
+
+    let after = retained_rows(&export_whole(&source));
+    for (table, rows) in [
+        ("CONVERSATION_MEMBERSHIP_ROW", 2),
+        ("CONVERSATION_MEMBERSHIP_SEQ", 1),
+    ] {
+        assert_eq!(
+            room_tuples(&after, table, room),
+            rows,
+            "the export carries the room's live {table} rows and no malformed copy"
+        );
+    }
 }

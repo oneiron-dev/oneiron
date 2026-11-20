@@ -90,3 +90,24 @@ pub fn set_room_ledger_row_visible_from(
         visible_from,
     )
 }
+
+/// Keeps on `vault` an inert retained copy of a `source_table` row with key `source_key` and
+/// value `source_value`, unchecked against the table, as an import of an archive carrying it
+/// would (REVIEW-9739 P1-2: a malformed copy of a room's ledger row).
+///
+/// # Errors
+///
+/// The store's.
+pub fn retain_inert_side_row(
+    vault: &Vault,
+    source_table: &str,
+    source_key: Vec<u8>,
+    source_value: Vec<u8>,
+) -> Result<()> {
+    crate::batch::export::archive_retained_side_rows::retain_inert_copy_for_test(
+        vault,
+        source_table,
+        source_key,
+        source_value,
+    )
+}

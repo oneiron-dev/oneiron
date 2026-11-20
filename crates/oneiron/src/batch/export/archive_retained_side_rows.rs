@@ -717,6 +717,29 @@ fn retain_envelope_in_txn(
     Ok(())
 }
 
+/// Keeps an inert copy of a `source_table` row with key `source_key` and value `source_value`
+/// under its envelope identity, as an import keeps an archived copy, unchecked against the
+/// table: a test plants a malformed copy an archive could carry (REVIEW-9739 P1-2). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn retain_inert_copy_for_test(
+    vault: &crate::Vault,
+    source_table: &str,
+    source_key: Vec<u8>,
+    source_value: Vec<u8>,
+) -> Result<()> {
+    let envelope = ArchiveRetainedSideRow {
+        source_table: source_table.to_owned(),
+        source_key,
+        source_value,
+        source_live: false,
+    };
+    let key = retained_side_row_key(&envelope);
+    let mut txn = vault.store.env.write_txn()?;
+    RETAINED_SIDE_ROWS.put(vault, &mut txn, &key, &envelope)?;
+    txn.commit()?;
+    Ok(())
+}
+
 /// Adds a reason count while preserving enum order without a second stored total.
 fn add_held_back_count(
     counts: &mut Vec<super::RetainedSideHeldBackCount>,

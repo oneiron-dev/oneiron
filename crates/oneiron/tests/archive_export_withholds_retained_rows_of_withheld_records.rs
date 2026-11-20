@@ -15,10 +15,16 @@
 //!   hex id, the id an erase of that NOTE finds in a change's reason and drops the change by.
 //!   After a customer hold keeps the first NOTE use-limited, the export carries no change citing
 //!   it and still carries the change citing the second NOTE (own review P1, 20 Nov).
+//! * `a_whole_vault_export_withholds_a_house_link_receipt_naming_a_use_limited_org`: on a
+//!   hosted vault rooted under its host, the owner binds the workspace's house to run its org,
+//!   which files one `HOUSE_LINK_RECEIPT` keyed by the house and naming the org in its value. A
+//!   customer hold then refuses the org's privacy erase: the export carries neither the org nor
+//!   the receipt (REVIEW-9739 P1-1).
 //!
 //! The first test runs red at the base (#9446 head 1adbb2714bf), whose export checks only the
 //! rows of three room tables, and green at the fix. The second runs red at 0b834f36c37, whose
-//! export reads only a setting change's scope, and green at the fix.
+//! export reads only a setting change's scope, and green at the fix. The third runs red at
+//! ec7407c4e2a, whose export reads only the receipt's house, and green at the fix.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test archive_export_withholds_retained_rows_of_withheld_records`.
 
 #[path = "archive_import_retained_side_rows.rs"]
@@ -27,8 +33,12 @@ mod retained_side_rows;
 use oneiron::deletion::LegalHoldTarget;
 use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::note::{NoteProgramEdit, NoteVerdict};
+use oneiron::registry::ENTITY_TYPE_ORG;
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
-use oneiron::{EdgeActorClass, EntityId, HostingPrivacyPosture, Vault, VaultConfig, WriteActor};
+use oneiron::workspace_roster::{DEFAULT_HOUSE_ROLE, WorkCompanionPolicy, WorkspaceRosterPreset};
+use oneiron::{
+    EdgeActorClass, EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig, WriteActor,
+};
 use retained_side_rows::{export_whole, owner_proof, retained_rows, rows_for};
 
 /// A hosted vault with a device keystore, so a held privacy erase keeps its record
@@ -243,5 +253,88 @@ fn a_whole_vault_export_withholds_a_setting_change_whose_reason_names_a_use_limi
         change_tuples(&archive, free_change),
         1,
         "the archive still carries the setting change citing the unrestricted NOTE"
+    );
+}
+
+/// The workspace the house link test stores, and its shared vault: not 7, the own-device
+/// residence scope's id.
+const WORKSPACE: &str = "retained-rows-house-link-workspace";
+const WORKSPACE_VAULT_ID: u64 = 41;
+
+#[test]
+fn a_whole_vault_export_withholds_a_house_link_receipt_naming_a_use_limited_org() {
+    let (_dir, vault) = open_hosted_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the vault names its embedded owner actor");
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    oneiron::test_support::bind_host_owner(&vault, &issuer, owner)
+        .expect("FIXTURE: bind the owner under the host root");
+    let proof = owner_proof(&vault);
+    let signer = vault
+        .owner_project_signer(&issuer)
+        .expect("FIXTURE: the owner's project signer");
+    let root = vault.root_project().expect("FIXTURE: the root project");
+    vault
+        .sign_owner_project(&proof, &signer, root)
+        .expect("FIXTURE: sign the root once");
+    let org = EntityId::from_bytes([0xB3; 16]).expect("FIXTURE: the org id");
+    vault
+        .put_entity(
+            &org,
+            ENTITY_TYPE_ORG,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"retained rows house link org",
+        )
+        .expect("FIXTURE: store the org");
+    vault
+        .initialize_shared_vault(
+            &proof,
+            WORKSPACE_VAULT_ID,
+            None,
+            &[],
+            vault.now_recorded_at(),
+        )
+        .expect("FIXTURE: create the workspace's shared vault");
+    let (house, _) = vault
+        .get_seeded_agent_definition_by_logical_id("sys.default")
+        .expect("FIXTURE: read the seeded agents")
+        .expect("FIXTURE: sys.default is seeded on open");
+    vault
+        .establish_workspace_preset(
+            &WorkspaceRosterPreset {
+                workspace_ref: WORKSPACE.to_owned(),
+                workspace_vault_id: WORKSPACE_VAULT_ID,
+                org_ref: org,
+                venture_name: "Retained Rows Works".to_owned(),
+                house_display_name: None,
+                house_actor_ref: house,
+                house_identity_ref: None,
+            },
+            WorkCompanionPolicy::Choose,
+            &proof,
+        )
+        .expect("FIXTURE: store the workspace");
+    vault
+        .bind_workspace_house_leader(WORKSPACE, DEFAULT_HOUSE_ROLE, &proof, &signer)
+        .expect("FIXTURE: the owner binds the house to run its org");
+    let receipts = |archive: &[u8]| rows_for(&retained_rows(archive), "HOUSE_LINK_RECEIPT").len();
+    assert_eq!(
+        receipts(&export_whole(&vault)),
+        1,
+        "FIXTURE: before the hold the archive carries the bind receipt"
+    );
+
+    use_limit(&vault, org);
+    let archive = export_whole(&vault);
+    assert!(
+        !archive_carries(&vault, &archive, org),
+        "FIXTURE: the archive carries no record of the use-limited org"
+    );
+    assert_eq!(
+        receipts(&archive),
+        0,
+        "LEAK: the archive carries no house link receipt naming the use-limited org"
     );
 }
