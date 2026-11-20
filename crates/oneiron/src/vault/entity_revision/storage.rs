@@ -26,7 +26,6 @@ pub(super) use history::{
 };
 mod redact;
 mod retained;
-mod text_field;
 pub use redact::{ClaimValueRedactionBinding, LocalClaimValueRedaction};
 pub(crate) use redact::{ClaimValueRedactionRow, redact_claim_value_fields_in_txn};
 pub(super) use retained::{retained_rows_in_txn, row_revisions_starting_with_in_txn};
@@ -116,7 +115,8 @@ pub(super) fn write_doc_row(doc: &LoroDoc, raw: &[u8]) -> Result<()> {
         }
     }
     for (name, text) in fields {
-        text_field::set_text(&doc.get_text(format!("field:{name}")), &text)?;
+        crate::text_diff::set_text_or_replace_span(&doc.get_text(format!("field:{name}")), &text)
+            .map_err(|_| Error::InvariantViolation("entity text update"))?;
         names
             .insert(&name, true)
             .map_err(|_| Error::InvariantViolation("entity text field insert"))?;
@@ -1035,7 +1035,8 @@ pub(crate) fn pins_write_doc_row(doc: &LoroDoc, raw: &[u8], at: i64) -> Result<(
         }
     }
     for (name, text) in fields {
-        text_field::set_text(&doc.get_text(format!("field:{name}")), &text)?;
+        crate::text_diff::set_text_or_replace_span(&doc.get_text(format!("field:{name}")), &text)
+            .map_err(|_| Error::InvariantViolation("entity text update"))?;
         names
             .insert(&name, true)
             .map_err(|_| Error::InvariantViolation("entity text field insert"))?;

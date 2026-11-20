@@ -29,7 +29,7 @@ use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreRead}
 use crate::side_table::HexId;
 use crate::{EntityId, Vault};
 use heed::RwTxn;
-use loro::{Frontiers, ID, UpdateOptions, VersionVector};
+use loro::{Frontiers, ID, VersionVector};
 
 /// Why a history held here stands against its successor.
 pub(super) enum Stands {
@@ -203,9 +203,7 @@ fn park_held_edits_in_txn(
     }
     let base = doc.doc.oplog_frontiers().encode();
     let fork = doc.fork(&base)?;
-    fork.doc
-        .get_text(BODY)
-        .update(&text, UpdateOptions::default())
+    crate::text_diff::set_text(&fork.doc.get_text(BODY), &text)
         .map_err(|_| Error::Artifact(ArtifactError::InvalidEditManifest("held edits fork")))?;
     EntityDoc::replace_metadata(&fork.doc, &metadata)?;
     fork.doc.commit();
