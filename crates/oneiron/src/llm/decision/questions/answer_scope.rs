@@ -384,30 +384,24 @@ pub fn project_bound_outcomes_in_lane(
 /// stand ([`crate::claim::FrozenReadLane::reads_as_principal`]) is one only
 /// while that credential holds now (FIX OWN-DEVICE-GRANT-NOT-RECHECKED);
 /// otherwise each reply is judged on its rows, and a lapsed credential reads
-/// none of them.
+/// none of them. Judged in one snapshot of its own.
 fn reads_as_principal(lane: &ScopedRead<'_>) -> bool {
-    reads_as_principal_while(lane, || {
-        lane.vault()
-            .store
-            .env
-            .read_txn()
-            .is_ok_and(|txn| lane.credential_live_in(&txn).unwrap_or(false))
-    })
+    lane.vault()
+        .store
+        .env
+        .read_txn()
+        .is_ok_and(|txn| reads_as_principal_in(lane, &txn))
 }
 
-/// [`reads_as_principal`], its credential judged in the caller's snapshot
-/// `txn`, the one the reply is read in.
+/// [`reads_as_principal`] in the caller's snapshot `txn`, the one the reply
+/// is read in: the lane is frozen there, the live-owner census its freeze
+/// reads included, and its credential judged there (blind review P1 on
+/// #9864: a freeze that opened its own snapshot on this thread failed while
+/// `txn` was held, and a full lane read as a narrowed one).
 fn reads_as_principal_in(lane: &ScopedRead<'_>, txn: &heed::RoTxn<'_>) -> bool {
-    reads_as_principal_while(lane, || lane.credential_live_in(txn).unwrap_or(false))
-}
-
-/// Whether `lane` freezes as its principal's own, a lane held to a
-/// credential whose grant must stand only while `credential_live` says
-/// that credential holds.
-fn reads_as_principal_while(lane: &ScopedRead<'_>, credential_live: impl FnOnce() -> bool) -> bool {
-    match lane.freeze() {
+    match lane.freeze_in(txn) {
         Ok(frozen) if frozen.is_principal() => true,
-        Ok(frozen) if frozen.reads_as_principal() => credential_live(),
+        Ok(frozen) if frozen.reads_as_principal() => lane.credential_live_in(txn).unwrap_or(false),
         _ => false,
     }
 }
