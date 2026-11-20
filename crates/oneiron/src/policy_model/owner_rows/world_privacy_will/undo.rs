@@ -80,7 +80,8 @@ impl Vault {
             let settings = restorable(&receipt.previous)?;
             let seen = parse_revision(&receipt.revision_after)
                 .ok_or(Error::CorruptedIndex("world privacy receipt revision"))?;
-            let author = WorldEditAuthor::holder(actor, surface);
+            let owner_authored = owner.owner_answer_in_txn(self, txn)?;
+            let author = WorldEditAuthor::holder(actor, surface, owner_authored.as_ref());
             let undone =
                 self.write_world_privacy_in_txn(txn, author, world, settings, Some(seen), None)?;
             let key_owner = key_owner_in_txn(self, txn, actor)?;

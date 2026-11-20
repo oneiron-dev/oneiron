@@ -131,6 +131,7 @@ impl Vault {
                 },
                 surface: ActSurface::ThisInstall,
                 answer: None,
+                owner_authored: None,
             };
             let receipt = self.write_world_privacy_in_txn(
                 txn,
