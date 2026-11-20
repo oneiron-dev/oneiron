@@ -174,6 +174,7 @@ pub mod guest_turn_counterparty;
 pub mod held_answer_confirm;
 pub mod held_program;
 pub mod hex_input_policy;
+pub mod hex_sign_digit;
 pub mod history_import_rows;
 pub mod holder_slip_revoke;
 #[cfg(feature = "sync")]

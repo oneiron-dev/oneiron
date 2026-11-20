@@ -47,11 +47,8 @@ impl RevisionRef {
         if value.len() != 32 || !value.is_ascii() {
             return Err(oneiron_base::error::Error::InvalidKey);
         }
-        let mut bytes = [0; 16];
-        for (index, byte) in bytes.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
-                .map_err(|_| oneiron_base::error::Error::InvalidKey)?;
-        }
+        let bytes = oneiron_hex::decode_any_case::<16>(value)
+            .ok_or(oneiron_base::error::Error::InvalidKey)?;
         Ok(Self(bytes))
     }
 }
