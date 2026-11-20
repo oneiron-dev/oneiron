@@ -2,7 +2,8 @@
 
 use super::door::CalendarConnectorOperation;
 use super::outbound::{
-    CalendarRemoteObjectRow, ingest_error, omission_observed, write_remote_object,
+    CalendarRemoteObjectRow, cancelled_members_in_flight, ingest_error, omission_observed,
+    write_remote_object,
 };
 use super::remote::{
     CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange,
@@ -114,9 +115,15 @@ pub fn run_calendar_connector_sync_with_screener(
     // every other change of this pull stands, and the next pull lists the
     // calendar whole again, so the omission is read again, never dropped
     // (fix list row 19192). A booking move a pending emergency delivery held
-    // back stays owed the same way (FIX 22385).
+    // back stays owed the same way (FIX 22385), and so does a cancelled
+    // version a cancelled write in flight holds back
+    // (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
     let next_cursor = match batch.next_cursor {
-        Some(cursor) if counters.owed_omissions > 0 || counters.owed_booking_moves > 0 => {
+        Some(cursor)
+            if counters.owed_omissions > 0
+                || counters.owed_booking_moves > 0
+                || counters.owed_cancelled_versions > 0 =>
+        {
             transport.cursor_owing_full_listing(&cursor)
         }
         cursor => cursor,
@@ -154,6 +161,9 @@ struct SyncCounters {
     /// Resources whose booking move a pending emergency delivery held back
     /// (FIX 22385).
     owed_booking_moves: u32,
+    /// Resources read cancelled while a cancelled write of the same member
+    /// was in flight (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
+    owed_cancelled_versions: u32,
 }
 
 /// Applies one pulled change under the echo law, each admission under
@@ -179,6 +189,23 @@ fn apply_remote_change(
                 .events
                 .first()
                 .ok_or_else(|| ingest_error("remote resource has no event"))?;
+            // A cancelled version of a member a write of this UID still in
+            // flight writes cancelled may be that write coming back before
+            // its settlement marks the member's passport, and would read as a
+            // host cancel that refunds the deposit. The resource stays owed
+            // and unread, as an omission a write in flight holds back does
+            // (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
+            let in_flight = cancelled_members_in_flight(vault, operation, &primary.uid)?;
+            if !in_flight.is_empty() {
+                for parsed in feed.events.iter().filter(|parsed| parsed.cancelled) {
+                    if crate::calendar::ingest::connector_event_ref(vault, parsed)?
+                        .is_some_and(|member| in_flight.contains(&member))
+                    {
+                        counters.owed_cancelled_versions += 1;
+                        return Ok(());
+                    }
+                }
+            }
             let source = pull_source_record_id(provider, seat, &primary.uid);
             // Archived before any semantic write, once the bytes are known to
             // parse: a later write renders over exactly this copy.

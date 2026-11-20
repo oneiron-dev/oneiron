@@ -4,11 +4,11 @@ mod archived;
 mod collection;
 
 pub(crate) use self::archived::{plan_archived_calendar_rows, read_back_archived_calendar_rows};
-pub(super) use self::collection::omission_observed;
 pub use self::collection::{
     CalendarCollectionMember, CalendarRemoteObjectObservation,
     calendar_collection_members_for_operation,
 };
+pub(super) use self::collection::{cancelled_members_in_flight, omission_observed};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -653,12 +653,19 @@ fn finish_remote_applied_write_in_txn(
         };
         // A member written cancelled marks its passport, so the seat's later
         // cancelled versions of it (a provider that rewrites the stored
-        // resource) read as this write, not a host cancel. A seat that
-        // reported the cancellation itself before this write keeps it its own.
-        let written_cancelled = row.cancelled_members.contains(&member)
-            && current
-                .as_ref()
-                .is_none_or(|(_, value)| value.cancelled_since.is_none());
+        // resource) read as this write, not a host cancel. A cancellation the
+        // seat reported itself before this write stays its own and keeps its
+        // first report's date across every later write; one the seat only
+        // reported back from an earlier marked write keeps the mark.
+        let written = row.cancelled_members.contains(&member);
+        let prior_cancel = current
+            .as_ref()
+            .and_then(|(_, value)| value.cancelled_since.map(|_| value.written_cancelled));
+        let written_cancelled = written && prior_cancel.is_none_or(|marked| marked);
+        let cancelled_since = current
+            .as_ref()
+            .and_then(|(_, value)| value.cancelled_since)
+            .filter(|_| written);
         let next = CalendarPassportValue {
             system: row.system.clone(),
             uid: row.uid.clone(),
@@ -668,7 +675,7 @@ fn finish_remote_applied_write_in_txn(
             direction,
             last_seen_at: now,
             presence: CalendarPassportPresence::Live,
-            cancelled_since: None,
+            cancelled_since,
             written_cancelled,
         };
         let already_applied = current.as_ref().is_some_and(|(_, value)| {
