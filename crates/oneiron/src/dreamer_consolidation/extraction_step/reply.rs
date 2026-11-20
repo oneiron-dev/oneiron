@@ -469,9 +469,11 @@ impl BoundReplySources<'_> {
     /// so its first quote or label that bound nothing, or else a cited head
     /// that is no evidence, refuses the whole reply, as the native citation
     /// check refuses it. A candidate a correction is asked about is skipped
-    /// for an unbound quote and kept with a cited head that is no evidence:
-    /// the verdict judges that head. An authored fallback's reply is never
-    /// refused here.
+    /// for an unbound quote, and for a cited head that is no evidence: no
+    /// later read of the job takes such a citation, so a candidate kept
+    /// with it would refuse the job's next request whole. An authored
+    /// fallback's reply is never refused here; its candidate with such a
+    /// citation is skipped the same way.
     ///
     /// # Errors
     ///
@@ -510,7 +512,10 @@ impl BoundReplySources<'_> {
                         "extraction candidate {index} cites outside its source: {reason}",
                     ));
                 }
-                (None, _) => {
+                (None, Some(reason)) => {
+                    format!("claim citation is no evidence ({reason}); no later read takes it")
+                }
+                (None, None) => {
                     decoded.candidates.push(read.candidate);
                     continue;
                 }

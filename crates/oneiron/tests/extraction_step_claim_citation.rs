@@ -14,7 +14,7 @@ use oneiron::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use oneiron::dreamer_runner::DreamerAttemptBinding;
-use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MemoryResult};
+use oneiron::memory::MemoryResult;
 use oneiron::test_doors::derive::grant_derive_rows;
 use oneiron::test_doors::extraction_inputs::{
     enqueue_admitted_extraction_attempt, witness_extraction_turns,
@@ -364,11 +364,11 @@ fn a_restated_generated_head_refuses_the_reply() -> ExtractionStepTestResult<()>
 }
 
 /// A candidate that cites a generated head and proposes another value is asked whether it
-/// corrects that head, so the step keeps it with the pin and the verdict side judges the
-/// head: the observations page refuses the pin by name.
+/// corrects that head, so the reply stands. No later read of the job takes a generated head
+/// as evidence, so the step skips the candidate by name; a kept pin would refuse the job's
+/// next request whole.
 #[test]
-fn a_generated_head_cited_with_another_value_is_kept_for_the_verdict()
--> ExtractionStepTestResult<()> {
+fn a_generated_head_cited_with_another_value_skips_the_candidate() -> ExtractionStepTestResult<()> {
     let fixture = citation_fixture(
         ClaimSource::Generated,
         citing_reply(
@@ -381,22 +381,17 @@ fn a_generated_head_cited_with_another_value_is_kept_for_the_verdict()
     assert_eq!(submit["result"]["status"], json!("finished"));
     let decoded = &submit["result"]["json"];
     assert_eq!(
-        decoded["skipped"],
+        decoded["candidates"],
         json!([]),
-        "a candidate a correction is asked about keeps its cited head"
+        "a candidate that cites a generated head is not handed on"
     );
-    let candidate = &decoded["candidates"][0];
-    assert_eq!(candidate["claim_evidence"], json!([fixture.claim_pin()?]));
-    let refused = fixture
-        .observe(candidate)
-        .expect_err("the observations page refuses a generated head as evidence");
-    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST);
+    assert_eq!(decoded["skipped"][0]["index"], json!(0));
+    let reason = decoded["skipped"][0]["reason"]
+        .as_str()
+        .ok_or("the skipped candidate names its reason")?;
     assert!(
-        refused
-            .message
-            .contains("generated claim cannot corroborate"),
-        "the refusal names the generated head: {}",
-        refused.message
+        reason.contains("generated claim cannot corroborate"),
+        "the candidate is skipped for its generated citation: {reason}"
     );
     Ok(())
 }
