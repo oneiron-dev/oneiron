@@ -105,6 +105,11 @@ pub(crate) struct McpGatewayError {
     /// `error.data.successor_short_id` so a client reads a FIELD instead of
     /// parsing the message.
     pub(super) successor_short_id: Option<String>,
+    /// A refused second task assignment: the task, the assignee it keeps and the one
+    /// refused. Surfaces as `error.data.task_assignment_conflict`, so a client reads a
+    /// FIELD instead of parsing the message, as `successor_short_id` does. Boxed for
+    /// size, as `effective_scope` is.
+    pub(super) task_assignment_conflict: Option<Box<oneiron::memory::TaskAssignmentConflict>>,
     /// The effective scope the refusal was made under, present for every
     /// actor-derived error (ONE-1704). Absent only before a credential
     /// resolves, where there is no scope yet to state.
@@ -170,6 +175,7 @@ impl McpGatewayError {
             field: None,
             vault_read: None,
             successor_short_id: None,
+            task_assignment_conflict: None,
             effective_scope: None,
             byte_bound: None,
             wrong_root: None,

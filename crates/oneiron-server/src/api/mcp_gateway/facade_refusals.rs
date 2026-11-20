@@ -57,14 +57,23 @@ fn mcp_facade_refusal(mut error: oneiron::MemoryError) -> McpGatewayError {
     }
     // A facade refusal carrying a successor keeps the same stable kind and
     // typed data the engine-error path emits (ONE-1936) — one vocabulary for
-    // one condition, whichever door reported it.
+    // one condition, whichever door reported it. A refused second assignment
+    // keeps its own kind and data the same way.
     with_refusal_timing(
-        match error.successor_short_id {
-            Some(successor_short_id) => {
-                McpGatewayError::new(code, "write_verb_target_stale", error.message)
-                    .with_successor_short_id(successor_short_id)
+        match error.task_assignment_conflict {
+            Some(conflict) => {
+                let mut refusal =
+                    McpGatewayError::new(code, "task_assignment_conflict", error.message);
+                refusal.task_assignment_conflict = Some(conflict);
+                refusal
             }
-            None => McpGatewayError::new(code, "facade_error", error.message),
+            None => match error.successor_short_id {
+                Some(successor_short_id) => {
+                    McpGatewayError::new(code, "write_verb_target_stale", error.message)
+                        .with_successor_short_id(successor_short_id)
+                }
+                None => McpGatewayError::new(code, "facade_error", error.message),
+            },
         },
         retry_after,
         resets_at,

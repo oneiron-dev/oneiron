@@ -206,6 +206,16 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
             },
             ["Offer a seat for the pinned model, or clear or change the owner's model pin."],
         ),
+        // Two of the owner's devices assigned one task differently: the second
+        // assignment is refused, naming the task and both assignees. A conflict
+        // (409), never a malformed request.
+        ErrorKind::TaskAssignmentConflict => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some("task_assignment_conflict".to_owned()),
+            },
+            [oneiron::error::TASK_ASSIGNMENT_CONFLICT_SUGGESTION],
+        ),
         // A refusal that names its bound answers as the facade does (FIX
         // 4618): the message is the whole answer.
         ErrorKind::Refused => ApiError::new(

@@ -15,6 +15,7 @@ pub(super) fn dimensions_to_engine(value: f64) -> Result<usize, MemoryError> {
             "Open the vault with the dimension count its embedding model produces.".to_owned(),
         ],
         successor_short_id: None,
+        task_assignment_conflict: None,
         extraction_layout: None,
         gate_denial: None,
         read_receipt: None,
@@ -53,6 +54,7 @@ pub(super) fn limit_to_engine(value: f64) -> Result<usize, MemoryError> {
                 u32::MAX
             )],
             successor_short_id: None,
+            task_assignment_conflict: None,
             extraction_layout: None,
             gate_denial: None,
             read_receipt: None,

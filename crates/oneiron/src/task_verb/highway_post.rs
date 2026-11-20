@@ -23,7 +23,7 @@ use crate::authority::{TaskActorProof, TaskActorVerb};
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::{ClaimError, Error, Result};
+use crate::error::{ClaimError, Error, RecordError, Result};
 use crate::federation::record_scope::BirthPosition;
 use crate::gate::PolicyApprovalCeiling;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -405,6 +405,19 @@ pub(super) fn put_assignment_fact_in_txn(
 }
 
 pub(super) fn settle_refusal(error: MemoryError) -> Error {
+    if let Some(conflict) = error.task_assignment_conflict.as_deref()
+        && let (Ok(task_ref), Ok(held_assignee), Ok(offered_assignee)) = (
+            EntityId::from_hex(&conflict.task_ref),
+            EntityId::from_hex(&conflict.held_assignee),
+            EntityId::from_hex(&conflict.offered_assignee),
+        )
+    {
+        return Error::Record(RecordError::TaskAssignmentConflict {
+            task_ref,
+            held_assignee,
+            offered_assignee,
+        });
+    }
     Error::InvalidConfig(format!(
         "task proposal settlement refused: {}",
         error.message
