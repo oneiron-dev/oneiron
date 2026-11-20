@@ -8,7 +8,7 @@ use crate::deletion::{LegalHoldReason, LegalHoldUseLimit};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 
 /// Records kept after a refused privacy erasure (C6). Key: id16 (record).
 pub(super) const USE_LIMITS: SideTable<EntityId, LegalHoldUseLimit, Named> =
@@ -104,16 +104,26 @@ pub(crate) enum RecordUseLimit {
     CooperativeReview,
 }
 
+/// What keeps `record` from use at a read or egress door, if anything: its
+/// own C6 limit, a cooperative review restriction on it, or, for a row whose
+/// content is about a PERSON, that PERSON's own C6 limit
+/// ([`super::person_content::kept_person_content_in_txn`]). The typed getter,
+/// retention and write admission ask the record's own facts only.
 pub(crate) fn use_limit_in_txn(
-    dbs: &impl SideTableDbs,
+    dbs: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     record: &EntityId,
 ) -> Result<Option<RecordUseLimit>> {
     if legal_hold_use_limit_in_txn(dbs, txn, record)?.is_some() {
         return Ok(Some(RecordUseLimit::LegalHold));
     }
-    Ok(cooperative_restriction_active_in_txn(dbs, txn, record)?
-        .then_some(RecordUseLimit::CooperativeReview))
+    if cooperative_restriction_active_in_txn(dbs, txn, record)? {
+        return Ok(Some(RecordUseLimit::CooperativeReview));
+    }
+    Ok(
+        super::person_content::kept_person_content_in_txn(dbs, txn, record)?
+            .then_some(RecordUseLimit::LegalHold),
+    )
 }
 
 /// The real legal-hold fact, for callers that report that exact reason.

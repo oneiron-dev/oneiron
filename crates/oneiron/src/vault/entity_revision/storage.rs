@@ -820,7 +820,13 @@ fn read_revision_from_store_in_txn(
             archived,
         );
     }
-    raw_for_revision(store, txn, id, &raw, Some(target)).map(admit)
+    let row = raw_for_revision(store, txn, id, &raw, Some(target))?;
+    // A retained revision names its own subjects: the content about a kept
+    // PERSON stays from use at every version, not only at the current row's.
+    if crate::store::legal_hold::kept_person_content_row_in_txn(store, txn, id, &row)? {
+        return Ok(None);
+    }
+    Ok(admit(row))
 }
 
 /// Whether the revision the ledger indexes `id` at is a retained state of its
