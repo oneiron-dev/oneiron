@@ -368,7 +368,7 @@ fn counted_standing(fold: &SettingSlotFold) -> ChangeStanding {
     let counts = || {
         fold.counts
             .values()
-            .chain(fold.name_counts.values().flat_map(|counts| counts.values()))
+            .chain(fold.name_counts.values().flat_map(BTreeMap::values))
             .map(|counted| counted.count)
     };
     if counts().any(|count| count == ChoiceCount::Safe { held: true }) {
