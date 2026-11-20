@@ -50,6 +50,7 @@ impl PublishBoundaryHarness {
 
         let dir = tempfile::tempdir().expect("tempdir");
         let vault = Arc::new(crate::Vault::open(dir.path(), config).expect("open vault"));
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let manager = Arc::new(WindowManager::new(
             Arc::clone(&vault),
             Arc::new(Materializer::new()),
@@ -321,6 +322,7 @@ pub(super) fn open_nonpublishing_delete_vault() -> (tempfile::TempDir, crate::Va
         },
     )
     .expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     (dir, vault)
 }
 

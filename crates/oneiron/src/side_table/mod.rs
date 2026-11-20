@@ -478,8 +478,9 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         })
     }
 
-    /// Writes bytes the codec would never produce, for fixtures that plant a damaged row.
-    #[cfg(any(test, feature = "test-support"))]
+    /// Writes bytes the codec would never produce, for fixtures that plant a damaged row. The
+    /// test cfg builds it too: the cfg-only door `test_doors::call_receipt_damage` calls it.
+    #[cfg(any(test, feature = "test-support", oneiron_test_support))]
     pub(crate) fn put_undecodable(
         &self,
         dbs: &impl SideTableDbs,
@@ -616,6 +617,23 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
             *value = self.decode_value(&masked)?;
         }
         Ok(())
+    }
+
+    /// Reads `projection` as the side-row wall will store it, writing
+    /// nothing (FIX FENCE-ERASED-FORM-THROUGH-WALL): the bytes of a row of
+    /// this table with the parts the wall does not read taken out, and
+    /// `decodes` the table's reading of a masked copy with those parts put
+    /// back. `None` when the wall changes nothing.
+    pub(crate) fn admit_projection(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &mut RwTxn<'_>,
+        key: &K,
+        projection: &[u8],
+        decodes: impl Fn(&[u8]) -> bool,
+    ) -> Result<Option<Vec<u8>>> {
+        self.decl
+            .admit(dbs, txn, &self.key_bytes(key), projection, decodes)
     }
 
     /// Deletes one row; `true` when a row was present.

@@ -29,6 +29,7 @@
 
 use std::collections::BTreeMap;
 
+use oneiron_contracts::fingerprint::ContentHash;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -518,7 +519,7 @@ fn read_evidence(vault: &Vault, declaration: &CompactionCheckDeclaration) -> Res
         return Ok(Settled::of(StaleEvidence, "summary_withdrawn"));
     };
     if summary.len() as u64 != declaration.artifact_len
-        || bytes_to_hex_lower(blake3::hash(summary.as_bytes()).as_bytes())
+        || bytes_to_hex_lower(ContentHash::of(summary.as_bytes()).as_bytes())
             != declaration.artifact_hash
     {
         return Ok(Settled::of(StaleEvidence, "artifact_changed"));

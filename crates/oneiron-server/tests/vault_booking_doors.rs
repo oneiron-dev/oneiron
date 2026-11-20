@@ -113,6 +113,7 @@ fn event_config() -> EventTypeConfig {
     EventTypeConfig {
         key: EventTypeKey(EVENT_TYPE.to_owned()),
         duration_min: 30,
+        allowed_durations_min: Vec::new(),
         slot_step_min: 30,
         pre_buffer_min: 0,
         post_buffer_min: 0,
@@ -134,7 +135,9 @@ fn event_config() -> EventTypeConfig {
                 .collect(),
             preferred_hours: Vec::new(),
         }],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
+        deposit: None,
     }
 }
 
@@ -177,7 +180,9 @@ fn publication(owner_display: &str) -> BookingPagePublication {
         event_types: vec![EventTypeCard {
             key: EventTypeKey(EVENT_TYPE.to_owned()),
             title: "Door event".to_owned(),
+            deposit: None,
             duration_min: 30,
+            allowed_durations_min: Vec::new(),
             description: "Door description".to_owned(),
         }],
         constraint_field: ConstraintFieldConfig {

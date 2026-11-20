@@ -8,8 +8,8 @@ use super::connectors::door::{
     CalendarImipTransportConfig, CalendarSeatSetup, is_seat_ref, seat_setup_changed_in_txn,
     validate_endpoint,
 };
-use super::ingest::IcsFeedPollConfig;
 use super::ingest::feed_door::{ics_feed_changed_in_txn, ics_feed_committed, is_feed_system};
+use super::ingest::{ADMISSION_WRITE_TURN, IcsFeedPollConfig};
 use crate::error::{Error, Result};
 use crate::setting::{ItemDomain, Kind, SettingValue};
 
@@ -61,21 +61,28 @@ crate::setting::setting_keys! {
     };
     /// One CalDAV seat the owner installed, keyed by its seat ref: the discovery endpoint and the
     /// seat's config (the custody name of its credential, its system, its collection and its poll
-    /// cadence). An installed seat never changes: a new configuration takes a new seat ref.
+    /// cadence). An installed seat never changes: a new configuration takes a new seat ref. A seat
+    /// never takes the system of an installed ICS feed or a pack calendar source, whose complete
+    /// polls and listings would cancel its events. A change waits for a running calendar
+    /// admission, a complete upload's among them, so none lands inside one.
     pub(crate) CONNECTOR_SEAT: Option<CalendarSeatSetup> = "calendar.connector_seat" {
         kind: Kind::new(no_seat).strictest(no_seat),
         item: Some(ItemDomain { name: "calendar seat refs", admits: is_seat_ref }),
         on_change: Some(seat_setup_changed_in_txn),
+        write_turn: Some(ADMISSION_WRITE_TURN),
     };
     /// One ICS feed the owner installed, keyed by its system: the custody name of its URL and its
     /// poll cadence. It grants no import consent. An installed feed never changes: a new
-    /// configuration takes a new system. Installing one starts its poll chain. Clearing one
-    /// uninstalls it: its standing consent ends, its cursor goes and its pending polls are
-    /// cancelled; a system it polled under stays retired.
+    /// configuration takes a new system, never one an installed CalDAV seat or a pack calendar
+    /// source imports under.
+    /// Installing one starts its poll chain. Clearing one uninstalls it: its standing consent
+    /// ends, its cursor goes and its pending polls are cancelled; a system it polled under stays
+    /// retired. A change waits for a running poll's admission, so none lands inside one.
     pub(crate) ICS_FEED: Option<IcsFeedPollConfig> = "calendar.ics_feed" {
         kind: Kind::new(no_feed).strictest(no_feed),
         item: Some(ItemDomain { name: "ICS feed systems", admits: is_feed_system }),
         on_change: Some(ics_feed_changed_in_txn),
         after_commit: Some(ics_feed_committed),
+        write_turn: Some(ADMISSION_WRITE_TURN),
     };
 }

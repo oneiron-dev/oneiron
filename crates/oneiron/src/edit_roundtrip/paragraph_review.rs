@@ -11,6 +11,7 @@ use super::{EditOp, EditOutcome, EditProposal, OfficeFormat};
 use crate::llm::decision::questions::keep_artifact_unit_ask;
 use crate::llm::decision::{DecisionAnswer, DecisionRung, EvidenceVersion, PairedReading};
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_docedit::docx_body::{DocxBlockKind, DocxStoryScope, read_docx_scoped_blocks};
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -88,7 +89,7 @@ impl Vault {
             .map_err(|error| {
                 crate::office_body::document_error(error.resource(), "paragraph ask document")
             })?;
-        let frontier = *blake3::hash(&bytes).as_bytes();
+        let frontier = *ContentHash::of(&bytes).as_bytes();
         let sources = [EvidenceVersion {
             id: *artifact,
             body_hash: frontier,
@@ -184,7 +185,7 @@ impl Vault {
             judgments.push(ParagraphJudgment {
                 block: id.clone(),
                 scope: request.scope.cloned(),
-                text_hash: *blake3::hash(block.text.as_bytes()).as_bytes(),
+                text_hash: *ContentHash::of(block.text.as_bytes()).as_bytes(),
                 decision,
                 answer_contract: ask.question.contract.clone(),
                 comment,
@@ -275,7 +276,7 @@ pub(crate) fn carry_paragraph_judgments(
             let block = blocks
                 .iter()
                 .find(|block| block.id == row.block)
-                .filter(|block| *blake3::hash(block.text.as_bytes()).as_bytes() == row.text_hash)
+                .filter(|block| *ContentHash::of(block.text.as_bytes()).as_bytes() == row.text_hash)
                 .ok_or_else(|| invalid("a carried paragraph changed"))?;
             Ok(paragraph_comment_op(
                 row.scope.as_ref(),
@@ -375,7 +376,7 @@ fn verify_rows(proposal: &EditProposal, carried: bool) -> Result<()> {
             || row.scope != rows[0].scope
             || op.get("scope").filter(|value| !value.is_null())
                 != row.scope.as_ref().map(|scope| json!(scope)).as_ref()
-            || text(op, "expect").map(|quote| *blake3::hash(quote.as_bytes()).as_bytes())
+            || text(op, "expect").map(|quote| *ContentHash::of(quote.as_bytes()).as_bytes())
                 != Some(row.text_hash)
             || text(op, "body").as_deref() != Some(row.comment.as_str())
             || text(op, "author").as_deref() != Some(row.author.as_str())

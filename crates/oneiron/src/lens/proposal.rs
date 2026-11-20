@@ -82,6 +82,13 @@ pub(super) struct LensProposalRecord {
     /// The `lens/intent` NOTE the lens row was born from.
     pub(super) prompt_ref: String,
     pub(super) proposed_by: String,
+    /// The run attempt the proposing handle wrote from, lowercase hex, when
+    /// its host bound one: a dispatch at the dispatcher's own ceiling pins no
+    /// delegation parent on the child, so the run carries the lineage its id
+    /// does not (DEC-0006). Absent on an owner's proposal, a run-less call's,
+    /// and every row stored before it was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) proposed_by_run_attempt: Option<String>,
     pub(super) proposed_at: u64,
     /// Where the lens is read: where its prompt NOTE is placed (FIX 2136).
     pub(super) scope: LensScope,
@@ -113,7 +120,9 @@ impl LensProposalRecord {
     }
 }
 
-/// The owner's stored selection for one slot.
+/// The stored selection for one slot: the owner's, or an agent's the owner's
+/// `lens.slot.agent_select` row admitted (its `authenticated_under` is then
+/// `grant:<hex>`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct LensSlotRecord {
@@ -183,6 +192,7 @@ impl Memory<'_> {
         let lens_ref = EntityId::now();
         let prompt_ref = EntityId::now();
         let vault = self.vault();
+        let writer = self.write_actor();
         let mut record = LensProposalRecord {
             pack_name: input.slot.pack_name,
             skill_id: skill_id.to_hex(),
@@ -190,10 +200,12 @@ impl Memory<'_> {
             compiled_hash: lens_hash(&compiled_json),
             prompt_ref: prompt_ref.to_hex(),
             proposed_by: self.actor().to_hex(),
+            proposed_by_run_attempt: writer
+                .run_attempt()
+                .map(|attempt| oneiron_hex::encode(&attempt)),
             proposed_at: crate::unix_seconds_now(),
             scope: LensScope::default(),
         };
-        let writer = self.write_actor();
         let trigger = input.trigger;
         self.with_verified_actor_write_txn(|txn| {
             let live = vault.live_pack_skill_in_txn(txn, &record.pack_name, &skill_id)?;

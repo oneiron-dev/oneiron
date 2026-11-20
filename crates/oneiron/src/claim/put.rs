@@ -224,6 +224,35 @@ impl Vault {
         self.put_claim_in_txn_with_reserved(wtxn, id, body, occurred, learned_at, true)
     }
 
+    /// [`Self::put_reserved_claim_in_txn`] attributed to `envelope` (FIX
+    /// 8118's caller envelope): the put is gated — the source-trust row
+    /// selection included — as that actor's write, so it rides the
+    /// actor-bound permit the owner's policy holds for the actor instead of
+    /// reading unattributed. The envelope is gating only: a reserved put
+    /// records no authorship.
+    pub(crate) fn put_reserved_claim_attributed_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+        occurred: TimeRange,
+        learned_at: u64,
+        envelope: &WriteEnvelope,
+    ) -> Result<()> {
+        let ops = self.claim_put_ops_in_txn(wtxn, id, body, occurred, learned_at, true)?;
+        apply_ops_with_gate_mode(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            ApplyOpsGateMode::new(false, true)
+                .with_caller_envelopes(std::collections::HashMap::from([(*id, envelope.clone())])),
+        )
+    }
+
     pub(crate) fn put_reserved_claim_with_setup_owner_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,

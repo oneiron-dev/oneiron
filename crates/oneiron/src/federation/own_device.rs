@@ -181,6 +181,37 @@ impl Vault {
         Ok(None)
     }
 
+    /// Every live grant `member` (PERSON hex) holds under the residence
+    /// selector's scope, by id: the grants a residence selector of theirs
+    /// may name at this home, whatever their role or term.
+    pub(crate) fn residence_scope_grants_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        member: &str,
+    ) -> Result<Vec<EntityId>> {
+        let mut ids = Vec::new();
+        for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            txn,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            None,
+        )? {
+            let id = id?;
+            let LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+                body,
+            } = live_entity_row_in_txn(&self.store, txn, &id)?
+            else {
+                continue;
+            };
+            let grant = decode_federation_grant_body(&body)?;
+            if grant.scope == own_device_residence_scope() && grant.member_ref.to_hex() == member {
+                ids.push(id);
+            }
+        }
+        Ok(ids)
+    }
+
     /// Whether `grant_ref` is `member`'s (PERSON hex) own-device grant, live
     /// and conferring at `now`. A paired slip naming it stands while it does.
     pub(crate) fn own_device_grant_stands_in_txn(

@@ -1,8 +1,6 @@
 //! Grant-checked, per-item residence projections over a window document.
 //! Window keys stay opaque here so a world-plus-month key has the same shape.
 
-// FIX [LIBTEST-QUARANTINE-SYNC-RESIDENCE-TESTS]: the lib test target's type check fails here (3 errors: E0061 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -24,6 +22,8 @@ mod discover;
 mod home_handoff;
 mod kit_fetch;
 mod machine_history;
+mod machine_names;
+mod own_device_grants;
 mod pad_custody;
 mod policy;
 mod predict;
@@ -34,6 +34,8 @@ mod sealed_updates;
 mod search;
 mod secret_same_value;
 mod window_index;
+// FOLLOWED-WORLD-TIER1-TOMBSTONE-IDS: a followed window's tombstone id set.
+mod window_tombstones;
 mod world_base_rows;
 mod world_eviction;
 pub(crate) use admission::admit_promoted_window_destination_in_txn;
@@ -98,7 +100,7 @@ pub use custody::{
 pub use directives::ResidenceDirectiveState;
 pub(crate) use directives::{
     directive_states_in_txn, finish_residence_directive_in_txn, pending_residence_directives,
-    residence_refusal_reason,
+    residence_directive_counts, residence_refusal_reason,
 };
 pub use discover::discover_local_window_keys;
 pub(crate) use discover::retry_pending_tombstones;
@@ -116,6 +118,11 @@ pub use kit_fetch::{
 };
 pub use machine_history::{
     MACHINE_HISTORY_PAGE_ROWS, MachineHistoryCursor, MachineHistoryPage, machine_history_page,
+};
+pub use machine_names::machine_names_residence_exchange;
+pub use own_device_grants::{
+    OWN_DEVICE_GRANTS_PAGE_MAX, OwnDeviceGrantAdmission, OwnDeviceGrantState,
+    admit_own_device_grants, own_device_grant_refs, own_device_grant_states, own_device_grants_for,
 };
 pub use pad_custody::{
     PAD_FETCH_PAGE_KEYS, WorldPadCapsule, WorldPadFetch, WorldPadPage, WorldPadSelection,
@@ -136,8 +143,8 @@ pub(crate) use prune::checkpoint_read_cache_keys;
 pub(crate) use prune::demote_resident_window;
 pub(crate) use prune::erase_item_caches_in_txn;
 pub(crate) use prune::prune_thin_items_in_txn;
-pub(crate) use prune::record_item_touch_in_txn;
 pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
+pub(crate) use prune::{record_item_touch_in_txn, record_item_touch_with};
 pub use publication_access::{
     PendingPublicationGrant, invalidate_publication_grant, offer_publication_grant,
     pending_publication_grants, publication_grant,
@@ -159,6 +166,7 @@ pub use window_index::{
     IndexPage, WindowIndexEntry, index_selection_revision, window_index_page,
     window_index_projection, window_index_projection_with,
 };
+pub use window_tombstones::{WindowTombstoneEntry, window_tombstone_projection_with};
 pub(crate) use world_base_rows::{discarded_rows_in, discarded_world_in, forget_discarded_in_txn};
 pub use world_eviction::{WorldEviction, discard_world_copy_as, evict_worlds_placed_elsewhere};
 pub(crate) use world_eviction::{
@@ -374,6 +382,27 @@ pub fn admit_promoted_window_update(
     proof: &crate::authority::VerifiedSlip,
     update: &[u8],
 ) -> Result<()> {
+    admit_promoted_window_update_then(vault, source, (scope, selector, proof), update, |_, _| {
+        Ok(())
+    })
+}
+
+/// [`admit_promoted_window_update`], every row judged in one read and with
+/// one clock reading for its grant's expiry, then `then` in that same read
+/// with that same reading: what the caller keeps of the admission (an own
+/// device's burst holds the update under the device's authority as read
+/// there: #9226 review round 2).
+pub(in crate::sync) fn admit_promoted_window_update_then<T>(
+    vault: &Vault,
+    source: &LoroDoc,
+    (scope, selector, proof): (
+        FederationGrantScope,
+        &SyncSelector,
+        &crate::authority::VerifiedSlip,
+    ),
+    update: &[u8],
+    then: impl FnOnce(&heed::RoTxn<'_>, u64) -> Result<T>,
+) -> Result<T> {
     let malformed = || Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied);
     let metadata = LoroDoc::decode_import_blob_meta(update, true).map_err(|_| malformed())?;
     if metadata.mode.is_snapshot() {
@@ -392,6 +421,7 @@ pub fn admit_promoted_window_update(
     let entities = ContainerID::new_root("entities", ContainerType::Map);
     let births = ContainerID::new_root(super::row_birth::ROW_BIRTHS_MAP, ContainerType::Map);
     let txn = vault.store.env.read_txn()?;
+    let now_secs = crate::unix_seconds_now();
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         let JsonOpContent::Map(MapOp::Insert {
             key,
@@ -420,10 +450,16 @@ pub fn admit_promoted_window_update(
             return Err(malformed());
         }
         super::selector::admit_promoted_entity_write_in_txn(
-            vault, &txn, id, &blob, scope, selector, proof,
+            vault,
+            &txn,
+            id,
+            &blob,
+            scope,
+            (selector, proof),
+            now_secs,
         )?;
     }
-    Ok(())
+    then(&txn, now_secs)
 }
 
 /// The entities a promoted window's update lands, read from the update's own
@@ -753,3 +789,6 @@ pub(crate) mod promotion_hook {
         }
     }
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::search::search_page_revision_for_test;

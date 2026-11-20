@@ -10,7 +10,6 @@ use crate::deletion::delete_bearing_update::DeleteBearingUpdate;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::Store;
-use crate::store::window_rows::CarrierRemoval;
 
 /// The engine's sync hooks. A store holds one implementation from the moment
 /// it is assembled (see [`crate::store::StoreHooks`]). The store layer calls
@@ -114,11 +113,18 @@ pub(crate) trait StoreSyncHooks: Send + Sync {
         raw_value: &[u8],
     ) -> Result<()>;
 
-    /// The engine's `sync::window::mark_removed_carriers_first`.
-    fn mark_removed_carriers_first(
+    /// The engine's `sync::window::suppress_published_carriers_first`.
+    fn suppress_published_carriers_first(
         &self,
         vault: &crate::Vault,
-        path: CarrierRemoval,
+        carriers: &[(EntityId, Vec<u8>)],
+    ) -> Result<()>;
+
+    /// The engine's `sync::window::forget_removed_carrier_records_in_txn`.
+    fn forget_removed_carrier_records_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
         carriers: &[(EntityId, Vec<u8>)],
     ) -> Result<()>;
 

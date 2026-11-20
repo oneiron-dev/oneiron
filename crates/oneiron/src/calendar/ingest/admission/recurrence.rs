@@ -86,18 +86,12 @@ impl PollAdmission<'_> {
         self.apply_imported_cancel(event_ref, event)?;
         Ok(())
     }
+    /// Ends an omission's cancellation of `event`, which a feed reports live
+    /// again ([`clear_absence_cancellation_in_txn`]).
     pub(super) fn clear_absence_cancellation(&self, event: EntityId) -> Result<(), CalendarError> {
-        for id in self.vault.claims_for_subject(&event)? {
-            if let Some(body) = self.vault.get_claim(&id)?
-                && body.predicate == PREDICATE_CALENDAR_STATUS
-                && body.lifecycle == ClaimLifecycleStatus::Active
-            {
-                let status = decode_status_value(&body.value)?;
-                if status.basis == CalendarStatusBasis::ImportedAbsence {
-                    self.vault.retract_claim(&id, self.now)?;
-                }
-            }
-        }
+        self.vault.with_write_txn_grouped(|txn| {
+            clear_absence_cancellation_in_txn(self.vault, txn, event, self.now)
+        })?;
         Ok(())
     }
     pub(super) fn exception_start(&self, event: EntityId) -> Result<Option<u64>, CalendarError> {
@@ -123,6 +117,30 @@ impl PollAdmission<'_> {
         }
         Ok(())
     }
+}
+
+/// Retracts every live `calendar.status` of `event` whose basis is
+/// `imported_absence`, in the caller's transaction: a feed reports the EVENT
+/// live again, so an omission's cancellation of it ends. A cancellation of any
+/// other basis stands. A booking's feed move runs it in the move's own
+/// transaction, so the revised invite it queues reads the booking live from
+/// the moment it can be claimed (review round 1 of #9677).
+pub(crate) fn clear_absence_cancellation_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    event: EntityId,
+    now: u64,
+) -> crate::Result<()> {
+    for id in vault.claims_for_subject_in_txn(txn, &event)? {
+        if let Some(body) = vault.get_claim_in_txn(txn, &id)?
+            && body.predicate == PREDICATE_CALENDAR_STATUS
+            && body.lifecycle == ClaimLifecycleStatus::Active
+            && decode_status_value(&body.value)?.basis == CalendarStatusBasis::ImportedAbsence
+        {
+            vault.retract_claim_in_txn(txn, &id, now)?;
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn exception_id(master: EntityId, original: u64) -> Result<EntityId, CalendarError> {

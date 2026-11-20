@@ -204,11 +204,6 @@ pub(in crate::api::facade) fn door_admits(
         Proof::ViewEditor => {
             crate::api::facade::code_view_doors::view_editor_admits(server, auth, verb)
         }
-        // The vault's review policy rows (FIX 8268): a live Owner, or a bound
-        // principal whose one Grant the engine door admits.
-        Proof::ReviewPolicy => {
-            crate::api::facade::merge_queue_checker_doors::review_policy_admits(server, auth, verb)
-        }
         // A member's own TASK-bound workflow run (FIX 5316): a live person on
         // their own slip, bound to it, as the door acts under.
         Proof::WorkflowMember => {
@@ -273,6 +268,9 @@ pub(in crate::api::facade) fn door_admits(
         // or an agent acting for the owner (an agent puts `local` alone).
         Proof::PacksSetup => super::packs::setup_admits(server, auth, verb),
         Proof::MediaOwnerGrade => owner_grade(auth, MEDIA_OWNERS),
+        // The customer GPU job rows (row L10-31): the owner's own proof, or an agent's own Grant naming the
+        // verb; `allow` is the owner's act alone, and start and cancel judge the agent again in their write.
+        Proof::GpuJobCaller => super::gpu_jobs::gpu_job_caller_admits(server, auth, verb),
         Proof::VideoJobOwnerGrade => owner_grade(auth, VIDEO_JOB_OWNERS),
         // A person's own trusted-contact acts (FIX 8169): the live person whose own slip the engine door
         // revalidates.
@@ -330,5 +328,10 @@ pub(in crate::api::facade) fn door_admits(
         // A requested eval-authoring pass (LEARNING-06): the owner's own proof or an agent's own Grant
         // naming the verb, as the writer that admits the Coach attempt checks it.
         Proof::EvalAuthoring => crate::api::facade::eval_doors::execute_admits(server, auth),
+        // A requested training run step (ROLE-TRAINING-RUN, LEARN-TRAIN Q4): the owner's own proof or an
+        // agent's own Grant naming the verb, as each read of the run checks it again.
+        Proof::TrainingRunExecutor => {
+            crate::api::facade::training_run_doors::training_run_executor_admits(server, auth)
+        }
     }
 }

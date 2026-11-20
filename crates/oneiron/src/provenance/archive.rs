@@ -63,6 +63,11 @@ impl Vault {
     /// `cut` marks an authored-cut cohort (blind-review P1c, REVIEW-4389):
     /// its subject edge is gone, so the restore replays the claim chain
     /// without the edge and never recreates the deleted link.
+    /// `restore_permit` is the owner's restore permit when the import is that
+    /// restore: the row and its closures are gated under it (Engine ANSWER
+    /// PROVENANCE-RESTORE-UNDER-TRUSTED-MANIFEST = A); with none, a vault
+    /// whose trusted manifest has no Imported Auto row pends the row.
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn restore_archived_provenance_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -72,6 +77,7 @@ impl Vault {
         learned_at: u64,
         explicit_prior: Option<&EntityId>,
         cut: bool,
+        restore_permit: Option<&crate::batch::export::OwnerArchiveRestorePermit>,
     ) -> Result<()> {
         if body.source != Some(ClaimSource::Imported) {
             return Err(invalid("archive source floor missing"));
@@ -124,17 +130,18 @@ impl Vault {
             generated_evidence: None,
         };
         if cut {
-            self.restore_cut_edge_provenance_in_txn(txn, write, allow_structural)?;
+            self.restore_cut_edge_provenance_in_txn(txn, write, allow_structural, restore_permit)?;
         } else {
-            self.restore_edge_provenance_in_txn(txn, write, allow_structural)?;
+            self.restore_edge_provenance_in_txn(txn, write, allow_structural, restore_permit)?;
         }
         if body.lifecycle == ClaimLifecycleStatus::Retracted {
-            self.retract_edge_provenance_in_txn(
+            self.retract_restored_edge_provenance_in_txn(
                 txn,
                 id,
                 body.valid_to
                     .ok_or_else(|| invalid("retracted archive missing close time"))?,
                 cut,
+                restore_permit,
             )?;
         }
         Ok(())

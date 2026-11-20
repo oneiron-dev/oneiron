@@ -66,7 +66,9 @@ pub use self::self_brief::{
 pub use self::session_refusal::is_session_act_refusal;
 pub use self::shadow_step::{ArmTypeFeedback, run_shadow_step};
 pub(crate) use self::shadow_step::{run_shadow_callable_branch, shadow_readable_outputs};
-pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};
+pub use self::skill_call::{
+    execute_live_skill_call, execute_live_skill_call_listing, spill_admitted_skill_view,
+};
 // FIX 4414: the owner's per-run step evidence.
 pub(crate) use self::step_evidence::step_evidence_page;
 pub use self::store::{RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES};
@@ -95,8 +97,6 @@ pub(crate) use self::host::spill_before_record;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::wire::{HealedExecutorReply, heal_executor_text_tracking_repairs};
 
-// FIX [LIBTEST-QUARANTINE-ENGINE-EXECUTOR-TESTS]: the lib test target's type check fails here (59 errors: E0063 x22, E0560 x20, E0308 x8, E0061 x4, E0599 x4, E0027 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

@@ -31,7 +31,9 @@
 //! actor's for good (Astra delta 2 review finding 1). A device key's
 //! enrolment of a key confirms it, so a passkey's vouch for the same key on
 //! a sibling branch limits nothing once the fold merges the two (Astra
-//! delta review finding 2). An install that holds such a key as its only
+//! delta review finding 2). The custodial root's enrolment confirms none,
+//! so the fold refuses a passkey's vouch on a sibling branch of it (blind
+//! review round 2 of #9495, P1). An install that holds such a key as its only
 //! owner key proves no owner act with it, as the fold takes no proof from it
 //! (REVIEW-8451 P1).
 //! A passkey that only another passkey vouched for has its own confirmation
@@ -54,14 +56,14 @@
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use base64::Engine as _;
 use ed25519_dalek::Signer as _;
 use oneiron::authority::{
-    ActAuthority, ActSurface, AuthorityAttestation, AuthorityKey, AuthorityOp, AuthorityTier,
-    DeviceAuthority, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
+    ActAuthority, ActSurface, AuthorityAttestation, AuthorityFold, AuthorityKey, AuthorityOp,
+    AuthorityTier, DeviceAuthority, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey, MachineOwnership,
     MachineProfile, MachineRole, OwnerAct, OwnerActKind, OwnerKeyEnrollment,
     OwnerPasskeyEnrollment, ROLE_AGENT, ROLE_OWNER, encode_authority_log_entry_body,
@@ -601,8 +603,11 @@ fn a_key_only_a_passkey_vouched_for_binds_itself_to_no_actor() {
 /// Astra delta review finding 2: the owner's device key enrols a fresh key
 /// at the heads, and the passkey vouches for the same key on a sibling
 /// branch (a blind signature the page's host obtained). Once the fold merges
-/// the two, the key acts in full: the device key's enrolment confirms it, so
-/// it revokes the passkey-vouched key.
+/// the two, the key acts in full, so it revokes the passkey-vouched key. The
+/// device key's enrolment is the one that made the key the owner's, and the
+/// passkey's vouch lies outside its line, so the fold refuses the vouch (row
+/// CARRIER-PROOF-OLD-PARENTS, OLDPARENTS-ENROL-DODGE = A); were it counted,
+/// the device key's enrolment would confirm the key against it.
 #[test]
 fn a_device_keys_enrolment_confirms_against_a_sibling_passkey_vouch() {
     let hosted = HostedVault::open();
@@ -627,8 +632,9 @@ fn a_device_keys_enrolment_confirms_against_a_sibling_passkey_vouch() {
     )
     .expect("the sibling vouch is stored");
     assert!(
-        vouched,
-        "guard: the passkey's sibling vouch for the same fresh key counts"
+        !vouched,
+        "the passkey's sibling vouch for the same fresh key lies outside the line of the device \
+         key's enrolment and counts for nothing"
     );
     assert!(
         revoke_owner_key_signed_by(
@@ -639,6 +645,54 @@ fn a_device_keys_enrolment_confirms_against_a_sibling_passkey_vouch() {
         )
         .unwrap_or(false),
         "the key the device key enrolled acts in full after the merge"
+    );
+}
+
+/// Blind review round 2 of #9495, P1: with the owner's passkey enrolled, the
+/// custodial root enrols a fresh key at the heads, and the passkey vouches
+/// for the same key, with the same holder and proof, on a sibling branch.
+/// The root is in the host's custody, so its enrolment confirms no vouch,
+/// and a counted vouch would limit the key once the fold merges the two.
+/// The vouch's key gives no proof where the root's enrolment's key gives
+/// it, so the fold refuses the vouch, and an install that holds the key
+/// proves owner acts with it. The reviewed head counted the vouch, and the
+/// key proved nothing.
+#[test]
+fn a_host_roots_enrolment_keeps_its_proof_against_a_sibling_passkey_vouch() {
+    let hosted = HostedVault::open();
+    let machine = enrol_passkey(&hosted).machine;
+    let fork = main_log_heads(&hosted.vault).expect("the heads before the fork");
+    hosted
+        .vault
+        .enrol_owner_signing_key_as_host(
+            &hosted.owner(),
+            keyed_enrollment(&hosted, machine, &fresh_owner_key()),
+            &hosted.issuer,
+        )
+        .expect("the host root enrols a fresh key");
+    let vouched = enrol_owner_key_on(
+        &hosted.vault,
+        &hosted.owner(),
+        keyed_enrollment(&hosted, machine, &fresh_owner_key()),
+        fork,
+        passkey_roster_key(),
+        |transcript| passkey_signs(transcript, FLAGS_PRESENT_VERIFIED),
+    )
+    .expect("the sibling vouch is stored");
+    assert!(
+        !vouched,
+        "the passkey's sibling vouch for the key the host root enrolled counts for nothing"
+    );
+    hosted
+        .vault
+        .hold_checkpoint_root_signer(Arc::new(HeldOwnerKey(fresh_owner_key())));
+    let listing = hosted
+        .vault
+        .held_machine_answers(&hosted.proof)
+        .expect("the held answers");
+    assert!(
+        listing.can_confirm,
+        "the key the host root enrolled proves owner acts after the merge"
     );
 }
 
@@ -710,6 +764,7 @@ fn answers_machine(
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     });
     append_signed_rows(
         &hosted.vault,
@@ -887,6 +942,7 @@ fn node_answer_proved_by(hosted: &HostedVault, prover: &ed25519_dalek::SigningKe
         seen_world_edits: BTreeSet::new(),
         carrier: Some(machine),
         act: Some(act),
+        restored_from: None,
     });
     append_signed_rows(
         &hosted.vault,
@@ -956,15 +1012,29 @@ impl oneiron::authority::CheckpointRootSigner for HeldOwnerKey {
         ed_key(&self.0)
     }
 
-    fn sign_checkpoint_statement(&self, statement: &[u8]) -> oneiron::Result<Vec<u8>> {
+    fn sign_checkpoint_statement(
+        &self,
+        _vault: &Vault,
+        statement: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
         Ok(self.0.sign(statement).to_bytes().to_vec())
     }
 
-    fn sign_owner_proof(&self, transcript: &[u8]) -> oneiron::Result<Vec<u8>> {
+    fn sign_owner_proof(
+        &self,
+        _vault: &Vault,
+        _fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
         Ok(self.0.sign(transcript).to_bytes().to_vec())
     }
 
-    fn sign_ask_word_proof(&self, transcript: &[u8]) -> oneiron::Result<Vec<u8>> {
+    fn sign_ask_word_proof(
+        &self,
+        _vault: &Vault,
+        _fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
         Ok(self.0.sign(transcript).to_bytes().to_vec())
     }
 }
@@ -992,10 +1062,12 @@ fn an_install_holding_only_a_key_a_passkey_vouched_for_proves_no_owner_act() {
         !listing.can_confirm,
         "the limited key proves no owner act on this install"
     );
-    let confirm =
-        hosted
-            .vault
-            .confirm_held_machine_answers(&hosted.proof, ActSurface::ThisInstall, &[]);
+    let confirm = hosted.vault.confirm_held_machine_answers(
+        &hosted.proof,
+        ActSurface::ThisInstall,
+        &[],
+        &BTreeMap::new(),
+    );
     assert!(
         matches!(
             confirm,
@@ -2034,4 +2106,86 @@ fn the_move_plan_verb_names_the_members_passkey_in_hex() {
         oneiron_hex::encode(passkey().verifying_key().to_encoded_point(true).as_bytes());
     assert_eq!(passkey_hex.len(), 66, "guard: a compressed P-256 key");
     assert_eq!(plan.revoked, vec![passkey_hex], "{plan:?}");
+}
+
+/// The custodial root signs a `BindActor` of the passkey-vouched key as a
+/// person's, another person than the owner, cosigned by `cosigner` (one of
+/// the keys this file holds, or the passkey); true when it counted.
+fn custodial_root_binds_host_key_to_a_person_with(
+    hosted: &HostedVault,
+    cosigner: AuthorityKey,
+) -> bool {
+    let root = hosted.issuer.public_key();
+    let counted = append_signed_rows(
+        &hosted.vault,
+        vec![SignedRow {
+            op: AuthorityOp::BindActor {
+                authority_key: ed_key(&host_held()),
+                actor_ref: oneiron::EntityId::now(),
+                actor_class: "human".to_owned(),
+                epoch: 1,
+            },
+            signer: root.clone(),
+            cosigners: vec![cosigner],
+        }],
+        |key, transcript| {
+            if *key == root {
+                sign_as_host_root(&hosted.issuer, transcript)
+            } else if *key == passkey_roster_key() {
+                passkey_signs(transcript, FLAGS_PRESENT_VERIFIED)
+            } else {
+                signs_as(key, transcript)
+            }
+        },
+    )
+    .expect("the row is stored");
+    counted == vec![true]
+}
+
+/// Rows OLD-PARENTS-OWNER-BINDING-REVOKE and -CONFLICT (#9137): on a hosted
+/// vault the custodial root's bind of a person counts only with an owner
+/// key's proof, and a passkey-limited key gives none, as it gives none to
+/// the root's revoke of an owner key above (lead ruling
+/// WEBPASSKEY-BLIND-SIGNATURE = B): the root's bind of the key only the
+/// passkey vouched for as another person's, cosigned by that key or by the
+/// passkey itself, counts for nothing. Main: the root's bind counts with any
+/// cosign; #9137 before this fix: both cosigns proved it. Each on its own
+/// vault, so the first bind cannot decide the second.
+#[test]
+fn a_passkey_limited_cosign_proves_no_custodial_roots_bind_of_a_person() {
+    let counted: Vec<bool> = [ed_key(&host_held()), passkey_roster_key()]
+        .into_iter()
+        .map(|cosigner| {
+            let hosted = HostedVault::open();
+            passkey_vouched_host_key(&hosted);
+            custodial_root_binds_host_key_to_a_person_with(&hosted, cosigner)
+        })
+        .collect();
+    assert_eq!(
+        counted,
+        vec![false, false],
+        "[the passkey-vouched key's cosign, the passkey's cosign]: neither proves the root's bind"
+    );
+}
+
+/// The control of the test above: once the owner's device key confirms the
+/// passkey-vouched key, its cosign is an owner key's proof, and the same
+/// custodial root's bind counts.
+#[test]
+fn once_confirmed_the_passkey_vouched_keys_cosign_proves_the_custodial_roots_bind() {
+    let hosted = HostedVault::open();
+    let machine = passkey_vouched_host_key(&hosted);
+    hosted
+        .vault
+        .confirm_owner_key_as(
+            &hosted.owner(),
+            keyed_enrollment(&hosted, machine, &host_held()),
+            ed_key(&owner_device()),
+            |transcript| Ok(owner_device().sign(transcript).to_bytes().to_vec()),
+        )
+        .expect("the owner's device key confirms the passkey-vouched key");
+    assert!(
+        custodial_root_binds_host_key_to_a_person_with(&hosted, ed_key(&host_held())),
+        "a confirmed key's cosign proves the root's bind"
+    );
 }

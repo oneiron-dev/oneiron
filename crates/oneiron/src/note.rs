@@ -296,12 +296,12 @@ pub(crate) use fork_downlink::{
 };
 #[cfg(feature = "sync")]
 mod fork_upload;
+#[cfg(all(feature = "sync", oneiron_test_support))]
+pub(crate) use fork_upload::fork_upload_refusal_in_txn;
 #[cfg(feature = "sync")]
 pub use fork_upload::{NoteForkUpload, NoteForkUploadOutcome, NoteForkUploadReceipt};
 #[cfg(feature = "sync")]
 pub(crate) use fork_upload::{fork_upload_frame_in_txn, uploadable_fork_in_txn};
-// FIX [LIBTEST-QUARANTINE-NOTE-ERASURE-TESTS]: the lib test target's type check fails here (2 errors: E0063 x1, E0308 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod erasure_tests;
 mod live_body;
@@ -405,6 +405,8 @@ pub(crate) fn note_side_text_in_txn(
 }
 
 mod document_store;
+mod found_key_restore;
+pub(crate) use found_key_restore::restore_found_key_text_in_txn;
 mod saved;
 pub(crate) use document_store::deck_outline_document_in_txn;
 pub(crate) use document_store::resolve_deck_pin_in_txn;
@@ -427,6 +429,8 @@ pub use folder_source::{
     FolderSourceFile, OriginalBytes,
 };
 mod import;
+#[cfg(oneiron_test_support)]
+pub(crate) use import::note_import_content_hash_for_test;
 pub use import::{
     ImportedFile, ImportedNote, ImportedNoteBatch, ImportedNoteBatchReceipt, ImportedNoteLink,
     ImportedNoteStanding, NOTES_IMPORT_SOURCE,
@@ -456,12 +460,10 @@ pub use brief_view::{BriefCitationView, BriefView};
 pub(crate) use replica::{
     import_note_from_authority, text_withheld_by_worlds, validate_note_export,
 };
-// FIX [LIBTEST-QUARANTINE-NOTE-DOCUMENT-TESTS]: the lib test target's type check fails here (8 errors: E0308 x7, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(all(test, feature = "sync"))]
 mod document_tests;
-// FIX [LIBTEST-QUARANTINE-NOTE-SYNC-TESTS]: the lib test target's type check fails here (10 errors: E0061 x6, E0308 x3, E0063 x1); port it, then drop this gate
-#[cfg(any())]
+#[cfg(all(test, feature = "sync"))]
+mod mask_splice_tests;
 #[cfg(all(test, feature = "sync"))]
 mod sync_tests;
 pub(crate) use document::MAX_NOTE_BYTES;
@@ -472,17 +474,11 @@ pub use document::{
 };
 pub use document::{NoteScalarEdit as NoteEdit, NoteScalarEditOutcome as NoteEditOutcome};
 
-// FIX [LIBTEST-QUARANTINE-NOTE-PROGRAM-TESTS]: the lib test target's type check fails here (2 errors: E0308 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod program_tests;
-// FIX [LIBTEST-QUARANTINE-NOTE-SHARED-MEMBERSHIP-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod shared_membership_tests;
 
-// FIX [LIBTEST-QUARANTINE-NOTE-ADAPTER-TESTS]: the lib test target's type check fails here (2 errors: E0308 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod adapter_tests;
 pub(crate) mod tables;

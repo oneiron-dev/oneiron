@@ -17,7 +17,7 @@ pub mod present;
 
 pub use admit::Admission;
 pub use appearance::flatten;
-pub use burn::{burn_field, op, resource, stamp_rejected, text};
+pub use burn::{BurnTarget, burn_field, op, resource, stamp_rejected, text};
 pub use error::BurnError;
 pub use present::{
     FieldGeometry, FieldMark, ImageCache, LeafValue, PageGeometry, PdfFieldRect, RasterView,

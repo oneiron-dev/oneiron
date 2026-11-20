@@ -26,6 +26,11 @@ use super::*;
 
 pub const OP_KIND_MACHINE_PROFILE: &str = "machine_profile";
 const MACHINE_PROFILE_PROOF_DOMAIN: &[u8] = b"oneiron/machine-profile/v1\0";
+/// The proof domain of a machine born of a restore (row
+/// RESTORED-COPIES-ENROL-EACH-OTHER): the v1 fields, then the image the
+/// install was restored from, so no one strips or swaps the mark under the
+/// machine's own signature.
+const RESTORED_MACHINE_PROFILE_PROOF_DOMAIN: &[u8] = b"oneiron/machine-profile/v2\0";
 /// `kem-x25519-mlkem1024-v1` (OF-570): the one suite a machine's encryption
 /// key may name.
 pub const MACHINE_ENCRYPTION_SUITE_HYBRID_V1: u16 = 0x0101;
@@ -35,6 +40,8 @@ const SEEN_WORLD_EDITS_KEY: &str = "seen_world_edits";
 /// The key an owner answer names its carrier under (C1). The `machine` key
 /// keeps meaning the target.
 const CARRIER_KEY: &str = "carrier";
+/// The key a restored machine's revision names its image under.
+const RESTORED_FROM_KEY: &str = "restored_from";
 /// The domain of a machine answer's `seen` (mesh PR1b C5): BLAKE3 over it and
 /// the target's sorted distinct live head hashes, in the `PolicyRevision`
 /// shape ([`machine_answer_revision`]).
@@ -237,6 +244,16 @@ pub struct MachineProfile {
     /// enrolment or a role change) or `machine_removal` (exactly when the
     /// role is `Removed`). `Some` exactly when `carrier` is.
     pub act: Option<OwnerAct>,
+    /// The checkpoint image this machine's install was restored from, when
+    /// it was born of a restore that dropped the image's machine identity
+    /// (row RESTORED-COPIES-ENROL-EACH-OTHER). The machine signs it in its
+    /// proof ([`restored_machine_profile_proof_transcript`]). Such a
+    /// machine is not joined until an entry signed by a joined machine
+    /// descends from its enrolment: until then its act-free revisions stand
+    /// for nothing. `None` is a machine that never restored, as every
+    /// revision before this field reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restored_from: Option<[u8; 32]>,
 }
 
 impl MachineProfile {
@@ -278,15 +295,34 @@ impl MachineProfile {
         let Ok(key) = VerifyingKey::from_bytes(&self.machine_key) else {
             return false;
         };
-        let transcript = machine_profile_proof_transcript(
-            vault_id,
-            self.machine,
-            &self.machine_key,
-            self.device_class,
-            &self.encryption_key,
-        );
-        key.verify_strict(&transcript, &Signature::from_bytes(&self.machine_proof))
-            .is_ok()
+        key.verify_strict(
+            &self.proof_transcript(vault_id),
+            &Signature::from_bytes(&self.machine_proof),
+        )
+        .is_ok()
+    }
+
+    /// The bytes [`Self::machine_proof`] signs: the restored transcript for a
+    /// machine born of a restore, else the v1 transcript.
+    #[must_use]
+    pub fn proof_transcript(&self, vault_id: &[u8; 32]) -> Vec<u8> {
+        match &self.restored_from {
+            Some(image) => restored_machine_profile_proof_transcript(
+                vault_id,
+                self.machine,
+                &self.machine_key,
+                self.device_class,
+                &self.encryption_key,
+                image,
+            ),
+            None => machine_profile_proof_transcript(
+                vault_id,
+                self.machine,
+                &self.machine_key,
+                self.device_class,
+                &self.encryption_key,
+            ),
+        }
     }
 
     /// Mine is the owner's explicit answer, never derived.
@@ -321,6 +357,31 @@ pub fn machine_profile_proof_transcript(
     bytes.push(0);
     bytes.extend_from_slice(&encryption_key.suite.to_be_bytes());
     bytes.extend_from_slice(&encryption_key.key);
+    bytes
+}
+
+/// [`machine_profile_proof_transcript`] for a machine born of a restore:
+/// the same fields under the v2 domain, then the 32-byte id of the image it
+/// was restored from (row RESTORED-COPIES-ENROL-EACH-OTHER).
+pub fn restored_machine_profile_proof_transcript(
+    vault_id: &[u8; 32],
+    machine: EntityId,
+    machine_key: &[u8; 32],
+    device_class: MachineDeviceClass,
+    encryption_key: &MachineEncryptionKey,
+    restored_from: &[u8; 32],
+) -> Vec<u8> {
+    let mut bytes = RESTORED_MACHINE_PROFILE_PROOF_DOMAIN.to_vec();
+    bytes.extend_from_slice(
+        &machine_profile_proof_transcript(
+            vault_id,
+            machine,
+            machine_key,
+            device_class,
+            encryption_key,
+        )[MACHINE_PROFILE_PROOF_DOMAIN.len()..],
+    );
+    bytes.extend_from_slice(restored_from);
     bytes
 }
 
@@ -371,6 +432,11 @@ pub(super) fn machine_profile_value(profile: &MachineProfile) -> Value {
             ),
         ));
     }
+    // Absent for a machine that never restored, so its bytes stay as they
+    // were.
+    if let Some(image) = profile.restored_from {
+        entries.push((Value::from(RESTORED_FROM_KEY), binary_value(image)));
+    }
     // An owner answer names its carrier and carries the act (C1); a
     // bootstrap or anchor revision names neither.
     if let (Some(carrier), Some(act)) = (&profile.carrier, &profile.act) {
@@ -395,6 +461,10 @@ pub(super) fn decode_machine_profile(entries: &[(Value, Value)]) -> Result<Autho
     let mut keys = MACHINE_PROFILE_KEYS.to_vec();
     if named(SEEN_WORLD_EDITS_KEY).is_some() {
         keys.push(SEEN_WORLD_EDITS_KEY);
+    }
+    let restored = named(RESTORED_FROM_KEY);
+    if restored.is_some() {
+        keys.push(RESTORED_FROM_KEY);
     }
     if acted {
         keys.extend([CARRIER_KEY, OP_KEY_ACT]);
@@ -451,6 +521,7 @@ pub(super) fn decode_machine_profile(entries: &[(Value, Value)]) -> Result<Autho
         act: acted
             .then(|| super::owner_act::decode_owner_act(required(entries, OP_KEY_ACT)?))
             .transpose()?,
+        restored_from: restored.map(decode_hash).transpose()?,
     }))
 }
 

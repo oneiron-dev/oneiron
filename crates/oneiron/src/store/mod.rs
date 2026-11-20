@@ -358,6 +358,8 @@ mod inference_snapshot_custody;
 pub(crate) mod install_identity;
 mod invocation_claims;
 mod key_custody;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::key_custody::custody_head_digest_for_test;
 mod key_encoding;
 mod known_history;
 pub(crate) mod legal_hold;
@@ -412,8 +414,6 @@ mod writer_lease;
 
 #[cfg(test)]
 pub(crate) mod test_hooks;
-// FIX [LIBTEST-QUARANTINE-STORE-TESTS]: the lib test target's type check fails here (17 errors: E0560 x4, E0061 x4, E0609 x3, E0308 x3, E0063 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -499,6 +499,8 @@ pub use key_custody::custody_container_path;
 #[cfg(oneiron_test_support)]
 pub(crate) use key_custody::custody_entry_reads_for_test;
 #[cfg(oneiron_test_support)]
+pub(crate) use key_custody::custody_policy_digest_for_test;
+#[cfg(oneiron_test_support)]
 pub(crate) use key_custody::drain_ack_digest_for_test;
 pub use key_custody::protocol as custody_protocol;
 pub use key_custody::sync_dir;
@@ -541,6 +543,8 @@ pub(crate) use root_directory::arm_after_root_entry_removed;
 
 #[cfg(unix)]
 pub use directory_exchange::{HeldEntry, exchange_held};
+#[cfg(unix)]
+pub(crate) use root_directory::make_vault_root_all;
 #[cfg(unix)]
 pub use root_directory::{
     SharedPath, refuse_shared_path, refuse_shared_vault_root, remove_held_directory, shared_path,
@@ -665,6 +669,8 @@ pub(crate) use oneiron_store::record_references;
 pub(crate) mod scan_count;
 pub(crate) mod skill_resident;
 pub(crate) mod tables;
+#[cfg(oneiron_test_support)]
+mod test_support_rows;
 
 pub(crate) use oneiron_store::host_issuer_seed;
 pub(crate) use oneiron_store::principal_record;

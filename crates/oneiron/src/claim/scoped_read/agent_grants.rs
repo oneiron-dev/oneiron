@@ -212,16 +212,9 @@ impl ScopedRead<'_> {
         candidates
     }
 
-    /// The reader A may stand for: this key's own actor, while the key
-    /// supplies no proof, carries no Scope and is not the owner's. A narrowed
-    /// key (`read_nothing` among them) stays exactly as it is.
+    /// The reader A may stand for ([`ScopedReadActorKey::grant_reader`]).
     fn grant_reader(&self) -> Option<EntityId> {
-        let key = &self.actor_key;
-        if key.proof.is_some() || key.authority_scope().is_some() || key.vault_owner_ref().is_some()
-        {
-            return None;
-        }
-        EntityId::from_hex(key.actor_ref()).ok()
+        self.actor_key.grant_reader()
     }
 
     /// The row under `grant` alone: the Grant first admits the row's record
@@ -306,6 +299,55 @@ impl ScopedRead<'_> {
                 &[&ceiling.worlds, &grant.worlds],
             );
             grant.admits("read", &record, &Scope::top())
+        }))
+    }
+}
+
+impl ScopedReadActorKey {
+    /// The reader A may stand for: this key's own actor, while the key
+    /// supplies no proof, carries no Scope and is not the owner's. A narrowed
+    /// key (`read_nothing` among them) stays exactly as it is.
+    fn grant_reader(&self) -> Option<EntityId> {
+        if self.proof.is_some()
+            || self.authority_scope().is_some()
+            || self.vault_owner_ref().is_some()
+        {
+            return None;
+        }
+        EntityId::from_hex(self.actor_ref()).ok()
+    }
+
+    /// Whether a CLAIM placed at `facet` sits inside the facets a read under
+    /// this key admits: the key's own facet limits and, for a key whose
+    /// actor reads through its own live Grants (A), one of its Grants over
+    /// CLAIMs that holds `facet`, as A judges each Grant alone. An actor with
+    /// no Grant over CLAIMs is judged by the key's limits alone. A standing
+    /// answer lands where its asker reads it back (review round 1 on #9604).
+    ///
+    /// # Errors
+    /// A store failure reading the key's limits or the actor's Grants.
+    pub(crate) fn reads_claims_at_facet_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        facet: EntityId,
+    ) -> Result<bool> {
+        if !self.facets_allow_placed_in(vault, txn, &[facet])? {
+            return Ok(false);
+        }
+        let Some(reader) = self.grant_reader() else {
+            return Ok(true);
+        };
+        let grants = reader_grants_in(vault, txn, reader)?;
+        let mut over_claims = grants
+            .iter()
+            .filter(|(_, scope)| scope.bands.contains(&ENTITY_TYPE_CLAIM))
+            .peekable();
+        if over_claims.peek().is_none() {
+            return Ok(true);
+        }
+        Ok(over_claims.any(|(_, scope)| {
+            crate::federation::facet_read::placed_facets_admit(&scope.facets, &[facet])
         }))
     }
 }

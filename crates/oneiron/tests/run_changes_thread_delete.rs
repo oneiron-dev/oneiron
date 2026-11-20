@@ -142,6 +142,7 @@ impl Fixture {
                 conversation_ref: room.to_hex(),
                 turn_ref: Some(turn.to_hex()),
                 thread_audience: thread_of.map(|_| BTreeSet::from([self.owner])),
+                project: None,
                 messages: vec![WitnessMessage {
                     id: Some(message.to_hex()),
                     author: WitnessAuthor::User,

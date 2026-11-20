@@ -45,18 +45,22 @@ async fn send(server: &Arc<SyncServer>, mut request: Request<Body>) -> (StatusCo
             40_000,
         ))));
     let request = slip_credentials::bind_request(server, request);
-    let response = api_routes(Arc::clone(server))
-        .oneshot(request)
-        .await
-        .expect("route response");
-    let status = response.status();
-    (
-        status,
-        to_bytes(response.into_body(), usize::MAX)
+    let server = Arc::clone(server);
+    crate::test_engine_stack::on_engine_stack(async move {
+        let response = api_routes(server)
+            .oneshot(request)
             .await
-            .unwrap()
-            .to_vec(),
-    )
+            .expect("route response");
+        let status = response.status();
+        (
+            status,
+            to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+    })
+    .await
 }
 
 fn chat(mut body: Value) -> Request<Body> {
@@ -454,12 +458,44 @@ fn install_route_manifest(vault: &oneiron::Vault) {
         .unwrap();
 }
 
+/// The owner narrows the LLM slot's resident route through the key
+/// `models.resident_route` (item `llm`). SETTING-DIALS D2 (#8977) moved the
+/// route there and removed `Vault::set_model_route`; the key's write runs the
+/// same manifest admission the old door ran.
+fn set_llm_resident_route(vault: &oneiron::Vault, route: oneiron::ModelLocality) {
+    use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
+    let owner_ref = vault.ensure_embedded_owner_actor().unwrap();
+    let owner = vault
+        .authenticate_owner(
+            owner_ref,
+            &owner_ref.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let outcome = vault
+        .set_setting(
+            SettingCaller::Owner(&owner),
+            SetSetting {
+                item: Some("llm".into()),
+                ..SetSetting::vault_value(
+                    "models.resident_route",
+                    serde_json::to_value(route).unwrap(),
+                )
+            },
+        )
+        .unwrap();
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "{outcome:?}"
+    );
+}
+
 /// Astra #1304 P1: chat and workflow steps took the raw-call exception, so a
 /// vault that narrowed its model route still sent them to a third party.
 #[tokio::test]
 async fn a_narrowed_vault_route_keeps_chat_and_workflow_steps_off_the_cloud() {
     use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, DispatchAgent};
-    use oneiron::llm::manifest::ModelSlot;
     use oneiron::{EntityId, ModelLocality};
     let cloud = FakeLlm::start(vec![], Some(Reply::text("from the cloud"))).await;
     let local = FakeLlm::start(vec![], Some(Reply::text("from this server"))).await;
@@ -480,9 +516,7 @@ async fn a_narrowed_vault_route_keeps_chat_and_workflow_steps_off_the_cloud() {
 
     // The vault narrows its LLM route to its own server: chat and a saved
     // workflow's step both stay there.
-    vault
-        .set_model_route(ModelSlot::Llm, ModelLocality::OwnServer)
-        .unwrap();
+    set_llm_resident_route(&vault, ModelLocality::OwnServer);
     let (status, body) = send(&server, turn()).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(lines(&body).last().unwrap()["type"], json!("saved"));
@@ -516,9 +550,7 @@ async fn a_narrowed_vault_route_keeps_chat_and_workflow_steps_off_the_cloud() {
 
     // Narrowed to the device, which this server cannot serve: refused before
     // any call leaves.
-    vault
-        .set_model_route(ModelSlot::Llm, ModelLocality::OnDevice)
-        .unwrap();
+    set_llm_resident_route(&vault, ModelLocality::OnDevice);
     let (status, body) = send(&server, turn()).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     let body: Value = serde_json::from_slice(&body).unwrap();
