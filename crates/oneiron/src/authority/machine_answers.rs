@@ -77,6 +77,11 @@ pub(super) struct AnswerAct {
     /// held on a device (the owner's ruling AUTH-5); no other answer reads
     /// it.
     pub(super) last_device_key: LastDeviceKeyConfirmation,
+    /// Whether the owner key's proof also cosigns the install join the
+    /// answer names first
+    /// ([`crate::consent::AuthenticatedOwner::proves_joins_in_txn`]); the answer
+    /// itself carries the proof its judge needs either way.
+    pub(super) proves_joins: bool,
 }
 
 impl AnswerAct {
@@ -84,7 +89,7 @@ impl AnswerAct {
     /// answer for any other role. It carries no confirmation of a last
     /// device key's end.
     pub(super) fn by_owner(
-        owner: EntityId,
+        (owner, proves_joins): (EntityId, bool),
         surface: ActSurface,
         role: MachineRole,
         seen: Option<[u8; 32]>,
@@ -101,6 +106,7 @@ impl AnswerAct {
             kind,
             seen,
             last_device_key: LastDeviceKeyConfirmation::NotGiven,
+            proves_joins,
         }
     }
 }
@@ -304,7 +310,8 @@ impl Vault {
     ) -> Result<MachineAnswerLanding> {
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        let answer = AnswerAct::by_owner(actor, surface, role, seen);
+        let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
+        let answer = AnswerAct::by_owner((actor, proves_joins), surface, role, seen);
         let landing = self.enroll_machine_in_txn(&mut txn, answer, request, role)?;
         txn.commit()?;
         #[cfg(feature = "sync")]
@@ -356,7 +363,8 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        let answer = AnswerAct::by_owner(actor, surface, role, seen);
+        let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
+        let answer = AnswerAct::by_owner((actor, proves_joins), surface, role, seen);
         let (landing, _) =
             self.machine_role_answer_in_txn(&mut txn, &fold, answer, machine, role)?;
         let rows = self.mark_rows_counted_since_in_txn(&mut txn, &fold)?;
@@ -638,11 +646,16 @@ impl Vault {
         profile.validate()?;
         // The owner key this install holds proves the answer beside the
         // carrier's signature (row CARRIER-OWNER-PROOF); with none, an
-        // answer that needs the proof is held. Its joins carry the same
-        // proof (row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS).
+        // answer that needs the proof is held. Its join carries the same
+        // proof only for the owner's own write (row
+        // OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, REVIEW-9962 P1).
         let proof = self.owner_proof_signer(fold);
         // FIX 7908: join a frontier wider than one entry names, else today's path.
-        let joiner = FrontierSigner::install(carrier, &key, proof.as_ref());
+        let joiner = FrontierSigner::install(
+            carrier,
+            &key,
+            proof.as_ref().filter(|_| answer.proves_joins),
+        );
         let joined = self.prepare_authority_frontier_in_txn(txn, fold, joiner, MAX_PARENTS)?;
         let fold = joined.as_deref().unwrap_or(fold);
         let parents = fold.append_heads.clone();

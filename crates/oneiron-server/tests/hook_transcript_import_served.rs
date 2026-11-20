@@ -573,3 +573,253 @@ fn logs_past_the_cap_are_refused_by_name_and_nothing_lands() {
         assert_eq!(ledger(&fixture), 0, "nothing landed");
     });
 }
+
+/// The repository's current Codex rollout fixture's file stem, which the
+/// hosted hand-over sends as the session (FIX
+/// HOOK-HOSTED-HAND-OVER-OTHER-HOSTS).
+const CODEX_STEM: &str = "rollout-2026-09-14T10-00-00-0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
+/// That rollout.
+const CODEX_LOG: &str = include_str!(
+    "fixtures/history/codex/sessions/2026/09/14/rollout-2026-09-14T10-00-00-0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b.jsonl"
+);
+/// A GitHub Copilot session's id, its transcript's file stem.
+const COPILOT_SESSION: &str = "8f6c1d2e-3333-4444-8555-666677778888";
+/// A Cursor conversation's id, its transcript's file stem.
+const CURSOR_SESSION: &str = "c0ffee00-1111-4222-8333-444455556666";
+
+/// A GitHub Copilot transcript: its session's start, a user message and the
+/// assistant's answer, one event per line.
+fn copilot_log() -> String {
+    [
+        json!({
+            "type": "session.start",
+            "data": {"sessionId": COPILOT_SESSION},
+            "id": "evt0",
+            "timestamp": "2026-11-20T01:00:00.000Z",
+        }),
+        json!({
+            "type": "user.message",
+            "data": {"content": "Keep the heron lantern timetable in pier nine order."},
+            "id": "evt1",
+            "timestamp": "2026-11-20T01:00:01.000Z",
+        }),
+        json!({
+            "type": "assistant.message",
+            "data": {"content": "Noted: the timetable stays in pier nine order."},
+            "id": "evt2",
+            "timestamp": "2026-11-20T01:00:05.000Z",
+        }),
+    ]
+    .iter()
+    .map(|event| format!("{event}\n"))
+    .collect()
+}
+
+/// A Cursor agent transcript: a user message, its words in `<user_query>`,
+/// and the assistant's answer.
+fn cursor_log() -> String {
+    [
+        json!({
+            "role": "user",
+            "message": {"content": [{
+                "type": "text",
+                "text": "<user_query>\nWhere is the heron lantern ledger kept?\n</user_query>",
+            }]},
+        }),
+        json!({
+            "role": "assistant",
+            "message": {"content": [{"type": "text", "text": "Beside the pier nine timetable."}]},
+        }),
+    ]
+    .iter()
+    .map(|record| format!("{record}\n"))
+    .collect()
+}
+
+/// The first conversation `source`'s reader reads from `text`, a file named
+/// `stem`, as the local import reads it: its id and how many messages it
+/// keeps.
+fn first_conversation(source: HistorySource, text: &str, stem: &str) -> (String, usize) {
+    let read = source
+        .decode(
+            text,
+            &HistoryFile {
+                stem: stem.to_owned(),
+                parent: None,
+            },
+        )
+        .expect("decode the log");
+    let first = read.first().expect("the log's conversation");
+    (first.native_id.clone(), first.messages.len())
+}
+
+/// How many messages of `source` the vault's import ledger holds.
+fn ledger_of(fixture: &Fixture, source: HistorySource) -> usize {
+    fixture
+        .vault
+        .history_import_ledger_len(source)
+        .expect("read the import ledger")
+}
+
+/// Case 5 (FIX HOOK-HOSTED-HAND-OVER-OTHER-HOSTS): a request that names its
+/// source lands another host's one log as `oneiron import <source> <log>`
+/// lands it: a Codex rollout by its file's stem, a Copilot and a Cursor hook
+/// transcript by theirs. Each answer names the conversation the log holds,
+/// which the vault holds, and the source's review; a second send lands
+/// nothing new. On the PR's base the verb takes no `source`, and each first
+/// send is refused.
+#[test]
+fn a_request_naming_its_source_lands_a_codex_rollout_and_hook_transcripts() {
+    run_on_engine_stack("hook-transcript-sources", || async {
+        let (fixture, _agent) = setup().await;
+        let owner_token = fixture.owner_token.clone();
+        let (copilot, cursor) = (copilot_log(), cursor_log());
+        for (source, text, stem) in [
+            (HistorySource::Codex, CODEX_LOG, CODEX_STEM),
+            (
+                HistorySource::HookTranscript,
+                copilot.as_str(),
+                COPILOT_SESSION,
+            ),
+            (
+                HistorySource::HookTranscript,
+                cursor.as_str(),
+                CURSOR_SESSION,
+            ),
+        ] {
+            let wire = source.source_id();
+            let (native_id, kept) = first_conversation(source, text, stem);
+            assert!(kept > 0, "precondition: {stem}'s log keeps messages");
+            let request = json!({
+                "session": stem,
+                "transcript_gzip_base64": gzip_base64(text.as_bytes()),
+                "source": wire,
+            });
+            let before = ledger_of(&fixture, source);
+
+            let (status, body) = import_as(
+                &fixture,
+                &owner_token,
+                owner_binding(&fixture),
+                request.clone(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{stem}: {body}");
+            let own = entry(&body, &native_id);
+            assert_eq!(own["kind"].as_str(), Some("main"), "{stem}: {body}");
+            assert_eq!(own["new"].as_u64(), Some(kept as u64), "{stem}: {body}");
+            assert_eq!(
+                own["conversation"], body["conversation"],
+                "{stem}: the answer names the log's own CONVERSATION: {body}"
+            );
+            assert_eq!(total(&body, "refused"), 0, "{stem}: {body}");
+            assert!(
+                body["review"]
+                    .as_str()
+                    .is_some_and(|review| review.starts_with(&format!("import:{wire}:"))),
+                "{stem}: the import's review is the source's: {body}"
+            );
+            let landed = total(&body, "new");
+            assert_eq!(
+                (ledger_of(&fixture, source) - before) as u64,
+                landed,
+                "{stem}: the source's ledger holds what landed"
+            );
+            let (status, read) = post(
+                &fixture,
+                "/v1/core/facade/vault.get",
+                &owner_token,
+                owner_binding(&fixture),
+                json!({"entity_ref": body["conversation"]}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{stem}: read it back: {read}");
+            assert_eq!(
+                read["value"]["kind"].as_str(),
+                Some("CONVERSATION"),
+                "{stem}: {read}"
+            );
+
+            let (status, again) =
+                import_as(&fixture, &owner_token, owner_binding(&fixture), request).await;
+            assert_eq!(status, StatusCode::OK, "{stem}: second send: {again}");
+            assert_eq!(again["conversation"], body["conversation"], "{stem}");
+            assert_eq!(
+                total(&again, "new"),
+                0,
+                "{stem}: nothing lands twice: {again}"
+            );
+            assert_eq!(total(&again, "changed"), 0, "{stem}: {again}");
+            assert_eq!(total(&again, "skipped"), landed, "{stem}: {again}");
+        }
+        assert_eq!(
+            ledger(&fixture),
+            0,
+            "no log was read as a Claude Code session"
+        );
+    });
+}
+
+/// Case 6: another source's log holds its subagents, so its request takes
+/// no subagent logs; its session is a plain file stem; and a source the
+/// verb does not read is not taken. Each is refused by its own reason, and
+/// nothing lands. On the PR's base each is refused for the `source` field
+/// alone.
+#[test]
+fn another_sources_subagent_logs_a_path_for_its_session_or_an_unread_source_are_refused() {
+    run_on_engine_stack("hook-transcript-source-refusals", || async {
+        let (fixture, _agent) = setup().await;
+        let owner_token = fixture.owner_token.clone();
+        let codex = gzip_base64(CODEX_LOG.as_bytes());
+        for (request, reason) in [
+            (
+                json!({
+                    "session": CODEX_STEM,
+                    "transcript_gzip_base64": codex,
+                    "subagents": [{"stem": "agent-a7f3", "transcript_gzip_base64": codex}],
+                    "source": "codex",
+                }),
+                "only a Claude Code session has subagent logs",
+            ),
+            (
+                json!({
+                    "session": format!("../{CODEX_STEM}"),
+                    "transcript_gzip_base64": codex,
+                    "source": "codex",
+                }),
+                "is not its log's file stem",
+            ),
+            (
+                json!({
+                    "session": CODEX_STEM,
+                    "transcript_gzip_base64": codex,
+                    "source": "slack",
+                }),
+                "unknown variant",
+            ),
+        ] {
+            let (status, body) = import_as(
+                &fixture,
+                &owner_token,
+                owner_binding(&fixture),
+                request.clone(),
+            )
+            .await;
+            assert!(
+                status.is_client_error() && status != StatusCode::NOT_FOUND,
+                "refused 4xx, not 404: {status} {body} for {request}"
+            );
+            assert!(
+                body.to_string().contains(reason),
+                "refused because {reason}: {body}"
+            );
+        }
+        for source in HistorySource::ALL {
+            assert_eq!(
+                ledger_of(&fixture, source),
+                0,
+                "nothing landed as {source:?}"
+            );
+        }
+    });
+}

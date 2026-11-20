@@ -486,8 +486,7 @@ impl LiveDeck {
         let mut stack: Vec<NodeId> = self
             .nodes
             .get(&node)
-            .map(|found| found.children.clone())
-            .unwrap_or_default();
+            .map_or_default(|found| found.children.clone());
         stack.reverse();
         while let Some(id) = stack.pop() {
             out.push(id);

@@ -540,6 +540,20 @@ fn execute(
     let mut input_not_taken = false;
     let result = match ran {
         Err(error) => Err(error),
+        // The guest's stack is the bound on how deep an input it parses
+        // ([SKILL-ANSWER-DEEP-JSON-STACK-SAFE]): QuickJS's JSON parse
+        // recurses once per nesting level on the wasm stack, so a deep
+        // enough input exhausts it before the body starts. That run never
+        // judged its input, so it reads as not taken, and a blocking post
+        // hook on a skill answer refuses the call rather than letting the
+        // answer through unjudged. A body that recursed past the stack on
+        // its own reads the same way: it never judged the input either.
+        Ok(Err(error)) if state.trap.is_none() && stack_exhausted(&error) => {
+            input_not_taken = true;
+            Err(failure(
+                "hook guest stack exhausted before it judged the input",
+            ))
+        }
         Ok(Err(error)) => Err(match state.trap {
             Some(reason) => failure(reason),
             None => trap_failure(&error),
@@ -592,6 +606,14 @@ fn serve_reads(
             Err(mpsc::RecvError) => return Err(failure("hook worker stopped without an end")),
         }
     }
+}
+
+/// Whether `error` is the trap of a guest whose wasm stack ran out.
+fn stack_exhausted(error: &wasmtime::Error) -> bool {
+    matches!(
+        error.downcast_ref::<wasmtime::Trap>(),
+        Some(wasmtime::Trap::StackOverflow)
+    )
 }
 
 fn trap_failure(error: &wasmtime::Error) -> Error {

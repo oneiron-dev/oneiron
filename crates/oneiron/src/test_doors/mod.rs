@@ -47,6 +47,7 @@ pub mod call_receipt_damage;
 pub mod callable_skill;
 pub mod campaign_member_index;
 pub mod campaign_opt_out_line;
+pub mod candidate_scope;
 #[cfg(feature = "sync")]
 pub mod carrier_proof;
 pub mod check_in;
@@ -242,6 +243,7 @@ pub mod msgpack_duplicate_key;
 pub mod msgpack_trailing;
 pub mod native_person_mint;
 pub mod nightly;
+pub mod nightly_arc_summary;
 pub mod note_bm25f_repair;
 #[cfg(feature = "sync")]
 pub mod note_fork_upload;
@@ -253,6 +255,7 @@ pub mod outbound_wait_setting_keys;
 pub mod own_device_grant;
 pub mod own_device_message_replay;
 pub mod owner_device_answer;
+pub mod owner_exemption_judgements;
 pub mod owner_key_enrolment_read;
 pub mod owner_key_line;
 pub mod owner_key_release;
@@ -305,6 +308,7 @@ pub mod room_facet_set;
 pub mod room_fact_marks;
 pub mod room_speaker_entries;
 pub mod room_turn_backfill;
+pub mod room_turn_claims;
 pub mod root_appointment;
 pub mod root_recovery;
 pub mod roster_slot_reservation;
@@ -316,6 +320,7 @@ pub mod scope_summary;
 pub mod scoped_read_liveness;
 pub mod scratchpad_wake;
 pub mod scrub_keeps_hint_and_name_rows;
+pub mod sealed_pad_capsule;
 pub mod seat_park_model_step;
 #[cfg(feature = "sync")]
 pub mod secret_same_value;
@@ -336,6 +341,8 @@ pub mod skill_package;
 pub mod skill_read_hold;
 pub mod slack_install_rows;
 pub mod slate_scope_signals;
+#[cfg(feature = "sync")]
+pub mod slim_drop_note_scrub;
 pub mod slip_store_fault;
 pub mod snapshot_page_accounting;
 pub mod sound_match_birth;
@@ -348,6 +355,7 @@ pub mod split_phrase_carrier;
 #[cfg(feature = "sync")]
 pub mod staged_vault_import;
 pub mod steward;
+pub mod stored_workspace_roster_rows;
 pub mod stretch_pack_finalize;
 pub mod substrate_reads;
 pub mod summarize_note_set;
@@ -374,12 +382,17 @@ pub mod wake_d1_park_release;
 pub mod wake_envelope_ack;
 pub mod weave_arc_rederive;
 pub mod witness_project;
+#[cfg(feature = "sync")]
+pub mod work_talk_replay;
 pub mod workaround_skills;
+pub mod workspace_onboarding_halt;
 pub mod workspace_token;
 pub mod world_access;
 #[cfg(feature = "sync")]
 pub mod world_follow;
 pub mod world_key_record_signature;
+#[cfg(feature = "sync")]
+pub use crate::sync::connection::home_probe;
 #[cfg(feature = "sync")]
 pub use crate::sync::connection::sync_outbox;
 #[cfg(feature = "sync")]

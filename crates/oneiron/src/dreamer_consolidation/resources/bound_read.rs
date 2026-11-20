@@ -175,10 +175,31 @@ impl BoundBranchRead {
         self.pins().evidence_project(refs)
     }
 
-    /// The branch relationship exposure: `None` is unbound, `Some(empty)` the
-    /// explicit empty set, otherwise exactly these relationships.
-    pub(crate) fn relationship(&self) -> Option<&BTreeSet<EntityId>> {
-        self.scope.relationship.as_ref()
+    /// The relationship set a candidate drawn from the words of `turns` is
+    /// assembled under, read in `txn`: the branch's own set where its scope
+    /// holds one, else the relationships every labelled word of those TURNs
+    /// shares, as a native call binds over its TURNs (S63E-RULED). `None`
+    /// for `turns` names every TURN the branch queued. A `None` result is
+    /// unbound, `Some(empty)` the explicit empty set, otherwise exactly
+    /// these relationships.
+    pub(crate) fn candidate_relationship_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        turns: Option<&BTreeSet<EntityId>>,
+    ) -> Result<Option<BTreeSet<EntityId>>> {
+        if let Some(bound) = &self.scope.relationship {
+            return Ok(Some(bound.clone()));
+        }
+        let queued: BTreeSet<EntityId>;
+        let turns = match turns {
+            Some(turns) => turns,
+            None => {
+                queued = self.texts.keys().copied().collect();
+                &queued
+            }
+        };
+        super::extraction_scope::word_bound_in_txn(vault, txn, &self.texts, turns)
     }
 
     /// The effective predicate key rules the projection pinned in the passed

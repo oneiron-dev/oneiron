@@ -6,6 +6,7 @@ mod host_cancel;
 mod import_claim;
 mod preflight;
 mod recurrence;
+mod screen_body;
 mod source_events;
 use super::ingest;
 #[cfg(test)]
@@ -32,8 +33,9 @@ use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 pub(in crate::calendar) use connector::{
     ConnectorAdmissionSource, ConnectorScreen, admit_connector_event, connector_event_ref,
-    defer_connector_cancel, delete_connector_resource, preflight_connector_feed,
-    repeat_connector_echo, sweep_connector_resource, sweep_connector_uids,
+    defer_connector_cancel, defer_connector_delete, delete_connector_resource,
+    preflight_connector_feed, repeat_connector_echo, sweep_connector_resource,
+    sweep_connector_uids, tombstone_cancels_written_only_event,
 };
 use continuation::OwedProperties;
 pub(super) use continuation::run_ics_property_continuation_admitting;
@@ -41,7 +43,7 @@ pub use continuation::{
     ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND, IcsPropertyContinuationPayload,
     run_ics_property_continuation,
 };
-use host_cancel::names_written_calendar;
+use host_cancel::{cancel_moves_deposit, names_written_calendar};
 pub(crate) use import_claim::ensure_ics_import_actor;
 pub use import_claim::ics_import_actor_id;
 pub(in crate::calendar) use import_claim::{
@@ -49,6 +51,7 @@ pub(in crate::calendar) use import_claim::{
 };
 use import_claim::{admit_calendar_import_claim_screened, imported_screen};
 pub(crate) use recurrence::clear_absence_cancellation_in_txn;
+use screen_body::screen_body;
 
 #[cfg(test)]
 use super::fetch::{IcsFeedFetcher, IcsFetchResponse};
@@ -201,6 +204,7 @@ impl PollAdmission<'_> {
             }) {
                 continue;
             }
+            let mut written_tombstone = false;
             for (_, value) in &passports {
                 let omitted = value.system == self.system
                     && only_uids.is_none_or(|uids| uids.contains(value.uid.as_str()))
@@ -210,17 +214,27 @@ impl PollAdmission<'_> {
                     && value.presence == CalendarPassportPresence::Live;
                 // A provider tombstone is this source's report of the UID
                 // cancelled, first seen now unless an earlier cancelled
-                // version or tombstone already dated it. An omission is no
-                // cancellation evidence and dates nothing, so a tombstone
-                // also dates a passport an omission already flipped absent.
-                // An Outbound passport of a calendar the EVENT was written
-                // to never flips, since it is no absence vote, but its
-                // tombstone is dated the same way.
+                // version or tombstone already dated it, or a pull held this
+                // one back while a cancelled write of the UID was in flight
+                // (`deferred_cancel_seen_at`). An omission is no cancellation
+                // evidence and dates nothing, so a tombstone also dates a
+                // passport an omission already flipped absent. An Outbound
+                // passport of a calendar the EVENT was written to never
+                // flips, since it is no absence vote, but its tombstone is
+                // dated the same way.
                 let dates_cancel = omitted
                     && absence_basis == CalendarStatusBasis::ImportedCancel
                     && value.cancelled_since.is_none()
                     && (value.direction.is_inbound_bearing()
                         || names_written_calendar(self.system, value));
+                // That tombstone is the host's cancel in their own calendar
+                // unless it is the engine's own cancelled write coming back
+                // ([`cancel_moves_deposit`]): a provider that keeps a
+                // cancelled event as a deleted one reports that write as a
+                // tombstone.
+                written_tombstone |= omitted
+                    && absence_basis == CalendarStatusBasis::ImportedCancel
+                    && cancel_moves_deposit(self.system, value);
                 if !flips && !dates_cancel {
                     continue;
                 }
@@ -230,14 +244,26 @@ impl PollAdmission<'_> {
                     next.last_seen_at = self.now;
                 }
                 if dates_cancel {
-                    next.cancelled_since = Some(self.now);
+                    next.cancelled_since = Some(value.deferred_cancel_seen_at.unwrap_or(self.now));
+                    next.deferred_cancel_seen_at = None;
                 }
                 // Absence carries no inbound content, so the screen body is
                 // empty — but the admission still crosses the hook and cites
                 // the complete feed that proved the omission.
                 self.admit_superseding_passport(event_ref, &next, &CalendarInboundBody::default())?;
             }
-            if all_live_inbound_passports_absent(self.vault, &event_ref)? {
+            // A written-to calendar's tombstone cancels an EVENT no inbound
+            // source carries by itself (RULING
+            // CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING = A): with
+            // no absence vote to wait on, the host's delete in the calendar the
+            // EVENT was written to is the cancel DEPOSIT-HOST-CANCEL-SOURCE = A
+            // names. An EVENT another source still carries waits for the
+            // multi-source law as before, and an omission stays no vote.
+            let written_only = written_tombstone
+                && !passports
+                    .iter()
+                    .any(|(_, value)| value.direction.is_inbound_bearing());
+            if written_only || all_live_inbound_passports_absent(self.vault, &event_ref)? {
                 self.admit_absence_cancellation(event_ref, absence_basis)?;
                 if instance.is_some() {
                     self.retract_exception_mask(event_ref)?;
@@ -532,6 +558,15 @@ impl PollAdmission<'_> {
     /// ([`crate::claim::claim_surfaceable`]), so it does not block the
     /// omission, and the omission is admitted beside it without superseding
     /// it, so the owner's answer to it stays owed (review round 2 of #9677).
+    /// The other way round, a status whose body the screen flagged waits on
+    /// the owner too (the standing consent holds it), so it supersedes no
+    /// admitted status: that one stays live beside it until the owner's
+    /// approval closes it, as its review's conflict head or in the feed
+    /// review's approval (`consent::close_admitted_status_beside_in_txn`), and
+    /// a decline leaves it standing
+    /// (CAL-HELD-STATUS-SUPERSEDES-ADMITTED-STATUS). The writer that closes
+    /// the prior decides, so an owner's answer that lands while the new
+    /// status is screened counts ([`super::consent::status_supersedes`]).
     /// Returns the new claim's id, or `None` when nothing was written.
     fn admit_status_if_changed(
         &mut self,
@@ -575,7 +610,9 @@ impl PollAdmission<'_> {
             value,
         )?;
         if let Some(old_id) = prior_live {
-            self.vault.supersede_claim(&new_id, &old_id, self.now)?;
+            let closes = super::consent::status_supersedes;
+            self.vault
+                .supersede_claim_when(&new_id, &old_id, self.now, closes)?;
         }
         Ok(Some(new_id))
     }
@@ -671,55 +708,6 @@ impl PollAdmission<'_> {
     fn source_record_id(&self, event: &ParsedVEvent) -> String {
         format!("{}:{}", self.blob_ref, event.uid)
     }
-}
-
-/// The CAL-09 screen body for one VEVENT: its description plus any ATTACH
-/// values as attachment text, exactly as the source expressed them.
-fn screen_body(event: &ParsedVEvent) -> CalendarInboundBody {
-    CalendarInboundBody {
-        description: event.description.clone().unwrap_or_default(),
-        attachment_text: attachment_text(&event.raw_component),
-    }
-}
-
-/// Every ATTACH of one raw VEVENT as text: an inline `ENCODING=BASE64`
-/// attachment's content when it decodes to UTF-8 text, else the value as the
-/// source wrote it (a URI, or inline bytes that are no text). A component
-/// that does not read again yields none; its parse already succeeded once.
-fn attachment_text(raw_component: &[u8]) -> Vec<String> {
-    let Ok(text) = std::str::from_utf8(raw_component) else {
-        return Vec::new();
-    };
-    let unfolded = icalendar::parser::unfold(text);
-    let Ok(components) = icalendar::parser::read_calendar_simple(&unfolded) else {
-        return Vec::new();
-    };
-    components
-        .iter()
-        .flat_map(|component| component.properties.iter())
-        .filter(|prop| prop.name.as_str().eq_ignore_ascii_case("ATTACH"))
-        .map(|prop| {
-            let base64 = prop.params.iter().any(|param| {
-                param.key.as_str().eq_ignore_ascii_case("ENCODING")
-                    && param
-                        .val
-                        .as_ref()
-                        .is_some_and(|val| val.as_str().eq_ignore_ascii_case("BASE64"))
-            });
-            let value = prop.val.as_str().trim();
-            if base64 {
-                use base64::Engine;
-                if let Some(content) = base64::engine::general_purpose::STANDARD
-                    .decode(value)
-                    .ok()
-                    .and_then(|bytes| String::from_utf8(bytes).ok())
-                {
-                    return content;
-                }
-            }
-            value.to_owned()
-        })
-        .collect()
 }
 
 /// The EVENT's display name: SUMMARY, with a UID fallback.

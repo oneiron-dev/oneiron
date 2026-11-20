@@ -308,7 +308,9 @@ impl Vault {
             self.note_committed_authority_rows(rows);
             return Ok(MachineRemoval::Written(receipt));
         }
-        let mut answer = AnswerAct::by_owner(actor, surface, MachineRole::Removed, seen);
+        let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
+        let mut answer =
+            AnswerAct::by_owner((actor, proves_joins), surface, MachineRole::Removed, seen);
         answer.last_device_key = confirmation;
         let (landing, ended) = self.machine_role_answer_in_txn(
             &mut txn,

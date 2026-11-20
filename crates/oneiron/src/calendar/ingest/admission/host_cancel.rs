@@ -82,9 +82,12 @@ impl PollAdmission<'_> {
     /// The multi-source law's conclusion: every live inbound passport
     /// reports absence, so the EVENT reads cancelled with basis
     /// `imported_absence` for an omission or `imported_cancel` for an explicit
-    /// provider tombstone. The EVENT row is never deleted. Only the explicit
-    /// tombstone is cancellation evidence for CAL-07, observed when this
-    /// source first reported it; an omission writes the status alone. The
+    /// provider tombstone. A tombstone from a calendar the EVENT was written
+    /// to concludes it alone when no inbound source carries the EVENT
+    /// (RULING CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING = A). The
+    /// EVENT row is never deleted. Only the explicit tombstone is
+    /// cancellation evidence for CAL-07, observed when this source first
+    /// reported it; an omission writes the status alone. The
     /// screen body is empty: absence carries no inbound content to screen.
     /// A tombstone sent again finds its status standing and repairs only a
     /// missing CAL-07 outcome ([`Self::repair_cancel_outcome`]).
@@ -388,6 +391,6 @@ pub(super) fn names_written_calendar(system: &str, passport: &CalendarPassportVa
 /// owner who writes an EVENT a feed the booking was not written to cancelled
 /// mirrors that cancel; a provider that rewrites the written resource sends
 /// it back as a new version, which is still no host cancel.
-fn cancel_moves_deposit(system: &str, passport: &CalendarPassportValue) -> bool {
+pub(super) fn cancel_moves_deposit(system: &str, passport: &CalendarPassportValue) -> bool {
     names_written_calendar(system, passport) && !passport.written_cancelled
 }

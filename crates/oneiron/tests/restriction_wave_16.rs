@@ -121,6 +121,7 @@ impl Fixture {
                     why: None,
                     check_in_ref: None,
                     weight_runs: None,
+                    surface: None,
                 },
             )
             .expect("the owner sets the key");

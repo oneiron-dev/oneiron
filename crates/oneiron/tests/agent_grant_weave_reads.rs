@@ -8,6 +8,12 @@
 //! (FIX-LIST SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS, part 2d). After the owner
 //! revokes the Grant neither shows the claim.
 //!
+//! A saved period reopens only when the reader reads each saved claim's
+//! subject too. Under a Grant over CLAIM rows alone the agent reads the
+//! owner's claim about it but not its own definition, so its period leaves
+//! the claim out when it is saved and reopens; it saved the claim and every
+//! reopen withheld the whole period (REVIEW-9872 P1).
+//!
 //! Public paths only: the embedded owner's door, the agent's own `Vault::memory`
 //! handle, and `ScopedRead::render_due_weave_digest` on `Vault::scoped_read`
 //! of the agent's key, the render the timer and `vault.weave.digest.render`
@@ -18,6 +24,7 @@
 
 use oneiron::claim::WeaveReader;
 use oneiron::memory::Memory;
+use oneiron::registry::ENTITY_TYPE_CLAIM;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_testkit::door;
 use serde_json::{Value, json};
@@ -65,9 +72,9 @@ fn serves_claim(answer: &Value, claim: &str) -> bool {
 }
 
 /// A vault this process owns with an identity agent holding a live read
-/// Grant over every world, facet, band, audience and sensitivity, and the
-/// owner's claim about that agent. The vault closes before its directory
-/// goes.
+/// Grant over every world, facet, audience and sensitivity and the entity
+/// types `bands`, and the owner's claim about that agent. The vault closes
+/// before its directory goes.
 struct Fixture {
     vault: Vault,
     agent: EntityId,
@@ -78,6 +85,10 @@ struct Fixture {
 
 impl Fixture {
     fn open() -> Self {
+        Self::open_with_bands(json!({"kind": "all"}))
+    }
+
+    fn open_with_bands(bands: Value) -> Self {
         let dir = tempfile::tempdir().expect("temporary vault directory");
         let vault = Vault::open_owned(dir.path(), VaultConfig::device()).expect("fresh vault");
         oneiron_testkit::dreamer::attach_test_host(&vault).expect("the test host");
@@ -117,7 +128,7 @@ impl Fixture {
                 "authority_scope": {
                     "worlds": {"kind": "all"},
                     "facets": {"kind": "all"},
-                    "bands": {"kind": "all"},
+                    "bands": bands,
                     "audience": {"kind": "all"},
                     "verbs": {"kind": "some", "values": ["read"]},
                     "sensitivity": {"kind": "all"},
@@ -164,6 +175,16 @@ impl Fixture {
             read.get("value").is_some_and(|value| !value.is_null()),
             "FIXTURE: the live Grant admits the owner's claim on vault.get: {read:#}"
         );
+    }
+
+    /// Whether the agent reads its own definition on vault.get.
+    fn agent_reads_itself(&self) -> bool {
+        door::invoke(
+            &self.reader(),
+            "vault.get",
+            json!({"entity_ref": self.agent.to_hex()}),
+        )
+        .is_ok_and(|read| read.get("value").is_some_and(|value| !value.is_null()))
     }
 
     /// The agent's live weave report: one Digest section over the claim's
@@ -271,5 +292,35 @@ fn an_agents_saved_digest_under_a_live_read_grant_serves_the_claim() {
     assert!(
         !serves_claim(&revoked, &fixture.claim),
         "the agent's saved period still serves the claim after the revoke: {revoked:#}"
+    );
+}
+
+#[test]
+fn an_agents_saved_digest_leaves_out_a_claim_whose_subject_its_grant_does_not_read() {
+    let fixture = Fixture::open_with_bands(json!({"kind": "some", "values": [ENTITY_TYPE_CLAIM]}));
+    fixture.assert_agent_reads_the_claim();
+    assert!(
+        !fixture.agent_reads_itself(),
+        "FIXTURE: a Grant over CLAIM rows alone does not read the agent's own definition"
+    );
+    let report = fixture.report();
+    assert!(
+        serves_claim(&report, &fixture.claim),
+        "FIXTURE: the agent's live weave report serves the owner's claim about it under a \
+         Grant over CLAIM rows alone: {report:#}"
+    );
+
+    fixture.schedule_digest();
+    fixture.render_digest();
+    let digest = fixture.digest();
+    assert!(
+        !digest.is_null(),
+        "the agent's due period saved under a Grant over CLAIM rows alone, yet its reopen \
+         withholds it whole"
+    );
+    assert!(
+        !serves_claim(&digest, &fixture.claim),
+        "the agent's saved period serves a claim whose subject, the agent's own definition, \
+         its Grant does not read: {digest:#}"
     );
 }

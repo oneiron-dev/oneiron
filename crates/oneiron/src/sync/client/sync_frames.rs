@@ -181,10 +181,15 @@ impl SyncClient {
     {
         let mut messages = Vec::new();
 
-        // Phase 1: Send our root VV (empty for new client — server will send snapshot)
-        let mut vv_msg = vec![TAG_VERSION_VECTOR];
-        vv_msg.extend_from_slice(&doc_version_vector(&self.root_doc));
-        messages.push(vv_msg);
+        // Phase 1: Send our root VV (empty for new client — server will send snapshot).
+        // A member lane sends none (H8-SHARED-ENV-LANE = B): the `residence.windows`
+        // catalogue replaces root discovery, and the home neither sends a
+        // snapshot nor admits root frames on it.
+        if !self.config.member_lane {
+            let mut vv_msg = vec![TAG_VERSION_VECTOR];
+            vv_msg.extend_from_slice(&doc_version_vector(&self.root_doc));
+            messages.push(vv_msg);
+        }
 
         // Phase 2: Default windows for the wall clock now (current +
         // previous), then any other windows already loaded in the manager.
@@ -315,6 +320,17 @@ impl SyncClient {
                         .insert(key);
                     continue;
                 }
+                // A member lane asks for a promoted window's vector only once
+                // the home granted it on this socket: the lane holds no root
+                // whose answer would release a deferred world window, and a
+                // home that no longer grants the window answers
+                // `FOLLOW_REFUSED` and keeps the socket, so the lane's other
+                // windows still sync. The queue replays once the home answered
+                // (review round 1 of #8364).
+                if self.config.member_lane {
+                    messages.push(self.member_promotion_request_frame(&key)?);
+                    continue;
+                }
                 messages.push(self.promotion_request_frame(&key)?);
                 // The setup window's vector waits for the home's grant.
                 if self.setup_catch_up(key.as_str()) {
@@ -371,11 +387,12 @@ impl SyncClient {
             .documents()
             .request_frames()
             .map_err(|error| TransportError::Storage(error.to_string()))?;
-        messages.extend(
-            requests
-                .into_iter()
-                .filter(|frame| self.peer_session.is_none() || !self.note_document_frame(frame)),
-        );
+        messages.extend(requests.into_iter().filter(|frame| {
+            // A member lane replays selector subscriptions only: a stale
+            // owner row's REQUEST would be refused (H8-SHARED-ENV-LANE = B).
+            (self.peer_session.is_none() || !self.note_document_frame(frame))
+                && !self.member_refuses_document_frame(frame)
+        }));
         Ok(messages)
     }
 
@@ -386,6 +403,26 @@ impl SyncClient {
         key: &WindowKey,
     ) -> std::result::Result<Vec<u8>, TransportError> {
         self.selector_request_frame(key, window_sub_tags::PROMOTION_REQUEST)
+    }
+
+    /// A member lane's `PROMOTION_REQUEST` frame for promoted window `key`,
+    /// whose vector waits for the home's grant. Records the request for
+    /// [`Self::unanswered_follow_requests`], as a follow's: the home answers
+    /// `PROMOTION_GRANTED` or `FOLLOW_REFUSED`.
+    fn member_promotion_request_frame(
+        &self,
+        key: &WindowKey,
+    ) -> std::result::Result<Vec<u8>, TransportError> {
+        let frame = self.promotion_request_frame(key)?;
+        self.follow_requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key.clone());
+        self.requested_windows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key.clone());
+        Ok(frame)
     }
 
     /// The `FOLLOW_REQUEST` frame for followed window `key`: the same

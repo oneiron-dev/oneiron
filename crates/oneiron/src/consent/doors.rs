@@ -354,6 +354,19 @@ impl AuthenticatedOwner {
         }
     }
 
+    /// Whether the owner key's proof this install holds also cosigns the
+    /// install join an act by this proof names first, revalidated in `txn`:
+    /// the owner's own write whose proof came with no request's slip, the
+    /// rule of [`Vault::owner_act_proof_signer`]. An owner choice or a
+    /// machine answer keeps that proof on the act itself, whose judge needs
+    /// it; the join's proof buys nothing but room past another install's
+    /// owner reserve (REVIEW-9962 P1).
+    pub(crate) fn proves_joins_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        Ok(self
+            .owner_answer_in_txn(vault, txn)?
+            .is_some_and(|write| !write.bound_to_request_slip()))
+    }
+
     /// Whether the credential this proof was carried under is a support
     /// slip (OF-606). A support person or agent never acts as the owner, so
     /// the support grant doors refuse such a proof outright, whatever else
