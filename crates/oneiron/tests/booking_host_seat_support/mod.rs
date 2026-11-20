@@ -218,6 +218,40 @@ impl Seat {
         .expect("write the booking to the seat")
     }
 
+    /// Writes one booking EVENT to the seat's calendar, which stores it, but
+    /// its answer never arrives: the write stays in flight until a later
+    /// write resumes it. Returns the SEQUENCE the stored copy carries.
+    pub(crate) fn write_with_lost_answer(
+        &self,
+        vault: &Vault,
+        event_ref: EntityId,
+        now: u64,
+    ) -> u32 {
+        *self
+            .transport
+            .lose_next_answer
+            .lock()
+            .expect("answer switch") = true;
+        let lost = write_calendar_event(
+            vault,
+            &self.operation(vault),
+            &self.transport,
+            event_ref,
+            now,
+        );
+        assert!(
+            matches!(lost, Err(CalendarConnectorError::Transport { .. })),
+            "the write whose answer was lost fails: {lost:?}"
+        );
+        self.transport
+            .writes
+            .lock()
+            .expect("written requests")
+            .last()
+            .expect("the seat stored the write")
+            .sequence
+    }
+
     /// Pulls one batch of booking resources and tombstones, returning the
     /// sync's result so a test can expect an error (smoke :801 `run_sync`).
     pub(crate) fn pull(
@@ -391,11 +425,13 @@ impl Seat {
 /// A scripted wire implementing [`CalendarRemoteTransport`] directly, as
 /// `DeleteEventAfterUpsert` does (smoke :509): `pull` pops one scripted
 /// batch (an empty batch when none is left), `upsert` records the request
-/// and answers an honest receipt, `delete` is unused.
+/// and answers an honest receipt, or, once `lose_next_answer` is set, a
+/// transport failure after it stored the request, and `delete` is unused.
 #[derive(Default)]
 struct ScriptedSeatTransport {
     batches: Mutex<VecDeque<RemoteSyncBatch>>,
     writes: Mutex<Vec<RemoteWriteRequest>>,
+    lose_next_answer: Mutex<bool>,
 }
 
 impl CalendarRemoteTransport for ScriptedSeatTransport {
@@ -430,6 +466,13 @@ impl CalendarRemoteTransport for ScriptedSeatTransport {
             .lock()
             .expect("written requests")
             .push(request.clone());
+        if std::mem::take(&mut *self.lose_next_answer.lock().expect("answer switch")) {
+            return Err(CalendarConnectorError::Transport {
+                provider: CALDAV_PROVIDER_KEY,
+                operation: "upsert",
+                detail: "the answer was lost after the resource was stored".to_owned(),
+            });
+        }
         Ok(parsed_receipt(
             &format!("/{calendar_ref}/"),
             Some(&format!("{}-write-1", request.uid)),

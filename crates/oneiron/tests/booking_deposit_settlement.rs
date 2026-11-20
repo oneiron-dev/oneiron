@@ -1276,13 +1276,13 @@ fn a_cancelled_booking_the_owner_wrote_and_the_seat_echoed_keeps_the_deposit() {
 /// The owner's write of an EVENT a feed the booking was not written to
 /// cancelled: the booking is paid and captured, the visitor's feed cancels
 /// it, then the owner writes the cancelled EVENT to the host seat. Returns
-/// that write's receipt.
+/// the booking and that write's receipt.
 fn owner_writes_a_foreign_cancel(
     fixture: &Fixture,
     seat: &Seat,
     key: &[u8],
     payment: &str,
-) -> RemoteWriteReceipt {
+) -> (ConfirmReceipt, RemoteWriteReceipt) {
     let mut provider = RecordingProvider::default();
     let booked = paid_booking(fixture, SessionKey::derive(key), payment, 9);
     settle_booking_deposit(
@@ -1302,7 +1302,8 @@ fn owner_writes_a_foreign_cancel(
         },
         "a cancel from a feed the booking was not written to moves no money"
     );
-    seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 150)
+    let wrote = seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    (booked, wrote)
 }
 
 #[test]
@@ -1313,7 +1314,7 @@ fn a_cancelled_booking_the_owner_wrote_and_the_seat_rewrote_keeps_the_deposit() 
     let fixture = Fixture::open(Some(two_hour_terms()));
     fixture.enable_host_feed();
     let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
-    let wrote =
+    let (_, wrote) =
         owner_writes_a_foreign_cancel(&fixture, &seat, b"rewritten-echo", "pi_rewritten_echo");
 
     seat.pull_rewritten_own_write(&fixture.vault, &wrote, wrote.sequence, NOW + 180)
@@ -1345,7 +1346,7 @@ fn a_seat_that_shows_the_owner_written_cancel_live_and_then_cancels_refunds() {
     let fixture = Fixture::open(Some(two_hour_terms()));
     fixture.enable_host_feed();
     let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
-    let wrote =
+    let (_, wrote) =
         owner_writes_a_foreign_cancel(&fixture, &seat, b"written-then-live", "pi_written_live");
     let start = MONDAY + 9 * 3_600;
 
@@ -1381,6 +1382,103 @@ fn a_seat_that_shows_the_owner_written_cancel_live_and_then_cancels_refunds() {
             amount_minor: 4_000
         },
         "the written-to seat's own cancel refunds the whole deposit"
+    );
+}
+
+#[test]
+fn a_second_owner_write_after_the_seat_rewrote_the_first_keeps_the_deposit() {
+    // Review of #9704: the seat's rewrite of the owner's cancelled write
+    // dates that cancellation on the seat's passport. The owner's next
+    // cancelled write keeps the mark, so the seat's rewrite of that one is
+    // still the owner's own write and moves no money either.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let (booked, first) =
+        owner_writes_a_foreign_cancel(&fixture, &seat, b"second-write", "pi_second_write");
+
+    seat.pull_rewritten_own_write(&fixture.vault, &first, first.sequence, NOW + 180)
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_second_write"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a rewrite of the owner's first cancelled write moves no money"
+    );
+
+    let second = seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 200);
+    seat.pull_rewritten_own_write(&fixture.vault, &second, second.sequence, NOW + 240)
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_second_write"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a rewrite of the owner's second cancelled write moves no money"
+    );
+}
+
+#[test]
+fn a_seat_pull_of_the_owner_cancelled_write_still_in_flight_keeps_the_deposit() {
+    // Review of #9704: the seat holds the booking live from the owner's
+    // earlier write. A feed the booking was not written to cancels it, and
+    // the owner writes the cancelled EVENT to the seat; the provider stores
+    // it, but its answer is lost, so the write is still in flight when a
+    // pull reads the stored copy back.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let mut provider = RecordingProvider::default();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let booked = paid_booking(
+        &fixture,
+        SessionKey::derive(b"in-flight-cancel"),
+        "pi_in_flight_cancel",
+        9,
+    );
+    settle_booking_deposit(
+        &fixture.vault,
+        &booked.calendar.event_ref,
+        &mut provider,
+        NOW + 50,
+    )
+    .expect("capture");
+    let live = seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+    let start = MONDAY + 9 * 3_600;
+    poll_visitor_feed(&fixture, &booked, start, 0, false, "v1", NOW + 60);
+    poll_visitor_feed(&fixture, &booked, start, 1, true, "v2", NOW + 120);
+    assert_eq!(
+        state_of(&fixture, "pi_in_flight_cancel"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a cancel from a feed the booking was not written to moves no money"
+    );
+
+    let stored = seat.write_with_lost_answer(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    seat.pull_rewritten_own_write(&fixture.vault, &live, stored, NOW + 160)
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_in_flight_cancel"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a pull of the owner's cancelled write before it settles moves no money"
+    );
+
+    let wrote = seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 170);
+    assert_eq!(
+        wrote.sequence, stored,
+        "the next write resumes the one in flight"
+    );
+    seat.pull_rewritten_own_write(&fixture.vault, &wrote, wrote.sequence, NOW + 180)
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_in_flight_cancel"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a pull of the owner's cancelled write after it settled moves no money"
     );
 }
 
