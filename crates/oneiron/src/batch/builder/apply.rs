@@ -161,10 +161,7 @@ impl BatchBuilder<'_> {
         } else {
             self.apply_staged(wtxn, gate_mode, None, lane, authority_beside, own_device)?;
         }
-        vault.stamp_agent_authored_creates_in_txn(wtxn, creates)?;
-        // A room the batch narrowed leaves no standing answer wider than its
-        // rows (FIX STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS).
-        vault.mark_answers_in_narrowed_rooms_in_txn(wtxn)
+        vault.stamp_agent_authored_creates_in_txn(wtxn, creates)
     }
 
     fn apply_staged(
@@ -390,7 +387,9 @@ impl BatchBuilder<'_> {
         // marker; the write door marks the rows.
         #[cfg(feature = "sync")]
         vault.mark_pending_edge_removals_in_txn(wtxn, &removed_edges)?;
-        Ok(())
+        // A room the batch narrowed leaves no standing answer wider than its
+        // rows (FIX STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS).
+        vault.mark_answers_in_narrowed_rooms_in_txn(wtxn)
     }
 }
 
