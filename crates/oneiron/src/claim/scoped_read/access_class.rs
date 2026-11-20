@@ -491,7 +491,12 @@ impl ScopedRead<'_> {
         principal: Option<EntityId>,
         authority: &HeldAuthority,
     ) -> Result<bool> {
-        if !crate::claim::has_live_support_in_txn(&self.store_read(), rtxn, body)? {
+        if !crate::claim::evidence_support::has_live_support_under_in_txn(
+            &self.store_read(),
+            rtxn,
+            body,
+            self.cited_support,
+        )? {
             return Ok(false);
         }
         // A mined preference with no principal is the class's to refuse.
