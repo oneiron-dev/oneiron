@@ -7,7 +7,9 @@
 //! that body's length and lines, never the room handle or the key, and its
 //! result reads in base; base's known-value index knows the key from then
 //! on. A reply past the inline bound is carried the same way, into a base
-//! body file.
+//! body file. A JSON reply is carried as the door read it, as JSON: a
+//! credential field the door lifted whole holds the bare base handle
+//! (REVIEW-10057 round 2).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test room_custody_reply_bodies`.
@@ -196,4 +198,65 @@ fn a_spilled_room_reply_is_carried_into_a_base_body_file() -> TestResult {
         "FIXTURE: the carried body still spills"
     );
     assert_carried(&owned, &saved)
+}
+
+/// REVIEW-10057 round 2 (P1 room_carry.rs:158): the door reads a JSON reply
+/// as JSON and lifts a credential field whole, so the room's body holds the
+/// field's bare room handle. A save reads the body as the door read it: the
+/// saved body's field holds the bare handle of a base custody record that
+/// holds the key, the rest of the body is as the room kept it, and the
+/// saved preview names no room handle.
+#[test]
+fn a_saved_json_result_carries_the_bare_room_handle_of_a_credential_field() -> TestResult {
+    let owned = owned()?;
+    let vault = &owned.vault;
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-reply-body-json", OffRecordBackendClass::Local)?;
+    let reply = serde_json::json!({"note": "the run's answer", "password": KEY}).to_string();
+    let said = room_says(&session, owned.actor, &reply)?;
+    let room_body = room_result_body(vault, &session, &said.handle)?
+        .ok_or("the room keeps the reply's body")?;
+    let room_body: serde_json::Value = serde_json::from_slice(&room_body)?;
+    let room_handle = room_body["password"]
+        .as_str()
+        .filter(|handle| handle.starts_with('r') && !handle.contains(KEY))
+        .ok_or_else(|| {
+            format!("FIXTURE: the door lifts the field whole into a bare room handle: {room_body}")
+        })?
+        .to_owned();
+
+    let saved = session.promote_turn_as(&owned.owner, &said.turn)?.replayed;
+
+    let saved = saved_result(vault, &saved)?.ok_or("the saved MESSAGE carries its result")?;
+    let body: serde_json::Value = serde_json::from_slice(&saved.body)?;
+    let base = body["password"]
+        .as_str()
+        .ok_or_else(|| format!("the saved field holds a handle: {body}"))?;
+    assert_ne!(base, room_handle, "the saved body keeps no room handle");
+    assert_eq!(
+        vault_custody_value(vault, base)?.as_deref(),
+        Some(KEY.as_bytes()),
+        "{base} holds the key the room kept"
+    );
+    assert_eq!(vault_custody_record_count(vault)?, 1);
+    assert_eq!(
+        body["note"], "the run's answer",
+        "the rest of the body is as the room kept it"
+    );
+    assert_eq!(
+        saved.bytes,
+        saved.body.len() as u64,
+        "the attachment names the saved body's length"
+    );
+    assert!(
+        !saved.preview.contains(&room_handle),
+        "the saved preview keeps no room handle: {}",
+        saved.preview
+    );
+    assert!(
+        vault_knows_value(vault, KEY.as_bytes())?,
+        "the save teaches base's known-value index the fingerprint"
+    );
+    Ok(())
 }
