@@ -850,7 +850,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/secret_scan/lift_history/side_rows.rs` | src | s | 4 crate-vis | — | The side tables the catalog classes as authored |
 | `src/batch/secret_scan/lift_history/sync_text.rs` | src | s | 1 crate-vis | — | A sync write's text holding a hit no rule places (FIX 11792) |
 | `src/batch/secret_scan/mask.rs` | src | L | 26 crate-vis | — | Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the… |
-| `src/batch/secret_scan/mask/admit.rs` | src | s | 9 crate-vis | — | Mask on write for content a writer stores outside the batch door (OF-067): a message stream's seed, a NOTE's… |
+| `src/batch/secret_scan/mask/admit.rs` | src | m | 10 crate-vis | — | Mask on write for content a writer stores outside the batch door (OF-067): a message stream's seed, a NOTE's… |
 | `src/batch/secret_scan/mask/batch_door.rs` | src | s | 1 crate-vis | — | The batch door with mask on write (OF-560): the door's scan, a plan on a copy of the batch's ops, the… |
 | `src/batch/secret_scan/mask/body.rs` | src | s | 2 crate-vis | — | A body as the door reads it (OF-560): JSON, a whole MessagePack value, or text |
 | `src/batch/secret_scan/mask/carrier.rs` | src | m | 24 crate-vis | — | The batch door's file mark (owner ruling C2) for a carrier's stored text no door rewrites (OF-067, Engine… |
@@ -865,11 +865,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/secret_scan/mask/promoted_message_parts.rs` | src | s | 1 crate-vis | — | Seals fresh MESSAGE parts only when their room is explicitly saved |
 | `src/batch/secret_scan/mask/retained_repo.rs` | src | m | 10 crate-vis | — | The mark of each key a retained repository blob holds (FIX 7608, owner ruling SECRETS-IN-REPOS = A) |
 | `src/batch/secret_scan/mask/retained_repo/read.rs` | src | s | 7 crate-vis | — | The masked copy a reader gets of a marked retained repository blob (FIX 7608 slice 2a) |
-| `src/batch/secret_scan/mask/side_row.rs` | src | L | 21 crate-vis | — | The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A) |
+| `src/batch/secret_scan/mask/side_row.rs` | src | L | 22 crate-vis | — | The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A) |
 | `src/batch/secret_scan/mask/split_phrase.rs` | src | L | 16 crate-vis | — | A recovery phrase split over a file's parts (LABEL-04; ARCH-0038 #promise-label-04): one word per… |
 | `src/batch/secret_scan/mask/spool.rs` | src | m | 17 crate-vis | — | The spool-aware admission adapter (FIX 5718 part 3, Engine ruling 3; CALLS C5718-19) |
 | `src/batch/secret_scan/mask/stream_known.rs` | src | s | 6 crate-vis | — | Known custody values in a streamed ASSET body (FIX 5395, CALLS KNOWN_VALUE_STREAM_FINDER) |
-| `src/batch/secret_scan/mask/text.rs` | src | s | 5 crate-vis | — | A text's mask on write (OF-560): each span the door's text rules place, and each value custody already… |
+| `src/batch/secret_scan/mask/text.rs` | src | s | 6 crate-vis | — | A text's mask on write (OF-560): each span the door's text rules place, and each value custody already… |
 | `src/batch/secret_scan/mask/text_spans.rs` | src | s | 4 crate-vis | — | Core half of `batch::secret_scan::mask::text_spans`: its store-layer items live in… |
 | `src/batch/secret_scan/mask/wipe.rs` | src | s | 4 crate-vis | — | Core half of `batch::secret_scan::mask::wipe`: its store-layer items live in… |
 | `src/batch/secret_scan/message_parts.rs` | src | s | 1 crate-vis | — | Whole immutable MESSAGE parts, sealed without changing their signed bytes |
@@ -5098,6 +5098,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/note/coreference/pair.rs` | src | s | 7 crate-vis | — | Canonical pair identity and resident-owned submission witnesses |
 | `src/note/delete.rs` | src | s | 1 crate-vis | — | Transactional erasure of a NOTE's own carriers and outgoing pin indexes |
 | `src/note/document.rs` | src | m | 1 struct · 2 enum · 1 re-export · 36 crate-vis | NoteDocumentView, NoteScalarEditOutcome, NoteSpanResolution | NOTE entity-document operations, stable cursors and citation provenance |
+| `src/note/document/splice.rs` | src | s | 2 crate-vis | — | Edits of a NOTE's live body at known offsets, with no diff over the body, so every other character keeps its… |
 | `src/note/document_store.rs` | src | L | 9 fn · 19 crate-vis | — | Actor-bound NOTE editor verbs and atomic entity-document persistence |
 | `src/note/document_store/deck.rs` | src | s | 4 crate-vis | — | What a deck keep reads of the NOTE spans its outline cites, in the deck's own transaction: a span with or… |
 | `src/note/document_tests.rs` | test | m | — | — | Concurrent editor operations, stable provenance and blessed brief acceptance |
@@ -5126,6 +5127,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/note/live_body.rs` | src | s | 4 crate-vis | — | Live NOTE read projection: the stored core and its head document's text |
 | `src/note/live_body_tests.rs` | test | s | — | — | Live read projections share a document frontier and keep raw birth bytes intact |
 | `src/note/local_discard.rs` | src | s | 2 crate-vis | — | The owner's discard of a world copy takes a NOTE's review workflow text off this install (FIX 14534, Engine… |
+| `src/note/mask_splice_tests.rs` | test | s | — | — | Mask-on-write budgets and stable NOTE pins through the public write doors |
 | `src/note/operations.rs` | src | m | 2 struct · 3 fn · 1 re-export · 15 crate-vis | NoteAuthorship, NoteOperationReceipt | Authenticated semantic NOTE commands |
 | `src/note/overrides.rs` | src | s | 3 struct · 4 fn · 7 crate-vis | NoteDefaultsView, NoteOverrides, SetNoteOverridesRequest | A NOTE's own extraction, context and retention defaults (ARCH-0032: each kind "carries its own extraction… |
 | `src/note/pending_request.rs` | src | s | 5 crate-vis | — | A semantic NOTE command as this host queues it for its authority (FIX 2375; C-NOTE-COMMAND) |
