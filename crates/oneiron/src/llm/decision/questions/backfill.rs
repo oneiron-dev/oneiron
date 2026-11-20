@@ -1,7 +1,8 @@
 //! Scheduled backfill (OF-516): the question's principal sets a time, and from
-//! then the question pump answers, once, each covered unit with no answer at
-//! the question's current version, as a scheduled refresh answers it, under
-//! the same responsible-role runner, dial and hold.
+//! then the question pump answers, once, each covered unit with no standing
+//! answer at the question's current version (an answer marked stale or closed
+//! no longer stands), as a scheduled refresh answers it, under the same
+//! responsible-role runner, dial and hold.
 
 use super::super::types::invalid;
 use super::{

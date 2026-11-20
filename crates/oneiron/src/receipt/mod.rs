@@ -26,9 +26,8 @@ mod kernel;
 mod ledgers;
 mod lens;
 mod off_device;
-#[cfg(oneiron_test_support)]
-pub(crate) use off_device::referenced_rows;
 pub(crate) use off_device::served_form_rows;
+pub(crate) use off_device::{is_verb_hook_receipt, record_rows, referenced_rows};
 mod pack_attribution;
 mod projection;
 pub mod prompt_stamp;
@@ -43,8 +42,6 @@ mod served_form;
 mod session;
 mod share_doors;
 
-// FIX [LIBTEST-QUARANTINE-RECEIPT-TESTS]: the lib test target's type check fails here (12 errors: E0063 x7, E0061 x4, E0308 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -153,7 +150,7 @@ pub(crate) use self::kernel::{
     FIELD_TARGET_CLASS, MAX_RECEIPT_QUERY_SCAN, hex_lower, retain_newest_receipt,
 };
 pub(crate) use self::ledgers::durable_send_receipts_lenient;
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) use self::ledgers::persist_send_receipt;
 pub(crate) use self::ledgers::{
     SendReceiptOutcome, attempt_calling_principal_in_txn, delivered_send_receipt_for_task,
@@ -161,8 +158,7 @@ pub(crate) use self::ledgers::{
 };
 #[cfg(test)]
 pub(crate) use self::ledgers::{
-    make_attempt_receipt_legacy_for_tests, overwrite_attempt_pack_receipt_for_test,
-    put_attempt_pack_receipt_for_test,
+    overwrite_attempt_pack_receipt_for_test, put_attempt_pack_receipt_for_test,
 };
 pub(crate) use self::projection::{COMMITMENT_TRIGGER_PREFIX, commitment_trigger_ref};
 pub(crate) use self::record::{
@@ -175,7 +171,8 @@ pub(crate) use self::record::{validate_receipt_record_body, validate_receipt_rec
 #[cfg(test)]
 pub(crate) use self::send_receipt_txn::persist_send_receipt_in_txn;
 pub(crate) use self::send_receipt_txn::{
-    delivered_send_exists_in_txn, persist_admitted_send_receipt_in_txn,
+    append_superseded_send_receipt_in_txn, delivered_send_exists_in_txn,
+    persist_admitted_send_receipt_in_txn,
 };
 
 /// One pre-write check for the two receipt carrier families. Both are judged
@@ -253,3 +250,6 @@ pub(crate) use archive_source::{receipt_archive_holder, receipt_archive_matches_
 pub(crate) use self::direct_dispatch::outbound_direct_receipt_accepts_masked;
 pub(crate) use self::dispatch_observation::dispatch_observation_accepts_masked;
 pub(crate) use self::pack_attribution::attempt_pack_attribution_accepts_masked;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::dispatch_observation::dispatch_observation_key_pin_for_test;

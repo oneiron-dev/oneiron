@@ -128,7 +128,8 @@ pub(crate) use self::shallow::{merge_window_heads, strict_window_cut, tip_window
 pub(in crate::sync) use self::tombstones::apply_tombstone_to_indexed_window_doc;
 pub(crate) use self::tombstones::{
     CarrierRemoval, DeleteBearingUpdate, entity_carriers, export_tombstone_commit_delta,
-    mark_removed_carriers_first, publish_pending_tombstones,
+    forget_removed_carrier_records_in_txn, mark_removed_carriers_first, publish_pending_tombstones,
+    suppress_published_carriers_first,
 };
 pub use self::tombstones::{
     apply_tombstone_to_window_doc, rebuild_window_from_updates, replay_pending_tombstones,
@@ -705,12 +706,8 @@ pub(in crate::sync) fn apply_pending_window_updates_in_txn(
     Ok(applied)
 }
 
-// FIX [LIBTEST-QUARANTINE-SYNC-WINDOW-HISTORY-FREE-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod history_free_tests;
-// FIX [LIBTEST-QUARANTINE-SYNC-WINDOW-TESTS]: the lib test target's type check fails here (31 errors: E0061 x23, E0277 x5, E0063 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

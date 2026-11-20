@@ -22,8 +22,8 @@ use jni::objects::{GlobalRef, JByteArray, JObject, JObjectArray, JString, JThrow
 use jni::sys::{jboolean, jbyteArray, jint, jlong, jobject, jsize};
 use jni::{JNIEnv, JavaVM};
 use oneiron_server::embedded::{
-    BlockingConnection, BlockingEngine, EmbeddedReply, EmbeddedRequest, embedded_serve_config,
-    engine_error_kind, host_limits, unix_millis,
+    BlockingConnection, BlockingEngine, EmbeddedReply, EmbeddedRequest, FetchConditions,
+    embedded_serve_config, engine_error_kind, host_limits, unix_millis,
 };
 use oneiron_vault_contract::host_adapters::AppHost;
 use zeroize::Zeroizing;
@@ -353,6 +353,25 @@ pub extern "system" fn Java_org_oneiron_EmbeddedEngine_wakeNative(
 ) {
     run_engine(&mut env, |env| {
         engine_of(env, &object)?.wake().map_err(chain)
+    });
+}
+
+/// JNI implementation of the shell's fetch-conditions report: whether the
+/// phone is on an unmetered network and on power.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_oneiron_EmbeddedEngine_setFetchConditionsNative(
+    mut env: JNIEnv<'_>,
+    object: JObject<'_>,
+    unmetered: jboolean,
+    powered: jboolean,
+) {
+    run_engine(&mut env, |env| {
+        engine_of(env, &object)?
+            .set_fetch_conditions(FetchConditions {
+                unmetered: unmetered != 0,
+                powered: powered != 0,
+            })
+            .map_err(chain)
     });
 }
 

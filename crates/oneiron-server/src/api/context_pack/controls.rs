@@ -368,6 +368,15 @@ pub(crate) struct CoreContextPackRequest {
     /// sit.
     #[serde(default, alias = "queryAffect")]
     pub(super) query_affect: Option<ContextPackQueryAffect>,
+    /// The stored compaction packet to rehydrate from (CROSS-ARCH-0002b
+    /// #ep-6-2-3 `packetId`): the 32-hex id of the epoch summary a
+    /// `host.compact` minted. The rows it carries lead the pack, before the
+    /// ranked fill, each read under the caller's own read. A stale packet (no
+    /// epoch summary the caller reads, a withdrawn one, or one a later epoch
+    /// of its lineage passed) leaves today's pack; a malformed id is a 400.
+    #[serde(default, alias = "packetId")]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    pub(super) packet_id: Option<String>,
     /// Maximum primary candidates to retrieve, served whole. The response's
     /// `limit_clamped` stays false.
     #[serde(default = "default_limit")]
@@ -535,6 +544,12 @@ impl CoreContextPackRequest {
     /// The room this retrieval is read in, as the caller spelled it.
     pub(crate) fn conversation_id(&self) -> Option<&str> {
         self.conversation_id.as_deref()
+    }
+
+    /// The vault this retrieval's conversation is homed in, as the caller
+    /// spelled it.
+    pub(crate) fn conversation_home(&self) -> Option<&str> {
+        self.conversation_home.as_deref()
     }
 
     /// The rows this request names by ref: its contacts and its reader's

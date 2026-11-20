@@ -53,7 +53,9 @@ pub(super) struct RetrievalTxnOutput {
     /// The applied read-side multiplier per candidate, from the run's
     /// single decay-applying blend. Empty when no blend ran.
     pub(super) access_factors: HashMap<EntityId, f32>,
-    pub(super) rerank_merged_components: Option<HashMap<EntityId, Vec<RetrievalScoreComponent>>>,
+    /// The rerank stage's block components, appended after each entity's
+    /// blend components on read; `None` when no rerank ran.
+    pub(super) rerank_components: Option<HashMap<EntityId, Vec<RetrievalScoreComponent>>>,
     pub(super) retrieval_trace: Option<RetrievalTrace>,
     pub(super) replay_inputs: Option<crate::store::RetrievalReplayInputs>,
     pub(super) ppr_expand_executed: bool,

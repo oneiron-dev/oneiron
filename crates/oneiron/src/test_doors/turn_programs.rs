@@ -241,3 +241,98 @@ pub fn disarm_kept_here(vault: &Vault, actor: EntityId, registration: EntityId) 
 pub fn arming_row_bytes(vault: &Vault, actor: EntityId, registration: EntityId) -> Result<Vec<u8>> {
     crate::dreamer_runner::turn_program_test_hooks::arming_row_bytes(vault, actor, registration)
 }
+
+/// Overwrites the ARM row (`actor`, `registration`) with bytes that decode as no arming,
+/// as a damaged row sits.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn damage_arming_row(vault: &Vault, actor: EntityId, registration: EntityId) -> Result<()> {
+    crate::dreamer_runner::turn_program_test_hooks::damage_arming_row(vault, actor, registration)
+}
+
+/// Erases `actor`'s turn programs as the owner's erase does, in one writer.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn erase_actor_programs(vault: &Vault, actor: EntityId) -> Result<()> {
+    crate::dreamer_runner::turn_program_test_hooks::erase_actor_programs(vault, actor)
+}
+
+/// Each idle or feed row one of `actor`'s programs keeps: its kind tag and registration.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn trigger_rows_for_actor(vault: &Vault, actor: EntityId) -> Result<Vec<(u8, EntityId)>> {
+    crate::dreamer_runner::turn_program_test_hooks::trigger_rows_for_actor(vault, actor)
+}
+
+/// Whether this machine keeps a carried decision for the wake TURN `turn`
+/// owes `registration`.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn decision_kept_here(vault: &Vault, turn: EntityId, registration: EntityId) -> Result<bool> {
+    crate::dreamer_runner::turn_program_test_hooks::decision_kept_here(vault, turn, registration)
+}
+
+/// The `Admitted` row a linked machine would carry for the owed wake of
+/// `registration`: its turn, its map key, and its bytes as the decision
+/// mirror encodes them.
+///
+/// # Errors
+///
+/// No such owed wake, a store failure, or a row that cannot encode.
+#[cfg(feature = "sync")]
+pub fn admitted_row_bytes(
+    vault: &Vault,
+    actor: EntityId,
+    registration: EntityId,
+) -> Result<(EntityId, String, Vec<u8>)> {
+    crate::dreamer_runner::turn_program_test_hooks::admitted_row_bytes(vault, actor, registration)
+}
+
+/// How many `Admitted` rows TURN `turn` owes the window from this machine's
+/// decisions.
+///
+/// # Errors
+///
+/// A store failure.
+#[cfg(feature = "sync")]
+pub fn decided_rows_for_turn(vault: &Vault, turn: EntityId) -> Result<usize> {
+    crate::dreamer_runner::turn_program_test_hooks::decided_rows_for_turn(vault, turn)
+}
+
+#[cfg(feature = "sync")]
+pub use crate::dreamer_runner::turn_program_test_hooks::ImportedWakeImage;
+
+/// The owed wake TURN `turn` owes `registration`, read as an image of this
+/// vault taken now holds it. `None` when this machine owes no such wake.
+///
+/// # Errors
+///
+/// A store failure.
+#[cfg(feature = "sync")]
+pub fn imported_wake_image(
+    vault: &Vault,
+    turn: EntityId,
+    registration: EntityId,
+) -> Result<Option<ImportedWakeImage>> {
+    crate::dreamer_runner::turn_program_test_hooks::imported_wake_image(vault, turn, registration)
+}
+
+/// Puts `image` back as a historical restore replays it: the owed row and
+/// its imported mark return as content, and each live row this machine kept
+/// for the wake (a release, a decision) stands as it is.
+///
+/// # Errors
+///
+/// A store failure.
+#[cfg(feature = "sync")]
+pub fn restore_imported_wake_image(vault: &Vault, image: &ImportedWakeImage) -> Result<()> {
+    crate::dreamer_runner::turn_program_test_hooks::restore_imported_wake_image(vault, image)
+}

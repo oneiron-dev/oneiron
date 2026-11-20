@@ -274,6 +274,22 @@ pub(crate) fn mcp_verb_gate(
     } else {
         McpRecordBounds::Unrestricted
     };
+    // A host door runs outside the engine's scoped read, which applies a
+    // channel caveat row by row, so the filtered bounds cannot carry one to
+    // it: refused here, before the call's hooks, as the door's HTTP
+    // admission `lane_record_scope` refuses it before its hooks
+    // (`self.actor`, review of #9533; every other such door, FIX
+    // MCP-FILTERED-HOST-DOOR-CHANNEL-CAVEAT-PARITY).
+    if tool.lane_record_scope_host_door() {
+        let auth = actor.auth.as_ref().ok_or_else(mcp_proof_error)?;
+        auth.require_lane_record_scope().map_err(|_| {
+            McpGatewayError::new(
+                -32020,
+                "mcp_scope_unprojectable",
+                "this facade cannot project the credential's record bounds",
+            )
+        })?;
+    }
     mcp_credential_gate(server, actor, bounds, McpCallEffect::of(tool, arguments))
 }
 

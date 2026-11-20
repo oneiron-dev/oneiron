@@ -1,0 +1,191 @@
+//! The owner's restore of a whole-vault archive into a fresh vault decides
+//! each merge and split the source held current again here
+//! (RESTORE-KEEPS-MERGES-AND-SPLITS, Engine ANSWER 08:00 17 Nov = B).
+//!
+//! The export names those decisions in its manifest, read off the source's
+//! effective fold ([`current_merge_and_split_events_in_txn`]): the archive's
+//! raw type-76 rows alone cannot show which seal counted there, since an
+//! engine seal counts by a local mark that never travels. The import reads
+//! each named decision whole from the archive's rows
+//! ([`archived_topology_decision`]) and applies it again through this
+//! vault's own topology door ([`restored_merge_or_split`]), so it becomes a
+//! new event of this vault, sealed by this install. The archived rows stay
+//! archive data, and no archived seal or mark is trusted here.
+
+use std::collections::BTreeSet;
+
+use crate::claim::ClaimApprovalStatus;
+use crate::entity_id::EntityId;
+use crate::error::{Error, Result, SyncError};
+use crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT;
+use crate::vault::Vault;
+
+use super::event_body_codec::{
+    decode_identity_topology_event_body, decode_identity_topology_operation_payload,
+};
+use super::ledger_fold::{IdentityTopologyAction, fold_identity_topology_log};
+use super::op_apply::IdentityOpWrite;
+use super::op_vocabulary::IdentityTopologyOp;
+use super::operation_parts::logical_identity_topology_event_with;
+use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
+use super::wire_keys::{EVENT_KIND_MERGE, EVENT_KIND_SPLIT};
+
+/// The merge and split decisions this vault's effective ledger holds
+/// current, sorted: each names a row still in its Merged or Split shell.
+/// Undone, superseded, parked and refused decisions are not current, and a
+/// facet moves no lifecycle state, so none of those is named.
+pub(crate) fn current_merge_and_split_events_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<Vec<EntityId>> {
+    let effective = vault.fold_effective_identity_topology_events_in_txn(rtxn)?;
+    let current: BTreeSet<EntityId> = fold_identity_topology_log(&effective)
+        .current_event
+        .into_values()
+        .collect();
+    Ok(effective
+        .into_iter()
+        .filter(|event| {
+            current.contains(&event.event_id)
+                && matches!(
+                    event.action,
+                    IdentityTopologyAction::Apply(
+                        IdentityTopologyOp::Merge(_) | IdentityTopologyOp::Split(_)
+                    )
+                )
+        })
+        .map(|event| event.event_id)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect())
+}
+
+/// The decision `id`, read whole from the rows `row` reads by id as (entity
+/// type, body): its inline record, or its manifest assembled from every
+/// part. `None` when a row is missing, of another type, or does not decode,
+/// or a part does not add up to its manifest, as a store reader reads it.
+pub(crate) fn archived_topology_decision(
+    id: &EntityId,
+    mut row: impl FnMut(&EntityId) -> Result<Option<(u8, Vec<u8>)>>,
+) -> Result<Option<StoredIdentityOpEvent>> {
+    let Some((entity_type, body)) = row(id)? else {
+        return Ok(None);
+    };
+    if entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+        return Ok(None);
+    }
+    let Ok(raw) = decode_identity_topology_event_body(&body) else {
+        return Ok(None);
+    };
+    logical_identity_topology_event_with(id, raw, row)
+}
+
+/// The op and write that decide `decision` again here: an applied merge or
+/// split with its own evidence and its read-through plan, under its
+/// archived source, approval and confidence, with no bound actor (the
+/// archived author stays archive data). `None` for any other decision.
+#[must_use]
+pub(crate) fn restored_merge_or_split(
+    decision: &StoredIdentityOpEvent,
+) -> Option<(IdentityTopologyOp, IdentityOpWrite)> {
+    if !matches!(
+        decision.approval,
+        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+    ) {
+        return None;
+    }
+    let IdentityTopologyAction::Apply(mut op) = decision.action.to_fold_action() else {
+        return None;
+    };
+    let evidence = decision.evidence.clone().unwrap_or_default();
+    match &mut op {
+        IdentityTopologyOp::Merge(merge) => merge.evidence = evidence,
+        IdentityTopologyOp::Split(split) => split.evidence = evidence,
+        _ => return None,
+    }
+    Some((
+        op,
+        IdentityOpWrite {
+            source: decision.source,
+            approval: decision.approval,
+            confidence: decision.confidence,
+            actor: None,
+        },
+    ))
+}
+
+/// Whether `body` is a type-76 row the codec decodes whole as an inline
+/// merge or split: the only rows an export without secrets keeps the typed
+/// byte slots of (REVIEW-9756). Every byte slot of either is a participant,
+/// a reassignment item, the actor or an evidence ref; neither names another
+/// decision.
+#[must_use]
+pub(crate) fn is_inline_merge_or_split_body(body: &[u8]) -> bool {
+    decode_identity_topology_event_body(body).is_ok_and(|event| {
+        matches!(
+            event.action,
+            StoredIdentityOpAction::Merge { .. } | StoredIdentityOpAction::Split { .. }
+        )
+    })
+}
+
+/// Whether `body` is the manifest of a merge or split recorded in one part
+/// (NO-SECRETS-ARCHIVE-MULTIPART-TOPOLOGY-DECISION): its only byte slot is
+/// the digest of that part's payload.
+#[must_use]
+pub(crate) fn is_one_part_merge_or_split_manifest(body: &[u8]) -> bool {
+    decode_identity_topology_event_body(body).is_ok_and(|event| {
+        matches!(
+            event.action,
+            StoredIdentityOpAction::OperationManifest { kind, parts: 1, .. }
+                if kind == EVENT_KIND_MERGE || kind == EVENT_KIND_SPLIT
+        )
+    })
+}
+
+/// The payload of `body` when it is the one part of a merge or split: part 0
+/// whose payload the codec decodes alone as the whole decision. A part of a
+/// decision recorded over two or more parts holds a slice no decode reads
+/// whole, so no credential scan reads its text whole either: `None`.
+#[must_use]
+pub(crate) fn one_part_merge_or_split_payload(body: &[u8]) -> Option<Vec<u8>> {
+    let event = decode_identity_topology_event_body(body).ok()?;
+    let StoredIdentityOpAction::OperationPart {
+        index: 0, payload, ..
+    } = event.action
+    else {
+        return None;
+    };
+    let decision = decode_identity_topology_operation_payload(&payload).ok()?;
+    matches!(
+        decision.action,
+        StoredIdentityOpAction::Merge { .. } | StoredIdentityOpAction::Split { .. }
+    )
+    .then_some(payload)
+}
+
+/// The decision `body` is a part of, when it is an operation part: the part
+/// carries that decision's record, so an export carries it only where it
+/// carries the decision.
+#[must_use]
+pub(crate) fn operation_part_root(body: &[u8]) -> Option<EntityId> {
+    match decode_identity_topology_event_body(body).ok()?.action {
+        StoredIdentityOpAction::OperationPart { root, .. } => Some(root),
+        _ => None,
+    }
+}
+
+/// Whether `error` is the topology door refusing a decision here (a
+/// participant missing, reserved for deletion or in a state the op cannot
+/// move, the embedded owner retired) rather than a fault of this vault.
+#[must_use]
+pub(crate) fn is_topology_refusal(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::EntityNotFound
+            | Error::Sync(
+                SyncError::IdentityTopologyRejected(_)
+                    | SyncError::InvalidIdentityTopologyEventBody(_)
+            )
+    )
+}

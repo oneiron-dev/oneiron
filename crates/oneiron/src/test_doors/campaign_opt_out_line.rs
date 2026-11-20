@@ -2,14 +2,19 @@
 //! campaign sender's sealing of one email send from its filed step body, as
 //! the gmail and the stalwart branches seal it before the sink runs, for a
 //! 1:1 mail and a bulk send. Also the one-click link a bulk send freezes,
-//! for oneiron-server's `tests/campaign_one_click_unsubscribe.rs`.
+//! for oneiron-server's `tests/campaign_one_click_unsubscribe.rs`, and the
+//! sealing of a 1:1 send from the envelope the leg froze, in the opt-out
+//! line's language, for `tests/campaign_opt_out_language.rs` (FIX
+//! [CAMPAIGN-OPT-OUT-LINE-LOCALE]).
 
 use std::collections::BTreeMap;
 
 use crate::Vault;
+use crate::campaign::compliance::OptOutLanguage;
 use crate::campaign::one_click_unsubscribe::one_click_unsubscribe_uri_in_txn;
 use crate::campaign::sender::{
-    CampaignEmailOptOut, seal_campaign_gmail_plan, seal_campaign_native_message,
+    CampaignEmailOptOut, campaign_envelope_email_opt_out, seal_campaign_gmail_plan,
+    seal_campaign_native_message,
 };
 use crate::channel_identity_provider::gmail::GmailDelegatedAdapter;
 use crate::entity_id::EntityId;
@@ -44,7 +49,7 @@ pub fn seal_gmail(
         subject,
         step_body,
         composed_at,
-        &CampaignEmailOptOut::BodyLine,
+        &CampaignEmailOptOut::BodyLine(OptOutLanguage::English),
     )?;
     Ok(SealedCampaignEmail {
         body_text: plan.body_text().to_owned(),
@@ -68,7 +73,7 @@ pub fn seal_native_mail(
         subject,
         step_body,
         sender_address,
-        &CampaignEmailOptOut::BodyLine,
+        &CampaignEmailOptOut::BodyLine(OptOutLanguage::English),
     )?;
     Ok(SealedCampaignEmail {
         body_text: message.text.clone().unwrap_or_default(),
@@ -98,6 +103,31 @@ pub fn seal_bulk_native_mail(
         content_ref: message.content_ref()?,
     };
     Ok((sealed, opt_out.hygiene_headers()?))
+}
+
+/// The stalwart branch's native message for `step_body`, sealed with the
+/// opt-out the frozen campaign envelope `envelope` carries, as the sender
+/// decodes it; `None` when the sender would refuse the envelope's opt-out
+/// keys.
+///
+/// # Errors
+/// As the branch: the message does not seal.
+pub fn seal_native_mail_from_envelope(
+    envelope: &[u8],
+    target: &str,
+    subject: &str,
+    step_body: &str,
+    sender_address: &str,
+) -> Result<Option<SealedCampaignEmail>> {
+    let Some(opt_out) = campaign_envelope_email_opt_out(envelope) else {
+        return Ok(None);
+    };
+    let message =
+        seal_campaign_native_message(target, subject, step_body, sender_address, &opt_out)?;
+    Ok(Some(SealedCampaignEmail {
+        body_text: message.text.clone().unwrap_or_default(),
+        content_ref: message.content_ref()?,
+    }))
 }
 
 /// The one-click link a bulk send to `person` in `campaign` freezes on

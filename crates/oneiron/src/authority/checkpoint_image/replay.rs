@@ -266,6 +266,7 @@ fold_state_fields!(
     machines,
     machine_keys,
     held_machine_answers,
+    restored_enrolments,
     root_anchors,
     anchor_entries,
     host_custody_keys,
@@ -291,6 +292,9 @@ fold_state_fields!(
     hosted,
     actor_rows,
     residence_directives,
+    passkey_contexts,
+    passkey_vouched_keys,
+    passkey_vouch_confirmations,
 );
 
 impl ReplayEvidence {

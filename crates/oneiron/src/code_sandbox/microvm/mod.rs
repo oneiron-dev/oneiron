@@ -47,8 +47,6 @@ pub use self::output::{
 pub use self::overlay::reap_overlay_scratch;
 pub use self::overlay::{collect_overlay_writes, prepare_overlay_handle};
 
-// FIX [LIBTEST-QUARANTINE-CODE-SANDBOX-MICROVM-TESTS]: the lib test target's type check fails here (4 errors: E0609 x2, E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

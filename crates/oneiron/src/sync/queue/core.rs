@@ -85,8 +85,26 @@ impl SyncQueue {
 
     /// Drains all pending update entries ordered by sequence number.
     ///
-    /// Does not remove entries — use `clear_through` after convergence.
+    /// Does not remove entries — use `clear_through` after convergence. A
+    /// row that does not decode is pruned: deleted with its `d:` marker
+    /// ([`Self::read_updates`] is the form that writes nothing).
     pub fn drain_updates(&self) -> Result<Vec<QueuedUpdate>> {
+        let (updates, malformed_keys) = self.scan_updates()?;
+        self.prune_malformed_rows(&malformed_keys, decode_update_row)?;
+        Ok(updates)
+    }
+
+    /// The pending update entries ordered by sequence number, for a read
+    /// such as the owner's outbox. It writes nothing: a row that does not
+    /// decode is skipped and stays stored until the next
+    /// [`Self::drain_updates`] prunes it.
+    pub fn read_updates(&self) -> Result<Vec<QueuedUpdate>> {
+        self.scan_updates().map(|(updates, _)| updates)
+    }
+
+    /// One read transaction over the update rows: the rows that decode, in
+    /// sequence order, and the keys of the rows that do not.
+    fn scan_updates(&self) -> Result<(Vec<QueuedUpdate>, Vec<Vec<u8>>)> {
         let rtxn = self.vault.store.env.read_txn()?;
         let mut updates = Vec::new();
         let mut malformed_keys = Vec::new();
@@ -107,11 +125,7 @@ impl SyncQueue {
             };
             updates.push(update);
         }
-        drop(rtxn);
-
-        self.prune_malformed_rows(&malformed_keys, decode_update_row)?;
-
-        Ok(updates)
+        Ok((updates, malformed_keys))
     }
 
     /// Drains all pending embed jobs.

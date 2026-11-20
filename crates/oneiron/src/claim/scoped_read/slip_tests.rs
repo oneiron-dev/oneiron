@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 fn host_root_reads_stamped_rows_but_plain_keys_and_revoked_proofs_do_not() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let id = EntityId::now();
     let row = ClaimBody::new(
         "test.slip_read",
@@ -25,6 +26,7 @@ fn host_root_reads_stamped_rows_but_plain_keys_and_revoked_proofs_do_not() -> Re
             ENTITY_TYPE_CLAIM,
             crate::TimeRange { start: 1, end: 1 },
             1,
+            None,
             &encode_claim_body(&row)?,
         )
         .commit()?;
@@ -177,6 +179,7 @@ fn no_slip_counts_an_unstamped_task_it_is_denied() -> Result<()> {
             crate::registry::ENTITY_TYPE_TASK,
             crate::TimeRange { start: 1, end: 1 },
             1,
+            None,
             &body,
         )
         .text(&replica, &[("body", "lantern harbor")])
@@ -239,6 +242,7 @@ fn a_base_only_slip_counts_an_unplaced_epoch_summary_nowhere() -> Result<()> {
         encode_epoch_summary_body(&EpochSummaryBody {
             v: EPOCH_SUMMARY_BODY_VERSION,
             session: EntityId::now().to_hex(),
+            conversation: None,
             epoch: n,
             turn_start: n * 3,
             turn_end: n * 3 + 2,
@@ -256,7 +260,7 @@ fn a_base_only_slip_counts_an_unplaced_epoch_summary_nowhere() -> Result<()> {
     );
     vault
         .batch()
-        .put_replicated(&replica, ENTITY_TYPE_SUMMARY, at, 1, &epoch(1)?)
+        .put_replicated(&replica, ENTITY_TYPE_SUMMARY, at, 1, None, &epoch(1)?)
         .put(&base_born, ENTITY_TYPE_SUMMARY, at, 1, &epoch(2)?)
         .put(&world_born, ENTITY_TYPE_SUMMARY, at, 1, &epoch(3)?)
         .put(
@@ -385,10 +389,8 @@ fn a_base_only_slip_counts_an_unplaced_epoch_summary_nowhere() -> Result<()> {
 /// (here one more row than a fusion list holds) and cut to one row after.
 #[test]
 fn a_scoped_text_search_for_one_row_ranks_a_bounded_list() -> Result<()> {
-    let config = crate::VaultConfig {
-        retrieval_telemetry_capture: true,
-        ..Default::default()
-    };
+    let mut config = crate::VaultConfig::device();
+    config.retrieval_telemetry_capture = true;
     let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let rows = crate::fusion::FUSION_LIST_LENGTH + 1;
     let mut batch = vault.batch();
@@ -429,5 +431,81 @@ fn a_scoped_text_search_for_one_row_ranks_a_bounded_list() -> Result<()> {
         "a one-row search ranked {} of {rows} rows",
         run.result_ids.len()
     );
+    Ok(())
+}
+
+/// Review #9577 P1: a row the credential's records caveat does not name is a
+/// missing id to the graph and timeline receipts, as it is to a point read:
+/// neither an edge centre nor a timeline anchor outside the caveat counts.
+#[test]
+fn graph_receipts_count_no_row_outside_the_records_caveat() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    let outside = EntityId::now();
+    let row = ClaimBody::new(
+        "test.slip_read",
+        ClaimSubject::Entity(outside),
+        Value::from("fact"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )?;
+    vault
+        .batch()
+        .put_replicated(
+            &outside,
+            ENTITY_TYPE_CLAIM,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            None,
+            &encode_claim_body(&row)?,
+        )
+        .commit()?;
+    let named = EntityId::now();
+    vault.put_entity(
+        &named,
+        crate::registry::ENTITY_TYPE_ASSET_TEXT,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"document",
+    )?;
+    let issuer = HostSlipIssuer::from_secret(b"records caveat graph receipts")?;
+    let mut slip = vault.ensure_host_root_slip(&issuer)?;
+    let root = vault.verified_host_root_slip(&issuer)?;
+    assert!(
+        vault
+            .scoped_read(ScopedReadActorKey::from_verified_slip(&root).expect("read proof"))
+            .read(&[crate::claim::PointRead::id(outside)], None)?
+            .single()
+            .is_some(),
+        "the root slip reads the row"
+    );
+    issuer.attenuate(
+        &mut slip,
+        SlipCaveat {
+            records: Some(BTreeSet::from([named.to_hex()])),
+            ..Default::default()
+        },
+    )?;
+    let verified = vault.verify_capability_slip(
+        &issuer.public_key(),
+        &slip,
+        b"named graph read",
+        &issuer.binding_proof(&slip, b"named graph read")?,
+    )?;
+    let limited =
+        vault.scoped_read(ScopedReadActorKey::from_verified_slip(&verified).expect("read proof"));
+    for id in [outside, EntityId::now()] {
+        let edges = limited.edges_out(&id)?;
+        assert!(edges.value.is_none());
+        assert_eq!(edges.receipt.suppressed_count, 0, "edges_out of {id:?}");
+        let timeline = limited.memory_timeline(&id)?;
+        assert!(timeline.records.is_empty());
+        assert_eq!(
+            timeline.receipt.suppressed_count, 0,
+            "memory_timeline of {id:?}"
+        );
+    }
     Ok(())
 }

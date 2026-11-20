@@ -3,6 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::expression_preference::{ExpressionPreferenceWrite, ExpressionWriteOrigin};
 use super::*;
 use crate::batch::export::OwnerArchiveRestorePermit;
@@ -353,7 +355,7 @@ fn binding(row: &ArchivedExpressionPreference, actual: &[u8]) -> Result<Vec<u8>>
     let mut result = archive.finalize().as_bytes().to_vec();
     // Include the actual header as well as body, so a later local lifecycle
     // edit invalidates the binding even if only its end timestamp changes.
-    result.extend_from_slice(blake3::hash(actual).as_bytes());
+    result.extend_from_slice(ContentHash::of(actual).as_bytes());
     Ok(result)
 }
 

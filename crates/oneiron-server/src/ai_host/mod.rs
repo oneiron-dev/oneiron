@@ -33,6 +33,7 @@ pub(crate) use compaction::pass_door;
 #[cfg(all(test, feature = "code-sandbox-wasmtime"))]
 pub(crate) use compaction::tests::cross_the_passes;
 pub(crate) use compaction::{ChatBreakpointCall, ChatSelfMode};
+mod attempt_retry;
 pub mod browser_planner;
 pub(crate) mod browser_program_admission;
 mod coach_browser_programs;
@@ -63,6 +64,8 @@ pub(crate) mod hook_regen;
 pub(crate) mod identity;
 mod judge_swap;
 mod lens_callbacks;
+#[cfg(oneiron_test_support)]
+pub(crate) use lens_callbacks::dedupe_key_for_test as lens_callback_dedupe_key_for_test;
 pub mod live_lease;
 mod local_vision;
 mod meeting_follow_up_drafting;

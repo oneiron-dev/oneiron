@@ -22,8 +22,8 @@ use crate::agent_dispatch::LivePlanRequest;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::learning_setting::{
-    SettingMode, SettingScope, check_row_terms, names_no_actor, parse_row_key, project_row_keys,
-    read_scopes_in_txn, scoped_row_key,
+    SettingMode, SettingScope, check_row_key_reads_back, check_row_terms, names_no_actor,
+    parse_row_key, project_row_keys, read_scopes_in_txn, scoped_row_key,
 };
 use crate::learning_setting_doors::{LearningSettingMode, LearningSettingScope};
 use crate::receipt::ERASED_CALL_IDENTITY;
@@ -171,6 +171,7 @@ pub fn put_choice_row(
     if let SettingScope::Type(type_ref) = scope {
         type_ref.validate()?;
     }
+    check_row_key_reads_back(row.value.choice().as_str(), row.mode, scope)?;
     check_row_terms(row.mode, row.weight_runs, &row.why)?;
     match row.value {
         ChoiceValue::Width(0) => return Err(invalid("a spawn width is at least one agent")),

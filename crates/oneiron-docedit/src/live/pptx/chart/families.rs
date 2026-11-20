@@ -135,7 +135,7 @@ tokens!(SizeRepresents {
 
 /// One plot's own settings: the `nth` plot (0 the first) of `family`, in
 /// the chart's plot order, so two plots of one family each keep theirs.
-/// Each setting applies to the families that hold it ([`ChartPlot::fit`]);
+/// Each setting applies to the families that hold it (`ChartPlot::fit`);
 /// `None` keeps what the plot holds, or gives a new plot its family's
 /// default.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

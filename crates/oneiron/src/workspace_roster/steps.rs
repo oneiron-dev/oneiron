@@ -293,7 +293,21 @@ pub(super) fn grant_member_bundle(
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
-        )
+        )?;
+        // The grant is the onboarding's admin act; a retry that finds it
+        // written above logs nothing again.
+        let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+        vault.record_admin_act_in_txn(
+            wtxn,
+            intent.workspace.workspace_vault_id,
+            writer.entity_ref(),
+            crate::federation::SharedVaultChange::MemberOnboarded {
+                member: intent.person_ref.to_hex(),
+                role: intent.grant_bundle.role,
+            },
+            now,
+        )?;
+        Ok(())
     })
 }
 

@@ -82,6 +82,29 @@ impl<'v> ScopedRead<'v> {
         }
     }
 
+    /// [`Self::is_ref_readable_with_policy_in`] for a stored record a
+    /// resolver names, read through its cleanup archive (ARCH-0055 section
+    /// 10, archive-visible: "The archive stays visible to the resolver"):
+    /// only `id`'s own archive conjuncts are lifted
+    /// ([`HeldAuthority::reading_archive_of`]). A removal, a stale mark, a
+    /// legal-hold use limit, a stale body or a withdrawn source still refuses
+    /// it, and the lane's scope, grants, credential, facets, relationship and
+    /// audience judge it as for any row. A record that is not archived reads
+    /// as [`Self::is_ref_readable_with_policy_in`] reads it.
+    pub(crate) fn is_ref_readable_through_archive_with_policy_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+    ) -> Result<bool> {
+        let filter = self.actor_retrieval_floor(policy)?;
+        let authority = HeldAuthority::for_request(None).reading_archive_of(*id);
+        match self.is_entity_readable_held_in(rtxn, policy, id, &filter, &authority) {
+            Err(error) if error.kind() == crate::ErrorKind::InvalidSecretCustodyBody => Ok(false),
+            readable => readable,
+        }
+    }
+
     pub(crate) fn is_entity_readable_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -630,13 +653,27 @@ impl<'v> ScopedRead<'v> {
         }
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if filter.deny_all
-            || self
-                .vault
-                .store
-                .validate_entity_type(header.entity_type)
-                .is_err()
-            || !filter.read_scope().bands.contains(&header.entity_type)
+        // A work-talk binding is row authority for a reader who holds no
+        // read scope of its own (L7-05, ANSWER L7-05-BINDING-READ = A): a
+        // bound reader with no Grant is floored to deny-all, so the binding
+        // is judged here, before the scope gates refuse the row. It lifts
+        // only those two gates, and only for a reader with no explicit
+        // credential or Grant Scope under a policy that has not failed
+        // closed; every later gate still binds, and the record stage below
+        // judges the binding again with the row's scope.
+        let scope_refuses =
+            filter.deny_all || !filter.read_scope().bands.contains(&header.entity_type);
+        let work_talk_bound = scope_refuses
+            && !policy.is_fail_closed()
+            && !policy.diagnostics().loaded_manifest_forces_fail_closed()
+            && grant.or(self.actor_key.authority_scope()).is_none()
+            && self.work_talk_row_readable_in(rtxn, id, header.entity_type);
+        if self
+            .vault
+            .store
+            .validate_entity_type(header.entity_type)
+            .is_err()
+            || (scope_refuses && !work_talk_bound)
         {
             return Ok(false);
         }
@@ -682,7 +719,7 @@ impl<'v> ScopedRead<'v> {
                 admitted && self.retained_copy_readable_in(rtxn, id, raw, header.entity_type)?
             );
         }
-        if !self.row_stands_in(rtxn, id, raw, &header, use_asked)? {
+        if !self.row_stands_in(rtxn, id, raw, &header, authority)? {
             return Ok(false);
         }
         if grant.is_none() && !self.relationship_raw_allowed_in(rtxn, id, raw, authority)? {
@@ -782,17 +819,34 @@ impl<'v> ScopedRead<'v> {
     /// archived and no deleted shell. A non-CLAIM body carries its own
     /// `stale: true` once withdrawn; a CLAIM's staleness is judged by its
     /// claim read. A recorded source that no longer stands withdraws the row,
-    /// the owner's too. `use_asked`: the named read asks the row's legal
-    /// non-use conjunct on its own (FIX 5226).
+    /// the owner's too. A named read that asks the row's legal non-use
+    /// conjunct on its own leaves it out here (FIX 5226;
+    /// [`HeldAuthority::asks_use_of`]). A named read of the row through its
+    /// cleanup archive ([`HeldAuthority::reads_archive_of`]) lifts only the
+    /// archive and reads the row as the owner's whole-vault export does
+    /// (`raw_exportable_in_txn`), its legal-hold use limit included.
     pub(super) fn row_stands_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
         header: &EntityMetadataHeader,
-        use_asked: bool,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
-        let readable = match (self.session_view, use_asked) {
+        if authority.reads_archive_of(id) {
+            let readable = match self.session_view {
+                Some(view) => crate::ports::raw_exportable_in_txn(view, rtxn, id, raw)?,
+                None => crate::ports::raw_exportable_in_txn(&self.vault.store, rtxn, id, raw)?,
+            };
+            return Ok(readable
+                && (raw.len() != ENTITY_METADATA_HEADER_LEN
+                    || !self.vault.store.entity_deletion_present_in_txn(
+                        rtxn,
+                        id,
+                        header.learned_at,
+                    )?));
+        }
+        let readable = match (self.session_view, authority.asks_use_of(id)) {
             (Some(view), false) => crate::ports::raw_readable_in_txn(view, rtxn, id, raw)?,
             (None, false) => crate::ports::raw_readable_in_txn(&self.vault.store, rtxn, id, raw)?,
             (Some(view), true) => {

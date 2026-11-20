@@ -136,6 +136,17 @@ fn preset(fixture: &Fixture) -> WorkspaceRosterPreset {
 
 /// Keeps encoding failures separate from the Owner door's refusal.
 fn install_one_vault(fixture: &Fixture, row: Value) -> TestResult<oneiron::Result<()>> {
+    install_one_vault_with_id(fixture, fresh_id(), row)
+}
+
+/// [`install_one_vault`] under a caller-chosen manifest id, so a later install
+/// replaces the earlier one: a second install under a fresh id would conflict
+/// with the first and leave the setting unreadable.
+fn install_one_vault_with_id(
+    fixture: &Fixture,
+    id: EntityId,
+    row: Value,
+) -> TestResult<oneiron::Result<()>> {
     let policy = json!({
         "schema_version": "1.2",
         "pack_id": "one-vault-work-talk-test",
@@ -149,7 +160,7 @@ fn install_one_vault(fixture: &Fixture, row: Value) -> TestResult<oneiron::Resul
     let bytes = rmp_serde::to_vec_named(&policy)?;
     Ok(fixture.vault.install_owner_policy_manifest(
         &fixture.owner_proof,
-        fresh_id(),
+        id,
         bytes,
         fixture.vault.now_recorded_at(),
     ))
@@ -222,6 +233,7 @@ fn witness_text(
             conversation_ref: conversation.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author,
@@ -370,32 +382,58 @@ fn assert_binding_turn_standing(
     Ok(())
 }
 
-/// Binding-scoped company read: the companion opens her room turn on the bound
-/// talk and recalls through it. No grant involved.
-fn companion_turn_recall_finds(
+/// The ids of `conversation`'s visible messages, as `reader` reads its
+/// transcript on a plain lane.
+fn transcript_message_ids(
+    fixture: &Fixture,
+    reader: EntityId,
+    conversation: &EntityId,
+) -> TestResult<Vec<EntityId>> {
+    let memory = fixture.vault.memory(reader, EdgeActorClass::Human);
+    let page = memory
+        .conversation_transcript(conversation, None, 50)?
+        .value;
+    let mut out = Vec::new();
+    for turn in &page.turns {
+        for message in &turn.messages {
+            out.push(EntityId::from_hex(&message.id)?);
+        }
+    }
+    Ok(out)
+}
+
+/// Binding-scoped company read by id: the companion opens her room turn on the
+/// bound talk and reads the talk's own row and its MESSAGE rows through it
+/// (ANSWER L7-05-BINDING-READ = A). No grant involved. Hydrate refuses the
+/// whole read when one row is withheld. Recall through the binding is FIX
+/// [WORK-TALK-BINDING-RECALL-FLOOR].
+fn companion_turn_message_texts(
     fixture: &Fixture,
     companion: EntityId,
     talk: &EntityId,
-    query: &str,
-    needles: &[&str],
-) -> TestResult<bool> {
+    messages: &[EntityId],
+) -> TestResult<Vec<String>> {
     let turn = fixture
         .vault
         .memory(companion, EdgeActorClass::Agent)
         .for_room_turn(*talk)?;
-    let pack = turn.recall(
-        query,
-        Effort::Light,
-        &RecallScope::default(),
-        10,
-        None,
-        None,
-    )?;
-    Ok(needles.iter().all(|needle| {
-        pack.items.iter().any(|item| {
-            matches!(item.kind.as_str(), "TURN" | "MESSAGE") && item.value_text.contains(needle)
+    let refs: Vec<String> = std::iter::once(talk)
+        .chain(messages)
+        .map(EntityId::to_hex)
+        .collect();
+    let views = turn.hydrate(&refs)?.value;
+    assert_eq!(views.len(), refs.len(), "every bound row reads");
+    Ok(views
+        .iter()
+        .filter(|view| view.kind == "MESSAGE")
+        .filter_map(|view| {
+            view.body
+                .as_ref()?
+                .get("content")?
+                .as_str()
+                .map(str::to_owned)
         })
-    }))
+        .collect())
 }
 
 /// Plain grant-gated transcript refuses the grantless companion: the withheld
@@ -633,14 +671,15 @@ fn one_vault_mode_saves_member_companion_work_talk_in_company_vault() -> TestRes
         owen,
         &talk,
     )?;
-    assert!(
-        companion_turn_recall_finds(
-            &fixture,
-            companion_actor,
-            &talk,
-            "March invoice",
-            &["quarterly numbers look off", "flagging the mismatch"]
-        )?,
+    let messages = transcript_message_ids(&fixture, yuki, &talk)?;
+    assert_eq!(messages.len(), 2, "the talk holds both witnessed messages");
+    let mut companion_read =
+        companion_turn_message_texts(&fixture, companion_actor, &talk, &messages)?;
+    companion_read.sort();
+    let mut expected_texts = vec![member_text.to_owned(), companion_text.to_owned()];
+    expected_texts.sort();
+    assert_eq!(
+        companion_read, expected_texts,
         "the companion reads the work talk through her binding"
     );
     assert_plain_transcript_closed_to_companion(&fixture, companion_actor, &talk)?;
@@ -814,7 +853,8 @@ fn the_brought_companion_writes_nowhere_else_in_the_company_vault() -> TestResul
 #[test]
 fn work_talk_stays_company_record_after_the_mode_turns_off() -> TestResult {
     let fixture = setup()?;
-    install_one_vault(&fixture, json!({ "version": 1, "mode": "on" }))??;
+    let manifest = fresh_id();
+    install_one_vault_with_id(&fixture, manifest, json!({ "version": 1, "mode": "on" }))??;
     let (yuki, _, companion_actor, yuki_outcome) =
         onboard_yuki_bring(&fixture, "work-talk-record-yuki")?;
     let talk = conversation_of(&open_via_verb(&member_memory(&fixture, yuki)?)?)?;
@@ -836,7 +876,7 @@ fn work_talk_stays_company_record_after_the_mode_turns_off() -> TestResult {
         at,
     )?;
 
-    install_one_vault(&fixture, json!({ "version": 1, "mode": "off" }))??;
+    install_one_vault_with_id(&fixture, manifest, json!({ "version": 1, "mode": "off" }))??;
 
     assert!(
         company_recall_finds(&fixture, "March invoice", "March invoice")?,
@@ -923,6 +963,7 @@ fn a_held_tag_witness_by_the_companion_needs_the_content_grant() -> TestResult {
         conversation_ref: talk.to_hex(),
         turn_ref: Some(turn_id.to_hex()),
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: None,
             author: WitnessAuthor::Companion,

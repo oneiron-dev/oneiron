@@ -2,11 +2,13 @@
 //! supersede, delete-only, no-hook advertisement, LFS-gated publication, and
 //! a recovery whose LFS check waited out.
 
+use super::exchange_idle::Progress;
+use super::protected_ref_confirm::ProtectedRefPasses;
 use super::tests::{
     LANDING_LEARNED_AT, RecordingRoom, advertise, advertised_refs, commit_file,
     fixture_attribution, fixture_intent, fixture_intent_with_pointers, git, hooks_dir,
-    landing_time, pointer_file, pushed_outcome, ref_update, seeded_repo, served_repo, temp_vault,
-    try_advertise,
+    landing_time, owner_admission_stamp, pointer_file, pushed_outcome, ref_update, seeded_repo,
+    served_repo, temp_vault, try_advertise,
 };
 use super::*;
 use crate::config::VaultConfig;
@@ -39,11 +41,7 @@ fn receive_pack_measured_partial_outcome_survives_recovery() {
         ref_update("refs/heads/published", None, Some(&second)),
         ref_update("refs/heads/declined", None, Some(&first)),
     ];
-    let stamp = DoorAdmissionStamp::from_principal(
-        EntityId::now(),
-        &EntityId::now().to_hex(),
-        crate::unix_seconds_now(),
-    );
+    let stamp = owner_admission_stamp(&vault, &root);
     vault
         .record_receive_pack_admission(&root, &stamp, DoorSeam::Landed)
         .expect("admission");
@@ -55,7 +53,13 @@ fn receive_pack_measured_partial_outcome_survives_recovery() {
         quarantine_path: None,
     };
     vault
-        .record_receive_pack_intent(&unpinned_repo_ref(&root), &stamp, &door)
+        .record_receive_pack_intent(
+            &unpinned_repo_ref(&root),
+            &stamp,
+            &door,
+            None,
+            &ProtectedRefPasses::default(),
+        )
         .expect("pre-effect intent");
     git(&root, &["update-ref", "refs/heads/pending", first.as_str()]);
     git(
@@ -175,11 +179,7 @@ fn receive_pack_hook_requires_durable_intent_before_releasing_the_backend() {
         (DoorSeam::Landed, false),
     ] {
         let (_hook_root, hooks) = hooks_dir();
-        let stamp = DoorAdmissionStamp::from_principal(
-            EntityId::now(),
-            &EntityId::now().to_hex(),
-            crate::unix_seconds_now(),
-        );
+        let stamp = owner_admission_stamp(&vault, &root);
         if admitted {
             vault
                 .record_receive_pack_admission(&root, &stamp, seam)
@@ -196,16 +196,20 @@ fn receive_pack_hook_requires_durable_intent_before_releasing_the_backend() {
         .expect("request");
         fs::write(hooks.blobs_path(), b"").expect("empty added-blob stream");
         fs::write(hooks.history_path(), b"").expect("empty history stream");
+        let clock = Progress::new();
         let report = serve_door_window(
             &vault,
             &repo,
             &hooks,
             &AtomicBool::new(false),
             Instant::now() + DOOR_WINDOW_TIMEOUT,
+            &clock,
             DoorWindowContext {
                 seam,
                 admission: Some(&stamp),
                 scan: ScanBounds::default(),
+                spill_floor: None,
+                protected_ref: None,
             },
         )
         .expect("window answered");
@@ -456,7 +460,7 @@ fn receive_pack_publication_cannot_omit_lfs_or_add_unobserved_objects() {
         &root,
         vec![ref_update("refs/heads/observed", None, Some(&tip))],
         vec![LfsPushedPointer {
-            path: "assets/logo.bin".to_owned(),
+            path: b"assets/logo.bin".to_vec(),
             oid,
             size_bytes: size,
         }],
@@ -539,7 +543,7 @@ fn recovery_stops_at_an_lfs_check_that_waited_out_and_leaves_its_refs_pending() 
             .map(|branch| ref_update(branch, None, Some(&tip)))
             .collect(),
         vec![LfsPushedPointer {
-            path: "assets/logo.bin".to_owned(),
+            path: b"assets/logo.bin".to_vec(),
             oid,
             size_bytes: size,
         }],
@@ -644,7 +648,7 @@ fn three_branch_push(room: Arc<RoomFor>) -> (PushDirs, Arc<Vault>, std::path::Pa
             .map(|branch| ref_update(branch, None, Some(&tip)))
             .collect(),
         vec![LfsPushedPointer {
-            path: "assets/logo.bin".to_owned(),
+            path: b"assets/logo.bin".to_vec(),
             oid,
             size_bytes: size,
         }],
