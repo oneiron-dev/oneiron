@@ -158,8 +158,13 @@ call fits the carrier of the selection's sign-in: the owner's socket frame
 (about 8 MiB encoded), else the 64 MiB line `oneiron mcp` reads, and at most
 64 MiB inflated. Subagents' logs that do not fit one call with the session's
 log go in further calls, each with the session's log again, which the import
-lands once. A session's log too long for one call is not sent at all; import
-it on the machine it ran on with `oneiron import claude-code <log>`. A send
+lands once. Over the owner's socket, a session's log too long for one call
+goes in parts (`vault.imports.hook_transcript_part`), up to 64 MiB encoded:
+the hosted vault holds them in memory, at most two sends at once, each for
+at most 10 minutes between parts and 30 minutes in all, and lands the log
+with the last part. A log too long even for that, or for a slip's one call,
+is not sent at all; import it on the machine it ran on with `oneiron import
+claude-code <log>`. A send
 the hosted vault does not take (it does not answer, or the credential has no
 Grant naming the verb) is dropped without a word; the session's next
 hand-over sends the whole log again, and the import lands only what is new.
@@ -462,8 +467,9 @@ What the hooks already imported stays in your vault, like any import.
 - `hand-over` takes well under a second: it writes one small file. To a
   hosted vault it sends the whole log, gzip-compressed, in as few calls as
   the sign-in's carrier takes (above), all ending by the same `--timeout`,
-  writing the calls included; a log too long for one call is not sent, and
-  lands only through `oneiron import claude-code <log>`. Claude
+  writing the calls included; over the owner's socket a log too long for
+  one call goes in parts, up to 64 MiB encoded. A log past that is not
+  sent, and lands only through `oneiron import claude-code <log>`. Claude
   Code gives `SessionEnd` hooks 1.5 seconds unless a hook sets its own
   `timeout`; the `timeout` of 5 above raises that budget to 5 seconds.
 - `serve` looks at the queue every 5 seconds and imports what waits there.

@@ -17,8 +17,10 @@
 //! `POST /v1/core/pairing/redeem`; its Grant is minted over real
 //! `POST /v1/core/facade/vault.agents.grants.mint`. The logs are the
 //! repository's Claude Code fixture session and its subagent. Each case owns
-//! its vault. The test names nothing the PR adds, so it builds on the PR's
-//! base, where every case's first call answers 404 (no route) and fails.
+//! its vault. Every case but case 9 names nothing the PR adds, so it builds
+//! on the PR's base, where every case's first call answers 404 (no route)
+//! and fails; case 9 reads the staged uploads' bounds through a door the
+//! FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER commit adds.
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test
 //! --locked -p oneiron-server --all-features --features oneiron/test-support
@@ -1103,4 +1105,127 @@ fn only_the_owner_stages_and_each_part_starts_where_the_upload_ends() {
         );
         assert_eq!(ledger(&fixture), landed, "nothing more landed");
     });
+}
+
+/// Case 9 (FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER): the staged uploads keep
+/// their bounds, on a clock the test sets. It reaches them through
+/// `test_doors::hook_transcript_uploads`, which the fix adds, so it runs on
+/// the PR's head alone. An upload with no part for the idle span is gone,
+/// and so is one open for its lifetime however its parts come; no more than
+/// the most uploads are open at once, and one that lands makes room;
+/// another owner's part never reaches an upload; text past the staged cap
+/// drops the upload.
+#[test]
+fn staged_uploads_keep_their_bounds() {
+    use std::time::Duration;
+
+    use oneiron::ingest::history::{HOOK_TRANSCRIPT_STAGED_MAX_BYTES, HookTranscriptPartRequest};
+    use oneiron::memory::MemoryResult;
+    use oneiron_server::test_doors::hook_transcript_uploads::{
+        IDLE, LIFETIME, OPEN_MAX, StagedPart, Uploads,
+    };
+
+    let part = |upload: u8, offset: usize, text: &str, last: bool| HookTranscriptPartRequest {
+        upload: format!("{upload:032x}"),
+        offset: offset as u64,
+        text: text.to_owned(),
+        last,
+    };
+    let refusal = |result: MemoryResult<StagedPart>| result.expect_err("refused").message;
+    let owner = EntityId::now();
+    let start = Duration::ZERO;
+
+    // No part for the idle span: the upload is gone.
+    let uploads = Uploads::starting_now();
+    assert_eq!(
+        uploads
+            .stage(start, owner, &part(1, 0, "ab", false))
+            .expect("open"),
+        StagedPart::Open(2)
+    );
+    assert!(
+        refusal(uploads.stage(IDLE, owner, &part(1, 2, "cd", true)))
+            .contains("no hook transcript upload"),
+        "an upload with no part for the idle span is gone"
+    );
+
+    // Parts within the idle span keep it, until its lifetime ends.
+    let uploads = Uploads::starting_now();
+    uploads
+        .stage(start, owner, &part(2, 0, "a", false))
+        .expect("open");
+    let step = IDLE - Duration::from_secs(1);
+    let (mut at, mut staged) = (start, 1);
+    while at + step < LIFETIME {
+        at += step;
+        assert_eq!(
+            uploads
+                .stage(at, owner, &part(2, staged, "b", false))
+                .expect("a part within the idle span"),
+            StagedPart::Open(staged as u64 + 1)
+        );
+        staged += 1;
+    }
+    assert!(staged > 2, "precondition: parts came past the idle span");
+    assert!(
+        refusal(uploads.stage(LIFETIME, owner, &part(2, staged, "c", true)))
+            .contains("no hook transcript upload"),
+        "an upload ends at its lifetime, however its parts come"
+    );
+
+    // No more than the most uploads open at once; one that lands makes room.
+    let uploads = Uploads::starting_now();
+    for upload in 0..OPEN_MAX {
+        uploads
+            .stage(start, owner, &part(10 + upload as u8, 0, "a", false))
+            .expect("open");
+    }
+    assert!(
+        refusal(uploads.stage(start, owner, &part(20, 0, "a", false))).contains("are open"),
+        "no more uploads open at once than the most"
+    );
+    assert_eq!(
+        uploads
+            .stage(start, owner, &part(10, 1, "b", true))
+            .expect("the last part lands"),
+        StagedPart::Whole("ab".to_owned())
+    );
+    uploads
+        .stage(start, owner, &part(20, 0, "a", false))
+        .expect("a landed upload makes room");
+
+    // Another owner's part never reaches an upload, nor ends it.
+    let other = EntityId::now();
+    assert_ne!(other, owner, "precondition: two owners");
+    assert!(
+        refusal(uploads.stage(start, other, &part(20, 1, "b", true)))
+            .contains("no hook transcript upload"),
+        "another owner's part never reaches the upload"
+    );
+    assert_eq!(
+        uploads
+            .stage(start, owner, &part(20, 1, "b", true))
+            .expect("its owner lands it"),
+        StagedPart::Whole("ab".to_owned())
+    );
+
+    // Text past the staged cap drops the upload.
+    let uploads = Uploads::starting_now();
+    let full = "x".repeat(HOOK_TRANSCRIPT_STAGED_MAX_BYTES);
+    assert_eq!(
+        uploads
+            .stage(start, owner, &part(30, 0, &full, false))
+            .expect("up to the cap"),
+        StagedPart::Open(full.len() as u64)
+    );
+    assert!(
+        refusal(uploads.stage(start, owner, &part(30, full.len(), "x", true)))
+            .contains("HOOK_TRANSCRIPT_STAGED_MAX_BYTES"),
+        "text past the cap is refused by the cap's name"
+    );
+    assert!(
+        refusal(uploads.stage(start, owner, &part(30, full.len(), "x", true)))
+            .contains("no hook transcript upload"),
+        "the upload past the cap was dropped"
+    );
 }

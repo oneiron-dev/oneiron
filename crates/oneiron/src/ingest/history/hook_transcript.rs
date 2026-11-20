@@ -15,11 +15,18 @@
 //! a Grant revoked during an import refuses the turns that had not landed
 //! yet; what had landed still reaches the owner's inbox and the Dreamer.
 //!
-//! Each log travels gzip-compressed in standard base64: the `oneiron mcp`
-//! bridge reads at most 2 MiB per message, and a long session's log is
-//! larger. All the logs of one call inflate to at most
+//! Each log travels gzip-compressed in standard base64, so a long session's
+//! log fits the call's carrier: one line `oneiron mcp` reads (at most 64
+//! MiB) for a slip or OAuth sign-in, one frame of the vault's socket (about
+//! 8 MiB) for the owner, whose calls ride the socket alone. A request too
+//! long for the owner's frame goes in parts
+//! (`vault.imports.hook_transcript_part`, [`HookTranscriptPartRequest`];
+//! FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER): the served vault holds them in
+//! memory, at most [`HOOK_TRANSCRIPT_STAGED_MAX_BYTES`] of the request's
+//! JSON text, and its last part lands the request here as one call lands
+//! it. All the logs of one request inflate to at most
 //! [`HOOK_TRANSCRIPT_MAX_BYTES`], read through a bounded reader; past that
-//! the call is refused before anything lands.
+//! the request is refused before anything lands.
 
 use std::collections::BTreeSet;
 use std::io::Read;
@@ -42,6 +49,12 @@ use crate::memory::{MEMORY_CODE_BAD_REQUEST, MemoryError, MemoryResult};
 /// The most bytes the logs of one call inflate to, together: the server's
 /// own request floor.
 pub const HOOK_TRANSCRIPT_MAX_BYTES: usize = 64 * 1024 * 1024;
+
+/// The most bytes of one request's JSON text a staged upload
+/// (`vault.imports.hook_transcript_part`) holds: the longest line `oneiron
+/// mcp` reads, so the owner's socket carries in parts a request as long as
+/// a slip's one call carries.
+pub const HOOK_TRANSCRIPT_STAGED_MAX_BYTES: usize = 64 * 1024 * 1024;
 
 /// The most subagent logs one call carries.
 pub const HOOK_TRANSCRIPT_MAX_SUBAGENTS: usize = 256;
@@ -171,6 +184,41 @@ pub struct HookTranscriptImportView {
     /// owner; absent when nothing landed new or changed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review: Option<String>,
+}
+
+/// `vault.imports.hook_transcript_part`'s input: one part of the JSON text
+/// of a [`HookTranscriptImportRequest`] too long for one call over the
+/// owner's socket. The parts of one upload go in order, each starting where
+/// the ones before it end; the last lands the request as
+/// `vault.imports.hook_transcript` lands the owner's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HookTranscriptPartRequest {
+    /// The upload's id: 32 lowercase hex digits the caller draws at random
+    /// for one request and names in each of its parts.
+    pub upload: String,
+    /// Where this part starts in the request's JSON text, in bytes: 0 opens
+    /// the upload; a later part starts where the parts before it end.
+    pub offset: u64,
+    /// The part: the request's JSON text from `offset` on, not empty.
+    pub text: String,
+    /// Whether this part ends the request's JSON text: the vault then lands
+    /// the request.
+    #[serde(default)]
+    pub last: bool,
+}
+
+/// `vault.imports.hook_transcript_part`'s answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HookTranscriptPartView {
+    /// The upload's id.
+    pub upload: String,
+    /// The bytes of the request's JSON text the upload holds, this part's
+    /// included: where its next part starts.
+    pub staged: u64,
+    /// The import's answer, once the last part landed the request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported: Option<HookTranscriptImportView>,
 }
 
 /// One conversation of the session, in counts, as the import reports it.

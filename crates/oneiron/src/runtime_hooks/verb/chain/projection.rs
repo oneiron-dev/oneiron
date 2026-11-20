@@ -37,10 +37,11 @@ pub(super) const WITHHELD: &str = "withheld_by_hook_grant";
 /// The verbs' free text whose rows no host names (CALLS, FIX 10084): a
 /// compaction window's turn text, a generated turn's text, and the Claude
 /// Code logs a hook transcript import carries (census L10-17, review round 1
-/// of #9770), raw tool results included. A hook whose view is narrower than
-/// its caller's reads each as withheld; every other field of a host verb is
-/// the host's own metadata.
-const UNNAMED_FREE_TEXT: [(&str, &[&str]); 4] = [
+/// of #9770), raw tool results included, whole or as a staged part's text
+/// (FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER). A hook whose view is narrower
+/// than its caller's reads each as withheld; every other field of a host
+/// verb is the host's own metadata.
+const UNNAMED_FREE_TEXT: [(&str, &[&str]); 5] = [
     ("host.compact", &["window", "*", "content"]),
     ("host.turn.generate", &["text"]),
     ("vault.imports.hook_transcript", &["transcript_gzip_base64"]),
@@ -48,6 +49,7 @@ const UNNAMED_FREE_TEXT: [(&str, &[&str]); 4] = [
         "vault.imports.hook_transcript",
         &["subagents", "*", "transcript_gzip_base64"],
     ),
+    ("vault.imports.hook_transcript_part", &["text"]),
 ];
 
 /// What one hook may see of its call: the caller's lane, the grant reader's

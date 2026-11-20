@@ -13,23 +13,30 @@
 //! binds, whose live Grant naming the verb the engine checks at the door's
 //! admission, before the import and in each of its writers, lands one Claude
 //! Code session. It lists no row: its answer names the session's
-//! CONVERSATION by id.
+//! CONVERSATION by id. `vault.imports.hook_transcript_part` (FIX
+//! HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER) carries the owner's request too long
+//! for one call over the socket in parts, staged in the server's memory
+//! (`server::hook_transcript_uploads`); its last part lands the request as
+//! the owner's call would. The owner alone stages: any other caller's calls
+//! ride HTTP, which takes the whole request in one call.
 use std::sync::Arc;
 
 use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::ingest::history::{
-    HistoryImportCaller, HookTranscriptImportRequest, HookTranscriptImportView, HostedImportCancel,
-    HostedImportCanceller, HostedImportLookup, HostedImportView, hosted_import_cancel_as,
-    hosted_import_get_as_owner, hosted_import_get_as_reader,
+    HistoryImportCaller, HookTranscriptImportRequest, HookTranscriptImportView,
+    HookTranscriptPartRequest, HookTranscriptPartView, HostedImportCancel, HostedImportCanceller,
+    HostedImportLookup, HostedImportView, hosted_import_cancel_as, hosted_import_get_as_owner,
+    hosted_import_get_as_reader,
 };
-use oneiron::memory::MemoryResult;
+use oneiron::memory::{MemoryError, MemoryResult};
 
 use super::host_doors::support::{Listed, internal, owner_proof};
 use super::legal_hold_doors::as_owner_naming;
 use super::substrate_read_doors::{as_reader, substrate_reader};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
+use crate::server::hook_transcript_uploads::Staged;
 
 /// Who may cancel a hosted import: the owner under its proof (`Some`), or a
 /// person or agent on its own verified slip (`None`), whose Steward `delete`
@@ -158,5 +165,58 @@ pub(crate) async fn vault_imports_hook_transcript(
     .await
     .map_err(|_| internal(VERB))
     .and_then(|answer| answer);
+    (answer, Vec::new())
+}
+
+/// Staged text that is not `vault.imports.hook_transcript`'s input.
+const ERR_STAGED_REQUEST: &str =
+    "the staged hook transcript request is not vault.imports.hook_transcript's input";
+
+/// `vault.imports.hook_transcript_part`: the owner, on its proof, stages one
+/// part of a `vault.imports.hook_transcript` request; the last part lands
+/// the whole request as that verb lands the owner's, the proof revalidated
+/// in the import's writers. A request whose staged text is not that verb's
+/// input is refused, with nothing landed.
+pub(crate) async fn vault_imports_hook_transcript_part(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: HookTranscriptPartRequest,
+) -> Listed<HookTranscriptPartView> {
+    const VERB: &str = "vault.imports.hook_transcript_part";
+    let owner = match owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(refusal) => return (Err(refusal), Vec::new()),
+    };
+    let text = match server.hook_transcript_uploads.stage(owner.actor(), &input) {
+        Ok(Staged::Open(staged)) => {
+            let view = HookTranscriptPartView {
+                upload: input.upload,
+                staged,
+                imported: None,
+            };
+            return (Ok(view), Vec::new());
+        }
+        Ok(Staged::Whole(text)) => text,
+        Err(refusal) => return (Err(refusal), Vec::new()),
+    };
+    let staged = u64::try_from(text.len()).unwrap_or(u64::MAX);
+    let upload = input.upload;
+    let server = Arc::clone(server);
+    let answer = super::clock_ingress::run_blocking(move || {
+        let request: HookTranscriptImportRequest = serde_json::from_str(&text)
+            .map_err(|error| MemoryError::bad_request(format!("{ERR_STAGED_REQUEST}: {error}")))?;
+        drop(text);
+        server
+            .vault()
+            .import_hook_transcript(HistoryImportCaller::Owner(&owner), &request)
+    })
+    .await
+    .map_err(|_| internal(VERB))
+    .and_then(|answer| answer)
+    .map(|imported| HookTranscriptPartView {
+        upload,
+        staged,
+        imported: Some(imported),
+    });
     (answer, Vec::new())
 }
