@@ -172,7 +172,9 @@ impl PipelineBuilder<'_> {
     /// claim gate judges each row first, as the D19 gate judges every row of
     /// these lists anyway (memoized), so its suppressions count as before;
     /// the slice's own refusal adds none, and an unborn claim's class is
-    /// read from the body that gate admitted.
+    /// read from the body that gate admitted. A search list takes it only
+    /// once the memory lane and entity-type authority have narrowed it, so
+    /// the gate judges no row the D19 gate never would (round 2).
     pub(super) fn retain_made_by_slice(
         &self,
         rtxn: &RoTxn<'_>,
@@ -219,7 +221,9 @@ impl PipelineBuilder<'_> {
         // A made_by slice joins the reader's predicate, after the call's own:
         // only rows it admits count toward the rounds' stops and take places
         // in the window's bound, so rows it drops cannot fill the window
-        // ahead of the rows it keeps (REVIEW-9842).
+        // ahead of the rows it keeps (REVIEW-9842). The window's scans ask
+        // that reader too, so neither can they fill a scan's cap or the
+        // spanner buffer (round 2).
         let slice_caches = RefCell::new((
             EntityMetadataCache::default(),
             claim_gate.fresh(filters.authority_filter.include_stale),
@@ -268,7 +272,11 @@ impl PipelineBuilder<'_> {
         // take places in the bound, and the walk below takes the bound's cut
         // as it reaches each row. The memory lane's kinds join the same
         // predicate, so no row past the cut is read for them.
-        let reader = ReadableRows::new(predicate, filters.deadline);
+        let reader = if self.made_by == crate::provenance::made_by::MadeByPredicate::All {
+            ReadableRows::new(predicate, filters.deadline)
+        } else {
+            ReadableRows::new_asked_by_scans(predicate, filters.deadline)
+        };
         let (mut scores, cut) = execute_temporal_for_reader(
             &self.read,
             rtxn,

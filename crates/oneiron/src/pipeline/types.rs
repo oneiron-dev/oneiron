@@ -209,8 +209,9 @@ pub(super) struct PipelineFilterConfig<'a> {
     /// walk's visibility, the TURN fold, the reranker's words, L2 evidence
     /// and the trace judge rows that are not results, and admit as before.
     /// A PPR walk's result list and the phonetic exact-code hits take the
-    /// slice after their search (`PipelineBuilder::retain_made_by_slice`);
-    /// the post-blend filter still sweeps every candidate.
+    /// slice after entity-type authority narrows them
+    /// (`PipelineBuilder::retain_made_by_slice`); the post-blend filter
+    /// still sweeps every candidate.
     pub(super) made_by: crate::provenance::made_by::MadeByPredicate,
 }
 
