@@ -93,6 +93,12 @@ def write_frame(kind, payload):
         _out.flush()
 
 
+def tree_path(root, path):
+    """The bytes path of tree path `path` under the str `root`: tree paths
+    are bytes, and os.path.join refuses a str and bytes mix."""
+    return os.path.join(os.fsencode(root), *path.split(b"/"))
+
+
 def safe_join(root, path):
     """`path` under `root`, refusing absolute, `..` and `.git` components."""
     parts = path.split(b"/")
@@ -100,7 +106,7 @@ def safe_join(root, path):
         raise ValueError("a tree path is not a normal relative path")
     if any(part.lower() == b".git" for part in parts):
         raise ValueError("a tree path names git administration")
-    return os.path.join(root, *parts)
+    return tree_path(root, path)
 
 
 def materialize(root, frame, git_dir):
@@ -174,7 +180,7 @@ def observe(root, paths):
     mode and content sha256, the engine's own tree digest."""
     digest = hashlib.sha256()
     for path in sorted(paths):
-        target = os.path.join(root, *path.split(b"/"))
+        target = tree_path(root, path)
         try:
             info = os.lstat(target)
         except FileNotFoundError:

@@ -108,7 +108,7 @@ async fn served_pass(wording: &str, files: &[(&str, &str)]) -> (Vec<Seen>, Strin
     let vault_path = dir.path().join("vault");
     std::fs::create_dir_all(&vault_path).unwrap();
     for (name, text) in files {
-        std::fs::write(dir.path().join(name), text).unwrap();
+        write_referenced_file(&dir.path().join(name), text);
     }
     witness(&vault_path);
     let fake = FakeLlm::start(Vec::new(), Some(Reply::text(NOTHING))).await;
@@ -323,11 +323,10 @@ async fn a_missing_file_or_an_unknown_question_refuses_the_config() {
         "the refusal names the key and the missing file's path: {output}"
     );
 
-    std::fs::write(
-        dir.path().join("questions.json"),
+    write_referenced_file(
+        &dir.path().join("questions.json"),
         json!({"verdict": "Which value wins?"}).to_string(),
-    )
-    .unwrap();
+    );
     let config = config_with(
         dir.path(),
         &vault_path,
@@ -347,4 +346,16 @@ async fn a_missing_file_or_an_unknown_question_refuses_the_config() {
         "the refusal never repeats the parser's message: {output}"
     );
     assert!(fake.seen().is_empty(), "a refused config calls no model");
+}
+
+/// Writes a file the config refers to with mode 0644. Serve reads such a
+/// file only once no other user can write it, so a bare write would take its
+/// mode from the host's umask (FIX SIDE-FILE-TESTS-UMASK-DEPENDENT).
+fn write_referenced_file(path: &Path, text: impl AsRef<[u8]>) {
+    std::fs::write(path, text).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
 }

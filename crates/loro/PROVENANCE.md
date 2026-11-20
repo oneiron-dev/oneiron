@@ -43,7 +43,7 @@ change store are private. This vendor adds that split and join.
 | Upstream source root | `$CARGO_HOME/registry/src/index.crates.io-1949cf8c6b5b557f/loro-1.16.2` | `$CARGO_HOME/registry/src/index.crates.io-1949cf8c6b5b557f/loro-internal-1.16.2` |
 | crates.io checksum (unpatched lock entry, equals the `.crate` SHA-256) | `8e86dea63b66576db244cbc3a40bdb17517263c93f318e2fbe08aca3be1192cb` | `8d5806b65ee68c3ae7891959dd968898860dab74fbf6498b312de9b548dce5ec` |
 | Upstream VCS commit (`.cargo_vcs_info.json`) | `af130d97d8b110add13283fc5bfc81d97a9a609f`, `crates/loro` | `af130d97d8b110add13283fc5bfc81d97a9a609f`, `crates/loro-internal` |
-| Upstream SHA-256 of each changed file | `src/lib.rs` `e2373b73e459c6dfcfb8a30ce2880a9dc86f5bf7dcb0bba2e001c26826264a8d` | `src/encoding.rs` `aab26dc4cbe9f5d91512a8659ea609ab2863d0a5f161a6cc582fab352b4816f7`; `src/oplog/change_store.rs` `ddedd8560f5c4125c21b7cafa572532a5cf15cfd04ee167bdf8d7799adf19626`; `src/loro.rs` `c71247657c228ff33750d87e46f59bf5ccc7aa5bbdc0d7ed4ea254fe7b88e500`; `src/lib.rs` `021bab8fdc294cfa7851cdb1309e33e7bedf558b2ef9ed6a2239fe599ea628e3` |
+| Upstream SHA-256 of each changed file | `src/lib.rs` `e2373b73e459c6dfcfb8a30ce2880a9dc86f5bf7dcb0bba2e001c26826264a8d` | `src/encoding.rs` `aab26dc4cbe9f5d91512a8659ea609ab2863d0a5f161a6cc582fab352b4816f7`; `src/oplog/change_store.rs` `ddedd8560f5c4125c21b7cafa572532a5cf15cfd04ee167bdf8d7799adf19626`; `src/loro.rs` `c71247657c228ff33750d87e46f59bf5ccc7aa5bbdc0d7ed4ea254fe7b88e500`; `src/lib.rs` `021bab8fdc294cfa7851cdb1309e33e7bedf558b2ef9ed6a2239fe599ea628e3`; `src/diff/diff_impl.rs` `8bd29608cb0597066cbd53fbab1811681a5013d62a2adaab27713645ed416084` |
 | License | MIT (`LICENSE` shipped) | MIT (declared; the package ships no license file) |
 
 ## Inventory
@@ -67,6 +67,13 @@ unmodified trees.
   (see "The SnapshotAt export counter" below).
 - `loro-internal-1.16.2/src/lib.rs` — `snapshot_at_exports()` reads that
   counter.
+- `loro-internal-1.16.2/src/diff/diff_impl.rs` — the text diff's timeout
+  (`UpdateOptions::timeout_ms`) reads a monotonic clock (`diff_clock_ms`, an
+  `Instant` elapsed since its first read) in place of the wall clock, on every
+  target where `Instant` works; plain `wasm32` keeps upstream's clock. Upstream
+  subtracted a saved wall-clock reading, so a clock stepped back while a diff
+  ran held its timeout off by the size of the step, and every whole-text set
+  (`crates/oneiron/src/text_diff.rs`) diffs under the vault's writer.
 - `loro-1.16.2/src/lib.rs` — a `loro::checkpoint` module re-exporting the new
   types, the two `LoroDoc` methods below delegating to the internal ones, and
   the `loro::snapshot_at_exports` re-export.
@@ -184,7 +191,7 @@ workspace `[lints]` do not apply to them.
 ## Re-vendoring
 
 Unpack the new `.crate` archives over both vendor directories, then re-apply
-the six changed files and the added module above, and update this file. The
+the seven changed files and the added module above, and update this file. The
 join relies on the fast-snapshot layout, `ChangeStore::encode_from`, map-state
 encoding, and the shallow-root store; any upstream move must re-run the KS7-3
 fleet probe before landing.

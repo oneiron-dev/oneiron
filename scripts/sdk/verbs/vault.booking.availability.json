@@ -1,6 +1,6 @@
 {
   "name": "vault.booking.availability",
-  "description": "Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver without exposing busy sources.",
+  "description": "Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver; a caller whose live calendar grants name every calendar a host binds also gets its busy blocks in working hours.",
   "input": "crate::task_verb::sdk::BookingAvailabilityRequest",
   "output": "crate::booking::agent_api::BookingOperationResponse",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.availability\", &input)?",

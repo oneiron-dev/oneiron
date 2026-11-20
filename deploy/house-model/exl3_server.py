@@ -20,6 +20,8 @@ A thinking reply is split as llama.cpp's `--reasoning-format deepseek` splits
 it: the text before `</think>` comes back as `reasoning_content`, the answer as
 `content`. `reasoning_budget_tokens` caps the thinking part; at the cap the
 server closes the thought itself and the answer gets the rest of `max_tokens`.
+A request that sets a budget and no `max_tokens` gets the budget plus
+`--default-max-tokens`, so the answer keeps that room after a full thought.
 A `response_format` schema constrains the answer only, never the thought.
 
 A request body may come gzip- or zstd-encoded (`body_codec.py`); one in a
@@ -435,6 +437,24 @@ def optional_int(body, key):
     if isinstance(value, bool) or not isinstance(value, (int, float)) or int(value) != value:
         raise RequestError(f"{key} must be an integer")
     return int(value)
+
+
+def reply_limits(body, default_max_tokens, room):
+    """The request's output cap and thinking budget. A request that names no
+    cap gets `default_max_tokens`, and one that also sets
+    `reasoning_budget_tokens` gets that budget on top, so a thought that
+    spends its whole budget still leaves the answer `default_max_tokens`
+    (FIX DREAMER-EXTRACTION-THOUGHT-EATS-ANSWER-CAP: with the budget inside
+    the default, a 4,096-token thought took a 4,096-token cap whole). The cap
+    is cut to the context's `room` either way."""
+    budget = optional_int(body, "reasoning_budget_tokens")
+    if budget is not None and budget < 0:
+        raise RequestError("reasoning_budget_tokens must not be negative")
+    max_tokens = optional_int(body, "max_completion_tokens") or optional_int(body, "max_tokens") \
+        or default_max_tokens + (budget or 0)
+    if max_tokens < 1:
+        raise RequestError("max_tokens must be positive")
+    return min(max_tokens, room), budget
 
 
 def answer_schema(body):
@@ -1629,14 +1649,7 @@ class Server:
         if room < 1:
             raise RequestError(f"the prompt's {prompt_tokens} tokens fill the {self.context}-token context",
                                code="context_length_exceeded")
-        max_tokens = optional_int(body, "max_completion_tokens") or optional_int(body, "max_tokens") \
-            or self.default_max_tokens
-        if max_tokens < 1:
-            raise RequestError("max_tokens must be positive")
-        max_tokens = min(max_tokens, room)
-        budget = optional_int(body, "reasoning_budget_tokens")
-        if budget is not None and budget < 0:
-            raise RequestError("reasoning_budget_tokens must not be negative")
+        max_tokens, budget = reply_limits(body, self.default_max_tokens, room)
         schema = answer_schema(body)
         stops = stop_strings(body)
         seed = optional_int(body, "seed")
@@ -1844,7 +1857,8 @@ def main():
                         f"a request that sets {SOLO_FIELD} runs alone")
     p.add_argument("--recurrent-cache-gib", type=int, default=4)
     p.add_argument("--default-max-tokens", type=int, default=4096,
-                   help="the reply cap when a request names none")
+                   help="the reply cap when a request names none; a request with a reasoning budget "
+                        "gets that budget on top, so its answer keeps this room")
     p.add_argument("--model-id", default="qwen3.8-27b", help="the id /v1/models reports")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=18091)

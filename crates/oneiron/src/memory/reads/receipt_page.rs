@@ -65,6 +65,12 @@ pub(crate) trait ReceiptReader {
     /// Whether this reader is the vault owner, who reads the world names on
     /// his own notices (FIX 5493).
     fn reads_owner_notices(&self) -> bool;
+    /// The actor this reader reads as, when it is one: a verb hook's
+    /// receipt reaches a bound reader only when it made the call. `None`
+    /// (a room's key) reads no verb hook's receipt.
+    fn receipt_reader_actor(&self) -> Option<EntityId> {
+        None
+    }
 }
 
 impl ReceiptReader for Memory<'_> {
@@ -91,6 +97,10 @@ impl ReceiptReader for Memory<'_> {
     fn reads_owner_notices(&self) -> bool {
         self.secret_sight()
             .is_ok_and(|sight| sight == crate::secret_custody::SecretSight::Owner)
+    }
+
+    fn receipt_reader_actor(&self) -> Option<EntityId> {
+        Some(self.actor)
     }
 }
 
@@ -287,9 +297,12 @@ pub(crate) fn receipts_of_kinds_for(
 
 /// `receipts` cut to what `reader`'s credential reads, before any page cut
 /// (OF-172 D2). Triggers and a prepared guest window's private source world
-/// and rows must all pass the same lane read. For a reader that screens
-/// served forms, its ASSET and ASSET_TEXT are judged the same way. Pure
-/// metadata stays; an unbound handle keeps its actor's receipt behavior.
+/// and rows must all pass the same lane read. A Hook receipt is judged on
+/// the rows it names, as the off-device screen reads them
+/// ([`crate::receipt::referenced_rows`]), withheld when they cannot be
+/// known. For a reader that screens served forms, its ASSET and ASSET_TEXT
+/// are judged the same way. Pure metadata stays; an unbound handle keeps
+/// its actor's receipt behavior.
 fn credential_kept_receipts(
     reader: &impl ReceiptReader,
     receipts: Vec<ReceiptRecord>,
@@ -300,7 +313,31 @@ fn credential_kept_receipts(
     let screens_forms = reader.screens_served_form_rows();
     let mut named = Vec::with_capacity(receipts.len());
     for receipt in receipts {
-        let mut rows: Vec<EntityId> = trigger_row_of(&receipt).into_iter().collect();
+        // A verb hook's receipt can carry its call's own words (a `note` or
+        // `reason` its body drew from the call's input), so it reaches only
+        // the actor that made the call (review of #9535).
+        if crate::receipt::is_verb_hook_receipt(&receipt) {
+            let caller = receipt.on_behalf_of.as_deref();
+            let reader_actor = reader.receipt_reader_actor().map(|actor| actor.to_hex());
+            if caller.is_none() || caller != reader_actor.as_deref() {
+                continue;
+            }
+        }
+        // A Hook receipt's real rows, not its trigger alone: a verb hook's
+        // invocation trigger names no row, and an unknown or unkept run
+        // withholds it (HOOKS-04). A verb run's rows include its input's (the
+        // rows its call showed or named), so a narrower credential of the
+        // same actor reads no text drawn from a row it cannot read (review
+        // round 2 of #9535). Every other family keeps `trigger_row_of`.
+        let mut rows: Vec<EntityId> = if receipt.receipt_kind == ReceiptKind::Hook {
+            let Some(rows) = crate::receipt::referenced_rows(reader.receipt_vault(), &receipt)?
+            else {
+                continue;
+            };
+            rows
+        } else {
+            trigger_row_of(&receipt).into_iter().collect()
+        };
         if screens_forms && receipt.receipt_kind == ReceiptKind::ServedForm {
             rows.extend(crate::receipt::served_form_rows(&receipt));
         }

@@ -15,6 +15,7 @@ use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{RetrievalRunId, RetrievalRunRecord};
 use crate::{EntityId, Error, Result, Vault, consent::AuthenticatedOwner};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 const LABEL: SideTable<Vec<u8>, ReviewedFinding, Named> =
@@ -129,28 +130,27 @@ fn key(family: &str, id: &EntityId) -> Vec<u8> {
     out.extend_from_slice(id.as_bytes());
     out
 }
-/// A registration's revision: the seed's wording and the exact corpus.
+/// A registration's revision: the seed's wording and the exact corpus
+/// (`purposes::self_heal::MINTED_T2_REVISION`).
 fn minted_revision(minted: &MintedT2) -> [u8; 32] {
     let policy = &minted.policy;
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron.self_heal.minted_t2.v1\0");
+    let mut hash = LegacyDigest::new(purposes::self_heal::MINTED_T2_REVISION);
     for part in [
         policy.family.as_str(),
         policy.class.as_str(),
         policy.prompt.as_str(),
         policy.rubric.as_str(),
     ] {
-        hash.update(&(part.len() as u64).to_be_bytes());
-        hash.update(part.as_bytes());
+        hash.len_u64_be(part.len()).raw(part.as_bytes());
     }
-    hash.update(&(policy.consecutive as u64).to_be_bytes());
+    hash.raw(&(policy.consecutive as u64).to_be_bytes());
     for ids in [&minted.positive_events, &minted.negative_events] {
-        hash.update(&(ids.len() as u64).to_be_bytes());
+        hash.len_u64_be(ids.len());
         for id in ids {
-            hash.update(id.as_bytes());
+            hash.raw(id.as_bytes());
         }
     }
-    *hash.finalize().as_bytes()
+    hash.finish()
 }
 fn family_prefix(family: &str) -> Vec<u8> {
     let mut out = Vec::new();
@@ -492,15 +492,28 @@ impl Vault {
 }
 
 fn replays_group(runs: &[RetrievalRunRecord], event: &super::DiagnosticEvent) -> Result<bool> {
-    let mut hasher = blake3::Hasher::new();
-    for run in runs {
-        let bytes = rmp_serde::to_vec_named(run)
-            .map_err(|_| Error::InvariantViolation("retrieval telemetry encode"))?;
-        hasher.update(&(bytes.len() as u64).to_be_bytes());
-        hasher.update(&bytes);
-    }
+    let digest = replays_digest(runs)?;
     Ok(runs
         .last()
         .is_some_and(|last| event.replay.run_ref.as_deref() == Some(last.run_id.to_hex().as_str()))
-        && event.replay.content_hash == *hasher.finalize().as_bytes())
+        && event.replay.content_hash == digest)
+}
+
+/// The retrieval-window digest [`replays_group`] compares
+/// (`purposes::self_heal::RETRIEVAL_WINDOW`).
+fn replays_digest(runs: &[RetrievalRunRecord]) -> Result<[u8; 32]> {
+    let mut hasher = LegacyDigest::new(purposes::self_heal::RETRIEVAL_WINDOW);
+    for run in runs {
+        let bytes = rmp_serde::to_vec_named(run)
+            .map_err(|_| Error::InvariantViolation("retrieval telemetry encode"))?;
+        hasher.len_u64_be(bytes.len()).raw(&bytes);
+    }
+    Ok(hasher.finish())
+}
+
+/// [`replays_digest`] for the K door
+/// (`test_doors::fingerprint_keep_self_heal_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn replays_digest_for_test(runs: &[RetrievalRunRecord]) -> Result<[u8; 32]> {
+    replays_digest(runs)
 }

@@ -116,7 +116,8 @@ struct SharedEnvEntry {
     /// Retained for leave checks and idempotent purge resume, whether or not a
     /// sync lane is running. Left envs never start a run on this connection.
     connection: Arc<SyncConnection>,
-    /// None once the env has left (or left before this process opened it).
+    /// None once the env has left (or left before this process opened it),
+    /// and while its slip names a member grant it holds no live copy of.
     lane: Option<ActiveLane>,
     /// The confirmed receipt finished every replica purge batch. The owed
     /// orphan-body collect continues independently in housekeeping.
@@ -124,7 +125,8 @@ struct SharedEnvEntry {
     /// The last unix second a leave check ran clean (`None` answered).
     /// Failures leave the stamp alone, so they retry on the next round.
     last_leave_check: u64,
-    /// The lane's 401 upgrades, and those a clean check covers (FIX 12442).
+    /// The lane's 401 and 403 upgrades, and those a clean check covers (FIX
+    /// 12442, MEMBER-SELECTOR-SOCKET).
     refused: RefusedUpgrades,
 }
 
@@ -137,6 +139,9 @@ struct OpenedEnv {
     vault: Arc<Vault>,
     connection: Arc<SyncConnection>,
     left: bool,
+    /// The slip names a member grant this env holds no live copy of: no
+    /// lane runs ([`LaneReach::GrantMissing`]).
+    grant_missing: bool,
 }
 
 #[derive(Default)]
@@ -235,8 +240,9 @@ impl SharedEnvRegistry {
             tokio::task::spawn_blocking(move || open_one(&spec, &config, lease_vault_id)).await;
         match opened {
             Ok(Ok(env)) => {
-                let lane = if env.left {
-                    // Already left: no run needs an admission.
+                let lane = if env.left || env.grant_missing {
+                    // Already left, or a member's lane with no live copy of
+                    // its grant: no run needs an admission.
                     None
                 } else {
                     let first = admission();
@@ -323,7 +329,8 @@ impl SharedEnvRegistry {
     /// already-recorded leave calls the same idempotent confirmation again,
     /// so an interrupted purge resumes instead of looking complete. The
     /// caller holds each handle so shutdown joins the checks. A refusal or
-    /// failure (a 401 included) warns and retries, never reads as a leave.
+    /// failure (a 401 or 403 included) warns and retries, never reads as a
+    /// leave.
     pub(crate) fn leave_check_round(&self, now: u64) -> Vec<tokio::task::JoinHandle<()>> {
         let due: Vec<(SharedEnvKey, Arc<Vault>, Arc<SyncConnection>, bool, u64)> = {
             let envs = self.lock();
@@ -400,7 +407,7 @@ impl SharedEnvRegistry {
 
     /// One env's check: the POST, bounded; the outcome applied back to the
     /// registry from the task itself. A clean answer covers the `refused`
-    /// 401 upgrades its round read.
+    /// 401 and 403 upgrades its round read.
     fn spawn_leave_check(
         &self,
         key: SharedEnvKey,
@@ -466,7 +473,7 @@ impl SharedEnvRegistry {
     }
 
     /// Notes a clean check round for one env: its next check is an hour
-    /// out, unless a 401 upgrade came after the round read `refused`.
+    /// out, unless a 401 or 403 upgrade came after the round read `refused`.
     /// Failures leave both alone, so they retry next round.
     fn note_leave_check(&self, key: &SharedEnvKey, now: u64, refused: u64) {
         if let Some(entry) = self.lock().get_mut(key) {
@@ -666,12 +673,20 @@ fn open_one(
     }
     // Left or not, this connection stays for idempotent leave confirmation;
     // only unleft entries start a sync run on it.
-    let connection = open_lane(Arc::clone(&vault), spec, lease_vault_id)?;
+    let (connection, reach) = open_lane(Arc::clone(&vault), spec, lease_vault_id)?;
+    let grant_missing = matches!(reach, LaneReach::GrantMissing);
     if left {
         tracing::info!(
             vault_id = vault_id,
             path = %path.display(),
             "shared env open: already left, no lane"
+        );
+    } else if grant_missing {
+        tracing::warn!(
+            vault_id = vault_id,
+            path = %path.display(),
+            "shared env open: its lane slip names a member grant this env holds no live copy \
+             of, so no lane runs; a member's lane never falls back to full replication"
         );
     } else {
         tracing::info!(
@@ -687,6 +702,7 @@ fn open_one(
         vault,
         connection,
         left,
+        grant_missing,
     })
 }
 
@@ -700,7 +716,7 @@ fn open_lane(
     vault: Arc<Vault>,
     spec: &SharedEnvSpec,
     lease_vault_id: u64,
-) -> Result<Arc<SyncConnection>, String> {
+) -> Result<(Arc<SyncConnection>, LaneReach), String> {
     let vault_id = spec.vault_id;
     let manager = Arc::new(WindowManager::new(
         Arc::clone(&vault),
@@ -714,30 +730,16 @@ fn open_lane(
     let key = credential
         .signing_key()
         .map_err(|error| format!("lane slip of shared env {vault_id} unusable: {error:#}"))?;
-    let residence_selector = shared_residence_selector(&vault, &credential.token)?;
-    let residence_mode = if residence_selector.is_some() {
-        oneiron::sync::SyncResidenceMode::Opened
-    } else {
-        // No live member grant: full replication has no Opened selector
-        // gate. A saved Opened preference would still override this
-        // fallback inside `SyncConnection::new` and fail every reconnect
-        // with no selector, so the lane records All for a vault it owns
-        // while open.
-        let saved =
-            oneiron::sync::residence::load_device_sync_preference(&vault).map_err(|error| {
-                format!("shared env {vault_id} residence preference unreadable: {error:#}")
-            })?;
-        if saved.is_some_and(|preference| preference.mode != oneiron::sync::SyncResidenceMode::All)
-        {
-            oneiron::sync::residence::set_device_sync_preference(
-                &vault,
-                oneiron::sync::SyncResidenceMode::All,
-            )
-            .map_err(|error| {
-                format!("shared env {vault_id} residence preference not writable: {error:#}")
-            })?;
-        }
-        oneiron::sync::SyncResidenceMode::All
+    let reach = lane_reach(&vault, &credential.token)?;
+    let (residence_mode, residence_selector) = match &reach {
+        LaneReach::Member(selector) => (
+            oneiron::sync::SyncResidenceMode::Opened,
+            Some(selector.clone()),
+        ),
+        // No run starts on this connection: it is kept for the leave checks
+        // alone, and records no full-replication preference.
+        LaneReach::GrantMissing => (oneiron::sync::SyncResidenceMode::Opened, None),
+        LaneReach::Full => (full_replication_mode(&vault, vault_id)?, None),
     };
     let client_config = SyncClientConfig {
         server_url: spec.home_url.clone(),
@@ -761,24 +763,72 @@ fn open_lane(
         },
     )
     .map_err(|error| format!("lane of shared env {vault_id} unbuildable: {error:#}"))?;
-    Ok(Arc::new(connection))
+    Ok((Arc::new(connection), reach))
 }
 
-/// The own-device member grant the paired slip names, for residence reads.
-/// Never inferred from the home's root or peer bytes.
-fn shared_residence_selector(
-    vault: &oneiron::Vault,
-    token: &str,
-) -> Result<Option<oneiron::sync::SyncSelector>, String> {
+/// The mode of a lane that replicates in full. A saved Opened preference
+/// would still override it inside `SyncConnection::new` and fail every
+/// reconnect with no selector, so the lane records All for a vault it owns
+/// while open.
+fn full_replication_mode(
+    vault: &Vault,
+    vault_id: u64,
+) -> Result<oneiron::sync::SyncResidenceMode, String> {
+    let saved = oneiron::sync::residence::load_device_sync_preference(vault).map_err(|error| {
+        format!("shared env {vault_id} residence preference unreadable: {error:#}")
+    })?;
+    if saved.is_some_and(|preference| preference.mode != oneiron::sync::SyncResidenceMode::All) {
+        oneiron::sync::residence::set_device_sync_preference(
+            vault,
+            oneiron::sync::SyncResidenceMode::All,
+        )
+        .map_err(|error| {
+            format!("shared env {vault_id} residence preference not writable: {error:#}")
+        })?;
+    }
+    Ok(oneiron::sync::SyncResidenceMode::All)
+}
+
+/// Which lane an env's slip opens (MEMBER-SELECTOR-SOCKET).
+#[derive(Debug)]
+pub(crate) enum LaneReach {
+    /// The slip names no member grant: the lane replicates in full, which
+    /// the home's owner door admits for its vault's owner alone
+    /// (OWNER-GRADE-IS-NOT-OWNERSHIP H8).
+    Full,
+    /// The slip's member grant, live in this env: the lane reads under it.
+    Member(oneiron::sync::SyncSelector),
+    /// The slip names a member grant this env holds no live copy of, as a
+    /// fresh env does before its first sync: no lane runs. A member's lane
+    /// never falls back to full replication.
+    GrantMissing,
+}
+
+/// The lane the paired slip `token` opens ([`lane_reach_of`] on its claims).
+fn lane_reach(vault: &oneiron::Vault, token: &str) -> Result<LaneReach, String> {
     let slip = oneiron::authority::CapabilitySlip::from_token(token)
         .map_err(|error| format!("lane slip of shared env unusable: {error:#}"))?;
-    let claims = &slip.claims;
-    let Some(grant) = claims.grant_ref.as_deref() else {
-        return Ok(None);
+    lane_reach_of(
+        vault,
+        slip.claims.grant_ref.as_deref(),
+        &slip.claims.holder_ref,
+    )
+}
+
+/// The lane a slip naming `grant_ref` and `holder_ref` opens: the member
+/// grant it names, for residence reads, when this env holds a live copy of
+/// it. Never inferred from the home's root or peer bytes.
+pub(crate) fn lane_reach_of(
+    vault: &oneiron::Vault,
+    grant_ref: Option<&str>,
+    holder_ref: &str,
+) -> Result<LaneReach, String> {
+    let Some(grant) = grant_ref else {
+        return Ok(LaneReach::Full);
     };
     let grant = oneiron::EntityId::from_hex(grant)
         .map_err(|_| "the paired credential's grant_ref is not an entity id".to_owned())?;
-    let holder = oneiron::EntityId::from_hex(&claims.holder_ref)
+    let holder = oneiron::EntityId::from_hex(holder_ref)
         .map_err(|_| "the paired credential's holder is not an actor".to_owned())?;
     let live_grant = vault
         .get_raw(&grant)
@@ -790,9 +840,9 @@ fn shared_residence_selector(
             .is_deleted_shell(&grant)
             .map_err(|error| format!("paired grant liveness unreadable: {error:#}"))?;
     if !live_grant {
-        return Ok(None);
+        return Ok(LaneReach::GrantMissing);
     }
-    Ok(Some(oneiron::sync::SyncSelector::new(
+    Ok(LaneReach::Member(oneiron::sync::SyncSelector::new(
         grant,
         holder,
         oneiron::sync::SyncSelectorWorld::All,

@@ -25,10 +25,10 @@ impl ChartEdit {
     pub(super) fn unnamed(&self) -> u64 {
         match self {
             Self::InsertSeries { id, categories, .. } => u64::from(id.is_none())
-                .saturating_add(categories.as_ref().map_or(0, |set| set.unnamed())),
+                .saturating_add(categories.as_ref().map_or(0, ChartCategories::unnamed)),
             Self::SetCategories { categories } => categories.unnamed(),
             Self::SetSeriesCategories { categories, .. } => {
-                categories.as_ref().map_or(0, |set| set.unnamed())
+                categories.as_ref().map_or(0, ChartCategories::unnamed)
             }
             Self::InsertCategory { id, .. } => u64::from(id.is_none()),
             _ => 0,

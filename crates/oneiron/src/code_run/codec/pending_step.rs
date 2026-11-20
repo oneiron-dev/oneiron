@@ -2,6 +2,7 @@
 //! its keys, its encoding and decoding, its checks against the record's
 //! bridge log, and the digest the record's generation carries.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
 
 use crate::{ModelId, Result};
@@ -45,8 +46,6 @@ const CODE_RUN_PENDING_REPAIRS_KEYS: [&str; 4] = [
     "stripped_exec_wrapper",
     "discarded_console_blocks",
 ];
-
-const PENDING_STEP_DIGEST_DOMAIN: &[u8] = b"oneiron:code-run-pending-step:v1";
 
 pub(super) fn encode_pending_step(step: &PendingCodeStep) -> Value {
     let answered_by = step.answered_by.as_ref().map(|model| {
@@ -207,8 +206,20 @@ pub(in crate::code_run) fn pending_step_digest(step: &PendingCodeStep) -> Result
         &encode_pending_step(step),
         "code-run pending step MessagePack encode failed",
     )?;
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(PENDING_STEP_DIGEST_DOMAIN);
-    hasher.update(&bytes);
-    Ok(*hasher.finalize().as_bytes())
+    Ok(pending_step_bytes_digest(&bytes))
+}
+
+/// The digest of a pending step's MessagePack
+/// (`purposes::code_run::PENDING_STEP`).
+fn pending_step_bytes_digest(bytes: &[u8]) -> [u8; 32] {
+    LegacyDigest::new(purposes::code_run::PENDING_STEP)
+        .raw(bytes)
+        .finish()
+}
+
+/// [`pending_step_bytes_digest`] for the K door
+/// (`test_doors::fingerprint_keep_code_run_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pending_step_bytes_digest_for_test(bytes: &[u8]) -> [u8; 32] {
+    pending_step_bytes_digest(bytes)
 }

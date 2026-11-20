@@ -56,8 +56,6 @@ mod recipes;
 pub(crate) use recipes::*;
 pub use recipes::{SieveAudit, SieveAuditRecord, SieveConsumeReceipt};
 mod rules;
-// FIX [LIBTEST-QUARANTINE-DREAMER-WAKE-SIEVE-TESTS]: the lib test target's type check fails here (2 errors: E0061 x1, E0308 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 pub(crate) mod texts;
@@ -71,6 +69,7 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) use chunks::span_words_in_txn;
 use chunks::{Admission, ChunkRef};
+pub(crate) use policy::land_archived_dreamer_sieve_policy_row_in_txn;
 pub use policy::{SievePassBudgets, SievePolicy};
 pub use rules::RuleClass;
 
@@ -678,4 +677,22 @@ impl Reader<'_> {
         pass.more |= retry.done < retry.epoch;
         RETRY.put(&vault.store, txn, &(), &retry)
     }
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::audit_windows::draw_rank_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::chunks::{ChunkRef as ChunkRefForTest, reading_digest_for_test};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::policy::policy_digest_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::read::{envelope_digest_for_test, span_id_for_test};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::recipes::{
+    audit_sample_rank_for_test, rung_dedupe_key_for_test, typing_member_key_for_test,
+};
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn chunk_digest_for_test(text: &str) -> [u8; 32] {
+    chunks::chunk_digest(text)
 }

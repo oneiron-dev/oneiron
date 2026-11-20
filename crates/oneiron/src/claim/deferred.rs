@@ -293,6 +293,23 @@ impl Vault {
         Ok(())
     }
 
+    /// [`Self::stage_claim_supersession_in_txn`] for a proposed `new` that an
+    /// earlier write filed: the replacement is parked under `new`'s own
+    /// stored write envelope, the one its completion reads back.
+    pub(crate) fn stage_stored_claim_supersession_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        new: &EntityId,
+        old: &EntityId,
+        now: u64,
+    ) -> Result<()> {
+        let body = self
+            .get_claim_in_txn(txn, new)?
+            .ok_or(Error::EntityNotFound)?;
+        let envelope = super::supersession_provenance::envelope(&body)?;
+        self.stage_claim_supersession_in_txn(txn, new, old, &envelope, now)
+    }
+
     /// Closes `old` under `new`, its owner's direct correction, inside the
     /// write that landed `new` (FIX 22041). The prior is superseded as a
     /// settled approval leaves it (`superseded`, `valid_to` and the
@@ -443,7 +460,16 @@ impl Vault {
                     claim_id: *id,
                 }));
             }
-            if proposal.critical || attributed(&prior) || attributed(&body) {
+            // An Auto grant is no person's: a replacement that would close a
+            // claim restricting someone's access waits for the owner, as a
+            // critical one does (RULING RESTRICTION-CLOSE-BY-CONFLICT-SETTLE;
+            // the owner, 15 Nov 18:3x: "Dreamer having to ask the owner is
+            // ok"; Astra review on #8189, F4).
+            if proposal.critical
+                || attributed(&prior)
+                || attributed(&body)
+                || crate::federation::claim_removal_widens_in(self, txn, &prior)?
+            {
                 return Err(Error::Gate(crate::error::GateError::GateWriteRejected {
                     outcome: "pending",
                     reason_codes: vec![GateReasonCode::PendingCriticalityFloor.as_str()],
