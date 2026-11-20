@@ -256,9 +256,10 @@ impl ScopedRead<'_> {
     /// one of the reader's own live Grants alone, under the floor a proof of
     /// it gives the key, holding the position's world, facet and type, as
     /// the row gate's A judges a row (Engine ANSWER
-    /// LOOP-KEPT-POSITION-FLOOR-AND-GRANT = A). Two Grants never combine. No
-    /// status, evidence or landing is asked: those govern the claim, not
-    /// whether its decision may be seen.
+    /// LOOP-KEPT-POSITION-FLOOR-AND-GRANT = A), never for a stored record a
+    /// legal use limit keeps. Two Grants never combine. No status, evidence
+    /// or landing is asked: those govern the claim, not whether its decision
+    /// may be seen.
     fn loop_position_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -288,6 +289,15 @@ impl ScopedRead<'_> {
             .map(|(id, raw)| (id, Some(raw)));
         if self.loop_position_held_in(txn, read, &read.filter, None, position, row)? {
             return Ok(true);
+        }
+        // A legal use limit keeps the stored record as storage only, so no
+        // Grant alone admits its kept position, as the row gate refuses the
+        // row (FIX 5226; review round 2 of #10040).
+        if let Some(id) = record
+            && !read.held.asks_use_of(id)
+            && crate::store::legal_hold::use_limit_in_txn(&self.vault.store, txn, id)?.is_some()
+        {
+            return Ok(false);
         }
         Ok(self.own_position_readable_by_grant_in(
             txn,
