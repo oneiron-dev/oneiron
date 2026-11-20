@@ -1531,7 +1531,7 @@ impl Vault {
     /// none, the root's revoke counts only where the fold takes the root as
     /// the owner's (a self-host root folded as hosted), and the move
     /// otherwise refuses with the uncounted entry: the device-confirmed move
-    /// signs no `RevokeActor` (row HOSTED-MOVE-RESIDUAL-ACTOR-REVOKE).
+    /// signs no `RevokeActor` (row HOSTED-MOVE-REVOKE-ACTOR-MIGRATED-BINDING).
     ///
     /// # Errors
     /// An `issuer` that is not this vault's live host root, as the log
