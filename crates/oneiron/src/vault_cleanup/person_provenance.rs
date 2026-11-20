@@ -248,3 +248,122 @@ pub(super) fn is_extraction_minted_person_in_txn(
     };
     Ok(evidence[..REVISION_HASH_LEN] == blake3::hash(&raw).as_bytes()[..])
 }
+
+/// A PERSON's cleanup archive as a restore finds it: the marker's time and
+/// request, and what the mint recorded, which the restore drops. The
+/// Dreamer's automatic identity settle keeps it when its pick restores the
+/// person, so the owner's revert of that settle can put the archive back
+/// ([`Vault::rearchive_restored_person_in_txn`]).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PersonArchive {
+    archived_at: u64,
+    request_id: [u8; 16],
+    /// The mint evidence: a hash of the record at its mint and the source.
+    evidence: Option<Vec<u8>>,
+    lineage: Option<AttemptId>,
+}
+
+impl Vault {
+    /// The cleanup archive of `id` as it stands, before a restore drops it.
+    /// None when `id` bears no marker with the cleanup-archive reason, or
+    /// when the lineage its mint recorded does not decode: the cleanup's
+    /// rule reads that record as pending, and no write puts it back.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn person_archive_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<PersonArchive>> {
+        let Some(marker) = self.archive_tombstone_in_txn(txn, id)? else {
+            return Ok(None);
+        };
+        let (Some(TombstoneReason::ArchivedByCleanup), Some(request_id)) =
+            (marker.reason, marker.request_id)
+        else {
+            return Ok(None);
+        };
+        let lineage = match EXTRACTION_LINEAGE.get_bytes(&self.store, txn, id)? {
+            Some(stored) => match EXTRACTION_LINEAGE.decode_value(&stored) {
+                Ok(first) => Some(first),
+                Err(_) => return Ok(None),
+            },
+            None => None,
+        };
+        Ok(Some(PersonArchive {
+            archived_at: marker.deleted_at,
+            request_id,
+            evidence: EXTRACTION_PERSON.get(&self.store, txn, id)?,
+            lineage,
+        }))
+    }
+
+    /// Puts back `archive`, the cleanup archive of the PERSON `id` that a
+    /// restore dropped, by the cleanup's own rule: its mint evidence and
+    /// lineage, then its marker under the time and request it had, while
+    /// the PERSON is still minted at its stored revision, no live claim is
+    /// about it and no try of its minting lineage is pending. Never an
+    /// unbirth: the owner's cleanup restore lifts it again.
+    ///
+    /// Returns `false` without writing when `archive` holds no mint
+    /// evidence, when `id` bears an archive marker or a mint record, when no
+    /// PERSON row is stored for it, when anything but the archive removes
+    /// it, or when the rule refuses.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn rearchive_restored_person_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        archive: &PersonArchive,
+    ) -> Result<bool> {
+        let Some(evidence) = &archive.evidence else {
+            return Ok(false);
+        };
+        if self.archive_tombstone_in_txn(wtxn, id)?.is_some()
+            || EXTRACTION_PERSON.contains(&self.store, wtxn, id)?
+            || EXTRACTION_LINEAGE.contains(&self.store, wtxn, id)?
+        {
+            return Ok(false);
+        }
+        let Some(row) = self.store.port_entity_record(wtxn, id)? else {
+            return Ok(false);
+        };
+        if row.entity_type != ENTITY_TYPE_PERSON
+            || crate::ports::removed_in_txn(&self.store, wtxn, id)?
+            || self.local_hard_delete_marker_exists_in_txn(wtxn, id)?
+            || self
+                .store
+                .entity_tombstone_present_in_txn(wtxn, id, row.learned_at)?
+        {
+            return Ok(false);
+        }
+        EXTRACTION_PERSON.put(&self.store, wtxn, id, evidence)?;
+        if let Some(first) = &archive.lineage {
+            EXTRACTION_LINEAGE.put(&self.store, wtxn, id, first)?;
+        }
+        // The rule reads the mint record back in place; a refusal takes it
+        // out again, as the restore left it.
+        if !super::person_mint_unclaimed_in_txn(self, wtxn, id, &std::collections::BTreeSet::new())?
+            || minting_lineage_pending_in_txn(self, wtxn, id)?
+        {
+            clear_mint_evidence_in_txn(self, wtxn, id)?;
+            return Ok(false);
+        }
+        self.put_archive_tombstone_in_txn(
+            wtxn,
+            id,
+            &crate::deletion::TombstoneValueV2 {
+                reason: TombstoneReason::ArchivedByCleanup,
+                deleted_at: archive.archived_at,
+                request_id: archive.request_id,
+            },
+        )?;
+        Ok(true)
+    }
+}

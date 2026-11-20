@@ -25,9 +25,10 @@ impl SettleInverse {
     /// Takes what this settle's kept copies hold of the erased `id`: the
     /// ask's copy once its mention is in `id` or no option is left, `id` as
     /// a candidate, a provisional entity's row it reached, a hint's words
-    /// from a mention in it, and both hint copies when it is the entity the
-    /// settle named. The anchors, the spans' links, the distinct assertions
-    /// and the receipt stay. True when it changed.
+    /// from a mention in it, and both hint copies and the archive the pick
+    /// lifted (its mint evidence hashes the record) when it is the entity
+    /// the settle named. The anchors, the spans' links, the distinct
+    /// assertions and the receipt stay. True when it changed.
     pub(in crate::dreamer_runner::maintenance) fn erase_source(&mut self, id: &EntityId) -> bool {
         let mut changed = erase_snapshot(&mut self.ask, id);
         for each in &mut self.provisionals {
@@ -36,6 +37,7 @@ impl SettleInverse {
         if self.entity == *id {
             changed |= self.hint_before.take().is_some();
             changed |= self.hint_after.take().is_some();
+            changed |= self.restored.take().is_some();
         }
         changed |= hints::erase_snapshot(&mut self.hint_before, id);
         changed |= hints::erase_snapshot(&mut self.hint_after, id);
