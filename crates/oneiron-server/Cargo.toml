@@ -585,6 +585,12 @@ name = "note_session_bind_reply"
 path = "tests/note_session_bind_reply.rs"
 required-features = ["oneiron/test-support"]
 
+# OWNER-GRADE H1's quota answer cases root the owner's home on a `MemoryKeystore` too.
+[[test]]
+name = "quota_answer_requires_vault_owner"
+path = "tests/quota_answer_requires_vault_owner.rs"
+required-features = ["oneiron/test-support"]
+
 # L1-02's named-client OAuth acceptance roots its served vault on a `MemoryKeystore`.
 [[test]]
 name = "oauth_named_client_acceptance"
