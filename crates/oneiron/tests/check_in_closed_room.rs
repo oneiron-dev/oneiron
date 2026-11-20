@@ -24,7 +24,9 @@
 //! check-in, so a `check_in_ref` its call names is refused as a bad request
 //! and the check-in stays eligible (FIX row
 //! [CHECK-IN-DOOR-GO-AT-ONCE-IGNORES-NAMED-CHECK-IN]). On main f75de13fe4c7
-//! every such add lands and leaves the named check-in unspent.
+//! every such add lands and leaves the named check-in unspent. A self
+//! re-add, someone already in walking in again, is not judged either
+//! (REVIEW-9839 P1).
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test check_in_closed_room`.
 
@@ -588,5 +590,49 @@ fn an_add_that_goes_at_once_refuses_a_named_check_in() {
             .as_deref(),
         Some(id.as_str()),
         "the add spent the check-in"
+    );
+}
+
+/// A self re-add is not judged and spends no check-in (REVIEW-9839 P1). A
+/// vault Admin's walk-in into the closed room waits and the owner approves
+/// it; the vault's owner then adds the Admin. The Admin's call naming the
+/// approved check-in is now a self re-add: it is refused as a bad request
+/// naming `check_in_ref`, and writes nothing. The check-in stays eligible:
+/// out again, the Admin's walk-in naming it spends it.
+#[test]
+fn a_self_re_add_refuses_a_named_check_in() {
+    let fx = Room::with_vault_admins();
+    let admins = fx.vault_admins.as_ref().expect("the vault's Admins");
+    let walker = admins.walker;
+    fx.set_closed(true);
+    let id = pending_id(
+        &fx.add(walker, walker, None)
+            .expect_err("in a closed room the Admin's walk-in waits"),
+    );
+    let settled = fx.approves(fx.owner, &id).expect("the owner answers");
+    assert_eq!(settled["eligible"].as_str(), Some("approved"), "{settled}");
+    fx.add(fx.owner, walker, None)
+        .expect("the vault's owner adds the Admin at once");
+
+    let refused = fx
+        .add(walker, walker, Some(&id))
+        .expect_err("a self re-add spends no check-in: the one it names is refused");
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{refused:?}");
+    assert!(
+        refused.message.contains("check_in_ref"),
+        "the refusal names check_in_ref: {refused:?}"
+    );
+
+    fx.leave(walker);
+    let walked = fx
+        .add(walker, walker, Some(&id))
+        .expect("the check-in stayed eligible: the Admin's walk-in lands");
+    assert_eq!(
+        walked
+            .check_in
+            .and_then(|decision| decision.check_in)
+            .as_deref(),
+        Some(id.as_str()),
+        "the walk-in spent the check-in"
     );
 }
