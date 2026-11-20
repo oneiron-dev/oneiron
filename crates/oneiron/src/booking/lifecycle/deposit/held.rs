@@ -4,7 +4,7 @@
 //! and the owner's line on the booking card read it from the one rule here
 //! ([`held_of`]), so the line shows exactly when the return moves money.
 
-use super::{DEPOSIT, DEPOSIT_BOOKING, DepositRow, DepositState, booking_key};
+use super::{DEPOSIT, DEPOSIT_BOOKING, DepositRow, DepositState, UnattributedCancel, booking_key};
 use crate::error::Result;
 use crate::{EntityId, Vault};
 
@@ -31,9 +31,9 @@ pub(in crate::booking::lifecycle) struct HeldDeposit {
     pub(in crate::booking::lifecycle) amount_minor: u64,
     /// The terms' currency, ISO 4217 lowercase.
     pub(in crate::booking::lifecycle) currency: String,
-    /// Whether a cancel Oneiron cannot attribute left it held
-    /// ([`note_unattributed_cancel_in_txn`]).
-    pub(in crate::booking::lifecycle) unattributed_cancel: bool,
+    /// When a cancel Oneiron cannot attribute was first noted on it
+    /// ([`note_unattributed_cancel_in_txn`]); `None` while none was.
+    pub(in crate::booking::lifecycle) unattributed_cancel_at: Option<u64>,
 }
 
 /// What `row` still holds that the owner's return gives back, and how much;
@@ -91,7 +91,7 @@ pub(in crate::booking::lifecycle) fn held_deposit_in_txn(
         kind,
         amount_minor,
         currency: row.terms.currency.clone(),
-        unattributed_cancel: row.unattributed_cancel_sequence.is_some(),
+        unattributed_cancel_at: row.unattributed_cancel.map(|noted| noted.noted_at),
     }))
 }
 
@@ -100,9 +100,10 @@ pub(in crate::booking::lifecycle) fn held_deposit_in_txn(
 /// stored copy with no write marker as the owner's own
 /// (BK-ECHO-UNMARKED-SAME-SHAPE-COPY = C, lead 21 Nov 04:3x): the deposit
 /// stays as that write decides, and a host's cancel at that SEQUENCE reads
-/// the same, so the owner's line asks the owner to refund by hand. Only a
-/// deposit a host cancel would move (a capture still due, or captured) is
-/// marked, and only once; an EVENT with no deposit is left alone.
+/// the same, so the owner's line asks the owner to refund by hand, dated
+/// `now`. Only a deposit a host cancel would move (a capture still due, or
+/// captured) is marked, and only once; an EVENT with no deposit is left
+/// alone.
 ///
 /// # Errors
 ///
@@ -120,7 +121,7 @@ pub(crate) fn note_unattributed_cancel_in_txn(
     let Some(mut row) = DEPOSIT.get(&vault.store, &*wtxn, &link.deposit_key)? else {
         return Ok(());
     };
-    if row.unattributed_cancel_sequence.is_some()
+    if row.unattributed_cancel.is_some()
         || !matches!(
             row.state,
             DepositState::CaptureDue { .. } | DepositState::Captured { .. }
@@ -128,7 +129,10 @@ pub(crate) fn note_unattributed_cancel_in_txn(
     {
         return Ok(());
     }
-    row.unattributed_cancel_sequence = Some(sequence);
+    row.unattributed_cancel = Some(UnattributedCancel {
+        sequence,
+        noted_at: now,
+    });
     row.updated_at = now;
     DEPOSIT.put(&vault.store, wtxn, &link.deposit_key, &row)
 }

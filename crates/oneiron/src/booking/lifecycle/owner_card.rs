@@ -27,6 +27,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use super::CalendarCancellation;
 use super::authorship::counts_in_txn;
 use super::claim::read_booking_facts;
 use super::deposit::held_deposit_in_txn;
@@ -121,15 +122,21 @@ pub struct BookingOwnerCardOffer {
 /// Never folded into a thread.
 ///
 /// Beside it, any day, each booking whose deposit a calendar's cancel left
-/// held, as a row of its own for the live owners among the hosts selected at
-/// its confirmation (who alone may return it): item id
+/// held, as a row of its own for `own_reader`, the one actor reading its own
+/// slice, when it is a live owner and one of the hosts selected at the
+/// booking's confirmation (who alone may return it): item id
 /// `booking-held-deposit:<event hex>`, at the cancel, or at the start when
-/// that came first.
+/// that came first, and no earlier than a cancel Oneiron cannot attribute
+/// was noted. No other reader lists it, the cross-identity lens included
+/// (review round 1 of #10028).
 ///
 /// # Errors
 ///
 /// Storage errors.
-pub(crate) fn booking_owner_card_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLensItem>> {
+pub(crate) fn booking_owner_card_inbox_items(
+    vault: &Vault,
+    own_reader: Option<EntityId>,
+) -> Result<Vec<AgentInboxLensItem>> {
     let now = vault.now_recorded_at();
     let rtxn = vault.store.env.read_txn()?;
     let mut events = BTreeSet::new();
@@ -150,6 +157,7 @@ pub(crate) fn booking_owner_card_inbox_items(vault: &Vault) -> Result<Vec<AgentI
     let Some(&actor_ref) = owners.first() else {
         return Ok(Vec::new());
     };
+    let held_reader = own_reader.filter(|reader| owners.contains(reader));
     let participants: Vec<AgentInboxParticipant> = owners
         .iter()
         .map(|&owner| AgentInboxParticipant {
@@ -162,7 +170,7 @@ pub(crate) fn booking_owner_card_inbox_items(vault: &Vault) -> Result<Vec<AgentI
         let Some(read) = card_in_txn(vault, &rtxn, &event_ref, now, None)? else {
             continue;
         };
-        if let Some(held) = held_deposit_row(&read, &owners) {
+        if let Some(held) = held_reader.and_then(|reader| held_deposit_row(&read, reader)) {
             items.push(held);
         }
         let card = read.card;
@@ -191,37 +199,41 @@ pub(crate) fn booking_owner_card_inbox_items(vault: &Vault) -> Result<Vec<AgentI
     Ok(items)
 }
 
-/// The held-deposit row of the booking `read` describes: when a calendar's
-/// cancel left its deposit held, a row for the live `owners` among its
-/// selected hosts; `None` otherwise, or when none of them is a live owner.
-fn held_deposit_row(read: &CardRead, owners: &[EntityId]) -> Option<AgentInboxLensItem> {
+/// The held-deposit row of the booking `read` describes, on the own slice
+/// of `reader`, a live owner: when a calendar's cancel left its deposit
+/// held and `reader` is one of its selected hosts; `None` otherwise. It is
+/// dated by the cancel, or the start when that came first, and by a cancel
+/// Oneiron cannot attribute once one is noted: its read state then counts
+/// the line as new, so a row marked done before comes back under the same
+/// handle (review round 1 of #10028).
+fn held_deposit_row(read: &CardRead, reader: EntityId) -> Option<AgentInboxLensItem> {
     let deposit = read.card.deposit.as_ref()?;
-    if !deposit.reason.lists_on_inbox() {
+    if !deposit.reason.lists_on_inbox() || !read.selected_hosts.contains(&reader.to_hex()) {
         return None;
     }
-    let participants: Vec<AgentInboxParticipant> = owners
-        .iter()
-        .filter(|owner| read.selected_hosts.contains(&owner.to_hex()))
-        .map(|&owner| AgentInboxParticipant {
-            identity_ref: None,
-            actor_ref: owner,
-        })
-        .collect();
-    let actor_ref = participants.first()?.actor_ref;
     let card = &read.card;
     let occurred_at = if card.status == BookingStatus::Cancelled {
         card.recorded_at.min(card.start_utc)
     } else {
         card.start_utc
     };
+    let occurred_at = match read.unattributed_cancel_at {
+        Some(noted_at) if deposit.reason == BookingDepositHeldReason::UnattributedCancel => {
+            occurred_at.max(noted_at)
+        }
+        _ => occurred_at,
+    };
     Some(AgentInboxLensItem {
         item_id: format!("{BOOKING_HELD_DEPOSIT_ITEM_PREFIX}{}", card.event_ref),
         kind: AgentInboxItemKind::CoordinationUpdate,
         thread_ref: None,
         identity_ref: None,
-        actor_ref,
+        actor_ref: reader,
         facet_ref: None,
-        participants,
+        participants: vec![AgentInboxParticipant {
+            identity_ref: None,
+            actor_ref: reader,
+        }],
         impact: InboxImpact(BOOKING_OWNER_CARD_INBOX_IMPACT),
         occurred_at,
         receipt_ref: None,
@@ -237,7 +249,7 @@ fn held_deposit_row(read: &CardRead, owners: &[EntityId]) -> Option<AgentInboxLe
 /// The card the INBOX row `item_id` carries, read now for `reader`; `None`
 /// for a row that is no booking card, for a booking that no longer reads as
 /// one, and for a held-deposit row whose deposit no longer stands held as
-/// the row says.
+/// the row says or whose reader is no selected host.
 ///
 /// # Errors
 ///
@@ -265,7 +277,7 @@ pub(crate) fn booking_owner_card_of_item(
             || card
                 .deposit
                 .as_ref()
-                .is_some_and(|deposit| deposit.reason.lists_on_inbox())
+                .is_some_and(|deposit| deposit.reason.lists_on_inbox() && deposit.return_offered)
     }))
 }
 
@@ -278,6 +290,9 @@ struct CardRead {
     zone: Option<String>,
     /// The hosts selected at confirmation, hex: who may return its deposit.
     selected_hosts: Vec<String>,
+    /// When a cancel Oneiron cannot attribute was first noted on its
+    /// deposit, while the deposit holds anything.
+    unattributed_cancel_at: Option<u64>,
 }
 
 /// `event_ref`'s card at `now`, as `reader` reads it, read in one snapshot;
@@ -342,9 +357,15 @@ fn card_in_txn(
         .context
         .as_ref()
         .and_then(|context| context.host_zones.first().cloned());
+    let held = held_deposit_in_txn(vault, rtxn, event_ref)?;
+    let unattributed_cancel_at = held.as_ref().and_then(|held| held.unattributed_cancel_at);
+    let removal_report_held = held.is_some()
+        && facts.calendar_cancellation == CalendarCancellation::Omission
+        && removal_report_held_in_txn(vault, rtxn, event_ref);
     let deposit = held_deposit::deposit_note(
         &facts,
-        held_deposit_in_txn(vault, rtxn, event_ref)?,
+        held,
+        removal_report_held,
         zone.as_deref(),
         now,
         reader,
@@ -370,7 +391,26 @@ fn card_in_txn(
         card,
         zone,
         selected_hosts,
+        unattributed_cancel_at,
     }))
+}
+
+/// Whether a calendar's report of the booking `event_ref` removed waits,
+/// unsettled, on one of its passports (`deferred_cancel_seen_at`): a host's
+/// delete or cancel a pull held back while a cancelled write of the UID was
+/// in flight, which a replay whose read proved no stored copy keeps held
+/// (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING). Passports that
+/// do not read count as no held report, with a warning.
+fn removal_report_held_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>, event_ref: &EntityId) -> bool {
+    match crate::calendar::passport::live_passports_for_event_in_txn(vault, rtxn, event_ref) {
+        Ok(passports) => passports
+            .iter()
+            .any(|(_, value)| value.deferred_cancel_seen_at.is_some()),
+        Err(error) => {
+            tracing::warn!(%error, "calendar passports not read; no held removal report counted");
+            false
+        }
+    }
 }
 
 /// What one booking's counted heads say beside its facts.
