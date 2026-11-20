@@ -48,8 +48,9 @@ use crate::{EntityId, Result, Vault};
 /// once its owner row says so, or once the actor that row, `stamped` (the
 /// run and actor this writer stamped it for, which the writer's view does
 /// not show yet) or its live run binding names is gone in the vault. The caller puts
-/// what this returns: the view reads the snapshot before this writer's
-/// own puts, so the record is fenced as supplied, never read back.
+/// what this returns with [`replay_rows::put_fenced`]: the view reads the
+/// snapshot before this writer's own puts, so the record is fenced as
+/// supplied, never read back.
 ///
 /// # Errors
 ///

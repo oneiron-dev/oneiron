@@ -745,11 +745,14 @@ async fn pinned_memories_bypass_query_scope_but_not_audience_disclosure() {
     assert_eq!(allowed["memories"]["rows"].as_array().unwrap().len(), 1);
     assert_eq!(allowed["memories"]["rows"][0]["tier"], "pinned");
     assert_eq!(allowed["pack"]["pin_narrowing"][0]["suppressed_count"], 0);
+    // FIX 7982: the content hash stays internal reference metadata, so
+    // the board renders a pinned row under its bare short id.
+    let short = reference.split(':').next().unwrap();
     assert!(
         allowed["board"]
             .as_str()
             .unwrap()
-            .contains(&format!("{reference} trust=unknown tier=PINNED")),
+            .contains(&format!("{short} trust=unknown tier=PINNED")),
         "{allowed}"
     );
 }

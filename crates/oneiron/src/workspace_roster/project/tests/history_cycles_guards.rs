@@ -1,10 +1,9 @@
 //! What may tie projects into one decision, and what a decision may cost
 //! (Sol and Astra on #1434, round 14): a frozen member keeps its saved checks,
 //! an orphan boundary or a pending malformed companion names no parent, a
-//! dissolved cycle takes its owner question with it, and a ring past the
-//! decision's work budget serves nothing and asks the owner once; a room's
+//! dissolved cycle raises no question, and a ring past the
+//! decision's work budget serves without a question; a room's
 //! facet is the one its project's folded authority names.
-use super::super::fold::reason;
 use super::super::history_policy::ProjectHistoryPolicy;
 use super::super::read::ProjectVerdict;
 use super::super::revision::{ProjectRevision, revisions_of_row};
@@ -164,11 +163,11 @@ fn a_pending_malformed_companion_never_blocks_a_component() -> Result<()> {
 }
 
 /// Bug repro (Astra r14 F7): A and B name each other past a bound of one
-/// world, and the owner holds one question. Revoking B1's slip dissolves the
-/// cycle; B's next refresh clears the question for both.
+/// world, and FIX 11050 decides in full with no question. Revoking B1's slip
+/// dissolves the cycle; B's next refresh keeps both lit with no question.
 #[cfg(feature = "sync")]
 #[test]
-fn a_dissolved_cycle_takes_its_question_with_it() -> Result<()> {
+fn a_dissolved_cycle_raises_no_question() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = open(&dir)?;
     set_bound(&vault, 1)?;
@@ -188,8 +187,9 @@ fn a_dissolved_cycle_takes_its_question_with_it() -> Result<()> {
     // A companion: the stored rows hold no cycle.
     let (_, companion) = revisions_of_row(b, &b1)?.pop().ok_or_else(invalid)?;
     put_companion(&vault, &companion, 5)?;
-    assert!(!lit(&vault, a)? && !lit(&vault, b)?);
-    assert_eq!(vault.project_cycle_questions()?.len(), 1);
+    // FIX 11050: decided in full; the solver raises no cycle question.
+    assert!(lit(&vault, a)? && lit(&vault, b)?);
+    assert_eq!(vault.project_cycle_questions()?, Vec::new());
     let issuer = HostSlipIssuer::from_secret(FIXTURE_HOST)?;
     vault.revoke_capability_slip(&issuer, slip_id(&b1)?)?;
     vault.with_write_txn(|txn| {
@@ -208,12 +208,13 @@ fn a_dissolved_cycle_takes_its_question_with_it() -> Result<()> {
 /// The decision's work budget (Engine ruling on r14 F4): a ring of twelve
 /// projects, each with one successor over its birth naming the next at depth
 /// 0, stays lit under the default budget. Scaled below the work the ring
-/// takes, the budget darkens every member, and the owner holds one question
-/// naming the ring.
+/// takes, FIX 11050 still serves what the unscaled decision serves and raises
+/// no question; the work is counted as a ProjectJointWork scan observation.
 #[cfg(feature = "sync")]
 #[test]
-fn a_ring_past_its_work_budget_serves_nothing_and_asks_once() -> Result<()> {
+fn a_ring_past_its_work_budget_serves_without_a_question() -> Result<()> {
     use super::super::joint::{WORK_DARK, WORK_SCALE};
+    use crate::scan_check::EngineScan;
     let n = 12;
     let graph = Graph {
         projects: n,
@@ -230,31 +231,44 @@ fn a_ring_past_its_work_budget_serves_nothing_and_asks_once() -> Result<()> {
     assert!(served.iter().all(Option::is_some), "{served:?}");
     assert_eq!(WORK_DARK.with(std::cell::Cell::get), 0);
     assert_eq!(lit.project_cycle_questions()?, Vec::new());
+    let mut lit_dispositions = Vec::new();
+    for id in &scaffold.ids {
+        let frontier = lit.project_frontier(*id)?.ok_or(Error::EntityNotFound)?;
+        lit_dispositions.push((frontier.effective, frontier.disposition));
+    }
     WORK_SCALE.with(|scale| scale.set(Some(1)));
-    let (_dark_dir, dark) = scaffold.replica(&all)?;
+    let (_scaled_dir, scaled) = scaffold.replica(&all)?;
     let mut dispositions = Vec::new();
     for id in &scaffold.ids {
-        let frontier = dark.project_frontier(*id)?.ok_or(Error::EntityNotFound)?;
+        let frontier = scaled.project_frontier(*id)?.ok_or(Error::EntityNotFound)?;
         dispositions.push((frontier.effective, frontier.disposition));
     }
-    let questions = dark.project_cycle_questions()?;
+    let questions = scaled.project_cycle_questions()?;
+    let joint_work: Vec<_> = scaled
+        .scan_checks()?
+        .into_iter()
+        .filter(|check| check.scan == EngineScan::ProjectJointWork.code())
+        .collect();
     WORK_SCALE.with(|scale| scale.set(None));
-    // Dark for its work, within the world bound.
-    assert!(WORK_DARK.with(std::cell::Cell::get) > 0);
-    let bound = ProjectDisposition::Unauthorized {
-        reason: reason::CYCLE_BOUND.into(),
-    };
-    assert_eq!(dispositions, vec![(None, bound); n]);
-    let mut members = scaffold.ids;
-    members.sort();
-    assert_eq!(questions.len(), 1);
-    assert_eq!(questions[0].members, members);
+    // FIX 11050: the work budget never darkens; the scaled decision serves
+    // what the unscaled one serves and raises no question.
+    assert_eq!(WORK_DARK.with(std::cell::Cell::get), 0);
+    assert_eq!(dispositions, lit_dispositions);
+    assert!(
+        dispositions
+            .iter()
+            .all(|(effective, _)| effective.is_some())
+    );
+    assert_eq!(questions, Vec::new());
+    // The scaled work is counted as ProjectJointWork observations.
+    assert!(!joint_work.is_empty());
+    assert!(joint_work.iter().all(|check| check.rows > check.threshold));
     Ok(())
 }
 
 /// FACET-READ's room facet (#1432) is the facet of the authority the history
 /// folds to: a replayed older row naming another facet never moves a room's
-/// facet, and a project dark past the cycle bound names none.
+/// facet, and a cycle past the bound still serves its facet (FIX 11050).
 #[cfg(feature = "sync")]
 #[test]
 fn a_rooms_facet_is_the_one_its_project_serves() -> Result<()> {
@@ -290,8 +304,8 @@ fn a_rooms_facet_is_the_one_its_project_serves() -> Result<()> {
     assert_eq!(facet_of(&a1)?, at_home);
     replay_project(&vault, a, &a0, 4)?;
     assert_eq!(facet_of(&a1)?, at_home);
-    // A and B name each other past a bound of one world: dark, so their
-    // rooms read nothing (L7-39-OLDER-PEER).
+    // A and B name each other past a bound of one world: decided in full
+    // (FIX 11050), so their rooms read the served facet.
     let slice = crate::llm::Scope {
         facet: Some(home),
         ..slice
@@ -308,8 +322,9 @@ fn a_rooms_facet_is_the_one_its_project_serves() -> Result<()> {
     })?;
     let (_, companion) = revisions_of_row(b, &b1)?.pop().ok_or_else(invalid)?;
     put_companion(&vault, &companion, 7)?;
-    assert!(!lit(&vault, a)? && !lit(&vault, b)?);
-    assert_eq!(facet_of(&a2)?, Some(ScopeAxis::Bottom));
-    assert_eq!(facet_of(&b0)?, Some(ScopeAxis::Bottom));
+    // FIX 11050: decided in full; the rooms read the served facet.
+    assert!(lit(&vault, a)? && lit(&vault, b)?);
+    assert_eq!(facet_of(&a2)?, at_home);
+    assert_eq!(facet_of(&b0)?, at_home);
     Ok(())
 }

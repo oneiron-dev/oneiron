@@ -146,7 +146,12 @@ fn substrate_admission_rejects_non_person_and_edge_subjects() -> Result<()> {
             ENTITY_TYPE_AGENT_DEF,
         ] {
             let (_dir, vault) = test_vault();
-            let subject = seed(&vault, entity(0x91), kind);
+            // PEOPLE ARCH-0067 onboarding anchor; unanchored AGENT_DEF seed per 76cdfce0102.
+            let subject = if kind == ENTITY_TYPE_AGENT_DEF {
+                seed_unanchored_agent_definition(&vault, entity(0x91), "substrate_admission")
+            } else {
+                seed(&vault, entity(0x91), kind)
+            };
             let id = entity(0x92);
             let mut body = subject_fact(
                 PREDICATE_PERSON_SUBSTRATE,

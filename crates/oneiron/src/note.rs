@@ -463,6 +463,8 @@ pub(crate) use replica::{
 #[cfg(all(test, feature = "sync"))]
 mod document_tests;
 #[cfg(all(test, feature = "sync"))]
+mod mask_splice_tests;
+#[cfg(all(test, feature = "sync"))]
 mod sync_tests;
 pub(crate) use document::MAX_NOTE_BYTES;
 #[cfg(oneiron_test_support)]

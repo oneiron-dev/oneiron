@@ -108,6 +108,7 @@ pub mod conversation;
 pub(crate) use oneiron_base::distance;
 pub mod embed;
 pub mod entity_doc;
+mod text_diff;
 pub(crate) use oneiron_base::fusion;
 pub mod graph_fs;
 pub(crate) mod hnsw;

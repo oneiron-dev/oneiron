@@ -115,8 +115,7 @@ pub(super) fn write_doc_row(doc: &LoroDoc, raw: &[u8]) -> Result<()> {
         }
     }
     for (name, text) in fields {
-        doc.get_text(format!("field:{name}"))
-            .update(&text, Default::default())
+        crate::text_diff::set_text_or_replace_span(&doc.get_text(format!("field:{name}")), &text)
             .map_err(|_| Error::InvariantViolation("entity text update"))?;
         names
             .insert(&name, true)
@@ -1036,8 +1035,7 @@ pub(crate) fn pins_write_doc_row(doc: &LoroDoc, raw: &[u8], at: i64) -> Result<(
         }
     }
     for (name, text) in fields {
-        doc.get_text(format!("field:{name}"))
-            .update(&text, Default::default())
+        crate::text_diff::set_text_or_replace_span(&doc.get_text(format!("field:{name}")), &text)
             .map_err(|_| Error::InvariantViolation("entity text update"))?;
         names
             .insert(&name, true)

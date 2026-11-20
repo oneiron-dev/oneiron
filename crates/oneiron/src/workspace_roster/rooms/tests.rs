@@ -233,8 +233,12 @@ fn room_history_needs_the_readers_own_grant() -> Result<()> {
     assert!(peer.room_head(room).expect("peer head").is_none());
     let in_room = host.for_room_turn(room).expect("open room turn");
     assert!(in_room.rooms_messages().expect("turn history").is_empty());
-    assert_eq!(host.rooms_messages(room).expect("own history").len(), 1);
+    // Withheld while a roster peer cannot read the TURN: the room reads only what every
+    // member may read (FIX 5545) — the owner's own read included.
+    assert!(host.rooms_messages(room).expect("own history").is_empty());
     grant(&every_kind)?;
+    // The peer now admits TURN, so the owner's own read is back too.
+    assert_eq!(host.rooms_messages(room).expect("own history").len(), 1);
     // The turn is back. A message id rides with it only when the read admits
     // that message too: the agent's own read here, and inside the turn every
     // member's.

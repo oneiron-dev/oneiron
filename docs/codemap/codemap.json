@@ -8622,6 +8622,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/document_import/unseated_rooms.rs",
+     "purpose": "Archived rooms this vault cannot seat (fix list rows ARCHIVE-IMPORT-ACTORLESS-SEATED-ROOM-REFUSED and…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -8866,7 +8876,7 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "re-export": 15
      }
     },
@@ -9553,13 +9563,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/secret_scan/mask/admit.rs",
      "purpose": "Mask on write for content a writer stores outside the batch door (OF-067): a message stream's seed, a NOTE's…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -9709,7 +9719,7 @@
      "path": "src/batch/secret_scan/mask/side_row.rs",
      "purpose": "The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A)",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -9749,7 +9759,7 @@
      "path": "src/batch/secret_scan/mask/text.rs",
      "purpose": "A text's mask on write (OF-560): each span the door's text rules place, and each value custody already…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -17309,7 +17319,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 78,
+      "crate-vis": 79,
       "fn": 11,
       "re-export": 1,
       "struct": 1
@@ -19268,7 +19278,7 @@
      "purpose": "Encoding and decoding of durable code-run replay records",
      "surface": {
       "const": 6,
-      "crate-vis": 8,
+      "crate-vis": 11,
       "fn": 2,
       "re-export": 1
      }
@@ -20520,7 +20530,7 @@
      "path": "src/code_run/replay/request_identity.rs",
      "purpose": "A bridge request's identity apart from its words (FIX 6534)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -21054,7 +21064,7 @@
      "path": "src/code_run/spawn_replay.rs",
      "purpose": "The one comparison of a recorded bridge row's request with the request its call makes again (FIX 7447), for…",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -21627,7 +21637,17 @@
      "path": "src/code_run/storage/replay_rows.rs",
      "purpose": "Every raw access to the code-run replay table (FIX CODE-RUN-REPLAY-SPLIT-LAYOUT)",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/replay_rows/fenced.rs",
+     "purpose": "The replay put after a put fence (FIX FENCE-ERASED-FORM-THROUGH-WALL)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -27939,9 +27959,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/conversation/archive_restore.rs",
-     "purpose": "Owner restore of archived room role grants (SIDE-4b G5)",
+     "purpose": "Owner restore of archived room membership ledgers and role grants",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation/archive_restore/ledger.rs",
+     "purpose": "Atomic, byte-preserving landing of a whole room membership ledger",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -27967,7 +27997,7 @@
      "path": "src/conversation/body.rs",
      "purpose": "Forward-compatible room body codec and the all-writer membership guard",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 4,
       "re-export": 1
      }
@@ -28053,7 +28083,7 @@
      "path": "src/conversation/membership.rs",
      "purpose": "Append-only membership ledger",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 30,
       "fn": 7,
       "re-export": 2
      }
@@ -28075,7 +28105,7 @@
      "path": "src/conversation/mod.rs",
      "purpose": "Room bodies, membership windows, session presence and audience visibility",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "mod": 1,
       "re-export": 10
      }
@@ -52112,7 +52142,7 @@
      "path": "src/llm/decision/questions/standing/left_facet.rs",
      "purpose": "A standing answer never stays in a facet its room no longer reads (FIX STANDING-ANSWER-STAYS-IN-LEFT-FACET…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -59913,6 +59943,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/document/splice.rs",
+     "purpose": "Edits of a NOTE's live body at known offsets, with no diff over the body, so every other character keeps its…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -60245,6 +60285,14 @@
      "surface": {
       "crate-vis": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/note/mask_splice_tests.rs",
+     "purpose": "Mask-on-write budgets and stable NOTE pins through the public write doors",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -61266,7 +61314,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "StoryCell",
@@ -61458,6 +61506,14 @@
      "surface": {
       "crate-vis": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/office_body/pptx/doc/text_diff_budget_tests.rs",
+     "purpose": "A large deck paragraph synced to unrelated runs is refused within the whole-text diff budget",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -76812,7 +76868,7 @@
      "path": "src/side_table/erased.rs",
      "purpose": "The one side-table put that skips the side-row wall (FIX 5718): an erase's own write of a row's erased form",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -76824,7 +76880,7 @@
      "path": "src/side_table/mod.rs",
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables",
      "surface": {
-      "crate-vis": 56,
+      "crate-vis": 57,
       "fn": 1,
       "mod": 1,
       "struct": 1
@@ -89875,6 +89931,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/sync/selector/secret_projection/documents/text_diff_budget_tests.rs",
+     "purpose": "A large copy lineage brought to an unrelated copy is refused within the whole-text diff budget",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -93720,6 +93784,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/archive_room_ledger.rs",
+     "purpose": "Doors for `tests/archive_import_owner_installs_room_membership.rs` (REVIEW-9446 P1-3, P1-4, round 2 P1-3 to…",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/archive_side_binary_credential.rs",
      "purpose": "Door for `tests/archive_side_family_binary_credential.rs`: plants one blob head side row with a…",
      "surface": {
@@ -94969,6 +95043,20 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FencedCall"
+     ],
+     "path": "src/test_doors/fenced_erase_form.rs",
+     "purpose": "Door for `tests/fenced_erase_form_past_wall.rs` (FIX FENCE-ERASED-FORM-THROUGH-WALL): the record of a run…",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 9
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -95901,7 +95989,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 334,
+      "mod": 336,
       "re-export": 2
      }
     },
@@ -97641,6 +97729,16 @@
      "path": "src/tests_bug.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/text_diff.rs",
+     "purpose": "A Loro text set to a new text, its diff held to a budget",
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "m",
@@ -103285,7 +103383,7 @@
      "purpose": "Direct leader chats: same-vault routing, shared-ancestor rule clamp and speaker scope",
      "surface": {
       "const": 1,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 2,
       "re-export": 1
      }
@@ -103317,7 +103415,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 56,
+      "crate-vis": 57,
       "enum": 2,
       "fn": 20,
       "re-export": 20,
@@ -103511,6 +103609,16 @@
      "surface": {
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/room_narrowing.rs",
+     "purpose": "A standing answer never stays in a facet its room no longer reads, whichever act narrows the room (FIX…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -105877,6 +105985,14 @@
      "bucket": "L",
      "kind": "test",
      "notable": [],
+     "path": "tests/archive_import_owner_installs_room_membership.rs",
+     "purpose": "The owner's restore installs the room membership ledger live",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
      "path": "tests/archive_import_owner_installs_setting_rows.rs",
      "purpose": "The owner's archive restore brings back Setting rows (ARCHIVE-SETTING-CATALOGUE-KEYS-NOT-CARRIED)",
      "surface": {}
@@ -105962,6 +106078,14 @@
      "surface": {
       "crate-vis": 10
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/archive_import_rooms_not_seated_here.rs",
+     "purpose": "Fix list rows ARCHIVE-IMPORT-ACTORLESS-SEATED-ROOM-REFUSED and ARCHIVE-IMPORT-ROOM-PINS-OR-CLOSED-REFUSED…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -106989,6 +107113,14 @@
      "notable": [],
      "path": "tests/cleanup_auto_posture.rs",
      "purpose": "L1-30 (FIX [SAFETYISM-CLEANUP-AUTO-ARM-409]; Engine ruling L1-30-AUTO-POSTURE, Fri 13 Nov 22:39 = A): a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/cleanup_restore_row_deletion_fence.rs",
+     "purpose": "FIX [CLEANUP-RESTORE-DOOR-MISSES-ROW-DELETION-FENCE]: the cleanup's restore door brings back no record whose…",
      "surface": {}
     },
     {
@@ -108087,6 +108219,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/entity_revision_text_diff_budget.rs",
+     "purpose": "A row edit diffs each revision text field within a budget",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/epoch_lineage_pointer_form_summary.rs",
      "purpose": "The lineage census reads a pointer-form epoch SUMMARY by the keyframe keys it keeps beside its pointer…",
      "surface": {}
@@ -108381,6 +108521,14 @@
      "notable": [],
      "path": "tests/feed_verbs.rs",
      "purpose": "The change feed verbs (untangle slice 6.8d) through the generated verb dispatch…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fenced_erase_form_past_wall.rs",
+     "purpose": "FIX FENCE-ERASED-FORM-THROUGH-WALL: a put fence erases, in its writer, the record of a run whose actor is…",
      "surface": {}
     },
     {
@@ -113216,7 +113364,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/saved_lane_actor_class.rs",
@@ -115126,7 +115274,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 208,
+     "files": 209,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -115308,7 +115456,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 273,
+     "files": 274,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -115462,7 +115610,7 @@
      "purpose": "Persisted, deterministic Rust/JavaScript API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 35,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116043,7 +116191,7 @@
      "purpose": "Durable model-step failure and reply-check contracts"
     },
     "note": {
-     "files": 84,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -116057,7 +116205,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116533,7 +116681,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 436,
+     "files": 437,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116589,7 +116737,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 343,
+     "files": 345,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116629,6 +116777,13 @@
      "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "—"
+    },
+    "text_diff": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A Loro text set to a new text, its diff held to a budget"
     },
     "thread_lens": {
      "files": 2,
@@ -116750,7 +116905,7 @@
      "purpose": "Monthly CRDT window keys and their timestamp conversion"
     },
     "workspace_roster": {
-     "files": 146,
+     "files": 147,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116766,8 +116921,8 @@
    },
    "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8231,
-   "test_files": 1980
+   "source_files": 8239,
+   "test_files": 1988
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -162631,7 +162786,7 @@
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/asset_forms.rs",
-     "purpose": "OF-329's hydrate doors: a text-only agent that hydrates a generated image, on `/v1` core hydrate and on…",
+     "purpose": "OF-329's hydrate doors: a text-only agent that hydrates a generated image is served the image's ASSET_TEXT…",
      "surface": {}
     },
     {
@@ -178596,7 +178751,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/restriction_wave11_cap_note.rs",
@@ -191639,6 +191794,36 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/canary/export_archive.rs",
+     "purpose": "The whole-vault export as a scan surface ([CANARY-SCAN-COVERAGE] step 4)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/canary/named_refs.rs",
+     "purpose": "The refs a scan's answers name, and the reads that follow them ([CANARY-SCAN-COVERAGE] step 2): a list…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/canary/point_doors.rs",
+     "purpose": "The scan's point and ledger doors ([CANARY-SCAN-COVERAGE] step 1 and 3): the keyed value at the canary…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "FakeClock"
      ],
@@ -192010,7 +192195,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/canary.rs",
@@ -192100,10 +192285,10 @@
    ],
    "modules": {
     "canary": {
-     "files": 1,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "L",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The canary leak detector, step 1 (Fable's review of verdict 52, 2026-11-10, section 4 idea 1)"
     },
     "clock": {
@@ -192207,7 +192392,7 @@
    },
    "over_bar": 3,
    "purpose": "`oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09…",
-   "source_files": 28,
+   "source_files": 31,
    "test_files": 12
   },
   "oneiron-uniffi": {

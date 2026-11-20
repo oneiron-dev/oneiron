@@ -161,10 +161,12 @@ fn an_agent_row_states_only_the_roots_over_its_own_attempts() {
 
 /// A rooted device vault, as an agent's Grant needs one: the install's
 /// keystore, a host root, the engine's machine identities and this install's
-/// profile.
+/// profile. It is process-owned, so it holds the writer lease and the
+/// embedded owner's doors (`open_root`) admit the owner, as an embedded
+/// host's vault does.
 fn open_rooted_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temporary vault directory");
-    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
+    let vault = Vault::open_owned(dir.path(), VaultConfig::device()).expect("open vault");
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     let issuer = HostSlipIssuer::from_seed(&[0x5A; HOST_ISSUER_SEED_BYTES]).expect("host issuer");
     vault.ensure_host_root_slip(&issuer).expect("host root");

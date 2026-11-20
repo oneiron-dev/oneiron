@@ -200,7 +200,8 @@ fn scrub_actor_responses_in_txn(
 /// bodies released all the same, and a Deleted row of it turns Erased here;
 /// an erased row stays erased. A removed row or a pending `df:` or `pt:`
 /// fence without that marker is no completed erasure: the row stays
-/// Deleted, with its bodies, for the retirement still to come.
+/// Deleted, with its bodies, for the retirement still to come. The caller
+/// lands what this returns with [`replay_rows::put_fenced`].
 ///
 /// # Errors
 ///

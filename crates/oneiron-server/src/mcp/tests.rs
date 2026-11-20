@@ -1591,13 +1591,23 @@ fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
         }
         let input = oneiron::task_verb::sdk::input_schema(name).expect("input schema");
         // A run row is answered by the code run itself: code mode serves it
-        // from its input schema, and no tool can carry a run.
+        // from its input schema. A run row with a host projection also has a
+        // typed door bound to its caller's credential and live run (the
+        // generated `RunVerb`), and that door is its tool, whose input is the
+        // projection's; a run row with none is no tool.
+        let hosted = row.get("host").is_some();
         if row["context"] == "run" {
             assert!(oneiron::task_verb::sdk::RunVerb::from_name(name).is_some());
-            assert!(oneiron::task_verb::sdk::AgentVerb::from_name(name).is_none());
-            assert!(surface.resolve(name).is_none(), "{name} is a tool");
-            assert_eq!(input["additionalProperties"], false, "{name}");
-            continue;
+            if !hosted {
+                assert!(oneiron::task_verb::sdk::AgentVerb::from_name(name).is_none());
+                assert!(surface.resolve(name).is_none(), "{name} is a tool");
+                assert_eq!(input["additionalProperties"], false, "{name}");
+                continue;
+            }
+            assert!(
+                oneiron::task_verb::sdk::AgentVerb::from_name(name).is_some(),
+                "{name} has no host door"
+            );
         }
         if name == "ask" {
             let branches = input["anyOf"]
@@ -1650,8 +1660,21 @@ fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
         } else {
             assert_eq!(input["type"], "object", "{name}");
         }
-        // ARCH-0028: every callable row is a tool; no row carries an opt-out.
-        assert!(row.get("mcp").is_none(), "{name} curates the tool list");
+        // ARCH-0028: every callable row is a tool. Only a browser or a
+        // scoped-child row states the opt-out, and every such row does: the
+        // run's own browser or the scoped child answers it, so code mode is
+        // its door. A browser row with a host projection is still a tool,
+        // through that typed door.
+        let opted_out = matches!(row["context"].as_str(), Some("browser" | "scoped_child"));
+        assert_eq!(
+            row.get("mcp").and_then(Value::as_str),
+            opted_out.then_some("none"),
+            "{name} curates the tool list"
+        );
+        if opted_out && !hosted {
+            assert!(surface.resolve(name).is_none(), "{name} is a tool");
+            continue;
+        }
         let tool = surface
             .resolve(name)
             .unwrap_or_else(|| panic!("{name} is not projected"));
