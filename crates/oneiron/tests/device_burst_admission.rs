@@ -64,6 +64,25 @@ fn wall_secs() -> TestResult<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
 }
 
+/// A Delegate grant of `owner` under the residence scope, delegated by the
+/// owner, that the device's selector may write under until `ends` on the
+/// wall clock. [`FederationGrant::new`] leaves `delegated_by` unset, which a
+/// Delegate grant must carry to pass validation, and gives a Delegate read
+/// alone.
+fn residence_delegate_grant(owner: EntityId, ends: u64) -> FederationGrant {
+    let mut grant = FederationGrant::new(
+        own_device_residence_scope(),
+        owner,
+        FederationGrantRole::Delegate,
+        FederationGrantPreset::Delegate,
+    );
+    grant.delegated_by = Some(owner);
+    grant.authority_scope.verbs =
+        ScopeAxis::Some(BTreeSet::from(["read".to_owned(), "write".to_owned()]));
+    grant.expires_at = Some(ends);
+    grant
+}
+
 /// A device's home whose owner set the device's baseline to one write a
 /// second; `unusual_rate` routes a burst over it.
 struct Home {
@@ -374,7 +393,15 @@ fn a_held_burst_ends_stale_once_its_slip_expires() -> TestResult {
     );
 
     // Past the slip's lifetime, and the device's rate back at its baseline.
+    // The slip's lifetime is judged on the authority clock, whose floor the
+    // recording clock alone does not move: raise it to the same second.
     home.clock.set(NOW + 120);
+    home.vault
+        .advance_authority_clock_for_test(home.vault.now_recorded_at())?;
+    assert!(
+        !home.vault.capability_slip_id_is_live(&slip)?,
+        "the slip has expired on the authority clock"
+    );
     let due = ready_device_work(&home.vault)?;
     assert!(
         due.is_empty(),
@@ -472,25 +499,29 @@ fn a_held_burst_ends_stale_once_another_residence_grant_of_its_holder_expires() 
     put_selector_test_federation_grant(&home.vault, &named_id, &named, NOW)?;
     // A second grant of the slip's holder under the residence scope, which
     // the device's selector may name instead of the slip's: a Delegate
-    // grant that ends at NOW + 1.
+    // grant that ends a few seconds from now on the wall clock, which the
+    // home's row admission judges a grant's end on.
+    let ends = wall_secs()? + GRANT_WALL_LIFETIME_SECS;
     let delegate_id = EntityId::now();
-    let mut delegate = FederationGrant::new(
-        own_device_residence_scope(),
-        owner,
-        FederationGrantRole::Delegate,
-        FederationGrantPreset::Delegate,
-    );
-    delegate.expires_at = Some(NOW + 1);
+    let delegate = residence_delegate_grant(owner, ends);
     put_selector_test_federation_grant(&home.vault, &delegate_id, &delegate, NOW)?;
     let slip = [0x45; 32];
     home.mint_slip_under(slip, 3_600, Some(named_id))?;
     let device = home.device_with_slip(PeerMachine::Unknown, slip)?;
     let batch_ref = home.hold_burst(&device)?;
+    assert!(
+        wall_secs()? < ends,
+        "the Delegate grant still confers when the burst is held"
+    );
 
-    // Two seconds on, the device's rate is back at its baseline and the
-    // Delegate grant has ended. No row changed and the slip still stands,
-    // but a write held under that grant no longer does.
+    // Two seconds on, the device's rate is back at its baseline, and the
+    // wall clock passes the Delegate grant's end. No row changed and the
+    // slip still stands, but a write held under that grant no longer does.
     home.clock.set(NOW + 2);
+    while wall_secs()? <= ends {
+        // testkit-lint: allow(sleep) grant expiry is judged on real wall time
+        std::thread::sleep(Duration::from_millis(100));
+    }
     let due = ready_device_work(&home.vault)?;
     assert!(
         due.is_empty(),
@@ -533,13 +564,7 @@ fn a_held_burst_stops_standing_once_the_wall_clock_passes_a_grant_end_the_grant_
     // A second grant of the slip's holder under the residence scope, which
     // the device's selector may name: a Delegate grant that ends at `ends`.
     let delegate_id = EntityId::now();
-    let mut delegate = FederationGrant::new(
-        own_device_residence_scope(),
-        owner,
-        FederationGrantRole::Delegate,
-        FederationGrantPreset::Delegate,
-    );
-    delegate.expires_at = Some(ends);
+    let delegate = residence_delegate_grant(owner, ends);
     put_selector_test_federation_grant(&home.vault, &delegate_id, &delegate, grant_clock)?;
     let slip = [0x48; 32];
     home.mint_slip_under(slip, 3_600, Some(named_id))?;
