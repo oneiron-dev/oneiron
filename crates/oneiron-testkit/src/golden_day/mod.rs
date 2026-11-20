@@ -51,7 +51,7 @@ use serde_json::{Value, json};
 use crate::clock::FakeClock;
 use crate::door;
 use crate::dreamer::{
-    DreamerPassError, DreamerPassReport, allow_scripted_extraction, attach_test_host,
+    DreamerPassError, DreamerPassReport, PassStack, allow_scripted_extraction, attach_test_host,
     scripted_backend,
 };
 use crate::fixture::{SeedError, TestVault};
@@ -246,6 +246,16 @@ pub fn backend() -> ScriptedBackend {
 /// fallback, so the rest of the day would run on a pass that read nothing.
 /// A step that refuses is recorded, not returned.
 pub fn run(backend: &ScriptedBackend) -> Result<GoldenDayRun, GoldenDayError> {
+    run_on(backend, PassStack::EngineThread)
+}
+
+/// [`run`] with the day's Dreamer pass polled on `stack`: on
+/// [`PassStack::CallingThread`] the whole day runs on the calling thread's
+/// own stack.
+///
+/// # Errors
+/// As [`run`].
+pub fn run_on(backend: &ScriptedBackend, stack: PassStack) -> Result<GoldenDayRun, GoldenDayError> {
     let mut day = Day::default();
     let test_vault = TestVault::seeded(SCRIPT, |vault, clock| day.seed(vault, clock))
         .map_err(|error| failed("the seed", error))?;
@@ -259,6 +269,7 @@ pub fn run(backend: &ScriptedBackend) -> Result<GoldenDayRun, GoldenDayError> {
     // 2. The Dreamer reads the turn.
     let pass = crate::dreamer::DreamerPass::new(backend)
         .with_run_id(PASS_RUN_ID)
+        .with_stack(stack)
         .run_turn_wake(&vault, clock);
     backend
         .check()
