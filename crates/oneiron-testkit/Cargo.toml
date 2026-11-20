@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Test fixtures for oneiron door tests and the E2E seeding script: fixture vault copies, a fake clock, a scripted model provider, a hashing embedder, a free-port server spawn, fault injection, a receipt reader and the test lint"
+description = "Test fixtures for oneiron door tests and the E2E seeding script: fixture vault copies, a fake clock, a scripted model provider, a hashing embedder, a free-port server spawn, fault injection and a receipt reader"
 repository.workspace = true
 # Test support only: a dev-dependency of the crates whose tests use it, never
 # a dependency of a shipped crate or binary.
