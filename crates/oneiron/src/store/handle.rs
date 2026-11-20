@@ -318,6 +318,10 @@ pub struct StoreCore {
     /// leaves each marker to the next replay.
     #[cfg(feature = "sync")]
     pub(crate) tombstone_publications_in_flight: crate::deletion::TombstonePublicationsInFlight,
+    /// When this home last pushed each machine a prediction, for the push
+    /// spacing. Never persisted: a restarted home answers the next ask.
+    #[cfg(feature = "sync")]
+    pub(crate) predicted_pushes: crate::sync::residence::PredictedPushes,
     /// The engine's record-scope stamp hooks, supplied by the open door with
     /// the delete guards.
     pub(crate) scope_stamps: &'static dyn crate::store::StoreScopeStamps,
