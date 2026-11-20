@@ -5,8 +5,10 @@
 //! higher sequence that does not descend from it, or an owner's join no
 //! public door writes. No public writer does either: each signs at the next
 //! sequence over the vault's heads. Beside them, an owner root this install
-//! does not pin, or one it pins, with its anchor's mark of a machine. The
-//! rows are stored as any row is; the fold judges them.
+//! does not pin, or one it pins, with its anchor's mark of a machine, or one
+//! it does not pin with its anchor's removal of a machine, which no public
+//! writer signs (row RESTORED-HELD-RESTRICTION-REVIEW-TESTS). The rows are
+//! stored as any row is; the fold judges them.
 
 use std::collections::BTreeSet;
 
@@ -14,7 +16,7 @@ use ed25519_dalek::SigningKey;
 
 use crate::authority::{
     AuthorityEntryHash, AuthorityKey, AuthorityOp, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-    MachineEncryptionKey, MachineEnrolmentRequest, OwnerRootRecord,
+    MachineEncryptionKey, MachineEnrolmentRequest, MachineProfile, MachineRole, OwnerRootRecord,
 };
 use crate::error::Result;
 use crate::world_keys::RecoveryRootSeed;
@@ -147,12 +149,63 @@ pub fn publish_pinned_root_and_mark(
     publish_root_and_mark(vault, owner, request, true)
 }
 
-fn publish_root_and_mark(
+/// An owner root of `owner` that this install does not pin, published by a
+/// fresh anchor, and that anchor's removal of `request`'s machine with the
+/// request's keys and proof, as the first revision of its own chain of that
+/// machine: a terminal row, act-free, that no install carries. The machine's
+/// row must exist already (an enrolment filed it). Returns the removal's
+/// entry.
+///
+/// # Errors
+/// A request of another vault; storage faults.
+pub fn publish_unpinned_root_and_removal(
     vault: &Vault,
     owner: EntityId,
     request: &MachineEnrolmentRequest,
-    pin: bool,
 ) -> Result<AuthorityEntryHash> {
+    let (anchor, record) = fresh_owner_root(owner, request)?;
+    let mut txn = vault.store.env.write_txn()?;
+    vault.publish_owner_root_in_txn(&mut txn, &anchor, record)?;
+    let fold = vault.authority_view_readonly_in_txn(&txn)?;
+    if fold.vault_id != Some(request.vault_id) {
+        return Err(crate::authority::invalid_authority());
+    }
+    let removal = MachineProfile {
+        machine: request.machine,
+        owner,
+        machine_key: request.machine_key,
+        device_class: request.device_class,
+        encryption_key: request.encryption_key.clone(),
+        role: MachineRole::Removed,
+        revision: 1,
+        machine_proof: request.machine_proof,
+        seen_world_edits: BTreeSet::new(),
+        carrier: None,
+        act: None,
+        restored_from: request.restored_from,
+    };
+    removal.validate()?;
+    let fold = vault
+        .join_anchor_frontier_in_txn(&mut txn, &fold, &anchor)?
+        .unwrap_or(fold);
+    let now = vault.instant_in_txn(&txn)?.secs();
+    let entry = crate::authority::anchor_signed_entry(
+        &fold,
+        &anchor,
+        AuthorityOp::MachineProfile(removal),
+        now,
+    )?;
+    let removal = vault.put_anchor_entry_in_txn(&mut txn, entry)?;
+    txn.commit()?;
+    Ok(removal)
+}
+
+/// A fresh owner root of `owner` on `request`'s vault: its anchor key and
+/// the record the anchor publishes.
+fn fresh_owner_root(
+    owner: EntityId,
+    request: &MachineEnrolmentRequest,
+) -> Result<(SigningKey, OwnerRootRecord)> {
     let seed = RecoveryRootSeed::generate()?;
     let root = seed.public(&request.vault_id)?;
     let record = OwnerRootRecord {
@@ -164,14 +217,25 @@ fn publish_root_and_mark(
         },
         anchor_key: root.anchor_key,
     };
-    let anchor = seed.anchor();
+    Ok((seed.anchor(), record))
+}
+
+fn publish_root_and_mark(
+    vault: &Vault,
+    owner: EntityId,
+    request: &MachineEnrolmentRequest,
+    pin: bool,
+) -> Result<AuthorityEntryHash> {
+    let (anchor, record) = fresh_owner_root(owner, request)?;
+    let root_id = record.root;
+    let anchor_key = record.anchor_key;
     let mut txn = vault.store.env.write_txn()?;
     vault.publish_owner_root_in_txn(&mut txn, &anchor, record)?;
     let mark = vault.append_anchor_mark_in_txn(&mut txn, &anchor, owner, request)?;
     if pin {
         let pinned = crate::authority::PinnedRoot {
-            id: root.id,
-            anchor_key: root.anchor_key,
+            id: root_id,
+            anchor_key,
         };
         crate::authority::write_pinned_root_in_txn(&vault.store, &mut txn, pinned, None)?;
     }
