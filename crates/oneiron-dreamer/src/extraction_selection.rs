@@ -250,13 +250,25 @@ fn native_keys(candidate: &CandidateObservation) -> (&str, &str, &str) {
 /// Builds one operand per group with an ordered, exact-deduplicated evidence union.
 ///
 /// Operands have the checked `CandidateOperand` shape. The union spans the members'
-/// cited turns (`evidence`) and their cited listed claims (`claim_evidence`), each
-/// list by itself; a group that cites no claim keeps the key absent. All other
+/// cited turns (`evidence`), their cited listed claims (`claim_evidence`) and the
+/// recorded step candidates they name (`from_steps`), each list by itself; a group
+/// that cites no claim, or names no recorded candidate, keeps that key absent. So
+/// every quote and cited claim of a union is one a recorded candidate it names
+/// carries, as the engine asks of an operand that names any. All other
 /// representative fields, including the representative's own `corrects`, remain
 /// unchanged, so the union keeps the representative's identity, as native assembly
 /// keeps the first member's. The group's merged correction is
 /// [`CandidateGroup::corrects`]. The engine recounts verified citations, times and
 /// diversity on these unions; none are summed.
+///
+/// A group may hold members that name recorded candidates beside members that name
+/// none. No recorded candidate carries the evidence of the second kind, so the union
+/// of such a group names none either: the engine reads it as it read the members that
+/// named none, over every queued TURN. A union of such a group that corrects a head
+/// also leaves out the representative's proposed `rel`. A correction binds the head's
+/// relationship set and the engine reads no proposed one, but it holds a proposed one
+/// inside the set the operand is assembled under, and the set over every queued TURN
+/// may be narrower than the set of the step that allowed the representative's.
 ///
 /// One cited claim may stay out of the union: the head the representative corrects,
 /// when the representative does not cite it itself. The engine asks a correction
@@ -346,11 +358,15 @@ impl CorrectionFacts {
     /// and value that are not both the head's, and a union with that same predicate
     /// and value does not restate the head. A member the read does not ask about a
     /// head it cites restates it: the head's predicate and value are the member's,
-    /// and a union with another predicate or value does not restate the head. With
-    /// no read fact for the member, only its own correction of `head`, which its
-    /// read took, stands for the first case. These are sufficient tests, not every
-    /// one: a member the read may ask about `head` that proposes another predicate
-    /// or value proves nothing about the union, and its citation stays out.
+    /// and a union with another predicate or value does not restate the head. That
+    /// second case holds only for a member that names at most one recorded
+    /// candidate. The read also leaves a pair out when none of the recorded
+    /// candidates an operand names may be asked about the head in its own step, so
+    /// for a member folded from several a missing pair proves nothing. With no read
+    /// fact for the member, only its own correction of `head`, which its read took,
+    /// stands for the first case. These are sufficient tests, not every one: a
+    /// member the read may ask about `head` that proposes another predicate or value
+    /// proves nothing about the union, and its citation stays out.
     fn keeps_citation(
         &self,
         position: usize,
@@ -360,9 +376,12 @@ impl CorrectionFacts {
     ) -> bool {
         let same_proposal = member["predicate"] == representative["predicate"]
             && member["value"] == representative["value"];
+        let folded_from_several = member["from_steps"]
+            .as_array()
+            .is_some_and(|named| named.len() > 1);
         match self.correctable.get(&position) {
             Some(heads) if heads.iter().any(|claim| claim == head) => same_proposal,
-            Some(_) => !same_proposal,
+            Some(_) => !same_proposal && !folded_from_several,
             None => same_proposal && member["corrects"].as_str() == Some(head),
         }
     }
@@ -413,10 +432,12 @@ pub(crate) fn union_operands_with_facts(
                 .filter(|_| !facts.differs.contains(&group.representative_index));
             let mut evidence = Vec::new();
             let mut claim_evidence = Vec::new();
+            let mut from_steps = Vec::new();
             for index in &group.member_indexes {
                 for (key, merged) in [
                     ("evidence", &mut evidence),
                     ("claim_evidence", &mut claim_evidence),
+                    ("from_steps", &mut from_steps),
                 ] {
                     if let Some(entries) = operands[*index][key].as_array() {
                         for entry in entries {
@@ -441,9 +462,28 @@ pub(crate) fn union_operands_with_facts(
             if !claim_evidence.is_empty() {
                 operand["claim_evidence"] = Value::Array(claim_evidence);
             }
+            let every_member_names_some = group
+                .member_indexes
+                .iter()
+                .all(|index| names_recorded_candidates(&operands[*index]));
+            if every_member_names_some {
+                operand["from_steps"] = Value::Array(from_steps);
+            } else if let Some(fields) = operand.as_object_mut() {
+                fields.remove("from_steps");
+                if !from_steps.is_empty() && fields.get("corrects").is_some_and(Value::is_string) {
+                    fields.remove("rel");
+                }
+            }
             operand
         })
         .collect()
+}
+
+/// Tells whether `operand` names a recorded step candidate it is folded from.
+fn names_recorded_candidates(operand: &Value) -> bool {
+    operand["from_steps"]
+        .as_array()
+        .is_some_and(|named| !named.is_empty())
 }
 
 /// Names each listed claim `operand` cites as evidence.
