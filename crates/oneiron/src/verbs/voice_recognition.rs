@@ -292,7 +292,12 @@ impl Memory<'_> {
     /// fresh enrolment. Offered while the withdrawal is open to disown
     /// ([`Vault::voice_withdrawal_open_to_disown_in_txn`]). The grant is dated
     /// one second after the withdrawal, so that withdrawal never voids it, a
-    /// later one still does, and a repeated tap replays the same decision.
+    /// later one still does, and a repeated tap replays the same decision. Its
+    /// event id is the withdrawal's under
+    /// [`crate::voice_identity::VOICE_CONSENT_RESTORE_EVENT_PREFIX`], which no
+    /// other request writes, and the consent door admits it only while the
+    /// withdrawal is still open to disown, inside the grant's write
+    /// (REVIEW-10022 P1).
     /// Clients label it "That wasn't me".
     pub(crate) fn voice_consent_restore_actions(
         &self,
@@ -319,7 +324,10 @@ impl Memory<'_> {
         vec![crate::inbox::NotificationAction {
             verb: VOICE_RECOGNITION_CONSENT_VERB.to_owned(),
             args: serde_json::json!({
-                "event_id": format!("{event_id}:restored"),
+                "event_id": format!(
+                    "{}{event_id}",
+                    crate::voice_identity::VOICE_CONSENT_RESTORE_EVENT_PREFIX
+                ),
                 "occurred_at": withdrawal.occurred_at.saturating_add(1),
                 "purposes": withdrawal.purposes,
                 "basis": {"SettingsToggle": {"surface_ref": format!("inbox:{}", row.id)}},

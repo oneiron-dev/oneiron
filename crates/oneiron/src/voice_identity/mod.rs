@@ -71,7 +71,9 @@ pub use self::types::{
     VoiceWithdrawalReceipt, VoiceWithdrawalRequest, WHOLE_RECORDING_RUN_AUTHORITATIVE,
 };
 
-pub(crate) use self::vault::VOICE_RECOGNITION_NOTIFICATION_PRODUCER;
+pub(crate) use self::vault::{
+    VOICE_CONSENT_RESTORE_EVENT_PREFIX, VOICE_RECOGNITION_NOTIFICATION_PRODUCER,
+};
 #[cfg(test)]
 pub(crate) use self::vault::{put_raw_voice_roster_for_test, put_voice_roster_for_test};
 

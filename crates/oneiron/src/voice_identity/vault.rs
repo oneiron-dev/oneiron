@@ -42,6 +42,19 @@ enum ConsentEventWrite {
 /// member's own notice of a logged withdrawal, whose tap the inbox offers.
 pub(crate) const VOICE_RECOGNITION_NOTIFICATION_PRODUCER: &str = "voice_recognition";
 
+/// The event id prefix of a member's restore of the consent a withdrawal
+/// someone else recorded for them ended: `<prefix><withdrawal event id>`
+/// (VOICE-WITHDRAW-UNDO-SHAPE = B). No withdrawal is written under it, and a
+/// consent only as that restore ([`Vault::admit_consent_restore_in_txn`]), so
+/// no other request takes a withdrawal's restore id first (REVIEW-10022 P1).
+pub(crate) const VOICE_CONSENT_RESTORE_EVENT_PREFIX: &str = "voice-consent-restore:";
+
+/// The withdrawal event id `event_id` restores, where it is a restore id
+/// ([`VOICE_CONSENT_RESTORE_EVENT_PREFIX`]).
+fn restored_withdrawal_id(event_id: &str) -> Option<&str> {
+    event_id.strip_prefix(VOICE_CONSENT_RESTORE_EVENT_PREFIX)
+}
+
 /// Both consent doors compare inside the transaction that holds the event
 /// write and any hard deletion.
 fn put_consent_event_once(
@@ -839,9 +852,13 @@ impl Vault {
     /// (VOICE-WITHDRAW-UNDO-SHAPE = B): a withdrawal someone else recorded
     /// for them that is still their latest decision, dated before this
     /// vault's clock. No grant of theirs is dated after it, apart from a
-    /// grant it voided as recorded before it ([`super::consent_void`]), and no
-    /// other withdrawal at or after it; a grant in its own second loses to
-    /// it, as enrolment and recognition order a tie.
+    /// grant it voided as recorded before it ([`super::consent_void`]), no
+    /// other withdrawal after it, and no withdrawal of their own in its
+    /// second; a grant in its own second loses to it, as enrolment and
+    /// recognition order a tie. Another recorder's withdrawal in the same
+    /// second leaves it open (REVIEW-10022 P1): the consent log keeps no order
+    /// within a second, and the grant either one's tap logs, a second later,
+    /// is the subject's latest decision over both.
     /// Their "that wasn't me" logs a grant dated one second after it, which
     /// the consent door then accepts, and which reverses only that
     /// withdrawal: a later one still voids it. It restores consent only; the
@@ -875,7 +892,11 @@ impl Vault {
                             &withdrawal,
                         )?
                 }
-                VoiceConsentState::Withdrawn => other.occurred_at >= withdrawal.occurred_at,
+                VoiceConsentState::Withdrawn => {
+                    other.occurred_at > withdrawal.occurred_at
+                        || (other.occurred_at == withdrawal.occurred_at
+                            && other.recorded_by_ref == subject)
+                }
             };
             if decided_since {
                 return Ok(None);
@@ -912,6 +933,13 @@ impl Vault {
             state: VoiceConsentState::Withdrawn,
         };
         CONSENT.encode_value(&asked)?;
+        if restored_withdrawal_id(&asked.event_id).is_some() {
+            return Err(invalid_voice(
+                "a voice consent restore id names a member's restore of consent, \
+                 never a withdrawal",
+            )
+            .into());
+        }
 
         let _guard = self
             .voice_ref_guard
@@ -1112,9 +1140,10 @@ impl Vault {
     }
 
     /// The consent-log transaction: `admit` runs first inside it, so a
-    /// refusal appends nothing, then the event append, and only on its first
-    /// insertion `on_insert`, handed what `admit` answered. It answers whether
-    /// the consent was already recorded. It enrols nothing.
+    /// refusal appends nothing, then a restore id's own check
+    /// ([`Self::admit_consent_restore_in_txn`]), the event append, and only on
+    /// its first insertion `on_insert`, handed what `admit` answered. It
+    /// answers whether the consent was already recorded. It enrols nothing.
     fn record_voice_consent_admitted<A, E: From<Error>>(
         &self,
         event: &VoiceConsentEventV1,
@@ -1124,12 +1153,53 @@ impl Vault {
         CONSENT.encode_value(event)?;
         self.try_with_write_txn_grouped::<_, _, E>(|wtxn| {
             let admitted = admit(wtxn)?;
+            if let Some(withdrawal) = restored_withdrawal_id(&event.event_id) {
+                self.admit_consent_restore_in_txn(wtxn, event, withdrawal)?;
+            }
             if put_consent_event_once(&self.store, wtxn, event)? == ConsentEventWrite::Replayed {
                 return Ok(true);
             }
             on_insert(wtxn, admitted)?;
             Ok(false)
         })
+    }
+}
+
+impl Vault {
+    /// Admits `event`, a consent under a restore id, only as the subject's
+    /// own restore of their withdrawal `withdrawal` while it is open to
+    /// disown ([`Self::voice_withdrawal_open_to_disown_in_txn`]): recorded by
+    /// the subject, a grant, dated one second after the withdrawal, for its
+    /// purposes. A stored identical event is a replay. It runs in the grant's
+    /// write transaction, so a decision recorded after the tap was offered,
+    /// such as the subject's own withdrawal, closes the tap (REVIEW-10022 P1).
+    fn admit_consent_restore_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        event: &VoiceConsentEventV1,
+        withdrawal: &str,
+    ) -> Result<()> {
+        let subject = event.subject_ref;
+        if read_consent_event(&self.store, txn, &subject, &event.event_id)?.as_ref() == Some(event)
+        {
+            return Ok(());
+        }
+        let restores = event.recorded_by_ref == subject
+            && event.state == VoiceConsentState::Granted
+            && self
+                .voice_withdrawal_open_to_disown_in_txn(txn, subject, withdrawal)?
+                .is_some_and(|open| {
+                    event.occurred_at == open.occurred_at.saturating_add(1)
+                        && event.purposes == open.purposes
+                });
+        if restores {
+            Ok(())
+        } else {
+            Err(invalid_voice(
+                "a voice consent restore id names only a member's own restore of a withdrawal \
+                 someone else recorded for them, while it is still their latest decision",
+            ))
+        }
     }
 }
 
