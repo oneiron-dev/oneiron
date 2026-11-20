@@ -9,7 +9,7 @@
 use oneiron::sync::WindowKey;
 use oneiron::sync::federation_burst::DeviceBurstWork;
 
-use super::window_sync::{land_device_update, map_update_admission_err};
+use super::window_sync::{DeviceWriteRecheck, land_device_update, map_update_admission_err};
 use crate::protocol::ProtocolError;
 use crate::server::SyncServer;
 
@@ -61,10 +61,10 @@ pub(crate) enum DeviceBurstEnd {
     Complete,
     /// Nothing of it persisted because a load, a read of the window's
     /// admission state, the copy translation or the persist failed, a Write
-    /// credential refused in the persist's writer among them: it stays
-    /// retained, and its device's streak counts nothing. The drain lands it
-    /// later, or ends it `StaleAuthority` once its device no longer stands
-    /// as it did.
+    /// credential refused in the persist's writer among them, or a replayed
+    /// batch that no longer stands there: it stays retained, and its
+    /// device's streak counts nothing. The drain lands it later, or ends it
+    /// `StaleAuthority` once its device no longer stands as it did.
     Retained,
     /// The window refused the device's own bytes: its receipt reads
     /// `Rejected`, a structural failure on the device's streak.
@@ -106,11 +106,13 @@ impl DeviceBurstEnd {
 /// sources, persisted, imported under the live-window turn and relayed to
 /// every socket, the device's own included. No socket sent it, so no Write
 /// credential is rechecked here: the burst core ended the batch
-/// `StaleAuthority` before this if its device no longer stands as it did,
+/// `StaleAuthority` before this if its device no longer stood as it did,
 /// its machine on the same key and the slip of its Write credential
-/// unexpired, unrevoked, and its grant and member scope standing (FIX 7999).
-/// A copy edit held on its ruled cause keeps its held record and lands
-/// nothing.
+/// unexpired, unrevoked, and its grant and member scope standing (FIX 7999),
+/// and the persist's writer requires the same again, with the batch still
+/// held: a change while the window loaded persists nothing, and the drain's
+/// next pass ends the batch (#9226 review). A copy edit held on its ruled
+/// cause keeps its held record and lands nothing.
 ///
 /// # Errors
 /// What [`DeviceBurstEnd::of`] reads: the window's load or the persist,
@@ -140,7 +142,7 @@ pub(crate) async fn land_retained_device_update(
         (&key, &doc),
         work.update(),
         inserts,
-        (None, false),
+        DeviceWriteRecheck::Retained(work),
     )
     .await?;
     // The relayed ask intents it landed go to their consumer now, as the

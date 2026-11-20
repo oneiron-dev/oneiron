@@ -382,6 +382,27 @@ pub fn admit_promoted_window_update(
     proof: &crate::authority::VerifiedSlip,
     update: &[u8],
 ) -> Result<()> {
+    admit_promoted_window_update_then(vault, source, (scope, selector, proof), update, |_, _| {
+        Ok(())
+    })
+}
+
+/// [`admit_promoted_window_update`], every row judged in one read and with
+/// one clock reading for its grant's expiry, then `then` in that same read
+/// with that same reading: what the caller keeps of the admission (an own
+/// device's burst holds the update under the device's authority as read
+/// there: #9226 review round 2).
+pub(in crate::sync) fn admit_promoted_window_update_then<T>(
+    vault: &Vault,
+    source: &LoroDoc,
+    (scope, selector, proof): (
+        FederationGrantScope,
+        &SyncSelector,
+        &crate::authority::VerifiedSlip,
+    ),
+    update: &[u8],
+    then: impl FnOnce(&heed::RoTxn<'_>, u64) -> Result<T>,
+) -> Result<T> {
     let malformed = || Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied);
     let metadata = LoroDoc::decode_import_blob_meta(update, true).map_err(|_| malformed())?;
     if metadata.mode.is_snapshot() {
@@ -400,6 +421,7 @@ pub fn admit_promoted_window_update(
     let entities = ContainerID::new_root("entities", ContainerType::Map);
     let births = ContainerID::new_root(super::row_birth::ROW_BIRTHS_MAP, ContainerType::Map);
     let txn = vault.store.env.read_txn()?;
+    let now_secs = crate::unix_seconds_now();
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         let JsonOpContent::Map(MapOp::Insert {
             key,
@@ -428,10 +450,16 @@ pub fn admit_promoted_window_update(
             return Err(malformed());
         }
         super::selector::admit_promoted_entity_write_in_txn(
-            vault, &txn, id, &blob, scope, selector, proof,
+            vault,
+            &txn,
+            id,
+            &blob,
+            scope,
+            (selector, proof),
+            now_secs,
         )?;
     }
-    Ok(())
+    then(&txn, now_secs)
 }
 
 /// The entities a promoted window's update lands, read from the update's own

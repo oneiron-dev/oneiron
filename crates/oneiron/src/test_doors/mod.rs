@@ -98,6 +98,7 @@ pub mod derivation_position;
 pub mod derive;
 pub mod derive_person;
 pub mod derive_verbs;
+pub mod device_burst_work_stands;
 pub mod device_pin;
 pub mod device_succession_fold;
 pub mod disclosure_word_sources;

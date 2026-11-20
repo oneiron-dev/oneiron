@@ -87,7 +87,10 @@ pub(super) fn retained_device_peers(vault: &Vault) -> Result<Vec<DevicePeer>> {
     for row in vault.store.sync_queue.prefix_iter(&txn, DEFERRED_PREFIX)? {
         let (_, value) = row?;
         let work = DeferredWork::decode(&value)?;
-        if work.kind == WorkKind::DeviceUpdate {
+        if matches!(
+            work.kind,
+            WorkKind::DeviceUpdate | WorkKind::DeviceResidenceUpdate
+        ) {
             let peer = DevicePeer::decode(&work.selector)?;
             if !peers.contains(&peer) {
                 peers.push(peer);
@@ -165,6 +168,7 @@ impl DeferredWork {
             WorkKind::MemberUpdate => 1,
             WorkKind::GuestUpdate => 2,
             WorkKind::DeviceUpdate => 3,
+            WorkKind::DeviceResidenceUpdate => 4,
         }]);
         hash.update(payload);
         Ok((*hash.finalize().as_bytes(), selector))
@@ -518,7 +522,7 @@ impl DeferredWork {
                     // baseline; its home then replays it with no human step
                     // (arch-0023b `#decision-federation-26`: "Defer replays
                     // the burst later"; L7-41).
-                    WorkKind::DeviceUpdate => rate_ready,
+                    WorkKind::DeviceUpdate | WorkKind::DeviceResidenceUpdate => rate_ready,
                     WorkKind::MemberUpdate | WorkKind::GuestUpdate => {
                         work.isolated_update.is_none() || rate_ready
                     }

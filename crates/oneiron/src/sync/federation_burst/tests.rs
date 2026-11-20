@@ -53,7 +53,7 @@ fn selector_replay_is_durable_and_bound_to_current_principal_grant_and_payload()
         WorkKind::Selector,
         &payload,
         (100, vault.now_recorded_at(), &[]),
-        None,
+        (None, None),
     )
     .unwrap();
     let FederationBurstDecision::Defer { request_id, .. } = decision else {
