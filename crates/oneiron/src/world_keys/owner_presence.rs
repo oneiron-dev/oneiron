@@ -124,14 +124,14 @@ impl Vault {
         }
 
         let Some(gate) = self.presence_gate() else {
-            return Ok(device_cannot_ask(importance));
+            return Err(owner_presence_refused(OwnerPresenceRefusal::PromptFailed));
         };
         let basis = match gate.confirm(reason) {
             Ok(PresenceConfirmation::Prompted) => OwnerPresenceBasis::Prompted,
             Ok(PresenceConfirmation::WithinWindow) => OwnerPresenceBasis::WithinWindow,
             // A backend answers `NoPrompt` only where it can never show its
             // prompt. A session that is off the screen answers `ScreenLocked`.
-            Err(PresenceError::NoPrompt(_)) => return Ok(device_cannot_ask(importance)),
+            Err(PresenceError::NoPrompt(_)) => return Err(owner_presence_refused(OwnerPresenceRefusal::PromptFailed)),
             Err(PresenceError::Declined) => {
                 return Err(owner_presence_refused(OwnerPresenceRefusal::Declined));
             }
