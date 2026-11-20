@@ -35,6 +35,10 @@
 //!   key: a cycle of them closes every fence in it, and two roots that each
 //!   revoke themselves on sibling branches both stand. No roster row settles
 //!   that state, and the fold names it (`NoRootKey`).
+//! - A carried act's owner key proof that buys only room past another
+//!   install's owner reserve is no signature a fence reads
+//!   ([`entry_signer_keys`]): the act stands or falls by its own signer, as
+//!   it did unproven.
 //! - The pinned root's anchor is the way out (OWNER-ANCHOR-ROOT-RECOVERY): a
 //!   root appointment this install counts closes its fence first, and always.
 //!   It holds every key its ancestry names as a device other than its
@@ -159,9 +163,10 @@ impl Fence {
         }
     }
 
-    /// Whether `hash` is signed, as primary or co-signer, by a key this
-    /// fence holds, in its vault and outside its line. A genesis is never
-    /// fenced: a second one is a root conflict, which the fold reports.
+    /// Whether `hash` is signed, as primary or co-signer
+    /// ([`entry_signer_keys`]), by a key this fence holds, in its vault and
+    /// outside its line. A genesis is never fenced: a second one is a root
+    /// conflict, which the fold reports.
     fn signed_outside(
         &self,
         hash: &AuthorityEntryHash,
@@ -539,10 +544,24 @@ fn anchor_signed(entry: &AuthorityLogEntry, anchor: impl Fn(&[u8; 32]) -> bool) 
         }
 }
 
-/// The primary signer and every co-signer of `entry`.
+/// The keys a fence reads as signing `entry`: its primary signer and every
+/// co-signer, but the one owner key proof a carried act carries only for
+/// room past another install's owner reserve
+/// ([`super::owner_proof::proof_judged_at_merge`]; row
+/// OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS). That cosign moves nothing in
+/// any fold, so a revocation or handoff that retires its key on a branch the
+/// act never saw leaves the act standing, as the same act carried unproven
+/// stands: a residence result does not vanish and send its directive round
+/// again (REVIEW-9946 P1). The act's own signer stays fenced. The reserve
+/// door asks the cosign's key to be live itself (`log_budget`
+/// `signs_for_the_owner`), so a retired key's proof buys no reserve.
 pub(super) fn entry_signer_keys(entry: &AuthorityLogEntry) -> impl Iterator<Item = &AuthorityKey> {
-    std::iter::once(&entry.signer.public_key)
-        .chain(entry.cosigns.iter().map(|cosign| &cosign.public_key))
+    let cosigns: &[AuthoritySignature] = if super::owner_proof::proof_judged_at_merge(&entry.op) {
+        &[]
+    } else {
+        &entry.cosigns
+    };
+    std::iter::once(&entry.signer.public_key).chain(cosigns.iter().map(|cosign| &cosign.public_key))
 }
 
 /// The row stored as authority history at `hash`'s id, if one is. A row of
