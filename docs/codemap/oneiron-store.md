@@ -473,7 +473,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/scan_kind_table.rs` | src | m | 2 fn · 2 const | — | Each engine scan's list, closed code, the threshold it asks past and its row's tag; split from `engine_scan`… |
 | `src/scope_summary.rs` | src | s | 3 mod | — | Store-layer modules of core `scope_summary`; core re-exports each one at its old path |
 | `src/scope_summary/arc_work.rs` | src | s | 4 struct · 3 enum · 4 fn · 1 const | ArcChildPlan, ArcMember, ArcRange, ArcReduceRow, ArcWorkState, ChildMode, MemberKind | An Arc composed in parts (FIX 7509 PR3, SUMMARY-SOURCE = A): an Arc whose input does not fit one call on its… |
-| `src/scope_summary/codec.rs` | src | m | 3 struct · 7 fn | ScopeSummaryBody, SummarySourceMessage, SummarySourceNote | Strict, versioned scope-summary MessagePack codec (distinct from epochs) |
+| `src/scope_summary/codec.rs` | src | m | 3 struct · 8 fn | ScopeSummaryBody, SummarySourceMessage, SummarySourceNote | Strict, versioned scope-summary MessagePack codec (distinct from epochs) |
 | `src/scope_summary/public_types.rs` | src | s | 8 struct · 1 enum | SummaryKeepRequest, SummaryKeepResult, SummaryPath, SummaryProposalRequest, SummaryQueued, SummaryReadRequest, SummaryRegenerateRequest, SummarySpan +1 | Typed SUMMARY doors over the retained scope-summary and entity-document APIs |
 | `src/secret_lease.rs` | src | s | 6 mod | — | Store-layer modules of core `secret_lease`; core re-exports each one at its old path |
 | `src/secret_lease/admission.rs` | src | s | 1 fn | — | The one cap-only admission rule, pure + door-side halves |
