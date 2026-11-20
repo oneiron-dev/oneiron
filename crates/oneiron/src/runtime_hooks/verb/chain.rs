@@ -10,6 +10,7 @@ mod run;
 mod session;
 mod storage;
 mod tail;
+pub(super) mod view;
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -32,10 +33,11 @@ use super::state::{Carry, Entered, HookDepth, depth};
 use super::storage::VerbHookStorage;
 use super::{
     InvocationId, VerbArgsCheck, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume, ask,
-    held_member, redact,
+    held_member,
 };
 
 use run::RunRecord;
+use view::PostView;
 
 /// The host verb a pre-hook may never skip: a skipped compaction overflows
 /// the next turn (ARCH-0080 §5).
@@ -45,9 +47,12 @@ const COMPACT: &str = "host.compact";
 /// runtime could not take it, refuses the call
 /// ([`Chain::skill_answer_unjudged`]).
 const SKILL_CALL: &str = "self.skills.call";
-/// Why that refusal stops the call: the hook never saw the answer.
-const SKILL_ANSWER_TOO_LARGE: &str =
-    "the skill answer is too large for the live post hook to judge";
+/// Why that refusal stops the call: the hook never saw the answer, too
+/// large or nesting too deep for the hook runtime to take.
+const SKILL_ANSWER_TOO_LARGE: &str = concat!(
+    "the skill answer is too large for the live post hook to judge: ",
+    "its size or its nesting passes what the hook runtime takes",
+);
 /// Why a resumed chain in a build without the sandbox runs no hook.
 const NO_SANDBOX: &str = "this build runs no hook sandbox";
 
@@ -286,13 +291,14 @@ fn pre_with_saved(
 }
 
 /// The post chain over the verb's `result`, for a call whose pre chain found
-/// hooks live.
-pub(super) fn post(
+/// hooks live: a value, or a skill answer's view held as text
+/// ([`view::TextView`]).
+pub(super) fn post<V: PostView>(
     vault: &Vault,
     storage: VerbHookStorage<'_>,
     pre: VerbHookPre,
-    result: Value,
-) -> Result<Stopped<Value>> {
+    result: V,
+) -> Result<Stopped<V>> {
     let VerbHookPre {
         call,
         args,
@@ -613,22 +619,24 @@ impl<'c> Chain<'c> {
     /// post hook's body never started on, because the runtime could not
     /// take it, is refused instead ([`Self::skill_answer_unjudged`]): its
     /// caller never reads the unjudged body.
-    fn post(mut self, hooks: &[Hook<'c>], args: &Value, result: Value) -> Result<Stopped<Value>> {
+    fn post<V: PostView>(
+        mut self,
+        hooks: &[Hook<'c>],
+        args: &Value,
+        result: V,
+    ) -> Result<Stopped<V>> {
         let mut view = result;
         let mut hidden = None;
         for &(id, binding) in hooks {
-            if !self.served_for(id, binding, &view)? {
+            if !self.served_for(id, binding, view.result_view())? {
                 continue;
             }
-            match self.run(id, binding, args, Some(&view), None)? {
+            match self.run(id, binding, args, Some(view.result_view()), None)? {
                 Some(HookOutcome::Redact { paths }) => {
                     if let Some(capture) = &self.read_capture {
                         capture.changed();
                     }
-                    self.origin.get_or_insert_with(|| view.clone());
-                    for path in &paths {
-                        redact::hide(&mut view, path);
-                    }
+                    view.redact(&mut self.origin, &paths)?;
                 }
                 Some(_) => {}
                 None if binding.selector.blocking => {

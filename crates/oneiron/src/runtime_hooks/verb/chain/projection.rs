@@ -10,6 +10,7 @@
 //! never changed here.
 
 use serde::Serialize;
+use serde_json::value::RawValue;
 use serde_json::{Value, json};
 
 use crate::claim::{PointRead, ScopedRead};
@@ -20,6 +21,7 @@ use crate::skill_hub::pack_catalog::PackHookBinding;
 use crate::{EntityId, Error, Result};
 
 use super::super::{VerbCallScope, VerbDomain, served};
+use super::view::ResultView;
 use super::{Chain, phase_token, session};
 
 /// The field a read result gives its narrowing receipt
@@ -129,11 +131,20 @@ struct Input<'i> {
     now: u64,
     /// The caller's view of the verb's result so far; post only.
     #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<&'i Value>,
+    result: Option<&'i Projected<'i>>,
     /// The rows that view serves, when it is a pack, as the hook's served
     /// filter takes them; post only.
     #[serde(skip_serializing_if = "Option::is_none")]
     served: Option<Vec<served::ServedRow<'i>>>,
+}
+
+/// The result as one hook's input shows it: a value projected for that
+/// hook, or a view held as JSON text, written verbatim.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum Projected<'r> {
+    Value(Value),
+    Text(&'r RawValue),
 }
 
 /// One hook's input, as JSON, and the rows whose content it shows.
@@ -178,16 +189,20 @@ impl Chain<'_> {
         id: EntityId,
         binding: &PackHookBinding,
         args: &Value,
-        result: Option<&Value>,
+        result: Option<ResultView<'_>>,
         seen: &HookView<'_>,
     ) -> Result<ProjectedInput> {
         let mut dependencies = Vec::new();
         let mut unattributed = Unattributed::default();
         let args = self.project_args(args, seen, &mut unattributed);
         let result = match result {
-            Some(result) => {
-                Some(self.project_result(result, seen, &mut dependencies, &mut unattributed)?)
-            }
+            Some(ResultView::Value(result)) => Some(Projected::Value(self.project_result(
+                result,
+                seen,
+                &mut dependencies,
+                &mut unattributed,
+            )?)),
+            Some(ResultView::Text(text)) => Some(self.project_text(text)?),
             None => None,
         };
         let tail = self.project_tail(seen, &mut dependencies)?;
@@ -212,9 +227,10 @@ impl Chain<'_> {
             receipt_tail: &tail,
             now: self.now,
             result: result.as_ref(),
-            served: result
-                .as_ref()
-                .and_then(|view| served::rows(view, &binding.selector.served)),
+            served: result.as_ref().and_then(|view| match view {
+                Projected::Value(view) => served::rows(view, &binding.selector.served),
+                Projected::Text(_) => None,
+            }),
         };
         let json = serde_json::to_string(&input)
             .map_err(|_| Error::InvariantViolation("hook input encode"))?;
@@ -234,11 +250,16 @@ impl Chain<'_> {
         &self,
         id: EntityId,
         binding: &PackHookBinding,
-        result: &Value,
+        result: ResultView<'_>,
     ) -> Result<bool> {
         if binding.selector.served.is_empty() {
             return Ok(true);
         }
+        // A view held as text frames a skill answer, which is no pack, so it
+        // serves no row a filter takes, as its value would not.
+        let ResultView::Value(result) = result else {
+            return Ok(false);
+        };
         let grant = session::hook_read(
             self.storage,
             "grant",
@@ -254,6 +275,19 @@ impl Chain<'_> {
         let shown =
             self.project_result(result, &seen, &mut Vec::new(), &mut Unattributed::default())?;
         Ok(served::admits(&binding.selector.served, &shown))
+    }
+
+    /// A view held as JSON text, as the hook sees it: a write's result is
+    /// the caller's own, so whole, as [`Self::project_result`] shows a
+    /// write's value. Only a skill answer is held as text, and that call is
+    /// a write.
+    fn project_text<'r>(&self, text: &'r RawValue) -> Result<Projected<'r>> {
+        if self.call.domain != VerbDomain::Write || self.call.verb.starts_with("host.") {
+            return Err(Error::InvariantViolation(
+                "a view held as text is a write's result",
+            ));
+        }
+        Ok(Projected::Text(text))
     }
 
     /// The caller's args as the hook sees them: the caller's own, whole; a
