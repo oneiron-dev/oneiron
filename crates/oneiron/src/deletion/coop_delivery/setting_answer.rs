@@ -19,7 +19,10 @@
 //!   `honour` and that the answer is still this one, so a changed row or
 //!   the owner's own answer stops the run before its next record. No
 //!   record-level retention rule exists to leave copies out by (FIX
-//!   HONOUR-RETENTION-RULE).
+//!   HONOUR-RETENTION-RULE). The choice records the reason code
+//!   `owner_setting_honour`, so each later pass knows it as the setting's
+//!   and runs again what a stop left pending, while the row still says
+//!   `honour` and the answer is still this one.
 //!
 //! An answer the owner recorded is never rewritten. No reply is queued:
 //! nothing here knows the requester's host. The owner's answer door sends
@@ -47,6 +50,10 @@ pub const ERASE_REQUEST_SETTING_DECLINE_CODE: &str = "owner_setting_decline";
 /// How long after a decline under the standing setting the ask comes up
 /// for review, in seconds.
 pub const ERASE_REQUEST_SETTING_DECLINE_REVIEW_SECS: u64 = 365 * 24 * 60 * 60;
+/// The reason code an honour under the standing setting records: the delete
+/// choice is the setting's, which a later pass resumes. The owner's own
+/// delete choice carries none.
+pub const ERASE_REQUEST_SETTING_HONOUR_CODE: &str = "owner_setting_honour";
 
 /// What the setting's writer did with one filed ask.
 enum SettingAnswer {
@@ -65,33 +72,51 @@ enum SettingAnswer {
 impl Vault {
     /// Answers every filed courtesy ask that has no answer yet as the
     /// owner's standing `erase_request_reply` row says (module doc), each in
-    /// its own writer. Returns the asks it answered, each as it reads once
-    /// its deletes have run. Under `ask`, or with no row, it answers
+    /// its own writer. Under `honour` it first runs again the setting's
+    /// earlier delete choices that still have a record pending: a stop
+    /// between an answer's writer and its deletes leaves them so, and their
+    /// answer stands, so no pass answers them again (review round 2 of
+    /// #9195). Returns the asks it answered or resumed, each as it reads
+    /// once its deletes have run. Under `ask`, or with no row, it answers
     /// nothing.
     ///
     /// # Errors
     ///
     /// Storage errors. A delete that fails leaves its record pending in the
-    /// answer's operation, and the rest go on.
+    /// answer's operation, and the rest go on; the next pass tries it again.
     pub fn answer_filed_asks_by_setting(
         &self,
         now: u64,
     ) -> Result<Vec<IncomingCooperativeDeletion>> {
-        if self.erase_request_reply()?.reply == EraseRequestReply::Ask {
+        let reply = self.erase_request_reply()?.reply;
+        if reply == EraseRequestReply::Ask {
             return Ok(Vec::new());
         }
-        let unanswered: Vec<AskKey> = {
+        let (unanswered, unfinished) = {
             let txn = self.store.env.read_txn()?;
             let mut keys = Vec::new();
+            let mut unfinished = Vec::new();
             for row in INCOMING.iter_from(&self.store, &txn, &[])? {
                 let (key, filed) = row?;
-                if filed.disposition.is_none() {
-                    keys.push(key);
+                match filed.disposition.as_ref() {
+                    None => keys.push(key),
+                    Some(answer) => {
+                        if let Some(operation_id) = unfinished_setting_delete(answer) {
+                            unfinished.push((key, operation_id));
+                        }
+                    }
                 }
             }
-            keys
+            (keys, unfinished)
         };
         let mut answered = Vec::new();
+        if reply == EraseRequestReply::Honour {
+            for (key, operation_id) in unfinished {
+                if let Some(filed) = self.resume_setting_delete(&key, operation_id)? {
+                    answered.push(filed);
+                }
+            }
+        }
         for key in unanswered {
             if let Some(filed) = self.answer_filed_ask_by_setting(&key, now)? {
                 answered.push(filed);
@@ -152,6 +177,30 @@ impl Vault {
         }
     }
 
+    /// Runs again the setting's delete choice `operation_id` on the ask
+    /// `key`, recorded by an earlier pass, as the first live owner who may
+    /// delete; `None` when none may. [`Self::run_setting_delete`] reads in
+    /// each delete's writes that the row still says `honour` and that the
+    /// answer is still this one.
+    fn resume_setting_delete(
+        &self,
+        key: &AskKey,
+        operation_id: EntityId,
+    ) -> Result<Option<IncomingCooperativeDeletion>> {
+        let owner = {
+            let txn = self.store.env.read_txn()?;
+            deleting_owner_in_txn(self, &txn)?
+        };
+        let Some(owner) = owner else {
+            tracing::warn!(
+                "no live owner of this vault may delete: the honour setting's courtesy \
+                 delete waits with records pending"
+            );
+            return Ok(None);
+        };
+        self.run_setting_delete(key, owner, operation_id).map(Some)
+    }
+
     /// Runs the setting's delete choice `operation_id` on the ask `key` as
     /// `owner`, through the delete rail, each delete's writes reading again
     /// that the row still says `honour` and that the answer is still this
@@ -205,8 +254,19 @@ fn setting_decline(now: u64) -> CooperativeDeletionDisposition {
     }
 }
 
+/// The operation of an honour under the standing setting that still has a
+/// record pending; `None` for any other answer, the owner's own delete
+/// choice among them.
+fn unfinished_setting_delete(answer: &CooperativeDeletionDisposition) -> Option<EntityId> {
+    let operation = answer.delete_operation.as_ref()?;
+    (answer.kind == CooperativeDeletionDispositionKind::Delete
+        && answer.reason_code.as_deref() == Some(ERASE_REQUEST_SETTING_HONOUR_CODE)
+        && !operation.pending().is_empty())
+    .then_some(operation.operation_id)
+}
+
 /// An honour under the standing setting: one delete choice over `unheld`,
-/// with `held` named as left out.
+/// with `held` named as left out, under the setting's reason code.
 fn setting_honour(
     now: u64,
     operation_id: EntityId,
@@ -215,7 +275,7 @@ fn setting_honour(
 ) -> CooperativeDeletionDisposition {
     CooperativeDeletionDisposition {
         kind: CooperativeDeletionDispositionKind::Delete,
-        reason_code: None,
+        reason_code: Some(ERASE_REQUEST_SETTING_HONOUR_CODE.to_owned()),
         review_at: None,
         deleted: Vec::new(),
         recorded_at: now,
