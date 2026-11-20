@@ -402,8 +402,9 @@ impl SyncConnection {
     }
 
     /// Unsubscribes the predicted documents the target dropped whose `qd:e:` queue holds no row,
-    /// deleting their `ds:e:` subscription row with their marker. A document with an edit waiting
-    /// stays subscribed: unsynced edits are never evicted.
+    /// under their own id or their copy id, deleting their `ds:e:` subscription rows (a marked
+    /// source's sits under its copy id) with their marker. A document with an edit waiting stays
+    /// subscribed: unsynced edits are never evicted.
     fn evict_predicted_documents(
         &self,
         target: &PredictedResidenceSet,
@@ -416,15 +417,24 @@ impl SyncConnection {
             if target.documents.contains(&marker.0) {
                 continue;
             }
-            if !vault
-                .sync_state_keys_with_prefix(&format!("qd:e:{}:", marker.0.to_hex()))
-                .map_err(storage)?
-                .is_empty()
-            {
+            // A marked source subscribes under its derived copy id (FIX 10872): that row goes
+            // too, derived with no mark consulted, as a note's delete erases it.
+            let copy = crate::origin::secret_projection::copy_id::copy_id(&marker.0).ok();
+            let mut waiting = false;
+            for id in std::iter::once(marker.0).chain(copy) {
+                waiting |= !vault
+                    .sync_state_keys_with_prefix(&format!("qd:e:{}:", id.to_hex()))
+                    .map_err(storage)?
+                    .is_empty();
+            }
+            if waiting {
                 continue;
             }
             write_rows(vault, |txn| {
                 crate::sync::documents::DS_E.delete(&vault.store, txn, marker)?;
+                if let Some(copy) = copy {
+                    crate::sync::documents::DS_E.delete(&vault.store, txn, &HexId(copy))?;
+                }
                 PREDICTED_DOCUMENT
                     .delete(&vault.store, txn, marker)
                     .map(drop)
