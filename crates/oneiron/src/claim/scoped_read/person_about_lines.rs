@@ -7,11 +7,11 @@
 //! An identity agent's own floor reads nothing, so a person its live Grant
 //! reads (FIX 7462) stood on its roster with no line at all. Each live Grant
 //! A may stand on is now one more alternative, judged alone (RULING
-//! GRANT-COMBINE Q1 = A: Grants are never unioned): under one Grant, the line
-//! of the highest band at or below that Grant's band shows only where that
-//! same Grant reads the PERSON and every CLAIM the line was written from, in
-//! one snapshot. No Grant lends its band or a fact to another, and the line
-//! shown is the highest any one alternative shows.
+//! GRANT-COMBINE Q1 = A: Grants are never unioned): under one Grant, a line
+//! at or below that Grant's band shows only where that same Grant reads the
+//! PERSON and every CLAIM the line was written from, in one snapshot. No
+//! Grant lends its band or a fact to another, and the line shown is the
+//! highest any one alternative shows.
 //!
 //! The key's own floor is one such alternative too: its line shows only where
 //! that floor alone reads the PERSON and every fact, in the same snapshot,
@@ -19,6 +19,13 @@
 //! FIX-LIST PEOPLE-ABOUT-OWN-FLOOR-FACTS-UNJUDGED). No Grant lends it a fact,
 //! and where the owner's agent Grants bind the key, one of them alone reads
 //! every row the line stands on.
+//!
+//! Each alternative shows the highest line it reads whole: where the line at
+//! its band stands on a fact it does not read, the next lower line, written
+//! from the facts of the lower bands alone, may still show (FIX-LIST
+//! PEOPLE-ABOUT-GRANT-LOWER-LINE). A line the Dreamer no longer stands
+//! behind (moved or stale facts) ends the walk, as it hides the person's
+//! lines today.
 
 use super::ScopedRead;
 use super::access_gate::HeldAuthority;
@@ -70,31 +77,63 @@ impl ScopedRead<'_> {
         grants: &[GrantAlternative],
         person: EntityId,
     ) -> Result<Option<ShownAboutLine>> {
-        let mut shown = None;
-        if let Some(filter) = own
-            && let Some(line) =
-                self.vault
-                    .person_about_line_in(txn, person, filter.max_sensitivity_band)?
-            && self.own_floor_reads_all_in(txn, policy, held, filter, person, &line)?
-        {
-            shown = Some(line);
+        let mut shown: Option<ShownAboutLine> = None;
+        if let Some(filter) = own {
+            shown = self.highest_line_read_whole_in(
+                txn,
+                person,
+                filter.max_sensitivity_band,
+                None,
+                |line| self.own_floor_reads_all_in(txn, policy, held, filter, person, line),
+            )?;
         }
         for alternative in grants {
             let band = alternative.filter.max_sensitivity_band;
-            if alternative.filter.deny_all || shown.as_ref().is_some_and(|line| line.band >= band) {
+            let above = shown.as_ref().map(|line| line.band);
+            if alternative.filter.deny_all || above.is_some_and(|above| above >= band) {
                 continue;
             }
-            let Some(line) = self.vault.person_about_line_in(txn, person, band)? else {
-                continue;
-            };
-            if shown.as_ref().is_some_and(|best| best.band >= line.band) {
-                continue;
-            }
-            if self.grant_reads_all_in(txn, policy, held, alternative, person, &line) {
+            if let Some(line) =
+                self.highest_line_read_whole_in(txn, person, band, above, |line| {
+                    Ok(self.grant_reads_all_in(txn, policy, held, alternative, person, line))
+                })?
+            {
                 shown = Some(line);
             }
         }
         Ok(shown)
+    }
+
+    /// The highest line of `person` at or below `ceiling`, and above the
+    /// band `above` when one is named, that `reads_whole` admits, in `txn`.
+    /// Each line it does not admit gives way to the next lower one; a band
+    /// with no line the Dreamer stands behind
+    /// ([`crate::Vault::person_about_line_in`]) ends the walk.
+    ///
+    /// # Errors
+    /// A store or decode failure reading a line, or `reads_whole`'s.
+    fn highest_line_read_whole_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+        ceiling: u8,
+        above: Option<u8>,
+        mut reads_whole: impl FnMut(&ShownAboutLine) -> Result<bool>,
+    ) -> Result<Option<ShownAboutLine>> {
+        let mut ceiling = Some(ceiling);
+        while let Some(band) = ceiling {
+            let Some(line) = self.vault.person_about_line_in(txn, person, band)? else {
+                return Ok(None);
+            };
+            if above.is_some_and(|above| line.band <= above) {
+                return Ok(None);
+            }
+            if reads_whole(&line)? {
+                return Ok(Some(line));
+            }
+            ceiling = line.band.checked_sub(1);
+        }
+        Ok(None)
     }
 
     /// Whether `alternative` alone reads `person` and every fact `line`
