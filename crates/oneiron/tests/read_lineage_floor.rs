@@ -16,7 +16,7 @@ use oneiron::provenance::made_by::{
 };
 use oneiron::test_doors::house_link::{put_claim_made_by, stamp_stated_birth};
 use oneiron::test_doors::read_lineage_floor::{
-    floor_of, floor_waits, forget_floor_state, walked_policies_of,
+    floor_of, floor_waits, forget_floor_state, travels_restricted, walked_policies_of,
 };
 use oneiron::test_doors::source_audience_binding::{
     bound_row, bound_row_read_by, reads, remove_policy_row,
@@ -541,5 +541,67 @@ fn a_members_own_mailbox_fact_does_not_read_to_the_vault_owner() {
     assert!(
         floor_waits(&mailbox.vault, held).expect("the floor's state"),
         "the fact's floor waits for the backfill",
+    );
+}
+
+/// #9289 review 3 P1-3: a CLAIM whose floor waits does not travel on a
+/// restricted lane, which carries no audience: its source may land later
+/// bound to a mailbox the lane's vault never sees.
+#[test]
+fn a_claim_waiting_for_its_source_does_not_travel_on_a_restricted_lane() {
+    let mailbox = owners_mailbox();
+    let control = claim_born_from(&mailbox, &[], "stated with no evidence");
+    assert!(
+        travels_restricted(&mailbox.vault, control).expect("control's travel"),
+        "precondition: a CLAIM with no source travels on a restricted lane",
+    );
+    let learnt = claim_born_from(&mailbox, &[EntityId::now()], "learnt from a row on its way");
+    assert!(
+        floor_waits(&mailbox.vault, learnt).expect("the floor's state"),
+        "precondition: a CLAIM born from a row not held here waits for it",
+    );
+    assert!(
+        !travels_restricted(&mailbox.vault, learnt).expect("the waiting CLAIM's travel"),
+        "LEAK: a CLAIM whose floor waits travels on a restricted lane",
+    );
+}
+
+/// #9289 review 3 P1-1, P1-6: a row waiting on a source that is then erased
+/// waits on nothing that can land. The next housekeeping pass (the floor
+/// sweep, now on the schedule) raises it again, so it stops waiting and its
+/// readers read it again.
+#[test]
+fn a_row_whose_awaited_source_was_erased_stops_waiting_at_the_next_pass() {
+    let mailbox = owners_mailbox();
+    let middle = claim_born_from(&mailbox, &[EntityId::now()], "learnt from a row on its way");
+    let derived = claim_born_from(&mailbox, &[], "derived from middle");
+    mailbox
+        .vault
+        .put_edge(&derived, EdgeKind::DerivedFrom, &middle, 1.0)
+        .expect("FIXTURE: the derived row names middle");
+    assert!(
+        floor_waits(&mailbox.vault, derived).expect("the floor's state"),
+        "precondition: a row written from a waiting row waits too",
+    );
+    assert!(
+        !reads(&mailbox.vault, derived, &[mailbox.reader]).expect("the reader's read"),
+        "precondition: a waiting row reads to no one but the owner",
+    );
+    mailbox
+        .vault
+        .memory(mailbox.owner, EdgeActorClass::Human)
+        .safe_delete(&middle.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("the owner deletes middle");
+    mailbox
+        .vault
+        .housekeeping_all(HousekeepingBudget::unbounded())
+        .expect("a housekeeping pass runs the floor sweep");
+    assert!(
+        !floor_waits(&mailbox.vault, derived).expect("the floor's state"),
+        "STUCK: a row whose awaited source was erased still waits after a housekeeping pass",
+    );
+    assert!(
+        reads(&mailbox.vault, derived, &[mailbox.reader]).expect("the reader's read"),
+        "a row that no longer waits reads to the reader again",
     );
 }
