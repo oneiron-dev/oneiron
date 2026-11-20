@@ -261,6 +261,9 @@ fn a_rooms_erase_keeps_the_identity_of_the_room_value_a_request_names() -> TestR
 /// next append would write that record to base, where no custody holds the
 /// value the handle names and the room's close leaves the record unreplayable.
 /// The append is refused: nothing lands in base and the room keeps its row.
+/// ROOM-CUSTODY-ON-RECORD-CARRY = A (the Engine, 21 Nov 06:19): the refusal
+/// stays, and the run's end message says to save the room to keep its
+/// secrets, since only a save moves them into base custody.
 #[test]
 fn a_record_holding_a_room_handle_does_not_move_to_base_on_record() -> TestResult {
     let (_directory, vault) = vault()?;
@@ -281,9 +284,17 @@ fn a_record_holding_a_room_handle_does_not_move_to_base_on_record() -> TestResul
     )?;
     session.flip_on_record_as(&owner)?;
 
+    let Err(refused) = put_room_record_again(&session, call) else {
+        return Err("an on-record append of a record holding a room handle is refused".into());
+    };
+    let message = refused.to_string();
     assert!(
-        put_room_record_again(&session, call).is_err(),
-        "an on-record append of a record holding a room handle is refused"
+        message.contains("save the room to keep its secrets"),
+        "the run's end message says to save the room to keep its secrets: {message}"
+    );
+    assert!(
+        message.contains(&call[1].to_hex()),
+        "the run's end message names the run: {message}"
     );
     assert!(
         base_replay_row(&vault, call[1])?.is_none(),
