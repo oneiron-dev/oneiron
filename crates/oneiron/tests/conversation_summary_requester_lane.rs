@@ -17,6 +17,20 @@
 //! composed and landed. Guard: with the credential live, the summary
 //! composes and lands.
 //!
+//! Round 2 of #9583 and #9590 found three more ways past that lane, each red
+//! at stack #9591's top eaacb131486:
+//! - FIX SUMMARY-REDERIVATION-DROPS-FROZEN-LANE: the landed summary's
+//!   projection kept no lane, so the TURN the owner appends after the
+//!   credential is revoked re-queued it as the owner's own, and the Dreamer
+//!   composed and landed it.
+//! - FIX SUMMARY-PLAN-JUDGES-TURNS-NOT-MESSAGES: a credential whose records
+//!   caveat names the TURN alone reads the TURN, not its MESSAGE; the plan
+//!   judged the TURN, and the Dreamer gave the MESSAGE's words to the model.
+//! - FIX ARC-SUMMARY-PLAN-SKIPS-DECLARED-LANE: an Arc plan returned before the
+//!   declared-lane check, so an Arc declared under a narrowed lane was
+//!   queued, composed and landed with no lane judging it. A narrowed lane now
+//!   declares no Arc; the owner's own declaration of the same Arc stands.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test conversation_summary_requester_lane`.
 #![cfg(oneiron_test_support)]
@@ -59,8 +73,12 @@ const CAVEAT_TTL_SECS: u64 = 1_800;
 const SOURCE_TEXT: &str = "We moved the review to Thursday.";
 /// The summary the scripted model writes.
 const SUMMARY_TEXT: &str = "The review moved to Thursday.";
+/// The words of the TURN the owner appends after the first summary landed.
+const LATER_TEXT: &str = "Thursday's review now starts at noon.";
 /// The plan's refusal of a source its declared lane does not read.
 const LANE_REFUSAL: &str = "summary source outside the requester's read lane";
+/// The refusal of an Arc declared under a narrowed lane.
+const ARC_LANE_REFUSAL: &str = "an arc summary is not declared under a narrowed read lane";
 
 /// A vault whose owner paired their own device and witnessed a
 /// conversation of one TURN.
@@ -72,6 +90,8 @@ struct Fixture {
     device_slip: CapabilitySlip,
     conversation: EntityId,
     turn: EntityId,
+    /// The TURN's one MESSAGE, which holds its words.
+    message: EntityId,
 }
 
 fn fixture() -> Fixture {
@@ -97,7 +117,7 @@ fn fixture() -> Fixture {
     vault
         .set_purpose_default_table(&defaults)
         .expect("scripted inference policy");
-    let (conversation, turn) = witness_conversation(&vault, owner);
+    let (conversation, turn, message) = witness_conversation(&vault, owner);
     Fixture {
         vault,
         _dir: dir,
@@ -106,6 +126,7 @@ fn fixture() -> Fixture {
         device_slip,
         conversation,
         turn,
+        message,
     }
 }
 
@@ -161,10 +182,32 @@ fn canonical(conversation: EntityId) -> ScopeSelector {
     }
 }
 
-/// The owner witnesses one txt-less TURN, its words in its MESSAGE.
-fn witness_conversation(vault: &Vault, owner: EntityId) -> (EntityId, EntityId) {
+/// The owner witnesses a conversation of one txt-less TURN, its words in its
+/// MESSAGE: the conversation, the TURN and the MESSAGE.
+fn witness_conversation(vault: &Vault, owner: EntityId) -> (EntityId, EntityId, EntityId) {
     let conversation = EntityId::now();
+    let (turn, message) = witness_turn(vault, owner, conversation, SOURCE_TEXT);
+    assert_eq!(
+        vault
+            .resolve_dag_scope(&canonical(conversation))
+            .expect("scope")
+            .records,
+        vec![turn],
+        "FIXTURE: the conversation resolves to its one TURN"
+    );
+    (conversation, turn, message)
+}
+
+/// The owner witnesses one txt-less TURN of `conversation` whose one MESSAGE
+/// says `content`: the TURN and the MESSAGE.
+fn witness_turn(
+    vault: &Vault,
+    owner: EntityId,
+    conversation: EntityId,
+    content: &str,
+) -> (EntityId, EntityId) {
     let turn = EntityId::now();
+    let message = EntityId::now();
     vault
         .memory(owner, EdgeActorClass::Human)
         .witness(&WitnessTurn {
@@ -173,10 +216,10 @@ fn witness_conversation(vault: &Vault, owner: EntityId) -> (EntityId, EntityId) 
             thread_audience: None,
             project: None,
             messages: vec![WitnessMessage {
-                id: Some(EntityId::now().to_hex()),
+                id: Some(message.to_hex()),
                 author: WitnessAuthor::User,
                 message_type: "dialogue".to_owned(),
-                content: SOURCE_TEXT.to_owned(),
+                content: content.to_owned(),
                 parts: None,
                 metadata: None,
                 is_visible: true,
@@ -186,30 +229,59 @@ fn witness_conversation(vault: &Vault, owner: EntityId) -> (EntityId, EntityId) 
             occurred_at: vault.now_recorded_at(),
             assertions: WitnessAssertions::default(),
         })
-        .expect("the owner's conversation");
-    assert_eq!(
-        vault
-            .resolve_dag_scope(&canonical(conversation))
-            .expect("scope")
-            .records,
-        vec![turn],
-        "FIXTURE: the conversation resolves to its one TURN"
-    );
-    (conversation, turn)
+        .expect("the owner's TURN");
+    (turn, message)
 }
 
 /// The device's credential narrowed by the device itself, kept on its key:
 /// its lane keeps the owner's exemption and freezes as a narrowed lane.
 fn attenuated_lane(fixture: &Fixture) -> ScopedRead<'_> {
-    let mut slip = fixture.device_slip.clone();
-    slip.attenuate(
+    narrowed_lane(
+        fixture,
         SlipCaveat {
             ttl_secs: Some(CAVEAT_TTL_SECS),
             ..Default::default()
         },
-        &SigningKey::from_bytes(&[DEVICE_BINDING_SEED; 32]),
     )
-    .expect("the device narrows its own credential");
+}
+
+/// The device's credential narrowed by the device itself to the
+/// conversation's TURN alone: a records caveat holds a row only as named, so
+/// its lane reads the TURN and not the MESSAGE that holds its words.
+fn turn_only_lane(fixture: &Fixture) -> ScopedRead<'_> {
+    let lane = narrowed_lane(
+        fixture,
+        SlipCaveat {
+            ttl_secs: Some(CAVEAT_TTL_SECS),
+            records: Some([fixture.turn.to_hex()].into()),
+            ..Default::default()
+        },
+    );
+    assert!(
+        lane.is_ref_readable(&fixture.turn)
+            .expect("the TURN's readability"),
+        "FIXTURE: the credential's records caveat names the TURN, so its lane reads it"
+    );
+    assert!(
+        attenuated_lane(fixture)
+            .is_ref_readable(&fixture.message)
+            .expect("the MESSAGE's readability"),
+        "FIXTURE: the MESSAGE is a row the device's lane reads when no records caveat binds it"
+    );
+    assert!(
+        !lane
+            .is_ref_readable(&fixture.message)
+            .expect("the MESSAGE's readability"),
+        "FIXTURE: the records caveat does not name the MESSAGE, so the lane does not read its words"
+    );
+    lane
+}
+
+/// The device's credential narrowed by `caveat`, kept on its key.
+fn narrowed_lane(fixture: &Fixture, caveat: SlipCaveat) -> ScopedRead<'_> {
+    let mut slip = fixture.device_slip.clone();
+    slip.attenuate(caveat, &SigningKey::from_bytes(&[DEVICE_BINDING_SEED; 32]))
+        .expect("the device narrows its own credential");
     let proof = verified(fixture, &slip);
     assert_eq!(
         proof.claims().slip_id,
@@ -378,6 +450,20 @@ fn run_summary(
     queued: ScopeSummaryQueued,
     model: &ScriptedSummaryModel<'_>,
 ) -> oneiron::Result<DreamerAttemptExecution> {
+    let (admitted, run) = run_next(fixture, model);
+    assert_eq!(
+        admitted.attempt, queued.attempt,
+        "FIXTURE: the admitted attempt is this summary's declaration"
+    );
+    run
+}
+
+/// The Dreamer admits the next queued attempt and runs it once with
+/// `model`: the attempt it admitted, and the run.
+fn run_next(
+    fixture: &Fixture,
+    model: &ScriptedSummaryModel<'_>,
+) -> (ScopeSummaryQueued, oneiron::Result<DreamerAttemptExecution>) {
     let vault = &fixture.vault;
     let now = vault.now_recorded_at();
     let admitted = match DreamerRunnerStore::new(vault)
@@ -402,10 +488,10 @@ fn run_summary(
         )) => *admitted,
         other => panic!("FIXTURE: summary was not admitted: {other:?}"),
     };
-    assert_eq!(
-        admitted.status.attempt.id, queued.attempt,
-        "FIXTURE: the admitted attempt is this summary's declaration"
-    );
+    let queued = ScopeSummaryQueued {
+        attempt: admitted.status.attempt.id,
+        coalesced: false,
+    };
     let guard =
         BudgetGuard::with_reserve_units("wake", 10_000, 100, BudgetExhaustionPolicy::Suspend);
     let model_id = ModelId::new("test/model@r1").expect("model");
@@ -438,7 +524,10 @@ fn run_summary(
         prepared_attempt: None,
         spend_meter: None,
     };
-    block_on_ready(executor.execute(&admitted, &mut context))
+    (
+        queued,
+        block_on_ready(executor.execute(&admitted, &mut context)),
+    )
 }
 
 /// The refusal a run ended on: its error, park or failure reason; `None`
@@ -540,4 +629,110 @@ fn a_conversation_summary_whose_credential_stays_live_composes_and_lands() {
         landed(&fixture, queued).is_some(),
         "actor=the owner's device under a live narrowed credential; expected its SUMMARY to land"
     );
+}
+
+#[test]
+fn a_conversation_summary_rederived_after_its_credential_ends_is_not_composed() {
+    let fixture = fixture();
+    let lane = attenuated_lane(&fixture);
+    let queued = declare_in_lane(&fixture, &lane);
+    let first = ScriptedSummaryModel::new(&fixture, false);
+    let run = run_summary(&fixture, queued, &first);
+    assert!(
+        matches!(run, Ok(DreamerAttemptExecution::Completed { .. }))
+            && landed(&fixture, queued).is_some(),
+        "FIXTURE: with its credential live, the summary composes and lands; run {run:?}"
+    );
+    revoke_device_credential(&fixture);
+    let (later, _) = witness_turn(
+        &fixture.vault,
+        fixture.owner,
+        fixture.conversation,
+        LATER_TEXT,
+    );
+    let model = ScriptedSummaryModel::new(&fixture, false);
+    let (rederived, run) = run_next(&fixture, &model);
+    assert_ne!(
+        rederived.attempt, queued.attempt,
+        "FIXTURE: the appended TURN re-queued the landed summary as a new attempt"
+    );
+    let reason = refusal(&run);
+    assert!(
+        reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains(LANE_REFUSAL)),
+        "actor=the owner's device under a narrowed credential, revoked after its summary of conversation {} landed; the owner appended TURN {}; expected the re-derived summary's plan to refuse the TURNs its lane no longer reads; run {run:?}",
+        fixture.conversation.to_hex(),
+        later.to_hex()
+    );
+    assert_eq!(
+        model.calls(),
+        0,
+        "actor=the owner's device under a revoked credential; expected no model call to read the re-derived summary's TURNs"
+    );
+    assert_eq!(
+        landed(&fixture, rederived),
+        None,
+        "actor=the owner's device under a revoked credential; expected no re-derived SUMMARY to land"
+    );
+}
+
+#[test]
+fn a_conversation_summary_composes_no_message_its_requester_lane_does_not_read() {
+    let fixture = fixture();
+    let lane = turn_only_lane(&fixture);
+    let queued = declare_in_lane(&fixture, &lane);
+    let model = ScriptedSummaryModel::new(&fixture, false);
+    let run = run_summary(&fixture, queued, &model);
+    let reason = refusal(&run);
+    assert!(
+        reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains(LANE_REFUSAL)),
+        "actor=the owner's device under a credential whose records caveat names TURN {} alone; expected the plan to refuse MESSAGE {}, which holds the TURN's words and which the lane does not read; run {run:?}",
+        fixture.turn.to_hex(),
+        fixture.message.to_hex()
+    );
+    assert_eq!(
+        model.calls(),
+        0,
+        "actor=the owner's device under a TURN-only credential; expected no model call to read MESSAGE {}",
+        fixture.message.to_hex()
+    );
+    assert_eq!(
+        landed(&fixture, queued),
+        None,
+        "actor=the owner's device under a TURN-only credential; expected no SUMMARY of the MESSAGE's words to land"
+    );
+}
+
+#[test]
+fn an_arc_summary_is_not_declared_under_a_narrowed_lane() {
+    let fixture = fixture();
+    let lane = attenuated_lane(&fixture);
+    let request = ScopeSummaryRequest {
+        target: ScopeSummaryTarget::Arc {
+            scope: ScopeSelector {
+                include_forks: true,
+                ..canonical(fixture.conversation)
+            },
+        },
+        requester: WriteActor::new(fixture.owner, EdgeActorClass::Human),
+    };
+    let declared = fixture
+        .vault
+        .request_scope_summary_in_lane(&request, None, &lane);
+    assert!(
+        declared
+            .as_ref()
+            .is_err_and(|error| format!("{error} {error:?}").contains(ARC_LANE_REFUSAL)),
+        "actor=the owner's device under a narrowed credential; expected its Arc declaration of conversation {} to be refused, as no lane judges an Arc's sources; got {declared:?}",
+        fixture.conversation.to_hex()
+    );
+    // Guard: the refusal is the narrowed lane's. The owner's own declaration
+    // of the same Arc stands.
+    fixture
+        .vault
+        .request_scope_summary(&request)
+        .expect("the owner's own Arc declaration is admitted");
 }
