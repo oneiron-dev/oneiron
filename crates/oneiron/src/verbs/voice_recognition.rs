@@ -16,7 +16,9 @@
 //! consent: one naming [`VOICE_RECOGNITION_CONSENT_VERB`], checked live in
 //! each write; never for a live owner's voice or its own. Consent it logs
 //! only for a person who holds no credential here: a live member consents on
-//! their own proof (VOICE-CONSENT-LOG-MEMBERS). A member's withdrawal it may
+//! their own proof (VOICE-CONSENT-LOG-MEMBERS), and the holder of a
+//! limited-purpose credential, such as a pending invitation, through the
+//! owner (VOICE-MEMBER-CREDENTIAL-SCOPE = B). A member's withdrawal it may
 //! log, since it only narrows, and the member is told. Each live owner is
 //! told in that write, on its first insertion; a replay tells no one again.
 //! An agent here is an agent or system-class principal on its own credential.
@@ -31,7 +33,9 @@ use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use crate::voice_identity::{VoiceConsentReceipt, VoicePrintPurpose, VoiceWithdrawalReceipt};
+use crate::voice_identity::{
+    HumanCredentialReach, VoiceConsentReceipt, VoicePrintPurpose, VoiceWithdrawalReceipt,
+};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::voice_recognition::{
@@ -160,8 +164,10 @@ pub fn record_voice_recognition_consent_as(
 /// `vault.voices.recognition.consent` for the agent `memory` acts as, on
 /// its own credential: it logs the spoken consent of the subject it
 /// names, a counterparty on its call, never a live owner's voice (the owner
-/// consents for their own voice on their own proof) nor a live member's,
-/// who consents on their own proof too (VOICE-CONSENT-LOG-MEMBERS). The
+/// consents for their own voice on their own proof) nor that of any person
+/// who holds a live credential here, who consents on their own proof or
+/// through the owner (VOICE-CONSENT-LOG-MEMBERS, VOICE-MEMBER-CREDENTIAL-SCOPE
+/// = B). The
 /// consent's write admits the agent first ([`agent_recorder_in_txn`]); the door's early
 /// check ([`voice_recognition_recorder_admits_agent`]) runs the same
 /// admission in a snapshot of its own. It enrols no print.
@@ -210,8 +216,9 @@ pub fn voice_recognition_recorder_admits_agent(
 /// `verb`: its actor binding holds, its presented credential is still live, a live
 /// Grant from a live owner names it and lists
 /// [`VOICE_RECOGNITION_CONSENT_VERB`], and `subject`, when named, is no
-/// live owner of the vault, nor, for consent, a live member who can consent
-/// on their own proof ([`Vault::holds_live_human_credential_in_txn`]).
+/// live owner of the vault, nor, for consent, a person who holds any live
+/// human credential here, a limited-purpose one included
+/// ([`HumanCredentialReach::Any`]).
 /// Answers that Grant.
 fn agent_recorder_in_txn(
     memory: &Memory<'_>,
@@ -265,17 +272,20 @@ fn agent_recorder_in_txn(
             "a vault owner consents and withdraws for their own voice on their own proof",
         ));
     }
-    // VOICE-CONSENT-LOG-MEMBERS: consent for a live member is the member's
-    // own act; their withdrawal stays open to the agent, which only narrows,
-    // and the withdrawal's write tells the member.
+    // VOICE-CONSENT-LOG-MEMBERS: consent for a person who holds a credential
+    // here is their own act or the owner's, a limited-purpose credential's
+    // holder's included (VOICE-MEMBER-CREDENTIAL-SCOPE = B); their withdrawal
+    // stays open to the agent, which only narrows, and the withdrawal's write
+    // tells a member who can read it.
     if verb == VOICE_RECOGNITION_CONSENT_VERB
         && let Some(subject) = subject
-        && vault.holds_live_human_credential_in_txn(txn, subject)?
+        && vault.holds_live_human_credential_in_txn(txn, subject, HumanCredentialReach::Any)?
     {
         return Err(agent_refused(
             verb,
-            "a member of this vault consents for their own voice on their own proof; an agent \
-             logs consent only for a person who holds no credential here",
+            "a person who holds a credential in this vault consents for their own voice on \
+             their own proof, or the owner logs it; an agent logs consent only for a person \
+             who holds no credential here",
         ));
     }
     Ok(grant)

@@ -55,6 +55,25 @@ fn restored_withdrawal_id(event_id: &str) -> Option<&str> {
     event_id.strip_prefix(VOICE_CONSENT_RESTORE_EVENT_PREFIX)
 }
 
+/// Which of a person's live credentials
+/// [`Vault::holds_live_human_credential_in_txn`] counts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HumanCredentialReach {
+    /// Every one, a limited-purpose slip included: a pending invitation, a
+    /// share link, a support delegation, a trusted-contact or a seat slip, an
+    /// organization-bound slip and a single-use slip. Its holder's consent is
+    /// never an agent's to log (VOICE-MEMBER-CREDENTIAL-SCOPE = B, lead 21 Nov
+    /// 06:27): it comes from the owner, or from their own proof once they hold
+    /// an ordinary credential.
+    Any,
+    /// Only one that acts at the voice doors and reads its inbox on its own
+    /// proof: an ordinary slip (a paired person or an accepted member) or the
+    /// binding. A limited-purpose slip reaches only its own doors, so its
+    /// holder gets no notice of a logged withdrawal and no tap they could not
+    /// send.
+    Ordinary,
+}
+
 /// Both consent doors compare inside the transaction that holds the event
 /// write and any hard deletion.
 fn put_consent_event_once(
@@ -694,8 +713,8 @@ impl Vault {
     /// or a Grant revoked while the request waited, appends and deletes
     /// nothing. On the first insertion each live owner is told in the same
     /// transaction, naming who asked, which consent it was, and the agent and
-    /// Grant that logged it, and so is the subject when they hold a
-    /// credential in this vault (VOICE-CONSENT-LOG-MEMBERS: a live member's
+    /// Grant that logged it, and so is the subject when they hold an
+    /// ordinary credential in this vault (VOICE-CONSENT-LOG-MEMBERS: a live member's
     /// withdrawal stands, and the member hears of it); a replay tells no one
     /// again. A withdrawal dated past this vault's clock is recorded at that
     /// clock, as at every withdrawal door.
@@ -726,8 +745,8 @@ impl Vault {
 
     /// One notice per live owner that `request.recorded_by_ref`, an agent
     /// under `grant`, logged `request`'s spoken withdrawal of
-    /// voice-recognition consent, and one to the subject when they hold a
-    /// credential in this vault ([`Self::holds_live_human_credential_in_txn`]).
+    /// voice-recognition consent, and one to the subject when they hold an
+    /// ordinary credential in this vault ([`HumanCredentialReach::Ordinary`]).
     /// Told again under the same event, a row is found, not written twice.
     fn tell_of_logged_withdrawal_in_txn(
         &self,
@@ -747,7 +766,11 @@ impl Vault {
         let now = self.instant_in_txn(wtxn)?.secs();
         let owners = crate::policy_model::owners_in_txn(self, wtxn)?;
         let member = !owners.contains(&request.subject_ref)
-            && self.holds_live_human_credential_in_txn(wtxn, request.subject_ref)?;
+            && self.holds_live_human_credential_in_txn(
+                wtxn,
+                request.subject_ref,
+                HumanCredentialReach::Ordinary,
+            )?;
         let member_notice = if member {
             let who = crate::reaction::person_name_in(self, wtxn, request.recorded_by_ref)?
                 .unwrap_or_else(|| "An agent".to_owned());
@@ -795,20 +818,15 @@ impl Vault {
         Ok(())
     }
 
-    /// Whether `person` holds a live member credential in this vault
-    /// (VOICE-CONSENT-LOG-MEMBERS): a live ordinary human-class slip minted to
-    /// them (a paired person or an accepted member, who can act at the voice
-    /// doors on their own proof), or an active human actor binding that
-    /// speaks for them. A limited-purpose slip does not count: a pending
-    /// invitation, a share link, a support delegation, a trusted-contact or a
-    /// seat binding reaches only its own doors, an organization-bound slip
-    /// only its organization's administration powers, and a single-use slip
-    /// only its one consuming door, so its holder cannot consent on their own
-    /// proof there. A counterparty an agent hears on a call holds none.
+    /// Whether `person` holds a live credential in this vault of `reach`
+    /// (VOICE-CONSENT-LOG-MEMBERS): a live human-class slip minted to them,
+    /// or an active human actor binding that speaks for them. A counterparty
+    /// an agent hears on a call holds none.
     pub(crate) fn holds_live_human_credential_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         person: EntityId,
+        reach: HumanCredentialReach,
     ) -> Result<bool> {
         let (bound, slips) = {
             let fold = self.authority_view_readonly_in_txn(txn)?;
@@ -825,13 +843,18 @@ impl Vault {
                     let claims = &mint.action.claims;
                     EntityId::from_hex(&claims.holder_ref).ok() == Some(person)
                         && claims.actor_class.as_deref() == Some(ACTOR_CLASS_HUMAN)
-                        && !claims.single_use
-                        && claims.org_ref.is_none()
-                        && claims.invitation_ref.is_none()
-                        && claims.share_ref.is_none()
-                        && claims.delegation.is_none()
-                        && claims.trusted_contact.is_none()
-                        && claims.seat_claim.is_none()
+                        && match reach {
+                            HumanCredentialReach::Any => true,
+                            HumanCredentialReach::Ordinary => {
+                                !claims.single_use
+                                    && claims.org_ref.is_none()
+                                    && claims.invitation_ref.is_none()
+                                    && claims.share_ref.is_none()
+                                    && claims.delegation.is_none()
+                                    && claims.trusted_contact.is_none()
+                                    && claims.seat_claim.is_none()
+                            }
+                        }
                 })
                 .map(|(id, _)| *id)
                 .collect();
