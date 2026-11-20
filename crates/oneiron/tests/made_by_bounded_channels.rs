@@ -6,7 +6,10 @@
 //! The temporal window's bound counts only the slice's rows, and a PPR
 //! walk's results and the phonetic exact-code hits take the slice before
 //! the blend, so a dropped row neither counts as a candidate nor seeds an
-//! implicit expansion (REVIEW-9842).
+//! implicit expansion (REVIEW-9842). Round 2: the temporal window's scans,
+//! its spanner buffer too, give no place to a row the slice drops, and those
+//! two lists take the slice only after entity-type authority, so a kind the
+//! reader may not retrieve adds no claim suppression.
 //! Births are stamped through a test door: run the file with
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test made_by_bounded_channels`.
@@ -15,7 +18,8 @@
 use oneiron::batch::generate_phonetic_codes;
 use oneiron::pipeline::RetrievalParams;
 use oneiron::registry::ENTITY_TYPE_PERSON;
-use oneiron::test_doors::sound_match_birth::put_born_at;
+use oneiron::store::RetrievalRunRecord;
+use oneiron::test_doors::sound_match_birth::{put_born_at, put_born_over, retrieving_only};
 use oneiron::write_envelope::provenance::made_by::{MadeByClass, MadeByPredicate};
 use oneiron::{
     ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EdgeKind,
@@ -43,6 +47,16 @@ const STATED_TEXT: &str = "quokka wombat wallaby numbat bilby dingo echidna plat
 /// most this many rows, fewer than `CONCLUDED_ROWS`, and its scan reads up
 /// to four times as many per axis.
 const CHANNEL_FETCH_FLOOR: usize = FUSION_LIST_LENGTH;
+/// Concluded rows that span the temporal window: more than the four scan
+/// places a sliced call's spanner buffer keeps per window row
+/// (`CHANNEL_FETCH_FLOOR` rows under the tight bound).
+const SPANNER_ROWS: usize = 5 * CHANNEL_FETCH_FLOOR;
+/// How far a spanner's interval reaches either side of its midpoint: past
+/// the widest window, 12 days at a one-day sigma.
+const SPAN: u64 = 60 * DAY;
+/// When every spanner was learned: past the widest learned window too, and
+/// the same for each, so the temporal score ties them all.
+const SPANNER_LEARNED_AT: u64 = ANCHOR - 30 * DAY;
 /// The walk fixture's names: no phonetic code of one is a code of the other.
 const WALK_STATED_NAME: &str = "Bilby";
 const WALK_CONCLUDED_NAME: &str = "Numbat";
@@ -221,6 +235,27 @@ impl Fixture {
         (stated, concluded)
     }
 
+    /// One PERSON born as `class` from `inputs`, occurring over `SPAN` either
+    /// side of `ANCHOR + offset` and learned at `SPANNER_LEARNED_AT`: neither
+    /// end nor its learned time lies in any window, so only the temporal
+    /// channel's spanner scan reads it. Its score ties every other spanner's;
+    /// the tiebreak ranks it by its midpoint's distance from the anchor.
+    fn spanner(&self, class: MadeByClass, inputs: &[EntityId], offset: u64) -> EntityId {
+        put_born_over(
+            &self.vault,
+            ENTITY_TYPE_PERSON,
+            &person_body("spanner"),
+            class,
+            inputs,
+            TimeRange {
+                start: ANCHOR + offset - SPAN,
+                end: ANCHOR + offset + SPAN,
+            },
+            SPANNER_LEARNED_AT,
+        )
+        .expect("FIXTURE: put the spanning person")
+    }
+
     /// A PPR search of `searched` at depth 0, run as [`Self::counted`].
     fn walk(
         &self,
@@ -252,6 +287,18 @@ impl Fixture {
         made_by: MadeByPredicate,
         expand: Option<&[EntityId]>,
     ) -> (Vec<EntityId>, usize) {
+        self.recorded(query, made_by, expand, |record| record.total_in_scope)
+    }
+
+    /// Runs `query` as [`Self::counted`] does and returns the result ids and
+    /// `field` of the run's record.
+    fn recorded<T>(
+        &self,
+        query: PipelineBuilder<'_>,
+        made_by: MadeByPredicate,
+        expand: Option<&[EntityId]>,
+        field: impl FnOnce(&RetrievalRunRecord) -> T,
+    ) -> (Vec<EntityId>, T) {
         let query = match expand {
             Some(seeds) => query.expand_ppr(seeds, 1),
             None => query,
@@ -272,7 +319,7 @@ impl Fixture {
             .expect("FIXTURE: the run record is readable");
         (
             run.value.into_iter().map(|row| row.id).collect(),
-            record.total_in_scope,
+            field(&record),
         )
     }
 }
@@ -400,6 +447,36 @@ fn a_stated_row_past_the_temporal_window_bound_is_found() {
     );
 }
 
+/// The spanner buffer gives no place to a row the slice drops (REVIEW-9842
+/// round 2, P1 1): `SPANNER_ROWS` concluded intervals centred at the anchor
+/// and one stated interval centred a second later all span the window and
+/// tie on score, so the midpoint tiebreak ranks the stated one last. Before,
+/// the buffer kept its best rows up to its cap, all concluded, and the slice
+/// then dropped them: no hit.
+#[test]
+fn a_stated_spanner_past_the_spanner_buffer_is_found() {
+    let fixture = fixture();
+    let stated = fixture.spanner(MadeByClass::Stated, &[], 1);
+    for _ in 0..SPANNER_ROWS {
+        fixture.spanner(MadeByClass::Concluded, &[stated], 0);
+    }
+    let tight = RetrievalParams {
+        temporal_widening_multiple: 1,
+        temporal_widening_floor: 0,
+        ..RetrievalParams::shipped()
+    };
+    let unsliced = fixture.temporal_with(MadeByPredicate::All, tight);
+    assert!(
+        unsliced.len() == 1 && unsliced[0] != stated,
+        "FIXTURE: a concluded spanner ranks first, got {unsliced:?}"
+    );
+    assert_eq!(
+        fixture.temporal_with(MadeByPredicate::Stated, tight),
+        [stated],
+        "a stated-only call finds the stated spanner past the buffer's cap"
+    );
+}
+
 /// A PPR result the slice drops neither counts as a candidate nor seeds an
 /// implicit expansion (REVIEW-9842 P1 2): a stated-only call that searches
 /// from a concluded row finds nothing, counts nothing, and does not expand
@@ -473,6 +550,55 @@ fn an_out_of_slice_exact_phonetic_hit_neither_counts_nor_seeds() {
     );
 }
 
+/// A row of a kind the reader may not retrieve adds no claim suppression
+/// (REVIEW-9842 round 2, P1 2): entity-type authority drops a proposed
+/// CLAIM holding the query's exact phonetic code before the D19 gate, so the
+/// run counts no suppressed claim, under a stated-only call as under none.
+/// Before, the slice had the run's gate judge the exact hits before the
+/// authority dropped them, and the run counted the proposed claim.
+#[test]
+fn an_exact_phonetic_hit_of_a_refused_kind_adds_no_suppression() {
+    let fixture = fixture_with_capture(true);
+    let claim = put_claim(&fixture.vault, ClaimApprovalStatus::Proposed);
+    let exact: Vec<String> = generate_phonetic_codes(WALK_CONCLUDED_NAME)
+        .into_iter()
+        .filter(|code| !code.starts_with("ipa:"))
+        .collect();
+    let codes: Vec<&str> = exact.iter().map(String::as_str).collect();
+    assert!(!codes.is_empty(), "FIXTURE: the name has exact codes");
+    fixture
+        .vault
+        .batch()
+        .phonetic(&claim, &codes)
+        .commit()
+        .expect("FIXTURE: post the claim under the exact codes");
+    let suppressed = |made_by: MadeByPredicate, narrowed: bool| {
+        let query = fixture.vault.query().search_phonetic(&codes);
+        let query = if narrowed {
+            retrieving_only(&fixture.vault, query, &[ENTITY_TYPE_PERSON])
+                .expect("FIXTURE: narrow the authority")
+        } else {
+            query
+        };
+        fixture.recorded(query, made_by, None, |record| record.claims_suppressed)
+    };
+    assert_eq!(
+        suppressed(MadeByPredicate::All, false),
+        (Vec::new(), 1),
+        "FIXTURE: unnarrowed, the D19 gate suppresses the proposed claim"
+    );
+    assert_eq!(
+        suppressed(MadeByPredicate::All, true),
+        (Vec::new(), 0),
+        "FIXTURE: narrowed to PERSON, the authority drops the claim first"
+    );
+    assert_eq!(
+        suppressed(MadeByPredicate::Stated, true),
+        (Vec::new(), 0),
+        "a stated-only call counts no claim of a kind it may not retrieve"
+    );
+}
+
 /// Guard: an explicit expansion seed is the caller's own, so a stated-only
 /// call still expands from a concluded seed and finds the stated row.
 #[test]
@@ -516,6 +642,11 @@ fn a_call_the_nearest_rows_match_keeps_its_nearest_row() {
 /// through the public batch (no birth stamp), as
 /// `tests/vault_embedding_spaces_doors.rs` writes it.
 fn put_stated_claim(vault: &Vault) -> EntityId {
+    put_claim(vault, ClaimApprovalStatus::Auto)
+}
+
+/// [`put_stated_claim`], written with approval `approval`.
+fn put_claim(vault: &Vault, approval: ClaimApprovalStatus) -> EntityId {
     let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
     let subject = EntityId::now();
     for id in [actor.entity_ref(), subject] {
@@ -534,7 +665,7 @@ fn put_stated_claim(vault: &Vault) -> EntityId {
         ClaimSource::UserStated,
         WriteProvenance::new(rmpv::Value::from("made_by bounded channels"))
             .expect("FIXTURE: provenance"),
-        ClaimApprovalStatus::Auto,
+        approval,
     );
     let claim = EntityId::now();
     vault
