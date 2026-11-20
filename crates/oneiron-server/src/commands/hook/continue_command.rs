@@ -100,7 +100,13 @@ pub fn continue_work(args: ContinueArgs) -> anyhow::Result<()> {
     };
     let oneiron = super::oneiron(None);
     let mut out = std::io::stdout().lock();
-    let mut remote = match Hosted::open(&oneiron, &vault, deadline) {
+    let mut remote = match Hosted::open(
+        &oneiron,
+        &vault,
+        POLICY_REF.to_owned(),
+        Stdio::inherit(),
+        deadline,
+    ) {
         Ok(remote) => remote,
         Err(error) => {
             writeln!(out, "{NOT_MOVED}")?;
@@ -417,25 +423,58 @@ fn passed_over(skipped: &[SkippedRunnerSeatView]) -> String {
         .join("; ")
 }
 
+/// The hooks' hand-over to the selected hosted vault: the Claude Code session
+/// log at `log` and its subagents' logs, landed through
+/// `vault.imports.hook_transcript` as step 3 lands them, over one `oneiron
+/// mcp` as the selection's own credential, in its own mode, under the
+/// consent `policy_ref` names. The bridge's stderr goes nowhere, as the
+/// local import's does: a hand-over's output is not the host's.
+pub(super) fn hand_over_hosted(
+    oneiron: &Path,
+    vault: &HostedVault,
+    log: &Path,
+    policy_ref: String,
+    deadline: Instant,
+) -> anyhow::Result<()> {
+    let session = transcript::read_log(log.to_path_buf())?;
+    let mut remote = Hosted::open(oneiron, vault, policy_ref, Stdio::null(), deadline)?;
+    let imported = remote.call::<HookTranscriptImportView>(
+        "vault.imports.hook_transcript",
+        &session.request,
+        "land this session's log in the selected vault",
+    );
+    remote.bridge.close();
+    imported.map(drop)
+}
+
 /// The selected hosted vault, spoken to through one `oneiron mcp`.
 struct Hosted<'a> {
     vault: &'a HostedVault,
     bridge: Bridge,
     calls: u64,
+    /// The consent policy every call names.
+    policy_ref: String,
     /// When the push must have ended, as the bridge's calls must.
     deadline: Instant,
 }
 
 impl<'a> Hosted<'a> {
     /// `oneiron mcp` at the vault's origin as the selection's credential,
-    /// past its handshake. Its own refusal goes to this process's stderr.
-    fn open(oneiron: &Path, vault: &'a HostedVault, deadline: Instant) -> anyhow::Result<Self> {
+    /// past its handshake, its calls naming `policy_ref`. Its own refusal
+    /// goes to `stderr`.
+    fn open(
+        oneiron: &Path,
+        vault: &'a HostedVault,
+        policy_ref: String,
+        stderr: Stdio,
+        deadline: Instant,
+    ) -> anyhow::Result<Self> {
         let mut bridge = Bridge::start(
             oneiron,
             &vault.origin,
             vault.recall_auth(),
             deadline,
-            Stdio::inherit(),
+            stderr,
         )?;
         if let Err(error) = bridge.initialize() {
             bridge.close();
@@ -448,6 +487,7 @@ impl<'a> Hosted<'a> {
             vault,
             bridge,
             calls: 1,
+            policy_ref,
             deadline,
         })
     }
@@ -484,7 +524,7 @@ impl<'a> Hosted<'a> {
                 "name": verb,
                 "arguments": {
                     "schema_version": TOOL_ARGS_VERSION,
-                    "consent": {"policy_ref": POLICY_REF, "purpose": purpose},
+                    "consent": {"policy_ref": self.policy_ref, "purpose": purpose},
                     "arguments": {"spec": spec},
                 },
                 "_meta": meta,

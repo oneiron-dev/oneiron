@@ -1,6 +1,8 @@
 //! The session `oneiron continue --cloud` sends: one Claude Code session log
 //! and its subagents' logs, each gzip-compressed in standard base64, as
-//! `vault.imports.hook_transcript` takes them.
+//! `vault.imports.hook_transcript` takes them. The hooks' hand-over to a
+//! selected hosted vault sends the log its event names the same way
+//! ([`read_log`]).
 //!
 //! The log is the one `--transcript` names, as the hook's `transcript_path`
 //! does, or else the newest session log of the project folder Claude Code
@@ -47,6 +49,11 @@ pub(super) fn read(
         Some(path) => path.to_path_buf(),
         None => newest_session(&claude_config_dir()?.join("projects"), dir, deadline)?,
     };
+    read_log(path)
+}
+
+/// The session log at `path` and its subagents' logs, read and encoded.
+pub(super) fn read_log(path: PathBuf) -> anyhow::Result<SessionLogs> {
     let session = path
         .file_name()
         .and_then(|name| name.to_str())

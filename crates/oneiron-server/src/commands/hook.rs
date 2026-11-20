@@ -6,7 +6,9 @@
 //! - `session-start` binds a vault ([`bind`]), prints one line naming it,
 //!   and recalls a short block for the project ([`recall`]).
 //! - `prompt` recalls a short block for the prompt from the bound vault.
-//! - `hand-over` queues the session's log for the running `serve` to import.
+//! - `hand-over` queues the session's log for the running `serve` to import,
+//!   or sends a Claude Code log to the selected hosted vault the session
+//!   bound ([`hand_over`]).
 //! - `bind` binds a vault as `session-start` does and prints it as JSON, for
 //!   a plugin that runs inside its host (Hermes's memory provider).
 //!
@@ -44,9 +46,11 @@ use std::time::{Duration, Instant};
 use oneiron::ingest::history::HistorySource;
 use serde_json::{Map, Value};
 
+use self::bind::HandOverTarget;
 use self::hosted_selection::{HostedDiscovery, HostedVault};
 use self::recall::RecallAuth;
 use crate::cli::{HookArgs, HookBindArgs, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs};
+use crate::commands::ConfigFiles;
 
 /// The most of the host's event read from stdin.
 const MAX_EVENT_BYTES: u64 = 1 << 20;
@@ -243,7 +247,13 @@ fn recall_auth<'a>(
 /// host's logs ([`import_source`]): one small file in the queue of the
 /// config named, else of the running local vault, else of the default
 /// config, under the settings file named, else the running vault's own when
-/// the import takes that vault's config. Its output is not the host's.
+/// the import takes that vault's config. With no config named, a Claude
+/// Code log goes instead to the selected hosted vault where a session binds
+/// that vault ([`bind::hand_over_target`]): through
+/// `vault.imports.hook_transcript`, as the selection's own credential, with
+/// nothing queued here. A send that fails is sent again whole by the
+/// session's next hand-over, and the import lands only what is new. Its
+/// output is not the host's.
 fn hand_over(host: HookHost, args: &HookHandOverArgs) {
     let Some(event) = read_event() else {
         return;
@@ -255,7 +265,30 @@ fn hand_over(host: HookHost, args: &HookHandOverArgs) {
     else {
         return;
     };
-    let mut command = oneiron_spawn::command(oneiron(args.common.oneiron.as_deref()));
+    let oneiron = oneiron(args.common.oneiron.as_deref());
+    let deadline = deadline(args.common.timeout);
+    let running = match bind::hand_over_target() {
+        HandOverTarget::Hosted(vault)
+            if args.config.is_none()
+                && matches!(import_source(host), HistorySource::ClaudeCode) =>
+        {
+            let policy_ref = format!("policy:{}-hooks", host.as_str());
+            let _ = continue_command::hand_over_hosted(
+                &oneiron,
+                &vault,
+                Path::new(transcript),
+                policy_ref,
+                deadline,
+            );
+            return;
+        }
+        // The hosted vault takes only a Claude Code log, and a config named
+        // here is a local queue's: queued as before, with no local vault
+        // running.
+        HandOverTarget::Hosted(_) | HandOverTarget::Local(None) => ConfigFiles::default(),
+        HandOverTarget::Local(Some(running)) => running,
+    };
+    let mut command = oneiron_spawn::command(oneiron);
     command
         .args([
             "import",
@@ -269,7 +302,6 @@ fn hand_over(host: HookHost, args: &HookHandOverArgs) {
     // A named file stands over a found one. The running vault's settings
     // file goes over its own config alone, never over another config named
     // here (FIX 5602).
-    let running = bind::running_config().unwrap_or_default();
     let its_own = args
         .config
         .as_deref()
@@ -285,7 +317,6 @@ fn hand_over(host: HookHost, args: &HookHandOverArgs) {
     if let Some(settings_file) = settings_file {
         command.arg("--settings-file").arg(settings_file);
     }
-    let deadline = deadline(args.common.timeout);
     if let Ok(mut child) = command.spawn()
         && wait_until(&mut child, deadline).is_none()
     {

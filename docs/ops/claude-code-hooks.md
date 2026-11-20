@@ -40,6 +40,8 @@ Claude Code ──SessionStart──▶ oneiron hook session-start ──▶ bin
 Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
             ──▶ oneiron import claude-code <log> --queue   (writes one small file)
                                    serve, every 5 s ──▶ imports the queued log
+            or, to a selected hosted vault (below):
+            ──▶ oneiron mcp ──▶ the hosted vault: vault.imports.hook_transcript
 ```
 
 - **Recall** goes through `oneiron mcp` with the hooks' own read-only
@@ -120,8 +122,15 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
 starts a server and prints no line of its own. A pinned or selected vault that does not answer one probe gets no recall, so a
 vault that is down costs a prompt at most 2 seconds. `hand-over` queues into the queue of `--config` if you give it;
 else, with a pin, of the running local vault at the pin; with no pin, of the
-newest running local vault; else of the default config. A pin is never
-swapped for another vault.
+newest running local vault; else, when a hosted vault is selected, it sends
+the session's log and its subagents' logs to that vault through
+`vault.imports.hook_transcript`, as the credential the selection names, in its
+own mode, and queues nothing here; else of the default config. A pin is never
+swapped for another vault. A send the hosted vault does not take (it does not
+answer, or the credential has no Grant naming the verb) is dropped without a
+word; the session's next hand-over sends the whole log again, and the import
+lands only what is new. The hosted vault takes only a Claude Code log: a
+Codex, Cursor or Copilot session queues locally as before.
 
 A pin in `hook.toml` counts only when no one but you can write it: your own
 regular file, not a link, with no write bit for others and, on macOS, no ACL
@@ -416,7 +425,10 @@ What the hooks already imported stays in your vault, like any import.
   6,000 characters in all, after its one line. Each probe of a vault waits
   at most 2 seconds. `prompt` has the same limits. Claude Code caps a hook's
   added context at 10,000 characters.
-- `hand-over` takes well under a second: it writes one small file. Claude
+- `hand-over` takes well under a second: it writes one small file. To a
+  hosted vault it sends the whole log, gzip-compressed, in one call, which
+  ends by the same `--timeout`; logs that inflate past 64 MiB are refused
+  there, and land only through `oneiron import claude-code <log>`. Claude
   Code gives `SessionEnd` hooks 1.5 seconds unless a hook sets its own
   `timeout`; the `timeout` of 5 above raises that budget to 5 seconds.
 - `serve` looks at the queue every 5 seconds and imports what waits there.
