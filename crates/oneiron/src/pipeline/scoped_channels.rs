@@ -202,17 +202,18 @@ impl PipelineBuilder<'_> {
     /// cut, so no admission asked them, and a hit outside the call's type,
     /// time, world, corpus, relationship or candidate filter counted as a
     /// candidate in scope, took a fusion rank and could seed an implicit
-    /// expansion ([PHONETIC-EXACT-HITS-UNSCOPED-BEFORE-BLEND]). Each row is
+    /// expansion (PHONETIC-EXACT-HITS-UNSCOPED-BEFORE-BLEND). Each row is
     /// asked as a bounded channel's admission asks it, made_by slice
     /// included, in the run's caches: the D19 gate judges a row the scope
     /// admits as far as the gate, as it judges every row of the blend, so
     /// its suppression counts as before, and the bookkeeping of every later
     /// check is the post-blend filters' own. A row the candidate filter
-    /// refuses is judged by nothing, so a reader learns nothing of a row it
-    /// cannot read. The list takes this only once the memory lane and
-    /// entity-type authority have narrowed it, so the gate judges no row of
-    /// a kind the reader may not retrieve (REVIEW-9842 round 2). No deadline
-    /// cuts it: admission always runs.
+    /// refuses is judged by nothing after it: this step adds no gate
+    /// decision, no `read_suppressed` entry and no count for it, so a reader
+    /// learns nothing here of a row it cannot read. The list takes this only
+    /// once the memory lane and entity-type authority have narrowed it, so
+    /// the gate judges no row of a kind the reader may not retrieve
+    /// (REVIEW-9842 round 2). No deadline cuts it: admission always runs.
     pub(super) fn retain_phonetic_hits_in_scope(
         &self,
         rtxn: &RoTxn<'_>,
