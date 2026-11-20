@@ -154,13 +154,22 @@ impl ErasedIds {
         !named.is_disjoint(&self.ids)
     }
 
-    /// Whether the JSON `text` names one; text that holds a ref and does not
-    /// decode names it.
+    /// Whether JSON `text` that does not decode spells one in a string or
+    /// key ([`spelled_ids_in`]), as its decoded value would name it.
+    fn spelled_in(&self, text: &str) -> bool {
+        let mut spelled = BTreeSet::new();
+        spelled_ids_in(text, &mut spelled);
+        !spelled.is_disjoint(&self.ids)
+    }
+
+    /// Whether the JSON `text` names one; text that does not decode names
+    /// one it spells ([`Self::spelled_in`]).
     pub(in crate::runtime_hooks) fn named_by_json(&self, text: &str) -> bool {
         self.named_in(text)
-            && serde_json::from_str::<Value>(text)
-                .ok()
-                .is_none_or(|value| self.named_by(&value))
+            && match serde_json::from_str::<Value>(text) {
+                Ok(value) => self.named_by(&value),
+                Err(_) => self.spelled_in(text),
+            }
     }
 }
 
@@ -226,22 +235,15 @@ pub(in crate::runtime_hooks) fn rows_named_by_fact(input: &str) -> Vec<EntityId>
 }
 
 /// Adds to `ids` each id the JSON `text` can spell in a string or key once
-/// decoded ([`hex_ids_in`]): a run of 32 lowercase hex digits, or the last
-/// 32 of a longer run, as an escape such as `\b` or `\u001f` lengthens a
-/// run on its left; and the same over `text` with its escapes read
-/// ([`escapes_read`]), so an id spelled through `\u` escapes counts too. A
-/// superset, each one checked before it counts.
+/// decoded: [`hex_ids_in`] over `text` with its escapes read
+/// ([`escapes_read`]), so an id counts however a string spells it, and a
+/// longer run, such as a digest, names none, as in the decoded value. Its
+/// escapes read, no escape lengthens a run. Flat, so it reads text no value
+/// may hold. A superset (a number's digits read too), each one checked
+/// before it counts.
 fn spelled_ids_in(text: &str, ids: &mut BTreeSet<EntityId>) {
     let read = escapes_read(text);
-    for scanned in std::iter::once(text).chain(read.as_deref()) {
-        for token in scanned.split(|digit: char| !matches!(digit, '0'..='9' | 'a'..='f')) {
-            if let Some(start) = token.len().checked_sub(32)
-                && let Ok(id) = EntityId::from_hex(&token[start..])
-            {
-                ids.insert(id);
-            }
-        }
-    }
+    hex_ids_in(read.as_deref().unwrap_or(text), ids);
 }
 
 /// JSON `text` with each escape read for an id scan: a `\u` escape that
@@ -343,6 +345,10 @@ fn erase_fact_memo(memo: &mut HookRunRecord, erased: &ErasedIds) -> RunErase {
         return RunErase::Unchanged;
     };
     let Ok(mut value) = serde_json::from_str::<Value>(input) else {
+        // Text that does not decode loses its payload when it spells one.
+        if !erased.spelled_in(input) {
+            return RunErase::Unchanged;
+        }
         scrub_memo_payload(memo);
         return RunErase::Rewritten;
     };
@@ -395,6 +401,10 @@ fn erase_verb_run(record: &mut HookVerbRunRecord, erased: &ErasedIds) -> RunEras
         return RunErase::Unchanged;
     };
     let Ok(mut value) = serde_json::from_str::<Value>(input) else {
+        // Text that does not decode loses its payload when it spells one.
+        if !erased.spelled_in(input) {
+            return RunErase::Unchanged;
+        }
         scrub_verb_payload(record);
         return RunErase::Rewritten;
     };
