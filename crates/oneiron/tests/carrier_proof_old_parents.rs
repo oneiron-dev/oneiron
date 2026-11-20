@@ -472,6 +472,9 @@ fn policy_setting_op(machine: EntityId, prior: [u8; 32], value: Option<[u8; 32]>
         setting: setting.wire().to_owned(),
         prior,
         value,
+        slot: None,
+        inline: None,
+        more: Vec::new(),
     })
 }
 

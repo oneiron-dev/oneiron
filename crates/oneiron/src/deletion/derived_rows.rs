@@ -142,6 +142,10 @@ const ERASERS: &[EntitySideRowEraser] = &[
     // FIX 7998: retained federation and maintenance copies of the row.
     #[cfg(feature = "sync")]
     |write, txn, id| erase_retained_copies_in_txn(write.store, txn, id),
+    // PREDICTED-BOARD-SEED-SIGNAL: the home's touch-log rows naming the row, a board's report
+    // of it among them.
+    #[cfg(feature = "sync")]
+    |write, txn, id| crate::sync::residence::erase_machine_touches_in_txn(write.store, txn, id),
 ];
 
 fn erase_stream_seeds_in_txn(

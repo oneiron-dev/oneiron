@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use xmltree::{Element, Namespace, XMLNode};
 
@@ -299,6 +299,9 @@ pub fn relationship_target_mode_is_internal(target_mode: Option<&str>) -> bool {
 pub struct RelationshipSet {
     pub entries: Vec<Relationship>,
     next_id: u32,
+    /// IDs referenced by the owning part but absent from this set. New
+    /// relationships must not take these IDs and bind those dangling references.
+    reserved_ids: BTreeSet<String>,
     /// Directory the described part lives in (e.g. `word/` for
     /// `word/_rels/document.xml.rels`, `""` for the package root `_rels/.rels`).
     /// Relationship `Target`s are resolved against this base so that dedup
@@ -381,7 +384,8 @@ impl RelationshipSet {
 
         Ok(RelationshipSet {
             entries,
-            next_id: max_id + 1,
+            next_id: max_id.saturating_add(1),
+            reserved_ids: BTreeSet::new(),
             base_dir: rels_base_dir(part_name),
         })
     }
@@ -395,11 +399,12 @@ impl RelationshipSet {
         RelationshipSet {
             entries: Vec::new(),
             next_id: 1,
+            reserved_ids: BTreeSet::new(),
             base_dir: String::new(),
         }
     }
 
-    /// Serialize back to `.rels` XML bytes.
+    /// Serialize back to `.rels` XML bytes. Reservations are not written.
     pub fn serialize(&self, part_name: &str) -> Result<Vec<u8>, PackageError> {
         let mut root = Element::new("Relationships");
         let mut ns = Namespace::empty();
@@ -423,6 +428,37 @@ impl RelationshipSet {
         write_xml(&root, part_name)
     }
 
+    /// Reserve each of `ids` that this set does not hold: the ids the owning
+    /// part references without a binding. An id the set holds is never
+    /// reserved, and a reserved id is never added afterwards, so a dangling
+    /// reference stays dangling.
+    pub(crate) fn reserve_unbound(&mut self, ids: impl IntoIterator<Item = String>) {
+        for id in ids {
+            if self.find_by_id(&id).is_none() {
+                self.reserved_ids.insert(id);
+            }
+        }
+    }
+
+    /// Whether the owning part references `id` and this set does not hold it.
+    pub(crate) fn is_reserved(&self, id: &str) -> bool {
+        self.reserved_ids.contains(id)
+    }
+
+    /// Take the first free numbered ID at or after the cursor, wrapping to 1.
+    /// The loop tries distinct numbers and the held and reserved IDs cannot
+    /// cover all four billion numbers.
+    fn take_free_id(&mut self) -> String {
+        loop {
+            let number = self.next_id.max(1);
+            self.next_id = if number == u32::MAX { 1 } else { number + 1 };
+            let id = format!("rId{number}");
+            if self.find_by_id(&id).is_none() && !self.is_reserved(&id) {
+                return id;
+            }
+        }
+    }
+
     /// Add a relationship entry, returning the assigned rId.
     ///
     /// If the relationship set already has an entry with the same type and target,
@@ -431,8 +467,7 @@ impl RelationshipSet {
         if let Some(existing) = self.find_by_type_and_target(rel_type, target) {
             return existing.id.clone();
         }
-        let id = format!("rId{}", self.next_id);
-        self.next_id += 1;
+        let id = self.take_free_id();
         self.entries.push(Relationship {
             id: id.clone(),
             rel_type: rel_type.to_string(),
@@ -451,8 +486,7 @@ impl RelationshipSet {
         }) {
             return existing.id.clone();
         }
-        let id = format!("rId{}", self.next_id);
-        self.next_id += 1;
+        let id = self.take_free_id();
         self.entries.push(Relationship {
             id: id.clone(),
             rel_type: rel_type.to_string(),
@@ -464,6 +498,7 @@ impl RelationshipSet {
 
     /// Add a relationship with a preferred rId. Uses the preferred ID if available,
     /// otherwise assigns a new one. Returns the actually assigned rId.
+    /// A reserved ID is not available.
     pub fn add_with_preferred_id(
         &mut self,
         rel_type: &str,
@@ -498,11 +533,9 @@ impl RelationshipSet {
             return existing.id.clone();
         }
 
-        let id = if self.entries.iter().any(|r| r.id == preferred_id) {
-            // preferred_id is taken, assign a new one
-            let id = format!("rId{}", self.next_id);
-            self.next_id += 1;
-            id
+        let id = if self.find_by_id(preferred_id).is_some() || self.is_reserved(preferred_id) {
+            // preferred_id is taken or reserved, assign a new one
+            self.take_free_id()
         } else {
             // Use the preferred ID
             let id = preferred_id.to_string();
@@ -510,7 +543,7 @@ impl RelationshipSet {
             if let Some(n) = id.strip_prefix("rId").and_then(|s| s.parse::<u32>().ok())
                 && n >= self.next_id
             {
-                self.next_id = n + 1;
+                self.next_id = n.saturating_add(1);
             }
             id
         };
@@ -528,6 +561,7 @@ impl RelationshipSet {
     /// XML imported from another package may already reference this precise
     /// ID even when an equivalent target is registered under a different ID.
     /// Returns false if the requested ID is already occupied.
+    /// Also returns false without making changes if that ID is reserved.
     pub fn insert_exact(
         &mut self,
         id: &str,
@@ -535,7 +569,7 @@ impl RelationshipSet {
         target: &str,
         target_mode: Option<&str>,
     ) -> bool {
-        if self.find_by_id(id).is_some() {
+        if self.find_by_id(id).is_some() || self.is_reserved(id) {
             return false;
         }
         if let Some(number) = id
@@ -1641,6 +1675,149 @@ mod tests {
 
         let empty = RelationshipSet::empty();
         assert_eq!(empty.max_rid_number(), 0);
+    }
+
+    #[test]
+    fn relationship_set_skips_a_reserved_id() {
+        let mut rels = RelationshipSet::parse(
+            br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#,
+            "word/_rels/document.xml.rels",
+        )
+        .unwrap();
+        rels.reserve_unbound(
+            ["rId1", "rId3", "rId0004", "rId99", "rId4294967295"].map(str::to_string),
+        );
+
+        assert_eq!(rels.add("urn:test:internal", "one.xml"), "rId2");
+        assert_eq!(
+            rels.add_external("urn:test:external", "https://example.invalid/"),
+            "rId4",
+        );
+        assert_eq!(
+            rels.add_external("urn:test:external", "https://example.invalid/"),
+            "rId4",
+        );
+        assert_eq!(rels.entries.len(), 2);
+        assert_eq!(rels.add("urn:test:internal", "two.xml"), "rId5");
+        assert_eq!(
+            rels.entries,
+            [
+                Relationship {
+                    id: "rId2".to_string(),
+                    rel_type: "urn:test:internal".to_string(),
+                    target: "one.xml".to_string(),
+                    target_mode: None,
+                },
+                Relationship {
+                    id: "rId4".to_string(),
+                    rel_type: "urn:test:external".to_string(),
+                    target: "https://example.invalid/".to_string(),
+                    target_mode: Some("External".to_string()),
+                },
+                Relationship {
+                    id: "rId5".to_string(),
+                    rel_type: "urn:test:internal".to_string(),
+                    target: "two.xml".to_string(),
+                    target_mode: None,
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn relationship_set_does_not_prefer_or_insert_a_reserved_id() {
+        let mut rels = RelationshipSet::empty();
+        rels.reserve_unbound(["rId1", "missing-object"].map(str::to_string));
+        let id = rels.add_with_preferred_id_and_mode(
+            "urn:test:external",
+            "https://example.invalid/",
+            "missing-object",
+            Some("External"),
+        );
+        assert_eq!(id, "rId2");
+        let relationship = rels.find_by_id(&id).unwrap();
+        assert_eq!(relationship.target_mode.as_deref(), Some("External"));
+        let entry_count = rels.entries.len();
+        assert!(!rels.insert_exact("missing-object", "urn:test:internal", "one.xml", None));
+        assert_eq!(rels.entries.len(), entry_count);
+        assert!(rels.insert_exact("separate-binding", "urn:test:internal", "two.xml", None));
+        rels.reserve_unbound(["separate-binding".to_string()]);
+        assert!(!rels.is_reserved("separate-binding"));
+        assert_eq!(
+            rels.add_with_preferred_id("urn:test:other", "three.xml", "separate-binding"),
+            "rId3",
+        );
+    }
+
+    #[test]
+    fn relationship_set_clone_and_rebased_keep_reservations() {
+        let mut rels = RelationshipSet::empty();
+        rels.reserve_unbound(["rId1".to_string()]);
+        let mut cloned = rels.clone();
+        let mut rebased = rels.rebased("other/_rels/document.xml.rels");
+        for copy in [&mut cloned, &mut rebased] {
+            assert!(copy.is_reserved("rId1"));
+            assert_eq!(copy.add("urn:test:internal", "item.xml"), "rId2");
+        }
+        let path = "word/_rels/document.xml.rels";
+        let reparsed = RelationshipSet::parse(&rels.serialize(path).unwrap(), path).unwrap();
+        assert!(reparsed.entries.is_empty());
+        assert!(!reparsed.is_reserved("rId1"));
+    }
+
+    #[test]
+    fn relationship_set_never_mints_a_held_or_reserved_id_at_the_number_edge() {
+        fn parse_with_ids(ids: &[&str]) -> RelationshipSet {
+            let mut xml = format!(r#"<Relationships xmlns="{RELS_NS}">"#);
+            for id in ids {
+                xml.push_str(&format!(
+                    r#"<Relationship Id="{id}" Type="urn:test:internal" Target="{id}.xml"/>"#,
+                ));
+            }
+            xml.push_str("</Relationships>");
+            RelationshipSet::parse(xml.as_bytes(), "word/_rels/document.xml.rels").unwrap()
+        }
+
+        let mut parsed_max = parse_with_ids(&["rId4294967295", "rId1"]);
+        assert_eq!(parsed_max.next_id, u32::MAX);
+        assert_eq!(parsed_max.add("urn:test:internal", "one.xml"), "rId2");
+
+        let mut parsed_before_max = parse_with_ids(&["rId4294967294"]);
+        assert_eq!(
+            parsed_before_max.add("urn:test:internal", "one.xml"),
+            "rId4294967295",
+        );
+        assert_eq!(
+            parsed_before_max.add("urn:test:internal", "two.xml"),
+            "rId1"
+        );
+
+        let mut preferred_max = RelationshipSet::empty();
+        assert_eq!(
+            preferred_max.add_with_preferred_id("urn:test:internal", "one.xml", "rId4294967295"),
+            "rId4294967295",
+        );
+        assert_eq!(preferred_max.add("urn:test:internal", "two.xml"), "rId1");
+
+        let mut inserted_max = RelationshipSet::empty();
+        assert!(inserted_max.insert_exact("rId4294967295", "urn:test:internal", "one.xml", None));
+        assert_eq!(inserted_max.add("urn:test:internal", "two.xml"), "rId1");
+
+        let mut reserved_max = parse_with_ids(&["rId4294967294"]);
+        reserved_max.reserve_unbound(["rId4294967295".to_string()]);
+        assert_eq!(reserved_max.add("urn:test:internal", "one.xml"), "rId1");
+
+        for rels in [
+            parsed_max,
+            parsed_before_max,
+            preferred_max,
+            inserted_max,
+            reserved_max,
+        ] {
+            let ids: BTreeSet<_> = rels.entries.iter().map(|rel| rel.id.as_str()).collect();
+            assert!(!ids.contains("rId0"));
+            assert_eq!(ids.len(), rels.entries.len());
+        }
     }
 
     // =========================================================================
