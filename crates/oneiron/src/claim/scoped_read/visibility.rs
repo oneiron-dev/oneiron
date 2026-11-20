@@ -65,7 +65,9 @@ impl<'v> ScopedRead<'v> {
     /// txn: the reader's relationship context and the owner's exemption are
     /// judged at the first ref that needs them and shared by every later
     /// one, as a search's hits share them (FIX 7462), not judged again per
-    /// ref (FIX REFS-READABLE-EACH-FRESH-AUTHORITY-PER-ROW).
+    /// ref (FIX REFS-READABLE-EACH-FRESH-AUTHORITY-PER-ROW). Each ref's
+    /// Grants and CLAIM class verdicts are its own, as a lone ref check
+    /// judges them ([`HeldAuthority::judge_ref`]).
     fn refs_readable_held_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -78,7 +80,9 @@ impl<'v> ScopedRead<'v> {
         }
         let filter = self.actor_retrieval_floor(policy)?;
         for id in ids {
-            if !self.is_ref_readable_held_in(rtxn, policy, id, &filter, authority)? {
+            let readable = authority
+                .judge_ref(|one| self.is_ref_readable_held_in(rtxn, policy, id, &filter, one))?;
+            if !readable {
                 return Ok(false);
             }
         }

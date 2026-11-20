@@ -189,6 +189,31 @@ impl HeldAuthority {
         self.judge_cited_with_coreference(Some(id), judge)
     }
 
+    /// `judge` over one ref of a batch ref check
+    /// ([`super::ScopedRead::refs_readable_each`]), in this serving txn: this
+    /// call's relationship authority, lent to `judge` and taken back after it
+    /// as [`Self::judge_cited`] lends it, and this call's owner-exemption
+    /// verdicts, with the ref's own Grants, class verdicts and room
+    /// admissions, as a lone ref check holds them (blind review round 1 of
+    /// #9925). So a Grant that ends between two refs refuses the later one,
+    /// and one ref's class verdict never stands in for another's own check.
+    pub(super) fn judge_ref<T>(&self, judge: impl FnOnce(&Self) -> Result<T>) -> Result<T> {
+        let one = Self(
+            RefCell::new(self.0.take()),
+            self.1,
+            HeldGrants::fresh(self.2.asked().clone()),
+            ClassVerdicts::default(),
+            self.4,
+            self.5,
+            RoomVerdicts::default(),
+            self.7,
+            self.8.clone(),
+        );
+        let judged = judge(&one);
+        *self.0.borrow_mut() = one.0.into_inner();
+        judged
+    }
+
     fn judge_cited_with_coreference<T>(
         &self,
         id: Option<EntityId>,
