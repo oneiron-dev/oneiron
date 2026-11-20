@@ -98435,6 +98435,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/entity_revision/storage/text_field.rs",
+     "purpose": "A revision document's text field set to a row's new text, its diff held to a budget",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -108105,6 +108115,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/entity_revision_text_diff_budget.rs",
+     "purpose": "A row edit diffs each revision text field within a budget",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/epoch_lineage_pointer_form_summary.rs",
      "purpose": "The lineage census reads a pointer-form epoch SUMMARY by the keyframe keys it keeps beside its pointer…",
      "surface": {}
@@ -116677,7 +116695,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 61,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116784,8 +116802,8 @@
    },
    "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8232,
-   "test_files": 1981
+   "source_files": 8233,
+   "test_files": 1982
   },
   "oneiron-agent-runtime": {
    "files": [
