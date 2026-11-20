@@ -18,7 +18,8 @@ pub struct AuthorityAuditQuery {
     #[serde(default)]
     pub limit: Option<usize>,
     /// Keep only stored rows of these kinds; empty keeps every row. Cold
-    /// rows have no kind and are listed whatever this names.
+    /// rows are listed whatever this names: one whose body the adopted
+    /// image does not carry has no kind to match.
     #[serde(default)]
     pub kinds: BTreeSet<AuthorityAuditEventKind>,
 }
