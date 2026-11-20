@@ -1273,6 +1273,117 @@ fn a_cancelled_booking_the_owner_wrote_and_the_seat_echoed_keeps_the_deposit() {
     );
 }
 
+/// The owner's write of an EVENT a feed the booking was not written to
+/// cancelled: the booking is paid and captured, the visitor's feed cancels
+/// it, then the owner writes the cancelled EVENT to the host seat. Returns
+/// that write's receipt.
+fn owner_writes_a_foreign_cancel(
+    fixture: &Fixture,
+    seat: &Seat,
+    key: &[u8],
+    payment: &str,
+) -> RemoteWriteReceipt {
+    let mut provider = RecordingProvider::default();
+    let booked = paid_booking(fixture, SessionKey::derive(key), payment, 9);
+    settle_booking_deposit(
+        &fixture.vault,
+        &booked.calendar.event_ref,
+        &mut provider,
+        NOW + 50,
+    )
+    .expect("capture");
+    let start = MONDAY + 9 * 3_600;
+    poll_visitor_feed(fixture, &booked, start, 0, false, "v1", NOW + 60);
+    poll_visitor_feed(fixture, &booked, start, 1, true, "v2", NOW + 120);
+    assert_eq!(
+        state_of(fixture, payment),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a cancel from a feed the booking was not written to moves no money"
+    );
+    seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 150)
+}
+
+#[test]
+fn a_cancelled_booking_the_owner_wrote_and_the_seat_rewrote_keeps_the_deposit() {
+    // BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS: a provider that
+    // rewrites the stored resource sends the owner's own cancelled write back
+    // as a new version; that is still no host cancel.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let wrote =
+        owner_writes_a_foreign_cancel(&fixture, &seat, b"rewritten-echo", "pi_rewritten_echo");
+
+    seat.pull_rewritten_own_write(&fixture.vault, &wrote, wrote.sequence, NOW + 180)
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_rewritten_echo"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a rewrite of the owner's own cancelled write at its SEQUENCE moves no money"
+    );
+
+    seat.pull_rewritten_own_write(&fixture.vault, &wrote, wrote.sequence + 1, NOW + 240)
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_rewritten_echo"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a later rewrite at a higher SEQUENCE is still the owner's own write"
+    );
+}
+
+#[test]
+fn a_seat_that_shows_the_owner_written_cancel_live_and_then_cancels_refunds() {
+    // The mark of the owner's cancelled write ends when the seat shows the
+    // EVENT uncancelled: a cancel made in that calendar after it is the
+    // host's, and refunds whole (RULING DEPOSIT-HOST-CANCEL-SOURCE = A).
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let wrote =
+        owner_writes_a_foreign_cancel(&fixture, &seat, b"written-then-live", "pi_written_live");
+    let start = MONDAY + 9 * 3_600;
+
+    pull_seat(
+        &seat,
+        &fixture,
+        &[(&wrote, start)],
+        wrote.sequence + 1,
+        false,
+        NOW + 180,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_written_live"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the seat showing the EVENT live moves no money"
+    );
+
+    pull_seat(
+        &seat,
+        &fixture,
+        &[(&wrote, start)],
+        wrote.sequence + 2,
+        true,
+        NOW + 240,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_written_live"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the written-to seat's own cancel refunds the whole deposit"
+    );
+}
+
 #[test]
 fn a_tombstone_from_a_seat_the_booking_was_not_written_to_keeps_the_deposit() {
     let fixture = Fixture::open(Some(two_hour_terms()));

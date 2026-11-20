@@ -290,19 +290,59 @@ impl Seat {
         receipt: &RemoteWriteReceipt,
         now: u64,
     ) -> Result<CalendarSyncOutcome, CalendarConnectorError> {
-        let ics = self
-            .transport
+        let ics = self.last_write_ics(&receipt.uid);
+        let echo = remote_upsert(&receipt.href, receipt.etag.as_deref(), &ics);
+        self.run_pull(vault, vec![RemoteCalendarChange::Upsert(echo)], now)
+    }
+
+    /// Pulls back the seat's own last write of one booking as a provider that
+    /// rewrites the stored resource returns it: the written VEVENT at
+    /// `sequence` (the written one or higher) with a property of the
+    /// provider's own added, so its content hash is not the written one's.
+    pub(crate) fn pull_rewritten_own_write(
+        &self,
+        vault: &Vault,
+        receipt: &RemoteWriteReceipt,
+        sequence: u32,
+        now: u64,
+    ) -> Result<CalendarSyncOutcome, CalendarConnectorError> {
+        let written =
+            String::from_utf8(self.last_write_ics(&receipt.uid)).expect("written ICS is UTF-8");
+        let mut rewritten = String::new();
+        for line in written.split_inclusive("\r\n") {
+            if line.starts_with("SEQUENCE:") {
+                rewritten.push_str(&format!("SEQUENCE:{sequence}\r\n"));
+                continue;
+            }
+            if line == "END:VEVENT\r\n" {
+                rewritten.push_str(&format!("X-PROVIDER-REVISION:{now}\r\n"));
+            }
+            rewritten.push_str(line);
+        }
+        let rewrite = remote_upsert(
+            &receipt.href,
+            Some(&format!("{}-rewritten-{now}", receipt.href)),
+            rewritten.as_bytes(),
+        );
+        assert_ne!(
+            rewrite.content_hash, receipt.content_hash,
+            "the provider's rewrite is a new version of the written resource"
+        );
+        self.run_pull(vault, vec![RemoteCalendarChange::Upsert(rewrite)], now)
+    }
+
+    /// The ICS of the seat's last write of `uid`.
+    fn last_write_ics(&self, uid: &str) -> Vec<u8> {
+        self.transport
             .writes
             .lock()
             .expect("written requests")
             .iter()
             .rev()
-            .find(|request| request.uid == receipt.uid)
+            .find(|request| request.uid == uid)
             .expect("the seat holds a write of this booking")
             .ics
-            .clone();
-        let echo = remote_upsert(&receipt.href, receipt.etag.as_deref(), &ics);
-        self.run_pull(vault, vec![RemoteCalendarChange::Upsert(echo)], now)
+            .clone()
     }
 
     /// Runs one sync whose pull answers `changes`.
