@@ -33,6 +33,13 @@
 //!   `the_owners_restore_keeps_a_held_misderived_owner_fact` (blind review round 1 P1,
 //!   REVIEW-9981): red at 0fea72ae9d1 (the import fails whole: "maker does not derive its
 //!   task id"); green on the head.
+//! - `an_owners_archive_holding_a_misderived_owner_fact_at_other_times_restores` (blind
+//!   review round 2 P1, REVIEW-9981): red at b1fd9b5cb634 (the import fails whole:
+//!   "archived task authority fact times"); green on the head.
+//! - `the_owners_restore_leaves_a_held_unlinked_cancel_untwinned` and
+//!   `the_owners_restore_leaves_an_unlinked_cancel_untwinned` (blind review round 2 P1,
+//!   REVIEW-9981): red at b1fd9b5cb634 (the adoption twins the cancel, the twin carries the
+//!   link its row lacks, and the task reads cancelled); green on the head.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test archive_task_authority_facts`.
 #![cfg(oneiron_test_support)]
@@ -448,15 +455,50 @@ fn carried_fact_body(
     row: EntityId,
     machine: EntityId,
     key: &SigningKey,
-    (task, kind, actor, at): (EntityId, TaskAuthorityFactKind, EntityId, u64),
+    fact: (EntityId, TaskAuthorityFactKind, EntityId, u64),
 ) -> Vec<u8> {
-    let encode = |entries: &[(Value, Value)]| {
-        let mut bytes = Vec::new();
-        rmpv::encode::write_value(&mut bytes, &Value::Map(entries.to_vec()))
-            .expect("encode fixture");
-        bytes
-    };
-    let mut entries = vec![
+    let mut entries = fact_entries(fact);
+    let transcript = carrier_transcript(
+        TASK_FACT_CARRIER_DOMAIN,
+        vault_id,
+        &row,
+        &machine,
+        &encode_fact_entries(&entries),
+    );
+    entries.extend([
+        (
+            Value::from("carrier_machine"),
+            Value::from(machine.to_hex()),
+        ),
+        (
+            Value::from("carrier_key"),
+            Value::Binary(key.verifying_key().to_bytes().to_vec()),
+        ),
+        (
+            Value::from("carrier_signature"),
+            Value::Binary(key.sign(&transcript).to_bytes().to_vec()),
+        ),
+    ]);
+    encode_fact_entries(&entries)
+}
+
+/// One current-schema fact of `kind` about `task` by `actor` at `at`, with no carrier, as an
+/// install that signs nothing writes it.
+fn unsigned_fact_body(fact: (EntityId, TaskAuthorityFactKind, EntityId, u64)) -> Vec<u8> {
+    encode_fact_entries(&fact_entries(fact))
+}
+
+fn encode_fact_entries(entries: &[(Value, Value)]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Value::Map(entries.to_vec())).expect("encode fixture");
+    bytes
+}
+
+/// The body entries of one current-schema fact of `kind` about `task` by `actor` at `at`.
+fn fact_entries(
+    (task, kind, actor, at): (EntityId, TaskAuthorityFactKind, EntityId, u64),
+) -> Vec<(Value, Value)> {
+    vec![
         (
             Value::from("role"),
             Value::from(TaskRole::AuthorityFact.role_byte()),
@@ -473,29 +515,7 @@ fn carried_fact_body(
         (Value::from("kind"), Value::from(kind.as_byte())),
         (Value::from("actor_ref"), Value::from(actor.to_hex())),
         (Value::from("occurred_at"), Value::from(at)),
-    ];
-    let transcript = carrier_transcript(
-        TASK_FACT_CARRIER_DOMAIN,
-        vault_id,
-        &row,
-        &machine,
-        &encode(&entries),
-    );
-    entries.extend([
-        (
-            Value::from("carrier_machine"),
-            Value::from(machine.to_hex()),
-        ),
-        (
-            Value::from("carrier_key"),
-            Value::Binary(key.verifying_key().to_bytes().to_vec()),
-        ),
-        (
-            Value::from("carrier_signature"),
-            Value::Binary(key.sign(&transcript).to_bytes().to_vec()),
-        ),
-    ]);
-    encode(&entries)
+    ]
 }
 
 /// Blind review round 2 P1 (REVIEW-9365): an archived fact whose carrier names the restoring
@@ -742,4 +762,236 @@ fn the_owners_restore_keeps_a_held_misderived_owner_fact() -> TestResult {
         "the true fact and its signed twin, and the misderived row with no twin"
     );
     Ok(())
+}
+
+/// Blind review round 2 P1 (REVIEW-9981): replay takes a fact row's times apart from its body,
+/// so a misderived Owner fact can ride the archive at times other than its fact's own. The
+/// owner's restore lands it as the archive holds it, times included, instead of refusing the
+/// import on them.
+#[test]
+fn an_owners_archive_holding_a_misderived_owner_fact_at_other_times_restores() -> TestResult {
+    let source_directory = tempfile::tempdir()?;
+    let source = Vault::open(source_directory.path(), VaultConfig::default())?;
+    let (task, fact) = owned_task(&source)?;
+    let owner = source.ensure_embedded_owner_actor()?;
+    let written = misderived_owner_fact(&source, task)?;
+    let raw = source
+        .get_raw(&written)?
+        .expect("the source's misderived Owner fact row");
+    let header = EntityMetadataHeader::parse(&raw).expect("the fact row's header");
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    // The same fact on another row, at times one tick before the fact's own, as a peer
+    // sends it.
+    let second = EntityId::now();
+    let other = header.occurred_start - 1;
+    replay_entity(
+        &source,
+        ReplicatedEntity {
+            id: second,
+            entity_type: ENTITY_TYPE_TASK,
+            occurred: TimeRange {
+                start: other,
+                end: other,
+            },
+            learned_at: other,
+            row_version: 0,
+            body,
+        },
+        ImportTier::OwnDevice,
+    )?;
+    source
+        .batch()
+        .edge(&second, EdgeKind::ScopedTo, &task, SCOPED_TO_WEIGHT)
+        .commit()?;
+    let here = source
+        .task_authority_state(task)?
+        .expect("the fold skips both misderived rows on the source vault");
+    assert_eq!(here.owner_ref, owner);
+    let archive = source.export_whole_vault(true)?.bytes().to_vec();
+
+    let (_dest_directory, dest) = open_destination_vault()?;
+    let proof = owner_proof(&dest)?;
+    if let Err(error) = dest.import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &proof)
+    {
+        panic!(
+            "the owner's whole archive holding a misderived fact at other times must restore: \
+             {error:?}"
+        );
+    }
+    let landed = dest
+        .get_raw(&second)?
+        .expect("the misderived row lands as the archive holds it");
+    let landed_header = EntityMetadataHeader::parse(&landed).expect("the landed row's header");
+    assert_eq!(
+        (
+            landed_header.occurred_start,
+            landed_header.occurred_end,
+            landed_header.learned_at,
+        ),
+        (other, other, other),
+        "the misderived row keeps the times the archive holds"
+    );
+    assert_eq!(&landed[ENTITY_METADATA_HEADER_LEN..], body);
+    let restored = authority_facts(&dest, task)?;
+    assert!(
+        restored.contains(&fact) && restored.contains(&written) && restored.contains(&second),
+        "the true fact and both misderived rows come back at their archived ids"
+    );
+    assert_eq!(restored.len(), 3, "an unrooted vault twins nothing");
+    let state = dest
+        .task_authority_state(task)?
+        .expect("the restored Owner fact counts on the restored vault");
+    assert_eq!(state.owner_ref, owner);
+    assert!(!state.cancelled);
+    Ok(())
+}
+
+/// A whole-vault archive of the owner's TASK and its Owner fact, holding also an unsigned
+/// cancel of the task whose `ScopedTo` link sync had not yet committed: sync writes a fact's
+/// row and its link apart, so the source's fold does not see the cancel and reads the task
+/// open.
+struct ArchiveWithUnlinkedCancel {
+    task: EntityId,
+    fact: EntityId,
+    owner: EntityId,
+    cancel: EntityId,
+    cancel_row: Vec<u8>,
+    archive: Vec<u8>,
+}
+
+fn archive_with_unlinked_cancel() -> Result<ArchiveWithUnlinkedCancel, Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let source = Vault::open(directory.path(), VaultConfig::default())?;
+    let (task, fact) = owned_task(&source)?;
+    let owner = source.ensure_embedded_owner_actor()?;
+    let cancel = EntityId::now();
+    let at = source.now_recorded_at();
+    let body = unsigned_fact_body((task, TaskAuthorityFactKind::Cancelled, owner, at));
+    replay_entity(
+        &source,
+        ReplicatedEntity {
+            id: cancel,
+            entity_type: ENTITY_TYPE_TASK,
+            occurred: TimeRange { start: at, end: at },
+            learned_at: at,
+            row_version: 0,
+            body: &body,
+        },
+        ImportTier::OwnDevice,
+    )?;
+    let here = source
+        .task_authority_state(task)?
+        .expect("the Owner fact counts on the source vault");
+    assert!(
+        !here.cancelled,
+        "the fold does not see a cancel with no link to its task"
+    );
+    let cancel_row = source.get_raw(&cancel)?.expect("the cancel row");
+    let archive = source.export_whole_vault(true)?.bytes().to_vec();
+    Ok(ArchiveWithUnlinkedCancel {
+        task,
+        fact,
+        owner,
+        cancel,
+        cancel_row,
+        archive,
+    })
+}
+
+/// A vault rooted on its own, with a device keystore and this install profiled, so the
+/// owner's restore into it twins each fact it counts.
+fn open_rooted_destination(
+    label: &[u8],
+) -> Result<(tempfile::TempDir, Vault), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let vault = Vault::open_owned(directory.path(), VaultConfig::device())?;
+    vault.install_device_keystore(Arc::new(MemoryKeystore::default()));
+    assert_eq!(
+        vault.profile_local_open(Some(label), true)?,
+        LocalOpenProfile::RootedAndProfiled,
+    );
+    Ok((directory, vault))
+}
+
+/// The task reads open after the owner's restore of `source.archive` into `dest`, as on the
+/// source vault: the cancel row comes back as the archive holds it, unlinked, and gets no
+/// twin, which would carry the link its row lacks.
+fn assert_restored_open(dest: &Vault, source: &ArchiveWithUnlinkedCancel) -> TestResult {
+    let state = dest
+        .task_authority_state(source.task)?
+        .expect("the restored Owner fact counts on the restored vault");
+    assert_eq!(state.owner_ref, source.owner);
+    assert!(
+        !state.cancelled,
+        "the task reads open, as its archive holds it: the unlinked cancel gets no twin"
+    );
+    assert!(
+        holds_task_row(dest, source.cancel)?,
+        "the cancel row stays as the archive holds it"
+    );
+    let restored = authority_facts(dest, source.task)?;
+    assert!(restored.contains(&source.fact));
+    assert!(
+        !restored.contains(&source.cancel),
+        "no link to the task comes back for the cancel"
+    );
+    assert_eq!(
+        restored.len(),
+        2,
+        "the Owner fact and its signed twin, and no twin of the cancel"
+    );
+    Ok(())
+}
+
+/// Blind review round 2 P1 (REVIEW-9981), the unchanged-row path: the rooted destination
+/// already holds the unlinked cancel row byte for byte, as sync gave it. The owner's restore
+/// counts it as his own write, and its twin waits for the row's link.
+#[test]
+fn the_owners_restore_leaves_a_held_unlinked_cancel_untwinned() -> TestResult {
+    let source = archive_with_unlinked_cancel()?;
+    let (_dest_directory, dest) =
+        open_rooted_destination(b"archive task facts held unlinked cancel")?;
+    let header = EntityMetadataHeader::parse(&source.cancel_row).expect("the cancel row's header");
+    replay_entity(
+        &dest,
+        ReplicatedEntity {
+            id: source.cancel,
+            entity_type: ENTITY_TYPE_TASK,
+            occurred: TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            learned_at: header.learned_at,
+            row_version: 0,
+            body: &source.cancel_row[ENTITY_METADATA_HEADER_LEN..],
+        },
+        ImportTier::OwnDevice,
+    )?;
+    assert!(
+        holds_task_row(&dest, source.cancel)?,
+        "the own-device replay door lands the cancel row, unlinked"
+    );
+
+    let proof = owner_proof(&dest)?;
+    if let Err(error) =
+        dest.import_whole_vault_archive_from_as_owner(Cursor::new(&source.archive), &proof)
+    {
+        panic!("the owner's whole archive must restore over the held cancel row: {error:?}");
+    }
+    assert_restored_open(&dest, &source)
+}
+
+/// Blind review round 2 P1 (REVIEW-9981), the restore door's path: the owner's restore lands
+/// the unlinked cancel row into a fresh rooted vault, and its twin waits for the row's link.
+#[test]
+fn the_owners_restore_leaves_an_unlinked_cancel_untwinned() -> TestResult {
+    let source = archive_with_unlinked_cancel()?;
+    let (_dest_directory, dest) = open_rooted_destination(b"archive task facts unlinked cancel")?;
+    let proof = owner_proof(&dest)?;
+    if let Err(error) =
+        dest.import_whole_vault_archive_from_as_owner(Cursor::new(&source.archive), &proof)
+    {
+        panic!("the owner's whole archive holding an unlinked cancel must restore: {error:?}");
+    }
+    assert_restored_open(&dest, &source)
 }

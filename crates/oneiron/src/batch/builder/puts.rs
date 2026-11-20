@@ -474,7 +474,20 @@ impl BatchBuilder<'_> {
 
     /// Engine-authored TASK facts cannot pass a raw put, which refuses their
     /// reserved role. The materialization checks still run at apply time.
-    pub(crate) fn put_task_fact(mut self, id: &EntityId, data: &[u8], at: u64) -> Self {
+    pub(crate) fn put_task_fact(self, id: &EntityId, data: &[u8], at: u64) -> Self {
+        self.put_task_fact_with_times(id, data, TimeRange { start: at, end: at }, at)
+    }
+
+    /// [`Self::put_task_fact`] at row times other than the fact's own: the
+    /// owner's restore of an archived row whose fact no door of this install
+    /// could have written, at the times the archive holds.
+    pub(crate) fn put_task_fact_with_times(
+        mut self,
+        id: &EntityId,
+        data: &[u8],
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Self {
         if self.validation_error.is_none() {
             self.validation_error =
                 match crate::write_envelope::task_body::task_role_from_body_bytes(data) {
@@ -488,8 +501,8 @@ impl BatchBuilder<'_> {
         self.ops.push(plain_put_op(
             id,
             ENTITY_TYPE_TASK,
-            TimeRange { start: at, end: at },
-            at,
+            occurred,
+            learned_at,
             data,
         ));
         self
