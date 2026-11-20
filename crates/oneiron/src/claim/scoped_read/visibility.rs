@@ -971,8 +971,12 @@ impl<'v> ScopedRead<'v> {
     /// it names under the CURRENT rule a root is read by (FIX 5545), in its
     /// audience now and still in the room or the vault's Owner or an Admin.
     /// The notice names the thread, who acted and what happened, so no broad
-    /// credential reads it, the owner's included. Every other row, every
-    /// other notice included, is `true` here.
+    /// credential reads it, the owner's included. A member's notice that
+    /// someone else logged the withdrawal of their voice
+    /// (VOICE-CONSENT-LOG-MEMBERS) is read by its recipient alone, likewise
+    /// the owner's included: it names what was withdrawn and deleted, and
+    /// each owner holds a notice of their own (REVIEW-10022 P1). Every other
+    /// row, every other notice included, is `true` here.
     pub(super) fn thread_notice_readable_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -988,12 +992,21 @@ impl<'v> ScopedRead<'v> {
         let Ok(notice) = crate::inbox::decode_notification_body(body) else {
             return Ok(true);
         };
+        let id = |text: Option<&str>| text.and_then(|text| EntityId::from_hex(text).ok());
+        let recipient = id(notice.recipient.as_deref());
+        let recipient_reads = recipient.is_some()
+            && !viewers.is_empty()
+            && viewers.iter().all(|viewer| Some(*viewer) == recipient);
+        if matches!(
+            notice.kind,
+            crate::inbox::NotificationKind::VoiceRecognitionWithdrawalLoggedForSubject
+        ) {
+            return Ok(recipient_reads);
+        }
         if notice.source.producer != crate::store::conversation_body::THREAD_NOTICE_PRODUCER {
             return Ok(true);
         }
-        let id = |text: Option<&str>| text.and_then(|text| EntityId::from_hex(text).ok());
-        let recipient = id(notice.recipient.as_deref());
-        if !viewers.is_empty() && viewers.iter().all(|viewer| Some(*viewer) == recipient) {
+        if recipient_reads {
             return Ok(true);
         }
         let Some(root) = id(notice.source.result.as_deref()) else {
