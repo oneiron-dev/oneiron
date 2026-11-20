@@ -8,11 +8,7 @@
 //! source repository except the sandbox rules of its `settings.json`, which
 //! deny every read of it.
 
-use std::{
-    fmt::Write as _,
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
-};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +16,13 @@ use super::super::{BeamResult, report_model::NotReadyState};
 use super::manifest::{Manifest, PromptPlan, Task, WriterPart, invalid, rfc3339_seconds};
 use super::mcp_probe;
 use super::profile::{Arm, Check, Piece, names_verb};
+
+mod cell_files;
+mod git;
+mod world;
+
+pub(super) use self::git::git_ok;
+use self::world::source_folders;
 
 const PACK_SCHEMA: &str = "code-bench-pack-v1";
 const CELL_SCHEMA: &str = "code-bench-cell-v1";
@@ -539,235 +542,6 @@ impl Pack<'_> {
             .and_then(|listing| listing.as_ref().ok())
             .map_or(&[], Vec::as_slice)
     }
-
-    fn write_cell_files(
-        &self,
-        id: &str,
-        check: Check,
-        task: &Task,
-        arm: Arm,
-        part: Option<&WriterPart>,
-        world: &CellWorld,
-    ) -> BeamResult<()> {
-        let dir = &world.dir;
-        std::fs::write(dir.join("PROMPT.md"), self.prompt(id, task, arm, part))?;
-        std::fs::write(
-            dir.join("mcp.json"),
-            serde_json::to_string_pretty(&self.mcp_config(arm))?,
-        )?;
-        std::fs::write(
-            dir.join("settings.json"),
-            serde_json::to_string_pretty(&self.settings(arm, world))?,
-        )?;
-        let cell = serde_json::json!({
-            "schema": CELL_SCHEMA,
-            "id": id,
-            "check": check,
-            "task": task.id,
-            "arm": arm,
-            "writer": part.map(|part| part.writer.as_str()),
-            "base": task.base,
-            "tree": world.tree.display().to_string(),
-            "world_root": world.root,
-            "cap_minutes": self.manifest.cap_minutes,
-            "mcp_server": arm.server(),
-            "mcp_verbs": arm.verbs(),
-            "mcp_tool_prefixes": arm.tool_prefixes(),
-        });
-        std::fs::write(dir.join("cell.json"), serde_json::to_string_pretty(&cell)?)?;
-        Ok(())
-    }
-
-    /// Claude Code's settings for the cell: the arm's tools, and a sandbox
-    /// that must start (`failIfUnavailable`), so no command of the writer
-    /// reads the source repository, whose merge commit holds the answer and
-    /// the sealed tests, or writes outside the cell's world. The Read and
-    /// Edit tools follow the permission rules, not the sandbox.
-    fn settings(&self, arm: Arm, world: &CellWorld) -> serde_json::Value {
-        let sources: Vec<String> = self
-            .sealed_sources
-            .iter()
-            .map(|folder| folder.display().to_string())
-            .collect();
-        let mut deny = arm.denied_tools();
-        for folder in &sources {
-            // `//` starts an absolute path in a permission rule.
-            deny.push(format!("Read(/{folder}/**)"));
-            deny.push(format!("Edit(/{folder}/**)"));
-        }
-        let write: Vec<String> = world
-            .write
-            .iter()
-            .map(|folder| folder.display().to_string())
-            .collect();
-        serde_json::json!({
-            "permissions": {
-                "allow": arm.allowed_tools(self.listed_tools(arm)),
-                "deny": deny,
-            },
-            "sandbox": {
-                "enabled": true,
-                "failIfUnavailable": true,
-                "allowUnsandboxedCommands": false,
-                "filesystem": {
-                    "denyRead": sources,
-                    "allowRead": [world.read.display().to_string()],
-                    "allowWrite": write,
-                },
-            },
-        })
-    }
-
-    fn prompt(&self, id: &str, task: &Task, arm: Arm, part: Option<&WriterPart>) -> String {
-        let mut text = format!("# CODE-BENCH cell `{id}`\n\n## Your task\n\n");
-        text.push_str(task.intent.as_deref().unwrap_or_default());
-        text.push('\n');
-        if let Some(part) = part {
-            let writers = task
-                .collaboration
-                .as_ref()
-                .map_or(0, |split| split.parts.len());
-            let files = part
-                .files
-                .iter()
-                .map(|file| format!("`{file}`"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let _ = write!(
-                text,
-                "\n### Your part (writer `{}` of {writers})\n\n{}\n\nThe files of your part: \
-                 {files}. The other writers change the other parts at the same time, and the \
-                 parts overlap.\n",
-                part.writer,
-                part.intent.as_deref().unwrap_or_default()
-            );
-        }
-        let _ = write!(
-            text,
-            "\n## Your tools\n\n{}\n\n## Rules\n\n- Work only in your tree, `tree/` beside this \
-             file. It was made from base {} before you started.\n- You have {} minutes.\n- Leave \
-             your change in the tree when you stop: it is graded after you stop.\n",
-            arm.rules(),
-            short(&task.base),
-            self.manifest.cap_minutes
-        );
-        text
-    }
-
-    fn mcp_config(&self, arm: Arm) -> serde_json::Value {
-        let entry = |url: &str, token_env: &str| {
-            serde_json::json!({
-                "type": "http",
-                "url": url,
-                "headers": { "Authorization": format!("Bearer ${{{token_env}}}") },
-            })
-        };
-        let server = match arm {
-            Arm::VaultMemory => self
-                .plan
-                .memory_vault
-                .as_ref()
-                .map(|piece| entry(&piece.url, &piece.token_env)),
-            Arm::SymbolGraph => self
-                .plan
-                .code_snapshot
-                .as_ref()
-                .map(|piece| entry(&piece.url, &piece.token_env)),
-            Arm::OneironWriters => self
-                .plan
-                .oneiron_code_path
-                .as_ref()
-                .map(|piece| entry(&piece.url, &piece.token_env)),
-            Arm::NoMemory | Arm::GrepOnly | Arm::GitWorktrees => None,
-        };
-        let mut servers = serde_json::Map::new();
-        if let (Some(name), Some(server)) = (arm.server(), server) {
-            servers.insert(name.to_owned(), server);
-        }
-        serde_json::json!({ "mcpServers": servers })
-    }
-
-    /// Builds the world at `root`: a fresh repository of the base's tree,
-    /// one commit, the sealed paths removed. `add -f` keeps tracked files
-    /// that match an ignore rule. With writers, each gets a worktree of it
-    /// on its own branch at `<arm folder>/<writer>/tree`, beside a shared
-    /// `integration` branch. Returns the root commit.
-    fn build_world(&self, root: &Path, task: &Task, writers: &[&str]) -> BeamResult<String> {
-        std::fs::create_dir(root)?;
-        let mut archive = git(&self.repo)
-            .args(["archive", "--format=tar", &task.base])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()?;
-        let tar_input = archive
-            .stdout
-            .take()
-            .ok_or_else(|| invalid("git archive gave no output pipe".to_owned()))?;
-        let unpacked = Command::new("tar")
-            .args(["-x", "-f", "-", "-C"])
-            .arg(root)
-            .stdin(tar_input)
-            .stderr(Stdio::null())
-            .status()?;
-        let archived = archive.wait()?;
-        if !(archived.success() && unpacked.success()) {
-            return Err(invalid(format!(
-                "the world of task `{}`: git archive of base {} into {} failed",
-                task.id,
-                task.base,
-                root.display()
-            )));
-        }
-        for path in &task.sealed {
-            remove_path(&root.join(path))?;
-        }
-        run_git(root, &["init", "-q"])?;
-        run_git(root, &["add", "-A", "-f"])?;
-        run_git(
-            root,
-            &[
-                "-c",
-                "user.name=code-bench",
-                "-c",
-                "user.email=code-bench@example.invalid",
-                "-c",
-                "commit.gpgsign=false",
-                "commit",
-                "-q",
-                "--no-verify",
-                "-m",
-                &world_subject(task),
-            ],
-        )?;
-        let commit = git_stdout(root, &["rev-parse", "HEAD"])?
-            .map(|commit| commit.trim().to_owned())
-            .ok_or_else(|| invalid(format!("no world commit in {}", root.display())))?;
-        if !writers.is_empty() {
-            run_git(root, &["branch", "integration"])?;
-            let arm_dir = root.parent().unwrap_or(root);
-            for writer in writers {
-                let tree = arm_dir.join(writer).join("tree");
-                let added = git(root)
-                    .args(["worktree", "add", "-q", "-b", writer])
-                    .arg(&tree)
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()?;
-                if !added.success() {
-                    return Err(invalid(format!(
-                        "git worktree add of writer `{writer}` at {} failed",
-                        tree.display()
-                    )));
-                }
-            }
-        }
-        Ok(commit)
-    }
-}
-
-/// The subject of a world's one root commit.
-fn world_subject(task: &Task) -> String {
-    format!("code-bench world: {} at {}", task.id, task.base)
 }
 
 /// Why the probed server cannot serve `arm`: it did not answer, it lacks
@@ -789,35 +563,6 @@ fn listing_gap(piece: Piece, listing: Option<&Listing>, arm: Arm) -> Option<Stri
             }
         }
     }
-}
-
-/// The source repository's work tree and Git folder, absolute; a linked
-/// worktree keeps its objects in its main repository's folder.
-fn source_folders(repo: &Path) -> BeamResult<Vec<PathBuf>> {
-    let mut folders = vec![std::fs::canonicalize(repo)?];
-    let common = git_stdout(
-        repo,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )?;
-    if let Some(common) = common {
-        let common = std::fs::canonicalize(common.trim())?;
-        if !folders.iter().any(|folder| common.starts_with(folder)) {
-            folders.push(common);
-        }
-    }
-    Ok(folders)
-}
-
-/// Removes a sealed path from the world, whatever it is; a path the base
-/// lacks is no error.
-fn remove_path(path: &Path) -> BeamResult<()> {
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(path)?,
-        Ok(_) => std::fs::remove_file(path)?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
-    }
-    Ok(())
 }
 
 fn state(component: &str, reason: String) -> NotReadyState {
@@ -858,44 +603,6 @@ fn verbs_gap(repo: &Path, engine_commit: &str, verbs: &[&str]) -> BeamResult<Opt
     Ok(None)
 }
 
-/// Git in `dir`, reading no stdin.
-fn git(dir: &Path) -> Command {
-    let mut command = Command::new("git");
-    command.arg("-C").arg(dir).stdin(Stdio::null());
-    command
-}
-
-pub(super) fn git_ok(repo: &Path, args: &[&str]) -> BeamResult<bool> {
-    Ok(git(repo)
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?
-        .success())
-}
-
-/// Git's stdout, or `None` when the command fails.
-fn git_stdout(dir: &Path, args: &[&str]) -> BeamResult<Option<String>> {
-    let output = git(dir).args(args).stderr(Stdio::null()).output()?;
-    Ok(output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).into_owned()))
-}
-
-fn run_git(dir: &Path, args: &[&str]) -> BeamResult<()> {
-    let output = git(dir).args(args).output()?;
-    if output.status.success() {
-        return Ok(());
-    }
-    Err(invalid(format!(
-        "git {} in {} failed: {}",
-        args.join(" "),
-        dir.display(),
-        String::from_utf8_lossy(&output.stderr).trim()
-    )))
-}
-
 fn folder_has_entries(path: &Path) -> BeamResult<bool> {
     match std::fs::read_dir(path) {
         Ok(mut entries) => Ok(entries.next().is_some()),
@@ -910,8 +617,4 @@ fn is_env_name(name: &str) -> bool {
         && name
             .bytes()
             .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
-}
-
-fn short(commit: &str) -> &str {
-    commit.get(..12).unwrap_or(commit)
 }

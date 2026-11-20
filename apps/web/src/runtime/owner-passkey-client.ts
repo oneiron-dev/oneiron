@@ -15,6 +15,11 @@
  * Nothing here holds or derives a key, and nothing decides who may act: the
  * routes refuse what the vault does not allow (a key a passkey vouched for
  * acts in part until a key that is no passkey confirms it).
+ *
+ * A passkey binds no one: the vault bars every passkey from signing the
+ * owner's `human` binding. On a Hosted or Relay vault the owner's device
+ * binds them with the owner device key it enrolled
+ * (`/v1/owner/owner-signing-keys/bind/prepare`, then `/bind/land`).
  */
 
 /** The COSE algorithm of ES256 (ECDSA P-256 with SHA-256): the only kind the engine enrolls. */

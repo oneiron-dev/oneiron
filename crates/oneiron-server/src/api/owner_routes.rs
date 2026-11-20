@@ -96,6 +96,7 @@ pub(super) mod model_setting_routes;
 mod oauth_authorization_routes;
 #[cfg(target_os = "linux")]
 pub(super) mod outbox_diverged_routes;
+pub(super) mod owner_key_binding_routes;
 pub(super) mod owner_key_enrollment_routes;
 pub(super) mod owner_passkey_routes;
 pub(super) mod owner_work_routes;
@@ -233,6 +234,7 @@ fn owner_tables() -> OwnerTable {
         world_privacy_routes::owner_table(),
         world_privacy_work_routes::owner_table(),
         owner_key_enrollment_routes::owner_table(),
+        owner_key_binding_routes::owner_table(),
         owner_passkey_routes::owner_table(),
         owner_work_routes::owner_table(),
         root_routes::owner_table(),

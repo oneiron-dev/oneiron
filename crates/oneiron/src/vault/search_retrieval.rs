@@ -230,6 +230,7 @@ impl Vault {
                     matches_scope: &mut admits,
                     private_note_ids: None,
                     recency: None,
+                    hidden_row: None,
                 },
             )?;
             observe(&txn, scores.as_slice());
@@ -349,6 +350,7 @@ impl Vault {
                     // FIX 9096 PART: no caller-side recency signal here; the
                     // direct-with-profile path still blends no recency.
                     recency: None,
+                    hidden_row: None,
                 },
             )?
         };

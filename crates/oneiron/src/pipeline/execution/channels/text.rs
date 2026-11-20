@@ -3,13 +3,14 @@
 use super::admit::{AdmitSignal, ChannelAccumulator};
 use super::turn_fold;
 use crate::bm25::Bm25Config;
+use crate::disclosure::DisclosureContext;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::pipeline::builder::PipelineBuilder;
 use crate::pipeline::channels::{fusion_fetch_limit, truncate_widened_channel_results_to_scope};
 use crate::pipeline::execution::types::HydeAttemptOverrides;
 use crate::pipeline::filters::{
-    claim_status_gate_allows, import_claim_gate_decisions_for_scores,
+    claim_status_gate_allows, clamp_hides_row, import_claim_gate_decisions_for_scores,
     pipeline_candidate_matches_filters_and_gate,
 };
 use crate::pipeline::types::{
@@ -84,10 +85,21 @@ impl PipelineBuilder<'_> {
                 expansion.grounded_query.as_str()
             });
             // A posting a device-local world keeps is no posting of this
-            // run: it neither fails the gate nor matches the scope.
+            // run: it neither fails the gate nor matches the scope. Nor is
+            // one a clamped pack's audience could not read whatever its
+            // status: the probe's rejections join the run's gate, so such a
+            // dead claim would count as suppressed.
             let exact_posting_fails_claim_gate = {
                 let mut exact_posting_fails_claim_gate = |id: &EntityId| {
-                    if claim_gate_widening_probe.keeps_device_local(&self.read, rtxn, id)? {
+                    if claim_gate_widening_probe.keeps_device_local(&self.read, rtxn, id)?
+                        || clamp_hides_row(
+                            &self.read,
+                            rtxn,
+                            id,
+                            filter_config.disclosure,
+                            metadata_cache,
+                        )?
+                    {
                         return Ok(false);
                     }
                     claim_status_gate_allows(
@@ -112,7 +124,15 @@ impl PipelineBuilder<'_> {
                 true
             } else {
                 let mut classify_prefix_posting = |id: &EntityId| {
-                    if claim_gate_widening_probe.keeps_device_local(&self.read, rtxn, id)? {
+                    if claim_gate_widening_probe.keeps_device_local(&self.read, rtxn, id)?
+                        || clamp_hides_row(
+                            &self.read,
+                            rtxn,
+                            id,
+                            filter_config.disclosure,
+                            metadata_cache,
+                        )?
+                    {
                         return Ok(crate::bm25::PrefixExpansionPostingDecision {
                             matches_scope: false,
                             rejected_by_gate: false,
@@ -154,6 +174,33 @@ impl PipelineBuilder<'_> {
         Ok(claim_gate_text_widening_active)
     }
 
+    /// A clamped read's own-row test for its BM25 statistics
+    /// ([`crate::bm25::Bm25SearchOptions::hidden_row`]), `None` without a
+    /// clamp. Each row it judges is a deadline checkpoint, as at the scope's
+    /// admission: under a clamp a term's document frequency asks it of every
+    /// posting. It answers each row once across the stage's reads (the turn
+    /// fold's longer reads ask again of the same postings).
+    fn hidden_row_test<'t>(
+        &'t self,
+        rtxn: &'t RoTxn<'_>,
+        clamp: Option<&'t DisclosureContext>,
+        metadata: &'t mut EntityMetadataCache,
+    ) -> Option<Box<dyn FnMut(&EntityId) -> Result<bool> + 't>> {
+        let clamp = clamp?;
+        let mut answers = std::collections::HashMap::<EntityId, bool>::new();
+        Some(Box::new(move |id: &EntityId| {
+            if let Some(&hidden) = answers.get(id) {
+                return Ok(hidden);
+            }
+            if let Some(deadline) = self.deadline {
+                deadline.checkpoint()?;
+            }
+            let hidden = clamp_hides_row(&self.read, rtxn, id, Some(clamp), metadata)?;
+            answers.insert(*id, hidden);
+            Ok(hidden)
+        }))
+    }
+
     /// Runs the text channel, the next of `stages_left` deadline stages, and
     /// its HyDE-retry extra queries, admitting each into `acc`. Returns the
     /// index the primary text list took in the ranked lists, `None` when no
@@ -181,7 +228,7 @@ impl PipelineBuilder<'_> {
             .as_ref()
             .map(|(query, limit)| (query.as_str(), fusion_fetch_limit(*limit)));
         if let Some((query, limit)) = &text_search
-            && let Some((text_results, exhausted)) =
+            && let Some((text_results, exhausted, withheld)) =
                 self.run_stage(RetrievalSignal::Text, stages_left, || {
                     self.text_stage(
                         rtxn,
@@ -194,6 +241,7 @@ impl PipelineBuilder<'_> {
         {
             diagnostics.succeeded.push(RetrievalSignal::Text);
             text_exhausted = exhausted;
+            acc.clamped_at_fetch.extend(withheld);
             text_channel_index = Some(acc.admit_channel(
                 RetrievalSignal::Text,
                 text_results,
@@ -220,6 +268,12 @@ impl PipelineBuilder<'_> {
                 let mut scan_metadata = EntityMetadataCache::default();
                 let retry_metadata = inputs.scan_metadata(self, metadata_cache, &mut scan_metadata);
                 let retry_filters = self.bounded_result_filters(inputs.filter_config);
+                let mut retry_hidden_metadata = EntityMetadataCache::default();
+                let mut retry_hidden_row = self.hidden_row_test(
+                    rtxn,
+                    inputs.filter_config.disclosure,
+                    &mut retry_hidden_metadata,
+                );
                 let mut retry_exact_posting_matches_scope = |id: &EntityId| {
                     pipeline_candidate_matches_filters_and_gate(
                         &self.read,
@@ -244,7 +298,11 @@ impl PipelineBuilder<'_> {
                             recency: None,
                             exact_posting_matches_scope: &mut retry_exact_posting_matches_scope,
                             private_note_ids: inputs.private_note_ids,
+                            hidden_row: retry_hidden_row
+                                .as_deref_mut()
+                                .map(|hidden| hidden as &mut dyn FnMut(&EntityId) -> Result<bool>),
                         },
+                        (inputs.filter_config.disclosure, &mut acc.clamped_at_fetch),
                     )?
                 } else {
                     self.vault.text_scoped_in_txn(
@@ -262,6 +320,9 @@ impl PipelineBuilder<'_> {
                             // table_default 0.35; the pipeline blends recency
                             // post-fusion on the non-port path instead.
                             recency: None,
+                            hidden_row: retry_hidden_row
+                                .as_deref_mut()
+                                .map(|hidden| hidden as &mut dyn FnMut(&EntityId) -> Result<bool>),
                         },
                     )?
                 };
@@ -305,7 +366,9 @@ impl PipelineBuilder<'_> {
     }
     /// The text stage itself: the scoped BM25 read, read on while folded
     /// turns are short, then cut to the run's own scope. Every candidate its
-    /// scope gate reads is a deadline checkpoint.
+    /// scope gate reads is a deadline checkpoint. Also returns the rows a
+    /// clamped pack's read kept out of its window
+    /// ([`Self::search_text_candidates`]).
     fn text_stage(
         &self,
         rtxn: &RoTxn<'_>,
@@ -313,7 +376,7 @@ impl PipelineBuilder<'_> {
         inputs: &TextChannelInputs<'_>,
         mut prefix_probe_claim_gate: ClaimStatusGateCache,
         (metadata_cache, claim_gate): (&mut EntityMetadataCache, &mut ClaimStatusGateCache),
-    ) -> Result<(Vec<ScoredEntity>, bool)> {
+    ) -> Result<(Vec<ScoredEntity>, bool, Vec<EntityId>)> {
         let scoped_text_limit = self.text_channel_limit(if inputs.overrides.widen_channel_limits {
             retry_channel_limit(limit)
         } else {
@@ -334,6 +397,9 @@ impl PipelineBuilder<'_> {
         let mut scan_metadata = EntityMetadataCache::default();
         let stage_metadata = inputs.scan_metadata(self, metadata_cache, &mut scan_metadata);
         let result_filters = self.bounded_result_filters(inputs.filter_config);
+        let mut hidden_metadata = EntityMetadataCache::default();
+        let mut hidden_row =
+            self.hidden_row_test(rtxn, inputs.filter_config.disclosure, &mut hidden_metadata);
         let mut exact_posting_matches_scope = |id: &EntityId| {
             pipeline_candidate_matches_filters_and_gate(
                 &self.read,
@@ -361,7 +427,11 @@ impl PipelineBuilder<'_> {
         let fold_cap = self.text_channel_limit(candidate_limit.saturating_mul(PER_SCAN_CAP_FACTOR));
         let mut fold_metadata = EntityMetadataCache::default();
         let mut fetch_limit = candidate_limit;
+        // The rows the last read kept out of its window: a longer read for
+        // folded turns places them anew.
+        let mut withheld = Vec::new();
         let (mut text_results, mut text_exhausted) = loop {
+            withheld.clear();
             let mut rows = if self.memory_category {
                 self.search_text_candidates(
                     rtxn,
@@ -371,7 +441,11 @@ impl PipelineBuilder<'_> {
                         recency: None,
                         exact_posting_matches_scope: &mut exact_posting_matches_scope,
                         private_note_ids: inputs.private_note_ids,
+                        hidden_row: hidden_row
+                            .as_deref_mut()
+                            .map(|hidden| hidden as &mut dyn FnMut(&EntityId) -> Result<bool>),
                     },
+                    (inputs.filter_config.disclosure, &mut withheld),
                 )?
             } else {
                 self.vault.text_scoped_in_txn(
@@ -389,6 +463,9 @@ impl PipelineBuilder<'_> {
                         // table_default 0.35; the pipeline blends recency
                         // post-fusion on the non-port path instead.
                         recency: None,
+                        hidden_row: hidden_row
+                            .as_deref_mut()
+                            .map(|hidden| hidden as &mut dyn FnMut(&EntityId) -> Result<bool>),
                     },
                 )?
             };
@@ -439,7 +516,7 @@ impl PipelineBuilder<'_> {
             &mut prefix_probe_claim_gate,
             &text_results,
         );
-        Ok((text_results, text_exhausted))
+        Ok((text_results, text_exhausted, withheld))
     }
     /// Keeps the rows of a widened text read that the run's own scope
     /// admits, up to `requested` results. A run that folds each MESSAGE into
@@ -491,13 +568,19 @@ impl PipelineBuilder<'_> {
     }
 
     /// The memory lane's text read: every posting through the lane's kinds
-    /// and, when `filter_all`, through the run's whole scope as well.
+    /// and, when `filter_all`, through the run's whole scope as well, which
+    /// asks a clamp first. Read through the lane alone, a clamped pack's
+    /// read asks the clamp's own-row test too, so a row the audience could
+    /// not read whatever its status takes no place in the read's `limit`,
+    /// and hands such rows back in `withheld` while they rank inside the
+    /// places a read without the clamp gives the lane's rows.
     fn search_text_candidates<F>(
         &self,
         rtxn: &RoTxn<'_>,
         config: &Bm25Config,
         (query, limit, filter_all): (&str, usize, bool),
         options: crate::bm25::Bm25SearchOptions<'_, F>,
+        (clamp, withheld): (Option<&DisclosureContext>, &mut Vec<EntityId>),
     ) -> Result<Vec<crate::pipeline::ScoredEntity>>
     where
         F: FnMut(&EntityId) -> Result<bool>,
@@ -515,6 +598,9 @@ impl PipelineBuilder<'_> {
             recency: options.recency,
             exact_posting_matches_scope: &mut matches_scope,
             private_note_ids: options.private_note_ids,
+            hidden_row: options
+                .hidden_row
+                .map(|hidden| hidden as &mut dyn FnMut(&EntityId) -> Result<bool>),
         };
         if filter_all {
             crate::bm25::search_text_filtered_with_recency(
@@ -529,9 +615,38 @@ impl PipelineBuilder<'_> {
         } else if self.memory_category {
             // Category admission consumes no claim body. D19 decisions made by
             // prefix/widening probes remain reusable by fusion and projection.
+            // Hidden rows that outrank a readable one would fill the window
+            // and leave it only before the blend, cutting the readable row
+            // out of the run (REVIEW-9980 round 1), so the clamp asks first.
+            // Read best first, a hidden row among the first `limit` lane rows
+            // it judges held a place the window gave it before, and the pack
+            // counts it as it did then. The read scores with the audience's
+            // document frequencies, so those places are that ranking's: a
+            // hidden row's own words weigh more there than they did without
+            // the clamp. With a port walk pending the read judges every
+            // posting in index order, so there the owner-side count takes
+            // the first `limit` hidden lane rows it meets. Each
+            // judged row under a clamp is a deadline checkpoint, as at the
+            // scope's admission: a read past many hidden rows stops there.
+            let mut clamp_metadata = EntityMetadataCache::default();
+            let mut places = 0_usize;
             let mut category = |id: &EntityId| {
-                super::super::super::capabilities::CapabilityLane::Memory
-                    .admits(&self.read, rtxn, id)
+                if !super::super::super::capabilities::CapabilityLane::Memory
+                    .admits(&self.read, rtxn, id)?
+                {
+                    return Ok(false);
+                }
+                if let Some(deadline) = self.deadline
+                    && clamp.is_some()
+                {
+                    deadline.checkpoint()?;
+                }
+                let hidden = clamp_hides_row(&self.read, rtxn, id, clamp, &mut clamp_metadata)?;
+                if hidden && places < limit {
+                    withheld.push(*id);
+                }
+                places = places.saturating_add(1);
+                Ok(!hidden)
             };
             crate::bm25::search_text_category_with_recency(
                 &self.read,

@@ -129,8 +129,9 @@ fn pin_and_read_policy(memory: &Memory<'_>, owner: &AuthenticatedOwner) -> Retri
         memory,
         owner,
         RetrievalPolicyPinRequest {
-            signal: RetrievalBlendSignal::Recency,
+            signal: Some(RetrievalBlendSignal::Recency),
             value: Some(0.25),
+            read_shape: None,
         },
     )
     .expect("pin recency weight");

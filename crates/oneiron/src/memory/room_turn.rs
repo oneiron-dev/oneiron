@@ -305,6 +305,7 @@ impl<'v> Memory<'v> {
                 external_git_source_host: None,
                 repo_tool_recipient: self.repo_tool_recipient.clone(),
                 read_filter: self.read_filter.clone(),
+                dispatch_attempt: self.dispatch_attempt,
             },
         })
     }

@@ -73,6 +73,25 @@ pub fn fold_past_overflow_prefix_image(
     fold_past_built_image(vault, covered, true)
 }
 
+/// `op` over `parents`, signed by `issuer`'s host key as the host signs its
+/// own authority rows, and not stored: a test builds a row the roster
+/// believes above a withheld parent, which no public act signs, since each
+/// signs over the vault's held heads (FIX
+/// [ADOPTED-PENDING-BATCH-BELIEF-RED-TEST]).
+///
+/// # Errors
+///
+/// The row's transcript does not encode.
+pub fn host_signed_row(
+    issuer: &crate::authority::HostSlipIssuer,
+    vault_id: AuthorityVaultId,
+    seq: u64,
+    parents: Vec<AuthorityEntryHash>,
+    op: AuthorityOp,
+) -> Result<AuthorityLogEntry> {
+    issuer.sign_entry(Some(vault_id), seq, parents, op, 1)
+}
+
 /// [`fold_past_prefix_image`], with the image's residence bodies dropped
 /// where `overflow` asks.
 fn fold_past_built_image(
