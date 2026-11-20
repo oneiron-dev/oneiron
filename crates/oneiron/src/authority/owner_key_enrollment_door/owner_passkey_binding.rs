@@ -232,8 +232,16 @@ impl Vault {
             return Err(not_valid(NOT_OWNERS_PASSKEY));
         }
         self.refuse_owner_passkey_binding_in_txn(&txn, &fold, actor, &key)?;
-        if entry.seq < next_sequence(&fold, &key)? {
+        let next = next_sequence(&fold, &key)?;
+        if entry.seq < next {
             return Err(not_valid(PREPARED_PASSKEY_BINDING_STALE));
+        }
+        // Prepare names the passkey's next sequence, which only grows: an
+        // entry above it is none prepare built. Landed, it would move the
+        // passkey's next sequence to its own, at `u64::MAX` past every one it
+        // could sign (blind review #10043 P1).
+        if entry.seq > next {
+            return Err(not_valid(NOT_PREPARED_PASSKEY_BINDING));
         }
         entry.signer.signature = assertion;
         // A raw P-256 signature is no assertion: the passkey's binding needs
