@@ -492,6 +492,8 @@ impl ResidenceRpc {
                 return Err(RpcFault::remote());
             }
             if reply.kind == "rpc.err" {
+                // Scratch diagnostic (never merged): the home's whole refusal.
+                eprintln!("RESIDENCE-RPC-REFUSAL method={method} payload={:?}", reply.payload);
                 let code = reply.payload.as_map().and_then(|fields| {
                     fields
                         .iter()
