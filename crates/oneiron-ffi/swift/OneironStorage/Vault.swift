@@ -646,6 +646,15 @@ public final class Engine {
 
     public func wake() throws { try OneironStorageError.checkEngine(oneiron_engine_wake(handle)) }
 
+    /// What the app observes about fetching predictions on this machine: on an unmetered network,
+    /// and on power. A phone at the predicted level asks and fetches only while both hold, closed
+    /// until the app reports; the report holds across `stop`, `wake` and every reconnect. Report
+    /// again on each change the network and power monitors see.
+    public func setFetchConditions(unmetered: Bool, powered: Bool) throws {
+        try OneironStorageError.checkEngine(
+            oneiron_engine_set_fetch_conditions(handle, unmetered ? 1 : 0, powered ? 1 : 0))
+    }
+
     public func stop() throws { try OneironStorageError.checkEngine(oneiron_engine_stop(handle)) }
 
     /// The engine's own open vault, shared rather than opened again.

@@ -4,6 +4,8 @@
 
 use std::collections::BTreeMap;
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{
     DreamCut, DreamSource, DreamSourceKind, PAD_CUT_MARK, PADS, PADS_SECTION, ResidentDreamPartial,
     ResidentDreamProgress, Room, WORDS_CUT_MARK, diary_review_words, read_on_from, resident_forks,
@@ -360,5 +362,5 @@ pub(super) fn cut_health(
 
 /// `blake3:<hex>` of a pad's text as the cut found it (FIX 7753).
 fn text_hash(text: &str) -> String {
-    format!("blake3:{}", blake3::hash(text.as_bytes()).to_hex())
+    format!("blake3:{}", ContentHash::of(text.as_bytes()).to_hex())
 }

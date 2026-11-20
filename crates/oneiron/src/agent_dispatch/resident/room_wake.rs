@@ -19,19 +19,29 @@
 //! which the run works in (ROOM-SCOPED-PINS P2c), and its dispatch input
 //! carries the other turns' keys. A room wake never carries another room's
 //! turn or an inbox message: its run works in its one room.
+//!
+//! A busy resident gets no second wake (AGM-2 = C; BUSY-ROOM-TURN-ROUTE = C,
+//! Engine 17 Nov 00:11). A waking turn lands on the running wake when that
+//! wake is a room wake of the turn's room, as one line naming the room and
+//! the turn, at its next step boundary; it stays staged until a step
+//! applies it, so a wake that ends without applying it leaves it to wake the
+//! resident again. Any other waking turn stays staged and wakes the resident
+//! once its run has ended.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
+use super::message_wake::RESIDENT_INBOX_SIGNAL_ACTOR;
 use super::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher,
-    AgentSpawnContext, DispatchAgent, ResidentAgentSpec, ResidentInboxDispatch, ResidentWakeMode,
-    WAKE_CARRY_LIMIT, resident_run_id,
+    AgentSpawnContext, DispatchAgent, ResidentAgentSpec, ResidentInboxDispatch, ResidentRunView,
+    ResidentWakeMode, WAKE_CARRY_LIMIT, resident_run_id,
 };
 use crate::EntityId;
-use crate::attempt_queue::AttemptRecord;
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::context_projection::ContextSpec;
-use crate::error::Result;
-use crate::workspace_roster::StagedRoomWake;
+use crate::error::{Error, Result};
+use crate::run_tree::{RunSignalInput, RunSignalKind, RunTreeAdapter};
+use crate::workspace_roster::{StagedRoomWake, turn_room_in};
 
 /// The dedupe-key segment that marks a resident's room wake.
 const ROOM_WAKE_KEY: &str = "room";
@@ -99,17 +109,32 @@ fn room_wake_briefing(room: EntityId, turns: &[StagedRoomWake]) -> String {
     briefing
 }
 
+/// The line a room turn lands on a resident's running wake with: the room
+/// and the turn by ref, as a steer. The running wake reads the room through
+/// its own reads; the line copies nothing of the turn.
+fn room_turn_line(room: EntityId, turn: EntityId) -> String {
+    serde_json::json!({
+        "room": room.to_hex(),
+        "turn": turn.to_hex(),
+        "class": "steer",
+    })
+    .to_string()
+}
+
 impl AgentDispatcher<'_> {
     /// Dispatches resident `spec`'s staged room wakes under its wake mode and
-    /// hold, each turn at most once (`woken` holds the keys its run already
-    /// took), and settles each one taken, woken or not. A turn that does not
-    /// wake it settles at once; a waking turn whose room's hold still runs
-    /// stays staged, and `pass` records when that hold falls due. Stops,
-    /// leaving the rest staged, once `pass` holds `limit` new dispatches.
+    /// hold, each turn at most once (`view.woken` holds the keys its run
+    /// already took), and settles each one taken, woken or not. A turn that
+    /// does not wake it settles at once; a waking turn whose room's hold
+    /// still runs stays staged, and `pass` records when that hold falls due.
+    /// Stops, leaving the rest staged, once `pass` holds `limit` new
+    /// dispatches. A busy resident gets no wake (module docs): its waking
+    /// turns land on the running wake or stay staged, and a turn landed on
+    /// a wake no step has applied yet stays staged, untouched.
     pub(super) fn dispatch_resident_room_wakes(
         &self,
         spec: &ResidentAgentSpec,
-        woken: &HashSet<String>,
+        view: &ResidentRunView,
         limit: usize,
         now: u64,
         pass: &mut ResidentInboxDispatch,
@@ -121,6 +146,13 @@ impl AgentDispatcher<'_> {
             if staged.wake.agent != agent {
                 continue;
             }
+            let key = format!(
+                "{AGENT_DISPATCH_ATTEMPT_TYPE}:{}",
+                room_wake_key(agent, staged.wake.turn)
+            );
+            if view.landed.contains(&key) {
+                continue;
+            }
             let wakes = match spec.wake {
                 ResidentWakeMode::Manual => false,
                 mode => self
@@ -130,12 +162,15 @@ impl AgentDispatcher<'_> {
                         mode == ResidentWakeMode::AllAddressed || turn.speaker_is_person
                     }),
             };
-            let key = room_wake_key(agent, staged.wake.turn);
-            if wakes && !woken.contains(&format!("{AGENT_DISPATCH_ATTEMPT_TYPE}:{key}")) {
+            if wakes && !view.woken.contains(&key) {
                 rooms.entry(staged.wake.room).or_default().push(staged);
             } else {
                 settled.push(staged.attempt);
             }
+        }
+        if view.busy {
+            self.land_busy_resident_room_turns(spec, view.running, &rooms)?;
+            return self.vault.settle_room_wakes(&settled, now);
         }
         let hold = u64::from(spec.wake_hold_secs);
         'rooms: for (room, mut turns) in rooms {
@@ -179,5 +214,60 @@ impl AgentDispatcher<'_> {
             }
         }
         self.vault.settle_room_wakes(&settled, now)
+    }
+
+    /// BUSY-ROOM-TURN-ROUTE = C: lands each waking turn in `rooms` that the
+    /// running wake `running` of busy resident `spec` works in on that wake,
+    /// as one [`room_turn_line`], when that wake is a room wake: its run
+    /// works in the room whose turn woke it (ROOM-SCOPED-PINS P2c). A turn of
+    /// another room, or any turn while no room wake runs, waits staged for a
+    /// later pass. A landing the wake no longer admits (it ended between the
+    /// read and this write) is logged, and the turn waits.
+    fn land_busy_resident_room_turns(
+        &self,
+        spec: &ResidentAgentSpec,
+        running: Option<AttemptId>,
+        rooms: &BTreeMap<EntityId, Vec<StagedRoomWake>>,
+    ) -> Result<()> {
+        let agent = spec.agent_def_ref;
+        let Some(branch) = running.filter(|_| !rooms.is_empty()) else {
+            return Ok(());
+        };
+        let room = {
+            let txn = self.vault.store.env.read_txn()?;
+            let Some(record) = AttemptQueue::new(self.vault).get_in_txn(&txn, branch)? else {
+                return Ok(());
+            };
+            let Some(turn) = resident_attempt_room_wake_turn(&record, agent) else {
+                return Ok(());
+            };
+            turn_room_in(self.vault, &txn, turn)?
+        };
+        let Some((&room, turns)) = room.and_then(|room| rooms.get_key_value(&room)) else {
+            return Ok(());
+        };
+        let mut turns: Vec<_> = turns.iter().collect();
+        turns.sort_by_key(|staged| (staged.staged_at, staged.attempt));
+        let adapter = RunTreeAdapter::new(self.vault);
+        for staged in turns {
+            let landed = adapter.signal(RunSignalInput {
+                branch,
+                run_id: resident_run_id(agent),
+                key: room_wake_key(agent, staged.wake.turn),
+                actor: RESIDENT_INBOX_SIGNAL_ACTOR.to_owned(),
+                kind: RunSignalKind::Interject {
+                    content: room_turn_line(room, staged.wake.turn),
+                },
+            });
+            match landed {
+                Ok(_) => {}
+                Err(Error::InvalidConfig(reason)) => tracing::info!(
+                    %reason,
+                    "a room turn did not land on a resident's running wake"
+                ),
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
     }
 }

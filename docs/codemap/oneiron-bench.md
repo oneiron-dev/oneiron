@@ -27,6 +27,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/chroma/tests.rs` | test | s | 1 crate-vis | — | — |
 | `src/beam/chroma/tests/support.rs` | test | s | — | — | — |
 | `src/beam/citations.rs` | src | m | 4 crate-vis | — | Evidence-backed per-number citations |
+| `src/beam/code_bench/grade.rs` | src | m | 2 crate-vis | — | `beam code-bench <attempts.json>`: grade what the writers left |
+| `src/beam/code_bench/manifest.rs` | src | m | 18 crate-vis | — | The CODE-BENCH task manifest (`fixtures/code_bench.tasks.v1.json`): three merged PRs of our repo, each with… |
+| `src/beam/code_bench/mcp_probe.rs` | src | s | 1 crate-vis | — | Probes each MCP server a run plan declares before any cell that needs it is ready |
+| `src/beam/code_bench/mod.rs` | src | s | 1 crate-vis | — | CODE-BENCH (ARCH-0042 #code-bench, owner intent 2026-10-21, cut by 90%): a small dogfood check of Oneiron… |
+| `src/beam/code_bench/pack.rs` | src | L | 5 crate-vis | — | `beam code-bench-pack <plan.json>`: materialize every ready cell for the run's driver, and list every cell… |
+| `src/beam/code_bench/profile.rs` | src | m | 24 crate-vis | — | Each CODE-BENCH arm is a fixed tool profile plus the pieces it needs |
+| `src/beam/code_bench/transcript.rs` | src | m | 2 crate-vis | — | Reads one writer's transcript in Claude Code's `--output-format stream-json`: one JSON object per line… |
 | `src/beam/community.rs` | src | m | 9 crate-vis | — | Community-beam run, timing loop, and aggregate gating |
 | `src/beam/comparability.rs` | src | s | 10 crate-vis | — | Seven independent comparability axes and per-number publication decisions |
 | `src/beam/corpus_clock.rs` | src | s | 1 crate-vis | — | Dataset valid-time admission |
@@ -86,6 +93,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cua/taskgen.rs` | src | s | 6 crate-vis | — | Freeze paired seeds, disjoint holdouts and rotated arm assignments |
 | `src/eval.rs` | src | m | 2 crate-vis | — | ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop |
 | `src/eval/outcome_ingest.rs` | src | s | 1 crate-vis | — | JSONL terminal retrieval outcome ingest for the explicit eval command |
+| `src/eval/phonetic.rs` | src | m | 1 crate-vis | — | `eval phonetic` (CROSS-ARCH-0013 §11): the cross-script name bench that decides whether a learned phonetic… |
 | `src/eval/route_calibration.rs` | src | s | 1 crate-vis | — | `eval route-calibration` (Engine row 22229, PR 2): the known-answer bench that gives route-conditioned… |
 | `src/eval/route_calibration/cases.rs` | src | s | 8 crate-vis | — | The bench's two operator inputs, each checked whole before any vault exists: the one standing question… |
 | `src/eval/route_calibration/house_read.rs` | src | s | 5 crate-vis | — | The house model's decision read as the ladder's escalation rung, built from the `--models-toml` file as the… |
@@ -125,22 +133,31 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/interface_bench/tests_a.rs` | src | s | 2 crate-vis | — | Taskgen, config, and memo tests |
 | `src/interface_bench/tests_b.rs` | src | s | — | — | Pinned-model tests |
 | `src/interface_bench/wire_and_scoring.rs` | src | m | 13 crate-vis | — | Request hashing, memo keys, and provider wire calls |
-| `src/load/client.rs` | src | s | 10 crate-vis | — | One agent on the facade doors: its signed slip, a fresh holder proof per request, and the three verbs the… |
+| `src/load/client.rs` | src | m | 11 crate-vis | — | One agent on the facade doors: its signed slip, a fresh holder proof per request, and the three verbs the… |
 | `src/load/corpus.rs` | src | m | 16 crate-vis | — | The synthetic corpus: invented words drawn with Zipf frequencies from a fixed seed, so two runs of one plan… |
-| `src/load/corpus_recall.rs` | src | m | 1 crate-vis | — | `load corpus-recall` — warm recall latency on a vault seeded from a recorded conversation corpus, on the… |
-| `src/load/dream.rs` | src | m | 1 crate-vis | — | `load dream` — one Dreamer cycle end to end on the shipped server binary (L07 DREAM-BENCH) |
+| `src/load/corpus_recall.rs` | src | m | 2 crate-vis | — | `load corpus-recall` — warm recall latency on a vault seeded from a recorded conversation corpus, on the… |
+| `src/load/dream.rs` | src | m | 6 crate-vis | — | `load dream` — one Dreamer cycle end to end on the shipped server binary (L07 DREAM-BENCH) |
+| `src/load/dream/call_attribution.rs` | src | s | 2 crate-vis | — | Which durable step sent each recorded model call (FIX DREAMER-CALL-ATTEMPT-ID) |
 | `src/load/dream/call_proxy.rs` | src | L | 5 crate-vis | — | The model-call timing proxy of `load dream` (FIX 21929) |
-| `src/load/dream/cycle.rs` | src | m | 20 crate-vis | — | The cycle itself: the session hints that open and end the sitting (`POST /v1/ai/session`, `api/ai/mod.rs`)… |
+| `src/load/dream/cycle.rs` | src | m | 22 crate-vis | — | The cycle itself: the session hints that open and end the sitting (`POST /v1/ai/session`, `api/ai/mod.rs`)… |
 | `src/load/dream/proof.rs` | src | s | 4 crate-vis | — | Whether a recall finds what the cycle landed: the landed claim ids (the stage lines' `landed_ids`, else the… |
 | `src/load/dream/report.rs` | src | m | 4 crate-vis | — | The `load dream` result: the JSON report and the summary lines on stdout |
-| `src/load/dream/server_log.rs` | src | s | 14 crate-vis | — | The server log as `load dream` reads it: the lines written since the last read, the Dreamer's `dreamer… |
-| `src/load/dream/setup.rs` | src | s | 7 crate-vis | — | What `load dream` sets up before the server starts: the model check, the `[models]` section that routes… |
+| `src/load/dream/server_log.rs` | src | s | 16 crate-vis | — | The server log as `load dream` reads it: the lines written since the last read, the Dreamer's `dreamer… |
+| `src/load/dream/setup.rs` | src | s | 9 crate-vis | — | What `load dream` sets up before the server starts: the model check, the `[models]` section that routes… |
 | `src/load/dream/turns.rs` | src | m | 12 crate-vis | — | The recorded corpus `load dream` seeds: one JSON line per turn (world, person, day, conversation_ref… |
 | `src/load/embedder.rs` | src | s | 9 crate-vis | — | A stand-in embedder on loopback: the plain OpenAI `/v1/embeddings` wire, answering bag-of-words vectors |
+| `src/load/lives/answer.rs` | src | m | 9 crate-vis | — | Judged answers (ASK L9-36-ACCURACY = C, its second column): one pinned reader answers each asked question… |
+| `src/load/lives/corpus.rs` | src | m | 12 crate-vis | — | The lives corpus: the synthetic-lives generation run's JSONL as it is (one life per line), every turn's… |
+| `src/load/lives/dreamed.rs` | src | m | 16 crate-vis | — | The `oneiron-dreamed` arm (ASK L9-36-ONEIRON-INGEST = C): the Oneiron store with its Dreamer on, every role… |
+| `src/load/lives/external.rs` | src | s | 3 crate-vis | — | Systems other than Oneiron on the lives screen (L9-36-COMPETITORS = A: this is the seam; each competitor's… |
+| `src/load/lives/mod.rs` | src | m | 4 crate-vis | — | `load lives` — the synthetic-lives screen (ARCH-0042 #lives-bench; census row L9-36): every system ingests… |
+| `src/load/lives/oneiron.rs` | src | m | 2 crate-vis | — | The Oneiron store of the lives screen: the shipped `oneiron-server` spawned on loopback and called as a… |
+| `src/load/lives/report.rs` | src | m | 17 crate-vis | — | The lives screen's JSON report: one row per question per grade per system, with its accuracy and its latency… |
+| `src/load/lives/score.rs` | src | s | 5 crate-vis | — | Context accuracy with no model (ASK L9-36-ACCURACY = C, its first column): whether a system's top-k returned… |
 | `src/load/mod.rs` | src | m | 2 crate-vis | — | `load` subcommand — the engine's load bench on the shipped server binary |
-| `src/load/phases.rs` | src | m | 13 crate-vis | — | The measured cells: ingest by one and by many callers, recall at each grade and agent count, the mixed and… |
+| `src/load/phases.rs` | src | m | 14 crate-vis | — | The measured cells: ingest by one and by many callers, recall at each grade and agent count, the mixed and… |
 | `src/load/report.rs` | src | m | 10 crate-vis | — | The result file, and `load compare`, which reads two of them |
-| `src/load/server.rs` | src | m | 22 crate-vis | — | The shipped `oneiron-server` binary as a child process: `init`, `whoami`, `token agent` on the stopped… |
+| `src/load/server.rs` | src | m | 23 crate-vis | — | The shipped `oneiron-server` binary as a child process: `init`, `whoami`, `token agent` on the stopped… |
 | `src/load/startup.rs` | src | s | 1 crate-vis | — | `load startup`: the server's memory while the shipped local embedding model loads, which is where its… |
 | `src/load/stats.rs` | src | s | 4 crate-vis | — | Latency summaries: nearest-rank percentiles over completed requests, with failures counted beside them and… |
 | `src/main.rs` | src | m | — | — | oneiron-bench — benchmark harness drivers |
@@ -179,8 +196,22 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/perf/sessions.rs` | src | m | 8 crate-vis | — | ONE-1579 axis 3: the concurrent-session curve against ONE vault |
 | `src/perf/trust.rs` | src | m | 14 crate-vis | — | ONE-1961 trust classes for publication evidence |
 | `src/perf/wake.rs` | src | s | 1 crate-vis | — | ONE-1579 axis 2: process spawn-to-ready wake latency |
+| `src/ppr_walk_share.rs` | src | m | 1 crate-vis | — | `ppr-walk-share` — share of High recall wall time in the narrowed PPR walks (UNBUILT3-06) |
 | `src/retrieval_trace_export.rs` | src | m | 4 crate-vis | — | — |
 | `src/retrieval_turn_corpus.rs` | src | m | 1 crate-vis | — | Offline replay of finalized, turn-indexed retrieval runs |
+| `src/scorecard/campaign.rs` | src | s | 8 crate-vis | — | The campaign file behind `scorecard compare` and the sealed run |
+| `src/scorecard/compare.rs` | src | m | 1 crate-vis | — | `scorecard compare`: judge a candidate against the incumbent, on held_out or sealed |
+| `src/scorecard/convert.rs` | src | s | 1 crate-vis | — | `scorecard convert`: LongMemEval-S JSON into pack slices and their split file |
+| `src/scorecard/convert_trec.rs` | src | s | 1 crate-vis | — | `scorecard convert-trec`: TREC-shaped collections into pack slices |
+| `src/scorecard/embed.rs` | src | m | 1 crate-vis | — | `scorecard pack-embed`: fill one pack slice's vectors from the served embedder |
+| `src/scorecard/grade.rs` | src | s | 1 crate-vis | — | `scorecard grade-run`: grade a TREC run file into a scorecard |
+| `src/scorecard/keyword.rs` | src | s | 7 crate-vis | — | The keyword arm: one throwaway vault per corpus, scored with a rank profile |
+| `src/scorecard/mod.rs` | src | s | 6 crate-vis | — | The retrieval ruler (RESEARCH-0651 Tier 0): replay a fixed query pack, grade the run, judge candidates |
+| `src/scorecard/params.rs` | src | s | 4 crate-vis | — | The `oneiron.retrieval_eval_params.v1` eval params file: blend weights for one run |
+| `src/scorecard/profile.rs` | src | s | 6 crate-vis | — | The `oneiron.bm25_rank_profile.v1` rank profile file: BM25F weights for one keyword run |
+| `src/scorecard/record.rs` | src | s | 2 crate-vis | — | `scorecard proposals` and `scorecard stamp`: list proposals, record the owner's stamp |
+| `src/scorecard/run.rs` | src | L | 6 crate-vis | — | `scorecard run`: replay one pack slice through fresh throwaway vaults, grade the run |
+| `src/scorecard/tune.rs` | src | m | 1 crate-vis | — | `scorecard tune-bm25f`: coordinate ascent over the BM25F rank profile on the search slice |
 | `src/swarm.rs` | src | m | 1 crate-vis | — | Seeded single-vault, in-process agent-swarm baseline |
 | `src/teacher_probe.rs` | src | s | 1 crate-vis | — | Offline extraction-teacher admission over the fixed CoNLL BIO probe |
 | `src/teacher_probe_tests.rs` | test | s | — | — | — |
@@ -191,5 +222,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vector/vector_tests.rs` | test | s | — | — | Vector bench contract and end-to-end tests |
 | `tests/beam_picks_for_cli.rs` | test | s | — | — | `oneiron-bench beam measure --picks-for` (census L9-32; Engine ruling L9-32-PICK-WRITER, Sat 14 Nov 07:43)… |
 | `tests/cleanup_retrieval.rs` | test | s | — | — | ANN recall corpus `ann_seed42.v1` (source: ec9cbdec92e7dbcc865b9958dd1ff8652714d6c7). rand 0.8.8 StdRng seed… |
+| `tests/code_bench_cli.rs` | test | L | — | — | `oneiron-bench beam code-bench-pack` (plan L4-02, CODE-BENCH; ARCH-0042 #code-bench; Engine ruling… |
 | `tests/e2e_approved_manifest_fixture.rs` | test | s | — | — | Runs the shipped bench flow to produce and check the approved E2E manifest fixture |
+| `tests/lives_bench_cli.rs` | test | L | — | — | `oneiron-bench load lives` (census L9-36; ARCH-0042 #lives-bench): the synthetic-lives screen ingests the… |
+| `tests/retrieval_matrix_cli.rs` | test | m | — | — | The retrieval matrix CLI end to end: the mini pack converts, the keyword arm grades it to hand-counted… |
+| `tests/scorecard_cli.rs` | test | L | — | — | Drive the shipped `scorecard` CLI end to end: fixtures in, JSON out |
+| `tests/scorecard_compare.rs` | test | L | — | — | Drive `scorecard compare`, `proposals` and `stamp` end to end: fixtures in, JSON out |
 | `tests/teacher_probe_cli.rs` | test | s | — | — | Run the shipped binary, not only its Rust scoring function, against CI fixtures |

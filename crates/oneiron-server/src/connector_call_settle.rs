@@ -62,10 +62,6 @@ pub(crate) const CONNECTOR_SETTLE_INTERVAL: Duration = Duration::from_secs(30);
 /// answer's own drive is never raced.
 const BROWSER_WAIT_DRIVE_AFTER: Duration = CONNECTOR_SETTLE_INTERVAL;
 
-/// Paced verb calls' turns one settle pass runs (FIX 8753): one per
-/// principal per round, so one pass serves many principals' heads.
-const PACED_VERB_TURNS_PER_PASS: usize = 64;
-
 /// The longest a call that stays held or undelivered waits between two of
 /// its resumes.
 pub(crate) const CONNECTOR_SETTLE_MAX_BACKOFF: Duration = Duration::from_secs(15 * 60);
@@ -127,6 +123,10 @@ impl SyncServer {
                 tokio::runtime::Handle::current(),
             ),
         ));
+        // This host runs the paced line's turns, in both builds: through the
+        // check above, or each refused at once without one, as before
+        // (DESIGN 15-setting-primitive, stage 5c-2).
+        self.vault().install_paced_verb_turn_runner();
         tokio::spawn(settle_forever(Arc::clone(self), admit))
     }
 }
@@ -202,8 +202,9 @@ fn settle_connector_calls(
     }
     // Verb calls a budget window paced take their fair turns, each through
     // its own door and Gate again, or end unrun past their deadline (FIX
-    // 8753). Before the connector listing: none of them is a connector call.
-    if let Err(error) = vault.drain_paced_verb_calls(PACED_VERB_TURNS_PER_PASS) {
+    // 8753): the paced line's row, when it is due (stage 5c-2). Before the
+    // connector listing: none of them is a connector call.
+    if let Err(error) = vault.run_due_paced_verb_line() {
         tracing::warn!(%error, "paced verb calls wait for the next pass");
     }
     crate::connector_call_host::resume_exchanges(server, &mut backoffs.1);

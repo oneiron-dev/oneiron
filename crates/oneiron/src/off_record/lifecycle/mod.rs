@@ -100,6 +100,7 @@ pub(crate) use self::registry::OffRecordSessionRegistry;
 pub use self::retained::{RetainedCharge, room_entry_bytes};
 pub use self::room::{SavedTurns, room_session_key};
 pub(crate) use self::room_births::RoomRowAttachments;
+pub(crate) use self::room_pack::StretchRoom;
 pub use self::room_pack::{RoomPackRead, RoomPackSession};
 pub(crate) use self::session::OverlayShellReservation;
 pub use self::session::{OffRecordSession, OffRecordSessionVault};
@@ -111,10 +112,10 @@ pub use self::types::{
 };
 
 #[cfg(test)]
+mod tests_flip_drain;
+#[cfg(test)]
 mod tests_session_reads;
 
-// FIX [LIBTEST-QUARANTINE-OFF-RECORD-TESTS]: the lib test target's type check fails here (30 errors: E0063 x18, E0061 x9, E0639 x2, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 #[path = "../tests.rs"]
 mod tests;

@@ -343,7 +343,7 @@ impl ScopedRead<'_> {
                 let scope = admin.read_scope_in_txn(self.vault, txn).ok()?;
                 (self.actor_key.actor_ref() == admin.actor().to_hex()
                     && !self.actor_key.reads_as_vault_owner()
-                    && self.actor_key.owner_exemption.is_none()
+                    && self.actor_key.relationship_gate_lift_owner().is_none()
                     && self.actor_key.authority_scope().is_some_and(|held| {
                         held.is_narrowing_of(&super::ScopedReadActorKey::read_authority(&scope))
                     }))

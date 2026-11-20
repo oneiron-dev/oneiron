@@ -3,15 +3,15 @@
 //! Chat types and shared helpers stay in the parent; start_turn keeps its original chat-only scope.
 
 use super::{
-    Answer, AnswerOpen, AnswerRefused, Arc, ChatTurnRequest, CoreAuth, CoreScope, EntityId,
-    HOST_TURN_GENERATE, HistoryRole, IntoResponse, Json, JsonRejection, LlmMessage, LlmMessageRole,
-    MessageWriteMode, Refused, ReplyAssertionCollector, RoleRefusal, Started, StatusCode,
-    StreamCadence, StreamSyncVisibility, SyncServer, TurnCredential, Value, VerbCall, WITNESS_ROW,
-    WakeTurnSubject, WitnessAuthor, WriteActor, after_turn, assistant, begin_sourced_answer,
-    compaction, credential_memory, hook_ask, hook_stopped, invocation, keepalive_every,
-    mark_history_end, principal, recall, refused, resolve_entity_ref, room_launch_funding,
-    segments, sitting, sources, text_message, turn_generate_pre, verb_hook_boundary,
-    witness_through_row, witness_turn,
+    Answer, AnswerOpen, AnswerRefused, Arc, CallerClock, ChatTurnRequest, CoreAuth, CoreScope,
+    EntityId, HOST_TURN_GENERATE, HistoryRole, IntoResponse, Json, JsonRejection, LlmMessage,
+    LlmMessageRole, MessageWriteMode, Refused, ReplyAssertionCollector, RoleRefusal, Started,
+    StatusCode, StreamCadence, StreamSyncVisibility, SyncServer, TurnCredential, Value, VerbCall,
+    WITNESS_ROW, WakeTurnSubject, WitnessAuthor, WriteActor, after_turn, assistant,
+    begin_sourced_answer, compaction, credential_memory, hook_ask, hook_stopped, invocation,
+    keepalive_every, mark_history_end, principal, recall, refused, resolve_entity_ref,
+    room_launch_funding, segments, sitting, sources, text_message, turn_generate_pre,
+    verb_hook_boundary, witness_through_row, witness_turn,
 };
 use crate::api::ai::room_place::{reply_place, stamp_reply};
 
@@ -24,6 +24,9 @@ pub(in crate::api::ai::chat) async fn start_turn(
     payload: Result<Json<ChatTurnRequest>, JsonRejection>,
     mark: oneiron::conversation::OutputMark,
 ) -> Result<Started, Refused> {
+    // The turn's `deadline_ms` counts from here, before anything is read
+    // (census L9-23).
+    let arrived = tokio::time::Instant::now();
     // A turn reads the agent and the conversation, and writes both turns.
     for scope in [CoreScope::Read, CoreScope::Write] {
         auth.require(scope)
@@ -105,9 +108,9 @@ pub(in crate::api::ai::chat) async fn start_turn(
         sources.craft(&craft.entries);
     }
     let system_end = messages.len();
-    // FIX 4465 D: a self agent on its live fork reads its log from the
-    // retained ledger, as the caller reads it where it sits; every other
-    // turn takes the caller's lines as before.
+    // FIX 4465 D: a self agent reads its log from the retained ledger on
+    // every self row (L10-33), as the caller reads it where it sits; every
+    // other turn takes the caller's lines as before.
     let self_reader = || match auth.principal_ref() {
         Some(_) => credential_memory(&vault, Some(auth), actor, class).at(locality),
         None => vault.memory(actor, class),
@@ -139,8 +142,8 @@ pub(in crate::api::ai::chat) async fn start_turn(
         None => {
             let skip = request.history.len().saturating_sub(settings.history_turns);
             for earlier in request.history.into_iter().skip(skip) {
-                // A caller's line names no row it was read from.
-                sources.add(None);
+                // A caller's line is its own text: no row the vault fed.
+                sources.caller_text();
                 let role = match earlier.role {
                     HistoryRole::User => LlmMessageRole::User,
                     HistoryRole::Assistant => LlmMessageRole::Assistant,
@@ -275,20 +278,31 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // Each session is judged on the call's own input (FIX 10344), as a row
     // door's is: a call that serves a room NOTE keeps its records there.
     let at = vault.now_recorded_at();
+    // A retry whose user witness a hook's ask held is that held call: it
+    // takes the first try's stamps, its time and its TURN id, so the resumed
+    // chain checks the call the ask held, and the board below names the TURN
+    // that witness writes (FIX CHAT-WITNESS-ASK-RESUME-ARGS-DRIFT). The reply
+    // keeps its own time.
+    let saved =
+        crate::server::blocking(|| super::hooks::saved_witness_stamps(&vault, &hooked_call()))
+            .map_err(|error| engine(&error))?;
     // The user's TURN id is minted here on the canonical door, so the board
     // below names on its recall the TURN the user's words are witnessed in
     // (FIX RETRIEVAL-TURN-CONVENTION-HOST-STAMP); a session door's witness
     // mints its own. A turn that answers in a thread replies there to the
     // TURN it names, so the reply below answers this one (FIX 3572); a trunk
     // reply answers in the trunk.
-    let user_turn_ref = session_binding.is_none().then(EntityId::now);
+    let user_turn_ref = match &saved {
+        Some(stamps) => stamps.turn_ref,
+        None => session_binding.is_none().then(EntityId::now),
+    };
     let user_turn_id = user_turn_ref.filter(|_| reply_to.is_some());
     let mut user_turn = witness_turn(
         &request.conversation_ref,
         user_turn_ref,
         WitnessAuthor::User,
         request.text.clone(),
-        at,
+        saved.as_ref().map_or(at, |stamps| stamps.occurred_at),
     );
     if let Some(parent) = reply_to {
         stamp_reply(&mut user_turn, parent);
@@ -642,6 +656,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
             today: None,
             craft,
             assertions: ReplyAssertionCollector::default(),
+            clock: CallerClock::starting(arrived, request.deadline_ms),
         },
         sources.rows(),
     )
@@ -653,6 +668,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
         AnswerRefused::NotAdmitted(reason) => {
             refused(StatusCode::PAYMENT_REQUIRED, "turn_not_admitted", reason)
         }
+        AnswerRefused::Model(failure) => Box::new(failure.refusal()),
     })?;
     let answering = after_turn(hooks_vault, generating, answering);
     // FIX 6921: the answer's context records, kept once it is handed on.

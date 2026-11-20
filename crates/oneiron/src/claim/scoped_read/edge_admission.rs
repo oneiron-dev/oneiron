@@ -51,6 +51,8 @@ pub(super) struct AdmittedEdgeScan {
     pub(super) source: ReadAdmission<()>,
     pub(super) edges: Vec<AdmittedEdge>,
     pub(super) suppressed: usize,
+    /// The withheld peers `suppressed` counts, each once.
+    pub(super) suppressed_peers: HashSet<EntityId>,
 }
 impl ScopedRead<'_> {
     /// Project a known stored edge with both endpoints under this reader's
@@ -140,6 +142,7 @@ impl ScopedRead<'_> {
             source,
             edges: Vec::new(),
             suppressed: 0,
+            suppressed_peers: HashSet::new(),
         };
         if !result.source.visible() || limit == 0 || scan_limit == 0 {
             return Ok(result);
@@ -168,6 +171,8 @@ impl ScopedRead<'_> {
             ScanCount::start(&self.vault.store, txn, EngineScan::ScopedEdgeRows, &scope)?;
         let mut seen = HashSet::new();
         seen.insert(*center);
+        // A withheld peer counts once however many edges reach it.
+        let mut suppressed_peers = HashSet::new();
         for row in rows {
             count.row();
             let edge = row?;
@@ -186,7 +191,9 @@ impl ScopedRead<'_> {
                 || Ok(ReadAdmission::Visible(())),
                 || admit(&peer),
             )?;
-            result.suppressed += admitted.suppression();
+            if admitted.suppression() > 0 {
+                suppressed_peers.insert(peer);
+            }
             if let Some(edge) = admitted.into_option() {
                 if unique_targets && !seen.insert(peer) {
                     continue;
@@ -197,19 +204,33 @@ impl ScopedRead<'_> {
                 }
             }
         }
+        result.suppressed = suppressed_peers.len();
+        result.suppressed_peers = suppressed_peers;
         count.defer(&self.vault.store);
         Ok(result)
     }
 
     /// An anchor's weighted neighborhood from ONE snapshot under one receipt:
-    /// out-edges, then in-edges, each admitted with its exact relation and
-    /// its peer. A withheld pair or an edge under `min_weight` never spends
-    /// one of the `limit` slots. The value is `None` when the anchor itself is
-    /// withheld or missing. `project` labels the rows in the same snapshot.
+    /// out-edges, then in-edges (only those `direction` names), each admitted
+    /// with its exact relation and its peer. A withheld pair or an edge under
+    /// `min_weight` never spends one of the `limit` slots. The value is `None`
+    /// when the anchor itself is withheld or missing. `project` labels the
+    /// rows in the same snapshot.
+    /// A withheld anchor, and each withheld peer the scan reached, counts once
+    /// in the receipt; an opaque one never does (as `edges_out`). A peer on an
+    /// edge of the other direction is not scanned, so it never counts. With
+    /// `peer_type`, a peer of another stored type is neither listed nor
+    /// counted: the caller could never use it.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "anchor, direction, relation, peer type and two budgets are distinct axes"
+    )]
     pub(crate) fn neighborhood_projected<T, E: From<Error>>(
         &self,
         center: &EntityId,
+        direction: EdgeDirection,
         kind: Option<EdgeKind>,
+        peer_type: Option<u8>,
         min_weight: Option<f32>,
         limit: usize,
         project: impl FnOnce(
@@ -221,8 +242,15 @@ impl ScopedRead<'_> {
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let anchor = self.admit_entity_in(&txn, &policy, &filter, center)?;
         let mut neighbors = Vec::new();
+        // A withheld peer counts once however many edges reach it.
+        let mut suppressed_peers = HashSet::new();
+        let directions: &[EdgeDirection] = match direction {
+            EdgeDirection::Out => &[EdgeDirection::Out],
+            EdgeDirection::In => &[EdgeDirection::In],
+            EdgeDirection::Both => &[EdgeDirection::Out, EdgeDirection::In],
+        };
         if anchor.visible() && limit > 0 {
-            'scan: for direction in [EdgeDirection::Out, EdgeDirection::In] {
+            'scan: for &direction in directions {
                 let rows = match self.session_view {
                     Some(view) => view.port_edges(&txn, center, direction, kind, None)?,
                     None => self.vault.port_edges(&txn, center, direction, kind, None)?,
@@ -233,6 +261,13 @@ impl ScopedRead<'_> {
                         continue;
                     }
                     let peer = edge.target;
+                    if let Some(wanted) = peer_type
+                        && self
+                            .entity_record_in(&txn, &peer)?
+                            .is_none_or(|row| row.entity_type != wanted)
+                    {
+                        continue;
+                    }
                     let outbound = direction == EdgeDirection::Out;
                     let (src, tgt) = if outbound {
                         (*center, peer)
@@ -248,6 +283,9 @@ impl ScopedRead<'_> {
                         || Ok(ReadAdmission::Visible(())),
                         || self.admit_entity_in(&txn, &policy, &filter, &peer),
                     )?;
+                    if admitted.suppression() > 0 {
+                        suppressed_peers.insert(peer);
+                    }
                     let Some(edge) = admitted.into_option() else {
                         continue;
                     };
@@ -264,7 +302,8 @@ impl ScopedRead<'_> {
                 }
             }
         }
-        let receipt = self.receipt_for(None, &policy, &filter, 0);
+        let suppressed = anchor.suppression() + suppressed_peers.len();
+        let receipt = self.receipt_for(None, &policy, &filter, suppressed);
         Ok(ScopedReadResult {
             value: project(&txn, anchor.visible().then_some(neighbors))?,
             receipt,
@@ -277,10 +316,16 @@ impl ScopedRead<'_> {
     /// decodes each admitted live row; a row it declines is not in the tree
     /// and is not descended. The value is `None` when the root is withheld,
     /// missing or declined. `project` labels the nodes in the same snapshot.
+    /// A withheld root or child counts once in the receipt and its subtree is
+    /// not read; an opaque or declined row, or one below `max_depth`, never
+    /// counts (as `edges_out` and `memory_timeline` count). With `node_type`,
+    /// a child of another stored type is neither read nor counted: it could
+    /// never be a node of the tree.
     pub(crate) fn child_of_tree_projected<N, T, E: From<Error>>(
         &self,
         root: &EntityId,
         max_depth: u32,
+        node_type: Option<u8>,
         node: impl Fn(&[u8]) -> std::result::Result<Option<N>, E>,
         project: impl FnOnce(
             &heed::RoTxn<'_>,
@@ -291,17 +336,27 @@ impl ScopedRead<'_> {
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         // One held authority for the tree's node reads in this txn (FIX 7462).
         let held = self.held_for(None);
-        let anchor = self.admit_entity_in(&txn, &policy, &filter, root)?;
+        let read_node = |id: &EntityId| {
+            self.admit_in(&txn, id, || {
+                self.entity_raw_with_mode_held_in(&txn, &policy, &filter, id, ReadMode::Live, &held)
+            })
+        };
+        let node_type_holds = |id: &EntityId| -> Result<bool> {
+            Ok(match node_type {
+                None => true,
+                Some(wanted) => self
+                    .entity_record_in(&txn, id)?
+                    .is_some_and(|row| row.entity_type == wanted),
+            })
+        };
+        let root_row = match self.admit_entity_in(&txn, &policy, &filter, root)? {
+            ReadAdmission::Visible(()) => read_node(root)?,
+            ReadAdmission::Suppressed => ReadAdmission::Suppressed,
+            ReadAdmission::OpaqueAbsent => ReadAdmission::OpaqueAbsent,
+        };
+        let mut suppressed = root_row.suppression();
         let mut tree = None;
-        if anchor.visible()
-            && let Some(row) = self.entity_raw_with_mode_held_in(
-                &txn,
-                &policy,
-                &filter,
-                root,
-                ReadMode::Live,
-                &held,
-            )?
+        if let Some(row) = root_row.into_option()
             && let Some(value) = node(&row.raw)?
         {
             let mut nodes = vec![ChildOfTreeNode {
@@ -329,6 +384,12 @@ impl ScopedRead<'_> {
                     usize::MAX,
                     true,
                 )?;
+                // A child its edge admission withholds counts here, unread.
+                for peer in &admitted.suppressed_peers {
+                    if node_type_holds(peer)? {
+                        suppressed += 1;
+                    }
+                }
                 // Inbound views carry the child in `edge.target`.
                 let mut children: Vec<EntityId> = admitted
                     .edges
@@ -337,15 +398,12 @@ impl ScopedRead<'_> {
                     .collect();
                 children.sort_unstable();
                 for child in children {
-                    let Some(row) = self.entity_raw_with_mode_held_in(
-                        &txn,
-                        &policy,
-                        &filter,
-                        &child,
-                        ReadMode::Live,
-                        &held,
-                    )?
-                    else {
+                    if !node_type_holds(&child)? {
+                        continue;
+                    }
+                    let child_row = read_node(&child)?;
+                    suppressed += child_row.suppression();
+                    let Some(row) = child_row.into_option() else {
                         continue;
                     };
                     if let Some(value) = node(&row.raw)? {
@@ -360,7 +418,8 @@ impl ScopedRead<'_> {
             }
             tree = Some(nodes);
         }
-        let receipt = self.receipt_for(None, &policy, &filter, 0);
+        let receipt = self.receipt_for(None, &policy, &filter, suppressed);
+        self.charge_served(tree.iter().flatten().map(|node| node.id));
         Ok(ScopedReadResult {
             value: project(&txn, tree)?,
             receipt,

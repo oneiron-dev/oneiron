@@ -46,7 +46,8 @@ pub enum ImportOmissionReason {
     HubConfigurationNotRestored,
     /// Policy bodies remain archive data; only a local authority can install policy.
     PolicyAuthorityNotRestored,
-    /// A foreign authority roster, grant, address or credential binding is not a local act.
+    /// A foreign authority roster, grant, address, credential binding or world key pad is
+    /// not a local act.
     LocalAuthorityNotRestored,
     /// Local audit/sequence history remains readable archive data, never replay authority.
     LocalHistoryNotRestored,
@@ -70,6 +71,38 @@ pub enum ImportOmissionReason {
     /// source vault, and the import never passes a signed write off as an
     /// unsigned one (FIX 3497).
     MachineSignedClaimNotRestored,
+    /// A claim about a link the import does not bring back (the archive
+    /// does not carry the link, or the link is not a plain one restored
+    /// before it): the claim door reads its link live, so the claim stays
+    /// archive data. An edge-provenance claim whose link the import leaves
+    /// out stays archive data the same way, as does one on a `same_as` link
+    /// this vault already held, which keeps its own provenance history.
+    ClaimSubjectEdgeNotRestored,
+    /// A coreference share consent: it counts only as this vault's own
+    /// Approved act, and an imported claim is neither, so the restored link
+    /// stays local until the owner consents again.
+    CoreferenceConsentNotRestored,
+    /// A claim about a row the import keeps as archive data (for a reason in
+    /// this list): the claim door reads its subject live, so the claim stays
+    /// archive data too.
+    ClaimSubjectNotRestored,
+    /// An edge-provenance claim whose restore the gate would pend: the
+    /// import restores it as an Imported Auto claim of its annotator, which
+    /// a policy manifest with no Imported Auto row for that annotator holds
+    /// for review (the shipped manifest has none). Only the owner's own
+    /// restore carries a permit for it, so through any other door the claim
+    /// stays archive data with the rest of its link's provenance history,
+    /// and the link comes back bare. A claim this vault already holds open,
+    /// whose archived close the gate would hold the same way, stays here as
+    /// it was and is named under this reason too.
+    ProvenanceAutoNotPermitted,
+    /// A room this vault does not hold, whose members, shared pins, pin
+    /// policy, closed bit or leader chat binding only a room door of this
+    /// vault writes, kept as archive data by every door but the owner's
+    /// restore, with each TURN that is its child and each MESSAGE that
+    /// belongs to it: no TURN or MESSAGE lands outside the room whose
+    /// members read it.
+    RoomNotSeatedHere,
 }
 
 /// Foundations not stored as vault-owned source. Never fabricate PACK.md/code.

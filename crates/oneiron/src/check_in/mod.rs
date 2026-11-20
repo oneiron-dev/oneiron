@@ -52,6 +52,7 @@ mod policy;
 mod receipt;
 mod resolve;
 mod role_preset;
+mod room_add;
 pub(crate) mod tables;
 mod verb_act_class;
 mod waits;
@@ -60,6 +61,7 @@ mod wake;
 pub use act_class::{ACT_CLASS, ActClass, ActClassRow, ModelCheck, ProofKind, UndoClass};
 pub(crate) use asker::{AskVerdict, judge_ask_in_txn};
 pub(crate) use chain::agent_grant_role_in_txn;
+pub(crate) use chain::caller_spawn_parent_in_txn;
 // The chain 2e's host builds; until then only `test_doors::check_in` does.
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use chain::{AgentHolderVerdict, NoAgentVerdict, VerifiedChain};
@@ -81,6 +83,11 @@ pub(crate) use pending::{
     answer_pending_check_in_in_txn, erase_pending_check_in_actor_in_txn,
     keyed_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn, pending_check_in_in_txn,
 };
+pub use room_add::{ROOM_ADD_FROM_NOW_REASON, ROOM_ADD_NOT_GRANTED_REASON, room_add_effect_digest};
+pub(crate) use room_add::{
+    agent_add_is_from_now, owner_room_add_decision, room_add_check_in_in_txn,
+    walk_in_check_in_in_txn,
+};
 // The doors 2c and 2e-2l call; until then only `test_doors::check_in` does.
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use pending::{
@@ -98,13 +105,13 @@ pub use resolve::{
     check_in, check_in_with_mode, resolve_mode,
 };
 pub use role_preset::{ROLE_PRESET, RoleDefault, RolePreset, RolePresetRow};
-pub use verb_act_class::{VerbActClass, verb_act_class};
+pub use verb_act_class::{VerbActClass, verb_act_class, verb_needs_owner_confirm};
 pub use waits::CheckInTransition;
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use waits::advance_pending_check_in_in_txn;
+pub(crate) use wake::CHECK_IN_DUE_JOB;
 #[cfg(oneiron_test_support)]
 pub(crate) use wake::due_rows;
-pub(crate) use wake::next_check_in_due_at;
 
 // The erase doors' apply shape (2k2; P25-SHAPE Q1 = A).
 pub(crate) use effect::{AppliedCheckIn, owner_act_decision_in_txn};

@@ -5,6 +5,8 @@ use super::*;
 pub(super) fn open_raw_test_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), embedding_test_config()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
     (dir, vault)
 }
 
@@ -74,6 +76,12 @@ pub(super) fn seed_raw_claim_record(vault: &Vault, id: &EntityId, body: ClaimBod
         crate::test_util::entity_record(ENTITY_TYPE_CLAIM, occurred, learned_at, 0, &data);
 
     let mut wtxn = vault.store.env.write_txn()?;
+    crate::batch::reindex_lexical_query_hint(
+        &vault.store,
+        &mut wtxn,
+        id,
+        Some((ENTITY_TYPE_CLAIM, &data)),
+    )?;
     vault
         .store
         .entities

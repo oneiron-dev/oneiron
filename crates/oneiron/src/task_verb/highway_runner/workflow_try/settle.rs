@@ -64,6 +64,10 @@ pub(crate) fn settle(
         ended.as_str(),
     )?;
     txn.commit()?;
+    // This settle commits outside the write door: a task-held inquiry
+    // answer of the TASK it ended leaves memory here (FIX
+    // INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE).
+    vault.evict_inquiry_answers_after_commit([&end.task]);
     let Some(receipt) = receipt else {
         return Ok(false);
     };

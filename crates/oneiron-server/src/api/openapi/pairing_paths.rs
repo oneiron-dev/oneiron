@@ -378,7 +378,8 @@ fn redeem_body() -> Value {
 }
 
 /// The joining machine's enrolment on the wire: `MachineEnrolment`
-/// (`pairing.rs:200-209`, seven required fields, denied unknown fields
+/// (`pairing.rs:200-209`, seven required fields and an optional
+/// `restored_from`, denied unknown fields
 /// `pairing.rs:199`). Vault and machine-key ids are 64 hex, the machine is
 /// an entity id in hex, the device class is required, the encryption key is
 /// base64 and the proof is 128 hex (`MachineEnrolment::request`,
@@ -395,7 +396,8 @@ fn machine_enrolment_schema() -> Value {
             "device_class": {"type": "string", "enum": ["phone", "computer"], "description": "What kind of machine it is, as its host declares it (MachineDeviceClass, machine_profile.rs:94-97)."},
             "encryption_suite": {"type": "integer", "minimum": 0, "maximum": 65535, "description": "The encryption suite number."},
             "encryption_key": {"type": "string", "description": "The machine's public encryption key in standard base64."},
-            "machine_proof": {"type": "string", "description": "The enrolment proof, 128 lower hex."}
+            "machine_proof": {"type": "string", "description": "The enrolment proof, 128 lower hex."},
+            "restored_from": {"type": "string", "description": "The checkpoint image a restore made the joining install from, 64 lower hex; present only for such an install, whose proof then signs the restored transcript (row RESTORED-COPIES-ENROL-EACH-OTHER)."}
         }
     })
 }

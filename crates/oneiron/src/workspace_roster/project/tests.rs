@@ -5,8 +5,6 @@ mod cycle_model;
 mod history;
 #[cfg(feature = "sync")]
 mod history_bounds_fall;
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-HISTORY-BUDGET]: the lib test target's type check fails here (3 errors: E0061 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(feature = "sync")]
 mod history_budget;
 #[cfg(feature = "sync")]
@@ -17,24 +15,16 @@ mod history_cycles_closure;
 mod history_cycles_guards;
 #[cfg(feature = "sync")]
 mod history_cycles_kept;
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-HISTORY-CYCLES-NAMED]: the lib test target's type check fails here (3 errors: E0308 x2, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(feature = "sync")]
 mod history_cycles_named;
 #[cfg(feature = "sync")]
 mod history_doors;
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-HISTORY-REFRESH-ORDER]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(feature = "sync")]
 mod history_refresh_order;
 #[cfg(feature = "sync")]
 mod history_resolution;
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-HISTORY-TRANSPORT]: the lib test target's type check fails here (10 errors: E0061 x5, E0308 x5); port it, then drop this gate
-#[cfg(any())]
 #[cfg(feature = "sync")]
 mod history_transport;
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-ROOM-FACET]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 mod room_facet;
 mod support;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
@@ -42,8 +32,8 @@ use crate::edge::EdgeKind;
 use rmpv::Value;
 
 use super::*;
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-SUPPORT-ITEMS]: re-exports signed_birth, gated for the lib test target's type check; port it with that item, then drop this gate
-#[cfg(any())]
+pub(crate) use authority::sign_with as sign_project_with_for_scan_tests;
+pub(crate) use authority::spawn_signed as spawn_signed_project_for_scan_tests;
 #[cfg(feature = "sync")]
 pub(crate) use support::signed_birth as create_project_signed_for_test;
 pub(crate) use support::signed_depth as set_project_depth_signed_for_test;
@@ -179,6 +169,7 @@ fn deleting_project_removes_derived_room_and_member_access() -> Result<()> {
     for door in [0, 1, 2] {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let root = vault.root_project()?;
         let owner = vault
             .ensure_embedded_owner_actor()
@@ -286,6 +277,7 @@ fn erased_parent_is_invalid_not_a_pending_dependency() -> Result<()> {
     for hard in [false, true] {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let root = vault.root_project()?;
         let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
         let parent = EntityId::now();
@@ -347,6 +339,7 @@ fn mint_fixture(
             conversation_ref: room.to_hex(),
             turn_ref: Some(EntityId::now().to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![crate::memory::WitnessMessage {
                 id: Some(message.to_hex()),
                 author: crate::memory::WitnessAuthor::User,
@@ -411,15 +404,16 @@ fn mint_fixture(
     Ok((card, tap, owner, skill))
 }
 
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-ITEMS]: the lib test target's type check fails here (4 errors: E0061 x4); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn approved_project_card_mints_one_atomic_branch_and_grant() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
     let (card, tap, owner, source_skill) = mint_fixture(&vault)?;
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"project-mint-test-host")?;
+    vault.ensure_host_root_slip(&issuer)?;
+    let signer = vault.owner_project_signer(&issuer)?;
     let root = vault.root_project()?;
-    let receipt = vault.mint_project_from_card(&card, &tap, &owner)?;
+    let receipt = vault.mint_project_from_card(&card, &tap, &owner, &signer)?;
     let id = EntityId::from_hex(&receipt.project_id)?;
     let project = vault.project(id)?.expect("minted project");
     assert_eq!(project.parents, vec![root.to_hex()]);
@@ -479,6 +473,31 @@ fn approved_project_card_mints_one_atomic_branch_and_grant() -> Result<()> {
     assert_eq!(envelope.budget(), Some(1200));
     assert!(envelope.receipt_required());
     assert_eq!(envelope.selectors(), &[format!("project:{}", id.to_hex())]);
+    // The room reads only what every member may read (FIX 5545): the roster
+    // agent peer needs its own core:read, or the opening header is withheld.
+    let scope = crate::federation::scope_codec::read_preset();
+    let grants: Vec<_> = project
+        .roster
+        .iter()
+        .map(|actor_ref| {
+            serde_json::json!({
+                "actor_ref": actor_ref, "effector": "core:read",
+                "scope": scope, "receipt_required": false
+            })
+        })
+        .collect();
+    let policy = serde_json::json!({
+        "schema_version": "1.2", "pack_id": "mint-read-fixture",
+        "pack_version": "1", "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {"criticality": "normal", "sensitivity": "normal"},
+        "rules": [],
+        "scoped_grants": grants
+    });
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        EntityId::now(),
+        &rmp_serde::to_vec_named(&policy).expect("read policy"),
+    )?;
     let room = EntityId::from_hex(&project.home_room)?;
     let history = vault
         .memory(owner.actor(), crate::edge::EdgeActorClass::Human)
@@ -528,7 +547,10 @@ fn approved_project_card_mints_one_atomic_branch_and_grant() -> Result<()> {
         gate[0].actor_ref.as_deref(),
         Some(owner.actor().to_hex().as_str())
     );
-    assert_eq!(vault.mint_project_from_card(&card, &tap, &owner)?, receipt);
+    assert_eq!(
+        vault.mint_project_from_card(&card, &tap, &owner, &signer)?,
+        receipt
+    );
     assert_eq!(vault.project_room_changes(id)?.len(), 1);
     assert_eq!(
         vault
@@ -555,7 +577,7 @@ fn approved_project_card_mints_one_atomic_branch_and_grant() -> Result<()> {
         crate::store::GateDecisionId::now(),
     )?;
     assert_eq!(
-        reopened.mint_project_from_card(&card, &tap, &owner)?,
+        reopened.mint_project_from_card(&card, &tap, &owner, &signer)?,
         receipt
     );
     assert_eq!(reopened.project(id)?, Some(project));
@@ -567,7 +589,7 @@ fn approved_project_card_mints_one_atomic_branch_and_grant() -> Result<()> {
             .is_active()
     );
     assert_eq!(
-        reopened.mint_project_from_card(&card, &tap, &owner)?,
+        reopened.mint_project_from_card(&card, &tap, &owner, &signer)?,
         receipt
     );
     assert!(
@@ -658,25 +680,30 @@ fn project_depth_is_person_editable_and_round_trips_with_member_refs() -> Result
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-ITEMS]: the lib test target's type check fails here (4 errors: E0061 x4); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn project_mint_rejects_unapproved_or_changed_cards_without_writes() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
     let (card, mut tap, owner, skill) = mint_fixture(&vault)?;
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"project-mint-test-host")?;
+    vault.ensure_host_root_slip(&issuer)?;
+    let signer = vault.owner_project_signer(&issuer)?;
     let projects = vault.entities_by_type(vault.project_type_byte()?)?.len();
     let skills = vault
         .entities_by_type(crate::registry::ENTITY_TYPE_SKILL)?
         .len();
     tap.action = crate::genui::ConsentActionKind::Decline;
-    assert!(vault.mint_project_from_card(&card, &tap, &owner).is_err());
+    assert!(
+        vault
+            .mint_project_from_card(&card, &tap, &owner, &signer)
+            .is_err()
+    );
     tap.action = crate::genui::ConsentActionKind::ProjectMint;
     let mut missing = card.clone();
     missing.starting_skill_refs[0] = EntityId::now().to_hex();
     assert!(
         vault
-            .mint_project_from_card(&missing, &tap, &owner)
+            .mint_project_from_card(&missing, &tap, &owner, &signer)
             .is_err()
     );
     assert_eq!(
@@ -690,12 +717,12 @@ fn project_mint_rejects_unapproved_or_changed_cards_without_writes() -> Result<(
         skills
     );
     assert!(vault.get_skill_record(&skill)?.is_some());
-    let receipt = vault.mint_project_from_card(&card, &tap, &owner)?;
+    let receipt = vault.mint_project_from_card(&card, &tap, &owner, &signer)?;
     let mut changed = card;
     changed.goal.why = "Different card".into();
     assert!(
         vault
-            .mint_project_from_card(&changed, &tap, &owner)
+            .mint_project_from_card(&changed, &tap, &owner, &signer)
             .is_err()
     );
     assert_eq!(
@@ -726,8 +753,6 @@ fn raw_project_depth_outside_projection_bound_is_rejected() -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-ITEMS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn project_born_from_is_message_at_typed_batch_and_replay_doors() -> Result<()> {
     let dir = tempfile::tempdir()?;
@@ -761,7 +786,7 @@ fn project_born_from_is_message_at_typed_batch_and_replay_doors() -> Result<()> 
         assert_eq!(
             vault
                 .batch()
-                .put_replicated(&id, vault.project_type_byte()?, at, 21, &bytes)
+                .put_replicated(&id, vault.project_type_byte()?, at, 21, None, &bytes)
                 .commit()
                 .unwrap_err()
                 .kind(),
@@ -780,14 +805,12 @@ fn project_born_from_is_message_at_typed_batch_and_replay_doors() -> Result<()> 
     let bytes = encode(&project)?;
     vault
         .batch()
-        .put_replicated(&id, vault.project_type_byte()?, at, 21, &bytes)
+        .put_replicated(&id, vault.project_type_byte()?, at, 21, None, &bytes)
         .commit()?;
     assert_eq!(vault.project(id)?.unwrap().born_from, project.born_from);
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-ITEMS]: the lib test target's type check fails here (12 errors: E0063 x8, E0061 x2, E0308 x1, E0277 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<()> {
     use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
@@ -837,16 +860,21 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
         let turn = WitnessTurn {
             conversation_ref: chat.to_hex(),
             turn_ref: None,
+            thread_audience: None,
+            project: None,
             occurred_at: at,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,
                 message_type: "text".into(),
                 content: "hello".into(),
+                parts: None,
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
+            assertions: Default::default(),
         };
         let receipt = vault
             .memory(actor, EdgeActorClass::Human)
@@ -866,16 +894,21 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
     let append = |message: EntityId, order: u32, content: &str| WitnessTurn {
         conversation_ref: chat.to_hex(),
         turn_ref: Some(alice_turn.to_hex()),
+        thread_audience: None,
+        project: None,
         occurred_at: 5,
         messages: vec![WitnessMessage {
             id: Some(message.to_hex()),
             author: WitnessAuthor::User,
             message_type: "text".into(),
             content: content.into(),
+            parts: None,
             metadata: None,
             is_visible: true,
             order,
+            quote: None,
         }],
+        assertions: Default::default(),
     };
     let bob_message = EntityId::now();
     let denied = vault
@@ -909,16 +942,21 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
     let streamed = WitnessTurn {
         conversation_ref: chat.to_hex(),
         turn_ref: Some(EntityId::now().to_hex()),
+        thread_audience: None,
+        project: None,
         occurred_at: 5,
         messages: vec![WitnessMessage {
             id: Some(streamed_message.to_hex()),
             author: WitnessAuthor::User,
             message_type: "text".into(),
             content: String::new(),
+            parts: None,
             metadata: None,
             is_visible: true,
             order: 0,
+            quote: None,
         }],
+        assertions: Default::default(),
     };
     let alice_memory = vault.memory(alice, EdgeActorClass::Human);
     let handle = alice_memory
@@ -933,12 +971,16 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
     assert_eq!(vault.leader_chat_message_scope(streamed_message)?, Some(a));
     scopes.push((streamed_message, a));
     // The other direct-chat turn door stamps the same speaker scope.
-    let dag = vault.append_dag_record(&crate::conversation_dag::fixtures::input(
+    let writer = vault.memory(alice, EdgeActorClass::Human);
+    let input = crate::conversation_dag::fixtures::input(
         chat,
         vault.head(&chat)?,
         true,
         crate::WriteActor::new(alice, EdgeActorClass::Human),
-    ))?;
+    );
+    let dag = vault
+        .append_dag_record(&writer, &input)
+        .map_err(|err| Error::InvalidConfig(err.to_string()))?;
     assert_eq!(vault.leader_chat_message_scope(dag.id)?, Some(a));
     scopes.push((dag.id, a));
     // The audience axis is authoritative; an accessor label alone is not.
@@ -1047,31 +1089,36 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
     assert!(
         matches!(backdated, Error::Record(RecordError::LeaderChatRule { rule: found }) if found == rule)
     );
-    let blocked_dag = vault
-        .append_dag_record(&crate::conversation_dag::fixtures::input(
-            chat,
-            vault.head(&chat)?,
-            true,
-            crate::WriteActor::new(alice, EdgeActorClass::Human),
-        ))
-        .unwrap_err();
-    assert!(
-        matches!(blocked_dag, Error::Record(RecordError::LeaderChatRule { rule: found }) if found == rule)
+    let blocked_input = crate::conversation_dag::fixtures::input(
+        chat,
+        vault.head(&chat)?,
+        true,
+        crate::WriteActor::new(alice, EdgeActorClass::Human),
     );
+    let blocked_dag = vault
+        .append_dag_record(&writer, &blocked_input)
+        .unwrap_err();
+    assert_eq!(blocked_dag.code, crate::memory::MEMORY_CODE_FORBIDDEN);
+    assert!(blocked_dag.message.contains(&rule.to_hex()));
     let message = EntityId::now();
     let turn = WitnessTurn {
         conversation_ref: chat.to_hex(),
         turn_ref: None,
+        thread_audience: None,
+        project: None,
         occurred_at: 4,
         messages: vec![WitnessMessage {
             id: Some(message.to_hex()),
             author: WitnessAuthor::User,
             message_type: "text".into(),
             content: "backdated".into(),
+            parts: None,
             metadata: None,
             is_visible: true,
             order: 0,
+            quote: None,
         }],
+        assertions: Default::default(),
     };
     let denied = vault
         .memory(alice, EdgeActorClass::Human)
@@ -1223,8 +1270,6 @@ fn cross_project_widen_asks_the_shared_ancestor_board_not_the_other_leader() -> 
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-ITEMS]: the lib test target's type check fails here (2 errors: E0061 x1, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn leader_chat_membership_keeps_binding_but_allows_history_leave_and_rejoin() -> Result<()> {
     use crate::conversation::HistoryChoice;
@@ -1269,15 +1314,15 @@ fn leader_chat_membership_keeps_binding_but_allows_history_leave_and_rejoin() ->
             vault.conversation_body(room)?.extra[super::leader_chat::CHAT_FIELD],
             binding
         );
-        let refused = vault
-            .append_dag_record(&crate::conversation_dag::fixtures::input(
-                room,
-                None,
-                true,
-                crate::WriteActor::new(leaver, EdgeActorClass::Human),
-            ))
-            .unwrap_err();
-        assert_eq!(refused.kind(), crate::ErrorKind::ConversationDenied);
+        let leaver_memory = vault.memory(leaver, EdgeActorClass::Human);
+        let input = crate::conversation_dag::fixtures::input(
+            room,
+            None,
+            true,
+            crate::WriteActor::new(leaver, EdgeActorClass::Human),
+        );
+        let refused = vault.append_dag_record(&leaver_memory, &input).unwrap_err();
+        assert_eq!(refused.code, crate::memory::MEMORY_CODE_FORBIDDEN);
         vault.join_member(room, leaver, writer, 6, HistoryChoice::None)?;
         assert_eq!(vault.members(room)?, vec![bob, alice]);
         assert_eq!(vault.windows(room, leaver)?.len(), 2);
@@ -1533,8 +1578,6 @@ fn generic_edges_cannot_invent_or_retire_project_parents() -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-ITEMS]: the lib test target's type check fails here (3 errors: E0061 x2, E0308 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn replicated_chat_and_turn_cannot_self_attest_a_project_scope() -> Result<()> {
     use crate::{
@@ -1553,7 +1596,7 @@ fn replicated_chat_and_turn_cannot_self_attest_a_project_scope() -> Result<()> {
     let binding = super::leader_chat::LeaderChat {
         projects: [project_a, project_b],
         actors: [false_leader_a, false_leader_b],
-        persons: [person_a, person_b],
+        persons: [Some(person_a), Some(person_b)],
     };
     let mut body = crate::conversation::ConversationBody {
         kind: crate::conversation::ConversationKind::Direct,
@@ -1572,8 +1615,15 @@ fn replicated_chat_and_turn_cannot_self_attest_a_project_scope() -> Result<()> {
     let at = TimeRange { start: 1, end: 1 };
     vault
         .batch()
-        .put_replicated(&room, ENTITY_TYPE_CONVERSATION, at, 1, &body.to_bytes()?)
-        .put_replicated(&turn, ENTITY_TYPE_TURN, at, 1, &forged_turn)
+        .put_replicated(
+            &room,
+            ENTITY_TYPE_CONVERSATION,
+            at,
+            1,
+            None,
+            &body.to_bytes()?,
+        )
+        .put_replicated(&turn, ENTITY_TYPE_TURN, at, 1, None, &forged_turn)
         .edge_with_value_fields(
             &turn,
             EdgeKind::ChildOf,
@@ -1696,8 +1746,6 @@ fn collection_membership_is_low_weight_and_never_accepts_claims() -> Result<()> 
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn project_body_updates_preserve_venture_org_edge_and_retire_only_old_project_parent() -> Result<()>
 {
@@ -1757,6 +1805,7 @@ fn project_body_updates_preserve_venture_org_edge_and_retire_only_old_project_pa
             vault.project_type_byte()?,
             TimeRange { start: 6, end: 6 },
             6,
+            None,
             &encode(&edited)?,
         )
         .commit()?;
@@ -1774,6 +1823,7 @@ fn project_body_updates_preserve_venture_org_edge_and_retire_only_old_project_pa
 fn updating_project_cannot_recreate_its_soft_deleted_home_room() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let root = vault.root_project()?;
     let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
     let id = EntityId::now();
@@ -1811,8 +1861,6 @@ fn child_project_whose_home_room_sorts_first(source: &Vault) -> Result<(EntityId
         .expect("the search is unbounded")
 }
 
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-ITEMS]: the lib test target's type check fails here (2 errors: E0308 x1, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn a_project_whose_home_room_id_sorts_first_reimports() -> Result<()> {
     // The whole-vault import resolves the project first either way.
@@ -1820,10 +1868,10 @@ fn a_project_whose_home_room_id_sorts_first_reimports() -> Result<()> {
     let root_id = source.root_project()?;
     let (child_id, child) = child_project_whose_home_room_sorts_first(&source)?;
     source.put_project(child_id, &child, 10)?;
-    let artifact = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    let artifact = source.export_whole_vault(false)?;
     let (_destination_dir, destination) =
         crate::test_util::open_test_vault_with(Default::default());
-    destination.import_whole_vault_json(artifact.bytes())?;
+    destination.import_whole_vault_archive(artifact.bytes())?;
     // The vault is its own root project (ARCH-0067): the source root maps
     // onto the destination root instead of landing as a second root.
     let destination_root = destination.root_project()?;
@@ -1839,8 +1887,6 @@ fn a_project_whose_home_room_id_sorts_first_reimports() -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-ITEMS]: the lib test target's type check fails here (2 errors: E0061 x1, E0277 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(feature = "sync")]
 #[test]
 fn a_project_whose_home_room_id_sorts_first_replays_without_a_stuck_window() -> Result<()> {
@@ -1854,7 +1900,9 @@ fn a_project_whose_home_room_id_sorts_first_replays_without_a_stuck_window() -> 
     // source root's subtree, room included.
     let images = tempfile::tempdir()?;
     let image = images.path().join("before-child");
+    source.ensure_vault_key().expect("mint the vault data key");
     source.snapshot_checkpoint(&image, 5)?;
+    let checkpoint_key = source.checkpoint_key()?;
     let (child_id, child) = child_project_whose_home_room_sorts_first(&source)?;
     source.put_project(child_id, &child, 10)?;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -1865,6 +1913,7 @@ fn a_project_whose_home_room_id_sorts_first_replays_without_a_stuck_window() -> 
         let peer_dir = crate::test_support::restore_tempdir();
         let (peer, _) = Vault::restore_checkpoint(
             &image,
+            &checkpoint_key,
             &peer_dir.path().join("peer"),
             Default::default(),
             crate::recovery::checkpoint::RestoreReason::Restore,
@@ -1905,8 +1954,6 @@ fn a_project_whose_home_room_id_sorts_first_replays_without_a_stuck_window() -> 
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-ITEMS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn in_range_depth_cannot_be_changed_through_generic_or_replicated_puts() -> Result<()> {
     let dir = tempfile::tempdir()?;
@@ -1926,7 +1973,7 @@ fn in_range_depth_cannot_be_changed_through_generic_or_replicated_puts() -> Resu
     vault.with_write_txn(|txn| {
         vault
             .batch_in()
-            .put_replicated(&root, kind, range, 8, &bytes)
+            .put_replicated(&root, kind, range, 8, None, &bytes)
             .apply(txn)
     })?;
     assert_eq!(vault.project(root)?, Some(original.clone()));
@@ -1941,14 +1988,9 @@ fn in_range_depth_cannot_be_changed_through_generic_or_replicated_puts() -> Resu
         crate::gate::seeded_project_depth_default()
     );
 
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        range,
-        8,
-        b"owner",
-    )?;
+    let person = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
     let owner = crate::write_envelope::WriteActor::new(person, crate::edge::EdgeActorClass::Human);
     let revoke = crate::subject_model::tests::authorization::root_owner(&vault, owner, 0xA5)?;
     crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &owner, 10, 0xA5)?;
@@ -1978,7 +2020,7 @@ fn in_range_depth_cannot_be_changed_through_generic_or_replicated_puts() -> Resu
     vault.with_write_txn(|txn| {
         vault
             .batch_in()
-            .put_replicated(&root, kind, range, 11, &bytes)
+            .put_replicated(&root, kind, range, 11, None, &bytes)
             .apply(txn)
     })?;
     assert_eq!(vault.project(root)?.unwrap().depth, 0);
@@ -2140,6 +2182,7 @@ fn secondary_parent_rule_narrows_cross_project_leader_chat() -> Result<()> {
         ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(&vault, &mut claim);
     claim.scope_project = right;
     vault.put_claim(&rule, &claim, TimeRange { start: 5, end: 5 }, 5)?;
     let refusal = vault

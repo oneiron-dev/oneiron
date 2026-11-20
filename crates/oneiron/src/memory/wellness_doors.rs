@@ -64,7 +64,7 @@ impl Memory<'_> {
             let measured = self
                 .vault
                 .project_action_mode_in_txn(txn, &person, now, refresh)?;
-            let coping = self.coping_aggregate_in_txn(txn, person, None)?;
+            let coping = self.coping_aggregate_in_txn(txn, &lane, person, None)?;
             let mut refs = vec![person];
             if let Some(claim) = &measured.state_index.claim {
                 let claim = EntityId::from_hex(claim)?;

@@ -355,12 +355,7 @@ pub(super) fn note_sources_in_txn(
     if notes.is_empty() {
         return Err(invalid("summary source set is empty"));
     }
-    let read = requester_read_in(vault, txn, requester, basis)?;
-    let read = if lane.is_principal() {
-        read
-    } else {
-        vault.scoped_read(lane.narrow_in_txn(vault, txn, read.actor_key().clone())?)
-    };
+    let read = declared_requester_read_in(vault, txn, requester, lane, basis)?;
     let rows = read.get_entities_parts_in_txn(txn, &notes)?;
     for (note, row) in notes.iter().zip(rows) {
         if !note_source_admitted(vault, txn, note, row.is_some())? {
@@ -455,6 +450,24 @@ fn requester_read_in<'v>(
         }
     };
     Ok(vault.scoped_read(key))
+}
+
+/// The requester's read under the lane its declaration froze, rebuilt in
+/// `txn`: its base read ([`requester_read_in`]) narrowed by `lane`, which
+/// reads nothing once the lane's credential no longer holds there (FIX
+/// 6322); the base read alone for a principal declaration.
+pub(super) fn declared_requester_read_in<'v>(
+    vault: &'v Vault,
+    txn: &RoTxn<'_>,
+    requester: WriteActor,
+    lane: &crate::claim::FrozenReadLane,
+    basis: RequesterReadBasis,
+) -> Result<ScopedRead<'v>> {
+    let read = requester_read_in(vault, txn, requester, basis)?;
+    if lane.is_principal() {
+        return Ok(read);
+    }
+    Ok(vault.scoped_read(lane.narrow_row_key_in_txn(vault, txn, read.actor_key().clone())?))
 }
 
 /// What a summary body says, and what it was written from.

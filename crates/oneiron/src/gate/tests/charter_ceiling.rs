@@ -40,8 +40,6 @@ fn definition_ceiling_clamps_manifest_auto() -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-CHARTER-CEILING-ITEMS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn charter_enforcement_requires_the_human_stamp() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -64,7 +62,7 @@ fn charter_enforcement_requires_the_human_stamp() -> Result<()> {
     // (b) A wrong re-presented hash is rejected and enforcement stays
     // unchanged.
     assert!(matches!(
-        vault.approve_connector_charter(&key_id, [0xEE; 32], "owner", 1_002),
+        vault.approve_connector_charter(&key_id, pending.text_hash, [0xEE; 32], "owner", 1_002),
         Err(Error::Record(RecordError::ConnectorCharterApprovalMismatch))
     ));
     let (decision, _) = check_effect(&vault, &effect, &policy)?;
@@ -72,7 +70,13 @@ fn charter_enforcement_requires_the_human_stamp() -> Result<()> {
 
     // (c) The stamped charter binds: the same dispatch now denies on the
     // never-list and consumes no budget (charge None).
-    vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_003)?;
+    vault.approve_connector_charter(
+        &key_id,
+        pending.text_hash,
+        pending.compiled_hash,
+        "owner",
+        1_003,
+    )?;
     let deny_before = vault
         .diagnostics()
         .gate
@@ -185,8 +189,6 @@ fn qualify_scoped_fixture(vault: &crate::Vault, key_id: &EntityId) -> Result<()>
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-CHARTER-CEILING-ITEMS]: the lib test target's type check fails here (3 errors: E0061 x3); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn charter_never_key_denies_one_scoped_grant_without_widening() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -246,10 +248,22 @@ fn charter_never_key_denies_one_scoped_grant_without_widening() -> Result<()> {
     let denied_capability = scoped_capability_connector("files", &denied_grant);
     let text = format!("never key {denied_capability}");
     let pending = vault.propose_connector_charter(&denied_key, &text, 1_001)?;
-    vault.approve_connector_charter(&denied_key, pending.compiled_hash, "owner", 1_002)?;
+    vault.approve_connector_charter(
+        &denied_key,
+        pending.text_hash,
+        pending.compiled_hash,
+        "owner",
+        1_002,
+    )?;
     // The neighbour key carries the SAME stamped text, naming the other grant.
     let pending = vault.propose_connector_charter(&neighbour_key, &text, 1_001)?;
-    vault.approve_connector_charter(&neighbour_key, pending.compiled_hash, "owner", 1_002)?;
+    vault.approve_connector_charter(
+        &neighbour_key,
+        pending.text_hash,
+        pending.compiled_hash,
+        "owner",
+        1_002,
+    )?;
 
     let (decision, charge) = check_effect(&vault, &denied_effect, &policy)?;
     assert_eq!(decision.outcome(), GateOutcome::Deny);
@@ -272,7 +286,13 @@ fn charter_never_key_denies_one_scoped_grant_without_widening() -> Result<()> {
     let hyphen_hex = hyphen_grant.to_hex();
     let hyphen_text = format!("never key mcp:my-server:grant:{hyphen_hex}");
     let pending = vault.propose_connector_charter(&hyphen_key, &hyphen_text, 1_003)?;
-    vault.approve_connector_charter(&hyphen_key, pending.compiled_hash, "owner", 1_004)?;
+    vault.approve_connector_charter(
+        &hyphen_key,
+        pending.text_hash,
+        pending.compiled_hash,
+        "owner",
+        1_004,
+    )?;
     let (decision, _) = check_effect(&vault, &hyphen_effect, &policy)?;
     assert_eq!(decision.outcome(), GateOutcome::Deny);
     assert_eq!(
@@ -282,8 +302,6 @@ fn charter_never_key_denies_one_scoped_grant_without_widening() -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-CHARTER-CEILING-ITEMS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn charter_never_channel_preserves_hyphen_and_underscore_for_scoped_calls() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -333,7 +351,13 @@ fn charter_never_channel_preserves_hyphen_and_underscore_for_scoped_calls() -> R
     // connector. It denies the hyphenated server and never aliases `_` to `-`.
     for key_id in [hyphen_key, underscore_key] {
         let pending = vault.propose_connector_charter(&key_id, "never * on mcp:foo-bar", 1_001)?;
-        vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_002)?;
+        vault.approve_connector_charter(
+            &key_id,
+            pending.text_hash,
+            pending.compiled_hash,
+            "owner",
+            1_002,
+        )?;
     }
     let (decision, charge) = check_effect(&vault, &hyphen_effect, &policy)?;
     assert_eq!(decision.outcome(), GateOutcome::Deny);
@@ -366,14 +390,18 @@ fn charter_never_channel_preserves_hyphen_and_underscore_for_scoped_calls() -> R
     let policy = resolve(&vault)?;
     let alias_effect = scoped_mcp_effect(alias_principal, "foo-bar");
     let pending = vault.propose_connector_charter(&alias_key, "never * on mcp:foo_bar", 1_003)?;
-    vault.approve_connector_charter(&alias_key, pending.compiled_hash, "owner", 1_004)?;
+    vault.approve_connector_charter(
+        &alias_key,
+        pending.text_hash,
+        pending.compiled_hash,
+        "owner",
+        1_004,
+    )?;
     let (decision, _) = check_effect(&vault, &alias_effect, &policy)?;
     assert_eq!(decision.outcome(), GateOutcome::Allow);
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-CHARTER-CEILING-ITEMS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn charter_wildcard_channel_still_binds_typed_scoped_calls() -> Result<()> {
     // `never <verb>` names NO channel spelling, so it cannot alias `foo-bar`
@@ -405,7 +433,13 @@ fn charter_wildcard_channel_still_binds_typed_scoped_calls() -> Result<()> {
     );
 
     let pending = vault.propose_connector_charter(&key_id, "never read_file", 1_001)?;
-    vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_002)?;
+    vault.approve_connector_charter(
+        &key_id,
+        pending.text_hash,
+        pending.compiled_hash,
+        "owner",
+        1_002,
+    )?;
     let (decision, charge) = check_effect(&vault, &effect, &policy)?;
     assert_eq!(decision.outcome(), GateOutcome::Deny);
     assert_eq!(
@@ -433,7 +467,13 @@ fn charter_wildcard_channel_still_binds_typed_scoped_calls() -> Result<()> {
     qualify_scoped_fixture(&vault, &other_key)?;
     let policy = resolve(&vault)?;
     let pending = vault.propose_connector_charter(&other_key, "never send", 1_003)?;
-    vault.approve_connector_charter(&other_key, pending.compiled_hash, "owner", 1_004)?;
+    vault.approve_connector_charter(
+        &other_key,
+        pending.text_hash,
+        pending.compiled_hash,
+        "owner",
+        1_004,
+    )?;
     let other_effect = scoped_mcp_effect(other_principal, "foo-bar");
     let (decision, _) = check_effect(&vault, &other_effect, &policy)?;
     assert_eq!(decision.outcome(), GateOutcome::Allow);
@@ -472,8 +512,6 @@ fn ordinary_channels_send_manifest(channels: &[&str]) -> Vec<u8> {
     )])
 }
 
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-CHARTER-CEILING-ITEMS]: the lib test target's type check fails here (3 errors: E0061 x3); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn charter_never_key_never_reaches_an_ordinary_connector() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -508,7 +546,13 @@ fn charter_never_key_never_reaches_an_ordinary_connector() -> Result<()> {
     let capability_text = format!("never key {lookalike}");
     for key_id in &key_ids {
         let pending = vault.propose_connector_charter(key_id, &capability_text, 1_001)?;
-        vault.approve_connector_charter(key_id, pending.compiled_hash, "owner", 1_002)?;
+        vault.approve_connector_charter(
+            key_id,
+            pending.text_hash,
+            pending.compiled_hash,
+            "owner",
+            1_002,
+        )?;
     }
     for channel in channels {
         let (decision, _) = check_effect(&vault, &ordinary_effect(channel), &policy)?;
@@ -522,7 +566,13 @@ fn charter_never_key_never_reaches_an_ordinary_connector() -> Result<()> {
     // The ordinary channel/verb form matches the COMPLETE connector string.
     let pending =
         vault.propose_connector_charter(&key_ids[0], "never send on mcp:calendar", 1_003)?;
-    vault.approve_connector_charter(&key_ids[0], pending.compiled_hash, "owner", 1_004)?;
+    vault.approve_connector_charter(
+        &key_ids[0],
+        pending.text_hash,
+        pending.compiled_hash,
+        "owner",
+        1_004,
+    )?;
     let (decision, charge) = check_effect(&vault, &ordinary_effect("mcp:calendar"), &policy)?;
     assert_eq!(decision.outcome(), GateOutcome::Deny);
     assert_eq!(
@@ -537,7 +587,13 @@ fn charter_never_key_never_reaches_an_ordinary_connector() -> Result<()> {
         "never send on mcp:calendar:grant:foo",
         1_003,
     )?;
-    vault.approve_connector_charter(&key_ids[1], pending.compiled_hash, "owner", 1_004)?;
+    vault.approve_connector_charter(
+        &key_ids[1],
+        pending.text_hash,
+        pending.compiled_hash,
+        "owner",
+        1_004,
+    )?;
     let (decision, _) = check_effect(&vault, &ordinary_effect("mcp:calendar:grant:foo"), &policy)?;
     assert_eq!(decision.outcome(), GateOutcome::Deny);
     let (decision, _) = check_effect(&vault, &ordinary_effect(&lookalike), &policy)?;

@@ -15,8 +15,10 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 
-const CHANGES: SideTable<u64, SettingChange, Named> = SideTable::new(&side_table::SETTING_CHANGE);
-const CHANGE_NEXT: SideTable<(), u64, Named> = SideTable::new(&side_table::SETTING_CHANGE_NEXT);
+pub(super) const CHANGES: SideTable<u64, SettingChange, Named> =
+    SideTable::new(&side_table::SETTING_CHANGE);
+pub(super) const CHANGE_NEXT: SideTable<(), u64, Named> =
+    SideTable::new(&side_table::SETTING_CHANGE_NEXT);
 
 /// One change to one setting row.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -116,6 +118,25 @@ fn holds(bytes: &[u8], needle: &[u8]) -> bool {
     bytes.windows(needle.len()).any(|window| window == needle)
 }
 
+/// The bytes of `change` an erase searches for a record's hex id ([`scrub_changes_in_txn`]): the
+/// encoded value before and after, and the setter's reason. Who made it is not among them: an
+/// erase of that actor only unnames it.
+fn mention_bytes(change: &SettingChange) -> impl Iterator<Item = &[u8]> {
+    [&change.prior, &change.value]
+        .into_iter()
+        .flatten()
+        .map(|value| value.0.as_slice())
+        .chain(change.why.as_deref().map(str::as_bytes))
+}
+
+/// Every id whose lower-case hex [`holds`] finds in `bytes`: each run of 32 lower-case hex
+/// characters, at every offset.
+fn hex_id_mentions(bytes: &[u8]) -> impl Iterator<Item = EntityId> + '_ {
+    bytes
+        .windows(32)
+        .filter_map(|window| EntityId::from_lower_hex(std::str::from_utf8(window).ok()?).ok())
+}
+
 /// The rows of `table` an erase of `id` changes: a row whose scope names it goes; a row it set
 /// stays, as it was set, and no longer names who set it; a row of a key that says how to take an
 /// entity out of its value ([`super::Kind::erase_mentions`]) and whose value names it is
@@ -168,11 +189,7 @@ fn scrub_changes_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId)
     for row in CHANGES.iter_from(store, txn, &[])? {
         let (sequence, change) = row?;
         let names_it = change.scope.entity() == Some(*id)
-            || [&change.prior, &change.value]
-                .into_iter()
-                .flatten()
-                .any(|value| holds(&value.0, hex.as_bytes()))
-            || change.why.as_deref().is_some_and(|why| why.contains(&hex));
+            || mention_bytes(&change).any(|bytes| holds(bytes, hex.as_bytes()));
         if names_it {
             gone.push(sequence);
         } else if change.by == Some(*id) {
@@ -222,6 +239,19 @@ pub(crate) fn erase_setting_change_actor_in_txn(
         return Ok(());
     }
     scrub_changes_in_txn(&vault.store, txn, actor)
+}
+
+/// The records a stored setting change's value bytes name whose erase takes the change with it
+/// ([`erase_setting_entity_in_txn`]): its scope's record, and every id its encoded values or its
+/// reason spell in hex ([`mention_bytes`]); `None` for bytes that do not read as a change. The
+/// whole-vault export withholds a change that names a record it keeps out.
+pub(crate) fn setting_change_records(value: &[u8]) -> Option<Vec<EntityId>> {
+    let change = CHANGES.decode_value(value).ok()?;
+    let mut records: Vec<EntityId> = change.scope.entity().into_iter().collect();
+    for bytes in mention_bytes(&change) {
+        records.extend(hex_id_mentions(bytes));
+    }
+    Some(records)
 }
 
 /// The per-entity eraser: an erased world, project, thread, goal or repository takes every

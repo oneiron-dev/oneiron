@@ -487,6 +487,7 @@ fn real_http_ingress_stamps_admitted_publisher_and_dedups_two_source_receipts() 
             },
             legend: &crate::context_board::BoardLegend::canonical(),
             sections: &[],
+            you: None,
             changes: Some(&changes),
         },
         crate::context_board::BoardBudgetRequest {
@@ -977,7 +978,9 @@ fn rejected_marketplace_candidate_cannot_be_activated_by_reimport_from_another_h
 #[test]
 fn code_policy_revalidates_owner_and_can_toggle_across_reopen() -> Result<()> {
     let temp = tempfile::tempdir()?;
+    let keys = std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new());
     let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
+    vault.install_device_keystore(keys.clone());
     let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let survivor = EntityId::now();
     let at = crate::TimeRange { start: 1, end: 1 };
@@ -999,6 +1002,8 @@ fn code_policy_revalidates_owner_and_can_toggle_across_reopen() -> Result<()> {
     }
     drop(vault);
     let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
+    vault.install_device_keystore(keys.clone());
+    vault.prepare_install_signing().expect("install signing");
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:owner",
@@ -1391,7 +1396,7 @@ fn local_git_pack_installs_with_pinned_receipt_and_skill_remains_separate() -> R
     let new_commit = git(repository.path(), &["rev-parse", "HEAD"]);
     let new_adapter = GitEndpointSkillHubAdapter::new(hub_id, endpoint, &new_commit)?;
     let skill_ref = HubRef::new(hub_id, "skills/plain", HubPin::Commit(new_commit))?;
-    let plain = vault.import_skill_from_adapter(&new_adapter, &skill_ref, at, 5)?;
+    let plain = vault.import_skill_from_adapter(&owner, &new_adapter, &skill_ref, at, 5)?;
     assert_eq!(
         vault
             .get_skill_record(&plain)?

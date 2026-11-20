@@ -248,6 +248,39 @@ pub(crate) fn holds_live_ownership_in_txn(
 }
 
 impl Vault {
+    /// What this vault's live-owner census, as [`holds_live_ownership_in_txn`]
+    /// reads it, says of `holder`: `Some(true)` when it names `holder` a live
+    /// owner; `Some(false)` only when this vault holds its shared-vault
+    /// membership, whose census names live owners and `holder` is not one;
+    /// and `None` when it cannot tell. That is a shared census that names no
+    /// live owner, and a vault that holds no shared-vault creation record,
+    /// for a holder who is not its live embedded owner: every vault seeds that
+    /// owner's PERSON when it opens, so a device opened on a shared vault
+    /// holds it before the vault's membership rows reach it, and there the
+    /// personal census cannot tell a co-owner from a stranger
+    /// (BLIND-REVIEW-7853 round 1 P1). A row that does not decode still
+    /// faults.
+    pub(crate) fn live_ownership_census_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: &EntityId,
+    ) -> Result<Option<bool>> {
+        let members = shared_members_census_with(
+            &self.store,
+            self.privacy_posture(),
+            txn,
+            true,
+            &mut |id| crate::consent::person_is_live_in_txn(self, txn, id),
+        )?;
+        Ok(match members {
+            None => personal_owner_in_txn(self, txn)?
+                .contains(holder)
+                .then_some(true),
+            Some(members) if members.owners.is_empty() => None,
+            Some(members) => Some(members.owners.contains(holder)),
+        })
+    }
+
     /// Whether `owner` is a live owner of this vault right now: the embedded
     /// owner of a personal vault, or a live Owner-role member of a shared one.
     /// An authenticated human is not by that alone an owner.
@@ -263,6 +296,26 @@ impl Vault {
     pub fn is_live_owner_person(&self, person: &EntityId) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
         is_live_vault_owner_in_txn(self, &txn, person)
+    }
+
+    /// [`is_live_vault_owner_in_txn`] for `owner`'s delete of their own
+    /// PERSON, as that delete's writes re-prove it after its own scrub
+    /// committed: the census takes `owner`'s PERSON as live, since its
+    /// deletion is the delete being proved, and reads every other PERSON as
+    /// it stands. An owner another Owner made an Admin since the delete's
+    /// first proof is no owner here.
+    pub(crate) fn is_vault_owner_deleting_own_person_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &EntityId,
+    ) -> Result<bool> {
+        let owners = owners_with(&self.store, self.privacy_posture(), txn, &mut |id| {
+            if id == owner {
+                return Ok(true);
+            }
+            crate::consent::person_is_live_in_txn(self, txn, id)
+        })?;
+        Ok(owners.contains(owner))
     }
 
     /// Whether `holder` is a recorded owner of this vault and a live vault
@@ -491,8 +544,6 @@ pub(super) fn holders_for_in_txn(
     Ok(holders.into_iter().collect())
 }
 
-// FIX [LIBTEST-QUARANTINE-POLICY-MODEL-OWNER-ROWS-AUTHORITY-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -616,6 +667,7 @@ mod tests {
                         end: now,
                     },
                     learned_at: now,
+                    row_version: None,
                     data: encode_federation_grant_body(&grant)?,
                     allow_maintenance: true,
                     allow_reserved_predicate: false,

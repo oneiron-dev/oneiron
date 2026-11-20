@@ -58,9 +58,14 @@ pub fn roster_has_live_owner(
     roster: &BTreeMap<AuthorityKey, FoldedDevice>,
     key: &AuthorityKey,
 ) -> bool {
-    roster
-        .get(key)
-        .is_some_and(|device| !device.revoked && device.roles & ROLE_OWNER != 0)
+    roster.get(key).is_some_and(folded_device_is_live_owner)
+}
+
+/// Whether a roster device is a live owner: not revoked, with the owner role.
+/// [`roster_has_live_owner`] for one device, so a roster held in another map
+/// type (the fold state's persistent roster) asks it without a copy.
+pub fn folded_device_is_live_owner(device: &FoldedDevice) -> bool {
+    !device.revoked && device.roles & ROLE_OWNER != 0
 }
 
 pub fn folded_device_can_authority_consent(device: &FoldedDevice) -> bool {

@@ -46,6 +46,7 @@ fn core_run_tree_node(node: RunTreeWireNode) -> CoreRunTreeNode {
         worker_kind,
         worker,
         agent_id,
+        executor_model,
         status,
         result_ref,
         timestamps,
@@ -60,6 +61,7 @@ fn core_run_tree_node(node: RunTreeWireNode) -> CoreRunTreeNode {
         worker_kind,
         worker,
         agent_id,
+        executor_model,
         status: core_run_tree_status(status),
         result_ref,
         timestamps: CoreRunTreeTimestamps {

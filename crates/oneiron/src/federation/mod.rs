@@ -24,7 +24,8 @@ mod agent_grant_brief;
 // OF-449 L4, and a record's own).
 mod delete_authority;
 pub(crate) use delete_authority::{
-    DeleteAuthority, DeleteCaller, DeleteRefusal, DeleteTarget, require_delete_authority_in_txn,
+    DeleteAuthority, DeleteCaller, DeleteRefusal, DeleteTarget, claim_removal_widens_in,
+    require_delete_authority_in_txn, stored_removal_widens_in,
 };
 // The old path of the role the deletion gate now names at
 // `deletion::archive_role`; kept for callers of the federation path.
@@ -82,7 +83,8 @@ pub(crate) use ruling_integrity::{
     witness_grant_rulings_in_txn,
 };
 mod own_device;
-mod pending_act;
+pub(crate) mod pending_act;
+pub(crate) mod setting_keys;
 mod shared_act;
 mod shared_creation;
 pub(crate) use own_device::is_own_device_grant;
@@ -145,7 +147,7 @@ pub use self::coreference::{
 };
 pub(crate) use self::coreference::{
     ConsolidatedSameAs, check_consolidated_same_as, coreference_share_consent_as_owner,
-    put_consolidated_same_as_in_txn, put_coreference_link_as_owner,
+    person_pair_in_txn, put_consolidated_same_as_in_txn, put_coreference_link_as_owner,
 };
 pub use self::grant::{
     ConnectMemberLeaveBinding, FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION,
@@ -205,8 +207,6 @@ pub(crate) use self::stale::federation_stale_key;
 #[cfg(test)]
 use self::stale::register_foreign_world_for_pact;
 
-// FIX [LIBTEST-QUARANTINE-FEDERATION-MEMBERSHIP-GATE-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod membership_gate_tests;
 mod system_agent_grant;
@@ -235,16 +235,10 @@ pub use engine_controls::{
     ENGINE_CONTROLS_OWNER_ONLY_KNOBS, EngineControlActor, EngineControlChange, EngineControlClass,
 };
 pub(crate) use substrate_reads::{SubstrateRead, admit_substrate_read, admit_substrate_read_by};
-// FIX [LIBTEST-QUARANTINE-FEDERATION-SHARED-CREATION-TESTS]: the lib test target's type check fails here (4 errors: E0061 x4); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod shared_creation_tests;
-// FIX [LIBTEST-QUARANTINE-FEDERATION-STEWARD-TESTS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod steward_tests;
-// FIX [LIBTEST-QUARANTINE-FEDERATION-TESTS]: the lib test target's type check fails here (10 errors: E0061 x7, E0559 x2, E0004 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -289,6 +283,6 @@ pub use oneiron_authority::federation::{
     ScopeId, Sensitivity, SensitivityCeiling, WalletRef, WorkingViewEditBounds,
 };
 
-mod org_admin;
+pub(crate) mod org_admin;
 pub(crate) mod tables;
 pub use org_admin::{OrgAdminError, OrgAdminPolicy, OrgAdminPower};
