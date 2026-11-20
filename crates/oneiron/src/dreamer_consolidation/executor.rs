@@ -34,7 +34,7 @@ pub(crate) use extraction::native_decisions_parity::{
 use conflicts::{ConflictInput, ResolvedSets};
 pub use decisions::ConsolidationDecisions;
 pub(super) use decisions::{Decider, ScopedRead};
-pub use extraction::ExtractionPrompt;
+pub use extraction::{EXTRACTION_MAX_TOKENS, ExtractionPrompt};
 use merge_resolution::MergeResolution;
 
 use super::evidence::{

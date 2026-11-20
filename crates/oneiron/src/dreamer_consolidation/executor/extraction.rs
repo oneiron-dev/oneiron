@@ -44,6 +44,12 @@ pub(in crate::dreamer_consolidation) use wire::{
 /// is the cap RESEARCH-1232 gave its largest packets.
 const EXTRACTION_ANSWER_TOKENS: u64 = 8_192;
 
+/// The output limit a claim extraction call asks an own server: the default
+/// level's thinking budget plus [`EXTRACTION_ANSWER_TOKENS`]. It is the
+/// largest output a Dreamer call asks, so the host's model windows reserve it
+/// for a provider that names no output ceiling.
+pub const EXTRACTION_MAX_TOKENS: u64 = DEFAULT_BUDGET_TOKENS + EXTRACTION_ANSWER_TOKENS;
+
 /// The output limit param every adapter folds into its provider's own field.
 const MAX_TOKENS_PARAM: &str = "max_tokens";
 
@@ -65,10 +71,7 @@ const MAX_TOKENS_PARAM: &str = "max_tokens";
 /// that answers keeps or drops them.
 fn extraction_params() -> BTreeMap<String, JsonValue> {
     let mut params = BTreeMap::from([
-        (
-            MAX_TOKENS_PARAM.to_owned(),
-            json!(DEFAULT_BUDGET_TOKENS + EXTRACTION_ANSWER_TOKENS),
-        ),
+        (MAX_TOKENS_PARAM.to_owned(), json!(EXTRACTION_MAX_TOKENS)),
         ("temperature".to_owned(), json!(0.7)),
         ("top_p".to_owned(), json!(0.8)),
         ("top_k".to_owned(), json!(20)),
