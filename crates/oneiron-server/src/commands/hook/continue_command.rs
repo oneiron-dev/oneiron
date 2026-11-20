@@ -207,7 +207,7 @@ fn steps(remote: &mut dyn ContinueRemote, plan: &Plan, out: &mut dyn Write) -> a
         session.request.subagents.len(),
         session.path.display()
     )?;
-    let calls = transcript::calls_within(&session, remote.carried_bytes())?;
+    let calls = transcript::calls_within(&session, remote.carried_bytes(), None)?;
     let imported = import_calls(remote, &calls)?;
     writeln!(
         out,
