@@ -1101,3 +1101,52 @@ test and ignores five. The `corpus_triage`, `redline_word_parity` and
 `stress_manifest` targets hold only ignored tests. The `read_model_reference`
 target of `stemma-diff` fails for the same reason, and the `--test` form names
 targets of `stemma` only.
+
+## A relationship the writer adds takes no id the main part references without a binding (FIX DOCX-WRITER-GIVES-A-NEW-RELATIONSHIP-AN-ID-A-DANGLING-REFERENCE-HOLDS, 2026-11-21)
+
+`src/docx_package.rs`, `src/runtime.rs` and one doc comment in
+`src/docx_validate.rs`. This is the twin of the section "Main part with no
+relationships part", for a main part whose relationships part is present. A
+main part can reference a relationship id that its relationships part does not
+hold: the linker reports each such reference (I-REL-001) and the reader takes
+the package. The writer numbered the relationships it adds from the set's
+cursor alone, so a new relationship could take the dangling id and bind the
+reference to a part it never named. Measured on 2026-11-21 at `e5e990f992bc`
+through the wrapper's contract, on a main part that holds
+`<w:altChunk r:id="rId1"/>` beside an empty relationships part: `docx.revise`
+answered Ok, its output gave `rId1` to `people.xml` and `rId2` to
+`stemmaRevisionIds.xml`, and the linker checked that output. With `rId9` in
+the same place the revision was refused (`output main document references
+relationship "rId9", but neither source package supplies that binding`).
+
+`RelationshipSet` now keeps the ids that its owning part references and the
+set does not hold (`reserve_unbound`). They live in memory only: `serialize`
+writes none of them, and `Clone` and `rebased` keep them, so the generated
+people plan and its apply still agree on an id. No addition takes a reserved
+id: the automatic allocator skips it, a preferred id that is reserved falls
+back to the allocator, and `insert_exact` answers false.
+`serialize_canonical_docx` reserves once, before its first allocation
+(`reserve_unbound_main_document_relationship_references`). It reads every
+nonempty attribute in the relationships namespace, in the main part as
+normalized and, where the bytes differ, as it came. The revision of the `rId1`
+document is now refused with the text the `rId9` document gets. No reader
+refuses anything new, and a document whose references all resolve gets the ids
+it got before. The output reconciler keeps its refusal of a reference that
+neither source package binds and gains one: it does not import the target
+package's relationship for an id that the base main part references without a
+binding.
+
+The allocator returns the first `rId<n>`, from its cursor on, that the set
+neither holds nor reserves. After 4294967295 it goes on at 1, and it never
+returns `rId0`. `RelationshipSet::parse` no longer overflows on a set that
+holds `rId4294967295`. No signature changes.
+
+Three sites stay as they are, each with its own FIX row: the section reference
+remap (`remap_sect_pr_story_refs`), the two settings-only writers
+(`set_update_fields_on_open` and `project_default_tab_stop`), which number a
+relationship on a package this reservation never reaches, and the name of a
+new media part, taken from `max_rid_number() + 1`. Ten tests hold the rule:
+six unit tests of the fork (four in `src/docx_package.rs` from
+`relationship_set_skips_a_reserved_id` on, two in `src/runtime.rs`), which
+`scripts/docedit/run_stemma_fork_unit_tests.sh` runs, and four in the
+wrapper's `tests/contract.rs`.
