@@ -255,6 +255,16 @@ pub(crate) fn reserve_brief_delete(
     Ok(())
 }
 
+/// Whether `id` holds a brief delete fence.
+#[cfg(test)]
+pub(crate) fn brief_delete_reserved(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    DELETE_RESERVATIONS.contains(store, txn, id)
+}
+
 pub(crate) fn check_generic_grant_write(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
