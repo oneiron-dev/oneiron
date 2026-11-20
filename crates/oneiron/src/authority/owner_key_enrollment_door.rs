@@ -191,7 +191,7 @@ impl EnrolledOwnerKeyKind {
     }
 
     /// The kind an enrollment row names.
-    fn of(enroll: &OwnerKeyEnroll) -> Self {
+    pub(super) fn of(enroll: &OwnerKeyEnroll) -> Self {
         if enroll.is_recovery_authority() {
             Self::RecoveryAuthority
         } else {
@@ -1437,8 +1437,16 @@ impl Vault {
     /// its key as a predecessor. Empty before any passkey enrollment.
     pub fn enrolled_owner_passkeys(&self) -> Result<Vec<EnrolledOwnerPasskey>> {
         let txn = self.store.env.read_txn()?;
+        self.enrolled_owner_passkeys_in_txn(&txn)
+    }
+
+    /// [`Self::enrolled_owner_passkeys`] in the caller's transaction.
+    pub(super) fn enrolled_owner_passkeys_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<EnrolledOwnerPasskey>> {
         let mut keys = BTreeMap::new();
-        self.visit_authority_entries_in_txn(&txn, |fold, hash, entry| {
+        self.visit_authority_entries_in_txn(txn, |fold, hash, entry| {
             keep_enrolled_passkey(&mut keys, fold, hash, entry);
         })?;
         Ok(keys.into_values().collect())
