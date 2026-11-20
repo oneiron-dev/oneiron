@@ -47,6 +47,7 @@ use std::time::Duration;
 use engine_stack::run_on_engine_stack;
 use oneiron::authority::{ActSurface, MachineRole, OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::federation::GitPushRepo;
 use oneiron::store::GateDecisionId;
 use oneiron::verbs::{OAuthAuthorizationAnswer, answer_oauth_authorization_as};
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
@@ -79,7 +80,7 @@ struct Served {
     owner_person: EntityId,
     origin: String,
     #[cfg_attr(not(oneiron_test_support), allow(dead_code))]
-    push_repo: EntityId,
+    push_repo: GitPushRepo,
 }
 
 impl Served {
