@@ -487,18 +487,23 @@ pub(crate) async fn core_memory_verb(
             let id = parse_required_entity_id(req.id.as_deref(), "id")?;
             let (reason, response_reason) = core_memory_delete_reason(verb, req.reason)?;
             // DEL-2 (ARCH-0043, owner DEL-2 = A): a self-hosted root, the dev
-            // mode and an owner-grade token delete as the owner, as before,
-            // with no new read. Any other token is judged by the one delete
-            // authority on its own resolved actor.
-            let owner_door = host_action.is_some() || auth.is_owner_grade();
-            let (id, delete) = if owner_door {
+            // mode and the owner's own slip delete as the owner. Any other
+            // token, a full-vault slip someone else holds included, is judged
+            // by the one delete authority on its own resolved actor
+            // (OWNER-GRADE-IS-NOT-OWNERSHIP). The owner's delete re-proves
+            // the owner's proof in each writer before it publishes or tears
+            // (FIX MEMORY-DELETE-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
+            let owner = memory_owner_proof(&server, &auth, host_action.is_some())?;
+            let (id, delete) = if let Some(owner) = owner {
                 let failed = |error: oneiron::Error| {
                     tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory delete failed");
                     core_engine_error("core memory delete failed", error)
                 };
+                #[cfg(oneiron_test_support)]
+                crate::test_doors::memory_owner_commit::run_before_owner_commit(&server.vault);
                 let outcome = server
                     .vault
-                    .delete_entity_with_reason(&id, reason)
+                    .delete_entity_with_reason_as_owner(&owner, &id, reason)
                     .map_err(failed)?;
                 let delete = serde_json::json!(CoreMemoryVerbDeleteOutcome {
                     existed: Some(outcome.existed),
@@ -763,9 +768,10 @@ fn memory_verb_refusal(refusal: oneiron::NamedMemoryVerbRefusal) -> ApiError {
 /// holds is not the owner's (OWNER-GRADE-IS-NOT-OWNERSHIP). A host action
 /// whose owner no longer authenticates gets the owner door's refusal. The
 /// lifecycle door checks the proof again in the writer that commits the act,
-/// so a credential revoked, or an owner removed, while the request waits on
-/// that writer commits nothing (FIX
-/// MEMORY-VERB-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
+/// and the delete door in each writer before it publishes or tears, so a
+/// credential revoked, or an owner removed, while the request waits on that
+/// writer commits nothing (FIX MEMORY-VERB-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT,
+/// FIX MEMORY-DELETE-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
 fn memory_owner_proof(
     server: &SyncServer,
     auth: &CoreAuth,

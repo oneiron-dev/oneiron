@@ -4,10 +4,14 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::legal_hold::HoldActor;
 
-use super::super::gate::{GatedDeletion, reverify_deletion_authority_before_publication};
+use super::super::gate::{
+    GatedDeletion, reverify_deletion_authority_before_publication,
+    reverify_owner_proof_before_publication,
+};
 use super::super::rendezvous::{DeleteRendezvous, signal_delete_rendezvous};
 use super::super::tombstone::DeleteReason;
 use super::{DeleteEntityOutcome, PendingConfirmedErase};
+use crate::consent::AuthenticatedOwner;
 use crate::error::RegistryError;
 
 /// What the delete guards decided: the headerful leg's header, the
@@ -89,6 +93,7 @@ impl Vault {
         gate: &Option<GatedDeletion<'_>>,
         allow_replay_test: bool,
         due: Option<&PendingConfirmedErase>,
+        owner: Option<&AuthenticatedOwner>,
     ) -> Result<DeleteGuard> {
         crate::store::base_agent::guard_actor_delete(id)?;
         {
@@ -124,7 +129,10 @@ impl Vault {
                 gate.as_ref()
                     .map_or(HoldActor::UNATTRIBUTED, GatedDeletion::hold_actor),
                 reason,
-                |txn| reverify_deletion_authority_before_publication(gate.as_ref(), txn),
+                |txn| {
+                    reverify_deletion_authority_before_publication(gate.as_ref(), txn)?;
+                    reverify_owner_proof_before_publication(self, owner, txn)
+                },
             )?
         {
             return Ok(DeleteGuard::Done(outcome));
