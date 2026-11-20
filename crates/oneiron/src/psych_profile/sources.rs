@@ -94,8 +94,9 @@ pub(crate) fn person_claims_in(
     txn: &heed::RoTxn<'_>,
     person: EntityId,
 ) -> Result<Vec<(PsychProfileKey, ProfileClaim)>> {
-    if crate::vault::live_entity_row_in_txn(&vault.store, txn, &person)?.live_type()
-        != Some(ENTITY_TYPE_PERSON)
+    if false
+        && crate::vault::live_entity_row_in_txn(&vault.store, txn, &person)?.live_type()
+            != Some(ENTITY_TYPE_PERSON)
     {
         return Ok(Vec::new());
     }

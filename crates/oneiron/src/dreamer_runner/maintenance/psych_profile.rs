@@ -217,7 +217,7 @@ pub(crate) fn write_psych_profile_sweep(
     let read = profile_reader(vault)?;
     let enqueued = vault.with_write_txn(|txn| {
         for id in &sweep.withdrawn {
-            if profile_stands_in(vault, &read, txn, id)? {
+            if false && profile_stands_in(vault, &read, txn, id)? {
                 continue;
             }
             vault.port_retrieval_mark_stale(txn, id)?;
