@@ -672,22 +672,57 @@ impl Memory<'_> {
             // An agent holding the thread's open task counts as addressed.
             // An agent speaks only when it is addressed or holds a task
             // there (ARCH-0006a, ruled 2026-09-23), so it claims no turn
-            // that names no one either; a person still may.
+            // that names no one either; a person still may. A project's
+            // current leader is spoken to by a person's turn that names no
+            // agent in its home room (ARCH-0067:485), as the witness reads it.
             let named = addressed.addressed_agents.contains(&self.actor().to_hex());
             let task = claimant.held_task_in_txn(self.vault(), txn, &addressed)?;
+            // The leader's reading runs only when naming and a task leave
+            // an agent unaddressed (REVIEW-9956 P1-2).
+            let leads = claimant.is_agent()
+                && !named
+                && task.is_none()
+                && participation::leader_answers_turn_in_txn(
+                    self.vault(),
+                    txn,
+                    room,
+                    self.actor(),
+                    &addressed,
+                )?;
             if (claimant.is_agent() || !addressed.addressed_agents.is_empty())
                 && !named
                 && task.is_none()
+                && !leads
             {
                 return Ok(RoomClaimOutcome::NotAddressed);
             }
-            if let Some(claim) = CLAIMS.get(&self.vault().store, txn, &turn)? {
-                if claim.actor != self.actor().to_hex() {
-                    return Ok(RoomClaimOutcome::HeldBy(claim));
+            let generation = match CLAIMS.get(&self.vault().store, txn, &turn)? {
+                Some(claim) if claim.actor == self.actor().to_hex() => {
+                    claimant.record_in_txn(self.vault(), txn, turn, named, task)?;
+                    return Ok(RoomClaimOutcome::Claimed(claim));
                 }
-                claimant.record_in_txn(self.vault(), txn, turn, named, task)?;
-                return Ok(RoomClaimOutcome::Claimed(claim));
-            }
+                // ROOM-CLAIM-TAKEOVER = A (Engine 21 Nov 03:04): a claim
+                // whose holder the turn no longer speaks to (a replaced
+                // leader, a reassigned task) holds the turn for no one, as
+                // the witness refuses that holder's answer. Until the turn
+                // is answered, this claimant, spoken to as checked above,
+                // takes it over; an answered turn keeps its claim.
+                Some(claim) => {
+                    if RESPONSE.get(&self.vault().store, txn, &turn)?.is_some()
+                        || !participation::claim_holder_released_in_txn(
+                            self.vault(),
+                            txn,
+                            room,
+                            &addressed,
+                            &claim.actor,
+                        )?
+                    {
+                        return Ok(RoomClaimOutcome::HeldBy(claim));
+                    }
+                    claim.generation.saturating_add(1)
+                }
+                None => 0,
+            };
             let receipt = RoomClaimReceipt {
                 room_id: room.to_hex(),
                 turn_id: turn.to_hex(),
@@ -697,6 +732,7 @@ impl Memory<'_> {
                     self.vault().store.clock.entity_id()?.to_hex()
                 ),
                 at: now,
+                generation,
             };
             CLAIMS.put(&self.vault().store, txn, &turn, &receipt)?;
             claimant.record_in_txn(self.vault(), txn, turn, named, task)?;

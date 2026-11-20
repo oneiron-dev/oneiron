@@ -169,10 +169,13 @@ fn union_keeps_every_citation_of_the_corrected_head_when_the_read_proves_it_diff
 
 /// A member the read does not ask about the head it cites restates that head, so
 /// the head's predicate and value are the member's: a representative with another
-/// value does not restate it, and the citation joins.
+/// value does not restate it, and the citation joins. A member folded from several
+/// recorded candidates proves nothing by a missing pair, since the read also leaves
+/// the pair out when none of those candidates may be asked about the head: its
+/// citation stays out.
 #[test]
 fn union_keeps_a_citation_from_a_member_that_restates_the_head_with_another_value() {
-    let operands = vec![
+    let mut operands = vec![
         operand("likes", "Coffee", true, false),
         operand("likes", "coffee", false, true),
     ];
@@ -181,6 +184,14 @@ fn union_keeps_a_citation_from_a_member_that_restates_the_head_with_another_valu
         joined[0]["claim_evidence"],
         json!([pin()]),
         "the head carries the member's value, not the representative's"
+    );
+    let step = "ab".repeat(32);
+    operands[0]["from_steps"] = json!([{"step": step, "index": 0}]);
+    operands[1]["from_steps"] = json!([{"step": step, "index": 1}, {"step": step, "index": 2}]);
+    let left_out = union_operands_with_facts(&operands, &pair(), &facts(false, false));
+    assert!(
+        left_out[0].get("claim_evidence").is_none(),
+        "a missing pair proves no restatement for a member folded from several candidates"
     );
 }
 
@@ -246,5 +257,114 @@ fn correction_facts_read_the_pairs_and_the_operands_that_differ_from_their_head(
         read.differs,
         BTreeSet::from([0, 1]),
         "position 0 by its value token, position 1 by its predicate; positions 2 and 3 prove nothing"
+    );
+}
+
+/// A union names the recorded step candidates of every member, each once in member
+/// order, so the engine finds each joined quote in a record. A group whose members
+/// name none carries no `from_steps` key.
+#[test]
+fn a_union_names_the_recorded_candidates_of_every_member() {
+    let step = "5e".repeat(32);
+    let mut first = operand("lives_in", "Kyoto", false, false);
+    first["from_steps"] = json!([{ "step": step, "index": 0 }]);
+    let mut second = operand("lives_in", "Kyoto", false, false);
+    second["from_steps"] = json!([{ "step": step, "index": 3 }, { "step": step, "index": 0 }]);
+    let unions = union_operands(&[first, second], &pair());
+    assert_eq!(
+        unions[0]["from_steps"],
+        json!([{ "step": step, "index": 0 }, { "step": step, "index": 3 }]),
+        "the representative's recorded candidate, then each further member's, each once"
+    );
+    let plain = union_operands(
+        &[
+            operand("lives_in", "Kyoto", false, false),
+            operand("lives_in", "Kyoto", false, false),
+        ],
+        &pair(),
+    );
+    assert!(
+        plain[0].get("from_steps").is_none(),
+        "a union of operands that name no step names none"
+    );
+}
+
+/// Builds one operand that proposes a home town with one quote of `turn`, and corrects
+/// the head when `corrects`.
+fn quoting(turn: &str, corrects: bool) -> Value {
+    let mut built = operand("lives_in", "Kyoto", corrects, false);
+    built["evidence"] = json!([{ "turn": turn.repeat(16) }]);
+    built
+}
+
+/// A group that holds a member naming a recorded candidate beside a member naming none
+/// is unioned with both quotes and no step name, whichever member represents it: no
+/// recorded candidate carries the second member's quote.
+#[test]
+fn a_union_with_a_member_that_names_no_recorded_candidate_names_none() {
+    let step = "5e".repeat(32);
+    let mut recorded = quoting("a1", false);
+    recorded["from_steps"] = json!([{ "step": step, "index": 0 }]);
+    let standalone = quoting("a2", false);
+    for operands in [
+        [recorded.clone(), standalone.clone()],
+        [standalone, recorded],
+    ] {
+        let unions = union_operands(&operands, &pair());
+        assert!(
+            unions[0].get("from_steps").is_none(),
+            "the union names no recorded candidate: {}",
+            unions[0]
+        );
+        assert_eq!(
+            unions[0]["evidence"].as_array().map(Vec::len),
+            Some(2),
+            "the union carries both members' quotes"
+        );
+    }
+}
+
+/// A correcting union of such a group leaves out the representative's proposed
+/// relationship, which the engine reads for no correction. A union that corrects
+/// nothing keeps it, and so does a union whose every member names a recorded candidate.
+#[test]
+fn a_correcting_union_that_names_no_recorded_candidate_proposes_no_relationship() {
+    let step = "5e".repeat(32);
+    let relationship = json!(["e1".repeat(16)]);
+    let named = |turn: &str, corrects: bool, index: usize| {
+        let mut built = quoting(turn, corrects);
+        built["from_steps"] = json!([{ "step": step, "index": index }]);
+        built["rel"] = relationship.clone();
+        built
+    };
+    let unions = union_operands(&[named("a1", true, 0), quoting("a2", true)], &pair());
+    assert!(
+        unions[0].get("rel").is_none(),
+        "the correcting union proposes no relationship: {}",
+        unions[0]
+    );
+    assert_eq!(
+        unions[0]["corrects"],
+        json!(head()),
+        "the union keeps its representative's correction"
+    );
+    let unions = union_operands(&[named("a1", false, 0), quoting("a2", false)], &pair());
+    assert_eq!(
+        unions[0]["rel"], relationship,
+        "a union that corrects nothing keeps its proposed relationship"
+    );
+    assert!(
+        unions[0].get("from_steps").is_none(),
+        "and it names no recorded candidate"
+    );
+    let unions = union_operands(&[named("a1", true, 0), named("a2", true, 1)], &pair());
+    assert_eq!(
+        unions[0]["rel"], relationship,
+        "a union whose every member names a recorded candidate keeps it"
+    );
+    assert_eq!(
+        unions[0]["from_steps"].as_array().map(Vec::len),
+        Some(2),
+        "and it names both recorded candidates"
     );
 }

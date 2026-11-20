@@ -502,6 +502,11 @@ impl Vault {
                 kind: answer.kind,
                 seen: None,
                 last_device_key: crate::authority::LastDeviceKeyConfirmation::NotGiven,
+                // The answer the owner gave on making the link, not the
+                // owner's own write here: its join carries no owner key's
+                // proof (REVIEW-9962 P1); the answer keeps the one its judge
+                // needs.
+                proves_joins: false,
             };
             return self
                 .enroll_machine_in_txn(txn, act, request, role)

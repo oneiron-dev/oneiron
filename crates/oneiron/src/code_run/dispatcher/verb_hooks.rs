@@ -288,13 +288,6 @@ impl HostSelfDispatcher<'_> {
         self.hook_view.take()
     }
 
-    /// Whether this call's own post chain judges a skill answer held as
-    /// JSON text: on the canonical vault. A room's chain still reads the
-    /// answer as one value (SKILL-ANSWER-DEEP-JSON-STACK-SAFE part 2b).
-    pub(crate) fn post_chain_reads_text(&self) -> bool {
-        matches!(self.storage, ExecutorStorage::Canonical(_))
-    }
-
     /// [`Self::leave_verb_hooks`] for a skill answer held as JSON text
     /// (`answer`), one that nests past what a value may hold on the host's
     /// stack (SKILL-ANSWER-DEEP-JSON-STACK-SAFE): the chain runs over its
@@ -306,6 +299,8 @@ impl HostSelfDispatcher<'_> {
         hooked: HookedCall,
         answer: &RawValue,
     ) -> Result<TextAnswerPost> {
+        // A room runs no skill call's hooks (`enter_room_verb_hooks`), so no
+        // room call reaches here.
         let ExecutorStorage::Canonical(vault) = &self.storage else {
             return Err(Error::InvariantViolation(
                 "a room's post chain reads no skill answer held as text",

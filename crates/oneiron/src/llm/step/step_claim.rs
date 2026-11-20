@@ -19,7 +19,7 @@ use super::types::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_VALUE_KEYS,
     DREAMER_STEP_VALUE_SCHEMA_VERSION, DurableStepContext, DurableStepError, DurableStepResult,
     ENVELOPE_PROVENANCE_ATTEMPT_KEY, ENVELOPE_PROVENANCE_RUN_KEY, ENVELOPE_PROVENANCE_SURFACE_KEY,
-    KEY_AT, KEY_ATTEMPT_ID, KEY_INPUT_LABELS, KEY_INPUT_RANGES, KEY_INPUT_SOURCES,
+    KEY_AT, KEY_ATTEMPT_ID, KEY_INPUT_LABELS, KEY_INPUT_RANGES, KEY_INPUT_SLICE, KEY_INPUT_SOURCES,
     KEY_INPUT_VERSIONS, KEY_MODEL_ID, KEY_PARAMS_HASH, KEY_PROGRESSION, KEY_PURPOSE, KEY_RESPONSE,
     KEY_RESPONSE_HASH, KEY_RESPONSE_REF, KEY_RESPONSE_VERSION, KEY_SCHEMA_VERSION, KEY_STEP_HASH,
     KEY_USAGE_IN, KEY_USAGE_OUT, StepProgression,
@@ -560,13 +560,22 @@ pub(super) struct DecodedStepClaim {
     /// The version of every source row a bound step's request was read from;
     /// `None` for a step that names none.
     pub(crate) input_versions: Option<Vec<SourceVersion>>,
+    /// The row behind each call label of a bound step's call; `None` for a
+    /// step that names none.
+    pub(crate) input_labels: Option<StepInputLabels>,
+    /// The shown range of each cited TURN of a bound step's call, in request
+    /// order; `None` for a step that names none.
+    pub(crate) input_ranges: Option<Vec<StepInputRange>>,
+    /// The listed entities of a bound step's native slice; `None` for a step
+    /// that names none.
+    pub(crate) input_slice: Option<Vec<EntityId>>,
 }
 
 /// Fail-closed `dreamer.step` claim value decode: pinned keys only, no
 /// duplicates, schema-version checked, and EXACTLY ONE of
 /// `response`/`response_ref` present (both or neither is a typed error). The
-/// call labels, TURN ranges and source rows a bound step names are checked as
-/// their facts and not kept here: no reader of this decode consumes them.
+/// source rows a bound step names are checked as their fact and not kept here:
+/// no reader of this decode consumes them.
 pub(super) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim> {
     let entries = expect_map(value, "dreamer step value must be a MessagePack map")?;
     let mut schema_version = None;
@@ -584,6 +593,9 @@ pub(super) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim>
     let mut response_hash = None;
     let mut at = None;
     let mut input_versions = None;
+    let mut input_labels = None;
+    let mut input_ranges = None;
+    let mut input_slice = None;
     let mut seen = [false; DREAMER_STEP_VALUE_KEYS.len()];
 
     for (key, value) in entries {
@@ -677,21 +689,34 @@ pub(super) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim>
                     invalid_step("dreamer step value input_versions must list source versions")
                 })?);
             }
-            KEY_INPUT_LABELS => check_json_fact::<StepInputLabels>(
-                value,
-                "dreamer step value input_labels must be a string",
-                "dreamer step value input_labels must list each label prefix's rows",
-            )?,
-            KEY_INPUT_RANGES => check_json_fact::<Vec<StepInputRange>>(
-                value,
-                "dreamer step value input_ranges must be a string",
-                "dreamer step value input_ranges must list TURN ranges",
-            )?,
-            KEY_INPUT_SOURCES => check_json_fact::<Vec<EntityId>>(
-                value,
-                "dreamer step value input_sources must be a string",
-                "dreamer step value input_sources must list source rows",
-            )?,
+            KEY_INPUT_LABELS => {
+                input_labels = Some(json_fact::<StepInputLabels>(
+                    value,
+                    "dreamer step value input_labels must be a string",
+                    "dreamer step value input_labels must list each label prefix's rows",
+                )?);
+            }
+            KEY_INPUT_RANGES => {
+                input_ranges = Some(json_fact::<Vec<StepInputRange>>(
+                    value,
+                    "dreamer step value input_ranges must be a string",
+                    "dreamer step value input_ranges must list TURN ranges",
+                )?);
+            }
+            KEY_INPUT_SOURCES => {
+                json_fact::<Vec<EntityId>>(
+                    value,
+                    "dreamer step value input_sources must be a string",
+                    "dreamer step value input_sources must list source rows",
+                )?;
+            }
+            KEY_INPUT_SLICE => {
+                input_slice = Some(json_fact::<Vec<EntityId>>(
+                    value,
+                    "dreamer step value input_slice must be a string",
+                    "dreamer step value input_slice must list entities",
+                )?);
+            }
             _ => unreachable!("index resolved from DREAMER_STEP_VALUE_KEYS"),
         }
     }
@@ -741,18 +766,20 @@ pub(super) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim>
         response,
         response_ref,
         input_versions,
+        input_labels,
+        input_ranges,
+        input_slice,
     })
 }
 
-/// Checks that `value` is one JSON string that reads as a `T`.
-fn check_json_fact<T: serde::de::DeserializeOwned>(
+/// Reads `value`, one JSON string, as a `T`.
+fn json_fact<T: serde::de::DeserializeOwned>(
     value: &Value,
     not_string: &'static str,
     not_fact: &'static str,
-) -> Result<()> {
+) -> Result<T> {
     let encoded = expect_string(value, not_string)?;
-    let _fact: T = serde_json::from_str(&encoded).map_err(|_| invalid_step(not_fact))?;
-    Ok(())
+    serde_json::from_str(&encoded).map_err(|_| invalid_step(not_fact))
 }
 
 fn parse_progression_str(value: &str) -> Result<StepProgression> {

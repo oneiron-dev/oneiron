@@ -790,8 +790,8 @@ and a vLLM server started with `--middleware body_codec.DecodeContentEncoding`
 (deploy/house-model/README.md, "Compressed requests").
 Each opts in on its own entry with `request_compression = "zstd"`; an entry
 whose server does not decode stays plain. A `voxcpm2` entry takes none (its
-loopback voice socket carries no codec frame) and an entry that sets it is
-refused at config load; an opted-in provider's media JSON bodies compress by
+loopback voice socket carries no codec frame) and an entry that turns it on
+is refused at config load; an opted-in provider's media JSON bodies compress by
 the same rules. A tagger endpoint opts in on its section, `[oneironer]
 request_compression = "zstd"`, for its `/v1/extract` posts, with the same
 plain resend; a `kind = "oneironer"` provider entry takes none.
@@ -1864,8 +1864,9 @@ unreranked, and say `skipped` with `no_reranker`. With one, nothing stands in
 for it: a spent line is refused with `BUDGET_SPENT` (402; MCP kind
 `budget_spent`), and a reranker that refuses, fails or answers out of shape
 with `MODEL_UNAVAILABLE` (503; MCP kind `model_unavailable`). A route whose
-rungs cannot serve (a key variable unset, or a `key_secret` provider: the
-broker has no rerank shape yet) refuses the same way. The request
+rungs cannot serve (a key variable unset) refuses the same way. A
+`key_secret` provider serves the reranker: its `/v1/rerank` calls go through
+the credential broker's rerank shape (`crates/oneiron-server/src/models/broker_rerank.rs`). The request
 never names the model, the endpoint or the lease; the server holds them, for
 MCP, HTTP and WebSocket recall alike.
 

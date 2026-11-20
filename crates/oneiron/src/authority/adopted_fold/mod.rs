@@ -577,9 +577,10 @@ fn tail_folds_past(
             image.per_parent.contains_key(parent)
                 || (image.keeps_state(parent) && context::seeds_late_fork(image, parent))
         });
-        let retired = std::iter::once(&entry.signer)
-            .chain(&entry.cosigns)
-            .any(|signature| image.safety.retired_keys.contains(&signature.public_key));
+        // The fence's own signers: a reserve-only owner key proof is none
+        // (`retired_signers::entry_signer_keys`, REVIEW-9961 P1).
+        let retired = super::retired_signers::entry_signer_keys(entry)
+            .any(|key| image.safety.retired_keys.contains(key));
         parents_stand
             && !retired
             && !image.safety.missing_parents.contains(hash)

@@ -1,29 +1,62 @@
 #!/usr/bin/env bash
-# run_stemma_fork_unit_tests.sh: the unit tests of the vendored stemma fork, run from the fork's own manifests.
+# run_stemma_fork_unit_tests.sh [--test <target>]: the vendored stemma fork's unit tests or one of stemma's
+# integration targets, run from the fork's own manifests.
 #
 # The fork is two packages that the root Cargo.toml lists under `exclude`: `stemma`
 # (crates/oneiron-docedit/vendor/stemma-engine) and `stemma-diff` (crates/oneiron-docedit/vendor/stemma-diff).
 # The workspace compiles `stemma` only as a dependency of oneiron-docedit, so no workspace run builds the
 # `#[cfg(test)]` modules under the fork's `src`. This script builds and runs them: `cargo test --lib` for each
-# package. It does not run the fork's integration targets (`tests/`); crates/oneiron-docedit/PROVENANCE.md says
-# what each of them does today.
+# package. With no arguments it runs none of the fork's integration targets (`tests/`); `--test <target>` runs
+# one of stemma's. crates/oneiron-docedit/PROVENANCE.md says what each of them does today.
 #
 # Dependency versions come from the workspace's Cargo.lock, so the tests run on the versions the product builds
-# the fork with. Neither package has a lock file of its own. The script copies the workspace lock beside each
-# manifest and lets cargo resolve from it: cargo keeps every version the copy names and drops the entries the
-# package does not use. The run is refused when the resolved lock holds a package the workspace lock does not
-# hold (the fork's own two packages apart), and the tests then run with --locked. The copies are removed when
-# the script ends. The script neither overwrites nor removes a lock file it did not make. One that is already
-# beside a manifest refuses the run at the start. Each copy is made only as a new file, when its package's turn
-# comes, so a lock file that appears beside a manifest during the run refuses the run then and stays as it is.
+# the fork with. Neither package has a lock file of its own. The script copies the workspace lock beside the
+# manifest of each package it tests and lets cargo resolve from it: cargo keeps every version the copy names and
+# drops the entries the package does not use. With `--test` it tests `stemma` alone, so only stemma-engine gets a
+# copy: `stemma-diff` is then a path dev-dependency, and cargo reads no lock file beside a path dependency. The
+# run is refused when the resolved lock holds a package the workspace lock does not hold (the fork's own two
+# packages apart), and the tests then run with --locked. The copies are removed when the script ends. The script
+# neither overwrites nor removes a lock file it did not make. One that is already beside the manifest of a
+# package it tests refuses the run at the start. Each copy is made only as a new file, when its package's turn
+# comes, so a lock file that appears beside that manifest during the run refuses the run then and stays as it is.
 # What the script cannot tell apart: a file written over a copy it already made; that file is removed as the copy.
 #
-# Usage: scripts/docedit/run_stemma_fork_unit_tests.sh   (no arguments; from any directory)
+# Usage: scripts/docedit/run_stemma_fork_unit_tests.sh [--test <target>]   (from any directory)
 set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$root"
 fork=crates/oneiron-docedit/vendor
-packages=(stemma-engine stemma-diff)
+
+usage_error() {
+  printf 'error: %s\n' "$1" >&2
+  printf 'Usage: scripts/docedit/run_stemma_fork_unit_tests.sh\n' >&2
+  printf '       scripts/docedit/run_stemma_fork_unit_tests.sh --test <target>\n' >&2
+  exit 2
+}
+
+case $# in
+  0)
+    packages=(stemma-engine stemma-diff)
+    test_args=(--lib)
+    ;;
+  2)
+    [ "$1" = --test ] || usage_error "the first argument must be --test"
+    target_pattern='^[a-z][a-z0-9_]*$'
+    if ! (export LC_ALL=C; shopt -u nocasematch; [[ $2 =~ $target_pattern ]]); then
+      usage_error "the target name must match $target_pattern"
+    fi
+    target_path=$fork/stemma-engine/tests/$2
+    if [[ ! -f "$target_path.rs" && ! -f "$target_path/main.rs" ]]; then
+      usage_error "no stemma integration target named '$2'"
+    fi
+    packages=(stemma-engine)
+    test_args=(--test "$2")
+    ;;
+  *)
+    usage_error "expected no arguments or --test followed by one target name"
+    ;;
+esac
+
 # The fork's build output stays apart from the workspace's.
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$root/target}/stemma-fork"
 
@@ -88,6 +121,6 @@ for package in "${packages[@]}"; do
     echo "$unpinned" >&2
     exit 1
   fi
-  echo "+ cargo test --locked --manifest-path $manifest --lib"
-  cargo test --locked --manifest-path "$manifest" --lib
+  echo "+ cargo test --locked --manifest-path $manifest ${test_args[*]}"
+  cargo test --locked --manifest-path "$manifest" "${test_args[@]}"
 done

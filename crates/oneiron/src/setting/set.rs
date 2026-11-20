@@ -9,6 +9,7 @@ use oneiron_setting_contract::{ChangeDirection, FoundRow, Order, Quorum, RowKey}
 use super::change::record_change_in_txn;
 use super::learned::{checked_weight, fits_in_txn};
 use super::pack::layer_default_in_txn;
+use super::project::{append_act_in_txn, rooted_in_txn, travels};
 use super::read::{
     Loaded, StoredRow, in_force_of, key_line_grant_in_txn, load_in_txn, names_subject, table_of,
 };
@@ -104,7 +105,9 @@ pub struct SetSetting {
     /// Where the owner said so (DESIGN 1.2 "The change stream"): an owner's applied change that
     /// names it is signed as one `PolicySettingSet` in the same write, last and best effort
     /// (stage 7a-1). Only the owner's change names one. The host names it from where the
-    /// owner's request reached it, never from the request's input.
+    /// owner's request reached it, never from the request's input. An owner's change of a row
+    /// that travels, in a rooted vault, is signed whether it names one or not: with none named,
+    /// from this install (stage 7a-2).
     pub surface: Option<ActSurface>,
 }
 
@@ -183,13 +186,27 @@ impl Vault {
     ///
     /// The value passes the side-row wall before it is checked and stored, as an authored row
     /// does: a secret goes to custody and the row keeps its handle; any other hit refuses the
-    /// change. A value equal to the row's writes nothing, but for the owner's over a row the owner
-    /// did not set: that writes, and the row becomes the owner's, so a non-owner's later move
-    /// meets the owner's row.
+    /// change.
     ///
     /// An owner's change that names its act surface is signed: last in the write, after the key's
     /// hook, one `PolicySettingSet` on the key's target, best effort, and the change row names the
     /// entry (stage 7a-1, [`super::signed_act`]).
+    ///
+    /// The act is the write (stage 7a-2, [`super::project`]). In a vault with an authority root,
+    /// an owner's change of a row that travels (a `sync: vault` key whose value is closed, not
+    /// learned; the clear of a carried row, its release, among them, stage 7a-4) appends its act
+    /// in this write, naming the row and carrying the value, from its act surface or, with none
+    /// named, from this install. It is not best
+    /// effort: a change whose act this install cannot append is refused with the append's
+    /// reason, and nothing is written. The row is then what the fold gives. A person's, an
+    /// agent's and the engine's changes write the row on this install alone (RULING
+    /// SETTING-7A-2-DECIDERS = A).
+    ///
+    /// An equal value writes nothing, but where the row changes hands: over the engine's row any
+    /// other caller's equal value writes (DESIGN 1.6, the no-op test is on the slot's own row),
+    /// and over any row the owner did not set the owner's does (FIX
+    /// SETTING-OWNER-EQUAL-VALUE-OVER-HOLDER-ROW), so a non-owner's later move meets the owner's
+    /// row. Either way the row becomes the caller's. The engine's own equal value writes nothing.
     ///
     /// # Errors
     ///
@@ -405,17 +422,22 @@ fn set_in_txn(
     let readable = !matches!(prior, Some(None));
     let prior_row = prior.flatten();
     let prior_row_by_owner = prior_row.as_ref().is_some_and(StoredRow::by_owner);
-    // The owner's equal value over a row the owner did not set (a holder's, a subject's, the
-    // engine's, an approved check-in's) writes, and the row becomes the owner's: a later move of a
-    // non-owner then meets the owner's row (FIX SETTING-OWNER-EQUAL-VALUE-OVER-HOLDER-ROW = A).
-    let owner_takes_row = matches!(caller, SettingCaller::Owner(_))
-        && prior_row
-            .as_ref()
-            .is_some_and(|row| !matches!(row.setter, Setter::Owner));
+    // The no-op test is on the slot's own row (DESIGN 1.6, pass 15e F6): an equal value writes
+    // where the row changes hands, and the row becomes the caller's. Over the engine's row any
+    // other caller's does; over a row the owner did not set (a holder's, a subject's, a standing
+    // approval's, an approved check-in's) the owner's does, so a later move of a non-owner meets
+    // the owner's row (FIX SETTING-OWNER-EQUAL-VALUE-OVER-HOLDER-ROW = A).
+    let setter_changes = prior_row.as_ref().is_some_and(|row| match caller {
+        SettingCaller::Owner(_) => !matches!(row.setter, Setter::Owner),
+        SettingCaller::Agent(_) | SettingCaller::Person(_) => {
+            matches!(row.setter, Setter::Engine { .. })
+        }
+        SettingCaller::Engine(_) => false,
+    });
     let prior_weight = prior_row.as_ref().and_then(|row| row.weight_runs);
     let prior_value = prior_row.map(|row| row.value);
     let unchanged = readable
-        && !owner_takes_row
+        && !setter_changes
         && prior_value.as_ref() == change.value
         && prior_weight == change.weight_runs;
     let by_owner = matches!(caller, SettingCaller::Owner(_) | SettingCaller::Engine(_));
@@ -493,6 +515,15 @@ fn set_in_txn(
             change.spec.name
         )));
     }
+    // The act is the write (stage 7a-2): an owner's change of a row that travels, in a rooted
+    // vault, appends its act below; with no surface named, from this install.
+    let travelling = matches!(caller, SettingCaller::Owner(_))
+        && travels(change.spec)
+        && rooted_in_txn(vault, txn)?;
+    let surface = match request.surface {
+        None if travelling => Some(ActSurface::ThisInstall),
+        surface => surface,
+    };
     let recorded = record_change_in_txn(
         &vault.store,
         txn,
@@ -511,8 +542,10 @@ fn set_in_txn(
             why: request.why.clone(),
             weight_runs: change.weight_runs,
             direction: Some(direction),
-            surface: request.surface,
+            surface,
             signed: None,
+            with: Vec::new(),
+            standing: None,
         },
     )?;
     let revision = match change.value {
@@ -524,6 +557,7 @@ fn set_in_txn(
                 set_at: now,
                 change: recorded.sequence,
                 weight_runs: change.weight_runs,
+                local: None,
             };
             table.put(&vault.store, txn, &key_bytes, &row)?;
             recorded.sequence
@@ -536,8 +570,20 @@ fn set_in_txn(
     if let Some(on_change) = change.spec.on_change {
         on_change(vault, txn, &recorded)?;
     }
-    // The signed record goes last, best effort, after every mandatory write (FIX 4624).
-    if let (SettingCaller::Owner(_), Some(owner), Some(surface)) = (caller, by, request.surface) {
+    // The act of a row that travels is mandatory: it fails the change when this install cannot
+    // append it. A value too long to carry inline keeps the best-effort digest act until values
+    // travel beside their acts (stage 7c).
+    let appended = match (travelling, by, surface) {
+        (true, Some(owner), Some(surface)) => {
+            append_act_in_txn(vault, txn, change.spec, (owner, surface), &recorded)?
+        }
+        _ => false,
+    };
+    // Any other owner's change that names its surface: the signed record goes last, best effort,
+    // after every mandatory write (FIX 4624).
+    if !appended
+        && let (SettingCaller::Owner(_), Some(owner), Some(surface)) = (caller, by, surface)
+    {
         sign_owner_change_in_txn(vault, txn, change.spec, owner, surface, &recorded);
     }
     Ok(SetSettingOutcome::Applied {
@@ -611,6 +657,8 @@ fn direction_in_txn(
                 value: Some(value.clone()),
             },
             revision: 0,
+            // The door's own change, as it would load once written: not a raced pin.
+            pin_read_as_value: false,
         });
     }
     let layer = layer_default_in_txn(&vault.store, txn, spec)?;

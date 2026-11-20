@@ -22,6 +22,7 @@ use oneiron_retrieval::pipeline::ScoredEntity;
 
 mod claim_admission;
 mod context_pack_filter;
+mod deleted_shells;
 mod diagnostic_reads;
 mod edge_claims;
 mod exposure;
@@ -41,6 +42,7 @@ mod named_reads;
 mod native_raw;
 pub use native_raw::NativeRawRead;
 mod note_visibility;
+mod person_about_lines;
 mod phone_line;
 mod pinned_reads;
 mod point_reads;

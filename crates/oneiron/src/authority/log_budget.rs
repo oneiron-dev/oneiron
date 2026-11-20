@@ -722,7 +722,8 @@ pub(crate) fn end_owner_reserve_work_hold(store: &Store, request: &AuthorityEntr
 /// record it signed for a change no host issuer signed (FIX 12335), or the
 /// world key wraps and residence results that work writes under this
 /// install's key ([AUTHORITY-LOG-SIGNER-FLOOD]: key delivery after an
-/// admission, a key minted in a world edit, a residence directive's end). Such a row leaves the lifetime signer bound, which still raises
+/// admission, a key minted in a world edit, a residence directive's end), or the
+/// setting copy a move it carried wrote (stage 7a-4). Such a row leaves the lifetime signer bound, which still raises
 /// its typed check, were the count not advisory; strangers, other installs' rows and a replica's retries
 /// keep their treatment. No local or replicated flag is read. An install
 /// whose key is not known yet keeps today's path
@@ -759,6 +760,7 @@ fn carries_own_will(
         | AuthorityOp::AgentGrantAct(_)
         | AuthorityOp::MembershipExecution(_)
         | AuthorityOp::PolicySettingSet(_)
+        | AuthorityOp::SettingCopy(_)
         | AuthorityOp::ExportAct(_)
         | AuthorityOp::FrontierJoin(_)
         | AuthorityOp::CustodyPermitPiece(_)

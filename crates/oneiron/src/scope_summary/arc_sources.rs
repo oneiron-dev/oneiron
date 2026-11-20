@@ -68,7 +68,8 @@ pub(crate) struct LowerLine {
     /// The slices of TURNs the line came from, as its summary recorded
     /// them; carried unchanged, never rebuilt from its words.
     pub(crate) source_spans: Vec<SummaryLineSpan>,
-    /// The line's words as generated.
+    /// The line's words as generated. In a rewritten summary, the words now
+    /// at the line's range, or none where the text no longer reaches it.
     pub(crate) words: String,
     /// The Arc's TURNs the line cites, in citation order.
     pub(crate) turns: Vec<EntityId>,
@@ -244,12 +245,19 @@ fn lower_in_txn(
         .collect();
     let mut lines = Vec::new();
     for (index, line) in line_sources.into_iter().enumerate() {
-        let words = bounds
+        let words = match bounds
             .get(line.output_start)
             .zip(bounds.get(line.output_end))
             .filter(|(start, end)| start <= end)
             .and_then(|(start, end)| generated.get(*start..*end))
-            .ok_or_else(|| invalid("a sitting's summary line is not in its text"))?;
+        {
+            Some(words) => words,
+            // An edit or a sync merge may leave the text shorter than a
+            // line's range, or blank: the line has no words left, and its
+            // cited TURNs are read in its place (review P1 of #9931).
+            None if rewritten => "",
+            None => return Err(invalid("a sitting's summary line is not in its text")),
+        };
         let mut cites = Vec::with_capacity(line.turn_refs.len());
         for turn in &line.turn_refs {
             cites.push(EntityId::from_hex(turn)?);

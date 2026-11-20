@@ -268,7 +268,13 @@ impl Vault {
             let receipt =
                 self.write_world_privacy_in_txn(txn, author, world, settings, Some(current), None)?;
             let key_owner = key_owner_in_txn(self, txn, actor)?;
-            let receipt = self.finish_world_key_work_in_txn(txn, key_owner, receipt, secret)?;
+            let receipt = self.finish_world_key_work_in_txn(
+                txn,
+                key_owner,
+                receipt,
+                secret,
+                owner_authored.as_ref(),
+            )?;
             Ok(WorldPrivacyOutcome::Applied(receipt))
         })?;
         self.queue_if_asked(outcome)

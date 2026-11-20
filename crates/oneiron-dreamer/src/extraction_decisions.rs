@@ -32,6 +32,12 @@ pub struct Input<'a> {
     pub now_ms: u64,
     /// Borrows the decoded bound extraction reply.
     pub reply: &'a BoundExtractionReply,
+    /// Names the generation step whose receipt carried `reply`, by the receipt's
+    /// `step_ref`. Every operand then names its recorded candidate of that step, and
+    /// the engine reads the candidate from the step's own record. `None` for a reply
+    /// that no recorded step of this attempt produced: its operands stand on their own
+    /// fields.
+    pub step: Option<&'a str>,
     /// Borrows the effective selection configuration served to the caller.
     pub config: &'a ExtractionSelectionConfig,
     /// Pins the effective policy required by every observations read.
@@ -169,13 +175,17 @@ impl std::error::Error for Error {}
 /// routing context or a component identity that moved before its component read.
 pub fn run(input: Input<'_>) -> Result<Outcome, Error> {
     check_policy(input.policy_pin, &input.config.policy_pin)?;
-    let ExtractionOperands {
-        mut operands,
-        candidate_indexes,
-    } = decision_operands(input.reply).map_err(|error| Error::Decode {
+    let mut built = decision_operands(input.reply).map_err(|error| Error::Decode {
         verb: "extraction reply",
         message: error.to_string(),
     })?;
+    if let Some(step) = input.step {
+        built.name_step(step);
+    }
+    let ExtractionOperands {
+        mut operands,
+        candidate_indexes,
+    } = built;
     let observations = observe(input, &operands)?;
     let corrections = verdict::corrections(
         input.client,
