@@ -636,8 +636,13 @@ impl Vault {
             answer: None,
         });
         profile.validate()?;
+        // The owner key this install holds proves the answer beside the
+        // carrier's signature (row CARRIER-OWNER-PROOF); with none, an
+        // answer that needs the proof is held. Its joins carry the same
+        // proof (row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS).
+        let proof = self.owner_proof_signer(fold);
         // FIX 7908: join a frontier wider than one entry names, else today's path.
-        let joiner = FrontierSigner::Install(carrier, &key);
+        let joiner = FrontierSigner::install(carrier, &key, proof.as_ref());
         let joined = self.prepare_authority_frontier_in_txn(txn, fold, joiner, MAX_PARENTS)?;
         let fold = joined.as_deref().unwrap_or(fold);
         let parents = fold.append_heads.clone();
@@ -647,10 +652,6 @@ impl Vault {
         let signer = AuthorityKey::Ed25519(key.verifying_key().to_bytes());
         let seq = next_sequence(fold, &signer)?;
         let now = self.instant_in_txn(txn)?.secs();
-        // The owner key this install holds proves the answer beside the
-        // carrier's signature (row CARRIER-OWNER-PROOF); with none, an
-        // answer that needs the proof is held.
-        let proof = self.owner_proof_signer(fold);
         let entry = sign_side_entry_with_owner_proof(
             fold,
             &key,

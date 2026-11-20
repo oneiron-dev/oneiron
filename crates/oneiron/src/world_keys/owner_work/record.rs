@@ -12,7 +12,8 @@ use crate::authority::{
     ActSurface, AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityOp, FrontierSigner,
     MAX_PARENTS, OwnerAct, OwnerActKind, OwnerWorkBody, OwnerWorkCancel, OwnerWorkRequest,
     WorldKeyMode, WorldPrivacyWorkBasis, WrapRecipient, authority_entry_hash, invalid_authority,
-    next_sequence, owner_act_signer_admits, sign_side_entry, stored_authority_row,
+    next_sequence, owner_act_signer_admits, sign_side_entry, sign_side_entry_with_owner_proof,
+    stored_authority_row,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -315,10 +316,14 @@ impl Vault {
     /// target and, as its `seen`, the request. Its parents are the main-log
     /// heads alone, which carry the request (FIX 4987). The fold is the
     /// judge: a cancel it does not take refuses the transaction.
+    /// `owner_authored` is the owner's own write, by an undelegated proof:
+    /// the cancel and its joins then carry the owner key's proof this
+    /// install holds ([`Vault::owner_act_proof_signer`]).
     pub(crate) fn record_owner_work_cancel_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         actor: EntityId,
+        owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
         surface: ActSurface,
         target: EntityId,
         request: AuthorityEntryHash,
@@ -332,8 +337,9 @@ impl Vault {
         let public_key = signing.verifying_key().to_bytes();
         let seen = OwnerWorkCancel::seen_for(request);
         let act = OwnerAct::by_owner(actor, OwnerActKind::RootRequest, target, surface, seen);
+        let proof = self.owner_act_proof_signer(&fold, owner_authored);
         // FIX 7908: join a frontier wider than one entry names, else today's path.
-        let joiner = FrontierSigner::Install(machine, &signing);
+        let joiner = FrontierSigner::install(machine, &signing, proof.as_ref());
         let fold = self
             .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
@@ -348,13 +354,14 @@ impl Vault {
         };
         let seq = next_sequence(&fold, &AuthorityKey::Ed25519(public_key))?;
         let now = self.instant_in_txn(txn)?.secs();
-        let entry = sign_side_entry(
+        let entry = sign_side_entry_with_owner_proof(
             &fold,
             &signing,
             seq,
             parents,
             AuthorityOp::OwnerWorkCancel(cancel),
             now,
+            proof.as_ref(),
         )?;
         let hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
