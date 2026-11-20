@@ -594,13 +594,22 @@ fn tail_folds_past(
 
 /// Whether `tail` moves no covered row's sequence floor and holds no row
 /// past its own (`rows_floor`): per signer and scope, the tail's rows rise
-/// strictly above the image's top, the lowest descends from every covered
-/// row at that top, and each next from the one below it, along that scope's
+/// strictly above the image's top, the lowest descends from the covered row
+/// at that top, and each next from the one below it, along that scope's
 /// rows. A covered row under no top sits past its floor with no row at or
 /// above it that vouches for it, so a tail row that misses it changes no
 /// floor; every other covered row is then among each tail row's ancestors.
 /// No tail row vouches for a covered row past its floor
-/// ([`tail_signers_covered_rows_unfloored`]).
+/// ([`tail_signers_covered_rows_unfloored`]). That gate runs first, so a
+/// tail signer's covered rows in a scope rise strictly and one sits at the
+/// top; several at one top answer false.
+///
+/// The rows form that chain exactly when each tail row's highest row of its
+/// signer and scope below it ([`covered_floors::tail_key_rows_below`], one
+/// pass) is the row before it: the top, then each tail row in turn. A later
+/// tail row below an earlier one would close a cycle with the chain, which
+/// no hash-linked log holds (FIX [ADOPTED-FOLD-TAIL-WALK-SIGNER-COST]: a
+/// walk per tail signer cost each one the whole spine its top sat below).
 ///
 /// Only the rows the whole fold judges count (`fold_engine::judged_entries`,
 /// review R2 of [SEQUENCE-FLOOR-DELIVERY-ORDER]): a row, covered or tail,
@@ -617,14 +626,8 @@ fn rows_floors_unmoved(
     image: &AuthorityCheckpointV2,
     tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
 ) -> bool {
-    let world_of = |hash: &AuthorityEntryHash| match tail.get(hash) {
-        Some(entry) => crate::authority::world_privacy::side_world(&entry.op),
-        None => image.rows.get(hash).and_then(|row| row.world),
-    };
     let violates = |world: Option<crate::EntityId>, parents: &[AuthorityEntryHash]| {
-        parents
-            .iter()
-            .any(|parent| world_of(parent).is_some_and(|parent_world| world != Some(parent_world)))
+        covered_floors::names_other_world(image, tail, world, parents)
     };
     let mut scopes = BTreeMap::<_, Vec<(u64, AuthorityEntryHash)>>::new();
     for (hash, entry) in tail {
@@ -651,36 +654,25 @@ fn rows_floors_unmoved(
             top.1.push(*hash);
         }
     }
-    let row = |hash: &AuthorityEntryHash| {
-        let (parents, world) = match tail.get(hash) {
-            Some(entry) => (
-                entry.parent_hashes.as_slice(),
-                crate::authority::world_privacy::side_world(&entry.op),
-            ),
-            None => image
-                .rows
-                .get(hash)
-                .filter(|_| !image.holds_rejected(hash))
-                .map(|row| (row.parents.as_slice(), row.world))?,
-        };
-        (!violates(world, parents)).then_some((parents, world))
+    let Some(below) = covered_floors::tail_key_rows_below(image, tail, scopes.keys().copied())
+    else {
+        return false;
     };
     scopes.iter_mut().all(|(key, rows)| {
         rows.sort_unstable();
-        let (mut below_seq, mut below) = tops
-            .get(key)
-            .map_or((None, Vec::new()), |(seq, rows)| (Some(*seq), rows.clone()));
-        rows.iter().all(|(seq, hash)| {
-            let rises = below_seq.is_none_or(|below_seq| *seq > below_seq)
-                && below.iter().all(|lower| {
-                    crate::authority::rows_floor::descends_within_scope(
-                        lower,
-                        &tail[hash].parent_hashes,
-                        key.1,
-                        row,
-                    )
-                });
-            (below_seq, below) = (Some(*seq), vec![*hash]);
+        let mut lower = match tops.get(key).map(|(seq, rows)| (*seq, rows.as_slice())) {
+            None => None,
+            Some((seq, &[top])) => Some((seq, top)),
+            Some(_) => return false,
+        };
+        rows.iter().all(|&(seq, hash)| {
+            let rises = match lower {
+                None => !below.contains_key(&hash),
+                Some((lower_seq, lower_row)) => {
+                    seq > lower_seq && below.get(&hash) == Some(&lower_row)
+                }
+            };
+            lower = Some((seq, hash));
             rises
         })
     })
