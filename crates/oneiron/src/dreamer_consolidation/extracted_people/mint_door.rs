@@ -1,7 +1,7 @@
 //! The extraction's person mint for one declared person, for the integration
 //! door `test_doors::native_person_mint`. Not API.
 
-use super::{MintNamespace, bind_people, mint_extracted_people};
+use super::{MintNamespace, bind_people, mint_extracted_people, original_try};
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_consolidation::call_labels::{
     CallLabelMap, CallSources, LabelKind, SourceShown,
@@ -36,14 +36,16 @@ impl CallSources for OneTurnCall {
 /// Binds and mints the one person a reply declares as `new:P1`, named `name`
 /// and citing the stored TURN `turn`, as the extraction pass does
 /// ([`bind_people`], then [`mint_extracted_people`] with no fence and no
-/// deadline). The attempt's first try is `attempt` and its queued parent is
-/// `parent`; the exposure axes are absent. Returns the id the declaration
-/// bound, whether or not the writer wrote a row for it.
+/// deadline). The namespace is the pass's: `parent` when one is given, else
+/// the first try of `attempt`'s retry lineage ([`original_try`]; `attempt`
+/// itself when no queue row of it retries another), with every exposure axis
+/// absent. No queue row is needed for either id. Returns the id the
+/// declaration bound, whether or not the writer wrote a row for it.
 ///
 /// # Errors
 ///
-/// A TURN that is not stored, a declaration that binds no id, and the
-/// writer's errors.
+/// A TURN that is not stored or whose stored row is shorter than its header,
+/// a declaration that binds no id, and the writer's errors.
 pub(crate) fn mint_named_person_for_test(
     vault: &Vault,
     attempt: AttemptId,
@@ -56,9 +58,12 @@ pub(crate) fn mint_named_person_for_test(
         let raw = vault
             .get_raw_in(&txn, &turn)?
             .ok_or_else(|| invalid_consolidation("person mint door: the TURN is not stored"))?;
+        let body = raw
+            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            .ok_or_else(|| invalid_consolidation("person mint door: the TURN's row is short"))?;
         (
             read_turn_facts_in_txn(vault, &txn, &turn)?.text,
-            document_version(turn, &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]),
+            document_version(turn, body),
         )
     };
     let mut labels = CallLabelMap::default();
@@ -72,7 +77,7 @@ pub(crate) fn mint_named_person_for_test(
     let people = bind_people(
         &persons,
         &call,
-        &MintNamespace::new(attempt, parent, None, None, None),
+        &MintNamespace::new(original_try(vault, attempt)?, parent, None, None, None),
     );
     let id = people.subject(1)?;
     let mut scope = oneiron_model::llm::Scope::default();
