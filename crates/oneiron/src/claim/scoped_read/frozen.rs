@@ -66,7 +66,8 @@ use oneiron_records::claim::scoped_read::frozen::{GUEST_LANE_NOT_SAVED, keep_cov
 pub(crate) enum SavedCredential {
     /// A narrowed lane's credential: it holds while it is live, that is
     /// unexpired, unrevoked and its grant, invitation and delegation
-    /// standing (`Vault::capability_slip_id_is_live_in_txn`), and, when a
+    /// standing, its read Scope inside its current membership grant
+    /// (`Vault::saved_read_credential_is_live_in_txn`), and, when a
     /// caveat set it an earlier end than its mint's, before that end, as
     /// its live proof was held to it (FIX SAVED-LANE-OUTLIVES-CAVEAT-EXPIRY).
     Live {
@@ -118,7 +119,7 @@ impl SavedCredential {
                 {
                     return Ok(false);
                 }
-                vault.capability_slip_id_is_live_in_txn(txn, &id)
+                vault.saved_read_credential_is_live_in_txn(txn, &id)
             }
             Self::Standing(id) => vault.capability_slip_id_stands_in_txn(txn, &id),
         }
