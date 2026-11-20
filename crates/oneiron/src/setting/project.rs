@@ -1813,7 +1813,7 @@ impl Vault {
         }
         let changed = self.with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            let mut changed = Vec::new();
+            let mut changed: Vec<&'static SettingSpec> = Vec::new();
             for (target, _) in &moved {
                 // Each row in a savepoint of its own: one a key's hook refuses on this install
                 // (its manifest, a seat installed here) stays as it was, and the others land.
