@@ -149,6 +149,27 @@ impl SyncClient {
                             .into_own_frame()?,
                     ]);
                 }
+                // A member lane asks for a promoted window's vector once the
+                // home granted it on this socket: its reconnect asked for none
+                // (review round 1 of #8364).
+                if sub_tag == window_sub_tags::PROMOTION_GRANTED
+                    && promoted
+                    && self.config.member_lane
+                {
+                    if !self.home_may_request(&key) {
+                        return Ok(Vec::new());
+                    }
+                    let vv = self
+                        .window_vv_for_initial_sync(&key)
+                        .map_err(|e| TransportError::Storage(e.to_string()))?;
+                    if key.world().is_some() {
+                        self.schedule_world_pad_repair(&key);
+                    }
+                    return Ok(vec![
+                        transport::encode_window_sync(window_key, window_sub_tags::VV_REQUEST, &vv)
+                            .into_own_frame()?,
+                    ]);
+                }
                 // The setup window's catch-up asks for the window only once the home granted it.
                 if sub_tag == window_sub_tags::PROMOTION_GRANTED && !catch_up {
                     return Ok(Vec::new());

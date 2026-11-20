@@ -57,6 +57,13 @@ impl SyncClient {
     /// whose read setting keeps it off this machine is followed by no lane
     /// here, so its windows are never asked.
     pub(crate) fn followed_tombstone_windows(&self) -> Result<Vec<WindowKey>, TransportError> {
+        // A member lane holds no root: it takes the set of every window it
+        // holds a thin copy of, listed in its catalogue now or not, so a copy
+        // the home hard-deleted is purged here (review round 1 of #8364).
+        if self.config.member_lane {
+            return thin_cached_windows(&self.vault)
+                .map_err(|error| TransportError::Storage(error.to_string()));
+        }
         let worlds = self.effective_worlds()?;
         Ok(self
             .server_windows()
@@ -244,6 +251,23 @@ pub(crate) async fn refresh_followed_tombstones(
 
 /// Whether `config` is an opened-item device lane, the one lane that takes
 /// followed tombstone id sets.
+/// Every window this install holds a thin read copy of (`ro:e:`, whose value
+/// is the item's window key), each once, in key order.
+fn thin_cached_windows(vault: &crate::Vault) -> crate::Result<Vec<WindowKey>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut windows = std::collections::BTreeSet::new();
+    for row in vault.store.sync_state.prefix_iter(&txn, "ro:e:")? {
+        let (_, value) = row?;
+        if let Ok(window) = std::str::from_utf8(value) {
+            windows.insert(window.to_owned());
+        }
+    }
+    Ok(windows
+        .iter()
+        .filter_map(|window| WindowKey::try_new(window))
+        .collect())
+}
+
 fn opened_device_lane(config: &SyncClientConfig) -> bool {
     config.residence_mode == SyncResidenceMode::Opened && config.federation_peer.is_none()
 }

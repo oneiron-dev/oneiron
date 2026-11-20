@@ -94,14 +94,17 @@ pub(super) async fn handle_window_sync(
         // asks as well for each window of a world it follows (ARCH-0023b #partial-sync): a home
         // that does not list the window, or does not grant the whole of it to this machine,
         // answers FOLLOW_REFUSED and keeps the socket. A refused promotion of a window the
-        // machine opened still ends the socket.
+        // machine opened still ends the socket, except on a member lane: the member's grant may
+        // narrow while its device keeps the window's marker, so the home answers FOLLOW_REFUSED
+        // and the lane's other windows still sync (review round 1 of #8364).
         let setup = key == WindowKey::from_timestamp(oneiron::embed::EMBEDDING_SETUP_LEARNED_AT);
-        let follow = sub_tag == window_sub_tags::FOLLOW_REQUEST;
-        if (setup || follow)
+        let refusal_keeps_socket = sub_tag == window_sub_tags::FOLLOW_REQUEST
+            || (conn_state.selector_lane.member().is_some() && !setup);
+        if (setup || refusal_keeps_socket)
             && protocol::is_residence_version(conn_state.protocol_version)
             && !read_window_list(&server.root_doc).contains(&key)
         {
-            if follow {
+            if refusal_keeps_socket {
                 refuse_follow(window_key, direct_tx)?;
             }
             return Ok(ControlFlow::Continue(()));
@@ -145,12 +148,12 @@ pub(super) async fn handle_window_sync(
         if setup && authorized.is_err() {
             return Ok(ControlFlow::Continue(()));
         }
-        if follow && let Err(refusal) = &authorized {
+        if refusal_keeps_socket && let Err(refusal) = &authorized {
             tracing::debug!(
                 conn_id,
                 window = %key,
                 %refusal,
-                "followed window not granted to this machine"
+                "followed or member window not granted to this machine"
             );
             refuse_follow(window_key, direct_tx)?;
             return Ok(ControlFlow::Continue(()));

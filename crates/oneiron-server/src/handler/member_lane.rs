@@ -318,7 +318,8 @@ pub(crate) fn member_receives_broadcast(version: u8, data: &[u8]) -> bool {
 /// The RPC methods a member lane may call (D4, D6): the in-band bind (of its
 /// own credential only, [`MemberLane::binds`]), `ping`, and the residence
 /// reads and promotion an Opened device uses, each behind its pinned
-/// selector. Every other method (bundle, pad, authority, checkpoint,
+/// selector, its windows' tombstone id sets among them (review round 1 of
+/// #8364). Every other method (bundle, pad, authority, checkpoint,
 /// machine history, home handoff, custody, facade verbs) is refused.
 pub(crate) fn member_admits_rpc_method(method: &str) -> bool {
     matches!(
@@ -333,5 +334,6 @@ pub(crate) fn member_admits_rpc_method(method: &str) -> bool {
             | "residence.search"
             | "residence.media_vectors"
             | "residence.windows"
+            | "residence.tombstones"
     )
 }

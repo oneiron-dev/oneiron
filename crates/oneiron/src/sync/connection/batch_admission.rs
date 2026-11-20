@@ -393,8 +393,15 @@ impl SyncConnection {
         )
         .into_result()
         .map_err(|e| LoopExit::Disconnected(e.to_string()))?;
+        // A member lane's vector waits for the home's grant, which the home
+        // may refuse and keep the socket (review round 1 of #8364).
+        let frames = if client.config.member_lane {
+            vec![proof]
+        } else {
+            vec![proof, vv]
+        };
         let mut left_rx = self.left.subscribe();
-        for frame in [proof, vv] {
+        for frame in frames {
             let send_result = tokio::select! {
                 biased;
                 () = async { let _ = left_rx.wait_for(|left| *left).await; } => {

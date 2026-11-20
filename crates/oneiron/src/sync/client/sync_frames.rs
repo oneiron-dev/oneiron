@@ -320,6 +320,17 @@ impl SyncClient {
                         .insert(key);
                     continue;
                 }
+                // A member lane asks for a promoted window's vector only once
+                // the home granted it on this socket: the lane holds no root
+                // whose answer would release a deferred world window, and a
+                // home that no longer grants the window answers
+                // `FOLLOW_REFUSED` and keeps the socket, so the lane's other
+                // windows still sync. The queue replays once the home answered
+                // (review round 1 of #8364).
+                if self.config.member_lane {
+                    messages.push(self.member_promotion_request_frame(&key)?);
+                    continue;
+                }
                 messages.push(self.promotion_request_frame(&key)?);
                 // The setup window's vector waits for the home's grant.
                 if self.setup_catch_up(key.as_str()) {
@@ -392,6 +403,26 @@ impl SyncClient {
         key: &WindowKey,
     ) -> std::result::Result<Vec<u8>, TransportError> {
         self.selector_request_frame(key, window_sub_tags::PROMOTION_REQUEST)
+    }
+
+    /// A member lane's `PROMOTION_REQUEST` frame for promoted window `key`,
+    /// whose vector waits for the home's grant. Records the request for
+    /// [`Self::unanswered_follow_requests`], as a follow's: the home answers
+    /// `PROMOTION_GRANTED` or `FOLLOW_REFUSED`.
+    fn member_promotion_request_frame(
+        &self,
+        key: &WindowKey,
+    ) -> std::result::Result<Vec<u8>, TransportError> {
+        let frame = self.promotion_request_frame(key)?;
+        self.follow_requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key.clone());
+        self.requested_windows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key.clone());
+        Ok(frame)
     }
 
     /// The `FOLLOW_REQUEST` frame for followed window `key`: the same
