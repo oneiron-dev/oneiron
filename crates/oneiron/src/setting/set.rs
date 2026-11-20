@@ -140,7 +140,8 @@ pub enum SetSettingOutcome {
 impl Vault {
     /// Changes one setting row in one write: the catalogue, the side-row wall on the value, the
     /// value's check, the caller's power checked live in this write, the change row, and the
-    /// key's hook. Once the write commits, an applied change runs the key's `after_commit`.
+    /// key's hook. Once the write commits, an applied change runs the key's `after_commit`. A key
+    /// that names a write turn takes it before the write opens and holds it until then.
     ///
     /// - The owner sets every key, a pin included.
     /// - An agent sets a value row of a key whose own line (`settings.set:<key>`) its live owner
@@ -174,6 +175,15 @@ impl Vault {
         caller: SettingCaller<'_>,
         request: SetSetting,
     ) -> Result<SetSettingOutcome> {
+        // Taken before the write opens, never inside it: a holder of the turn may be waiting on
+        // the writer. An unknown key takes none; the write refuses it.
+        let _turn = match spec_named(&request.key)
+            .ok()
+            .and_then(|spec| spec.write_turn)
+        {
+            Some(turn) => Some((turn.take)(self)?),
+            None => None,
+        };
         self.with_write_txn_grouped_after_commit(
             |txn| self.set_setting_in_txn(txn, caller, &request),
             |outcome| {

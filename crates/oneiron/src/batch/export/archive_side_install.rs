@@ -29,12 +29,12 @@ pub(crate) struct ArchivedSideRowRefresh {
     pub(crate) prelanded_rooms: std::collections::BTreeSet<crate::EntityId>,
     /// Serving hosts must observe repaired drafter bindings.
     drafter_serving: bool,
-    /// Queue attempts must observe the installed review policy.
-    attempt_observers: bool,
     /// Digest timers must re-read installed schedules and settings.
     proactivity: bool,
     /// Consent settlers must recheck newly restored answers.
     consent_answer: bool,
+    /// The after-commit wake of each setting key with an installed row.
+    setting_wakes: Vec<crate::setting::OnCommitted>,
 }
 
 impl ArchivedSideRowRefresh {
@@ -46,7 +46,6 @@ impl ArchivedSideRowRefresh {
         {
             match group {
                 ArchivedSideGroup::Drafter => self.drafter_serving = true,
-                ArchivedSideGroup::MergeQueue => self.attempt_observers = true,
                 ArchivedSideGroup::WeaveDigest => self.proactivity = true,
                 ArchivedSideGroup::Consent => self.consent_answer = true,
                 _ => {}
@@ -59,14 +58,14 @@ impl ArchivedSideRowRefresh {
         if self.drafter_serving {
             vault.notify_drafter_serving();
         }
-        if self.attempt_observers {
-            vault.store.notify_attempt_observers();
-        }
         if self.proactivity {
             vault.store.notify_proactivity_changes();
         }
         if self.consent_answer {
             vault.notify_consent_answer();
+        }
+        for wake in self.setting_wakes {
+            wake(vault);
         }
     }
 }
@@ -74,6 +73,9 @@ impl ArchivedSideRowRefresh {
 /// The fixed dependency order of the owning landing groups.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ArchivedSideGroup {
+    /// Setting catalogue rows, their change history and its counter: first, because later
+    /// groups read choices that are catalogue keys.
+    SettingRows,
     /// Independent owner settings.
     Settings,
     /// Grants whose holders have already been restored.
@@ -88,8 +90,6 @@ pub(crate) enum ArchivedSideGroup {
     WebConnector,
     /// Dependent walk bounds.
     Ports,
-    /// Passive housekeeping wake notes.
-    HousekeepingWake,
     /// Protective grant withdrawal markers.
     WithdrawnGrant,
     /// Project history budgets.
@@ -100,8 +100,6 @@ pub(crate) enum ArchivedSideGroup {
     DreamerRunner,
     /// Served-origin LFS path rules.
     OriginLfs,
-    /// Queue review policy.
-    MergeQueue,
     /// Owner learning rows before holder rows.
     LearningSetting,
     /// Retrieval pins and local active weights.
@@ -160,6 +158,13 @@ pub(crate) enum ArchivedSideGroup {
 pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGroup> {
     use ArchivedSideGroup as Group;
     match source_table {
+        name if name == side_table::SETTING.name
+            || name == side_table::SETTING_CHANGE.name
+            || name == side_table::SETTING_CHANGE_NEXT.name
+            || name == side_table::SETTING_CONTENT.name =>
+        {
+            Some(Group::SettingRows)
+        }
         name if name == side_table::BOARD_LAYOUT_SETTINGS.name
             || name == side_table::MODEL_OWNER_FALLBACK.name
             || name == side_table::NON_BASE_WORLD_CLAIM_FRACTION.name
@@ -188,7 +193,6 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         }
         name if name == side_table::WEB_CONNECTOR_SETTING.name => Some(Group::WebConnector),
         name if name == side_table::PORTS_DEPENDENT_WALK_POLICY.name => Some(Group::Ports),
-        name if name == side_table::HOUSEKEEPING_WAKE.name => Some(Group::HousekeepingWake),
         name if name == side_table::AUTHORITY_WITHDRAWN_GRANT.name => Some(Group::WithdrawnGrant),
         name if name == side_table::PROJECT_HISTORY_POLICY.name => Some(Group::ProjectHistory),
         name if name == side_table::MESSAGE_STREAM_POLICY.name
@@ -198,7 +202,6 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         }
         name if name == side_table::DREAMER_FREE_TIME_RECEIPT.name => Some(Group::DreamerRunner),
         name if name == side_table::ORIGIN_LFS_PATH_POLICY.name => Some(Group::OriginLfs),
-        name if name == side_table::MERGE_QUEUE_REVIEW_POLICY.name => Some(Group::MergeQueue),
         name if name == side_table::LEARNING_SETTING.name => Some(Group::LearningSetting),
         name if name == side_table::RETRIEVAL_POLICY_PINS.name => Some(Group::RetrievalPins),
         name if name == side_table::DRAFTER_POLICY.name => Some(Group::Drafter),
@@ -276,6 +279,15 @@ pub(crate) fn land_archived_side_group_in_txn(
     refresh: &mut ArchivedSideRowRefresh,
 ) -> Result<Vec<ArchivedSideRowOutcome>> {
     let outcomes = match group {
+        ArchivedSideGroup::SettingRows => {
+            crate::setting::archive_restore::land_archived_setting_rows_in_txn(
+                vault,
+                txn,
+                permit,
+                rows,
+                &mut refresh.setting_wakes,
+            )
+        }
         ArchivedSideGroup::Settings => {
             crate::settings::archive_restore::land_archived_settings_rows_in_txn(
                 vault, txn, permit, rows,
@@ -307,11 +319,6 @@ pub(crate) fn land_archived_side_group_in_txn(
         ArchivedSideGroup::Ports => {
             crate::ports::land_archived_ports_rows_in_txn(vault, txn, permit, rows)
         }
-        ArchivedSideGroup::HousekeepingWake => {
-            crate::store::housekeeping_wake::land_archived_housekeeping_wake_rows_in_txn(
-                vault, txn, permit, rows,
-            )
-        }
         ArchivedSideGroup::WithdrawnGrant => {
             crate::authority::land_archived_withdrawn_grant_rows_in_txn(vault, txn, permit, rows)
         }
@@ -330,9 +337,6 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::OriginLfs => {
             crate::Vault::land_archived_origin_lfs_rows_in_txn(vault, txn, permit, rows)
-        }
-        ArchivedSideGroup::MergeQueue => {
-            crate::Vault::land_archived_merge_queue_rows_in_txn(vault, txn, permit, rows)
         }
         ArchivedSideGroup::LearningSetting => {
             crate::learning_setting::land_archived_learning_setting_rows_in_txn(

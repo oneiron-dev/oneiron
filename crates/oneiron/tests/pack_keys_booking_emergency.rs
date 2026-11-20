@@ -134,6 +134,7 @@ fn base_config(
     EventTypeConfig {
         key: event_type(),
         duration_min: 30,
+        allowed_durations_min: Vec::new(),
         slot_step_min: 30,
         pre_buffer_min: 0,
         post_buffer_min: 0,
@@ -141,6 +142,7 @@ fn base_config(
         booking_window_secs,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: owner,
@@ -207,6 +209,7 @@ impl SlotOracle for Offered {
                 host_refs: vec![self.host.to_hex()],
                 host_zones: vec!["UTC".to_owned()],
             }],
+            full_days: Vec::new(),
         })
     }
 }
@@ -253,7 +256,7 @@ impl Fixture {
         DreamerRunnerStore::new(&vault)
             .elect_home_node(&[candidate], 1)
             .expect("elect home node");
-        let body = ClaimBody::new(
+        let mut body = ClaimBody::new(
             BOOKING_EVENT_TYPE_PREDICATE,
             ClaimSubject::Entity(page),
             encode_event_type_claim_value(&BookingEventTypeClaimValue {
@@ -267,6 +270,7 @@ impl Fixture {
             ClaimLifecycleStatus::Active,
         )
         .expect("event type claim");
+        body.scope_facet = vault.default_facet().expect("the vault default facet");
         vault
             .put_claim(&EntityId::now(), &body, at(1), 1)
             .expect("put event type");
@@ -340,6 +344,7 @@ impl Fixture {
                 constraint: None,
                 lease: HoldLeaseSpec::Ordinary,
                 idempotency_key: None,
+                cap_override: None,
             }),
             slot,
             NOW,

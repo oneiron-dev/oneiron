@@ -76,7 +76,8 @@ pub(crate) enum FrontierSigner<'a> {
     /// P-256 (FIX 11993), held behind the caller's signing callback, which
     /// signs each join's transcript (FIX 11867). Its joins are in the host
     /// family: that family's rule, a live owner roster key, is the standing
-    /// the ReRoot itself stands on.
+    /// the ReRoot itself stands on. The recovery root's authority key joins
+    /// the same way at the root's door, under the same rule (pass 27 R4).
     Callback(&'a AuthorityKey, &'a dyn Fn(&[u8]) -> Result<Vec<u8>>),
 }
 
@@ -146,7 +147,7 @@ impl FrontierSigner<'_> {
 /// Whether `state` admits `signer` to sign a join in `family`, as the rows
 /// the join leads to admit their own signer there: for a carrier, the one
 /// carrier rule in the roster view ([`super::owner_act_signer_admits`]: not
-/// a roster key, no removed chain, a live chain whose machine key it is);
+/// a roster key, the roster's chain live under it as its machine key);
 /// for the host, a live owner roster key, as the host's slip issuer and a
 /// ReRoot's signer are (FIX 11867), in either root suite (FIX 11993); for an
 /// anchor, an anchor `state` recorded for a stored root, as its marks are
@@ -164,7 +165,7 @@ fn admits_join_signer(
         (FrontierJoinFamily::Install(carrier), AuthorityKey::Ed25519(key)) => {
             Standing::new(state, pin, counted).admits_owner_act_signer(carrier, key, roster)
         }
-        (FrontierJoinFamily::Host, _) => roster_has_live_owner(&state.roster, signer),
+        (FrontierJoinFamily::Host, _) => state.has_live_owner(signer),
         (FrontierJoinFamily::Anchor, AuthorityKey::Ed25519(key)) => {
             state.root_anchors.contains_key(key)
         }

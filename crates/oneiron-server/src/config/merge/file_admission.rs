@@ -36,11 +36,27 @@ const ISSUER_KEY_SETTING: &str = "auth_secret";
 #[cfg(unix)]
 const WRITE_BY_ANY_USER: u32 = 0o002;
 
+/// A file this server will not read because of who else can reach it. Its
+/// text names the file, its mode and the command that mends it, and never
+/// repeats a line of the file, so a caller may show it to the owner as it
+/// is: the owner route's first-run model setup does (FIX
+/// INIT-ADOPTS-UNADMITTED-CONFIG).
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub(crate) struct FileRefused(String);
+
+impl FileRefused {
+    /// The refusal `error` carries, under any context a caller added.
+    pub(crate) fn of(error: &anyhow::Error) -> Option<&Self> {
+        error.downcast_ref()
+    }
+}
+
 /// The text of the config file at `path`, from one open handle, once that
 /// handle's file is admitted: not writable by any user, and its owner's
-/// alone when the text sets the issuer key. A refusal names the file, its
-/// mode and the command that mends it, and for the issuer key the line that
-/// sets it; it never repeats a value.
+/// alone when the text sets the issuer key. A refusal ([`FileRefused`])
+/// names the file, its mode and the command that mends it, and for the
+/// issuer key the line that sets it; it never repeats a value.
 pub(crate) fn read_config_file(path: &Path) -> anyhow::Result<String> {
     let Admitted {
         file,
@@ -48,16 +64,17 @@ pub(crate) fn read_config_file(path: &Path) -> anyhow::Result<String> {
         text: raw,
     } = read_admitted(path, Role::Config)?;
     if stored && sets_issuer_key(&raw) {
-        credential_file::admit(path, &file).with_context(|| {
+        credential_file::admit(path, &file).map_err(|refusal| {
             let place = match locate_toml_root_key(&raw, ISSUER_KEY_SETTING) {
                 Some(line) => format!(" at line {line}"),
                 None => String::new(),
             };
-            format!(
+            FileRefused(format!(
                 "config file {} sets {ISSUER_KEY_SETTING}{place}, the issuer key, so only the \
-                 file's owner may read it (ONEIRON_AUTH_SECRET keeps the key out of the file)",
+                 file's owner may read it (ONEIRON_AUTH_SECRET keeps the key out of the file): \
+                 {refusal}",
                 path.display()
-            )
+            ))
         })?;
     }
     Ok(raw)
@@ -121,14 +138,16 @@ fn read_admitted(path: &Path, role: Role) -> anyhow::Result<Admitted> {
     if stored {
         use std::os::unix::fs::PermissionsExt;
         let mode = metadata.permissions().mode();
-        anyhow::ensure!(
-            mode & WRITE_BY_ANY_USER == 0,
-            "{} {} can be written by any user (mode {:o}), and {}; run `chmod o-w` on it",
-            role.noun(),
-            path.display(),
-            mode & 0o777,
-            role.stake()
-        );
+        if mode & WRITE_BY_ANY_USER != 0 {
+            return Err(FileRefused(format!(
+                "{} {} can be written by any user (mode {:o}), and {}; run `chmod o-w` on it",
+                role.noun(),
+                path.display(),
+                mode & 0o777,
+                role.stake()
+            ))
+            .into());
+        }
     }
     let mut text = String::new();
     file.read_to_string(&mut text)

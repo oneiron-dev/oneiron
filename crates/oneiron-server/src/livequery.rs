@@ -431,7 +431,13 @@ pub(crate) fn residence_rpc(
     index_cache: &mut Option<ResidenceIndexCache>,
     append_stage: &mut Option<oneiron::sync::residence::AuthorityAppendStage>,
     touch_stage: &mut Option<ResidenceTouchStage>,
-) -> Result<RpcReply, ProtocolError> {
+) -> Result<
+    (
+        RpcReply,
+        Option<crate::selector_release::SelectorReleaseBasis>,
+    ),
+    ProtocolError,
+> {
     residence::run(
         server,
         auth,
@@ -690,7 +696,7 @@ pub(crate) struct Cursor {
 
 pub(crate) mod subscriptions;
 
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) mod test_wire;
 
 #[cfg(test)]

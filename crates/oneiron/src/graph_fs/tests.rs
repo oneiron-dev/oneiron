@@ -2,7 +2,7 @@ use super::*;
 use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::config::VaultConfig;
-use crate::registry::ENTITY_TYPE_PERSON;
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use crate::temporal::TimeRange;
 use crate::test_util::open_test_vault_with;
 
@@ -194,6 +194,7 @@ fn put_policy_manifest(vault: &crate::Vault, id: EntityId, data: Vec<u8>) -> Res
         entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
         occurred: time_range(1),
         learned_at: 1,
+        row_version: None,
         data,
         allow_maintenance: true,
         allow_reserved_predicate: false,
@@ -991,6 +992,7 @@ fn a_scan_limit_cursor_never_names_the_row_the_walk_passed_over() -> Result<()> 
         name: "graph-fs-scan-limit".to_owned(),
         class: CustodyClass::CustodyPortable,
         device_only: false,
+        model_reveal_allowed: false,
         value_bytes: b"never-in-a-cursor".to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: 1,
@@ -1230,10 +1232,8 @@ fn graph_fs_listings_expire_grants_without_other_writes() -> Result<()> {
     use crate::claim::ScopedReadActorKey;
 
     let clock = crate::ports::ManualClock::new(1_000);
-    let config = VaultConfig {
-        store_clock: clock.bundle(),
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::default();
+    config.store_clock = clock.bundle();
     let (_dir, vault) = open_test_vault_with(config);
     let principal = test_id(0x81);
     let space = test_id(0x82);
@@ -1254,24 +1254,33 @@ fn graph_fs_listings_expire_grants_without_other_writes() -> Result<()> {
             created_at: 1_000,
             revoked_at: None,
             expires_at: Some(2_000),
+            companion_bounds: None,
         },
     )?;
     let author = test_id(0x86);
     put_entity(&vault, author, ENTITY_TYPE_PERSON)?;
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    put_entity(&vault, space, ENTITY_TYPE_RELATIONSHIP)?;
     vault
         .memory(author, crate::EdgeActorClass::Human)
         .witness(&crate::memory::WitnessTurn {
             conversation_ref: test_id(0x87).to_hex(),
             turn_ref: None,
+            thread_audience: None,
+            project: None,
             occurred_at: 1_000,
+            assertions: Default::default(),
             messages: vec![crate::memory::WitnessMessage {
                 id: Some(message.to_hex()),
                 author: crate::memory::WitnessAuthor::User,
                 message_type: "dialogue".into(),
                 content: "expiring message".into(),
+                parts: None,
                 metadata: Some(serde_json::json!({"rel": space.to_hex()})),
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
         })
         .expect("witness message");
@@ -1293,18 +1302,15 @@ fn graph_fs_listings_expire_grants_without_other_writes() -> Result<()> {
 }
 
 fn telemetry_config() -> VaultConfig {
-    VaultConfig {
-        retrieval_telemetry_capture: true,
-        ..VaultConfig::default()
-    }
+    let mut config = VaultConfig::default();
+    config.retrieval_telemetry_capture = true;
+    config
 }
 
 fn assert_graph_fs_capture(capture: bool) -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let config = VaultConfig {
-        retrieval_telemetry_capture: capture,
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::default();
+    config.retrieval_telemetry_capture = capture;
     let vault = crate::Vault::open(dir.path(), config)?;
     let reader = vault
         .scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("valid actor key"));

@@ -64,6 +64,7 @@
 
 use std::cell::RefCell;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use super::FoldWordRef;
@@ -210,10 +211,22 @@ thread_local! {
 
 /// The hash a captured request and the call a ladder sends for it share:
 /// their messages, which admission and a rung's binding leave as they are
-/// (the route prompt is a new first message, never a change to these).
+/// (the route prompt is a new first message, never a change to these;
+/// `purposes::code_run::CAPSULE_MESSAGES`).
 fn messages_digest(messages: &[LlmMessage]) -> Option<[u8; 32]> {
     let bytes = serde_json::to_vec(messages).ok()?;
-    Some(*blake3::hash(&bytes).as_bytes())
+    Some(
+        LegacyDigest::new(purposes::code_run::CAPSULE_MESSAGES)
+            .raw(&bytes)
+            .finish(),
+    )
+}
+
+/// [`messages_digest`] for the K door
+/// (`test_doors::fingerprint_keep_code_run_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn messages_digest_for_test(messages: &[LlmMessage]) -> Option<[u8; 32]> {
+    messages_digest(messages)
 }
 
 /// The actual admitted request replacing an unfinalized executor capture.

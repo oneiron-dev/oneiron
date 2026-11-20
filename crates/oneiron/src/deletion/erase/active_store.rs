@@ -108,9 +108,7 @@ impl Vault {
                 // entries' retirement staged; another record's stays (KS-3).
                 self.store.stage_known_history_erase_in_txn(wtxn, id)?;
                 crate::store::secret_handle_labels::erase_secret_handle_label_in_txn(
-                    &self.store,
-                    wtxn,
-                    id,
+                    self, wtxn, id,
                 )?;
                 crate::store::secret_payment_marks::erase_secret_payment_mark_in_txn(
                     &self.store,
@@ -538,6 +536,7 @@ impl Vault {
         crate::llm::deindex_dreamer_step_claim(&self.store, wtxn, id)?;
         // The scrub below truncates a PERSON body in place: its party keys go first.
         crate::store::person_party_keys::reindex_person_party_keys(&self.store, wtxn, id, None)?;
+        crate::task_verb::speaker_entry_index::reindex_speaker_entry(&self.store, wtxn, id, None)?;
         // An epoch summary keeps its keyframe, so the next mint numbers above it.
         let scrubbed = crate::compaction::erased_form(&entity_record);
         self.store

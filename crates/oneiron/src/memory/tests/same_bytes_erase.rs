@@ -16,7 +16,7 @@ const ONLY_B: &[u8] = b"bytes only the second record holds";
 const OTHER: &[u8] = b"bytes an unrelated record holds";
 
 const FLAG: EraseOptions<'static> = EraseOptions {
-    reason: EraseReason::UserHardDelete,
+    reason: EraseReason::OwnerErase,
     also_same_bytes: true,
     veto_starter: None,
 };
@@ -110,7 +110,43 @@ fn shared_vault_with(
             1,
         )
         .expect("shared vault");
+    crate::test_util::accept_founding_invitation(&vault, 42, member, role);
     crate::test_util::clear_default_policy_manifest_for_legacy_tests(&vault);
+    // The version CLAIM names the artifact through its writer's read lane.
+    // A replacement manifest must also admit both humans' Auto uploads.
+    let mut ceilings = vec![serde_json::json!({
+        "actor_class": "human", "actor_ref": owner.to_hex(), "ceiling": "auto",
+    })];
+    let mut reads = Vec::new();
+    if matches!(
+        role,
+        FederationGrantRole::Owner
+            | FederationGrantRole::Deputy
+            | FederationGrantRole::Admin
+            | FederationGrantRole::Member
+    ) {
+        ceilings.push(serde_json::json!({
+            "actor_class": "human", "actor_ref": member.to_hex(), "ceiling": "auto",
+        }));
+        reads.push(serde_json::json!({
+            "actor_ref": member.to_hex(),
+            "effector": "core:read",
+            "scope": crate::federation::scope_codec::read_preset(),
+            "receipt_required": false,
+        }));
+    }
+    let policy = serde_json::json!({
+        "schema_version": "1.2", "pack_id": "same-bytes-erase-test", "pack_version": "v1",
+        "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {"criticality": "normal", "sensitivity": "normal"}, "rules": [],
+        "actor_ceilings": ceilings, "scoped_grants": reads,
+    });
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        EntityId::now(),
+        &rmp_serde::to_vec_named(&policy).expect("encode blob fixture policy"),
+    )
+    .expect("blob fixture policy");
     (dir, vault, owner, member)
 }
 
@@ -226,7 +262,7 @@ fn only_a_live_vault_owner_confirms_a_same_bytes_erase() {
     let agent = vault.memory(owner, EdgeActorClass::Agent);
 
     for preview in &previews {
-        for reason in [EraseReason::UserHardDelete, EraseReason::GdprDelete] {
+        for reason in [EraseReason::OwnerErase, EraseReason::GdprDelete] {
             let options = EraseOptions {
                 reason,
                 also_same_bytes: true,
@@ -527,6 +563,7 @@ fn brief_grant(vault: &crate::Vault, issuer: EntityId, brief: EntityId) -> Entit
         created_at: 42,
         revoked_at: None,
         expires_at: None,
+        mention: None,
     };
     crate::share::tests::policy(vault, &issuer, &share, true, None).expect("share policy");
     let grant = EntityId::from_bytes([0xC8; 16]).expect("grant id");
@@ -536,7 +573,7 @@ fn brief_grant(vault: &crate::Vault, issuer: EntityId, brief: EntityId) -> Entit
 
 #[test]
 fn a_match_with_its_own_brief_grant_is_erased_and_keeps_no_grant() {
-    for reason in [EraseReason::UserHardDelete, EraseReason::GdprDelete] {
+    for reason in [EraseReason::OwnerErase, EraseReason::GdprDelete] {
         let (_dir, vault) = blob_vault();
         let owner = vault.ensure_embedded_owner_actor().expect("owner");
         let memory = facade_for(&vault, owner);
@@ -593,10 +630,8 @@ struct TwoOwners {
 
 fn two_owners() -> TwoOwners {
     let clock = crate::ports::ManualClock::new(100);
-    let config = VaultConfig {
-        store_clock: clock.bundle(),
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
     let (dir, vault, owner, other) = shared_vault_with(config, FederationGrantRole::Owner);
     let me = crate::test_util::embedded_owner_proof(&vault);
     let other_proof = vault
@@ -716,6 +751,8 @@ fn an_act_whose_record_was_erased_without_its_claim_reads_as_erased() {
             existed: true,
             reason: "user_hard_delete".to_owned(),
             receipt_ref: None,
+            state: DeleteRequestState::Applied,
+            check_in: None,
         }
     );
     assert!(erased(&owners.vault, &owners.b));

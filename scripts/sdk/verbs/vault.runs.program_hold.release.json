@@ -3,7 +3,7 @@
   "description": "The owner releases one held turn program's try against the exact hold he read: stop ends it and clears the hold, its run kept; resume queues the same try once its checkpoint, authority, pin and effects check out.",
   "input": "crate::dreamer_runner::ReleaseTurnProgramHoldRequest",
   "output": "crate::dreamer_runner::ProgramHoldReleaseView",
-  "call": "crate::dreamer_runner::release_turn_program_hold_as_owner(memory.vault(), &memory.embedded_owner(\"vault.runs.program_hold.release\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "call": "memory.with_owner_or_delegate(\"vault.runs.program_hold.release\", |who, credential| match who { crate::authority::OwnerOrDelegate::Owner(owner) => crate::dreamer_runner::release_turn_program_hold_as_owner(memory.vault(), owner, &input).map_err(crate::memory::MemoryError::from), crate::authority::OwnerOrDelegate::Delegate(agent) => crate::dreamer_runner::release_turn_program_hold_as_delegate(memory.vault(), agent, credential, &input) })?",
   "host_door": true,
   "host_door_lists": true,
   "scope": "Write",

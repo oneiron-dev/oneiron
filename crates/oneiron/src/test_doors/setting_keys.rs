@@ -15,6 +15,9 @@ use crate::setting::{
 /// How many changes `test.hooked` has seen.
 static HOOKED_CHANGES: AtomicU64 = AtomicU64::new(0);
 
+/// The time the last change `test.hooked`'s hook saw was stamped with.
+static HOOKED_LAST_AT: AtomicU64 = AtomicU64::new(0);
+
 /// How many times `test.after_commit`'s after-commit hook has run.
 static AFTER_COMMITS: AtomicU64 = AtomicU64::new(0);
 
@@ -47,6 +50,13 @@ fn quietest() -> bool {
 
 fn empty_banner() -> String {
     String::new()
+}
+
+fn daily() -> crate::schedule::Trigger {
+    crate::schedule::Trigger::Every {
+        secs: 24 * 60 * 60,
+        first_at: None,
+    }
 }
 
 fn no_mode() -> Option<u64> {
@@ -110,8 +120,9 @@ fn no_credential_named_members() -> CredentialNamedMembers {
 fn count_change(
     _vault: &crate::Vault,
     _txn: &mut heed::RwTxn<'_>,
-    _change: &SettingChange,
+    change: &SettingChange,
 ) -> Result<()> {
+    HOOKED_LAST_AT.store(change.at, Ordering::SeqCst);
     HOOKED_CHANGES.fetch_add(1, Ordering::SeqCst);
     Ok(())
 }
@@ -120,6 +131,12 @@ fn count_change(
 #[must_use]
 pub fn hooked_changes() -> u64 {
     HOOKED_CHANGES.load(Ordering::SeqCst)
+}
+
+/// The time the last change `test.hooked`'s hook ran for was stamped with.
+#[must_use]
+pub fn hooked_last_at() -> u64 {
+    HOOKED_LAST_AT.load(Ordering::SeqCst)
 }
 
 /// `test.after_commit`'s after-commit hook: it reads the key in a read of its own, which sees
@@ -185,6 +202,11 @@ crate::setting::setting_keys! {
     pub TEST_HOOKED: u64 = "test.hooked" {
         kind: Kind::new(zero),
         on_change: Some(count_change),
+    };
+    /// The cadence of the test job `test.cadence` (DESIGN 15-setting-primitive, stage 5a-1).
+    pub TEST_JOB_CADENCE: crate::schedule::Trigger = "test.job_cadence" {
+        kind: Kind::new(daily),
+        on_change: Some(crate::schedule::rearm_on_change),
     };
     /// A mode that is off until the owner sets one: an optional value.
     pub TEST_OPTIONAL_MODE: Option<u64> = "test.optional_mode" {

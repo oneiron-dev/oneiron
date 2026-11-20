@@ -127,11 +127,25 @@ impl ActClass {
     pub fn row(self) -> &'static ActClassRow {
         &ACT_CLASS[self as usize]
     }
+
+    /// Whether the act takes the owner-checked preview and confirm
+    /// (DEC-0006 #undo-class): its row is one-way and it is not [`Self::Sign`].
+    /// Sign is one-way but its H is the signer's own (ARCH-0082:205;
+    /// L8-49-SIGN = A), so it keeps its own preview. Today this is true for
+    /// [`Self::Erase`], [`Self::VaultDelete`] and
+    /// [`Self::ProtectedRefRewriteOrDelete`]. No verb row has the last class:
+    /// a protected-ref push asks through the origin's own floor
+    /// (`origin::smart_http::protected_ref_confirm`), so the shared confirm
+    /// gates the erase and vault-delete verbs.
+    #[must_use]
+    pub fn owner_confirms(self) -> bool {
+        self.row().undo.is_one_way() && self != Self::Sign
+    }
 }
 
 /// How far an act can be undone. Canon fills no missing class by default, so
 /// an act with an [`UndoClass::Unstated`] class holds on silence.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum UndoClass {
     /// An undo restores it.
@@ -148,6 +162,14 @@ pub enum UndoClass {
     Unstated,
     /// Not an act with an effect of its own.
     NotApplicable,
+}
+
+impl UndoClass {
+    /// Whether the class is one-way.
+    #[must_use]
+    pub const fn is_one_way(self) -> bool {
+        matches!(self, Self::OneWay)
+    }
 }
 
 /// A proof an act accepts. The names are the settlement's `proof_kind`.

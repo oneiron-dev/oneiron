@@ -25,10 +25,12 @@
 //! Stage 0.1 lands the primitive unused: no engine key is in the catalogue yet, and no value in
 //! force moves.
 
+pub(crate) mod archive_restore;
 mod ask;
 mod catalogue;
 mod change;
 mod learned;
+mod page_max;
 mod read;
 mod set;
 pub(crate) mod tables;
@@ -54,6 +56,7 @@ pub(crate) use self::change::{
     settings_head_in_txn,
 };
 pub use self::learned::{LEARNED_SCOPES, LearnedRange, SettingFitView};
+pub use self::page_max::PageMax;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::read::put_stored_bytes;
 pub use self::read::{SettingCatalogueEntry, SettingRowView, SettingView};
@@ -111,13 +114,31 @@ pub type LooseningNote =
 /// The one hook a key may run in the write that changes it: re-arm a schedule, clear parks that
 /// wait on the key, or refuse the change on state the value's own check cannot see. It runs only
 /// on an applied change, after its rows are put; its `Err` fails the whole write, so neither row
-/// lands and the caller sees that error. A row that arrives by sync or a restore never passes
-/// through it, so a refusal here needs its reader to hold the same line.
+/// lands and the caller sees that error. A row that arrives by sync or a checkpoint restore never
+/// passes through it, so a refusal here needs its reader to hold the same line. The owner's
+/// archive restore passes an absent row through it as a change with no prior, in a savepoint: a
+/// refusal there leaves the row out and its archived copy retained (`archive_restore`).
 pub type OnChange = fn(&Vault, &mut heed::RwTxn<'_>, &SettingChange) -> Result<()>;
 
 /// The one hook a key may run once the write that changed it has committed: wake a host that
 /// reads the key (a reader woken inside the write would see the last commit's value).
 pub type OnCommitted = fn(&Vault);
+
+/// The turn a key's change takes before its write opens, held until the write and its
+/// `after_commit` are done: for a key whose hook must not land while another holder of that turn
+/// runs several writes. [`Vault::set_setting`] takes it, and so does the owner's archive restore
+/// for each key its archive holds a row of, which it can install through the key's hook
+/// (`archive_restore::take_write_turns`). A change made in a caller's own write
+/// (`Vault::set_setting_in_txn`) takes none, since waiting for a turn inside a write could wait on
+/// a holder that waits on the writer. Such a key is set through those two doors alone.
+#[derive(Clone, Copy)]
+pub struct WriteTurn {
+    /// Names the turn. Keys that take one turn name it alike, so a write that can change several
+    /// of them takes it once.
+    pub name: &'static str,
+    /// Waits for, then holds, the turn, until the returned guard drops.
+    pub take: fn(&Vault) -> Result<Box<dyn std::any::Any>>,
+}
 
 /// One catalogue row: everything the engine knows about a key. Data, not code.
 #[derive(Clone, Copy)]
@@ -146,6 +167,8 @@ pub struct SettingSpec {
     /// Run after the commit of each write that applied a change to the key (not on an equal
     /// value, not on a change that waits on a check-in).
     pub after_commit: Option<OnCommitted>,
+    /// Taken before the write of a change to the key opens ([`WriteTurn`]).
+    pub write_turn: Option<WriteTurn>,
 }
 
 impl SettingSpec {
@@ -166,6 +189,7 @@ impl SettingSpec {
         loosening_note: None,
         on_change: None,
         after_commit: None,
+        write_turn: None,
     };
 
     /// Whether a row may sit at `kind`.

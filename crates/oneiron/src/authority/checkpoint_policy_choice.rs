@@ -38,8 +38,15 @@ const TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than o
 /// The fold did not count the signed choice here: it never reports success.
 const NOT_COUNTED: &str = "this install's fold does not count the checkpoint policy choice";
 
-const HOSTED_SELECTION_ADVANCED_ONLY: &str =
-    "hosted checkpoint root selection requires the operator's enterprise/advanced capability";
+/// The owner's QUORUM-HOST-ROOT = C: the host key signs a hosted vault's
+/// checkpoints, and dropping it is an enterprise/advanced setting the
+/// operator grants per vault. Neither law, a provider's term nor capacity,
+/// so it names no bound kind, only the rule and where the choice is the
+/// owner's own (DEC-0005 #will-sweep; RULING L9-61-CHECKPOINT = A).
+const HOSTED_SELECTION_ADVANCED_ONLY: &str = "hosted checkpoint root selection requires \
+     the operator's enterprise/advanced capability: on a hosted vault the host key signs its \
+     checkpoints unless the operator grants this vault that setting; a self-hosted or relay \
+     vault's owner chooses its roots";
 
 #[doc(hidden)]
 pub use oneiron_records::authority::checkpoint_policy_choice::CheckpointPolicyView;
@@ -151,7 +158,12 @@ impl Vault {
         let key = crate::identity::read_machine_signing_key_in_txn(self, &txn)?
             .ok_or_else(|| authority_refused(NO_CARRIER))?;
         let public_key = key.verifying_key().to_bytes();
-        if !super::owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+        if !super::owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
             return Err(authority_refused(NO_CARRIER));
         }
         // FIX 7908: join a frontier wider than one entry names, else today's path.
@@ -187,7 +199,7 @@ impl Vault {
                 choice,
             }),
             now,
-            self.owner_proof_signer(&fold).as_deref(),
+            self.owner_proof_signer(&fold).as_ref(),
         )?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {

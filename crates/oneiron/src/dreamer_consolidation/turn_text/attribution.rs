@@ -8,6 +8,7 @@ use crate::gate::{WITNESS_AUTHOR_COUNTERPARTY, WITNESS_AUTHOR_SYSTEM};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::{EntityId, Result, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// The source speaker a MESSAGE's sorted `AuthoredBy` targets `authors`
 /// name, when they are the binding its `author` bucket admits. A native
@@ -66,20 +67,30 @@ pub(super) fn attribution_hash(
     if !imported || authors.is_empty() {
         return None;
     }
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron:message-attribution:v1");
-    hash.update(&(authors.len() as u64).to_be_bytes());
+    let mut hash = LegacyDigest::new(purposes::dreamer_consolidation::MESSAGE_ATTRIBUTION);
+    hash.len_u64_be(authors.len());
     for author in authors {
-        hash.update(author.as_bytes());
+        hash.raw(author.as_bytes());
     }
     match speaker {
         Some(speaker) => {
-            hash.update(&[1]);
-            hash.update(speaker.as_bytes());
+            hash.raw(&[1]);
+            hash.raw(speaker.as_bytes());
         }
         None => {
-            hash.update(&[0]);
+            hash.raw(&[0]);
         }
     }
-    Some(*hash.finalize().as_bytes())
+    Some(hash.finish())
+}
+
+/// [`attribution_hash`] for the K door
+/// (`test_doors::fingerprint_keep_dreamer_consolidation_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn attribution_hash_for_test(
+    imported: bool,
+    authors: &[EntityId],
+    speaker: Option<EntityId>,
+) -> Option<[u8; 32]> {
+    attribution_hash(imported, authors, speaker)
 }

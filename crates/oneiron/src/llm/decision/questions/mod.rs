@@ -26,8 +26,6 @@ mod store;
 mod task_ask;
 mod windows;
 
-// FIX [LIBTEST-QUARANTINE-LLM-DECISION-QUESTIONS-STANDING-TESTS]: the lib test target's type check fails here (26 errors: E0308 x16, E0063 x9, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod standing_tests;
 
@@ -97,6 +95,7 @@ pub use route_calibration::{
 #[cfg(oneiron_test_support)]
 pub(crate) use saved_reader::{saved_reader, saved_source_key_in_txn};
 pub(crate) use saved_reader::{wake_artifact_reads, wake_lane};
+pub(crate) use standing::mark_answers_stale_in_left_facets_in_txn;
 pub use standing::{
     StandingAnswer, admit_standing_answer, backfill_standing_answer, prepare_standing_answer,
     standing_source_frontier,
@@ -113,7 +112,5 @@ pub use windows::{
     next_outcome_window_close_at,
 };
 
-// FIX [LIBTEST-QUARANTINE-LLM-DECISION-QUESTIONS-GRAPH-ASK-TESTS]: the lib test target's type check fails here (26 errors: E0061 x20, E0063 x6); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod graph_ask_tests;

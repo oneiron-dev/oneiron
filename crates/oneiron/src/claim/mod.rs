@@ -52,6 +52,7 @@ pub(crate) use dispatch_input as widen_record;
 mod aging_profiles;
 mod authorship;
 mod candidate_write;
+pub(crate) use candidate_write::LandingGateAnswer;
 pub mod code_instruction;
 pub mod consult_payload_ref;
 pub mod retrieval_scope;
@@ -65,6 +66,7 @@ pub(crate) mod enforcement_read;
 mod evidence_support;
 mod expression_archive;
 mod expression_preference;
+pub(crate) mod held_question;
 use oneiron_authority::claim_history_handoff as history_handoff;
 mod history_pin_exchange;
 pub use oneiron_base::learning_estimate;
@@ -160,8 +162,6 @@ pub(crate) use scoped_read::{
 pub use source_trust::*;
 pub(crate) use supersession_provenance::{ConflictMarker, conflict_marker, write_coaching};
 pub(crate) use write_target::validate_claim_write_target_in_txn;
-// FIX [LIBTEST-QUARANTINE-CLAIM-TESTS]: the lib test target's type check fails here (7 errors: E0063 x2, E0609 x2, E0061 x1, E0308 x1, E0277 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

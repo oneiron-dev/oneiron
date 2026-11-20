@@ -562,7 +562,7 @@ impl Vault {
         let live = source.capture(&CopyGenerations::of_rows(&image.databases["sync_state"]))?;
         // What the source erased, those after the cut too (FIX 4753).
         let erased = source.erased_ids();
-        image.drop_machine_identity();
+        image.drop_machine_identity_restored(&checkpoint_id)?;
         // The copy holds the source's records, so its host orders hold them too.
         host_holds::carry(&mut image.databases, live.host_holds())?;
         // A pad its forked custody lacks or cannot read comes from the
@@ -863,7 +863,7 @@ impl Vault {
         host_holds::carry_current(&mut image.databases, current)?;
         // Two live vaults never answer as one machine (wp-keys I7).
         if let Custody::Fork(_) = custody {
-            image.drop_machine_identity();
+            image.drop_machine_identity_restored(&checkpoint_id)?;
         }
         let (made, forked, mut vault, mut report) = Self::restore_image(
             image,
@@ -925,7 +925,5 @@ mod test_hooks;
 #[cfg(test)]
 use test_hooks::panic_if_armed;
 
-// FIX [LIBTEST-QUARANTINE-RECOVERY-CHECKPOINT-TESTS]: the lib test target's type check fails here (48 errors: E0061 x41, E0063 x7); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

@@ -28,6 +28,8 @@ pub(crate) use archive_read::{
 };
 pub use archive_retained_side_rows::ArchiveRetainedSideRow;
 #[cfg(oneiron_test_support)]
+pub(crate) use archive_side_tables::PortableSideTable;
+#[cfg(oneiron_test_support)]
 pub(crate) use archive_side_tables::archive_side_family_table_names;
 pub use archive_side_tables::{
     ArchiveLfsObject, ArchiveSideFamily, ArchiveSideKeyPart, ArchiveSideRow, ArchiveSideTree,
@@ -97,8 +99,6 @@ mod evidence_import;
 pub use embedding_setup::*;
 mod epoch_floors;
 mod expression_import;
-// FIX [LIBTEST-QUARANTINE-BATCH-EXPORT-EXPRESSION-IMPORT-TESTS]: the lib test target's type check fails here (16 errors: E0599 x13, E0308 x2, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod expression_import_tests;
 pub(crate) use home_room_project::project_room_dependency;
@@ -111,8 +111,8 @@ mod snapshot_body;
 pub(crate) use document_snapshot::{ExportSnapshotBody, ExportSnapshotEntity, ExportSnapshotRun};
 pub use document_types::*;
 pub(crate) use snapshot_body::ExportSnapshotEntityBody;
-// FIX [LIBTEST-QUARANTINE-BATCH-EXPORT-DOCUMENT-TESTS]: the lib test target's type check fails here (27 errors: E0599 x17, E0308 x10); port it, then drop this gate
-#[cfg(any())]
+#[cfg(test)]
+pub(crate) mod archive_rewrite_fixture;
 #[cfg(test)]
 mod document_tests;
 
@@ -122,8 +122,6 @@ pub use bundle_types::*;
 pub(crate) use bundle_validation::OmissionLedger;
 #[cfg(oneiron_test_support)]
 pub(crate) use bundle_validation::reserved_claim_import;
-// FIX [LIBTEST-QUARANTINE-BATCH-EXPORT-BUNDLE-TESTS]: the lib test target's type check fails here (27 errors: E0599 x15, E0308 x11, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod bundle_tests;
 
@@ -132,8 +130,6 @@ pub use receipt_sources::{ExportReceiptSource, ReceiptSourceOmission, ReceiptSou
 
 pub(crate) use receipt_sources::{receipt_sources_for_body, task_receipt_refs};
 
-// FIX [LIBTEST-QUARANTINE-BATCH-EXPORT-RECEIPT-SOURCE-TESTS]: the lib test target's type check fails here (25 errors: E0599 x15, E0308 x10); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod receipt_source_tests;
 

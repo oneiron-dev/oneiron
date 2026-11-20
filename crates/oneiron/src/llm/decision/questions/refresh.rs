@@ -481,7 +481,8 @@ pub(super) fn source_actor_key(
 /// Lands one answer to `record`'s version as a proposed claim, stamped for
 /// the audience the version names (FIX 1825). An answer
 /// resting on a graph context's `rows` reads no wider than any of them, as a
-/// one-off graph ask's does; a lone unit bounds it by its own claim terms.
+/// one-off graph ask's does; a lone claim unit bounds it by its own claim
+/// terms, and any other lone unit as the one row it rests on.
 fn land(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -516,6 +517,29 @@ fn land(
         if let Some(world) = body.world {
             candidate = candidate.with_world(world);
         }
+    } else {
+        // The answer lands where the unit's room reads it now, as a graph
+        // answer on it does (review round 1 on #9604).
+        let reader = super::saved_reader::saved_reader_in_txn(
+            vault,
+            txn,
+            record.principal,
+            &record.read_lane,
+        )?;
+        if let Some(unit) = super::standing::lone_unit_source_in(
+            vault,
+            txn,
+            answer.unit,
+            answer.source_kind,
+            raw,
+            &reader,
+        )? {
+            taint = super::standing::constrain_sources(
+                &mut candidate,
+                std::slice::from_ref(&unit),
+                record.principal,
+            )?;
+        }
     }
     candidate = super::answer_landing::stamp_answer(candidate.with_evidence_taint(taint)?, record)?
         .with_evidence(rmpv::Value::Array(
@@ -547,7 +571,5 @@ fn land(
         .apply(txn)
 }
 
-// FIX [LIBTEST-QUARANTINE-LLM-DECISION-QUESTIONS-REFRESH-TESTS]: the lib test target's type check fails here (14 errors: E0308 x9, E0063 x5); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

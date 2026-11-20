@@ -132,8 +132,43 @@ pub enum Ran {
     Done,
     /// The run stopped at its budget: due again at once, going on from `cursor`.
     More { cursor: Vec<u8> },
+    /// The run reached the end of its work but left items it could not finish: due again after
+    /// the backoff, which retries them, its cursor cleared. A paged job whose earlier page left
+    /// items carries that in its own cursor and answers this at its end.
+    ItemsFailed,
     /// The run failed: due again after the backoff, its cursor kept.
     Failed,
+}
+
+/// A zone table that knows every zone: the check of a stored trigger, which has no zone table.
+/// The arming of a trigger refuses a zone the engine does not know.
+struct EveryZone;
+
+impl ZoneRules for EveryZone {
+    fn knows(&self, _zone: &str) -> bool {
+        true
+    }
+
+    fn wall_to_utc(&self, _zone: &str, _date: CivilDate, _hour: u8, _minute: u8) -> Option<u64> {
+        None
+    }
+
+    fn date_of(&self, _zone: &str, _utc: u64) -> Option<CivilDate> {
+        None
+    }
+}
+
+/// A trigger is a setting value: a job's cadence is a Setting key (DESIGN 15-setting-primitive
+/// section 1.4). The check refuses a trigger that can never fire, but for its zone.
+impl oneiron_setting_contract::SettingValue for Trigger {
+    fn check(self) -> oneiron_contracts::error::Result<Self> {
+        match self.refusal(&EveryZone) {
+            Some(why) => Err(oneiron_contracts::error::Error::InvalidConfig(format!(
+                "a trigger that can never fire: {why}"
+            ))),
+            None => Ok(self),
+        }
+    }
 }
 
 /// How long after its `failures`-th failure in a row a job is due again: `first`, doubling with

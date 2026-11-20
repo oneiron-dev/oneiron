@@ -167,6 +167,18 @@ pub(crate) enum ReleasedBody {
 /// A failed raw release check, or a room body that cannot encode without its
 /// pins.
 pub(crate) fn released_body(entity_type: u8, body: &[u8]) -> Result<ReleasedBody> {
+    released_body_judged(entity_type, body, true)
+}
+
+/// [`released_body`], with a changed proof-bound body withheld only when
+/// `withhold_proof_bound`: a record that leaves with its proof is withheld
+/// whole rather than rewritten (EXPORTDOORS-PROOF-SLOTS = A). Every other
+/// reason withholds a body either way.
+fn released_body_judged(
+    entity_type: u8,
+    body: &[u8],
+    withhold_proof_bound: bool,
+) -> Result<ReleasedBody> {
     use crate::serialize::{ExportBody, ExportSecrets};
 
     let unpinned = crate::conversation::body_without_room_pins(entity_type, body)?;
@@ -184,7 +196,7 @@ pub(crate) fn released_body(entity_type: u8, body: &[u8]) -> Result<ReleasedBody
         });
     }
     if entity_type == crate::registry::ENTITY_TYPE_ASSET
-        || proof_bound_body(entity_type, body)
+        || (withhold_proof_bound && proof_bound_body(entity_type, body))
         || matches!(nulled, ExportBody::Nulled | ExportBody::File(_))
     {
         return Ok(ReleasedBody::Withheld);
@@ -250,6 +262,35 @@ pub(crate) fn released_body_for(
     })
 }
 
+/// A CLAIM's stored `body` as a recall item serves it: as
+/// [`released_body_for`] releases it, except that a changed proof-bound
+/// CLAIM, such as a belief the engine's MACHINE writer signed, goes as its
+/// Nulled typed body instead of being withheld. Withholding a proof-bound
+/// body whole protects a record that leaves the vault with its proof; a recall
+/// item serves the claim's value and predicate only, never its evidence or the
+/// proof, so it is judged on what it serves (ruling
+/// DREAMER-SIGNED-CLAIM-RECALL-WITHHELD = A). Every other reason still
+/// withholds the body, and the item keeps its own secret guards. A
+/// machine-history claim never reaches an item: it is not generic-readable.
+///
+/// # Errors
+/// A failed raw release check.
+pub(crate) fn released_claim_item_body_for(
+    reads_stored: bool,
+    body: &[u8],
+) -> Result<Option<std::borrow::Cow<'_, [u8]>>> {
+    if reads_stored {
+        return Ok(Some(std::borrow::Cow::Borrowed(body)));
+    }
+    Ok(
+        match released_body_judged(crate::registry::ENTITY_TYPE_CLAIM, body, false)? {
+            ReleasedBody::Unchanged => Some(std::borrow::Cow::Borrowed(body)),
+            ReleasedBody::Rewritten { bytes, .. } => Some(std::borrow::Cow::Owned(bytes)),
+            ReleasedBody::Withheld => None,
+        },
+    )
+}
+
 impl crate::claim::ScopedRead<'_> {
     /// Whether this lane reads each admitted body as stored, judged in `txn`
     /// (ruling EXPORTDOORS Q4 = A): the vault owner's own key, and a narrower
@@ -287,6 +328,20 @@ impl crate::claim::ScopedRead<'_> {
         body: &'b [u8],
     ) -> Result<Option<std::borrow::Cow<'b, [u8]>>> {
         released_body_for(self.reads_stored_bodies_in(txn)?, entity_type, body)
+    }
+
+    /// [`released_claim_item_body_for`] for this lane's reader, judged in
+    /// `txn`: the CLAIM body a recall item serves.
+    ///
+    /// # Errors
+    /// An owner binding that cannot be read in `txn`, or a failed raw release
+    /// check.
+    pub(crate) fn released_claim_item_body_in<'b>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        body: &'b [u8],
+    ) -> Result<Option<std::borrow::Cow<'b, [u8]>>> {
+        released_claim_item_body_for(self.reads_stored_bodies_in(txn)?, body)
     }
 }
 

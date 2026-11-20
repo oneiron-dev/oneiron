@@ -253,6 +253,13 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
         } else {
             ""
         };
+        // Only the admitted skill call's entry needs this call's own pre
+        // chain state: its post chain here may still run on the answer.
+        let skill_hooks_arg = if name_value.is_str("self.skills.call") {
+            ", outer_hooks_live"
+        } else {
+            ""
+        };
         let paced_arg = if flag(row, "host_door_paced") {
             "super::mcp_paced_call(actor, &memory), "
         } else {
@@ -264,7 +271,7 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
             ""
         };
         let door = format!(
-            "Box::pin(crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller}{lens_arg}{client_surface_arg}{surface_arg}{paced_arg}input{fold_hooks_arg})).await"
+            "Box::pin(crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller}{lens_arg}{client_surface_arg}{surface_arg}{paced_arg}input{fold_hooks_arg}{skill_hooks_arg})).await"
         );
         // The card's owner names the request as the row runs it, before it decodes.
         let lens_owner = if flag(row, "host_door_lens_owner") {
@@ -295,12 +302,12 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
         };
     } else if flag(row, "server_door") {
         // A server door runs the verb with the host's execution inputs, as on REST.
-        let door_call = match name_value
+        let home = name_value
             .as_str()
-            .and_then(|name| HOME_SERVER_DOORS.iter().find(|(row, _)| *row == name))
-        {
+            .and_then(|name| HOME_SERVER_DOORS.iter().find(|(row, _)| *row == name));
+        let door_call = match home {
             Some((_, home_door)) => format!(
-                "{home_door}(actor.actor_ref, actor.actor_class, proof, actor.destination(), None, input, actor.home_caller(), server.vault().model_call_keeps_no_record_for(actor.off_record_session.as_deref(), crate::api::call_receipt::mcp_session_principal(actor.auth.as_ref(), actor.actor_ref)))"
+                "{home_door}(actor.actor_ref, actor.actor_class, actor.auth.as_ref(), actor.destination(), None, input, actor.home_caller(), server.vault().model_call_keeps_no_record_for(actor.off_record_session.as_deref(), crate::api::call_receipt::mcp_session_principal(actor.auth.as_ref(), actor.actor_ref)))"
             ),
             None => format!(
                 "{}_listing(actor.actor_ref, actor.actor_class, proof, actor.locality(), None, input)",
@@ -311,8 +318,15 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
             "oneiron::task_verb::sdk::validate_input({name}, &input).map_err(mcp_facade_error)?;\n"
         );
         body += &decode;
+        // A home door reads the caller's auth itself; any other server door
+        // takes the caller's slip alone.
+        let proof_line = if home.is_some() {
+            ""
+        } else {
+            "let proof = actor.auth.as_ref().and_then(crate::auth::CoreAuth::verified_slip).cloned();\n"
+        };
         body += &format!(
-            "let proof = actor.auth.as_ref().and_then(crate::auth::CoreAuth::verified_slip).cloned();\nlet (output, listed) = Box::pin(server.{door_call}).await;\n// Derived from these rows too, though it names none of them.\nserved.extend(listed);\nlet output = output.map_err(mcp_facade_error)?;\n"
+            "{proof_line}let (output, listed) = Box::pin(server.{door_call}).await;\n// Derived from these rows too, though it names none of them.\nserved.extend(listed);\nlet output = output.map_err(mcp_facade_error)?;\n"
         );
     } else {
         body += &decode;
@@ -507,7 +521,7 @@ pub(crate) fn mcp_dispatch(generator: &Generator) -> Result<String, GenerateErro
     result += &held_content_rows(generator)?;
     result += EXECUTE_AGENT_VERB_ROW;
     result += INVALID;
-    result += "let row = McpVerbRow { server, tool, input, actor, memory, surface, served, board_hooks, pre_hooked_fold };\nmatch tool {\n";
+    result += "let row = McpVerbRow { server, tool, input, actor, memory, surface, served, board_hooks, pre_hooked_fold, outer_hooks_live };\nmatch tool {\n";
     let mut helpers = String::new();
     for &id in &mcp_rows {
         let row = &generator.rows[id];
@@ -538,8 +552,8 @@ pub(crate) fn mcp_dispatch(generator: &Generator) -> Result<String, GenerateErro
         helpers += &format!(
             "async fn mcp_verb_row_{method}(row: McpVerbRow<'_>) -> McpVerbRowResult {{\n"
         );
-        helpers += "let McpVerbRow { server, tool, input, actor, memory, surface, served, board_hooks, pre_hooked_fold } = row;\n";
-        helpers += "let _ = (&server, &tool, &input, &actor, &memory, &surface, &served, &board_hooks, &pre_hooked_fold);\n";
+        helpers += "let McpVerbRow { server, tool, input, actor, memory, surface, served, board_hooks, pre_hooked_fold, outer_hooks_live } = row;\n";
+        helpers += "let _ = (&server, &tool, &input, &actor, &memory, &surface, &served, &board_hooks, &pre_hooked_fold, &outer_hooks_live);\n";
         if uses_invalid {
             helpers += INVALID;
         }
@@ -720,11 +734,12 @@ const VERB_LISTING_TAIL: &str = ") {
         (memory, task_work_turn)
     };
     let pre_hooked_fold = oneiron::code_run::actions::PreHookedFold::from_pre(&hooks);
+    let outer_hooks_live = !hooks.passed_through();
     let ran = match held.filter(|_| hooks.passed_through()) {
         // The args passed the chain as the caller sent them: the row reads
         // the content from the file.
         Some(held) => execute_held_content_row(tool, hooks.args.clone(), &memory, held),
-        None => execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, surface, served, board_hooks, pre_hooked_fold).await,
+        None => execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, surface, served, board_hooks, pre_hooked_fold, outer_hooks_live).await,
     };
     // A row that fails after its pre chain ran keeps a session-only call's
     // pre hook records and runs no post chain (FIX 5527).
@@ -736,8 +751,17 @@ const VERB_LISTING_TAIL: &str = ") {
         }
     };
     let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks);
+    // The admitted skill call's post-hook view spills to its run past the
+    // inline size, bound as a readable result; any other row answers its
+    // post chain's view as it did.
+    let spill_run = if tool == \"self.skills.call\" {
+        crate::api::facade::host_doors::skill_call_spill_run(&hooks)
+    } else {
+        None
+    };
     let output = crate::api::facade::row_hooks_post(server, hooks, output).await
         .map_err(|error| mcp_facade_error(error).with_hook_notice(hook_notice.clone()))?;
+    let output = crate::api::facade::host_doors::spill_admitted_skill_view(server, spill_run, output, served.rows().map(<[oneiron::EntityId]>::to_vec)).await;
     // The row's turn ends after its post hooks.
     drop(task_work_turn);
     Ok((output, source, carrier, epoch, hook_notice))
@@ -762,9 +786,10 @@ async fn execute_agent_verb_row(
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
         pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
+        outer_hooks_live: bool,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
         let run_writes = surface.run.as_ref().and_then(|run| oneiron::skill_attribution::run_write_token_of_origin(&run.origin));
-        crate::api::facade::run_write_polls::scoped(run_writes, execute_agent_verb_row_on(server, tool, input, actor, memory, surface, served, board_hooks, pre_hooked_fold)).await
+        crate::api::facade::run_write_polls::scoped(run_writes, execute_agent_verb_row_on(server, tool, input, actor, memory, surface, served, board_hooks, pre_hooked_fold, outer_hooks_live)).await
     }
 
 /// [`execute_agent_verb_row`]'s row, inside the run's write envelope. Each
@@ -781,6 +806,7 @@ async fn execute_agent_verb_row_on(
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
         pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
+        outer_hooks_live: bool,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 ";
 
@@ -800,6 +826,7 @@ struct McpVerbRow<'a> {
     served: &'a mut McpServed,
     board_hooks: &'a mut Option<super::board_setup::McpBoardHooks>,
     pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
+    outer_hooks_live: bool,
 }
 ";
 

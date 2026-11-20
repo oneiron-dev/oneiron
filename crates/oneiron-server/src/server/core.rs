@@ -92,6 +92,19 @@ pub struct SyncServer {
     /// Whether this server's merge queue checker ran a pass yet: its first
     /// asks again for a check that needed host configuration (FIX 7310).
     pub(crate) queue_driver_started: std::sync::atomic::AtomicBool,
+    /// Whether this server's vault syncs as a device of another home through a
+    /// link this process runs (the macOS app's `EmbeddedDeviceSync`), so it
+    /// serves the vault's other machines as a peer, never as their home (L7-47).
+    /// Set by its boot (`SyncServer::new_device_link`).
+    pub(crate) runs_device_link: bool,
+    /// Whether a device link this process runs over this vault opened: serve's,
+    /// managed serve's or the macOS app's (`device_sync::open`). Its client
+    /// imports the home's root into a doc of its own and persists it to
+    /// `d:root`, which this server loaded once, at start, so this server merges
+    /// that persisted root before it exports its own (SERVE-DEVICE-PEER-STALE-ROOT).
+    /// Set once and never cleared: after the link stops, a merge imports nothing
+    /// new.
+    pub(crate) device_link_opened: std::sync::atomic::AtomicBool,
     /// Server configuration.
     pub(crate) config: SyncServerConfig,
     /// Permits for git and LFS transfers, sized by `config.limits`.
@@ -151,6 +164,9 @@ pub struct SyncServer {
     /// Authenticated booking calls per actor this minute (FIX 128-131),
     /// measured against their `[limits]` rows; never a window.
     pub(crate) booking_calls: super::booking_calls::AuthenticatedBookingCalls,
+    /// The Stripe API origin booking deposits call (BK-DEPOSITS): Stripe's
+    /// own in service; the tests point it at a loopback fake.
+    pub(crate) booking_deposit_stripe_base: String,
     /// The lines authenticated booking requests wait in, one per window
     /// (ARCH-0062 #booking-turn-divergence); never persisted.
     pub(crate) booking_turn_lines: super::booking_turn_lines::BookingTurnLines,
@@ -211,6 +227,10 @@ pub struct SyncServer {
     /// The `mcp_stdio` connector children every connector host this server
     /// builds sends through (row L8-27), stopped with the server.
     pub(crate) connector_stdio: Arc<crate::connector_call_host::stdio::ConnectorStdioRegistry>,
+    /// The GPU backends this server registered and the permits of the GPU
+    /// job chunks it runs (row L10-31), for the `vault.gpu.jobs.*` doors and
+    /// the GPU job worker.
+    pub(crate) gpu_jobs: Arc<crate::gpu_host::GpuJobHost>,
     /// The `[browser]` guest each code run starts for its own browser verbs.
     /// `None` answers every browser call `browser_unbound`.
     pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
@@ -382,11 +402,12 @@ const _: fn(&SyncServer) = |server| {
         broadcast_sessions,
         _reactive_tee, lifecycle_session_id, lifecycle_in_flight, housekeeping_passes,
         residence_work_changed, queue_driver_started, config, transfers, memory, renderer_turns,
+        runs_device_link, device_link_opened,
         context_reads, renderer_scratch, query_checks, managed_issuer, host_root_issuer,
         recovery_box_hold,
         policy_doors, account_keys, usage_ledger, retrieval_buffer, host_account, wire_telemetry,
-        mesh_pressure, retained, presence, booking_calls, removal_deliveries, shared_envs,
-        booking_turn_lines,
+        mesh_pressure, retained, presence, booking_calls, booking_deposit_stripe_base,
+        removal_deliveries, shared_envs, booking_turn_lines,
         leaf_keys, lens_frames, note_editors, artifact_previews, live_voice, asr_sessions,
         process_readiness,
         meeting_imports, model_streams, export_transfers, pairing_backoff, mcp_registry,
@@ -396,7 +417,7 @@ const _: fn(&SyncServer) = |server| {
         browser_readiness, desktop_guest, artifact_backend, desktop_seats, browser_seats,
         web_fetcher, memories_cursors, self_brief_sessions, deep_retrieval, model_slots,
         trained_embedders, model_setup, model_setup_runtime, gpu_pool, llm, embedding_line,
-        decision_read, decision_reads, decisions, hook_runtime, runner_fence,
+        decision_read, decision_reads, decisions, hook_runtime, runner_fence, gpu_jobs,
         #[cfg(feature = "mesh")] mesh_transport,
         builtin_handles,
         #[cfg(unix)] organs,
@@ -921,6 +942,28 @@ impl SyncServer {
     /// assert sync_state durability).
     pub fn vault(&self) -> &Arc<oneiron::Vault> {
         &self.vault
+    }
+
+    /// Whether this server's vault syncs as a device of another home through a
+    /// link this process runs (the macOS app's `EmbeddedDeviceSync`), so it
+    /// serves the vault's other machines as a peer, never as their home (L7-47).
+    pub(crate) fn runs_device_link(&self) -> bool {
+        self.runs_device_link
+    }
+
+    /// Marks that a device link this process runs over this vault opened
+    /// (SERVE-DEVICE-PEER-STALE-ROOT): called by the link's opening, before its
+    /// client persists any root it learns from its home.
+    #[cfg(feature = "mesh")]
+    pub(crate) fn mark_device_link_opened(&self) {
+        self.device_link_opened.store(true, Ordering::Release);
+    }
+
+    /// Whether a device link this process runs over this vault opened, so the
+    /// vault's persisted root may hold what the link learned since this server
+    /// loaded it (SERVE-DEVICE-PEER-STALE-ROOT).
+    pub(crate) fn device_link_opened(&self) -> bool {
+        self.device_link_opened.load(Ordering::Acquire)
     }
 
     /// Installs this serve's dedicated shared environments once. A second

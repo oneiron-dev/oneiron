@@ -15,12 +15,14 @@ mod embedder_space;
 mod embedding;
 mod failure_signals;
 mod feedback;
+pub mod gpu_jobs;
 pub mod import;
 mod keystore;
 mod limits;
 mod line;
 mod linear;
 mod lookup;
+mod mail;
 pub mod merge;
 pub mod merge_queue;
 pub mod models;
@@ -60,6 +62,7 @@ pub(crate) use feedback::github_issue_source;
 pub use feedback::{
     CLOUD_FEEDBACK_ENDPOINT, FeedbackConfig, FeedbackInboxConfig, FeedbackTriageConfig,
 };
+pub use gpu_jobs::{GpuJobsSettings, GpuOfferSettings};
 pub use import::ImportConfig;
 pub use keystore::{DEFAULT_KEYCHAIN_SERVICE, KeystoreBackend, KeystoreConfig, KeystoreInstall};
 pub use limits::LimitsConfig;
@@ -67,6 +70,7 @@ pub use line::LineConfig;
 pub(crate) use linear::LinearCredential;
 pub use linear::{LinearConfig, LinearMode};
 pub(crate) use lookup::normalize_list;
+pub use mail::{MailConfig, MailSmtpConfig};
 pub(crate) use merge::layer_serve_config;
 pub use merge::{
     EnvConfig, default_config_path, resolve_backup_config, resolve_serve_config,

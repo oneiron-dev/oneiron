@@ -27,7 +27,7 @@ use crate::code_run::{
 };
 use crate::engine_executor::{
     JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStream, SelfDispatchResponse,
-    StepCancellation, bridge_result_output_path,
+    StepCancellation, bridge_result_output_path, record_only_output_path,
 };
 use crate::memory::MemoryError;
 use crate::store::sandbox_contract::{SandboxBoundaryContract, SandboxGuestTier};
@@ -185,13 +185,14 @@ impl ShadowBridgeHost<'_> {
         }
         self.record_matched(at)?;
         self.run_callable(captured, callables, nested)?;
-        // Its answer, live spilled as a body, counts as the arm's own spill.
+        // Its answer, live spilled as a body, counts as the arm's own spill:
+        // the readable bridge result, or the record-only body a live post
+        // chain's view stood in for, as the general replay counts them.
         let window = self.window;
-        if window
-            .outputs
-            .iter()
-            .any(|output| output.path == bridge_result_output_path(position))
-        {
+        if window.outputs.iter().any(|output| {
+            output.path == bridge_result_output_path(position)
+                || output.path == record_only_output_path(position)
+        }) {
             self.spilled += 1;
         }
         Ok(SelfDispatchResponse {

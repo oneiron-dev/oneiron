@@ -43,6 +43,7 @@ fn pass(
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let mut driver = DreamerWakeDriver::new(vault, "wake", WakePassDeadline::new(180_000));
     ready(driver.run_wake_pass(
@@ -99,7 +100,13 @@ fn a_fresh_vaults_dreamer_is_warm_and_lands_with_no_grant_step() -> Result<()> {
     let conversation = seed_session(&vault, 0x6c, 1);
     let turn = seed_turn(&vault, &conversation, "user", "call me Owen", 10);
     let subject = EntityId::now();
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        occurred(1),
+        1,
+        &super::super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?,
+    )?;
     enqueue_micro(&vault, "run-fresh", 20)?;
     let backend = ScriptedBackend::new(vec![Ok(extraction_response(&subject, &turn))]);
     let report = pass(&vault, &backend, node_id, 21)?;

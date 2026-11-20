@@ -148,6 +148,7 @@ fn push_credential(now: VaultInstant) -> DoorCredential {
 fn blob(path: &str, lines: &[&[u8]]) -> PushedBlob {
     PushedBlob {
         path: path.to_owned(),
+        tip_raw_path: None,
         oid: "b".repeat(40),
         content: lines
             .iter()
@@ -266,10 +267,6 @@ fn is_floor_named(err: &CredentialDoorError) -> bool {
 
 fn is_scan_failure(err: &CredentialDoorError) -> bool {
     matches!(err, CredentialDoorError::ScanFailure { .. })
-}
-
-fn is_binary_rejected(err: &CredentialDoorError) -> bool {
-    matches!(err, CredentialDoorError::BinaryContentRejected { .. })
 }
 
 fn secret_text() -> &'static str {
@@ -676,7 +673,7 @@ fn a_detector_hit_rejects_with_a_valueless_lift_proposal() {
     let blobs = [blob("src/config.rs", &[b"// fine", DETECTED_LINE])];
 
     let verdict = scan(&door, &blobs).expect("the scan produced a verdict");
-    let DoorScanVerdict::Rejected { proposals } = verdict else {
+    let DoorScanVerdict::Rejected { proposals, .. } = verdict else {
         panic!("a detector hit must reject the push");
     };
 
@@ -698,8 +695,20 @@ fn a_pushed_blob_debug_never_prints_added_bytes() {
     assert!(!printed.contains("ghp_"));
 }
 
+/// The value-free hits of a scan verdict, whichever disposition the one
+/// G7-BINARY policy point names (refuse today, admit-marked after FIX 7608).
+fn verdict_hits(verdict: &DoorScanVerdict) -> &[ReceiveScanHit] {
+    match verdict {
+        DoorScanVerdict::Clean => &[],
+        DoorScanVerdict::Rejected { hits, .. } | DoorScanVerdict::AdmitMarked { hits } => hits,
+    }
+}
+
+/// G7-BINARY = A (FIX 6871): binary bytes are scanned, never refused for
+/// being binary. NUL-bearing, magic-prefixed, high-entropy and stray
+/// continuation bytes with no credential in them all scan clean.
 #[test]
-fn binary_lines_reject_typed_whatever_their_entropy_or_magic() {
+fn binary_lines_scan_clean_whatever_their_entropy_or_magic() {
     let (_tmp, _vault, door) = door_fixture();
     let png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR".to_vec();
     let samples: Vec<(&str, Vec<u8>)> = vec![
@@ -715,25 +724,29 @@ fn binary_lines_reject_typed_whatever_their_entropy_or_magic() {
 
     for (name, bytes) in samples {
         let blobs = [blob("assets/blob.bin", &[&bytes])];
-        let err = scan(&door, &blobs).expect_err("no pass path exists");
-        assert!(is_binary_rejected(&err), "sample {name}");
-        match err {
-            CredentialDoorError::BinaryContentRejected { path } => {
-                assert_eq!(path, "assets/blob.bin", "sample {name}");
-            }
-            other => panic!("sample {name} rejected wrongly: {other:?}"),
-        }
+        let verdict = scan(&door, &blobs);
+        assert!(
+            matches!(verdict, Ok(DoorScanVerdict::Clean)),
+            "sample {name}: {verdict:?}"
+        );
     }
 }
 
+/// G7-BINARY = A (FIX 6871): a NUL byte does not hide the rest of the blob
+/// from the scan. A credential next to binary bytes is found, read as
+/// binary, and named by its path.
 #[test]
-fn binary_content_dominates_a_detector_hit_in_the_same_blob() {
+fn a_detector_hit_in_a_binary_blob_is_found() {
     let (_tmp, _vault, door) = door_fixture();
     let lines: [&[u8]; 2] = [DETECTED_LINE, b"trailing\0binary"];
     let blobs = [blob("src/config.rs", &lines)];
 
-    let err = scan(&door, &blobs).expect_err("never partially scanned");
-    assert!(is_binary_rejected(&err));
+    let verdict = scan(&door, &blobs).expect("the scan produced a verdict");
+    let hits = verdict_hits(&verdict);
+    assert_eq!(hits.len(), 1, "{verdict:?}");
+    assert_eq!(hits[0].path, "src/config.rs");
+    assert_eq!(hits[0].content_kind, ReceiveBlobKind::Binary);
+    assert!(!format!("{verdict:?}").contains("ghp_"));
 }
 
 #[test]
@@ -960,10 +973,8 @@ fn a_lease_claimed_late_in_a_second_is_admitted_at_once() {
     let second = crate::unix_seconds_now();
     let clock = crate::store::ports::ManualClock::new(second);
     let tmp = tempfile::tempdir().expect("temp dir");
-    let config = VaultConfig {
-        store_clock: clock.bundle(),
-        ..Default::default()
-    };
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
     let vault = Arc::new(Vault::open(tmp.path(), config).expect("open vault"));
     // The authority clock reads the time late in `second`; then the caller's
     // clock turns to the next second, and it claims and redeems at once.

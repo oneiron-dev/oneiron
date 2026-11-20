@@ -65,6 +65,7 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
     };
     let originator = own_agent(&vault);
     let origin_question = consult_turn(&vault, 0xAC);
+    super::support::grant_ask_read(&vault, &[originator, lead]).unwrap();
     let origin = vault
         .memory(originator, EdgeActorClass::Agent)
         .tasks_ask(&TaskAskSpec {
@@ -98,13 +99,14 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
     let worker = routable_agent_def(&vault, 0xB1);
     let child = match dispatcher
         .dispatch(SelfCall::AgentsSpawn(Box::new(SelfAgentSpawnCall {
-            target: AgentDispatchTarget::Custom(worker),
+            target: Some(AgentDispatchTarget::Custom(worker)),
             context: AgentSpawnContext::default(),
             intent_key: "worker".to_owned(),
+            ask: None,
         })))
         .unwrap()
     {
-        SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued { attempt_ref }) => {
+        SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued { attempt_ref, .. }) => {
             attempt_ref
         }
         other => panic!("{other:?}"),
@@ -124,9 +126,10 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
     assert!(
         worker_dispatcher
             .dispatch(SelfCall::AgentsSpawn(Box::new(SelfAgentSpawnCall {
-                target: AgentDispatchTarget::Custom(worker),
+                target: Some(AgentDispatchTarget::Custom(worker)),
                 context: AgentSpawnContext::default(),
                 intent_key: "too-deep".to_owned(),
+                ask: None,
             })))
             .is_err()
     );
@@ -135,6 +138,7 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
         .into_iter()
         .map(|seed| consult_peer(&vault, seed))
         .collect();
+    super::support::grant_ask_read(&vault, &peers).unwrap();
     let responder = |i: usize| TaskAssignee::Peer {
         actor_ref: peers[i],
     };
@@ -277,8 +281,13 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
     else {
         panic!("the lead's result is durable evidence")
     };
-    assert_eq!(origin_result.decision, TaskAskDecision::Unknown);
-    assert!(origin_result.coverage.responded.is_empty());
+    // 4e62e8a4a1b grants admit the lead's word; an admitted Executor counts as its own (reducers.rs:32-34).
+    let TaskAskDecision::First(answer) = &origin_result.decision else {
+        panic!("lead word: {:?}", origin_result.decision)
+    };
+    assert_eq!(answer.result_ref, report.entity_ref());
+    // Coverage keys by responder identity, not TASK (reducers.rs:44-51).
+    assert!(origin_result.coverage.responded.contains(&lead));
     assert!(origin_result.evidence.iter().any(|entry| {
         entry.source == TaskAskSource::Executor && entry.answer.result_ref == report.entity_ref()
     }));

@@ -84,6 +84,10 @@ mod explicit_revocation;
 mod export_act;
 mod export_secret_work;
 mod first_seen_clock;
+#[cfg(oneiron_test_support)]
+pub(crate) mod floor_probe_door;
+#[cfg(oneiron_test_support)]
+pub(crate) mod fold_encoding_door;
 mod fold_engine;
 mod fold_project;
 mod fold_resume;
@@ -141,7 +145,9 @@ mod owner_choice;
 mod owner_delegate;
 mod owner_key_enrollment;
 mod owner_key_enrollment_door;
+mod owner_key_line;
 mod owner_key_move_confirm;
+mod owner_key_vouch;
 mod owner_project_slip;
 mod owner_proof;
 mod owner_roots;
@@ -155,9 +161,14 @@ mod principal_standing;
 mod readonly_fold;
 mod recover_many;
 mod recovery;
+mod restored_join;
+mod restored_join_door;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
+mod root_appointment_door;
+mod root_appointment_judge;
+mod root_recovery_door;
 mod rows_floor;
 mod seat_child_slip;
 mod sequence_ancestry;
@@ -165,6 +176,8 @@ mod sequence_ancestry;
 pub(crate) mod sequence_floor_door;
 mod sequence_observation;
 pub(crate) mod setting_keys;
+#[cfg(oneiron_test_support)]
+pub(crate) mod signed_branch_door;
 mod slip;
 mod slip_pairing;
 mod slip_renewal;
@@ -233,8 +246,8 @@ pub use oneiron_authority::authority::{
     authority_transcript, decode_authority_log_entry_body, effective_slip_comm,
     encode_authority_log_entry_body, federation_pact_transcript, federation_scope_digest,
     genesis_vault_id, machine_profile_proof_transcript, privacy_direction,
-    sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
-    verify_authority_signature,
+    restored_machine_profile_proof_transcript, sign_federation_pact_gesture,
+    validate_authority_log_entry_body_bytes, verify_authority_signature,
 };
 // The custody work body's own types (WILL L04 row 04), its permits in
 // pieces (FIX 11866) and its shared permit set (FIX 12281).
@@ -244,6 +257,22 @@ pub use oneiron_authority::authority::{
 };
 // The settings edit a holder's key work follows (FIX 4704).
 pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
+// The owner anchor's appointment of a successor root key, and the fold's
+// verdict on it (OWNER-ANCHOR-ROOT-RECOVERY).
+pub use oneiron_authority::authority::{
+    ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND, ROOT_APPOINTMENT_SUCCESSOR_ROLES, RootAppointment,
+    root_appointment_challenge,
+};
+// The owner's word that no other machine is left, which joins one machine
+// born of a restore (row RESTORED-COPIES-ENROL-EACH-OTHER).
+pub use oneiron_authority::authority::{
+    RestoredJoinEnrolment, RestoredMachineJoin, restored_machine_join_inline_seen,
+    restored_machine_join_seen,
+};
+pub use root_appointment_door::RootAppointmentReceipt;
+pub(crate) use root_appointment_door::refuse_unneeded_appointment;
+pub use root_appointment_judge::{AppointmentVerdict, AppointmentVoidReason};
+pub use root_recovery_door::{RootMaterial, RootRecovery, RootSuccessor};
 // The export secret work body and its sealed result (FIX 4624(b)).
 pub use export_secret_work::{
     ExportSecretSupplement, HolderExportRequest, HolderExportState, HolderExportUnassigned,
@@ -254,9 +283,11 @@ pub use oneiron_authority::authority::{ExportSecretWork, SealedWorkOutput};
 // The heads a root request's revision is over, its witness (FIX 5551).
 pub use oneiron_authority::authority::RootRevisionBasis;
 // The challenge a device's new owner key signs to enrol, and its proof's
-// length (FIX 4920, the seam L04's FIX 4921 calls).
+// length (FIX 4920, the seam L04's FIX 4921 calls); the recovery root's
+// authority key signs its own (pass 27 R4).
 pub use oneiron_authority::authority::{
     OWNER_KEY_POSSESSION_PROOF_LEN, owner_key_enrollment_challenge,
+    recovery_authority_enrollment_challenge,
 };
 // A passkey's assertion as an owner root's signature: its envelope and the
 // challenge it names (row WEB-PASSKEY-OWNER-KEY).
@@ -293,8 +324,8 @@ pub use backup_signer_delegation::{
     BackupSignerStatement,
 };
 pub use carrier_prompt::{
-    PromptDeviceName, held_answer_prompt, machine_code_line, machine_key_code, pin_request_prompt,
-    recovery_root_code,
+    PromptDeviceName, held_answer_prompt, machine_code_check_line, machine_code_line,
+    machine_key_code, pin_request_prompt, recovery_root_code,
 };
 pub use carrier_reading::CarrierReading;
 pub use causal_write::CausalWriteDisposition;
@@ -310,6 +341,7 @@ pub use checkpoint_choice::CheckpointPolicyHead;
 pub use checkpoint_image::*;
 pub use checkpoint_policy::*;
 pub use checkpoint_policy_choice::CheckpointPolicyView;
+pub(crate) use checkpoint_root_attest::HeldRootSigner;
 pub use checkpoint_root_attest::{
     ASK_WORD_PROOF_DOMAIN, AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX, CheckpointRootSigner,
     ROOT_CHECKPOINT_AUTHORITY, ROOT_CHECKPOINT_PICKUP, RootCheckpointAttest,
@@ -332,6 +364,8 @@ pub use clock_repair::{
 pub use conversation_training::ConversationTrainingView;
 pub use conversation_training_vault::ConversationLearningView;
 pub use fold_engine::*;
+#[cfg(oneiron_test_support)]
+pub(crate) use fold_resume::whole_and_resumed_folds_for_test;
 pub use fold_state::*;
 pub use forwarded_caller::{
     ForwardedCallerProof, ForwardedRequest, ForwardingDevice, ForwardingMachineProof,
@@ -380,7 +414,7 @@ pub use log_budget::{
 pub use machine_answers::MachineAnswerLanding;
 pub use machine_identity::{
     LocalMachine, MACHINE_PROOF_HEADER, MachineEnrolmentRequest, PeerMachine, RequestCode,
-    machine_connection_transcript, machine_proof_header_value,
+    SERVING_INSTALL_ROLE, machine_connection_transcript, machine_proof_header_value,
 };
 pub(crate) use machine_profile::YoursProof;
 pub use machine_profile::{
@@ -394,6 +428,7 @@ pub use mesh_machine::{
     MeshAlpnGrant, MeshBindRefusal, MeshBindingIdentity, MeshEnrolment, MeshMachineAddress,
     MeshMachineAddressEnvelope, MeshMachineBinding,
 };
+pub use restored_join::RestoredEnrolmentStanding;
 // The vault as its own `/mcp`'s OAuth 2.1 authorization server (FIX 4902 slice B), and the
 // agent tiers it and `oneiron token agent` share.
 pub use agent_tier::AgentTier;
@@ -424,15 +459,24 @@ pub(crate) use owner_delegate::{
     OwnerDelegate, delegate_reads_in_txn, is_owner_delegate_verb, owner_delegate_in_txn,
 };
 pub use owner_delegate::{OwnerOrDelegate, owner_delegate_admits};
+pub(crate) use owner_key_enrollment_door::ActivationPredecessor;
 pub use owner_key_enrollment_door::{
-    EnrolledOwnerKey, EnrolledOwnerPasskey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
-    OwnerPasskeyEnrollment, OwnerPasskeyEnrollmentReceipt, PreparedOwnerKeyEnrollment,
+    EnrolledOwnerKey, EnrolledOwnerKeyKind, EnrolledOwnerPasskey, OwnerKeyEnrollment,
+    OwnerKeyEnrollmentReceipt, OwnerPasskeyEnrollment, OwnerPasskeyEnrollmentReceipt,
+    PreparedOwnerKeyEnrollment, WaysBack,
 };
 pub use owner_key_move_confirm::{
     OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED, OWNER_KEY_MOVE_NO_HELD_KEY, OWNER_KEY_MOVE_NOT_PLANNED,
     OWNER_KEY_MOVE_NOT_SYNCED, OWNER_KEY_MOVE_PLAN_STALE, OWNER_KEY_MOVE_SIGNER_NOT_EXECUTORS,
     OwnerKeyMovePlan, OwnerKeyMoveSigner, sign_owner_key_move,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use owner_key_vouch::require_holding_machine;
+pub use owner_key_vouch::{
+    DeviceOwnerKeyVouch, OWNER_KEY_VOUCH_LABEL_MAX, OWNER_KEY_VOUCH_TEXT_PREFIX,
+    OwnerKeyVouchRequest,
+};
+pub(crate) use owner_key_vouch::{label_is_valid, label_not_valid};
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};
 pub use recover_many::{
@@ -507,6 +551,8 @@ pub(crate) use checkpoint_adopt::{
     adopted_image_row_key, adopted_pin_row_key, cached_adopted_authority_checkpoint_in_txn,
     cached_adopted_evidence_in_txn,
 };
+#[cfg(feature = "sync")]
+pub(crate) use claim_write::row_causal_admitted_cached;
 pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
 };
@@ -533,6 +579,8 @@ pub(crate) use log_budget::{
     end_owner_reserve_work_hold, past_owner_reserve_in_txn, signer_has_standing,
 };
 pub(crate) use log_structure::carried_rows_never_applied_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use owner_key_line::tail_reaches_old_parents_past_rows_for_test;
 pub(crate) use owner_work::{RootBasisCheck, check_root_basis};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
 #[cfg(oneiron_test_support)]
@@ -553,6 +601,8 @@ pub(crate) use principal_standing::{
     principal_standing_or_lapse_in_txn,
 };
 pub(crate) use readonly_fold::AuthorityView;
+#[cfg(oneiron_test_support)]
+pub(crate) use readonly_fold::adopted_door;
 pub(crate) use readonly_fold::authority_view_readonly_for_store_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use readonly_fold::folded_vault_id_of_records;
@@ -562,7 +612,10 @@ pub(crate) use readonly_fold::{
     authority_fold_readonly_for_store_in_txn,
 };
 use readonly_fold::{authority_log_rows_in_txn, decode_stored_authority_log_body};
-pub(crate) use retired_signers::{authority_row_resident, door_ancestor_row, stored_authority_row};
+pub(crate) use recovery::arriving_re_root;
+pub(crate) use retired_signers::{
+    authority_row_held, authority_row_resident, door_ancestor_row, stored_authority_row,
+};
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
 
 // Module-internal only: nothing here leaves `authority`.
@@ -574,12 +627,12 @@ use machine_profile::{
     merge_machine_maps,
 };
 pub(crate) use machine_write::{
-    MACHINE_SIGNATURE_KEY, evidence_without_machine_signature, machine_claim_needs_history,
-    machine_claim_needs_history_observing, machine_claim_read_admitted,
-    machine_claim_signer_bound_in_txn, machine_history_authority_descends,
-    machine_history_authority_descends_with_image, machine_history_host_context,
-    resign_machine_claim_after_mask_in_txn, sign_retained_machine_claim_for_store_in_txn,
-    verify_machine_claim_in_txn,
+    MACHINE_SIGNATURE_KEY, evidence_without_machine_signature, history_control_read_admitted,
+    machine_claim_needs_history, machine_claim_needs_history_observing,
+    machine_claim_read_admitted, machine_claim_signer_bound_in_txn,
+    machine_history_authority_descends, machine_history_authority_descends_with_image,
+    machine_history_host_context, resign_machine_claim_after_mask_in_txn,
+    sign_retained_machine_claim_for_store_in_txn, verify_machine_claim_in_txn,
 };
 use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;

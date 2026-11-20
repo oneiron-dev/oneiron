@@ -5,8 +5,6 @@ use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 
-// FIX [LIBTEST-QUARANTINE-REACTION-TESTS-CLAIMS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 mod claims;
 mod lifecycle;
 mod mirror;
@@ -89,6 +87,7 @@ pub(super) fn witness(vault: &Vault, room: EntityId, author: EntityId, text: &st
 pub(super) fn room_with(external_id: Option<&str>) -> Room {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     if external_id.is_some() {
         crate::test_util::provision_engine_machines(&vault);
     }
