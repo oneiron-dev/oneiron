@@ -27,6 +27,7 @@ mod predict;
 mod search;
 mod secret_same_value;
 mod tombstones;
+mod windows;
 mod work;
 pub(crate) use work::{ResidenceWorkCall, ResidenceWorkState};
 
@@ -271,14 +272,18 @@ impl ForwardedSearchCaller {
         &self,
         server: &'v SyncServer,
         carrier: PeerMachine,
+        lane: &crate::handler::selector_scope::SelectorLane,
         selector: &SyncSelector,
     ) -> Result<ResidenceAdmission<'v>, AppError> {
+        let scope = lane
+            .scope_for(selector)
+            .map_err(|_| AppError::not_found("item", None))?;
         ResidenceAdmission::load_forwarded(
             &server.vault,
             self.caller.caller(),
             carrier,
             self.locality,
-            crate::handler::selector_scope::selector_grant_scope(),
+            scope,
             selector,
         )
         .map_err(|_| AppError::not_found("item", None))
@@ -453,10 +458,15 @@ struct AuthorityAppendPartRequest {
     part: String,
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the residence RPC's call state, each part its own borrow"
+)]
 pub(super) fn run(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     request: RpcRequest,
     index_cache: &mut Option<ResidenceIndexCache>,
     append_stage: &mut Option<AuthorityAppendStage>,
@@ -482,13 +492,23 @@ pub(super) fn run(
         }
         let budgets = operation_budgets(server)?;
         match request.method.as_str() {
-            "residence.index" => index(server, auth, peer, request.params, index_cache, budgets),
-            "residence.touch" => touch(server, auth, peer, request.params, touch_stage),
-            "residence.touch.part" => touch_part(server, auth, peer, request.params, touch_stage),
-            "residence.promote" => promote(server, auth, peer, request.params),
-            "residence.window.vv" => window_vv(server, auth, peer, request.params),
+            "residence.index" => index(
+                server,
+                auth,
+                peer,
+                lane,
+                request.params,
+                index_cache,
+                budgets,
+            ),
+            "residence.touch" => touch(server, auth, peer, lane, request.params, touch_stage),
+            "residence.touch.part" => {
+                touch_part(server, auth, peer, lane, request.params, touch_stage)
+            }
+            "residence.promote" => promote(server, auth, peer, lane, request.params),
+            "residence.window.vv" => window_vv(server, auth, peer, lane, request.params),
             "residence.tombstones" => {
-                tombstones::tombstones(server, auth, peer, request.params, budgets)
+                tombstones::tombstones(server, auth, peer, lane, request.params, budgets)
             }
             "residence.predict" => predict::predict(server, auth, peer, request.params),
             "residence.predicted_set" => predict::predicted_set(server, auth, peer, request.params),
@@ -496,14 +516,18 @@ pub(super) fn run(
                 server,
                 auth,
                 peer,
+                lane,
                 request.params,
                 budgets,
                 &mut attribution,
                 &mut off_carrier,
                 &mut reader,
             ),
+            "residence.windows" => {
+                windows::windows(server, auth, peer, lane, request.params, budgets)
+            }
             "residence.media_vectors" => {
-                media_vectors::media_vectors(server, auth, peer, request.params)
+                media_vectors::media_vectors(server, auth, peer, lane, request.params)
             }
             "residence.bundle.turn" => bundle_turn(server, auth, peer, request.params),
             "residence.bundle.put" => bundle_put(server, auth, peer, request.params),
@@ -588,6 +612,7 @@ fn operation_budgets(server: &SyncServer) -> Result<ResidenceOperationBudgets, A
 fn bound_selector(
     server: &SyncServer,
     auth: &CoreAuth,
+    lane: &crate::handler::selector_scope::SelectorLane,
     encoded_selector: &str,
 ) -> Result<SyncSelector, AppError> {
     if encoded_selector.len() > 8192 {
@@ -608,12 +633,10 @@ fn bound_selector(
     if selector.member_ref != principal {
         return Err(AppError::not_found("item", None));
     }
-    oneiron::sync::authorize_sync_selector(
-        &server.vault,
-        crate::handler::selector_scope::selector_grant_scope(),
-        &selector,
-    )
-    .map_err(|_| AppError::not_found("item", None))?;
+    // A member lane reads only under its own grant (MEMBER-SYNC D3).
+    lane.scope_for(&selector)
+        .and_then(|scope| oneiron::sync::authorize_sync_selector(&server.vault, scope, &selector))
+        .map_err(|_| AppError::not_found("item", None))?;
     Ok(selector)
 }
 
@@ -623,22 +646,19 @@ fn admitted<'v>(
     server: &'v SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     selector: &SyncSelector,
 ) -> Result<ResidenceAdmission<'v>, AppError> {
     let proof = auth.verified_slip().ok_or_else(AppError::unauthorized)?;
-    ResidenceAdmission::load(
-        &server.vault,
-        proof,
-        peer,
-        crate::handler::selector_scope::selector_grant_scope(),
-        selector,
-    )
-    .map_err(|_| AppError::not_found("item", None))
+    lane.scope_for(selector)
+        .and_then(|scope| ResidenceAdmission::load(&server.vault, proof, peer, scope, selector))
+        .map_err(|_| AppError::not_found("item", None))
 }
 
 fn selected_window(
     server: &SyncServer,
     auth: &CoreAuth,
+    lane: &crate::handler::selector_scope::SelectorLane,
     key: &str,
     encoded_selector: &str,
 ) -> Result<(WindowKey, SyncSelector, loro::LoroDoc), AppError> {
@@ -646,7 +666,7 @@ fn selected_window(
     if !read_window_list(&server.root_doc).contains(&window) {
         return Err(AppError::not_found("item", None));
     }
-    let selector = bound_selector(server, auth, encoded_selector)?;
+    let selector = bound_selector(server, auth, lane, encoded_selector)?;
     let doc = server
         .reassert_manager
         .open_window(&window)

@@ -20,6 +20,7 @@ fn reply(server: &SyncServer, auth: &CoreAuth, params: Value) -> Value {
         server,
         auth,
         PeerMachine::Unknown,
+        &crate::handler::selector_scope::SelectorLane::OwnDevice,
         RpcRequest {
             request_id: 7,
             method: "residence.tombstones".into(),

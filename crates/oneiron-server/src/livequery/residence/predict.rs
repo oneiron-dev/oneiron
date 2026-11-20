@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{Answer, AppError, CoreAuth, admitted, bound_selector};
+use crate::handler::selector_scope::SelectorLane;
 use crate::server::SyncServer;
 
 /// How many set-body bytes one predicted-set part carries.
@@ -44,8 +45,11 @@ pub(super) fn predict(
     let PeerMachine::Proven { .. } = peer else {
         return Err(AppError::unauthorized());
     };
-    let selector = bound_selector(server, auth, &input.selector)?;
-    let admission = admitted(server, auth, peer, &selector)?;
+    // A prediction is an owner machine's ask, never a member lane's
+    // (`handler::member_lane::member_admits_rpc_method`): its selector is
+    // checked on the own-device lane, as machine history's is.
+    let selector = bound_selector(server, auth, &SelectorLane::OwnDevice, &input.selector)?;
+    let admission = admitted(server, auth, peer, &SelectorLane::OwnDevice, &selector)?;
     let issuer = server.host_root_issuer.as_deref().ok_or_else(|| {
         AppError::internal_server_error("this host holds no signing key for a prediction")
     })?;
