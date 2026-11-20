@@ -429,6 +429,9 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
     let mut requests = Vec::with_capacity(child.slices.len());
     let mut authored = Vec::with_capacity(child.slices.len());
     for slice in &child.slices {
+        if let Some(past) = slice.page_past_room {
+            return Err(DurableStepError::Engine(past.refusal()));
+        }
         if let Some(reply) =
             super::relation_extraction::relation_reply(vault, slice.labels, &child.citations)?
         {

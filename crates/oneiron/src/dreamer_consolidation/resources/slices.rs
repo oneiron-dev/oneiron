@@ -289,7 +289,7 @@ impl BranchResources<'_> {
                         labels,
                         low_trust: slice_low_trust,
                         sources,
-                        page_past_room: PagePastRoom::filling(page_bytes, bound.room),
+                        page_past_room: PagePastRoom::filling(page.rendered_bytes(), bound.room),
                     });
                 }
                 Ok(built)
@@ -420,7 +420,7 @@ fn fit_chunks<'g, T, S>(
             pending.push(first);
             continue;
         }
-        while past(&calls) && carried > 0 {
+        while past(&calls) && carried > texts {
             carried -= 1;
             calls = build(chunk, carried)?;
         }
