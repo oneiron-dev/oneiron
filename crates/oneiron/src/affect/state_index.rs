@@ -9,10 +9,7 @@ use crate::claim::{
 };
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
-use crate::memory::state_index::{
-    COMPOSITE_EVIDENCE_ANNOTATED_TURNS, COMPOSITE_EVIDENCE_ENGAGEMENT_SIGNAL,
-    COMPOSITE_EVIDENCE_GOAL_VELOCITY_SIGNAL,
-};
+use crate::memory::state_index::COMPOSITE_EVIDENCE_ANNOTATED_TURNS;
 use crate::side_table::{self, Raw, SideTable};
 use crate::write_envelope::claim_body::scope_stamp::subject_facet;
 use crate::{EntityId, TimeRange, Vault};
@@ -30,8 +27,8 @@ impl Vault {
     /// Blend the mean VAD trajectory, goal velocity and engagement with equal weight.
     /// VAD is normalized to the unit interval; high arousal alone is not judged adverse.
     /// All three signal families are required, and both signal claims must sit in the
-    /// composite's own facet. Repeating identical evidence (the same numbers,
-    /// annotated-turn count and signal claims) is a no-op.
+    /// composite's own facet with no principal of their own. Repeating identical
+    /// evidence (the same numbers and annotated-turn count) is a no-op.
     /// Every VAD turn is read; past `limits.state_vad_turns` the vault asks.
     pub fn derive_state_index(
         &self,
@@ -79,9 +76,10 @@ impl Vault {
         }
         // The composite is born in its subject's substrate FACET; any other
         // subject takes the vault default facet (a birth gate refusal
-        // otherwise, #4389). Its evidence names both signal claims, so a
-        // signal stored in another facet is refused: a reader of the
-        // composite's facet may not read it (REVIEW-9905 P1).
+        // otherwise, #4389). It carries both signals' numbers, and no
+        // principal narrows it, so a signal stored in another facet, or one a
+        // principal scope narrows to one reader, is refused: a reader of the
+        // composite may not read it (REVIEW-9905 P1, rounds 1 and 2).
         let id = EntityId::now();
         let facet = self.claim_put_facet_keeping_in_txn(
             txn,
@@ -95,6 +93,7 @@ impl Vault {
             if body.subject != ClaimSubject::Entity(*subject)
                 || body.predicate != predicate
                 || body.scope_facet != facet
+                || crate::claim::claim_principal_id(&body)?.is_some()
                 || body.lifecycle != ClaimLifecycleStatus::Active
                 || body.stale
                 || !matches!(
@@ -140,21 +139,15 @@ impl Vault {
             (Value::from("engagement"), Value::F32(inputs.engagement)),
         ]);
         // A count of the annotated turns, never their ids: a reader of the
-        // composite's facet may not read the rooms they sit in.
-        let cited = Value::Map(vec![
-            (
-                Value::from(COMPOSITE_EVIDENCE_ANNOTATED_TURNS),
-                Value::from(turns.len() as u64),
-            ),
-            (
-                Value::from(COMPOSITE_EVIDENCE_GOAL_VELOCITY_SIGNAL),
-                Value::from(evidence.goal_velocity.to_hex()),
-            ),
-            (
-                Value::from(COMPOSITE_EVIDENCE_ENGAGEMENT_SIGNAL),
-                Value::from(evidence.engagement.to_hex()),
-            ),
-        ]);
+        // composite's facet may not read the rooms they sit in. Nor does it
+        // name the two signal claims: a reader the composite admits may be
+        // refused a signal row by a check of its own (a credential's rows, a
+        // guest bound), so the served body names none (REVIEW-9905 P1 round
+        // 2). Neither the live-support test nor any read asks for them.
+        let cited = Value::Map(vec![(
+            Value::from(COMPOSITE_EVIDENCE_ANNOTATED_TURNS),
+            Value::from(turns.len() as u64),
+        )]);
         let mut previous = Vec::new();
         let mut matching = None;
         for id in self.claims_for_subject_in_txn(txn, subject)? {
