@@ -84,6 +84,7 @@ pub(crate) use self::causes::amendment_cause_rows_for_test;
 pub(crate) use self::causes::receipt_key_for_test as cause_receipt_key_for_test;
 mod cells;
 mod evidence_judge;
+mod gate_receipt_erase;
 mod origin;
 mod projector;
 mod rejection;
@@ -121,6 +122,7 @@ pub(in crate::edit_distance) use self::cells::record_untouched_in_txn;
 pub(in crate::edit_distance) use self::evidence_judge::{
     amendment_evidence_in_txn, amendment_judgment_in_txn,
 };
+pub(crate) use self::gate_receipt_erase::forget_gate_amendment_in_txn;
 pub(in crate::edit_distance) use self::origin::UNKNOWN_EXECUTOR;
 pub use self::rejection::judge_rejection_with_cause;
 pub(in crate::edit_distance) use self::rejection::{

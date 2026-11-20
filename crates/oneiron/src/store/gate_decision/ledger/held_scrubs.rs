@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
-use crate::edit_distance::delta::forget_gate_amendment_delta_in_txn;
+use crate::edit_distance::attribution::forget_gate_amendment_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
@@ -308,7 +308,7 @@ impl Store {
             &record.decision_id,
             &encode_gate_decision(&record)?,
         )?;
-        forget_gate_amendment_delta_in_txn(self, wtxn, record.decision_id)?;
+        forget_gate_amendment_in_txn(self, wtxn, record.decision_id)?;
         self.forget_gate_scrubs_of_decision_in_txn(wtxn, record.decision_id)
     }
 
