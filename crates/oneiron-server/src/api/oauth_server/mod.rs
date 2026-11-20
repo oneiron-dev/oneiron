@@ -8,9 +8,12 @@
 //!
 //! The vault's public identity is `oauth_resource_indicator`: its origin is the issuer, and
 //! `{origin}/mcp` and `{origin}/git` its two protected resources ([`ProtectedResource`]): a
-//! stock connector signs in for `/mcp` alone, and `oneiron hosted login` for both, so its
-//! tokens may also push through the git door (lead ruling CONTINUE-PUSH-NON-SLIP-SELECTION = B,
-//! Sat 21 Nov 04:3x). With none configured, or one that is no https origin,
+//! stock connector and `oneiron hosted login` sign in for `/mcp` alone, at the tier asked, and
+//! the continue step-up of `oneiron continue --cloud` (and `hosted login --push`) for both at
+//! `full`, so only its tokens push through the git door (lead rulings
+//! CONTINUE-PUSH-NON-SLIP-SELECTION = B, Sat 21 Nov 04:3x, CONTINUE-PUSH-GIT-TIER = C, 05:4x,
+//! and CONTINUE-STEP-UP-MCP-WRITE = A, 06:1x). With none configured, or one that is no https
+//! origin,
 //! every route here answers 404, as the client metadata documents do. Codes, tokens and the
 //! page's poll secret ride only in a body, a header or the client's own redirect, never in this
 //! vault's paths, logs or stored rows. The binding door's swap that accepts the tokens at
@@ -172,7 +175,22 @@ impl ProtectedResource {
             Self::Git => PROTECTED_RESOURCE_GIT_METADATA_PATH,
         }
     }
+
+    /// What a sign-in that names it asks to do, as the owner's ask and the consent page say it
+    /// (CONTINUE-STEP-UP-MCP-WRITE = A): `None` for `/mcp`, whose tier says it. The one client
+    /// that names `/git` is `oneiron continue --cloud`'s step-up.
+    const fn purpose(self) -> Option<&'static str> {
+        match self {
+            Self::Mcp => None,
+            Self::Git => Some(GIT_SIGN_IN_PURPOSE),
+        }
+    }
 }
+
+/// What a sign-in naming `/git` asks to do, in the owner's ask (CONTINUE-STEP-UP-MCP-WRITE = A,
+/// its wording as ruled).
+const GIT_SIGN_IN_PURPOSE: &str =
+    "continue this session in your hosted vault: land its log, push its code and start it there";
 
 /// This vault's public OAuth identity, from `oauth_resource_indicator`.
 pub(super) struct OAuthIdentity {

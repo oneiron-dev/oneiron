@@ -66,9 +66,9 @@ pub(super) struct PendingAuthorization {
     pub(super) state: Option<String>,
     /// The first RFC 8707 resource the request named: this vault's `/mcp`, or its `/git`.
     pub(super) resource: String,
-    /// Every further resource it named (RFC 8707 §2: a request may name several): `oneiron
-    /// hosted login` names `/mcp` and `/git` (CONTINUE-PUSH-NON-SLIP-SELECTION). Empty on a row
-    /// that named one, and on every row written before it, which reads as before.
+    /// Every further resource it named (RFC 8707 §2: a request may name several;
+    /// CONTINUE-PUSH-NON-SLIP-SELECTION). Empty on a row that named one, and on every row
+    /// written before it, which reads as before.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) further_resources: Vec<String>,
     /// The tier the client asked for.

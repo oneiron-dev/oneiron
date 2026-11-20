@@ -24,8 +24,9 @@
 //! commit itself and the landing refuses any pointer it frames whose object
 //! the vault lacks ([`OldTip::Unheld`]).
 //!
-//! Every request carries the slip and a fresh holder proof, as receive-pack's
-//! do, and goes to the custody repo's base only: an object's address is built
+//! Every request carries the push's credential (the slip and a fresh holder
+//! proof, or an OAuth continue sign-in's bearer), as receive-pack's do, and goes
+//! to the custody repo's base only: an object's address is built
 //! from that base, never taken from the batch answer, whose hrefs name the host
 //! the request named and a scheme read from `x-forwarded-proto`. The answer
 //! only says which objects to send and which to verify.
@@ -55,7 +56,8 @@ const BATCH_OBJECTS: usize = 100;
 /// The media type of an object's bytes.
 const OBJECT_TYPE: &str = "application/octet-stream";
 
-/// A request made to prove its caller: the slip and a fresh holder proof.
+/// A request made to prove its caller: the slip and a fresh holder proof, or
+/// an OAuth continue sign-in's bearer ([`super::PushCredential`]).
 pub(super) type Proven<'a> = dyn Fn(RequestBuilder) -> anyhow::Result<RequestBuilder> + 'a;
 
 /// The custody repo's Git-LFS door, as the push reaches it.
@@ -64,7 +66,7 @@ pub(super) struct LfsDoor<'a> {
     pub(super) client: &'a Client,
     /// The custody repo's base, `<origin>/git/<repo>.git`.
     pub(super) base: &'a str,
-    /// Adds the slip and a fresh holder proof to a request.
+    /// Adds the push's credential to a request.
     pub(super) proven: &'a Proven<'a>,
 }
 
