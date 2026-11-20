@@ -197,9 +197,26 @@ impl HeldAuthority {
     /// admissions, as a lone ref check holds them (blind review round 1 of
     /// #9925). So a Grant that ends between two refs refuses the later one,
     /// and one ref's class verdict never stands in for another's own check.
-    pub(super) fn judge_ref<T>(&self, judge: impl FnOnce(&Self) -> Result<T>) -> Result<T> {
+    /// The relationship authority is lent only while `txn`'s authorization
+    /// time stands where it was loaded; a ref judged at a later time loads
+    /// its own, as a lone ref check does, so a relationship AccessGrant that
+    /// expires between two refs refuses the later one (round 2). A load in
+    /// one txn at one time reads the same authority, so the lent one changes
+    /// no verdict.
+    pub(super) fn judge_ref<T>(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        judge: impl FnOnce(&Self) -> Result<T>,
+    ) -> Result<T> {
+        let mut held = self.0.take();
+        if let Some(loaded_at) = held.as_ref().map(AccessContextSnapshot::observed_at)
+            && loaded_at != crate::ports::authorization_floor_in_txn(&vault.store, txn)?
+        {
+            held = None;
+        }
         let one = Self(
-            RefCell::new(self.0.take()),
+            RefCell::new(held),
             self.1,
             HeldGrants::fresh(self.2.asked().clone()),
             ClassVerdicts::default(),
