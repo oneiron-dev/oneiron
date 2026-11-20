@@ -19,19 +19,18 @@ use crate::deletion::CooperativeDeletionRequest;
 use crate::error::RecordError;
 use crate::{Result, Vault};
 use oneiron_authority::authority::FederationPactStatus;
-
-/// The key context of a leave ask's nonce.
-const LEAVE_ASK_NONCE_CONTEXT: &str = "oneiron leave erase request nonce v1";
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// The nonce of the leave ask over `pact_id` up to `epoch_cutoff`: one per
 /// ended pact, so a repeated action finds its first ask instead of queuing
 /// a second. The queue refuses any other ask under it.
 pub(super) fn leave_ask_nonce(pact_id: &[u8; 32], epoch_cutoff: u64) -> [u8; 16] {
-    let mut hasher = blake3::Hasher::new_derive_key(LEAVE_ASK_NONCE_CONTEXT);
-    hasher.update(pact_id);
-    hasher.update(&epoch_cutoff.to_le_bytes());
+    let digest = LegacyDigest::new(purposes::deletion::LEAVE_ASK_NONCE)
+        .raw(pact_id)
+        .raw(&epoch_cutoff.to_le_bytes())
+        .finish();
     let mut nonce = [0u8; 16];
-    nonce.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+    nonce.copy_from_slice(&digest[..16]);
     nonce
 }
 
