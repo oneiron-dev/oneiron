@@ -372,3 +372,50 @@ fn issuer_signed_foreign_word_for_non_person_is_refused_without_evidence()
     }
     Ok(())
 }
+
+#[test]
+fn a_foreign_stated_answer_lands_after_its_person_in_a_restore()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let group = EntityId::from_bytes([0xA0; 16])?;
+    let task = EntityId::from_bytes([0xA1; 16])?;
+    let actor = EntityId::from_bytes([0xA2; 16])?;
+    let word = TaskAskWord {
+        result_ref: actor,
+        option: None,
+        inform_for: None,
+        companion_for: None,
+        confirmation: None,
+        provenance_refs: Default::default(),
+    };
+    let foreign = AskAnswerFact {
+        group,
+        task,
+        actor,
+        actor_kind: crate::registry::ENTITY_TYPE_PERSON,
+        source: TaskAskSource::ForeignStated,
+        word: word.clone(),
+        result_kind: crate::registry::ENTITY_TYPE_PERSON,
+        link_proof: None,
+        order: 1,
+        delegation_grant_ref: None,
+        at: 42,
+        credential_lineage: Vec::new(),
+        lineage_unread: false,
+    };
+    assert_eq!(
+        ask_record_dependencies(&value(ANSWER, &foreign)?),
+        vec![group, actor],
+        "a foreign-stated answer waits for its group and its actor's PERSON"
+    );
+    let human = AskAnswerFact {
+        source: TaskAskSource::Human,
+        word,
+        ..foreign
+    };
+    assert_eq!(
+        ask_record_dependencies(&value(ANSWER, &human)?),
+        vec![group],
+        "a human answer waits for its group only"
+    );
+    Ok(())
+}

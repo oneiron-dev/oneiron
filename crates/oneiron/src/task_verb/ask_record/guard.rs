@@ -33,19 +33,29 @@ pub(crate) fn is_ask_record_body(body: &[u8]) -> bool {
 
 /// The rows an ask record names that land before it (FIX
 /// OWNER-RESTORE-REFUSES-TASK-ASK-RECORDS): an answer's, a settlement's, a
-/// soft confirm's and a relayed intent's group, a relayed result's intent and
-/// a late ask's attendee entry. The whole-vault import queues the record
-/// after them, so its guard finds them stored. A body that is no ask record,
-/// or does not decode, names none; its put refuses it.
+/// soft confirm's and a relayed intent's group, a foreign-stated answer's
+/// PERSON, a relayed result's intent and a late ask's attendee entry. The
+/// whole-vault import queues the record after them, so its guard finds them
+/// stored. A body that is no ask record, or does not decode, names none; its
+/// put refuses it.
 pub(crate) fn ask_record_dependencies(body: &[u8]) -> Vec<EntityId> {
     use super::attendee_late_ask::ATTENDEE_LATE_ASK;
     use crate::task_verb::ask_forward::{INTENT, RESULT};
     use crate::task_verb::ask_soft_confirm::SOFT_CONFIRM;
+    let mut person = None;
     let named = match fact_kind(body) {
         Some(ANSWER) => decode::<AskAnswerFact>(body, ANSWER)
             .ok()
             .flatten()
-            .map(|fact| fact.group),
+            .map(|fact| {
+                // A foreign-stated answer's link proof reads its actor's
+                // PERSON row, which an archive may hold beside it (blind
+                // review P1, REVIEW-9983).
+                if fact.source == TaskAskSource::ForeignStated {
+                    person = Some(fact.actor);
+                }
+                fact.group
+            }),
         Some("tasks.ask_settlement") => {
             decode::<crate::task_verb::TaskAskResult>(body, "tasks.ask_settlement")
                 .ok()
@@ -74,7 +84,7 @@ pub(crate) fn ask_record_dependencies(body: &[u8]) -> Vec<EntityId> {
         }
         _ => None,
     };
-    named.into_iter().collect()
+    named.into_iter().chain(person).collect()
 }
 
 /// An ask word or receipt is checked against its group row, so a replicated

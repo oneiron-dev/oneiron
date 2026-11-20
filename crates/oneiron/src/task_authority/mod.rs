@@ -688,13 +688,46 @@ fn refuse_second_assignment(fact: &TaskAuthorityFact, folded: &TaskAuthorityFact
         TaskAuthorityFactKind::HumanAssigned => folded.human_assigner,
         _ => return Ok(()),
     };
-    if let (Some(held_binding), Some(offered)) = (held, fact.assigned_ref)
-        && (fact.actor_ref, offered) != held_binding
+    match fact.assigned_ref {
+        Some(offered) => refuse_other_binding(fact.task_ref, held, (fact.actor_ref, offered)),
+        None => Ok(()),
+    }
+}
+
+/// The check [`put_task_authority_fact_in_txn`] makes on an Assigned fact, for a settle
+/// whose TASK already landed and which therefore writes no fact: an approval that offers
+/// `owner`'s task `offered` while the fold holds another assignee is the fork that write
+/// refuses, and it is refused the same way, so the approval does not commit over a TASK
+/// assigned to someone else (TASK-ASSIGNED-FORK = C; blind review P1, REVIEW-9983). The
+/// held binding offered again, or no assignee offered, passes and changes nothing.
+pub(crate) fn refuse_landed_task_reassignment_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+    owner: EntityId,
+    offered: Option<EntityId>,
+) -> Result<()> {
+    let Some(offered) = offered else {
+        return Ok(());
+    };
+    let held = vault.task_authority_facts_in(txn, task_ref)?.assigned;
+    refuse_other_binding(task_ref, held, (owner, offered))
+}
+
+/// Refuses the binding `offered` (assigner, assignee) of `task_ref` when the fold holds
+/// another one, `held`.
+fn refuse_other_binding(
+    task_ref: EntityId,
+    held: Option<(EntityId, EntityId)>,
+    offered: (EntityId, EntityId),
+) -> Result<()> {
+    if let Some(held_binding) = held
+        && offered != held_binding
     {
         return Err(Error::Record(RecordError::TaskAssignmentConflict {
-            task_ref: fact.task_ref,
+            task_ref,
             held_assignee: held_binding.1,
-            offered_assignee: offered,
+            offered_assignee: offered.1,
         }));
     }
     Ok(())
@@ -1448,8 +1481,9 @@ impl FactCountRule {
 impl Vault {
     /// Adopts the facts this install's doors wrote unsigned, before the vault's root or with
     /// no signer loaded. Each gets a twin: the same fact on a new row, which this install's
-    /// carrier signs. The unsigned row leaves the written-here index. So the fact counts on
-    /// every device of the vault, and still counts here (Engine RULING 16 Nov 03:18,
+    /// carrier signs. The unsigned row keeps its written-here mark, and a fact whose twin
+    /// stands is not twinned again. So the fact counts on every device of the vault, and
+    /// still counts here, even after a restore that drops the twin (Engine RULING 16 Nov 03:18,
     /// TASK-FACT-RULING-CROSSED-OPTION-D = B). The fold absorbs a twin as a set duplicate of
     /// its fact, so no task changes meaning.
     ///
@@ -1504,15 +1538,18 @@ impl Vault {
     }
 
     /// [`Self::adopt_unsigned_task_facts`] in the caller's transaction: it twins each fact
-    /// [`Self::task_facts_to_adopt_in`] names. A twin carries this install's signature, so a
-    /// second call twins nothing.
+    /// [`Self::task_facts_to_adopt_in`] names. A twin stands under this install's signature,
+    /// so a second call twins nothing.
     pub(crate) fn adopt_task_facts_in_txn(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<usize> {
         let mut adopted = 0;
-        for (fact_ref, fact) in self.task_facts_to_adopt_in(wtxn)? {
+        for fact in self.task_facts_to_adopt_in(wtxn)? {
             // The same fact on a new row: it counts exactly when the
-            // indexed row did, so it asks no door's rule again.
+            // indexed row did, so it asks no door's rule again. The
+            // indexed row keeps its written-here mark: a restore of a
+            // checkpoint taken before the twin drops the twin and keeps
+            // the mark, so the fact still counts here, and the next
+            // pass twins it again (blind review round 2 P1, REVIEW-9976).
             write_task_authority_fact_in_txn(self, wtxn, fact)?;
-            fact_proof::forget_written_fact_in_txn(&self.store, wtxn, &fact_ref)?;
             adopted += 1;
         }
         Ok(adopted)
@@ -1525,12 +1562,9 @@ impl Vault {
     /// under a carrier that names this install's machine without its verified signature
     /// (blind review round 2 P1, REVIEW-9365). Its task must still be a live TASK: a task's
     /// delete takes the fact's link to it and leaves the fact, so a twin would link the
-    /// deleted task again (blind review round 2 P1, REVIEW-8610). None when this install
-    /// signs nothing.
-    fn task_facts_to_adopt_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-    ) -> Result<Vec<(EntityId, TaskAuthorityFact)>> {
+    /// deleted task again (blind review round 2 P1, REVIEW-8610). And its twin must not
+    /// stand yet ([`Self::twinned_here_in`]). None when this install signs nothing.
+    fn task_facts_to_adopt_in(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<TaskAuthorityFact>> {
         if !fact_proof::signs_in_txn(self, txn)? {
             return Ok(Vec::new());
         }
@@ -1565,9 +1599,78 @@ impl Vault {
             {
                 continue;
             }
-            facts.push((fact_ref, carried.fact));
+            if self.twinned_here_in(txn, &fact_ref, &carried.fact)? {
+                continue;
+            }
+            facts.push(carried.fact);
         }
         Ok(facts)
+    }
+
+    /// Whether `fact`, held on the row `fact_ref`, already has its twin: another fact row
+    /// linked to its task that holds the same fact under this install's own signature.
+    /// Adoption leaves the indexed row's written-here mark in place, so this is what tells a
+    /// later pass the fact was adopted. A restore that drops the twin leaves none, and the
+    /// next pass twins the fact again. Inbound `ScopedTo` is shared, so a row that is no
+    /// signed fact is skipped, as the fold skips it.
+    fn twinned_here_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fact_ref: &EntityId,
+        fact: &TaskAuthorityFact,
+    ) -> Result<bool> {
+        let mut scanned = ScanCount::start(
+            &self.store,
+            txn,
+            EngineScan::TaskAuthorityFactEdges,
+            fact.task_ref.as_bytes(),
+        )?;
+        let mut twinned = false;
+        for entry in self.store.port_edges(
+            txn,
+            &fact.task_ref,
+            crate::ports::EdgeDirection::In,
+            Some(EdgeKind::ScopedTo),
+            None,
+        )? {
+            scanned.row();
+            let twin_ref = entry?.target;
+            if twin_ref == *fact_ref {
+                continue;
+            }
+            let Some(raw) = self.get_raw_in(txn, &twin_ref)? else {
+                continue;
+            };
+            if EntityMetadataHeader::parse(&raw)
+                .is_none_or(|header| header.entity_type != ENTITY_TYPE_TASK)
+            {
+                continue;
+            }
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            if !is_task_authority_fact_body(body) {
+                continue;
+            }
+            let Ok(carried) = decode_carried_task_authority_fact_body(body) else {
+                continue;
+            };
+            let Some(carrier) = &carried.carrier else {
+                continue;
+            };
+            if carried.fact == *fact
+                && fact_proof::signed_by_this_install_in_txn(
+                    self,
+                    txn,
+                    &twin_ref,
+                    &encode_task_authority_fact_body(&carried.fact),
+                    carrier,
+                )?
+            {
+                twinned = true;
+                break;
+            }
+        }
+        scanned.finish(self);
+        Ok(twinned)
     }
 
     /// The owner's restore of one archived TASK authority fact (FIX
@@ -1575,14 +1678,20 @@ impl Vault {
     /// keep the facts). The fact lands at its archived id with its archived body, byte for
     /// byte, born at `birth_facet`, its archived birth; its `ScopedTo` link to its TASK comes
     /// back with the archive's other links. The body must read as a fact under the current
-    /// schema, an Owner fact must derive its task's id from its maker, and the row's times
-    /// must be the fact's own, as its door writes them; any other refuses the import.
+    /// schema, and the row's times must be the fact's own, as its door writes them; any
+    /// other refuses the import.
     ///
     /// The owner's restore counts the fact as a local write (ASK
     /// OWNER-RESTORE-TASK-FACT-COUNT, option A): it enters this install's written-here
     /// index, and the import's [`Self::adopt_task_facts_in_txn`] then twins it under this
     /// install's signature, so it counts on every device of the vault. The fold still
-    /// judges it as any fact: maker derive, actor rule and owner fork.
+    /// judges it as any fact: maker derive, actor rule and owner fork. A fact whose maker
+    /// does not derive its task's id ([`TaskAuthorityFact::commits_to_its_task`]), such as
+    /// a peer's second Owner fact the vault held beside the true one, lands as the archive
+    /// holds it and no more: no door of this install could have written it, so it is no
+    /// local write and gets no twin, and the fold skips it here as it did where it came
+    /// from. A restore does not fail on a row the source vault held and skipped (blind
+    /// review P1, REVIEW-9981).
     pub(crate) fn restore_archived_task_fact_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -1593,11 +1702,6 @@ impl Vault {
         birth_facet: Option<EntityId>,
     ) -> Result<()> {
         let carried = decode_carried_task_authority_fact_body(body)?;
-        if !carried.fact.commits_to_its_task() {
-            return Err(Error::InvariantViolation(
-                "task authority fact's maker does not derive its task id",
-            ));
-        }
         let at = carried.fact.occurred_at;
         if occurred.start != at || occurred.end != at || learned_at != at {
             return Err(Error::Record(RecordError::InvalidTaskBody(
@@ -1608,6 +1712,9 @@ impl Vault {
             .mask(birth_facet)
             .put_task_fact(fact_ref, body, at)
             .apply(wtxn)?;
+        if !carried.fact.commits_to_its_task() {
+            return Ok(());
+        }
         fact_proof::record_written_fact_in_txn(&self.store, wtxn, fact_ref, body)
     }
 
@@ -1617,9 +1724,9 @@ impl Vault {
     /// [`Self::restore_archived_task_fact_in_txn`] counts a fact it lands: a fact an own
     /// device sent here unsigned proves nothing here, and the owner's restore of his own
     /// archive is his own act (OWNER-RESTORE-TASK-FACT-COUNT = A). It enters this install's
-    /// written-here index, and the import's [`Self::adopt_task_facts_in_txn`] twins it. An
-    /// Owner fact whose maker does not derive its task's id refuses the import, as the
-    /// restore door refuses it. Any other row is left as it is.
+    /// written-here index, and the import's [`Self::adopt_task_facts_in_txn`] twins it. A
+    /// fact whose maker does not derive its task's id is left as it is, unmarked, as the
+    /// restore door lands it. Any other row is left as it is.
     pub(crate) fn restore_held_task_fact_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -1638,9 +1745,7 @@ impl Vault {
             .fact
             .commits_to_its_task()
         {
-            return Err(Error::InvariantViolation(
-                "task authority fact's maker does not derive its task id",
-            ));
+            return Ok(());
         }
         fact_proof::record_written_fact_in_txn(&self.store, wtxn, fact_ref, body)
     }
