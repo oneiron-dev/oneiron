@@ -2298,6 +2298,109 @@ impl Served {
             .expect("the minted slip");
         person
     }
+
+    /// A fresh live PERSON whose one credential is a pending invitation's
+    /// human-class slip, minted on the host issuer as vault_workflows_doors.rs
+    /// mints one: it reaches only its invitation's doors.
+    fn invitee_slip_holding_person(&self, slip_id: [u8; 32]) -> EntityId {
+        let person = EntityId::now();
+        self.vault
+            .put_entity(
+                &person,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"an invitee",
+            )
+            .expect("a live PERSON");
+        let mut claims = self.owner_slip.claims.clone();
+        claims.parent_id = None;
+        claims.slip_id = slip_id;
+        claims.holder_ref = person.to_hex();
+        claims.binding_key = SigningKey::from_bytes(&slip_id).verifying_key().to_bytes();
+        claims.actor_class = Some("human".to_owned());
+        claims.invitation_ref = Some(EntityId::now().to_hex());
+        self.vault
+            .mint_capability_slip(&self.issuer, claims)
+            .expect("the invitee slip");
+        person
+    }
+}
+
+/// The holder of a limited-purpose credential is no counterparty either
+/// (VOICE-MEMBER-CREDENTIAL-SCOPE = B, Engine 21 Nov 06:27): an agent never
+/// logs consent for a person whose only credential is a pending invitation's
+/// slip, and the owner logs it for them (VOICE-CONSENT-LOG-WHO = A). Their
+/// withdrawal stays open to the agent, and they get no member notice: the
+/// slip reaches neither their inbox nor the consent door. Red before: the
+/// agent's consent for the invitee was logged.
+#[test]
+fn an_agent_never_logs_consent_for_an_invitation_slip_holder() {
+    run_on_engine_stack("voices-recognition-consent-invitee", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let owner = served.owner_person;
+        let invitee = served.invitee_slip_holding_person([0x79; 32]);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+
+        let (status, body) = served
+            .post(
+                Caller::Agent,
+                RECOGNITION_CONSENT,
+                recognition_consent(
+                    "invitee-spoken-consent",
+                    now,
+                    Some(invitee),
+                    &["meeting_attribution"],
+                ),
+            )
+            .await;
+        assert_eq!(
+            error_code(&body),
+            Some("FORBIDDEN"),
+            "the agent on an invitee's voice is refused: {status} {body}"
+        );
+        assert!(
+            served.consent_notices().is_empty(),
+            "a refusal tells no one"
+        );
+
+        let logged = served
+            .ok(
+                Caller::Owner,
+                RECOGNITION_CONSENT,
+                recognition_consent(
+                    "invitee-consent-by-owner",
+                    now,
+                    Some(invitee),
+                    &["meeting_attribution"],
+                ),
+            )
+            .await;
+        assert_eq!(logged["subject"], invitee.to_hex(), "{logged}");
+        assert_eq!(
+            logged["recorded_by"],
+            owner.to_hex(),
+            "the owner logs the invitee's word: {logged}"
+        );
+
+        served
+            .ok(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("invitee-spoken-withdrawal", now, Some(invitee)),
+            )
+            .await;
+        assert!(
+            served.stored_subject_withdrawal_notices(invitee).is_empty(),
+            "an invitee gets no member notice"
+        );
+        assert_eq!(
+            served.withdrawal_notices().len(),
+            1,
+            "the owner is told of the agent-logged withdrawal"
+        );
+    });
 }
 
 /// A single-use human slip makes no member: it serves only the one-shot
