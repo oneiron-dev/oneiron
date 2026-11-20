@@ -8,6 +8,7 @@ pub(super) mod tests;
 mod tombstone_tests;
 
 mod authority;
+mod board_seeds;
 mod bundle_access;
 mod bundle_commit;
 mod bundles;
@@ -511,6 +512,7 @@ pub(super) fn run(
                 tombstones::tombstones(server, auth, peer, lane, request.params, budgets)
             }
             "residence.predict" => predict::predict(server, auth, peer, request.params),
+            "residence.board_seeds" => board_seeds::board_seeds(server, auth, peer, request.params),
             "residence.predicted_set" => predict::predicted_set(server, auth, peer, request.params),
             "residence.search" => search(
                 server,

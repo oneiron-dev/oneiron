@@ -38,6 +38,14 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
+/// The bound a move carries onto one row: the meet of the rows at the lines it left, and whether
+/// every one of them was a copy of a pack's default (`StoredRow::seeded`, stage 7c-2), so the
+/// carried row is seeded only when no row someone set took part.
+struct CarriedBound {
+    value: EncodedValue,
+    seeded: bool,
+}
+
 /// After a write that moved `project`, whose lines were `lines_before`
 /// ([`Vault::lines_before_move_in_txn`]): carries the rows of the lines it left onto it, in the
 /// mover's write. Returns how many carried rows it wrote.
@@ -177,9 +185,9 @@ fn bounds_at_lines_in_txn(
     txn: &heed::RoTxn<'_>,
     spec: &'static SettingSpec,
     left: &BTreeSet<EntityId>,
-) -> Result<BTreeMap<Option<String>, EncodedValue>> {
+) -> Result<BTreeMap<Option<String>, CarriedBound>> {
     let strictest = spec.kind.strictest_value()?;
-    let mut bounds: BTreeMap<Option<String>, EncodedValue> = BTreeMap::new();
+    let mut bounds: BTreeMap<Option<String>, CarriedBound> = BTreeMap::new();
     for row in table_of(spec).iter_raw_from(&vault.store, txn, &RowKey::name_prefix(spec.name))? {
         let (key, bytes) = row?;
         let Some(row_key) = RowKey::decode(&key) else {
@@ -196,6 +204,7 @@ fn bounds_at_lines_in_txn(
         if row_key.mode == SettingMode::Pin && stored.as_ref().is_some_and(|row| !row.by_owner()) {
             continue;
         }
+        let seeded = stored.as_ref().is_some_and(|row| row.seeded);
         let value = stored
             .map(|row| row.value)
             .filter(|value| spec.kind.decodes(value))
@@ -204,8 +213,14 @@ fn bounds_at_lines_in_txn(
             continue;
         };
         let met = match bounds.remove(&row_key.item) {
-            Some(so_far) => spec.kind.meet(&so_far, &value).unwrap_or(so_far),
-            None => value,
+            Some(so_far) => CarriedBound {
+                value: spec
+                    .kind
+                    .meet(&so_far.value, &value)
+                    .unwrap_or(so_far.value),
+                seeded: so_far.seeded && seeded,
+            },
+            None => CarriedBound { value, seeded },
         };
         bounds.insert(row_key.item, met);
     }
@@ -215,13 +230,13 @@ fn bounds_at_lines_in_txn(
 /// Writes the carried row `key` as the meet of `bound` and the row already there, with its change
 /// row and the key's `on_change`, and keeps that meet as the row's own bound
 /// (`StoredRow::local`, stage 7a-4); `false` when the row already holds that value, whose own
-/// bound it then sets alone.
+/// bound it then sets alone. The row is seeded only when the bound and the row already there are.
 fn write_carried_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     spec: &'static SettingSpec,
     key: &RowKey,
-    bound: EncodedValue,
+    bound: CarriedBound,
     now: u64,
     why: &str,
 ) -> Result<bool> {
@@ -234,16 +249,22 @@ fn write_carried_in_txn(
         .as_ref()
         .map(|row| row.value.clone())
         .filter(|value| spec.kind.decodes(value));
+    let seeded = bound.seeded && stored.as_ref().is_none_or(|row| row.seeded);
     let value = match &prior {
-        Some(prior) => spec.kind.meet(prior, &bound).unwrap_or(bound),
-        None => bound,
+        Some(prior) => spec.kind.meet(prior, &bound.value).unwrap_or(bound.value),
+        None => bound.value,
     };
     let local = Some(value.clone());
     if prior.as_ref() == Some(&value) {
         if let Some(row) = stored
-            && row.local != local
+            && (row.local != local || row.seeded != seeded)
         {
-            table.put(&vault.store, txn, &key_bytes, &StoredRow { local, ..row })?;
+            let row = StoredRow {
+                local,
+                seeded,
+                ..row
+            };
+            table.put(&vault.store, txn, &key_bytes, &row)?;
         }
         return Ok(false);
     }
@@ -284,6 +305,7 @@ fn write_carried_in_txn(
         change: recorded.sequence,
         weight_runs: None,
         local,
+        seeded,
     };
     table.put(&vault.store, txn, &key_bytes, &row)?;
     if let Some(on_change) = spec.on_change {

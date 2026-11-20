@@ -18,10 +18,15 @@
 //!   own OAuth server as a native app ([`super::hosted_sign_in`]), and
 //!   records that sign-in in OAuth mode, its vault id the one the origin
 //!   answers for. Its origin is https, or http on this machine.
+//! - `login --push` makes the continue step-up of the vault recorded at the
+//!   origin in OAuth mode ([`super::hosted_continue_sign_in`]): a second
+//!   sign-in, `full` at its `/mcp` and `/git`, kept beside the first, which
+//!   `oneiron continue --cloud` alone reads.
 //! - `select` selects one recorded vault, or none.
 //! - `logout` forgets one recorded vault, or every one. It never deletes a
 //!   credential file another surface wrote: that surface keeps it. An OAuth
-//!   sign-in `login` made is revoked at the vault and its file removed.
+//!   sign-in `login` made is revoked at the vault and its file removed, and
+//!   so is its continue sign-in.
 //! - `status` reads where the selection stands.
 //!
 //! Each prints the selection's state as one JSON line. It names credential
@@ -34,7 +39,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use super::hosted_selection::{self, HostedAuthMode, HostedVault, Selection};
-use super::{hosted_sign_in, recall};
+use super::{hosted_continue_sign_in, hosted_sign_in, recall};
 use crate::cli::{HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs, McpAuthMode};
 use crate::commands::credential_file::PairedCredentialFile;
 use crate::commands::oauth_sign_in;
@@ -61,6 +66,9 @@ pub fn hosted(command: HostedCommand) -> anyhow::Result<()> {
 /// that is then not recorded is revoked and removed again, and the recorded
 /// one stays as it was.
 fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
+    if args.push {
+        return push_login(args);
+    }
     let mut selection = held()?;
     let origin = origin(&args.origin)?;
     // The file given names the mode when none is asked; no file signs in.
@@ -147,6 +155,7 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
                 &origin,
                 &staged,
                 Duration::from_secs(args.sign_in_timeout_secs),
+                hosted_sign_in::SignInAsk::Recall,
             )?;
             (HostedAuthMode::OAuth, file, named, Some(staged))
         }
@@ -167,6 +176,31 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
         let _ = hosted_sign_in::sign_out(staged);
     }
     recorded
+}
+
+/// `login --push`: the continue step-up of the vault recorded at `--origin` in
+/// OAuth mode (the one `--vault-id` names, when given). The recorded
+/// sign-in and the selection stay as they are.
+fn push_login(args: &HostedLoginArgs) -> anyhow::Result<()> {
+    let selection = held()?;
+    let origin = origin(&args.origin)?;
+    let named = args.vault_id.as_deref().map(vault_id).transpose()?;
+    let vault = selection
+        .vaults
+        .iter()
+        .find(|vault| {
+            vault.origin == origin
+                && vault.auth_mode == HostedAuthMode::OAuth
+                && named.as_ref().is_none_or(|named| *named == vault.vault_id)
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no OAuth sign-in to {origin} is recorded here; sign in with `oneiron hosted \
+                 login --origin {origin}` first, then add --push"
+            )
+        })?;
+    hosted_continue_sign_in::step_up(vault, Duration::from_secs(args.sign_in_timeout_secs))?;
+    Ok(())
 }
 
 /// Records the vault at `origin` reached by `file` in `auth_mode`, once
@@ -319,15 +353,21 @@ fn logout(args: &HostedLogoutArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Revokes and removes each OAuth sign-in `login` made among `vaults`. A
-/// credential file another surface wrote stays: that surface keeps it.
+/// Revokes and removes each OAuth sign-in `login` made among `vaults`, and
+/// its continue sign-in. A credential file another surface wrote stays: that
+/// surface keeps it.
 fn sign_out(vaults: &[HostedVault]) {
     for vault in vaults
         .iter()
         .filter(|vault| vault.auth_mode == HostedAuthMode::OAuth)
     {
-        if let Err(error) = hosted_sign_in::sign_out(&vault.credential_file) {
-            let _ = writeln!(std::io::stderr().lock(), "{error}");
+        for signed_out in [
+            hosted_sign_in::sign_out(&vault.credential_file),
+            hosted_continue_sign_in::sign_out(&vault.origin),
+        ] {
+            if let Err(error) = signed_out {
+                let _ = writeln!(std::io::stderr().lock(), "{error}");
+            }
         }
     }
 }

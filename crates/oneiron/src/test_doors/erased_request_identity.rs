@@ -114,6 +114,58 @@ pub fn store_note_call_in_room(
     Ok([agent, run])
 }
 
+/// A note held as a map of `fields`, each a text.
+fn fields_note(fields: &[(&str, &str)]) -> Value {
+    Value::Map(
+        fields
+            .iter()
+            .map(|(key, value)| (Value::from(*key), Value::from(*value)))
+            .collect(),
+    )
+}
+
+/// [`store_note_call_in_room`] for a note held as a map of `fields`, each a
+/// text, staged live: a field the wall lifts whole holds the bare room
+/// handle (REVIEW-10003).
+///
+/// # Errors
+///
+/// The agent cannot be put, the run cannot be bound to the room, or the
+/// record cannot be stored.
+pub fn store_fields_call_in_room(
+    vault: &Vault,
+    session: &OffRecordSession<'_>,
+    fields: &[(&str, &str)],
+) -> Result<[EntityId; 2]> {
+    let ([agent, run], record) = new_note_run(vault, fields_note(fields))?;
+    ExecutorStorage::for_session(session, agent)?
+        .put_owned_code_run_replay_record(&record, None, run, agent)?;
+    Ok([agent, run])
+}
+
+/// Puts the replay record of `run` that `session`'s room holds again, as
+/// `agent`'s run, through the session's storage on its route now: into base
+/// once the stretch is on record, as an on-record append of a run the room
+/// began writes its whole record (REVIEW-10003 round 2).
+///
+/// # Errors
+///
+/// The record cannot be read in the room, or the put's refusal.
+pub fn put_room_record_again(
+    session: &OffRecordSession<'_>,
+    [agent, run]: [EntityId; 2],
+) -> Result<()> {
+    let record = session
+        .routed_side_read(|rtxn, read| replay_rows::get(&read, rtxn, &run))?
+        .ok_or(Error::InvariantViolation(
+            "the room holds no record of the run",
+        ))?;
+    let expected = Some(record.generation()?);
+    ExecutorStorage::for_session(session, agent)?
+        .put_owned_code_run_replay_record(&record, expected, run, agent)
+        .map(drop)
+}
+
 /// The one call `record` holds.
 fn first_call(record: Option<CodeRunReplayRecord>) -> Result<CodeRunBridgeCall> {
     record
@@ -141,10 +193,19 @@ fn call_is(
     note: Value,
     custody: bool,
 ) -> Result<bool> {
-    let offered = note_row(agent, note)?.request;
     let read: BaseKnownRead<'_> = &|| vault.known_values_now();
-    let known = CompareKnown::new(custody.then_some(read));
-    stored.request_identity_is(&offered, &known)
+    call_is_read(stored, agent, note, custody.then_some(read))
+}
+
+/// [`call_is`] with the values `read` reads, or none.
+fn call_is_read(
+    stored: &CodeRunBridgeCall,
+    agent: EntityId,
+    note: Value,
+    read: Option<BaseKnownRead<'_>>,
+) -> Result<bool> {
+    let offered = note_row(agent, note)?.request;
+    stored.request_identity_is(&offered, &CompareKnown::new(read))
 }
 
 /// Whether the call `run`'s stored record holds is in its erased form.
@@ -210,25 +271,68 @@ pub fn stored_body_call_is(
     )
 }
 
-/// [`stored_call_is`] for the record `session`'s room holds.
+/// [`stored_call_is`] for the record `session`'s room holds, read as a run
+/// bound to the room reads it: with the values base custody holds and the
+/// values the room keeps in its own custody (ROOM-LOCAL-CUSTODY) when
+/// `custody` is in reach, else with none.
 ///
 /// # Errors
 ///
 /// The record cannot be read in the room, or the compare fails.
 pub fn room_stored_call_is(
-    vault: &Vault,
+    _vault: &Vault,
     session: &OffRecordSession<'_>,
     [agent, run]: [EntityId; 2],
     words: &str,
     custody: bool,
 ) -> Result<bool> {
-    call_is(
-        vault,
+    let read: BaseKnownRead<'_> = &|| session.base_known_values();
+    call_is_read(
         &room_stored_call(session, run)?,
         agent,
         Value::from(words),
-        custody,
+        custody.then_some(read),
     )
+}
+
+/// [`room_stored_call_is`] for a call made again writing a note held as a
+/// map of `fields`, each a text.
+///
+/// # Errors
+///
+/// The record cannot be read in the room, or the compare fails.
+pub fn room_stored_fields_call_is(
+    session: &OffRecordSession<'_>,
+    [agent, run]: [EntityId; 2],
+    fields: &[(&str, &str)],
+    custody: bool,
+) -> Result<bool> {
+    let read: BaseKnownRead<'_> = &|| session.base_known_values();
+    call_is_read(
+        &room_stored_call(session, run)?,
+        agent,
+        fields_note(fields),
+        custody.then_some(read),
+    )
+}
+
+/// Whether the request of the call `run`'s record holds in `session`'s room
+/// holds `text` in one of its texts.
+///
+/// # Errors
+///
+/// The record cannot be read in the room.
+pub fn room_stored_call_holds(
+    session: &OffRecordSession<'_>,
+    run: EntityId,
+    text: &str,
+) -> Result<bool> {
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &room_stored_call(session, run)?.request)
+        .map_err(|_| Error::InvariantViolation("a stored call's request did not encode"))?;
+    Ok(encoded
+        .windows(text.len())
+        .any(|window| window == text.as_bytes()))
 }
 
 /// The handle custody gives `record`, or `None` when it gives none.

@@ -14,10 +14,14 @@
 use oneiron::access_grant::AccessGrant;
 use oneiron::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
 use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
-use oneiron::consent::AuthenticatedOwner;
+use oneiron::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use oneiron::conversation::ConversationKind;
 use oneiron::core_write::ConversationTurnCreateInput;
+use oneiron::deletion::LegalHoldTarget;
 use oneiron::edge::{EdgeActorClass, EdgeKind};
+use oneiron::entity_doc::{
+    AnchoredEdit, DocAuthorization, EditVerb, ForkRequest, SettleVerb, TextField,
+};
 use oneiron::federation::{FederationGrantPreset, FederationGrantRole};
 use oneiron::memory::{
     Effort, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_NOT_FOUND, Memory,
@@ -30,7 +34,9 @@ use oneiron::subject_model::{PersonSubstrate, anchor_actor_subject};
 use oneiron::workspace_roster::{
     CompanionChoice, MemberGrantBundle, MemberOnboardingIntent, WorkspaceRosterPreset,
 };
-use oneiron::{CompanionBirthIntent, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
+use oneiron::{
+    CompanionBirthIntent, DeleteReason, EntityId, TimeRange, Vault, VaultConfig, WriteActor,
+};
 use serde_json::{Value, json};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -1264,6 +1270,244 @@ fn a_generic_turn_create_cannot_enter_work_talk() -> TestResult {
             .edges_in(&talk)?
             .iter()
             .all(|edge| edge.kind != EdgeKind::ChildOf)
+    );
+    Ok(())
+}
+
+/// The Owner's edit grant for `writer` on one message: a bound writer still
+/// needs the doc plane's own authority to change it at once.
+fn grant_text_edit(fixture: &Fixture, writer: WriteActor, message: EntityId) -> TestResult {
+    let target = format!("entity:{}", message.to_hex());
+    fixture.vault.create_standing_grant(
+        &fixture.owner_proof,
+        GrantBound::action(
+            ActorBound::new(writer.entity_ref().to_hex())?,
+            ActionClass::new("entity.text.edit")?,
+            ActionEnvelope::new([target.clone()])?.with_target(target)?,
+        )?,
+    )?;
+    Ok(())
+}
+
+/// One edit by `actor` that replaces the whole text of `message`.
+fn replace_text(
+    fixture: &Fixture,
+    message: EntityId,
+    actor: WriteActor,
+    text: &str,
+) -> TestResult<AnchoredEdit> {
+    let end = fixture.vault.entity_text(&message)?.chars().count();
+    Ok(AnchoredEdit {
+        actor: Some(actor),
+        verb: EditVerb::ReplaceQuotedSpan {
+            span: fixture.vault.entity_text_anchor(&message, 0, end)?,
+            text: text.to_owned(),
+        },
+    })
+}
+
+/// The company Owner's new text for `message`, as one fork.
+fn owner_fork(fixture: &Fixture, message: EntityId, text: &str) -> TestResult<ForkRequest> {
+    let owner = WriteActor::new(fixture.owner, EdgeActorClass::Human);
+    Ok(ForkRequest {
+        entity: message,
+        base: fixture.vault.entity_text_frontier(&message)?,
+        actor: owner,
+        edits: vec![replace_text(fixture, message, owner, text)?],
+        rewrite: None,
+    })
+}
+
+/// Work talk holding one MESSAGE by the member's roster actor, moved to the
+/// document plane by that writer under the edit grant the Owner gave her.
+/// Answers (member PERSON, talk, message, the member's write actor).
+fn work_talk_with_member_message(
+    fixture: &Fixture,
+    onboarding_id: &str,
+    text: &str,
+) -> TestResult<(EntityId, EntityId, EntityId, WriteActor)> {
+    install_one_vault(fixture, json!({ "version": 1, "mode": "on" }))??;
+    let (yuki, _, _, yuki_outcome) = onboard_yuki_bring(fixture, onboarding_id)?;
+    let talk = conversation_of(&open_via_verb(&member_memory(fixture, yuki)?)?)?;
+    let member = WriteActor::new(yuki_outcome.actor_ref, EdgeActorClass::Agent);
+    witness_text(
+        &fixture
+            .vault
+            .memory(yuki_outcome.actor_ref, EdgeActorClass::Agent),
+        &talk,
+        WitnessAuthor::User,
+        text,
+        fixture.vault.now_recorded_at(),
+    )?;
+    let messages = transcript_message_ids(fixture, yuki, &talk)?;
+    let [message] = messages.as_slice() else {
+        return Err(format!("one message in the talk: {messages:?}").into());
+    };
+    grant_text_edit(fixture, member, *message)?;
+    fixture.vault.migrate_entity_text(
+        message,
+        &TextField::MapField("content".to_owned()),
+        member,
+        &DocAuthorization::StandingGrant,
+    )?;
+    assert_eq!(fixture.vault.entity_text(message)?, text);
+    Ok((yuki, talk, *message, member))
+}
+
+/// WORK-TALK-DOC-EDIT = A (lead, 21 Nov 2026): in work talk only its two
+/// bound writers change a message. The company Owner's rewrite of the
+/// member's words is refused; his new text stays a proposal that changes
+/// nothing and that he cannot settle himself (ARCH-0002: editing someone
+/// else's message is a proposal). His erase and his legal hold work as
+/// before. Red on main: the Owner's rewrite lands.
+#[test]
+fn the_owner_cannot_rewrite_a_work_talk_message_but_erases_and_holds() -> TestResult {
+    let fixture = setup()?;
+    let said = "quarterly numbers look off";
+    let (yuki, talk, message, member) =
+        work_talk_with_member_message(&fixture, "work-talk-doc-edit-owner", said)?;
+    let owner = WriteActor::new(fixture.owner, EdgeActorClass::Human);
+    let as_owner = DocAuthorization::Owner(&fixture.owner_proof);
+
+    let rewrite = replace_text(&fixture, message, owner, "the numbers are fine")?;
+    let refused = fixture.vault.edit_entity_text(
+        &message,
+        &[rewrite],
+        &as_owner,
+        fixture.vault.now_recorded_at(),
+    );
+    assert!(
+        matches!(refused, Err(oneiron::Error::Artifact(_))),
+        "the Owner's rewrite of the member's words is refused: {refused:?}"
+    );
+    assert_eq!(fixture.vault.entity_text(&message)?, said);
+
+    let proposal = fresh_id();
+    let bundle = fixture.vault.open_text_proposal(
+        &proposal,
+        &[owner_fork(&fixture, message, "the numbers are fine")?],
+        &as_owner,
+        fixture.vault.now_recorded_at(),
+    )?;
+    assert_eq!(
+        bundle.pending().count(),
+        1,
+        "the Owner's text waits for a bound writer"
+    );
+    assert_eq!(fixture.vault.entity_text(&message)?, said);
+    let settled = fixture.vault.settle_text_proposal(
+        &proposal,
+        SettleVerb::Merge,
+        &as_owner,
+        owner,
+        fixture.vault.now_recorded_at(),
+    );
+    assert!(
+        matches!(settled, Err(oneiron::Error::Artifact(_))),
+        "the Owner cannot land his own proposal: {settled:?}"
+    );
+    assert_eq!(fixture.vault.entity_text(&message)?, said);
+
+    // Erase: the Owner deletes a second message of the talk.
+    witness_text(
+        &fixture
+            .vault
+            .memory(member.entity_ref(), EdgeActorClass::Agent),
+        &talk,
+        WitnessAuthor::User,
+        "draft line to drop",
+        fixture.vault.now_recorded_at(),
+    )?;
+    let erased = transcript_message_ids(&fixture, yuki, &talk)?
+        .into_iter()
+        .find(|id| *id != message)
+        .ok_or("the second message")?;
+    let outcome = fixture.vault.delete_entity_with_reason_as_owner(
+        &fixture.owner_proof,
+        &erased,
+        DeleteReason::UserHardDelete,
+    )?;
+    assert!(outcome.existed, "the Owner's erase found the message");
+    assert_eq!(
+        fixture.vault.get(&erased)?,
+        None,
+        "the Owner erases a work-talk message"
+    );
+
+    // Hold: the Owner holds the first message, and a delete of it then fails.
+    fixture.vault.place_legal_hold(
+        &fixture.owner_proof,
+        vec![LegalHoldTarget::Record(message)],
+        None,
+    )?;
+    let held = fixture.vault.delete_entity_with_reason_as_owner(
+        &fixture.owner_proof,
+        &message,
+        DeleteReason::UserHardDelete,
+    );
+    assert!(
+        fixture.vault.get(&message)?.is_some(),
+        "the Owner's hold keeps the message: {held:?}"
+    );
+    assert_eq!(fixture.vault.entity_text(&message)?, said);
+    Ok(())
+}
+
+/// WORK-TALK-DOC-EDIT = A: the member's roster actor, one of the two bound
+/// writers, edits her own message under the Owner's edit grant, and passes
+/// the shared vault's Content check on her binding, as her witness did. She
+/// also settles the Owner's proposed text, which then lands. Red on main: the
+/// roster actor holds no Content grant (the member's grant names her
+/// PERSON), and the Owner's proposal lands by itself.
+#[test]
+fn a_bound_writer_edits_her_work_talk_message_and_settles_the_owners_proposal() -> TestResult {
+    let fixture = setup()?;
+    let (_, _, message, member) = work_talk_with_member_message(
+        &fixture,
+        "work-talk-doc-edit-writer",
+        "quarterly numbers look off",
+    )?;
+
+    let correction = replace_text(&fixture, message, member, "quarterly numbers look right")?;
+    fixture.vault.edit_entity_text(
+        &message,
+        &[correction],
+        &DocAuthorization::StandingGrant,
+        fixture.vault.now_recorded_at(),
+    )?;
+    assert_eq!(
+        fixture.vault.entity_text(&message)?,
+        "quarterly numbers look right",
+        "the member's own edit lands"
+    );
+
+    let proposal = fresh_id();
+    let bundle = fixture.vault.open_text_proposal(
+        &proposal,
+        &[owner_fork(&fixture, message, "quarterly numbers are fine")?],
+        &DocAuthorization::Owner(&fixture.owner_proof),
+        fixture.vault.now_recorded_at(),
+    )?;
+    assert_eq!(
+        bundle.pending().count(),
+        1,
+        "the Owner's text is a proposal"
+    );
+    assert_eq!(
+        fixture.vault.entity_text(&message)?,
+        "quarterly numbers look right"
+    );
+    fixture.vault.settle_text_proposal(
+        &proposal,
+        SettleVerb::Merge,
+        &DocAuthorization::StandingGrant,
+        member,
+        fixture.vault.now_recorded_at(),
+    )?;
+    assert_eq!(
+        fixture.vault.entity_text(&message)?,
+        "quarterly numbers are fine",
+        "the member accepts the Owner's proposal"
     );
     Ok(())
 }

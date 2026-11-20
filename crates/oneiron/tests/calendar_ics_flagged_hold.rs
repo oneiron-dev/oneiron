@@ -923,3 +923,180 @@ fn a_feed_review_s_approval_of_a_flagged_cancellation_closes_the_omission_beside
         "the approved cancellation is the one live status: {statuses:?}"
     );
 }
+
+/// [`MarkerScreener`] that lands the owner's release of the held cancellation
+/// `held` once, at the first empty body screened while `when` holds: the
+/// owner answers while a complete feed's sweep of its omissions runs.
+struct ReleasingScreener<'f> {
+    fixture: &'f Fixture,
+    held: EntityId,
+    when: fn(&Fixture) -> bool,
+    released: AtomicBool,
+}
+
+impl<'f> ReleasingScreener<'f> {
+    fn new(fixture: &'f Fixture, held: EntityId, when: fn(&Fixture) -> bool) -> Self {
+        Self {
+            fixture,
+            held,
+            when,
+            released: AtomicBool::new(false),
+        }
+    }
+}
+
+impl CalendarBodyScreener for ReleasingScreener<'_> {
+    fn screen(&self, body: &CalendarInboundBody) -> oneiron::Result<CalendarScreenVerdict> {
+        if body.description.is_empty()
+            && body.attachment_text.is_empty()
+            && !self.released.load(Ordering::SeqCst)
+            && (self.when)(self.fixture)
+        {
+            self.fixture.owner_releases(self.held);
+            self.released.store(true, Ordering::SeqCst);
+        }
+        MarkerScreener.screen(body)
+    }
+
+    fn name(&self) -> Option<&str> {
+        Some("fixture-releasing-screener")
+    }
+}
+
+/// Feed `work` under its standing consent carrying `uid-0@work` and
+/// `uid-1@work`, then `uid-0@work` cancelled in a body the screen flags and
+/// `uid-1@work` as before: the standing consent holds that cancellation
+/// (returned).
+fn held_cancellation_beside_a_live_event(f: &Fixture, work: &IcsFeedPollConfig) -> EntityId {
+    f.poll(
+        work,
+        calendar(
+            &[
+                Event::new("uid-0@work", "weekly sync"),
+                Event::new("uid-1@work", "daily sync"),
+            ],
+            "v1",
+        ),
+    );
+    f.approve_first_poll("work");
+    let IcsFetchResponse::Complete { etag, body } = calendar(
+        &[
+            Event::new("uid-0@work", FLAG_MARKER),
+            Event::new("uid-1@work", "daily sync"),
+        ],
+        "v2",
+    ) else {
+        panic!("the fixture calendar answers a complete body");
+    };
+    let body = String::from_utf8(body)
+        .expect("the fixture calendar is UTF-8")
+        .replace(
+            "UID:uid-0@work\r\n",
+            "UID:uid-0@work\r\nSTATUS:CANCELLED\r\n",
+        )
+        .into_bytes();
+    f.poll(work, IcsFetchResponse::Complete { etag, body });
+    let statuses = live_statuses(&f.imported_claims("uid-0@work"));
+    let [(held, CalendarStatusBasis::ImportedCancel, ClaimApprovalStatus::Proposed)] =
+        statuses.as_slice()
+    else {
+        panic!("the flagged cancellation waits on the owner: {statuses:?}");
+    };
+    *held
+}
+
+/// Whether the omission of `uid-0@work` has written its cancellation: an
+/// active `calendar.status` of basis `imported_absence`, waiting or settled.
+fn omission_admitted(f: &Fixture) -> bool {
+    live_statuses(&f.imported_claims("uid-0@work"))
+        .iter()
+        .any(|(_, basis, _)| *basis == CalendarStatusBasis::ImportedAbsence)
+}
+
+/// After the poll the release landed in: the released cancellation is the one
+/// live status of `uid-0@work`, and the omission's cancellation was admitted
+/// and closed beside it, as when the release lands after that poll.
+fn assert_the_released_cancellation_stands_alone(f: &Fixture, held: EntityId) {
+    let claims = f.imported_claims("uid-0@work");
+    let statuses = live_statuses(&claims);
+    assert_eq!(
+        statuses,
+        vec![(
+            held,
+            CalendarStatusBasis::ImportedCancel,
+            ClaimApprovalStatus::Approved
+        )],
+        "the released cancellation is the one live status: {statuses:?}"
+    );
+    let omissions: Vec<_> = claims
+        .iter()
+        .filter(|(_, body)| {
+            body.predicate == PREDICATE_CALENDAR_STATUS
+                && body.value.as_map().is_some_and(|entries| {
+                    entries.iter().any(|(key, value)| {
+                        key.as_str() == Some("basis")
+                            && value.as_str() == Some(CalendarStatusBasis::ImportedAbsence.as_str())
+                    })
+                })
+        })
+        .map(|(_, body)| (body.lifecycle, body.approval))
+        .collect();
+    assert_eq!(
+        omissions,
+        vec![(
+            ClaimLifecycleStatus::Superseded,
+            ClaimApprovalStatus::Approved
+        )],
+        "the omission's cancellation settled and the released one closed it"
+    );
+}
+
+/// CAL-OMISSION-STATUS-READS-PRIOR-BEFORE-SCREEN: the owner releases a held
+/// cancellation while the omission's own cancellation of that EVENT is
+/// screened, after the omission's admission read the held one as waiting and
+/// before it wrote. One admitted status stands, the released cancellation, as
+/// when the release lands after the poll. Main admitted the omission beside
+/// the released cancellation with nothing closed: two admitted
+/// `calendar.status` heads of one EVENT, both cancelled.
+#[test]
+fn a_held_cancellation_released_while_the_omission_is_screened_closes_the_omission() {
+    let f = Fixture::open();
+    let work = f.install("work");
+    let held = held_cancellation_beside_a_live_event(&f, &work);
+
+    // The next complete feed leaves both EVENTs out. The sweep flips
+    // `uid-0@work`'s passport absent, then screens its cancellation's empty
+    // body: the first empty body screened once that passport reads absent.
+    let screener = ReleasingScreener::new(&f, held, |f| {
+        f.passport_presence("work", "uid-0@work") == Some(CalendarPassportPresence::Absent)
+    });
+    f.poll_with(&work, calendar(&[], "v3"), &screener);
+    assert!(
+        screener.released.load(Ordering::SeqCst),
+        "the owner's release landed while the omission's cancellation was screened"
+    );
+    assert_the_released_cancellation_stands_alone(&f, held);
+}
+
+/// The same race one write later: the owner releases the held cancellation
+/// after the omission wrote its cancellation and before the standing consent
+/// settled it, while the sweep screens the next omitted EVENT's passport. The
+/// release's review names no conflict head (the omission still waits), so the
+/// settlement is where the omission closes. Main settled it beside the
+/// released cancellation: two admitted `calendar.status` heads.
+#[test]
+fn a_held_cancellation_released_before_the_omission_settles_closes_the_omission() {
+    let f = Fixture::open();
+    let work = f.install("work");
+    let held = held_cancellation_beside_a_live_event(&f, &work);
+
+    // `uid-0@work` was minted first, so the sweep reaches it first; the first
+    // empty body screened once its omission wrote is `uid-1@work`'s passport.
+    let screener = ReleasingScreener::new(&f, held, omission_admitted);
+    f.poll_with(&work, calendar(&[], "v3"), &screener);
+    assert!(
+        screener.released.load(Ordering::SeqCst),
+        "the owner's release landed between the omission's write and its settlement"
+    );
+    assert_the_released_cancellation_stands_alone(&f, held);
+}

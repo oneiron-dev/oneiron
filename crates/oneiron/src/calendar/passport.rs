@@ -583,7 +583,7 @@ pub fn live_passports_for_event(
     live_passports_for_event_in_txn(vault, &txn, event_ref)
 }
 
-fn live_passports_for_event_in_txn(
+pub(crate) fn live_passports_for_event_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     event_ref: &EntityId,
