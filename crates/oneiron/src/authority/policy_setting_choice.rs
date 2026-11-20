@@ -172,7 +172,7 @@ impl Vault {
             prior,
             value,
         } = act;
-        self.record_carried_act_in_txn(txn, "policy setting", |machine| {
+        self.record_carried_act_in_txn(txn, "policy setting", None, |machine| {
             AuthorityOp::PolicySettingSet(PolicySettingSet {
                 act,
                 machine,

@@ -16,7 +16,10 @@
 //!
 //! The export door ([`Vault::record_export_act_op_in_txn`]) signs the act
 //! after the copy left, in the write of its audit row, best effort
-//! ([`super::carried_act`]): the copy is never withheld.
+//! ([`super::carried_act`]): the copy is never withheld. The owner's own
+//! export, his proof revalidated in that write, carries the owner key's
+//! proof this install holds; the fold reads its one cosign at the merge
+//! ([`super::owner_proof::proof_judged_at_merge`]).
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -67,10 +70,13 @@ impl Vault {
     /// ([`super::carried_act`]): `format` as the row names it, `bytes` and
     /// `digest` (BLAKE3, lowercase hex) where the door read the copy back. A
     /// digest that does not read is left out of the record.
+    /// `owner_authored` when the export door's proof of the owner
+    /// revalidated in `txn` as his own write: the record and its join carry
+    /// the owner key's proof this install holds.
     pub(crate) fn record_export_act_op_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        act: OwnerAct,
+        (act, owner_authored): (OwnerAct, Option<&crate::consent::OwnerAuthoredWrite>),
         export: EntityId,
         format: &str,
         bytes: Option<u64>,
@@ -80,7 +86,7 @@ impl Vault {
             .and_then(|hex| blake3::Hash::from_hex(hex).ok())
             .map(|hash| *hash.as_bytes());
         let format = format.to_owned();
-        self.record_carried_act_in_txn(txn, "export", |machine| {
+        self.record_carried_act_in_txn(txn, "export", owner_authored, |machine| {
             AuthorityOp::ExportAct(ExportActRecord {
                 act,
                 machine,

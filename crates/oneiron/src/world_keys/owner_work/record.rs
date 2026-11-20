@@ -205,14 +205,18 @@ impl Vault {
     /// own act, for the export secret work its holder does. The caller
     /// checked its owner a live vault owner in this same transaction. The
     /// executor is pinned by [`owner_work_executor`]; with none to name,
-    /// nothing is written and the receipt says why.
+    /// nothing is written and the receipt says why. `owner_authored` when
+    /// the export is the owner's own write, its door's proof of him
+    /// revalidated in `txn`: the request then carries the owner key's proof
+    /// this install holds.
     pub(crate) fn record_owner_work_with_act_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         act: OwnerAct,
+        owner_authored: Option<&OwnerAuthoredWrite>,
         work: OwnerWorkBody,
     ) -> Result<OwnerWorkReceipt> {
-        self.sign_owner_work_in_txn(txn, act, work, None, None)
+        self.sign_owner_work_in_txn(txn, act, work, None, owner_authored)
     }
 
     /// Records the key work the world settings edit signed as entry `edit`

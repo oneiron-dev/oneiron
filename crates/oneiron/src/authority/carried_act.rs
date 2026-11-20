@@ -11,7 +11,11 @@
 //! logged and rolls the savepoint back alone: the door's change stands as it
 //! did before the op existed (rubric 1, no new refusal). Every door calls it
 //! last in its write, after each mandatory row, so the optional record never
-//! takes the room a mandatory one needs.
+//! takes the room a mandatory one needs. A door that revalidated the owner's
+//! own write in that transaction lends it, and the act and its join then
+//! carry the owner key's proof this install holds (row
+//! OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS): room past another install's
+//! owner reserve, and nothing in any fold.
 //!
 //! An agent-carried act (an agent's free-time policy act, an agent's
 //! export, an agent's world privacy edit) names a Grant the fold cannot
@@ -158,13 +162,17 @@ impl Vault {
     /// Records the act `op` builds, given the carrier, as a signed op in a
     /// savepoint of `txn`, best effort: a fault is logged under `what` and
     /// leaves `txn` as it was. The entry hash when the fold counted it.
+    /// `owner_authored` when the act is the owner's own write, revalidated in
+    /// `txn`: the act and its join then carry the owner key's proof this
+    /// install holds ([`Vault::owner_act_proof_signer`]).
     pub(super) fn record_carried_act_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         what: &'static str,
+        owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
         op: impl FnOnce(EntityId) -> AuthorityOp,
     ) -> Option<AuthorityEntryHash> {
-        match self.append_carried_act_in_savepoint(txn, op) {
+        match self.append_carried_act_in_savepoint(txn, owner_authored, op) {
             Ok(hash) => Some(hash),
             Err(error) => {
                 tracing::warn!(
@@ -180,20 +188,23 @@ impl Vault {
     fn append_carried_act_in_savepoint(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
         op: impl FnOnce(EntityId) -> AuthorityOp,
     ) -> Result<AuthorityEntryHash> {
         let mut savepoint = self.store.env.nested_write_txn(txn)?;
-        let hash = self.append_carried_act_in_txn(&mut savepoint, op)?;
+        let hash = self.append_carried_act_in_txn(&mut savepoint, owner_authored, op)?;
         savepoint.commit()?;
         Ok(hash)
     }
 
     /// Signs, appends and folds the act `op` builds in `txn`, naming the
     /// main-log heads alone, as every owner act does; returns only once the
-    /// fold in `txn` counted it.
+    /// fold in `txn` counted it. The proof is picked once, before the join,
+    /// and the join and the act carry it alike.
     fn append_carried_act_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
         op: impl FnOnce(EntityId) -> AuthorityOp,
     ) -> Result<AuthorityEntryHash> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
@@ -210,8 +221,9 @@ impl Vault {
         ) {
             return Err(authority_refused(NO_CARRIER));
         }
+        let proof = self.owner_act_proof_signer(&fold, owner_authored);
         // FIX 7908: join a frontier wider than one entry names, else today's path.
-        let joiner = FrontierSigner::Install(machine, &key);
+        let joiner = FrontierSigner::install(machine, &key, proof.as_ref());
         let fold = self
             .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
@@ -223,12 +235,15 @@ impl Vault {
         }
         let now = self.instant_in_txn(txn)?.secs();
         let op = op(machine);
-        // Only a setting act lands through the gate that reads an owner
-        // key's proof (row CARRIER-OWNER-PROOF); an export act's fold still
-        // refuses any cosign.
-        let proof = matches!(op, AuthorityOp::PolicySettingSet(_))
-            .then(|| self.owner_proof_signer(&fold))
-            .flatten();
+        // A setting act lands through the gate that reads an owner key's
+        // proof whoever carried it (row CARRIER-OWNER-PROOF), so it keeps
+        // that pick; its door passes no write of its own, and its join stays
+        // unproven. Every other carried act is proved as the owner's own
+        // write alone.
+        let proof = match &op {
+            AuthorityOp::PolicySettingSet(_) => self.owner_proof_signer(&fold),
+            _ => proof,
+        };
         let entry =
             sign_side_entry_with_owner_proof(&fold, &key, seq, parents, op, now, proof.as_ref())?;
         let entry_hash = authority_entry_hash(&entry)?;
