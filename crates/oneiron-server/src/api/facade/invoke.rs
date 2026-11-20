@@ -53,9 +53,9 @@ pub(super) fn facade_invoke_concern_move(
     value: serde_json::Value,
     producers: &oneiron::memory::ProducerRows,
 ) -> Result<(serde_json::Value, bool), FacadeApiError> {
+    const VERB: &str = "self.inbox.concern.move";
     let (output, wake) = crate::server::blocking(
         move || -> Result<(serde_json::Value, bool), FacadeApiError> {
-            const VERB: &str = "self.inbox.concern.move";
             let auth = call.auth();
             let memory = facade_invocation(
                 credential_memory(&server.vault, Some(auth), actor, class)
@@ -123,7 +123,7 @@ pub(super) fn facade_invoke_concern_move(
         },
     )?;
     let output =
-        super::drained_still_admitted(&server.vault, call.auth(), producers, output, false);
+        super::drained_still_admitted(&server.vault, call.auth(), VERB, producers, output, false);
     Ok((output, wake))
 }
 
@@ -251,6 +251,7 @@ pub(super) fn facade_invoke_in_turn_with_notice(
         super::drained_still_admitted(
             &server.vault,
             call.auth(),
+            verb,
             producers,
             output,
             owner_whole_vault_export,
@@ -325,18 +326,25 @@ pub(super) fn facade_landing(
         auth.require_unrestricted_record_scope()?;
         return Ok(BirthPosition::default());
     }
-    let session = call.session()?;
+    let session = call
+        .session()?
+        .map(crate::api::write_facet::RequestSession::of_id);
     let write_facet = server
         .vault
         .paired_write_facet(&proof.claims().slip_id)
         .map_err(MemoryError::from)?;
-    let landing = landing_facet(&server.vault, session, &proof.scope().facets, write_facet)
-        .map_err(|_| {
-            FacadeApiError::forbidden(
-                "the session this request names does not place this credential's writes",
-                ["Name a session whose facet this credential reads, or none."],
-            )
-        })?;
+    let landing = landing_facet(
+        &server.vault,
+        session.as_ref(),
+        &proof.scope().facets,
+        write_facet,
+    )
+    .map_err(|_| {
+        FacadeApiError::forbidden(
+            "the session this request names does not place this credential's writes",
+            ["Name a session whose facet this credential reads, or none."],
+        )
+    })?;
     auth.require_record_scope_carried(
         ScopeAxis::All,
         landing.map_or(ScopeAxis::All, |facet| {

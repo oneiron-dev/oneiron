@@ -16,7 +16,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/facade/boundary.rs` | src | s | 8 crate-vis | — | JS-boundary guards: error constructors, timestamp/number narrowing, blob decoding |
 | `src/facade/bridge.rs` | src | s | 2 struct · 6 fn · 1 crate-vis | ActorScopedVault, VaultBridge | VaultBridge root and ActorScopedVault handle plus the facade() accessor |
 | `src/facade/calendar_paging_tests.rs` | test | s | — | — | Regression tests for the actor-bound calendar paging surface |
-| `src/facade/client.rs` | src | m | 5 struct · 16 fn | NapiHostRootProfile, NapiNativeLimitQuestion, NapiPaired, NapiWitnessTurnInput, NativeClient | Remote-backed NativeClient SDK seam with its stamped-turn input |
+| `src/facade/client.rs` | src | m | 5 struct · 17 fn | NapiHostRootProfile, NapiNativeLimitQuestion, NapiPaired, NapiWitnessTurnInput, NativeClient | Remote-backed NativeClient SDK seam with its stamped-turn input |
 | `src/facade/client/embedded_engine.rs` | src | m | 6 struct · 13 fn | NapiEngineHeader, NapiEngineOptions, NapiEngineReply, NapiEngineRequest, NativeEngine, NativeEngineConnection | The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron… |
 | `src/facade/convert.rs` | src | m | 21 crate-vis | — | DTO to/from engine converters plus the forget paging helper |
 | `src/facade/custody_seal.rs` | src | s | 1 fn | — | The client's own seal for `vault.secrets.custody.submit` (FIX 11441): the input sealed to the holder on the… |
@@ -29,7 +29,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/facade/mod.rs` | src | s | 2 re-export · 4 crate-vis | — | BRIDGE-01 (ONE-1454): napi lift of the engine memory facade |
 | `src/facade/numeric.rs` | src | s | 3 crate-vis | — | JavaScript numbers must be validated before N-API can narrow them |
 | `src/facade/pairing.rs` | src | s | 6 struct · 1 crate-vis | NapiCheckpointPin, NapiCheckpointPinBinding, NapiCheckpointPinKey, NapiCheckpointPinPolicy, NapiCheckpointPinRoot, NapiCheckpointPinSignature | The checkpoint pin `NativeClient.pair` returns (OF-469, FIX 3376), lifted whole from… |
-| `src/facade/tests.rs` | test | s | — | — | Boundary regression tests for the napi facade surface |
+| `src/facade/tests.rs` | test | m | — | — | Boundary regression tests for the napi facade surface |
 | `src/facade/verbs_claims.rs` | src | m | 13 fn | — | Core claim/witness/read verbs of the actor-scoped surface |
 | `src/facade/verbs_services.rs` | src | m | 17 fn | — | Structural/blob/retrieval/outbound/calendar verbs of the actor surface |
 | `src/lib/boundary.rs` | src | m | 24 crate-vis | — | Shared caps, parse/validate helpers and napi error mapping for the legacy surface |

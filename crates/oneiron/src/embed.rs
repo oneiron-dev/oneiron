@@ -21,11 +21,16 @@ mod repo_projection;
 #[cfg(feature = "sync")]
 mod routing;
 mod session_media;
+/// The embedding owner Setting keys (the space move's undo window, "Wait for the night box");
+/// the build script names their rows in the setting catalogue.
+pub(crate) mod setting_keys;
 mod space;
 mod space_card;
 mod space_move;
 mod space_probe;
 mod turn;
+pub(crate) mod world_space;
+pub mod world_vectors;
 pub use binding_move::{
     BindingMoveLink, BindingMoveState, BindingNotApplied, BindingSource, PendingEmbedderBinding,
 };
@@ -47,7 +52,7 @@ pub use evidence::EmbeddingMatchEvidence;
 pub use gpu_pod_hours::{PodHoursClock, PodHoursWait};
 pub(crate) use locality::{clear_embedding_locality_in_txn, stamp_embedding_locality_in_txn};
 #[cfg(feature = "sync")]
-pub(crate) use media::text_vector_sources_in_txn;
+pub(crate) use media::media_source_in_txn;
 pub use media::{
     MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome, UnboundMediaSample,
 };
@@ -65,6 +70,8 @@ pub use space::EMBEDDING_SETUP_LEARNED_AT;
 #[cfg(feature = "sync")]
 pub use space::MediaVectorReplica;
 pub(crate) use space::checkpoint;
+#[cfg(all(feature = "sync", oneiron_test_support))]
+pub(crate) use space::install_media_vector_replica_in_txn;
 pub use space::{
     EMBEDDING_SPACE_ID_MAX_LEN, EMBEDDING_SPACE_MAX_DIMENSIONS, EmbeddingSpace, InputKind,
     KindSlotBindings, MediaRefused,
@@ -79,6 +86,8 @@ pub(crate) use space::{
 pub(crate) use space::{
     embedding_setup_rests_on_sibling, install_replicated_embedding_setup_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use space::{put_pins_media_refusal_in_txn, put_pins_media_vector_in_txn};
 pub use space_move::{
     CohortProbe, KindProbeCheck, NotWorse, PairedInterval, SPACE_MOVE_FILL_DEADLINE_SECS,
     SPACE_MOVE_NOTE_PRODUCER, SPACE_MOVE_UNDO_WINDOW_SECS, SPACE_PROBE_DEPTH,
@@ -94,6 +103,7 @@ pub(crate) use turn::{
     erase_turn_vectors_in_txn, erased_message_turns_in_txn, mark_on_publication_in_txn,
     mark_turn_in_txn,
 };
+pub use world_space::{DEVICE_PLACE, space_runs_on_device};
 
 #[cfg(feature = "sync")]
 use crate::ports::EntityStoreRead;
@@ -226,6 +236,9 @@ struct LeaseBatch {
     egress_denied: usize,
     egress_no_verdict: usize,
     device_local: usize,
+    world_space: usize,
+    world_space_index_drops: usize,
+    world_space_vector_drops: usize,
 }
 
 /// One actually-filled measured item: the leased source it filled, with the actual
@@ -262,6 +275,19 @@ pub struct PendingEmbeddingReconcileReport {
     /// Rows a device-local world keeps (DEC-0005): embedded on device, or
     /// left pending unsent while no embedder on this device takes them.
     pub device_local: usize,
+    /// Rows a world with its own text space carries (DEC-0005
+    /// #private-world-vectors): left pending, unleased and unsent, for the
+    /// media pass of the world's space; never embedded into the vault's
+    /// index, here or by a rung.
+    pub world_space: usize,
+    /// Vault-index vectors this pass dropped because a world's order now names
+    /// its own text space for their rows; each row is queued again, pending for
+    /// that space and for the vault's index should the world inherit again.
+    pub world_space_index_drops: usize,
+    /// Text vectors this pass dropped from a device space that no longer takes
+    /// their rows, as a world's order stopped naming it; a row the vault's
+    /// index now takes is queued again.
+    pub world_space_vector_drops: usize,
     /// Actually-filled measured items, in fill order, for the operational
     /// `EmbedTokens` meter. Stale/deferred/reused/skipped/failed fills and
     /// unmeasured remote fills have no entry.
@@ -277,6 +303,9 @@ pub struct PendingEmbeddingReconciler {
     lease_duration_ms: u64,
     remote_rung: Option<RemoteRung>,
     rung_role: routing::RungRole,
+    /// The primary embedder, held on the vault for `vault.worlds.vectors`
+    /// while this reconciler lives.
+    registration: world_vectors::HostTextEmbedderRegistration,
     pod_hours: Option<std::sync::Arc<dyn PodHoursClock>>,
 }
 
@@ -287,6 +316,8 @@ impl PendingEmbeddingReconciler {
         vault: std::sync::Arc<crate::Vault>,
         embedder: std::sync::Arc<dyn Embedder>,
     ) -> Self {
+        let registration =
+            world_vectors::HostTextEmbedderRegistration::register(&vault, embedder.as_ref());
         Self {
             vault,
             embedder,
@@ -294,6 +325,7 @@ impl PendingEmbeddingReconciler {
             lease_duration_ms: DEFAULT_PENDING_EMBEDDING_LEASE_MS,
             remote_rung: None,
             rung_role: routing::RungRole::Fallback,
+            registration,
             pod_hours: None,
         }
     }
@@ -365,6 +397,7 @@ impl PendingEmbeddingReconciler {
         }
         let mut rung = RemoteRung::new(std::sync::Arc::clone(&self.embedder), predicate);
         rung.lease_duration_ms = self.lease_duration_ms;
+        self.registration.hold_to_primary_rung(rung.offer_id());
         self.remote_rung = Some(rung);
         self.rung_role = routing::RungRole::Primary;
         Ok(self)
@@ -422,6 +455,9 @@ impl PendingEmbeddingReconciler {
             egress_denied: batch.egress_denied,
             egress_no_verdict: batch.egress_no_verdict,
             device_local: batch.device_local,
+            world_space: batch.world_space,
+            world_space_index_drops: batch.world_space_index_drops,
+            world_space_vector_drops: batch.world_space_vector_drops,
             ..PendingEmbeddingReconcileReport::default()
         };
         Ok(batch.work)
@@ -606,9 +642,19 @@ impl PendingEmbeddingReconciler {
     }
 
     fn lease_due_jobs(&self, now_ms: u64) -> Result<LeaseBatch> {
+        // A world's order that names its own text space, or stops naming one,
+        // moves the vectors of the rows it carries before any job is read
+        // (DEC-0005 #private-world-vectors): the rows it queues again lease
+        // in this pass. An order edit that arrives by sync passes no door, so
+        // the pass sweeps on a change of the map rather than a door hook.
+        let sweep = world_space::sweep_world_text_spaces(&self.vault)?;
         let queue = crate::sync::SyncQueue::new(std::sync::Arc::clone(&self.vault))?;
         let jobs = queue.drain_embed_jobs()?;
-        let mut batch = LeaseBatch::default();
+        let mut batch = LeaseBatch {
+            world_space_index_drops: sweep.index_drops,
+            world_space_vector_drops: sweep.space_drops,
+            ..LeaseBatch::default()
+        };
         if jobs.is_empty() {
             return Ok(batch);
         }
@@ -625,12 +671,22 @@ impl PendingEmbeddingReconciler {
         let rung_endpoint = self.remote_rung.as_ref().map(RemoteRung::endpoint);
         // The pods' hours are read once, before the writer: a job the wait
         // names is held before its payload is read.
-        let wait = PodHoursWait::default();
         let outside_pod_hours = self
             .pod_hours
             .as_ref()
             .is_some_and(|clock| clock.outside_pod_hours());
         self.vault.with_write_txn_grouped(|wtxn| {
+            // The owner's wait is read in the writer too, and only while the
+            // pods are outside their hours: every change committed before
+            // this pass is one it reads (NIGHT-BACKFILL-HOLD).
+            let wait = if outside_pod_hours {
+                setting_keys::POD_HOURS_WAIT
+                    .read_in_txn(&self.vault, wtxn, &[], None)?
+                    .value
+            } else {
+                PodHoursWait::Nothing
+            };
+            let world_spaces = world_space::WorldTextSpaces::read_in(&self.vault, wtxn)?;
             let flagged_primary =
                 crate::settings::device_local_worlds_for(&self.vault, wtxn, &primary_endpoint)?;
             let flagged_remote = rung_endpoint
@@ -650,7 +706,7 @@ impl PendingEmbeddingReconciler {
                 if batch.work.len() >= self.batch_size {
                     break;
                 }
-                if outside_pod_hours && wait.holds(job.priority) {
+                if wait.holds(job.priority) {
                     batch.held_for_pod_hours += 1;
                     continue;
                 }
@@ -667,6 +723,18 @@ impl PendingEmbeddingReconciler {
                     batch.stale_jobs += 1;
                     continue;
                 };
+                // A row a world with its own text space carries embeds into
+                // that space alone (DEC-0005 #private-world-vectors): it stays
+                // pending here, unleased and unsent, for the media pass of the
+                // world's space, and never reaches the primary or a rung. A
+                // world set back to the vault's order leases it again here.
+                if !world_spaces
+                    .of_row(&self.vault.store, wtxn, &job.entity_id)?
+                    .is_empty()
+                {
+                    batch.world_space += 1;
+                    continue;
+                }
 
                 let key = HexId(job.entity_id);
                 if let Some(existing) = tolerate_undecodable_lease(PENDING_EMBEDDING_LEASE.get(
@@ -750,6 +818,24 @@ impl PendingEmbeddingReconciler {
             if let Some(replica) = home_replica
                 && !home_vectors::replica_matches_in_txn(&self.vault, wtxn, &work.input, replica)?
             {
+                return Ok(());
+            }
+            // A world whose order named its own text space since this row was
+            // leased takes it now (DEC-0005 #private-world-vectors): no vault
+            // vector lands, the lease goes, and the row stays pending for the
+            // world's space, as the lease loop leaves it. The sweep that saw
+            // the new map ran before this vector existed, so only this writer
+            // can keep it out of the vault's index.
+            if !world_space::WorldTextSpaces::read_in(&self.vault, wtxn)?
+                .of_row(&self.vault.store, wtxn, &work.input.entity_id)?
+                .is_empty()
+            {
+                clear_pending_embedding_lease_if_matches(
+                    &self.vault,
+                    wtxn,
+                    &work.input.entity_id,
+                    &work.lease,
+                )?;
                 return Ok(());
             }
             let current_before = self

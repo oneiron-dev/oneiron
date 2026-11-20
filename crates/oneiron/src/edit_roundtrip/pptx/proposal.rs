@@ -1,5 +1,7 @@
 //! Modern comments use the existing retained-output proposal and consume-once settle.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::super::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditProposal, MutationMode, OfficeFormat,
     RecalcStatus, ValidationCheck, ValidationReport,
@@ -63,7 +65,7 @@ pub(super) fn run_comment_roundtrip_with_limits(
             ValidationCheck{name:"well_formed_opc",passed:true,detail:"bounded ZIP records and checksums verified".into()},
             ValidationCheck{name:"pptx_comment_links",passed:true,detail:"modern author/comment references and XML verified".into()},
             ValidationCheck{name:"pptx_semantic_write_set",passed:true,detail:"only declared comment, author, extension and relationship insertions; no Office-host proof".into()},
-        ]},recalc:RecalcStatus::NotNeeded,calc_engine:None,base_version:None,base_content_hash:*blake3::hash(input).as_bytes(),sheet_answers:None,
+        ]},recalc:RecalcStatus::NotNeeded,calc_engine:None,base_version:None,base_content_hash:*ContentHash::of(input).as_bytes(),sheet_answers:None,
     })
 }
 
@@ -97,7 +99,7 @@ pub(crate) fn verify_comment_proposal_with_limits(
     if proposal.format != OfficeFormat::Pptx
         || proposal.manifest.format != OfficeFormat::Pptx
         || proposal.manifest.schema_version != EDIT_MANIFEST_SCHEMA_VERSION
-        || proposal.base_content_hash != *blake3::hash(base).as_bytes()
+        || proposal.base_content_hash != *ContentHash::of(base).as_bytes()
         || proposal.manifest.mutation_mode != MutationMode::Minimal
     {
         return Err(PptxError::InvalidPatch);

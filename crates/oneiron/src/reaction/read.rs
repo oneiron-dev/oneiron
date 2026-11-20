@@ -87,15 +87,18 @@ pub fn reaction_line(glyph: &str, count: usize, names: &[String]) -> String {
 
 /// One grouped line per glyph for the reactions `admit` lets through. A
 /// record carrying more claims than one read may walk yields no lines rather
-/// than failing the recall or pack that returned it. Each reactor a line
-/// names is added to `named`: the line's name is read from that row
-/// (FIX 1435).
+/// than failing the recall or pack that returned it. A line names only
+/// reactors `nameable` admits: another reactor counts in the line's total and
+/// falls into its `+N`, never named (Engine RULING REACTOR-NAME-WITHHELD = A,
+/// 17 Nov 00:0x; FIX REACTION-NAMES-UNGATED). Each reactor a line names is
+/// added to `named`: the line's name is read from that row (FIX 1435).
 pub(crate) fn grouped_lines_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     record: EntityId,
     named: &mut Vec<EntityId>,
     admit: impl FnMut(&StoredReaction) -> Result<bool>,
+    mut nameable: impl FnMut(EntityId) -> Result<bool>,
 ) -> Result<Vec<String>> {
     let fold = admission_in(vault, txn)?;
     let pills = match pills_in(
@@ -117,8 +120,16 @@ pub(crate) fn grouped_lines_in(
     pills
         .iter()
         .map(|pill| {
-            let shown = &pill.by[..pill.by.len().min(NAMED_REACTORS)];
-            named.extend_from_slice(shown);
+            let mut shown = Vec::with_capacity(NAMED_REACTORS);
+            for person in &pill.by {
+                if shown.len() == NAMED_REACTORS {
+                    break;
+                }
+                if nameable(*person)? {
+                    shown.push(*person);
+                }
+            }
+            named.extend_from_slice(&shown);
             let names = shown
                 .iter()
                 .map(|person| display_name_in(vault, txn, *person))
@@ -210,7 +221,10 @@ fn display_name_in(vault: &Vault, txn: &heed::RoTxn<'_>, person: EntityId) -> Re
 impl Vault {
     /// Groups each readable message's live reactions for `viewer` in one
     /// snapshot. A message the viewer cannot read gets no pills, and a
-    /// reaction made while the viewer was outside the room is withheld.
+    /// reaction made while the viewer was outside the room is withheld. This
+    /// is the owner's whole-vault read, so a pill lists every reactor; a
+    /// scoped reader takes [`crate::claim::ScopedRead::reaction_pills`],
+    /// which lists only the reactors it may read.
     pub fn reaction_pills(
         &self,
         messages: &[EntityId],
@@ -252,7 +266,10 @@ impl Vault {
     }
 
     /// The (message, person, glyph) chain in order: every put, and when each
-    /// was removed. Flip-flopping stays readable.
+    /// was removed. Flip-flopping stays readable. This is the owner's
+    /// whole-vault read; a scoped reader takes
+    /// [`crate::claim::ScopedRead::reaction_history`], which serves no chain
+    /// of a reactor it may not read.
     pub fn reaction_history(
         &self,
         message: EntityId,
@@ -260,10 +277,26 @@ impl Vault {
         glyph: &str,
     ) -> Result<Vec<ReactionHistoryEntry>> {
         let txn = self.store.env.read_txn()?;
-        let fold = admission_in(self, &txn)?;
-        Ok(chain_in(self, &txn, &fold, message, by, glyph)?
-            .into_iter()
-            .map(|row| ReactionHistoryEntry {
+        self.reaction_history_in(&txn, message, by, glyph, |_| Ok(true))
+    }
+
+    /// [`Self::reaction_history`] in `txn`, keeping only the claims `admit`
+    /// lets through.
+    pub(crate) fn reaction_history_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        message: EntityId,
+        by: EntityId,
+        glyph: &str,
+        mut admit: impl FnMut(&StoredReaction) -> Result<bool>,
+    ) -> Result<Vec<ReactionHistoryEntry>> {
+        let fold = admission_in(self, txn)?;
+        let mut entries = Vec::new();
+        for row in chain_in(self, txn, &fold, message, by, glyph)? {
+            if !admit(&row)? {
+                continue;
+            }
+            entries.push(ReactionHistoryEntry {
                 id: row.id,
                 removed_at: row.retracted_at(),
                 glyph: row.value.glyph,
@@ -271,8 +304,9 @@ impl Vault {
                 occurred_at: row.value.occurred_at,
                 recorded_at: row.learned_at,
                 external_id: row.value.external_id,
-            })
-            .collect())
+            });
+        }
+        Ok(entries)
     }
 }
 

@@ -22,6 +22,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use oneiron_persistent_collections::PersistentMap;
+
 use crate::entity_id::EntityId;
 
 use super::machine_standing::{InstallCounted, Mark, Standing, StandingView};
@@ -55,10 +57,10 @@ pub(super) struct FrontierEdit<S = WorldPrivacy> {
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct WorldFrontier<S = WorldPrivacy> {
     /// The edits no later edit of the world has seen.
-    pub(super) live: BTreeMap<AuthorityEntryHash, Arc<FrontierEdit<S>>>,
+    pub(super) live: PersistentMap<AuthorityEntryHash, Arc<FrontierEdit<S>>>,
     /// Every edit a later edit replaced, kept so an edit that only narrows
     /// is judged against what it replaced.
-    pub(super) superseded: BTreeMap<AuthorityEntryHash, Arc<FrontierEdit<S>>>,
+    pub(super) superseded: PersistentMap<AuthorityEntryHash, Arc<FrontierEdit<S>>>,
 }
 
 impl<S: Clone + PartialEq> FrontierEdit<S> {
@@ -80,9 +82,7 @@ impl<S: Clone + PartialEq> FrontierEdit<S> {
                         *admitter,
                         Mark {
                             entry: mark.entry.min(other.entry),
-                            prior: Arc::new(
-                                mark.prior.intersection(&other.prior).copied().collect(),
-                            ),
+                            prior: mark.prior.intersection(&other.prior).copied().collect(),
                         },
                     )
                 })
@@ -104,42 +104,48 @@ impl<S: Clone + PartialEq> FrontierEdit<S> {
     }
 }
 
+/// The held copy of `hash` met with `edit`, or `edit` where none is held.
+/// An unchanged meet writes nothing (`insert` skips an equal value), so a
+/// merge row copies only the entries that change.
 fn meet_copy<S: Clone + PartialEq>(
-    edits: &mut BTreeMap<AuthorityEntryHash, Arc<FrontierEdit<S>>>,
+    edits: &mut PersistentMap<AuthorityEntryHash, Arc<FrontierEdit<S>>>,
     hash: AuthorityEntryHash,
     edit: &Arc<FrontierEdit<S>>,
 ) {
-    edits
-        .entry(hash)
-        .and_modify(|held| *held = FrontierEdit::meet(held, edit))
-        .or_insert_with(|| Arc::clone(edit));
+    let met = match edits.get(&hash) {
+        Some(held) => FrontierEdit::meet(held, edit),
+        None => Arc::clone(edit),
+    };
+    edits.insert(hash, met);
 }
 
 /// Joins two frontiers: an edit superseded on either side is superseded,
-/// and two copies of one edit meet.
+/// and two copies of one edit meet. A world the merge leaves as it was is
+/// not written.
 pub(super) fn merge_world_frontiers<S: Clone + PartialEq + Default>(
-    merged: &mut BTreeMap<EntityId, WorldFrontier<S>>,
-    right: &BTreeMap<EntityId, WorldFrontier<S>>,
+    merged: &mut PersistentMap<EntityId, WorldFrontier<S>>,
+    right: &PersistentMap<EntityId, WorldFrontier<S>>,
 ) {
     for (world, frontier) in right {
-        let into = merged.entry(*world).or_default();
-        for (hash, edit) in &frontier.superseded {
-            meet_copy(&mut into.superseded, *hash, edit);
-        }
-        for (hash, edit) in &frontier.live {
-            meet_copy(&mut into.live, *hash, edit);
-        }
-        let moved: Vec<_> = into
-            .live
-            .keys()
-            .filter(|hash| into.superseded.contains_key(*hash))
-            .copied()
-            .collect();
-        for hash in moved {
-            if let Some(edit) = into.live.remove(&hash) {
-                meet_copy(&mut into.superseded, hash, &edit);
+        merged.modify_or_default(*world, |into| {
+            for (hash, edit) in &frontier.superseded {
+                meet_copy(&mut into.superseded, *hash, edit);
             }
-        }
+            for (hash, edit) in &frontier.live {
+                meet_copy(&mut into.live, *hash, edit);
+            }
+            let moved: Vec<_> = into
+                .live
+                .keys()
+                .filter(|hash| into.superseded.contains_key(*hash))
+                .copied()
+                .collect();
+            for hash in moved {
+                if let Some(edit) = into.live.remove(&hash) {
+                    meet_copy(&mut into.superseded, hash, &edit);
+                }
+            }
+        });
     }
 }
 
@@ -214,7 +220,7 @@ pub(super) enum WalkPart<'f, S> {
 pub(super) struct FrontierWalk<'f, S, F> {
     frontier: &'f WorldFrontier<S>,
     strong: F,
-    live: std::collections::btree_map::Iter<'f, AuthorityEntryHash, Arc<FrontierEdit<S>>>,
+    live: oneiron_persistent_collections::Iter<'f, AuthorityEntryHash, Arc<FrontierEdit<S>>>,
     visited: BTreeSet<AuthorityEntryHash>,
     pending: Vec<&'f FrontierEdit<S>>,
     replaced: std::collections::btree_set::Iter<'f, AuthorityEntryHash>,
@@ -353,8 +359,8 @@ pub(super) fn frontier_read(
 /// The `WorldPrivacy` transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster check:
 /// its signer is the carrier's install key, never a roster key (FIX 2222: the
-/// host root acts as nobody). Some chain of the carrier must name the key; an
-/// edit carried while the carrier was not admitted
+/// host root acts as nobody). The carrier's roster chain must name the key;
+/// an edit carried while the carrier was not admitted
 /// ([`super::owner_act_signer_admits`], pin-free) is valid and without
 /// effect, so it never stalls what descends from it. Validity is pin-free,
 /// the same on every install, before and after the owner anchor. `pin` and
@@ -386,11 +392,12 @@ pub(super) fn apply_world_privacy(
     {
         return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
-    // Integrity: a one-machine pick names a machine this vault admits. That
-    // it is one marked "yours" is the owner's recipient choice, which the
-    // writer checks; readers then follow `world_readable_on`.
+    // Integrity: a one-machine pick names a machine the roster links live.
+    // That it is one marked "yours" is the owner's recipient choice, which
+    // the writer checks under its own pin; readers then follow
+    // `world_readable_on`.
     if let ReadLocation::OneMachine(target) = edit.settings.read
-        && !standing.is_admitted(target)
+        && !standing.is_linked(target)
     {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }

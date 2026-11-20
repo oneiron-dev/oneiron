@@ -7,6 +7,8 @@
 
 use std::collections::BTreeMap;
 
+use oneiron_persistent_collections::PersistentMap;
+
 use crate::entity_id::EntityId;
 
 use super::principal_standing::{
@@ -31,24 +33,65 @@ use super::*;
 /// in any role (yours, work or school, rented, a hosted node, an execution
 /// node), as the sync wire accepts a proven peer machine
 /// ([`AuthorityFold::machine_proof_key`]) and not only a "yours" one. Live:
-/// not removed in any chain, not conflicted or poisoned, not stale, held or
-/// unsettled where the view says so. A role change between linked roles
-/// never revokes it; only removal does. It never admits a key the authority
-/// roster names (the host root, an owner or roster device key: FIX 2222, the
-/// unattended host root acts as nobody), nor an engine MACHINE writer, which
-/// no profile names.
+/// the roster's chain names `key` live (not removed, conflicted or
+/// poisoned, not stale, held or unsettled where the view says so). An
+/// anchor's chain neither admits nor removes a carrier: any fresh key can
+/// publish a root and mark any machine, under keys it holds, owned or
+/// removed in its own chain, and the fold cannot tell the owner's anchor
+/// from a stranger's (RULINGs FOREIGN-ANCHOR-FOLD-JUDGE-RULE = C, 16 Nov
+/// 05:10, and FOREIGN-ANCHOR-ADMIT-SIDE-P1 = B, 05:38). The owner's kit acts
+/// through its own key on the roster, like any owner key (Fable design pass
+/// 29; ANCHORS-1 = A, 16 Nov 06:1x); an install that only an anchor marked
+/// carries once the roster profiles it ([`crate::Vault::ensure_serving_install_profile`]
+/// enrols it then).
+/// A role change between linked roles never revokes it; only removal does.
+/// It never admits a key the authority roster names (the host root, an owner
+/// or roster device key: FIX 2222, the unattended host root acts as nobody),
+/// nor an engine MACHINE writer, which no profile names.
+///
+/// `pin` only adds a veto: a head the reader believes
+/// ([`FoldedMachine::standing_heads`]) that says removed refuses. A shared
+/// judge, the fold's validity included, passes `None`, so it reads the
+/// roster's head alone; a door passes its install's pin (`fold.pinned_root`),
+/// so it signs nothing its own install would not count, and the fold's
+/// install view passes it too, so this install never reads an act at full
+/// strength that its pinned anchor's removal raced. Admission stays the roster's
+/// (Fable design pass 29, 3.2: "a chain is read only by a reader that
+/// believes its admitter"; FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES).
 pub(crate) fn owner_act_signer_admits(
     machine: Option<&FoldedMachine>,
-    roster: &BTreeMap<AuthorityKey, FoldedDevice>,
+    roster: &impl RosterKeyLookup,
     key: &[u8; 32],
+    pin: Option<&PinnedRoot>,
 ) -> bool {
-    !roster.contains_key(&AuthorityKey::Ed25519(*key))
+    !roster.contains_roster_key(&AuthorityKey::Ed25519(*key))
         && machine.is_some_and(|folded| {
-            folded.chains().all(|(_, chain)| !chain.removed)
-                && folded
-                    .chains()
-                    .any(|(_, chain)| chain.is_live() && chain.profile.machine_key == *key)
+            folded
+                .roster
+                .as_ref()
+                .is_some_and(|chain| chain.is_live() && chain.profile.machine_key == *key)
+                && folded.standing_heads(pin).iter().all(|head| !head.removed)
         })
+}
+
+/// The one roster read [`owner_act_signer_admits`] makes: whether a roster
+/// holds a device under a key. The fold's roster (a `BTreeMap`) and a fold
+/// state's persistent roster both answer it in place, without a copy.
+pub(crate) trait RosterKeyLookup {
+    /// Whether this roster holds a device under `key`, live or revoked.
+    fn contains_roster_key(&self, key: &AuthorityKey) -> bool;
+}
+
+impl RosterKeyLookup for BTreeMap<AuthorityKey, FoldedDevice> {
+    fn contains_roster_key(&self, key: &AuthorityKey) -> bool {
+        self.contains_key(key)
+    }
+}
+
+impl RosterKeyLookup for PersistentMap<AuthorityKey, FoldedDevice> {
+    fn contains_roster_key(&self, key: &AuthorityKey) -> bool {
+        self.contains_key(key)
+    }
 }
 
 /// Whether `owner` is a live owner at an act's causal point, as the fold

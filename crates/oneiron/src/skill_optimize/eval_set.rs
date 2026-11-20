@@ -48,8 +48,14 @@ pub(super) use cohort::cohort_in_txn as cohort_for_offer_in_txn;
 mod cut_audit;
 pub mod doors;
 mod erase;
+#[cfg(oneiron_test_support)]
+pub(crate) use authoring::fail_execution_writes;
 pub(crate) use erase::{erase_eval_source_in_txn, forget_eval_case_source_rows, forget_source_row};
 mod measurement;
+#[cfg(oneiron_test_support)]
+pub(crate) use measurement::{
+    eval_measurement_remeasure_digest_for_test, eval_measurement_request_digest_for_test,
+};
 mod repair_task;
 mod replay_input;
 mod sufficiency;

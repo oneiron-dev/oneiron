@@ -5,6 +5,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::claim::decode_claim_body;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::vault::live_entity_row_in_txn;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 pub(crate) use crate::write_envelope::subject_record::{
     imported_subject_body, invalid, is_subject_model_predicate,
@@ -174,9 +175,20 @@ fn prior_fingerprints(
     rows.sort_by_key(|(id, _)| *id);
     Ok(rows)
 }
+/// The digest of an entity's stored raw row. A restore review carries it, the
+/// restore refuses a review whose digests differ from the rows' now, and the
+/// restored claim keeps its hex as evidence, so it keeps its bytes (K,
+/// PLAN-UC-04 stage 6.1).
 fn digest(bytes: &[u8]) -> [u8; 32] {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(bytes).into()
+    LegacyDigest::new(purposes::subject_model::ARCHIVE_REVIEW)
+        .raw(bytes)
+        .finish()
+}
+
+/// The digest a restore review carries of an entity's stored raw row `bytes`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn archive_review_digest_for_test(bytes: &[u8]) -> [u8; 32] {
+    digest(bytes)
 }
 fn hex_digest(bytes: [u8; 32]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()

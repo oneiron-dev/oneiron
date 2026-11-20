@@ -111,6 +111,81 @@ pub(super) fn facade_owner_or(
     })
 }
 
+/// The owner doors' common refusal: `verb` is the vault owner's. The
+/// delegate doors refuse exactly this, so one constructor names it.
+pub(super) fn owner_refusal(verb: &str) -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        format!("{verb} is the vault owner's"),
+        &["Present the owner's own verified, unattenuated credential."],
+    )
+}
+
+/// A delegate door's refusal of a credential that no longer stands: the
+/// slip died or was revoked after it was issued.
+pub(super) fn credential_dead() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        "the credential is no longer live",
+        &["Present a live credential, then call again."],
+    )
+}
+
+/// Who calls an owner door that also admits the owner's delegate
+/// (restriction wave 11), as the facade resolves them.
+pub(super) enum OwnerDoorCaller {
+    /// The vault owner, by the request's own proof.
+    Owner(AuthenticatedOwner),
+    /// An agent on its own live credential, which the engine admits as the
+    /// owner's delegate in the act's own transaction.
+    Delegate(EntityId),
+}
+
+/// The caller of an owner door that also admits the owner's delegate: an
+/// owner-grade credential takes today's owner proof, unchanged; an agent's
+/// credential names its agent once the host preflight, its actor binding and
+/// its liveness pass. Any other caller gets today's owner refusal.
+pub(super) fn owner_door_caller(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> MemoryResult<OwnerDoorCaller> {
+    if auth.is_owner_grade() {
+        return facade_owner(server, auth, verb).map(OwnerDoorCaller::Owner);
+    }
+    if auth.actor_class() != Some("agent") {
+        return Err(owner_refusal(verb));
+    }
+    host_preflight(server, auth)?;
+    let (agent, class) = super::facade_actor(server, auth).map_err(|_| owner_refusal(verb))?;
+    if class != EdgeActorClass::Agent {
+        return Err(owner_refusal(verb));
+    }
+    if !auth.credential_is_live(server.vault()) {
+        return Err(credential_dead());
+    }
+    Ok(OwnerDoorCaller::Delegate(agent))
+}
+
+/// The precheck of an owner door that also admits the owner's delegate
+/// (`host_door_proof: "owner_delegate"`), run before the door's hooks: the
+/// owner's proof, or an agent the engine admits as the owner's delegate for
+/// `verb` in a read transaction (the door's Setting key reads true at it and
+/// one live Grant lists the verb). The door admits again in the act's own
+/// transaction.
+pub(super) fn owner_delegate_admits(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> MemoryResult<()> {
+    match owner_door_caller(server, auth, verb)? {
+        OwnerDoorCaller::Owner(_) => Ok(()),
+        OwnerDoorCaller::Delegate(agent) => {
+            oneiron::authority::owner_delegate_admits(server.vault(), agent, verb)
+        }
+    }
+}
+
 /// [`facade_owner_or`] with the owner doors' common refusal: `verb` is the
 /// vault owner's.
 pub(super) fn facade_owner(
@@ -118,13 +193,7 @@ pub(super) fn facade_owner(
     auth: &CoreAuth,
     verb: &str,
 ) -> MemoryResult<AuthenticatedOwner> {
-    facade_owner_or(server, auth, || {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{verb} is the vault owner's"),
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    })
+    facade_owner_or(server, auth, || owner_refusal(verb))
 }
 
 /// The credential's own actor for a facade door, as the facade binds a

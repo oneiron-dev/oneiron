@@ -11,6 +11,14 @@
 //! the run with no session; a thread on another plan, a rejection naming a
 //! turn, and a ref that is no turn are all refused with nothing written.
 //!
+//! When the run settles, its result is filed into the sub-session
+//! (PLAN-RUN-TRACE-INTO-SUB-SESSION = B, Engine 17 Nov 00:11): one record
+//! naming the result TURN, under the approving turn, HEAD unmoved, and only
+//! in a room the owner alone reads. A shared room keeps the result out, and
+//! so does a room a voice speaker entered (OF-365): the speaker's entry reads
+//! the room's records from its entry on, with no seat on its ledger
+//! (PLAN-RUN-RESULT-GUARD-SPEAKER-ENTRIES).
+//!
 //! Every verdict request is built from JSON and every new settlement field
 //! is read back through JSON, so this file compiles on a tree without the
 //! refs and fails there on assertions, never on a compile error.
@@ -22,11 +30,14 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use oneiron::agent_dispatch::AgentDispatcher;
 use oneiron::anchored_annotation::{AnnotationThreadOpenRequest, AnnotationThreadRequest};
 use oneiron::authority::{ActSurface, AgentTier, MachineRole};
 use oneiron::claim::base_world_id;
+use oneiron::code_run::{CodeRunDeterminism, CodeRunReplayRecord};
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::conversation_dag::{AddressMode, AppendRecord};
+use oneiron::conversation::{ContainerAttendee, ContainerAttendeeEvent, HistoryChoice};
+use oneiron::conversation_dag::{AddressMode, AppendRecord, ScopePath, ScopeSelector};
 use oneiron::core_write::ConversationCreateInput;
 use oneiron::federation::{Scope, ScopeId};
 use oneiron::memory::{Memory, MemoryResult};
@@ -34,7 +45,7 @@ use oneiron::note::{
     PlanDocProposeRequest, PlanDocRequest, PlanDocSettlementView, PlanDocState,
     PlanDocVerdictRequest, PlanDocView, approve_plan_doc_as, reject_plan_doc_as,
 };
-use oneiron::registry::ENTITY_TYPE_TURN;
+use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::derive_verbs::define_agent;
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
@@ -168,6 +179,13 @@ fn char_span(haystack: &str, needle: &str) -> (u64, u64) {
 /// The owner opens a fresh conversation and speaks one TURN on it: the turn
 /// an approval hangs its run off. Each call makes a new conversation.
 fn turn(fixture: &Fixture) -> EntityId {
+    room_turn(fixture, &[fixture.owner]).1
+}
+
+/// [`turn`] in a conversation whose members are `members`: the room and the
+/// owner's TURN.
+fn room_turn(fixture: &Fixture, members: &[EntityId]) -> (EntityId, EntityId) {
+    let member_ids: Vec<String> = members.iter().map(EntityId::to_hex).collect();
     let created = owner(fixture)
         .conversations_create(&ConversationCreateInput {
             id: None,
@@ -177,7 +195,7 @@ fn turn(fixture: &Fixture) -> EntityId {
             body: json!({
                 "v": 1,
                 "kind": "group",
-                "member_ids": [fixture.owner.to_hex()],
+                "member_ids": member_ids,
                 "title": "plan approval room",
             }),
             text: None,
@@ -186,7 +204,7 @@ fn turn(fixture: &Fixture) -> EntityId {
     let room = EntityId::from_hex(&created.id).expect("the conversation id");
     let writer = owner(fixture);
     let now = fixture.vault.now_recorded_at();
-    fixture
+    let appended = fixture
         .vault
         .append_dag_record(
             &writer,
@@ -213,8 +231,114 @@ fn turn(fixture: &Fixture) -> EntityId {
                 thread_audience: None,
             },
         )
-        .expect("the owner's TURN lands")
-        .id
+        .expect("the owner's TURN lands");
+    (room, appended.id)
+}
+
+/// A second PERSON, who shares a room with the owner.
+fn put_person(fixture: &Fixture) -> EntityId {
+    let person = EntityId::now();
+    let now = fixture.vault.now_recorded_at();
+    fixture
+        .vault
+        .put_entity(
+            &person,
+            ENTITY_TYPE_PERSON,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+            b"maren",
+        )
+        .expect("a second PERSON");
+    person
+}
+
+/// An unplaced voice speaker heard in `room` enters it, as a voice host
+/// records it (OF-365).
+fn enter_speaker(fixture: &Fixture, room: EntityId) {
+    let attendee = ContainerAttendee::Speaker {
+        session_key: "plan-room-call".to_owned(),
+        speaker_key: "speaker-2".to_owned(),
+    };
+    // The entry commits whether or not its "who is this?" ask is admitted
+    // (FIX 10172); the entry is what reads the room.
+    let _asked = owner(fixture).container_attendee_entered(&ContainerAttendeeEvent {
+        container: room,
+        attendee: attendee.clone(),
+        roster_revision: 1,
+        trigger_turn: None,
+        candidates: Vec::new(),
+        until: fixture.vault.now_recorded_at() + 3_600,
+        history: HistoryChoice::Inherit,
+    });
+    assert!(
+        fixture
+            .vault
+            .container_attendee_entry(room, &attendee)
+            .expect("the room's entries read")
+            .is_some(),
+        "the speaker entered the room"
+    );
+}
+
+/// The lease owner the test's run pump claims under.
+const PUMP: &str = "plan-mode-subsession-pump";
+
+/// The run pump claims plan run `run` and settles it as the resident pump
+/// does, with a run that answered nothing: the run's result TURN.
+fn settle_run(fixture: &Fixture, run: EntityId) -> EntityId {
+    let dispatcher = AgentDispatcher::new(&fixture.vault);
+    let now = fixture.vault.now_recorded_at();
+    let ready = dispatcher
+        .ready_agent_runs(&[], now)
+        .expect("the ready agent runs read");
+    let (attempt, _) = ready
+        .into_iter()
+        .find(|(_, agent)| *agent == fixture.agent)
+        .expect("the plan's run is ready for its agent");
+    let claimed = dispatcher
+        .claim_agent_run(attempt, PUMP, now)
+        .expect("the claim reads")
+        .expect("the pump claims the plan's run");
+    assert_eq!(
+        claimed.status.attempt.task_ref.as_deref(),
+        Some(run.to_hex().as_str()),
+        "the claimed try realizes the plan's run"
+    );
+    let replay = CodeRunReplayRecord::new(EntityId::now(), CodeRunDeterminism::new(0, [7; 32]));
+    dispatcher
+        .attach_agent_run_result(&claimed.status.attempt, PUMP, &replay, now)
+        .expect("the run's result lands")
+}
+
+/// How many records of sub-session `session` in `room` file result TURN
+/// `result`.
+fn filed_results(fixture: &Fixture, room: EntityId, session: EntityId, result: EntityId) -> usize {
+    let scope = fixture
+        .vault
+        .resolve_dag_scope(&ScopeSelector {
+            conversation: room,
+            session: None,
+            path: ScopePath::SubSession(session),
+            include_forks: false,
+        })
+        .expect("the sub-session's scope reads");
+    scope
+        .records
+        .iter()
+        .filter(|record| {
+            let bytes = fixture
+                .vault
+                .get(record)
+                .expect("a record reads")
+                .expect("the record is stored");
+            let body: Value = rmp_serde::from_slice(&bytes).expect("a record body decodes");
+            body.get("kind") == Some(&json!("plan.run_result"))
+                && body.get("result_ref") == Some(&json!(result.to_hex()))
+        })
+        .count()
 }
 
 /// The owner opens an anchored thread on the plan's second step.
@@ -520,5 +644,97 @@ fn a_ref_that_is_no_turn_is_refused() {
         read(&fixture, plan.plan_ref).state,
         PlanDocState::InReview,
         "the refused verdict leaves the plan in review"
+    );
+}
+
+#[test]
+fn an_owner_only_room_files_the_runs_result_under_the_approving_turn() {
+    let fixture = fixture();
+    let plan = propose_run_by(&fixture, fixture.agent).expect("the agent proposes its run");
+    let (room, turn) = room_turn(&fixture, &[fixture.owner]);
+    let settled = approve_with(
+        &fixture,
+        plan.plan_ref,
+        &plan.revision,
+        json!({"approving_turn_ref": turn.to_hex()}),
+    )
+    .expect("the approval naming the turn lands");
+    let run = run_of(&settled)
+        .expect("the settlement names its run")
+        .expect("the approval lands the plan's run");
+    let session = sub_session_of(&settled).expect("the approval hangs the run off the turn");
+    let head = fixture.vault.head(&room).expect("the room's head reads");
+    let result = settle_run(&fixture, run);
+    assert_eq!(
+        filed_results(&fixture, room, session, result),
+        1,
+        "the owner-only room files the run's result in its sub-session"
+    );
+    assert_eq!(
+        fixture.vault.head(&room).expect("the room's head reads"),
+        head,
+        "filing the run's result leaves the room's HEAD where it was"
+    );
+}
+
+#[test]
+fn a_shared_room_keeps_the_runs_result_out_of_its_sub_session() {
+    let fixture = fixture();
+    let plan = propose_run_by(&fixture, fixture.agent).expect("the agent proposes its run");
+    let other = put_person(&fixture);
+    let (room, turn) = room_turn(&fixture, &[fixture.owner, other]);
+    let settled = approve_with(
+        &fixture,
+        plan.plan_ref,
+        &plan.revision,
+        json!({"approving_turn_ref": turn.to_hex()}),
+    )
+    .expect("the approval naming the turn lands");
+    let run = run_of(&settled)
+        .expect("the settlement names its run")
+        .expect("the approval lands the plan's run");
+    let session = sub_session_of(&settled).expect("the approval hangs the run off the turn");
+    let head = fixture.vault.head(&room).expect("the room's head reads");
+    let result = settle_run(&fixture, run);
+    assert_eq!(
+        filed_results(&fixture, room, session, result),
+        0,
+        "a room another person reads never takes the run's result"
+    );
+    assert_eq!(
+        fixture.vault.head(&room).expect("the room's head reads"),
+        head,
+        "the room's HEAD stays where it was"
+    );
+}
+
+#[test]
+fn a_room_a_voice_speaker_entered_keeps_the_runs_result_out_of_its_sub_session() {
+    let fixture = fixture();
+    let plan = propose_run_by(&fixture, fixture.agent).expect("the agent proposes its run");
+    let (room, turn) = room_turn(&fixture, &[fixture.owner]);
+    enter_speaker(&fixture, room);
+    let settled = approve_with(
+        &fixture,
+        plan.plan_ref,
+        &plan.revision,
+        json!({"approving_turn_ref": turn.to_hex()}),
+    )
+    .expect("the approval naming the turn lands");
+    let run = run_of(&settled)
+        .expect("the settlement names its run")
+        .expect("the approval lands the plan's run");
+    let session = sub_session_of(&settled).expect("the approval hangs the run off the turn");
+    let head = fixture.vault.head(&room).expect("the room's head reads");
+    let result = settle_run(&fixture, run);
+    assert_eq!(
+        filed_results(&fixture, room, session, result),
+        0,
+        "a room a voice speaker entered never takes the run's result: its entry reads the room"
+    );
+    assert_eq!(
+        fixture.vault.head(&room).expect("the room's head reads"),
+        head,
+        "the room's HEAD stays where it was"
     );
 }

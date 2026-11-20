@@ -68,6 +68,7 @@ pub(super) mod desktop_takeover_routes;
 mod device_succession_routes;
 pub(super) mod diary_routes;
 mod disclosure_routes;
+mod display_edit_routes;
 pub(super) mod dreamer_maintenance_routes;
 pub(super) mod dreamer_routes;
 pub(super) mod embedding_space_routes;
@@ -96,6 +97,7 @@ mod oauth_authorization_routes;
 #[cfg(target_os = "linux")]
 pub(super) mod outbox_diverged_routes;
 pub(super) mod owner_key_enrollment_routes;
+pub(super) mod owner_passkey_routes;
 pub(super) mod owner_work_routes;
 pub(super) mod pack_preview_routes;
 pub(super) mod pack_routes;
@@ -111,7 +113,9 @@ pub(super) mod root_routes;
 pub(super) mod schema;
 pub(super) mod secret_control_routes;
 pub(super) mod secret_found_routes;
+mod secret_handle_edit_routes;
 pub(super) mod secret_lift_routes;
+mod secret_list_routes;
 mod secret_payment_mark_routes;
 pub(super) mod secret_reveal_routes;
 pub(super) mod secret_use_routes;
@@ -159,6 +163,7 @@ fn owner_tables() -> OwnerTable {
         connector_subscription_routes::owner_table(),
         diary_routes::owner_table(),
         disclosure_routes::owner_table(),
+        display_edit_routes::owner_table(),
         dreamer_maintenance_routes::owner_table(),
         harness_evaluation_routes::owner_table(),
         dreamer_routes::owner_table(),
@@ -214,8 +219,10 @@ fn owner_tables() -> OwnerTable {
         secret_use_routes::owner_table(),
         secret_reveal_routes::owner_table(),
         secret_found_routes::owner_table(),
+        secret_handle_edit_routes::owner_table(),
         code_run_secret_lift_routes::owner_table(),
         secret_lift_routes::owner_table(),
+        secret_list_routes::owner_table(),
         secret_payment_mark_routes::owner_table(),
         steer_routes::owner_table(),
         stream_recovery_routes::owner_table(),
@@ -226,6 +233,7 @@ fn owner_tables() -> OwnerTable {
         world_privacy_routes::owner_table(),
         world_privacy_work_routes::owner_table(),
         owner_key_enrollment_routes::owner_table(),
+        owner_passkey_routes::owner_table(),
         owner_work_routes::owner_table(),
         root_routes::owner_table(),
         recovery_kit_target_routes::owner_table(),
@@ -467,12 +475,17 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
             oneiron::ErrorKind::ConsentApproveOnceSpent => {
                 ApiError::invalid_state(Some("already_decided"))
             }
-            // FIX [L6-03-FOUND-KEY-ROUTE-BOUND-500]: an act its target's state
+            // FIX [L6-03-FOUND-KEY-ROUTE-BOUND-500], [DISCLOSURE-CONFIRM-STALE-500],
+            // [OWNER-DISCLOSURE-NARROW-STATE-STRING]: an act its target's state
             // does not admit (a found key already ruled, a place that cannot
-            // take its value back, an erased value) is the refusal a delete
-            // of the found key already answers: 409 `refused` in the engine's
-            // own words. Each reason is a fixed sentence; none carries a value.
-            oneiron::ErrorKind::InvalidConsentBound => {
+            // take its value back, an erased value, a narrowing wider than the
+            // clearance, an inactive contact, a repeated trusted-set contact, a
+            // consent row that failed validation) is a refused owner act: 409
+            // `refused` in the engine's own words. Each reason is a fixed
+            // sentence; none carries a value. The disclosure confirm names the
+            // widen proposal instead (`disclosure_routes::offer_answer_refusal`).
+            oneiron::ErrorKind::InvalidConsentGrantRow
+            | oneiron::ErrorKind::InvalidConsentBound => {
                 owner_error(OwnerError::Refused(error.to_string()))
             }
             oneiron::ErrorKind::SecretRefNotFound => ApiError::not_found("secret", None),
@@ -521,10 +534,19 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
 pub(super) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, OwnerError> + Send + 'static,
 ) -> Result<T, ApiError> {
+    blocking_with(owner_error, work).await
+}
+
+/// [`blocking`] with the route's own refusal map in place of
+/// [`owner_error`], for a route whose engine refusal names its own state.
+pub(super) async fn blocking_with<T: Send + 'static>(
+    refusal: fn(OwnerError) -> ApiError,
+    work: impl FnOnce() -> Result<T, OwnerError> + Send + 'static,
+) -> Result<T, ApiError> {
     super::clock_ingress::run_blocking(work)
         .await
         .map_err(|_| ApiError::internal_server_error("owner action task failed"))?
-        .map_err(owner_error)
+        .map_err(refusal)
 }
 
 /// The status root admin command's answer, at `GET /v1/owner/status` and

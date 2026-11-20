@@ -4,7 +4,11 @@ use rmpv::Value;
 
 use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
 use crate::config::VaultConfig;
-use crate::edit_distance::delta::{delta_from_reconstructed, put_amendment_delta_in_txn};
+use crate::edit_distance::ProposalArtifactRef;
+use crate::edit_distance::delta::{
+    EndpointRef, MeasuredEnd, delta_from_reconstructed, put_amendment_delta_in_txn,
+};
+use crate::edit_distance::myers::myers_line_diff;
 use crate::error::ClaimError;
 use crate::llm::decision::{
     DecisionAnswer, DecisionBandPolicy, DecisionCall, DecisionLadder, DecisionProvider,
@@ -62,7 +66,17 @@ fn put_skill(vault: &Vault, skill_id: &str) -> Result<EntityId> {
 /// Records a real ED-01 Δ against `receipt_id`, so the evidence door's
 /// grounding resolves the way production's would.
 fn measure_amendment(vault: &Vault, receipt_id: &str, before: &str, after: &str) -> Result<f32> {
-    let delta = delta_from_reconstructed(before, after);
+    let record = ProposalArtifactRef::mint();
+    let delta = delta_from_reconstructed(
+        MeasuredEnd {
+            at: EndpointRef::imported_proposed(record),
+            content: before,
+        },
+        MeasuredEnd {
+            at: EndpointRef::imported_final(record),
+            content: after,
+        },
+    );
     let d_norm = delta.d_norm;
     vault.with_write_txn(|wtxn| {
         put_amendment_delta_in_txn(vault, wtxn, receipt_id, &delta)?;
@@ -489,11 +503,7 @@ fn a_two_hunk_edit_charges_each_route_only_its_share() -> Result<()> {
     let judgment = judge_amendment_hunks(&vault, receipt, Some(&decisions), &hunks)?
         .expect("a split amendment routes");
     // Each hunk weighs what the pinned ED metric measures for it.
-    let mass = |hunk: &EditHunk<'_>| {
-        delta_from_reconstructed(hunk.before, hunk.after)
-            .ops_summary
-            .edit_mass()
-    };
+    let mass = |hunk: &EditHunk<'_>| myers_line_diff(hunk.before, hunk.after).ops.edit_mass();
     let defect_share = mass(&hunks[0]) / (mass(&hunks[0]) + mass(&hunks[1]));
     assert!(
         defect_share > 0.0 && defect_share < 0.5,
@@ -646,54 +656,80 @@ fn terminal_attempt(
     skill_id: &str,
     failed: bool,
 ) -> Result<String> {
+    use crate::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
     use crate::attempt_queue::{
-        AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt, EnqueueOutcome,
-        FailAttempt, ManifestEntry, ManifestKind,
+        AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, FailAttempt, ManifestEntry,
+        ManifestKind,
     };
+    use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
     let queue = AttemptQueue::new(vault);
-    let EnqueueOutcome::Enqueued(row) = queue.enqueue(EnqueueAttempt {
-        kind: "ed03.amended".to_owned(),
-        payload: Vec::new(),
-        dedupe_key: None,
-        run_id: None,
-        now: 10,
-    })?
+    let dispatcher = AgentDispatcher::new(vault);
+    let now = vault.now_recorded_at();
+    let AgentDispatchOutcome::Dispatched(dispatched) =
+        dispatcher.dispatch_default_base(None, None, None, now)?
     else {
         panic!("a fresh attempt enqueues")
     };
+    let row = dispatched.attempt;
     vault.bind_actor_attempt(row.id, &actor)?;
     queue.append_manifest_entry(
         row.id,
-        ManifestEntry::new(ManifestKind::Skill, skill_id, "1.0.0", 11),
+        ManifestEntry::new(ManifestKind::Skill, skill_id, "1.0.0", now),
     )?;
     let ClaimOutcome::Claimed(leased) = queue.claim_kind(
-        "ed03.amended",
+        DREAMER_RUNNER_ATTEMPT_KIND,
         ClaimAttempt {
             lease_owner: "host".to_owned(),
-            now: 12,
+            now: vault.now_recorded_at(),
         },
     )?
     else {
         panic!("the attempt leases")
     };
+    assert_eq!(leased.id, row.id);
     queue.set_executor_model(row.id, "host", leased.attempt_count, MODEL)?;
     if failed {
-        queue.fail(FailAttempt {
-            id: row.id,
-            lease_owner: "host".to_owned(),
-            attempt_count: leased.attempt_count,
-            reason: "failed check".to_owned(),
-            now: 13,
+        // The public fail door refuses an agent-dispatch row (only the typed
+        // failure ladder fails one); the fixture takes the queue transition
+        // the ladder's terminal write makes, with its terminal pack receipt.
+        let now = vault.now_recorded_at();
+        vault.with_write_txn(|wtxn| {
+            queue
+                .fail_in_txn(
+                    wtxn,
+                    FailAttempt {
+                        id: row.id,
+                        lease_owner: "host".to_owned(),
+                        attempt_count: leased.attempt_count,
+                        reason: "failed check".to_owned(),
+                        now,
+                    },
+                )
+                .map(|_| ())
         })?;
     } else {
         queue.complete(CompleteAttempt {
             id: row.id,
             lease_owner: "host".to_owned(),
             attempt_count: leased.attempt_count,
-            now: 13,
+            now: vault.now_recorded_at(),
         })?;
     }
-    Ok(crate::receipt::attempt_pack_receipt_id(&row.id))
+    let receipt_id = crate::receipt::attempt_pack_receipt_id(&row.id);
+    if !failed {
+        // The projector mints numerical claims only for anchored outcomes
+        // (skill_reliability/projector.rs:535-548): stamp the harness's
+        // held-out score beside the executor revision, so the credited win
+        // below moves the posterior instead of being skipped.
+        let mut receipt = crate::receipt::attempt_pack_receipt(vault, &receipt_id)?
+            .expect("stamped pack receipt");
+        receipt.fields.insert(
+            crate::skill_reliability::FIELD_SKILL_LEARNING_ANCHOR.to_owned(),
+            serde_json::to_string(&crate::learning::Anchor::HeldOut).expect("anchor encodes"),
+        );
+        crate::receipt::overwrite_attempt_pack_receipt_for_test(vault, &receipt)?;
+    }
+    Ok(receipt_id)
 }
 
 /// The attempt arm's reliability posterior as `(alpha, beta)`.
@@ -856,9 +892,12 @@ fn a_withdrawn_or_rejoined_amendment_leaves_no_stale_loss() -> Result<()> {
     )?;
     judge_amendment(&vault, receipt)?.expect("a preference routes");
     assert_eq!(project_amendment_reliability(&vault)?, vec![skill]);
-    assert_eq!(
-        arm_posterior(&vault, &skill)?,
-        (prior.alpha, prior.beta),
+    // Withdrawing the sole observation retracts its head
+    // (skill_reliability/projector.rs:609-616, learning/project.rs:409-412):
+    // no measured head remains, so the arm reads None.
+    assert!(
+        crate::skill_reliability::skill_reliability_posterior_for_executor(&vault, &skill, MODEL)?
+            .is_none(),
         "the withdrawn loss is gone, not kept as imported history"
     );
     Ok(())

@@ -1,0 +1,1572 @@
+//! OWNER-ANCHOR-ROOT-RECOVERY part (b2) (PLAN v3 section 7; Engine RULINGs
+//! 14 Nov 21:01, 21:47 and 22:32): the root appointment door and the
+//! admission bridge, on a vault.
+//!
+//! An owner key of the vault signs two sibling handoffs, which arrive
+//! together. Each fences every roster key, the host root included, so they
+//! conflict: neither installs its successor, and the roster holds no live
+//! root key. No root key can bind the owner, so owner verbs stop. The owner
+//! restores his kit on an install that pins its root and runs
+//! `appoint_owner_root`: the root's anchor appoints a fresh owner signing key
+//! of this install, on the conflict's two handoffs (the witnesses) and the
+//! heads, and the successor binds the owner as `human` at its own first
+//! epoch. The fold counts both, the roster holds a root key again, and owner
+//! verbs pass.
+//!
+//! The same appointment and binding, signed elsewhere, arrive by an import:
+//! the walk that refuses rows standing on a retired key reads neither the
+//! appointment's witnesses against it nor, through the counted appointment,
+//! against its binding. A row that also reaches a witness by a path of its
+//! own still stands on the retired key and is refused.
+//!
+//! Two runs of the door on one install, the second checked before the first
+//! commits: the second is refused before it makes a key, so the install's
+//! owner signing slot still holds the successor the roster names live.
+//!
+//! The owner's second install awaits the root a pin request this install
+//! carries names (PLAN v3 test 7): an awaited root is no pin, so the second
+//! install stores the root's appointment without judging it, and its door
+//! refuses, until the owner pins the root at that install's own pin door.
+//!
+//! Red before part (b2): every test here but the slot test
+//! (`a_door_run_beside_a_committed_appointment_keeps_the_successor_in_the_slot`),
+//! which needs its test door. The door answered `AppointmentUnavailable`;
+//! the import held the appointment as a row no admitter signed, its
+//! witnesses signed by a key the conflict retired, and the successor's
+//! binding with it. Red before the fix of review-b2's P1: the slot test,
+//! since the second run dropped the slot's seed before its writer read the
+//! roster, and the live successor was a key no install held. Red with the
+//! pickup pinning a carried root (as before CARRIED-PIN): the awaited-root
+//! test, whose second install then holds a pin no owner confirmed there.
+//!
+//! FIX APPOINTMENT-PIN-STEP-AND-VOUCH-ENTRY-FOLD-NO-TEST: the door enters the
+//! device PIN's step before its writer, so it waits for a first PIN's set
+//! that is inside its step, and once the PIN is set its writer makes no
+//! successor in the slot. Red with the door taking no step: the appointment
+//! goes on beside the set.
+//!
+//! FIX APPOINTMENT-DROPS-SLOT-SEED-BEFORE-ITS-VERDICT: the door makes the
+//! successor in memory, and the install's owner signing slot takes its seed
+//! only as the writer's last step, so a keystore that refuses that seed
+//! leaves the slot's old seed in place, and the door runs again. Red with
+//! the seed dropped before the verdict: the refused run leaves the slot
+//! empty, and the install's next key is a new one.
+//!
+//! FIX OWNER-SIGNING-SLOT-RENEWAL-OUTSIDE-SLOT-LOCK: the door takes the
+//! vault's owner signing slot lock before its writer, so it waits for a
+//! door that holds that lock while it reads the slot. Red without the lock:
+//! the appointment renews the slot beside that read.
+//!
+//! FIX OWNER-SLOT-GET-ONLY-READERS-SEE-RENEWAL-GAP: a read of where the
+//! install's owner key rests and a hold of that key wait for the slot lock
+//! an appointment holds while it renews the slot. Red with those readers
+//! taking no lock: both answer between the renewal's delete and its create,
+//! and the rest read finds no key.
+//!
+//! REVIEW-9678 P1: the hold lets the slot lock go before it holds the key,
+//! since a hold asks every signer held for its root, and a signer's answer
+//! may read where the owner key rests. Red with the lock held through the
+//! hold: the hold never ends.
+//!
+//! REVIEW-9678 round 2 P1: a held signer is asked its root once, at its
+//! hold. A later hold and an owner act's pick of its owner proof inside its
+//! writer read that answer, so neither waits for a signer's root, which may
+//! wait for the owner signing slot lock a recovery holds while it waits for
+//! the writer. Red with the signers asked again: the hold and the owner's
+//! clear of the checkpoint policy wait for the held signer's root.
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
+//! --all-features --test owner_anchor_appointment`.
+#![cfg(oneiron_test_support)]
+
+use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError, Weak, mpsc};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use ed25519_dalek::{Signer, SigningKey};
+use oneiron::authority::{
+    AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AppointmentVerdict,
+    AuthorityAttestation, AuthorityEntryHash, AuthorityFold, AuthorityFoldIssue, AuthorityKey,
+    AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityTier, CheckpointRootSigner,
+    DeviceAuthority, HostSlipIssuer, MachineOwnership, MachineRole, OwnerKeyEnrollment, ROLE_ADMIN,
+    ROLE_AGENT, ROLE_OWNER, ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND, RecoveryRootId, RootAppointment,
+    RootChange, authority_entry_hash, authority_transcript, decode_authority_log_entry_body,
+    encode_authority_log_entry_body, root_appointment_challenge,
+};
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::error::SecretError;
+use oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED;
+use oneiron::recovery::{
+    KitIssue, KitSecretKind, PassphraseCost, PieceHome, issue_recovery_root_kit, restore_kit,
+};
+use oneiron::store::GateDecisionId;
+use oneiron::test_doors::device_pin::steps_that_waited;
+use oneiron::test_doors::root_appointment::appoint_owner_root_between;
+use oneiron::test_support::bind_host_owner;
+use oneiron::world_keys::{DevicePin, OwnerKeyRest, RecoveryRootSeed};
+use oneiron::{EdgeActorClass, EntityId, Error, Vault, VaultConfig};
+use oneiron_keystore::{
+    AuthBoundSecretStore, DeviceKeystore, KeystoreAssurance, KeystoreError, KeystoreLocality,
+    KeystoreSlot, ManualPresenceClock, MemoryKeystore, PresenceCapability, SealedBytesStore,
+    SlotKind,
+};
+use zeroize::Zeroizing;
+
+/// The seed of the owner key that signs the fork.
+const OWNER_KEY_SEED: u8 = 21;
+/// The seeds of the two handoffs' successors.
+const FIRST_HANDOFF_SEED: u8 = 33;
+const SECOND_HANDOFF_SEED: u8 = 34;
+/// The seed of the unrelated key whose binding the owner key revokes.
+const UNRELATED_SEED: u8 = 35;
+/// The seed of a successor signed outside the door.
+const SUCCESSOR_SEED: u8 = 36;
+/// The seed of the agent key a successor's row enrols.
+const AGENT_SEED: u8 = 37;
+/// The seed of the root signer whose root reads where the owner key rests.
+const REST_READER_SEED: u8 = 38;
+/// The seed of the root signer whose root waits while its gate is held.
+const GATED_ROOT_SEED: u8 = 39;
+/// The seed of a root signer held beside the gated one.
+const SECOND_ROOT_SEED: u8 = 40;
+
+/// The device PIN a test sets.
+const PIN: &[u8] = b"271828";
+
+/// What the owner signing slot answers on a device with a PIN set
+/// (`KEPT_UNDER_DEVICE_PIN` of `world_keys::owner_signing`).
+const KEPT_UNDER_DEVICE_PIN: &str =
+    "this install's owner signing key is kept under the device PIN and is not handed out";
+
+/// How long a test waits for a step to reach the read it pauses at, a
+/// paused read for the test's word, and a second step to wait or go on.
+const PAUSE_WAIT: Duration = Duration::from_secs(30);
+/// How long the slot lock test lets an appointment run beside a door that
+/// holds the lock: far longer than an appointment takes on a test host.
+const SLOT_LOCK_WAIT: Duration = Duration::from_secs(5);
+/// The refusal of a keystore that denied access.
+const KEYSTORE_DENIED: &str = "the keystore denied access";
+
+fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
+    vault
+        .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
+        .expect("an owner proof")
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("a clock after 1970")
+        .as_secs()
+}
+
+fn signing(seed: u8) -> SigningKey {
+    SigningKey::from_bytes(&[seed; 32])
+}
+
+fn key_of(signing: &SigningKey) -> AuthorityKey {
+    AuthorityKey::Ed25519(signing.verifying_key().to_bytes())
+}
+
+fn device(key: AuthorityKey, roles: u16) -> DeviceAuthority {
+    DeviceAuthority {
+        key,
+        transport_key_binding: [7; 32],
+        attestation: AuthorityAttestation {
+            kind: "SoftwareArgon2id".to_owned(),
+            evidence: vec![1, 2, 3],
+        },
+        tier: AuthorityTier::Software,
+        roles,
+    }
+}
+
+fn hash(row: &AuthorityLogEntry) -> AuthorityEntryHash {
+    authority_entry_hash(row).expect("a hash")
+}
+
+fn bytes(row: &AuthorityLogEntry) -> Vec<u8> {
+    encode_authority_log_entry_body(row).expect("the signed bytes")
+}
+
+/// `seed` rebuilt from two stored pieces of a kit issued for it: the owner's
+/// restore.
+fn restored(vault_id: [u8; 32], seed: &RecoveryRootSeed) -> RecoveryRootSeed {
+    let issue = KitIssue {
+        vault_id,
+        homes: [
+            PieceHome::ThisMachine,
+            PieceHome::OtherMachine(EntityId::now()),
+            PieceHome::OtherMachine(EntityId::now()),
+        ],
+        passphrase: None,
+        cost: PassphraseCost::FLOOR,
+        only_machine: false,
+    };
+    let pieces = issue_recovery_root_kit(&issue, &seed.kit_bytes())
+        .expect("the kit")
+        .into_pieces();
+    let secret = restore_kit(
+        vault_id,
+        KitSecretKind::RecoveryRoot,
+        &[&pieces[0], &pieces[1]],
+        None,
+    )
+    .expect("two stored pieces restore the seed");
+    RecoveryRootSeed::from_restored_kit(secret).expect("the restored seed")
+}
+
+/// A rooted self-hosted vault: the host root binds the embedded owner, the
+/// owner enrolled an owner key of his own, and his kit's root is published
+/// and pinned on this install.
+struct Owned {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    _issuer: HostSlipIssuer,
+    person: EntityId,
+    vault_id: [u8; 32],
+    owner_key: SigningKey,
+    root: RecoveryRootId,
+    seed: RecoveryRootSeed,
+}
+
+fn owned() -> Owned {
+    owned_on(Arc::new(MemoryKeystore::default()))
+}
+
+/// [`owned`], the install keeping its slots in `keystore`.
+fn owned_on(keystore: Arc<dyn DeviceKeystore>) -> Owned {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("the vault");
+    vault.install_device_keystore(keystore);
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::HostedNode)
+        .expect("this install's live machine profile");
+    let person = vault.ensure_embedded_owner_actor().expect("the owner");
+    bind_host_owner(&vault, &issuer, person).expect("the owner's binding");
+    let vault_id = vault
+        .authority_fold()
+        .expect("the fold")
+        .vault_id
+        .expect("a rooted vault");
+    let owner_key = signing(OWNER_KEY_SEED);
+    let machine = vault
+        .prepare_install_signing()
+        .expect("this install's machine");
+    let authority = ActAuthority::Owner(proof(&vault, person), ActSurface::ThisInstall);
+    let public_key = owner_key.verifying_key().to_bytes();
+    let challenge = vault
+        .owner_key_enrollment_challenge_as(&authority, machine, &public_key)
+        .expect("the enrolment challenge");
+    vault
+        .enrol_owner_signing_key_as_host(
+            &authority,
+            OwnerKeyEnrollment {
+                machine,
+                public_key,
+                proof: owner_key.sign(&challenge).to_bytes().to_vec(),
+            },
+            &issuer,
+        )
+        .expect("the owner enrols an owner key");
+    let owner = proof(&vault, person);
+    vault
+        .enrol_device_owner_signing_key(&authority, &issuer)
+        .expect("this install holds a predecessor for the activation");
+    let prepared = vault.prepare_owner_root(&owner).expect("a kit root");
+    let seed = restored(vault_id, prepared.seed());
+    let root = vault
+        .activate_owner_root(&owner, prepared, &BTreeSet::new())
+        .expect("the owner activates his root")
+        .root;
+    Owned {
+        _dir: dir,
+        vault,
+        _issuer: issuer,
+        person,
+        vault_id,
+        owner_key,
+        root,
+        seed,
+    }
+}
+
+impl Owned {
+    fn history(&self) -> Vec<AuthorityLogEntry> {
+        self.vault
+            .export_signed_authority_history()
+            .expect("the signed history")
+            .iter()
+            .map(|row| decode_authority_log_entry_body(row).expect("a row"))
+            .collect()
+    }
+
+    /// The rows no row names as a parent.
+    fn heads(&self) -> Vec<AuthorityEntryHash> {
+        let rows = self.history();
+        let parents: BTreeSet<AuthorityEntryHash> = rows
+            .iter()
+            .flat_map(|row| row.parent_hashes.iter().copied())
+            .collect();
+        rows.iter()
+            .map(hash)
+            .filter(|row| !parents.contains(row))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    /// The next sequence of `signer` over the rows the vault holds.
+    fn next_seq(&self, signer: &AuthorityKey) -> u64 {
+        self.history()
+            .iter()
+            .filter(|row| row.signer_key() == signer)
+            .map(|row| row.seq + 1)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// `op`, signed by `signer` at `seq` on `parents`.
+    fn signed(
+        &self,
+        signer: &SigningKey,
+        seq: u64,
+        mut parents: Vec<AuthorityEntryHash>,
+        op: AuthorityOp,
+    ) -> AuthorityLogEntry {
+        parents.sort_unstable();
+        parents.dedup();
+        let public_key = key_of(signer);
+        let mut row = AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some(self.vault_id),
+            seq,
+            parent_hashes: parents,
+            op,
+            signer: AuthoritySignature {
+                suite: public_key.suite(),
+                public_key,
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: now_secs(),
+        };
+        let transcript = authority_transcript(&row).expect("the transcript");
+        row.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
+        row
+    }
+
+    /// The owner key revokes the binding of an unrelated key at the highest
+    /// epoch: a floor no fresh key's binding meets.
+    fn revoke_unrelated_binding(&self) {
+        let row = self.signed(
+            &self.owner_key,
+            self.next_seq(&key_of(&self.owner_key)).max(1),
+            self.heads(),
+            AuthorityOp::RevokeActor {
+                authority_key: key_of(&signing(UNRELATED_SEED)),
+                epoch: u64::MAX,
+            },
+        );
+        self.vault
+            .import_signed_authority_history(&[bytes(&row)])
+            .expect("the owner key revokes an unrelated binding");
+    }
+
+    /// The owner key hands the vault to two new keys on the heads, and both
+    /// handoffs arrive together: a fork. Answers the two handoffs.
+    fn fork(&self) -> [AuthorityEntryHash; 2] {
+        let heads = self.heads();
+        let seq = self.next_seq(&key_of(&self.owner_key)).max(1);
+        let first = self.signed(
+            &self.owner_key,
+            seq,
+            heads.clone(),
+            AuthorityOp::ReRoot {
+                new_device: device(key_of(&signing(FIRST_HANDOFF_SEED)), ROLE_OWNER),
+            },
+        );
+        let second = self.signed(
+            &self.owner_key,
+            seq + 1,
+            heads,
+            AuthorityOp::ReRoot {
+                new_device: device(key_of(&signing(SECOND_HANDOFF_SEED)), ROLE_OWNER),
+            },
+        );
+        self.vault
+            .import_signed_authority_history(&[bytes(&first), bytes(&second)])
+            .expect("both handoffs land");
+        [hash(&first), hash(&second)]
+    }
+
+    /// The pinned root's appointment of `successor` on `parents`, signed by
+    /// its anchor outside the door, and the successor's binding of the owner
+    /// on it.
+    fn appointment_and_binding(
+        &self,
+        successor: &SigningKey,
+        parents: Vec<AuthorityEntryHash>,
+    ) -> (AuthorityLogEntry, AuthorityLogEntry) {
+        let anchor = self.seed.anchor();
+        let mut parents = parents;
+        parents.sort_unstable();
+        parents.dedup();
+        let successor_key = successor.verifying_key().to_bytes();
+        let challenge =
+            root_appointment_challenge(&self.vault_id, &self.root, &parents, &successor_key)
+                .expect("the challenge");
+        let appointment = self.signed(
+            &anchor,
+            self.next_seq(&key_of(&anchor)),
+            parents,
+            AuthorityOp::RootAppointment(RootAppointment {
+                root: self.root,
+                successor: DeviceAuthority {
+                    key: AuthorityKey::Ed25519(successor_key),
+                    transport_key_binding: [0; 32],
+                    attestation: AuthorityAttestation {
+                        kind: ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND.to_owned(),
+                        evidence: successor.sign(&challenge).to_bytes().to_vec(),
+                    },
+                    tier: AuthorityTier::Software,
+                    roles: ROLE_OWNER | ROLE_ADMIN,
+                },
+            }),
+        );
+        let binding = self.signed(
+            successor,
+            1,
+            vec![hash(&appointment)],
+            AuthorityOp::BindActor {
+                authority_key: key_of(successor),
+                actor_ref: self.person,
+                actor_class: "human".to_owned(),
+                epoch: 1,
+            },
+        );
+        (appointment, binding)
+    }
+
+    fn live(&self, key: &AuthorityKey) -> bool {
+        self.vault
+            .authority_fold()
+            .expect("the fold")
+            .roster
+            .get(key)
+            .is_some_and(|device| !device.revoked)
+    }
+
+    fn rootless(&self) -> bool {
+        self.vault
+            .authority_fold()
+            .expect("the fold")
+            .issues
+            .contains(&AuthorityFoldIssue::NoRootKey)
+    }
+
+    fn valid(&self, row: &AuthorityEntryHash) -> bool {
+        self.vault
+            .authority_fold()
+            .expect("the fold")
+            .valid_entries
+            .contains(row)
+    }
+
+    fn passes_owner_verbs(&self) -> bool {
+        match self
+            .vault
+            .memory(self.person, EdgeActorClass::Human)
+            .verify_owner()
+        {
+            Ok(()) => true,
+            Err(error) => {
+                assert_eq!(error.code, MEMORY_CODE_OWNER_BINDING_REQUIRED, "{error:?}");
+                false
+            }
+        }
+    }
+}
+
+/// The door end to end on a handoff fork (PLAN v3 test 1, with test 17's
+/// floor): the appointment names the conflict's two handoffs, the successor
+/// is a live root key of its own line, it binds the owner at epoch 1 though
+/// an unrelated key's binding was revoked at the highest epoch, and owner
+/// verbs pass again. A second run of the door is refused: the roster holds a
+/// root key now.
+#[test]
+fn the_pinned_anchor_appoints_a_root_after_a_handoff_fork() {
+    let owned = owned();
+    assert!(owned.passes_owner_verbs(), "the bound owner passes");
+    owned.revoke_unrelated_binding();
+    let witnesses = owned.fork();
+    assert!(owned.rootless(), "the fork leaves no live root key");
+    assert!(
+        !owned.passes_owner_verbs(),
+        "no root key binds the owner after the fork"
+    );
+    assert!(!owned.live(&key_of(&owned.owner_key)));
+
+    let receipt = owned
+        .vault
+        .appoint_owner_root(&proof(&owned.vault, owned.person), &owned.seed, None)
+        .expect("the pinned root's anchor appoints a successor");
+
+    assert_eq!(receipt.root, owned.root);
+    assert_eq!(receipt.epoch, 1, "the successor binds at its own floor");
+    let appointment = owned
+        .history()
+        .into_iter()
+        .find(|row| hash(row) == receipt.entry)
+        .expect("the appointment is stored");
+    for witness in witnesses {
+        assert!(
+            appointment.parent_hashes.contains(&witness),
+            "the appointment names the conflict's handoffs"
+        );
+        assert!(!owned.valid(&witness), "the handoffs stay refused");
+    }
+    let successor = AuthorityKey::Ed25519(receipt.successor);
+    assert!(owned.live(&successor), "the successor is a live root key");
+    assert!(owned.valid(&receipt.entry) && owned.valid(&receipt.binding));
+    assert!(!owned.rootless(), "the roster holds a root key again");
+    assert!(
+        !owned.live(&key_of(&owned.owner_key)),
+        "the old key stays retired"
+    );
+    assert!(
+        owned.passes_owner_verbs(),
+        "the successor's binding lets owner verbs pass"
+    );
+
+    let stored = owned.history().len();
+    assert!(
+        owned
+            .vault
+            .appoint_owner_root(&proof(&owned.vault, owned.person), &owned.seed, None)
+            .is_err(),
+        "a rooted roster needs no appointment"
+    );
+    assert_eq!(owned.history().len(), stored, "the refusal writes nothing");
+}
+
+/// On a roster that still holds a live root key the door refuses, names
+/// why, and writes nothing.
+#[test]
+fn a_rooted_roster_refuses_the_appointment_and_writes_nothing() {
+    let owned = owned();
+    let stored = owned.history().len();
+
+    let refusal = owned
+        .vault
+        .appoint_owner_root(&proof(&owned.vault, owned.person), &owned.seed, None)
+        .expect_err("no appointment while a root key is live");
+
+    assert!(
+        refusal.to_string().contains("live root key"),
+        "the refusal names the live root key: {refusal}"
+    );
+    assert_eq!(owned.history().len(), stored);
+    assert!(owned.passes_owner_verbs());
+}
+
+/// The appointment and the successor's binding, signed outside the door,
+/// arrive in one import past the conflict's handoffs: both land, and the
+/// owner is bound again (the admission bridge).
+#[test]
+fn an_appointment_and_its_binding_land_together_over_the_witnesses() {
+    let owned = owned();
+    let heads = owned.heads();
+    let witnesses = owned.fork();
+    let successor = signing(SUCCESSOR_SEED);
+    let parents: Vec<_> = witnesses.iter().chain(&heads).copied().collect();
+    let (appointment, binding) = owned.appointment_and_binding(&successor, parents);
+
+    let arrival = owned
+        .vault
+        .import_signed_authority_history(&[bytes(&appointment), bytes(&binding)]);
+
+    assert!(arrival.is_ok(), "the import takes both rows: {arrival:?}");
+    assert!(owned.valid(&hash(&appointment)) && owned.valid(&hash(&binding)));
+    assert!(owned.live(&key_of(&successor)));
+    assert!(owned.passes_owner_verbs());
+}
+
+/// A row the successor signs that also names a witness as its own parent
+/// stands on the retired key through that path, so the import that carries
+/// it with the appointment is refused whole; without it, the appointment and
+/// the binding land.
+#[test]
+fn a_row_with_its_own_path_to_a_witness_is_refused() {
+    let owned = owned();
+    let heads = owned.heads();
+    let witnesses = owned.fork();
+    let successor = signing(SUCCESSOR_SEED);
+    let parents: Vec<_> = witnesses.iter().chain(&heads).copied().collect();
+    let (appointment, binding) = owned.appointment_and_binding(&successor, parents);
+    let beside = owned.signed(
+        &successor,
+        2,
+        vec![hash(&binding), witnesses[0]],
+        AuthorityOp::EnrollDevice {
+            device: device(key_of(&signing(AGENT_SEED)), ROLE_AGENT),
+        },
+    );
+
+    let refused = owned.vault.import_signed_authority_history(&[
+        bytes(&appointment),
+        bytes(&binding),
+        bytes(&beside),
+    ]);
+
+    assert!(
+        refused.is_err(),
+        "a row that reaches a witness by its own path stands on the retired key"
+    );
+    assert!(
+        !owned.valid(&hash(&appointment)),
+        "the refused import writes nothing"
+    );
+    owned
+        .vault
+        .import_signed_authority_history(&[bytes(&appointment), bytes(&binding)])
+        .expect("the appointment and its binding land alone");
+    assert!(owned.live(&key_of(&successor)));
+    assert!(!owned.valid(&hash(&beside)));
+}
+
+/// A second run of the door whose read-only check passed before the first
+/// run committed: the first appoints its successor; the second, at its
+/// writer, finds a live root key and is refused before it makes a key. The
+/// install's owner signing slot still holds the successor the roster names
+/// live, so the owner's root key stays one this install can sign with.
+#[test]
+fn a_door_run_beside_a_committed_appointment_keeps_the_successor_in_the_slot() {
+    let owned = owned();
+    owned.revoke_unrelated_binding();
+    owned.fork();
+    assert!(owned.rootless(), "the fork leaves no live root key");
+
+    let mut first = None;
+    let refusal = appoint_owner_root_between(
+        &owned.vault,
+        &proof(&owned.vault, owned.person),
+        &owned.seed,
+        None,
+        || {
+            first = Some(owned.vault.appoint_owner_root(
+                &proof(&owned.vault, owned.person),
+                &owned.seed,
+                None,
+            ));
+        },
+    )
+    .expect_err("the roster holds a root key once the first run commits");
+    let first = first
+        .expect("the first run ran between the check and the writer")
+        .expect("the first run appoints a successor");
+
+    assert!(
+        refusal.to_string().contains("live root key"),
+        "the second run names the live root key: {refusal}"
+    );
+    assert!(
+        owned.live(&AuthorityKey::Ed25519(first.successor)),
+        "the first run's successor is a live root key"
+    );
+    let held = owned
+        .vault
+        .device_owner_signing_key()
+        .expect("the install's owner signing key")
+        .public_key();
+    assert_eq!(
+        held, first.successor,
+        "the install's owner signing slot holds the live successor"
+    );
+    assert!(owned.passes_owner_verbs());
+}
+
+/// A call on the owner signing slot paused before it reaches the keystore:
+/// it tells the test through the sender and goes on at the test's word on
+/// the receiver.
+type PausedCall = (mpsc::Sender<()>, mpsc::Receiver<()>);
+
+/// The process-memory keystore, its hardware counting wrong PINs, with one
+/// read of the owner signing slot that a test pauses in the middle of a
+/// device PIN step (as `SteppedKeystore` of `tests/device_pin.rs` pauses a
+/// call), one seed put in that slot that a test pauses, and one such seed
+/// that a test has it refuse.
+struct PausingKeystore {
+    inner: MemoryKeystore,
+    pause_read: Mutex<Option<PausedCall>>,
+    pause_create: Mutex<Option<PausedCall>>,
+    refuse_owner_slot_create: AtomicBool,
+}
+
+impl PausingKeystore {
+    fn hardware_counted() -> Self {
+        Self {
+            inner: MemoryKeystore::with_counted_auth_bound(32, 1000),
+            pause_read: Mutex::new(None),
+            pause_create: Mutex::new(None),
+            refuse_owner_slot_create: AtomicBool::new(false),
+        }
+    }
+
+    /// Denies the next seed put in the owner signing slot.
+    fn refuse_next_owner_slot_create(&self) {
+        self.refuse_owner_slot_create.store(true, Ordering::SeqCst);
+    }
+
+    /// Pauses the next read of the owner signing slot before it reaches the
+    /// keystore. The test hears of it on the receiver and lets the read go
+    /// on through the sender.
+    fn pause_next_owner_slot_read(&self) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        arm_pause(&self.pause_read)
+    }
+
+    /// Pauses the next seed put in the owner signing slot before it reaches
+    /// the keystore: a renewal's, once it emptied the slot. The test hears
+    /// of it on the receiver and lets the put go on through the sender.
+    fn pause_next_owner_slot_create(&self) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        arm_pause(&self.pause_create)
+    }
+}
+
+/// Arms `pause` for the next call it pauses, and answers the test's ends
+/// of it: the receiver hears of the pause, the sender lets the call go on.
+fn arm_pause(pause: &Mutex<Option<PausedCall>>) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+    let (reached, test_hears) = mpsc::channel();
+    let (test_resumes, resumed) = mpsc::channel();
+    *pause.lock().unwrap_or_else(PoisonError::into_inner) = Some((reached, resumed));
+    (test_hears, test_resumes)
+}
+
+/// Pauses the calling keystore call when `pause` is armed, until the test
+/// lets it go on.
+fn wait_if_paused(pause: &Mutex<Option<PausedCall>>) {
+    let paused = pause.lock().unwrap_or_else(PoisonError::into_inner).take();
+    if let Some((reached, resumed)) = paused {
+        reached.send(()).expect("the test waits for the pause");
+        resumed
+            .recv_timeout(PAUSE_WAIT)
+            .expect("the test lets the paused call go on");
+    }
+}
+
+impl DeviceKeystore for PausingKeystore {
+    fn get(&self, slot: &KeystoreSlot) -> Result<Option<Zeroizing<[u8; 32]>>, KeystoreError> {
+        if slot.kind == SlotKind::OwnerSigning {
+            wait_if_paused(&self.pause_read);
+        }
+        DeviceKeystore::get(&self.inner, slot)
+    }
+
+    fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<(), KeystoreError> {
+        if slot.kind == SlotKind::OwnerSigning {
+            if self.refuse_owner_slot_create.swap(false, Ordering::SeqCst) {
+                return Err(KeystoreError::Denied);
+            }
+            wait_if_paused(&self.pause_create);
+        }
+        DeviceKeystore::create(&self.inner, slot, secret)
+    }
+
+    fn delete(&self, slot: &KeystoreSlot) -> Result<(), KeystoreError> {
+        DeviceKeystore::delete(&self.inner, slot)
+    }
+
+    fn replace(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<bool, KeystoreError> {
+        DeviceKeystore::replace(&self.inner, slot, secret)
+    }
+
+    fn locality(&self) -> KeystoreLocality {
+        self.inner.locality()
+    }
+
+    fn assurance(&self) -> KeystoreAssurance {
+        self.inner.assurance()
+    }
+
+    fn sealed_bytes(&self) -> Option<&dyn SealedBytesStore> {
+        self.inner.sealed_bytes()
+    }
+
+    fn auth_bound_secret(&self) -> Option<&dyn AuthBoundSecretStore> {
+        self.inner.auth_bound_secret()
+    }
+}
+
+/// Whether a second step waited for the first, which the test paused inside
+/// its step: true once `pin` counted a step that waited, false when the
+/// second step went on instead and `went_on` heard of it. A second step
+/// that does neither fails the test.
+fn second_step_waited(pin: &DevicePin, waited_before: u64, went_on: &mpsc::Receiver<()>) -> bool {
+    let deadline = Instant::now() + PAUSE_WAIT;
+    loop {
+        if steps_that_waited(pin) > waited_before {
+            return true;
+        }
+        if went_on.recv_timeout(Duration::from_millis(10)).is_ok() {
+            return false;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the second step neither waited for the first nor went on"
+        );
+    }
+}
+
+/// A run of the door beside a first device PIN's set. The set is paused
+/// inside its step, at its read of the owner signing slot and before any PIN
+/// is stored. The door enters the same step before its writer, so it waits
+/// there. Once the PIN is set the door's writer runs: the slot's rule
+/// refuses a key beside a set PIN, so no successor is made and no row is
+/// written.
+#[test]
+fn an_appointment_waits_for_a_first_device_pin_set_and_makes_no_successor() {
+    let keystore = Arc::new(PausingKeystore::hardware_counted());
+    let owned = owned_on(Arc::<PausingKeystore>::clone(&keystore));
+    let pin = DevicePin::with_clock_and_cost(
+        Arc::<PausingKeystore>::clone(&keystore),
+        ManualPresenceClock::new(1_000_000, 1_000_000),
+        PassphraseCost::FLOOR,
+    )
+    .expect("the device PIN over the install's keystore");
+    owned
+        .vault
+        .install_device_pin(Arc::clone(&pin))
+        .expect("the device PIN goes on the handle");
+    owned.revoke_unrelated_binding();
+    owned.fork();
+    assert!(owned.rootless(), "the fork leaves no live root key");
+    assert_eq!(
+        pin.capability(),
+        PresenceCapability::DevicePin { set: false },
+        "guard: the device takes a PIN and has none"
+    );
+    let stored = owned
+        .vault
+        .export_signed_authority_history()
+        .expect("the signed history");
+
+    // Both proofs are made before the set starts, so each thread runs its
+    // door alone.
+    let setting_owner = proof(&owned.vault, owned.person);
+    let appointing_owner = proof(&owned.vault, owned.person);
+    let waited_before = steps_that_waited(&pin);
+    let (vault, seed) = (&owned.vault, &owned.seed);
+    let (appointment_ended, went_on) = mpsc::channel();
+    let (set, appointment, appointment_waited, waits) = thread::scope(|scope| {
+        let (reached, resume) = keystore.pause_next_owner_slot_read();
+        let set = scope.spawn(move || {
+            vault.set_device_pin_as(
+                &ActAuthority::Owner(setting_owner, ActSurface::ThisInstall),
+                PIN,
+                false,
+            )
+        });
+        reached
+            .recv_timeout(PAUSE_WAIT)
+            .expect("the first PIN's set reaches its read of the owner signing slot");
+        let appointment = scope.spawn(move || {
+            let answer = vault.appoint_owner_root(&appointing_owner, seed, None);
+            let _heard = appointment_ended.send(());
+            answer
+        });
+        let appointment_waited = second_step_waited(&pin, waited_before, &went_on);
+        let waits = steps_that_waited(&pin) - waited_before;
+        resume.send(()).expect("the first PIN's set goes on");
+        (
+            set.join().expect("the set's thread ends"),
+            appointment.join().expect("the appointment's thread ends"),
+            appointment_waited,
+            waits,
+        )
+    });
+
+    assert!(
+        appointment_waited,
+        "the appointment waits for the first PIN's set; it went on beside it instead"
+    );
+    assert_eq!(waits, 1, "one step waited for the set: the appointment's");
+    set.expect("the owner sets this device's first PIN");
+    assert_eq!(
+        pin.capability(),
+        PresenceCapability::DevicePin { set: true }
+    );
+    let refusal = appointment.expect_err("no successor is made in a slot beside a set PIN");
+    assert!(
+        matches!(
+            &refusal,
+            Error::Secret(SecretError::WorldKeyRefused(reason)) if *reason == KEPT_UNDER_DEVICE_PIN
+        ),
+        "the slot's rule refuses the successor once the PIN is set: {refusal}"
+    );
+    assert_eq!(
+        owned
+            .vault
+            .export_signed_authority_history()
+            .expect("the signed history"),
+        stored,
+        "the refused appointment writes no row"
+    );
+    assert!(owned.rootless(), "no successor was appointed");
+}
+
+/// FIX APPOINTMENT-DROPS-SLOT-SEED-BEFORE-ITS-VERDICT: the keystore denies
+/// the successor's seed, the last step of the door's writer. The refused
+/// appointment writes no row, and the install's owner signing slot still
+/// holds the key it held before; the door then runs again and the slot
+/// holds the successor the roster names live.
+#[test]
+fn a_refused_successor_seed_leaves_the_slot_its_old_seed() {
+    let keystore = Arc::new(PausingKeystore::hardware_counted());
+    let owned = owned_on(Arc::<PausingKeystore>::clone(&keystore));
+    owned.revoke_unrelated_binding();
+    owned.fork();
+    assert!(owned.rootless(), "the fork leaves no live root key");
+    let held = owned
+        .vault
+        .device_owner_signing_key()
+        .expect("the install's owner signing key")
+        .public_key();
+    let stored = owned.history().len();
+
+    keystore.refuse_next_owner_slot_create();
+    let refusal = owned
+        .vault
+        .appoint_owner_root(&proof(&owned.vault, owned.person), &owned.seed, None)
+        .expect_err("the keystore denies the successor's seed");
+
+    assert!(
+        matches!(
+            &refusal,
+            Error::Secret(SecretError::WorldKeyRefused(reason)) if *reason == KEYSTORE_DENIED
+        ),
+        "the keystore's refusal: {refusal}"
+    );
+    assert_eq!(
+        owned.history().len(),
+        stored,
+        "the refused appointment writes no row"
+    );
+    assert!(owned.rootless(), "no successor was appointed");
+    let kept = owned
+        .vault
+        .device_owner_signing_key()
+        .expect("the install's owner signing key")
+        .public_key();
+    assert_eq!(
+        kept, held,
+        "the slot keeps the seed it held before the refused appointment"
+    );
+
+    let receipt = owned
+        .vault
+        .appoint_owner_root(&proof(&owned.vault, owned.person), &owned.seed, None)
+        .expect("the door runs again");
+    assert!(owned.live(&AuthorityKey::Ed25519(receipt.successor)));
+    let renewed = owned
+        .vault
+        .device_owner_signing_key()
+        .expect("the install's owner signing key")
+        .public_key();
+    assert_eq!(
+        renewed, receipt.successor,
+        "the slot holds the successor the roster names live"
+    );
+    assert!(owned.passes_owner_verbs());
+}
+
+/// FIX OWNER-SIGNING-SLOT-RENEWAL-OUTSIDE-SLOT-LOCK: a read of this
+/// install's owner signing key holds the vault's owner signing slot lock
+/// while it reads the slot, and the test pauses it there. An appointment
+/// started then waits for the lock and renews nothing beside the read; once
+/// the read goes on, it answers the slot's old key, and the appointment
+/// puts its successor in the slot.
+#[test]
+fn an_appointment_waits_for_a_door_that_holds_the_owner_signing_slot() {
+    let keystore = Arc::new(PausingKeystore::hardware_counted());
+    let owned = owned_on(Arc::<PausingKeystore>::clone(&keystore));
+    owned.revoke_unrelated_binding();
+    owned.fork();
+    assert!(owned.rootless(), "the fork leaves no live root key");
+    let held = owned
+        .vault
+        .device_owner_signing_key()
+        .expect("the install's owner signing key")
+        .public_key();
+
+    let appointing_owner = proof(&owned.vault, owned.person);
+    let (vault, seed) = (&owned.vault, &owned.seed);
+    let (appointment_ended, ended) = mpsc::channel();
+    let (read, appointment, ended_beside_the_read) = thread::scope(|scope| {
+        let (reached, resume) = keystore.pause_next_owner_slot_read();
+        let read = scope.spawn(move || vault.device_owner_signing_key());
+        reached
+            .recv_timeout(PAUSE_WAIT)
+            .expect("the read reaches the owner signing slot under its lock");
+        let appointment = scope.spawn(move || {
+            let answer = vault.appoint_owner_root(&appointing_owner, seed, None);
+            let _heard = appointment_ended.send(());
+            answer
+        });
+        let ended_beside_the_read = ended.recv_timeout(SLOT_LOCK_WAIT).is_ok();
+        resume.send(()).expect("the read goes on");
+        (
+            read.join().expect("the read's thread ends"),
+            appointment.join().expect("the appointment's thread ends"),
+            ended_beside_the_read,
+        )
+    });
+
+    assert!(
+        !ended_beside_the_read,
+        "the appointment waits for the door that holds the owner signing slot; it renewed the \
+         slot beside that door's read instead"
+    );
+    let read = read.expect("the read answers").public_key();
+    assert_eq!(read, held, "the read answers the slot's key from before");
+    let receipt = appointment.expect("the appointment goes on once the read let the slot go");
+    assert!(owned.live(&AuthorityKey::Ed25519(receipt.successor)));
+    let renewed = owned
+        .vault
+        .device_owner_signing_key()
+        .expect("the install's owner signing key")
+        .public_key();
+    assert_eq!(
+        renewed, receipt.successor,
+        "the slot holds the successor the roster names live"
+    );
+}
+
+/// FIX OWNER-SLOT-GET-ONLY-READERS-SEE-RENEWAL-GAP: an appointment renews
+/// this install's owner signing slot by emptying it and putting the
+/// successor's seed there, and the test pauses it in between. A read of
+/// where the owner key rests and a hold of that key, started then, wait for
+/// the owner signing slot lock the appointment holds; once the renewal goes
+/// on, the rest read finds the successor's seed in the slot, and the hold
+/// answers as a hold after the appointment does.
+#[test]
+fn a_read_of_the_owner_signing_slot_waits_for_its_renewal() {
+    let keystore = Arc::new(PausingKeystore::hardware_counted());
+    let owned = owned_on(Arc::<PausingKeystore>::clone(&keystore));
+    owned.revoke_unrelated_binding();
+    owned.fork();
+    assert!(owned.rootless(), "the fork leaves no live root key");
+    owned
+        .vault
+        .device_owner_signing_key()
+        .expect("the install's owner signing key");
+    assert_eq!(
+        owned.vault.device_owner_key_rest().expect("the rest reads"),
+        OwnerKeyRest::Slot,
+        "the install's owner signing key rests in its slot"
+    );
+
+    let appointing_owner = proof(&owned.vault, owned.person);
+    let (vault, seed) = (&owned.vault, &owned.seed);
+    let (rest_ended, rest_heard) = mpsc::channel();
+    let (hold_ended, hold_heard) = mpsc::channel();
+    let (appointment, rest, held, rest_beside, hold_beside) = thread::scope(|scope| {
+        let (reached, resume) = keystore.pause_next_owner_slot_create();
+        let appointment =
+            scope.spawn(move || vault.appoint_owner_root(&appointing_owner, seed, None));
+        reached
+            .recv_timeout(PAUSE_WAIT)
+            .expect("the appointment empties the slot and pauses before the successor's seed");
+        let rest = scope.spawn(move || {
+            let rest = vault.device_owner_key_rest();
+            let _heard = rest_ended.send(());
+            rest
+        });
+        let held = scope.spawn(move || {
+            let held = vault.hold_device_owner_signer_logged();
+            let _heard = hold_ended.send(());
+            held
+        });
+        let deadline = Instant::now() + SLOT_LOCK_WAIT;
+        let rest_beside = rest_heard
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .is_ok();
+        let hold_beside = hold_heard
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .is_ok();
+        resume.send(()).expect("the renewal goes on");
+        (
+            appointment.join().expect("the appointment's thread ends"),
+            rest.join().expect("the rest read's thread ends"),
+            held.join().expect("the hold's thread ends"),
+            rest_beside,
+            hold_beside,
+        )
+    });
+
+    let receipt = appointment.expect("the appointment goes on once its renewal does");
+    assert!(owned.live(&AuthorityKey::Ed25519(receipt.successor)));
+    assert_eq!(
+        rest.expect("the rest reads"),
+        OwnerKeyRest::Slot,
+        "the rest read finds the successor's seed in the slot, never the emptied slot"
+    );
+    assert!(
+        !rest_beside,
+        "the rest read waits for the renewal that holds the owner signing slot lock"
+    );
+    assert!(
+        !hold_beside,
+        "the hold waits for the renewal that holds the owner signing slot lock"
+    );
+    assert_eq!(
+        held,
+        owned.vault.hold_device_owner_signer_logged(),
+        "the hold answers as a hold after the appointment"
+    );
+    let renewed = owned
+        .vault
+        .device_owner_signing_key()
+        .expect("the install's owner signing key")
+        .public_key();
+    assert_eq!(
+        renewed, receipt.successor,
+        "the slot holds the successor the roster names live"
+    );
+}
+
+/// A root signer whose root reads where this install's owner signing key
+/// rests, as a host's own signer may: that read takes the vault's owner
+/// signing slot lock.
+struct RestReadingSigner {
+    vault: Weak<Vault>,
+    key: SigningKey,
+}
+
+impl CheckpointRootSigner for RestReadingSigner {
+    fn root(&self) -> AuthorityKey {
+        if let Some(vault) = self.vault.upgrade() {
+            let _rest = vault.device_owner_key_rest();
+        }
+        key_of(&self.key)
+    }
+
+    fn sign_checkpoint_statement(
+        &self,
+        _vault: &Vault,
+        statement: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
+        Ok(self.key.sign(statement).to_bytes().to_vec())
+    }
+
+    fn sign_owner_proof(
+        &self,
+        _vault: &Vault,
+        _fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
+        Ok(self.key.sign(transcript).to_bytes().to_vec())
+    }
+
+    fn sign_ask_word_proof(
+        &self,
+        _vault: &Vault,
+        _fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
+        Ok(self.key.sign(transcript).to_bytes().to_vec())
+    }
+}
+
+/// REVIEW-9678 P1: the install holds a root signer whose root reads where
+/// the install's owner signing key rests. A hold of that key asks every
+/// signer held for its root, so it lets the owner signing slot lock go
+/// first: the hold ends, and the key the roster names live is held.
+#[test]
+fn a_hold_lets_the_owner_signing_slot_lock_go_before_it_holds_the_key() {
+    let owned = owned();
+    let owner_key = owned
+        .vault
+        .device_owner_signing_key()
+        .expect("the install's owner signing key")
+        .public_key();
+    assert!(
+        owned.live(&AuthorityKey::Ed25519(owner_key)),
+        "the roster names the install's owner signing key live"
+    );
+    let Owned { _dir, vault, .. } = owned;
+    let vault = Arc::new(vault);
+    vault.hold_checkpoint_root_signer(Arc::new(RestReadingSigner {
+        vault: Arc::downgrade(&vault),
+        key: signing(REST_READER_SEED),
+    }));
+
+    let (hold_ended, hold_heard) = mpsc::channel();
+    let holding = Arc::clone(&vault);
+    // Not joined: a hold that never ends would keep the test waiting.
+    let _hold = thread::spawn(move || {
+        let _heard = hold_ended.send(holding.hold_device_owner_signer_logged());
+    });
+    let held = hold_heard
+        .recv_timeout(PAUSE_WAIT)
+        .expect("the hold ends: it asks the signers held for their roots after the slot lock");
+    assert!(held, "the install's live owner signing key is held");
+}
+
+/// A root signer whose root waits while the test holds its gate, as a
+/// host's signer whose root reads where this install's owner signing key
+/// rests waits for a door that holds the owner signing slot lock.
+struct GatedRootSigner {
+    gate: Arc<Mutex<()>>,
+    key: SigningKey,
+}
+
+impl CheckpointRootSigner for GatedRootSigner {
+    fn root(&self) -> AuthorityKey {
+        let _gate = self.gate.lock().unwrap_or_else(PoisonError::into_inner);
+        key_of(&self.key)
+    }
+
+    fn sign_checkpoint_statement(
+        &self,
+        _vault: &Vault,
+        statement: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
+        Ok(self.key.sign(statement).to_bytes().to_vec())
+    }
+
+    fn sign_owner_proof(
+        &self,
+        _vault: &Vault,
+        _fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
+        Ok(self.key.sign(transcript).to_bytes().to_vec())
+    }
+
+    fn sign_ask_word_proof(
+        &self,
+        _vault: &Vault,
+        _fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
+        Ok(self.key.sign(transcript).to_bytes().to_vec())
+    }
+}
+
+/// [`owned`], holding a [`GatedRootSigner`] ahead of the install's owner
+/// signing key, so an owner proof's pick comes to it first. Answers the
+/// vault, the owner, the signer's gate (not held) and the vault's directory.
+fn gated_root_ahead_of_the_owner_key() -> (Arc<Vault>, EntityId, Arc<Mutex<()>>, tempfile::TempDir)
+{
+    let Owned {
+        _dir: dir,
+        vault,
+        person,
+        ..
+    } = owned();
+    let gate = Arc::new(Mutex::new(()));
+    vault.hold_checkpoint_root_signer(Arc::new(GatedRootSigner {
+        gate: Arc::clone(&gate),
+        key: signing(GATED_ROOT_SEED),
+    }));
+    assert!(
+        vault.hold_device_owner_signer_logged(),
+        "the install's live owner signing key is held again, after the gated signer"
+    );
+    (Arc::new(vault), person, gate, dir)
+}
+
+/// REVIEW-9678 round 2 P1: a hold asks no signer it already holds for its
+/// root. The install holds a signer whose root waits; a hold of another
+/// signer ends beside that wait, so it never waits under the lock of the
+/// signers' list, which an owner act's door takes inside its writer.
+#[test]
+fn a_hold_asks_no_held_signer_its_root() {
+    let (vault, _person, gate, _dir) = gated_root_ahead_of_the_owner_key();
+    let waiting = gate.lock().unwrap_or_else(PoisonError::into_inner);
+    let (hold_ended, hold_heard) = mpsc::channel();
+    let holding = Arc::clone(&vault);
+    // Not joined: a hold that waits for the gate would keep the test waiting.
+    let _hold = thread::spawn(move || {
+        holding.hold_checkpoint_root_signer(Arc::new(GatedRootSigner {
+            gate: Arc::new(Mutex::new(())),
+            key: signing(SECOND_ROOT_SEED),
+        }));
+        let _heard = hold_ended.send(());
+    });
+    let ended = hold_heard.recv_timeout(PAUSE_WAIT).is_ok();
+    drop(waiting);
+    assert!(
+        ended,
+        "the hold ends while a held signer's root waits: it asks no held signer its root under \
+         the list's lock"
+    );
+}
+
+/// REVIEW-9678 round 2 P1: an owner act's door picks its owner proof inside
+/// its writer by the roots its signers named when held. The install holds a
+/// signer whose root waits, ahead of its owner signing key; the owner's
+/// clear of the checkpoint policy ends beside that wait, so the door never
+/// waits for a signer's root while it holds the writer that a recovery
+/// holding the owner signing slot lock waits for.
+#[test]
+fn an_owner_proof_pick_asks_no_held_signer_its_root() {
+    let (vault, person, gate, _dir) = gated_root_ahead_of_the_owner_key();
+    let authority = ActAuthority::Owner(proof(&vault, person), ActSurface::ThisInstall);
+    let waiting = gate.lock().unwrap_or_else(PoisonError::into_inner);
+    let (door_ended, door_heard) = mpsc::channel();
+    let acting = Arc::clone(&vault);
+    // Not joined: a door that waits for the gate would keep the test waiting.
+    let _door = thread::spawn(move || {
+        let _answer = acting.set_checkpoint_policy_as(&authority, None, None);
+        let _heard = door_ended.send(());
+    });
+    let ended = door_heard.recv_timeout(PAUSE_WAIT).is_ok();
+    drop(waiting);
+    assert!(
+        ended,
+        "the owner's clear ends while a held signer's root waits: its owner proof's pick inside \
+         the writer asks no held signer its root"
+    );
+}
+
+/// The owner's second install: enrolled as his through the hosted console,
+/// never pinned. It takes the vault's authority history from the first
+/// install, as sync does.
+struct SecondInstall {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    machine: EntityId,
+    held: BTreeSet<Vec<u8>>,
+}
+
+impl Owned {
+    /// Enrols the owner's second install, as the hosted console does, and
+    /// hands it this install's history.
+    fn enrol_second_install(&self) -> SecondInstall {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault = Vault::open(dir.path(), VaultConfig::device()).expect("the second install");
+        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        let key = vault
+            .machine_encryption_key(self.vault_id)
+            .expect("the second install's encryption key");
+        let request = vault
+            .machine_enrolment_request(self.vault_id, key)
+            .expect("the second install's enrolment request");
+        self.vault
+            .enroll_machine(
+                &proof(&self.vault, self.person),
+                ActSurface::HostedConsole,
+                &request,
+                MachineRole::Owned(MachineOwnership::Yours),
+                None,
+            )
+            .expect("the owner enrols the second install as his");
+        vault
+            .ensure_embedded_owner_actor()
+            .expect("the owner on the second install");
+        let mut second = SecondInstall {
+            _dir: dir,
+            vault,
+            machine: request.machine,
+            held: BTreeSet::new(),
+        };
+        second.take(self);
+        second
+    }
+
+    /// Records a pin of this install's root on `target`, carried by this
+    /// install as the hosted console's act.
+    fn request_pin(&self, target: EntityId) {
+        let receipt = self
+            .vault
+            .request_root_change(
+                &proof(&self.vault, self.person),
+                ActSurface::HostedConsole,
+                target,
+                RootChange::Pin { root: self.root },
+            )
+            .expect("the pin request");
+        assert!(
+            receipt.request.is_some(),
+            "the pin request is recorded for the second install: {receipt:?}"
+        );
+    }
+}
+
+impl SecondInstall {
+    /// Imports the rows of `from`'s history this install does not hold yet.
+    fn take(&mut self, from: &Owned) {
+        let new: Vec<Vec<u8>> = from
+            .vault
+            .export_signed_authority_history()
+            .expect("the first install's history")
+            .into_iter()
+            .filter(|row| !self.held.contains(row))
+            .collect();
+        self.vault
+            .import_signed_authority_history(&new)
+            .expect("the second install takes the rows");
+        self.held.extend(new);
+    }
+
+    /// Two syncs and pickups: the first may only commit the wait for a root
+    /// whose record the install does not store yet.
+    fn sync_and_pick_up(&mut self, from: &Owned) {
+        for _ in 0..2 {
+            self.take(from);
+            let _drain = self
+                .vault
+                .run_pending_owner_work(|| true)
+                .expect("the second install's pickup");
+        }
+        self.take(from);
+    }
+
+    fn owner(&self) -> AuthenticatedOwner {
+        let person = self
+            .vault
+            .ensure_embedded_owner_actor()
+            .expect("the owner on the second install");
+        proof(&self.vault, person)
+    }
+
+    fn pinned(&self) -> Option<RecoveryRootId> {
+        self.vault
+            .owner_root_view(None, 16)
+            .expect("the second install's roots")
+            .pinned
+    }
+
+    fn awaiting(&self) -> Option<RecoveryRootId> {
+        self.vault
+            .owner_root_view(None, 16)
+            .expect("the second install's roots")
+            .awaiting
+            .map(|awaited| awaited.root)
+    }
+
+    fn stored(&self) -> usize {
+        self.vault
+            .export_signed_authority_history()
+            .expect("the second install's history")
+            .len()
+    }
+
+    fn live(&self, key: &AuthorityKey) -> bool {
+        self.vault
+            .authority_fold()
+            .expect("the second install's fold")
+            .roster
+            .get(key)
+            .is_some_and(|device| !device.revoked)
+    }
+
+    fn rootless(&self) -> bool {
+        self.vault
+            .authority_fold()
+            .expect("the second install's fold")
+            .issues
+            .contains(&AuthorityFoldIssue::NoRootKey)
+    }
+
+    fn valid(&self, row: &AuthorityEntryHash) -> bool {
+        self.vault
+            .authority_fold()
+            .expect("the second install's fold")
+            .valid_entries
+            .contains(row)
+    }
+
+    /// The verdict the install's fold names for a refused appointment.
+    fn refused_as(&self, appointment: AuthorityEntryHash) -> Option<AppointmentVerdict> {
+        self.vault
+            .authority_fold()
+            .expect("the second install's fold")
+            .issues
+            .iter()
+            .find_map(|issue| match issue {
+                AuthorityFoldIssue::AppointmentRefused { entry, verdict }
+                    if *entry == appointment =>
+                {
+                    Some(*verdict)
+                }
+                _ => None,
+            })
+    }
+}
+
+/// PLAN v3 test 7 (round-1 finding 1): this install carries a pin of its
+/// root for the owner's second install, which never pinned one. The pickup
+/// leaves the root awaited there. The fork, and the root's appointment of a
+/// successor signed outside the door, reach the second install: it stores
+/// the appointment and does not judge it, since an awaited root is no pin,
+/// so the successor has no standing there and the door refuses with the pin
+/// door's name. Once the owner pins the root at the second install's own pin
+/// door, it counts the stored appointment, and the successor's binding lands.
+#[test]
+fn an_awaited_root_counts_no_appointment_until_the_pin_door_writes_it() {
+    let owned = owned();
+    let mut second = owned.enrol_second_install();
+    owned.request_pin(second.machine);
+    second.sync_and_pick_up(&owned);
+    assert_eq!(second.pinned(), None, "a carried pin request sets no pin");
+    assert_eq!(
+        second.awaiting(),
+        Some(owned.root),
+        "the second install awaits the requested root"
+    );
+
+    let heads = owned.heads();
+    let witnesses = owned.fork();
+    second.take(&owned);
+    assert!(second.rootless(), "the fork reaches the second install");
+    let successor = signing(SUCCESSOR_SEED);
+    let parents: Vec<_> = witnesses.iter().chain(&heads).copied().collect();
+    let (appointment, binding) = owned.appointment_and_binding(&successor, parents);
+    second
+        .vault
+        .import_signed_authority_history(&[bytes(&appointment)])
+        .expect("the second install stores the appointment of the root it awaits");
+
+    assert_eq!(
+        second.refused_as(hash(&appointment)),
+        Some(AppointmentVerdict::Unjudged),
+        "an awaited root judges no appointment"
+    );
+    assert!(
+        !second.live(&key_of(&successor)),
+        "the successor has no standing on the second install"
+    );
+    assert!(second.rootless());
+    let stored = second.stored();
+    let refusal = second
+        .vault
+        .appoint_owner_root(&second.owner(), &owned.seed, None)
+        .expect_err("an awaited root is no pin for the door");
+    assert!(
+        refusal.to_string().contains("pin_owner_root"),
+        "the refusal names the pin door: {refusal}"
+    );
+    assert_eq!(second.stored(), stored, "the refusal writes nothing");
+
+    second
+        .vault
+        .pin_owner_root(&second.owner(), owned.root)
+        .expect("the owner pins the awaited root at the second install's pin door");
+
+    assert_eq!(second.pinned(), Some(owned.root));
+    assert!(
+        second.valid(&hash(&appointment)),
+        "the pinned root's stored appointment counts"
+    );
+    assert!(second.live(&key_of(&successor)));
+    assert!(!second.rootless());
+    second
+        .vault
+        .import_signed_authority_history(&[bytes(&binding)])
+        .expect("the successor's binding lands");
+    assert!(second.valid(&hash(&binding)));
+}

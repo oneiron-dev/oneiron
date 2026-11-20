@@ -63,9 +63,30 @@ impl EntityStoreMaintenance for Store {
             id,
             Some((entity_type, &scrubbed[ENTITY_METADATA_HEADER_LEN..])),
         )?;
+        crate::batch::reindex_lexical_query_hint(
+            self,
+            txn,
+            id,
+            Some((entity_type, &scrubbed[ENTITY_METADATA_HEADER_LEN..])),
+        )?;
         if scrubbed == stored {
             return Ok(false);
         }
+        // A scrubbed row names no identity hint and no query prefix: its
+        // rows leave the indexes in this write, since an erase's later
+        // purge reads only the shell.
+        crate::store::identity_hints::reindex_identity_hints(
+            self,
+            txn,
+            id,
+            Some((entity_type, &scrubbed[ENTITY_METADATA_HEADER_LEN..])),
+        )?;
+        crate::ports::reindex_named_entities(
+            self,
+            txn,
+            id,
+            Some((entity_type, &scrubbed[ENTITY_METADATA_HEADER_LEN..])),
+        )?;
         // A scrubbed MACHINE names no endpoint: its key leaves the index in
         // this write, since an erase's later purge reads only the shell.
         crate::authority::reindex_mesh_machine_endpoint(
@@ -174,7 +195,11 @@ impl EntityStoreMaintenance for Store {
         row.body = crate::connector_key::encode_connector_key_body(record)?;
         let payload = row.encode();
         crate::vault::entity_revision::capture_entity_revision(self, txn, id, &payload)?;
-        self.entities.put(txn, id.as_bytes(), &payload)
+        self.entities.put(txn, id.as_bytes(), &payload)?;
+        // FIX RAW-REWRITE-SHORT-ID-STALE: a live read issues the key's short
+        // ref with the hash of the body this put wrote (a revoke or a
+        // suspension changes it), so the index moves to that hash here.
+        crate::vault::entity_revision::refresh_live_short_id_in_txn(self, txn, id)
     }
     fn port_habit_streak_materialize(
         &self,
@@ -194,6 +219,10 @@ impl EntityStoreMaintenance for Store {
             let payload = row.encode();
             crate::vault::entity_revision::capture_entity_revision(self, txn, id, &payload)?;
             self.entities.put(txn, id.as_bytes(), &payload)?;
+            // FIX RAW-REWRITE-SHORT-ID-STALE: this runs at the batch tail,
+            // after the batch indexed the habit's body; the streak fields
+            // change the hash a live read issues the short ref with.
+            crate::vault::entity_revision::refresh_live_short_id_in_txn(self, txn, id)?;
         }
         Ok(())
     }

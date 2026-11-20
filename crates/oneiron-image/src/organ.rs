@@ -16,7 +16,7 @@ use crate::body::{
 };
 use crate::decode::{Header, Profile, check_size, decode, header_cost, read_header};
 use crate::ops::{self, Edited};
-use crate::render::{encode_png, render};
+use crate::render::{JPEG_QUALITY, WEBP_MAX_SIDE, encode, no_jpeg_alpha, render, webp_too_wide};
 
 pub const VERB_INSPECT: &str = "image.inspect";
 pub const VERB_OPEN: &str = "image.open";
@@ -39,8 +39,13 @@ const VERBS: [(&str, bool); 8] = [
     (VERB_PREVIEW, false),
 ];
 
-/// The most ops one `image.render` or `image.preview` applies.
+/// The most ops one `image.render` or `image.preview` applies when its call
+/// names no `max_ops`: the host's default count (`organ_host.image.max_ops`).
 const MAX_RENDER_OPS: usize = 256;
+
+const fn default_max_render_ops() -> usize {
+    MAX_RENDER_OPS
+}
 
 /// The bounds of `image.preview`'s `max_side`, in pixels.
 pub const MIN_PREVIEW_SIDE: u32 = 16;
@@ -185,19 +190,27 @@ struct ExportArgs {
 }
 
 /// `image.render`'s args: the ops in order, each a map naming its `op`
-/// beside that op's own args, and the format.
+/// beside that op's own args, the format, and `max_ops`, the most ops this
+/// render applies: the host's count, which is the vault owner's
+/// `organ_host.image.max_ops`. A call that names none takes
+/// [`MAX_RENDER_OPS`]. The memory grant and frame limits bound each call
+/// whatever the count.
 #[derive(Deserialize)]
 struct RenderArgs {
     ops: Vec<Value>,
     format: String,
+    #[serde(default = "default_max_render_ops")]
+    max_ops: usize,
 }
 
-/// `image.preview`'s args: `image.render`'s ops, and the longest side the
-/// preview may have.
+/// `image.preview`'s args: `image.render`'s ops and `max_ops`, and the
+/// longest side the preview may have.
 #[derive(Deserialize)]
 struct PreviewArgs {
     ops: Vec<Value>,
     max_side: u32,
+    #[serde(default = "default_max_render_ops")]
+    max_ops: usize,
 }
 
 #[derive(Deserialize)]
@@ -327,15 +340,39 @@ fn header_report(header: &Header, too_large: Option<OrganError>) -> Value {
     Value::Map(pairs.into_iter().map(|(k, v)| (k.into(), v)).collect())
 }
 
-/// Refuses any export format but PNG.
-fn png_only(format: &str) -> Result<(), OrganError> {
-    if format == "png" {
-        Ok(())
-    } else {
-        Err(OrganError::new(
+/// The export format an `image.export` or `image.render` call names: `png`,
+/// `jpeg` or `webp` (FIX 23724: an edit keeps its source's format).
+fn export_format(format: &str) -> Result<Format, OrganError> {
+    match format {
+        "png" => Ok(Format::Png),
+        "jpeg" => Ok(Format::Jpeg),
+        "webp" => Ok(Format::Webp),
+        other => Err(OrganError::new(
             ErrorCode::Unsupported,
-            format!("export to {format} is not built; png is"),
-        ))
+            format!("export to {other} is not built; png, jpeg and webp are"),
+        )),
+    }
+}
+
+/// Refuses, before any pixel is made, an export `body` cannot have as
+/// `format`: a JPEG of a source with alpha (a JPEG has none), or a WebP
+/// with a side past [`WEBP_MAX_SIDE`].
+fn exportable(body: &ImageBody, format: Format) -> Result<(), OrganError> {
+    match format {
+        Format::Jpeg if body.source.alpha => Err(no_jpeg_alpha()),
+        Format::Webp if body.canvas.w > WEBP_MAX_SIDE || body.canvas.h > WEBP_MAX_SIDE => {
+            Err(webp_too_wide())
+        }
+        Format::Png | Format::Jpeg | Format::Webp => Ok(()),
+    }
+}
+
+/// The name a format's export is answered under, and its report's word.
+const fn format_word(format: Format) -> (&'static str, &'static str) {
+    match format {
+        Format::Png => ("image.png", "png"),
+        Format::Jpeg => ("image.jpg", "jpeg"),
+        Format::Webp => ("image.webp", "webp"),
     }
 }
 
@@ -494,14 +531,16 @@ impl ImageOrgan {
         })
     }
 
-    /// `image.export {format: png}`: with `image.render`, the only verb that
-    /// makes pixels. The call must carry the source every time, and the
-    /// source must be what the body records: the cache only saves a decode.
+    /// `image.export {format: png | jpeg | webp}`: with `image.render`, the
+    /// only verb that makes pixels. The call must carry the source every
+    /// time, and the source must be what the body records: the cache only
+    /// saves a decode.
     fn export(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
         let args: ExportArgs = from_value(call.args, "export args")?;
-        png_only(&args.format)?;
+        let format = export_format(&args.format)?;
         let body = ImageBody::from_typed(call.body, &|| call.check_cancel())?;
-        let peak = ops::render_peak(&body, &|| call.check_cancel())?;
+        exportable(&body, format)?;
+        let peak = ops::render_peak(&body, format, &|| call.check_cancel())?;
         let input = call
             .inputs
             .iter()
@@ -511,20 +550,21 @@ impl ImageOrgan {
         if source_from(input, &header, icc) != body.source {
             return Err(bad("the input does not match the body's source"));
         }
-        self.export_png(call, &body, peak, input, &header)
+        self.export_as(call, &body, format, peak, input, &header)
     }
 
-    /// `image.render {ops, format: png}` over its one input: `image.open`,
-    /// each op in order, then `image.export`, in one call, so a host holds
-    /// or redrives a whole edit as one call (RULING 09:53 Fri 13 Nov,
-    /// IO-HOLD C). Its answer is the export's: the same PNG, report and
-    /// notes. The body it builds is never returned on its own.
+    /// `image.render {ops, format: png | jpeg | webp}` over its one input:
+    /// `image.open`, each op in order, then `image.export`, in one call, so a
+    /// host holds or redrives a whole edit as one call (RULING 09:53 Fri 13
+    /// Nov, IO-HOLD C). Its answer is the export's: the same file, report
+    /// and notes. The body it builds is never returned on its own.
     fn render(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
         let args: RenderArgs = from_value(call.args, "render args")?;
-        png_only(&args.format)?;
-        let (body, input, header) = self.rendered_body(call, &args.ops)?;
-        let peak = ops::render_peak(&body, &|| call.check_cancel())?;
-        self.export_png(call, &body, peak, input, &header)
+        let format = export_format(&args.format)?;
+        let (body, input, header) = self.rendered_body(call, &args.ops, args.max_ops)?;
+        exportable(&body, format)?;
+        let peak = ops::render_peak(&body, format, &|| call.check_cancel())?;
+        self.export_as(call, &body, format, peak, input, &header)
     }
 
     /// `image.preview {ops, max_side}` over its one input (L4-16):
@@ -539,7 +579,7 @@ impl ImageOrgan {
                 args.max_side
             )));
         }
-        let (mut body, input, header) = self.rendered_body(call, &args.ops)?;
+        let (mut body, input, header) = self.rendered_body(call, &args.ops, args.max_ops)?;
         let check = || call.check_cancel();
         if let Some(fit) = preview_fit(body.canvas, args.max_side) {
             body = ops::resize(
@@ -552,21 +592,23 @@ impl ImageOrgan {
             )?
             .body;
         }
-        let peak = ops::render_peak(&body, &check)?;
-        self.export_png(call, &body, peak, input, &header)
+        let peak = ops::render_peak(&body, Format::Png, &check)?;
+        self.export_as(call, &body, Format::Png, peak, input, &header)
     }
 
     /// The body of the call's one input with `ops` applied in order, as
     /// `image.render` and `image.preview` build it, beside the input and its
-    /// checked header.
+    /// checked header. `max_ops` is the call's count: the host's, which is
+    /// the vault owner's `organ_host.image.max_ops`.
     fn rendered_body<'a>(
         &self,
         call: &'a CallContext<'_>,
         ops: &[Value],
+        max_ops: usize,
     ) -> Result<(ImageBody, &'a InputBytes, Header), OrganError> {
-        if ops.len() > MAX_RENDER_OPS {
+        if ops.len() > max_ops {
             return Err(bad(format!(
-                "a render takes at most {MAX_RENDER_OPS} ops, not {}",
+                "a render takes at most {max_ops} ops, not {}",
                 ops.len()
             )));
         }
@@ -581,14 +623,15 @@ impl ImageOrgan {
         Ok((body, input, header))
     }
 
-    /// The PNG of `body` over its source `input`, whose header and profile
-    /// the caller has checked, with `peak` the most bytes rendering it
-    /// holds: the answer of `image.export`, `image.render` and
-    /// `image.preview` alike.
-    fn export_png(
+    /// The `format` file of `body` over its source `input`, whose header and
+    /// profile the caller has checked, with `peak` the most bytes rendering
+    /// and encoding it holds: the answer of `image.export`, `image.render`
+    /// and `image.preview` (always PNG) alike.
+    fn export_as(
         &self,
         call: &CallContext<'_>,
         body: &ImageBody,
+        format: Format,
         peak: u64,
         input: &InputBytes,
         header: &Header,
@@ -600,14 +643,15 @@ impl ImageOrgan {
         let pixels = render(&source, body, &|| call.check_cancel())?;
         drop(source);
         call.check_cancel()?;
-        let png = encode_png(&pixels, header.alpha)?;
+        let file = encode(&pixels, format, header.alpha)?;
+        let (name, word) = format_word(format);
         // The body it rendered rides in the report, so a proposal the export
         // lands keeps the edit that made it (RULING 09:34 Fri 13 Nov, IO-BODY A).
         let report = Value::Map(vec![
-            ("format".into(), "png".into()),
+            ("format".into(), word.into()),
             ("width".into(), pixels.width().into()),
             ("height".into(), pixels.height().into()),
-            ("bytes".into(), (png.len() as u64).into()),
+            ("bytes".into(), (file.len() as u64).into()),
             ("body_schema".into(), SCHEMA.into()),
             ("body".into(), to_value(body)?),
         ]);
@@ -628,11 +672,17 @@ impl ImageOrgan {
             code: "metadata_stripped".into(),
             detail: "the export carries no EXIF, ICC or text metadata".into(),
         });
+        if format == Format::Jpeg {
+            notes.losses.push(Loss {
+                code: "lossy_encode".into(),
+                detail: format!("the JPEG is encoded again, at quality {JPEG_QUALITY}"),
+            });
+        }
         Ok(Answer {
             outputs: vec![OutputBytes {
-                name: "image.png".into(),
-                media_type: "image/png".into(),
-                bytes: png,
+                name: name.into(),
+                media_type: format.media_type().into(),
+                bytes: file,
             }],
             report,
             notes,

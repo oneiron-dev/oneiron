@@ -25,6 +25,7 @@ const CALENDAR: u8 = 0x74;
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("open booking vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     (dir, vault)
 }
 
@@ -39,6 +40,7 @@ fn synthetic_config() -> EventTypeConfig {
         booking_window_secs: 14 * 24 * 3_600,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: id(HOST),
@@ -58,6 +60,7 @@ fn synthetic_config() -> EventTypeConfig {
             start_minute: 10 * 60,
             end_minute: 22 * 60,
         }],
+        allowed_durations_min: Vec::new(),
     }
 }
 

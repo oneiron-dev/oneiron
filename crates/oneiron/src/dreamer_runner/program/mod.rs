@@ -38,6 +38,8 @@ mod admit;
 mod arm;
 mod authority;
 mod bodies;
+#[cfg(feature = "sync")]
+mod carried_row_placement;
 mod erase;
 mod hold_index;
 mod index;
@@ -49,6 +51,8 @@ mod release;
 #[cfg(feature = "sync")]
 pub(crate) mod replica;
 mod resume;
+#[cfg(feature = "sync")]
+mod retraction;
 mod run;
 mod stop_recovery;
 mod stop_sends;
@@ -89,7 +93,8 @@ pub use self::read::{
 };
 pub use self::rebind::{TurnProgramRebindReceipt, TurnProgramRebindRequest, rebind_turn_program};
 pub use self::release::{
-    ProgramHoldReleaseAction, ProgramHoldReleaseView, ReleaseTurnProgramHoldRequest,
+    PROGRAM_HOLD_RELEASE_VERB, ProgramHoldReleaseAction, ProgramHoldReleaseView,
+    ReleaseTurnProgramHoldRequest, release_turn_program_hold_as_delegate,
     release_turn_program_hold_as_owner,
 };
 pub(crate) use self::resume::ProgramHold;
@@ -100,9 +105,7 @@ pub(crate) use self::run::{
 // The owner's stop of a parked try (`park_release`) abandons the try's
 // Pending sends as a held program's Stop does (FIX 7188).
 pub(in crate::dreamer_runner) use self::stop_sends::abandon_stopped_sends_in_txn;
-pub(crate) use self::trigger::{
-    next_program_timer_at, release_idle_programs, release_program_wakes,
-};
+pub(crate) use self::trigger::{PROGRAM_TIMER_JOB, release_idle_programs, release_program_wakes};
 pub use self::types::{
     ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin, ProgramTrigger,
     TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain,

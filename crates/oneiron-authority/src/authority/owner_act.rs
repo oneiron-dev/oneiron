@@ -162,6 +162,11 @@ pub enum OwnerActKind {
     /// proposal lands `Proposed` under the carrying owner's principal, and
     /// only the owner accepts.
     ModelBindingPropose,
+    /// The owner's word that no other machine of the vault is left, which
+    /// joins one machine born of a restore (`RestoredMachineJoin`; Setting
+    /// DESIGN pass 15e "Joined", RULING RESTORED-COPIES-JOIN-SCOPE = A). Its
+    /// `seen` is over the one enrolment it joins.
+    RestoredMachineJoin,
     /// An agent's start of a continued outside session under its live Grant
     /// naming the verb (Engine ruling Sat 14 Nov 20:57, L10-17-WHO = B:
     /// "The owner may start a continue, and so may an outside agent whose
@@ -203,6 +208,7 @@ impl OwnerActKind {
             Self::OriginCut => "origin_cut",
             Self::DeviceSuccession => "device_succession",
             Self::ModelBindingPropose => "model_binding_propose",
+            Self::RestoredMachineJoin => "restored_machine_join",
             Self::RunnerContinue => "runner_continue",
             Self::HookTranscriptImport => "hook_transcript_import",
         }
@@ -234,6 +240,7 @@ impl OwnerActKind {
             "origin_cut" => Self::OriginCut,
             "device_succession" => Self::DeviceSuccession,
             "model_binding_propose" => Self::ModelBindingPropose,
+            "restored_machine_join" => Self::RestoredMachineJoin,
             "runner_continue" => Self::RunnerContinue,
             "hook_transcript_import" => Self::HookTranscriptImport,
             _ => return None,

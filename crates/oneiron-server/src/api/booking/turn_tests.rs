@@ -92,6 +92,7 @@ fn listing(nth: u64) -> BookingAvailabilityInput {
         visitor_tz: "UTC".to_owned(),
         constraint: None,
         session_ref: format!("turn-{nth}"),
+        duration_min: None,
     }
 }
 
@@ -112,7 +113,9 @@ fn book_input(request: BookingOperationRequest) -> BookingBookInput {
 }
 
 /// Past the owner's slot-list, hold and book windows (one a minute each), the
-/// second request of each kind waits for its window to open and is served.
+/// second request of each kind is served at once: since FIX 128-131 an
+/// authenticated caller is counted against `[limits]` rows that ask and
+/// serve, and spends none of those windows, so no crossing asks.
 #[tokio::test(start_paused = true)]
 async fn an_authenticated_caller_past_each_booking_window_waits_and_is_served() {
     let fixture = fixture_on_the_runtime_clock();
@@ -165,7 +168,10 @@ async fn an_authenticated_caller_past_each_booking_window_waits_and_is_served() 
             "confirmed, got {confirmed:?}"
         );
     }
-    assert!(asked(&fixture), "each window's crossing asks");
+    assert!(
+        !asked(&fixture),
+        "an authenticated caller crosses no window"
+    );
 }
 
 /// Two credentials behind one address keep windows of their own: one past its

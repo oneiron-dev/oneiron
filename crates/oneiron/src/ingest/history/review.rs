@@ -47,16 +47,29 @@ const OWN_SECOND_POLL: Duration = Duration::from_millis(50);
 const ERR_CLOCK_AHEAD: &str = "the vault's clock is ahead of this machine's; import again once \
      the machine's clock passes it, so this import has a review of its own";
 
+/// The one import second owned at a time in this process. The CLI, the
+/// queue pass, the hosted-import worker and `vault.imports.hook_transcript`
+/// all own their second through [`Vault::own_import_second`], which holds
+/// this from its first read of the vault's clock until the second is owned,
+/// so two imports that start in the same second own different seconds and
+/// each keeps a review of its own.
+static OWN_SECOND: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 impl Vault {
     /// The second an import lands at: after every write before it, so no two
-    /// imports share one and each has a review of its own. Waits out the rest
-    /// of the current second; a vault clock more than two seconds ahead of
-    /// this machine's refuses the import rather than share a second with an
-    /// earlier one.
+    /// imports share one and each has a review of its own. Holds the
+    /// process's one import-second lock for the whole wait, so two imports
+    /// that start in the same second own different seconds. Waits out the
+    /// rest of the current second; a vault clock more than two seconds ahead
+    /// of this machine's refuses the import rather than share a second with
+    /// an earlier one.
     ///
     /// # Errors
     /// A vault clock that did not pass its second within two seconds.
     pub fn own_import_second(&self) -> MemoryResult<u64> {
+        let _second = OWN_SECOND
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let start = self.now_recorded_at();
         let deadline = Instant::now() + OWN_SECOND_WAIT;
         loop {
