@@ -42,6 +42,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use booking_host_seat_support::{Seat, SeatChange, seat_owner};
+use oneiron::agent_inbox_lens::AgentInboxLensQuery;
 use oneiron::booking::lifecycle::{
     DepositCheckoutStart, DepositProviderEvent, DepositProviderEventKind,
     DepositProviderEventOutcome, DepositProviderFailure, DepositSettleMove, DepositSettleRequest,
@@ -2507,4 +2508,688 @@ fn the_host_returns_the_balance_while_a_late_cancel_refund_is_owed() {
             amount_minor: 4_000
         }
     );
+}
+
+// The owner's line for a held deposit (BK-DEPOSIT-HOST-CANCEL-AFTER-START-
+// OWNER-LINE PR 2; BK-DEPOSIT-OWNER-RETURN-SCOPE = A, Engine 21 Nov 02:56;
+// BK-ECHO-UNMARKED-SAME-SHAPE-COPY = C, lead 21 Nov 04:3x). Once a booking
+// is cancelled or has started, its card says what the deposit still holds
+// and offers Return deposit to a selected host; where a calendar's cancel
+// moved no money, the line is also an INBOX row of its own until the
+// deposit holds nothing. Each row is read through the verbs by name, so the
+// pre-fix head builds these tests: its red is an assert.
+
+/// The prefix of a held deposit's INBOX row.
+const HELD_DEPOSIT_ROW: &str = "booking-held-deposit:";
+
+/// The held-deposit rows of `actor`'s INBOX slice at `now`.
+fn held_deposit_rows(fixture: &Fixture, actor: EntityId, now: u64) -> Vec<String> {
+    fixture.set_clock(now);
+    fixture
+        .vault
+        .agent_inbox_slice(actor, 500, None)
+        .expect("the actor's inbox slice")
+        .into_iter()
+        .map(|item| item.item_id)
+        .filter(|id| id.starts_with(HELD_DEPOSIT_ROW))
+        .collect()
+}
+
+/// `reader` opens the INBOX row `item_id` (`self.inbox.get`): the booking
+/// card it carries, as JSON.
+fn open_booking_row(reader: &Memory<'_>, item_id: &str) -> serde_json::Value {
+    let opened = oneiron::verbs::invoke(
+        reader,
+        "self.inbox.get",
+        serde_json::json!({ "item_id": item_id }),
+    )
+    .expect("the reader opens the row");
+    opened["booking"].clone()
+}
+
+/// The visitor's calendar, which the booking was never written to, carries
+/// `booked` cancelled at `now`, and the owner approves that cancellation, so
+/// the booking reads cancelled with its deposit held
+/// (DEPOSIT-HOST-CANCEL-SOURCE = A).
+fn cancel_on_unwritten_calendar(fixture: &Fixture, booked: &ConfirmReceipt, now: u64) {
+    let slot = slot_at(9);
+    let visitor = Seat::install(&fixture.vault, VISITOR_SEAT_SYSTEM);
+    read_booking_on_seat(&visitor, fixture, booked, slot.start, now - 30);
+    visitor
+        .pull(
+            &fixture.vault,
+            &[SeatChange::foreign(
+                &visitor,
+                &booked.calendar.uid,
+                slot.start,
+                slot.end,
+                1,
+                true,
+            )],
+            now,
+        )
+        .expect("the visitor calendar's cancellation");
+    approve_imported_status(&fixture.vault, booked.calendar.event_ref);
+}
+
+/// A cancel from a calendar the booking was never written to moves no
+/// money: the selected host's INBOX carries the held deposit as a row of its
+/// own, which opens the booking card with the deposit line and Return
+/// deposit. The host's return ends the row and the line.
+#[test]
+fn a_calendar_cancel_that_moved_no_money_lists_the_held_deposit_until_the_host_returns_it() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let booked = captured_booking(&fixture, "pi_held_line", 9);
+    let row = format!("{HELD_DEPOSIT_ROW}{}", booked.calendar.event_ref.to_hex());
+    assert!(
+        held_deposit_rows(&fixture, fixture.host, NOW + 60).is_empty(),
+        "a live booking before its start lists no held deposit"
+    );
+    cancel_on_unwritten_calendar(&fixture, &booked, NOW + 120);
+    assert_eq!(
+        fixture.state_of("pi_held_line"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a cancellation from a calendar the booking was not written to moves no money"
+    );
+
+    assert_eq!(
+        held_deposit_rows(&fixture, fixture.host, NOW + 180),
+        vec![row.clone()],
+        "the selected host's INBOX lists the held deposit"
+    );
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    let card = open_booking_row(&host, &row);
+    assert_eq!(card["status"], "cancelled", "{card}");
+    assert_eq!(
+        card["deposit"],
+        serde_json::json!({
+            "held": "captured",
+            "amount_minor": 4_000,
+            "currency": "usd",
+            "reason": "calendar_cancel",
+            "line": "Booking at 2026-03-02 09:00 (UTC) was cancelled in a calendar. 40.00 USD is \
+                     still held as its deposit. Choose Return deposit to refund it in full.",
+            "return_offered": true,
+        }),
+        "{card}"
+    );
+    assert_eq!(
+        held_deposit_rows(&fixture, fixture.host, NOW + 2 * 86_400),
+        vec![row.clone()],
+        "the row stands on later days while the deposit is held"
+    );
+
+    fixture.set_clock(NOW + 2 * 86_400 + 60);
+    let refund = refund_deposit(&host, &booked).expect("the host returns the deposit");
+    assert_eq!(refund["state"], "refund_due", "{refund}");
+    assert!(
+        held_deposit_rows(&fixture, fixture.host, NOW + 2 * 86_400 + 120).is_empty(),
+        "a return owed ends the row"
+    );
+    assert!(
+        oneiron::verbs::invoke(
+            &host,
+            "self.inbox.get",
+            serde_json::json!({ "item_id": row }),
+        )
+        .is_err(),
+        "the row's handle no longer opens once the return is owed"
+    );
+}
+
+/// The host deletes the booking from the calendar it was written to after
+/// the meeting started: the cancel moves no money
+/// (DEPOSIT-HOST-CANCEL-AFTER-START = A), so the held deposit is listed.
+#[test]
+fn a_calendar_cancel_after_the_start_lists_the_held_deposit() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let booked = captured_booking(&fixture, "pi_after_start_line", 9);
+    let slot = slot_at(9);
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let wrote = seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+    pull_seat(&seat, &fixture, &wrote, slot.start, 0, false, NOW + 60)
+        .expect("the seat's first pull");
+    fixture.set_clock(slot.start + 60);
+    pull_seat(
+        &seat,
+        &fixture,
+        &wrote,
+        slot.start,
+        1,
+        true,
+        slot.start + 60,
+    )
+    .expect("the host's cancellation after the start");
+    approve_imported_status(&fixture.vault, booked.calendar.event_ref);
+    assert_eq!(
+        fixture.state_of("pi_after_start_line"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a cancellation seen after the start moves no money"
+    );
+    let row = format!("{HELD_DEPOSIT_ROW}{}", booked.calendar.event_ref.to_hex());
+    assert_eq!(
+        held_deposit_rows(&fixture, fixture.host, slot.start + 120),
+        vec![row.clone()]
+    );
+    let card = open_booking_row(
+        &fixture.vault.memory(fixture.host, EdgeActorClass::Human),
+        &row,
+    );
+    assert_eq!(card["deposit"]["reason"], "calendar_cancel", "{card}");
+    assert_eq!(card["deposit"]["held"], "captured", "{card}");
+    assert_eq!(card["deposit"]["return_offered"], true, "{card}");
+}
+
+/// BK-ECHO-UNMARKED-SAME-SHAPE-COPY = C: the owner's cancelled write lands
+/// but its answer is lost, and the provider drops the write's marker from
+/// the copy it stores. The replay reads that copy as the owner's own write
+/// (A: a host's cancel at that SEQUENCE reads the same), so the deposit
+/// stays held, and the owner's line names a cancel Oneiron cannot
+/// attribute, with Return deposit.
+#[test]
+fn a_cancel_read_as_the_owners_write_without_its_marker_lists_the_held_deposit_as_unattributed() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let booked = captured_booking(&fixture, "pi_unattributed_line", 9);
+    let event = booked.calendar.event_ref;
+    let slot = slot_at(9);
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let live = seat.write(&fixture.vault, event, NOW + 55);
+    pull_seat(&seat, &fixture, &live, slot.start, 0, false, NOW + 60)
+        .expect("the seat's first pull");
+    cancel_on_unwritten_calendar(&fixture, &booked, NOW + 120);
+
+    let stored = seat.write_with_lost_answer(&fixture.vault, event, NOW + 150);
+    let copy = seat.stripped_rewrite_of_own_write(&live, stored, NOW + 160);
+    seat.replay_refused_over(&fixture.vault, event, &copy, NOW + 170);
+    seat.pull(&fixture.vault, std::slice::from_ref(&copy), NOW + 180)
+        .expect("seat pull");
+    assert_eq!(
+        fixture.state_of("pi_unattributed_line"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the copy with its marker dropped reads as the owner's own write and moves no money"
+    );
+
+    let row = format!("{HELD_DEPOSIT_ROW}{}", event.to_hex());
+    assert_eq!(
+        held_deposit_rows(&fixture, fixture.host, NOW + 240),
+        vec![row.clone()]
+    );
+    let card = open_booking_row(
+        &fixture.vault.memory(fixture.host, EdgeActorClass::Human),
+        &row,
+    );
+    assert_eq!(
+        card["deposit"],
+        serde_json::json!({
+            "held": "captured",
+            "amount_minor": 4_000,
+            "currency": "usd",
+            "reason": "unattributed_cancel",
+            "line": "Booking at 2026-03-02 09:00 (UTC): a cancel we can't attribute: refund by \
+                     hand? 40.00 USD is still held as its deposit. Choose Return deposit to \
+                     refund it in full.",
+            "return_offered": true,
+        }),
+        "{card}"
+    );
+}
+
+/// A booking that simply started (the visitor did not show) keeps its
+/// captured deposit: the line is on the booking card only, from the start,
+/// and no row of its own is listed.
+#[test]
+fn a_started_booking_shows_its_held_deposit_on_its_card_only() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let booked = captured_booking(&fixture, "pi_started_line", 9);
+    let card_row = format!("booking:{}", booked.calendar.event_ref.to_hex());
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    fixture.set_clock(NOW + 60);
+    let before = open_booking_row(&host, &card_row);
+    assert!(
+        before.get("deposit").is_none(),
+        "a live booking before its start shows no deposit line: {before}"
+    );
+    let started = slot_at(9).start + 60;
+    assert!(held_deposit_rows(&fixture, fixture.host, started).is_empty());
+    let card = open_booking_row(&host, &card_row);
+    assert_eq!(
+        card["deposit"],
+        serde_json::json!({
+            "held": "captured",
+            "amount_minor": 4_000,
+            "currency": "usd",
+            "reason": "started",
+            "line": "Booking at 2026-03-02 09:00 (UTC) has started. 40.00 USD is still held as \
+                     its deposit. Choose Return deposit to refund it in full.",
+            "return_offered": true,
+        }),
+        "{card}"
+    );
+}
+
+/// The vault's owner was not the host selected at confirmation: no held
+/// row is listed for them, and the card they open says the deposit is held
+/// without offering them Return deposit, which would refuse them.
+#[test]
+fn an_owner_who_was_not_a_selected_host_is_not_offered_the_return() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, Some(test_id(OTHER_HOST_SEED)));
+    let booked = captured_booking(&fixture, "pi_not_selected_line", 9);
+    cancel_on_unwritten_calendar(&fixture, &booked, NOW + 120);
+    let owner = fixture
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    assert!(
+        held_deposit_rows(&fixture, owner, NOW + 180).is_empty(),
+        "only a selected host's INBOX lists the held deposit"
+    );
+    let card = open_booking_row(
+        &fixture.vault.memory(owner, EdgeActorClass::Human),
+        &format!("booking:{}", booked.calendar.event_ref.to_hex()),
+    );
+    assert_eq!(card["deposit"]["reason"], "calendar_cancel", "{card}");
+    assert_eq!(card["deposit"]["return_offered"], false, "{card}");
+    assert_eq!(
+        card["deposit"]["line"],
+        "Booking at 2026-03-02 09:00 (UTC) was cancelled in a calendar. 40.00 USD is still held \
+         as its deposit. A host selected when it was confirmed can return it.",
+        "{card}"
+    );
+}
+
+// Review round 1 of #10028.
+
+/// Whether `rows` carries the INBOX row `row`.
+fn lists_held_row(rows: &[oneiron::agent_inbox_lens::AgentInboxLensItem], row: &str) -> bool {
+    rows.iter().any(|item| item.item_id == row)
+}
+
+/// Review round 1 of #10028 (P1 held_deposit.rs:110): the one calendar
+/// that carries the booking, written to it, leaves it out of a complete
+/// listing before the start. The omission reads the booking cancelled but
+/// is no cancel and moves no money, so the deposit line stays on the
+/// booking card and no row of its own is listed.
+#[test]
+fn a_plain_omission_shows_the_held_deposit_on_its_card_only() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let booked = captured_booking(&fixture, "pi_omission_line", 9);
+    let seat = host_seat_reading_and_written(&fixture, &booked, slot_at(9).start, NOW + 54);
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::omitted(&booked.calendar.uid)],
+        NOW + 60,
+    )
+    .expect("the omission before the start");
+    approve_imported_status(&fixture.vault, booked.calendar.event_ref);
+    assert_eq!(
+        fixture.state_of("pi_omission_line"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "an omission moves no money"
+    );
+
+    assert!(
+        held_deposit_rows(&fixture, fixture.host, NOW + 120).is_empty(),
+        "a plain omission lists no held deposit"
+    );
+    let card = open_booking_row(
+        &fixture.vault.memory(fixture.host, EdgeActorClass::Human),
+        &format!("booking:{}", booked.calendar.event_ref.to_hex()),
+    );
+    assert_eq!(card["status"], "cancelled", "{card}");
+    assert_eq!(
+        card["deposit"],
+        serde_json::json!({
+            "held": "captured",
+            "amount_minor": 4_000,
+            "currency": "usd",
+            "reason": "calendar_omission",
+            "line": "Booking at 2026-03-02 09:00 (UTC) is missing from every calendar that \
+                     listed it, so it reads as cancelled. 40.00 USD is still held as its \
+                     deposit. Choose Return deposit to refund it in full.",
+            "return_offered": true,
+        }),
+        "{card}"
+    );
+}
+
+/// Review round 1 of #10028 (P1 owner_card.rs:165): the held-deposit row
+/// is listed only on the own INBOX slice of a selected host. The
+/// cross-identity lens, and another reader's view of the host's slice, list
+/// it for no one.
+#[test]
+fn the_held_deposit_row_lists_only_on_a_selected_hosts_own_slice() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let booked = captured_booking(&fixture, "pi_own_slice_line", 9);
+    cancel_on_unwritten_calendar(&fixture, &booked, NOW + 120);
+    let row = format!("{HELD_DEPOSIT_ROW}{}", booked.calendar.event_ref.to_hex());
+    assert_eq!(
+        held_deposit_rows(&fixture, fixture.host, NOW + 180),
+        vec![row.clone()],
+        "the selected host's own slice lists the held deposit"
+    );
+
+    let lens = fixture
+        .vault
+        .agent_inbox_lens(AgentInboxLensQuery {
+            identity_ref: None,
+            limit: 500,
+            before: None,
+        })
+        .expect("the cross-identity lens");
+    assert!(
+        !lists_held_row(&lens, &row),
+        "the cross-identity lens lists no held deposit"
+    );
+    let viewed = fixture
+        .vault
+        .agent_identity_inbox_slice(fixture.host, None, 500, None, false)
+        .expect("another reader's view of the host's slice");
+    assert!(
+        !lists_held_row(&viewed, &row),
+        "another reader's view of the host's slice lists no held deposit"
+    );
+}
+
+/// Review round 1 of #10028 (P1 owner_card.rs:212): the host marks the
+/// held row of a cancel from an unwritten calendar done; the replay of the
+/// owner's cancelled write then reads a copy with its marker dropped, which
+/// makes the cancel one Oneiron cannot attribute. The row comes back new,
+/// under the same handle.
+#[test]
+fn a_held_deposit_row_marked_done_comes_back_when_its_cancel_turns_unattributed() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let booked = captured_booking(&fixture, "pi_done_then_unattributed", 9);
+    let event = booked.calendar.event_ref;
+    let slot = slot_at(9);
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let live = seat.write(&fixture.vault, event, NOW + 55);
+    pull_seat(&seat, &fixture, &live, slot.start, 0, false, NOW + 60)
+        .expect("the seat's first pull");
+    cancel_on_unwritten_calendar(&fixture, &booked, NOW + 120);
+    let row = format!("{HELD_DEPOSIT_ROW}{}", event.to_hex());
+    let board = |now: u64| -> Vec<(String, oneiron::agent_inbox_lens::AgentInboxReadState)> {
+        fixture.set_clock(now);
+        fixture
+            .vault
+            .agent_inbox_board_slice(fixture.host, 500, now)
+            .expect("the host's board")
+            .rows
+            .into_iter()
+            .map(|(item, state)| (item.item_id, state))
+            .filter(|(id, _)| id.starts_with(HELD_DEPOSIT_ROW))
+            .collect()
+    };
+    assert_eq!(
+        board(NOW + 130),
+        vec![(
+            row.clone(),
+            oneiron::agent_inbox_lens::AgentInboxReadState::New
+        )]
+    );
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    oneiron::verbs::invoke(
+        &host,
+        "self.inbox.done",
+        serde_json::json!({ "item_id": row }),
+    )
+    .expect("the host marks the held row done");
+    assert!(board(NOW + 140).is_empty(), "a row marked done leaves");
+
+    let stored = seat.write_with_lost_answer(&fixture.vault, event, NOW + 150);
+    let copy = seat.stripped_rewrite_of_own_write(&live, stored, NOW + 160);
+    seat.replay_refused_over(&fixture.vault, event, &copy, NOW + 170);
+    seat.pull(&fixture.vault, std::slice::from_ref(&copy), NOW + 180)
+        .expect("seat pull");
+    assert_eq!(
+        board(NOW + 240),
+        vec![(
+            row.clone(),
+            oneiron::agent_inbox_lens::AgentInboxReadState::New
+        )],
+        "the unattributed cancel brings the row back"
+    );
+    let card = open_booking_row(&host, &row);
+    assert_eq!(card["deposit"]["reason"], "unattributed_cancel", "{card}");
+}
+
+/// Review round 1 of #10028 (P1 held_deposit.rs:176): a late visitor cancel
+/// under a 25% rule owes a quarter of the capture back. Until that refund
+/// settles, the card says it is owed, not made; once it settles, the card
+/// says it was made. Both keep the balance and Return deposit.
+#[test]
+fn a_partial_refund_still_owed_is_not_shown_as_made() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned_with_terms(&clock, late_refund_terms(25));
+    let booked = captured_booking(&fixture, "pi_owed_line", 9);
+    cancel(&fixture, &booked, NOW + 120);
+    assert_eq!(
+        fixture.state_of("pi_owed_line"),
+        DepositState::RefundDue {
+            amount_minor: 1_000
+        }
+    );
+    let card_row = format!("booking:{}", booked.calendar.event_ref.to_hex());
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    fixture.set_clock(NOW + 180);
+    let owed = open_booking_row(&host, &card_row);
+    assert_eq!(
+        owed["deposit"],
+        serde_json::json!({
+            "held": "balance_after_owed_refund",
+            "amount_minor": 3_000,
+            "currency": "usd",
+            "reason": "cancelled",
+            "line": "Booking at 2026-03-02 09:00 (UTC) was cancelled. A partial refund of its \
+                     deposit is owed and not yet made; 30.00 USD more is still held. Choose \
+                     Return deposit to refund the balance once that refund is made.",
+            "return_offered": true,
+        }),
+        "{owed}"
+    );
+
+    let mut provider = KeyedRefundProvider::default();
+    drain_settle_rows(&fixture, &mut provider, NOW + 240);
+    assert_eq!(
+        fixture.state_of("pi_owed_line"),
+        DepositState::Refunded {
+            amount_minor: 1_000
+        }
+    );
+    fixture.set_clock(NOW + 360);
+    let made = open_booking_row(&host, &card_row);
+    assert_eq!(
+        made["deposit"],
+        serde_json::json!({
+            "held": "balance_after_refund",
+            "amount_minor": 3_000,
+            "currency": "usd",
+            "reason": "cancelled",
+            "line": "Booking at 2026-03-02 09:00 (UTC) was cancelled. 30.00 USD of its deposit \
+                     is still held after a partial refund. Choose Return deposit to refund the \
+                     balance.",
+            "return_offered": true,
+        }),
+        "{made}"
+    );
+}
+
+// Review round 2 of #10028.
+
+/// Review round 2 of #10028 (P1 held_deposit.rs:134): the host deletes the
+/// booking after the start from the calendar it was written to, while the
+/// visitor's calendar still shows it; the visitor's calendar then leaves it
+/// out, and that omission concludes the cancel. The host's delete, first
+/// seen after the start, moved no money (DEPOSIT-HOST-CANCEL-AFTER-START =
+/// A), so the held deposit is listed as a calendar's cancel.
+#[test]
+fn a_host_delete_after_the_start_that_an_omission_concludes_lists_the_held_deposit() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let booked = captured_booking(&fixture, "pi_late_delete_then_omission", 9);
+    let start = slot_at(9).start;
+    let host_seat = host_seat_reading_and_written(&fixture, &booked, start, NOW + 54);
+    let visitor = Seat::install(&fixture.vault, VISITOR_SEAT_SYSTEM);
+    read_booking_on_seat(&visitor, &fixture, &booked, start, NOW + 56);
+    fixture.set_clock(start + 60);
+    seat_tombstone(&host_seat, &fixture, &booked, start + 60)
+        .expect("the host's delete after the start");
+    fixture.set_clock(start + 120);
+    visitor
+        .pull(
+            &fixture.vault,
+            &[SeatChange::omitted(&booked.calendar.uid)],
+            start + 120,
+        )
+        .expect("the visitor calendar's omission");
+    approve_imported_status(&fixture.vault, booked.calendar.event_ref);
+    assert_eq!(
+        fixture.state_of("pi_late_delete_then_omission"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a host delete first seen after the start moves no money"
+    );
+
+    let row = format!("{HELD_DEPOSIT_ROW}{}", booked.calendar.event_ref.to_hex());
+    assert_eq!(
+        held_deposit_rows(&fixture, fixture.host, start + 180),
+        vec![row.clone()],
+        "the host's delete lists the held deposit, though an omission concluded the cancel"
+    );
+    let card = open_booking_row(
+        &fixture.vault.memory(fixture.host, EdgeActorClass::Human),
+        &row,
+    );
+    assert_eq!(card["status"], "cancelled", "{card}");
+    assert_eq!(card["deposit"]["reason"], "calendar_cancel", "{card}");
+    assert_eq!(card["deposit"]["return_offered"], true, "{card}");
+}
+
+/// Review round 2 of #10028 (P1 owner_card.rs:222): before the start, a
+/// calendar the booking was never written to cancels it in one second, and
+/// the host marks the held row done in that second; the replay of the
+/// owner's cancelled write then reads a copy with its marker dropped, in the
+/// same second. The row's time does not move, but the cancel Oneiron cannot
+/// attribute is a new version of the row: it comes back new, under the same
+/// handle.
+#[test]
+fn a_held_deposit_row_marked_done_comes_back_when_its_cancel_turns_unattributed_in_one_second() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let booked = captured_booking(&fixture, "pi_done_then_unattributed_same_second", 9);
+    let event = booked.calendar.event_ref;
+    let slot = slot_at(9);
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let live = seat.write(&fixture.vault, event, NOW + 55);
+    pull_seat(&seat, &fixture, &live, slot.start, 0, false, NOW + 60)
+        .expect("the seat's first pull");
+    let second = NOW + 120;
+    fixture.set_clock(second);
+    cancel_on_unwritten_calendar(&fixture, &booked, second);
+    let row = format!("{HELD_DEPOSIT_ROW}{}", event.to_hex());
+    let board = || -> Vec<(String, oneiron::agent_inbox_lens::AgentInboxReadState)> {
+        fixture
+            .vault
+            .agent_inbox_board_slice(fixture.host, 500, second)
+            .expect("the host's board")
+            .rows
+            .into_iter()
+            .map(|(item, state)| (item.item_id, state))
+            .filter(|(id, _)| id.starts_with(HELD_DEPOSIT_ROW))
+            .collect()
+    };
+    assert_eq!(
+        board(),
+        vec![(
+            row.clone(),
+            oneiron::agent_inbox_lens::AgentInboxReadState::New
+        )]
+    );
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    oneiron::verbs::invoke(
+        &host,
+        "self.inbox.done",
+        serde_json::json!({ "item_id": row }),
+    )
+    .expect("the host marks the held row done");
+    assert!(board().is_empty(), "a row marked done leaves");
+
+    let stored = seat.write_with_lost_answer(&fixture.vault, event, second);
+    let copy = seat.stripped_rewrite_of_own_write(&live, stored, second);
+    seat.replay_refused_over(&fixture.vault, event, &copy, second);
+    seat.pull(&fixture.vault, std::slice::from_ref(&copy), second)
+        .expect("seat pull");
+    assert_eq!(
+        fixture.state_of("pi_done_then_unattributed_same_second"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the copy with its marker dropped moves no money"
+    );
+    assert_eq!(
+        board(),
+        vec![(
+            row.clone(),
+            oneiron::agent_inbox_lens::AgentInboxReadState::New
+        )],
+        "the unattributed cancel in the same second brings the row back"
+    );
+    let card = open_booking_row(&host, &row);
+    assert_eq!(card["deposit"]["reason"], "unattributed_cancel", "{card}");
+}
+
+/// Review round 2 of #10028 (P1 read_state.rs:197): a booking's row is
+/// listed on the day it was confirmed only. On a later day the booking has
+/// started, and its held deposit, which a start lists on no row of its own,
+/// is on its card alone: the booking handle the host kept still opens that
+/// card, with Return deposit.
+#[test]
+fn a_kept_booking_handle_opens_its_card_on_a_later_day() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let booked = captured_booking(&fixture, "pi_kept_handle", 9);
+    let card_row = format!("booking:{}", booked.calendar.event_ref.to_hex());
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    let next_day = NOW + 86_400;
+    assert!(
+        held_deposit_rows(&fixture, fixture.host, next_day).is_empty(),
+        "a started booking lists no held deposit row"
+    );
+    let listed = fixture
+        .vault
+        .agent_inbox_slice(fixture.host, 500, None)
+        .expect("the host's inbox slice");
+    assert!(
+        !listed.iter().any(|item| item.item_id == card_row),
+        "the booking's row has left the same-day listing"
+    );
+    let opened = oneiron::verbs::invoke(
+        &host,
+        "self.inbox.get",
+        serde_json::json!({ "item_id": card_row }),
+    );
+    assert!(
+        opened.is_ok(),
+        "the kept booking handle opens on a later day: {opened:?}"
+    );
+    let card = opened.expect("the kept booking handle opens")["booking"].clone();
+    assert_eq!(card["deposit"]["reason"], "started", "{card}");
+    assert_eq!(card["deposit"]["held"], "captured", "{card}");
+    assert_eq!(card["deposit"]["return_offered"], true, "{card}");
 }

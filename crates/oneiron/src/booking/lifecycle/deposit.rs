@@ -45,9 +45,14 @@ use crate::booking::{BookingError, DepositTerms, EventTypeKey};
 use crate::side_table::{self, SideTable, VersionedNamed};
 use crate::{EntityId, Vault};
 
+mod held;
 mod refund;
 mod settle;
 
+pub(crate) use self::held::note_unattributed_cancel_in_txn;
+pub(super) use self::held::{
+    HeldDeposit, HeldDepositKind, held_deposit_in_txn, unattributed_cancel_sequence_in_txn,
+};
 pub(super) use self::refund::{
     cap_refund_on_visitor_reschedule_in_writer, refund_on_host_cancel_in_writer,
     refund_on_visitor_cancel_in_writer,
@@ -153,7 +158,28 @@ struct DepositRow {
     /// owed: once that refund settles, the balance is owed as well.
     #[serde(default)]
     balance_owed_after_refund: bool,
+    /// The owner's cancelled calendar write whose replay read a stored copy
+    /// with no write marker as the owner's own while this deposit was held
+    /// (BK-ECHO-UNMARKED-SAME-SHAPE-COPY = C): a host's cancel at its
+    /// SEQUENCE would read the same, so the owner's line names it as a
+    /// cancel Oneiron cannot attribute. Unset on every other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unattributed_cancel: Option<UnattributedCancel>,
     updated_at: u64,
+}
+
+/// The first replay that read an unmarked stored copy as the owner's
+/// cancelled write while a deposit was held
+/// ([`note_unattributed_cancel_in_txn`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnattributedCancel {
+    /// The write's staged SEQUENCE.
+    sequence: u32,
+    /// When the replay's proof was written. The owner's held-deposit row
+    /// dates the unattributed cancel by it, so a row marked done before
+    /// then comes back (review round 1 of #10028).
+    noted_at: u64,
 }
 
 /// A booking's deposit. Key: hash32 (the booking digest).
@@ -316,6 +342,7 @@ pub fn begin_deposit_checkout(
                 captured_minor: None,
                 refunded_minor: 0,
                 balance_owed_after_refund: false,
+                unattributed_cancel: None,
                 updated_at: now_utc,
             },
         };
