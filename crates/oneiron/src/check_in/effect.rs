@@ -367,8 +367,9 @@ fn applied_check_in_asker_in_txn(
 /// Checks in `txn`, writing nothing, that [`owner_act_decision_in_txn`]
 /// would spend `applied` for an act of class `act` now: for an Owner's act
 /// whose spend lands in a later writer of its own (the record erase's
-/// linearizing write), so a check-in it could not spend refuses it before
-/// its first write.
+/// linearizing write, or the write after a custody journal act lands,
+/// [`run_owner_act_outside_vault_writer`]), so a check-in it could not
+/// spend refuses it before its first write.
 ///
 /// # Errors
 ///
@@ -539,30 +540,46 @@ pub fn step_up_reset_effect_digest(person: &EntityId, factor: StepUpFactor) -> [
     *hasher.finalize().as_bytes()
 }
 
-/// The decision an Owner's own act on a catastrophe row runs on when its
-/// effect lands outside the vault's writer (a custody journal; 2k3,
-/// P25-SHAPE Q1 = A): the Owner on their own proof, and with `applied` the
-/// asker's approved check-in, spent in a writer of its own on the Owner's
-/// live proof before the act runs. A refusal after it leaves the approval
-/// spent; an act that lands in the vault's writer spends it there instead
+/// Runs `run`, an Owner's own act on a catastrophe row whose effect lands
+/// outside the vault's writer (a custody journal; 2k3, P25-SHAPE Q1 = A),
+/// and answers its result with the decision it ran on: the Owner on their
+/// own proof, and with `applied` the asker's approved check-in. That
+/// check-in is checked on the Owner's live proof before `run`, writing
+/// nothing, and spent in a writer of its own on that proof after `run`
+/// lands, so an act that refuses leaves it unspent for the Owner to apply
+/// again. An act that lands in the vault's writer spends it there instead
 /// ([`owner_act_decision_in_txn`]), as the NOTE history purge does (2k2).
+///
+/// Two calls that apply one check-in at once can both pass the check and
+/// both act: the later spend then refuses, after its act landed on the
+/// Owner's own proof, which no check-in gates.
 ///
 /// # Errors
 ///
-/// The Owner's proof no longer holds; as [`spend_applied_check_in_in_txn`].
-pub(crate) fn owner_act_decision_in_own_writer(
+/// The Owner's proof no longer holds; as [`check_applied_check_in_in_txn`]
+/// before `run`; `run`'s refusal; as [`spend_applied_check_in_in_txn`]
+/// after it.
+pub(crate) fn run_owner_act_outside_vault_writer<T>(
     vault: &Vault,
     owner: &crate::consent::AuthenticatedOwner,
     act: ActClass,
     applied: Option<&AppliedCheckIn<'_>>,
-) -> Result<CheckInDecision> {
-    match applied {
-        Some(applied) => vault.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(vault, txn)?;
-            owner_act_decision_in_txn(vault, txn, act, Some(applied))
-        }),
-        None => Ok(owner_own_proof_decision(act)),
+    run: impl FnOnce() -> Result<T>,
+) -> Result<(T, CheckInDecision)> {
+    let Some(applied) = applied else {
+        return Ok((run()?, owner_own_proof_decision(act)));
+    };
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        owner.revalidate_in_txn(vault, &rtxn)?;
+        check_applied_check_in_in_txn(vault, &rtxn, applied, act)?;
     }
+    let done = run()?;
+    let decision = vault.with_write_txn_grouped(|txn| {
+        owner.revalidate_in_txn(vault, txn)?;
+        owner_act_decision_in_txn(vault, txn, act, Some(applied))
+    })?;
+    Ok((done, decision))
 }
 
 /// The digest of draining custody member `target_id` out of the required

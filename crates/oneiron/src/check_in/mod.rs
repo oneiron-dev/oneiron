@@ -120,7 +120,7 @@ pub use effect::{
     text_history_erase_effect_digest,
 };
 // The key-recovery doors' effects (2k3; P25-SHAPE Q1 = A).
-pub(crate) use effect::owner_act_decision_in_own_writer;
+pub(crate) use effect::run_owner_act_outside_vault_writer;
 pub use effect::{
     custody_drain_effect_digest, custody_reenrol_effect_digest, root_request_effect_digest,
     step_up_reset_effect_digest,
