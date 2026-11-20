@@ -123,6 +123,7 @@ pub use partition::*;
 pub use persistence::close_persistent_conflict;
 pub(crate) use persistence::conflict_close_candidate;
 pub(crate) use persistence::on_axes_of;
+pub(crate) use person_about::ShownAboutLine;
 pub use person_about::{PERSON_ABOUT_INSTRUCTION, PersonAboutExecutor};
 pub(crate) use person_about::{
     about_facts_in, about_revision_in, enqueue_person_about_on_wake, erase_person_about_in_txn,

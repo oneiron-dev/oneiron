@@ -600,6 +600,52 @@ impl<'v> ScopedRead<'v> {
         Ok(admitted.unwrap_or(true))
     }
 
+    /// Whether every row the row `raw` of `id` was written from passes
+    /// `source_readable`, the rows listed as the row gate lists them for a
+    /// reader that is not the owner ([`Self::derived_sources_readable_in`]):
+    /// for a check that judges a row and each of its sources under one live
+    /// Grant alone (`agent_grants`), so that no other Grant of the reader's
+    /// lends a source (RULING GRANT-COMBINE Q1 = A; review round 1 of #9929).
+    /// A text asset or a summary, whose sources the row gate reads over the
+    /// whole held authority, reads as written from rows this check does not
+    /// judge, and so as not readable.
+    ///
+    /// # Errors
+    /// A store or decode failure reading the row's sources, or
+    /// `source_readable`'s.
+    pub(super) fn written_from_each_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+        mut source_readable: impl FnMut(&EntityId, &[u8]) -> Result<bool>,
+    ) -> Result<bool> {
+        if !self.reminder_wording_asset_sources_readable_in(rtxn, id, raw)? {
+            return Ok(false);
+        }
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT
+            || header.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+        {
+            return Ok(false);
+        }
+        let sources = match crate::scope_summary::word_sources_in(self.vault, rtxn, id, raw)? {
+            crate::scope_summary::WordSources::Own => return Ok(true),
+            crate::scope_summary::WordSources::Unresolved => return Ok(false),
+            crate::scope_summary::WordSources::From(sources) => sources,
+        };
+        for source in &sources {
+            let Some(raw) = self.entity_record_in(rtxn, source)?.map(|row| row.encode()) else {
+                return Ok(false);
+            };
+            if !source_readable(source, &raw)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// The row's own admission, before what it was written from: today's
     /// (B), and only once B refuses, the same row under one of the reader's
     /// own live Grants (A, FIX 7462; `agent_grants`), and only once both

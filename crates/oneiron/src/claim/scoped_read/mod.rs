@@ -41,6 +41,7 @@ mod named_reads;
 mod native_raw;
 pub use native_raw::NativeRawRead;
 mod note_visibility;
+mod person_about_lines;
 mod phone_line;
 mod pinned_reads;
 mod point_reads;
