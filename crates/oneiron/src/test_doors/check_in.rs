@@ -9,17 +9,20 @@
 //! a member grant narrowed to some worlds in place. For
 //! `tests/check_in_waiter_resume.rs` (P2.3a, piece 2e): the due index, and
 //! the spend of a settled row in the act's own transaction, committed or
-//! aborted.
+//! aborted. For `tests/check_in_custody_drain_effects.rs` (FIX
+//! [CHECK-IN-SPEND-BEFORE-ERASE], custody drain doors): an Owner's
+//! key-recovery act outside the vault's writer, with the test's act.
 
 use std::collections::BTreeMap;
 
 use crate::batch::BatchOp;
 use crate::check_in::{
-    AgentHolderVerdict, CheckInTransition, EligibleBasis, HolderAnswer, HolderKind, HolderReply,
-    NoAgentVerdict, OpenPendingCheckIn, PendingCheckIn, Rung, RungHolder, RungMembers,
-    RungResolver, VerifiedChain, advance_pending_check_in_in_txn, answer_pending_check_in_in_txn,
+    ActClass, AgentHolderVerdict, AppliedCheckIn, CheckInDecision, CheckInTransition,
+    EligibleBasis, HolderAnswer, HolderKind, HolderReply, NoAgentVerdict, OpenPendingCheckIn,
+    PendingCheckIn, Rung, RungHolder, RungMembers, RungResolver, VerifiedChain,
+    advance_pending_check_in_in_txn, answer_pending_check_in_in_txn,
     consume_pending_check_in_in_txn, extend_pending_check_in_in_txn, open_pending_check_in_in_txn,
-    record_objection_in_txn,
+    record_objection_in_txn, run_owner_act_outside_vault_writer,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -430,4 +433,29 @@ pub fn consume_then_abort(
         (None, Err(error)) => Err(error),
         (_, Ok(())) => Err(Error::InvariantViolation("the aborting write committed")),
     }
+}
+
+/// Runs `run` as an Owner's key-recovery act whose effect lands outside the
+/// vault's writer, as door `verb`'s custody journal act runs, applying the
+/// approved check-in `check_in` asked for `verb` over `effect_digest` when
+/// given ([`run_owner_act_outside_vault_writer`]): `run`'s result and the
+/// decision it ran on.
+///
+/// # Errors
+///
+/// As [`run_owner_act_outside_vault_writer`].
+pub fn run_owner_key_recovery_act<T>(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    verb: &'static str,
+    effect_digest: [u8; 32],
+    check_in: Option<EntityId>,
+    run: impl FnOnce() -> Result<T>,
+) -> Result<(T, CheckInDecision)> {
+    let applied = check_in.map(|id| AppliedCheckIn {
+        id,
+        verb,
+        effect_digest,
+    });
+    run_owner_act_outside_vault_writer(vault, owner, ActClass::KeyRecovery, applied.as_ref(), run)
 }

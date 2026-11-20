@@ -15,7 +15,8 @@
 //! on (2k3; P25-SHAPE Q1 = A): the Owner on their own proof, and with
 //! `check_in_ref` an asker's approved check-in for that door's effect,
 //! which the Owner applies. The custody journal is no vault writer, so the
-//! check-in is spent in a writer of its own before the door acts.
+//! check-in is checked before the door acts and spent in a writer of its
+//! own after the act lands: an act the journal refuses leaves it unspent.
 
 use std::path::PathBuf;
 
@@ -24,7 +25,7 @@ use zeroize::Zeroize;
 
 use crate::check_in::{
     ActClass, AppliedCheckIn, CheckInDecision, custody_drain_effect_digest,
-    custody_reenrol_effect_digest, owner_act_decision_in_own_writer,
+    custody_reenrol_effect_digest, run_owner_act_outside_vault_writer,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
@@ -96,26 +97,30 @@ fn target_id(id: &str) -> MemoryResult<TargetId> {
     })
 }
 
-/// The check-in decision door `verb` runs on: the Owner on their own proof,
-/// and with `check_in_ref` an asker's approved check-in for `verb` over
-/// `effect_digest`, spent in a writer of its own before the door acts.
-fn key_recovery_decision(
+/// Runs `run`, door `verb`'s custody journal act, and answers its result
+/// with the check-in decision it ran on: the Owner on their own proof, and
+/// with `check_in_ref` an asker's approved check-in for `verb` over
+/// `effect_digest`, checked before the act and spent after it lands
+/// ([`run_owner_act_outside_vault_writer`]).
+fn run_key_recovery_door<T>(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     verb: &'static str,
     check_in_ref: Option<&str>,
     effect_digest: [u8; 32],
-) -> MemoryResult<CheckInDecision> {
+    run: impl FnOnce() -> crate::Result<T>,
+) -> MemoryResult<(T, CheckInDecision)> {
     let applied = super::shared::check_in_ref(check_in_ref)?.map(|id| AppliedCheckIn {
         id,
         verb,
         effect_digest,
     });
-    Ok(owner_act_decision_in_own_writer(
+    Ok(run_owner_act_outside_vault_writer(
         vault,
         owner,
         ActClass::KeyRecovery,
         applied.as_ref(),
+        run,
     )?)
 }
 
@@ -132,14 +137,14 @@ pub fn custody_member_drain_begin_as(
     input: CustodyMemberRef,
 ) -> MemoryResult<CustodyDrainTicketView> {
     let target = target_id(&input.target_id)?;
-    let check_in = key_recovery_decision(
+    let (ticket, check_in) = run_key_recovery_door(
         vault,
         owner,
         "vault.custody.members.drain.begin",
         input.check_in_ref.as_deref(),
         custody_drain_effect_digest(target.as_str()),
+        || vault.begin_custody_member_drain_as(owner, &target),
     )?;
-    let ticket = vault.begin_custody_member_drain_as(owner, &target)?;
     Ok(CustodyDrainTicketView {
         target_id: ticket.target_id.as_str().to_owned(),
         set_revision: ticket.set_revision,
@@ -162,14 +167,14 @@ pub fn custody_member_drain_commit_as(
     owner: &AuthenticatedOwner,
     input: CustodyDrainCommitRequest,
 ) -> MemoryResult<CustodySetRevision> {
-    let check_in = key_recovery_decision(
+    let (revision, check_in) = run_key_recovery_door(
         vault,
         owner,
         "vault.custody.members.drain.commit",
         input.check_in_ref.as_deref(),
         custody_drain_effect_digest(&input.ack.target_id),
+        || vault.commit_custody_member_drain_as(owner, &input.ack),
     )?;
-    let revision = vault.commit_custody_member_drain_as(owner, &input.ack)?;
     Ok(CustodySetRevision {
         revision,
         check_in: Some(check_in),
@@ -189,14 +194,14 @@ pub fn custody_folder_member_drain_as(
     input: CustodyMemberRef,
 ) -> MemoryResult<CustodySetRevision> {
     let target = target_id(&input.target_id)?;
-    let check_in = key_recovery_decision(
+    let (revision, check_in) = run_key_recovery_door(
         vault,
         owner,
         "vault.custody.members.drain.folder",
         input.check_in_ref.as_deref(),
         custody_drain_effect_digest(target.as_str()),
+        || vault.drain_custody_folder_member_as(owner, &target),
     )?;
-    let revision = vault.drain_custody_folder_member_as(owner, &target)?;
     Ok(CustodySetRevision {
         revision,
         check_in: Some(check_in),
@@ -216,14 +221,14 @@ pub fn custody_member_reenrol_as(
     input: CustodyMemberReenrolRequest,
 ) -> MemoryResult<CustodySetRevision> {
     let spec = reenrolled_spec(&input)?;
-    let check_in = key_recovery_decision(
+    let (revision, check_in) = run_key_recovery_door(
         vault,
         owner,
         "vault.custody.members.reenrol",
         input.check_in_ref.as_deref(),
         custody_reenrol_effect_digest(&spec),
+        || vault.reenrol_custody_member_as(owner, &spec),
     )?;
-    let revision = vault.reenrol_custody_member_as(owner, &spec)?;
     Ok(CustodySetRevision {
         revision,
         check_in: Some(check_in),
