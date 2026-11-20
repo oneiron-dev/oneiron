@@ -1031,11 +1031,14 @@ impl OffRecordSession<'_> {
         self.vault.vault_id()
     }
 
-    /// The values base custody holds now (FIX REPLAY-COMPARE-KNOWN-MATCHER):
-    /// a run bound to this room compares its replay rows with them, since
-    /// the room reads its rows over base, where a value custody holds took
-    /// its handle. It projects the matcher rather than lending out the
-    /// vault, and it reads base only.
+    /// The values base custody holds now (FIX REPLAY-COMPARE-KNOWN-MATCHER),
+    /// and the values this room keeps in its own custody, each under its
+    /// room handle (ROOM-LOCAL-CUSTODY): a run bound to this room compares
+    /// its replay rows with them, since the room reads its rows over base,
+    /// where a value custody holds took its handle, and keeps a fresh one
+    /// under a room handle. It projects the matcher rather than lending out
+    /// the vault or the room; the room's values are printed in the matcher
+    /// alone, never in the index.
     ///
     /// # Errors
     ///
@@ -1043,7 +1046,7 @@ impl OffRecordSession<'_> {
     pub(crate) fn base_known_values(
         &self,
     ) -> Result<Option<Arc<crate::store::known_value_index::KnownValues>>> {
-        self.vault.known_values_now()
+        self.vault.known_values_with_room(&self.entry.overlay)
     }
 
     /// Notes the messages of a turn witnessed while the room was on record:

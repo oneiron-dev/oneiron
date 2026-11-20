@@ -31,6 +31,10 @@ pub fn export_authority_history_as_owner(
 
 /// `vault.authority.history.import`: the engine verifies and folds the
 /// signed bytes atomically. A roster supplied by a caller is never authority.
+/// Past the owner's reserve the rows the store door admits land and each row
+/// it holds there waits, with every row standing on it, until the owner
+/// raises the floor row (FIX [OWNER-RESERVE-IMPORT-PARTIAL]): `entry_refs`
+/// names the import's rows this vault stores now.
 pub fn import_authority_history_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -47,7 +51,7 @@ pub fn import_authority_history_as_owner(
         })
         .collect::<MemoryResult<Vec<_>>>()?;
     let entry_refs = vault
-        .import_signed_authority_history(&blobs)?
+        .import_owner_authority_history(&blobs)?
         .into_iter()
         .map(|id| id.to_hex())
         .collect();

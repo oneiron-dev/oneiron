@@ -636,6 +636,12 @@ name = "oauth_named_client_acceptance"
 path = "tests/oauth_named_client_acceptance.rs"
 required-features = ["oneiron/test-support"]
 
+# CONTINUE-PUSH-NON-SLIP-SELECTION's `/git` audience roots its served vault on a `MemoryKeystore`.
+[[test]]
+name = "oauth_git_audience_served"
+path = "tests/oauth_git_audience_served.rs"
+required-features = ["oneiron/test-support"]
+
 # L1-07's lost host root: the test door empties this install's issuer seed slot
 # and retires its escrow under the cfg, which needs oneiron's test support.
 [[test]]

@@ -23,7 +23,6 @@ use oneiron::authority::{
     OAuthAuthorizationStatus, OAuthClientRecord, oauth_code_challenge_admitted,
     oauth_requested_tier,
 };
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::client_document::resolve_client;
@@ -44,8 +43,9 @@ const UNKNOWN_CLIENT: &str =
 const UNKNOWN_REDIRECT: &str =
     "This sign-in request names a return address the app did not register.";
 
-/// The authorize request's parameters; every other is ignored.
-#[derive(Deserialize)]
+/// The authorize request's parameters; every other is ignored. Each but `resource` comes at
+/// most once; `resource` may come several times (RFC 8707 §2).
+#[derive(Default)]
 pub(super) struct AuthorizeQuery {
     response_type: Option<String>,
     client_id: Option<String>,
@@ -53,8 +53,53 @@ pub(super) struct AuthorizeQuery {
     code_challenge: Option<String>,
     code_challenge_method: Option<String>,
     state: Option<String>,
-    resource: Option<String>,
+    resources: Vec<String>,
     scope: Option<String>,
+}
+
+impl AuthorizeQuery {
+    /// The parameters `pairs` name, in their order; `None` when one other than `resource`
+    /// comes twice, which reads as no request, as it did before a request could name several
+    /// resources.
+    fn from_pairs(pairs: Vec<(String, String)>) -> Option<Self> {
+        let mut query = Self::default();
+        for (name, value) in pairs {
+            let slot = match name.as_str() {
+                "response_type" => &mut query.response_type,
+                "client_id" => &mut query.client_id,
+                "redirect_uri" => &mut query.redirect_uri,
+                "code_challenge" => &mut query.code_challenge,
+                "code_challenge_method" => &mut query.code_challenge_method,
+                "state" => &mut query.state,
+                "scope" => &mut query.scope,
+                "resource" => {
+                    query.resources.push(value);
+                    continue;
+                }
+                _ => continue,
+            };
+            if slot.replace(value).is_some() {
+                return None;
+            }
+        }
+        Some(query)
+    }
+}
+
+/// The resources an authorize request names (RFC 8707 §2): at least one, each one of this
+/// vault's own ([`super::ProtectedResource`]) and none twice. Answers the first and the rest,
+/// in the request's order; `None` for a request that names none, another, or one twice.
+fn named_resources(identity: &OAuthIdentity, named: &[String]) -> Option<(String, Vec<String>)> {
+    let (first, further) = named.split_first()?;
+    let mut seen = Vec::with_capacity(named.len());
+    for identifier in named {
+        let resource = identity.named_resource(identifier)?;
+        if seen.contains(&resource) {
+            return None;
+        }
+        seen.push(resource);
+    }
+    Some((first.clone(), further.to_vec()))
 }
 
 /// Where a request's errors go once its client and redirect URI are known.
@@ -107,7 +152,7 @@ pub(super) async fn page(
     State(server): State<Arc<SyncServer>>,
     Extension(caps): Extension<Arc<OAuthFloodCaps>>,
     ClientAddress(source): ClientAddress,
-    query: Result<Query<AuthorizeQuery>, QueryRejection>,
+    query: Result<Query<Vec<(String, String)>>, QueryRejection>,
 ) -> Response {
     let Some(identity) = OAuthIdentity::of(&server) else {
         return not_found();
@@ -115,7 +160,10 @@ pub(super) async fn page(
     if let Some(shed) = caps.shed_authorization(source) {
         return shed;
     }
-    let Ok(Query(query)) = query else {
+    let Some(query) = query
+        .ok()
+        .and_then(|Query(pairs)| AuthorizeQuery::from_pairs(pairs))
+    else {
         return error_page(UNREADABLE);
     };
     let Some(client_id) = query.client_id.as_deref().filter(|id| !id.is_empty()) else {
@@ -153,10 +201,9 @@ pub(super) async fn page(
     }) else {
         return redirect.error("invalid_request");
     };
-    let resource = identity.resource();
-    if query.resource.as_deref() != Some(resource.as_str()) {
+    let Some((resource, further_resources)) = named_resources(&identity, &query.resources) else {
         return redirect.error("invalid_target");
-    }
+    };
     let Some(tier) = oauth_requested_tier(query.scope.as_deref()) else {
         return redirect.error("invalid_scope");
     };
@@ -169,6 +216,7 @@ pub(super) async fn page(
         code_challenge,
         state: query.state.as_deref(),
         resource: &resource,
+        further_resources: &further_resources,
         tier,
     };
     match server
