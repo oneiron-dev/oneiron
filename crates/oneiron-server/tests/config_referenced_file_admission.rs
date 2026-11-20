@@ -28,6 +28,11 @@ const READ_AND_PARSED: &str = "house_role must be";
 const MARKER: &str = "referenced-file-text-not-for-output";
 /// A refused command stops at once; one that runs this long was not refused.
 const STOPS_WITHIN: Duration = Duration::from_secs(120);
+/// A relay room's locker token too short to serve with: a room that read it
+/// stops at its length.
+const SHORT_TOKEN: &str = "short-relay-token\n";
+/// What that stop says: the mark of a token that was read.
+const TOKEN_READ: &str = "at least 32 bytes";
 
 #[test]
 fn a_prompt_file_any_user_can_write_is_refused() {
@@ -210,6 +215,97 @@ fn a_relay_room_file_that_does_not_parse_names_the_file_and_the_place_only() {
     );
 }
 
+/// FIX [RELAY-ACCESS-TOKEN-FILE-NOT-ADMITTED]: a relay room's file names its
+/// token file and the binary the room runs, so one any user can write is
+/// refused as a config file is, before it is read: on the plain room and on
+/// the guarded room its installer starts.
+#[test]
+fn a_relay_room_file_any_user_can_write_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let token = file(dir.path(), "room.token", SHORT_TOKEN, 0o440);
+    for mode in [0o666, 0o602] {
+        let name = format!("room-writable-{mode:o}.json");
+        let room = file(dir.path(), &name, &room_text(dir.path(), &token), mode);
+        for guarded in [false, true] {
+            let error = relay_refused(dir.path(), &room, guarded);
+            assert!(error.contains("chmod o-w"), "mode {mode:o}: {error}");
+            assert!(error.contains(&name), "mode {mode:o}: {error}");
+            assert!(
+                error.contains(&format!("mode {mode:o}")),
+                "mode {mode:o}: {error}"
+            );
+            assert!(
+                !error.contains(TOKEN_READ),
+                "mode {mode:o} was read (guarded: {guarded}): {error}"
+            );
+        }
+    }
+}
+
+/// The locker token is shared with the room's own group alone, so a token
+/// file any user can read or write is refused before it is read, and its
+/// text is never printed.
+#[test]
+fn a_relay_token_file_any_user_can_read_or_write_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    for mode in [0o644, 0o604, 0o642, 0o602] {
+        let name = format!("token-open-{mode:o}");
+        let token = file(dir.path(), &name, SHORT_TOKEN, mode);
+        let room = file(
+            dir.path(),
+            &format!("room-{mode:o}.json"),
+            &room_text(dir.path(), &token),
+            0o440,
+        );
+        let error = relay_refused(dir.path(), &room, false);
+        assert!(error.contains("chmod o-rw"), "mode {mode:o}: {error}");
+        assert!(error.contains(&name), "mode {mode:o}: {error}");
+        assert!(
+            error.contains(&format!("mode {mode:o}")),
+            "mode {mode:o}: {error}"
+        );
+        assert!(
+            !error.contains(TOKEN_READ),
+            "mode {mode:o} was read: {error}"
+        );
+        assert!(
+            !error.contains(SHORT_TOKEN.trim()),
+            "the token was printed: {error}"
+        );
+    }
+}
+
+/// The control of both refusals: the installer's modes (room file and token
+/// at 0440, shared with the room's group) and owner-only files are read, on
+/// the plain room and on the guarded one. The token is too short to serve
+/// with, so the room stops at its length: the mark of a token that was read.
+#[test]
+fn a_relay_room_and_token_no_other_user_can_reach_are_read() {
+    let dir = tempfile::tempdir().unwrap();
+    for mode in [0o440, 0o640, 0o600] {
+        let token = file(
+            dir.path(),
+            &format!("token-closed-{mode:o}"),
+            SHORT_TOKEN,
+            mode,
+        );
+        let room = file(
+            dir.path(),
+            &format!("room-closed-{mode:o}.json"),
+            &room_text(dir.path(), &token),
+            mode,
+        );
+        for guarded in [false, true] {
+            let error = relay_refused(dir.path(), &room, guarded);
+            assert!(
+                error.contains(TOKEN_READ),
+                "mode {mode:o} (guarded: {guarded}): {error}"
+            );
+            assert!(!error.contains("chmod"), "mode {mode:o}: {error}");
+        }
+    }
+}
+
 /// A new file `name` in `dir` that holds `text`, its mode exactly `mode`
 /// whatever the umask of the test process.
 fn file(dir: &Path, name: &str, text: &str, mode: u32) -> PathBuf {
@@ -279,4 +375,39 @@ fn ran(home: &Path, args: &[&str]) -> (ExitStatus, String, String) {
     };
     let text = |path: &Path| String::from_utf8_lossy(&std::fs::read(path).unwrap()).into_owned();
     (status, text(&output), text(&error))
+}
+
+/// A relay room's file for one vault and one enrolled transport key, its
+/// token at `token` and its locker and relay binary in `dir`, as a room's
+/// installer writes it. The room stops before it reaches either path.
+fn room_text(dir: &Path, token: &Path) -> String {
+    serde_json::json!({
+        "vault_id": "ab".repeat(32),
+        "listen": "127.0.0.1:0",
+        "locker_dir": dir.join("locker"),
+        "access_token_file": token,
+        "relay_binary": dir.join("iroh-relay"),
+        "relay_bind": "127.0.0.1:0",
+        "relay_url": "https://relay.invalid",
+        "endpoint_keys": ["cd".repeat(32)],
+        "relay_metrics_bind": "127.0.0.1:0",
+    })
+    .to_string()
+}
+
+/// What `oneiron host relay --config <room>` says when it stops, and with
+/// `guarded` the hold-guard flags the room's installer starts it with.
+fn relay_refused(dir: &Path, room: &Path, guarded: bool) -> String {
+    let socket = dir.join("broker.sock");
+    let mut args = vec!["host", "relay", "--config", room.to_str().unwrap()];
+    if guarded {
+        args.extend([
+            "--hold-guard-socket",
+            socket.to_str().unwrap(),
+            "--hold-guard-vault",
+            "0f0e0d0c-0b0a-4908-8706-050403020100",
+            "--hold-guard-required",
+        ]);
+    }
+    refused(dir, &args)
 }
