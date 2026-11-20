@@ -1022,7 +1022,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/booking_deposit/stripe.rs` | src | m | 13 crate-vis | — | The Stripe API calls a deposit needs, test mode only |
 | `src/booking_deposit/webhook.rs` | src | s | 6 crate-vis | — | `POST /v1/hooks/stripe/booking-deposit`: Stripe's signed word about a deposit's PaymentIntent |
 | `src/broadcast.rs` | src | s | 10 crate-vis | — | Broadcast group for multi-device fan-out with echo suppression |
-| `src/builtin_host.rs` | src | s | 6 crate-vis | — | The served host's side of the built-in connector packs (OF-519): the connection checks only a served host… |
+| `src/builtin_host.rs` | src | s | 7 crate-vis | — | The served host's side of the built-in connector packs (OF-519): the connection checks only a served host… |
 | `src/builtin_host/checks.rs` | src | s | 4 crate-vis | — | The served host's connection checks: the engine's provider checks, plus two that need this host's own config |
 | `src/builtin_host/gmail.rs` | src | m | 3 crate-vis | — | The Gmail seats' served mailboxes (FIX 1168): while the built-in email pack is Active and its Gmail… |
 | `src/builtin_host/handles.rs` | src | s | 13 crate-vis | — | One handle per served built-in channel: its adapter, the provider account its check bound, and the… |
@@ -1030,7 +1030,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/builtin_host/native_mail.rs` | src | s | 5 crate-vis | — | The native mail pack's served inboxes (OF-519, FIX 2096): while the pack is Active, its check Verified and… |
 | `src/builtin_host/probes.rs` | src | s | 2 crate-vis | — | The isolated qualification probes of the built-in channels this host serves (FIX 710): Slack's `auth.test`… |
 | `src/builtin_host/slack_app.rs` | src | m | 11 crate-vis | — | The served Slack app and the provider URLs of the built-in channels (OF-519): the manifest the owner creates… |
-| `src/builtin_host/webhooks.rs` | src | m | 5 crate-vis | — | The provider webhooks of the served built-in channels (OF-519) |
+| `src/builtin_host/webhooks.rs` | src | m | 6 crate-vis | — | The provider webhooks of the served built-in channels (OF-519) |
 | `src/byte_line.rs` | src | m | 13 crate-vis | — | Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers… |
 | `src/calendar_host.rs` | src | m | 1 re-export · 19 crate-vis | — | The calendar host's real CalDAV wire and iMIP submission transport |
 | `src/calendar_host/caldav.rs` | src | m | 4 crate-vis | — | Real CalDAV discovery, sync-collection and conditional resource writes |
@@ -1348,8 +1348,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedder/local/tests.rs` | test | L | — | — | Local-provider rows |
 | `src/embedder/mod.rs` | src | L | 41 crate-vis | — | The embedder provider slot |
 | `src/embedder/remote.rs` | src | s | 7 crate-vis | — | Builds a remote rung with a nonblocking host egress predicate |
-| `src/embedder/serve.rs` | src | m | 6 crate-vis | — | `oneiron-server embedder serve`: the local provider over an OpenAI-compatible `/v1/embeddings`, for several… |
-| `src/embedder/serve/accounts.rs` | src | m | 11 crate-vis | — | Each account's own bearer key for the shared embedder (CROSS-ARCH-0019 #dm-xaccount-embedder): one server… |
+| `src/embedder/serve.rs` | src | m | 7 crate-vis | — | `oneiron-server embedder serve`: the local provider over an OpenAI-compatible `/v1/embeddings`, for several… |
+| `src/embedder/serve/accounts.rs` | src | s | 13 crate-vis | — | Each account's own bearer key for the shared embedder (CROSS-ARCH-0019 #dm-xaccount-embedder): one server… |
 | `src/embedder/serve/batches.rs` | src | m | 2 crate-vis | — | A request's work, batch by batch (FIX 9487) |
 | `src/embedder/serve/body.rs` | src | s | 4 crate-vis | — | A request's body, read under room its budget holds for it (FIX 149) |
 | `src/embedder/serve/budget.rs` | src | s | 3 crate-vis | — | How many bytes an answer may hold, and the buffer it is encoded into |
@@ -1443,12 +1443,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens_frames.rs` | src | m | 18 crate-vis | — | OF-181: the lens frames this server holds for the cards it rendered |
 | `src/lib.rs` | src | s | 3 fn · 1 const · 28 mod · 2 re-export · 2 crate-vis | — | Oneiron CRDT sync server library |
 | `src/libreoffice.rs` | src | s | 9 crate-vis | — | The host's LibreOffice headless runs for the precision recalculator ([`crate::xlsx_recalc`]): where… |
-| `src/linear_host.rs` | src | m | 5 crate-vis | — | Opt-in scheduled Linear mirror over an authenticated host-owned bridge |
+| `src/linear_host.rs` | src | m | 6 crate-vis | — | Opt-in scheduled Linear mirror over an authenticated host-owned bridge |
 | `src/linear_host/body_line.rs` | src | s | 2 crate-vis | — | The direct Linear mirror's decode memory on the server's retained-memory line (FIX 8610): the narrow host… |
 | `src/linear_host/direct.rs` | src | s | 4 crate-vis | — | The server's direct Linear GraphQL mirror, using the production adapter |
 | `src/linear_host/push.rs` | src | s | 3 crate-vis | — | A caller's own push of one TASK to Linear (FIX 8788, FIX 9382) |
 | `src/linear_host/tests.rs` | test | s | — | — | — |
-| `src/linear_host/webhook.rs` | src | s | 6 crate-vis | — | `POST /v1/hooks/linear`: the signed Linear webhook door (OF-427 C1–C4, C11) |
+| `src/linear_host/webhook.rs` | src | s | 7 crate-vis | — | `POST /v1/hooks/linear`: the signed Linear webhook door (OF-427 C1–C4, C11) |
 | `src/livequery.rs` | src | m | 38 crate-vis | — | App-tier framing and coarse live-query state, separate from WindowSync |
 | `src/livequery/ask_option_link.rs` | src | s | 3 crate-vis | — | Bearer option-link dispatch off the socket loop |
 | `src/livequery/budget.rs` | src | s | 7 crate-vis | — | Retained app state is charged to the server's retained-memory line (`limits.retained_memory_bytes`), never… |
@@ -1483,7 +1483,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/residence/search.rs` | src | s | 1 crate-vis | — | A window's home search: the candidates a residence search returns for one query |
 | `src/livequery/residence/secret_same_value.rs` | src | s | 1 crate-vis | — | `residence.secret_same_value.exchange`: this home as the meeting point of its owner's machines' same-value… |
 | `src/livequery/residence/tests.rs` | test | m | 1 crate-vis | — | — |
-| `src/livequery/residence/tombstone_tests.rs` | test | s | — | — | The home's followed-world tombstone answer, `residence.tombstones` (FOLLOWED-WORLD-TIER1-TOMBSTONE-IDS… |
+| `src/livequery/residence/tombstone_tests.rs` | test | m | — | — | The home's followed-world tombstone answer, `residence.tombstones` (FOLLOWED-WORLD-TIER1-TOMBSTONE-IDS… |
 | `src/livequery/residence/tombstones.rs` | src | s | 1 crate-vis | — | A followed window's tombstone id set, `residence.tombstones` (FOLLOWED-WORLD-TIER1-TOMBSTONE-IDS; canon… |
 | `src/livequery/residence/work.rs` | src | m | 11 crate-vis | — | Socket-owned drivers for durable sealed-bundle work |
 | `src/livequery/routing.rs` | src | s | 7 crate-vis | — | Private routing header for the EXISTING server broadcast channel and a socket's own reply queue |
@@ -1511,7 +1511,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/machine_capacity.rs` | src | s | 2 fn · 1 crate-vis | — | The host's capacity probe (CROSS-ARCH-0024 #my-network 05): serving measures this machine as it starts and… |
 | `src/mail_host.rs` | src | s | 1 crate-vis | — | The host's Mail & Calendar source sync (FIX 12559): every pass, as the vault's local owner, one bounded… |
 | `src/main.rs` | src | s | — | — | — |
-| `src/managed/args.rs` | src | m | 1 struct · 2 enum · 1 const · 1 re-export · 3 crate-vis | ManagedArgs, ManagedError, SettingsRefusal | Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals |
+| `src/managed/args.rs` | src | m | 1 struct · 2 enum · 1 const · 1 re-export · 4 crate-vis | ManagedArgs, ManagedError, SettingsRefusal | Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals |
 | `src/managed/args/policy.rs` | src | m | 1 crate-vis | — | The managed argv allowlist: what managed mode does with each `ServeArgs` field, and the refusal of every… |
 | `src/managed/args/resolve.rs` | src | m | 3 fn · 1 crate-vis | — | Resolution and validation of the managed argv group |
 | `src/managed/args/start_mode.rs` | src | s | 1 enum · 1 crate-vis | ManagedStartMode | How a managed process starts: an ordinary open or a cold restore |
@@ -1529,7 +1529,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/listener.rs` | src | m | 1 struct · 2 enum · 10 fn · 1 const · 3 crate-vis | BoundServeListener, ManagedCtl, ServeListener | Managed sockets: listener resolution and binding, the ctl plane, and readiness |
 | `src/managed/listener/admitted.rs` | src | s | 4 crate-vis | — | Managed API and artifact connections on the process's descriptor line (FIX 6299): the same ledger the… |
 | `src/managed/listener/tests.rs` | test | s | — | — | — |
-| `src/managed/mod.rs` | src | s | 5 mod · 10 re-export · 8 crate-vis | — | Managed serve mode: the vault engine as a supervised child process |
+| `src/managed/mod.rs` | src | s | 5 mod · 10 re-export · 9 crate-vis | — | Managed serve mode: the vault engine as a supervised child process |
 | `src/managed/org_routing.rs` | src | s | 2 struct · 1 enum · 13 fn | OrgRoutingError, OrgVaultRoute, OrgVaultRouter | Read-only organization-to-vault routing over a host's registry projection |
 | `src/managed/owner_recovery.rs` | src | s | 1 crate-vis | — | Owner-signing recovery (FIX 5260): the vault's proof, on its supervisor's `recover_owner_signing` challenge… |
 | `src/managed/owner_stage.rs` | src | m | 3 crate-vis | — | Managed ingress's byte-exact staging of an owner-attested request whose body streams (FIX 5255, part 2 of… |
@@ -1871,10 +1871,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/oneironer/tests/worker.rs` | test | m | 6 crate-vis | — | The worker against the stub tagger: save mode saves each turn's tags, shadow writes nothing but the job… |
 | `src/oneironer/wire.rs` | src | s | 3 crate-vis | — | The qualify case input as JSON writes it, shared by qualification and calibration |
 | `src/owner/agent_grants.rs` | src | s | 1 crate-vis | — | The serve start's backfill of default agent Grants (FIX AGENT-GRANTLESS-VISIBLE; Engine RULING… |
-| `src/owner/backup.rs` | src | m | 21 crate-vis | — | Local backups of one vault: take, list, prune, rehearse and restore |
+| `src/owner/backup.rs` | src | m | 22 crate-vis | — | Local backups of one vault: take, list, prune, rehearse and restore |
 | `src/owner/backup/checkpoint_fact.rs` | src | s | 3 crate-vis | — | Each backup's checkpoint fact beside it (FIX 7327): the signed fact the snapshot's receipt carries (FIX… |
-| `src/owner/backup/custody.rs` | src | m | 13 crate-vis | — | Custody heads beside the backups (KS-4A1/KS-4A2, FIX 5685) |
-| `src/owner/backup/custody/anchor_client.rs` | src | s | 2 crate-vis | — | The HTTP custody anchor (FIX 5788, CALLS CUSTODY_ANCHOR_URL): a host whose own disks would roll back with… |
+| `src/owner/backup/custody.rs` | src | m | 14 crate-vis | — | Custody heads beside the backups (KS-4A1/KS-4A2, FIX 5685) |
+| `src/owner/backup/custody/anchor_client.rs` | src | s | 3 crate-vis | — | The HTTP custody anchor (FIX 5788, CALLS CUSTODY_ANCHOR_URL): a host whose own disks would roll back with… |
 | `src/owner/backup/custody/anchor_credentials.rs` | src | s | 9 crate-vis | — | The owner credential a custody anchor door admits (FIX 5788), handed to the process that calls the door on a… |
 | `src/owner/backup/custody/anchor_transport.rs` | src | s | 5 crate-vis | — | A vault VM's way to its custody anchor door (FIX 6517): the guest has no network, so its bootstrap serves a… |
 | `src/owner/backup/custody/home_fetch.rs` | src | s | 1 crate-vis | — | A restore's custody read from the residence home (FIX 5846, `--custody-home`): a new host that holds the kit… |
@@ -2103,6 +2103,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/embedding_line.rs` | src | s | 2 fn | — | Doors for `tests/embedder_host_line_notice.rs` (0053-EMB, on census L1-27): a server holding an endpoint… |
 | `src/test_doors/fingerprint_keep_lens_callback.rs` | src | s | 1 fn | — | Door for `tests/fingerprint_keep_lens_callback.rs` (PLAN-UC-04 stage 5): the dedupe key of a lens card… |
 | `src/test_doors/gpu_backend.rs` | src | s | 5 fn | — | Doors for `tests/customer_gpu_job_maximum.rs` (row L10-31): the `[gpu_jobs]` section as `serve` resolves it… |
+| `src/test_doors/hex_input_policy.rs` | src | s | 2 fn | — | Doors for `tests/hex_input_policy_server.rs` (UC-07 PR 6, HEX-CASE-POLICY = A): whether two hex spellings… |
+| `src/test_doors/hex_sign_digit.rs` | src | s | 3 fn | — | Doors for `tests/hex_sign_digit_server.rs` (UC-07 PR 7 sign digit): thin calls to the three crate-private… |
 | `src/test_doors/history_import.rs` | src | s | 1 fn | — | Doors for `tests/history_import_review_id_same_second.rs` ([HISTORY-IMPORT-REVIEW-ID-SAME-SECOND]): the… |
 | `src/test_doors/hosted_import.rs` | src | s | 5 fn | — | Doors for `tests/hosted_import_job.rs` ([HOSTED-IMPORT-JOB]) and `tests/hosted_import_verbs.rs`… |
 | `src/test_doors/lens_frames.rs` | src | s | 5 fn | — | Doors for `tests/lens_frame_state_door.rs`: moves a held card's `$state` as an accepted local event moves… |
@@ -2122,7 +2124,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/media_job_spend.rs` | src | s | 2 struct · 11 fn | ScopedJobSpend, ScopedMediaJob | Doors for `tests/media_job_staged_spend.rs` ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a scoped… |
 | `src/test_doors/memory_owner_commit.rs` | src | s | 1 fn · 1 crate-vis | — | Door for `tests/memory_verb_owner_proof_at_commit.rs` (FIX… |
 | `src/test_doors/merge_queue_checker_pressure.rs` | src | s | 1 fn | — | Doors for `tests/merge_queue_checker_pressure.rs` ([GUEST-PIDS-PRESSURE-MERGE-QUEUE-CHECKER], FIX 8013… |
-| `src/test_doors/mod.rs` | src | s | 69 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
+| `src/test_doors/mod.rs` | src | s | 71 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
 | `src/test_doors/model_licence.rs` | src | s | 1 fn | — | The model licence admission under the owner's choice (`models.install.allow_noncommercial_licences`), read… |
 | `src/test_doors/native_board.rs` | src | s | 2 fn | — | Doors for `tests/room_pins_native.rs` (ROOM-SCOPED-PINS P2c): what a pumped run's native board and self… |
 | `src/test_doors/off_router_wire_counts.rs` | src | s | 2 fn | — | Doors for `tests/wire_counts_off_runtime.rs`: the wire counts an e-sign QR capability refusal and an MCP… |
@@ -2317,6 +2319,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/git_lfs_prehandler_refusal_envelope.rs` | test | s | — | — | A slip the owner revoked is refused at the binding door, before any route runs |
 | `tests/gpu_pod_hours.rs` | test | m | — | — | A GPU pod with `hours` takes new batches only inside them, read in its fixed UTC offset or in its IANA zone… |
 | `tests/graduation_demote_holder_door.rs` | test | m | — | — | A policy holder demotes a graduated ramp scope over the host door (census L7-33; Engine RULING… |
+| `tests/hex_input_policy_server.rs` | test | s | — | — | UC-07 PR 6, HEX-CASE-POLICY = A: stored and wire forms read lowercase-only; typed or foreign input reads… |
+| `tests/hex_sign_digit_server.rs` | test | s | — | — | UC-07 PR 7, HEX-PR6-SIGN-SITES = B: a `+` hex digit is refused at the 3 server decoders, reached through… |
 | `tests/history_import_archive_precheck.rs` | test | m | — | — | The archive pre-check under `oneiron import chatgpt <zip>`, through the shipped binary (ARCH-0027… |
 | `tests/history_import_queue_enqueue.rs` | test | s | — | — | `oneiron import <source> <log> --queue` refuses a misnamed or foreign log itself (FIX-LIST line 280): the… |
 | `tests/history_import_review_id_same_second.rs` | test | s | — | — | [HISTORY-IMPORT-REVIEW-ID-SAME-SECOND]: the review id of a history import is keyed by the second it ran, so… |
