@@ -235,6 +235,15 @@ impl Fixture {
     /// fixture's vault holds no writer lease, so the handle's
     /// embedded-owner shortcut (`claim_review` with no grant) refuses.
     fn owner_releases(&self, id: EntityId) {
+        assert_eq!(
+            self.owner_settles(id, ClaimSettleDecision::Approve),
+            ClaimSettlementVerdict::Landed
+        );
+    }
+
+    /// The owner's review and settlement of one held claim with `decision`,
+    /// as [`Self::owner_releases`] runs them, and the settlement's verdict.
+    fn owner_settles(&self, id: EntityId, decision: ClaimSettleDecision) -> ClaimSettlementVerdict {
         let memory = self.memory();
         let review = memory
             .claim_review_as_owner(
@@ -251,12 +260,12 @@ impl Fixture {
                 &ClaimSettleRequest {
                     claim_ref: id.to_hex(),
                     review_id: review.review_id,
-                    decision: ClaimSettleDecision::Approve,
+                    decision,
                     grant_ref: None,
                 },
             )
             .expect("the owner settles the held claim");
-        assert_eq!(settled.verdict, ClaimSettlementVerdict::Landed);
+        settled.verdict
     }
 
     /// The next due property continuation, claimed as the host's worker
@@ -605,4 +614,120 @@ fn an_omission_cancels_beside_a_held_cancellation_and_leaves_it_waiting() {
          {statuses:?}"
     );
     assert_eq!(statuses.len(), 2, "two live statuses: {statuses:?}");
+}
+
+/// The admitted `calendar.status` claims among `statuses`: those every read
+/// that skips a proposal (a booking's among them) still sees.
+fn admitted(
+    statuses: &[(EntityId, CalendarStatusBasis, ClaimApprovalStatus)],
+) -> Vec<(EntityId, CalendarStatusBasis, ClaimApprovalStatus)> {
+    statuses
+        .iter()
+        .filter(|(_, _, approval)| {
+            matches!(
+                approval,
+                ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
+            )
+        })
+        .copied()
+        .collect()
+}
+
+/// The feed of `uid-0@work` under its standing consent: its omission's
+/// cancellation settled (returned), then the EVENT carried cancelled in a body
+/// the screen flags, whose cancellation the standing consent holds (returned).
+fn omission_then_held_cancellation(f: &Fixture) -> (EntityId, EntityId) {
+    let work = f.install("work");
+    f.poll(
+        &work,
+        calendar(&[Event::new("uid-0@work", "weekly sync")], "v1"),
+    );
+    f.approve_first_poll("work");
+
+    // A complete feed leaves the EVENT out: the omission cancels it.
+    f.poll(&work, calendar(&[], "v2"));
+    let statuses = live_statuses(&f.imported_claims("uid-0@work"));
+    let [(omission, CalendarStatusBasis::ImportedAbsence, ClaimApprovalStatus::Approved)] =
+        statuses.as_slice()
+    else {
+        panic!("the omission's cancellation settles under the standing consent: {statuses:?}");
+    };
+    let omission = *omission;
+
+    // The next feed carries the EVENT cancelled, in a body the screen flags.
+    f.poll(
+        &work,
+        cancelled_calendar(&[Event::new("uid-0@work", FLAG_MARKER)], "v3"),
+    );
+    let statuses = live_statuses(&f.imported_claims("uid-0@work"));
+    let held = statuses
+        .iter()
+        .find(|(_, basis, approval)| {
+            *basis == CalendarStatusBasis::ImportedCancel
+                && *approval == ClaimApprovalStatus::Proposed
+        })
+        .map(|(id, _, _)| *id)
+        .unwrap_or_else(|| panic!("the flagged cancellation waits on the owner: {statuses:?}"));
+    (omission, held)
+}
+
+/// CAL-HELD-STATUS-SUPERSEDES-ADMITTED-STATUS: a feed's cancellation that the
+/// standing consent holds for the owner (its body flagged) supersedes no
+/// admitted status while it waits. A complete feed left the EVENT out and the
+/// omission's cancellation settled; the next feed carries the EVENT cancelled
+/// in a flagged body. The omission's cancellation stays live beside the held
+/// one, so every read that skips a proposal still sees the EVENT cancelled,
+/// and the owner's decline of the held one leaves it standing. Main
+/// superseded the omission at admission, so the EVENT read live while the
+/// owner had not answered, and for good after a decline.
+#[test]
+fn a_held_cancellation_supersedes_no_admitted_omission_while_it_waits() {
+    let f = Fixture::open();
+    let (omission, held) = omission_then_held_cancellation(&f);
+    let statuses = live_statuses(&f.imported_claims("uid-0@work"));
+    assert_eq!(
+        admitted(&statuses),
+        vec![(
+            omission,
+            CalendarStatusBasis::ImportedAbsence,
+            ClaimApprovalStatus::Approved
+        )],
+        "the omission's cancellation stays admitted beside the held one: {statuses:?}"
+    );
+
+    assert_eq!(
+        f.owner_settles(held, ClaimSettleDecision::Reject),
+        ClaimSettlementVerdict::Rejected
+    );
+    let statuses = live_statuses(&f.imported_claims("uid-0@work"));
+    assert_eq!(
+        admitted(&statuses),
+        vec![(
+            omission,
+            CalendarStatusBasis::ImportedAbsence,
+            ClaimApprovalStatus::Approved
+        )],
+        "the owner's decline leaves the omission's cancellation standing: {statuses:?}"
+    );
+}
+
+/// The owner's release of the held cancellation closes the omission's
+/// cancellation it waited beside: the review names it as the conflict head
+/// (`calendar.status` holds one value), so one admitted status stands, the
+/// feed's explicit cancellation.
+#[test]
+fn the_owner_s_release_of_a_held_cancellation_closes_the_omission_beside_it() {
+    let f = Fixture::open();
+    let (_, held) = omission_then_held_cancellation(&f);
+    f.owner_releases(held);
+    let statuses = live_statuses(&f.imported_claims("uid-0@work"));
+    assert_eq!(
+        statuses,
+        vec![(
+            held,
+            CalendarStatusBasis::ImportedCancel,
+            ClaimApprovalStatus::Approved
+        )],
+        "the released cancellation is the one live status: {statuses:?}"
+    );
 }
