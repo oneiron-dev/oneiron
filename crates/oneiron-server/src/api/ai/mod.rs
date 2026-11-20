@@ -275,27 +275,31 @@ fn quota_choice_wire_name(choice: QuotaChoice) -> &'static str {
 /// its reset, and `use_fallback` (`{"choice": "use_fallback", "fallback":
 /// "<model>"}`) sends its calls to that model on another provider while it
 /// stays parked.
+///
+/// The answer is an owner act, so it goes through the owner door: the
+/// caller must own this vault, not merely hold a full-vault slip, which is a
+/// scope and names no act (FIX-LIST OWNER-GRADE-IS-NOT-OWNERSHIP). The owner's
+/// own slips and a self-hosted root acting as the owner pass; a hosted
+/// operator's root keeps its typed refusal (FIX 2222). An agent the owner
+/// lets give the answer takes the agent path instead (restriction wave 11).
 async fn answer_quota(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path(question): Path<String>,
     Json(answer): Json<QuotaAnswer>,
 ) -> Response {
-    // Restriction wave 11: the owner takes today's path; an agent the
-    // owner lets give this answer takes the agent path below; anyone
-    // else is refused as before.
-    let agent = if auth.is_owner_grade() {
-        None
-    } else {
-        agent_caller(&auth)
+    // The owner door first: the caller must own this vault, not merely hold
+    // a full-vault slip (FIX-LIST OWNER-GRADE-IS-NOT-OWNERSHIP). Restriction
+    // wave 11: a caller the door refuses that is an agent the owner lets give
+    // this answer takes the agent path below; anyone else keeps the door's
+    // refusal.
+    let agent = match crate::api::owner_routes::owner(&auth, &server) {
+        Ok(_) => None,
+        Err(error) => match agent_caller(&auth) {
+            Some(agent) => Some(agent),
+            None => return error.into_response(),
+        },
     };
-    if !auth.is_owner_grade() && agent.is_none() {
-        return refusal(
-            StatusCode::FORBIDDEN,
-            "owner_required",
-            "quota questions are the owner's",
-        );
-    }
     // The key first, so a closed key answers exactly today's refusal.
     if let Some(agent) = agent {
         match server
@@ -329,7 +333,10 @@ async fn answer_quota(
         return error.into_response();
     }
     // FIX 2222: an owner act; a hosted operator's root is refused, typed.
-    if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
+    // The owner door already asked it of the owner path.
+    if agent.is_some()
+        && let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth)
+    {
         return error.into_response();
     }
     // The agent answers on a live credential, as a wave plan does.
