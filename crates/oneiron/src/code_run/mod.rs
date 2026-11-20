@@ -144,6 +144,7 @@ pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
     RepoRequestWitness, SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
+pub(crate) use self::dispatcher::{HookedCall, TextAnswerPost};
 pub(crate) use self::model_call::{
     erase_model_call_actor_as_in_txn, erase_model_call_actor_in_txn,
 };

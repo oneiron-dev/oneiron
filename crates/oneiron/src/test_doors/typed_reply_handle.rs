@@ -54,6 +54,42 @@ impl HookBodyRuntime for RedactRuntime {
     }
 }
 
+/// A [`RedactRuntime`] that redacts `paths` only when its input holds
+/// `needle` verbatim, and otherwise a path that names nothing: a test reads
+/// off the caller's view whether the hook's input carried the needle.
+pub struct InputMatchRedactRuntime {
+    paths: Vec<String>,
+    needle: String,
+}
+
+impl HookBodyRuntime for InputMatchRedactRuntime {
+    fn run_hook(
+        &self,
+        _body: &str,
+        input_json: &str,
+        _context: &mut HookRunContext,
+        _read: &mut dyn FnMut(&str) -> std::result::Result<String, String>,
+    ) -> Result<HookBodyRun> {
+        let paths = if input_json.contains(&self.needle) {
+            self.paths.clone()
+        } else {
+            vec!["/input-lacks-the-needle".to_owned()]
+        };
+        let outcome_json = serde_json::to_string(&serde_json::json!({
+            "kind": "redact",
+            "paths": paths,
+        }))
+        .map_err(|error| {
+            Error::InvalidConfig(format!("redact outcome does not encode: {error}"))
+        })?;
+        Ok(HookBodyRun {
+            outcome_json,
+            fuel_used: Some(0),
+            host_calls: 1,
+        })
+    }
+}
+
 /// A [`RedactRuntime`] that also caps the hook input it runs on at
 /// `message_bytes`, as the real sandbox refuses an input its guest cannot
 /// hold: an input past it fails the run before the body starts, reported
@@ -210,6 +246,40 @@ pub fn install_redact_runtime(vault: &Vault, paths: Vec<String>) -> Result<()> {
     vault
         .install_hook_runtime(Arc::new(RedactRuntime { paths }))
         .map_err(Error::InvalidConfig)
+}
+
+/// Hands `vault`'s verb hooks the [`InputMatchRedactRuntime`] redacting
+/// `paths` when an input holds `needle`. The runtime is per vault: each test
+/// vault installs its own.
+///
+/// # Errors
+///
+/// Another sandbox already installed on the vault.
+pub fn install_input_match_redact_runtime(
+    vault: &Vault,
+    paths: Vec<String>,
+    needle: String,
+) -> Result<()> {
+    vault
+        .install_hook_runtime(Arc::new(InputMatchRedactRuntime { paths, needle }))
+        .map_err(Error::InvalidConfig)
+}
+
+/// The verb chain's Redact of `paths` applied to `view`, a value, path by
+/// path ([SKILL-ANSWER-DEEP-JSON-STACK-SAFE]).
+pub fn redact_view_value(view: &mut serde_json::Value, paths: &[String]) {
+    crate::runtime_hooks::verb::redact_value_for_test(view, paths);
+}
+
+/// The same Redact applied to `text`, the view held as JSON text, as a post
+/// chain applies it to a skill answer it never reads into a value: `None`
+/// when it hid nothing.
+///
+/// # Errors
+///
+/// `text` does not read as JSON.
+pub fn redact_view_text(text: &str, paths: &[String]) -> Result<Option<String>> {
+    crate::runtime_hooks::verb::redact_text_for_test(text, paths)
 }
 
 /// Hands `vault`'s verb hooks the [`CappedRedactRuntime`] redacting `paths`
