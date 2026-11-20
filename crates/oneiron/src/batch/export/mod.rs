@@ -16,6 +16,8 @@ mod archive_project;
 mod archive_read;
 /// Inert copies of source side-table rows carried by whole-vault archives.
 pub(crate) mod archive_retained_side_rows;
+/// The records each retained side table's rows are about.
+pub(crate) mod archive_retained_subjects;
 /// The archive disposition of each decided canonical side table.
 pub(crate) mod archive_side_dispositions;
 /// Owner-permitted landing groups for retained archive rows.

@@ -187,6 +187,16 @@ pub(crate) fn erase_proposal_actor_in_txn(
     Ok(())
 }
 
+/// The NOTE a stored landing receipt's value bytes name, whose delete drops the receipt
+/// (`note::erase::purge`); `None` for bytes that do not read as a receipt. The whole-vault export
+/// withholds a receipt of a NOTE it keeps out.
+pub(crate) fn landing_receipt_note(value: &[u8]) -> Option<EntityId> {
+    NOTE_RECEIPT
+        .decode_value(value)
+        .ok()
+        .map(|receipt| receipt.note)
+}
+
 /// Erasing `actor` from the head-move receipts (FIX 3520): each verdict it
 /// gave keeps its receipt, its heads and its time, and names no one. One-way,
 /// in the erase's own transaction. An id whose entity is no actor scans

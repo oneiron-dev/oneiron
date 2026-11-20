@@ -226,6 +226,15 @@ pub(crate) fn erase_setting_change_actor_in_txn(
     scrub_changes_in_txn(&vault.store, txn, actor)
 }
 
+/// The record a stored setting change's value bytes name as its scope, whose erase takes the
+/// change with it ([`erase_setting_entity_in_txn`]); none for a vault or task-type scope, `None`
+/// for bytes that do not read as a change. The whole-vault export withholds a change scoped to a
+/// record it keeps out.
+pub(crate) fn setting_change_records(value: &[u8]) -> Option<Vec<EntityId>> {
+    let change = CHANGES.decode_value(value).ok()?;
+    Some(change.scope.entity().into_iter().collect())
+}
+
 /// The per-entity eraser: an erased world, project, thread, goal or repository takes every
 /// setting row at its scope, and every change that names it, with it; a value that names it is
 /// rewritten where its key says how.
