@@ -4,7 +4,8 @@
 //! admissible turns in this extraction's working set, or by the NOTE a
 //! review read, may mint a new row. The id is the engine's, bound once per
 //! reply (`bindings`, FIX 7506), never the reply's. The mint door stamps
-//! Generated provenance and refuses existing/deleted ids.
+//! Generated provenance and refuses existing/deleted ids; a mention of a
+//! PERSON the vault cleanup archived restores that record.
 
 use super::resources::ConsolidationFence;
 use super::support::invalid_consolidation;
@@ -195,8 +196,15 @@ pub(super) fn mint_note_people(
 }
 
 /// Writes one extracted PERSON named `name` under `id`, Generated; the door
-/// refuses an existing or deleted id. The mint records `lineage`, the first
-/// try of the minting attempt's retry lineage.
+/// writes nothing for an existing or deleted id. The mint records `lineage`,
+/// the first try of the minting attempt's retry lineage.
+///
+/// An id the door wrote nothing for may name a PERSON the vault cleanup
+/// archived: an earlier try of this lineage, or another child of this
+/// parent, minted it from this same mention. The writer has checked that an
+/// admissible source of this call names the person, so the mention restores
+/// that record (`Vault::restore_mentioned_person_in_txn`), and the claims
+/// this reply makes about the person land on a row the owner reads.
 fn put_person(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -214,7 +222,9 @@ fn put_person(
         &rmpv::Value::Map(vec![(rmpv::Value::from("name"), rmpv::Value::from(name))]),
     )
     .map_err(|_| invalid_consolidation("extracted person body"))?;
-    vault.put_attempt_minted_person_in_txn(txn, id, now, &body, lineage)?;
+    if !vault.put_attempt_minted_person_in_txn(txn, id, now, &body, lineage)? {
+        vault.restore_mentioned_person_in_txn(txn, id)?;
+    }
     Ok(())
 }
 

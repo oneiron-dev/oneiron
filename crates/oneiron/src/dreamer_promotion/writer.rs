@@ -451,6 +451,13 @@ pub(super) fn promote_one_answering(
                 .ok_or(Error::InvalidClaimBody(
                     "consolidation claim is missing inside its own write transaction",
                 ))?;
+        // A claim about a PERSON the vault cleanup archived is a new mention
+        // of that person: the same record is restored in the claim's own
+        // transaction, so the claim never stands on a PERSON the owner does
+        // not read (ARCH-0073 §6; FIX NATIVE-CLAIM-LANDS-ON-ARCHIVED-PERSON).
+        if let crate::claim::ClaimSubject::Entity(subject) = landed.subject {
+            vault.restore_mentioned_person_in_txn(wtxn, &subject)?;
+        }
         // Never Auto, and never Proposed where no review holds it.
         if imported
             && (landed.approval == ClaimApprovalStatus::Auto
