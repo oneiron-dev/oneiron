@@ -134,6 +134,9 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
         AuthorityOp::SettingCopy(copy) => {
             vec![Grant::InstallKey(copy.machine, entry.signer_key().clone())]
         }
+        AuthorityOp::SettingPackHead(head) => {
+            vec![Grant::InstallKey(head.machine, entry.signer_key().clone())]
+        }
         AuthorityOp::ExportAct(record) => {
             vec![Grant::InstallKey(
                 record.machine,

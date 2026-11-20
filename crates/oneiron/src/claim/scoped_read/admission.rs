@@ -1,6 +1,7 @@
 use super::*;
 
 mod audience;
+mod notice_recipient;
 mod room_ceiling;
 mod world_scope;
 

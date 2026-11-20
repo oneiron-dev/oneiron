@@ -17,7 +17,9 @@
 //! at a time, so a refund past the first page is found
 //! (FIX [BK-DEPOSIT-REFUND-LIST-ONE-PAGE]). Sol's blind review of #9862: a
 //! page of refunds with full metadata is still read, and a refund the list
-//! names twice is never counted twice.
+//! names twice is never counted twice. Review round 2 of #9977: the
+//! deposit's earlier refund under another of its settle keys is no hand
+//! refund, so the owner's return of the balance is refunded.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -1898,4 +1900,45 @@ async fn a_refund_page_that_omits_has_more_makes_no_refund() {
         owed,
         "the refund stays owed"
     );
+}
+
+/// The owner's return of the balance after a visitor's half refund settled
+/// (review round 2 of #9977): the payment holds the deposit's earlier refund
+/// under another of its settle keys. That refund is neither the one owed now
+/// nor one a person made by hand, so the refund owed is made, and the
+/// payment ends refunded whole.
+#[tokio::test]
+async fn a_refund_under_an_earlier_settle_key_of_the_deposit_is_not_taken_for_a_hand_refund() {
+    let (fixture, stripe, payment_id) = half_refund_owed("earlier-settle-key").await;
+    stripe
+        .lock()
+        .expect("fake stripe")
+        .refunds
+        .push(FakeRefund {
+            id: "re_earlier_settle_key".to_owned(),
+            payment_intent: payment_id.clone(),
+            amount: 2_500,
+            status: "succeeded".to_owned(),
+            settle_key: Some("oneiron-deposit-refund-2500-earlier".to_owned()),
+            metadata: BTreeMap::new(),
+        });
+    let drain = run_settle_pass(&fixture, now_secs().expect("clock")).await;
+    assert_eq!(drain.failed, 0, "{drain:?}");
+    assert_eq!(drain.refunded, 1, "{drain:?}");
+    assert_eq!(refund_posts(&stripe), 1, "the refund owed now is made");
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::Refunded {
+            amount_minor: 2_500
+        }
+    );
+    let refunded: u64 = stripe
+        .lock()
+        .expect("fake stripe")
+        .refunds
+        .iter()
+        .filter(|refund| refund.status == "succeeded")
+        .map(|refund| refund.amount)
+        .sum();
+    assert_eq!(refunded, 5_000, "the payment is refunded whole");
 }

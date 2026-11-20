@@ -122,6 +122,7 @@ pub(crate) enum BeamError {
 }
 
 mod ablations;
+mod action_bench;
 mod arms;
 mod chroma;
 mod citations;

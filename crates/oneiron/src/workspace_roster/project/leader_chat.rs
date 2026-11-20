@@ -675,6 +675,24 @@ pub(crate) fn bound_reader_in(
     Ok(chat.persons[slot].is_none_or(|person| body.member_ids.contains(&person)))
 }
 
+/// The two actors leader chat `room` binds as its writers, `None` for a room
+/// without the binding. A binding that does not decode fails closed. It
+/// checks no leader rule: the doc plane asks only who wrote here
+/// (WORK-TALK-DOC-EDIT = A), and each writer still needs its own authority.
+pub(crate) fn bound_writers_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> Result<Option<[EntityId; 2]>> {
+    let body = crate::conversation::body_in(vault, txn, room)?;
+    let Some(value) = body.extra.get(CHAT_FIELD) else {
+        return Ok(None);
+    };
+    let bytes = rmp_serde::to_vec_named(value).map_err(|_| denied())?;
+    let chat: LeaderChat = decode(&bytes).map_err(|_| denied())?;
+    Ok(Some(chat.actors))
+}
+
 pub(crate) fn admit_witness(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

@@ -4,7 +4,9 @@
 //! user-stated truth; an agent answers an open conflict its grant reaches
 //! through the conflict settlement's own door. A settlement about a PERSON
 //! under the vault cleanup's archive marker restores her (FIX
-//! DREAMER-DIRECT-CLAIM-WRITERS-LAND-ON-ARCHIVED-PERSON).
+//! DREAMER-DIRECT-CLAIM-WRITERS-LAND-ON-ARCHIVED-PERSON). The owner's hold on a
+//! subject's conflict review stops a settlement by every actor (FIX
+//! DERIVE-SETTLE-HOLD-NAMES-STAMP-ACTOR).
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -15,6 +17,7 @@
 use oneiron::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
+use oneiron::dreamer_consolidation::ConflictReviewScope;
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::cleanup_archive::archive_as_cleanup;
@@ -23,13 +26,14 @@ use oneiron::test_doors::derivation_floor::{define_agent, write_derived_claim};
 use oneiron::test_doors::derive::{
     Claim, Derived, Named, Settle, Settlement, Supersede, batch_items, claim_lifecycle, commit,
     define_auto_agent, grant_derive_rows, open_conflict, open_conflict_with_alternative,
-    open_conflict_with_imported_alternative, refusal_receipt, revert_as_owner,
+    open_conflict_with_imported_alternative, refusal_receipt, revert_as_owner, witness_turn,
 };
 use oneiron::test_doors::steward::{
-    STEWARD_ARCHIVE_VERB, STEWARD_READ_VERB, STEWARD_VERBS, dreamer, receive_steward_grant_row,
-    stand_steward_grant, steward_grant_rows,
+    STEWARD_ARCHIVE_VERB, STEWARD_READ_VERB, STEWARD_VERBS, dreamer, owner,
+    receive_steward_grant_row, stand_steward_grant, steward_grant_rows,
 };
-use oneiron::{EdgeActorClass, EntityId, Vault};
+use oneiron::test_doors::untangle_regressions::seed_named_person;
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use serde_json::json;
 
 const READER: &str = "reader";
@@ -39,6 +43,7 @@ const LACKS_DERIVE: &str = "gate.deny.derive.grant_lacks_derive";
 const LIFECYCLE: &str = "gate.deny.derive.supersede_lifecycle";
 const OUTSIDE_GRANT: &str = "gate.deny.derive.outside_grant";
 const SETTLE_REFUSED: &str = "gate.deny.derive.settle_refused";
+const SETTLE_OWNER_HOLD: &str = "gate.deny.derive.settle_owner_hold";
 
 fn put(vault: &Vault, entity_type: u8, body: &[u8]) -> EntityId {
     let id = EntityId::now();
@@ -1063,4 +1068,140 @@ fn a_derived_keep_of_imported_words_about_an_archived_person_restores_her() {
         person_restored(&fixture),
         "the staged proposal is a new mention of her: it restored her"
     );
+}
+
+/// One open conflict between two of the Dreamer's claims about a person, in a vault its
+/// owner holds open, so the owner's hold door answers. This is the fixture of
+/// `tests/conflicts_page.rs`.
+struct OwnedConflict {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    dreamer: EntityId,
+    person: EntityId,
+    first: EntityId,
+    marker: EntityId,
+}
+
+fn owned_conflict() -> OwnedConflict {
+    let dir = tempfile::tempdir().expect("tempdir");
+    drop(open_dreamer_vault(dir.path(), READER).expect("vault"));
+    let vault = Vault::open_owned(dir.path(), VaultConfig::device()).expect("the owned vault");
+    oneiron::test_support::provision_engine_machines(&vault);
+    vault.ensure_embedded_owner_actor().expect("the owner");
+    let person = EntityId::now();
+    seed_named_person(&vault, &person, "owen", vault.now_recorded_at()).expect("a person");
+    let turn = witness_turn(&vault, "call me owen").expect("a witnessed turn");
+    let dreamer = dreamer(&vault).expect("the Dreamer");
+    stand_steward_grant(&vault, dreamer, &STEWARD_VERBS).expect("the Dreamer's grant");
+    let mut members = Vec::new();
+    for (run, value) in [
+        ("run-first", "an oat milk flat white"),
+        ("run-second", "a cortado"),
+    ] {
+        let committed = commit(
+            &vault,
+            dreamer,
+            EdgeActorClass::System,
+            run,
+            &[Derived::Claim(Claim {
+                local: "claim",
+                predicate: "preference.coffee",
+                subject: Named::Stored(person),
+                value: json!(value),
+                evidence: vec![Named::Stored(turn)],
+            })],
+        )
+        .expect("commit");
+        let [item] = committed.items.as_slice() else {
+            panic!("one item: {:?}", committed.items);
+        };
+        assert!(item.landed, "the claim lands: {item:?}");
+        members.push(item.rows[0]);
+    }
+    let marker = open_conflict(&vault, members[1], members[0]).expect("an open conflict");
+    OwnedConflict {
+        _dir: dir,
+        vault,
+        dreamer,
+        person,
+        first: members[0],
+        marker,
+    }
+}
+
+impl OwnedConflict {
+    /// The owner holds the conflict review of the conflict's subject.
+    fn hold(&self) {
+        let proof = owner(&self.vault).expect("the owner's proof");
+        let owner_actor = self.vault.ensure_embedded_owner_actor().expect("the owner");
+        self.vault
+            .memory(owner_actor, EdgeActorClass::Human)
+            .hold_dreamer_conflict_review(&proof, ConflictReviewScope::Subject(self.person))
+            .expect("the owner's hold");
+    }
+
+    /// Commits one Dismiss of the conflict as `actor` of `class`: whether it landed, and
+    /// its refusal reasons.
+    fn dismiss_as(&self, actor: EntityId, class: EdgeActorClass, run: &str) -> (bool, Vec<String>) {
+        let committed = commit(
+            &self.vault,
+            actor,
+            class,
+            run,
+            &[Derived::Settle(Settle {
+                local: "dismiss",
+                marker: Named::Stored(self.marker),
+                settlement: Settlement::Dismiss,
+            })],
+        )
+        .expect("commit");
+        let [item] = committed.items.as_slice() else {
+            panic!("one item: {:?}", committed.items);
+        };
+        (item.landed, item.reasons.clone())
+    }
+}
+
+/// The owner's hold on a subject's conflict review leaves its conflicts to the owner,
+/// whoever asks (lead ruling of 21 Nov 2026). The one hold an owner mints names the
+/// Dreamer. An agent other than the Dreamer, whose Steward grant gives `derive` over the
+/// marker and which lands what it derives, is refused as the Dreamer is.
+#[test]
+fn the_owners_hold_stops_a_settlement_by_an_agent_other_than_the_dreamer() {
+    let conflict = owned_conflict();
+    let agent = define_auto_agent(&conflict.vault).expect("an agent");
+    grant_derive_rows(&conflict.vault, &[agent]).expect("the agent's derive rows");
+    stand_steward_grant(&conflict.vault, agent, &STEWARD_VERBS).expect("the agent's grant");
+    conflict.hold();
+
+    let (landed, reasons) =
+        conflict.dismiss_as(agent, EdgeActorClass::Agent, "run-agent-dismisses");
+    assert!(
+        !landed,
+        "a held conflict is the owner's to answer: {reasons:?}"
+    );
+    assert_eq!(reasons, vec![SETTLE_OWNER_HOLD.to_owned()]);
+    assert_eq!(
+        claim_lifecycle(&conflict.vault, conflict.first).expect("read"),
+        Some("active".to_owned()),
+        "the refused settlement closes no member"
+    );
+}
+
+/// The Dreamer's own settlement through a derivation batch is refused under the hold.
+#[test]
+fn the_owners_hold_stops_a_settlement_by_the_dreamer() {
+    let conflict = owned_conflict();
+    conflict.hold();
+
+    let (landed, reasons) = conflict.dismiss_as(
+        conflict.dreamer,
+        EdgeActorClass::System,
+        "run-dreamer-dismisses",
+    );
+    assert!(
+        !landed,
+        "a held conflict is the owner's to answer: {reasons:?}"
+    );
+    assert_eq!(reasons, vec![SETTLE_OWNER_HOLD.to_owned()]);
 }

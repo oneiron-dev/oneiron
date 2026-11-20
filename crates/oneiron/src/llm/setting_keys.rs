@@ -57,7 +57,10 @@ fn admits_slot(item: &str) -> bool {
 
 /// A resident narrowing is stored only while the manifest in force admits it: no wider than the
 /// slot's pin, and every served role on the slot has a model at that route. A row with no item
-/// narrows every slot, so each one must admit it. A clear always lands.
+/// narrows every slot, so each one must admit it. A clear always lands, and so does the row the
+/// setting projection writes from the owner's signed act, which his machine checked under its
+/// own manifest: this install's reader takes a route its manifest does not admit as the slot's
+/// pin (`manifest::read_routes`).
 fn check_resident_route_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -66,6 +69,9 @@ fn check_resident_route_in_txn(
     let Some(stored) = change.value.as_ref() else {
         return Ok(());
     };
+    if change.standing.is_some() {
+        return Ok(());
+    }
     let Some(ResidentRoute(route)) = stored.decode::<Option<ResidentRoute>>().flatten() else {
         return Ok(());
     };

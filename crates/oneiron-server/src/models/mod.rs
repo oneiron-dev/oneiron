@@ -16,6 +16,7 @@
 //! [`ModelsStatus`]. Everything that needs no model keeps working.
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{
@@ -27,7 +28,9 @@ use oneiron::{BudgetGuard, LlmCatalogEntry, ModelId, ModelLocality};
 use oneiron_llm::anthropic::{AnthropicMessagesBackend, AnthropicMessagesConfig};
 use oneiron_llm::openai_compat::{OpenAiCompatBackend, OpenAiCompatConfig};
 
-use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind, role_key};
+use crate::config::models::{
+    ModelRef, ModelsConfig, ProviderConfig, ProviderKind, WorkerConfig, role_key,
+};
 
 mod anthropic;
 mod broker;
@@ -75,11 +78,14 @@ mod offer;
 mod openai;
 pub(crate) mod outbound_wait;
 mod output_cap;
+#[cfg(unix)]
+mod peer_socket;
 mod raw;
 // FIX 462: realtime voice sessions on a voice-loop run.
 mod realtime_voice;
 mod receipts;
 mod rerank;
+mod reranker_backend;
 mod responses_socket;
 mod role_route;
 mod router;
@@ -130,6 +136,7 @@ pub(crate) use media::AgentMediaCall;
 #[cfg(oneiron_test_support)]
 pub(crate) use media::JobSpendLedger;
 pub(crate) use media::RungVoices;
+// L9-15: a stub worker in custody as a socket launch, for the test door only.
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::{OfferEndpoint, ServedOffer};
 pub use oneiron_speech::design::hosted::VendorVoice;
@@ -140,6 +147,7 @@ pub use receipts::{LoggedReceipts, RUN_RECEIPT_TARGET};
 pub(crate) use rerank::{
     RerankLine, RerankOutcome, RerankStop, on_line, rerank_outcome, rerank_request,
 };
+use reranker_backend::build_reranker;
 pub(crate) use responses_socket::ResponsesContext;
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
@@ -154,6 +162,8 @@ pub use status::{
     TaggerStatus,
 };
 pub use token_ratio::TokenRatios;
+#[cfg(all(oneiron_test_support, any(target_os = "linux", target_os = "macos")))]
+pub(crate) use worker_host::socket_launch_door;
 pub(crate) use worker_host::start_worker_controller;
 pub(crate) use worker_host::{
     install_snapshot_runtime, permit_worker_launch, session_allocations_for_vault,
@@ -493,32 +503,6 @@ fn build_provider(
     Ok(Some(backend))
 }
 
-/// The rerank client for `provider`'s reranker `models`: over the
-/// provider's own HTTP client, or, for a `key_secret` key, over the
-/// credential broker at `site` with the key read at `keys` (L9-12), as the
-/// offer's T0 custody says.
-fn build_reranker(
-    provider: &ProviderConfig,
-    models: &[ModelRef],
-    site: Option<&Result<broker::BrokerSite, String>>,
-    keys: Option<&Arc<dyn KeyDoor>>,
-) -> anyhow::Result<Arc<dyn SingleRouteBackend>> {
-    anyhow::ensure!(
-        provider.siwc.is_none(),
-        "SIWC credentials serve Responses, not reranking"
-    );
-    let transport = if provider.key_secret.is_some() {
-        rerank::RerankTransport::Broker(broker_rerank::BrokerRerank::new(provider, site, keys)?)
-    } else {
-        rerank::RerankTransport::Direct(http::ProviderHttp::new(provider, http::KeyStyle::Bearer)?)
-    };
-    let wire_models = models
-        .iter()
-        .map(|model| Ok((engine_model_id(model, provider)?, model.model.clone())))
-        .collect::<anyhow::Result<_>>()?;
-    Ok(Arc::new(rerank::RerankBackend::new(transport, wire_models)))
-}
-
 /// The output ceiling a provider's wire carries.
 fn output_cap(provider: &ProviderConfig) -> OutputCap {
     match provider.kind {
@@ -576,9 +560,12 @@ fn rung(
     })
 }
 
-/// A provider's on-device alternative (I2-LOCAL): one chat backend over the
-/// native channels of the managed EXL3 workers bound to it and nothing else,
-/// and the id of the worker that serves each wire model.
+/// A provider's on-device alternative (I2-LOCAL): one backend over channels
+/// checked against the supervised children of the managed workers bound to
+/// it and nothing else, and the id of the worker that serves each wire
+/// model. For chat, the native channels of its EXL3 workers; for the
+/// reranker, the Unix sockets of its `listen = "unix"` llama.cpp workers
+/// (L9-15).
 #[cfg_attr(not(unix), allow(dead_code))]
 struct NativeLocal {
     backend: Arc<dyn SingleRouteBackend>,
@@ -676,8 +663,8 @@ fn speaks_native_local(provider: &ProviderConfig) -> bool {
 
 /// `model` on `provider` over `native` alone, as a rung at `position`: the
 /// on-device alternative of the rung [`rung`] builds for it (I2-LOCAL), with
-/// the same model id, wire model and prompt. `None` when no supervised native
-/// worker serves its wire model.
+/// the same model id, wire model and prompt, a rerank rung when `rerank`.
+/// `None` when no supervised worker serves its wire model.
 fn native_rung(
     name: &str,
     provider: &ProviderConfig,
@@ -685,12 +672,13 @@ fn native_rung(
     model: &ModelRef,
     position: usize,
     prompt: Option<String>,
+    rerank: bool,
 ) -> Option<LadderRung> {
     if !native.workers.contains_key(&model.model) {
         return None;
     }
     let id = engine_model_id(model, provider).ok()?;
-    let offer = match native_local_offer(provider, id.clone(), &model.model, native) {
+    let offer = match native_local_offer(provider, id.clone(), &model.model, native, rerank) {
         Ok(offer) => offer,
         Err(error) => {
             tracing::warn!(provider = %name, %error, "model has no on-device offer");

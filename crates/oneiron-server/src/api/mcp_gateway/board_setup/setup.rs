@@ -74,6 +74,8 @@ pub(crate) async fn execute_mcp_setup(
     )
     .await?;
     let mut rider = None;
+    // The rows a freshly assembled board was derived from: its report's items.
+    let mut board_rows = Vec::new();
     let mut hooks = None;
     let mut layout_candidate = None;
     let mut staged_brief = None;
@@ -164,6 +166,7 @@ pub(crate) async fn execute_mcp_setup(
         };
         staged_brief = brief;
         hooks = Some(board.hooks);
+        board_rows.clone_from(&board.rows);
         rider = Some((board.changes, board.epoch));
         (structured, keyframe, health, snapshot, Some(board.epoch))
     };
@@ -217,6 +220,8 @@ pub(crate) async fn execute_mcp_setup(
     }
     if let Some((rider, epoch)) = &rider {
         super::board_observations::delivered(server, actor, rider, true, *epoch).await;
+        // Its items go to this machine's home as prefetch seeds, whoever runs the session.
+        crate::board_seed_report::report_delivered_board(server, board_rows.iter().copied());
     }
     #[cfg(test)]
     super::device_release::release_hook::run(server);

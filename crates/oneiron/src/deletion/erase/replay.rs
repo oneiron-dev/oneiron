@@ -383,6 +383,21 @@ impl Vault {
                 effects,
             ));
         }
+        // A peer's release of a blob version (L9-44, Engine ruling 13 Nov
+        // 17:56) may arrive as its claim's tombstone alone: the version this
+        // vault's chain keeps under the claim, or on a replica that keeps no
+        // chain the claim's pair and bytes (REVIEW-7640-NO-CHAIN-REPLICA-REPLAY),
+        // is read before the purge takes the claim's body, and released after it.
+        let released_version =
+            crate::blob_artifact::replayed_claim_version_in_txn(&self.store, &*wtxn, id)?;
+        // A legal hold on the version's artifact or ASSET keeps the version, so it keeps the
+        // claim the version names too: the purge is refused as for a held claim id
+        // (BLOB-VERSION-HELD-PURGE, Engine 15 Nov 19:25), before anything here is destroyed.
+        if let Some(released) = released_version.as_ref() {
+            for held in released.legal_hold_ids()? {
+                self.store.reject_legal_hold_in_txn(wtxn, held.as_bytes())?;
+            }
+        }
         // ARCH-0055 §9 (r6) on the RECEIVING side: a remote hard erase must
         // leave this replica as unreadable as the origin, so the local shells
         // of the erased head are cascaded here too — before the purge takes
@@ -399,6 +414,13 @@ impl Vault {
         )?;
         changed_documents.extend(citing);
         effects.extend(purged_cancelled);
+        if let Some(released) = released_version {
+            crate::blob_artifact::release_replayed_claim_version_in_txn(
+                &crate::secret_custody::CustodyWrite::of(self),
+                wtxn,
+                &released,
+            )?;
+        }
         // The replay reserves no topology delete, so the purge kept the
         // checkpoint payload leaves; the tombstone's own reason settles them.
         crate::deletion::checkpoint_payload::settle_checkpoint_payloads_for_reason_in_txn(
