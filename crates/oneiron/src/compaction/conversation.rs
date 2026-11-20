@@ -43,7 +43,6 @@ pub use log::{
 };
 pub(crate) use log::{chat_log_room, select_action_turns};
 pub(crate) use order::validate_conversation_window_in_txn;
-use pieces::TurnPieces;
 pub(crate) use standing::{FoldedTurnSummary, folded_turn_summary_in, summary_stands_in};
 pub(crate) use storage::{conversation_receipt_in, put_conversation_receipt_in_txn};
 use window::ChatLogWindow;
@@ -148,7 +147,7 @@ pub struct ConversationFlight<'a> {
     /// How its one turn is read when the writer cannot take that turn
     /// whole (FIX-LIST COMPACTION-FIRST-TURN-PAST-INPUT-ROOM-STALLS); `None`
     /// for a window of whole turns.
-    pieces: Option<TurnPieces>,
+    pieces: Option<pieces::TurnPieces>,
 }
 
 /// Seals `log`'s window for one flight past its driver's threshold, on the
@@ -284,7 +283,10 @@ fn sized_window(
     budget: u64,
     room: Option<u64>,
     floor: u64,
-) -> Result<(ChatLogWindow, Vec<String>, Option<TurnPieces>), ConversationCompactionUnavailable> {
+) -> Result<
+    (ChatLogWindow, Vec<String>, Option<pieces::TurnPieces>),
+    ConversationCompactionUnavailable,
+> {
     use ConversationCompactionUnavailable as Why;
     if let Some(window) = window_within(whole, budget, room) {
         return window_with_pins(window, profile, budget, room)
@@ -297,7 +299,7 @@ fn sized_window(
         return Err(Why::PinsDoNotFit);
     }
     room.zip(turn.messages.first())
-        .and_then(|(room, message)| TurnPieces::plan(message, &pins, budget, room, floor))
+        .and_then(|(room, message)| pieces::TurnPieces::plan(message, &pins, budget, room, floor))
         .map(|plan| (turn, pins, Some(plan)))
         .ok_or(Why::TurnPastInputRoom)
 }
