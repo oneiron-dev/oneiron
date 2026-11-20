@@ -126,7 +126,10 @@ pub(super) fn apply_policy_setting(
     // Another setting's act on the kit-only target lands nothing there. The
     // switch counts only with an owner key's proof, whoever carries it, the
     // owner's own machine included: with none it waits for one.
-    let unproven_kit_only = kit_only
+    // MUTATION (red proof): a kit-only act with no owner key's proof lands
+    // as any setting act does.
+    let unproven_kit_only = false
+        && kit_only
         && matches!(landing, OwnerChoiceLanding::Recorded { .. })
         && super::owner_proof::owner_proof_key(state, entry, hash)?.is_none();
     let landing = match landing {
