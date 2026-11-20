@@ -2,8 +2,8 @@
 
 use super::door::CalendarConnectorOperation;
 use super::outbound::{
-    CalendarRemoteObjectRow, cancelled_members_in_flight, ingest_error, omission_observed,
-    prove_unproven_replay, write_remote_object,
+    CalendarRemoteObjectRow, cancelled_members_in_flight, first_write_unsettled, ingest_error,
+    omission_observed, prove_unproven_replay, write_remote_object,
 };
 use super::remote::{
     CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange,
@@ -117,12 +117,15 @@ pub fn run_calendar_connector_sync_with_screener(
     // (fix list row 19192). A booking move a pending emergency delivery held
     // back stays owed the same way (FIX 22385), and so does a cancelled
     // version a cancelled write in flight holds back
-    // (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
+    // (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS) and a first write's
+    // copy read before the write settled
+    // (CAL-FIRST-WRITE-COPY-PULLED-UNSETTLED-IMPORTS-DUPLICATE-EVENT).
     let next_cursor = match batch.next_cursor {
         Some(cursor)
             if counters.owed_omissions > 0
                 || counters.owed_booking_moves > 0
-                || counters.owed_cancelled_versions > 0 =>
+                || counters.owed_cancelled_versions > 0
+                || counters.owed_first_write_copies > 0 =>
         {
             transport.cursor_owing_full_listing(&cursor)
         }
@@ -164,6 +167,10 @@ struct SyncCounters {
     /// Resources read cancelled while a cancelled write of the same member
     /// was in flight (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
     owed_cancelled_versions: u32,
+    /// Resources read while the first write of their EVENT, under the UID
+    /// it minted, was in flight
+    /// (CAL-FIRST-WRITE-COPY-PULLED-UNSETTLED-IMPORTS-DUPLICATE-EVENT).
+    owed_first_write_copies: u32,
 }
 
 /// Applies one pulled change under the echo law, each admission under
@@ -190,10 +197,22 @@ fn apply_remote_change(
                 .first()
                 .ok_or_else(|| ingest_error("remote resource has no event"))?;
             let source = pull_source_record_id(provider, seat, &primary.uid);
-            // A replayed cancelled write whose refusal's read proved nothing
-            // is proved by this read first, so its own copy never lands
-            // unmarked (BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY).
+            // A replayed write whose refusal's read proved nothing is proved
+            // by this read first, so its own copy never lands unmarked
+            // (BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY), nor a first
+            // write's as a second EVENT.
             prove_unproven_replay(vault, operation, provider, object, &primary.uid, now)?;
+            // A first write's copy coming back before the write binds its
+            // UID resolves no EVENT: nothing names the UID the write minted
+            // until its passport lands. The resource stays owed and unread,
+            // so it never imports a second EVENT, on this seat or on any
+            // other seat of the collection, and the next pull after the
+            // write binds the UID reads it on the written EVENT
+            // (CAL-FIRST-WRITE-COPY-PULLED-UNSETTLED-IMPORTS-DUPLICATE-EVENT).
+            if first_write_unsettled(vault, &primary.uid)? {
+                counters.owed_first_write_copies += 1;
+                return Ok(());
+            }
             // A cancelled version of a member a write of this UID still in
             // flight writes cancelled may be that write coming back before
             // its settlement marks the member's passport, and would read as a
@@ -203,8 +222,7 @@ fn apply_remote_change(
             // which dates the cancellation if the write proves not to be the
             // stored copy (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
             // A VEVENT is the staged member its UID and staged RECURRENCE-ID
-            // name, so a first write's copy, whose UID no passport resolves
-            // yet, is held back too and mints no second EVENT.
+            // name, whatever exception claims the member holds now.
             let in_flight = cancelled_members_in_flight(vault, operation, &primary.uid)?;
             if !in_flight.is_empty() {
                 let mut cancelled = Vec::new();

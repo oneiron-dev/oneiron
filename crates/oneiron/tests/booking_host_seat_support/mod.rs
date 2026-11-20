@@ -351,6 +351,15 @@ impl Seat {
         self.run_pull(vault, vec![RemoteCalendarChange::Upsert(echo)], now)
     }
 
+    /// The seat's own last write of `uid` byte for byte, as the collection
+    /// stores it: what another seat installed on the same collection, under
+    /// another system name, pulls.
+    pub(crate) fn stored_own_write(&self, uid: &str) -> SeatChange {
+        let href = self.resource_href(uid);
+        let etag = format!("{href}-stored");
+        SeatChange::Stored(remote_upsert(&href, Some(&etag), &self.last_write_ics(uid)))
+    }
+
     /// Pulls back the seat's own last write of one booking as a provider that
     /// rewrites the stored resource returns it: the written VEVENT at
     /// `sequence` (the written one or higher) with a property of the
@@ -666,6 +675,44 @@ impl Seat {
             matches!(refused, Err(CalendarConnectorError::EtagMismatch { .. })),
             "the write is refused on its precondition: {refused:?}"
         );
+    }
+
+    /// Writes one EVENT to the seat's calendar while another call of the
+    /// same write overlaps it: once this call has staged the write, and
+    /// before its request reaches the provider, the other call at
+    /// `replay_now` finds the write prepared and sends it again. The
+    /// provider stores that request, but its answer is lost. This call's
+    /// request then reaches the provider, which refuses it on its
+    /// precondition, since the stored copy took an ETag; its reconciliation
+    /// reads the copy the other call stored or, with `read_fails`, reads
+    /// nothing. Returns the SEQUENCE the stored copy carries.
+    pub(crate) fn write_refused_over_overlapping_replay(
+        &self,
+        vault: &Vault,
+        event_ref: EntityId,
+        read_fails: bool,
+        replay_now: u64,
+        now: u64,
+    ) -> u32 {
+        let wire = ReplayBeforeSend {
+            seat: self,
+            vault,
+            event_ref,
+            replay_now,
+            read_fails,
+        };
+        let refused = write_calendar_event(vault, &self.operation(vault), &wire, event_ref, now);
+        assert!(
+            matches!(refused, Err(CalendarConnectorError::EtagMismatch { .. })),
+            "the overlapped call is refused on its precondition: {refused:?}"
+        );
+        self.transport
+            .writes
+            .lock()
+            .expect("written requests")
+            .last()
+            .expect("the seat stored the overlapping replay")
+            .sequence
     }
 
     /// Sends the prepared write again under a refused precondition, with
@@ -1016,6 +1063,104 @@ impl CalendarRemoteTransport for PullBeforeRefusal<'_> {
         self.seat
             .pull(self.vault, std::slice::from_ref(self.change), self.pull_now)
             .expect("the pull while the write is out");
+        *self
+            .seat
+            .transport
+            .refuse_next_precondition
+            .lock()
+            .expect("precondition switch") = true;
+        self.seat
+            .transport
+            .upsert(secret_ref, calendar_ref, request)
+    }
+
+    fn delete(
+        &self,
+        _secret_ref: &str,
+        _calendar_ref: &str,
+        _href: &str,
+        _expected_etag: Option<&str>,
+        _uid: &str,
+        _sequence: u32,
+    ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+        panic!("delete is not used by the host-seat fixture")
+    }
+}
+
+/// The seat's scripted wire, whose upsert, before the request reaches the
+/// provider, runs another call of the same write at `replay_now`: that call
+/// replays the prepared row, and the provider stores the replay but loses
+/// its answer. The request then reaches the provider, which refuses it on
+/// its precondition; the reconciliation pull reads the replay's stored
+/// copy, or fails with `read_fails`.
+struct ReplayBeforeSend<'a> {
+    seat: &'a Seat,
+    vault: &'a Vault,
+    event_ref: EntityId,
+    replay_now: u64,
+    read_fails: bool,
+}
+
+impl CalendarRemoteTransport for ReplayBeforeSend<'_> {
+    fn provider_key(&self) -> &'static str {
+        self.seat.transport.provider_key()
+    }
+
+    fn pull(
+        &self,
+        secret_ref: &str,
+        calendar_ref: &str,
+        cursor: Option<&str>,
+    ) -> Result<RemoteSyncBatch, CalendarConnectorError> {
+        self.seat.transport.pull(secret_ref, calendar_ref, cursor)
+    }
+
+    fn upsert(
+        &self,
+        secret_ref: &str,
+        calendar_ref: &str,
+        request: &RemoteWriteRequest,
+    ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+        *self
+            .seat
+            .transport
+            .lose_next_answer
+            .lock()
+            .expect("answer switch") = true;
+        let replayed = write_calendar_event(
+            self.vault,
+            &self.seat.operation(self.vault),
+            &self.seat.transport,
+            self.event_ref,
+            self.replay_now,
+        );
+        assert!(
+            matches!(replayed, Err(CalendarConnectorError::Transport { .. })),
+            "the overlapping replay's answer is lost: {replayed:?}"
+        );
+        if self.read_fails {
+            *self
+                .seat
+                .transport
+                .fail_next_pull
+                .lock()
+                .expect("pull switch") = true;
+        } else {
+            let stored = remote_upsert(
+                &self.seat.resource_href(&request.uid),
+                Some(&format!("{}-stored-by-replay", request.uid)),
+                &self.seat.last_write_ics(&request.uid),
+            );
+            self.seat
+                .transport
+                .batches
+                .lock()
+                .expect("scripted batches")
+                .push_back(RemoteSyncBatch {
+                    next_cursor: None,
+                    changes: vec![RemoteCalendarChange::Upsert(stored)],
+                });
+        }
         *self
             .seat
             .transport
