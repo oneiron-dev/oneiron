@@ -72,9 +72,8 @@ unmodified trees.
   `Instant` elapsed since its first read) in place of the wall clock, on every
   target where `Instant` works; plain `wasm32` keeps upstream's clock. Upstream
   subtracted a saved wall-clock reading, so a clock stepped back while a diff
-  ran held its timeout off by the size of the step, and the revision text
-  field (`crates/oneiron/src/vault/entity_revision/storage/text_field.rs`)
-  diffs under the vault's writer.
+  ran held its timeout off by the size of the step, and every whole-text set
+  (`crates/oneiron/src/text_diff.rs`) diffs under the vault's writer.
 - `loro-1.16.2/src/lib.rs` — a `loro::checkpoint` module re-exporting the new
   types, the two `LoroDoc` methods below delegating to the internal ones, and
   the `loro::snapshot_at_exports` re-export.
