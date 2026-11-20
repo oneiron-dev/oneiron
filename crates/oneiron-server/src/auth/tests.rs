@@ -630,3 +630,18 @@ fn reconnect_identity_keeps_exact_instrument_not_remaining_ttl() {
         narrowed_auth.idempotency_principal()
     );
 }
+
+#[test]
+fn a_stored_grant_body_that_does_not_decode_is_a_store_fault_not_a_refusal() {
+    // A grant-bound slip's stored FEDERATION_GRANT row whose body does not
+    // decode is this server's fault, as an unreadable entity header is: the
+    // caller is answered 500, never 401 as if its credential failed.
+    let undecodable =
+        oneiron::Error::Record(oneiron::error::RecordError::InvalidFederationGrantBody(
+            "federation grant body failed validation",
+        ));
+    assert!(slip_verification_store_fault(&undecodable));
+    assert!(slip_verification_store_fault(
+        &oneiron::Error::CorruptedIndex("entity header")
+    ));
+}
