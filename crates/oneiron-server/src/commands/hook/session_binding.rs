@@ -27,12 +27,12 @@
 //! writer uses and renamed into place, so starts of one session running at
 //! once never replace or remove each other's file, and a writer that fails
 //! removes only its own staging file. A file anyone else could write is
-//! never read. A hand-over that reads a session's one record writes it
-//! again, so a session that hands over keeps its record. The folders of
-//! sessions whose files are all older than [`KEEP_FOR`] are removed when
-//! another session records; once a record other than `local` has gone that
-//! way, a session with no record may be the one whose record went, and its
-//! log goes nowhere, never to the local queue (REVIEW-9914).
+//! never read. No record other than `local` is ever removed, so a session
+//! that bound a hosted vault, or more than one vault, hands over by its
+//! whole record however long it waited (REVIEW-9914). The folders of
+//! sessions whose every file is a `local` record or a staging file, all
+//! older than [`KEEP_FOR`], are removed when another session records: such
+//! a session queues locally with its record or without it.
 
 use std::ffi::OsStr;
 use std::fs;
@@ -57,12 +57,9 @@ const HOSTED_PREFIX: &str = "hosted-";
 const MAX_RECORD_BYTES: u64 = 4 * 1024;
 /// The longest session id a folder is named by.
 const MAX_SESSION_ID_BYTES: usize = 128;
-/// How long a session's files are kept after the newest was written.
+/// How long a session's `local` records are kept after the newest was
+/// written.
 const KEEP_FOR: Duration = Duration::from_secs(30 * 24 * 60 * 60);
-/// The file in a host's folder that says a session's record other than
-/// `local` was removed as old ([`remove_old`]). No session id starts with a
-/// dot.
-const REMOVED: &str = ".removed";
 
 /// A hosted vault a session bound: its origin and vault id.
 #[derive(Serialize, Deserialize)]
@@ -147,25 +144,16 @@ pub(super) fn record(host: HookHost, session: &str, hosted: Option<&HostedVault>
 }
 
 /// What the starts of `host`'s session `session` bound; `None` when none
-/// recorded anything and no record of `host`'s sessions other than `local`
-/// was removed as old. A session with no record where one was may be the
-/// one whose record went: it reads as a mixed log, which no vault takes, as
-/// does a file that anyone else could write or that this version does not
-/// read (REVIEW-9914). A record read as one binding is written again, so a
-/// session that hands over is never removed as old.
+/// recorded anything. A file that anyone else could write, or that this
+/// version does not read, reads as a mixed log, which no vault takes.
 pub(super) fn bound(host: HookHost, session: &str) -> Option<SessionBinding> {
     let folder = session_folder(host, session)?;
-    let unrecorded = || removed(&folder).then_some(SessionBinding::Mixed);
-    let Ok(entries) = fs::read_dir(&folder) else {
-        return unrecorded();
-    };
-    let mut files = entries
+    let mut files = fs::read_dir(&folder)
+        .ok()?
         .filter_map(Result::ok)
         .map(|entry| entry.file_name())
         .filter(|name| !staging(name));
-    let Some(first) = files.next() else {
-        return unrecorded();
-    };
+    let first = files.next()?;
     if files.next().is_some() {
         return Some(SessionBinding::Mixed);
     }
@@ -173,10 +161,7 @@ pub(super) fn bound(host: HookHost, session: &str) -> Option<SessionBinding> {
         return Some(SessionBinding::Mixed);
     };
     let binding = match first.to_str() {
-        Some(LOCAL) => {
-            let _ = add(&folder, LOCAL, b"");
-            SessionBinding::Local
-        }
+        Some(LOCAL) => SessionBinding::Local,
         Some(name) if name.starts_with(HOSTED_PREFIX) => {
             let mut body = Vec::new();
             let read = file.take(MAX_RECORD_BYTES + 1).read_to_end(&mut body);
@@ -186,7 +171,6 @@ pub(super) fn bound(host: HookHost, session: &str) -> Option<SessionBinding> {
                         && body.len() as u64 <= MAX_RECORD_BYTES
                         && hosted.file_name() == name =>
                 {
-                    let _ = add(&folder, name, &body);
                     SessionBinding::Hosted(hosted)
                 }
                 _ => SessionBinding::Mixed,
@@ -195,14 +179,6 @@ pub(super) fn bound(host: HookHost, session: &str) -> Option<SessionBinding> {
         _ => SessionBinding::Mixed,
     };
     Some(binding)
-}
-
-/// Whether a record other than `local` of the sessions whose folders are
-/// beside `folder` was removed as old: [`REMOVED`] is there.
-fn removed(folder: &Path) -> bool {
-    folder
-        .parent()
-        .is_some_and(|sessions| fs::symlink_metadata(sessions.join(REMOVED)).is_ok())
 }
 
 /// The folder of `host`'s session `session`, when its id is a plain name:
@@ -233,11 +209,11 @@ fn staging(name: &OsStr) -> bool {
     name.as_encoded_bytes().starts_with(b".")
 }
 
-/// Adds the file `name` holding `body` to `folder`, a session's folder or,
-/// for [`REMOVED`], a host's, 0600 in 0700 folders in the run folder:
-/// written under a staging name of this writer's alone, then renamed into
-/// place, where a file of that name is replaced by the same bytes. A writer
-/// that fails removes its staging file alone.
+/// Adds the file `name` holding `body` to the session folder `folder`, 0600
+/// in 0700 folders in the run folder: written under a staging name of this
+/// writer's alone, then renamed into place, where a file of that name is
+/// replaced by the same bytes. A writer that fails removes its staging file
+/// alone.
 fn add(folder: &Path, name: &str, body: &[u8]) -> anyhow::Result<()> {
     local_servers::ensure_run_dir()?;
     let sessions = folder
@@ -266,12 +242,10 @@ fn add(folder: &Path, name: &str, body: &[u8]) -> anyhow::Result<()> {
 }
 
 /// Removes the folders of sessions other than the one at `own` whose files
-/// were all written more than [`KEEP_FOR`] ago. Before a folder holding a
-/// record other than `local` goes, [`REMOVED`] is written beside it, so a
-/// later hand-over of its session, finding no record, sends the log
-/// nowhere, never to the local queue (REVIEW-9914); when that file cannot
-/// be written, the folder stays. A `local` record goes by itself: a session
-/// with no record queues locally all the same.
+/// are all `local` records or staging files, written more than [`KEEP_FOR`]
+/// ago. A folder holding any other record stays: removing it, or any part
+/// of it, could leave a session that may still hand over with no record, or
+/// with one of the vaults it bound alone (REVIEW-9914).
 fn remove_old(own: &Path) {
     let Some(sessions) = own.parent() else {
         return;
@@ -287,6 +261,10 @@ fn remove_old(own: &Path) {
             .and_then(|metadata| metadata.modified())
             .is_ok_and(|modified| modified < cutoff)
     };
+    let held = |path: &Path| {
+        path.file_name()
+            .is_some_and(|name| !staging(name) && name != OsStr::new(LOCAL))
+    };
     for entry in entries.filter_map(Result::ok) {
         let folder = entry.path();
         if folder == own || !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
@@ -299,19 +277,11 @@ fn remove_old(own: &Path) {
             .filter_map(Result::ok)
             .map(|file| file.path())
             .collect();
-        if !files.iter().all(|file| old(file)) {
-            continue;
+        if files.iter().all(|file| old(file) && !held(file)) {
+            for file in &files {
+                let _ = fs::remove_file(file);
+            }
+            let _ = fs::remove_dir(&folder);
         }
-        let held = files.iter().any(|file| {
-            file.file_name()
-                .is_some_and(|name| !staging(name) && name != OsStr::new(LOCAL))
-        });
-        if held && add(sessions, REMOVED, b"").is_err() {
-            continue;
-        }
-        for file in &files {
-            let _ = fs::remove_file(file);
-        }
-        let _ = fs::remove_dir(&folder);
     }
 }
