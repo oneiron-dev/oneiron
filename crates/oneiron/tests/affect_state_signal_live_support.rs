@@ -7,7 +7,9 @@
 //! claim, and stay served after every record they counted is deleted, as the
 //! composite index that carries the same numbers does. A served signal spells
 //! no counted TASK or turn id, which a reader of the substrate facet may not
-//! read (REVIEW-9816 P1).
+//! read (REVIEW-9816 P1). The composite counts the annotated turns it read
+//! and names none, for the same reason, and still names the two signals,
+//! which sit in its own facet (STATE-COMPOSITE-TURN-HEX-OUTSIDE-READER-FACET).
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -169,15 +171,15 @@ fn owned_task(vault: &Vault, owner: EntityId) -> EntityId {
         .expect("the TASK creation took effect")
 }
 
-/// The value a signal's evidence holds under `key`, or `None` when the
-/// evidence holds no such key.
+/// The value a signal's (or the composite's) evidence holds under `key`, or
+/// `None` when the evidence holds no such key.
 fn evidence_field(vault: &Vault, signal: &EntityId, key: &str) -> Option<Value> {
     let body = vault
         .get_claim(signal)
         .expect("signal read")
         .expect("the signal is stored");
     let Some(Value::Map(fields)) = body.evidence.as_ref() else {
-        panic!("a signal's evidence is a map: {:?}", body.evidence);
+        panic!("the claim's evidence is a map: {:?}", body.evidence);
     };
     fields
         .iter()
@@ -297,5 +299,68 @@ fn a_state_signal_keeps_live_support_after_every_counted_record_is_deleted() {
         claim_has_live_support(&vault, &composite).expect("read"),
         Some(true),
         "the composite carrying the same numbers stays served too"
+    );
+}
+
+/// The owner speaks one annotated turn and owns one TASK; the production
+/// refresh writes the composite. The composite spells no turn id: the turn
+/// sits in its room's facet and the composite in the owner's substrate facet,
+/// so a door that serves the composite's bytes to a reader of that facet
+/// would hand on the id of a turn the reader may not read. Its evidence
+/// counts the one annotated turn and names the two signal claims, which sit
+/// in the composite's own facet.
+/// Red on main: the composite's evidence is an array of the annotated turn's
+/// hex id, then the two signals' ids.
+#[test]
+fn a_composite_index_counts_its_annotated_turns_and_names_none() {
+    let (_dir, vault, owner) = owned_vault();
+    declare_predicates_normal(&vault, &[("state.", false)]);
+    let room = EntityId::now();
+    let turn = spoken_turn(&vault, owner, room);
+    let _task = owned_task(&vault, owner);
+
+    let RefreshedStateSignals {
+        composite,
+        goal_velocity,
+        engagement,
+    } = refresh_state_signals(&vault, &owner, &WINDOW, vault.now_recorded_at())
+        .expect("the refresh")
+        .expect("an annotated turn the owner spoke and a TASK it owns make the refresh measure");
+
+    assert!(
+        !row_spells_id(&vault, &composite, &turn),
+        "FAILBEFORE STATE-COMPOSITE-TURN-HEX-OUTSIDE-READER-FACET: the composite spells the \
+         id of the turn it read, which a reader of the substrate facet may not read"
+    );
+    assert_eq!(
+        evidence_field(&vault, &composite, "annotated_turns"),
+        Some(Value::from(1_u64)),
+        "the composite counts the one annotated turn the owner spoke"
+    );
+    for (key, signal, predicate) in [
+        ("goal_velocity_signal", goal_velocity, "state.goal_velocity"),
+        ("engagement_signal", engagement, "state.engagement"),
+    ] {
+        assert_eq!(
+            evidence_field(&vault, &composite, key),
+            Some(Value::from(signal.to_hex())),
+            "the composite names its {predicate} signal"
+        );
+        let body = vault.get_claim(&signal).expect("read").expect("stored");
+        assert_eq!(body.predicate, predicate);
+        assert_eq!(
+            body.scope_facet,
+            vault
+                .get_claim(&composite)
+                .expect("read")
+                .expect("stored")
+                .scope_facet,
+            "the {predicate} signal sits in the composite's own facet"
+        );
+    }
+    assert_eq!(
+        claim_has_live_support(&vault, &composite).expect("read"),
+        Some(true),
+        "the composite index is served"
     );
 }
