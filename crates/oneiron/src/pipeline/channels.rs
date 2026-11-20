@@ -692,6 +692,7 @@ pub(super) fn collect_index_candidates(
         window_end,
         anchor_mid,
         cap,
+        deadline,
         scans,
         ..
     } = collection;
@@ -701,6 +702,27 @@ pub(super) fn collect_index_candidates(
 
     let mut rows =
         Vec::<TemporalIndexRow>::with_capacity(cap.saturating_mul(2).min(MAX_TEMPORAL_SEEK_BUFFER));
+
+    // A reader the scans ask makes each scan read on past the rows it
+    // refuses, up to the window's edge, so the scan then checks the deadline
+    // and counts each row it reads, raising one check past its threshold
+    // row, as the spanner scan does. Without one it stops at `cap` rows, as
+    // before.
+    let scan = if matches!(axis, TimeAxis::Learned) {
+        EngineScan::LearnedRangeRows
+    } else {
+        EngineScan::OccurredRangeRows
+    };
+    let mut scanned = scans
+        .map(|_| ScanCount::start(store, rtxn, scan, &[]))
+        .transpose()?;
+    let mut takes = |id: &EntityId| -> Result<bool> {
+        if let Some(scanned) = scanned.as_mut() {
+            scanned.row();
+            checkpoint(deadline)?;
+        }
+        scan_takes(scans, store, rtxn, id)
+    };
 
     let mut forward = store.port_entity_timeline(
         rtxn,
@@ -715,7 +737,7 @@ pub(super) fn collect_index_candidates(
         let Some(row) = next_temporal_index_row(&mut forward)? else {
             break;
         };
-        if scan_takes(scans, store, rtxn, &row.id)? {
+        if takes(&row.id)? {
             rows.push(row);
         }
     }
@@ -731,11 +753,13 @@ pub(super) fn collect_index_candidates(
             ..Default::default()
         },
     )?;
-    let mut backward_rows =
-        collect_temporal_index_rows(&mut backward, cap, |id| scan_takes(scans, store, rtxn, id))?;
+    let mut backward_rows = collect_temporal_index_rows(&mut backward, cap, &mut takes)?;
     let backward_full = backward_rows.len() >= cap;
-    normalize_backward_boundary_bucket(store, axis, rtxn, &mut backward_rows, scans)?;
+    normalize_backward_boundary_bucket(store, axis, rtxn, &mut backward_rows, &mut takes)?;
     rows.extend(backward_rows);
+    if let Some(scanned) = scanned {
+        scanned.defer(store);
+    }
 
     rows.sort_unstable_by(|a, b| compare_temporal_index_rows(a, b, anchor_mid));
     for row in rows.into_iter().take(cap) {
@@ -793,7 +817,7 @@ fn normalize_backward_boundary_bucket(
     axis: TimeAxis,
     rtxn: &RoTxn<'_>,
     rows: &mut Vec<TemporalIndexRow>,
-    scans: Option<&ReadableRows<'_, '_>>,
+    mut takes: impl FnMut(&EntityId) -> Result<bool>,
 ) -> Result<()> {
     let Some(boundary_timestamp) = rows.last().map(|row| row.timestamp) else {
         return Ok(());
@@ -824,7 +848,7 @@ fn normalize_backward_boundary_bucket(
         let Some(row) = next_temporal_index_row(&mut boundary_iter)? else {
             break;
         };
-        if scan_takes(scans, store, rtxn, &row.id)? {
+        if takes(&row.id)? {
             boundary_rows.push(row);
         }
     }
