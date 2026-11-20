@@ -57,8 +57,9 @@ use oneiron::booking::{
     EmergencyPlan, EmergencyRescheduleRequest, EventTypeConfig, EventTypeKey, HoldLeaseSpec,
     HoldReceipt, HoldSpec, HostAvailabilityConfig, PublishBookingPageGrantRequest, RescheduleSpec,
     RoutingMode, SessionKey, SlotOracle, SolveRequest, SolveResult, VaultActiveHoldSource,
-    WeeklyWallWindow, encode_event_type_claim_value, enqueue_booking_verb, execute_emergency_plan,
-    mint_publish_page_invite_grant, plan_emergency_reschedule, run_booking_lifecycle_once,
+    WeeklyWallWindow, counterparty_pick, encode_event_type_claim_value, enqueue_booking_verb,
+    execute_emergency_plan, mint_publish_page_invite_grant, plan_emergency_reschedule,
+    run_booking_lifecycle_once,
 };
 use oneiron::calendar::CalendarError;
 use oneiron::calendar::claims::PREDICATE_CALENDAR_STATUS;
@@ -3192,4 +3193,228 @@ fn a_kept_booking_handle_opens_its_card_on_a_later_day() {
     assert_eq!(card["deposit"]["reason"], "started", "{card}");
     assert_eq!(card["deposit"]["held"], "captured", "{card}");
     assert_eq!(card["deposit"]["return_offered"], true, "{card}");
+}
+
+// The emergency repick's note (BK-DEPOSIT-HOST-CANCEL-AFTER-START-OWNER-LINE
+// PR 3; RULING DEPOSIT-PICK-AFTER-EMERGENCY-CANCEL = A, Engine 15 Nov 19:08).
+// A booking the visitor takes again from the owner's emergency proposals
+// carries no deposit, because the emergency cancel gave it back whole; the
+// owner's card of that booking says so. Each card is read through the verbs
+// by name, so the pre-fix head builds these tests: its red is an assert.
+
+/// The owner cancels `booked`, which starts at `hour`, in a BK-09 emergency
+/// at `now`, before its start, with its proposals delivered; then the
+/// visitor picks the emergency's first proposal at `picked_at`. Returns the
+/// picked slot, at which the booking stands confirmed again.
+fn emergency_cancel_then_repick(
+    fixture: &Fixture,
+    booked: &ConfirmReceipt,
+    hour: u64,
+    now: u64,
+    picked_at: u64,
+) -> TimeRange {
+    install_owner_delivery(fixture);
+    let window = TimeRange {
+        start: slot_at(hour).start,
+        end: slot_at(hour).end - 1,
+    };
+    fixture.set_clock(now);
+    let authority = fixture
+        .vault
+        .memory(fixture.host, EdgeActorClass::Human)
+        .record_emergency_instruction(&EmergencyInstructionInput {
+            affected_window: CalendarRangeDto {
+                start: window.start,
+                end: window.end,
+            },
+            reason: "unavailable".to_owned(),
+            action_policy: EmergencyActionPolicy::Cancel,
+            recorded_at: now,
+        })
+        .expect("the owner logs the emergency instruction");
+    let request = EmergencyRescheduleRequest {
+        owner_ref: fixture.host,
+        affected_window: window,
+        reason: "unavailable".to_owned(),
+        action_policy: EmergencyActionPolicy::Cancel,
+        authority,
+    };
+    let batch = plan_emergency_reschedule(&fixture.vault, &request, &fixture.calendars(), now)
+        .expect("plan the emergency");
+    assert!(batch.refusals.is_empty(), "{:?}", batch.refusals);
+    let [plan] = batch.plans.as_slice() else {
+        panic!("one plan for the one booking: {:?}", batch.plans.len());
+    };
+    assert_eq!(plan.booking().calendar.event_ref, booked.calendar.event_ref);
+    let proposal = plan
+        .proposals()
+        .first()
+        .expect("the emergency proposes a slot");
+    let picked = TimeRange {
+        start: proposal.start_utc,
+        end: proposal.end_utc,
+    };
+    let item = execute_emergency_plan(
+        &fixture.vault,
+        &request,
+        plan,
+        &fixture.calendars(),
+        &fixture.consumer(now),
+        &mut DeliveringSink,
+    )
+    .expect("the owner's emergency cancel commits");
+    assert!(item.calendar_delivered && item.apology_delivered);
+    let card = open_booking_row(
+        &fixture.vault.memory(fixture.host, EdgeActorClass::Human),
+        &format!("booking:{}", booked.calendar.event_ref.to_hex()),
+    );
+    assert_eq!(card["status"], "cancelled", "{card}");
+    assert!(
+        card.get("emergency_return").is_none(),
+        "the cancelled booking carries no repick note: {card}"
+    );
+    fixture.set_clock(picked_at);
+    let action = item.actions.first().expect("the first proposal's action");
+    counterparty_pick(
+        &fixture.vault,
+        action,
+        &fixture.calendars(),
+        &fixture.consumer(picked_at),
+        &mut DeliveringSink,
+    )
+    .expect("the visitor picks the first proposal");
+    picked
+}
+
+/// `Booking at <date> <time> (UTC)`, the label the owner's lines give the
+/// booking that starts at `start`.
+fn booking_label_utc(start: u64) -> String {
+    let wall = oneiron::calendar::utc_to_wall(start, "UTC").expect("a UTC wall time");
+    format!(
+        "Booking at {:04}-{:02}-{:02} {:02}:{:02} (UTC)",
+        wall.y, wall.mo, wall.d, wall.h, wall.mi
+    )
+}
+
+/// A captured deposit: the owner's emergency cancel owes it back whole, the
+/// visitor picks one of its proposals, and the booking stands confirmed
+/// again with no deposit. Its card says the refund from the emergency cancel
+/// is pending, then, once the provider refunded it, that no deposit is held
+/// because the emergency cancel refunded it. It offers no Return deposit.
+#[test]
+fn a_booking_picked_again_after_an_emergency_cancel_says_its_deposit_was_refunded() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let booked = captured_booking(&fixture, "pi_repick_refund", 9);
+    let picked = emergency_cancel_then_repick(&fixture, &booked, 9, NOW + 90, NOW + 120);
+    assert_eq!(
+        fixture.state_of("pi_repick_refund"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the emergency cancel owes the whole deposit back; the pick takes none"
+    );
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    let card_row = format!("booking:{}", booked.calendar.event_ref.to_hex());
+    let label = booking_label_utc(picked.start);
+    fixture.set_clock(NOW + 150);
+    let card = open_booking_row(&host, &card_row);
+    assert_eq!(card["status"], "confirmed", "{card}");
+    assert_eq!(card["start_utc"], picked.start, "{card}");
+    assert!(card.get("deposit").is_none(), "nothing is held: {card}");
+    assert_eq!(
+        card["emergency_return"],
+        serde_json::json!({
+            "returned": "refund_pending",
+            "line": format!(
+                "{label}: no new deposit held; the refund from your emergency cancel is pending."
+            ),
+        }),
+        "{card}"
+    );
+
+    settle_booking_deposit(
+        &fixture.vault,
+        &booked.calendar.event_ref,
+        &mut AgreeingProvider,
+        NOW + 180,
+    )
+    .expect("the refund settles");
+    assert_eq!(
+        fixture.state_of("pi_repick_refund"),
+        DepositState::Refunded {
+            amount_minor: 4_000
+        }
+    );
+    fixture.set_clock(NOW + 210);
+    let card = open_booking_row(&host, &card_row);
+    assert!(card.get("deposit").is_none(), "nothing is held: {card}");
+    assert_eq!(
+        card["emergency_return"],
+        serde_json::json!({
+            "returned": "refunded",
+            "line": format!("{label}: no deposit held (refunded at your emergency cancel)."),
+        }),
+        "{card}"
+    );
+}
+
+/// A deposit still to capture: the owner's emergency cancel releases it,
+/// and the card of the booking the visitor picks again says the release is
+/// pending, then that no deposit is held because the emergency cancel
+/// released it.
+#[test]
+fn a_booking_picked_again_after_an_emergency_cancel_says_its_deposit_was_released() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let booked = paid_booking(
+        &fixture,
+        SessionKey::derive(b"repick-release"),
+        "pi_repick_release",
+        9,
+    );
+    assert_eq!(
+        fixture.state_of("pi_repick_release"),
+        DepositState::CaptureDue {
+            amount_minor: 4_000
+        }
+    );
+    let picked = emergency_cancel_then_repick(&fixture, &booked, 9, NOW + 90, NOW + 120);
+    assert_eq!(fixture.state_of("pi_repick_release"), DepositState::VoidDue);
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    let card_row = format!("booking:{}", booked.calendar.event_ref.to_hex());
+    let label = booking_label_utc(picked.start);
+    fixture.set_clock(NOW + 150);
+    let card = open_booking_row(&host, &card_row);
+    assert_eq!(card["status"], "confirmed", "{card}");
+    assert_eq!(
+        card["emergency_return"],
+        serde_json::json!({
+            "returned": "release_pending",
+            "line": format!(
+                "{label}: no new deposit held; the release from your emergency cancel is pending."
+            ),
+        }),
+        "{card}"
+    );
+
+    settle_booking_deposit(
+        &fixture.vault,
+        &booked.calendar.event_ref,
+        &mut AgreeingProvider,
+        NOW + 180,
+    )
+    .expect("the release settles");
+    assert_eq!(fixture.state_of("pi_repick_release"), DepositState::Voided);
+    fixture.set_clock(NOW + 210);
+    let card = open_booking_row(&host, &card_row);
+    assert!(card.get("deposit").is_none(), "nothing is held: {card}");
+    assert_eq!(
+        card["emergency_return"],
+        serde_json::json!({
+            "returned": "released",
+            "line": format!("{label}: no deposit held (released at your emergency cancel)."),
+        }),
+        "{card}"
+    );
 }
