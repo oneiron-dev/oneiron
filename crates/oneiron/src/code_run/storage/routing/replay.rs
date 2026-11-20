@@ -231,16 +231,17 @@ fn put_base_replay_in_txn(
 /// names a room handle (REVIEW-10003 round 2). A run the room began holds
 /// the room's handles, and base holds no custody of the values they name:
 /// the record would land unreplayable once the room's close wipes them, and
-/// a later scrub would keep only the handle's stand-in. It lands, and the
-/// room's row is retired, only once an authorized carry rebinds its handles
-/// into base custody (row ROOM-CUSTODY-ON-RECORD-CARRY); until then the writer
-/// commits nothing, consumes nothing, and a wait stays.
+/// a later scrub would keep only the handle's stand-in. Only a save of the
+/// room moves its secrets into base custody, so the writer commits nothing,
+/// consumes nothing, and a wait stays; the run ends with the room, and its
+/// end message says to save the room to keep its secrets
+/// (ROOM-CUSTODY-ON-RECORD-CARRY = A, the Engine 21 Nov 06:19).
 fn refuse_room_bound_record(record: &CodeRunReplayRecord) -> Result<()> {
     let encoded = zeroize::Zeroizing::new(REPLAY_RECORDS.encode_value(record)?);
     if crate::session_overlay::holds_room_secret_handle(&encoded) {
         return Err(crate::Error::OffRecord(
-            OffRecordError::OffRecordTaintedBaseWrite {
-                entity_ref: record.run_id.to_hex(),
+            OffRecordError::OffRecordRoomSecretsUnsaved {
+                run_ref: record.run_id.to_hex(),
             },
         ));
     }

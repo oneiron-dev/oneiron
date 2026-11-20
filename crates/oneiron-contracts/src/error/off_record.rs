@@ -66,6 +66,18 @@ pub enum OffRecordError {
     /// the session whose promote it is.
     #[error("base write rejected: {entity_ref} is a live off-record overlay member")]
     OffRecordTaintedBaseWrite { entity_ref: String },
+    /// ROOM-LOCAL-CUSTODY (the lead's ruling of 21 Nov): a run the off-record
+    /// room began holds handles of secrets the room keeps in its own custody,
+    /// and its stretch went on record since. Base holds no custody of those
+    /// values, and only a save of the room moves them there
+    /// (ROOM-CUSTODY-ON-RECORD-CARRY = A, the Engine 21 Nov 06:19), so the
+    /// run's record does not move to base: nothing was written, and the run
+    /// ends with the room. Its kind is [`ErrorKind::OffRecordTaintedBaseWrite`]:
+    /// a base write an off-record room's state refused.
+    #[error(
+        "run {run_ref} holds secrets its off-record room keeps, so it cannot go on record: save the room to keep its secrets, or the run ends with the room"
+    )]
+    OffRecordRoomSecretsUnsaved { run_ref: String },
     /// ARCH-0052 D2 backstop (a) (ONE-1728, K7): the canonical-handle witness
     /// door resolved a conversation that belongs to a live session overlay.
     /// Session-owned rooms are witnessed through the session handle only;
@@ -154,7 +166,9 @@ impl OffRecordError {
             Self::OffRecordPromoteUnauthenticated { .. } => {
                 ErrorKind::OffRecordPromoteUnauthenticated
             }
-            Self::OffRecordTaintedBaseWrite { .. } => ErrorKind::OffRecordTaintedBaseWrite,
+            Self::OffRecordTaintedBaseWrite { .. } | Self::OffRecordRoomSecretsUnsaved { .. } => {
+                ErrorKind::OffRecordTaintedBaseWrite
+            }
             Self::OffRecordWitnessDoorRejected { .. } => ErrorKind::OffRecordWitnessDoorRejected,
             Self::OffRecordGuestTurnRefRejected { .. } => ErrorKind::OffRecordGuestTurnRefRejected,
             Self::OffRecordTalkOnly { .. } => ErrorKind::OffRecordTalkOnly,
