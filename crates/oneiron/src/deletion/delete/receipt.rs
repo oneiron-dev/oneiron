@@ -190,6 +190,7 @@ impl Vault {
                 receipt_id: None,
                 sweep_key: None,
                 turn_program_details: turn_program_details.to_vec(),
+                version_release: false,
             });
         }
         // ONE-1122 `dt:` local hard-delete marker: the permanent local truth
@@ -345,6 +346,7 @@ impl Vault {
             receipt_id: Some(receipt_id),
             sweep_key: Some(sweep_key),
             turn_program_details: turn_program_details.to_vec(),
+            version_release: false,
         })
     }
 }

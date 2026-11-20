@@ -23,7 +23,7 @@ mod archive_import;
 #[cfg(feature = "sync")]
 mod residence_read;
 pub use archive_import::ImportedNoteRead;
-pub(crate) use archive_import::{ArchivedNoteAdmission, archived_note_body};
+pub(crate) use archive_import::{ArchivedNoteAdmission, archived_note_body, diary_author_in};
 #[cfg(feature = "sync")]
 pub(crate) use residence_read::opened_note_view;
 mod archive_read;

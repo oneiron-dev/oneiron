@@ -74,6 +74,10 @@ use crate::store::Store;
 use crate::vault::entity_revision::{ReadMode, read_entity_revision_including_archived_in_txn};
 use crate::{EntityId, Vault};
 
+mod lane;
+
+pub(super) use lane::{LaneLink, lane_links_in_txn};
+
 /// The save path's version, the envelope's `version`.
 const SAVE_VERSION: &str = "oneiron.tagging.save.v2";
 
@@ -613,6 +617,23 @@ enum RoleRung {
     Abstain,
 }
 
+/// The role rung's answer over `hits`, the persons the speaker's role edges
+/// name with whether a settled Approved edge names them
+/// ([`Linker::role_link`]).
+fn role_rung(kind: u8, hits: BTreeMap<EntityId, bool>) -> RoleRung {
+    let sure = hits.len() == 1 && hits.values().all(|approved| *approved);
+    if hits.len() >= 2 || sure {
+        RoleRung::Link(MentionLink::Candidates {
+            kind,
+            entities: hits.into_keys().collect(),
+        })
+    } else if hits.len() == 1 {
+        RoleRung::Unsure
+    } else {
+        RoleRung::Abstain
+    }
+}
+
 /// Links mentions over the identity key, over the speaker's role edges for a
 /// mention of a relationship, and over the phonetic postings when the key
 /// misses. It never compares names itself: candidates come only
@@ -991,17 +1012,7 @@ impl<'v> Linker<'v> {
             }
         }
         let hits = self.role_hits(txn, kind, &word, message, hint_read)?;
-        let sure = hits.len() == 1 && hits.values().all(|approved| *approved);
-        Ok(if hits.len() >= 2 || sure {
-            RoleRung::Link(MentionLink::Candidates {
-                kind,
-                entities: hits.into_keys().collect(),
-            })
-        } else if hits.len() == 1 {
-            RoleRung::Unsure
-        } else {
-            RoleRung::Abstain
-        })
+        Ok(role_rung(kind, hits))
     }
 
     /// Links a mention said in `message` by its own name: a real person the

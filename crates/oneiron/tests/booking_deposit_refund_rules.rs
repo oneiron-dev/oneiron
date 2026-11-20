@@ -17,6 +17,15 @@
 //!   [BK-DEPOSIT-TOMBSTONE-REDELIVERY-SEEN-AT]); a tombstone in another
 //!   calendar before the start never dates it (RULING
 //!   DEPOSIT-HOST-CANCEL-SOURCE = A).
+//! - The owner's refund (`vault.booking.deposit.refund`, RULINGS
+//!   BK-DEPOSIT-OWNER-RETURN-ACT = A and BK-DEPOSIT-OWNER-RETURN-SCOPE = A,
+//!   Engine 21 Nov 02:56): a host selected at confirmation gives a held
+//!   deposit back whole once the booking is cancelled or has started, in one
+//!   idempotent write; an agent, a vault owner who was not a selected host
+//!   and a call on a live booking before its start are refused. After a
+//!   visitor's late cancel refunded part of the capture, the owner's return
+//!   owes the balance, whether that refund is still owed or has settled, and
+//!   the provider refunds the earlier part once (review round 2 of #9977).
 //!
 //! The fixture is the emergency fixture of `tests/booking_feed_move_held.rs`
 //! (keystore, the page's facet, engine machines, this install elected the
@@ -29,7 +38,8 @@
 mod booking_host_seat_support;
 mod common;
 
-use std::sync::Mutex;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use booking_host_seat_support::{Seat, SeatChange, seat_owner};
 use oneiron::booking::lifecycle::{
@@ -61,7 +71,7 @@ use oneiron::calendar::query::CalendarRangeDto;
 use oneiron::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
 use oneiron::memory::{
     ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest, ClaimSettlementVerdict,
-    EmergencyInstructionInput,
+    EmergencyInstructionInput, MEMORY_CODE_FORBIDDEN, Memory, MemoryError,
 };
 use oneiron::outbound::{
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
@@ -71,6 +81,7 @@ use oneiron::{
     CalendarSel, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject,
     DreamerRunnerStore, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig,
 };
+use oneiron_store::ports::manual_clock::ManualClock;
 
 /// Monday 2 March 2026, 00:00 UTC.
 const MONDAY: u64 = 1_772_409_600;
@@ -81,6 +92,8 @@ const BOOKER_SEED: u8 = 0x57;
 const BUSY_SEED: u8 = 0x61;
 const IDENTITY_SEED: u8 = 0x79;
 const POLICY_SEED: u8 = 0x7a;
+const OTHER_HOST_SEED: u8 = 0x7b;
+const AGENT_SEED: u8 = 0x7c;
 
 const fn at(ts: u64) -> TimeRange {
     TimeRange { start: ts, end: ts }
@@ -112,11 +125,24 @@ fn terms() -> DepositTerms {
     }
 }
 
+/// [`terms`] whose late cancel refunds `late_cancel_refund_percent` of the
+/// deposit.
+fn late_refund_terms(late_cancel_refund_percent: u8) -> DepositTerms {
+    let base = terms();
+    DepositTerms {
+        refund: DepositRefundRule {
+            late_cancel_refund_percent,
+            ..base.refund
+        },
+        ..base
+    }
+}
+
 fn event_type() -> EventTypeKey {
     EventTypeKey("intro-call".to_owned())
 }
 
-fn fixture_config(host: EntityId) -> EventTypeConfig {
+fn fixture_config(host: EntityId, deposit: &DepositTerms) -> EventTypeConfig {
     EventTypeConfig {
         key: event_type(),
         duration_min: DEFAULT_INTRO_DURATION_MIN,
@@ -128,7 +154,7 @@ fn fixture_config(host: EntityId) -> EventTypeConfig {
         booking_window_secs: 7 * 24 * 3_600,
         daily_cap: None,
         weekly_cap: None,
-        deposit: Some(terms()),
+        deposit: Some(deposit.clone()),
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: host,
@@ -156,21 +182,64 @@ struct Fixture {
     /// This install's client id, elected the lifecycle home node: the
     /// emergency writer runs only there.
     node_id: u64,
+    /// The store's clock, when the fixture sets it: each lifecycle run moves
+    /// it to the run's time.
+    clock: Option<Arc<ManualClock>>,
+    /// The deposit terms of the page's event type.
+    terms: DepositTerms,
 }
 
 impl Fixture {
     fn open() -> Self {
+        Self::open_on(None, None, terms())
+    }
+
+    /// The fixture on a vault this process owns (`Vault::open_owned`, as an
+    /// embedded SDK host opens one), so its embedded owner takes owner verbs,
+    /// with `clock` as the store's clock. The page's host is `other_host`, a
+    /// PERSON stored here, when given, else the vault's embedded owner.
+    fn open_owned(clock: &Arc<ManualClock>, other_host: Option<EntityId>) -> Self {
+        Self::open_on(Some(Arc::clone(clock)), other_host, terms())
+    }
+
+    /// [`Fixture::open_owned`] with the vault's embedded owner as the host,
+    /// on an event type whose deposit has `terms`.
+    fn open_owned_with_terms(clock: &Arc<ManualClock>, terms: DepositTerms) -> Self {
+        Self::open_on(Some(Arc::clone(clock)), None, terms)
+    }
+
+    fn open_on(
+        clock: Option<Arc<ManualClock>>,
+        other_host: Option<EntityId>,
+        terms: DepositTerms,
+    ) -> Self {
         let dir = tempfile::tempdir().expect("temp dir");
-        let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+        let vault = match &clock {
+            None => Vault::open(dir.path(), VaultConfig::default()).expect("open vault"),
+            Some(clock) => {
+                let mut config = VaultConfig::default();
+                config.store_clock = clock.bundle();
+                Vault::open_owned(dir.path(), config).expect("open the owned vault")
+            }
+        };
         // Signing doors load this install's keys from a keystore (P6c).
         vault.install_device_keystore(std::sync::Arc::new(
             oneiron_keystore::MemoryKeystore::default(),
         ));
         let page = test_id(PAGE_SEED);
-        // The host is the vault's embedded owner, the one owner a personal
-        // vault has: the owner census refuses an owner act from any other
-        // PERSON bound as human (main 34a0a330, rooted owner census).
-        let host = vault.ensure_embedded_owner_actor().expect("host");
+        let host = match other_host {
+            Some(host) => {
+                vault
+                    .put_entity(&host, ENTITY_TYPE_PERSON, at(1), 1, b"host")
+                    .expect("put the host");
+                host
+            }
+            // The host is the vault's embedded owner, the one owner a
+            // personal vault has: the owner census refuses an owner act from
+            // any other PERSON bound as human (main 34a0a330, rooted owner
+            // census).
+            None => vault.ensure_embedded_owner_actor().expect("host"),
+        };
         let booker = test_id(BOOKER_SEED);
         vault
             .put_entity(&page, ENTITY_TYPE_ASSET, at(1), 1, b"booking page")
@@ -204,7 +273,7 @@ impl Fixture {
             encode_event_type_claim_value(&BookingEventTypeClaimValue {
                 schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
                 page_ref: page,
-                config: fixture_config(host),
+                config: fixture_config(host, &terms),
             })
             .expect("encode the event type"),
             1.0,
@@ -232,6 +301,15 @@ impl Fixture {
             host,
             booker,
             node_id,
+            clock,
+            terms,
+        }
+    }
+
+    /// Sets the store's clock to `now`, when the fixture sets it.
+    fn set_clock(&self, now: u64) {
+        if let Some(clock) = &self.clock {
+            clock.set(now);
         }
     }
 
@@ -248,6 +326,7 @@ impl Fixture {
         request: BookingVerbRequest,
         now: u64,
     ) -> Result<BookingVerbReceipt, BookingError> {
+        self.set_clock(now);
         enqueue_booking_verb(&self.vault, request, now)?;
         let turn = run_booking_lifecycle_once(
             &self.vault,
@@ -259,6 +338,8 @@ impl Fixture {
                     page,
                     exclude: oracle_request.exclude_session_key,
                     vault: &self.vault,
+                    host: self.host,
+                    terms: &self.terms,
                 })
             },
             &self.consumer(now),
@@ -286,6 +367,8 @@ struct LifecycleSolver<'a> {
     page: EntityId,
     exclude: Option<SessionKey>,
     vault: &'a Vault,
+    host: EntityId,
+    terms: &'a DepositTerms,
 }
 
 impl SlotOracle for LifecycleSolver<'_> {
@@ -294,15 +377,14 @@ impl SlotOracle for LifecycleSolver<'_> {
             Some(key) => VaultActiveHoldSource::excluding(self.vault, key),
             None => VaultActiveHoldSource::new(self.vault),
         };
-        let host = self.vault.ensure_embedded_owner_actor().expect("host");
-        let calendars = vec![(host, vec![CalendarSel { system: None }])];
+        let calendars = vec![(self.host, vec![CalendarSel { system: None }])];
         BookingSolver {
             vault: self.vault,
             page_ref: self.page,
             calendars_by_host: &calendars,
             holds: &holds,
             now_utc: NOW,
-            synthetic_config: Some(fixture_config(host)),
+            synthetic_config: Some(fixture_config(self.host, self.terms)),
         }
         .solve(req)
     }
@@ -550,7 +632,7 @@ fn paid_booking(
             page_ref: fixture.page,
             event_type: event_type(),
             session_key: session,
-            terms: terms(),
+            terms: fixture.terms.clone(),
             payment_id: payment_id.to_owned(),
         },
         NOW,
@@ -585,8 +667,8 @@ fn paid_booking(
                 event_id: format!("evt-auth-{payment_id}"),
                 payment_id: payment_id.to_owned(),
                 kind: DepositProviderEventKind::Authorized {
-                    amount_minor: terms().amount_minor,
-                    currency: terms().currency,
+                    amount_minor: fixture.terms.amount_minor,
+                    currency: fixture.terms.currency.clone(),
                 },
             },
             NOW + 30,
@@ -1885,5 +1967,544 @@ fn a_host_cancel_repaired_after_an_omission_concluded_records_its_cancellation()
         outcome.recorded_at,
         NOW + 120,
         "CAL-07 dates the cancellation by its first sighting"
+    );
+}
+
+// The owner's refund, `vault.booking.deposit.refund` (RULINGS
+// BK-DEPOSIT-OWNER-RETURN-ACT = A and BK-DEPOSIT-OWNER-RETURN-SCOPE = A,
+// Engine 21 Nov 02:56). Each call goes through the verb by its name, so the
+// pre-fix head builds these tests and refuses the unknown verb.
+
+const DEPOSIT_REFUND_VERB: &str = "vault.booking.deposit.refund";
+
+/// `caller` calls the owner's deposit refund on `booked`.
+fn refund_deposit(
+    caller: &Memory<'_>,
+    booked: &ConfirmReceipt,
+) -> Result<serde_json::Value, MemoryError> {
+    oneiron::verbs::invoke(
+        caller,
+        DEPOSIT_REFUND_VERB,
+        serde_json::json!({ "event_ref": booked.calendar.event_ref.to_hex() }),
+    )
+}
+
+/// The claims on `booked`'s EVENT, sorted: a refund writes none, so the
+/// booking's status heads and revision stay as they are.
+fn event_claims(fixture: &Fixture, booked: &ConfirmReceipt) -> Vec<EntityId> {
+    let mut claims = fixture
+        .vault
+        .claims_for_subject(&booked.calendar.event_ref)
+        .expect("claims on the EVENT");
+    claims.sort();
+    claims
+}
+
+/// A provider that does every move it is asked, and keeps each one.
+#[derive(Default)]
+struct RecordingProvider {
+    moves: Vec<DepositSettleMove>,
+}
+
+impl DepositSettlementPort for RecordingProvider {
+    fn settle(
+        &mut self,
+        request: &DepositSettleRequest<'_>,
+    ) -> Result<u64, DepositProviderFailure> {
+        self.moves.push(request.movement);
+        AgreeingProvider.settle(request)
+    }
+}
+
+/// The host refunds a started booking's captured deposit and releases a
+/// started booking's deposit still to capture; a retry, before and after
+/// settlement, queues and moves nothing, and no call writes a claim on the
+/// booking.
+#[test]
+fn the_host_refunds_a_started_bookings_deposit_once() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let captured = captured_booking(&fixture, "pi_owner_refund", 9);
+    let due = paid_booking(
+        &fixture,
+        SessionKey::derive(b"owner-refund-due"),
+        "pi_owner_release",
+        10,
+    );
+    let claims_captured = event_claims(&fixture, &captured);
+    let claims_due = event_claims(&fixture, &due);
+    // Both meetings have started (or the visitor did not show).
+    let refunded_at = slot_at(10).start + 60;
+    fixture.set_clock(refunded_at);
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+
+    let refund = refund_deposit(&host, &captured).expect("the host refunds the captured deposit");
+    assert_eq!(
+        refund,
+        serde_json::json!({
+            "event_ref": captured.calendar.event_ref.to_hex(),
+            "state": "refund_due",
+            "amount_minor": 4_000,
+            "currency": "usd",
+            "queued": true,
+        })
+    );
+    assert_eq!(
+        fixture.state_of("pi_owner_refund"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the whole capture is owed back"
+    );
+    let release = refund_deposit(&host, &due).expect("the host releases the deposit still due");
+    assert_eq!(release["state"], "void_due", "{release}");
+    assert_eq!(release["amount_minor"], 0, "{release}");
+    assert_eq!(release["queued"], true, "{release}");
+    assert_eq!(fixture.state_of("pi_owner_release"), DepositState::VoidDue);
+
+    let retry = refund_deposit(&host, &captured).expect("the retry answers");
+    assert_eq!(retry["state"], "refund_due", "{retry}");
+    assert_eq!(retry["amount_minor"], 4_000, "{retry}");
+    assert_eq!(retry["queued"], false, "a retry queues nothing: {retry}");
+    assert_eq!(
+        fixture.state_of("pi_owner_refund"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        }
+    );
+    assert_eq!(
+        event_claims(&fixture, &captured),
+        claims_captured,
+        "the refund leaves the booking's status and revision as they are"
+    );
+    assert_eq!(event_claims(&fixture, &due), claims_due);
+
+    let mut provider = RecordingProvider::default();
+    let pass = run_booking_deposit_settlement(
+        &fixture.vault,
+        "deposit-settle-worker",
+        &mut provider,
+        16,
+        refunded_at + 60,
+    )
+    .expect("drain the settle rows");
+    assert_eq!(pass.failed, 0);
+    assert_eq!(
+        provider.moves.len(),
+        2,
+        "one refund and one release: {:?}",
+        provider.moves
+    );
+    assert!(
+        provider.moves.contains(&DepositSettleMove::Refund {
+            amount_minor: 4_000
+        }),
+        "{:?}",
+        provider.moves
+    );
+    assert!(
+        provider.moves.contains(&DepositSettleMove::Void),
+        "{:?}",
+        provider.moves
+    );
+    assert_eq!(
+        fixture.state_of("pi_owner_refund"),
+        DepositState::Refunded {
+            amount_minor: 4_000
+        }
+    );
+    assert_eq!(fixture.state_of("pi_owner_release"), DepositState::Voided);
+
+    fixture.set_clock(refunded_at + 120);
+    let settled = refund_deposit(&host, &captured).expect("a retry after settlement answers");
+    assert_eq!(settled["state"], "refunded", "{settled}");
+    assert_eq!(settled["amount_minor"], 4_000, "{settled}");
+    assert_eq!(settled["queued"], false, "{settled}");
+    let mut after = RecordingProvider::default();
+    run_booking_deposit_settlement(
+        &fixture.vault,
+        "deposit-settle-worker",
+        &mut after,
+        16,
+        refunded_at + 180,
+    )
+    .expect("drain again");
+    assert!(
+        after.moves.is_empty(),
+        "a retry moves no money: {:?}",
+        after.moves
+    );
+}
+
+/// An agent takes no refund, whatever it holds: the act is the owner's own.
+/// The host's own call then refunds, so the refusal was the caller's.
+#[test]
+fn an_agent_cannot_refund_a_deposit() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let captured = captured_booking(&fixture, "pi_agent_refund", 9);
+    fixture.set_clock(slot_at(9).start + 60);
+    let agent = fixture
+        .vault
+        .memory(test_id(AGENT_SEED), EdgeActorClass::Agent);
+    assert!(
+        refund_deposit(&agent, &captured).is_err(),
+        "an agent takes no refund"
+    );
+    assert_eq!(
+        fixture.state_of("pi_agent_refund"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the agent's call moves nothing"
+    );
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    let refund = refund_deposit(&host, &captured).expect("the host refunds");
+    assert_eq!(refund["queued"], true, "{refund}");
+    assert_eq!(
+        fixture.state_of("pi_agent_refund"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        }
+    );
+}
+
+/// A booking hosted by another person: the vault's owner was not a host
+/// selected at its confirmation, so the owner's call is refused, and the
+/// host, who owns no vault, holds no owner proof.
+#[test]
+fn only_a_host_selected_at_confirmation_refunds_a_deposit() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, Some(test_id(OTHER_HOST_SEED)));
+    let captured = captured_booking(&fixture, "pi_other_host", 9);
+    fixture.set_clock(slot_at(9).start + 60);
+    let owner = fixture
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let refusal = refund_deposit(
+        &fixture.vault.memory(owner, EdgeActorClass::Human),
+        &captured,
+    )
+    .expect_err("the vault's owner was not a selected host");
+    assert_eq!(refusal.code, MEMORY_CODE_FORBIDDEN, "{refusal:?}");
+    assert!(
+        refusal.message.contains("host selected"),
+        "the refusal names the selected hosts: {refusal:?}"
+    );
+    assert!(
+        refund_deposit(
+            &fixture.vault.memory(fixture.host, EdgeActorClass::Human),
+            &captured,
+        )
+        .is_err(),
+        "a host who owns no vault holds no owner proof"
+    );
+    assert_eq!(
+        fixture.state_of("pi_other_host"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "no refused call moves money"
+    );
+}
+
+/// Before its start, a live booking keeps its deposit: the owner's refund is
+/// refused, and the owner's emergency cancel is the door. Once the visitor
+/// cancels late, which refunds nothing by the visitor's terms, the booking
+/// is cancelled and the host refunds it whole.
+#[test]
+fn a_live_booking_keeps_its_deposit_until_it_is_cancelled_or_starts() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let captured = captured_booking(&fixture, "pi_live", 9);
+    fixture.set_clock(NOW + 60);
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    let refusal =
+        refund_deposit(&host, &captured).expect_err("a live booking before its start keeps it");
+    assert!(
+        refusal.message.contains("has not started"),
+        "the refusal names the booking's state: {refusal:?}"
+    );
+    assert_eq!(
+        fixture.state_of("pi_live"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        }
+    );
+    cancel(&fixture, &captured, NOW + 120);
+    assert_eq!(
+        fixture.state_of("pi_live"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the visitor's late cancel refunds nothing by its terms"
+    );
+    fixture.set_clock(NOW + 180);
+    let refund = refund_deposit(&host, &captured).expect("the host refunds the cancelled booking");
+    assert_eq!(refund["state"], "refund_due", "{refund}");
+    assert_eq!(refund["queued"], true, "{refund}");
+    assert_eq!(
+        fixture.state_of("pi_live"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        }
+    );
+}
+
+/// A MACRO home move carries no deposit row: the node that confirmed the
+/// booking still holds its deposit after the home moved to another node, so
+/// the host's refund is taken there and its settle worker returns the money
+/// (review round 1 of #9977: a home-node gate left the deposit refundable on
+/// neither node).
+#[test]
+fn the_confirming_node_refunds_a_deposit_after_the_home_moved_away() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let captured = captured_booking(&fixture, "pi_home_moved", 9);
+    let runner = DreamerRunnerStore::new(&fixture.vault);
+    let local = runner
+        .local_home_node_candidate(true, true, true)
+        .expect("local home node candidate");
+    let cloud = oneiron::DreamerHomeNodeCandidate::cloud(fixture.node_id.wrapping_add(1), true);
+    let elected = runner
+        .elect_home_node(&[local, cloud], NOW + 30)
+        .expect("elect the attached cloud node")
+        .expect("a home node");
+    assert_ne!(
+        elected.node_id, fixture.node_id,
+        "the home moved off the confirming node"
+    );
+    let refunded_at = slot_at(9).start + 60;
+    fixture.set_clock(refunded_at);
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+
+    let refund =
+        refund_deposit(&host, &captured).expect("the confirming node refunds the deposit it holds");
+    assert_eq!(refund["state"], "refund_due", "{refund}");
+    assert_eq!(refund["queued"], true, "{refund}");
+    let mut provider = RecordingProvider::default();
+    let pass = run_booking_deposit_settlement(
+        &fixture.vault,
+        "deposit-settle-worker",
+        &mut provider,
+        16,
+        refunded_at + 60,
+    )
+    .expect("drain the settle rows");
+    assert_eq!(pass.failed, 0);
+    assert_eq!(
+        provider.moves,
+        vec![DepositSettleMove::Refund {
+            amount_minor: 4_000
+        }]
+    );
+    assert_eq!(
+        fixture.state_of("pi_home_moved"),
+        DepositState::Refunded {
+            amount_minor: 4_000
+        }
+    );
+}
+
+/// A provider that keeps each refund by its idempotency key, as the payment
+/// provider does: a request under a key it already took answers that refund
+/// again and moves no more money.
+#[derive(Default)]
+struct KeyedRefundProvider {
+    refunds: BTreeMap<String, u64>,
+    moves: Vec<DepositSettleMove>,
+}
+
+impl KeyedRefundProvider {
+    /// What the payment has had refunded in all.
+    fn refunded_minor(&self) -> u64 {
+        self.refunds.values().sum()
+    }
+}
+
+impl DepositSettlementPort for KeyedRefundProvider {
+    fn settle(
+        &mut self,
+        request: &DepositSettleRequest<'_>,
+    ) -> Result<u64, DepositProviderFailure> {
+        if let DepositSettleMove::Refund { amount_minor } = request.movement {
+            if let Some(refunded) = self.refunds.get(request.idempotency_key) {
+                return Ok(*refunded);
+            }
+            self.refunds
+                .insert(request.idempotency_key.to_owned(), amount_minor);
+        }
+        self.moves.push(request.movement);
+        AgreeingProvider.settle(request)
+    }
+}
+
+/// Drains the settle rows at `now` and again a minute later: a settled
+/// refund whose record owes a balance queues the balance's own row.
+fn drain_settle_rows(fixture: &Fixture, provider: &mut KeyedRefundProvider, now: u64) {
+    for at in [now, now + 60] {
+        let pass = run_booking_deposit_settlement(
+            &fixture.vault,
+            "deposit-settle-worker",
+            provider,
+            16,
+            at,
+        )
+        .expect("drain the settle rows");
+        assert_eq!(pass.failed, 0);
+    }
+}
+
+/// A late cancel under a 50% rule refunds half the capture, and that refund
+/// settles; the host's return then owes the other half. The provider keeps
+/// refunds by idempotency key, so the balance, equal to the earlier refund,
+/// is a new refund and not its replay: the payment ends refunded whole, the
+/// visitor's half once (review round 2 of #9977).
+#[test]
+fn the_host_returns_the_balance_a_settled_late_cancel_refund_left() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned_with_terms(&clock, late_refund_terms(50));
+    let booked = captured_booking(&fixture, "pi_half_late", 9);
+    // One hour before the 09:00 start: half the deposit comes back.
+    cancel(&fixture, &booked, NOW + 120);
+    assert_eq!(
+        fixture.state_of("pi_half_late"),
+        DepositState::RefundDue {
+            amount_minor: 2_000
+        }
+    );
+    let mut provider = KeyedRefundProvider::default();
+    drain_settle_rows(&fixture, &mut provider, NOW + 180);
+    assert_eq!(
+        fixture.state_of("pi_half_late"),
+        DepositState::Refunded {
+            amount_minor: 2_000
+        }
+    );
+    let returned_at = NOW + 300;
+    fixture.set_clock(returned_at);
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+
+    let refund = refund_deposit(&host, &booked).expect("the host returns the balance");
+    assert_eq!(
+        refund,
+        serde_json::json!({
+            "event_ref": booked.calendar.event_ref.to_hex(),
+            "state": "refund_due",
+            "amount_minor": 4_000,
+            "currency": "usd",
+            "queued": true,
+        }),
+        "the half the late cancel kept is owed back"
+    );
+    assert_eq!(
+        fixture.state_of("pi_half_late"),
+        DepositState::RefundDue {
+            amount_minor: 2_000
+        },
+        "only the balance is owed: the visitor's half is refunded already"
+    );
+    drain_settle_rows(&fixture, &mut provider, returned_at + 60);
+    assert_eq!(
+        provider.moves,
+        vec![
+            DepositSettleMove::Refund {
+                amount_minor: 2_000
+            },
+            DepositSettleMove::Refund {
+                amount_minor: 2_000
+            },
+        ],
+        "the visitor's half, then the balance as a new refund"
+    );
+    assert_eq!(
+        provider.refunded_minor(),
+        4_000,
+        "the payment is refunded whole"
+    );
+    assert_eq!(
+        fixture.state_of("pi_half_late"),
+        DepositState::Refunded {
+            amount_minor: 4_000
+        }
+    );
+
+    fixture.set_clock(returned_at + 180);
+    let retry = refund_deposit(&host, &booked).expect("a retry after settlement answers");
+    assert_eq!(retry["state"], "refunded", "{retry}");
+    assert_eq!(retry["amount_minor"], 4_000, "{retry}");
+    assert_eq!(retry["queued"], false, "{retry}");
+    drain_settle_rows(&fixture, &mut provider, returned_at + 240);
+    assert_eq!(
+        provider.moves.len(),
+        2,
+        "a retry moves no money: {:?}",
+        provider.moves
+    );
+}
+
+/// A late cancel under a 25% rule owes a quarter of the capture back; the
+/// host's return before that refund settles leaves it as it is and owes the
+/// balance once it settles. A retry queues nothing, and the quarter is
+/// refunded once, the balance after it (review round 2 of #9977).
+#[test]
+fn the_host_returns_the_balance_while_a_late_cancel_refund_is_owed() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned_with_terms(&clock, late_refund_terms(25));
+    let booked = captured_booking(&fixture, "pi_quarter_late", 9);
+    cancel(&fixture, &booked, NOW + 120);
+    assert_eq!(
+        fixture.state_of("pi_quarter_late"),
+        DepositState::RefundDue {
+            amount_minor: 1_000
+        }
+    );
+    let returned_at = NOW + 180;
+    fixture.set_clock(returned_at);
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+
+    let refund = refund_deposit(&host, &booked).expect("the host returns the balance");
+    assert_eq!(refund["state"], "refund_due", "{refund}");
+    assert_eq!(
+        refund["amount_minor"], 4_000,
+        "the whole capture comes back: {refund}"
+    );
+    assert_eq!(refund["queued"], true, "{refund}");
+    assert_eq!(
+        fixture.state_of("pi_quarter_late"),
+        DepositState::RefundDue {
+            amount_minor: 1_000
+        },
+        "the quarter owed settles first, as it was asked"
+    );
+    let retry = refund_deposit(&host, &booked).expect("the retry answers");
+    assert_eq!(retry["amount_minor"], 4_000, "{retry}");
+    assert_eq!(retry["queued"], false, "a retry queues nothing: {retry}");
+
+    let mut provider = KeyedRefundProvider::default();
+    drain_settle_rows(&fixture, &mut provider, returned_at + 60);
+    assert_eq!(
+        provider.moves,
+        vec![
+            DepositSettleMove::Refund {
+                amount_minor: 1_000
+            },
+            DepositSettleMove::Refund {
+                amount_minor: 3_000
+            },
+        ],
+        "the visitor's quarter, then the balance"
+    );
+    assert_eq!(
+        provider.refunded_minor(),
+        4_000,
+        "the payment is refunded whole"
+    );
+    assert_eq!(
+        fixture.state_of("pi_quarter_late"),
+        DepositState::Refunded {
+            amount_minor: 4_000
+        }
     );
 }

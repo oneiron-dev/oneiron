@@ -28,6 +28,13 @@
 //! * `the_owner_restore_installs_the_voice_consent_and_enrollment_admits`: the owner import
 //!   installs one VOICE_IDENTITY_CONSENT row for its live person, and an enrollment citing
 //!   it is admitted; on the actorless destination the same enrollment is refused.
+//! * `a_restored_consent_void_voids_only_the_exact_grant_it_names` (FIX
+//!   [VOICE-WITHDRAWAL-BACKDATED-LEAVES-GRANT], review P1 of #9986): the source logs a grant,
+//!   then a withdrawal dated before it, which voids the grant. On a fresh destination the owner
+//!   import installs the void and an enrollment citing the restored grant is refused (red on
+//!   main, which has no void). A destination that logged the same withdrawal first and then its
+//!   own later grant under the same event id keeps that grant live, installs the void, and an
+//!   enrollment citing its grant is admitted (red at f4eec5e9, whose void matched the id alone).
 //! * `the_owner_restore_installs_the_voice_render_grant_and_the_actorless_import_leaves_none`:
 //!   the owner import installs one VOICE_REF_RENDER_CONSENT row that reads Granted.
 //! * `a_render_decision_for_a_voice_the_destination_banks_under_another_creator_is_held_back`:
@@ -946,6 +953,116 @@ fn the_owner_restore_installs_the_voice_consent_and_enrollment_admits() {
         ),
         source_tuple,
         "the actorless destination retains the consent tuple byte for byte"
+    );
+}
+
+/// The grant event the void test's source logs: owen's meeting-attribution grant, dated 300.
+fn voided_grant_event(subject: EntityId, recorder: EntityId) -> VoiceConsentEventV1 {
+    VoiceConsentEventV1 {
+        event_id: "consent-owen-voided".to_owned(),
+        occurred_at: 300,
+        ..voice_consent_event(subject, recorder)
+    }
+}
+
+/// A withdrawal of owen's meeting attribution dated 100, before [`voided_grant_event`].
+fn backdated_withdrawal_event(subject: EntityId, recorder: EntityId) -> VoiceConsentEventV1 {
+    VoiceConsentEventV1 {
+        event_id: "withdrawal-owen-backdated".to_owned(),
+        occurred_at: 100,
+        state: VoiceConsentState::Withdrawn,
+        ..voice_consent_event(subject, recorder)
+    }
+}
+
+/// An enrollment of `subject` citing [`voided_grant_event`]'s id, requested after every date.
+fn voided_grant_enrollment(subject: EntityId) -> VoiceEnrollmentRequest {
+    VoiceEnrollmentRequest {
+        consent_event_ref: "consent-owen-voided".to_owned(),
+        requested_at: 500,
+        ..voice_enrollment_request(subject)
+    }
+}
+
+/// A restored void binds the exact grant and withdrawal it was written for (FIX
+/// [VOICE-WITHDRAWAL-BACKDATED-LEAVES-GRANT]; review P1 of #9986).
+#[test]
+fn a_restored_consent_void_voids_only_the_exact_grant_it_names() {
+    let (_source_dir, source) = open_source_vault();
+    let now = source.now_recorded_at();
+    let occurred = TimeRange {
+        start: now,
+        end: now,
+    };
+    let subject = fixed_id(0x35);
+    let recorder = fixed_id(0x36);
+    put_person_at(&source, subject, b"owen", occurred, now);
+    put_person_at(&source, recorder, b"yuki", occurred, now);
+    source
+        .record_voice_consent(&voided_grant_event(subject, recorder))
+        .expect("the source records the grant dated 300");
+    source
+        .record_voice_consent(&backdated_withdrawal_event(subject, recorder))
+        .expect("the source accepts the withdrawal dated 100");
+    assert!(
+        source
+            .enroll_voice_print(&voided_grant_enrollment(subject))
+            .is_err(),
+        "setup: the backdated withdrawal voids the grant on the source"
+    );
+    let archive = export_whole(&source);
+
+    // A fresh destination: the void lands with both events and refuses the restored grant.
+    let (_fresh_dir, fresh) = open_later_vault();
+    let fresh_receipt = fresh
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner_proof(&fresh))
+        .expect("the owner import into the fresh destination succeeds");
+    let fresh_summary =
+        serde_json::to_value(&fresh_receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&fresh_summary, "VOICE_IDENTITY_CONSENT", "installed_rows"),
+        Some(2),
+        "the fresh destination installs the grant and the withdrawal: {fresh_summary}"
+    );
+    let refusal = fresh
+        .enroll_voice_print(&voided_grant_enrollment(subject))
+        .expect_err("the restored void refuses an enrollment citing the restored grant");
+    assert!(
+        refusal.to_string().contains("withdrawn"),
+        "the enrollment is refused as withdrawn: {refusal}"
+    );
+
+    // A destination that logged the same withdrawal first and then its own grant dated 400
+    // under the same event id: that yes was recorded after the withdrawal, so it stands.
+    let (_dest_dir, dest) = open_later_vault();
+    dest.record_voice_consent(&backdated_withdrawal_event(subject, recorder))
+        .expect("the destination logs the withdrawal first");
+    dest.record_voice_consent(&VoiceConsentEventV1 {
+        occurred_at: 400,
+        ..voided_grant_event(subject, recorder)
+    })
+    .expect("the destination logs its own later grant under the same event id");
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner_proof(&dest))
+        .expect("the owner import into the logged destination succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "VOICE_IDENTITY_CONSENT", "kept_live_rows"),
+        Some(1),
+        "the destination keeps its own grant live over the archived one: {summary}"
+    );
+    assert_eq!(
+        table_count(&summary, "VOICE_IDENTITY_CONSENT_VOID", "installed_rows"),
+        Some(1),
+        "the void lands as written: {summary}"
+    );
+    let print = dest
+        .enroll_voice_print(&voided_grant_enrollment(subject))
+        .expect("the restored void leaves the destination's own later grant live");
+    assert_eq!(
+        print.consent_event_ref, "consent-owen-voided",
+        "the enrollment cites the destination's own grant"
     );
 }
 

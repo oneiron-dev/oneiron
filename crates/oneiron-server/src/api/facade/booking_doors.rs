@@ -49,6 +49,38 @@ pub(crate) async fn vault_booking_page_token(
     .unwrap_or_else(|_| refused(internal(VERB)))
 }
 
+/// `vault.booking.deposit.refund` (BK-DEPOSIT-OWNER-RETURN-ACT = A): the
+/// owner's own proof, as every owner door takes it, which the refund's money
+/// write revalidates in its snapshot; an agent's credential, a delegate's
+/// or a visitor's token takes no refund. It lists the booking's EVENT
+/// (`host_door_lists`), the one row its answer names; a refusal lists none.
+pub(crate) async fn vault_booking_deposit_refund(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::BookingDepositRefundRequest,
+) -> Listed<oneiron::task_verb::sdk::BookingDepositRefundReceipt> {
+    const VERB: &str = "vault.booking.deposit.refund";
+    let owner = match super::owner_binding::facade_owner(server, auth, VERB) {
+        Ok(owner) => owner,
+        Err(refusal) => return refused(refusal),
+    };
+    let server = Arc::clone(server);
+    super::clock_ingress::run_blocking(move || {
+        match oneiron::task_verb::sdk::refund_booking_deposit_as(server.vault(), &owner, &input) {
+            Ok(receipt) => {
+                let rows = EntityId::from_hex(&receipt.event_ref)
+                    .ok()
+                    .into_iter()
+                    .collect();
+                (Ok(receipt), rows)
+            }
+            Err(error) => refused(error),
+        }
+    })
+    .await
+    .unwrap_or_else(|_| refused(internal(VERB)))
+}
+
 /// The same live publication, admission, parser and oracle as the public front.
 /// The caller's own credential keys the wait and pays for its model call.
 /// It lists (`host_door_lists`) the rows its answer was derived from, from
