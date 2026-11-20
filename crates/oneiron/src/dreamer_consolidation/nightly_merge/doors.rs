@@ -5,7 +5,7 @@
 //! under `--cfg oneiron_test_support` (`test_doors`); hidden, never API.
 
 use super::write::MergeDraft;
-use super::{MERGE_IDS, NightlyWrite, Proposal, merge_read, recheck_in_txn};
+use super::{Proposal, merge_read, merge_writer, recheck_in_txn};
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::{EntityId, Error, Result, Vault};
@@ -51,13 +51,7 @@ pub(crate) fn write_arc_summary(
         members
     };
     let members: Vec<&Proposal> = members.iter().collect();
-    let writer = NightlyWrite {
-        vault,
-        actor,
-        attempt: &status,
-        ids: MERGE_IDS,
-        now: crate::unix_seconds_now(),
-    };
+    let writer = merge_writer(vault, actor, &status, crate::unix_seconds_now());
     let outputs = vault.with_write_txn_grouped(|txn| {
         recheck_in_txn(&read, txn, &members)?;
         let draft = MergeDraft::ArcSummary {

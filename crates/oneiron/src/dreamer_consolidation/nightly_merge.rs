@@ -471,13 +471,7 @@ impl ConsolidationExecutor<'_> {
             });
         }
         let now = ctx.now_ms / 1_000;
-        let writer = NightlyWrite {
-            vault: ctx.vault,
-            actor: self.actor,
-            attempt: &attempt.status,
-            ids: MERGE_IDS,
-            now,
-        };
+        let writer = merge_writer(ctx.vault, self.actor, &attempt.status, now);
         let read_back: Vec<&Proposal> = proposals.iter().collect();
         let commit = ctx.vault.with_write_txn_grouped(|txn| {
             let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("nightly merge");
@@ -510,6 +504,23 @@ impl ConsolidationExecutor<'_> {
             // a gate only an owner act opens keeps the private park.
             Err(error) => Ok(charges.park_on_error(&error)),
         }
+    }
+}
+
+/// The writer of a merge attempt's own claims, under the merge's id domain;
+/// `now` is Unix seconds.
+fn merge_writer<'a>(
+    vault: &'a Vault,
+    actor: WriteActor,
+    attempt: &'a DreamerAttemptStatus,
+    now: u64,
+) -> NightlyWrite<'a> {
+    NightlyWrite {
+        vault,
+        actor,
+        attempt,
+        ids: MERGE_IDS,
+        now,
     }
 }
 
