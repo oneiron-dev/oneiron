@@ -2173,6 +2173,57 @@ fn anchor_mark_past_an_adopted_image_still_needs_history() {
 }
 
 #[test]
+fn owner_answer_past_an_adopted_image_still_needs_history() {
+    use oneiron::authority::{ActSurface, OwnerAct, OwnerActKind};
+    // A machine the host root's roster revision 1 made the owner's, covered
+    // by the image.
+    let home = machine_fixture(&[YOURS]);
+    let fixture = &home.fixture;
+    let seen = fixture
+        .home
+        .authority_fold()
+        .expect("home folds before the answer")
+        .machines
+        .get(&home.machine)
+        .expect("the covered machine")
+        .answer_revision(None);
+    // The owner's answer "yours" at revision 2, which the machine carries
+    // itself under the key it already stands under: valid at home with no
+    // owner key's proof. Its standing reads the carrier chain's covered
+    // revisions under this install's floors, which no image keeps.
+    let AuthorityOp::MachineProfile(mut profile) = home.profile(YOURS, 2) else {
+        panic!("a machine profile");
+    };
+    profile.carrier = Some(home.machine);
+    profile.act = Some(OwnerAct::by_owner(
+        home.owner,
+        OwnerActKind::MachineAnswer,
+        home.machine,
+        ActSurface::ThisInstall,
+        seen,
+    ));
+    let tail = sign_next_op_as(
+        &fixture.home,
+        &home.key,
+        AuthorityOp::MachineProfile(profile),
+    )
+    .expect("sign the owner answer");
+    let hash = authority_entry_hash(&tail).expect("answer hash");
+    put_signed_entries(&fixture.home, std::slice::from_ref(&tail)).expect("store on home");
+    let home_fold = fixture
+        .home
+        .authority_fold()
+        .expect("home folds the answer");
+    assert!(home_fold.issues.is_empty(), "home folds the answer clean");
+    heads_roster(&home_fold, home.machine, &hash, false);
+    asks_history(
+        put_signed_entries(&fixture.adopting, std::slice::from_ref(&tail))
+            .and_then(|()| fixture.adopting.authority_fold()),
+        AuthorityHistoryReason::OpNotFoldedPast,
+    );
+}
+
+#[test]
 fn machine_revision_beside_a_covered_row_still_needs_history() {
     let ConcurrentHome {
         home,
