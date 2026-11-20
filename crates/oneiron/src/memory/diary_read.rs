@@ -360,7 +360,9 @@ pub(crate) fn agent_reviews_diary_reads_in_txn(
 }
 
 /// The live diary entries `agent` wrote, oldest first, with their current
-/// text and the time each was written.
+/// text and the time each was written: those an import brought back count
+/// once the owner's review of the restored agent named it their author
+/// ([`crate::note::diary_author_in`]).
 pub(crate) fn diary_entries_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -376,7 +378,7 @@ pub(crate) fn diary_entries_in_txn(
     )? {
         if let Some((note, learned_at)) = live_note_in_txn(vault, txn, &id)?
             && note.kind == NoteKind::Diary
-            && note.author_ref.is(agent)
+            && crate::note::diary_author_in(&vault.store, txn, &id, note.author_ref)? == Some(agent)
         {
             entries.push((id, note, learned_at));
         }

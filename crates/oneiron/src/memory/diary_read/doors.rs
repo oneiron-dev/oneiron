@@ -311,10 +311,18 @@ impl Memory<'_> {
                 action_bound(self.vault, txn, reader, DIARY_READ_VERB, agent)?
             } else {
                 for entry in entries {
-                    let ours =
-                        live_note_in_txn(self.vault, txn, entry)?.is_some_and(|(note, _)| {
-                            note.kind == NoteKind::Diary && note.author_ref.is(agent)
-                        });
+                    let ours = match live_note_in_txn(self.vault, txn, entry)? {
+                        Some((note, _)) => {
+                            note.kind == NoteKind::Diary
+                                && crate::note::diary_author_in(
+                                    &self.vault.store,
+                                    txn,
+                                    entry,
+                                    note.author_ref,
+                                )? == Some(agent)
+                        }
+                        None => false,
+                    };
                     if !ours {
                         return Err(MemoryError::bad_request(format!(
                             "{} is not a live diary entry of this agent",

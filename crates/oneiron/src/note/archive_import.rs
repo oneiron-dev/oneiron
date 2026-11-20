@@ -17,7 +17,10 @@
 //! An imported diary or owner-only NOTE has no local author to read it, so
 //! every ordinary read, search and context pack holds it. The vault's
 //! current owner reads one only by asking for it by id through
-//! [`Vault::read_imported_note`], an explicit owner act.
+//! [`Vault::read_imported_note`], an explicit owner act. The one exception
+//! is a restored agent's own diary: once the owner's review makes the
+//! restored agent stand, its imported diary entries are its own again
+//! ([`diary_author_in`]; RESTORED-AGENT-KEEPS-IMPORTED-DIARY).
 
 use super::{
     NoteActor, NoteBody, NoteKind, decode_note_body_using, decode_note_core_using, encode_note_core,
@@ -25,8 +28,10 @@ use super::{
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::consent::AuthenticatedOwner;
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
+use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::store::note_body::encode_note_body;
 use crate::temporal::TimeRange;
@@ -76,6 +81,31 @@ pub(crate) fn archived_note_body(source: &[u8]) -> Result<Vec<u8>> {
     };
     body.author_ref = NoteActor::Imported(author);
     encode_note_body(&body)
+}
+
+/// The agent who wrote diary NOTE `note`, whose stored author is `author`
+/// (RESTORED-AGENT-KEEPS-IMPORTED-DIARY): its local author, or the source
+/// author of an imported entry once the entry's `AuthoredBy` edge names that
+/// author. An archive never writes that edge; the owner's review of the
+/// restored agent does (`agent_def::restored_diary`). `None` for an erased
+/// author, and for an imported one no review has named: such an entry stays
+/// the owner's evidence.
+///
+/// # Errors
+/// Storage faults.
+pub(crate) fn diary_author_in(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    note: &EntityId,
+    author: NoteActor,
+) -> Result<Option<EntityId>> {
+    Ok(match author {
+        NoteActor::Actor(author) => Some(author),
+        NoteActor::Imported(author) => store
+            .port_edge_present(txn, note, EdgeDirection::Out, EdgeKind::AuthoredBy, &author)?
+            .then_some(author),
+        NoteActor::Erased => None,
+    })
 }
 
 /// The archive NOTE put's capability for `body`: a NOTE body under the

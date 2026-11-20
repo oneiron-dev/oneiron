@@ -1434,22 +1434,36 @@ impl Vault {
         learned_at: u64,
         data: Vec<u8>,
     ) -> Result<()> {
+        // A restored agent's first standing write names it the author of its
+        // imported diary again (RESTORED-AGENT-KEEPS-IMPORTED-DIARY).
+        let diary = super::restored_diary::restored_diary_entries_in_txn(
+            self,
+            wtxn,
+            id,
+            &decode_agent_definition(&data)?,
+        )?;
+        let mut ops = vec![BatchOp::Put {
+            id: *id,
+            entity_type: ENTITY_TYPE_AGENT_DEF,
+            occurred,
+            learned_at,
+            row_version: None,
+            data,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        }];
+        ops.extend(
+            diary
+                .iter()
+                .map(|note| super::restored_diary::authored_by(note, id)),
+        );
         apply_ops(
             &self.store,
             &self.config,
             &self.analyzer,
             wtxn,
-            vec![BatchOp::Put {
-                id: *id,
-                entity_type: ENTITY_TYPE_AGENT_DEF,
-                occurred,
-                learned_at,
-                row_version: None,
-                data,
-                allow_maintenance: false,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            }],
+            ops,
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
@@ -1460,10 +1474,11 @@ impl Vault {
         // row's window a durable owed-mirror marker and mirrors the new body
         // into a live window. Without it, the window keeps the old body, and
         // its next cold open lands that body back over this edit
-        // (AGENT-DEF-DIAL-REVERTS-ON-RESTART). Without sync there is no
-        // window to mirror into.
+        // (AGENT-DEF-DIAL-REVERTS-ON-RESTART). Each diary entry whose edge
+        // it adds is named too: its window carries the edge. Without sync
+        // there is no window to mirror into.
         #[cfg(feature = "sync")]
-        crate::batch::queue_committed_rows(self, wtxn, std::collections::BTreeSet::from([*id]));
+        crate::batch::queue_committed_rows(self, wtxn, std::iter::once(*id).chain(diary).collect());
         Ok(())
     }
 }

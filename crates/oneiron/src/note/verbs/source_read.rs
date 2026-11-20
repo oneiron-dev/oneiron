@@ -65,14 +65,20 @@ pub(super) fn admit_source_in(
         return Ok(SourceAdmission::Read(None));
     }
     let (_, core) = note_core(vault, txn, text_source)?;
-    if core.kind != NoteKind::Diary || core.author_ref.is(actor.entity_ref()) {
+    if core.kind != NoteKind::Diary {
         return Ok(SourceAdmission::Read(None));
     }
     // An erased diary author is no agent, so no Grant covers the entry: it
-    // stays held, as a NOTE read holds it.
-    let Some(author) = core.author_ref.id() else {
+    // stays held, as a NOTE read holds it. So does an imported one no review
+    // of its restored agent has named.
+    let Some(author) =
+        crate::note::diary_author_in(&vault.store, txn, &text_source, core.author_ref)?
+    else {
         return Err(held(DiaryReadHold::NotCovered));
     };
+    if author == actor.entity_ref() {
+        return Ok(SourceAdmission::Read(None));
+    }
     let mut gate = DiaryReadGate::new(actor, read.reason.unwrap_or_default())?;
     Ok(match gate.admit(vault, txn, author, text_source)? {
         DiaryEntryAdmission::Read => SourceAdmission::Read(Some(gate)),
