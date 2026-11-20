@@ -53,6 +53,10 @@ use super::tags::{
 };
 use super::vector;
 use crate::attempt_queue::AttemptQueue;
+use crate::batch::phonetic_codes::{
+    every_part_sounds_like, linking_codes, names_for_body, sound_keys,
+};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::federation::record_scope::{birth_facet, scope_for_blob};
@@ -60,11 +64,14 @@ use crate::federation::{ScopeAxis, ScopeId};
 use crate::memory::extraction::{
     ContextLink, EncoderInput, EncoderOutput, SpeakerLink, SpeakerTarget,
 };
+use crate::pipeline::RetrievalParams;
 use crate::ports::{
-    EdgeDirection, EdgeStoreRead, EntityStoreRead, RetrievalIndexRead, TombstoneStoreRead,
+    EdgeDirection, EdgeStoreRead, EntityStoreRead, RetrievalIndexRead, SoundMatchAdmission,
+    TombstoneStoreRead,
 };
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::store::Store;
+use crate::vault::entity_revision::{ReadMode, read_entity_revision_including_archived_in_txn};
 use crate::{EntityId, Vault};
 
 /// The save path's version, the envelope's `version`.
@@ -526,8 +533,10 @@ pub(crate) fn shares_world_in_txn(
     Linker::new(vault, txn, turn, 0)?.shares_world(txn, id)
 }
 
-/// The persons a mention of `name` in `turn` sounds like, as the Linker's
-/// phonetic rung finds them, for a re-check that runs outside a save.
+/// The persons a mention of `name` in `turn` sounds like, for a re-check
+/// that runs outside a save: those the Linker's phonetic rung finds
+/// ([`Linker::sounds_like`]), and those its sound match finds
+/// ([`Linker::sound_matches`]), which a save never links by.
 pub(crate) fn sounds_like_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -535,7 +544,39 @@ pub(crate) fn sounds_like_in_txn(
     kind: u8,
     name: &str,
 ) -> Result<Vec<EntityId>> {
-    Linker::new(vault, txn, turn, 0)?.sounds_like(txn, kind, name)
+    let linker = Linker::new(vault, txn, turn, 0)?;
+    let mut found: BTreeSet<EntityId> = linker.sounds_like(txn, kind, name)?.into_iter().collect();
+    found.extend(linker.sound_matches(txn, kind, name)?);
+    Ok(found.into_iter().collect())
+}
+
+/// The phonetic channel's shipped parameters with the sound match taken
+/// person by person, for the Linker's sound match: the shipped Normalized
+/// Phonetic Distance threshold, with no keep ratio of the nearest distance
+/// and no cap. Whether a person sounds like a name then rests on that person
+/// alone ([`Linker::sound_matches`]).
+const LINKER_SOUND_PARAMS: RetrievalParams = RetrievalParams {
+    phonetic_npd_keep_ratio: f32::INFINITY,
+    phonetic_npd_cap: usize::MAX,
+    ..RetrievalParams::shipped()
+};
+
+/// The names of record `id` at the revision its phonetic postings were
+/// written from ([`ReadMode::Indexed`]), archived or not, for the sound
+/// match: none for a record that is gone, withdrawn or unreadable.
+fn linker_names_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Vec<String>> {
+    let Some(raw) =
+        read_entity_revision_including_archived_in_txn(vault, txn, id, ReadMode::Indexed)?
+    else {
+        return Ok(Vec::new());
+    };
+    let (Some(header), Some(body)) = (
+        EntityMetadataHeader::parse(&raw),
+        raw.get(ENTITY_METADATA_HEADER_LEN..),
+    ) else {
+        return Ok(Vec::new());
+    };
+    Ok(names_for_body(header.entity_type, body))
 }
 
 /// The persons the speaker of `message` names by a mention of `name` in
@@ -768,7 +809,7 @@ impl<'v> Linker<'v> {
         if kind != ENTITY_TYPE_PERSON {
             return Ok(Vec::new());
         }
-        let codes = crate::batch::phonetic_codes::linking_codes(mention);
+        let codes = linking_codes(mention);
         let store = &self.vault.store;
         let mut hits: BTreeSet<EntityId> = store
             .port_retrieval_phonetic_search(txn, &codes.whole)?
@@ -798,6 +839,71 @@ impl<'v> Linker<'v> {
         let mut found = BTreeSet::new();
         for hit in hits {
             for head in self.vault.resolve_entity_in_txn(txn, &hit)? {
+                if linkable_in_txn(store, txn, &head, kind)? && self.shares_world(txn, &head)? {
+                    found.insert(head);
+                }
+            }
+        }
+        Ok(found.into_iter().collect())
+    }
+
+    /// The sound match (CROSS-ARCH-0013 `#two-uses`: canonicalize at
+    /// extraction), for a name the key misses: the canonical heads of the
+    /// live or archived persons, each in a world the turn is in, whose
+    /// stored sound keys are within the Normalized Phonetic Distance
+    /// threshold of the name's ([`sound_keys`]), and one of whose names holds
+    /// a part that sounds like each part of the name
+    /// ([`every_part_sounds_like`]), as the code rung asks every part's
+    /// Soundex code to match. A misheard name whose codes differ from the
+    /// person's still finds them. Each person is matched on their own sound
+    /// alone, as the key and the codes match each on their own: the match
+    /// keeps no ratio of the nearest distance and no cap
+    /// ([`LINKER_SOUND_PARAMS`]), so no other person, nearer or one a lane
+    /// serving the ask cannot read, moves a person in or out. A name of one
+    /// part, and a mention of any other kind, take none.
+    ///
+    /// A save never links by it: a mention only these persons sound like
+    /// mints, and the nightly re-check asks whether it is one of them or
+    /// someone new ([`sounds_like_in_txn`]). The link a save stores is
+    /// decided over the key and the codes alone, so a person that a lane
+    /// reading the turn cannot read never turns its mint into candidates by
+    /// sounding like the name.
+    fn sound_matches(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: u8,
+        mention: &str,
+    ) -> Result<Vec<EntityId>> {
+        // The code rung's gate: a name of one part takes none.
+        if kind != ENTITY_TYPE_PERSON || linking_codes(mention).whole.is_empty() {
+            return Ok(Vec::new());
+        }
+        let sound = sound_keys(mention);
+        let store = &self.vault.store;
+        let admission: &mut SoundMatchAdmission<'_> = &mut |id: &EntityId| {
+            let mut linkable = false;
+            for head in self.vault.resolve_entity_in_txn(txn, id)? {
+                if linkable_in_txn(store, txn, &head, kind)? && self.shares_world(txn, &head)? {
+                    linkable = true;
+                    break;
+                }
+            }
+            // The names are read last: each part's readings cost a G2P pass.
+            Ok(linkable
+                && linker_names_in_txn(self.vault, txn, id)?
+                    .iter()
+                    .any(|name| every_part_sounds_like(mention, name)))
+        };
+        let hits = store.port_retrieval_phonetic_search_with_deadline(
+            txn,
+            &sound,
+            &LINKER_SOUND_PARAMS,
+            None,
+            Some(admission),
+        )?;
+        let mut found = BTreeSet::new();
+        for hit in hits {
+            for head in self.vault.resolve_entity_in_txn(txn, &hit.id)? {
                 if linkable_in_txn(store, txn, &head, kind)? && self.shares_world(txn, &head)? {
                     found.insert(head);
                 }
