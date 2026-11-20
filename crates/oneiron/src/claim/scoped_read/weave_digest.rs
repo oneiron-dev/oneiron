@@ -63,7 +63,7 @@ pub use settings::{
     WeaveDigestFeedback, WeaveDigestSettingAnswer, WeaveDigestSettingChange,
     WeaveDigestSettingChangeStatus, WeaveDigestSettingUndo, WeaveDigestSettings,
 };
-use wire::{WireDigest, WireSchedule, item_sources, report_sources, source_key};
+use wire::{WireDigest, WireSchedule, report_sources, source_key};
 
 #[doc(hidden)]
 use oneiron_verb_wire::claim::scoped_read::weave_digest::SCHEDULE_PREFIX;
@@ -1079,7 +1079,7 @@ impl ScopedRead<'_> {
     }
 
     /// The live report under `held` in `txn` as a period saves it: each row
-    /// whose sources ([`item_sources`]) this read's row gate refuses is left
+    /// whose sources ([`wire::item_sources`]) this read's row gate refuses is left
     /// out, as a reopen of the period checks them
     /// ([`Self::saved_weave_digest_in_txn`]) and withholds the whole period
     /// for one. The live report keeps such a row: an owner's claim about an
@@ -1098,7 +1098,7 @@ impl ScopedRead<'_> {
             let mut kept = Vec::with_capacity(section.items.len());
             for item in std::mem::take(&mut section.items) {
                 let mut sources = std::collections::BTreeSet::new();
-                item_sources(&item, &mut sources)?;
+                wire::item_sources(&item, &mut sources)?;
                 let mut reopens = true;
                 for source in &sources {
                     if !self.is_entity_retrievable_held_in(txn, &policy, &filter, source, held)? {
