@@ -16,6 +16,7 @@ mod parked;
 mod rewrite;
 mod session;
 
+use serde_json::value::RawValue;
 use serde_json::{Value, json};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
@@ -28,6 +29,7 @@ use crate::code_run::types::{
     SelfDurableWait, SelfDurableWaitReason, SelfEffect, SelfLeaderCall,
 };
 use crate::error::{Error, Result};
+use crate::runtime_hooks::verb::TextView;
 use crate::runtime_hooks::{
     InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookPre, VerbHookStop, hook_class,
 };
@@ -64,6 +66,17 @@ pub(crate) type ParkedCall = (SelfEffect, rmpv::Value);
 /// `None` when no hook runs for the call; the second carries the dispatched
 /// rewritten call (FIX 1442), `None` when no hook rewrote it.
 pub(crate) struct HookedCall(pub(crate) Option<VerbHookPre>, pub(crate) Option<SelfCall>);
+
+/// What a skill answer's own post chain left of its view held as JSON text
+/// ([`HostSelfDispatcher::leave_verb_hooks_text`]).
+pub(crate) enum TextAnswerPost {
+    /// No hook changed it: the guest reads the answer.
+    Unchanged,
+    /// A Redact narrowed it: the guest reads this view in the answer's place.
+    Narrowed(TextView),
+    /// A hook stopped the call: the guest reads this view in its place.
+    Stopped(Value),
+}
 
 impl HostSelfDispatcher<'_> {
     /// `dispatch_effect` inside the call's verb hooks, and the dispatched
@@ -273,6 +286,46 @@ impl HostSelfDispatcher<'_> {
     /// Taken once: the host replies with it in place of the result's own.
     pub(crate) fn take_hook_view(&self) -> Option<Value> {
         self.hook_view.take()
+    }
+
+    /// Whether this call's own post chain judges a skill answer held as
+    /// JSON text: on the canonical vault. A room's chain still reads the
+    /// answer as one value (SKILL-ANSWER-DEEP-JSON-STACK-SAFE part 2b).
+    pub(crate) fn post_chain_reads_text(&self) -> bool {
+        matches!(self.storage, ExecutorStorage::Canonical(_))
+    }
+
+    /// [`Self::leave_verb_hooks`] for a skill answer held as JSON text
+    /// (`answer`), one that nests past what a value may hold on the host's
+    /// stack (SKILL-ANSWER-DEEP-JSON-STACK-SAFE): the chain runs over its
+    /// view as text and never reads it into a value. The host stores the
+    /// answer once the chain is done and serves what it left
+    /// ([`Self::serve_hook_view`]).
+    pub(crate) fn leave_verb_hooks_text(
+        &self,
+        hooked: HookedCall,
+        answer: &RawValue,
+    ) -> Result<TextAnswerPost> {
+        let ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Err(Error::InvariantViolation(
+                "a room's post chain reads no skill answer held as text",
+            ));
+        };
+        let Some(pre) = hooked.0 else {
+            return Ok(TextAnswerPost::Unchanged);
+        };
+        let view = TextView::of_skill_answer(answer)?;
+        Ok(match vault.post_verb_hooks_text(pre, view)? {
+            Ok(seen) if seen.narrowed() => TextAnswerPost::Narrowed(seen),
+            Ok(_) => TextAnswerPost::Unchanged,
+            Err(stop) => TextAnswerPost::Stopped(stopped_view(&stop)),
+        })
+    }
+
+    /// Serves `view` in place of the last call's result, as a hook's view
+    /// is: the host's reply carries it ([`Self::take_hook_view`]).
+    pub(crate) fn serve_hook_view(&self, view: Value) {
+        *self.hook_view.borrow_mut() = Some(view);
     }
 
     /// The invocation a call's hooks run under. The same call a hook's ask

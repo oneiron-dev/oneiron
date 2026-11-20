@@ -27,6 +27,8 @@ pub(super) use cursor::{
     CursorRow, advance_cursor_in_txn, cursor, cursor_in_txn, enable_cursor_in_txn,
     enabled_before_tick_in_txn, put_cursor_in_txn, unpaused_cursor_bindings_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(super) use erase::erase_deep_input_for_test;
 pub(super) use erase::{
     ErasedIds, args_erased, dependencies_erased_in_txn, erased_by_args_in_txn,
     retire_kept_runs_in_txn, rows_named_by_call, rows_named_by_fact, scrub_erased_memo_in_txn,
