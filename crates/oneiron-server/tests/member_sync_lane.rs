@@ -1004,6 +1004,24 @@ impl LiveLane {
     }
 }
 
+/// Waits until the member vault holds no `key` row: whether it went. The
+/// member lane's tombstone refresh tick is one sealed relay period
+/// (`SEALED_RELAY_INTERVAL_SECS = 300`) after the connect, so the wait is
+/// bounded at 360 s; an interval paces the poll.
+async fn wait_member_row_gone(vault: &Vault, key: &str) -> bool {
+    let mut poll = tokio::time::interval(Duration::from_millis(500));
+    tokio::time::timeout(Duration::from_secs(360), async {
+        loop {
+            poll.tick().await;
+            if vault.sync_state_get(key).unwrap().is_none() {
+                return;
+            }
+        }
+    })
+    .await
+    .is_ok()
+}
+
 /// Review round 2 of #8364 (P1-1): a read-only member keeps its socket
 /// through a promoted window's round. The member's grant reads and never
 /// writes (`Viewer` under `ReadOnly`); it promotes a world window, then a
@@ -1157,19 +1175,7 @@ fn a_connected_member_drops_a_thin_copy_home_hard_deleted() {
                 .existed,
             "HOME hard-deletes the opened item"
         );
-        // A bounded poll paced by an interval: the refresh tick is one
-        // sealed relay period (300 s) after the connect.
-        let mut poll = tokio::time::interval(Duration::from_millis(500));
-        let purged = tokio::time::timeout(Duration::from_secs(360), async {
-            loop {
-                poll.tick().await;
-                if member.vault.sync_state_get(&thin_key).unwrap().is_none() {
-                    return;
-                }
-            }
-        })
-        .await
-        .is_ok();
+        let purged = wait_member_row_gone(&member.vault, &thin_key).await;
         let after = lane.events_after_synced();
         lane.stop().await;
         assert!(
@@ -1189,6 +1195,169 @@ fn a_connected_member_drops_a_thin_copy_home_hard_deleted() {
                 .unwrap()
                 .is_none(),
             "the thin body is gone"
+        );
+    });
+}
+
+/// Review round 2 of #9924 (P1-1): a connected member drops a thin copy HOME
+/// hard-deleted from a window it holds a snapshot of. The member opens an
+/// item without promoting it, then opens the item's window locally and
+/// unloads it: the unload stores the window's snapshot (`d:w:`) while the
+/// window stays unpromoted (no `rp:w:`), so no exchange of it runs. A
+/// session connects; HOME hard-deletes the item; the member lane's own
+/// tombstone refresh tick purges the thin copy. The session must stay up
+/// throughout, so the purge is the tick's, not a reconnect's.
+/// red at ef31e10c28da: the tick asks only the windows this install holds no
+/// rows of, so it skips this one and the thin copy stays until the 360 s
+/// wait runs out.
+#[test]
+fn a_connected_member_drops_a_hard_deleted_thin_copy_of_a_window_it_holds() {
+    run_on_engine_stack(|| async {
+        let fx = fixture().await;
+        let member = member_client(fx.url.clone(), &fx.caller);
+        assert!(
+            run_lane(&member.manager, &member.config).await,
+            "the lane first reaches Synced"
+        );
+        let doors = lane_connection(&member.manager, &member.config);
+        let opened = doors.open_item(&fx.window, fx.item).await.unwrap();
+        assert!(
+            matches!(opened, OpenedItem::Thin(_)),
+            "the first open caches a thin copy"
+        );
+        drop(member.manager.open_window(&fx.window).unwrap());
+        assert!(
+            member.manager.unload_window(&fx.window).unwrap(),
+            "the locally opened window unloads"
+        );
+        assert!(
+            member
+                .vault
+                .sync_state_get(&format!("d:w:{}", fx.window))
+                .unwrap()
+                .is_some(),
+            "the member holds the window's snapshot"
+        );
+        assert!(
+            member
+                .vault
+                .sync_state_get(&format!("rp:w:{}", fx.window))
+                .unwrap()
+                .is_none(),
+            "the window is not promoted"
+        );
+        let hex = fx.item.to_hex();
+        let thin_key = format!("ro:e:{hex}");
+        assert!(
+            member.vault.sync_state_get(&thin_key).unwrap().is_some(),
+            "the thin copy is cached"
+        );
+        let lane = LiveLane::start(&member.manager, &member.config);
+        lane.wait_synced().await;
+        assert!(
+            fx.vault
+                .delete_entity_with_reason(&fx.item, DeleteReason::UserHardDelete)
+                .unwrap()
+                .existed,
+            "HOME hard-deletes the opened item"
+        );
+        let purged = wait_member_row_gone(&member.vault, &thin_key).await;
+        let after = lane.events_after_synced();
+        lane.stop().await;
+        assert!(
+            purged,
+            "the connected member's thin copy is purged (events: {after:?})"
+        );
+        assert!(
+            !after
+                .iter()
+                .any(|event| event == "StatusChanged(Disconnected)"),
+            "the session stayed up, so no reconnect took the tombstone (events: {after:?})"
+        );
+        assert!(
+            member
+                .vault
+                .sync_state_get(&format!("ri:b:{hex}"))
+                .unwrap()
+                .is_none(),
+            "the thin body is gone"
+        );
+    });
+}
+
+/// Review round 2 of #9924 (P1-2): a soft delete a connected member takes
+/// drops the item from its thin index. The session indexes the granted
+/// window (`ri:w:{window}:{item}`), and the member opens an item of it
+/// without promoting it; HOME soft-deletes the item (`UserDelete`); the
+/// member lane's tombstone refresh tick drops the thin copy and the item's
+/// index row together, writing no hard-delete marker (`dt:`), so
+/// `residence_index` no longer lists it. The session must stay up
+/// throughout, so no reconnect's index fetch dropped the row.
+/// red at ef31e10c28da: the tick drops the thin body and the opened marker
+/// but keeps the index row, so `residence_index` still lists the deleted
+/// item.
+#[test]
+fn a_connected_member_drops_a_soft_deleted_item_from_its_thin_index() {
+    run_on_engine_stack(|| async {
+        let fx = fixture().await;
+        let member = member_client(fx.url.clone(), &fx.caller);
+        let lane = LiveLane::start(&member.manager, &member.config);
+        lane.wait_synced().await;
+        let hex = fx.item.to_hex();
+        let index_key = format!("ri:w:{}:{hex}", fx.window);
+        assert!(
+            member.vault.sync_state_get(&index_key).unwrap().is_some(),
+            "the session indexed the item"
+        );
+        let doors = lane_connection(&member.manager, &member.config);
+        let opened = doors.open_item(&fx.window, fx.item).await.unwrap();
+        assert!(
+            matches!(opened, OpenedItem::Thin(_)),
+            "the open caches a thin copy"
+        );
+        let body_key = format!("ri:b:{hex}");
+        assert!(
+            member.vault.sync_state_get(&body_key).unwrap().is_some(),
+            "the thin body is cached"
+        );
+        assert!(
+            fx.vault
+                .delete_entity_with_reason(&fx.item, DeleteReason::UserDelete)
+                .unwrap()
+                .existed,
+            "HOME soft-deletes the opened item"
+        );
+        let dropped = wait_member_row_gone(&member.vault, &body_key).await;
+        let after = lane.events_after_synced();
+        lane.stop().await;
+        assert!(
+            dropped,
+            "the connected member's thin body is dropped (events: {after:?})"
+        );
+        assert!(
+            !after
+                .iter()
+                .any(|event| event == "StatusChanged(Disconnected)"),
+            "the session stayed up, so no reconnect refetched the index (events: {after:?})"
+        );
+        assert!(
+            member.vault.sync_state_get(&index_key).unwrap().is_none(),
+            "the item's thin index row is dropped"
+        );
+        let index = doors.residence_index().unwrap();
+        assert!(
+            !index
+                .iter()
+                .any(|window| window.items.iter().any(|entry| entry.entity_id == hex)),
+            "the thin index no longer lists the deleted item (index: {index:?})"
+        );
+        assert!(
+            member
+                .vault
+                .sync_state_get(&format!("dt:{hex}"))
+                .unwrap()
+                .is_none(),
+            "a soft delete writes no hard-delete marker"
         );
     });
 }
