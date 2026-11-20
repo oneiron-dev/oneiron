@@ -21,7 +21,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use loro::{
     Container, ExpandType, LoroDoc, LoroMap, LoroMovableList, LoroText, LoroValue, StyleConfig,
-    TextDelta, UpdateOptions, ValueOrContainer,
+    TextDelta, ValueOrContainer,
 };
 use oneiron_docedit::docx_body::{
     DocxAnchor, DocxBlock, DocxBlockKind, DocxChange, DocxLock, DocxMark, DocxParagraph, DocxRun,
@@ -238,8 +238,7 @@ pub(super) fn apply(doc: &LoroDoc, op: &DocxBodyOp, minted: &mut Vec<String>) ->
             line(new)?;
             let body =
                 loro_text(&editable(block)?, TEXT).ok_or_else(|| invalid("not a paragraph"))?;
-            body.update(new, UpdateOptions::default())
-                .map_err(|_| invalid("paragraph update"))?;
+            crate::text_diff::set_text(&body, new).map_err(|_| invalid("paragraph update"))?;
         }
         DocxBodyOp::Splice {
             block,
@@ -268,10 +267,9 @@ pub(super) fn apply(doc: &LoroDoc, op: &DocxBodyOp, minted: &mut Vec<String>) ->
         } => {
             bounded(new)?;
             let grid = child_map(&editable(block)?, CELLS).ok_or_else(|| invalid("not a table"))?;
-            loro_text(&grid, &cell_key(*row, *col))
-                .ok_or_else(|| invalid("no such cell"))?
-                .update(new, UpdateOptions::default())
-                .map_err(|_| invalid("cell update"))?;
+            let cell =
+                loro_text(&grid, &cell_key(*row, *col)).ok_or_else(|| invalid("no such cell"))?;
+            crate::text_diff::set_text(&cell, new).map_err(|_| invalid("cell update"))?;
         }
         DocxBodyOp::InsertParagraph {
             after,

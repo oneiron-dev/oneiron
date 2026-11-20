@@ -12,7 +12,7 @@
 
 use super::{child_list, child_map, invalid, keys, loro, node_id, order};
 use crate::error::Result;
-use loro::{Container, LoroMap, LoroText, UpdateOptions, ValueOrContainer};
+use loro::{Container, LoroMap, LoroText, ValueOrContainer};
 use oneiron_docedit::live::{LiveDeck, NodeId, NodePayload, TableBody, TableMerge};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -145,7 +145,7 @@ fn sync_table(entry: &LoroMap, body: &TableBody) -> Result<()> {
                 None => continue,
             };
             if held.to_string() != text {
-                held.update(text, UpdateOptions::default())
+                crate::text_diff::set_text(&held, text)
                     .map_err(|_| invalid("deck table cell text update"))?;
             }
         }

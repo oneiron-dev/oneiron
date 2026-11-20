@@ -38,8 +38,7 @@ use super::{invalid, live, log::LoggedOp};
 use crate::error::{Error, Result};
 use loro::{
     Container, ExpandType, LoroDoc, LoroList, LoroMap, LoroMovableList, LoroText, LoroTree,
-    LoroValue, StyleConfig, StyleConfigMap, TextDelta, TreeParentId, UpdateOptions,
-    ValueOrContainer,
+    LoroValue, StyleConfig, StyleConfigMap, TextDelta, TreeParentId, ValueOrContainer,
 };
 use node::{node_of, root, sync_meta};
 use oneiron_docedit::edit::transaction::IdMarks;
@@ -466,7 +465,7 @@ fn sync_paragraph(para: &LoroMap, paragraph: &Paragraph) -> Result<()> {
         .collect();
     let plain: String = runs.iter().map(|run| run.text.as_str()).collect();
     if text.to_string() != plain {
-        text.update(&plain, UpdateOptions::default())
+        crate::text_diff::set_text(&text, &plain)
             .map_err(|_| invalid("deck paragraph text update"))?;
     }
     let mut wanted = Vec::new();

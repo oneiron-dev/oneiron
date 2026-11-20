@@ -11,9 +11,7 @@
 use super::super::invalid;
 use super::{LOCK, TEXT, child_map, lock_token, loro, loro_text, mark_styles, runs, string};
 use crate::error::Result;
-use loro::{
-    Container, LoroDoc, LoroList, LoroMap, LoroText, LoroValue, UpdateOptions, ValueOrContainer,
-};
+use loro::{Container, LoroDoc, LoroList, LoroMap, LoroText, LoroValue, ValueOrContainer};
 use oneiron_docedit::docx_body::{
     DocxBlockKind, DocxChange, DocxMark, DocxRun, DocxStory, DocxStoryScope,
 };
@@ -161,8 +159,7 @@ pub(super) fn set_text(
     text: &str,
 ) -> Result<()> {
     story_line(text)?;
-    editable(doc, scope, block)?
-        .update(text, UpdateOptions::default())
+    crate::text_diff::set_text(&editable(doc, scope, block)?, text)
         .map_err(|_| invalid("story paragraph update"))?;
     Ok(())
 }

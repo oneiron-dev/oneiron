@@ -1,27 +1,28 @@
-//! A revision document's text field set to a row's new text, its diff held
-//! to a budget.
+//! A Loro text set to a new text, its diff held to a budget. Every place
+//! that sets a stored text to a whole new value goes through [`set_text`]:
+//! entity revision fields, entity document forks and recovery replays,
+//! office body paragraphs and cells, and secret projection copies.
 
-use crate::error::{Error, Result};
-use loro::{LoroText, UpdateOptions};
+use loro::{LoroResult, LoroText, UpdateOptions};
 
-/// How long one field's diff may run. Myers' diff takes time in proportion to
+/// How long one text's diff may run. Myers' diff takes time in proportion to
 /// the text's length times the size of the change, so a large body replaced
 /// by an unrelated one diffed for hours while the write held the vault's
 /// writer. The note folder import holds its whole-text diff to the same
 /// budget (`WHOLE_TEXT_TIMEOUT_MS`). The vendored diff times the budget on a
 /// monotonic clock, so a wall clock stepped back cannot hold it off
 /// (`crates/loro/PROVENANCE.md`).
-const FIELD_DIFF_TIMEOUT_MS: f64 = 2_000.0;
+const TEXT_DIFF_TIMEOUT_MS: f64 = 2_000.0;
 
 /// Sets `field` to `text` by the smallest edits the diff finds within
-/// [`FIELD_DIFF_TIMEOUT_MS`], so every unchanged character keeps its identity
+/// [`TEXT_DIFF_TIMEOUT_MS`], so every unchanged character keeps its identity
 /// and the cursors on it. Past the budget, the edits the diff already made
 /// stay (it makes them in text order, each one part of the change) and the
 /// one span that still differs is replaced whole: the field always ends equal
 /// to `text`, and the characters before and after that span keep theirs.
-pub(super) fn set_text(field: &LoroText, text: &str) -> Result<()> {
+pub(crate) fn set_text(field: &LoroText, text: &str) -> LoroResult<()> {
     let options = UpdateOptions {
-        timeout_ms: Some(FIELD_DIFF_TIMEOUT_MS),
+        timeout_ms: Some(TEXT_DIFF_TIMEOUT_MS),
         use_refined_diff: true,
     };
     if field.update(text, options).is_ok() {
@@ -42,15 +43,11 @@ pub(super) fn set_text(field: &LoroText, text: &str) -> Result<()> {
         .count();
     let removed = held.len() - prefix - suffix;
     if removed > 0 {
-        field
-            .delete(prefix, removed)
-            .map_err(|_| Error::InvariantViolation("entity text update"))?;
+        field.delete(prefix, removed)?;
     }
     let inserted: String = wanted[prefix..wanted.len() - suffix].iter().collect();
     if !inserted.is_empty() {
-        field
-            .insert(prefix, &inserted)
-            .map_err(|_| Error::InvariantViolation("entity text update"))?;
+        field.insert(prefix, &inserted)?;
     }
     Ok(())
 }

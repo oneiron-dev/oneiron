@@ -31,7 +31,7 @@
 use std::collections::BTreeMap;
 
 use heed::{RoTxn, RwTxn};
-use loro::{ExportMode, ID, LoroDoc, UpdateOptions, VersionVector};
+use loro::{ExportMode, ID, LoroDoc, VersionVector};
 use oneiron_contracts::fingerprint::ContentHash;
 
 use super::rows::HeldEdit;
@@ -366,7 +366,7 @@ fn bring_current(
     lineage
         .set_peer_id(author()?)
         .map_err(|_| Error::InvariantViolation("document copy author"))?;
-    text.update(copy, UpdateOptions::default())
+    crate::text_diff::set_text(&text, copy)
         .map_err(|_| Error::InvariantViolation("document copy diff"))?;
     lineage.commit();
     Ok(true)
@@ -531,9 +531,7 @@ fn land_copy_in_txn(
         .set_peer_id(LoroDoc::new().peer_id())
         .map_err(|_| Error::InvariantViolation("document copy landing peer"))?;
     let before = resident.oplog_vv();
-    resident
-        .get_text(BODY)
-        .update(&landed, UpdateOptions::default())
+    crate::text_diff::set_text(&resident.get_text(BODY), &landed)
         .map_err(|_| Error::InvariantViolation("document copy landing diff"))?;
     resident.commit();
     let update = resident

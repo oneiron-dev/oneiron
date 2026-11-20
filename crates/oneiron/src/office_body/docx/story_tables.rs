@@ -4,7 +4,7 @@ use super::super::invalid;
 use super::stories::{child_list, order_ids};
 use super::{LOCK, TEXT, cell_key, child_map, lock_token, loro, loro_text, parse_cell_key, string};
 use crate::error::Result;
-use loro::{LoroDoc, LoroList, LoroMap, LoroText, UpdateOptions};
+use loro::{LoroDoc, LoroList, LoroMap, LoroText};
 use oneiron_docedit::docx_body::{DocxBlockKind, DocxChange, DocxStory, DocxStoryScope};
 use std::collections::HashSet;
 
@@ -164,8 +164,7 @@ pub(super) fn set_text(
     paragraph: &str,
     text: &str,
 ) -> Result<()> {
-    editable(doc, scope, table, row, col, paragraph)?
-        .update(text, UpdateOptions::default())
+    crate::text_diff::set_text(&editable(doc, scope, table, row, col, paragraph)?, text)
         .map_err(|_| invalid("story cell paragraph update"))?;
     Ok(())
 }

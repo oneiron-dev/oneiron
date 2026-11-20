@@ -21,7 +21,7 @@
 //! the marked blob are merged as concurrent edits of the blob's copy.
 
 use heed::{RoTxn, RwTxn};
-use loro::{ExportMode, LoroDoc, UpdateOptions, VersionVector};
+use loro::{ExportMode, LoroDoc, VersionVector};
 use oneiron_contracts::fingerprint::ContentHash;
 
 use super::{
@@ -524,8 +524,7 @@ fn merged(base: &str, ours: &str, theirs: &str) -> Result<String> {
     let edit = |doc: &LoroDoc, peer: u64, text: &str| -> Result<()> {
         doc.set_peer_id(peer)
             .map_err(|_| Error::InvariantViolation("document copy merge author"))?;
-        doc.get_text(BODY)
-            .update(text, UpdateOptions::default())
+        crate::text_diff::set_text(&doc.get_text(BODY), text)
             .map_err(|_| Error::InvariantViolation("document copy merge diff"))?;
         doc.commit();
         Ok(())
