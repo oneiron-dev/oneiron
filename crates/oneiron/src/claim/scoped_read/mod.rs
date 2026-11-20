@@ -22,6 +22,7 @@ use oneiron_retrieval::pipeline::ScoredEntity;
 
 mod claim_admission;
 mod context_pack_filter;
+mod deleted_shells;
 mod diagnostic_reads;
 mod edge_claims;
 mod exposure;
