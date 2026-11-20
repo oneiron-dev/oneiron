@@ -5,7 +5,7 @@
 
 use oneiron_vault_contract::{
     OWNER_KEY_CHANGE_AT_MAX, OWNER_KEY_CHANGE_OP, OWNER_KEY_CHANGE_REFUSAL_MAX,
-    OwnerKeyChangeReport, OwnerKeyChangeReportAck, TOKEN_LEN, TokenHex,
+    OwnerKeyChangeReport, OwnerKeyChangeReportAck, TOKEN_LEN, TokenHex, owner_key_change_wire_at,
     valid_owner_key_change_refusal_code,
 };
 
@@ -115,4 +115,42 @@ fn owner_key_change_ack_shapes() {
     );
     let long = "a".repeat(OWNER_KEY_CHANGE_REFUSAL_MAX + 1);
     assert!(!valid_owner_key_change_refusal_code(&long));
+}
+
+#[test]
+fn owner_key_change_ack_error_is_absent_or_a_string() {
+    // a null is no absence: a supervisor outside the contract, never reported
+    for line in [
+        r#"{"reported":true,"error":null}"#,
+        r#"{"reported":false,"error":null}"#,
+        r#"{"reported":true,"error":7}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<OwnerKeyChangeReportAck>(line).is_err(),
+            "{line}"
+        );
+    }
+    // positive controls: the absent field, and a string
+    let absent: OwnerKeyChangeReportAck = serde_json::from_str(r#"{"reported":true}"#).unwrap();
+    assert_eq!(absent.error, None);
+    let named: OwnerKeyChangeReportAck =
+        serde_json::from_str(r#"{"reported":false,"error":"stale_generation"}"#).unwrap();
+    assert_eq!(named.error.as_deref(), Some("stale_generation"));
+}
+
+#[test]
+fn owner_key_change_wire_at_carries_every_claim() {
+    assert_eq!(owner_key_change_wire_at(0), 0);
+    assert_eq!(owner_key_change_wire_at(1_764_110_000), 1_764_110_000);
+    assert_eq!(
+        owner_key_change_wire_at(OWNER_KEY_CHANGE_AT_MAX),
+        OWNER_KEY_CHANGE_AT_MAX
+    );
+    // a claim past the wire's range still goes out, at the range's top
+    for claimed in [OWNER_KEY_CHANGE_AT_MAX + 1, u64::MAX] {
+        let mut report = request();
+        report.at = owner_key_change_wire_at(claimed);
+        assert_eq!(report.at, OWNER_KEY_CHANGE_AT_MAX, "{claimed}");
+        report.validate().unwrap();
+    }
 }

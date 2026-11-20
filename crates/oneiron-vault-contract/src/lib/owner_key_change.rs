@@ -20,7 +20,7 @@
 //! vault reads any answer other than `reported: true` as a failure, so the
 //! change stays unreported and goes out again on the next sweep.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::{TOKEN_LEN, TokenHex, valid_vault_name};
 
@@ -34,6 +34,17 @@ pub const OWNER_KEY_CHANGE_REFUSAL_MAX: usize = 64;
 /// JSON reader holds exactly.
 pub const OWNER_KEY_CHANGE_AT_MAX: u64 = (1 << 53) - 1;
 
+/// The `at` a vault sends for an entry whose signer claimed the unix time
+/// `claimed`: the claim, or [`OWNER_KEY_CHANGE_AT_MAX`] for a claim above
+/// it. The authority format admits any u64 claim, and the time is only the
+/// signer's claim: the control plane keeps it and mails every new entry
+/// whatever it says. So a claim past the wire's range still reports its
+/// change, which a signer could otherwise keep from ever being mailed.
+#[must_use]
+pub fn owner_key_change_wire_at(claimed: u64) -> u64 {
+    claimed.min(OWNER_KEY_CHANGE_AT_MAX)
+}
+
 /// Vault → supervisor, on the supervisor socket ledger pushes use: one owner
 /// key change of this vault. `token` is the spawn token the vault holds, on
 /// the channel that already carries it with every push. `entry` is the
@@ -41,7 +52,8 @@ pub const OWNER_KEY_CHANGE_AT_MAX: u64 = (1 << 53) - 1;
 /// `confirmed`, `removed`, `removed_by_ended_key`, `removed_in_conflict`,
 /// `bound_by_passkey`, `bound_by_device_key`); `key` is the shape of the key
 /// the change names (`device_key`, `passkey`, `recovery_authority`); `at` is
-/// the entry's signer-claimed unix time in seconds.
+/// the entry's signer-claimed unix time in seconds, as
+/// [`owner_key_change_wire_at`] carries it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OwnerKeyChangeReport {
@@ -104,13 +116,24 @@ fn valid_entry_hex(entry: &str) -> bool {
 
 /// Supervisor → vault on the request's connection. `reported` is true only
 /// when the control plane took the change; otherwise `error` names why,
-/// never the token.
+/// never the token. `error` is absent or a string: a `null` is no absence,
+/// so `{"reported":true,"error":null}` does not read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OwnerKeyChangeReportAck {
     pub reported: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present_string",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub error: Option<String>,
+}
+
+/// A field that, when present, must be a string: only its absence reads as
+/// `None` (through `default`).
+fn present_string<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    String::deserialize(deserializer).map(Some)
 }
 
 impl OwnerKeyChangeReportAck {

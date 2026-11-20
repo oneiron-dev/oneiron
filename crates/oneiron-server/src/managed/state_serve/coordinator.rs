@@ -185,6 +185,11 @@ async fn serve_with_handles(
     // Rehearsal scratch a stopped process left in `<data>.rehearsals` goes
     // before any worker starts or ready is said (FIX 5677).
     owner_host.sweep_rehearsals(&vault);
+    // The owner key change report's baseline, before any worker starts or
+    // anything serves: every owner key entry the vault holds now is history,
+    // never mailed, and every change landed after it is reported (Engine
+    // ruling 21 Nov 06:00).
+    crate::managed::owner_key_change_report::baseline_cursor(&vault);
     // The one credential-broker context, built from the opened vault: the
     // `[models]` providers, the System One seat, the embedder and the GPU
     // pods read their `key_secret` keys at its custody door, call by call.

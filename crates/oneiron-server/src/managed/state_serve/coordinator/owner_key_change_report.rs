@@ -1,5 +1,6 @@
 //! Owner key changes reported while the managed vault is serving.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::managed::ledger::LEDGER_SCHEDULE_POLL;
@@ -27,8 +28,11 @@ const BACKOFF_SWEEP_EVERY: Duration = Duration::from_secs(10 * 60);
 /// [`FAILED_SWEEPS_BEFORE_BACKOFF`] sweeps in a row that stopped on a
 /// failure, sweeps run at most every [`BACKOFF_SWEEP_EVERY`] until one
 /// succeeds. The sweep blocks on its socket, so it runs off the runtime's
-/// threads. It takes no write admission, so the reap freeze never holds it
-/// back, and it ends with shutdown.
+/// threads; the task's end, by shutdown or by teardown's abort, sets the
+/// sweep's stop flag, so a sweep in flight sends nothing more and ends within
+/// one read slice. Managed boot wrote the cursor's baseline before anything
+/// served, so every sweep sends what the row does not name. It takes no
+/// write admission, so the reap freeze never holds it back.
 pub(super) fn spawn(
     server: Arc<SyncServer>,
     mut stop: ShutdownSignal,
@@ -37,9 +41,10 @@ pub(super) fn spawn(
         let Some(report) = server.owner_key_change_report().cloned() else {
             return;
         };
+        let stop_sweeps = Arc::new(AtomicBool::new(false));
+        let _stop_on_end = SetOnDrop(Arc::clone(&stop_sweeps));
         let mut poll = tokio::time::interval(LEDGER_SCHEDULE_POLL);
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        // No opening sweep ran, so the first tick's sweep is the baseline.
         let mut failures: u32 = 0;
         let mut last_sweep: Option<Instant> = None;
         loop {
@@ -53,8 +58,12 @@ pub(super) fn spawn(
             {
                 continue;
             }
-            let (vault, report) = (Arc::clone(server.vault()), report.clone());
-            let outcome = tokio::task::spawn_blocking(move || sweep_once(&vault, &report))
+            let (vault, report, stop) = (
+                Arc::clone(server.vault()),
+                report.clone(),
+                Arc::clone(&stop_sweeps),
+            );
+            let outcome = tokio::task::spawn_blocking(move || sweep_once(&vault, &report, &stop))
                 .await
                 .unwrap_or(SweepOutcome::StoppedOnFailure);
             last_sweep = Some(Instant::now());
@@ -63,7 +72,18 @@ pub(super) fn spawn(
                 SweepOutcome::StoppedOnFailure => {
                     failures = failures.saturating_add(1);
                 }
+                SweepOutcome::Stopped => return,
             }
         }
     })
+}
+
+/// Sets its flag when dropped: the reporter task holds one, so its end by
+/// return or by abort stops the sweep it left on the blocking pool.
+struct SetOnDrop(Arc<AtomicBool>);
+
+impl Drop for SetOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
 }

@@ -4,23 +4,29 @@
 //! exactly one `owner_key_change` line each, oldest first, and each joins
 //! the install-local cursor once its ack says reported.
 //!
-//! The first sweep on a vault with an enrolled passkey writes the cursor and
-//! sends nothing, so a deploy mails no old change. A passkey enrolled after
-//! it is sent as one line with the enrolment's entry, `enrolled`, `passkey`
-//! and the list's time, and the next sweep sends nothing. A refusal leaves
-//! the change unreported, and the next sweep sends it again.
+//! The boot baseline on a vault with an enrolled passkey writes the cursor
+//! and sends nothing, so a deploy mails no old change; a sweep writes no
+//! baseline, so with no cursor row it sends every listed change. A passkey
+//! enrolled after the baseline is sent as one line with the enrolment's
+//! entry, `enrolled`, `passkey` and the list's time, and the next sweep sends
+//! nothing. A refusal, an ack outside the contract or over the line cap, and
+//! a supervisor whose accept backlog is full leave the change unreported at
+//! once, and the next sweep sends it again. A set stop flag sends nothing
+//! and ends a wait for an ack within one read slice.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --features oneiron/test-support
 //! --test owner_key_change_report`.
 
 use std::collections::BTreeSet;
-use std::io::{BufRead as _, BufReader, Write as _};
+use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Sender, channel};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use oneiron::authority::{
@@ -31,7 +37,10 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::{HostingPrivacyPosture, Vault, VaultConfig};
 use oneiron_server::managed::OWNER_KEY_CHANGE_REPORTED_KEY;
-use oneiron_server::test_doors::owner_key_change_report::{report_client, sweep_once};
+use oneiron_server::test_doors::owner_key_change_report::{
+    baseline_cursor, report_client, sweep_once, sweep_once_until,
+};
+use oneiron_vault_contract::MAX_CTL_LINE;
 use p256::ecdsa::signature::Signer as _;
 use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
 use sha2::{Digest as _, Sha256};
@@ -54,6 +63,12 @@ fn token() -> String {
 /// What the test's supervisor does with the one line it reads.
 enum Answer {
     Line(&'static str),
+    /// `{"reported":true}` padded with spaces to this many bytes, then the
+    /// newline.
+    Padded(usize),
+    /// No answer: says on the sender that the line is read, then holds the
+    /// connection until the vault closes it.
+    Silent(Sender<()>),
 }
 
 /// A supervisor on a fresh socket that reads one line, then answers as told;
@@ -76,10 +91,40 @@ fn supervisor(answer: Answer) -> (tempfile::TempDir, PathBuf, JoinHandle<String>
                 stream.write_all(text.as_bytes()).ok();
                 stream.write_all(b"\n").ok();
             }
+            Answer::Padded(len) => {
+                let mut text = br#"{"reported":true}"#.to_vec();
+                text.resize(len, b' ');
+                text.push(b'\n');
+                stream.write_all(&text).ok();
+            }
+            Answer::Silent(read) => {
+                read.send(()).ok();
+                // the vault's close ends the read
+                stream.read(&mut [0_u8; 1]).ok();
+            }
         }
         line
     });
     (dir, socket, handle)
+}
+
+/// A supervisor socket with no accept backlog and one connection waiting in
+/// it, so the next connect finds the backlog full. The listener and the
+/// waiting connection keep it so while held.
+fn full_backlog_supervisor() -> (tempfile::TempDir, PathBuf, UnixListener, UnixStream) {
+    use rustix::net::{AddressFamily, SocketAddrUnix, SocketType, bind, listen, socket};
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("hypnos.sock");
+    let fd = socket(AddressFamily::UNIX, SocketType::STREAM, None).expect("a Unix socket");
+    bind(
+        &fd,
+        &SocketAddrUnix::new(&path).expect("the socket's address"),
+    )
+    .expect("bind");
+    listen(&fd, 0).expect("listen with no backlog");
+    let listener = UnixListener::from(fd);
+    let waiting = UnixStream::connect(&path).expect("the one connection the backlog holds");
+    (dir, path, listener, waiting)
 }
 
 /// One vault under the Hosted posture, rooted under the test host, with this
@@ -221,6 +266,9 @@ fn sweep_and_read_line(
     let (_dir, socket, supervisor) = supervisor(answer);
     let client = report_client(&socket, VAULT, &token(), BOUND);
     sweep_once(&hosted.vault, &client);
+    // a sweep that sent nothing left the supervisor in its accept: this
+    // connection releases it with no line, and is refused or dropped else
+    let _ = UnixStream::connect(&socket);
     (
         supervisor.join().expect("supervisor"),
         cursor(&hosted.vault),
@@ -264,14 +312,37 @@ fn listed_at(hosted: &HostedVault, entry: &AuthorityEntryHash) -> u64 {
 }
 
 #[test]
-fn the_first_sweep_writes_the_cursor_and_sends_nothing() {
+fn the_boot_baseline_writes_the_cursor_and_sends_nothing() {
     let hosted = HostedVault::open();
     let enrolled = host_enrols_passkey(&hosted, &passkey(), CREDENTIAL_ID);
+    baseline_cursor(&hosted.vault);
+    assert_eq!(
+        cursor(&hosted.vault),
+        BTreeSet::from([enrolled.entry]),
+        "the baseline names the passkey's enrolment"
+    );
     let reported = sweep_and_read_nothing(&hosted);
     assert_eq!(
         reported,
         BTreeSet::from([enrolled.entry]),
-        "the first sweep baselines the cursor with the passkey's enrolment"
+        "the sweep after the baseline sends nothing"
+    );
+}
+
+#[test]
+fn a_sweep_with_no_cursor_row_sends_every_listed_change() {
+    let hosted = HostedVault::open();
+    let enrolled = host_enrols_passkey(&hosted, &passkey(), CREDENTIAL_ID);
+    let (line, reported) = sweep_and_read_line(&hosted, Answer::Line(r#"{"reported":true}"#));
+    assert_eq!(
+        line,
+        expected_line(&enrolled.entry, listed_at(&hosted, &enrolled.entry)),
+        "a sweep writes no baseline: the enrolment is sent"
+    );
+    assert_eq!(
+        reported,
+        BTreeSet::from([enrolled.entry]),
+        "the reported enrolment is the cursor"
     );
 }
 
@@ -279,7 +350,7 @@ fn the_first_sweep_writes_the_cursor_and_sends_nothing() {
 fn a_passkey_enrolled_after_the_baseline_is_sent_as_one_exact_line() {
     let hosted = HostedVault::open();
     let first = host_enrols_passkey(&hosted, &passkey(), CREDENTIAL_ID);
-    sweep_and_read_nothing(&hosted);
+    baseline_cursor(&hosted.vault);
     let second = host_enrols_passkey(&hosted, &second_passkey(), SECOND_CREDENTIAL_ID);
     let (line, reported) = sweep_and_read_line(&hosted, Answer::Line(r#"{"reported":true}"#));
     assert_eq!(
@@ -298,7 +369,7 @@ fn a_passkey_enrolled_after_the_baseline_is_sent_as_one_exact_line() {
 fn the_next_sweep_after_a_report_sends_nothing() {
     let hosted = HostedVault::open();
     host_enrols_passkey(&hosted, &passkey(), CREDENTIAL_ID);
-    sweep_and_read_nothing(&hosted);
+    baseline_cursor(&hosted.vault);
     let second = host_enrols_passkey(&hosted, &second_passkey(), SECOND_CREDENTIAL_ID);
     let (_, reported) = sweep_and_read_line(&hosted, Answer::Line(r#"{"reported":true}"#));
     assert!(
@@ -313,12 +384,13 @@ fn the_next_sweep_after_a_report_sends_nothing() {
 fn an_ack_outside_the_contract_leaves_the_change_unreported() {
     let hosted = HostedVault::open();
     let first = host_enrols_passkey(&hosted, &passkey(), CREDENTIAL_ID);
-    sweep_and_read_nothing(&hosted);
+    baseline_cursor(&hosted.vault);
     let second = host_enrols_passkey(&hosted, &second_passkey(), SECOND_CREDENTIAL_ID);
     for answer in [
         "[true]",
         r#"{"reported":true,"reported":true}"#,
         r#"{"reported":true,"error":"refused"}"#,
+        r#"{"reported":true,"error":null}"#,
         r#"{"reported":false}"#,
         r#"{"ok":true}"#,
     ] {
@@ -340,7 +412,7 @@ fn an_ack_outside_the_contract_leaves_the_change_unreported() {
 fn a_refused_report_stays_unreported_and_goes_again() {
     let hosted = HostedVault::open();
     let first = host_enrols_passkey(&hosted, &passkey(), CREDENTIAL_ID);
-    sweep_and_read_nothing(&hosted);
+    baseline_cursor(&hosted.vault);
     let second = host_enrols_passkey(&hosted, &second_passkey(), SECOND_CREDENTIAL_ID);
     let (line, reported) = sweep_and_read_line(
         &hosted,
@@ -366,5 +438,132 @@ fn a_refused_report_stays_unreported_and_goes_again() {
         reported,
         BTreeSet::from([first.entry, second.entry]),
         "the reported change joins the cursor"
+    );
+}
+
+#[test]
+fn an_ack_over_the_line_cap_leaves_the_change_unreported() {
+    let hosted = HostedVault::open();
+    let first = host_enrols_passkey(&hosted, &passkey(), CREDENTIAL_ID);
+    baseline_cursor(&hosted.vault);
+    let second = host_enrols_passkey(&hosted, &second_passkey(), SECOND_CREDENTIAL_ID);
+    // the line and its newline are one byte over the cap
+    let (line, reported) = sweep_and_read_line(&hosted, Answer::Padded(MAX_CTL_LINE));
+    assert_eq!(
+        line,
+        expected_line(&second.entry, listed_at(&hosted, &second.entry)),
+        "the change was sent"
+    );
+    assert_eq!(
+        reported,
+        BTreeSet::from([first.entry]),
+        "an ack over the line cap reports nothing"
+    );
+    // positive control: the line and its newline at the cap read
+    let (_, reported) = sweep_and_read_line(&hosted, Answer::Padded(MAX_CTL_LINE - 1));
+    assert_eq!(
+        reported,
+        BTreeSet::from([first.entry, second.entry]),
+        "an ack at the line cap reports the change"
+    );
+}
+
+#[test]
+fn a_full_supervisor_backlog_fails_the_report_at_once() {
+    let hosted = HostedVault::open();
+    let first = host_enrols_passkey(&hosted, &passkey(), CREDENTIAL_ID);
+    baseline_cursor(&hosted.vault);
+    let second = host_enrols_passkey(&hosted, &second_passkey(), SECOND_CREDENTIAL_ID);
+    let (_dir, socket, listener, waiting) = full_backlog_supervisor();
+    let client = report_client(&socket, VAULT, &token(), BOUND);
+    let (done, finished) = channel();
+    let returned = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            sweep_once(&hosted.vault, &client);
+            done.send(()).ok();
+        });
+        let returned = finished.recv_timeout(BOUND).is_ok();
+        // a sweep still waiting in its connect is woken, refused, before the
+        // scope joins it
+        drop(listener);
+        returned
+    });
+    drop(waiting);
+    assert!(returned, "the sweep returned while the backlog was full");
+    assert_eq!(
+        cursor(&hosted.vault),
+        BTreeSet::from([first.entry]),
+        "a full backlog reports nothing"
+    );
+    // positive control: a supervisor with room takes the same change
+    let (line, reported) = sweep_and_read_line(&hosted, Answer::Line(r#"{"reported":true}"#));
+    assert_eq!(
+        line,
+        expected_line(&second.entry, listed_at(&hosted, &second.entry)),
+        "the next sweep sends it"
+    );
+    assert_eq!(reported, BTreeSet::from([first.entry, second.entry]));
+}
+
+#[test]
+fn a_set_stop_flag_sends_nothing() {
+    let hosted = HostedVault::open();
+    let first = host_enrols_passkey(&hosted, &passkey(), CREDENTIAL_ID);
+    baseline_cursor(&hosted.vault);
+    let second = host_enrols_passkey(&hosted, &second_passkey(), SECOND_CREDENTIAL_ID);
+    let (_dir, socket, supervisor) = supervisor(Answer::Line(r#"{"reported":true}"#));
+    let client = report_client(&socket, VAULT, &token(), BOUND);
+    sweep_once_until(&hosted.vault, &client, &AtomicBool::new(true));
+    drop(UnixStream::connect(&socket).expect("connect to release the supervisor"));
+    assert_eq!(
+        supervisor.join().expect("supervisor"),
+        "",
+        "a stopped sweep sent nothing"
+    );
+    assert_eq!(cursor(&hosted.vault), BTreeSet::from([first.entry]));
+    // positive control: an unstopped sweep sends it
+    let (_, reported) = sweep_and_read_line(&hosted, Answer::Line(r#"{"reported":true}"#));
+    assert_eq!(reported, BTreeSet::from([first.entry, second.entry]));
+}
+
+#[test]
+fn a_stop_ends_the_wait_for_an_ack_within_one_slice() {
+    let hosted = HostedVault::open();
+    let first = host_enrols_passkey(&hosted, &passkey(), CREDENTIAL_ID);
+    baseline_cursor(&hosted.vault);
+    let second = host_enrols_passkey(&hosted, &second_passkey(), SECOND_CREDENTIAL_ID);
+    let (read, line_read) = channel();
+    let (_dir, socket, supervisor) = supervisor(Answer::Silent(read));
+    // a bound far past the slice: only the stop can end the wait in time
+    let client = report_client(&socket, VAULT, &token(), Duration::from_secs(60));
+    let stop = AtomicBool::new(false);
+    let waited = std::thread::scope(|scope| {
+        let sweep = scope.spawn(|| {
+            sweep_once_until(&hosted.vault, &client, &stop);
+            Instant::now()
+        });
+        line_read
+            .recv_timeout(BOUND)
+            .expect("the supervisor read the line");
+        let stopped_at = Instant::now();
+        stop.store(true, Ordering::Relaxed);
+        sweep
+            .join()
+            .expect("sweep")
+            .saturating_duration_since(stopped_at)
+    });
+    assert!(
+        waited < Duration::from_secs(3),
+        "the sweep ended {waited:?} after the stop"
+    );
+    assert_eq!(
+        supervisor.join().expect("supervisor"),
+        expected_line(&second.entry, listed_at(&hosted, &second.entry)),
+        "the change was sent before the stop"
+    );
+    assert_eq!(
+        cursor(&hosted.vault),
+        BTreeSet::from([first.entry]),
+        "an unanswered report stays unreported"
     );
 }

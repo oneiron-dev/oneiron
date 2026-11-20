@@ -134,7 +134,8 @@ pub use self::managed_holder::{
 };
 pub use self::owner_key_change::{
     OWNER_KEY_CHANGE_AT_MAX, OWNER_KEY_CHANGE_OP, OWNER_KEY_CHANGE_REFUSAL_MAX,
-    OwnerKeyChangeReport, OwnerKeyChangeReportAck, valid_owner_key_change_refusal_code,
+    OwnerKeyChangeReport, OwnerKeyChangeReportAck, owner_key_change_wire_at,
+    valid_owner_key_change_refusal_code,
 };
 pub use self::owner_signing_recovery::{
     OWNER_SIGNING_CHALLENGE_LEN, OWNER_SIGNING_RECOVERY_OP, OwnerSigningRecovery,

@@ -16,17 +16,20 @@
 //! `reported: true` is an error here: a refusal, an ack outside the contract
 //! (a supervisor built before the op answers a ledger ack), a closed
 //! connection or no answer within [`REPORT_TIMEOUT`]. One attempt per call;
-//! the sweep sends the change again.
+//! the sweep sends the change again. Managed boot writes the cursor's
+//! baseline ([`baseline_cursor`]) before anything serves.
 //!
-//! The call is a blocking `std` socket under one deadline, so it needs no
-//! runtime and is safe on a runtime's thread or off one. A self-hosted
-//! vault has no supervisor and so no client: `SyncServer::owner_key_change_report`
-//! answers `None`.
+//! The call is a blocking `std` socket: its connect never waits, and the
+//! write and the ack run under one deadline, read in slices of
+//! [`READ_SLICE`] so a set stop flag ends it within one slice. It needs no
+//! runtime. A self-hosted vault has no supervisor and so no client:
+//! `SyncServer::owner_key_change_report` answers `None`.
 
 use std::collections::BTreeSet;
 use std::io::{Read as _, Write as _};
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use oneiron::Vault;
@@ -36,6 +39,7 @@ use oneiron::authority::{
 };
 use oneiron_vault_contract::{
     MAX_CTL_LINE, OWNER_KEY_CHANGE_OP, OwnerKeyChangeReport, OwnerKeyChangeReportAck, TokenHex,
+    owner_key_change_wire_at,
 };
 use zeroize::Zeroizing;
 
@@ -47,9 +51,13 @@ pub const OWNER_KEY_CHANGE_REPORTED_KEY: &str = "managed:owner_key_change_report
 /// How long one report's write and the supervisor's ack may take, in all.
 /// The supervisor's own call to the control plane ends within 20 s, so a
 /// slow control plane still answers inside this. The connect to the local
-/// socket is not bounded: it is answered at once unless the supervisor's
-/// accept backlog is full.
+/// socket never waits: a supervisor whose accept backlog is full fails the
+/// report at once, and the next sweep sends it again.
 pub const REPORT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long one read of the ack waits before the report looks at its stop
+/// flag again: a shutdown waits at most this long for a report in flight.
+pub const READ_SLICE: Duration = Duration::from_secs(1);
 
 /// The room reserved for the request line before the token is in it, so no
 /// growth of the buffer leaves a copy of the token in freed memory. A report
@@ -106,9 +114,10 @@ impl HypnosOwnerKeyChange {
 
     /// Reports `change` to the supervisor: its entry hash, kind, key shape
     /// and signer-claimed time. `Ok` only when the supervisor answers that
-    /// the change is reported.
-    pub fn report_change(&self, change: &OwnerKeyChange) -> oneiron::Result<()> {
-        let ack = self.ask(change).map_err(|why| failed(&why))?;
+    /// the change is reported; a set `stop` ends the wait for the answer
+    /// within one [`READ_SLICE`], as a failure.
+    pub fn report_change(&self, change: &OwnerKeyChange, stop: &AtomicBool) -> oneiron::Result<()> {
+        let ack = self.ask(change, stop).map_err(|why| failed(&why))?;
         match (ack.reported, ack.error.as_deref()) {
             (true, None) => Ok(()),
             (false, Some(code)) => Err(failed(&format!("was refused by the supervisor ({code})"))),
@@ -116,9 +125,13 @@ impl HypnosOwnerKeyChange {
         }
     }
 
-    /// One request and its ack: the write and the whole answer under one
-    /// deadline.
-    fn ask(&self, change: &OwnerKeyChange) -> Result<OwnerKeyChangeReportAck, String> {
+    /// One request and its ack: a connect that never waits, then the write
+    /// and the whole answer under one deadline.
+    fn ask(
+        &self,
+        change: &OwnerKeyChange,
+        stop: &AtomicBool,
+    ) -> Result<OwnerKeyChangeReportAck, String> {
         let deadline = Instant::now() + self.timeout;
         let request = OwnerKeyChangeReport {
             op: OWNER_KEY_CHANGE_OP.to_owned(),
@@ -127,7 +140,8 @@ impl HypnosOwnerKeyChange {
             entry: oneiron_hex::encode(&change.entry),
             change: change_name(change.change).to_owned(),
             key: key_shape(change).to_owned(),
-            at: change.at,
+            // a claim past the wire's range still reports its change
+            at: owner_key_change_wire_at(change.at),
         };
         // A request this side's supervisor would refuse to read is one this
         // side must refuse to send.
@@ -142,7 +156,7 @@ impl HypnosOwnerKeyChange {
         }
         line.push(b'\n');
 
-        let stream = UnixStream::connect(&self.socket)
+        let stream = connect_at_once(&self.socket)
             .map_err(|_| "did not reach the supervisor socket".to_owned())?;
         stream
             .set_write_timeout(Some(remaining(deadline)?))
@@ -158,32 +172,39 @@ impl HypnosOwnerKeyChange {
                 self.timeout
             )
         };
+        let over_cap = || "had an answer over the supervisor's line cap".to_owned();
         let mut answer = Vec::new();
         let mut chunk = [0_u8; 256];
         let end = loop {
+            // the cap is the line's with its newline, as on the request
             if let Some(end) = answer.iter().position(|byte| *byte == b'\n') {
+                if end >= MAX_CTL_LINE {
+                    return Err(over_cap());
+                }
                 break end;
             }
-            if answer.len() > MAX_CTL_LINE {
-                return Err("had an answer over the supervisor's line cap".to_owned());
+            if answer.len() >= MAX_CTL_LINE {
+                return Err(over_cap());
+            }
+            if stop.load(Ordering::Relaxed) {
+                return Err("was stopped by the vault's shutdown".to_owned());
             }
             // the deadline is the whole answer's, not each read's
             let left = remaining(deadline).map_err(|_| silent())?;
             stream
-                .set_read_timeout(Some(left))
+                .set_read_timeout(Some(left.min(READ_SLICE)))
                 .map_err(|_| "could not bound the read".to_owned())?;
             match (&stream).read(&mut chunk) {
                 Ok(0) => return Err("had no whole answer from the supervisor".to_owned()),
                 Ok(read) => answer.extend_from_slice(&chunk[..read]),
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                // a slice ended: the stop flag and the deadline decide
                 Err(e)
                     if matches!(
                         e.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) =>
-                {
-                    return Err(silent());
-                }
+                        std::io::ErrorKind::Interrupted
+                            | std::io::ErrorKind::WouldBlock
+                            | std::io::ErrorKind::TimedOut
+                    ) => {}
                 Err(_) => return Err("lost the supervisor's answer".to_owned()),
             }
         };
@@ -200,6 +221,35 @@ impl HypnosOwnerKeyChange {
         }
         Ok(ack)
     }
+}
+
+/// A blocking stream to the Unix socket at `path`, connected without
+/// waiting. A blocking Unix stream connect waits while the listener's accept
+/// backlog is full, and nothing bounds that wait: a send timeout is set only
+/// after `UnixStream::connect` returns. Non-blocking, the connect either
+/// completes at once or fails (`EAGAIN` on Linux, `ECONNREFUSED` on the
+/// BSDs), and the stream turns blocking again for its bounded write and
+/// reads.
+fn connect_at_once(path: &Path) -> std::io::Result<UnixStream> {
+    use rustix::net::{AddressFamily, SocketAddrUnix, SocketType, connect};
+    #[cfg(not(target_vendor = "apple"))]
+    let socket = rustix::net::socket_with(
+        AddressFamily::UNIX,
+        SocketType::STREAM,
+        rustix::net::SocketFlags::CLOEXEC,
+        None,
+    )?;
+    #[cfg(target_vendor = "apple")]
+    let socket = {
+        let socket = rustix::net::socket(AddressFamily::UNIX, SocketType::STREAM, None)?;
+        rustix::io::fcntl_setfd(&socket, rustix::io::FdFlags::CLOEXEC)?;
+        socket
+    };
+    let stream = UnixStream::from(socket);
+    stream.set_nonblocking(true)?;
+    connect(&stream, &SocketAddrUnix::new(path)?)?;
+    stream.set_nonblocking(false)?;
+    Ok(stream)
 }
 
 /// The wire name of a change kind.
@@ -259,16 +309,69 @@ pub(crate) enum SweepOutcome {
     /// report was refused or failed, or the cursor would not write. Nothing
     /// past the stop was sent; the next sweep sends it again.
     StoppedOnFailure,
+    /// The stop flag was set: the vault is shutting down. Nothing past the
+    /// stop was sent; the next start's sweeps send it.
+    Stopped,
+}
+
+/// Writes the cursor row's baseline: managed boot's only, before this vault
+/// serves anything or any worker starts. With no row, or one that does not
+/// decode, the row is written with every current entry and nothing is sent,
+/// so a deploy mails no old change and a damaged row mails nothing old. Only
+/// boot writes a baseline, so a change that lands once the vault serves is
+/// never read as history. A row that does not read is left as it is. A
+/// failure logs; with no row written, the sweeps send every listed change,
+/// and the control plane mails each entry once.
+pub(crate) fn baseline_cursor(vault: &Vault) {
+    match vault.sync_state_get(OWNER_KEY_CHANGE_REPORTED_KEY) {
+        Ok(Some(raw)) if decode_reported(&raw).is_some() => return,
+        Ok(Some(_)) => tracing::warn!(
+            reason = "owner_key_change_cursor_rebased",
+            "owner key change cursor did not decode; it is written again and nothing is sent"
+        ),
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(
+                reason = "owner_key_change_cursor_failed",
+                %error,
+                "owner key change baseline read no cursor"
+            );
+            return;
+        }
+    }
+    let changes = match vault.owner_key_changes_as_host() {
+        Ok(changes) => changes,
+        Err(error) => {
+            tracing::warn!(
+                reason = "owner_key_change_list_failed",
+                %error,
+                "owner key change baseline read no list"
+            );
+            return;
+        }
+    };
+    let reported: BTreeSet<AuthorityEntryHash> =
+        changes.iter().map(|change| change.entry).collect();
+    if let Err(error) = write_reported(vault, &reported) {
+        tracing::warn!(
+            reason = "owner_key_change_cursor_write_failed",
+            %error,
+            "owner key change baseline wrote no cursor"
+        );
+    }
 }
 
 /// One report sweep over `vault`: every listed change the cursor row does not
 /// name goes to the supervisor, oldest first, and joins the row once its ack
-/// says reported; any other answer stops the sweep. With no cursor row yet,
-/// the sweep writes one with every current entry and sends nothing, so a
-/// deploy mails no old change. A row that does not decode is written again
-/// the same way, so a damaged row mails nothing old and later changes still
-/// report. Failures log with their reason; never the token.
-pub(crate) fn sweep_once(vault: &Vault, report: &HypnosOwnerKeyChange) -> SweepOutcome {
+/// says reported; any other answer stops the sweep, and so does a set `stop`.
+/// A sweep writes no baseline ([`baseline_cursor`] at boot does): with no
+/// row, or one that does not decode, it sends every listed change. Failures
+/// log with their reason; never the token.
+pub(crate) fn sweep_once(
+    vault: &Vault,
+    report: &HypnosOwnerKeyChange,
+    stop: &AtomicBool,
+) -> SweepOutcome {
     let changes = match vault.owner_key_changes_as_host() {
         Ok(changes) => changes,
         Err(error) => {
@@ -291,18 +394,16 @@ pub(crate) fn sweep_once(vault: &Vault, report: &HypnosOwnerKeyChange) -> SweepO
             return SweepOutcome::StoppedOnFailure;
         }
     };
-    let Some(raw) = raw else {
-        return rebase(vault, &changes);
-    };
-    let mut reported = match decode_reported(&raw) {
-        Some(reported) => reported,
-        None => {
+    let mut reported = match raw.as_deref().map(decode_reported) {
+        Some(Some(reported)) => reported,
+        Some(None) => {
             tracing::warn!(
-                reason = "owner_key_change_cursor_rebased",
-                "owner key change cursor did not decode; it is written again and nothing is sent"
+                reason = "owner_key_change_cursor_undecoded",
+                "owner key change cursor did not decode; every listed change is sent"
             );
-            return rebase(vault, &changes);
+            BTreeSet::new()
         }
+        None => BTreeSet::new(),
     };
     let mut pending: Vec<&OwnerKeyChange> = changes
         .iter()
@@ -310,7 +411,13 @@ pub(crate) fn sweep_once(vault: &Vault, report: &HypnosOwnerKeyChange) -> SweepO
         .collect();
     pending.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.entry.cmp(&b.entry)));
     for change in pending {
-        if let Err(error) = report.report_change(change) {
+        if stop.load(Ordering::Relaxed) {
+            return SweepOutcome::Stopped;
+        }
+        if let Err(error) = report.report_change(change, stop) {
+            if stop.load(Ordering::Relaxed) {
+                return SweepOutcome::Stopped;
+            }
             tracing::warn!(
                 reason = "owner_key_change_report_failed",
                 %error,
@@ -327,22 +434,6 @@ pub(crate) fn sweep_once(vault: &Vault, report: &HypnosOwnerKeyChange) -> SweepO
             );
             return SweepOutcome::StoppedOnFailure;
         }
-    }
-    SweepOutcome::Clean
-}
-
-/// Writes the cursor row with every entry in `changes` and sends nothing:
-/// the first sweep's baseline, and a damaged row's repair.
-fn rebase(vault: &Vault, changes: &[OwnerKeyChange]) -> SweepOutcome {
-    let reported: BTreeSet<AuthorityEntryHash> =
-        changes.iter().map(|change| change.entry).collect();
-    if let Err(error) = write_reported(vault, &reported) {
-        tracing::warn!(
-            reason = "owner_key_change_cursor_write_failed",
-            %error,
-            "owner key change sweep wrote no cursor"
-        );
-        return SweepOutcome::StoppedOnFailure;
     }
     SweepOutcome::Clean
 }
