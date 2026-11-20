@@ -44,6 +44,12 @@ pub(crate) struct AppError {
     room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
     #[serde(default, rename = "pending", skip_serializing_if = "Option::is_none")]
     pending: Option<Box<oneiron::memory::MemoryPending>>,
+    #[serde(
+        default,
+        rename = "task_assignment_conflict",
+        skip_serializing_if = "Option::is_none"
+    )]
+    task_assignment_conflict: Option<Box<oneiron::memory::TaskAssignmentConflict>>,
 }
 
 impl AppError {
@@ -66,6 +72,7 @@ impl AppError {
             legal_hold: None,
             room_join_hold: None,
             pending: None,
+            task_assignment_conflict: None,
         }
     }
 
@@ -192,10 +199,12 @@ impl From<ApiError> for AppError {
         let legal_hold = error.legal_hold().cloned().map(Box::new);
         let room_join_hold = error.room_join_hold().cloned().map(Box::new);
         let pending = error.pending().cloned().map(Box::new);
+        let task_assignment_conflict = error.task_assignment_conflict().cloned().map(Box::new);
         Self {
             legal_hold,
             room_join_hold,
             pending,
+            task_assignment_conflict,
             ..Self::new(
                 error.code().as_str(),
                 error.message(),
@@ -226,6 +235,7 @@ impl From<MemoryError> for AppError {
             legal_hold: error.legal_hold,
             room_join_hold: error.room_join_hold,
             pending: error.pending,
+            task_assignment_conflict: error.task_assignment_conflict,
             ..Self::new(&error.code, error.message, error.suggestions)
         }
     }

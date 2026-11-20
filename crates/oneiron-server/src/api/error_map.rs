@@ -6,7 +6,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::rejection::QueryRejection;
 use oneiron::ErrorKind;
 
-pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
+pub(crate) fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
     // FIX 2222: the owner refusal a read key or a host action carries (a
     // self-hosted root that binds no live owner under its key, a broken
     // owner check) answers as the facade's `From<MemoryError>` does: a 403
@@ -207,15 +207,32 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
             ["Offer a seat for the pinned model, or clear or change the owner's model pin."],
         ),
         // Two of the owner's devices assigned one task differently: the second
-        // assignment is refused, naming the task and both assignees. A conflict
-        // (409), never a malformed request.
-        ErrorKind::TaskAssignmentConflict => ApiError::new(
-            error.to_string(),
-            ApiErrorDetails::InvalidState {
-                state: Some("task_assignment_conflict".to_owned()),
-            },
-            [oneiron::error::TASK_ASSIGNMENT_CONFLICT_SUGGESTION],
-        ),
+        // assignment is refused, naming the task and both assignees, as data
+        // too, as the facade's `MemoryError` answers it (REVIEW-10008). A
+        // conflict (409), never a malformed request.
+        ErrorKind::TaskAssignmentConflict => {
+            let refusal = ApiError::new(
+                error.to_string(),
+                ApiErrorDetails::InvalidState {
+                    state: Some("task_assignment_conflict".to_owned()),
+                },
+                [oneiron::error::TASK_ASSIGNMENT_CONFLICT_SUGGESTION],
+            );
+            match &error {
+                oneiron::Error::Record(oneiron::error::RecordError::TaskAssignmentConflict {
+                    task_ref,
+                    held_assignee,
+                    offered_assignee,
+                }) => refusal.with_task_assignment_conflict(Box::new(
+                    oneiron::memory::TaskAssignmentConflict {
+                        task_ref: task_ref.to_hex(),
+                        held_assignee: held_assignee.to_hex(),
+                        offered_assignee: offered_assignee.to_hex(),
+                    },
+                )),
+                _ => refusal,
+            }
+        }
         // A refusal that names its bound answers as the facade does (FIX
         // 4618): the message is the whole answer.
         ErrorKind::Refused => ApiError::new(

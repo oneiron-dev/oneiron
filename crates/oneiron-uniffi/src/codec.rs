@@ -103,6 +103,7 @@ fn failure(code: &str, message: String, suggestion: &str) -> OneironError {
         legal_hold: None,
         room_join_hold: None,
         pending_block: None,
+        task_assignment_conflict: None,
     }
 }
 
@@ -134,6 +135,12 @@ pub(crate) fn lift_memory_pending(
     block: oneiron::memory::MemoryPending,
 ) -> Result<crate::facade_types_generated::MemoryPending, OneironError> {
     lift_record("pending", &block)
+}
+
+pub(crate) fn lift_task_assignment_conflict(
+    conflict: oneiron::memory::TaskAssignmentConflict,
+) -> Result<crate::facade_types_generated::TaskAssignmentConflict, OneironError> {
+    lift_record("task_assignment_conflict", &conflict)
 }
 
 // ── the WireJson leaf ───────────────────────────────────────────────────
