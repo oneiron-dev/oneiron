@@ -42,6 +42,7 @@ pub use selector::{PreparedSelectorFetch, prepare_selector_fetch, replay_selecto
 use crate::error::{SyncProtocolValidation, SyncSelectorValidation};
 use crate::sync::{SyncSelector, WindowKey, authorize_sync_selector};
 use crate::{EntityId, Error, FederationGrantScope, Result, Vault};
+use oneiron_contracts::fingerprint::ContentHasher;
 use oneiron_model::llm::NormalizedBurstInputs;
 
 #[cfg(oneiron_test_support)]
@@ -162,14 +163,14 @@ impl FederationPeer {
         self.revalidate_in_txn(vault, txn)?;
         let raw = crate::federation::live_federation_grant_in(vault, txn, &self.grant())?;
         let fold = vault.authority_view_readonly_in_txn(txn)?;
-        let mut hash = blake3::Hasher::new();
+        let mut hash = ContentHasher::new();
         hash.update(&raw);
         hash_grant_pacts(&mut hash, &fold, self.grant())?;
-        Ok(*hash.finalize().as_bytes())
+        Ok(hash.finish().into_bytes())
     }
 
     fn digest(&self) -> [u8; 32] {
-        let mut hash = blake3::Hasher::new();
+        let mut hash = ContentHasher::new();
         hash.update(b"oneiron/federation-peer/v1");
         hash.update(self.principal.to_hex().as_bytes());
         hash.update(self.selector.grant_id.to_hex().as_bytes());
@@ -187,7 +188,7 @@ impl FederationPeer {
                 hash.update(&peer_vault_id);
             }
         }
-        *hash.finalize().as_bytes()
+        hash.finish().into_bytes()
     }
 }
 
@@ -453,7 +454,7 @@ pub(in crate::sync) fn record_outcome(
 /// scopes, in id order. A held batch's authority digest covers them, so a
 /// pact that moves ends the batch `StaleAuthority` (FIX 7999).
 fn hash_grant_pacts(
-    hash: &mut blake3::Hasher,
+    hash: &mut ContentHasher,
     fold: &crate::authority::AuthorityFold,
     grant: EntityId,
 ) -> Result<()> {
