@@ -137,7 +137,7 @@ pub(super) fn serial_binding_op(op: &AuthorityOp) -> bool {
 /// whole history: its standing reads its carrier chain's covered revisions
 /// under this install's own floors, which no image keeps.
 pub(super) fn serial_machine_op(op: &AuthorityOp) -> bool {
-    matches!(op, AuthorityOp::MachineProfile(profile) if profile.act.is_none())
+    matches!(op, AuthorityOp::MachineProfile(_))
 }
 
 /// Whether `op` is a re-root, which the tail folds past the image only
