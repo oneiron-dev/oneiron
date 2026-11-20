@@ -88,6 +88,12 @@ pub(crate) fn pending_history_of_in_txn(
     txn: &heed::RoTxn<'_>,
     staged: &[(AuthorityEntryHash, &AuthorityLogEntry)],
 ) -> Result<Option<PendingAuthorityHistory>> {
+    // Each probe's fold believes the whole batch, as the fold will once the
+    // batch is stored: a key the batch enrolls vouches for the rows it signs
+    // (#9476 review round 2).
+    let _staged_batch = super::super::log_structure::stage_batch_for_belief(
+        staged.iter().map(|(_, entry)| (*entry).clone()).collect(),
+    );
     Ok(pending_history_of(store, posture, txn, staged).unwrap_or(None))
 }
 
@@ -112,11 +118,7 @@ fn pending_history_of(
     }
     // Each row needs the history itself: its fold, with the batch rows it
     // rests on, needs it. A row that does not keeps the batch on today's
-    // path. Each fold believes the whole batch, as the fold will once the
-    // batch is stored: a key the batch enrolls vouches for the rows it signs
-    // (#9476 review round 2).
-    let _staged_batch =
-        super::super::log_structure::stage_batch_for_belief(arriving.values().cloned().collect());
+    // path.
     for (hash, entry) in &arriving {
         let mut own = BTreeMap::from([(*hash, entry.clone())]);
         let mut stack = entry.parent_hashes.clone();
