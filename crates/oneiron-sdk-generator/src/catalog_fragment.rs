@@ -353,6 +353,10 @@ impl<'r> Fragment<'r> {
             let node = &children[name];
             out.push_str(&Self::doc(node, &indent));
             match node.row() {
+                // A member `new(...)` opens a construct signature, so that verb is a property of its call type.
+                Some(row) if node.children.is_empty() && name == "new" => {
+                    out.push_str(&format!("{indent}{name}: {};\n", self.call(row)?));
+                }
                 Some(row) if node.children.is_empty() => {
                     for (params, result) in self.signatures(row)? {
                         out.push_str(&format!("{indent}{name}{params}: {result};\n"));
@@ -889,7 +893,8 @@ declare const ünï: {
     fn a_reserved_word_binding_is_refused_and_a_reserved_member_stays() {
         // FIX-LIST [SDK-TS-RESERVED-WORD-IDENTIFIERS]: a root, a bare verb and a `self` member are declared as
         // bindings (`declare const`, `declare function`, `const`, `function`, `namespace`), where a reserved word
-        // does not parse; deeper in a path a reserved word is a member name, which TypeScript takes.
+        // does not parse; deeper in a path a reserved word is a member name, which TypeScript takes (`new` as a
+        // property, since `new(...)` is a construct signature).
         let root = tree("reserved");
         let pins = Value::Dict(Dict::new());
         let rows_of = |text: &str| {
@@ -918,6 +923,7 @@ declare const ünï: {
         }
         let rows = rows_of(
             r#"[{"name": "zz.delete", "input": "ZzIn", "output": "String"},
+            {"name": "zz.new", "input": "ZzIn", "output": "String"},
             {"name": "self.zz.export", "input": "ZzIn", "output": "String"}]"#,
         );
         let rows: Vec<&Dict> = rows.iter().filter_map(Value::as_dict).collect();
@@ -929,6 +935,9 @@ declare const ünï: {
             text.contains("\ndeclare const zz: {\n  delete(input: Sdk."),
             "{text}"
         );
+        // `new(...)` in a type literal is a construct signature: `zz.new` is a property of its call type.
+        assert!(text.contains("\n  new: (input: Sdk."), "{text}");
+        assert!(!text.contains("  new("), "{text}");
         assert!(
             text.contains("\n  const zz: {\n    export(input: Sdk."),
             "{text}"

@@ -15,8 +15,8 @@ use indexmap::IndexMap;
 use regex::Regex;
 
 use super::common::{
-    AGENT_VERBS_TS, argument_kind, boundary_type, container_type, js_binding_name, js_method,
-    native_binding, str_receiver,
+    AGENT_VERBS_TS, argument_kind, boundary_type, container_type, js_binding_names, js_method,
+    native_binding, str_receiver, ts_callable_member,
 };
 use super::row_access::{concat, item, json};
 use super::uniffi::json_eq;
@@ -50,24 +50,6 @@ pub(crate) fn dict_items(value: &Value) -> Result<&Dict, GenerateError> {
     value
         .as_dict()
         .ok_or_else(|| GenerateError::attribute(value.type_name(), "items"))
-}
-
-/// `x[0]`: a list's first item (Python's `IndexError` when it is empty), a string's first character, or Python's
-/// refusal for any other value (a dict has no key `0`, its keys being strings).
-pub(crate) fn first_item(value: &Value) -> Result<Value, GenerateError> {
-    match value {
-        Value::List(items) => items.first().cloned().ok_or_else(index_error),
-        Value::Str(text) => text
-            .chars()
-            .next()
-            .map(|c| Value::Str(c.to_string()))
-            .ok_or_else(|| GenerateError::index("string index out of range")),
-        Value::Dict(_) => Err(GenerateError::exception("KeyError", "0")),
-        other => Err(GenerateError::type_error(format!(
-            "'{}' object is not subscriptable",
-            other.type_name()
-        ))),
-    }
 }
 
 /// `needle in container` for a needle that may be no string. A list compares each item by identity, then equality
@@ -344,9 +326,21 @@ fn ts_facade(generator: &mut Generator, row: &Dict) -> Result<TsVerb, GenerateEr
         false,
     )?;
     let arg_list = args.iterate()?;
-    let mut declaration: Vec<String> = Vec::new();
+    let options = binding.dict_get("options")?.is_some_and(Value::truthy);
+    let mut names = Vec::new();
     for a in &arg_list {
-        let name = js_binding_name(&js_method(str_receiver(a.getitem("name")?, "replace")?));
+        names.push(js_method(str_receiver(a.getitem("name")?, "replace")?));
+    }
+    // The parameters bind the arguments' names; a namespace member's body reads `host`, and with options `opts`
+    // is a parameter too.
+    let fixed: &[&str] = if options {
+        &["host", "opts"]
+    } else {
+        &["host"]
+    };
+    let bindings = js_binding_names(&names, fixed);
+    let mut declaration: Vec<String> = Vec::new();
+    for (a, name) in arg_list.iter().zip(&bindings) {
         let kind = a.getitem("kind")?;
         let optional = !kind.is_str("json")
             && argument_kind(kind)?
@@ -373,11 +367,11 @@ fn ts_facade(generator: &mut Generator, row: &Dict) -> Result<TsVerb, GenerateEr
         let mark = if optional { "?" } else { "" };
         declaration.push(format!("{name}{mark}: {typ}{default}"));
     }
-    let arguments: Vec<String> = if binding.dict_get("options")?.is_some_and(Value::truthy) {
+    let arguments: Vec<String> = if options {
         let first = declaration.first().cloned().ok_or_else(index_error)?;
         let options = concat(binding.getitem("options")?)?;
         declaration = vec![first, format!("opts: {options} = {{}}")];
-        let mut arguments = vec![js_binding_name(&first_item(args)?.getitem("name")?.str())];
+        let mut arguments = vec![bindings.first().cloned().ok_or_else(index_error)?];
         for a in arg_list.iter().skip(1) {
             let name = js_method(str_receiver(a.getitem("name")?, "replace")?);
             let default = if a.contains_str("default")? {
@@ -389,27 +383,16 @@ fn ts_facade(generator: &mut Generator, row: &Dict) -> Result<TsVerb, GenerateEr
         }
         arguments
     } else {
-        let mut arguments = Vec::new();
-        for a in &arg_list {
-            arguments.push(js_binding_name(&js_method(str_receiver(
-                a.getitem("name")?,
-                "replace",
-            )?)));
-        }
-        arguments
+        bindings.clone()
     };
     let body = if binding
         .dict_get("native")?
         .is_some_and(|native| native.is_str("agent_verb"))
     {
         let mut fields = Vec::new();
-        for a in &arg_list {
-            let name = a.getitem("name")?;
-            let left = concat_left(name)?;
-            fields.push(format!(
-                "{left}: {}",
-                js_binding_name(&js_method(str_receiver(name, "replace")?))
-            ));
+        for (a, name) in arg_list.iter().zip(&bindings) {
+            let left = concat_left(a.getitem("name")?)?;
+            fields.push(format!("{left}: {name}"));
         }
         format!(
             "this.#client.{method}({{{}}}) as {output}",
@@ -419,7 +402,8 @@ fn ts_facade(generator: &mut Generator, row: &Dict) -> Result<TsVerb, GenerateEr
         .dict_get("wire")?
         .is_some_and(|wire| wire.is_str("json"))
     {
-        ts_wire_body(generator, row, binding, args, &method)?
+        let request = bindings.first().ok_or_else(index_error)?;
+        ts_wire_body(generator, row, binding, request, &method)?
     } else {
         format!("this.#client.{method}({})", arguments.join(", "))
     };
@@ -432,52 +416,64 @@ fn ts_facade(generator: &mut Generator, row: &Dict) -> Result<TsVerb, GenerateEr
     })
 }
 
-/// A field's entry in `ts_wire_body`'s destructure: the field, or `field: field_` for a reserved word, which is a
-/// valid key but no binding.
-fn destructured_field(field: &str) -> String {
-    let binding = js_binding_name(field);
-    if binding == field {
-        binding
-    } else {
-        format!("{field}: {binding}")
-    }
+/// `ts_wire_body`'s destructure: each input field's entry and the name it binds, in field order. A field binds its
+/// own name unless [`js_binding_names`] renames it (a reserved word, or a name of `fixed`); then the entry renames it
+/// (`default: default_`), since the name is still a valid key.
+fn destructure_entries(fields: &[String], fixed: &[&str]) -> Vec<(String, String)> {
+    js_binding_names(fields, fixed)
+        .into_iter()
+        .zip(fields)
+        .map(|(alias, field)| {
+            let entry = if alias == *field {
+                alias.clone()
+            } else {
+                format!("{field}: {alias}")
+            };
+            (entry, alias)
+        })
+        .collect()
 }
 
-/// `ts_facade`'s JSON-wire branch: the call through `keyedJson` and the result read back.
+/// `ts_facade`'s JSON-wire branch: the call through `keyedJson` and the result read back. `request` is the binding of
+/// the request parameter.
 fn ts_wire_body(
     generator: &mut Generator,
     row: &Dict,
     binding: &Value,
-    args: &Value,
+    request: &str,
     method: &str,
 ) -> Result<String, GenerateError> {
     let no_fields = Value::Dict(Dict::new());
     let fields = binding.dict_get("input_fields")?.unwrap_or(&no_fields);
-    let mut request = js_binding_name(&first_item(args)?.getitem("name")?.str());
+    let mut request = request.to_owned();
     let mut setup = String::new();
     if fields.truthy() {
         let defaults = binding.dict_get("input_defaults")?.unwrap_or(&no_fields);
+        let names = fields.iterate()?;
+        let mut keys = Vec::new();
+        for name in &names {
+            keys.push(concat_left(name)?.to_owned());
+        }
+        // The block binds `rest` and `result` and reads `host` and the request beside the fields.
+        let entries = destructure_entries(&keys, &["host", "rest", "result", request.as_str()]);
         let mut destructure = Vec::new();
-        for name in fields.iterate()? {
+        for (name, (entry, _)) in names.iter().zip(&entries) {
             // `name + (' = ' + json.dumps(defaults[name]) if name in defaults else '')`: the subscript with the field
             // as it is, then the concatenation.
-            let default = if contains(defaults, &name)? {
-                format!(" = {}", json(&subscript(defaults, &name)?))
+            let default = if contains(defaults, name)? {
+                format!(" = {}", json(&subscript(defaults, name)?))
             } else {
                 String::new()
             };
-            destructure.push(format!(
-                "{}{default}",
-                destructured_field(concat_left(&name)?)
-            ));
+            destructure.push(format!("{entry}{default}"));
         }
         setup = format!(
             "const {{ {}, ...rest }} = {request};",
             destructure.join(", ")
         );
         let mut renamed = Vec::new();
-        for (name, wire) in dict_items(fields)? {
-            renamed.push(format!("{}: {}", concat_left(wire)?, js_binding_name(name)));
+        for ((_, wire), (_, alias)) in dict_items(fields)?.iter().zip(&entries) {
+            renamed.push(format!("{}: {alias}", concat_left(wire)?));
         }
         request = format!("{{ ...rest, {} }}", renamed.join(", "));
     }
@@ -516,10 +512,16 @@ fn ts_handle_shape(
     let Some(handle_args) = row.get("handle_args") else {
         return Ok((ts_input(generator, row)?, "input".to_owned()));
     };
+    let handle_args = handle_args.iterate()?;
+    let mut names = Vec::new();
+    for a in &handle_args {
+        names.push(js_method(str_receiver(a.getitem("name")?, "replace")?));
+    }
+    // A namespace member's body reads `host` beside the parameters.
+    let bindings = js_binding_names(&names, &["host"]);
     let mut params = Vec::new();
     let mut fields = Vec::new();
-    for a in handle_args.iterate()? {
-        let name = js_binding_name(&js_method(str_receiver(a.getitem("name")?, "replace")?));
+    for (a, name) in handle_args.iter().zip(bindings) {
         // `a.get('field', a['name'])` evaluates its default first.
         let own = a.getitem("name")?;
         let field = a.dict_get("field")?.unwrap_or(own).clone();
@@ -757,7 +759,7 @@ pub(crate) fn ts_native_signature(
     let binding = native_binding(&row)?;
     let method = js_method(str_receiver(item(&row, "name")?, "replace")?);
     let Some(binding) = binding.filter(|binding| binding.truthy()) else {
-        return Ok(format!("{method}(input: unknown): unknown"));
+        return Ok(ts_callable_member(&method, "input: unknown", "unknown"));
     };
     let wire_json = binding
         .dict_get("wire")?
@@ -772,17 +774,19 @@ pub(crate) fn ts_native_signature(
             false,
         )?
     };
-    let mut args = Vec::new();
+    let suffix = if wire_json { "Json" } else { "" };
+    let mut names = Vec::new();
+    let mut kinds = Vec::new();
     for a in binding.getitem("args")?.iterate()? {
-        let name = concat_left(a.getitem("name")?)?;
-        let suffix = if wire_json { "Json" } else { "" };
-        let native_ts = argument_kind(a.getitem("kind")?)?.text("native_ts")?;
-        args.push(format!(
-            "{}: {native_ts}",
-            js_binding_name(&format!("{name}{suffix}"))
-        ));
+        names.push(format!("{}{suffix}", concat_left(a.getitem("name")?)?));
+        kinds.push(argument_kind(a.getitem("kind")?)?.text("native_ts")?);
     }
-    Ok(format!("{method}({}): {output}", args.join(", ")))
+    let args: Vec<String> = js_binding_names(&names, &[])
+        .into_iter()
+        .zip(kinds)
+        .map(|(name, native_ts)| format!("{name}: {native_ts}"))
+        .collect();
+    Ok(ts_callable_member(&method, &args.join(", "), &output))
 }
 
 #[cfg(test)]

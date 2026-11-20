@@ -1,9 +1,10 @@
 //! FIX-LIST [SDK-TS-RESERVED-WORD-IDENTIFIERS]: the generated TypeScript binds no name that is a
-//! JavaScript reserved word. A verb row's argument and field names become parameters and
-//! destructured bindings in `facade-verbs.ts` and `native-verbs.ts`, and a code-mode root, bare
-//! verb or `self` member becomes a `const`, `function` or `namespace` in the catalog fragment;
-//! a reserved word there does not parse, and no PR-time job parses these files (the 21 Nov
-//! nightly e2e found the Python twin, `def continue`). The generator runs on the repository
+//! JavaScript reserved word, and no callable member of an interface or type literal is named
+//! `new` (a construct signature there). A verb row's argument and field names become parameters
+//! and destructured bindings in `facade-verbs.ts` and `native-verbs.ts`, and a code-mode root,
+//! bare verb or `self` member becomes a `const`, `function` or `namespace` in the catalog
+//! fragment; a reserved word there does not parse, and no PR-time job parses these files (the
+//! 21 Nov nightly e2e found the Python twin, `def continue`). The generator runs on the repository
 //! through its public `outputs` entry. Today's table names no reserved word at these positions,
 //! so this test guards the emitters' escape and refusal.
 //! `cargo test --locked -p oneiron-sdk-generator --all-features
@@ -63,6 +64,9 @@ const JS_RESERVED_WORDS: [&str; 48] = [
     "with",
     "yield",
 ];
+
+/// The form of a callable member `name(params): result` in the scan's report.
+const CALLABLE_MEMBER: &str = "callable member (`new(` is a construct signature)";
 
 const FACADE_VERBS: &str = "packages/oneiron/src/facade-verbs.ts";
 const NATIVE_VERBS: &str = "packages/oneiron/src/native-verbs.ts";
@@ -191,8 +195,15 @@ fn generated_typescript_binds_no_javascript_reserved_word() {
             .unwrap_or_else(|| panic!("{path} is an output"))
     };
     let mut offenders = Vec::new();
+    // A binding must not be a reserved word; a callable member of an interface or type literal
+    // must not be `new`, which there opens a construct signature.
     let mut check = |path: &str, line: usize, form: &str, name: &str| {
-        if JS_RESERVED_WORDS.contains(&name) {
+        let bad = if form == CALLABLE_MEMBER {
+            name == "new"
+        } else {
+            JS_RESERVED_WORDS.contains(&name)
+        };
+        if bad {
             offenders.push(format!("{path}:{line} {form} {name}"));
         }
     };
@@ -250,6 +261,12 @@ fn generated_typescript_binds_no_javascript_reserved_word() {
             )
         });
         signatures += 1;
+        check(
+            NATIVE_VERBS,
+            index + 1,
+            CALLABLE_MEMBER,
+            &line[..found.end() - 1],
+        );
         for name in parameter_bindings(list) {
             check(NATIVE_VERBS, index + 1, "parameter", name);
         }
@@ -264,11 +281,15 @@ fn generated_typescript_binds_no_javascript_reserved_word() {
     let declaration =
         regex::Regex::new(r"^\s*(?:declare\s+)?(?:const|function|namespace)\s+([A-Za-z_$][\w$]*)")
             .expect("regex");
+    let callable = regex::Regex::new(r"^\s*([A-Za-z_$][\w$]*)\(").expect("regex");
     let mut declarations = 0;
     for (index, line) in text_of(CATALOG_FRAGMENT).lines().enumerate() {
         if let Some(captures) = declaration.captures(line) {
             declarations += 1;
             check(CATALOG_FRAGMENT, index + 1, "declaration", &captures[1]);
+        }
+        if let Some(captures) = callable.captures(line) {
+            check(CATALOG_FRAGMENT, index + 1, CALLABLE_MEMBER, &captures[1]);
         }
     }
     // At least the type namespace `Sdk`, the `self` namespace and the `vault` root.

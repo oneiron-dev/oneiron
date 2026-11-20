@@ -120,20 +120,38 @@ fn membership_is_pythons() {
     }
 }
 
-// FIX-LIST [SDK-TS-RESERVED-WORD-IDENTIFIERS]: a JSON-wire row's input field is destructured into a binding of
-// its own name, so a reserved word is renamed (`const { default: default_, ...rest } = request`), and the request
-// sent on is rebuilt from that binding; today's three such fields keep their shorthand.
+// FIX-LIST [SDK-TS-RESERVED-WORD-IDENTIFIERS]: a JSON-wire row's input fields are destructured into bindings of
+// their own names, so a reserved word, or a name the block binds or reads itself, is renamed
+// (`const { default: default_, ...rest } = request`), with no two fields bound alike; the request sent on is
+// rebuilt from those bindings. Today's three such fields keep their shorthand.
 #[test]
-fn a_reserved_wire_field_destructures_into_its_binding_name() {
-    for (field, entry) in [
-        ("requestId", "requestId"),
-        ("maxDepth", "maxDepth"),
-        ("namespacePrefix", "namespacePrefix"),
-        ("default", "default: default_"),
-        ("new", "new: new_"),
-        ("let", "let: let_"),
-        ("type", "type"),
-    ] {
-        assert_eq!(destructured_field(field), entry, "{field}");
+fn a_reserved_wire_field_destructures_into_a_binding_of_its_own() {
+    let fixed = ["host", "rest", "result", "request"];
+    let entries = |fields: &[&str]| {
+        let fields: Vec<String> = fields.iter().map(|field| (*field).to_owned()).collect();
+        destructure_entries(&fields, &fixed)
+    };
+    let pair = |entry: &str, alias: &str| (entry.to_owned(), alias.to_owned());
+    for field in ["requestId", "maxDepth", "namespacePrefix", "type"] {
+        assert_eq!(entries(&[field]), [pair(field, field)], "{field}");
     }
+    assert_eq!(
+        entries(&["default"]),
+        [pair("default: default_", "default_")]
+    );
+    assert_eq!(entries(&["let"]), [pair("let: let_", "let_")]);
+    assert_eq!(
+        entries(&["default", "default_"]),
+        [
+            pair("default: default__", "default__"),
+            pair("default_", "default_")
+        ]
+    );
+    assert_eq!(
+        entries(&["rest", "request"]),
+        [
+            pair("rest: rest_", "rest_"),
+            pair("request: request_", "request_")
+        ]
+    );
 }
