@@ -98,7 +98,25 @@ pub fn run_calendar_connector_sync_with_screener(
         safeguard_enabled,
     };
     let mut counters = SyncCounters::default();
+    // A sync answer that reports a resource gone beside a copy of its UID is
+    // the provider's report of a moved resource (CalDAV: the old href's 404
+    // and the new href's copy in one delta), not a cancellation: the delete
+    // is dropped and the copy is read as any other version, a cancelled one
+    // included (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING).
+    let live_uids: std::collections::BTreeSet<&str> = batch
+        .changes
+        .iter()
+        .filter_map(|change| match change {
+            RemoteCalendarChange::Upsert(object) => Some(object.uid.as_str()),
+            _ => None,
+        })
+        .collect();
     for change in &batch.changes {
+        if let RemoteCalendarChange::Delete { uid, .. } = change
+            && live_uids.contains(uid.as_str())
+        {
+            continue;
+        }
         apply_remote_change(
             vault,
             operation,
@@ -411,12 +429,16 @@ fn apply_remote_change(
                 counters.owed_omissions += 1;
                 return Ok(());
             }
+            let settles_held_cancel =
+                !super::outbound::replay_copy_unproven(vault, operation, uid)?;
             apply_remote_deletion(
                 vault,
                 seat,
                 provider,
                 uid,
-                RemovalEvidence::Omission,
+                RemovalEvidence::Omission {
+                    settles_held_cancel,
+                },
                 screen,
                 now,
                 counters,
@@ -432,7 +454,13 @@ enum RemovalEvidence {
     Tombstone,
     /// A full listing that no longer carries it (fix list row 19192): an
     /// absence, as an omitted feed item is.
-    Omission,
+    Omission {
+        /// Whether it settles a cancellation this seat reported while a
+        /// cancelled write of the UID was in flight, which the pull held back
+        /// ([`apply_remote_deletion`]): false while that write is a replay
+        /// whose refusal read no copy.
+        settles_held_cancel: bool,
+    },
 }
 
 /// A remote deletion marks exactly one source's passport absent, once.
@@ -458,6 +486,7 @@ fn apply_remote_deletion(
 ) -> Result<(), CalendarConnectorError> {
     let mut absent_count = 0;
     let mut newly_absent = Vec::new();
+    let mut held_cancel = false;
     let mut after = None;
     loop {
         let ids = vault.entities_by_type_page(
@@ -469,11 +498,18 @@ fn apply_remote_deletion(
             break;
         }
         for event in &ids {
-            if crate::calendar::passport::live_passport_for(vault, event, &seat.config.system, uid)?
-                .is_some_and(|(_, value)| {
-                    value.presence == CalendarPassportPresence::Live
-                        && value.direction.is_inbound_bearing()
-                })
+            let Some((_, value)) = crate::calendar::passport::live_passport_for(
+                vault,
+                event,
+                &seat.config.system,
+                uid,
+            )?
+            else {
+                continue;
+            };
+            held_cancel |= value.deferred_cancel_seen_at.is_some();
+            if value.presence == CalendarPassportPresence::Live
+                && value.direction.is_inbound_bearing()
             {
                 absent_count += 1;
                 newly_absent.push((*event, imported_cancellation(vault, *event)?));
@@ -488,6 +524,22 @@ fn apply_remote_deletion(
         screen,
         source: None,
     };
+    // A full listing can only leave a gone resource out, never send its
+    // tombstone again. So an omission of a resource whose cancellation this
+    // seat reported while a cancelled write of the UID was in flight, held
+    // back as `deferred_cancel_seen_at`, settles that report as the tombstone
+    // it was, dated by its first sighting: no write is in flight any more (an
+    // omission waits on one), a write that settled dropped the sighting, and
+    // a refusal that stored nothing, or whose read proved the stored copy
+    // another writer's, leaves the host's report. A replay whose read proved
+    // nothing leaves it held, since the gone copy may be the engine's own
+    // cancelled write (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING).
+    let evidence = match evidence {
+        RemovalEvidence::Omission {
+            settles_held_cancel: true,
+        } if held_cancel => RemovalEvidence::Tombstone,
+        evidence => evidence,
+    };
     match evidence {
         RemovalEvidence::Tombstone => crate::calendar::ingest::delete_connector_resource(
             vault,
@@ -496,7 +548,7 @@ fn apply_remote_deletion(
             uid,
             now,
         )?,
-        RemovalEvidence::Omission => crate::calendar::ingest::sweep_connector_uids(
+        RemovalEvidence::Omission { .. } => crate::calendar::ingest::sweep_connector_uids(
             vault,
             &seat.config.system,
             source,

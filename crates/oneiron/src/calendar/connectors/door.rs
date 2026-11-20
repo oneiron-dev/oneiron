@@ -135,13 +135,19 @@ pub(crate) fn seat_of_system_in_txn(
 /// installed ICS feed: each complete poll of the feed cancels every event of its system that
 /// the feed body lacks, the seat's events too. A system whose feed was uninstalled is open to a
 /// seat, since no poll of that feed runs again. Nor does a seat take a pack calendar source's
-/// system, whose complete listings sweep it the same way.
+/// system, whose complete listings sweep it the same way. Nor does a seat take the system of
+/// an installed seat of another calendar ([`same_calendar`]): a passport names its calendar by
+/// system, so the two calendars' copies, deletes and echoes of one booking would read as one
+/// calendar's, and a delete in the calendar a booking was not written to would refund its
+/// deposit as the host's cancel in the one it was
+/// (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING).
 ///
 /// # Errors
 ///
 /// `InvalidConfig` for a pin, a row with no seat ref, a value naming another seat ref, a change
-/// to an installed seat, a seat ref used before, the system of an installed ICS feed, or a
-/// system with the pack calendar prefix.
+/// to an installed seat, a seat ref used before, the system of an installed ICS feed, a
+/// system with the pack calendar prefix, or the system of an installed seat of another
+/// calendar.
 pub(crate) fn seat_setup_changed_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -187,8 +193,34 @@ pub(crate) fn seat_setup_changed_in_txn(
                     .into(),
             ));
         }
+        for installed_ref in CONNECTOR_SEAT.items_in_txn(vault, txn)? {
+            if installed_ref == seat_ref {
+                continue;
+            }
+            let installed = CONNECTOR_SEAT
+                .read_in_txn(vault, txn, &[], Some(&installed_ref))?
+                .value;
+            if installed.is_some_and(|installed| {
+                installed.config.system == setup.config.system && !same_calendar(&installed, &setup)
+            }) {
+                return Err(crate::Error::InvalidConfig(
+                    "an installed seat of another calendar imports under this system, and a \
+                     passport names its calendar by system; use another system"
+                        .into(),
+                ));
+            }
+        }
     }
     Ok(())
+}
+
+/// Whether two seat setups read one calendar: the same CalDAV endpoint, the same credential
+/// record (the account whose calendar home the endpoint resolves) and the same collection in
+/// it. A new seat of one calendar keeps its system; a seat of another calendar takes its own.
+fn same_calendar(installed: &CalendarSeatSetup, setup: &CalendarSeatSetup) -> bool {
+    installed.endpoint == setup.endpoint
+        && installed.config.secret_ref == setup.config.secret_ref
+        && installed.config.calendar_ref == setup.config.calendar_ref
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
