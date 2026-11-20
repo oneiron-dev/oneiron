@@ -1,11 +1,12 @@
 {
   "name": "vault.imports.hook_transcript_part",
-  "description": "Stages one part of a vault.imports.hook_transcript request too long for one call over the owner's socket; the last part lands the request as that verb lands the owner's. The owner calls it.",
+  "description": "Stages one part of a vault.imports.hook_transcript request too long for one call over the owner's socket; no hook sees a part, and the last part runs the request as one call of that verb. The owner calls it.",
   "input": "crate::ingest::history::HookTranscriptPartRequest",
   "output": "crate::ingest::history::HookTranscriptPartView",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.imports.hook_transcript_part\", &input)?",
   "host_door": true,
   "host_door_lists": true,
+  "host_door_transport_only": true,
   "scope": "Write",
   "act_class": "reversible_work",
   "admission": {

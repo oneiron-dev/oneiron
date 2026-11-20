@@ -23,8 +23,9 @@
 //! (`vault.imports.hook_transcript_part`, [`HookTranscriptPartRequest`];
 //! FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER): the served vault holds them in
 //! memory, at most [`HOOK_TRANSCRIPT_STAGED_MAX_BYTES`] of the request's
-//! JSON text, and its last part lands the request here as one call lands
-//! it. All the logs of one request inflate to at most
+//! JSON text, and no verb hook sees a part; its last part runs the request
+//! as one call of `vault.imports.hook_transcript`, whose hooks judge it as
+//! they judge any call of it. All the logs of one request inflate to at most
 //! [`HOOK_TRANSCRIPT_MAX_BYTES`], read through a bounded reader; past that
 //! the request is refused before anything lands.
 
@@ -189,8 +190,9 @@ pub struct HookTranscriptImportView {
 /// `vault.imports.hook_transcript_part`'s input: one part of the JSON text
 /// of a [`HookTranscriptImportRequest`] too long for one call over the
 /// owner's socket. The parts of one upload go in order, each starting where
-/// the ones before it end; the last lands the request as
-/// `vault.imports.hook_transcript` lands the owner's.
+/// the ones before it end; the last runs the request as one call of
+/// `vault.imports.hook_transcript`, and, when that call's hooks hold it on
+/// an ask, runs the same call again when it is sent again as it was.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HookTranscriptPartRequest {
@@ -202,7 +204,7 @@ pub struct HookTranscriptPartRequest {
     pub offset: u64,
     /// The part: the request's JSON text from `offset` on, not empty.
     pub text: String,
-    /// Whether this part ends the request's JSON text: the vault then lands
+    /// Whether this part ends the request's JSON text: the vault then runs
     /// the request.
     #[serde(default)]
     pub last: bool,
@@ -216,9 +218,11 @@ pub struct HookTranscriptPartView {
     /// The bytes of the request's JSON text the upload holds, this part's
     /// included: where its next part starts.
     pub staged: u64,
-    /// The import's answer, once the last part landed the request.
+    /// Once the last part ran the request: the answer of its call of
+    /// `vault.imports.hook_transcript`, as that call's post hooks left it
+    /// (a [`HookTranscriptImportView`] when no hook redacts it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub imported: Option<HookTranscriptImportView>,
+    pub imported: Option<serde_json::Value>,
 }
 
 /// One conversation of the session, in counts, as the import reports it.

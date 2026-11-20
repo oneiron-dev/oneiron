@@ -162,7 +162,9 @@ lands once. Over the owner's socket, a session's log too long for one call
 goes in parts (`vault.imports.hook_transcript_part`), up to 64 MiB encoded:
 the hosted vault holds them in memory, at most two sends at once, each for
 at most 10 minutes between parts and 30 minutes in all, and lands the log
-with the last part. A log too long even for that, or for a slip's one call,
+with the last part as one `vault.imports.hook_transcript` call: a verb hook
+on that verb judges the whole log once, and no hook sees a part. A log too
+long even for that, or for a slip's one call,
 is not sent at all; import it on the machine it ran on with `oneiron import
 claude-code <log>`. A send
 the hosted vault does not take (it does not answer, or the credential has no

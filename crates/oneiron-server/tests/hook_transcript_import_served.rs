@@ -1259,6 +1259,85 @@ fn staged_uploads_keep_their_bounds() {
     );
 }
 
+/// Case 15 (FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER, design A): an
+/// upload's landing runs under one invocation the upload mints. A landing
+/// held on its hooks' ask keeps the upload: only its last part, sent again
+/// as it was, runs it again, under the same invocation; any other part is
+/// refused, a first part of that id included. A landing that answers ends
+/// the upload. Through `test_doors::hook_transcript_uploads`, which the fix
+/// changes, so it runs on the PR's head alone.
+#[test]
+fn a_held_landing_keeps_its_upload_and_its_invocation() {
+    use std::time::Duration;
+
+    use oneiron::ingest::history::HookTranscriptPartRequest;
+    use oneiron_server::test_doors::hook_transcript_uploads::{HeldPart, StagedPart, Uploads};
+
+    let part = |offset: usize, text: &str, last: bool| HookTranscriptPartRequest {
+        upload: UPLOAD.to_owned(),
+        offset: offset as u64,
+        text: text.to_owned(),
+        last,
+    };
+    let owner = EntityId::now();
+    let at = Duration::ZERO;
+    let uploads = Uploads::starting_now();
+    assert_eq!(
+        uploads
+            .stage_held(at, owner, &part(0, "ab", false))
+            .expect("open"),
+        HeldPart::Open(2)
+    );
+    let HeldPart::Whole(text, invocation) = uploads
+        .stage_held(at, owner, &part(2, "cd", true))
+        .expect("the last part starts the landing")
+    else {
+        panic!("the last part hands back the whole request");
+    };
+    assert_eq!(text, "abcd");
+    assert_eq!(invocation.len(), 32, "an invocation id: {invocation}");
+
+    for (other, why) in [
+        (part(2, "cx", true), "a last part other than the one sent"),
+        (part(4, "ef", true), "a part after the last"),
+        (
+            part(2, "cd", false),
+            "the last part's text as a part that is not last",
+        ),
+        (part(0, "ab", false), "a first part of the landing's id"),
+    ] {
+        let refusal = uploads
+            .stage_held(at, owner, &other)
+            .expect_err(why)
+            .message;
+        assert!(
+            refusal.contains("last part came"),
+            "{why} is refused: {refusal}"
+        );
+    }
+    assert_eq!(
+        uploads
+            .stage_held(at, owner, &part(2, "cd", true))
+            .expect("the last part sent again"),
+        HeldPart::Whole("abcd".to_owned(), invocation),
+        "the last part sent again runs the landing again under its invocation"
+    );
+    assert_eq!(
+        uploads
+            .stage(at, owner, &part(2, "cd", true))
+            .expect("the landing runs again and answers"),
+        StagedPart::Whole("abcd".to_owned())
+    );
+    assert!(
+        uploads
+            .stage(at, owner, &part(2, "cd", true))
+            .expect_err("the answered landing ended the upload")
+            .message
+            .contains("no hook transcript upload"),
+        "an answered landing ends the upload"
+    );
+}
+
 /// The pack the owner's hooks of the staged-import hook cases come in.
 const HOOK_PACK: &str = "example.stagedimporthooks";
 

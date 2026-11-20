@@ -16,9 +16,12 @@
 //! CONVERSATION by id. `vault.imports.hook_transcript_part` (FIX
 //! HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER) carries the owner's request too long
 //! for one call over the socket in parts, staged in the server's memory
-//! (`server::hook_transcript_uploads`); its last part lands the request as
-//! the owner's call would. The owner alone stages: any other caller's calls
-//! ride HTTP, which takes the whole request in one call.
+//! (`server::hook_transcript_uploads`). It is a transport-only row
+//! (`host_door_transport_only`): no verb hook sees a part. Its last part
+//! runs the whole request as one call of `vault.imports.hook_transcript`,
+//! whose admission, hooks and record scope judge it as they judge any call
+//! of that verb. The owner alone stages: any other caller's calls ride
+//! HTTP, which takes the whole request in one call.
 use std::sync::Arc;
 
 use oneiron::EntityId;
@@ -31,12 +34,14 @@ use oneiron::ingest::history::{
 };
 use oneiron::memory::{MemoryError, MemoryResult};
 
+use super::{FacadeApiError, FacadeCall, FacadeCallOutput};
+
 use super::host_doors::support::{Listed, internal, owner_proof};
 use super::legal_hold_doors::as_owner_naming;
 use super::substrate_read_doors::{as_reader, substrate_reader};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
-use crate::server::hook_transcript_uploads::Staged;
+use crate::server::hook_transcript_uploads::{LandingRun, Staged};
 
 /// Who may cancel a hosted import: the owner under its proof (`Some`), or a
 /// person or agent on its own verified slip (`None`), whose Steward `delete`
@@ -168,61 +173,125 @@ pub(crate) async fn vault_imports_hook_transcript(
     (answer, Vec::new())
 }
 
+/// The verb a staged upload's whole request is a call of.
+pub(crate) const HOOK_TRANSCRIPT_VERB: &str = "vault.imports.hook_transcript";
+
+/// The row that stages one.
+const HOOK_TRANSCRIPT_PART_VERB: &str = "vault.imports.hook_transcript_part";
+
 /// Staged text that is not `vault.imports.hook_transcript`'s input.
 const ERR_STAGED_REQUEST: &str =
     "the staged hook transcript request is not vault.imports.hook_transcript's input";
 
-/// `vault.imports.hook_transcript_part`: the owner, on its proof, stages one
-/// part of a `vault.imports.hook_transcript` request; the last part lands
-/// the whole request as that verb lands the owner's, the proof revalidated
-/// in the import's writers. A request whose staged text is not that verb's
-/// input is refused, with nothing landed.
-pub(crate) async fn vault_imports_hook_transcript_part(
-    server: &Arc<SyncServer>,
+/// What one part of an upload leaves for its transport: the answer of a
+/// part that keeps the upload open, or the run of its landing.
+pub(crate) enum HookTranscriptStaged<'a> {
+    Open(HookTranscriptPartView),
+    Landing(LandingRun<'a>, serde_json::Value),
+}
+
+/// Stages `input` for the owner on its proof under `auth`: the upload's
+/// holder is the proof's own person, once the proof is this vault's. A last
+/// part hands back its landing's run and the whole request as JSON, which
+/// the transport runs as one call of [`HOOK_TRANSCRIPT_VERB`] and answers
+/// through [`hook_transcript_landing_view`]. Staged text that is not that
+/// verb's input ends the upload, refused by name before any call runs.
+///
+/// # Errors
+///
+/// The owner refusal of any other caller; the uploads' refusal of the part;
+/// staged text that is not [`HOOK_TRANSCRIPT_VERB`]'s input.
+pub(crate) fn stage_hook_transcript_part<'a>(
+    server: &'a SyncServer,
     auth: &CoreAuth,
-    input: HookTranscriptPartRequest,
-) -> Listed<HookTranscriptPartView> {
-    const VERB: &str = "vault.imports.hook_transcript_part";
-    let owner = match owner_proof(auth, server, VERB) {
-        Ok(owner) => owner,
-        Err(refusal) => return (Err(refusal), Vec::new()),
-    };
-    // The upload's holder: the proof's own person, once the proof is this
-    // vault's. The landing import revalidates the proof in its writers.
-    let holder = match owner.actor_for_read(server.vault()) {
-        Ok(holder) => holder,
-        Err(error) => return (Err(error.into()), Vec::new()),
-    };
-    let text = match server.hook_transcript_uploads.stage(holder, &input) {
-        Ok(Staged::Open(staged)) => {
-            let view = HookTranscriptPartView {
-                upload: input.upload,
+    input: &HookTranscriptPartRequest,
+) -> MemoryResult<HookTranscriptStaged<'a>> {
+    let owner = owner_proof(auth, server, HOOK_TRANSCRIPT_PART_VERB)?;
+    let holder = owner.actor_for_read(server.vault())?;
+    let run = match server.hook_transcript_uploads.stage(holder, input)? {
+        Staged::Open(staged) => {
+            return Ok(HookTranscriptStaged::Open(HookTranscriptPartView {
+                upload: input.upload.clone(),
                 staged,
                 imported: None,
-            };
-            return (Ok(view), Vec::new());
+            }));
         }
-        Ok(Staged::Whole(text)) => text,
-        Err(refusal) => return (Err(refusal), Vec::new()),
+        Staged::Whole(run) => run,
     };
-    let staged = u64::try_from(text.len()).unwrap_or(u64::MAX);
-    let upload = input.upload;
-    let server = Arc::clone(server);
-    let answer = super::clock_ingress::run_blocking(move || {
-        let request: HookTranscriptImportRequest = serde_json::from_str(&text)
-            .map_err(|error| MemoryError::bad_request(format!("{ERR_STAGED_REQUEST}: {error}")))?;
-        drop(text);
-        server
-            .vault()
-            .import_hook_transcript(HistoryImportCaller::Owner(&owner), &request)
-    })
-    .await
-    .map_err(|_| internal(VERB))
-    .and_then(|answer| answer)
-    .map(|imported| HookTranscriptPartView {
-        upload,
+    let request = serde_json::from_str::<serde_json::Value>(&run.text)
+        .map_err(|error| error.to_string())
+        .and_then(|request| {
+            oneiron::task_verb::sdk::validate_input(HOOK_TRANSCRIPT_VERB, &request)
+                .map(|()| request)
+                .map_err(|refusal| refusal.message)
+        });
+    match request {
+        Ok(request) => Ok(HookTranscriptStaged::Landing(run, request)),
+        Err(error) => {
+            run.answered(false);
+            Err(MemoryError::bad_request(format!(
+                "{ERR_STAGED_REQUEST}: {error}"
+            )))
+        }
+    }
+}
+
+/// The part's answer once its landing's call answered `imported`, the view
+/// that call's post hooks left, as it came; the run ends the upload.
+pub(crate) fn hook_transcript_landing_view(
+    run: LandingRun<'_>,
+    upload: &str,
+    imported: serde_json::Value,
+) -> HookTranscriptPartView {
+    let staged = run.staged();
+    run.answered(false);
+    HookTranscriptPartView {
+        upload: upload.to_owned(),
         staged,
         imported: Some(imported),
-    });
-    (answer, Vec::new())
+    }
+}
+
+/// `vault.imports.hook_transcript_part`, a transport-only row: the owner,
+/// on its proof, stages one part of a `vault.imports.hook_transcript`
+/// request, and no verb hook sees it. The last part runs the whole request
+/// as one call of that verb under this call's credential and the invocation
+/// its upload minted (`FacadeCall::staged_landing`), through the one verb
+/// table, so that verb's admission, input check, hooks and record scope
+/// judge it; the view its post hooks leave comes back as `imported`, the
+/// rows it was derived from with it. A call its hooks hold on an ask keeps
+/// the upload: the last part sent again runs the same call again, which
+/// finds its ask and lands at most once.
+pub(crate) async fn vault_imports_hook_transcript_part(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: HookTranscriptPartRequest,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let (run, request) = match stage_hook_transcript_part(server, call.auth(), &input)? {
+        // Derived from no row.
+        HookTranscriptStaged::Open(view) => {
+            return Ok(FacadeCallOutput {
+                value: super::facade_output(view)?,
+                rows: Some(Vec::new()),
+                hook_notice: false,
+            });
+        }
+        HookTranscriptStaged::Landing(run, request) => (run, request),
+    };
+    let landing = call.staged_landing(run.invocation);
+    let answer = super::call_verb(server, &landing, HOOK_TRANSCRIPT_VERB, Ok(request)).await;
+    match answer {
+        Ok(output) => {
+            let view = hook_transcript_landing_view(run, &input.upload, output.value);
+            Ok(FacadeCallOutput {
+                value: super::facade_output(view)?,
+                rows: output.rows,
+                hook_notice: output.hook_notice,
+            })
+        }
+        Err(refusal) => {
+            run.answered(refusal.held_on_ask());
+            Err(refusal)
+        }
+    }
 }
