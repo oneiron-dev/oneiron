@@ -1627,6 +1627,47 @@ fn a_record_other_than_local_is_never_removed_as_old() {
 }
 
 #[test]
+fn a_start_beside_an_old_local_record_leaves_the_log_mixed_when_that_record_goes() {
+    // FIX HOOK-SESSION-LOCAL-RECORD-EXPIRY-RACE: another session's start
+    // lists this session's folder while it holds only an old `local`
+    // record. A resumed start of this session then adds the selected
+    // hosted vault's record beside it, and the other start removes the
+    // `local` record it listed. The log, its pinned turns included, goes
+    // nowhere. On the PR's base the hosted record is left alone and the
+    // whole log goes to the hosted vault.
+    let bench = Bench::new();
+    let origin = answering_vault();
+    bench.select_hosted(&origin, VAULT_ID, "slip", &bench.path("slip-credential"));
+    let log = bench.session_log();
+    let pin = answering_vault();
+    let said = bench.session_start(&["--url", &pin], &log);
+    assert!(said.contains(&pin), "the session binds its pin: {said}");
+    bench.age_record();
+    let said = bench.session_start_from("resume", &[], &log);
+    assert!(
+        said.contains("uses your hosted vault"),
+        "the resumed start binds the selected hosted vault: {said}"
+    );
+    // The removal the other start made of the `local` record it listed as
+    // old before the resumed start's add.
+    std::fs::remove_file(
+        bench
+            .run_dir()
+            .join("hook-sessions")
+            .join(SESSION)
+            .join("local"),
+    )
+    .expect("the pinned start's record");
+    bench.forget_runs();
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    assert!(
+        bench.ran_nothing(),
+        "a log with pinned turns went to the hosted vault: {:?}",
+        bench.recorded("argv")
+    );
+}
+
+#[test]
 fn a_codex_hand_over_finds_its_rollout_below_a_relative_or_linked_codex_home() {
     // REVIEW-9914, hosted_hand_over.rs:103: Codex makes `CODEX_HOME`
     // absolute, its links resolved, and names its rollouts below that; the
