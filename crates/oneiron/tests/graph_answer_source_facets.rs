@@ -10,7 +10,10 @@
 //! room's facet set changes under an unchanged row, the next answer lands
 //! where the row is read now (review round 2 on #9582). When the set narrows,
 //! an answer already written in a facet the room left is marked stale
-//! (FIX STANDING-ANSWER-STAYS-IN-LEFT-FACET, Engine ruling A, 19 Nov 13:29).
+//! (FIX STANDING-ANSWER-STAYS-IN-LEFT-FACET, Engine ruling A, 19 Nov 13:29),
+//! and the refresh it queues lands where the room reads the row now. A row
+//! read only in facets no FACET row holds holds no answer: the vault default
+//! takes only a row read in no facet (review round 1 on #9604).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test graph_answer_source_facets`.
@@ -19,8 +22,9 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use oneiron::authority::HostSlipIssuer;
+use oneiron::authority::{ActSurface, HostSlipIssuer};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::llm::decision::questions::{
     AnswerProposal, GraphAnswerer, GraphAskResult, GraphPrediction, GraphQuestionInput,
     GraphQuestionRef, GraphUnitContext, QuestionActivation, QuestionDefinitionInput, RefreshBatch,
@@ -30,10 +34,16 @@ use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion,
     DecisionQuestionInput, DecisionRung, ProviderPin,
 };
-use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
-use oneiron::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_ORG};
+use oneiron::memory::{
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_NOT_FOUND, WitnessAuthor, WitnessMessage, WitnessTurn,
+};
+use oneiron::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_ORG,
+};
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::coach::define_agent;
 use oneiron::test_doors::room_facet_set::{create_owner_project, set_room_facets};
+use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
 use oneiron::workspace_roster::ProjectRecord;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use serde_json::json;
@@ -250,6 +260,100 @@ impl Fixture {
         let (project, room) = self.project_room(slice)?;
         self.set_room(project, Some(facets.clone()))?;
         Ok((project, room))
+    }
+
+    /// A fresh agent holding the owner's live `read` Grant over MESSAGE and
+    /// CLAIM rows placed in `facets` alone; every other axis covers every row.
+    /// Its read of its own answer goes through that Grant, which holds the
+    /// answer inside the Grant's facets.
+    fn agent_reading_in(&self, facets: &BTreeSet<EntityId>) -> TestResult<EntityId> {
+        let agent = define_agent(&self.vault)?;
+        let mut authority_scope = Scope::top();
+        authority_scope.bands =
+            ScopeAxis::Some(BTreeSet::from([ENTITY_TYPE_MESSAGE, ENTITY_TYPE_CLAIM]));
+        authority_scope.facets = ScopeAxis::Some(facets.iter().copied().map(ScopeId).collect());
+        authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+        let minted = mint_agent_grant_as(
+            &self.vault,
+            &self.owner_proof,
+            ActSurface::ThisInstall,
+            AgentGrantMintRequest {
+                agent,
+                authority_scope,
+                expires_at: None,
+                repo_bounds: None,
+                verb_classes: BTreeSet::new(),
+                wallet_ref: None,
+                working_view_bounds: None,
+            },
+        )
+        .map_err(|error| format!("the owner mints the agent's read Grant: {error:?}"))?;
+        assert!(
+            minted.grant.confers,
+            "precondition: the agent's Grant confers"
+        );
+        Ok(agent)
+    }
+
+    /// `agent`'s own saved graph question over `units`.
+    fn agent_question(
+        &self,
+        agent: EntityId,
+        units: Vec<EntityId>,
+    ) -> TestResult<GraphQuestionRef> {
+        let record = create_question(
+            &self.vault,
+            WriteActor::new(agent, EdgeActorClass::Agent),
+            definition(units),
+            2,
+        )?;
+        Ok(GraphQuestionRef {
+            id: record.definition.question.id,
+            version: record.definition.question.version,
+        })
+    }
+
+    /// The answer to `agent`'s question on `unit`, written by the owner.
+    fn agent_ask(
+        &self,
+        agent: EntityId,
+        question: GraphQuestionRef,
+        unit: EntityId,
+    ) -> Result<GraphAskResult, String> {
+        run_graph_question(
+            &self.vault,
+            agent,
+            self.actor(),
+            question,
+            &[GraphQuestionInput {
+                unit,
+                evidence: Vec::new(),
+            }],
+            &mut ScriptedAnswerer,
+            3,
+        )
+        .map_err(|failure| failure.error.to_string())
+    }
+
+    /// Whether `agent`'s own read lane reads `record`: a withheld row reads
+    /// as none, or as a not-found or forbidden refusal.
+    fn agent_reads(&self, agent: EntityId, record: EntityId) -> bool {
+        match self
+            .vault
+            .memory(agent, EdgeActorClass::Agent)
+            .get_entity(&record.to_hex())
+        {
+            Ok(read) => read
+                .value
+                .is_some_and(|view| view.id_hex == record.to_hex()),
+            Err(refused) => {
+                assert!(
+                    refused.code == MEMORY_CODE_NOT_FOUND || refused.code == MEMORY_CODE_FORBIDDEN,
+                    "the read answers a row or withholds it: {refused:?}"
+                );
+                false
+            }
+        }
     }
 
     /// Signs `facets` as `project`'s room facet set, or drops the set.
@@ -643,5 +747,95 @@ fn a_narrowing_queues_the_refresh_of_an_answer_it_marks_stale() -> TestResult {
         "the refreshed answer lands where the room reads the MESSAGE now"
     );
     assert!(!answer.stale, "the refreshed answer stands");
+    Ok(())
+}
+
+#[test]
+fn a_room_reading_only_an_unstored_facet_stales_its_answer_and_lands_none() -> TestResult {
+    let fixture = open()?;
+    // A room set names scope ids, not FACET rows: the slice facet here is one
+    // no FACET row holds, and the set's other facet is the vault default.
+    let unstored = EntityId::now();
+    let default = fixture.vault.default_facet()?;
+    let (project, room) = fixture.project_room(unstored)?;
+    fixture.set_room(project, Some(BTreeSet::from([unstored, default])))?;
+    let message = fixture.message_in_room(room, "The clinic moves upstairs in June.")?;
+    let question = fixture.question(vec![message])?;
+    let shared = fixture
+        .ask(question, message, Vec::new())
+        .map_err(|error| format!("an answer on a room MESSAGE lands; it refused: {error}"))?;
+    assert_eq!(
+        fixture.answer_facet(&shared)?,
+        default,
+        "precondition: the answer lands at the one stored facet the room reads"
+    );
+
+    // The room now reads only the unstored slice facet: a reader of the
+    // default facet no longer reads the MESSAGE.
+    fixture.set_room(project, None)?;
+    assert!(
+        fixture.answer_stale(Fixture::answer_claim(&shared))?,
+        "an answer in the default facet the room left is marked stale, though no stored facet \
+         replaces it"
+    );
+    match fixture.ask(question, message, Vec::new()) {
+        Err(error) => assert!(
+            error.contains(NO_SHARED_POSITION),
+            "an answer on a row read only in a facet no FACET row holds refuses as having no \
+             shared position: {error}"
+        ),
+        Ok(again) => panic!(
+            "no answer lands on a row read only in a facet no FACET row holds; {} landed",
+            again.answers.len()
+        ),
+    }
+    Ok(())
+}
+
+#[test]
+fn an_agents_fresh_answer_lands_in_a_facet_its_grant_reads() -> TestResult {
+    let fixture = open()?;
+    let mut facets = [
+        fixture.put_row(ENTITY_TYPE_FACET, "work")?,
+        fixture.put_row(ENTITY_TYPE_FACET, "health")?,
+        fixture.put_row(ENTITY_TYPE_FACET, "home")?,
+    ];
+    facets.sort();
+    let [low, middle, high] = facets;
+    let (project, room) = fixture.project_room_reading(&BTreeSet::from(facets))?;
+    let message = fixture.message_in_room(room, "The ward rota is posted on Sundays.")?;
+    // The agent reads the MESSAGE through its Grant's `high`, and its answers
+    // only in `low` and `high`.
+    let agent = fixture.agent_reading_in(&BTreeSet::from([low, high]))?;
+    let question = fixture.agent_question(agent, vec![message])?;
+    let first = fixture
+        .agent_ask(agent, question, message)
+        .map_err(|error| {
+            format!("the agent's answer on a room MESSAGE lands; it refused: {error}")
+        })?;
+    assert_eq!(
+        fixture.answer_facet(&first)?,
+        low,
+        "precondition: the agent's first answer lands at the lowest facet the room reads"
+    );
+
+    fixture.set_room(project, Some(BTreeSet::from([middle, high])))?;
+    assert!(
+        fixture.answer_stale(Fixture::answer_claim(&first))?,
+        "precondition: the answer in the facet the room left is marked stale"
+    );
+    let again = fixture
+        .agent_ask(agent, question, message)
+        .map_err(|error| format!("the agent's fresh answer lands; it refused: {error}"))?;
+    assert_eq!(
+        fixture.answer_facet(&again)?,
+        high,
+        "the fresh answer lands where the room reads the MESSAGE and the agent's Grant reads \
+         the answer, not at the lower facet its Grant does not read"
+    );
+    assert!(
+        fixture.agent_reads(agent, Fixture::answer_claim(&again)),
+        "the agent reads its fresh answer back"
+    );
     Ok(())
 }
