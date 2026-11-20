@@ -675,10 +675,12 @@ impl CanaryVault {
     /// each class's refs in one `vault.hydrate`; the change and settlement
     /// feed from its beginning; the gate receipt ledger and each receipt
     /// kind's pages; `vault.proactivity.digest`; `vault.export`, its archive
-    /// decoded; and last, every ref those answers name, followed by its form
-    /// (an entity through `vault.get`, `vault.refs.resolve` and the doors of
-    /// the kind `vault.get` names; a `call:` or `emit:` receipt; a report
-    /// issue; a summary proposal), until no answer names a new one.
+    /// decoded and its custody records read less their values; and last,
+    /// every ref those answers name, as a value or an object key, followed
+    /// by its form (an entity through `vault.get` and `vault.refs.resolve`,
+    /// whatever they answer, and the doors of the kind `vault.get` names; a
+    /// `call:` or `emit:` receipt; a report issue; a summary proposal), until
+    /// no answer names a new one.
     ///
     /// What writes: a diary read logs itself, a feed subscription is a row,
     /// `self.inbox.get` marks its item opened (a digest item seen), and an

@@ -140,18 +140,24 @@ impl Reader<'_, '_> {
     }
 
     /// Reads one entity by `reference` (a short ref or 32 hex) through
-    /// `vault.get` and `vault.refs.resolve`, then through the doors of its
-    /// kind: a claim's `vault.claims.read_filtered` and
-    /// `vault.claims.history`, a turn's `vault.refs.links` pages, a
-    /// summary's `vault.summaries.read`. With `every_kind`, each kind's doors
-    /// run whatever the row is (a wrong kind is refused and recorded);
-    /// otherwise only the kind `vault.get` names, and a row it withholds
-    /// gets no further read.
+    /// `vault.get` and `vault.refs.resolve`, whatever either answers, then
+    /// through the doors of its kind: a claim's
+    /// `vault.claims.read_filtered` and `vault.claims.history`, a turn's
+    /// `vault.refs.links` pages, a summary's `vault.summaries.read`. With
+    /// `every_kind`, each kind's doors run whatever the row is (a wrong kind
+    /// is refused and recorded); otherwise only the kind `vault.get` names,
+    /// and a row it names no kind for (absent, withheld or refused) gets no
+    /// kind's door.
     fn read_entity(&mut self, reference: &str, every_kind: bool) {
         let got = self.read(
             &format!("vault.get {reference}"),
             "vault.get",
             json!({"entity_ref": reference}),
+        );
+        self.read(
+            &format!("vault.refs.resolve {reference}"),
+            "vault.refs.resolve",
+            json!({"reference": reference}),
         );
         let kind = got
             .as_ref()
@@ -161,11 +167,6 @@ impl Reader<'_, '_> {
         if kind.is_none() && !every_kind {
             return;
         }
-        self.read(
-            &format!("vault.refs.resolve {reference}"),
-            "vault.refs.resolve",
-            json!({"reference": reference}),
-        );
         let is = |wanted: &str| every_kind || kind.as_deref() == Some(wanted);
         if is(KIND_CLAIM) {
             self.read(
@@ -197,7 +198,8 @@ impl Reader<'_, '_> {
 }
 
 /// Every ref `value` names, with the field each string sits under (an array
-/// keeps its field's name).
+/// keeps its field's name). An object's keys name refs too, by their own
+/// form alone: an answer may index its values by entity id.
 fn named_refs(value: &Value, key: Option<&str>, out: &mut Vec<NamedRef>) {
     match value {
         Value::String(text) => out.extend(NamedRef::parse(key, text)),
@@ -208,6 +210,7 @@ fn named_refs(value: &Value, key: Option<&str>, out: &mut Vec<NamedRef>) {
         }
         Value::Object(fields) => {
             for (name, item) in fields {
+                out.extend(NamedRef::parse(None, name));
                 named_refs(item, Some(name.as_str()), out);
             }
         }

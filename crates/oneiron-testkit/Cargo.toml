@@ -26,6 +26,9 @@ serde_json = { workspace = true }
 stacker = { git = "https://github.com/rust-lang/stacker", rev = "d3ac2df79a409c681329006e9b31c96ab9c5fcae" }
 tempfile = "3"
 toml = "0.9"
+# Reads the custody member of a whole-vault archive (the canary scan): the
+# oneiron crate's version and features.
+zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
