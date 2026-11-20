@@ -33,9 +33,10 @@ use serde::{Deserialize, Serialize};
 /// The `body.extra` field naming a work-talk conversation's binding.
 pub(crate) const WORK_TALK_FIELD: &str = "work_talk.v1";
 
-/// The `vault_meta` prefix registering a work-talk binding:
-/// `work_talk.v1/<conversation id>`.
-const WORK_TALK_PREFIX: &[u8] = b"work_talk.v1/";
+/// The side table registering each work-talk binding: its msgpack bytes,
+/// keyed by the conversation id.
+const REGISTRATIONS: SideTable<EntityId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::WORK_TALK_REGISTRATION);
 
 /// Who a work-talk conversation binds: the member and her brought companion,
 /// as the member's roster row names them when the conversation opens. The
@@ -69,8 +70,16 @@ fn denied() -> Error {
     RecordError::ConversationDenied.into()
 }
 
-fn work_talk_key(id: EntityId) -> Vec<u8> {
-    [WORK_TALK_PREFIX, id.as_bytes()].concat()
+/// Whether this vault's open door registered exactly `encoded` as the
+/// binding of `room`: the check every reader and every local put naming the
+/// field makes before it trusts a body's `work_talk.v1` field.
+pub(crate) fn work_talk_registered_in(
+    dbs: &impl side_table::SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    encoded: &[u8],
+) -> Result<bool> {
+    Ok(REGISTRATIONS.get_borrowed(dbs, txn, &room)?.as_deref() == Some(encoded))
 }
 
 /// The binding the work-talk conversation `room` carries, `None` for any
@@ -94,13 +103,7 @@ pub(crate) fn work_talk_binding_in_txn(
         return Ok(None);
     };
     let encoded = rmp_serde::to_vec_named(value).map_err(|_| denied())?;
-    if vault
-        .store
-        .vault_meta
-        .get(txn, &work_talk_key(room))?
-        .as_deref()
-        != Some(encoded.as_slice())
-    {
+    if !work_talk_registered_in(vault, txn, room, &encoded)? {
         return Err(denied());
     }
     let binding: WorkTalkBinding = rmp_serde::from_slice(&encoded).map_err(|_| denied())?;
@@ -246,9 +249,7 @@ impl Vault {
             );
             let id = EntityId::now();
             let at = self.store.clock.now_recorded_at();
-            self.store
-                .vault_meta
-                .put(txn, &work_talk_key(id), &encoded)?;
+            REGISTRATIONS.put(self, txn, &id, &encoded)?;
             crate::conversation::create_in_txn(
                 self,
                 txn,

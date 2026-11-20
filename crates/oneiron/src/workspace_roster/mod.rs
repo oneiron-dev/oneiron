@@ -142,7 +142,7 @@ pub use self::sharing::{
 pub use self::work_companion::WorkCompanionPolicy;
 pub use self::work_talk::WorkTalkBinding;
 pub(crate) use self::work_talk::{
-    WORK_TALK_FIELD, admit_work_talk_witness, work_talk_binding_in_txn,
+    WORK_TALK_FIELD, admit_work_talk_witness, work_talk_binding_in_txn, work_talk_registered_in,
 };
 #[cfg(oneiron_test_support)]
 pub(crate) use self::{
