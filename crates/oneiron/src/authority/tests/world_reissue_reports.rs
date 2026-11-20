@@ -7,7 +7,9 @@ use super::machine_identity::request_for;
 use super::support::ed_key;
 use super::world_key_doors::{Fresh, enrol_own, fresh_install, keyed_machine};
 use super::world_privacy::{settings, stored_entries, world_row};
-use super::world_reissue::{admit, edit_on, issue, pinned, read_on, revision, set_on, sync};
+use super::world_reissue::{
+    admit, edit_on, issue, pinned, read_on, revision, set_on, sync, with_predecessor,
+};
 use super::*;
 use crate::world_keys::RecoveryRootSeed;
 
@@ -21,6 +23,7 @@ fn a_carried_machine_re_pins_with_its_keys() {
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
     let b = fresh_install(&host);
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
     admit(&issuer, &first, &b);
@@ -66,6 +69,7 @@ fn an_activation_on_a_roster_mine_install_still_heads_its_anchor_chain() {
     let anchor_of = |prepared: &crate::world_keys::PreparedRoot| {
         prepared.seed().anchor().verifying_key().to_bytes()
     };
+    with_predecessor(&host, &host.vault, &host.owner);
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let first = anchor_of(&prepared);
     host.vault
@@ -118,6 +122,7 @@ fn a_model_order_conflict_is_reported_and_never_resolved_by_the_engine() {
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
     let b = fresh_install(&host);
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
     admit(&issuer, &first, &b);
@@ -206,6 +211,7 @@ fn a_clones_widening_is_never_offered_for_re_assertion() {
     let (host, world) = host_with_world();
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
     set_on(&a, world, ReadLocation::OneMachine(a.machine()));

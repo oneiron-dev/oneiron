@@ -13,7 +13,7 @@ use super::world_key_doors::{
     Fresh, Keyed, enrol_own, fresh_install, key_records, keyed_machine, kit_seed, own_request, set,
 };
 use super::world_privacy::{settings, world_row};
-use super::world_reissue::{admit, issue, set_on, sync};
+use super::world_reissue::{admit, issue, set_on, sync, with_predecessor};
 use super::*;
 use crate::Vault;
 use crate::error::{Error, SecretError};
@@ -74,6 +74,7 @@ fn a_restore_past_one_wide_world_pins_and_withholds_only_that_key() {
     let host = host();
     enrol_own(&host);
     let flooder = keyed_machine(&host, 46);
+    with_predecessor(&host, &host.vault, &host.owner);
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let seed = kit_seed(host.vault_id, prepared.seed());
     host.vault
@@ -200,6 +201,7 @@ fn a_deferred_reader_never_hides_a_usable_restore_key() {
     let host = host();
     enrol_own(&host);
     let flooder = keyed_machine(&host, 46);
+    with_predecessor(&host, &host.vault, &host.owner);
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let seed = kit_seed(host.vault_id, prepared.seed());
     host.vault
@@ -258,6 +260,7 @@ fn a_skipped_pre_wrap_keeps_the_key_for_a_re_run() {
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
     let b = fresh_install(&host);
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
     admit(&issuer, &first, &b);
@@ -270,6 +273,7 @@ fn a_skipped_pre_wrap_keeps_the_key_for_a_re_run() {
     flood_on(&b.vault, &host, &flooder, world);
 
     let other = fresh_install(&host);
+    with_predecessor(&host, &other.vault, &other.owner);
     let second = issue(&other, &[]);
     sync(&other.vault, &b.vault);
     let report = b.vault.pin_owner_root(&b.owner, second.root).unwrap();

@@ -4,12 +4,13 @@
 //! machine left out of a carry gets its keys back by anchoring itself with
 //! the new seed, and only the owner's explicit re-assertion restores a
 //! world's earlier settings, keeping its key.
-use super::machine_identity::{host, request_for};
+use super::machine_identity::{Host, host, request_for};
 use super::support::{authority_key_from_ed, ed_key, owner_act, sign_ed, unsigned_entry};
 use super::world_key_doors::{Fresh, fresh_install, kit_seed, opened_by, own_request};
 use super::world_privacy::{settings, stored_entries, world_row};
 use super::*;
 use crate::Vault;
+use crate::consent::AuthenticatedOwner;
 use crate::world_keys::{PolicyRevision, RecoveryRootSeed, Withheld};
 
 /// Every authority entry `from` holds that `to` lacks, landed on `to`.
@@ -27,6 +28,39 @@ pub(super) fn sync(from: &Vault, to: &Vault) {
     if !rows.is_empty() {
         to.put_authority_log_entries(&rows).unwrap();
     }
+}
+
+/// Gives `vault` a live Device predecessor for its next kit activation
+/// (WAYBACK-R4-NO-PREDECESSOR = A): enrols `vault`'s machine via `host` when
+/// the roster holds no live profile of it, syncs that row, then enrols this
+/// install's device owner key under `host`'s root. Idempotent: a machine
+/// already live is not enrolled again, and a key already live is only held.
+/// `vault` is `host.vault` or a `Fresh` install's; `owner` is its owner.
+pub(super) fn with_predecessor(host: &Host, vault: &Vault, owner: &AuthenticatedOwner) {
+    let request = own_request(vault);
+    let fold = host.vault.authority_fold().unwrap();
+    let live = matches!(
+        fold.machine(request.machine).and_then(|folded| folded.roster.as_ref()),
+        Some(chain) if chain.is_live()
+    );
+    if !live {
+        host.vault
+            .enroll_machine(
+                &host.owner,
+                ActSurface::ThisInstall,
+                &request,
+                MachineRole::Owned(MachineOwnership::Yours),
+                None,
+            )
+            .unwrap();
+    }
+    sync(&host.vault, vault);
+    vault
+        .enrol_device_owner_signing_key(
+            &ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall),
+            &host.issuer,
+        )
+        .unwrap();
 }
 
 pub(super) fn set_on(install: &Fresh, world: EntityId, read: ReadLocation) {
@@ -150,6 +184,7 @@ fn a_re_issue_without_carry_never_widens() {
     let second_pin = fresh_install(&host);
     let third_pin = fresh_install(&host);
     let unpinned = fresh_install(&host);
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
     set_on(&a, world, ReadLocation::OneMachine(a.machine()));
@@ -226,6 +261,7 @@ fn re_assertion_keeps_a_widening() {
     let world = world_row(&host);
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
     set_on(&a, world, ReadLocation::OneMachine(a.machine()));
@@ -277,6 +313,7 @@ fn the_narrowed_report_lists_every_world_at_scale() {
     let worlds: BTreeSet<_> = (0..WORLDS).map(|_| world_row(&host)).collect();
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
     for world in &worlds {
@@ -324,6 +361,7 @@ fn a_compromised_old_roots_late_widening_is_never_promoted() {
     let world = world_row(&host);
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
     set_on(&a, world, ReadLocation::MyMachines);
@@ -395,6 +433,7 @@ fn a_left_out_machine_anchors_itself_back_and_keeps_its_key() {
         let world = world_row(&host);
         let issuer = fresh_install(&host);
         let mut a = fresh_install(&host);
+        with_predecessor(&host, &issuer.vault, &issuer.owner);
         let first = issue(&issuer, &[]);
         admit(&issuer, &first, &a);
         set_on(&a, world, ReadLocation::OneMachine(a.machine()));
@@ -445,6 +484,7 @@ fn a_left_out_recipient_anchors_itself_back_from_records_another_signed() {
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
     let b = fresh_install(&host);
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
     admit(&issuer, &first, &b);
@@ -455,6 +495,7 @@ fn a_left_out_recipient_anchors_itself_back_from_records_another_signed() {
     assert_eq!(b.vault.world_key(world).unwrap().id(), &key);
 
     let other = fresh_install(&host);
+    with_predecessor(&host, &other.vault, &other.owner);
     let second = issue(&other, &[]);
     sync(&other.vault, &b.vault);
     let report = b.vault.pin_owner_root(&b.owner, second.root).unwrap();
@@ -495,6 +536,7 @@ fn a_recipients_key_survives_an_explicit_re_assertion() {
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
     let b = fresh_install(&host);
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
     admit(&issuer, &first, &b);
@@ -547,6 +589,7 @@ fn a_restore_with_no_earlier_admitter_reports_the_local_settings() {
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
     let b = fresh_install(&host);
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
     set_on(&a, world, ReadLocation::OneMachine(a.machine()));

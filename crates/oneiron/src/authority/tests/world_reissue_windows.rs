@@ -6,7 +6,7 @@
 use super::support::{authority_key_from_ed, sign_ed, unsigned_entry};
 use super::world_key_doors::{Fresh, fresh_install, own_request};
 use super::world_privacy::{settings, world_row};
-use super::world_reissue::{admit, issue, read_on, revision, set_on, sync};
+use super::world_reissue::{admit, issue, read_on, revision, set_on, sync, with_predecessor};
 use super::*;
 use crate::world_keys::RecoveryRootSeed;
 use crate::{Vault, VaultConfig};
@@ -154,6 +154,7 @@ fn old_root_writes_after_a_re_issue_change_nothing() {
     let offline = world_row(&host);
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
     set_on(&a, world, ReadLocation::OneMachine(a.machine()));
@@ -243,6 +244,7 @@ fn a_compromised_old_seed_only_narrows_and_the_owner_recovers() {
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
     let b = fresh_install(&host);
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
     admit(&issuer, &first, &b);

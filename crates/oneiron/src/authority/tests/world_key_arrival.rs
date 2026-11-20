@@ -9,7 +9,7 @@ use super::support::{authority_key_from_ed, sign_ed, unsigned_entry};
 use super::world_chain_reads::hash;
 use super::world_key_doors::{Fresh, enrol_own, fresh_install, keyed_machine, kit_seed, set};
 use super::world_privacy::{settings, stored_entries, world_row};
-use super::world_reissue::{Issued, admit, issue, set_on, sync};
+use super::world_reissue::{Issued, admit, issue, set_on, sync, with_predecessor};
 use super::*;
 use crate::world_keys::{RecoveryRootSeed, WorldKey, WorldKeyBinding, seal_world_key};
 use crate::{Vault, VaultConfig};
@@ -21,6 +21,7 @@ const AT: TimeRange = TimeRange { start: 3, end: 3 };
 fn rooted() -> (Host, RecoveryRootSeed, EntityId) {
     let host = host();
     enrol_own(&host);
+    with_predecessor(&host, &host.vault, &host.owner);
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let seed = kit_seed(host.vault_id, prepared.seed());
     host.vault
@@ -172,6 +173,7 @@ pub(super) fn graph() -> Graph {
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
     let b = fresh_install(&host);
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let root = issue(&issuer, &[]);
     admit(&issuer, &root, &a);
     set_on(&a, world, ReadLocation::MyMachines);

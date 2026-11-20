@@ -7,6 +7,7 @@ use super::machine_identity::{Host, host, request_for};
 use super::support::ed_key;
 use super::world_key_doors::{Fresh, enrol_own, fresh_install, own_request};
 use super::world_privacy::stored_entries;
+use super::world_reissue::with_predecessor;
 use super::*;
 use crate::Vault;
 use crate::error::{Error, KitRecord, SecretError};
@@ -125,6 +126,7 @@ fn pinned(vault: &Vault) -> Option<RecoveryRootId> {
 fn a_forged_kit_piece_never_pins() {
     let host = host();
     enrol_own(&host);
+    with_predecessor(&host, &host.vault, &host.owner);
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let genuine = rebuilt(host.vault_id, prepared.seed(), 2);
     let owners = prepared.seed().public(&host.vault_id).unwrap().id;
@@ -277,6 +279,7 @@ fn with_no_root_stored_the_kit_is_never_a_lockout() {
 fn an_old_machine_never_approves_a_new_one_with_a_forged_piece() {
     let host = host();
     enrol_own(&host);
+    with_predecessor(&host, &host.vault, &host.owner);
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let owners = prepared.seed().public(&host.vault_id).unwrap().id;
     host.vault
