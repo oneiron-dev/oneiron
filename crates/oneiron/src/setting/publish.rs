@@ -31,7 +31,7 @@ use std::collections::BTreeMap;
 use oneiron_authority::authority::{ActSurface, setting_slot_target, setting_value_digest};
 use oneiron_setting_contract::{RowKey, ScopeKind, SettingMode};
 
-use super::beside::slot_value_in_txn;
+use super::beside::{put_beside_value_in_txn, slot_value};
 use super::change::{change_in_txn, record_signed_entry_in_txn};
 use super::project::{json_bytes, rooted_in_txn, travels};
 use super::read::{StoredRow, table_of};
@@ -184,6 +184,7 @@ fn publish_owner_rows_in_txn(
     let mut savepoint = vault.store.env.nested_write_txn(txn)?;
     let mut rows = Vec::with_capacity(unbacked.len());
     let mut changes = Vec::with_capacity(unbacked.len());
+    let mut beside = Vec::new();
     for Unbacked {
         spec,
         slot,
@@ -191,7 +192,10 @@ fn publish_owner_rows_in_txn(
         change,
     } in unbacked
     {
-        let value = slot_value_in_txn(vault, &mut savepoint, spec, &slot, Some(json))?;
+        let (value, json) = slot_value(spec, Some(json));
+        if let Some(json) = json {
+            beside.push((slot.clone(), json));
+        }
         rows.push(SettingSlotRow {
             slot,
             prior: setting_value_digest(b"null"),
@@ -228,6 +232,9 @@ fn publish_owner_rows_in_txn(
             "the owner's setting rows stay on this install: their batch act waits for an owner key's proof"
         );
         return Ok(false);
+    }
+    for (slot, json) in &beside {
+        put_beside_value_in_txn(vault, &mut savepoint, (slot, &signed), json)?;
     }
     for change in changes.iter().flatten() {
         record_signed_entry_in_txn(&vault.store, &mut savepoint, change, signed)?;

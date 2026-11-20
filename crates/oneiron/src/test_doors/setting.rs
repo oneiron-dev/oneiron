@@ -548,70 +548,134 @@ pub fn land_setting_beside_act_from(
     land_slot_values_from(vault, (signer, owner), frontier, rows, ts)
 }
 
-/// The ASSET row that holds `value` beside an act on the row `slot` (stage 7c-1).
+/// The owner `owner`'s change of the row `slot` to `value` with its value beside the act (stage
+/// 7c-1), as `signer`'s own door signs it on `frontier` at `ts`, not landed: a test lands the row
+/// that holds the value, which the act names, before the act ([`land_setting_beside_value_before`],
+/// [`land_signed_setting_act`]).
 ///
 /// # Errors
 ///
-/// A key name of another shape.
+/// A key name of another shape; a value with no JSON; storage errors.
+#[cfg(feature = "test-support")]
+pub fn sign_setting_beside_act_from(
+    vault: &Vault,
+    (signer, owner): (&EnrolledMachine, EntityId),
+    frontier: &SettingFrontier,
+    (key, item, mode, scope): SlotName<'_>,
+    value: &serde_json::Value,
+    ts: u64,
+) -> Result<SignedSettingAct> {
+    let digest = oneiron_authority::authority::setting_value_digest(&json_bytes(value)?);
+    let rows = vec![(
+        row_key(key, item, mode, scope),
+        crate::authority::SlotValue::Beside(digest),
+    )];
+    vault
+        .sign_setting_act_as((signer.machine, &signer.key), owner, &frontier.0, rows, ts)
+        .map(SignedSettingAct)
+}
+
+/// The ASSET row that holds `value` beside the live act on the row `slot` that keeps only its
+/// digest (stage 7c-1).
+///
+/// # Errors
+///
+/// No such live act; a key name of another shape; storage errors.
 #[cfg(feature = "test-support")]
 pub fn setting_beside_row(
+    vault: &Vault,
     (key, item, mode, scope): SlotName<'_>,
     value: &serde_json::Value,
 ) -> Result<EntityId> {
-    crate::setting::beside_row_of(&row_key(key, item, mode, scope), &json_bytes(value)?)
+    crate::setting::beside_row_of(vault, &row_key(key, item, mode, scope), &json_bytes(value)?)
 }
 
-/// Lands the row that holds `value` beside an act on the row `slot`, in a write of its own, as a
-/// peer's row lands: through the batch door, whose commit runs the setting projection (stage
-/// 7c-1).
+/// Lands the row that holds `value` beside the live act on the row `slot`, in a write of its own,
+/// as a peer's row lands: through the batch door, whose commit runs the setting projection
+/// (stage 7c-1).
 ///
 /// # Errors
 ///
-/// The put's refusal; storage errors.
+/// No such live act; the put's refusal; storage errors.
 #[cfg(feature = "test-support")]
 pub fn land_setting_beside_value(
     vault: &Vault,
-    (key, item, mode, scope): SlotName<'_>,
+    slot: SlotName<'_>,
     value: &serde_json::Value,
 ) -> Result<()> {
-    let json = json_bytes(value)?;
-    crate::setting::land_beside_row(vault, &row_key(key, item, mode, scope), &json, &json)
+    land_setting_beside_value_holding(vault, slot, value, value)
 }
 
-/// Lands at the row for `value` beside an act on the row `slot` a row that holds `held`'s JSON
-/// bytes instead: a row that does not match its digest (stage 7c-1).
+/// Lands at the row for `value` beside the live act on the row `slot` a row that holds `held`'s
+/// JSON bytes: a row that does not match its digest where `held` is another value (stage 7c-1).
 ///
 /// # Errors
 ///
-/// The put's refusal; storage errors.
+/// No such live act; the put's refusal; storage errors.
 #[cfg(feature = "test-support")]
 pub fn land_setting_beside_value_holding(
     vault: &Vault,
-    (key, item, mode, scope): SlotName<'_>,
+    slot: SlotName<'_>,
     value: &serde_json::Value,
     held: &serde_json::Value,
 ) -> Result<()> {
-    crate::setting::land_beside_row(
-        vault,
-        &row_key(key, item, mode, scope),
-        &json_bytes(value)?,
-        &json_bytes(held)?,
-    )
+    let row = setting_beside_row(vault, slot, value)?;
+    crate::setting::land_beside_row(vault, row, (&json_bytes(held)?, true))
 }
 
-/// The JSON the row for `value` beside an act on the row `slot` holds here; `None` when no such
-/// row is readable here (stage 7c-1).
+/// Lands at the row for `value` beside the live act on the row `slot` a row whose body is
+/// `body` alone, with no setting value's tag (stage 7c-1).
 ///
 /// # Errors
 ///
-/// A row whose bytes are not JSON; storage errors.
+/// No such live act; the put's refusal; storage errors.
+#[cfg(feature = "test-support")]
+pub fn land_setting_beside_untagged(
+    vault: &Vault,
+    slot: SlotName<'_>,
+    value: &serde_json::Value,
+    body: &[u8],
+) -> Result<()> {
+    let row = setting_beside_row(vault, slot, value)?;
+    crate::setting::land_beside_row(vault, row, (body, false))
+}
+
+/// Lands, before `act` itself, the row for `value` beside `act` on the row `slot`, holding
+/// `held`'s JSON bytes (`value`'s, or another value's: a row that does not match its digest), in
+/// a write of its own (stage 7c-1). The row's id.
+///
+/// # Errors
+///
+/// A key name of another shape; the put's refusal; storage errors.
+#[cfg(feature = "test-support")]
+pub fn land_setting_beside_value_before(
+    vault: &Vault,
+    (key, item, mode, scope): SlotName<'_>,
+    (value, held): (&serde_json::Value, &serde_json::Value),
+    act: &SignedSettingAct,
+) -> Result<EntityId> {
+    let row = crate::setting::beside_row_for(
+        &row_key(key, item, mode, scope),
+        &json_bytes(value)?,
+        &act.hash()?,
+    )?;
+    crate::setting::land_beside_row(vault, row, (&json_bytes(held)?, true))?;
+    Ok(row)
+}
+
+/// The JSON the row for `value` beside the live act on the row `slot` holds here; `None` when no
+/// such row is readable here (stage 7c-1).
+///
+/// # Errors
+///
+/// No such live act; a row whose bytes are not JSON; storage errors.
 #[cfg(feature = "test-support")]
 pub fn setting_beside_value_here(
     vault: &Vault,
-    (key, item, mode, scope): SlotName<'_>,
+    slot: SlotName<'_>,
     value: &serde_json::Value,
 ) -> Result<Option<serde_json::Value>> {
-    crate::setting::beside_row_json(vault, &row_key(key, item, mode, scope), &json_bytes(value)?)?
+    crate::setting::beside_row_json(vault, setting_beside_row(vault, slot, value)?)?
         .map(|json| {
             serde_json::from_slice(&json)
                 .map_err(|_| Error::InvariantViolation("a beside row's JSON"))
@@ -764,6 +828,18 @@ pub fn member_banner_read(vault: &Vault) -> Result<Resolved<String>> {
 /// One setting act a peer signed that this install has not landed yet (stage 7b-3 tests).
 #[cfg(feature = "test-support")]
 pub struct SignedSettingAct(oneiron_authority::authority::AuthorityLogEntry);
+
+#[cfg(feature = "test-support")]
+impl SignedSettingAct {
+    /// The act's entry hash, which names the row of a value beside it (stage 7c-1 tests).
+    ///
+    /// # Errors
+    ///
+    /// An entry that does not encode.
+    pub fn hash(&self) -> Result<oneiron_authority::authority::AuthorityEntryHash> {
+        Ok(oneiron_authority::authority::authority_entry_hash(&self.0)?)
+    }
+}
 
 /// The owner `owner`'s change of the row `slot` to `value` (`None` clears), signed as `signer`'s
 /// own door signs it on `frontier` at `ts`, `ahead` sequences past the signer's next one here,

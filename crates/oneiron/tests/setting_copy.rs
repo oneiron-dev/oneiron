@@ -31,8 +31,9 @@ use oneiron::setting::{
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::setting::{
     EnrolledMachine, SettingFrontier, SlotName, carry_settings_between, enroll_machine_with_key,
-    forget_projected_setting_rows, land_setting_act_from, land_setting_copy_from, ordered_cap_read,
-    set_setting_as_engine, setting_change, setting_frontier_of, setting_slot_heads,
+    forget_projected_setting_rows, land_setting_act_from, land_setting_copy_from,
+    land_signed_setting_act, ordered_cap_read, set_setting_as_engine, setting_change,
+    setting_frontier_of, setting_slot_heads, sign_setting_act_ahead,
 };
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_authority::authority::{
@@ -696,5 +697,50 @@ fn a_copy_follows_its_named_acts_count_when_a_later_entry_holds_it_back() {
         fx.cap_at(&[moved]).0,
         6,
         "the unchanged copy follows its named act's new safe count without a new destination act"
+    );
+}
+
+/// A copy that names an act this install does not hold yet reads the key's strictest value for
+/// it, and once the act arrives gives what that act gives its row: the copy's fallback is no
+/// bound of this install's own carry, so the order the two arrive in changes nothing
+/// (REVIEW-9783 P1-1; RULING SETTING-7A-4-COPY Q2 = A: every other machine reads the copy alone).
+#[test]
+fn a_copy_that_arrives_before_its_named_act_gives_that_act_once_it_arrives() {
+    let fx = Fixture::rooted();
+    let other = fx.other_machine(0x6a);
+    let mover = fx.second_machine(0x6b);
+    let (source, moved) = (EntityId::now(), EntityId::now());
+    let act = sign_setting_act_ahead(
+        &fx.vault,
+        (&other.signer, fx.owner),
+        &fx.frontier(source),
+        (value_row(source), Some(json!(5))),
+        (T0, 0),
+    )
+    .expect("the act signs");
+    let named = act.hash().expect("its hash");
+
+    let frontier = setting_frontier_of(&fx.vault, &[carried(moved)]).expect("frontier");
+    let (_, counted) = land_setting_copy_from(
+        &fx.vault,
+        &mover,
+        &frontier,
+        &[(carried(moved), vec![(value_row(source), named)])],
+        T0,
+    )
+    .expect("the copy lands");
+    assert!(counted, "the live mover's copy counts in full");
+    assert_eq!(
+        fx.cap_at(&[moved]).0,
+        STRICTEST,
+        "a named act this install does not hold reads the key's strictest value"
+    );
+
+    land_signed_setting_act(&fx.vault, &act, T0).expect("the act lands");
+    assert_eq!(fx.cap_at(&[source]).0, 5, "the act counts in full here");
+    assert_eq!(
+        fx.cap_at(&[moved]).0,
+        5,
+        "the copy gives what its named act gives, as when the act arrives first"
     );
 }

@@ -3,11 +3,17 @@
 //! - the owner's change of a free-text key travels as its act: the act keeps only the value's
 //!   digest, and the same write stores the value beside it, in a row addressed by that digest;
 //! - a value longer than an act carries travels beside it whole;
-//! - another machine's act whose value is beside it writes the row here once both are here;
+//! - another machine's act whose value is beside it writes the row here once both are here, in
+//!   either order;
 //! - an act whose value has not arrived leaves the row as it was, `Pending`; the value's arrival
 //!   alone moves the row to it;
 //! - a value beside an act that does not match its digest, or was erased here, reads the key's
-//!   strictest value, `Quarantined`, also when that happens after the row read it;
+//!   strictest value, `Quarantined`, also when that happens after the row read it, and also
+//!   while a later act waits for its own value; a put at that value's row with no value tag is
+//!   read at once; on a key that names no strictest value the row reads the key's default;
+//! - each act's value has a row of its own: the owner sets again a value whose row was erased;
+//! - a row a key's hook refuses on this install keeps no other row of the pass from landing,
+//!   and the owner's resident route lands on an install with no model manifest;
 //! - an act on a key this build does not know is read once, whether it carries its value or
 //!   keeps only a digest, also when its value comes beside it later: a pass reads it again only
 //!   once its acts move or a build knows the key;
@@ -32,10 +38,12 @@ use oneiron::setting::{
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::setting::{
-    EnrolledMachine, SlotName, enroll_machine_with_key, forget_projected_setting_rows,
-    land_setting_batch_from, land_setting_beside_act_from, land_setting_beside_value,
-    land_setting_beside_value_holding, member_banner_read, permit_list_read, setting_beside_row,
-    setting_beside_value_here, setting_change, setting_frontier_of,
+    EnrolledMachine, SignedSettingAct, SlotName, enroll_machine_with_key,
+    forget_projected_setting_rows, land_setting_batch_from, land_setting_beside_act_from,
+    land_setting_beside_untagged, land_setting_beside_value, land_setting_beside_value_before,
+    land_setting_beside_value_holding, land_signed_setting_act, member_banner_read,
+    permit_list_read, setting_beside_row, setting_beside_value_here, setting_change,
+    setting_frontier_of, sign_setting_beside_act_from,
 };
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_authority::authority::{
@@ -185,6 +193,31 @@ impl Fixture {
         assert!(counted, "the fold here counts the act");
     }
 
+    /// `machine`'s act on `key`'s vault value row to `value`, its value beside the act, signed on
+    /// the row's acts as they stand now and not landed: a test lands its value's row first.
+    fn sign_beside_act_from(
+        &self,
+        machine: &EnrolledMachine,
+        key: &str,
+        value: &Value,
+    ) -> SignedSettingAct {
+        let frontier = setting_frontier_of(&self.vault, &[vault_row(key)]).expect("frontier");
+        sign_setting_beside_act_from(
+            &self.vault,
+            (machine, self.owner),
+            &frontier,
+            vault_row(key),
+            value,
+            T0,
+        )
+        .expect("the act signs")
+    }
+
+    /// Lands `act` as a peer's entry lands; its commit runs the pass.
+    fn land(&self, act: &SignedSettingAct) {
+        land_signed_setting_act(&self.vault, act, T0).expect("the act lands");
+    }
+
     /// `test.permit_list` at the vault: value and standing.
     fn permits(&self) -> (Vec<String>, SettingStanding) {
         let read = permit_list_read(&self.vault).expect("the read");
@@ -251,8 +284,10 @@ fn another_machines_act_with_its_value_beside_it_writes_the_row_here() {
     let fx = Fixture::rooted();
     let machine = fx.second_machine(7);
     let value = json!("from the other machine");
-    land_setting_beside_value(&fx.vault, vault_row(BANNER), &value).expect("the value lands");
-    fx.beside_act_from(&machine, BANNER, &value);
+    let act = fx.sign_beside_act_from(&machine, BANNER, &value);
+    land_setting_beside_value_before(&fx.vault, vault_row(BANNER), (&value, &value), &act)
+        .expect("the value lands before its act");
+    fx.land(&act);
     assert_eq!(
         fx.banner(),
         (
@@ -290,9 +325,15 @@ fn a_value_that_does_not_match_its_digest_reads_the_strictest_value() {
     let fx = Fixture::rooted();
     let machine = fx.second_machine(7);
     let read_only = json!(["read"]);
-    land_setting_beside_value_holding(&fx.vault, vault_row(PERMITS), &read_only, &json!(["send"]))
-        .expect("a row that does not match its digest");
-    fx.beside_act_from(&machine, PERMITS, &read_only);
+    let act = fx.sign_beside_act_from(&machine, PERMITS, &read_only);
+    land_setting_beside_value_before(
+        &fx.vault,
+        vault_row(PERMITS),
+        (&read_only, &json!(["send"])),
+        &act,
+    )
+    .expect("a row that does not match its digest");
+    fx.land(&act);
     assert_eq!(
         fx.permits(),
         (Vec::new(), SettingStanding::Quarantined),
@@ -305,21 +346,27 @@ fn a_value_erased_here_reads_the_strictest_value() {
     let fx = Fixture::rooted();
     let machine = fx.second_machine(7);
     let read_only = json!(["read"]);
-    land_setting_beside_value(&fx.vault, vault_row(PERMITS), &read_only).expect("the value lands");
-    let row = setting_beside_row(vault_row(PERMITS), &read_only).expect("the row's id");
+    let act = fx.sign_beside_act_from(&machine, PERMITS, &read_only);
+    let row = land_setting_beside_value_before(
+        &fx.vault,
+        vault_row(PERMITS),
+        (&read_only, &read_only),
+        &act,
+    )
+    .expect("the value lands before its act");
     assert!(
         fx.vault
             .delete_entity_with_options(&row, DeleteEntityOptions { purge: true })
             .expect("the erase"),
         "the row was here"
     );
+
+    fx.land(&act);
     assert_eq!(
         setting_beside_value_here(&fx.vault, vault_row(PERMITS), &read_only).expect("the read"),
         None,
         "the erase reached the value"
     );
-
-    fx.beside_act_from(&machine, PERMITS, &read_only);
     assert_eq!(
         fx.permits(),
         (Vec::new(), SettingStanding::Quarantined),
@@ -332,14 +379,21 @@ fn a_value_erased_after_the_row_read_it_reads_the_strictest_value() {
     let fx = Fixture::rooted();
     let machine = fx.second_machine(7);
     let read_only = json!(["read"]);
-    land_setting_beside_value(&fx.vault, vault_row(PERMITS), &read_only).expect("the value lands");
-    fx.beside_act_from(&machine, PERMITS, &read_only);
+    let act = fx.sign_beside_act_from(&machine, PERMITS, &read_only);
+    land_setting_beside_value_before(
+        &fx.vault,
+        vault_row(PERMITS),
+        (&read_only, &read_only),
+        &act,
+    )
+    .expect("the value lands before its act");
+    fx.land(&act);
     assert_eq!(
         fx.permits(),
         (vec!["read".to_owned()], SettingStanding::Settled)
     );
 
-    let row = setting_beside_row(vault_row(PERMITS), &read_only).expect("the row's id");
+    let row = setting_beside_row(&fx.vault, vault_row(PERMITS), &read_only).expect("the row's id");
     assert!(
         fx.vault
             .delete_entity_with_options(&row, DeleteEntityOptions { purge: true })
@@ -360,8 +414,15 @@ fn a_value_replaced_after_the_row_read_it_reads_the_strictest_value() {
     let fx = Fixture::rooted();
     let machine = fx.second_machine(7);
     let read_only = json!(["read"]);
-    land_setting_beside_value(&fx.vault, vault_row(PERMITS), &read_only).expect("the value lands");
-    fx.beside_act_from(&machine, PERMITS, &read_only);
+    let act = fx.sign_beside_act_from(&machine, PERMITS, &read_only);
+    land_setting_beside_value_before(
+        &fx.vault,
+        vault_row(PERMITS),
+        (&read_only, &read_only),
+        &act,
+    )
+    .expect("the value lands before its act");
+    fx.land(&act);
     assert_eq!(
         fx.permits(),
         (vec!["read".to_owned()], SettingStanding::Settled)
@@ -487,4 +548,191 @@ fn the_list_shows_how_each_key_travels() {
     assert_eq!(travel(PERMITS), json!("beside"), "a list of text");
     assert_eq!(travel(INSTALL_MODE), json!("local"), "stays on its install");
     assert_eq!(travel(LEARNED), json!("local"), "a learned key");
+}
+
+#[test]
+fn the_owner_sets_again_a_value_whose_row_was_erased() {
+    let fx = Fixture::rooted();
+    let hello = json!("hello");
+    fx.owner_sets(SetSetting::vault_value(BANNER, hello.clone()));
+    let erased = setting_beside_row(&fx.vault, vault_row(BANNER), &hello).expect("the row");
+    fx.owner_sets(SetSetting::vault_value(BANNER, json!("another banner")));
+    assert!(
+        fx.vault
+            .delete_entity_with_options(&erased, DeleteEntityOptions { purge: true })
+            .expect("the erase"),
+        "the row was here"
+    );
+
+    // The same value again is a new act, with a row of its own: the erase does not refuse it.
+    fx.owner_sets(SetSetting::vault_value(BANNER, hello.clone()));
+    assert_ne!(
+        setting_beside_row(&fx.vault, vault_row(BANNER), &hello).expect("the new row"),
+        erased
+    );
+    assert_eq!(
+        setting_beside_value_here(&fx.vault, vault_row(BANNER), &hello).expect("the read"),
+        Some(hello)
+    );
+    assert_eq!(fx.banner(), ("hello".to_owned(), SettingStanding::Settled));
+}
+
+#[test]
+fn a_row_with_no_value_tag_after_its_act_is_read_at_once() {
+    let fx = Fixture::rooted();
+    let machine = fx.second_machine(7);
+    let read_only = json!(["read"]);
+    let before = fx.permits();
+    fx.beside_act_from(&machine, PERMITS, &read_only);
+    assert_eq!(fx.permits(), (before.0, SettingStanding::Pending));
+
+    // Its put runs the pass, whatever its body: the row holds no value of the act.
+    land_setting_beside_untagged(
+        &fx.vault,
+        vault_row(PERMITS),
+        &read_only,
+        b"not a setting value",
+    )
+    .expect("the row lands");
+    assert_eq!(
+        fx.permits(),
+        (Vec::new(), SettingStanding::Quarantined),
+        "the key's strictest value"
+    );
+}
+
+#[test]
+fn a_kept_value_erased_while_a_later_act_waits_reads_the_strictest_value() {
+    let fx = Fixture::rooted();
+    let machine = fx.second_machine(7);
+    let read_only = json!(["read"]);
+    fx.beside_act_from(&machine, PERMITS, &read_only);
+    land_setting_beside_value(&fx.vault, vault_row(PERMITS), &read_only).expect("the value lands");
+    assert_eq!(
+        fx.permits(),
+        (vec!["read".to_owned()], SettingStanding::Settled)
+    );
+    let kept = setting_beside_row(&fx.vault, vault_row(PERMITS), &read_only).expect("the row");
+
+    // A later act whose value has not arrived: the row keeps its value, `Pending`.
+    fx.beside_act_from(&machine, PERMITS, &json!(["read", "send"]));
+    assert_eq!(
+        fx.permits(),
+        (vec!["read".to_owned()], SettingStanding::Pending)
+    );
+
+    // The value the row keeps is erased here while the later act still waits.
+    assert!(
+        fx.vault
+            .delete_entity_with_options(&kept, DeleteEntityOptions { purge: true })
+            .expect("the erase"),
+        "the row was here"
+    );
+    fx.vault.project_settings().expect("the pass");
+    assert_eq!(
+        fx.permits(),
+        (Vec::new(), SettingStanding::Quarantined),
+        "the key's strictest value"
+    );
+}
+
+#[test]
+fn an_erased_value_on_a_key_with_no_strictest_value_reads_the_default() {
+    let fx = Fixture::rooted();
+    let hello = json!("hello");
+    fx.owner_sets(SetSetting::vault_value(BANNER, hello.clone()));
+    assert_eq!(fx.banner(), ("hello".to_owned(), SettingStanding::Settled));
+    let row = setting_beside_row(&fx.vault, vault_row(BANNER), &hello).expect("the row");
+    assert!(
+        fx.vault
+            .delete_entity_with_options(&row, DeleteEntityOptions { purge: true })
+            .expect("the erase"),
+        "the row was here"
+    );
+
+    // `test.member_banner` names no strictest value: no read takes the erased value.
+    fx.vault.project_settings().expect("the pass");
+    assert_eq!(
+        fx.banner(),
+        (String::new(), SettingStanding::Quarantined),
+        "the key's default"
+    );
+}
+
+#[test]
+fn a_row_a_keys_hook_refuses_here_keeps_no_other_row_of_the_pass_from_landing() {
+    let fx = Fixture::rooted();
+    let machine = fx.second_machine(7);
+    let floor = || vault_row("booking.emergency.min_proposals");
+    // A floor above this install's count of proposals: the key's hook refuses the row here.
+    let frontier = setting_frontier_of(&fx.vault, &[floor()]).expect("frontier");
+    assert!(
+        land_setting_batch_from(
+            &fx.vault,
+            &machine,
+            fx.owner,
+            &frontier,
+            &[(floor(), Some(json!(9)))],
+            T0
+        )
+        .expect("the act lands"),
+        "the fold here counts the act"
+    );
+
+    // The next act's pass reads both rows: the refused one stays as it was, and the other lands.
+    let value = json!("from the other machine");
+    let act = fx.sign_beside_act_from(&machine, BANNER, &value);
+    land_setting_beside_value_before(&fx.vault, vault_row(BANNER), (&value, &value), &act)
+        .expect("the value lands before its act");
+    fx.land(&act);
+    assert_eq!(
+        fx.banner(),
+        (
+            "from the other machine".to_owned(),
+            SettingStanding::Settled
+        )
+    );
+    let read = invoke(
+        &fx.as_owner(),
+        "vault.settings.get",
+        json!({ "key": "booking.emergency.min_proposals" }),
+    )
+    .expect("the owner reads the floor");
+    assert_ne!(read["value"], json!(9), "the refused row stays as it was");
+}
+
+#[test]
+fn the_owners_resident_route_lands_on_an_install_with_no_model_manifest() {
+    let fx = Fixture::rooted();
+    let machine = fx.second_machine(7);
+    let route = || {
+        (
+            "models.resident_route",
+            Some("llm"),
+            SettingMode::Value,
+            SettingScope::Vault,
+        )
+    };
+    let frontier = setting_frontier_of(&fx.vault, &[route()]).expect("frontier");
+    assert!(
+        land_setting_batch_from(
+            &fx.vault,
+            &machine,
+            fx.owner,
+            &frontier,
+            &[(route(), Some(json!("on_device")))],
+            T0
+        )
+        .expect("the act lands"),
+        "the fold here counts the act"
+    );
+    // His machine checked the route under its manifest; this install's reader takes a route its
+    // own manifest does not admit as the slot's pin.
+    let read = invoke(
+        &fx.as_owner(),
+        "vault.settings.get",
+        json!({ "key": "models.resident_route", "item": "llm" }),
+    )
+    .expect("the owner reads the route");
+    assert_eq!(read["value"], json!("on_device"));
 }
