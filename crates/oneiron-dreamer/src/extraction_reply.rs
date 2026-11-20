@@ -235,6 +235,9 @@ mod tests {
     /// Holds the cited turn's id in the fixtures, as 32 lowercase hex digits.
     const TURN_HEX: &str = "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2";
 
+    /// Holds the cited claim's id in the fixtures, as 32 lowercase hex digits.
+    const CLAIM_HEX: &str = "f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5";
+
     /// Holds the turn revision the fixtures cite, as `blake3:<hex>`.
     const REVISION: &str =
         "blake3:d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3";
@@ -392,6 +395,30 @@ mod tests {
         let second = &operands[1]["evidence"][0]["version"];
         assert_eq!(second["entity"], json!(TURN_HEX));
         assert!(second.get("projection").is_none());
+    }
+
+    /// A candidate's cited claims reach its operand with their versions, and a
+    /// candidate that cites none carries no `claim_evidence` key.
+    #[test]
+    fn verdict_operands_carry_cited_claims() {
+        let cited = json!([{
+            "claim": CLAIM_HEX,
+            "version": {
+                "entity": CLAIM_HEX,
+                "entity_type": 0,
+                "learned_at": 1_720_000_000_500_u64,
+                "revision": REVISION,
+            },
+        }]);
+        let mut reply = bound_reply_value();
+        reply["candidates"][0]["claim_evidence"] = cited.clone();
+        let reply: BoundExtractionReply =
+            serde_json::from_value(reply).expect("the fixture decodes");
+        let operands = verdict_operands(&reply);
+        assert_eq!(operands.len(), 2);
+        assert_eq!(operands[0]["claim_evidence"], cited);
+        assert_eq!(operands[0]["evidence"][0]["turn"], json!(TURN_HEX));
+        assert!(operands[1].get("claim_evidence").is_none());
     }
 
     /// A candidate with an unknown field does not decode.

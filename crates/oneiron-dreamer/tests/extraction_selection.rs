@@ -275,6 +275,68 @@ fn union_dedupes_evidence_and_keeps_representative_shape() {
     );
 }
 
+/// A group's union carries each member's cited claims once, in member order, and a
+/// group that cites no claim keeps the key absent.
+#[test]
+fn union_carries_the_cited_claims_of_every_member() {
+    let pin = |claim: &str| {
+        json!({
+            "claim": claim,
+            "version": {
+                "entity": claim,
+                "entity_type": 0,
+                "learned_at": 7,
+                "revision": format!("blake3:{}", "ab".repeat(32)),
+            },
+        })
+    };
+    let first = pin(&"c1".repeat(16));
+    let second = pin(&"c2".repeat(16));
+    let operand = |predicate: &str, cited: Option<Value>| {
+        let mut built = json!({
+            "subject": "b1".repeat(16),
+            "predicate": predicate,
+            "value": "tea",
+            "evidence": [],
+        });
+        if let Some(cited) = cited {
+            built["claim_evidence"] = cited;
+        }
+        built
+    };
+    let operands = vec![
+        operand("likes", Some(json!([first.clone()]))),
+        operand("likes", Some(json!([second.clone(), first.clone()]))),
+        operand("dislikes", None),
+    ];
+    let groups = CandidateGroups {
+        groups: vec![
+            CandidateGroup {
+                representative_index: 0,
+                member_indexes: vec![0, 1],
+                corrects: None,
+            },
+            CandidateGroup {
+                representative_index: 2,
+                member_indexes: vec![2],
+                corrects: None,
+            },
+        ],
+        pending_bindings: Vec::new(),
+    };
+    let unions = union_operands(&operands, &groups);
+    assert_eq!(unions.len(), 2, "one union per bound group");
+    assert_eq!(
+        unions[0]["claim_evidence"],
+        json!([first, second]),
+        "each member's cited claims, once, in member order"
+    );
+    assert!(
+        unions[1].get("claim_evidence").is_none(),
+        "a group that cites no claim keeps the key absent"
+    );
+}
+
 #[test]
 fn required_policy_fields_and_policy_pin_are_enforced() {
     let fixture = load_fixture();
