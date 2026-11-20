@@ -499,14 +499,19 @@ impl OwnerWorkRequest {
         Ok(())
     }
 
-    /// Signed alone by an Ed25519 install key, the carrier's.
+    /// Signed by an Ed25519 install key, the carrier's, alone or beside one
+    /// owner key's proof ([`AuthorityLogEntry::validate_carried_signers`]); a kit push by its
+    /// root's anchor alone.
     pub(super) fn validate_entry(&self, entry: &AuthorityLogEntry) -> Result<()> {
-        signed_alone_by_install_key(entry)
+        if self.kit_root().is_some() {
+            return signed_alone_by_install_key(entry);
+        }
+        entry.validate_carried_signers()
     }
 }
 
-/// An owner work entry is signed by one Ed25519 install key and cosigned by
-/// none.
+/// An owner-anchored owner work entry, a kit push or its permit piece, is
+/// signed by one Ed25519 key, its root's anchor, and cosigned by none.
 fn signed_alone_by_install_key(entry: &AuthorityLogEntry) -> Result<()> {
     if entry.signer.suite != AuthoritySignatureSuite::Ed25519 || !entry.cosigns.is_empty() {
         return Err(invalid_authority());

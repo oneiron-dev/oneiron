@@ -50,9 +50,6 @@ pub(super) fn apply_membership_execution(
     hash: AuthorityEntryHash,
     (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
 ) -> std::result::Result<(), AuthorityFoldIssue> {
-    if !entry.cosigns.is_empty() {
-        return Err(AuthorityFoldIssue::InvalidEntry(hash));
-    }
     let signer = entry.signer_key();
     let AuthorityKey::Ed25519(key) = signer else {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));

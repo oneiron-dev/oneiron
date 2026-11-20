@@ -373,7 +373,7 @@ pub(super) fn apply_world_privacy(
     (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
-    if !entry.cosigns.is_empty() || edit.world == crate::claim::base_world_id() {
+    if edit.world == crate::claim::base_world_id() {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
     let signer = entry.signer_key();
