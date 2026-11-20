@@ -69,6 +69,7 @@ use crate::entity_id::EntityId;
 use crate::error::{DevicePinRefusal, Error, RecordError, Result};
 use crate::vault::Vault;
 
+mod box_cancel_signature;
 mod slot;
 
 pub(crate) use self::slot::{OwnerSigningSlot, SlotRenewal};

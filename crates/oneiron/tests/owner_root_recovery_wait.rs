@@ -76,10 +76,11 @@ use oneiron::authority::{
     ActorBindingStatus, AuthorityAttestation, AuthorityEntryHash, AuthorityKey, AuthorityLogEntry,
     AuthorityOp, AuthoritySignature, AuthorityTier, CheckpointRootSigner, DeviceAuthority,
     HostSlipIssuer, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey, MachineRole,
-    OwnerKeyEnrollment, OwnerRootRecord, RECOVERY_WAIT_DEFAULT, ROLE_ADMIN, RecoveryHoldAnswer,
-    RecoveryHoldAnswerKind, RecoveryHoldLanding, RecoveryHoldState, RecoveryHoldView, RootMaterial,
-    RootRecovery, RootSuccessor, authority_entry_hash, authority_log_entity_id_from_hash,
-    authority_transcript, decode_authority_log_entry_body, encode_authority_log_entry_body,
+    OwnerKeyEnrollment, OwnerRootRecord, RECOVERY_WAIT_DEFAULT, ROLE_ADMIN, RecoveryBoxCancelProof,
+    RecoveryHoldAnswer, RecoveryHoldAnswerKind, RecoveryHoldLanding, RecoveryHoldState,
+    RecoveryHoldView, RootMaterial, RootRecovery, RootSuccessor, authority_entry_hash,
+    authority_log_entity_id_from_hash, authority_transcript, decode_authority_log_entry_body,
+    encode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole, InitialSharedMember};
@@ -95,7 +96,8 @@ use oneiron::test_doors::owner_key_release::release_owner_keys;
 use oneiron::test_doors::root_recovery::{recover_owner_root_waiting, released_authority_seed};
 use oneiron::test_support::bind_host_owner;
 use oneiron::world_keys::{
-    NoRecoveryBox, RecoveryAuthoritySigner, RecoveryBoxHold, RecoveryPreset, RecoveryRootSeed,
+    NoRecoveryBox, RecoveryAuthoritySigner, RecoveryBoxCanceller, RecoveryBoxHold, RecoveryPreset,
+    RecoveryRootSeed,
 };
 use oneiron::{
     EdgeActorClass, EntityId, ErrorKind, HostingPrivacyPosture, TimeRange, Vault, VaultConfig,
@@ -2622,11 +2624,14 @@ fn a_retry_after_a_cancelled_hold_keeps_its_seed_and_lands() {
 /// = A): it records each wait the vault reports, and a release it opens at
 /// `opened` gives the root's authority key out at `opened` plus the last
 /// reported wait, or 24 hours before any report. With `fail_report`, a
-/// report answers `Err`.
+/// report answers `Err`. It records each Cancel with who cancelled and the
+/// receipt it names; the first Cancel voids the pending release, so a later
+/// one finds nothing pending.
 #[derive(Default)]
 struct WaitingBox {
     reports: RefCell<Vec<Duration>>,
     fail_report: bool,
+    cancels: RefCell<Vec<(RecoveryBoxCanceller, Option<u64>)>>,
 }
 
 impl RecoveryBoxHold for WaitingBox {
@@ -2642,6 +2647,16 @@ impl RecoveryBoxHold for WaitingBox {
             )));
         }
         Ok(())
+    }
+
+    fn cancel_pending_box_release(
+        &self,
+        cancelled_by: &RecoveryBoxCanceller,
+        release_receipt: Option<u64>,
+    ) -> oneiron::Result<bool> {
+        let mut cancels = self.cancels.borrow_mut();
+        cancels.push((*cancelled_by, release_receipt));
+        Ok(cancels.len() == 1)
     }
 }
 
@@ -2811,4 +2826,252 @@ fn a_wait_report_the_box_refuses_answers_its_error() {
         .vault
         .report_recovery_wait_to_box(&NoRecoveryBox)
         .expect("no box: nothing to report");
+}
+
+/// The box cancel doors' refusal words, asserted with `contains`.
+const NO_OWNER_KEY_TO_CANCEL: &str =
+    "this install holds no live owner key of yours to cancel the box's recovery";
+const CANCEL_PROOF_NOT_ACTORS: &str = "the cancel's proof names another person";
+const CANCEL_KEY_NOT_OWNERS: &str =
+    "the cancel is not signed by a live owner key of yours on this vault";
+const CANCEL_KEY_IS_ROOT: &str = "the root's authority key never cancels the box's recovery";
+const CANCEL_PROOF_NOT_VALID: &str = "the cancel's signature does not verify for this vault";
+const CANCEL_PROOF_STALE: &str =
+    "the cancel was signed more than five minutes from this node's clock";
+
+/// `key`'s Cancel of the box's pending release for `person`, signed by hand
+/// over the door's transcript for `vault_id`: an owner device install of its
+/// own.
+fn signed_cancel(
+    vault_id: &[u8; 32],
+    key: &SigningKey,
+    person: EntityId,
+    issued_at: u64,
+    release_receipt: Option<u64>,
+) -> RecoveryBoxCancelProof {
+    let mut proof = RecoveryBoxCancelProof {
+        person,
+        key: key.verifying_key().to_bytes(),
+        issued_at,
+        release_receipt,
+        signature: Vec::new(),
+    };
+    proof.signature = key.sign(&proof.transcript(vault_id)).to_bytes().to_vec();
+    proof
+}
+
+/// An owner device's Cancel during the box wait (ONE-WAIT = A: no recovery
+/// hold exists yet) reaches the box once, naming the owner and the key that
+/// signed it, and voids the pending release: a second Cancel finds nothing
+/// pending. The Cancel writes no authority row.
+#[test]
+fn an_owner_devices_cancel_during_the_box_wait_voids_the_release_and_names_them() {
+    let fixture = fixture();
+    let enrolled = fixture
+        .vault
+        .enrol_device_owner_signing_key(&fixture.authority(), &fixture.issuer)
+        .expect("this device's owner key enrols");
+    let recovery_box = WaitingBox::default();
+    let before_history = fixture.history().len();
+
+    let proof = fixture
+        .vault
+        .sign_recovery_box_cancel_as(&fixture.authority(), Some(7))
+        .expect("the device signs its cancel");
+    assert_eq!(proof.person, fixture.person, "the cancel names the owner");
+    assert_eq!(
+        proof.key, enrolled.public_key,
+        "this device's owner key signs"
+    );
+    assert!(
+        (T0..T0 + 60).contains(&proof.issued_at),
+        "signed on this clock: {}",
+        proof.issued_at
+    );
+    assert_eq!(proof.release_receipt, Some(7));
+
+    fixture.at(T0 + 60);
+    let cancelled = fixture
+        .vault
+        .cancel_box_recovery_as(&fixture.authority(), &proof, &recovery_box)
+        .expect("the node takes the cancel");
+    assert!(cancelled, "the box cancelled the pending release");
+    assert_eq!(
+        *recovery_box.cancels.borrow(),
+        vec![(
+            RecoveryBoxCanceller {
+                owner: fixture.person,
+                key: enrolled.public_key,
+            },
+            Some(7),
+        )],
+        "the box is asked once, naming who cancelled and the release"
+    );
+    let again = fixture
+        .vault
+        .cancel_box_recovery_as(&fixture.authority(), &proof, &recovery_box)
+        .expect("a second cancel reaches the box");
+    assert!(!again, "nothing is pending after the cancel");
+    assert_eq!(
+        fixture.history().len(),
+        before_history,
+        "a box cancel writes no authority row"
+    );
+}
+
+/// Any owner of the vault cancels the box's recovery, each with their own
+/// key (WAYBACK-COOWNER-CANCEL-OTHER-OWNERS-RECOVERY = B): the co-Owner's
+/// Cancel and the first owner's each reach the box naming who cancelled.
+#[test]
+fn every_owner_of_the_vault_cancels_the_box_wait_with_their_own_key() {
+    let co = co_owner_wait_fixture();
+    let first_key = co.hold_first_owners_key(FIRST_OWNER_KEY_SEED);
+    let recovery_box = WaitingBox::default();
+
+    let co_owners = signed_cancel(&co.vault_id, &co.lost_key, co.person, T0, None);
+    assert!(
+        co.vault
+            .cancel_box_recovery_as(&co.authority(), &co_owners, &recovery_box)
+            .expect("the co-Owner cancels"),
+        "the co-Owner's cancel voids the pending release"
+    );
+    let first_owners = signed_cancel(&co.vault_id, &first_key, co.first_owner, T0, Some(3));
+    co.vault
+        .cancel_box_recovery_as(&co.first_owner_authority(), &first_owners, &recovery_box)
+        .expect("the first owner cancels");
+    assert_eq!(
+        *recovery_box.cancels.borrow(),
+        vec![
+            (
+                RecoveryBoxCanceller {
+                    owner: co.person,
+                    key: co.lost_key.verifying_key().to_bytes(),
+                },
+                None,
+            ),
+            (
+                RecoveryBoxCanceller {
+                    owner: co.first_owner,
+                    key: first_key.verifying_key().to_bytes(),
+                },
+                Some(3),
+            ),
+        ],
+        "each cancel names its owner and key"
+    );
+}
+
+/// Sign-in alone never cancels the box's recovery: an install that holds no
+/// live owner key of the owner's signs no Cancel, and the node refuses a
+/// Cancel whose key is no live owner key on its fold. Neither reaches the
+/// box.
+#[test]
+fn sign_in_alone_never_cancels_the_box_wait() {
+    let fixture = fixture();
+    let error = fixture
+        .vault
+        .sign_recovery_box_cancel_as(&fixture.authority(), None)
+        .expect_err("no owner key on this install, no cancel");
+    assert_refused(&error, NO_OWNER_KEY_TO_CANCEL);
+
+    let recovery_box = WaitingBox::default();
+    let stranger = SigningKey::from_bytes(&[STRANGER_KEY_SEED; 32]);
+    let proof = signed_cancel(&fixture.vault_id, &stranger, fixture.person, T0, None);
+    let error = fixture
+        .vault
+        .cancel_box_recovery_as(&fixture.authority(), &proof, &recovery_box)
+        .expect_err("a key off the roster never cancels");
+    assert_refused(&error, CANCEL_KEY_NOT_OWNERS);
+    assert!(
+        recovery_box.cancels.borrow().is_empty(),
+        "nothing reached the box"
+    );
+}
+
+/// The root's authority key never cancels the box's recovery: the box holds
+/// its seed. Its Cancel never reaches the box.
+#[test]
+fn the_roots_authority_key_never_cancels_the_box_wait() {
+    let fixture = fixture();
+    let root = SigningKey::from_bytes(&released_authority_seed(
+        &fixture.seed(),
+        &fixture.vault_id,
+        0,
+    ));
+    assert!(fixture.live(&key_of(&root)), "the kit's R is on the roster");
+    let recovery_box = WaitingBox::default();
+    let proof = signed_cancel(&fixture.vault_id, &root, fixture.person, T0, None);
+    let error = fixture
+        .vault
+        .cancel_box_recovery_as(&fixture.authority(), &proof, &recovery_box)
+        .expect_err("R never cancels at this door");
+    assert_refused(&error, CANCEL_KEY_IS_ROOT);
+    assert!(
+        recovery_box.cancels.borrow().is_empty(),
+        "nothing reached the box"
+    );
+}
+
+/// A Cancel the node cannot trust never reaches the box: one signed more
+/// than five minutes from the node's clock, ahead or behind; one whose
+/// receipt changed after signing; one signed for another vault.
+#[test]
+fn a_stale_or_altered_cancel_never_reaches_the_box() {
+    let fixture = fixture();
+    let keeper = fixture.enrol_device_key(KEEPER_KEY_SEED);
+    let recovery_box = WaitingBox::default();
+    let node = |proof: &RecoveryBoxCancelProof| {
+        fixture
+            .vault
+            .cancel_box_recovery_as(&fixture.authority(), proof, &recovery_box)
+            .expect_err("the node refuses the cancel")
+    };
+
+    let ahead = signed_cancel(
+        &fixture.vault_id,
+        &keeper,
+        fixture.person,
+        T0 + 400,
+        Some(7),
+    );
+    assert_refused(&node(&ahead), CANCEL_PROOF_STALE);
+    let mut altered = signed_cancel(&fixture.vault_id, &keeper, fixture.person, T0, Some(7));
+    altered.release_receipt = Some(8);
+    assert_refused(&node(&altered), CANCEL_PROOF_NOT_VALID);
+    let other_vault = signed_cancel(&[9; 32], &keeper, fixture.person, T0, Some(7));
+    assert_refused(&node(&other_vault), CANCEL_PROOF_NOT_VALID);
+    let behind = signed_cancel(&fixture.vault_id, &keeper, fixture.person, T0, Some(7));
+    fixture.at(T0 + 400);
+    assert_refused(&node(&behind), CANCEL_PROOF_STALE);
+    assert!(
+        recovery_box.cancels.borrow().is_empty(),
+        "nothing reached the box"
+    );
+}
+
+/// Each owner cancels with their own key: a Cancel that names another
+/// person than the actor, or that another owner's key signed for the
+/// actor, never reaches the box.
+#[test]
+fn another_owners_name_or_key_never_cancels_for_the_actor() {
+    let co = co_owner_wait_fixture();
+    let first_key = co.hold_first_owners_key(FIRST_OWNER_KEY_SEED);
+    let recovery_box = WaitingBox::default();
+
+    let names_another = signed_cancel(&co.vault_id, &first_key, co.first_owner, T0, None);
+    let error = co
+        .vault
+        .cancel_box_recovery_as(&co.authority(), &names_another, &recovery_box)
+        .expect_err("the co-Owner never sends the first owner's cancel");
+    assert_refused(&error, CANCEL_PROOF_NOT_ACTORS);
+    let another_key = signed_cancel(&co.vault_id, &first_key, co.person, T0, None);
+    let error = co
+        .vault
+        .cancel_box_recovery_as(&co.authority(), &another_key, &recovery_box)
+        .expect_err("the first owner's key never cancels for the co-Owner");
+    assert_refused(&error, CANCEL_KEY_NOT_OWNERS);
+    assert!(
+        recovery_box.cancels.borrow().is_empty(),
+        "nothing reached the box"
+    );
 }
