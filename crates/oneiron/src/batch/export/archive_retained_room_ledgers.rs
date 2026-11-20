@@ -8,7 +8,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use heed::RoTxn;
 
 use super::archive_retained_side_rows::ArchiveRetainedSideRow;
-use super::archive_retained_subjects::RetainedSubjectRule;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::SideKey;
@@ -34,39 +33,31 @@ pub(super) fn retained_row_room(source_table: &str, source_key: &[u8]) -> Option
     }
 }
 
-/// Withholds the whole ledger of the room a withheld ledger envelope belongs to, when its key
-/// still names one: the ledger goes whole or not at all ([`note_ledger_envelope`]), so a row the
-/// export withholds takes its room's other rows and revision along. A live row does so even
-/// when `rule` cannot read it. An inert copy `rule` cannot read is withheld alone: an imported
-/// copy is archive data, and a malformed one never takes the room's live ledger out of the
-/// backup (REVIEW-9739 P1-2).
+/// Withholds the whole ledger of the room a withheld live ledger envelope belongs to, when its
+/// key still names one: the ledger goes whole or not at all ([`note_ledger_envelope`]), so a live
+/// row the export withholds, one its rule cannot read among them, takes its room's other rows
+/// and revision along. A withheld inert copy is withheld alone: an imported copy is archive data
+/// that never installs, so it never takes the room's live ledger out of the backup, whatever its
+/// bytes say (REVIEW-9739 P1-2, round 2 P1-1).
 pub(super) fn withhold_room_ledger(
-    rule: Option<RetainedSubjectRule>,
     envelope: &ArchiveRetainedSideRow,
     withheld_ledgers: &mut BTreeSet<EntityId>,
 ) {
-    if !crate::conversation::archive_restore::is_ledger_table(&envelope.source_table) {
-        return;
-    }
-    if !envelope.source_live
-        && rule
-            .and_then(|rule| rule.records(&envelope.source_key, &envelope.source_value))
-            .is_none()
+    if envelope.source_live
+        && crate::conversation::archive_restore::is_ledger_table(&envelope.source_table)
+        && let Some(room) = retained_row_room(&envelope.source_table, &envelope.source_key)
     {
-        return;
-    }
-    if let Some(room) = retained_row_room(&envelope.source_table, &envelope.source_key) {
         withheld_ledgers.insert(room);
     }
 }
 
-/// Notes room ledger envelope `envelope`'s room under its identity, and withholds that room's
-/// whole ledger when the envelope is a ledger row that names an entity the export keeps out, or
-/// a live row that does not read as a ledger row (REVIEW-9446 round 2 P1-2). The ledger goes
-/// whole or not at all: a restore needs its one revision and every row, and each envelope's
-/// bytes are its identity, so no row is trimmed or rewritten. An inert copy that does not read
-/// as a ledger row is withheld alone, as [`withhold_room_ledger`] withholds one whose key does
-/// not read (REVIEW-9739 P1-2). Returns whether the export carries the envelope.
+/// Notes room ledger envelope `envelope`'s room under its identity, so a withheld live ledger
+/// takes its inert copies along too. A live ledger row that does not read as one, or that names
+/// an entity the export keeps out, withholds its room's whole ledger (REVIEW-9446 round 2 P1-2):
+/// a restore needs its one revision and every row, and each envelope's bytes are its identity,
+/// so no row is trimmed or rewritten. Such an inert copy is withheld alone, as
+/// [`withhold_room_ledger`] withholds one (REVIEW-9739 round 2 P1-1). Returns whether the export
+/// carries the envelope.
 pub(super) fn note_ledger_envelope(
     store: &Store,
     rtxn: &RoTxn<'_>,
@@ -81,28 +72,29 @@ pub(super) fn note_ledger_envelope(
     let Some(room) = retained_row_room(&envelope.source_table, &envelope.source_key) else {
         return Ok(true);
     };
-    if envelope.source_table != crate::side_table::CONVERSATION_MEMBERSHIP_ROW.name {
-        ledger_rooms.insert(identity, room);
-        return Ok(true);
-    }
-    let Some(named) = crate::conversation::membership_row_named_entities(&envelope.source_value)
-    else {
+    if envelope.source_table == crate::side_table::CONVERSATION_MEMBERSHIP_ROW.name
+        && !(envelope.source_live && withheld_ledgers.contains(&room))
+        && membership_row_withheld(store, rtxn, &envelope.source_value)?
+    {
         if !envelope.source_live {
             return Ok(false);
         }
-        ledger_rooms.insert(identity, room);
         withheld_ledgers.insert(room);
+    }
+    ledger_rooms.insert(identity, room);
+    Ok(true)
+}
+
+/// Whether the export withholds a membership ledger row with value bytes `value`, read in
+/// `rtxn`: its bytes read as no ledger row, or it names an entity the export keeps out.
+fn membership_row_withheld(store: &Store, rtxn: &RoTxn<'_>, value: &[u8]) -> Result<bool> {
+    let Some(named) = crate::conversation::membership_row_named_entities(value) else {
         return Ok(true);
     };
-    ledger_rooms.insert(identity, room);
-    if withheld_ledgers.contains(&room) {
-        return Ok(true);
-    }
     for id in &named {
         if super::export_egress::whole_vault_export_excludes_entity_in_txn(store, rtxn, id)? {
-            withheld_ledgers.insert(room);
-            break;
+            return Ok(true);
         }
     }
-    Ok(true)
+    Ok(false)
 }

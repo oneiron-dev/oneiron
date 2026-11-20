@@ -206,9 +206,9 @@ fn retained_row_withheld(
 /// retained source tables read raw and marked `source_live`, unioned with the inert envelopes
 /// already stored, deduplicated by [`retained_side_row_key`] with the live row kept. A row about
 /// a record the export keeps out is withheld ([`retained_row_withheld`]), and so is every live
-/// and inert row of a room ledger one of whose rows is withheld ([`withhold_room_ledger`]) or
-/// names an entity it keeps out ([`note_ledger_envelope`]). Collected into memory like the
-/// 41-family writer.
+/// and inert row of a room ledger one of whose live rows is withheld ([`withhold_room_ledger`])
+/// or names an entity it keeps out ([`note_ledger_envelope`]); a withheld inert copy goes alone.
+/// Collected into memory like the 41-family writer.
 pub(crate) fn collect_retained_side_rows_in_txn(
     store: &Store,
     rtxn: &RoTxn<'_>,
@@ -227,7 +227,7 @@ pub(crate) fn collect_retained_side_rows_in_txn(
                 source_live: true,
             };
             if retained_row_withheld(store, rtxn, rule, &envelope)? {
-                withhold_room_ledger(rule, &envelope, &mut withheld_ledgers);
+                withhold_room_ledger(&envelope, &mut withheld_ledgers);
                 continue;
             }
             let key = retained_side_row_key(&envelope);
@@ -261,7 +261,7 @@ pub(crate) fn collect_retained_side_rows_in_txn(
         let envelope = RETAINED_SIDE_ROWS.decode_value(&value)?;
         let rule = retained_subject_rule(&envelope.source_table);
         if retained_row_withheld(store, rtxn, rule, &envelope)? {
-            withhold_room_ledger(rule, &envelope, &mut withheld_ledgers);
+            withhold_room_ledger(&envelope, &mut withheld_ledgers);
             continue;
         }
         let identity = retained_side_row_key(&envelope);

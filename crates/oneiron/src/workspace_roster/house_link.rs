@@ -46,7 +46,7 @@ use crate::federation::{
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT};
 use crate::scan_check::ScanCount;
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::EngineScan;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -689,16 +689,17 @@ pub(crate) fn erase_house_link_actor_in_txn(
     Ok(())
 }
 
-/// The records a stored house link receipt's value bytes name, as
+/// The records a stored house link receipt names, as
 /// [`erase_house_link_actor_in_txn`] matches them: its binder, its house and
-/// its org, whose erase drops the receipt; `None` for bytes that do not read
-/// as a receipt. The whole-vault export withholds a receipt that names a
-/// record it keeps out (REVIEW-9739 P1-1).
-pub(crate) fn house_link_receipt_records(value: &[u8]) -> Option<Vec<EntityId>> {
-    RECEIPTS
-        .decode_value(value)
-        .ok()
-        .map(|receipt| vec![receipt.binder, receipt.house, receipt.org])
+/// its org, whose erase drops the receipt, read from its value; `None` for
+/// bytes that do not read as a receipt, and for a key whose house is not the
+/// value's (the key leads with the house, so it names it too). The
+/// whole-vault export withholds a receipt that names a record it keeps out
+/// (REVIEW-9739 P1-1, round 2 P1-2).
+pub(crate) fn house_link_receipt_records(key: &[u8], value: &[u8]) -> Option<Vec<EntityId>> {
+    let (house, _) = <(EntityId, EntityId) as SideKey>::decode_key(key)?;
+    let receipt = RECEIPTS.decode_value(value).ok()?;
+    (receipt.house == house).then(|| vec![receipt.binder, receipt.house, receipt.org])
 }
 
 /// The org `house` ran at `at`, read from its receipts alone: the org of the

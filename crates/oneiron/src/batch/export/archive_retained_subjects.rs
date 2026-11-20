@@ -35,6 +35,9 @@ pub(crate) enum RetainedSubjectRule {
     /// The records whose delete drops the row, read from its value by the table's owner; `None`
     /// when the bytes do not read as the table's value.
     Value(fn(&[u8]) -> Option<Vec<EntityId>>),
+    /// The records a row's key and value name together, read by the table's owner, which also
+    /// checks that they agree; `None` when the bytes do not read as one row of the table.
+    KeyAndValue(fn(&[u8], &[u8]) -> Option<Vec<EntityId>>),
 }
 
 /// A key that is one record id.
@@ -86,7 +89,11 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("DREAMER_PROJECTOR_POLICY", NoRecord),
     ("DREAMER_SIEVE_POLICY", NoRecord),
     ("DREAMER_WAKE_POLICY", NoRecord),
-    ("EDIT_DISTANCE_ESCALATION_POLICY", NoRecord),
+    // A remembered policy's governed scope (e.g. `consult:<actor hex>:<brief>`) and answerer.
+    (
+        "EDIT_DISTANCE_ESCALATION_POLICY",
+        Value(standing_policy_records),
+    ),
     ("ENTITY_DOC_PURGE_RECEIPT", HEX_PAIR_OWNER),
     ("ENTITY_DOC_RECEIPT", HEX_PAIR_OWNER),
     ("ESIGN_AUDIT", ID_AND_U64),
@@ -97,8 +104,11 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("HOOKS_GRANT", ONE_ID),
     ("HOOKS_RECEIPT", NoRecord),
     ("HOOKS_REGEN_RECEIPT", NoRecord),
-    // The house, then the receipt id; the value names the binder, the house and the org.
-    ("HOUSE_LINK_RECEIPT", Value(house_link_receipt_records)),
+    // The house, then the receipt id; the value names the binder, the same house and the org.
+    (
+        "HOUSE_LINK_RECEIPT",
+        KeyAndValue(house_link_receipt_records),
+    ),
     ("INQUIRY_RECEIPT", NoRecord),
     ("LEARNING_SETTING", ParsedKey(learning_setting_key_records)),
     ("LEGAL_HOLD_ERASE_LINK", Evidence),
@@ -188,6 +198,7 @@ impl RetainedSubjectRule {
             RawIds { .. } | HexIds { .. } => None,
             ParsedKey(read) => read(key),
             Value(read) => read(value),
+            KeyAndValue(read) => read(key, value),
         }
     }
 }
@@ -250,9 +261,14 @@ fn note_receipt_records(value: &[u8]) -> Option<Vec<EntityId>> {
     crate::note::landing_receipt_note(value).map(|note| vec![note])
 }
 
-/// The binder, house and org a stored house link receipt names.
-fn house_link_receipt_records(value: &[u8]) -> Option<Vec<EntityId>> {
-    crate::workspace_roster::house_link_receipt_records(value)
+/// The binder, house and org a stored house link receipt names, its key's house the same.
+fn house_link_receipt_records(key: &[u8], value: &[u8]) -> Option<Vec<EntityId>> {
+    crate::workspace_roster::house_link_receipt_records(key, value)
+}
+
+/// The records a stored standing escalation policy names in its governed scopes and answerers.
+fn standing_policy_records(value: &[u8]) -> Option<Vec<EntityId>> {
+    crate::edit_distance::escalation::standing_policy_records(value)
 }
 
 /// The voice subject a stored render decision is about.
@@ -320,7 +336,7 @@ const fn rules_cover_the_retained_tables() -> bool {
         let fits = match RETAINED_SUBJECT_RULES[at].1 {
             RawIds { len, ids } => ids_fit(len, ids, 16),
             HexIds { len, ids } => ids_fit(len, ids, 32),
-            NoRecord | Evidence | ParsedKey(_) | Value(_) => true,
+            NoRecord | Evidence | ParsedKey(_) | Value(_) | KeyAndValue(_) => true,
         };
         if !fits {
             return false;
