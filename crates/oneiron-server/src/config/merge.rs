@@ -38,13 +38,17 @@ use super::{
 };
 
 mod file_admission;
+mod layers;
+mod refusal_origin;
 mod sections;
 mod validation;
 
-pub(crate) use self::file_admission::read_config_file;
+pub(crate) use self::file_admission::{FileRefused, read_config_file, read_referenced_file};
+use self::layers::{merge_layers, read_layers};
 pub use self::sections::default_config_path;
 pub(crate) use self::validation::settings_schema_keys;
 use self::validation::{validate_embedder_config, validate_serve_config};
+pub(crate) use super::diagnostics::parse_json;
 
 /// Environment-derived serve settings.
 #[derive(Clone, Debug, Default)]
@@ -109,11 +113,10 @@ pub fn resolve_serve_config_with_sources(
     env: EnvConfig,
     default_config_path: Option<PathBuf>,
 ) -> anyhow::Result<ServeConfig> {
-    let resolved = layer_serve_config(args, env, default_config_path)?;
+    let layers = read_layers(args, env, default_config_path)?;
     // Same-source or higher-precedence references remain for validation to
     // refuse rather than silently fixing a contradictory self-host request.
-    validate_serve_config(&resolved)?;
-    Ok(resolved)
+    merge_layers(args, &layers, validate_serve_config)
 }
 
 /// The file, environment and flag layers merged, before the checks that
@@ -124,97 +127,8 @@ pub(crate) fn layer_serve_config(
     env: EnvConfig,
     default_config_path: Option<PathBuf>,
 ) -> anyhow::Result<ServeConfig> {
-    let flag_values = PartialServeConfig::from(args);
-    let config_path = args
-        .config
-        .clone()
-        .or_else(|| env.config_path.clone())
-        .or(default_config_path);
-    let explicit_config = args.config.is_some() || env.config_path.is_some();
-    // A config path whose existence cannot be checked (a parent this process
-    // may not search) is not taken as absent, even the default one: its file
-    // may set what the defaults do not, such as a manual `[runtime] clock`.
-    let file_values = match config_path {
-        Some(path) => match path.try_exists() {
-            Ok(true) => load_file_config(&path)?,
-            Ok(false) if explicit_config => {
-                anyhow::bail!("config file {} does not exist", path.display());
-            }
-            Ok(false) => PartialServeConfig::default(),
-            Err(error) => {
-                let path = path.display();
-                anyhow::bail!("config file {path} cannot be checked: {error}");
-            }
-        },
-        None => PartialServeConfig::default(),
-    };
-    // The owner's settings file (`--settings-file`, FIX 5016), in the config
-    // file's schema as a managed vault reads it: one more vault file layer,
-    // over the config file and under the environment and the flags.
-    let settings_values = args
-        .settings_file
-        .as_deref()
-        .map(load_file_config)
-        .transpose()?;
-
-    let space_naming = super::embedder_space::SpaceNaming::of([
-        file_values.embedder.as_ref(),
-        settings_values
-            .as_ref()
-            .and_then(|values| values.embedder.as_ref()),
-        env.values.embedder.as_ref(),
-        flag_values.embedder.as_ref(),
-    ]);
-    let mut resolved = ServeConfig::default();
-    let mut posture_source = None;
-    let mut key_ref_source = None;
-    for (source, values) in [
-        (ConfigLayer::Vault, Some(file_values)),
-        (ConfigLayer::Vault, settings_values),
-        (ConfigLayer::Environment, Some(env.values)),
-        (ConfigLayer::Holder, Some(flag_values)),
-    ] {
-        let Some(values) = values else {
-            continue;
-        };
-        if values.privacy_posture.is_some() {
-            posture_source = Some(source);
-        }
-        if values.hosted_kms_key_ref.is_some() {
-            key_ref_source = Some(source);
-        }
-        values.apply_to(&mut resolved, source)?;
-    }
-    // Only the final posture may discard inherited custody, and only a blind
-    // relay, which holds no key: a self-hosted vault keeps an inherited KMS
-    // reference as its own key's custody. An intermediate relay layer can
-    // still be overridden by a later hosted layer, which needs the
-    // highest-precedence reference even when it came from the file.
-    if resolved.privacy_posture == HostingPrivacyPosture::Relay
-        && let (Some(posture_source), Some(key_ref_source)) = (posture_source, key_ref_source)
-        && key_ref_source < posture_source
-    {
-        resolved.hosted_kms_key_ref = None;
-    }
-    if let Some(embedder) = resolved.embedder.as_mut() {
-        super::embedder_space::settle_local_space(embedder, space_naming)?;
-    }
-    // The organ builds this server runs as first party, from argv alone
-    // (FIX 7644): no file, settings file or environment layer names one.
-    resolved.trusted_organ_builds = args.trusted_organ_builds.iter().cloned().collect();
-    // The self-hoster's lift of the payment-credential withholding, from
-    // argv alone (L8-60).
-    resolved.release_payment_credentials_unfenced = args.release_payment_credentials_unfenced;
-    // `--voice-socket` names where the voice loop the layered
-    // `[models.voice]` turns on listens, over its `socket` (FIX 5016), as
-    // managed mode sets it on its settings file. With no voice configured it
-    // names nothing.
-    if let Some(socket) = &args.voice_socket
-        && let Some(models) = resolved.models.as_mut()
-    {
-        models.voice.listen_on(socket)?;
-    }
-    Ok(resolved)
+    let layers = read_layers(args, env, default_config_path)?;
+    merge_layers(args, &layers, |_| Ok(()))
 }
 
 /// One `[embedder]` table settled onto `config` as [`layer_serve_config`]
@@ -293,10 +207,10 @@ fn load_backup_section(path: &Path) -> anyhow::Result<Option<BackupConfigOverrid
     Ok(file.backup)
 }
 
-/// The config file's layer. A file that is not admitted is not read
-/// (`file_admission`), and one that does not parse names only itself and
-/// the place it failed (FIX 9477).
-fn load_file_config(path: &Path) -> anyhow::Result<PartialServeConfig> {
+/// The config file's layer, and the text it was read from. A file that is
+/// not admitted is not read (`file_admission`), and one that does not parse
+/// names only itself and the place it failed (FIX 9477).
+fn load_file_config(path: &Path) -> anyhow::Result<(PartialServeConfig, String)> {
     let raw = read_config_file(path)?;
     let mut config: FileServeConfig = super::parse_toml(path, &raw)?;
     let models = config
@@ -307,7 +221,7 @@ fn load_file_config(path: &Path) -> anyhow::Result<PartialServeConfig> {
         .with_context(|| format!("config file {}", path.display()))?;
     let mut values = PartialServeConfig::from(config);
     values.models = models;
-    Ok(values)
+    Ok((values, raw))
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -372,8 +286,10 @@ struct FileServeConfig {
     device_sync: Option<super::DeviceSyncConfig>,
     shared_env: Option<Vec<super::SharedEnvConfig>>,
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
+    gpu_jobs: Option<super::gpu_jobs::GpuJobsFile>,
     embedding: Option<super::EmbeddingConfig>,
     line: Option<super::LineConfig>,
+    mail: Option<super::MailConfig>,
     channel_endpoints: Option<super::ChannelEndpointsConfig>,
     apns: Option<super::ApnsConfig>,
     linear: Option<super::LinearConfig>,
@@ -385,6 +301,8 @@ struct FileServeConfig {
     maximum_tier: Option<bool>,
     off_record_dump_suppression: Option<bool>,
     device_class: Option<oneiron::authority::MachineDeviceClass>,
+    machine_reported_name: Option<String>,
+    machine_reported_model: Option<String>,
 }
 
 impl From<FileServeConfig> for PartialServeConfig {
@@ -449,8 +367,10 @@ impl From<FileServeConfig> for PartialServeConfig {
             device_sync: value.device_sync,
             shared_env: value.shared_env,
             connectors: value.connectors,
+            gpu_jobs: value.gpu_jobs,
             embedding: value.embedding,
             line: value.line,
+            mail: value.mail,
             channel_endpoints: value.channel_endpoints,
             apns: value.apns,
             linear: value.linear,
@@ -462,6 +382,8 @@ impl From<FileServeConfig> for PartialServeConfig {
             maximum_tier: value.maximum_tier,
             off_record_dump_suppression: value.off_record_dump_suppression,
             device_class: value.device_class,
+            machine_reported_name: value.machine_reported_name,
+            machine_reported_model: value.machine_reported_model,
             esign_delivery_outbox_dir: None,
             cloud_registration_pins: None,
             publisher_training_outbox_dir: None,
@@ -543,10 +465,14 @@ struct PartialServeConfig {
     shared_env: Option<Vec<super::SharedEnvConfig>>,
     /// `[connectors.<name>]` is file-only, as `[native_mail]` is.
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
+    /// `[gpu_jobs]` is file-only, as `[connectors.<name>]` is.
+    gpu_jobs: Option<super::gpu_jobs::GpuJobsFile>,
     /// `[embedding]` is file-only, as `[models]` is.
     embedding: Option<super::EmbeddingConfig>,
     /// `[line]` is file-only, as `[browser]` is.
     line: Option<super::LineConfig>,
+    /// `[mail]` is file-only, as `[line]` is.
+    mail: Option<super::MailConfig>,
     /// `[channel_endpoints]` is file-only, as `[line]` is.
     channel_endpoints: Option<super::ChannelEndpointsConfig>,
     /// `[apns]` is file-only, as `[channel_endpoints]` is.
@@ -567,6 +493,10 @@ struct PartialServeConfig {
     off_record_dump_suppression: Option<bool>,
     /// `device_class` is file-only, as `maximum_tier` is.
     device_class: Option<oneiron::authority::MachineDeviceClass>,
+    /// `machine_reported_name` is file-only, as `device_class` is.
+    machine_reported_name: Option<String>,
+    /// `machine_reported_model` is file-only, as `device_class` is.
+    machine_reported_model: Option<String>,
     /// `--esign-delivery-outbox-dir` is argv-only: no file key, no env.
     esign_delivery_outbox_dir: Option<PathBuf>,
     /// `--cloud-registration-pins` is argv-only, as the outbox: no file key,
@@ -650,8 +580,10 @@ impl fmt::Debug for PartialServeConfig {
             .field("device_sync", &self.device_sync)
             .field("shared_env", &self.shared_env)
             .field("connectors", &self.connectors)
+            .field("gpu_jobs", &self.gpu_jobs)
             .field("embedding", &self.embedding)
             .field("line", &self.line)
+            .field("mail", &self.mail)
             .field("channel_endpoints", &self.channel_endpoints)
             .field("apns", &self.apns)
             .field("linear", &self.linear)
@@ -667,6 +599,8 @@ impl fmt::Debug for PartialServeConfig {
                 &self.off_record_dump_suppression,
             )
             .field("device_class", &self.device_class)
+            .field("machine_reported_name", &self.machine_reported_name)
+            .field("machine_reported_model", &self.machine_reported_model)
             .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
             .field("cloud_registration_pins", &self.cloud_registration_pins)
             .field(
@@ -760,8 +694,10 @@ impl From<&ServeArgs> for PartialServeConfig {
             device_sync: None,
             shared_env: None,
             connectors: None,
+            gpu_jobs: None,
             embedding: None,
             line: None,
+            mail: None,
             channel_endpoints: None,
             apns: None,
             linear: None,
@@ -773,6 +709,8 @@ impl From<&ServeArgs> for PartialServeConfig {
             maximum_tier: None,
             off_record_dump_suppression: None,
             device_class: None,
+            machine_reported_name: None,
+            machine_reported_model: None,
             esign_delivery_outbox_dir: value.esign_delivery_outbox_dir.clone(),
             cloud_registration_pins: value.cloud_registration_pins.clone(),
             publisher_training_outbox_dir: value.publisher_training_outbox_dir.clone(),

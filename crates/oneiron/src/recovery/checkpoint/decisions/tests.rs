@@ -43,6 +43,7 @@ impl Case {
     ) -> Result<Self> {
         let backups = crate::test_support::restore_tempdir();
         let image = backups.path().join("backup");
+        vault.ensure_vault_key().expect("mint the vault data key");
         vault.snapshot_checkpoint(&image, 100)?;
         Ok(Self {
             row,
@@ -125,12 +126,15 @@ fn a_restore_inside_the_live_vaults_write_transaction_refuses_rather_than_waits(
     let (dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100).expect("backup");
     let (done, outcome) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
+        let key = vault.checkpoint_key().expect("checkpoint key");
         let restored = vault.with_write_txn(|_| {
             Ok(Vault::restore_checkpoint_keeping_authority(
                 &image,
+                &key,
                 &backups.path().join("restored"),
                 vault.config.clone(),
                 &vault,
@@ -216,16 +220,24 @@ fn a_vault_holding_more_claims_of_a_predicate_than_a_list_holds_restores() -> Re
         for n in 0..=crate::ports::MAX_PREDICATE_LIST_ROWS {
             let mut id = [0x01, 0x52, row as u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
             id[8..].copy_from_slice(&(n as u64).to_be_bytes());
-            batch =
-                batch.put_replicated(&EntityId::from_bytes(id)?, ENTITY_TYPE_CLAIM, at, 1, &body);
+            batch = batch.put_replicated(
+                &EntityId::from_bytes(id)?,
+                ENTITY_TYPE_CLAIM,
+                at,
+                1,
+                None,
+                &body,
+            );
         }
     }
     batch.commit()?;
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100)?;
     Vault::restore_checkpoint_keeping_authority(
         &image,
+        &vault.checkpoint_key()?,
         &backups.path().join("restored"),
         vault.config.clone(),
         &vault,

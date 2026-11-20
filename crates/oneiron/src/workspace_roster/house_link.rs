@@ -48,10 +48,15 @@ use crate::federation::{
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT};
 use crate::scan_check::ScanCount;
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::EngineScan;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
+
+mod owner_seat;
+pub(crate) use owner_seat::{
+    require_owner_seat_skips_no_wait_in_txn, seat_house_owner_by_act_in_txn,
+};
 
 const RECEIPT_VERSION: u8 = 1;
 
@@ -343,7 +348,7 @@ fn append_receipt_in_txn(
 /// house already seated at exactly `role` is left as it is, with no second
 /// receipt. `binder` must be able to assign `role`, and every role the house
 /// holds there now, by the role table, an Admin on the step-up `step_up`
-/// shows.
+/// shows. Whether it wrote a grant.
 pub(crate) fn link_house_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -352,7 +357,7 @@ pub(crate) fn link_house_in_txn(
     binder: EntityId,
     step_up: &OrgAdminStepUp,
     now: u64,
-) -> Result<()> {
+) -> Result<bool> {
     require_house_role(role)?;
     let house = preset.house_actor_ref;
     let vault_id = preset.workspace_vault_id;
@@ -387,7 +392,7 @@ pub(crate) fn link_house_in_txn(
             .iter()
             .all(|(id, grant)| grant.role == role && linked_here(id))
     {
-        return Ok(());
+        return Ok(false);
     }
     let mut ids: Vec<EntityId> = held.into_iter().map(|(id, _)| id).collect();
     if ids.is_empty() {
@@ -440,7 +445,7 @@ pub(crate) fn link_house_in_txn(
             },
         )?;
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Removes the live grants that seat `preset`'s house in its workspace's
@@ -541,9 +546,15 @@ impl Vault {
     /// naming `actor`. `actor` must be able to assign `role`, and the role it
     /// replaces, by the role table: `org:assign-role` for member, steward or
     /// admin, an Owner for deputy or owner; the vault's owner may assign
-    /// any. The house
+    /// any. A change is logged to every live Owner, Admin and Deputy
+    /// (`SharedVaultChange::HouseRoleChanged`). The house
     /// already at `role` is left as it is, with no receipt. No stored preset
     /// is `EntityNotFound`.
+    ///
+    /// An Owner seat over the shared vault that an `add_owner` act would
+    /// hold (an owner-change wait or objection window the vault set) is
+    /// refused: [`Vault::propose_house_owner_role`] starts that act (FIX
+    /// HOUSE-OWNER-ROLE-VIA-ADD-OWNER).
     pub fn set_house_role(
         &self,
         actor: &AuthenticatedOwner,
@@ -555,7 +566,20 @@ impl Vault {
             let actor = actor.revalidate_person_in_txn(self, txn)?;
             let preset = stored_preset_in_txn(self, txn, workspace_ref)?;
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            link_house_in_txn(self, txn, &preset, role, actor, &step_up, now)
+            require_owner_seat_skips_no_wait_in_txn(self, txn, &preset, role, actor, now)?;
+            if link_house_in_txn(self, txn, &preset, role, actor, &step_up, now)? {
+                self.record_admin_act_in_txn(
+                    txn,
+                    preset.workspace_vault_id,
+                    actor,
+                    crate::federation::SharedVaultChange::HouseRoleChanged {
+                        workspace: preset.workspace_ref.clone(),
+                        role: Some(role),
+                    },
+                    now,
+                )?;
+            }
+            Ok(())
         })
     }
 
@@ -563,8 +587,8 @@ impl Vault {
     /// grant goes, with one unbind receipt naming `actor`, and the root's
     /// leader stays as it is. `actor` must be able to assign the role it
     /// clears, by the role table, as [`Self::set_house_role`] asks; a refusal
-    /// writes nothing. `Ok(false)`, writing nothing, when the house holds no
-    /// role there.
+    /// writes nothing. A clear is logged as a set is. `Ok(false)`, writing
+    /// nothing, when the house holds no role there.
     pub fn clear_house_role(
         &self,
         actor: &AuthenticatedOwner,
@@ -575,7 +599,20 @@ impl Vault {
             let actor = actor.revalidate_person_in_txn(self, txn)?;
             let preset = stored_preset_in_txn(self, txn, workspace_ref)?;
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            unlink_preset_in_txn(self, txn, &preset, actor, &step_up, now)
+            let cleared = unlink_preset_in_txn(self, txn, &preset, actor, &step_up, now)?;
+            if cleared {
+                self.record_admin_act_in_txn(
+                    txn,
+                    preset.workspace_vault_id,
+                    actor,
+                    crate::federation::SharedVaultChange::HouseRoleChanged {
+                        workspace: preset.workspace_ref.clone(),
+                        role: None,
+                    },
+                    now,
+                )?;
+            }
+            Ok(cleared)
         })
     }
 }
@@ -668,6 +705,19 @@ pub(crate) fn erase_house_link_actor_in_txn(
         RECEIPTS.delete(&vault.store, wtxn, key)?;
     }
     Ok(())
+}
+
+/// The records a stored house link receipt names, as
+/// [`erase_house_link_actor_in_txn`] matches them: its binder, its house and
+/// its org, whose erase drops the receipt, read from its value; `None` for
+/// bytes that do not read as a receipt, and for a key whose house is not the
+/// value's (the key leads with the house, so it names it too). The
+/// whole-vault export withholds a receipt that names a record it keeps out
+/// (REVIEW-9739 P1-1, round 2 P1-2).
+pub(crate) fn house_link_receipt_records(key: &[u8], value: &[u8]) -> Option<Vec<EntityId>> {
+    let (house, _) = <(EntityId, EntityId) as SideKey>::decode_key(key)?;
+    let receipt = RECEIPTS.decode_value(value).ok()?;
+    (receipt.house == house).then(|| vec![receipt.binder, receipt.house, receipt.org])
 }
 
 /// The org `house` ran at `at`, read from its receipts alone: the org of the

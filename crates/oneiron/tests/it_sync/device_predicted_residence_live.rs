@@ -12,7 +12,7 @@ use std::sync::Arc;
 use ed25519_dalek::SigningKey;
 use oneiron::EntityId;
 use oneiron::authority::{
-    ActSurface, HostSlipIssuer, MachineDeviceClass, MachineOwnership, MachineRole,
+    ActAuthority, ActSurface, HostSlipIssuer, MachineDeviceClass, MachineOwnership, MachineRole,
     PredictedResidenceSet, ResidenceAct, ResidenceResultStatus,
 };
 use oneiron::consent::AuthenticatedOwner;
@@ -62,6 +62,12 @@ impl Device {
             .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
             .expect("authenticated owner");
         vault
+            .enrol_device_owner_signing_key(
+                &ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall),
+                &issuer,
+            )
+            .expect("the owner enrols this install's owner signing key");
+        let landing = vault
             .set_machine_role(
                 &owner,
                 ActSurface::ThisInstall,
@@ -70,6 +76,10 @@ impl Device {
                 None,
             )
             .expect("the owner answers the device's machine");
+        assert!(
+            landing.held().is_none(),
+            "FIXTURE: the owner key this install holds proves the work-or-school answer"
+        );
         let founder = vault
             .create_world(&owner, "Founder world", vault.now_recorded_at())
             .expect("founder world");
@@ -453,6 +463,129 @@ fn a_phone_waits_for_wifi_and_power() {
     });
 }
 
+/// Applies the predicted level and the home's prediction of one window of `device` on
+/// `connection`, as `a_phone_waits_for_wifi_and_power` does, its set served by `predicted`;
+/// answers the predicted window.
+async fn adopt_one_predicted_window(
+    device: &Device,
+    connection: &SyncConnection,
+    predicted: &Arc<PredictedHome>,
+) -> WindowKey {
+    let window = WindowKey::for_world(now_secs(), device.founder);
+    device
+        .vault
+        .sync_state_put(
+            &format!("ri:w:{window}:{}", EntityId::now().to_hex()),
+            b"thin index anchor",
+        )
+        .expect("the thin index anchor");
+    let parent = issue(
+        device,
+        ResidenceAct::SyncPredicted {
+            window_budget: 8,
+            document_budget: 16,
+        },
+    );
+    assert_eq!(
+        apply_residence_directives(connection)
+            .await
+            .expect("the level applies"),
+        1
+    );
+    let set = predicted_set(&[window.clone()], &[]);
+    serve(predicted, &set);
+    let prediction = append_prediction(
+        &device.vault,
+        &issuer(),
+        local_machine(&device.vault),
+        parent,
+        &set,
+    )
+    .expect("the home's prediction");
+    assert_eq!(
+        apply_residence_directives(connection)
+            .await
+            .expect("the prediction applies"),
+        1
+    );
+    assert_eq!(
+        result_of(device, prediction),
+        Some(ResidenceResultStatus::Applied)
+    );
+    window
+}
+
+/// The shell's report is a fact of the open install, not of one connection: a connection
+/// rebuilt over the same vault (a credential renewal, an embedded engine's wake) fetches on the
+/// report the shell made before it, with no new report.
+#[test]
+fn a_reconnected_phone_keeps_its_reported_fetch_conditions() {
+    run_async(
+        "a_reconnected_phone_keeps_its_reported_fetch_conditions",
+        || async {
+            let device = Device::open_as(MachineDeviceClass::Phone);
+            let predicted = Arc::new(PredictedHome::default());
+            let (url, _seen) = start_home(Arc::clone(&predicted)).await;
+            let first = device_connection(&device, url.clone());
+            let window = adopt_one_predicted_window(&device, &first, &predicted).await;
+            first.set_fetch_conditions(FetchConditions {
+                unmetered: true,
+                powered: true,
+            });
+            drop(first);
+            let reconnected = device_connection(&device, url);
+            run_predicted_pass(&reconnected)
+                .await
+                .expect("the reconnected pass");
+            assert_eq!(
+                predicted.asks.lock().expect("the asks").len(),
+                1,
+                "the rebuilt connection asks on the shell's earlier report"
+            );
+            assert_eq!(
+                *predicted.promotes.lock().expect("the promotes"),
+                vec![window.as_str().to_owned()]
+            );
+        },
+    );
+}
+
+/// The shell may report before any connection runs (an embedded engine reports at app start,
+/// before device sync dials its home): the report stands on the open vault, and the first
+/// connection fetches on it.
+#[test]
+fn a_shell_report_before_the_connection_opens_its_gate() {
+    run_async(
+        "a_shell_report_before_the_connection_opens_its_gate",
+        || async {
+            let device = Device::open_as(MachineDeviceClass::Phone);
+            assert_eq!(
+                device.vault.reported_fetch_conditions(),
+                FetchConditions::default(),
+                "closed until the shell reports"
+            );
+            let open = FetchConditions {
+                unmetered: true,
+                powered: true,
+            };
+            device.vault.report_fetch_conditions(open);
+            assert_eq!(device.vault.reported_fetch_conditions(), open);
+            let predicted = Arc::new(PredictedHome::default());
+            let (url, _seen) = start_home(Arc::clone(&predicted)).await;
+            let connection = device_connection(&device, url);
+            let window = adopt_one_predicted_window(&device, &connection, &predicted).await;
+            run_predicted_pass(&connection)
+                .await
+                .expect("the fetching pass");
+            assert_eq!(predicted.asks.lock().expect("the asks").len(), 1);
+            assert_eq!(
+                *predicted.promotes.lock().expect("the promotes"),
+                vec![window.as_str().to_owned()]
+            );
+        },
+    );
+}
+
 #[test]
 fn a_dropped_window_is_demoted_never_deleted() {
     run_async("a_dropped_window_is_demoted_never_deleted", || async {
@@ -504,7 +637,6 @@ fn a_dropped_window_is_demoted_never_deleted() {
             .sync_state_put(&format!("rp:w:{window}"), &[1])
             .expect("the promotion marker");
         // A second prediction leaves the window out, strictly after the first.
-        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
         let second = predicted_set(&[], &[]);
         let second_body = serve(&predicted, &second);
         let prediction = append_prediction(
@@ -656,7 +788,6 @@ fn a_followed_world_is_neither_fetched_nor_evicted_by_prediction() {
                 .sync_state_put(&format!("pr:w:{window}"), &[])
                 .expect("the prediction marker");
             // A second prediction drops the window and the document, strictly after the first.
-            tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
             let second = predicted_set(&[], &[]);
             serve(&predicted, &second);
             append_prediction(
@@ -922,7 +1053,6 @@ fn a_prediction_without_its_live_parent_is_refused() {
                     .expect("the first level applies"),
                 1
             );
-            tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
             let live = issue(
                 &device,
                 ResidenceAct::SyncPredicted {
@@ -992,7 +1122,6 @@ fn a_prediction_without_its_live_parent_is_refused() {
                 &set,
             )
             .expect("the older prediction");
-            tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
             let newer = append_prediction(
                 &device.vault,
                 &issuer(),
@@ -1019,6 +1148,148 @@ fn a_prediction_without_its_live_parent_is_refused() {
             assert_eq!(
                 result_of(&device, newer),
                 Some(ResidenceResultStatus::Applied)
+            );
+        },
+    );
+}
+
+/// A predicted document whose subscribe fails with more than an admission refusal (a WORLD row,
+/// which holds no text plane: a kind the machine and its home disagree on) holds back neither the
+/// other documents nor the eviction of what the set dropped, and leaves no subscription row that
+/// every reconnect's requests would fail on; the pass answers the fault after it evicted.
+#[test]
+fn a_document_fault_still_evicts_and_leaves_no_subscription() {
+    run_async(
+        "a_document_fault_still_evicts_and_leaves_no_subscription",
+        || async {
+            let device = Device::open();
+            let window = WindowKey::for_world(now_secs(), device.founder);
+            let turn = predicted_turn(&device);
+            let predicted = Arc::new(PredictedHome::default());
+            let (url, _seen) = start_home(Arc::clone(&predicted)).await;
+            let connection = device_connection(&device, url);
+            let parent = issue(
+                &device,
+                ResidenceAct::SyncPredicted {
+                    window_budget: 8,
+                    document_budget: 16,
+                },
+            );
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the level applies"),
+                1
+            );
+            let first = predicted_set(&[window.clone()], &[]);
+            serve(&predicted, &first);
+            append_prediction(
+                &device.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &first,
+            )
+            .expect("the first prediction");
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the first prediction applies"),
+                1
+            );
+            // The window as fetched: its prediction marker and its promotion.
+            device
+                .vault
+                .sync_state_put(&format!("pr:w:{window}"), &[])
+                .expect("the prediction marker");
+            device
+                .vault
+                .sync_state_put(&format!("rp:w:{window}"), &[1])
+                .expect("the promotion marker");
+            // A second prediction drops the window and names a WORLD row and a TURN as
+            // documents, strictly after the first.
+            let second = predicted_set(&[], &[device.granted, turn]);
+            let second_body = serve(&predicted, &second);
+            let prediction = append_prediction(
+                &device.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &second,
+            )
+            .expect("the second prediction");
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the second prediction applies"),
+                1
+            );
+            assert_eq!(
+                result_of(&device, prediction),
+                Some(ResidenceResultStatus::Applied)
+            );
+            assert_eq!(
+                device
+                    .vault
+                    .sync_state_get("pr:t")
+                    .expect("pr:t reads")
+                    .expect("the adopted set"),
+                second_body
+            );
+            let fault = run_predicted_pass(&connection)
+                .await
+                .expect_err("the WORLD row's subscribe fault is the pass's answer");
+            assert!(
+                device
+                    .vault
+                    .sync_state_get(&format!("pr:w:{window}"))
+                    .expect("the marker reads")
+                    .is_none(),
+                "the dropped window is evicted after the fault: {fault}"
+            );
+            assert!(
+                device
+                    .vault
+                    .sync_state_get(&format!("rp:w:{window}"))
+                    .expect("the promotion reads")
+                    .is_none(),
+                "the dropped window is demoted after the fault: {fault}"
+            );
+            assert_eq!(
+                *predicted.vvs.lock().expect("the vv asks"),
+                vec![window.as_str().to_owned()]
+            );
+            assert!(
+                device
+                    .vault
+                    .sync_state_get(&format!("ds:e:{}", device.granted.to_hex()))
+                    .expect("the subscription reads")
+                    .is_none(),
+                "a document whose request cannot be built leaves no subscription row"
+            );
+            assert!(
+                device
+                    .vault
+                    .sync_state_get(&format!("pr:e:{}", device.granted.to_hex()))
+                    .expect("the marker reads")
+                    .is_none(),
+                "the faulted document is not marked"
+            );
+            assert!(
+                device
+                    .vault
+                    .sync_state_get(&format!("ds:e:{}", turn.to_hex()))
+                    .expect("the subscription reads")
+                    .is_some(),
+                "the other predicted document subscribes"
+            );
+            assert!(
+                device
+                    .vault
+                    .sync_state_get(&format!("pr:e:{}", turn.to_hex()))
+                    .expect("the marker reads")
+                    .is_some(),
+                "the other predicted document is marked"
             );
         },
     );

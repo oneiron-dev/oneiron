@@ -108,10 +108,12 @@ impl Memory<'_> {
             // A CLAIM serves its value and predicate from its own body, beside
             // the view: every reader but the owner reads them from the body
             // the typed Nulled rule releases (ruling EXPORTDOORS Q4 = A), and
-            // a CLAIM whose body is withheld serves no item.
+            // a CLAIM whose body is withheld serves no item. The item serves
+            // no evidence or proof, so a signed claim's proof does not
+            // withhold it (DREAMER-SIGNED-CLAIM-RECALL-WITHHELD = A).
             let body = match body {
                 Some(stored) if entity_type == ENTITY_TYPE_CLAIM => lane
-                    .released_body_in(txn, entity_type, &stored)?
+                    .released_claim_item_body_in(txn, &stored)?
                     .map(std::borrow::Cow::into_owned),
                 body => body,
             };

@@ -167,13 +167,16 @@ impl Vault {
         actor: EntityId,
         decision_id: GateDecisionId,
     ) -> Result<AuthenticatedOwner> {
-        let signer = {
+        // The read transaction ends before the key signs: the signer reads
+        // the roster from the fold it was picked on and opens none.
+        let (fold, signer) = {
             let txn = self.store.env.read_txn()?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;
-            self.owner_proof_signer(&fold)
-        }
-        .ok_or(Error::Record(crate::error::RecordError::OwnerKeyRequired))?;
-        let key = signer.root();
+            let signer = self.owner_proof_signer(&fold);
+            (fold, signer)
+        };
+        let signer = signer.ok_or(Error::Record(crate::error::RecordError::OwnerKeyRequired))?;
+        let key = signer.key();
         let decision = decision_id.as_bytes();
         let parts: [&[u8]; 4] = [
             crate::authority::ASK_WORD_PROOF_DOMAIN,
@@ -185,7 +188,7 @@ impl Vault {
         let signature = crate::authority::AuthoritySignature {
             suite: key.suite(),
             public_key: key.clone(),
-            signature: signer.sign_ask_word_proof(&transcript)?,
+            signature: signer.sign_ask_word(&fold, &transcript)?,
         };
         if !crate::authority::verify_authority_signature(&signature, &transcript) {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
@@ -413,6 +416,14 @@ fn slip_reaches_verb(credential: &crate::authority::VerifiedSlip, verb: &str) ->
 }
 
 impl AuthenticatedOwner {
+    /// The owner key this install holds that proved this owner
+    /// ([`Vault::authenticate_owner_device`]), or `None` for a proof no owner
+    /// key made: a door that revokes owner keys never revokes the one its
+    /// own act stands on.
+    pub(crate) const fn proving_owner_key(&self) -> Option<&crate::authority::AuthorityKey> {
+        self.owner_key.as_ref()
+    }
+
     /// The slip this proof is bound to, for a persisted delegation that
     /// rechecks it at redemption (a Slack install): its slip id, or `None`
     /// for a proof bound to no credential.

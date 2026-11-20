@@ -37,8 +37,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{
-    ActSurface, AwaitedRoot, HostSlipIssuer, MachineOwnership, MachineRole, OwnerRootView,
-    RecoveryRootId, RootChange,
+    ActAuthority, ActSurface, AwaitedRoot, HostSlipIssuer, MachineOwnership, MachineRole,
+    OwnerRootView, RecoveryRootId, RootChange,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
@@ -96,6 +96,12 @@ impl Host {
     /// install: its record, its anchor's mark of the host's machine, and the
     /// host's own pin.
     fn mint_own_root(&self) -> RecoveryRootId {
+        self.vault
+            .enrol_device_owner_signing_key(
+                &ActAuthority::Owner(self.owner.clone(), ActSurface::ThisInstall),
+                &self._issuer,
+            )
+            .expect("this install holds a predecessor for the activation");
         let prepared = self
             .vault
             .prepare_owner_root(&self.owner)
@@ -334,9 +340,24 @@ fn a_hosts_pin_request_lists_the_host_as_its_carrier_and_never_as_the_owners_mac
         oneiron::authority::CarrierReading {
             machine: host_machine,
             role: Some(MachineRole::HostedNode),
+            device_class: Some(oneiron::authority::MachineDeviceClass::Computer),
             is_mine: false,
         },
         "the device's own records name the carrier: the vault's host, not his machine"
+    );
+    assert_eq!(
+        request.prompt(),
+        Some(format!(
+            "Use your recovery kit to get back in?\nKit code: {}\nAsked from a computer. It is a \
+             server Oneiron hosts, not one of your devices.",
+            oneiron::authority::recovery_root_code(&root)
+        )),
+        "the question shows the kit's code and names the host as a server Oneiron hosts"
+    );
+    assert_eq!(
+        request.root_code(),
+        Some(oneiron::authority::recovery_root_code(&root)),
+        "the pin's code is the code of the root it names"
     );
     assert_eq!(
         device.roots().awaiting.and_then(|awaited| awaited.request),
@@ -368,6 +389,7 @@ fn a_carrier_reads_as_the_owners_machine_only_under_the_key_this_install_trusts_
         oneiron::authority::CarrierReading {
             machine: device.machine,
             role: Some(MachineRole::Owned(MachineOwnership::Yours)),
+            device_class: Some(oneiron::authority::MachineDeviceClass::Computer),
             is_mine: true,
         },
         "an act the device's own key signed reads as his machine's"
@@ -380,6 +402,7 @@ fn a_carrier_reads_as_the_owners_machine_only_under_the_key_this_install_trusts_
         oneiron::authority::CarrierReading {
             machine: device.machine,
             role: None,
+            device_class: None,
             is_mine: false,
         },
         "an act that names the device and that another key signed is not his machine's"

@@ -11,13 +11,15 @@ use crate::skill_hub::tests::ladder_fixture::{
 };
 use serde_json::Value as Json;
 
+use crate::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
 use crate::attempt_queue::{
-    AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
-    EnqueueOutcome, ManifestEntry, ManifestKind,
+    AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, ManifestEntry,
+    ManifestKind,
 };
 use crate::config::VaultConfig;
 use crate::dreamer_runner::{
-    DreamerRunnerStore, EnqueueDreamerAttemptOutcome, EnqueueDreamerSkillOptimizeAttempt,
+    DREAMER_RUNNER_ATTEMPT_KIND, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
+    EnqueueDreamerSkillOptimizeAttempt,
 };
 use crate::edge::EdgeKind;
 use crate::error::ErrorKind;
@@ -111,19 +113,16 @@ fn stamped_receipt_version_as(
     now: u64,
     actor: Option<EntityId>,
 ) -> String {
+    let now = vault.now_recorded_at().max(now);
     let queue = AttemptQueue::new(vault);
-    let EnqueueOutcome::Enqueued(attempt) = queue
-        .enqueue(EnqueueAttempt {
-            kind: "skill-opt.attempt".to_owned(),
-            payload: Vec::new(),
-            dedupe_key: None,
-            run_id: None,
-            now,
-        })
-        .expect("enqueue")
+    let dispatcher = AgentDispatcher::new(vault);
+    let AgentDispatchOutcome::Dispatched(dispatched) = dispatcher
+        .dispatch_default_base(None, None, None, now)
+        .expect("enqueue typed agent dispatch")
     else {
-        panic!("a fresh dedupe-free enqueue is never Existing");
+        panic!("a fresh dedupe-free dispatch is never Existing");
     };
+    let attempt = dispatched.attempt;
     if let Some(actor) = actor {
         vault
             .bind_actor_attempt(attempt.id, &actor)
@@ -136,14 +135,18 @@ fn stamped_receipt_version_as(
         )
         .expect("manifest append");
     let ClaimOutcome::Claimed(leased) = queue
-        .claim(ClaimAttempt {
-            lease_owner: "skill-opt-worker".to_owned(),
-            now: now + 1,
-        })
+        .claim_kind(
+            DREAMER_RUNNER_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: "skill-opt-worker".to_owned(),
+                now,
+            },
+        )
         .expect("claim")
     else {
         panic!("the enqueued attempt is claimable");
     };
+    assert_eq!(leased.id, attempt.id);
     queue
         .set_executor_model(
             attempt.id,
@@ -157,15 +160,26 @@ fn stamped_receipt_version_as(
             id: attempt.id,
             lease_owner: "skill-opt-worker".to_owned(),
             attempt_count: leased.attempt_count,
-            now: now + 2,
+            now,
         })
         .expect("complete")
     else {
         panic!("a leased attempt completes exactly once");
     };
     let receipt_id = attempt_pack_receipt_id(&attempt.id);
-    crate::receipt::make_attempt_receipt_legacy_for_tests(vault, &receipt_id)
-        .expect("emulate historical unknown-executor evidence");
+    // The reliability projector mints numerical claims only for anchored outcomes
+    // (skill_reliability/projector.rs:535-548): stamp the harness's held-out score
+    // beside the executor revision, so a routed defect moves the whole-ledger
+    // posterior the dev-partition fixture reads below.
+    let mut receipt = crate::receipt::attempt_pack_receipt(&vault, &receipt_id)
+        .expect("read stamped pack receipt")
+        .expect("stamped pack receipt");
+    receipt.fields.insert(
+        crate::skill_reliability::FIELD_SKILL_LEARNING_ANCHOR.to_owned(),
+        serde_json::to_string(&crate::learning::Anchor::HeldOut).expect("anchor encodes"),
+    );
+    crate::receipt::overwrite_attempt_pack_receipt_for_test(&vault, &receipt)
+        .expect("stamp fixture performance anchor");
     receipt_id
 }
 
@@ -252,6 +266,7 @@ impl StubAuthor {
             answer: SkillEditDraft::Edit {
                 desc: DRAFTED_DESC.to_owned(),
                 rationale: "five attributed defects name the missing check".to_owned(),
+                files: Vec::new(),
             },
             seen: RefCell::new(Vec::new()),
         }
@@ -3178,8 +3193,15 @@ fn a_rematerialized_optimizer_born_id_is_marked_and_cannot_be_laundered() -> Res
     let (_replica_tmp, replica) = temp_vault();
     replica
         .batch()
-        .put_replicated(&skill, ENTITY_TYPE_SKILL, t(400), 401, &target_body)
-        .put_replicated(&proposal, ENTITY_TYPE_SKILL, t(400), 401, &proposal_body)
+        .put_replicated(&skill, ENTITY_TYPE_SKILL, t(400), 401, None, &target_body)
+        .put_replicated(
+            &proposal,
+            ENTITY_TYPE_SKILL,
+            t(400),
+            401,
+            None,
+            &proposal_body,
+        )
         .commit()?;
     assert_eq!(stored(&replica, &proposal), born);
     assert!(
@@ -3216,7 +3238,14 @@ fn a_rematerialized_optimizer_born_id_is_marked_and_cannot_be_laundered() -> Res
     // outcome; accepting a replay is not authority to resurrect an ID.
     replica
         .batch()
-        .put_replicated(&proposal, ENTITY_TYPE_SKILL, t(404), 405, &proposal_body)
+        .put_replicated(
+            &proposal,
+            ENTITY_TYPE_SKILL,
+            t(404),
+            405,
+            None,
+            &proposal_body,
+        )
         .commit()?;
     assert!(
         replica
@@ -3238,7 +3267,7 @@ fn a_replicated_update_can_neither_edit_origin_nor_activate_new_content() -> Res
         let body = crate::skill::encode_skill_record(record)?;
         vault
             .batch()
-            .put_replicated(&proposal, ENTITY_TYPE_SKILL, t(at), at + 1, &body)
+            .put_replicated(&proposal, ENTITY_TYPE_SKILL, t(at), at + 1, None, &body)
             .commit()
     };
 
@@ -4271,7 +4300,7 @@ fn portable_goal_survives_replayed_activation_and_first_active_rematerialization
         let a_body = crate::skill::encode_skill_record(&stored(&origin, &a))?;
         receiver
             .batch()
-            .put_replicated(&a, ENTITY_TYPE_SKILL, t(400), 401, &a_body)
+            .put_replicated(&a, ENTITY_TYPE_SKILL, t(400), 401, None, &a_body)
             .commit()?;
         let owner = vector_owner(&receiver);
         let original = set_skill_edit_goal_axes(&receiver, &owner, &a, vector_axes())?;
@@ -4279,12 +4308,12 @@ fn portable_goal_survives_replayed_activation_and_first_active_rematerialization
             let candidate_body = crate::skill::encode_skill_record(&candidate)?;
             receiver
                 .batch()
-                .put_replicated(&b, ENTITY_TYPE_SKILL, t(402), 403, &candidate_body)
+                .put_replicated(&b, ENTITY_TYPE_SKILL, t(402), 403, None, &candidate_body)
                 .commit()?;
             let active_body = crate::skill::encode_skill_record(&active)?;
             receiver
                 .batch()
-                .put_replicated(&b, ENTITY_TYPE_SKILL, t(404), 405, &active_body)
+                .put_replicated(&b, ENTITY_TYPE_SKILL, t(404), 405, None, &active_body)
                 .commit()?;
             assert!(receiver.delete_entity(&a)?);
         } else {
@@ -4293,11 +4322,11 @@ fn portable_goal_survives_replayed_activation_and_first_active_rematerialization
             let active_body = crate::skill::encode_skill_record(&active)?;
             receiver
                 .batch()
-                .put_replicated(&b, ENTITY_TYPE_SKILL, t(404), 405, &active_body)
+                .put_replicated(&b, ENTITY_TYPE_SKILL, t(404), 405, None, &active_body)
                 .commit()?;
             receiver
                 .batch()
-                .put_replicated(&b, ENTITY_TYPE_SKILL, t(406), 407, &active_body)
+                .put_replicated(&b, ENTITY_TYPE_SKILL, t(406), 407, None, &active_body)
                 .commit()?;
         }
         assert_eq!(
@@ -4416,7 +4445,7 @@ fn optimizer_goal_identity_is_strict_on_birth_update_and_same_id_recreate() -> R
         assert_eq!(
             vault
                 .batch()
-                .put_replicated(&fresh, ENTITY_TYPE_SKILL, t(400), 401, &body)
+                .put_replicated(&fresh, ENTITY_TYPE_SKILL, t(400), 401, None, &body)
                 .commit()
                 .expect_err("known predecessor constrains replay")
                 .kind(),
@@ -4500,7 +4529,7 @@ fn orphaned_replay_checks_erased_parent_origin_before_accepting_a_goal() -> Resu
         assert_eq!(
             vault
                 .batch()
-                .put_replicated(&c, ENTITY_TYPE_SKILL, t(402), 403, &bad_body)
+                .put_replicated(&c, ENTITY_TYPE_SKILL, t(402), 403, None, &bad_body)
                 .commit()
                 .expect_err("retained B origin knows C's proposed ruler is wrong")
                 .kind(),
@@ -4528,7 +4557,7 @@ fn orphaned_replay_checks_erased_parent_origin_before_accepting_a_goal() -> Resu
         assert_eq!(
             vault
                 .batch()
-                .put_replicated(&c, ENTITY_TYPE_SKILL, t(404), 405, &good_body)
+                .put_replicated(&c, ENTITY_TYPE_SKILL, t(404), 405, None, &good_body)
                 .commit()
                 .expect_err("malformed retained parent fact fails closed")
                 .kind(),
@@ -4542,7 +4571,7 @@ fn orphaned_replay_checks_erased_parent_origin_before_accepting_a_goal() -> Resu
         // The same new id with the correct portable goal still materializes.
         vault
             .batch()
-            .put_replicated(&c, ENTITY_TYPE_SKILL, t(404), 405, &good_body)
+            .put_replicated(&c, ENTITY_TYPE_SKILL, t(404), 405, None, &good_body)
             .commit()?;
         assert_eq!(SkillGoalId::of(&c, &stored(&vault, &c))?.entity(), a);
         seed_successor_outcome(&vault, &c)?;
@@ -4754,6 +4783,7 @@ fn goal_axes_score_held_out_first_then_bounded_live_slice_with_human_cost() -> R
         skill,
         &incumbent,
         &candidate,
+        [incumbent.desc.as_str(), candidate.desc.as_str()],
         &goal_axis_plan(6),
         &judge,
         &bandit,
@@ -4792,7 +4822,7 @@ fn goal_axes_score_held_out_first_then_bounded_live_slice_with_human_cost() -> R
     );
     assert_eq!(
         judge.events.lock().unwrap().as_slice(),
-        &[
+        [
             "offline:quality:1.0.0",
             "offline:quality:2.0.0",
             "offline:safety:1.0.0",
@@ -4937,30 +4967,32 @@ fn context_recipe_workflow_keeps_manifest_attribution_after_improver_edit() -> R
     admit_optimized_skill_revision(&vault, &proposal_id, t(400), 401).expect("recipe admission");
     vault.supersede_skill_record(&skill, &proposal_id, t(404), 405)?;
     let queue = AttemptQueue::new(&vault);
-    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
-        kind: "recipe.attempt".into(),
-        payload: vec![],
-        dedupe_key: None,
-        run_id: None,
-        now: 500,
-    })?
+    let dispatcher = AgentDispatcher::new(&vault);
+    let now = vault.now_recorded_at();
+    let AgentDispatchOutcome::Dispatched(dispatched) =
+        dispatcher.dispatch_default_base(None, None, None, now)?
     else {
         panic!("fresh recipe attempt")
     };
-    let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
-        lease_owner: "recipe-worker".into(),
-        now: 501,
-    })?
+    let attempt = dispatched.attempt;
+    let ClaimOutcome::Claimed(leased) = queue.claim_kind(
+        DREAMER_RUNNER_ATTEMPT_KIND,
+        ClaimAttempt {
+            lease_owner: "recipe-worker".into(),
+            now,
+        },
+    )?
     else {
         panic!("leased recipe attempt")
     };
+    assert_eq!(leased.id, attempt.id);
     let loaded = vault.load_attempt_skill_pack(
         attempt.id,
         &proposal_id,
         "recipe-worker",
         leased.attempt_count,
         "fixture-recipe-model@1",
-        501,
+        now,
     )?;
     let source = loaded
         .source_files
@@ -4978,12 +5010,12 @@ fn context_recipe_workflow_keeps_manifest_attribution_after_improver_edit() -> R
             id: attempt.id,
             lease_owner: "recipe-worker".into(),
             attempt_count: leased.attempt_count,
-            now: 502,
+            now,
         })?,
         CompleteOutcome::Completed(_)
     ));
     let receipt = attempt_pack_receipt_id(&attempt.id);
-    record_skill_contributing_win(&vault, &proposal_id, &receipt, 503)?;
+    record_skill_contributing_win(&vault, &proposal_id, &receipt, now)?;
     assert!(crate::skill_reliability::skill_reliability_posterior(&vault, &proposal_id)?.is_none());
     // The attributed outcome is held under the NEW skill entity and exact
     // revision, never copied from the previous recipe's receipt history.
@@ -5032,7 +5064,7 @@ fn ladder_goal(
     rules: Vec<TradeoffRule>,
 ) -> Result<String> {
     set_skill_edit_goal_axes(vault, owner, skill, vector_axes())?;
-    set_skill_tradeoff_preferences(vault, owner, skill, rules, LADDER_BAND)
+    set_skill_tradeoff_preferences(vault, owner, skill, rules, Some(LADDER_BAND))
 }
 
 fn axes_with_minutes_floor() -> Vec<GoalAxisSpec> {
@@ -5318,7 +5350,7 @@ fn responsible_pick_is_durable_and_settles_the_next_axis_tie() -> Result<()> {
     assert_eq!(first.tradeoff_jev.as_ref().unwrap().pin.model, "jev");
     let ask = skill_tradeoff_ask(&vault, &proposal)?.unwrap();
     assert_eq!(ask.pending, first.id);
-    assert_eq!(ask.question.responsible, owner.actor());
+    assert_eq!(ask.question.accountable(), Some(owner.actor()));
     assert_eq!(ask.question.proposal, proposal);
     assert_eq!(ask.jev, first.tradeoff_jev);
     let ask_digest = ask.question.digest()?;
@@ -5432,7 +5464,7 @@ fn newer_goal_replaces_an_unanswered_ab_question() -> Result<()> {
     assert_eq!(question_one.question.goal_revision, first_goal);
     let digest_one = question_one.question.digest()?;
     let second_goal =
-        set_skill_tradeoff_preferences(&vault, &owner, &skill, Vec::new(), LADDER_BAND)?;
+        set_skill_tradeoff_preferences(&vault, &owner, &skill, Vec::new(), Some(LADDER_BAND))?;
     assert!(skill_tradeoff_ask(&vault, &proposal)?.is_none());
     let new = score_gate_skill_edit_in_cycle(
         &vault,
@@ -5503,7 +5535,7 @@ fn owner_goal_edit_between_admission_and_supersession_reaches_successor() -> Res
     // The predecessor stays Active until supersession. A lawful owner edit in
     // that window lands on the shared goal identity the successor carries.
     set_skill_edit_goal_axes(&vault, &owner, &old, axes_with_minutes_floor())?;
-    set_skill_tradeoff_preferences(&vault, &owner, &old, Vec::new(), LADDER_BAND)?;
+    set_skill_tradeoff_preferences(&vault, &owner, &old, Vec::new(), Some(LADDER_BAND))?;
     vault.supersede_skill_record(&old, &successor, t(902), 902)?;
     drop(vault);
     let reopened = Vault::open(tmp.path(), VaultConfig::default())?;

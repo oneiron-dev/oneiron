@@ -313,6 +313,15 @@ pub struct StoreCore {
     /// The engine's delete guards, supplied by the open door: a store never
     /// exists without them.
     pub(crate) delete_guards: &'static dyn crate::store::StoreDeleteGuards,
+    /// The soft deletes' `pt:` markers whose own publication is in flight,
+    /// which no replay publishes in its stead. Never persisted: a crash
+    /// leaves each marker to the next replay.
+    #[cfg(feature = "sync")]
+    pub(crate) tombstone_publications_in_flight: crate::deletion::TombstonePublicationsInFlight,
+    /// When this home last pushed each machine a prediction, for the push
+    /// spacing. Never persisted: a restarted home answers the next ask.
+    #[cfg(feature = "sync")]
+    pub(crate) predicted_pushes: crate::sync::residence::PredictedPushes,
     /// The engine's record-scope stamp hooks, supplied by the open door with
     /// the delete guards.
     pub(crate) scope_stamps: &'static dyn crate::store::StoreScopeStamps,
@@ -359,6 +368,9 @@ pub struct StoreCore {
     /// Scan checks raised since the vault's last write, which keeps them
     /// ([`crate::scan_check`]).
     pub(crate) pending_scan_checks: crate::store::PendingScanChecks,
+    /// Records served to external readers since the vault's last write,
+    /// which keeps them ([`crate::claim::PendingReadExposure`], L8-65).
+    pub(crate) pending_read_exposure: crate::claim::PendingReadExposure,
     /// The engine's `[limits]` rows on this vault: what they are set to,
     /// fixed at open, and the port a crossing asks through
     /// ([`crate::Vault::set_limit_ask`]).
@@ -382,6 +394,11 @@ pub struct StoreCore {
     /// worker, none until one attaches (FIX 14976,
     /// [`crate::Vault::attach_drafter_serving`]). Never persisted.
     pub(crate) drafter_serving: RwLock<Option<Arc<dyn crate::drafter::DrafterServingRuntime>>>,
+    /// The host operator's mail settings on this vault and the runner its
+    /// blocking mail work runs on, the defaults and none until a host
+    /// installs them (fix list row 17645, [`crate::Vault::install_mail_host`]).
+    /// Never persisted.
+    pub(crate) mail_host: crate::mail_pack::MailHostSlot,
     /// The pool code-mode result bodies held in memory draw on: this
     /// vault's own until the host installs the process's
     /// ([`crate::Vault::set_result_memory`]).
@@ -430,6 +447,10 @@ pub struct StoreCore {
     /// Committed consent answers wake this vault's connector-call settler.
     /// Content-free and in memory only; the durable answer is re-read.
     pub(crate) consent_answers: tokio::sync::Notify,
+    /// A committed per-request Coach host job wakes the host's Coach worker
+    /// beside its tick. Content-free and in memory only; the worker re-reads
+    /// its queue.
+    pub(crate) coach_host_requests: std::sync::Arc<tokio::sync::Notify>,
     /// The committed-notification signal live queries wake on (FIX 3084).
     pub(crate) notification_updates: tokio::sync::watch::Sender<u64>,
     /// Content-free, per-vault: bumped after each commit that revoked a
@@ -462,6 +483,14 @@ pub struct StoreCore {
     /// lock because the two critical sections never nest.
     #[cfg(feature = "sync")]
     pub(crate) staged_import_confirm_lock: Mutex<()>,
+    /// Held while an install reads its owner signing slot for this vault,
+    /// checks the slot's key against the roster and gives a revoked key's slot
+    /// a fresh seed. Two callers never act on one reading: a later delete
+    /// would take a fresh key that a vouch had made live in between. It was a
+    /// process-wide lock; the slot belongs to this vault, and a process holds
+    /// one store per vault path, so the vault's own lock keeps every caller
+    /// of the process that reaches the slot in one line.
+    pub(crate) owner_signing_slot_lock: Mutex<()>,
     /// This vault's test seams. `#[cfg(test)]` so a production `StoreCore`
     /// carries neither the field nor its types: see [`TestHooks`] for why a
     /// test seam is exactly the state that must not be process-wide.

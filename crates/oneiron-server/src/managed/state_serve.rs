@@ -41,6 +41,7 @@ use boot_keys::{escrow_vault_key, managed_page_seal, spool_vault_key_escrow};
 use oneiron_vault_contract::host::{Host, HostLimits};
 use read_only::is_read_only;
 use refusal::writes_frozen_body;
+pub(crate) use refusal::{REAP_PAUSE_BOUND, ReapPauseBound};
 
 /// The reap freeze's write admission, held until a write's last write.
 mod admission;
@@ -97,7 +98,7 @@ pub const WRITES_FROZEN_TAG: &str = REAP_PAUSE_REFUSAL.error.as_str();
 /// pause under the service's vault lifecycle allocation, what it holds back,
 /// how it lifts, and that a self-hosted vault has no such limit. It names no
 /// duration: this process knows none.
-pub(super) const WRITES_FROZEN_MESSAGE: &str = "This hosted vault is paused while the service prepares to reap it under its vault lifecycle allocation. New effects, requests other than GET, HEAD and OPTIONS (POST reads included) and connection upgrades are refused, and background passes wait, until the reap is aborted or the vault wakes again; the same request then succeeds. The same action works on a self-hosted vault, which has no such service reap limit; its storage and authorization checks still apply.";
+pub(super) const WRITES_FROZEN_MESSAGE: &str = "This hosted vault is paused while the service prepares to reap it under its vault lifecycle allocation, a capacity bound. New effects, requests other than GET, HEAD and OPTIONS (POST reads included) and connection upgrades are refused, and background passes wait, until the reap is aborted or the vault wakes again; the same request then succeeds. The same action works on a self-hosted vault, which has no such service reap limit; its storage and authorization checks still apply.";
 
 /// An alarm the supervisor pushed, as the reconciler hook saw it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -562,9 +563,11 @@ impl ManagedState {
     /// commit a durable write.
     ///
     /// Two ways one can be live, and quiescence has to answer for both. A
-    /// session past its protocol hello holds a broadcast receiver for as long
-    /// as it runs, and it subscribes before it can import a single update, so
-    /// the receiver count covers every session that is able to write. A
+    /// session past its protocol hello holds a counted broadcast subscriber
+    /// for as long as it runs, and it subscribes before it can import a single
+    /// update, so the session count covers every session that is able to
+    /// write. The host's own subscribers (the cloud erase watch holds one for
+    /// the whole serve) are not sessions and are not counted (FIX 23314). A
     /// session that upgraded and has not spoken yet holds nothing to count, so
     /// a 15-second settle window (the protocol hello deadline plus margin)
     /// covers that blind window instead.
@@ -576,12 +579,9 @@ impl ManagedState {
     /// This vault's own device sync, dialing its home, is live too until its
     /// run and refresh have paused at the freeze (FIX 5127).
     pub fn live_sync_writer(&self) -> bool {
-        // Crate-internal on purpose: the receiver count is the only liveness
-        // signal a session leaves outside its own task, and adding a second
-        // registry to `SyncServer` would put the same fact in two places.
-        if self.server.broadcast_tx.receiver_count() > 0
-            || self.admission.in_flight().device_sync > 0
-        {
+        // Not the channel's receiver count: that also counts the host's own
+        // subscribers, so it never reads zero on a served host (FIX 23314).
+        if self.server.broadcast_sessions.live() > 0 || self.admission.in_flight().device_sync > 0 {
             return true;
         }
         let admitted = self.last_sync_upgrade.load(Ordering::SeqCst);

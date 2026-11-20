@@ -105,13 +105,13 @@ pub use resolve::{
     check_in, check_in_with_mode, resolve_mode,
 };
 pub use role_preset::{ROLE_PRESET, RoleDefault, RolePreset, RolePresetRow};
-pub use verb_act_class::{VerbActClass, verb_act_class};
+pub use verb_act_class::{VerbActClass, verb_act_class, verb_needs_owner_confirm};
 pub use waits::CheckInTransition;
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use waits::advance_pending_check_in_in_txn;
+pub(crate) use wake::CHECK_IN_DUE_JOB;
 #[cfg(oneiron_test_support)]
 pub(crate) use wake::due_rows;
-pub(crate) use wake::next_check_in_due_at;
 
 // The erase doors' apply shape (2k2; P25-SHAPE Q1 = A).
 pub(crate) use effect::{AppliedCheckIn, owner_act_decision_in_txn};

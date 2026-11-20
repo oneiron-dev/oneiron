@@ -13,6 +13,7 @@
 use std::collections::BTreeSet;
 use std::ops::Bound;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use super::DiagnosticReplayCoordinate;
@@ -246,30 +247,50 @@ fn issue_evidence_in_txn(
     Ok(evidence)
 }
 
-/// `runs` as an observed window, each run with its replay hash, and the window's coordinate as
-/// a finding's: the digest of every run's record, length-prefixed, and its newest run.
+/// `runs` as an observed window, each run with its replay hash
+/// (`purposes::self_heal::OBSERVED_RUN_REPLAY`), and the window's coordinate as a finding's:
+/// the digest of every run's record, length-prefixed (`purposes::self_heal::RETRIEVAL_WINDOW`),
+/// and its newest run.
 pub(super) fn observed_window(
     runs: &[RetrievalRunRecord],
 ) -> Result<(Vec<ObservedRun>, DiagnosticReplayCoordinate)> {
-    let mut digest = blake3::Hasher::new();
+    let mut digest = LegacyDigest::new(purposes::self_heal::RETRIEVAL_WINDOW);
     let mut observed = Vec::with_capacity(runs.len());
     for run in runs {
         let bytes = rmp_serde::to_vec_named(run)
             .map_err(|_| Error::InvariantViolation("retrieval telemetry encode"))?;
-        digest.update(&(bytes.len() as u64).to_be_bytes());
-        digest.update(&bytes);
+        digest.len_u64_be(bytes.len()).raw(&bytes);
         observed.push(ObservedRun {
             run: run.run_id.as_bytes(),
-            replay: *blake3::hash(&bytes).as_bytes(),
+            replay: LegacyDigest::new(purposes::self_heal::OBSERVED_RUN_REPLAY)
+                .raw(&bytes)
+                .finish(),
             started_at: run.started_at,
         });
     }
     let coordinate = DiagnosticReplayCoordinate {
-        content_hash: *digest.finalize().as_bytes(),
+        content_hash: digest.finish(),
         run_ref: runs.last().map(|run| run.run_id.to_hex()),
         checkpoint_ref: None,
     };
     Ok((observed, coordinate))
+}
+
+/// [`observed_window`] for the K door (`test_doors::fingerprint_keep_self_heal_digests`): each
+/// run's id, replay hash and start, then the coordinate's content hash and run ref. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn observed_window_for_test(
+    runs: &[RetrievalRunRecord],
+) -> Result<(Vec<([u8; 16], [u8; 32], u64)>, [u8; 32], Option<String>)> {
+    let (observed, coordinate) = observed_window(runs)?;
+    Ok((
+        observed
+            .into_iter()
+            .map(|run| (run.run, run.replay, run.started_at))
+            .collect(),
+        coordinate.content_hash,
+        coordinate.run_ref,
+    ))
 }
 
 /// Whether any issue filed under `key` is open.

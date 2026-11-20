@@ -28,6 +28,7 @@ use oneiron::{
 };
 use tokio::sync::{broadcast, watch};
 
+use super::attempt_retry::retry_backoff_until;
 use super::{AiHandle, CHAT_ROLE};
 use crate::config::models::{DreamerWording, ModelsConfig};
 use crate::models::{SourceAdmission, SourceOffer};
@@ -123,7 +124,8 @@ fn run_id(attempt: &AttemptRecord) -> String {
 /// One try of `attempt`. `Ok` completes it: the reply was filed, or no try
 /// can draft from it (the SESSION is gone or not a transcript, the read is
 /// silent, or the payload or the model's reply is outside its contract).
-/// `Err` names the stage that failed, and the attempt is tried again.
+/// `Err` names the stage that failed, and the attempt is tried again after a
+/// wait that grows with its tries ([`retry_backoff_until`]).
 async fn draft(
     vault: &Vault,
     ai: &AiHandle,
@@ -401,7 +403,7 @@ fn settle(vault: &Vault, attempt: &AttemptRecord, result: Result<(), &'static st
                     id: attempt.id,
                     lease_owner: LEASE_OWNER.to_owned(),
                     attempt_count: attempt.attempt_count,
-                    backoff_until: now.saturating_add(backoff),
+                    backoff_until: retry_backoff_until(vault, attempt, backoff, now),
                     last_error: Some(reason.to_owned()),
                     now,
                 })

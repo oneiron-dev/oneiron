@@ -147,6 +147,11 @@ impl Vault {
     /// the house files its join of the root's home room, with the revalidated
     /// owner as filer; a join that holds or is refused is no participation,
     /// and the lead stands either way. No subject anchor changes.
+    ///
+    /// A bind at Owner that an `add_owner` act would hold (the vault's
+    /// owner-change wait or objection window) is refused, writing nothing:
+    /// bind lower, then [`Vault::propose_house_owner_role`] (FIX
+    /// HOUSE-OWNER-ROLE-VIA-ADD-OWNER).
     pub fn bind_house_leader(
         &self,
         preset: &WorkspaceRosterPreset,
@@ -261,6 +266,9 @@ impl Vault {
                 }
                 self.sign_root_leader_in_txn(txn, owner, signer, (root, kind), witness, house)?;
             }
+            crate::workspace_roster::house_link::require_owner_seat_skips_no_wait_in_txn(
+                self, txn, preset, role, binder, now,
+            )?;
             link_house_in_txn(
                 self,
                 txn,

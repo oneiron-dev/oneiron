@@ -10,7 +10,7 @@
         "revision": "hooks03-rewrite-ask-v1"
       },
       "licence": "Apache-2.0",
-      "sha256": "28c30f25f16cdb3436fb21c73fbcf1047ec91e1883a02c99c862c1a1e1cb244b",
+      "sha256": "c3c6dd9ee5f496e436d71da1ec3af5a89a2d16707123860fb1c4ef2eb13b4482",
       "expectedFacts": {
         "packPath": "PACK.md",
         "runtime": "engine-owned quickjs-hook.wasm; no external effects"
@@ -136,7 +136,7 @@
         "revision": "hooks03-rewrite-ask-v1"
       },
       "licence": "Apache-2.0",
-      "sha256": "b2659faa13a6dcfd48ccaed01f14905ddb040c1f571bfe8e370ed9f1d612be15",
+      "sha256": "c2f27c29f37e63459b64d8850b78a6c7d2b3c00930554dd0429302c8af7c07fd",
       "expectedFacts": {
         "carriers": [
           "HTTP",

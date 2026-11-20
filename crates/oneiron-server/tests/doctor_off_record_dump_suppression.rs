@@ -8,6 +8,9 @@
 #![cfg(unix)]
 #![allow(clippy::unwrap_used)]
 
+#[path = "support/owner_only_file.rs"]
+mod owner_only_file;
+
 use std::path::Path;
 use std::process::Command;
 
@@ -36,7 +39,7 @@ fn doctor_reports_the_off_record_dump_suppression_switch() {
     // as that table's.
     let written = std::fs::read_to_string(&config).unwrap();
     let switched_off = dir.path().join("switched-off.toml");
-    std::fs::write(
+    crate::owner_only_file::write_owner_only_file(
         &switched_off,
         format!("off_record_dump_suppression = false\n{written}"),
     )
