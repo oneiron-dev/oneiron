@@ -35,6 +35,10 @@
 //! by grouping the TURNs again. A candidate folds only under those answers, and an
 //! operand that names recorded candidates is offered, and may correct, only a head one of
 //! them may be asked about ([`OperandBound::askable`]).
+//!
+//! The check also joins, for an operand that names recorded candidates, the rows their
+//! steps' calls were read from, which each step's record keeps
+//! ([`OperandBound::sources`]). A decision read over the operand sends under them.
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -94,6 +98,9 @@ struct RecordedStep {
     /// Holds the listing the step's scope keeps: the branch's listing cut to the
     /// entities of the step's native slice, which the step's record names.
     kept: Neighbourhood,
+    /// Names every row the step's call was read from: `None` for a record that keeps
+    /// none.
+    sources: Option<Vec<EntityId>>,
 }
 
 /// What the shared operand check fixed for one operand.
@@ -104,6 +111,11 @@ pub(crate) struct OperandBound {
     /// correct, each in its own step: `None` for an operand that names none, which every
     /// listed head about its subject may be offered to.
     pub(crate) askable: Option<BTreeSet<EntityId>>,
+    /// Names the rows the operand was drawn from, sorted and each once: the rows the
+    /// calls of every step it names were read from. `None` where they are not known:
+    /// for an operand that names no step, and for one that names a step whose record
+    /// keeps none.
+    pub(crate) sources: Option<Vec<EntityId>>,
 }
 
 /// One recorded candidate an operand names, as its step kept it.
@@ -209,10 +221,12 @@ pub(super) fn bind_operands_in_txn(
             bounds.push(OperandBound {
                 relationship: set,
                 askable: None,
+                sources: None,
             });
             continue;
         }
         let mut turns = BTreeSet::new();
+        let mut step_rows = Vec::with_capacity(operand.from_steps.len());
         let mut recorded = Vec::with_capacity(operand.from_steps.len());
         let mut named = Vec::with_capacity(operand.from_steps.len());
         for reference in &operand.from_steps {
@@ -224,6 +238,7 @@ pub(super) fn bind_operands_in_txn(
                 }
             };
             turns.extend(step.turns.iter().copied());
+            step_rows.push(step.sources.clone());
             let candidate = step.reply.candidate(reference.index).map_err(|reason| {
                 MemoryError::bad_request(format!(
                     "extraction operand {position} names a recorded candidate its step did not keep: {reason}"
@@ -249,6 +264,7 @@ pub(super) fn bind_operands_in_txn(
         bounds.push(OperandBound {
             relationship,
             askable: Some(askable),
+            sources: crate::skill_optimize::union_source_rows(step_rows),
         });
     }
     Ok(bounds)
@@ -338,6 +354,7 @@ fn read_recorded_step(
         turns,
         relationship,
         kept,
+        sources: record.sources,
     })
 }
 
@@ -428,6 +445,7 @@ fn check_named_candidates_fold(
         let fixed = OperandBound {
             relationship: set.clone(),
             askable: None,
+            sources: None,
         };
         let pack = check_pack_candidates(
             from_ref(candidate),

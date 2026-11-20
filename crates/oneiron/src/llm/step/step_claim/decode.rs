@@ -47,6 +47,9 @@ pub(in crate::llm::step) struct DecodedStepClaim {
     /// The shown range of each cited TURN of a bound step's call, in request
     /// order; `None` for a step that names none.
     pub(crate) input_ranges: Option<Vec<StepInputRange>>,
+    /// Every row a bound step's call was read from; `None` for a step that
+    /// names none.
+    pub(crate) input_sources: Option<Vec<EntityId>>,
     /// The listed entities of a bound step's native slice; `None` for a step
     /// that names none.
     pub(crate) input_slice: Option<Vec<EntityId>>,
@@ -54,9 +57,7 @@ pub(in crate::llm::step) struct DecodedStepClaim {
 
 /// Fail-closed `dreamer.step` claim value decode: pinned keys only, no
 /// duplicates, schema-version checked, and EXACTLY ONE of
-/// `response`/`response_ref` present (both or neither is a typed error). The
-/// source rows a bound step names are checked as their fact and not kept here:
-/// no reader of this decode consumes them.
+/// `response`/`response_ref` present (both or neither is a typed error).
 pub(in crate::llm::step) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim> {
     let entries = expect_map(value, "dreamer step value must be a MessagePack map")?;
     let mut schema_version = None;
@@ -76,6 +77,7 @@ pub(in crate::llm::step) fn decode_step_claim_value(value: &Value) -> Result<Dec
     let mut input_versions = None;
     let mut input_labels = None;
     let mut input_ranges = None;
+    let mut input_sources = None;
     let mut input_slice = None;
     let mut seen = [false; DREAMER_STEP_VALUE_KEYS.len()];
 
@@ -185,11 +187,11 @@ pub(in crate::llm::step) fn decode_step_claim_value(value: &Value) -> Result<Dec
                 )?);
             }
             KEY_INPUT_SOURCES => {
-                json_fact::<Vec<EntityId>>(
+                input_sources = Some(json_fact::<Vec<EntityId>>(
                     value,
                     "dreamer step value input_sources must be a string",
                     "dreamer step value input_sources must list source rows",
-                )?;
+                )?);
             }
             KEY_INPUT_SLICE => {
                 input_slice = Some(json_fact::<Vec<EntityId>>(
@@ -249,6 +251,7 @@ pub(in crate::llm::step) fn decode_step_claim_value(value: &Value) -> Result<Dec
         input_versions,
         input_labels,
         input_ranges,
+        input_sources,
         input_slice,
     })
 }
