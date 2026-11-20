@@ -127,11 +127,6 @@ impl Vault {
             owner,
             &mut doc_mutated,
         );
-        // A committed publication, or a live document it changed, linearized
-        // this delete: its brief fence stays.
-        if outcome.is_ok() || doc_mutated {
-            self.store.brief_delete_fences.settle(id);
-        }
         crate::sync::note::deleted_elsewhere(self, window_label, outcome.is_ok().then_some(*id));
         if outcome.is_err() && !doc_mutated {
             // Pre-CRDT errors have no document mutation to recover: drop
@@ -310,6 +305,9 @@ impl Vault {
                     owner,
                     &removed_carriers,
                 )?;
+                // The live document changes next, which linearizes this
+                // delete: its brief fence settles under the publish writer.
+                self.store.brief_delete_fences.settle(id);
                 let vv_before = window.doc.oplog_vv();
                 let (delete_update, (snapshot, owes_compaction), vv) =
                     with_deletion_tombstone_observer_a_suppressed(|| -> Result<_> {
@@ -436,6 +434,9 @@ impl Vault {
                 history_free,
             },
         )?;
+        // This commit linearizes the delete: its brief fence settles under
+        // the publish writer.
+        self.store.brief_delete_fences.settle(id);
         wtxn.commit()?;
         drop(publication);
         self.notify_tombstone_publication(id, &window_key, value);

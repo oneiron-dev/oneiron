@@ -159,9 +159,10 @@ impl Vault {
                 .tombstone_publications_in_flight
                 .hold(window_label, id, &tombstone)
         });
-        wtxn.commit()?;
-        // The scrub linearized this delete: its brief fence stays.
+        // The scrub linearizes this delete: its brief fence settles under
+        // the scrub's writer.
         self.store.brief_delete_fences.settle(id);
+        wtxn.commit()?;
         if existed {
             self.notify_local_delete_materialized(&changed);
             gate.as_ref()

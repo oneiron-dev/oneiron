@@ -125,3 +125,50 @@ fn a_hold_dropped_unconcluded_keeps_the_fence() {
     assert!(conclude(&vault, retry, refused()).is_err());
     assert!(reserved(&vault, &id), "no later refusal takes it");
 }
+
+/// Two refused deletes of one id end at once, both before either reaches the
+/// writer: exactly one finds itself the last hold, and it releases the fence.
+#[test]
+fn two_refusals_ending_at_once_release_the_fence_once() {
+    let (_dir, vault) = open_vault();
+    let id = EntityId::from_bytes([0xD6; 16]).expect("id");
+    let mut first = reserve(&vault, &id);
+    let mut second = reserve(&vault, &id);
+    (first.held, second.held) = (false, false);
+    let fences = &vault.store.brief_delete_fences;
+    let first_is_last = fences.leave_unless_last_releasable(&id);
+    let second_is_last = fences.leave_unless_last_releasable(&id);
+    assert!(!first_is_last, "the first refusal leaves the other hold");
+    assert!(
+        second_is_last,
+        "the second refusal is the last hold on a releasable row"
+    );
+    fences.release_last(&vault.store, &id);
+    assert!(
+        !reserved(&vault, &id),
+        "the last of two refusals ending at once releases the fence"
+    );
+    assert!(no_hold_left(&vault));
+}
+
+/// A refused delete finds itself the last hold, and before it takes the
+/// writer a delete of the id that holds no fence publishes: the publication
+/// settles under its writer, so the refused delete keeps the fence.
+#[test]
+fn a_refusal_keeps_the_fence_a_publication_settled_before_its_release() {
+    let (_dir, vault) = open_vault();
+    let id = EntityId::from_bytes([0xD7; 16]).expect("id");
+    let mut refused_delete = reserve(&vault, &id);
+    refused_delete.held = false;
+    let fences = &vault.store.brief_delete_fences;
+    assert!(fences.leave_unless_last_releasable(&id));
+    let publication = vault.store.env.write_txn().expect("publication writer");
+    fences.settle(&id);
+    publication.commit().expect("the publication commits");
+    fences.release_last(&vault.store, &id);
+    assert!(
+        reserved(&vault, &id),
+        "a refusal never releases a fence a publication settled"
+    );
+    assert!(no_hold_left(&vault));
+}

@@ -65,8 +65,13 @@ impl BriefDeleteFences {
         })
     }
 
-    /// A delete of `id` linearized: its reservation stays. Called after the
-    /// commit or publication that linearizes any delete, reserved or not.
+    /// A delete of `id` linearized: its reservation stays. Called under the
+    /// writer of the commit or publication that linearizes any delete,
+    /// reserved or not, before that writer is released: a refused delete's
+    /// release, which removes the row under the writer, then reads the
+    /// settlement, so no release lands between a publication and its
+    /// settlement. A linearizing commit that fails after its settlement keeps
+    /// the row, as a crash would.
     pub(crate) fn settle(&self, id: &EntityId) {
         if let Some(holders) = self.held().get_mut(id) {
             holders.releasable = false;
@@ -75,28 +80,37 @@ impl BriefDeleteFences {
 
     /// Drops one hold on `id`, keeping the row.
     fn leave(&self, id: &EntityId) {
-        let mut held = self.held();
-        if let Some(holders) = held.get_mut(id) {
-            holders.deletes = holders.deletes.saturating_sub(1);
-            if holders.deletes == 0 {
-                held.remove(id);
-            }
-        }
+        drop_hold(&mut self.held(), id);
     }
 
     /// Drops one hold on `id`; the last hold on a releasable row removes the
     /// row under the writer. A failed release keeps the row, as a crash would.
     fn release(&self, store: &Store, id: &EntityId) {
-        let sole_releasable = self
-            .held()
+        if self.leave_unless_last_releasable(id) {
+            self.release_last(store, id);
+        }
+    }
+
+    /// Drops one hold on `id`, unless it is the last hold on a releasable row;
+    /// returns whether it was, and then leaves that hold to
+    /// [`Self::release_last`]. One scope reads the holds and drops one: of two
+    /// refused deletes of the id, exactly one finds itself the last hold.
+    fn leave_unless_last_releasable(&self, id: &EntityId) -> bool {
+        let mut held = self.held();
+        let last_releasable = held
             .get(id)
             .is_some_and(|holders| holders.deletes == 1 && holders.releasable);
-        if !sole_releasable {
-            self.leave(id);
-            return;
+        if !last_releasable {
+            drop_hold(&mut held, id);
         }
-        // The writer first, then the set, as `reserve` takes them; the set is
-        // read again, since a delete may have joined or linearized meanwhile.
+        last_releasable
+    }
+
+    /// Drops the hold [`Self::leave_unless_last_releasable`] found to be the
+    /// last one on a releasable row, and removes the row under the writer.
+    /// The writer first, then the set, as `reserve` takes them; the set is
+    /// read again, since a delete may have joined or settled meanwhile.
+    fn release_last(&self, store: &Store, id: &EntityId) {
         let Ok(mut txn) = store.env.write_txn() else {
             self.leave(id);
             return;
@@ -120,6 +134,16 @@ impl BriefDeleteFences {
 
     fn held(&self) -> MutexGuard<'_, BTreeMap<EntityId, Holders>> {
         self.held.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// Drops one hold on `id` from the locked set, keeping the row.
+fn drop_hold(held: &mut BTreeMap<EntityId, Holders>, id: &EntityId) {
+    if let Some(holders) = held.get_mut(id) {
+        holders.deletes = holders.deletes.saturating_sub(1);
+        if holders.deletes == 0 {
+            held.remove(id);
+        }
     }
 }
 
