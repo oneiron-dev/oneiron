@@ -113,9 +113,12 @@ use serde::Serialize;
 /// 54: a `RotateKey` that ends an owner key needs an owner key's proof, as a `RevokeDevice` of it
 /// does: the custodial root alone never rotates an owner key away (FIX
 /// ROTATEKEY-OLD-OWNER-KEY-UNPROVEN).
-/// 55: the fold keeps every key ever enrolled as the recovery root's authority key, so a recovery
+/// 55: the image's fold and its safety index each name the revocations whose fences closed in a
+/// conflict, which the fold refused and whose keys ended all the same; absent when there is none
+/// (row OWNER-KEY-CHANGES-RING-CROSSING-UNLISTED).
+/// 56: the fold keeps every key ever enrolled as the recovery root's authority key, so a recovery
 /// hold's signer R and an answer's owner key judge apart (OPUS-WAYBACK, the box recovery's wait).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 55;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 56;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

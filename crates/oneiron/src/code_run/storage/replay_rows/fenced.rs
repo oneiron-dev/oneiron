@@ -31,6 +31,12 @@
 //! An output preview is text the run wrote, and a live one can read as the
 //! erased preview's text, so the wall reads every preview: one whose text
 //! custody holds takes its handle, an erased one too.
+//!
+//! A writer that reads a stored row again before it derives a row or a body
+//! from it has the wall read it the same way (FIX
+//! ERASED-FORM-UNFENCED-REPLAY-PUTS): [`admit_fenced`] reads the row, and a
+//! body carrying the row (a step start's prefix) has the wall read the
+//! row's [`ErasedFormProjection`] in its place.
 
 use oneiron_contracts::msgpack;
 use rmpv::Value;
@@ -41,6 +47,7 @@ use super::super::super::codec::{
 use super::super::super::replay::erased_identity_field;
 use super::super::super::spawn_replay::erased_ask_field;
 use super::REPLAY_RECORDS;
+use crate::EntityId;
 use crate::code_run::payload::self_dispatch_outcome_value;
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunReplayRecord, RESPONSE_ERASED, SelfAgentSpawnResult,
@@ -62,11 +69,11 @@ impl AdmittedFencedReplay {
     }
 }
 
-/// Persists `record`, a record a put fence passed, as its run's replay row:
-/// with the side-row wall reading all of it but the erase's fixed words in
-/// each part it holds in its erased form, which land as they are. A record
-/// holding no such part goes through the wall whole, as [`super::put`]
-/// puts it.
+/// Persists `record`, a record a put fence passed or a stored row a writer
+/// read again, as its run's replay row: with the side-row wall reading all
+/// of it but the erase's fixed words in each part it holds in its erased
+/// form, which land as they are. A record holding no such part goes through
+/// the wall whole, as [`super::put`] puts it.
 ///
 /// # Errors
 ///
@@ -78,19 +85,12 @@ pub(crate) fn put_fenced(
     wtxn: &mut heed::RwTxn<'_>,
     record: &CodeRunReplayRecord,
 ) -> Result<()> {
-    let parts = ErasedParts::of(record)?;
-    if parts.is_empty() {
+    let Some(erased) = ErasedFormProjection::of(record)? else {
         return super::put(dbs, wtxn, &record.run_id, record);
-    }
-    let projection = msgpack::encode(&replay_record_value(&parts.taken_out_of(record)));
-    let admitted =
-        REPLAY_RECORDS.admit_projection(dbs, wtxn, &record.run_id, &projection, |masked| {
-            parts.put_back(masked).is_ok()
-        })?;
-    let landed = match admitted {
-        Some(masked) => parts.put_back(&masked)?,
-        None => record.clone(),
     };
+    let landed = erased
+        .admitted(dbs, wtxn, &record.run_id)?
+        .unwrap_or_else(|| record.clone());
     #[cfg(oneiron_test_support)]
     super::note_written(REPLAY_RECORDS.encode_value(&landed)?.len());
     REPLAY_RECORDS.put_erased(
@@ -99,6 +99,90 @@ pub(crate) fn put_fenced(
         &record.run_id,
         Erased::code_run_fenced(AdmittedFencedReplay(landed)),
     )
+}
+
+/// Reads `record`, a stored row a writer derives a row or a body from, as
+/// [`put_fenced`] stores it: the wall reads all of it but the erase's fixed
+/// words in each part it holds in its erased form, and each secret it
+/// places becomes its handle in `record` too. A record holding no such part
+/// is read whole, as [`super::admit`] reads it.
+///
+/// # Errors
+///
+/// As [`put_fenced`]'s; it writes no replay row.
+pub(crate) fn admit_fenced(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &mut CodeRunReplayRecord,
+) -> Result<()> {
+    let run = record.run_id;
+    let Some(erased) = ErasedFormProjection::of(record)? else {
+        return super::admit(dbs, wtxn, &run, record);
+    };
+    if let Some(admitted) = erased.admitted(dbs, wtxn, &run)? {
+        *record = admitted;
+    }
+    Ok(())
+}
+
+/// What the side-row wall reads of a replay record that holds a part in an
+/// erased form: the record's pinned MessagePack with the erase's fixed
+/// words taken out, and the place of each, which goes back into the copy
+/// the wall admitted.
+pub(crate) struct ErasedFormProjection {
+    parts: ErasedParts,
+    projection: Vec<u8>,
+}
+
+impl ErasedFormProjection {
+    /// `record`'s projection; `None` when it holds no part in an erased
+    /// form, and the wall reads it whole.
+    ///
+    /// # Errors
+    ///
+    /// An erased outcome that does not encode.
+    pub(crate) fn of(record: &CodeRunReplayRecord) -> Result<Option<Self>> {
+        let parts = ErasedParts::of(record)?;
+        if parts.is_empty() {
+            return Ok(None);
+        }
+        let projection = msgpack::encode(&replay_record_value(&parts.taken_out_of(record)));
+        Ok(Some(Self { parts, projection }))
+    }
+
+    /// The bytes the wall reads in the record's place. They are no valid
+    /// record.
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.projection
+    }
+
+    /// The record the wall admitted, read from `masked`, the projection's
+    /// bytes as the wall left them: the fixed words back in each part, each
+    /// part still in its erased form, and the whole a valid record.
+    ///
+    /// # Errors
+    ///
+    /// A copy in which a part moved or no longer holds its erased form, or
+    /// which is no valid record.
+    pub(crate) fn put_back(&self, masked: &[u8]) -> Result<CodeRunReplayRecord> {
+        self.parts.put_back(masked)
+    }
+
+    /// The record as the wall admits it at `run`'s row, writing no replay
+    /// row; `None` when the wall changes nothing.
+    fn admitted(
+        &self,
+        dbs: &impl SideTableDbs,
+        wtxn: &mut heed::RwTxn<'_>,
+        run: &EntityId,
+    ) -> Result<Option<CodeRunReplayRecord>> {
+        REPLAY_RECORDS
+            .admit_projection(dbs, wtxn, run, &self.projection, |masked| {
+                self.parts.put_back(masked).is_ok()
+            })?
+            .map(|masked| self.parts.put_back(&masked))
+            .transpose()
+    }
 }
 
 /// The request of a call a part sits in: the guest's own, or a hook's

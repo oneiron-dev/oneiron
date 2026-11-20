@@ -7,7 +7,8 @@
 //! owner's document budget binds it (PREDICTED-DOC-BRANCH-NO-FIXTURE). A second ask inside the
 //! home's push spacing appends nothing, a push leaves the home's memory once the spacing has
 //! passed, and a later prediction the home holds no body for leaves its own last set the base of
-//! the hysteresis (PREDICTED-DIRECTIVES-GROW-AUTHORITY-LOG, REVIEW-9762).
+//! the hysteresis (PREDICTED-DIRECTIVES-GROW-AUTHORITY-LOG, REVIEW-9762). A foreign prediction
+//! that follows the home's push in the signed log unseats its set whatever its date (REVIEW-9781).
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -673,6 +674,61 @@ fn a_later_foreign_prediction_leaves_the_home_its_own_set() {
         predicted_set_of(&fixture, &digest).documents,
         BTreeSet::from([late]),
         "the hysteresis keeps the home's own last document, ranked second"
+    );
+}
+
+/// REVIEW-9781 round 1: another home that took this home's push in signs a prediction that
+/// follows it, dated an hour before it by that home's clock. The machine applies the one that
+/// follows, and this home holds no body for it, so its own set no longer stands there: asked again
+/// with nothing changed, the home pushes its set again rather than answering unchanged.
+#[test]
+fn a_foreign_prediction_that_follows_the_push_unseats_it_whatever_its_date() {
+    let fixture = Fixture::open();
+    let subject = person_in(&fixture.vault, LEARNED_AT_A);
+    let a = EntityId::now();
+    claim_in(
+        &fixture.vault,
+        &a,
+        subject,
+        Some(fixture.world),
+        LEARNED_AT_A,
+    );
+    let parent = predict_level(&fixture, 32, 128);
+    fixture
+        .vault
+        .record_machine_touch(fixture.machine, a)
+        .expect("the touch lands");
+    assert!(
+        matches!(predict(&fixture), PredictedResidenceAnswer::Pushed(_)),
+        "a first prediction pushes"
+    );
+    let own = predictions_of(&fixture)
+        .pop()
+        .expect("the home's prediction");
+    let (_, own_digest, _, _) = predicted_act(&own);
+
+    let foreign = PredictedResidenceSet {
+        windows: BTreeSet::new(),
+        documents: BTreeSet::from([EntityId::now()]),
+    };
+    append_prediction_dated(
+        &fixture.vault,
+        &fixture.issuer,
+        fixture.machine,
+        parent,
+        &foreign,
+        own.directive.issued_at - 3_600,
+    )
+    .expect("the foreign prediction that follows the push, dated an hour before it");
+    advance_past_push_spacing(&fixture);
+
+    let PredictedResidenceAnswer::Pushed(pushed) = predict(&fixture) else {
+        panic!("the home pushes again over a prediction that follows its own, dated before it");
+    };
+    let (_, digest, _, _) = predicted_act(&pushed);
+    assert_eq!(
+        digest, own_digest,
+        "the home pushes its unchanged set again"
     );
 }
 

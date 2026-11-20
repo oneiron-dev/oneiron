@@ -54,11 +54,11 @@ impl HookBodyRuntime for RedactRuntime {
     }
 }
 
-/// A [`RedactRuntime`] that also caps the hook input it runs on, as the
-/// real sandbox caps its own at `message_bytes`: an input past it fails the
-/// run before the body starts, with the sandbox's own refusal. What a test
-/// installs to stand a blocking post hook on an answer its hook cannot
-/// judge whole.
+/// A [`RedactRuntime`] that also caps the hook input it runs on at
+/// `message_bytes`, as the real sandbox refuses an input its guest cannot
+/// hold: an input past it fails the run before the body starts, reported
+/// as never taken, with the sandbox's own refusal. What a test installs to
+/// stand a blocking post hook on an answer its hook cannot judge whole.
 pub struct CappedRedactRuntime {
     paths: Vec<String>,
     message_bytes: usize,
@@ -74,8 +74,9 @@ impl HookBodyRuntime for CappedRedactRuntime {
     ) -> Result<HookBodyRun> {
         if input_json.len() > self.message_bytes {
             context.report_usage(crate::runtime_hooks::HookBodyUsage::NOT_RUN);
+            context.report_input_not_taken();
             return Err(Error::InvalidConfig(
-                "hook body or input exceeds the message limit".to_owned(),
+                "hook input exceeds the guest memory".to_owned(),
             ));
         }
         let outcome_json = serde_json::to_string(&serde_json::json!({
@@ -90,10 +91,6 @@ impl HookBodyRuntime for CappedRedactRuntime {
             fuel_used: Some(0),
             host_calls: 1,
         })
-    }
-
-    fn message_limit(&self) -> Option<usize> {
-        Some(self.message_bytes)
     }
 }
 

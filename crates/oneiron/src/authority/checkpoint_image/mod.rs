@@ -113,6 +113,11 @@ pub(super) struct CheckpointSafety {
     pub(super) retired_keys: BTreeSet<AuthorityKey>,
     pub(super) handoff_or_appointment_retired_keys: BTreeSet<AuthorityKey>,
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    /// The revocations whose fences closed in a conflict, as the projected
+    /// fold holds them. Absent when empty, as in every history where no two
+    /// removals cross.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) crossed_revocations: BTreeSet<AuthorityEntryHash>,
     pub(super) unsettled: bool,
     pub(super) issues: Vec<AuthorityFoldIssue>,
     pub(super) missing_parents: BTreeSet<AuthorityEntryHash>,
@@ -303,6 +308,14 @@ impl AuthorityCheckpointV2 {
         {
             return Ok(self);
         }
+        self.drop_residence_bodies();
+        Ok(self)
+    }
+
+    /// What an image past [`AUTHORITY_CHECKPOINT_V2_COMPACTION_BYTES`] keeps
+    /// (FIX 11400): no residence directive's or result's body, each such row
+    /// requiring none, and the overflow marked.
+    pub(super) fn drop_residence_bodies(&mut self) {
         for row in self.rows.values_mut() {
             let is_residence = row.body.as_ref().is_some_and(|body| {
                 decode_authority_log_entry_body(body).is_ok_and(|entry| {
@@ -318,7 +331,6 @@ impl AuthorityCheckpointV2 {
             }
         }
         self.residence_overflow = AUTHORITY_RESIDENCE_BODY_OVERFLOW;
-        Ok(self)
     }
 
     fn shape(&self) -> Result<()> {
@@ -451,6 +463,8 @@ impl AuthorityCheckpointV2 {
         if !aggregate.fold.valid_entries.iter().all(covered)
             || !safety.uncounted.iter().all(covered)
             || !safety.closed_handoffs.iter().all(covered)
+            || !safety.crossed_revocations.iter().all(covered)
+            || safety.crossed_revocations != aggregate.fold.crossed_revocations
             || safety.handoff_or_appointment_retired_keys
                 != aggregate.fold.handoff_or_appointment_retired_keys
             || !safety

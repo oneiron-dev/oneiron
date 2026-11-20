@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/affect.rs` | src | s | 1 re-export | — | Core VAD value types |
-| `src/affect/vad.rs` | src | s | 3 struct · 2 enum · 6 fn · 1 const | DerivationFreshness, Vad, VadAnnotation, VadAnnotationSource, VadComponent | Core VAD value types: ranges, validation, and annotation records shared by every affect child |
+| `src/affect/vad.rs` | src | s | 3 struct · 2 enum · 5 fn · 1 const | DerivationFreshness, Vad, VadAnnotation, VadAnnotationSource, VadComponent | Core VAD value types: ranges, validation, and annotation records shared by every affect child |
 | `src/authority.rs` | src | s | 1 type · 1 const | — | Authority-log hash vocabulary the write path shares |
 | `src/claim.rs` | src | s | 1 fn · 3 re-export | — | Claim status axes and the scoped-read receipt |
 | `src/claim/confidence.rs` | src | s | 1 struct · 2 enum · 6 fn | ConfidenceBand, ConfidenceDetails, VerdictBasis | What a claim's confidence means beyond its number (ARCH-0003, FIX 7761): the hedge band it is read in and… |
@@ -84,6 +84,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/wallet.rs` | src | s | 1 struct · 1 fn | WalletRef | The host wallet an owner's agent Grant names (FIX 7766, ARCH-0011 billing): the host owns the money, a Grant… |
 | `src/write_envelope.rs` | src | s | 1 struct · 7 fn | WriteActor | The write actor every write path stamps |
 | `tests/contracts_register_names.rs` | test | s | — | — | The names of 8 name lists in `oneiron-contracts`, one line per row, generated from… |
+| `tests/contracts_vad_register_names.rs` | test | s | — | — | The names of `VadAnnotationSource` in `oneiron-contracts`, one line per row, generated from… |
 | `tests/cursor_text.rs` | test | s | — | — | The `{at}:{id}` cursor (UC-13 PR 1): written byte for byte as the mail inbox and the conversation transcript… |
 | `tests/extraction_layout_wire.rs` | test | s | — | — | The bound extraction step's layout refusal carries its native slices as the typed `extraction_layout` field… |
 | `tests/fingerprint_id_prefix.rs` | test | s | — | — | PLAN-UC-04 stage 0: the id rules against the fingerprint door |

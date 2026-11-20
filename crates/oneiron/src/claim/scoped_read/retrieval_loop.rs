@@ -36,7 +36,9 @@ impl ScopedRead<'_> {
             .scoped_note_reader(self.actor_key.clone())
             .filter_candidates(&admitted)
             .run_for_pack()?;
-        let final_read = self.filter_search_results_with_suppression(
+        // The loop's receipts report the key's live Grants on any lane
+        // (FIX-LIST GRANT-RECEIPT-OTHER-READ-LANES).
+        let final_read = self.filter_search_results_reporting(
             output.scores,
             limit,
             requested,
@@ -47,6 +49,7 @@ impl ScopedRead<'_> {
                 excluded: excluded.snapshot_ids()?,
             },
             &output.revisions,
+            true,
         )?;
         Ok(LoopSearch {
             handles: final_read
@@ -94,24 +97,31 @@ impl ScopedRead<'_> {
     /// receipt's applied scope is the candidates a search under `requested`
     /// ranks, read in the same snapshot, so the loop's next step, asked under
     /// it, never refuses a row this read admitted under one of the reader's
-    /// own live Grants. Every row check is the point read's own.
+    /// own live Grants. Every row check is the point read's own. The receipt
+    /// reports the live Grants the rows' gate held in that snapshot, on any
+    /// lane (FIX-LIST GRANT-RECEIPT-OTHER-READ-LANES), in its ceiling and in
+    /// the candidates alike ([`Self::receipt_candidates_in`]).
     fn loop_read_projected<T>(
         &self,
         reads: &[PointRead<'_>],
         requested: &RetrievalFilter,
         project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> Result<T>,
     ) -> Result<ScopedReadResult<T>> {
-        let read = self.read_projected(reads, Some(requested), |txn, rows| {
-            let plan = self.search_plan_in(txn, Some(requested))?;
-            Ok::<_, Error>((project(txn, rows)?, plan))
+        let read = self.read_projected_held(reads, Some(requested), |txn, held, rows| {
+            let (filter, policy) = self.resolve_retrieval_filter_in(txn, Some(requested))?;
+            let receipt = self.receipt_reporting_in(
+                txn,
+                Some(requested),
+                &policy,
+                &self.receipt_candidates_in(txn, &policy, &filter, Some(requested), true),
+                0,
+                Some(held),
+                true,
+            );
+            Ok((project(txn, rows)?, receipt))
         })?;
-        let (value, plan) = read.value;
-        let receipt = self.receipt_for(
-            Some(requested),
-            &plan.policy,
-            &plan.candidates,
-            read.receipt.suppressed_count,
-        );
+        let (value, mut receipt) = read.value;
+        receipt.add_suppressed(read.receipt.suppressed_count);
         Ok(ScopedReadResult { value, receipt })
     }
 
@@ -127,7 +137,7 @@ impl ScopedRead<'_> {
         let mut result =
             self.loop_read_projected(&[point_read(anchor)], requested, |txn, rows| {
                 let Some(row) = rows.into_iter().next().flatten() else {
-                    return Ok((Vec::new(), 0));
+                    return Ok((Vec::new(), 0, None));
                 };
                 let (direction, edge_kind, target_type) = match (up, row.entity_type) {
                     (true, ENTITY_TYPE_MESSAGE) => {
@@ -142,7 +152,7 @@ impl ScopedRead<'_> {
                     (false, ENTITY_TYPE_TURN) => {
                         (EdgeDirection::In, EdgeKind::PartOf, ENTITY_TYPE_MESSAGE)
                     }
-                    _ => return Ok((Vec::new(), 0)),
+                    _ => return Ok((Vec::new(), 0, None)),
                 };
                 let (filter, policy) = self.resolve_retrieval_filter_in(txn, Some(requested))?;
                 let store = self.store_read();
@@ -153,8 +163,12 @@ impl ScopedRead<'_> {
                 let mut handles = Vec::new();
                 let mut suppressed = 0;
                 let mut seen = HashSet::new();
-                // One relationship authority for every peer (FIX 11648).
-                let retrievable = self.recall_candidates_in(txn, &policy, &filter, Some(requested));
+                // One relationship authority for every peer (FIX 11648),
+                // whose Grants the drill's receipt also reports.
+                let peer_held = self.held_for(Some(requested));
+                let retrievable = |peer: &EntityId| {
+                    self.is_entity_retrievable_held_in(txn, &policy, &filter, peer, &peer_held)
+                };
                 let floor_held = super::access_gate::HeldAuthority::for_request(None);
                 for edge in edges {
                     let edge = edge?;
@@ -210,10 +224,26 @@ impl ScopedRead<'_> {
                         break;
                     }
                 }
-                Ok::<_, Error>((handles, suppressed))
+                // The peers' gate holds its own Grants: one that lapsed since
+                // the anchor's read narrows the receipt, so peers it refused
+                // never stand under the anchor's wider one (review round 1 of
+                // #9794). Row admission is unchanged.
+                let peers = self.receipt_reporting_in(
+                    txn,
+                    Some(requested),
+                    &policy,
+                    &self.receipt_candidates_in(txn, &policy, &filter, Some(requested), true),
+                    0,
+                    Some(&peer_held),
+                    true,
+                );
+                Ok::<_, Error>((handles, suppressed, Some(peers)))
             })?;
+        if let Some(peers) = &result.value.2 {
+            result.receipt.restrict_with(peers);
+        }
         result.receipt.add_suppressed(result.value.1);
-        Ok(result.map(|(handles, _)| handles))
+        Ok(result.map(|(handles, _, _)| handles))
     }
 
     /// The loop's frontier (FIX 7798): how many distinct one-hop graph

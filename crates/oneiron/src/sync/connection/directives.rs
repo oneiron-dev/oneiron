@@ -12,12 +12,13 @@ use tokio::sync::mpsc;
 
 use crate::EntityId;
 use crate::Vault;
-use crate::authority::{ResidenceAct, ResidenceDirective, ResidenceResultStatus};
+use crate::authority::{ResidenceAct, ResidenceResultStatus};
 use crate::sync::TransportError;
 use crate::sync::client::{SyncEvent, SyncResidenceMode};
 use crate::sync::residence::{
-    ResidenceDirectiveState, finish_residence_directive_in_txn, load_device_sync_preference,
-    pending_residence_directives, residence_directive_counts, residence_refusal_reason,
+    ResidenceDirectiveState, directive_states_in_txn, finish_residence_directive_in_txn,
+    live_prediction_in_txn, load_device_sync_preference, pending_residence_directives,
+    residence_directive_counts, residence_refusal_reason,
 };
 
 use super::SyncConnection;
@@ -57,16 +58,28 @@ fn applied(
 }
 
 /// The owner's budget the prediction `pending` names through `parent`: its parent's, once the
-/// owner's live predicted level for this machine is that directive and no newer prediction
-/// replaced it (Engine ruling PLAN-SIGNER A).
+/// owner's live predicted level for `machine` is that directive and no newer prediction replaced
+/// it (Engine ruling PLAN-SIGNER A), read in `txn`. `pending` is newest when it is the prediction
+/// the machine adopts under `parent` ([`live_prediction_in_txn`]): one that follows it in the
+/// signed log replaces it whatever their dates, and of two predictions neither of which follows
+/// the other, the one that follows more of the others replaces the other, then the later dated,
+/// in whichever order they arrived. One refused here is never adopted later, so its result stays
+/// true. One under another parent applies nowhere and replaces nothing (FIX
+/// PREDICTED-FUTURE-DATED-BLOCKS-LATER, REVIEW-9781).
 fn check_prediction_parent(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     pending: &ResidenceDirectiveState,
-    directives: &[ResidenceDirective],
+    machine: EntityId,
     parent: EntityId,
 ) -> Result<(u32, u32), TransportError> {
+    let states = directive_states_in_txn(vault, txn).map_err(storage)?;
     let mut last: Option<(EntityId, u32, u32)> = None;
-    let mut later = false;
-    for directive in directives {
+    for directive in states
+        .iter()
+        .map(|state| &state.directive)
+        .filter(|directive| directive.machine == machine)
+    {
         match &directive.act {
             ResidenceAct::SyncPredicted {
                 window_budget,
@@ -77,18 +90,14 @@ fn check_prediction_parent(
             ResidenceAct::SyncAll | ResidenceAct::SyncOpened => {
                 last = None;
             }
-            ResidenceAct::Predicted { .. }
-                if (directive.issued_at, directive.id)
-                    > (pending.directive.issued_at, pending.directive.id) =>
-            {
-                later = true;
-            }
             _ => {}
         }
     }
     match last {
         Some((id, window_budget, document_budget)) if id == parent => {
-            if later {
+            let live =
+                live_prediction_in_txn(vault, txn, &states, machine, parent).map_err(storage)?;
+            if live.is_none_or(|live| live.entry != pending.entry) {
                 return Err(TransportError::InvalidPayload(
                     "a newer prediction replaced it",
                 ));
@@ -178,7 +187,7 @@ impl SyncConnection {
     /// Runs one directive and records its result. A mode switch, a world
     /// pick, a prune and an open commit with their result; the index read
     /// commits nothing a second run would change, then the result.
-    async fn apply_residence_directive(
+    pub(crate) async fn apply_residence_directive(
         &self,
         pending: &ResidenceDirectiveState,
     ) -> Result<(), TransportError> {
@@ -271,9 +280,14 @@ impl SyncConnection {
             .ok_or(TransportError::InvalidPayload(
                 "a prediction applies under the owner's live predicted level",
             ))?;
-        let directives = Self::directives_naming_machine(vault, machine).map_err(storage)?;
-        let (window_budget, document_budget) =
-            check_prediction_parent(pending, &directives, parent)?;
+        let (window_budget, document_budget) = {
+            let txn = vault
+                .store
+                .env
+                .read_txn()
+                .map_err(|error| storage(error.into()))?;
+            check_prediction_parent(vault, &txn, pending, machine, parent)?
+        };
         if window_count > window_budget || document_count > document_budget {
             return Err(TransportError::InvalidPayload(
                 "a prediction exceeds the owner's budget",
@@ -290,12 +304,19 @@ impl SyncConnection {
                 "the predicted set does not match its counts",
             ));
         }
+        // Judged again in the target's writer: a row that came in while the set was fetched may
+        // have replaced it.
         vault
             .with_write_txn_grouped(|txn| {
+                if let Err(refusal) = check_prediction_parent(vault, txn, pending, machine, parent)
+                {
+                    return Ok(Err(refusal));
+                }
                 super::predicted::PREDICTED_TARGET.put(&vault.store, txn, &(), &body)?;
-                applied(vault, txn, pending, set.windows.len() + set.documents.len())
+                applied(vault, txn, pending, set.windows.len() + set.documents.len())?;
+                Ok(Ok(()))
             })
-            .map_err(storage)?;
+            .map_err(storage)??;
         self.predicted_wake.notify_one();
         Ok(())
     }

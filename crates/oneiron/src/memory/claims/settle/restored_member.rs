@@ -4,7 +4,8 @@
 //! reads it, with the owner's restore left out of its openers (D5), and
 //! settles with its own owner proof and its own Settlement receipt. A member
 //! the owner opened, or whose approval would supersede a live head, is left
-//! waiting; so is one the gate refuses or holds. The caller settles each
+//! waiting; so is one the gate refuses or holds, and one whose settlement
+//! would lift a restriction on a handle that acts as no person. The caller settles each
 //! member in its own savepoint and drops the savepoint of one left waiting.
 
 use super::*;
@@ -136,6 +137,19 @@ impl Memory<'_> {
                 RestoreMemberWait::Refused,
                 None,
                 Some(error.message),
+            ));
+        }
+        // The owner's proof answers for the owner, but a settlement by no
+        // person (his slip handed on to another key) never lifts a
+        // restriction: that member waits for his own answer (RULING
+        // HANDED-ON-SLIP-PERSON Q1 = A).
+        if !self.acts_as_own_person()
+            && reviewed.settle_lifts_restriction_in(self.vault, &*wtxn, &id, action)?
+        {
+            return Ok(waiting(
+                RestoreMemberWait::Refused,
+                None,
+                Some(restriction_close_needs_a_person(actor).message),
             ));
         }
         let owner_answer = owner.owner_answer_in_txn(self.vault, &*wtxn)?;

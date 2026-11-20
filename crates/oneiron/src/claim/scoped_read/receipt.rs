@@ -41,7 +41,9 @@ impl ScopedRead<'_> {
     /// This lane reporting its live Grants in each receipt it builds in a
     /// serving snapshot ([`Self::receipt_in`]). Set on a verb answer whose
     /// receipt tells its caller what admitted its rows: vault.recall,
-    /// vault.search.bm25, vault.claims.list and vault.get.
+    /// vault.search.bm25, vault.claims.list, vault.get and vault.hydrate.
+    /// The retrieval loop reports them on any lane
+    /// ([`Self::receipt_reporting_in`]).
     #[must_use]
     pub(crate) fn with_live_grant_receipts(mut self) -> Self {
         self.receipts_include_live_grants = true;
@@ -67,7 +69,47 @@ impl ScopedRead<'_> {
         suppressed_count: usize,
         held: Option<&HeldAuthority>,
     ) -> ScopedReadReceipt {
-        match self.live_grant_receipt_scope_in(rtxn, policy, applied, requested, held) {
+        self.receipt_reporting_in(
+            rtxn,
+            requested,
+            policy,
+            applied,
+            suppressed_count,
+            held,
+            self.receipts_include_live_grants,
+        )
+    }
+
+    /// [`Self::receipt_in`], reporting the key's live Grants when
+    /// `report_live_grants`, whatever this lane's own setting. The retrieval
+    /// loop passes `true` (FIX-LIST GRANT-RECEIPT-OTHER-READ-LANES): it runs
+    /// on a lane its embedder made and lends it, so it cannot opt that lane
+    /// in, and its receipts only tell its planner what admitted its rows; no
+    /// consumer caps unjudged content by them. Its applied scope stays the
+    /// candidates it asks its next step under, which already join each live
+    /// Grant's.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a receipt takes its snapshot, request, policy, scope, count, held authority and reach"
+    )]
+    pub(super) fn receipt_reporting_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        requested: Option<&RetrievalFilter>,
+        policy: &PolicyManifestResolution,
+        applied: &ResolvedRetrievalFilter,
+        suppressed_count: usize,
+        held: Option<&HeldAuthority>,
+        report_live_grants: bool,
+    ) -> ScopedReadReceipt {
+        match self.live_grant_receipt_scope_in(
+            rtxn,
+            policy,
+            applied,
+            requested,
+            held,
+            report_live_grants,
+        ) {
             Some(scope) => self.receipt_under(
                 requested,
                 scope.ceiling,
@@ -153,21 +195,23 @@ impl ScopedRead<'_> {
     /// its own live Grants reads (`SearchPlan::candidates`), so a search
     /// whose key reads nothing by itself still runs when a Grant reads some
     /// rows. It reports, never authorizes: every row still takes the row gate.
+    /// A receipt that reports the live Grants loads them once
+    /// ([`Self::receipt_candidates_in`]).
     pub(crate) fn search_receipt(
         &self,
         requested: Option<&RetrievalFilter>,
         suppressed: usize,
     ) -> crate::Result<ScopedReadReceipt> {
         let txn = self.grant_read_txn()?;
-        let plan = self.search_plan_in(&txn, requested)?;
-        Ok(self.receipt_in(
+        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
+        let candidates = self.receipt_candidates_in(
             &txn,
+            &policy,
+            &filter,
             requested,
-            &plan.policy,
-            &plan.candidates,
-            suppressed,
-            None,
-        ))
+            self.receipts_include_live_grants,
+        );
+        Ok(self.receipt_in(&txn, requested, &policy, &candidates, suppressed, None))
     }
 
     /// The receipt for a scan that already holds its transaction: the
