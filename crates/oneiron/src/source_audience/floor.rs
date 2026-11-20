@@ -25,12 +25,14 @@
 //! was written from (the source-audience walk's lineage, the source
 //! dependency index, the birth's inputs of every role, a carried summary)
 //! adds its floor. A CLAIM's supports attest it: one free attestation frees,
-//! otherwise every attestation's floor binds. A row whose lineage cannot be
-//! read when it is written is born under [`sealed_source`], which admits no
-//! one, the vault owner included (READ-LINEAGE-L3 = A), and so is a row
-//! whose birth names an input this vault erased
-//! ([`seal_births_from_erased_inputs_in_txn`]); doctor counts such rows
-//! ([`facts_hidden_source_unknown_in`]).
+//! otherwise every attestation's floor binds. A row whose birth names an
+//! input this vault erased is born under [`sealed_source`]
+//! ([`seal_births_from_erased_inputs_in_txn`]), which admits no one, the
+//! vault owner included (READ-LINEAGE-L3 = A); doctor counts such rows
+//! ([`facts_hidden_source_unknown_in`]). Only proof of erasure seals (#9289
+//! review 2 P1-1): a row it was written from that has not landed here yet,
+//! or lineage that does not resolve yet, leaves its floor pending, and the
+//! write that lands what it waits on raises it again ([`super::floor_state`]).
 
 use std::collections::BTreeSet;
 
@@ -96,28 +98,34 @@ pub(crate) fn floor_source_in(
     Ok(FloorSource::Unknown)
 }
 
-/// The source the row `row` (bytes `raw`) was born in, if any: the policy
-/// it is bound to. A row a source landed whose binding is absent here is
-/// [`sealed_source`]: such a row reads to no one, and so does what is
-/// written from it. A row its landing is binding
-/// in this very write (its birth mark stands until the binding lands) names
-/// no source yet: the landing binds it after staging its rows.
-fn own_source_in(
+/// The source a row was born in, as a floor reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum OwnSource {
+    /// None: its words are its own.
+    None,
+    /// The policy it is bound to.
+    Source(EntityId),
+    /// A row a source landed whose binding is not here: its landing binds it
+    /// later in this very write, or its carried binding waits for its
+    /// policy. It names no source yet; its own read waits for its binding,
+    /// and a row written from it waits too ([`super::floor_state`]).
+    Unbound,
+}
+
+/// The source the row `row` (bytes `raw`) was born in.
+pub(super) fn own_source_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
     row: &EntityId,
     raw: &[u8],
-) -> Result<Option<EntityId>> {
+) -> Result<OwnSource> {
     if let Some(policy) = super::binding_in(vault, txn, row)? {
-        return Ok(Some(policy));
+        return Ok(OwnSource::Source(policy));
     }
     if super::obligation::row_obligation(raw).is_present() {
-        if super::BIRTHS.contains(&vault.store, txn, row)? {
-            return Ok(None);
-        }
-        return Ok(Some(sealed_source()));
+        return Ok(OwnSource::Unbound);
     }
-    Ok(None)
+    Ok(OwnSource::None)
 }
 
 /// The sources the row `row` (bytes `raw`) reads under: the one it was born
@@ -135,7 +143,9 @@ pub(crate) fn floor_in(
     let mut floor = super::DERIVED
         .get(&vault.store, txn, row)?
         .unwrap_or_default();
-    floor.extend(own_source_in(vault, txn, row, raw)?);
+    if let OwnSource::Source(own) = own_source_in(vault, txn, row, raw)? {
+        floor.insert(own);
+    }
     Ok(floor)
 }
 
@@ -157,9 +167,15 @@ pub(crate) struct RowSources {
     pub(crate) written_from: Vec<EntityId>,
     /// A CLAIM's supports: one free one frees, otherwise all bind.
     pub(crate) attested_by: Vec<EntityId>,
-    /// Whether a source it names cannot be read: a summary's word sources
-    /// that do not resolve, a named word source not held here, or a carried
-    /// summary that does not decode.
+    /// The rows of `written_from` no read walks: the birth's inputs and the
+    /// source dependency index. A row waits for one of them that has not
+    /// landed; a read walks the rest live.
+    pub(crate) unwalked: Vec<EntityId>,
+    /// The word sources it names that this vault does not hold.
+    pub(crate) unheld: Vec<EntityId>,
+    /// Whether its lineage does not resolve here: a summary's word sources
+    /// that do not resolve yet (an epoch whose head has not landed), or a
+    /// body or carried summary that does not decode.
     pub(crate) unresolved: bool,
 }
 
@@ -185,7 +201,7 @@ pub(crate) fn row_sources_in(
         Ok(crate::scope_summary::WordSources::From(named)) => {
             for source in named {
                 if vault.get_raw_in(txn, &source)?.is_none() {
-                    sources.unresolved = true;
+                    sources.unheld.push(source);
                 }
             }
         }
@@ -200,15 +216,18 @@ pub(crate) fn row_sources_in(
     let (every, supports) = vault.lineage_word_sources_in(txn, *row, raw)?;
     sources.written_from.extend(every);
     sources
-        .written_from
+        .unwalked
         .extend(crate::ports::dependency_sources_in(&vault.store, txn, row)?);
     sources
-        .written_from
+        .unwalked
         .extend(crate::store::birth_record::input_rows_in_txn(
             &vault.store,
             txn,
             row,
         )?);
+    sources
+        .written_from
+        .extend(sources.unwalked.iter().copied());
     sources.attested_by = supports;
     Ok(sources)
 }
@@ -225,17 +244,20 @@ pub(crate) fn floors_possible_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<bool>
     Ok(super::any_policy_in(vault, txn)? || super::any_landed_in(vault, txn)?)
 }
 
-/// Raises the floor of `row` over what its words came from, one level, in
-/// the write that gives it words or a source. Whether it grew.
-fn raise_floor_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, row: &EntityId) -> Result<bool> {
+/// Raises the floor of `row` over what its words came from, one level
+/// (`sources`), in the write that gives it words or a source. Whether it
+/// grew. A row it was written from that is not held here adds the floor it
+/// left, if any; whether the row waits for it is [`super::floor_state`]'s.
+pub(super) fn raise_floor_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    row: &EntityId,
+    sources: &RowSources,
+) -> Result<bool> {
     let Some(raw) = vault.get_raw_in(txn, row)? else {
         return Ok(false);
     };
-    let sources = row_sources_in(vault, txn, row, &raw)?;
     let mut add = BTreeSet::new();
-    if sources.unresolved {
-        add.insert(sealed_source());
-    }
     for source in &sources.written_from {
         if source != row {
             add.extend(stored_floor_in(vault, txn, source)?);
@@ -257,7 +279,7 @@ fn raise_floor_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, row: &EntityId) -> Res
     if !freed {
         add.extend(attested);
     }
-    if let Some(own) = own_source_in(vault, txn, row, &raw)? {
+    if let OwnSource::Source(own) = own_source_in(vault, txn, row, &raw)? {
         add.remove(&own);
     }
     if add.is_empty() {
@@ -269,9 +291,12 @@ fn raise_floor_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, row: &EntityId) -> Res
 /// Raises the floor of each of `rows` in `txn`, the write that gave them
 /// words or a source (READ-LINEAGE L1: a born row, a row that gained a
 /// `PartOf`, `DerivedFrom` or `Supports` source, a row whose dependencies
-/// were registered). It repeats until no floor grows, so a row this write
-/// gave a floor passes it on to a row the same write wrote from it. A vault
-/// where no row can have a floor reads nothing ([`floors_possible_in`]).
+/// were registered, a row that landed here). It repeats until no floor
+/// grows, so a row this write gave a floor passes it on to a row the same
+/// write wrote from it; it settles whether each floor is whole, and raises
+/// again the rows that waited on a row it settled ([`super::floor_state`]).
+/// A vault where no row can have a floor reads nothing
+/// ([`floors_possible_in`]).
 ///
 /// # Errors
 ///
@@ -285,15 +310,7 @@ pub(crate) fn raise_floors_in_txn(
     if rows.is_empty() || !floors_possible_in(vault, txn)? {
         return Ok(());
     }
-    loop {
-        let mut grew = false;
-        for row in &rows {
-            grew |= raise_floor_in_txn(vault, txn, row)?;
-        }
-        if !grew {
-            return Ok(());
-        }
-    }
+    super::floor_state::raise_and_settle_in_txn(vault, txn, rows)
 }
 
 /// Seals each row of `born`, in the write that stamps its birth, when that
