@@ -77,11 +77,14 @@ impl ScopedRead<'_> {
             let had_l2_base = pack.l2_base.is_some();
             let mut auxiliary_suppressed = 0;
             if let Some(summary) = pack.l2_base.as_ref() {
-                let visibility = self.retrieval_visibility_in(&rtxn, None)?;
+                // The L2 evidence takes the rows' held authority, so the
+                // Grants that admit it are the ones the receipt reports: a
+                // timed Grant that lapses mid-read cannot leave evidence
+                // under a deny-all receipt.
                 let mut admitted = true;
                 for id in summary.evidence_ids() {
                     let evidence = self.admit_in(&rtxn, id, || {
-                        crate::ports::PprNodeVisibility::ppr_node_visible(&visibility, &rtxn, id)
+                        self.is_entity_retrievable_held_in(&rtxn, &policy, &filter, id, &held)
                             .map(|visible| visible.then_some(()))
                     })?;
                     if !evidence.visible() {
