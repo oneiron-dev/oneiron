@@ -3905,6 +3905,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/account_key_read.rs",
+     "purpose": "The read an account API key makes as its person (OF-448; the lead's ruling DEL2-ROOTLESS-MEMBER-KEY-READ =…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -3996,6 +4007,16 @@
      "notable": [],
      "path": "src/authority/adopted_fold/settle.rs",
      "purpose": "The tail's seeded fold past an adopted image, settled and projected (OF-469, slice C): what the live fold…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/adopted_fold/tail_gaps.rs",
+     "purpose": "The gaps that refuse the fold past an adopted image (FIX [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD])",
      "surface": {
       "crate-vis": 3
      }
@@ -4935,7 +4956,7 @@
      "path": "src/authority/guest_revoke.rs",
      "purpose": "OF-232: the owner mints an Ask or Connect guest's capability slip, bound to its grant, and withdraws one…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 2
      }
     },
@@ -5366,7 +5387,17 @@
      "path": "src/authority/log_structure.rs",
      "purpose": "The authority log's consent structure, read from its signed rows alone, so the fold's bounds and the store…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/log_structure/belief.rs",
+     "purpose": "The belief the fold past an adopted image reads (FIX [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]): the store…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -41310,6 +41341,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/bound_room.rs",
+     "purpose": "Bound rooms on the doc plane (WORK-TALK-DOC-EDIT = A, lead 21 Nov 2026)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -58524,7 +58565,7 @@
      "purpose": "Handle binders: the `with_*` methods and the accessors that read back what a binder set",
      "surface": {
       "crate-vis": 18,
-      "fn": 28
+      "fn": 29
      }
     },
     {
@@ -87792,13 +87833,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/connection/handshake.rs",
-     "purpose": "Handshake: run loop, open_sync_session, overflow check",
+     "purpose": "Handshake: run loop, overflow check",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -87820,6 +87861,16 @@
      "purpose": "The wait of a run whose home refused its credential the socket (MEMBER-SELECTOR-SOCKET): it never redials on…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/connection/handshake/initial_sync.rs",
+     "purpose": "Session opening: the connect, initial sync and queue replay a session runs before its steady loop",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -91720,7 +91771,17 @@
      "path": "src/tagging/save.rs",
      "purpose": "Save mode: a checked answer becomes the turn's tag set (ARCH-0036, serving the tagger)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/save/lane.rs",
+     "purpose": "The link a lane is served for a saved mention (FIX TAG-LINK-DECIDED-OVER-UNREADABLE-PERSONS; the lead's…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -94599,6 +94660,7 @@
      "path": "src/test_doors/authority_adopted_fold.rs",
      "purpose": "The adopted-fold door (FIX [ADOPTED-FOLD-GATE-TEST] and [SEQ-FLOOR-S-ADOPTED-FORK-NEEDS-HISTORY]): one…",
      "surface": {
+      "fn": 1,
       "re-export": 1
      }
     },
@@ -103468,6 +103530,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/voice_identity/consent_void.rs",
+     "purpose": "Grants a backdated withdrawal voids (FIX [VOICE-WITHDRAWAL-BACKDATED-LEAVES-GRANT]; RULING…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "VoiceEnrollmentLegalContext",
       "VoiceJurisdiction",
@@ -104047,7 +104119,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 55,
+      "crate-vis": 56,
       "mod": 1,
       "re-export": 32
      }
@@ -104410,7 +104482,7 @@
      "purpose": "Direct leader chats: same-vault routing, shared-ancestor rule clamp and speaker scope",
      "surface": {
       "const": 1,
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 2,
       "re-export": 1
      }
@@ -104442,7 +104514,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 59,
+      "crate-vis": 60,
       "enum": 2,
       "fn": 20,
       "re-export": 20,
@@ -106735,6 +106807,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/adopted_fold_request_wait.rs",
+     "purpose": "FIX [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD], #9476 review round 1 (P1): the fold past an adopted image reads…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -107510,6 +107590,14 @@
      "notable": [],
      "path": "tests/authority_log_owner_reserve_request_slip.rs",
      "purpose": "An owner act whose proof came with a request's slip carries no owner key proof (row…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/authority_log_owner_reserve_residence_results.rs",
+     "purpose": "Row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, part 2e2: a residence result carries the owner key's proof…",
      "surface": {}
     },
     {
@@ -116034,6 +116122,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/stranger_adopted_tail_gap.rs",
+     "purpose": "FIX [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]: on a vault that adopted a checkpoint image, a stranger's stored…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/stranger_parent_settled.rs",
      "purpose": "FIX [STRANGER-WITHHELD-PARENT-STALLS-PEER-SETTLED]: a stranger's withheld parent stalls no peer route, while…",
      "surface": {}
@@ -116212,6 +116308,14 @@
      "notable": [],
      "path": "tests/sync_upgrade_forbidden.rs",
      "purpose": "A home's HTTP 403 to a sync upgrade is a typed stop (FIX-LIST [MEMBER-SELECTOR-SOCKET]): the home accepted…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/tag_link_lane_decision.rs",
+     "purpose": "A saved mention's link is served to a lane as the lane would decide it over the persons it reads (FIX…",
      "surface": {}
     },
     {
@@ -117047,7 +117151,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/workspace_work_talk.rs",
@@ -117239,7 +117343,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 322,
+     "files": 325,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -117785,7 +117889,7 @@
      "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…"
     },
     "entity_doc": {
-     "files": 47,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -118660,14 +118764,14 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 443,
+     "files": 444,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "CRDT sync layer for Oneiron"
     },
     "tagging": {
-     "files": 27,
+     "files": 28,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -118849,7 +118953,7 @@
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade"
     },
     "voice_identity": {
-     "files": 26,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -118898,10 +119002,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 307,
+   "over_bar": 306,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8327,
-   "test_files": 2102
+   "source_files": 8334,
+   "test_files": 2106
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -155038,6 +155142,14 @@
      "path": "tests/sdk_generated_header_text.rs",
      "purpose": "FIX-LIST 22920 [SDK-GENERATED-HEADER-TEXT]: every generated SDK output names `crates/oneiron-sdk-generator`…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/sdk_python_keyword_identifiers.rs",
+     "purpose": "FIX-LIST [PY-SDK-GENERATED-KEYWORD-METHOD]: the generated Python facade names no method, property or…",
+     "surface": {}
     }
    ],
    "modules": {
@@ -155108,7 +155220,7 @@
    "over_bar": 7,
    "purpose": "The SDK generator: writes every generated SDK output of the verb table (`scripts/sdk/verbs/`), the Rust…",
    "source_files": 43,
-   "test_files": 6
+   "test_files": 7
   },
   "oneiron-seal": {
    "files": [
