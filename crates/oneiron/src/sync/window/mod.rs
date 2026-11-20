@@ -43,6 +43,7 @@ mod shallow;
 pub mod test_hooks;
 mod tombstones;
 mod update_inserts;
+mod use_limited;
 mod withdrawn;
 
 pub(in crate::sync) use self::admission::encoded_root_state;
@@ -81,7 +82,7 @@ use self::egress::window_packing_excludes_entity;
 use self::egress::window_packing_excludes_entity_with;
 pub(in crate::sync) use self::egress::{
     export_scrubbed_window_snapshot, export_scrubbed_window_state, withdrawn_delete_carriers,
-    withhold_audience_carriers, withhold_use_limited_carriers,
+    withhold_audience_carriers,
 };
 pub use self::egress::{
     history_free_window_required, replay_pending_mirrors, require_history_free_window,
@@ -137,6 +138,7 @@ pub use self::tombstones::{
 #[cfg(test)]
 pub(crate) use self::tombstones::{arm_fail_after_carrier_mark, disarm_fail_after_carrier_mark};
 pub use self::update_inserts::UpdateInserts;
+pub(crate) use self::use_limited::withhold_use_limited_carriers;
 pub(crate) use self::withdrawn::replace_withdrawn_carriers;
 
 /// Whether the stored TURN `turn` can ride its base month window, judged in

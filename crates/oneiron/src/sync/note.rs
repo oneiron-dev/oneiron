@@ -117,6 +117,17 @@ fn held(
 ) -> Result<bool> {
     crate::settings::device_only_withholds(&vault.store, txn, flagged, note)
 }
+/// Whether a record use limit keeps `note` for storage only on this vault (a
+/// privacy erase a customer hold refused, C6, or a cooperative review
+/// restriction). No workflow of it is packed, and it rides as no other
+/// NOTE's attachment. Unlike a blocked NOTE its carrier is not removed
+/// here: the withholding pass takes it out under a marker
+/// (`window::withhold_use_limited_carriers`), so a receiver holds it back
+/// rather than deleting it (Engine ANSWER SERVING-DOORS-OWNER-WINDOW-USE-LIMIT
+/// = B; REVIEW-9846).
+fn use_limited(vault: &Vault, txn: &heed::RoTxn<'_>, note: &EntityId) -> Result<bool> {
+    Ok(crate::store::legal_hold::use_limit_in_txn(&vault.store, txn, note)?.is_some())
+}
 /// Whether no export of the document `tombstones` indexes carries `note`: it
 /// is tombstoned there, deleted here, off the record, or an erased shell.
 pub(crate) fn blocked(

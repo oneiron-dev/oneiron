@@ -67,7 +67,7 @@ use loro::{CommitOptions, LoroDoc};
 /// and it packs again once the limit goes inert (Engine ANSWER
 /// SERVING-DOORS-OWNER-WINDOW-USE-LIMIT = B, 20 Nov 21:19; LEGAL-HOLD-USE = B).
 /// A row the window already carries leaves it through
-/// [`withhold_use_limited_carriers`].
+/// [`super::use_limited::withhold_use_limited_carriers`].
 /// A packing pass asks it through [`window_packing_excludes_entity_with`].
 #[cfg(test)]
 pub(super) fn window_packing_excludes_entity(
@@ -642,6 +642,9 @@ pub(in crate::sync) fn export_scrubbed_window_state(
     doc: &LoroDoc,
 ) -> Result<ScrubbedWindowState> {
     crate::sync::note::refresh(vault, doc, key)?;
+    // A row a use limit keeps here leaves first, so the side-row scrubs
+    // below drop its side rows as a row the window no longer carries.
+    super::use_limited::withhold_use_limited_carriers(vault, doc, Some(key))?;
     scrub_local_claim_carriers(vault, key, doc)?;
     scrub_local_only_carriers(vault, key, doc)?;
     scrub_redacted_attribution_carriers(vault, key, doc)?;
@@ -1114,68 +1117,6 @@ pub(in crate::sync) fn withhold_audience_carriers(
     // No prune here (fix list row 17211): the refresh that called this
     // prunes after it writes the bindings it publishes, which may reach a
     // policy this map's carried bindings do not reach yet.
-    doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-    Ok(true)
-}
-
-/// Takes out of `doc` each row it carries that a use limit keeps for storage
-/// only on this vault ([`crate::store::legal_hold::use_limit_in_txn`]): a
-/// privacy erase a standing customer hold refused (C6), or a cooperative
-/// review restriction. Its carrier and edges go, and a withholding marker
-/// naming this machine takes their place, so the owner's devices hold the row
-/// back and read it to no one, as they would had the erase run; this vault
-/// keeps its stored copy for the hold (Engine ANSWER
-/// SERVING-DOORS-OWNER-WINDOW-USE-LIMIT = B, 20 Nov 21:19). The marker lifts,
-/// and the row rides again, once the limit goes inert and the row packs
-/// (`source_audiences::refresh_and_scrub`). `pin` names the window pinned
-/// history-free before anything goes, so its history never ships the row's
-/// bytes; the sweep passes `None`. A vault with no use limit carries no such
-/// row. Whether anything went, committed.
-///
-/// # Errors
-///
-/// Storage failures.
-pub(in crate::sync) fn withhold_use_limited_carriers(
-    vault: &Vault,
-    doc: &LoroDoc,
-    pin: Option<&WindowKey>,
-) -> Result<bool> {
-    let (withheld, by) = {
-        let rtxn = vault.store.env.read_txn()?;
-        if !crate::store::legal_hold::any_record_use_limit_in_txn(&vault.store, &rtxn)? {
-            return Ok(false);
-        }
-        let mut carried = Vec::new();
-        map_for_each_value_bytes(&doc.get_map("entities"), |key, _| {
-            if let Ok(id) = EntityId::from_hex(key)
-                && id.to_hex() == key
-            {
-                carried.push(id);
-            }
-        });
-        let mut withheld = Vec::new();
-        for id in carried {
-            if crate::store::legal_hold::use_limit_in_txn(&vault.store, &rtxn, &id)?.is_some() {
-                withheld.push(id);
-            }
-        }
-        (
-            withheld,
-            crate::identity::read_machine_id_in_txn(vault, &rtxn)?,
-        )
-    };
-    if withheld.is_empty() {
-        return Ok(false);
-    }
-    if let Some(key) = pin {
-        require_history_free_window(vault, key)?;
-    }
-    let entities = doc.get_map("entities");
-    let edges = doc.get_map("edges");
-    for id in &withheld {
-        remove_entity_crdt_carriers(&entities, &edges, id)?;
-    }
-    crate::sync::source_audiences::mark_withheld(doc, &withheld, by.as_ref())?;
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     Ok(true)
 }

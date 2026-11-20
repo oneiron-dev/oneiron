@@ -39,11 +39,17 @@ pub(crate) fn refresh_for(
     };
     let mut local = BTreeSet::new();
     let mut removed = BTreeSet::new();
+    // A NOTE a use limit keeps here packs no workflow and joins no bundle;
+    // its carrier stays for the withholding pass to take out under a marker.
+    let any_limit = crate::store::legal_hold::any_record_use_limit_in_txn(&vault.store, &txn)?;
     for (key, raw) in rows(doc, "entities")? {
         if EntityMetadataHeader::parse(&raw)
             .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_NOTE)
         {
             let note = id(&key)?;
+            if any_limit && use_limited(vault, &txn, &note)? {
+                continue;
+            }
             if raw.len() > ENTITY_METADATA_HEADER_LEN {
                 state.cores.entry(note).or_insert(raw);
             }
@@ -65,6 +71,9 @@ pub(crate) fn refresh_for(
         // A NOTE a device-only world keeps is never packed into a window
         // that does not already carry it.
         if !state.cores.contains_key(&note) && held(vault, &txn, &flagged, &note)? {
+            continue;
+        }
+        if any_limit && use_limited(vault, &txn, &note)? {
             continue;
         }
         local.insert(note);

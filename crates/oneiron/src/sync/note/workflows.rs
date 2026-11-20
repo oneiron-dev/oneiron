@@ -98,10 +98,12 @@ pub(super) struct Judge<'a, 't> {
 
 impl Judge<'_, '_> {
     /// Whether the export drops `note`, a NOTE whose core its window holds:
-    /// blocked, or kept on this device by a device-only world.
+    /// blocked, kept on this device by a device-only world, or kept for
+    /// storage only here by a record use limit.
     pub(super) fn drops(&self, note: &EntityId) -> Result<bool> {
         Ok(blocked(self.vault, self.txn, self.tombstones, note)?
-            || held(self.vault, self.txn, self.flagged, note)?)
+            || held(self.vault, self.txn, self.flagged, note)?
+            || use_limited(self.vault, self.txn, note)?)
     }
 
     /// Whether the rows of `note`, a NOTE whose core rides another window,
