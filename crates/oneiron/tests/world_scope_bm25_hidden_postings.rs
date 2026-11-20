@@ -26,7 +26,9 @@ use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole, PairingPrincip
 use oneiron::claim::{ScopedReadActorKey, base_world_id, default_project_id};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
-use oneiron::memory::{AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput};
+use oneiron::memory::{
+    AllRelationships, ClaimRelationships, ClaimScope, Effort, RecallScope, ScopedClaimInput,
+};
 use oneiron::pipeline::WorldScope;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::test_doors::label_writers::embedded_owner;
@@ -62,6 +64,8 @@ struct Fixture {
     owner: EntityId,
     owner_proof: AuthenticatedOwner,
     second_world: EntityId,
+    agent: EntityId,
+    agent_slip: VerifiedSlip,
     agent_key: ScopedReadActorKey,
 }
 
@@ -115,6 +119,8 @@ fn fixture() -> Fixture {
         owner,
         owner_proof,
         second_world,
+        agent,
+        agent_slip,
         agent_key,
     }
 }
@@ -184,11 +190,11 @@ fn put_readable_claims(fixture: &Fixture) -> (EntityId, BTreeSet<EntityId>) {
 }
 
 /// [`HIDDEN_CLAIMS`] second-world claims holding [`RARE`], which the
-/// owner's unscoped search reaches.
-fn put_hidden_claims(fixture: &Fixture) {
-    for _ in 0..HIDDEN_CLAIMS {
-        put_text_claim(fixture, Some(fixture.second_world), RARE);
-    }
+/// owner's unscoped search reaches. Returns them.
+fn put_hidden_claims(fixture: &Fixture) -> BTreeSet<EntityId> {
+    let hidden: BTreeSet<EntityId> = (0..HIDDEN_CLAIMS)
+        .map(|_| put_text_claim(fixture, Some(fixture.second_world), RARE))
+        .collect();
     let owner_found = fixture
         .vault
         .query()
@@ -202,6 +208,7 @@ fn put_hidden_claims(fixture: &Fixture) {
         1 + HIDDEN_CLAIMS,
         "FIXTURE: the owner's search finds the second world's claims"
     );
+    hidden
 }
 
 /// The rows the agent's pack serves for [`QUERY`], in rank order. It blends
@@ -232,6 +239,34 @@ fn agent_search_order(fixture: &Fixture) -> Vec<EntityId> {
         .value
         .into_iter()
         .map(|hit| hit.id)
+        .collect()
+}
+
+/// The claims of `claims` the agent's memory recall under its credential
+/// serves for [`QUERY`] (Light effort), in rank order, each found by the
+/// revision its item's provenance names.
+fn agent_recall_order(fixture: &Fixture, claims: &BTreeSet<EntityId>) -> Vec<EntityId> {
+    fixture
+        .vault
+        .memory(fixture.agent, EdgeActorClass::Agent)
+        .with_read_proof(&fixture.agent_slip)
+        .recall(
+            QUERY,
+            Effort::Light,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .expect("the agent's recall")
+        .items
+        .iter()
+        .filter_map(|item| {
+            claims
+                .iter()
+                .find(|id| item.provenance.source_revision_ids.contains(&id.to_hex()))
+                .copied()
+        })
         .collect()
 }
 
@@ -311,6 +346,39 @@ fn an_agent_text_search_ranks_alike_with_claims_of_a_world_its_grant_leaves_out(
         "FAILBEFORE WORLD-SCOPE-BM25-DF-COUNTS-HIDDEN-POSTINGS: claims of a world the agent's \
          Grant leaves out count in no word's document frequency, so the rarer readable word's \
          claim still leads the agent's search"
+    );
+}
+
+/// The agent's memory recall under its credential, whose read is held to its
+/// Grant's worlds: the recall pack scored with every posting before, as it
+/// named no reader to the pipeline.
+#[test]
+fn an_agent_recall_ranks_alike_with_claims_of_a_world_its_grant_leaves_out() {
+    let fixture = fixture();
+    let (rare, readable) = put_readable_claims(&fixture);
+    let without = agent_recall_order(&fixture, &readable);
+    assert_eq!(
+        (
+            without.first(),
+            without.iter().copied().collect::<BTreeSet<_>>()
+        ),
+        (Some(&rare), readable.clone()),
+        "FIXTURE: the agent's recall serves every readable claim, the rarer word's first"
+    );
+    let hidden = put_hidden_claims(&fixture);
+    let every: BTreeSet<EntityId> = readable.union(&hidden).copied().collect();
+    let with = agent_recall_order(&fixture, &every);
+    assert_eq!(
+        with.iter().copied().collect::<BTreeSet<_>>(),
+        readable,
+        "FIXTURE: the agent's recall serves no claim of the second world"
+    );
+    assert_eq!(
+        with.first(),
+        Some(&rare),
+        "FAILBEFORE WORLD-SCOPE-BM25-DF-COUNTS-HIDDEN-POSTINGS: claims of a world the agent's \
+         Grant leaves out count in no word's document frequency, so the rarer readable \
+         word's claim still leads the agent's recall"
     );
 }
 
