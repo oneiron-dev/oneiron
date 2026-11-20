@@ -5,6 +5,10 @@
 //! nothing (FIX-LIST GRANT-RECEIPT-OTHER-READ-LANES part 3b, after
 //! GRANT-READ-NARROWING-SAYS-DENY-ALL). The receipt only reports: with no
 //! Grant, and after the owner revokes it, the same query finds nothing.
+//! The reason answer cites the claim the Grant admits, where the key's own
+//! floor once emptied its evidence read; a core query that asks for no kind
+//! finds nothing on its hybrid and seeded searches, and its receipt still
+//! names the Grant's ceiling (review round 1 of #9915).
 //!
 //! The control plane's key check is faked; its verdict takes the verifier's
 //! own clock, so the test reads no wall clock.
@@ -241,6 +245,16 @@ impl Served {
         self.post(key, "/v1/core/query", json!({ "query": WORD }))
             .await
     }
+
+    /// The light memory reason of [`WORD`] under `key`: its answer.
+    async fn reason(&self, key: &str) -> Value {
+        self.post(
+            key,
+            "/v1/companion/memory/reason",
+            json!({ "query": WORD, "depth": "light" }),
+        )
+        .await
+    }
 }
 
 /// Whether the core query answer `answer` holds the row `id`.
@@ -337,21 +351,28 @@ fn an_agents_core_query_under_a_live_read_grant_reports_the_grant_not_deny_all()
     });
 }
 
+/// Whether the reason answer `answer` cites evidence: a source, and no
+/// "Not in memory." gap.
+fn cites_evidence(answer: &Value) -> bool {
+    answer["sources"]
+        .as_array()
+        .is_some_and(|sources| !sources.is_empty())
+        && answer["answer"] != "Not in memory."
+}
+
 #[test]
 fn an_agents_memory_reason_under_a_live_read_grant_reports_the_grant_not_deny_all() {
     on_engine_stack(|| async {
         let served = served();
         served.owner_claim();
         let agent = served.agent();
-        served.read_grant(agent);
+        let grant = served.read_grant(agent);
         let agent_key = served.account_key(agent);
-        let answer = served
-            .post(
-                &agent_key,
-                "/v1/companion/memory/reason",
-                json!({ "query": WORD, "depth": "light" }),
-            )
-            .await;
+        let answer = served.reason(&agent_key).await;
+        assert!(
+            cites_evidence(&answer),
+            "the live Grant admits the owner's claim as the agent's reason evidence: {answer:#}"
+        );
         let receipts = answer["narrowing"]
             .as_array()
             .unwrap_or_else(|| panic!("a reason answer with a receipt list: {answer:#}"));
@@ -361,6 +382,55 @@ fn an_agents_memory_reason_under_a_live_read_grant_reports_the_grant_not_deny_al
         );
         for narrowing in receipts {
             assert_reports_the_grant("/v1/companion/memory/reason", narrowing);
+        }
+
+        served.revoke(grant);
+        let revoked = served.reason(&agent_key).await;
+        assert!(
+            !cites_evidence(&revoked),
+            "the agent's reason still cites evidence after the revoke: {revoked:#}"
+        );
+    });
+}
+
+#[test]
+fn an_agents_core_query_asking_no_kind_reports_the_grants_ceiling_on_hybrid_and_seeded_searches() {
+    on_engine_stack(|| async {
+        let served = served();
+        let claim = served.owner_claim();
+        let agent = served.agent();
+        served.read_grant(agent);
+        let agent_key = served.account_key(agent);
+        // A text and vector query takes the hybrid search; one asked in an
+        // affect takes the seeded search. Each asks for no kind, so its
+        // candidates deny all and it answers before it ranks anything.
+        for (search, body) in [
+            (
+                "hybrid",
+                json!({
+                    "query": WORD,
+                    "query_vector": [0.1, 0.2, 0.3, 0.4],
+                    "filter": { "entity_types": [] },
+                }),
+            ),
+            (
+                "seeded",
+                json!({
+                    "query": WORD,
+                    "query_affect": { "valence": -0.4, "arousal": 0.7, "dominance": 0.5 },
+                    "filter": { "entity_types": [] },
+                }),
+            ),
+        ] {
+            let answer = served.post(&agent_key, "/v1/core/query", body).await;
+            assert!(
+                !finds(&answer, &claim),
+                "the {search} core query that asks for no kind finds the owner's claim: {answer:#}"
+            );
+            assert_eq!(
+                answer["narrowing"]["actor_ceiling"]["deny_all"], false,
+                "the {search} core query's actor_ceiling denies all under the live Grant: {answer:#}"
+            );
         }
     });
 }
