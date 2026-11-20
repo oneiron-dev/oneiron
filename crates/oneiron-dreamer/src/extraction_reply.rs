@@ -44,8 +44,10 @@ pub struct BoundExtractionCandidate {
     pub confidence: f64,
     /// Holds the lexical hints the reply offers for the candidate, in order.
     pub prospective_queries: Vec<String>,
-    /// Holds the arbitrary relationship proposal as JSON, when the reply names one;
-    /// the caller reads it, and [`verdict_operands`] leaves it off the operand.
+    /// Holds the relationship the reply names, when it names one, as the step read
+    /// it back from the reply's label: a list of one relationship id, as 32 lowercase
+    /// hexadecimal digits. [`decision_operands`] carries it as the operand's `rel`,
+    /// and [`verdict_operands`] leaves it off the operand.
     #[serde(default)]
     pub rel: Option<Value>,
     /// Holds the proposed topic as JSON, when the reply names one; the engine's

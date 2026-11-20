@@ -3,9 +3,11 @@
 //! A candidate cites served TURN words by quote and, as a native reply may,
 //! a listed claim by its label. The decoded candidate carries each cited
 //! claim as a pin at the version the step's request names, the form the
-//! verdict operand takes.
+//! verdict operand takes. A candidate may name a listed relationship by its
+//! label, as a native reply may; the decoded candidate carries that
+//! relationship's id.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use oneiron_model::llm::LlmResponse;
 use serde::{Deserialize, Serialize};
@@ -13,11 +15,11 @@ use serde_json::Value;
 
 use super::{ExtractionStepPiece, ListedHead, PreparedExtractionStep};
 use crate::dreamer_consolidation::call_labels::{
-    CallLabelMap, CallSources, LabelKind, SourceShown, SubjectLabel, new_person,
+    CallLabelMap, CallSources, CandidateRel, LabelKind, SourceShown, SubjectLabel, new_person,
 };
 use crate::dreamer_consolidation::executor::extraction::{
-    ExtractedPerson, authored_fallback, check_extraction_reply, decode_ref, extraction_reply,
-    prospective_queries,
+    ExtractedPerson, authored_fallback, check_extraction_reply, decode_ref, entity_id_from_hex,
+    extraction_reply, prospective_queries,
 };
 use crate::dreamer_consolidation::extracted_people::normalize_name_span;
 use crate::entity_id::EntityId;
@@ -53,9 +55,12 @@ struct BoundExtractionCandidate {
     confidence: f64,
     /// Holds the native normalized prospective query hints.
     prospective_queries: Vec<String>,
-    /// Retains the optional relationship proposal.
+    /// Holds the relationship the candidate names, read back from the
+    /// reply's label to its id: one id, as lowercase hexadecimal digits, in
+    /// the list form the verdict operand takes. Absent when the candidate
+    /// names none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    rel: Option<Value>,
+    rel: Option<Vec<String>>,
     /// Retains the optional topic proposal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     topic_key: Option<Value>,
@@ -129,6 +134,9 @@ struct BoundReplySources<'p> {
     /// Borrows the versions the request names, a cited claim's among them
     /// when the job's read serves that claim.
     inputs: &'p [SourceVersion],
+    /// Borrows the relationship set of the step's own scope: `None` where
+    /// that scope holds none.
+    relationship: Option<&'p BTreeSet<EntityId>>,
 }
 
 impl CallSources for BoundReplySources<'_> {
@@ -234,6 +242,43 @@ impl BoundReplySources<'_> {
         }
     }
 
+    /// Reads the relationship a candidate names, as native reads it
+    /// (FIX 7575, `executor/extraction.rs` `resolve_proposal`): a
+    /// relationship label of this call gives that relationship, and any
+    /// other string that is a 32-hex id gives that id. The relationship
+    /// must lie inside the step's own relationship set when the step's
+    /// scope holds one, as native assembly asks of a candidate that
+    /// corrects nothing. A candidate that names none inherits, so it
+    /// carries none.
+    ///
+    /// Native ignores the named relationship of a candidate that turns out
+    /// to correct a listed head. Corrections are decided after this
+    /// decode, and the pack check refuses a whole request over a
+    /// relationship it cannot read, so the candidate is a skip here
+    /// whatever it would correct.
+    ///
+    /// # Errors
+    ///
+    /// The reason decode skips this candidate, in native's words: a value
+    /// that names no relationship, or a relationship outside the step's
+    /// set.
+    fn relationship(&self, item: &Value) -> Result<Option<Vec<String>>, String> {
+        let Some(value) = item.get("rel").filter(|value| !value.is_null()) else {
+            return Ok(None);
+        };
+        let id = match CandidateRel::read(value, self.labels) {
+            CandidateRel::Listed(id) => id,
+            CandidateRel::Unlisted(value) => value
+                .as_str()
+                .and_then(entity_id_from_hex)
+                .ok_or_else(|| "invalid relationship ref".to_owned())?,
+        };
+        if self.relationship.is_some_and(|bound| !bound.contains(&id)) {
+            return Err("extraction relationship crossed branch scope".to_owned());
+        }
+        Ok(Some(vec![id.to_hex()]))
+    }
+
     /// Reads a candidate's fields and binds each quote and claim label
     /// through the native decoder.
     ///
@@ -295,6 +340,7 @@ impl BoundReplySources<'_> {
             .and_then(Value::as_f64)
             .ok_or_else(|| "extracted candidate names no confidence".to_owned())?;
         let prospective_queries = prospective_queries(item).map_err(|error| error.to_string())?;
+        let rel = self.relationship(item)?;
         let mut evidence = Vec::with_capacity(refs.len());
         let mut claim_evidence = Vec::new();
         let mut cited_claims = Vec::new();
@@ -373,7 +419,7 @@ impl BoundReplySources<'_> {
                 value,
                 confidence,
                 prospective_queries,
-                rel: item.get("rel").filter(|value| !value.is_null()).cloned(),
+                rel,
                 topic_key: item
                     .get("topic_key")
                     .filter(|value| !value.is_null())
@@ -478,8 +524,8 @@ impl BoundReplySources<'_> {
 }
 
 /// Owns a checked call's labels, pieces, correctable claims, listed heads,
-/// landing projects and input versions so the durable check can outlive
-/// this borrow.
+/// landing projects, input versions and relationship set so the durable
+/// check can outlive this borrow.
 pub(super) fn check_bound_reply(
     prepared: &PreparedExtractionStep,
 ) -> impl Fn(&LlmResponse) -> Result<(), String> + Send + Sync + 'static {
@@ -489,6 +535,7 @@ pub(super) fn check_bound_reply(
     let heads = prepared.heads.clone();
     let projects = prepared.projects.clone();
     let inputs = prepared.inputs.clone();
+    let relationship = prepared.scope.relationship.clone();
     move |response| {
         check_extraction_reply(response)?;
         if authored_fallback(response) {
@@ -501,6 +548,7 @@ pub(super) fn check_bound_reply(
             heads: &heads,
             projects: &projects,
             inputs: &inputs,
+            relationship: relationship.as_ref(),
         }
         .decode(response)
         .map(|_| ())
@@ -519,6 +567,7 @@ pub(super) fn decode_bound_reply(
         heads: &prepared.heads,
         projects: &prepared.projects,
         inputs: &prepared.inputs,
+        relationship: prepared.scope.relationship.as_ref(),
     }
     .decode(response)
     .map_err(MemoryError::bad_request)?;
