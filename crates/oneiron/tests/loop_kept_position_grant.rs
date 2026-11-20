@@ -10,7 +10,9 @@
 //!
 //! Two Grants never combine: Grants that hold the position only together,
 //! or a Grant whose facets miss the position's facet, show nothing. A
-//! revoked Grant shows nothing.
+//! revoked Grant shows nothing, and so does a Grant once a legal use limit
+//! keeps the stored claim for storage alone (a hosted vault, where the
+//! owner's customer hold refuses its privacy erase; review round 2).
 //!
 //! The decision is the agent's own refused applied-maintenance decision
 //! about a candidate claim that never landed, its one read context the
@@ -33,11 +35,12 @@
 
 use oneiron::claim::base_world_id;
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::memory::Memory;
+use oneiron::deletion::LegalHoldTarget;
+use oneiron::memory::{EraseOptions, EraseReason, Memory};
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM};
 use oneiron::test_doors::loop_kept_position::record_kept_position_receipt;
 use oneiron::test_doors::steward::owner as owner_proof;
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, HostingPrivacyPosture, Vault, VaultConfig};
 use oneiron_testkit::door;
 use serde_json::{Value, json};
 
@@ -188,8 +191,20 @@ struct Fixture {
 
 impl Fixture {
     fn open() -> Self {
+        Self::open_in(VaultConfig::device())
+    }
+
+    /// [`Self::open`] on a hosted vault, where a refused privacy erase keeps
+    /// a record as storage only.
+    fn open_hosted() -> Self {
+        let mut config = VaultConfig::device();
+        config.privacy.posture = HostingPrivacyPosture::Hosted;
+        Self::open_in(config)
+    }
+
+    fn open_in(config: VaultConfig) -> Self {
         let dir = tempfile::tempdir().expect("temporary vault directory");
-        let vault = Vault::open_owned(dir.path(), VaultConfig::device()).expect("fresh vault");
+        let vault = Vault::open_owned(dir.path(), config).expect("fresh vault");
         oneiron_testkit::dreamer::attach_test_host(&vault).expect("the test host");
         let owner_id = vault.ensure_embedded_owner_actor().expect("the owner");
         let owner = door::owner(&vault).expect("the embedded owner");
@@ -294,6 +309,49 @@ impl Fixture {
         .is_ok_and(|read| read.get("value").is_some_and(|value| !value.is_null()))
     }
 
+    /// The owner places a customer hold on the stored claim and runs its
+    /// privacy erase, which the hold refuses: the claim stays stored, kept
+    /// for storage alone under a legal use limit (C6).
+    fn keep_the_claim_use_limited(&self) {
+        let claim = EntityId::from_hex(&self.claim).expect("the claim id");
+        let proof = owner_proof(&self.vault).expect("the owner's proof");
+        let hold = self
+            .vault
+            .place_legal_hold(
+                &proof,
+                vec![LegalHoldTarget::Record(claim)],
+                Some("matter-kept-position".to_owned()),
+            )
+            .expect("FIXTURE: the owner places a customer hold on the claim");
+        assert!(hold.stands(), "FIXTURE: the customer hold stands: {hold:?}");
+        let owner = self.owner();
+        let preview = owner
+            .preview_entity_delete(&claim)
+            .expect("FIXTURE: the owner previews the claim's privacy erase");
+        let outcome = owner
+            .confirm_entity_erase(
+                &preview,
+                EraseOptions {
+                    reason: EraseReason::GdprDelete,
+                    also_same_bytes: false,
+                    veto_starter: None,
+                },
+            )
+            .expect("FIXTURE: the claim's privacy erase runs");
+        assert_eq!(
+            outcome.first.reason.as_str(),
+            "privacy_erase_kept",
+            "FIXTURE: the held privacy erase is kept: {outcome:?}"
+        );
+        assert!(
+            self.vault
+                .legal_hold_use_limit(&claim)
+                .expect("FIXTURE: the use limit reads")
+                .is_some(),
+            "FIXTURE: the kept erase use-limits the claim"
+        );
+    }
+
     /// The fixture's own facts: the candidate never landed, and the owner
     /// sees the decision.
     fn assert_fixture(&self) {
@@ -393,5 +451,34 @@ fn a_grant_whose_facets_miss_the_kept_positions_facet_shows_nothing() {
         "the agent's one Grant holds only a facet the kept position does not sit in (it reads \
          the owner's claim at that position on vault.get: {reads_claim}), yet its Admissions \
          list the decision kept there: {report:#}"
+    );
+}
+
+/// Review round 2 of #10040: a stored claim a legal use limit keeps for
+/// storage alone is absent to every ordinary reader on the named-row route,
+/// so one Grant alone never shows a decision through its kept position.
+#[test]
+fn a_grant_shows_no_decision_kept_at_a_use_limited_claim() {
+    let fixture = Fixture::open_hosted();
+    fixture.assert_fixture();
+    fixture.mint(read_scope(
+        some(&[named(base_world_id())]),
+        all(),
+        some(&[json!(ENTITY_TYPE_CLAIM)]),
+    ));
+    let report = fixture.agent_admissions();
+    assert!(
+        decision_item(&report, &fixture.decision).is_some(),
+        "FIXTURE: the agent's one Grant shows its decision before the hold: {report:#}"
+    );
+
+    fixture.keep_the_claim_use_limited();
+    let reads_claim = fixture.agent_reads_the_claim();
+    let report = fixture.agent_admissions();
+    assert!(
+        decision_item(&report, &fixture.decision).is_none(),
+        "a legal use limit keeps the claim at the kept position for storage alone (the agent \
+         reads it on vault.get: {reads_claim}), yet its one Grant still shows the decision kept \
+         there: {report:#}"
     );
 }
