@@ -4,7 +4,9 @@
 //! `ai.verdict` and the one outcome return, and exports `run-hook`. No WASI,
 //! clock, random, file, network or verb import is linked. A verdict is
 //! answered only for a fact hook the runner lets call one. Each run gets a fresh Store under the
-//! code-mode limits. Its `budget_ms` is an accounting deadline on the run's
+//! code-mode limits, save one: a memory growth past them fails the guest's
+//! allocation, which QuickJS throws as out of memory, where code mode traps.
+//! Its `budget_ms` is an accounting deadline on the run's
 //! [`HookRunContext`], never a stop (FIX 8842): start-up, reads and verdicts
 //! are measured against it, each admitted callback's answer is delivered
 //! even when late, and the body runs to its own end under its fuel and
@@ -38,8 +40,8 @@ const HOOK_COMPONENT: &[u8] =
 
 /// BLAKE3 of the checked-in hook component; its manifest row carries the SHA-256.
 pub const HOOK_COMPONENT_BLAKE3: [u8; 32] = [
-    0x48, 0xca, 0x94, 0x38, 0x8c, 0xa1, 0x8c, 0x48, 0x26, 0xb0, 0xf4, 0xbc, 0xb1, 0x7c, 0xb9, 0x80,
-    0x37, 0x53, 0xec, 0xb3, 0x4f, 0x7e, 0x77, 0xd5, 0x48, 0xfd, 0x63, 0x08, 0x84, 0x1a, 0x14, 0xcc,
+    0x0c, 0x16, 0xb8, 0x27, 0x34, 0x12, 0x47, 0xb6, 0x09, 0x56, 0x0e, 0x02, 0x18, 0xe6, 0xe1, 0xaa,
+    0x11, 0x8c, 0xf7, 0xcf, 0x73, 0xb9, 0x4a, 0xbc, 0xe7, 0xc1, 0x39, 0xf5, 0xa5, 0xe9, 0xe0, 0x0a,
 ];
 
 /// The three imports of the hook world, sorted. A component importing
@@ -58,6 +60,21 @@ const WASM_STACK_BYTES: usize = 512 * 1024;
 const MAX_COMPONENT_BYTES: usize = 64 * 1024 * 1024;
 /// Characters of a body's error text a failed run keeps.
 const GUEST_ERROR_CHARS: usize = 2048;
+/// The longest hook input the host lowers into the guest, set by the
+/// guest's memory itself: its linear memory ends at 32 MiB
+/// (components/code-run-quickjs/build.py `--max-memory=33554432`). The
+/// input is lowered into a fresh instance before any guest code runs, and
+/// a lowering that cannot allocate aborts the guest (a trap, not a typed
+/// failure); 8 MiB, with the 1 MiB body beside it, always fits there.
+/// Past the lowering, the guest parses the input inside its 24 MiB
+/// interpreter heap (hook_guest.c `JS_SetMemoryLimit`), and an input it
+/// cannot hold answers `hook_input_not_taken`: an input past about 14 MiB
+/// could never parse beside its own lowered copy, and 8 MiB leaves a
+/// plain-text answer room to parse.
+const HOOK_INPUT_BYTES: usize = 8 * 1024 * 1024;
+/// The guest's answer when it could not take the input (hook_guest.c
+/// `INPUT_NOT_TAKEN`).
+const INPUT_NOT_TAKEN: &str = "hook_input_not_taken";
 
 /// The checked-in hook component and its BLAKE3 pin, for serve to build a
 /// [`HookSandbox`].
@@ -80,10 +97,6 @@ impl HookBodyRuntime for HookSandbox {
                 .to_hex()
                 .to_string(),
         )
-    }
-
-    fn message_limit(&self) -> Option<usize> {
-        Some(self.budget.message_bytes)
     }
 
     fn run_hook(
@@ -182,11 +195,14 @@ impl HookSandbox {
         let prepared = prepare_source(body);
         context.report_preparation(preparation(&prepared));
         let executed = prepared.executed();
-        if executed.len() > self.budget.message_bytes
-            || input_json.len() > self.budget.message_bytes
-        {
+        if executed.len() > self.budget.message_bytes {
             context.report_usage(HookBodyUsage::NOT_RUN);
-            return Err(failure("hook body or input exceeds the message limit"));
+            return Err(failure("hook body exceeds the message limit"));
+        }
+        if input_json.len() > HOOK_INPUT_BYTES {
+            context.report_usage(HookBodyUsage::NOT_RUN);
+            context.report_input_not_taken();
+            return Err(failure("hook input exceeds the guest memory"));
         }
         // Wasmtime needs 'static store data, so the body runs on a scoped
         // worker and the borrowed `read` answers on this thread over a bounded
@@ -200,8 +216,9 @@ impl HookSandbox {
         context.body_starts();
         std::thread::scope(|scope| {
             scope.spawn(move || {
-                let (result, usage) = execute(pre, budget, prepared, input_json, events.clone());
-                let _ = events.send(Event::Finished(result, usage));
+                let (result, usage, input_not_taken) =
+                    execute(pre, budget, prepared, input_json, events.clone());
+                let _ = events.send(Event::Finished(result, usage, input_not_taken));
             });
             serve_reads(&requests, read, verdict, context)
         })
@@ -247,9 +264,9 @@ enum Event {
         request: String,
         reply: mpsc::SyncSender<std::result::Result<String, String>>,
     },
-    /// The body's end: its result, and what it used, measured on every path
-    /// it took (FIX 9332).
-    Finished(Result<HookBodyRun>, HookBodyUsage),
+    /// The body's end: its result, what it used, measured on every path
+    /// it took (FIX 9332), and whether the guest never took the input.
+    Finished(Result<HookBodyRun>, HookBodyUsage, bool),
 }
 
 type Reply<T> = std::result::Result<T, String>;
@@ -343,21 +360,27 @@ fn link_imports(linker: &mut Linker<State>) -> Result<()> {
     Ok(())
 }
 
-/// Runs the prepared body on a fresh Store: its result, beside what it used.
+/// Runs the prepared body on a fresh Store: its result, beside what it
+/// used, and whether the guest never took the input.
 fn execute(
     pre: &bindings::HookPre<State>,
     budget: ComponentBudget,
     prepared: &PreparedSource<'_>,
     input_json: &str,
     events: mpsc::SyncSender<Event>,
-) -> (Result<HookBodyRun>, HookBodyUsage) {
+) -> (Result<HookBodyRun>, HookBodyUsage, bool) {
     let limits = StoreLimitsBuilder::new()
         .memory_size(budget.memory_bytes)
         .memories(1)
         .tables(8)
         .instances(16)
         .table_elements(10_000)
-        .trap_on_grow_failure(true)
+        // A failed growth is the guest's own out of memory: its allocation
+        // fails, QuickJS throws, and before the body starts the guest
+        // answers `hook_input_not_taken`. A trap here would end a run on an
+        // input the body never judged as an ordinary failure
+        // ([SKILL-POST-HOOK-INPUT-BODY-CHANNEL]).
+        .trap_on_grow_failure(false)
         .build();
     let mut store = Store::new(
         pre.engine(),
@@ -375,6 +398,7 @@ fn execute(
         return (
             Err(failure("hook fuel setup failed")),
             HookBodyUsage::NOT_RUN,
+            false,
         );
     }
     let ran = match pre.instantiate(&mut store) {
@@ -394,12 +418,17 @@ fn execute(
         host_calls: Some(store.data().host_calls),
     };
     let state = store.into_data();
+    let mut input_not_taken = false;
     let result = match ran {
         Err(error) => Err(error),
         Ok(Err(error)) => Err(match state.trap {
             Some(reason) => failure(reason),
             None => trap_failure(&error),
         }),
+        Ok(Ok(Err(message))) if message == INPUT_NOT_TAKEN => {
+            input_not_taken = true;
+            Err(failure("hook input exceeds the guest memory"))
+        }
         Ok(Ok(Err(message))) => Err(guest_failure(&message, prepared)),
         Ok(Ok(Ok(()))) => match state.outcome {
             Some(outcome_json) => Ok(HookBodyRun {
@@ -410,7 +439,7 @@ fn execute(
             None => Err(failure("hook body emitted no outcome")),
         },
     };
-    (result, usage)
+    (result, usage, input_not_taken)
 }
 
 /// Answers the worker's reads and verdicts until the body ends. The budget
@@ -434,8 +463,11 @@ fn serve_reads(
             Ok(Event::Verdict { request, reply }) => {
                 let _ = reply.send(context.verdict(|| verdict(&request)));
             }
-            Ok(Event::Finished(result, usage)) => {
+            Ok(Event::Finished(result, usage, input_not_taken)) => {
                 context.report_usage(usage);
+                if input_not_taken {
+                    context.report_input_not_taken();
+                }
                 return result;
             }
             Err(mpsc::RecvError) => return Err(failure("hook worker stopped without an end")),
