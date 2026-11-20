@@ -2219,3 +2219,58 @@ fn a_live_booking_keeps_its_deposit_until_it_is_cancelled_or_starts() {
         }
     );
 }
+
+/// A MACRO home move carries no deposit row: the node that confirmed the
+/// booking still holds its deposit after the home moved to another node, so
+/// the host's refund is taken there and its settle worker returns the money
+/// (review round 1 of #9977: a home-node gate left the deposit refundable on
+/// neither node).
+#[test]
+fn the_confirming_node_refunds_a_deposit_after_the_home_moved_away() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let captured = captured_booking(&fixture, "pi_home_moved", 9);
+    let runner = DreamerRunnerStore::new(&fixture.vault);
+    let local = runner
+        .local_home_node_candidate(true, true, true)
+        .expect("local home node candidate");
+    let cloud = oneiron::DreamerHomeNodeCandidate::cloud(fixture.node_id.wrapping_add(1), true);
+    let elected = runner
+        .elect_home_node(&[local, cloud], NOW + 30)
+        .expect("elect the attached cloud node")
+        .expect("a home node");
+    assert_ne!(
+        elected.node_id, fixture.node_id,
+        "the home moved off the confirming node"
+    );
+    let refunded_at = slot_at(9).start + 60;
+    fixture.set_clock(refunded_at);
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+
+    let refund =
+        refund_deposit(&host, &captured).expect("the confirming node refunds the deposit it holds");
+    assert_eq!(refund["state"], "refund_due", "{refund}");
+    assert_eq!(refund["queued"], true, "{refund}");
+    let mut provider = RecordingProvider::default();
+    let pass = run_booking_deposit_settlement(
+        &fixture.vault,
+        "deposit-settle-worker",
+        &mut provider,
+        16,
+        refunded_at + 60,
+    )
+    .expect("drain the settle rows");
+    assert_eq!(pass.failed, 0);
+    assert_eq!(
+        provider.moves,
+        vec![DepositSettleMove::Refund {
+            amount_minor: 4_000
+        }]
+    );
+    assert_eq!(
+        fixture.state_of("pi_home_moved"),
+        DepositState::Refunded {
+            amount_minor: 4_000
+        }
+    );
+}
