@@ -338,6 +338,37 @@ impl Memory<'_> {
             }),
         }]
     }
+
+    /// Whether the credential this handle presented passes the scope guard a
+    /// served call of `verb` meets before its door runs (the server's
+    /// `require_action_scope`): the core class of the verb's row, `read` or
+    /// `write`, granted by that name or as `core:<class>`, and for a write no
+    /// record or channel cut and an uncut record scope, as the owner door's
+    /// delegate check composes it (`owner_door.rs`). A handle bound to no
+    /// credential, as an embedded owner's is, passes; an unknown verb does
+    /// not. An inbox tap is offered only to a caller this passes
+    /// (REVIEW-10022 P1).
+    fn presented_credential_reaches_verb(&self, verb: &str) -> bool {
+        let Some(row) = crate::verbs::AgentVerb::from_name(verb) else {
+            return false;
+        };
+        let Some(credential) = self.presented_credential() else {
+            return true;
+        };
+        let class = if row.writes() { "write" } else { "read" };
+        if !(credential.allows_verb(class) || credential.allows_verb(&format!("core:{class}"))) {
+            return false;
+        }
+        if !row.writes() {
+            return true;
+        }
+        let claims = credential.claims();
+        let mut uncut = crate::federation::Scope::top();
+        uncut.verbs = credential.scope().verbs.clone();
+        claims.records.is_empty()
+            && claims.channels.is_empty()
+            && uncut.is_narrowing_of(credential.scope())
+    }
 }
 
 /// The refusal of an agent `verb` does not admit.
