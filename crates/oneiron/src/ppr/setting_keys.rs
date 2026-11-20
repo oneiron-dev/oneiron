@@ -5,7 +5,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, SettingValue};
 use crate::side_table::SideTableDbs;
 
 /// The most gated, visible edges one group of a narrowed walk may hold and still spread mass,
@@ -51,7 +51,7 @@ crate::setting::setting_keys! {
     pub(crate) NARROWED_HUB_FANOUT_CAP: HubFanoutCap = "retrieval.ppr.narrowed_hub_fanout_cap" {
         kind: Kind::new(narrowed_hub_fanout_cap_default)
             .strictest(narrowed_hub_fanout_cap_default)
-            .tighter(lower_is_tighter::<HubFanoutCap>),
+            .lower(),
     };
 }
 
