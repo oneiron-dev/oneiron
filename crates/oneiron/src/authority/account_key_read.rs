@@ -21,7 +21,7 @@ use oneiron_authority::federation::{Scope, ScopeAxis};
 use crate::Vault;
 use crate::claim::ScopedReadActorKey;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, ErrorKind, Result};
 
 impl Vault {
     /// The read key of `person`'s account API key, which the host verified
@@ -30,8 +30,8 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// A store failure, or a membership grant that names `person` but no
-    /// longer stands (as a member's slip under it is refused).
+    /// A store failure. A membership grant that no longer stands gives the
+    /// key no Scope, so it reads nothing.
     pub fn account_key_read_key(&self, person: EntityId) -> Result<ScopedReadActorKey> {
         let txn = self.store.env.read_txn()?;
         self.account_key_read_key_in_txn(&txn, person)
@@ -86,11 +86,18 @@ impl Vault {
         else {
             return Ok(None);
         };
-        let Some(membership) =
-            self.current_member_grant_scope_in_txn(txn, grant_ref, &person.to_hex())?
-        else {
-            return Ok(None);
-        };
+        let membership =
+            match self.current_member_grant_scope_in_txn(txn, grant_ref, &person.to_hex()) {
+                Ok(Some(membership)) => membership,
+                Ok(None) => return Ok(None),
+                // A membership grant that no longer stands (withdrawn, lapsed,
+                // its person gone) is none: the key reads nothing, as before,
+                // never a failed read. A store failure stays an error.
+                Err(error) if error.kind() == ErrorKind::InvalidAuthorityLogBody => {
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            };
         let mut read = Scope::top();
         read.verbs = ScopeAxis::Some(
             ["read", "core:read"]
