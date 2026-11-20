@@ -1422,11 +1422,14 @@ impl Vault {
     /// TASK-FACT-RULING-CROSSED-OPTION-D = B). The fold absorbs a twin as a set duplicate of
     /// its fact, so no task changes meaning.
     ///
-    /// Each root door calls it once the root is minted with this install's signer loaded, and
-    /// every later open that profiles this install calls it again, so a root whose adoption
-    /// failed or was cut off adopts at the next start. With no root, no signer or nothing to
-    /// adopt it writes nothing. It runs in one transaction, so a failure leaves no twin, and a
-    /// second call finds nothing left to adopt. Returns how many twins it wrote.
+    /// Each root door calls it once the root is minted with this install's signer loaded,
+    /// every later open that profiles this install calls it again, and every start whose
+    /// keystore loads this install's signer calls it through
+    /// [`Self::adopt_unsigned_task_facts_logged`]. So a root whose adoption failed or was cut
+    /// off adopts at the next start, and so does a fact a door wrote while no signer was
+    /// loaded. With no root, no signer or nothing to adopt it writes nothing. It runs in one
+    /// transaction, so a failure leaves no twin, and a second call finds nothing left to
+    /// adopt. Returns how many twins it wrote.
     pub fn adopt_unsigned_task_facts(&self) -> Result<usize> {
         {
             let rtxn = self.store.env.read_txn()?;
@@ -1435,6 +1438,34 @@ impl Vault {
             }
         }
         self.with_write_txn(|wtxn| self.adopt_task_facts_in_txn(wtxn))
+    }
+
+    /// [`Self::adopt_unsigned_task_facts`] for a start that has just loaded this install's
+    /// signer: a fact a door wrote unsigned while no signer was loaded is adopted at the
+    /// next start that loads one. A vault no root roots yet adopts nothing here; its root
+    /// door adopts. It never fails the start: a failure is warned, and the next start tries
+    /// again. Returns how many twins it wrote, or 0 on a failure.
+    pub fn adopt_unsigned_task_facts_logged(&self) -> usize {
+        match self.adopt_unsigned_task_facts() {
+            Ok(adopted) => {
+                if adopted > 0 {
+                    tracing::info!(
+                        adopted,
+                        "the task facts written while no signer was loaded were adopted"
+                    );
+                }
+                adopted
+            }
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    reason = %error,
+                    "the task facts written while no signer was loaded were not adopted; \
+                     the next start tries again"
+                );
+                0
+            }
+        }
     }
 
     /// [`Self::adopt_unsigned_task_facts`] in the caller's transaction: it twins each fact

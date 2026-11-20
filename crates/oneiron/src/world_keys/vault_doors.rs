@@ -51,6 +51,7 @@ impl Vault {
                 let loaded = self.prepare_install_signing_logged();
                 if loaded {
                     self.hold_device_owner_signer_logged();
+                    self.adopt_unsigned_task_facts_logged();
                 }
                 loaded
             }

@@ -59,4 +59,5 @@ mod serve_start_grant_backfill;
 // Restarts the shipped server through `reopen_after_restart`'s helpers.
 #[cfg(unix)]
 mod slip_clock;
+mod start_adopts_unsigned_task_facts;
 mod ws_sync;

@@ -116,6 +116,7 @@ impl KeystoreConfig {
                 if signing {
                     vault.prepare_host_issuer_custody_logged();
                     vault.hold_device_owner_signer_logged();
+                    vault.adopt_unsigned_task_facts_logged();
                 }
                 KeystoreInstall::Installed { signing }
             }
