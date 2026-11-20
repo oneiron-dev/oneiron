@@ -157,9 +157,7 @@ pub(crate) enum FailureKind {
 
 /// An organ's ask, sent back to the node whose handlers answer it. It
 /// carries the ask's real serving-call identity first, as `wire::Ask`
-/// orders it: `call` scopes `id`, which restarts at 1 per call. Its
-/// encoding crosses as [`Carried`] bytes, and so does its [`PeerAnswer`]'s
-/// (FIX 8023): staged past the inline bound, never one oversized message.
+/// orders it: `call` scopes `id`, which restarts at 1 per call.
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct PeerAsk {
     pub call: u64,
