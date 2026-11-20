@@ -33,6 +33,8 @@ pub(crate) struct StoreState {
     pub(crate) live: BTreeMap<String, (LibraryCard, FiledWorkflow)>,
     pub(crate) retired: Vec<RetiredCard>,
     pub(crate) find_cards: Vec<LibraryCard>,
+    pub(crate) admission: Option<Admitted>,
+    pub(crate) predecessor_refusal: Option<Option<SupersedeRefusal>>,
     pub(crate) record_run_error: Option<BrowserError>,
     pub(crate) recorded_runs: Vec<(String, RunOutcome)>,
 }
@@ -69,17 +71,40 @@ impl WorkflowLibrary for WorkflowStore {
         proof: &WorkflowProof,
         supersedes: Option<&str>,
     ) -> Result<Admitted, BrowserError> {
-        self.0
-            .lock()
-            .expect("workflow store state")
-            .calls
-            .push(StoreCall::Admit(
-                site.to_owned(),
-                serde_json::to_value(program).expect("the admitted program serializes"),
-                serde_json::to_value(proof).expect("the admitted proof serializes"),
-                supersedes.map(str::to_owned),
-            ));
-        Err(BrowserError::Library("unexpected admission".to_owned()))
+        let mut state = self.0.lock().expect("workflow store state");
+        state.calls.push(StoreCall::Admit(
+            site.to_owned(),
+            serde_json::to_value(program).expect("the admitted program serializes"),
+            serde_json::to_value(proof).expect("the admitted proof serializes"),
+            supersedes.map(str::to_owned),
+        ));
+        let admission = state
+            .admission
+            .clone()
+            .ok_or_else(|| BrowserError::Library("unexpected admission".to_owned()))?;
+        if let Admitted::Filed { workflow, .. } = &admission {
+            let filed_card = LibraryCard {
+                site: site.to_owned(),
+                subgoal: program.subgoal.clone(),
+                params: program.params.clone(),
+                secret_params: program.secret_params.clone(),
+                held_out: proof.held_out,
+                supersedes: supersedes.map(str::to_owned),
+                seed: proof.seed.clone(),
+                ..card(workflow)
+            };
+            state.live.insert(
+                workflow.clone(),
+                (
+                    filed_card,
+                    FiledWorkflow {
+                        program: program.clone(),
+                        proof: proof.clone(),
+                    },
+                ),
+            );
+        }
+        Ok(admission)
     }
 
     fn record_run(&mut self, workflow: &str, outcome: &RunOutcome) -> Result<(), BrowserError> {
@@ -127,17 +152,14 @@ impl WorkflowLibrary for WorkflowStore {
         site: &str,
         supersedes: &str,
     ) -> Result<Option<SupersedeRefusal>, BrowserError> {
-        self.0
-            .lock()
-            .expect("workflow store state")
-            .calls
-            .push(StoreCall::SupersedesRefused(
-                site.to_owned(),
-                supersedes.to_owned(),
-            ));
-        Err(BrowserError::Library(
-            "unexpected predecessor lookup".to_owned(),
-        ))
+        let mut state = self.0.lock().expect("workflow store state");
+        state.calls.push(StoreCall::SupersedesRefused(
+            site.to_owned(),
+            supersedes.to_owned(),
+        ));
+        state
+            .predecessor_refusal
+            .ok_or_else(|| BrowserError::Library("unexpected predecessor lookup".to_owned()))
     }
 
     fn retired(&mut self, site: &str) -> Result<Vec<RetiredCard>, BrowserError> {

@@ -1,4 +1,4 @@
-//! Holds the browser workflow library's draft, find, retire, retired and run
+//! Holds the browser workflow library's draft, find, propose, retire, retired and run
 //! session doors and the solved-run snapshot door
 //! (FIX [BROWSER-LIBRARY-SESSION-DOORS-HELD-BY-NO-TEST]).
 //! The attached session is real; its Chromium peer and workflow store are fakes.
@@ -9,6 +9,9 @@
 
 mod draft;
 mod find;
+mod fresh_guest;
+mod propose_refused;
+mod propose_replayed;
 mod retire;
 mod retired;
 mod run;
