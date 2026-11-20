@@ -1,9 +1,12 @@
 //! `vault.imports.hook_transcript` (census L10-17; Engine ruling Tue 17 Nov
-//! 06:50, L10-17-PR3-MEMORY = B): one Claude Code session, sent by the CLI
+//! 06:50, L10-17-PR3-MEMORY = B): one coding agent's session, sent by the CLI
 //! on another machine, lands in this vault through the same import the local
-//! `oneiron import claude-code <log>` runs, with the same dedupe, Imported
+//! `oneiron import <source> <log>` runs, with the same dedupe, Imported
 //! provenance and refusals, and an answer that names the session's
-//! CONVERSATION, which `vault.runners.continue` then takes.
+//! CONVERSATION, which `vault.runners.continue` then takes. The session is a
+//! Claude Code log and its subagents' logs, unless the request names another
+//! source a hook hands over (FIX HOOK-HOSTED-HAND-OVER-OTHER-HOSTS): a Codex
+//! rollout, or a GitHub Copilot or Cursor hook transcript, each one file.
 //!
 //! The owner calls it, or an agent whose live Grant names the verb
 //! (substrate behind grants). The Grant is checked at the door's admission,
@@ -46,12 +49,19 @@ pub const HOOK_TRANSCRIPT_MAX_SUBAGENTS: usize = 256;
 /// The longest subagent log stem, in bytes.
 const SUBAGENT_STEM_MAX_BYTES: usize = 128;
 
-/// The source a hook transcript is: a Claude Code session log.
-const SOURCE: HistorySource = HistorySource::ClaudeCode;
+/// The longest session log stem of a source other than Claude Code, in
+/// bytes.
+const SESSION_STEM_MAX_BYTES: usize = 128;
 
 /// A session id that is not a Claude Code session log's stem.
 const ERR_SESSION: &str =
     "the hook transcript's session is not a Claude Code session id (36 hex digits and dashes)";
+
+/// A session that is not a plain log stem.
+const ERR_SESSION_STEM: &str = "the hook transcript's session is not its log's file stem (up to 128 letters, digits, dashes and underscores)";
+
+/// Subagent logs sent with a log that keeps its subagents in itself.
+const ERR_SUBAGENTS_OF_SOURCE: &str = "only a Claude Code session has subagent logs of its own; this source's log holds its subagents";
 
 /// A subagent log stem that is not `agent-<id>`.
 const ERR_SUBAGENT_STEM: &str =
@@ -66,9 +76,20 @@ const ERR_SUBAGENTS_MANY: &str = "the hook transcript carries more than 256 suba
 /// Logs past the inflated cap.
 const ERR_PAST_CAP: &str = "the hook transcript's logs inflate past 64 MiB (HOOK_TRANSCRIPT_MAX_BYTES): nothing was imported";
 
-/// What the caller does about logs past the cap.
-const HINT_PAST_CAP: &str =
-    "Import the session on the machine it ran on: oneiron import claude-code <log>.";
+/// What the caller does about logs past the cap, by the source.
+const fn hint_past_cap(source: HookTranscriptSource) -> &'static str {
+    match source {
+        HookTranscriptSource::ClaudeCode => {
+            "Import the session on the machine it ran on: oneiron import claude-code <log>."
+        }
+        HookTranscriptSource::Codex => {
+            "Import the session on the machine it ran on: oneiron import codex <log>."
+        }
+        HookTranscriptSource::HookTranscript => {
+            "Import the session on the machine it ran on: oneiron import hook-transcript <log>."
+        }
+    }
+}
 
 /// A session log that left its CONVERSATION absent: no message of it was
 /// kept, now or before.
@@ -77,19 +98,55 @@ const ERR_NO_CONVERSATION: &str = "the hook transcript's session log holds no me
 /// What the caller does about a session log with no message kept.
 const HINT_NO_CONVERSATION: &str = "Send the log once the session has a user or assistant message.";
 
-/// `vault.imports.hook_transcript`'s input: one Claude Code session's log,
-/// as the hook names it, and the logs of its subagents.
+/// `vault.imports.hook_transcript`'s input: one session's log, as the hook
+/// names it, and, for Claude Code, the logs of its subagents.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HookTranscriptImportRequest {
-    /// The session's id: the session log's file stem, 36 hex digits and
-    /// dashes.
+    /// The session log's file stem, as the local import names the file: a
+    /// Claude Code session id (36 hex digits and dashes); a Codex
+    /// `rollout-<time>-<id>`; a Copilot or Cursor session id (for a Copilot
+    /// CLI `events.jsonl`, its session folder's name). Up to 128 letters,
+    /// digits, dashes and underscores.
     pub session: String,
     /// The session log's bytes, gzip-compressed, in standard base64.
     pub transcript_gzip_base64: String,
-    /// The session's subagent logs (`<session>/subagents/agent-<id>.jsonl`).
+    /// The session's subagent logs (`<session>/subagents/agent-<id>.jsonl`);
+    /// Claude Code's only.
     #[serde(default)]
     pub subagents: Vec<HookSubagentTranscript>,
+    /// Which import reads the logs; absent for Claude Code, so a request
+    /// written before other sources were taken reads as it did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<HookTranscriptSource>,
+}
+
+/// The import a hook transcript's logs are read by: the `oneiron import`
+/// source of the host's session logs.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum HookTranscriptSource {
+    /// A Claude Code session log and its subagents' logs.
+    #[default]
+    ClaudeCode,
+    /// A Codex session rollout.
+    Codex,
+    /// A GitHub Copilot or Cursor hook transcript.
+    HookTranscript,
+}
+
+impl HookTranscriptSource {
+    /// The import source that reads it.
+    #[must_use]
+    pub const fn history_source(self) -> HistorySource {
+        match self {
+            Self::ClaudeCode => HistorySource::ClaudeCode,
+            Self::Codex => HistorySource::Codex,
+            Self::HookTranscript => HistorySource::HookTranscript,
+        }
+    }
 }
 
 /// One subagent log of a session.
@@ -119,8 +176,8 @@ pub struct HookTranscriptImportView {
 /// One conversation of the session, in counts, as the import reports it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HookTranscriptConversation {
-    /// The conversation's id in Claude Code: the session id, or
-    /// `<session>/<stem>` for a subagent's log and
+    /// The conversation's id in its source: for Claude Code the session id,
+    /// or `<session>/<stem>` for a subagent's log and
     /// `<session>/sidechain/<agent>` for a sidechain the session's log kept.
     pub native_id: String,
     /// Its CONVERSATION entity id, hex.
@@ -144,10 +201,10 @@ pub struct HookTranscriptConversation {
 }
 
 impl HookTranscriptConversation {
-    fn of(report: &HistoryImportReport) -> Result<Self> {
+    fn of(source: HistorySource, report: &HistoryImportReport) -> Result<Self> {
         Ok(Self {
             native_id: report.conversation.clone(),
-            conversation: conversation_id(SOURCE, &report.conversation)?.to_hex(),
+            conversation: conversation_id(source, &report.conversation)?.to_hex(),
             kind: report.kind.as_str().to_owned(),
             messages: report.messages,
             new: report.new,
@@ -207,12 +264,15 @@ impl Vault {
         Ok(())
     }
 
-    /// Lands one Claude Code session a CLI on another machine sent, as
-    /// `oneiron import claude-code <log>` lands it: the session's log and
-    /// its subagents' logs decode as Claude Code logs, land earliest first
-    /// through [`Self::import_history`]'s import at a second of their own,
-    /// and what landed goes in front of the Dreamer, its claims waiting in
-    /// the import's review.
+    /// Lands one session a CLI on another machine sent, as `oneiron import
+    /// <source> <log>` lands it: the session's log and its subagents' logs
+    /// decode as the request's source's logs, land earliest first through
+    /// [`Self::import_history`]'s import at a second of their own, and what
+    /// landed goes in front of the Dreamer, its claims waiting in the
+    /// import's review. The answer names the session's own conversation:
+    /// for Claude Code the session id's, else the first the session's log
+    /// decodes to (a Codex rollout's thread, a Cursor log's conversation, a
+    /// Copilot log's main conversation before its subagents').
     ///
     /// `caller` is judged before any log is read, so a refused caller is
     /// told nothing of them, and again in each of the import's writers. A
@@ -234,11 +294,18 @@ impl Vault {
         input: &HookTranscriptImportRequest,
     ) -> MemoryResult<HookTranscriptImportView> {
         caller.owner(self)?;
+        let kind = input.source.unwrap_or_default();
+        let source = kind.history_source();
         let mut conversations: Vec<HistoryConversation> = Vec::new();
-        for (file, text) in inflated_logs(input)? {
-            let read = SOURCE
+        // The session's own conversation's id in its source.
+        let mut own = (kind == HookTranscriptSource::ClaudeCode).then(|| input.session.clone());
+        for (index, (file, text)) in inflated_logs(kind, input)?.into_iter().enumerate() {
+            let read = source
                 .decode(&text, &file)
                 .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+            if index == 0 && own.is_none() {
+                own = read.first().map(|first| first.native_id.clone());
+            }
             conversations.extend(read);
         }
         earliest_first(&mut conversations);
@@ -247,7 +314,7 @@ impl Vault {
         let mut views = Vec::with_capacity(conversations.len());
         let mut refusal = None;
         for conversation in &conversations {
-            match self.import_history_as(caller, SOURCE, conversation, imported_at, None) {
+            match self.import_history_as(caller, source, conversation, imported_at, None) {
                 Ok(report) => {
                     landed |= report.new > 0 || report.changed > 0;
                     views.push(report);
@@ -261,8 +328,8 @@ impl Vault {
         // One inbox row for the call, never one per conversation; written
         // for what landed before a refusal too.
         let review = if landed {
-            self.record_history_import_finished(SOURCE, imported_at)?;
-            Some(history_import_review_id(SOURCE, imported_at))
+            self.record_history_import_finished(source, imported_at)?;
+            Some(history_import_review_id(source, imported_at))
         } else {
             None
         };
@@ -270,19 +337,22 @@ impl Vault {
         if let Some(refusal) = refusal {
             return Err(refusal);
         }
-        let conversation = conversation_id(SOURCE, &input.session)?;
-        if !self.transcript_conversation_present(&conversation)? {
-            return Err(MemoryError::new(
+        let no_conversation = || {
+            MemoryError::new(
                 MEMORY_CODE_BAD_REQUEST,
                 ERR_NO_CONVERSATION,
                 &[HINT_NO_CONVERSATION],
-            ));
+            )
+        };
+        let conversation = conversation_id(source, &own.ok_or_else(no_conversation)?)?;
+        if !self.transcript_conversation_present(&conversation)? {
+            return Err(no_conversation());
         }
         Ok(HookTranscriptImportView {
             conversation: conversation.to_hex(),
             conversations: views
                 .iter()
-                .map(HookTranscriptConversation::of)
+                .map(|report| HookTranscriptConversation::of(source, report))
                 .collect::<Result<_>>()?,
             review,
         })
@@ -296,12 +366,26 @@ impl Vault {
     }
 }
 
-/// Each log of `input` with the file it decodes as, inflated: the session's
-/// first, then each subagent's under the session. Checks every name and the
-/// count before any log is inflated.
-fn inflated_logs(input: &HookTranscriptImportRequest) -> MemoryResult<Vec<(HistoryFile, String)>> {
-    if !session_id(&input.session) {
-        return Err(MemoryError::bad_request(ERR_SESSION));
+/// Each log of `input`, read by `source`'s import, with the file it decodes
+/// as, inflated: the session's first, then each subagent's under the
+/// session. Checks every name and the count before any log is inflated.
+fn inflated_logs(
+    source: HookTranscriptSource,
+    input: &HookTranscriptImportRequest,
+) -> MemoryResult<Vec<(HistoryFile, String)>> {
+    match source {
+        HookTranscriptSource::ClaudeCode if !session_id(&input.session) => {
+            return Err(MemoryError::bad_request(ERR_SESSION));
+        }
+        HookTranscriptSource::ClaudeCode => {}
+        HookTranscriptSource::Codex | HookTranscriptSource::HookTranscript => {
+            if !session_stem(&input.session) {
+                return Err(MemoryError::bad_request(ERR_SESSION_STEM));
+            }
+            if !input.subagents.is_empty() {
+                return Err(MemoryError::bad_request(ERR_SUBAGENTS_OF_SOURCE));
+            }
+        }
     }
     if input.subagents.len() > HOOK_TRANSCRIPT_MAX_SUBAGENTS {
         return Err(MemoryError::bad_request(ERR_SUBAGENTS_MANY));
@@ -321,21 +405,28 @@ fn inflated_logs(input: &HookTranscriptImportRequest) -> MemoryResult<Vec<(Histo
         stem: input.session.clone(),
         parent: None,
     };
-    logs.push((session, inflated(&input.transcript_gzip_base64, &mut room)?));
+    let hint = hint_past_cap(source);
+    logs.push((
+        session,
+        inflated(&input.transcript_gzip_base64, &mut room, hint)?,
+    ));
     for subagent in &input.subagents {
         let file = HistoryFile {
             stem: subagent.stem.clone(),
             parent: Some(input.session.clone()),
         };
-        logs.push((file, inflated(&subagent.transcript_gzip_base64, &mut room)?));
+        logs.push((
+            file,
+            inflated(&subagent.transcript_gzip_base64, &mut room, hint)?,
+        ));
     }
     Ok(logs)
 }
 
 /// One log's text: `encoded` decoded and inflated, at most `room` bytes,
-/// which it then takes from `room`. Bytes that are not UTF-8 read as the
-/// local import reads them, replaced.
-fn inflated(encoded: &str, room: &mut usize) -> MemoryResult<String> {
+/// which it then takes from `room`; past them, refused with `hint`. Bytes
+/// that are not UTF-8 read as the local import reads them, replaced.
+fn inflated(encoded: &str, room: &mut usize, hint: &str) -> MemoryResult<String> {
     let compressed = base64::engine::general_purpose::STANDARD
         .decode(encoded)
         .map_err(|_| MemoryError::bad_request("a hook transcript log is not standard base64"))?;
@@ -349,7 +440,7 @@ fn inflated(encoded: &str, room: &mut usize) -> MemoryResult<String> {
         return Err(MemoryError::new(
             MEMORY_CODE_BAD_REQUEST,
             ERR_PAST_CAP,
-            &[HINT_PAST_CAP],
+            &[hint],
         ));
     }
     *room -= bytes.len();
@@ -363,13 +454,24 @@ fn session_id(session: &str) -> bool {
     session.len() == 36 && session.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
 }
 
+/// Whether `session` is a session log's stem of a source other than Claude
+/// Code: up to [`SESSION_STEM_MAX_BYTES`] letters, digits, dashes and
+/// underscores, so it never names a path.
+fn session_stem(session: &str) -> bool {
+    !session.is_empty() && session.len() <= SESSION_STEM_MAX_BYTES && plain(session)
+}
+
+/// Whether `name` is only ASCII letters, digits, dashes and underscores.
+fn plain(name: &str) -> bool {
+    name.bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
 /// Whether `stem` names a subagent log: `agent-<id>`, of letters, digits,
 /// dashes and underscores only, so it never names a path.
 fn subagent_stem(stem: &str) -> bool {
     stem.len() <= SUBAGENT_STEM_MAX_BYTES
         && stem.len() > "agent-".len()
         && stem.starts_with("agent-")
-        && stem
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        && plain(stem)
 }

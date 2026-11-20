@@ -283,7 +283,9 @@ pub(crate) fn validate_carried_birth(
 /// `doc` carries that row as one of the same kind, and of a kind that
 /// replicates. A carrier the ladder skips because its kind never replicates
 /// (a local diagnostic observation, internal LFS chunk bytes) lends its birth
-/// to no local row.
+/// to no local row, and neither does one for a record a refused privacy erase
+/// keeps or a cooperative review restricts, or one the ladder dropped for such
+/// a record: the kept row takes no change from a peer (REVIEW-9881 round 1).
 fn carried_row_lands_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -301,7 +303,9 @@ fn carried_row_lands_in_txn(
         .is_some_and(|header| header.entity_type == entity_type)
         && entity_type != ENTITY_TYPE_DIAGNOSTIC
         && !crate::origin::lfs::is_lfs_chunk_blob(id, &carrier)
-        && !crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, txn, id)?)
+        && !crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, txn, id)?
+        && vault.store.use_restricted_in_txn(txn, id)?.is_none()
+        && !crate::sync::ingest::carrier_dropped_in_txn(&vault.store, txn, id, &carrier)?)
 }
 
 /// Stamps the birth `doc` carries for `id` in `wtxn`, beside the row the same

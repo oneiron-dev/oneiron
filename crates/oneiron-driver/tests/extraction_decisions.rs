@@ -149,6 +149,7 @@ fn run_case_citing(
         attempt: &attempt,
         now_ms,
         reply: &reply,
+        step: None,
         config: &config,
         policy_pin: &policy_pin,
     })?;
@@ -436,6 +437,7 @@ fn unlent_returns_model_unavailable() -> TestResult<()> {
         attempt: &fixture.attempt,
         now_ms: fixture.now_ms,
         reply: &reply,
+        step: None,
         config: &fixture.config,
         policy_pin: &fixture.policy_pin,
     })
@@ -481,6 +483,7 @@ fn declared_subject_never_operand() -> TestResult<()> {
         attempt: &attempt,
         now_ms,
         reply: &reply,
+        step: None,
         config: &config,
         policy_pin: &policy_pin,
     })?;

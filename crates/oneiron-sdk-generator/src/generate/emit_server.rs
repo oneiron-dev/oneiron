@@ -782,18 +782,24 @@ fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
     let answer = if flag(row, "host_door_lists") {
         // The admitted skill call's post-hook view spills to its run past
         // the inline size, bound as a readable result; a small view answers
-        // inline, as every other row's does.
+        // inline, as every other row's does. An answer nesting past what a
+        // value may hold comes back as JSON text, and its post chain judges
+        // it as text (SKILL-ANSWER-DEEP-JSON-STACK-SAFE).
         if name_value.is_str("self.skills.call") {
             format!(
                 "let ran = async {{
                     let (output, listed) = {door};
-                    Ok::<_, FacadeApiError>((facade_output({door_output})?, listed))
+                    Ok::<_, FacadeApiError>(({door_output}, listed))
                 }}.await;
                 let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
                 let (output, listed) = match ran {{ Ok(ran) => ran, {failed} }};{landed}
                 let spill_run = super::host_doors::skill_call_spill_run(&hooks);
                 let spill_rows = listed.clone();
-                Ok(FacadeCallOutput {{ value: super::host_doors::spill_admitted_skill_view(server, spill_run, {post_hooks}.await.map_err(|error| error.with_hook_notice(hook_notice))?, spill_rows).await, rows: super::host_doors::support::ListedRows::rows(listed), hook_notice }})"
+                let value = match output {{
+                    oneiron::engine_executor::AdmittedSkillAnswer::Value(output) => super::host_doors::spill_admitted_skill_view(server, spill_run, {post_hooks}.await.map_err(|error| error.with_hook_notice(hook_notice))?, spill_rows).await,
+                    oneiron::engine_executor::AdmittedSkillAnswer::Text(text) => super::host_doors::admitted_skill_text_post(server, hooks, text, spill_run, spill_rows).await.map_err(|error| FacadeApiError::from(error).with_hook_notice(hook_notice))?,
+                }};
+                Ok(FacadeCallOutput {{ value, rows: super::host_doors::support::ListedRows::rows(listed), hook_notice }})"
             )
         } else {
             format!(

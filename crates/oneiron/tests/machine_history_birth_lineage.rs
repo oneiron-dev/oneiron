@@ -14,6 +14,12 @@
 //! re-put by the vault owner as a successor about a free PERSON P without W,
 //! and a Member grant for M. S is either a row bound to a source audience M is
 //! not in (`test_doors::source_audience_binding::bound_row`) or a free PERSON.
+//! The machine's Proposed birth holds an owner question bound to the birth
+//! body, and an owner write of another body is refused `GateConsentStale`
+//! while that question is open. So the owner first answers it through the
+//! owner's approval door (`Vault::approve_machine_claim_as`), whose signed
+//! Approve event names digests and holds no word of the body, and then writes
+//! the successor.
 //! - Test 1 (red on main): with S bound, M's `machine_history_page` of T is
 //!   refused and no row of it holds W. On main the walk reached only P, so the
 //!   page served the birth holding W.
@@ -148,8 +154,9 @@ struct Seeded {
 }
 
 /// The vault, the member's selector and T: a machine birth of T about the
-/// subject `birth`, holding [`BIRTH_WORD`], then the owner's ordinary
-/// successor about a free PERSON without it, and a Member grant.
+/// subject `birth`, holding [`BIRTH_WORD`], the owner's approval of it, then
+/// the owner's ordinary successor about a free PERSON without it, and a
+/// Member grant.
 fn seed(birth: BirthSubject) -> Seeded {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault");
@@ -179,6 +186,9 @@ fn seed(birth: BirthSubject) -> Seeded {
 
     let owner = vault.ensure_embedded_owner_actor().expect("vault owner");
     bind_host_owner(&vault, &issuer, owner).expect("FIXTURE: owner binding");
+    vault
+        .approve_machine_claim_as(target, WriteActor::new(owner, EdgeActorClass::Human))
+        .expect("FIXTURE: the owner approves T's machine birth, answering its held question");
     let successor = ClaimCandidate::new(
         "profile.note",
         ClaimSubject::Entity(successor_subject),

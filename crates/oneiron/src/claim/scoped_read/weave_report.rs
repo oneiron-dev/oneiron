@@ -233,15 +233,16 @@ impl ScopedRead<'_> {
     }
 
     /// The live report as a period publishes it: [`Self::weave_report`]'s
-    /// rows with each audit's decisions whole, as the publication recheck
-    /// reads them and the saved period stores them. Never served as is.
+    /// rows with each audit's decisions whole, less each row a reopen of the
+    /// period would refuse, as the publication recheck reads them and the
+    /// saved period stores them. Never served as is.
     pub(super) fn weave_report_snapshot(
         &self,
         reader: WeaveReader<'_>,
         recipe: &[WeaveSectionSpec],
     ) -> Result<ScopedReadResult<WeaveReport>> {
         let txn = self.grant_read_txn()?;
-        self.weave_report_in_txn(&txn, reader, recipe)
+        self.weave_report_publishable_in_txn(&txn, reader, recipe, &self.held_for(None))
     }
 }
 

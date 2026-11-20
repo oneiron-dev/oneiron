@@ -1,6 +1,6 @@
 {
   "name": "vault.imports.hook_transcript",
-  "description": "Imports one Claude Code session log and its subagent logs, each sent gzip in base64, as the local import does: same dedupe and Imported provenance. The owner calls it, or an agent whose Grant names this verb.",
+  "description": "Imports one session log sent gzip in base64, as the local import does: Claude Code with its subagent logs, or by source a Codex rollout or a Copilot or Cursor transcript. The owner calls it, or an agent whose Grant names this verb.",
   "input": "crate::ingest::history::HookTranscriptImportRequest",
   "output": "crate::ingest::history::HookTranscriptImportView",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.imports.hook_transcript\", &input)?",

@@ -12,6 +12,9 @@
 //! Review round 2 of #9753: the attempt's binding reads its step's receipt
 //! while the key still serves every claim the step read, and an owner's
 //! erase of the PERSON while the step's call is in flight ends the attempt.
+//! Their two fixes are pinned too: the sweep's write keeps a profile that a
+//! claim landing after its read stands under, and a NOTE's sources page
+//! serves no claim, since a profile is about a PERSON.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-driver --all-features --test dreamer_psych_profile`
 #![cfg(oneiron_test_support)]
@@ -20,6 +23,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron::attempt_queue::{AttemptQueue, AttemptState};
+use oneiron::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+};
 use oneiron::dreamer_consolidation::{DREAMER_NARRATIVE_ROLE, DREAMER_VERDICT_ROLE, RoleBackend};
 use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
@@ -32,20 +38,21 @@ use oneiron::psych_profile::{
     psych_profile_entity_id,
 };
 use oneiron::registry::ENTITY_TYPE_PSYCH_PROFILE;
+use oneiron::snapshot_read::{PsychProfileSourcesPageRequest, psych_profile_sources_page};
 use oneiron::test_doors::consolidation::{consolidate_unbound_turn, open_dreamer_vault};
 use oneiron::test_doors::derive::claim_subject;
 use oneiron::test_doors::extraction_verdict::ExtractionVerdictFixture;
 use oneiron::test_doors::psych_profile::{
     admit_psych_profile_attempt, claim_words_hash, claim_words_hash_at,
     companion_profile_under_dreamer_read, companion_profile_under_reader_of_nothing,
-    psych_profile_keys,
+    psych_profile_keys, read_psych_profile_sweep, write_psych_profile_sweep,
 };
 use oneiron::test_doors::run_lifecycle::defer_enqueued;
 use oneiron::test_doors::steward::{STEWARD_VERBS, dreamer, stand_steward_grant};
 use oneiron::{
     AccessGrant, BudgetLease, ContentPart, DreamerAttemptExecution, DreamerAttemptExecutor,
     DreamerClaimAuthoringStrategy, EdgeActorClass, EntityId, FatalLlmError, LlmBackend,
-    LlmCapability, LlmError, LlmGenerateFuture, LlmRequest, LlmStreamResult, ModelId,
+    LlmCapability, LlmError, LlmGenerateFuture, LlmRequest, LlmStreamResult, ModelId, TimeRange,
     UnsupportedCapability, Vault, VaultConfig, WakeAttemptContext, WriteActor,
 };
 use oneiron_driver::{ConsolidationExecutorFactory, ExtractionDecisionGate, PassExecutorFactory};
@@ -633,6 +640,128 @@ fn a_step_erased_while_its_call_is_in_flight_ends_the_attempt() -> TestResult<()
     assert!(
         stored_profile(&fixture)?.is_none(),
         "an erased step lands nothing"
+    );
+    Ok(())
+}
+
+/// Lands the owner's stated claim `profile.hobby: yuki` about `subject`, active at Approved and
+/// stamped as `like` is (its facet, project, world, relationships and scope, so its sensitivity
+/// band); returns its id.
+fn land_owner_claim(vault: &Vault, subject: EntityId, like: &ClaimBody) -> TestResult<EntityId> {
+    let mut body = ClaimBody::new(
+        "profile.hobby",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("yuki"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )?;
+    body.source = Some(ClaimSource::UserStated);
+    body.scope_facet = like.scope_facet;
+    body.scope_project = like.scope_project;
+    body.world = like.world;
+    body.rel = like.rel.clone();
+    body.scope = like.scope.clone();
+    let id = EntityId::now();
+    let at = vault.now_recorded_at();
+    vault.put_claim(&id, &body, TimeRange { start: at, end: at }, at)?;
+    Ok(id)
+}
+
+/// The claims the owner's sources page of `key` serves, under the owner's proof.
+fn owner_sources_page(
+    vault: &Vault,
+    owner: EntityId,
+    key: PsychProfileKey,
+) -> TestResult<Vec<EntityId>> {
+    let request = PsychProfileSourcesPageRequest {
+        person: key.person,
+        facet: key.facet,
+        world: key.world,
+    };
+    let page = psych_profile_sources_page(&vault.memory(owner, EdgeActorClass::Human), &request)?;
+    Ok(page
+        .value
+        .candidates
+        .iter()
+        .map(|candidate| candidate.version.entity)
+        .collect())
+}
+
+/// The sweep's read finds a profile standing on nothing (its one claim retracted); a claim that
+/// lands under its key before the sweep's write keeps it, because the write checks the key again
+/// before it withdraws (review round 2 of #9753).
+#[test]
+fn a_claim_landing_between_the_sweeps_read_and_write_keeps_the_profile() -> TestResult<()> {
+    let fixture = fixture()?;
+    let narrative = NarrativeBackend::new(COMPACT, TEXT, NARRATIVE);
+    run_profile_attempt(&fixture, &narrative, true)?;
+    let profile = psych_profile_entity_id(&fixture.key);
+    let retracted = fixture
+        .vault
+        .get_claim(&fixture.claim)?
+        .ok_or("FIXTURE: the claim reads")?;
+    let now = fixture.vault.now_recorded_at();
+    fixture.vault.retract_claim(&fixture.claim, now)?;
+    assert!(
+        fixture.vault.get_psych_profile(&profile)?.is_some(),
+        "FIXTURE: a retraction leaves the profile for the sweep to withdraw"
+    );
+    let read = read_psych_profile_sweep(&fixture.vault, now)?;
+    assert_eq!(
+        read.withdrawn(),
+        1,
+        "FIXTURE: the sweep's read finds the profile standing on nothing"
+    );
+    land_owner_claim(&fixture.vault, fixture.person, &retracted)?;
+    assert_eq!(
+        psych_profile_keys(&fixture.vault, fixture.person)?,
+        vec![fixture.key],
+        "FIXTURE: the landed claim stands under the profile's key"
+    );
+    write_psych_profile_sweep(&fixture.vault, &read, now)?;
+    assert!(
+        fixture.vault.get_psych_profile(&profile)?.is_some(),
+        "the sweep's write keeps a profile that a claim stands under again"
+    );
+    Ok(())
+}
+
+/// A profile is about a PERSON (review round 2 of #9753): the owner's sources page of a NOTE's
+/// key serves no claim, though the NOTE carries an active, surfaced claim below the restricted
+/// band, stamped as the PERSON's claim that her own page serves.
+#[test]
+fn a_sources_page_of_a_note_serves_no_claim() -> TestResult<()> {
+    let fixture = fixture()?;
+    let vault = &fixture.vault;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let like = vault
+        .get_claim(&fixture.claim)?
+        .ok_or("FIXTURE: the claim reads")?;
+    let about_person = land_owner_claim(vault, fixture.person, &like)?;
+    assert!(
+        owner_sources_page(vault, owner, fixture.key)?.contains(&about_person),
+        "FIXTURE: the PERSON's page serves the owner's claim about her"
+    );
+    let note = vault.create_note(
+        "research",
+        "Owen's reading list",
+        WriteActor::new(owner, EdgeActorClass::Human),
+    )?;
+    let about_note = land_owner_claim(vault, note, &like)?;
+    assert_eq!(
+        vault.get_claim(&about_note)?.map(|claim| claim.lifecycle),
+        Some(ClaimLifecycleStatus::Active),
+        "FIXTURE: the claim about the NOTE lands active"
+    );
+    let note_key = PsychProfileKey {
+        person: note,
+        ..fixture.key
+    };
+    assert_eq!(
+        owner_sources_page(vault, owner, note_key)?,
+        Vec::<EntityId>::new(),
+        "a NOTE has no profile claims: its page serves none"
     );
     Ok(())
 }

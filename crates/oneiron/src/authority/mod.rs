@@ -511,6 +511,7 @@ pub use slip_vault::{
     ConnectOffer, ConnectRescopeOffer, ConnectWindow, GuestDocumentContext, GuestDocumentEnvelope,
     HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT, HostSlipIssuer, ScopeOpeningKey,
 };
+pub(crate) use slip_vault::{ConnectOfferTerms, fresh_pact_id};
 pub use step_up::{
     EnrolledPasskey, EnrolledTotp, PasskeyAssertion, PasskeyDescriptor, PasskeyRegistration,
     STEP_UP_CHALLENGE_STALE, STEP_UP_CHALLENGE_TTL_SECS, STEP_UP_NO_PASSKEY, STEP_UP_NOT_HOLDER,
@@ -600,7 +601,12 @@ pub(crate) use pinned_root::{
     end_request_wait_in_txn, ended_request_wait, read_pin_and_earlier_in_txn, read_pin_row_in_txn,
     write_awaited_root_in_txn, write_pinned_root_in_txn,
 };
-pub(crate) use policy_setting_choice::PolicySettingAct;
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use policy_setting_choice::SettingFrontier;
+pub(crate) use policy_setting_choice::{
+    ChoiceCount, ChoiceCounts, PolicySettingAct, SettingSlotAct, SettingSlotFold, SettingSlotHead,
+    SettingSlotRow,
+};
 pub(crate) use principal_standing::{
     GIT_PUSH_PACT_STANDING_LAPSED, git_push_pact_standing_lapsed_in_txn,
 };
