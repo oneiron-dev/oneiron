@@ -259,8 +259,7 @@ fn listed(recipe: Recipe, subject: &Subject<'_>, n: NodeId, ids: &mut Ids) -> Re
         .texts
         .get(&t)
         .and_then(|body| body.paragraphs.first())
-        .map(|paragraph| office_text(&paragraph.text()))
-        .unwrap_or_default();
+        .map_or_default(|paragraph| office_text(&paragraph.text()));
     Ok(match recipe {
         Recipe::AddSlide => new_slide(n, ids),
         Recipe::MoveShape => {

@@ -486,15 +486,15 @@ pub(super) fn write(
                     .and_then(|preset| preset_sites::kept(&tree, preset))
             };
             let empty = BTreeSet::new();
-            let taken = kept.as_ref().map(|held| &held.names).unwrap_or(&empty);
+            let taken = kept.as_ref().map_or(&empty, |held| &held.names);
             let drawn = sites("a", paths, taken);
             let count = u32::try_from(drawn.len()).unwrap_or(u32::MAX);
             let site_guides: String = drawn.iter().map(|site| site.guides.as_str()).collect();
             let site_list: String = drawn.iter().map(|site| site.cxn.as_str()).collect();
-            let adjustments = kept
-                .as_ref()
-                .map(|held| format!("<a:avLst>{}</a:avLst>", held.adjustments))
-                .unwrap_or_else(|| "<a:avLst/>".to_owned());
+            let adjustments = kept.as_ref().map_or_else(
+                || "<a:avLst/>".to_owned(),
+                |held| format!("<a:avLst>{}</a:avLst>", held.adjustments),
+            );
             let kept_guides = kept.as_ref().map_or("", |held| held.guides);
             let kept_sites = kept.as_ref().map_or("", |held| held.connections);
             let geometry = format!(
@@ -557,20 +557,17 @@ fn redraw(
         .flat_map(|list| children(tree, list, A, "gd"))
         .filter_map(|gd| named(gd, "name"))
         .collect();
-    let held_sites: Vec<usize> = guide_list
-        .map(|list| {
-            children(tree, list, A, "gd")
-                .filter(|&gd| tree.nodes[gd].attr("name").is_some_and(site_guide))
-                .collect()
-        })
-        .unwrap_or_default();
+    let held_sites: Vec<usize> = guide_list.map_or_default(|list| {
+        children(tree, list, A, "gd")
+            .filter(|&gd| tree.nodes[gd].attr("name").is_some_and(site_guide))
+            .collect()
+    });
     if let Some(guide_list) = guide_list
         && !held_sites.is_empty()
         && !guides(paths).into_iter().any(site_guide)
     {
         let cxns: Vec<usize> = xml::child(tree, geometry, A, "cxnLst")
-            .map(|list| children(tree, list, A, "cxn").collect())
-            .unwrap_or_default();
+            .map_or_default(|list| children(tree, list, A, "cxn").collect());
         let slots = kept_slots(tree, &cxns, glued, paths);
         // The site guides a kept site names, and those their formulas name.
         let mut kept: BTreeSet<String> = cxns

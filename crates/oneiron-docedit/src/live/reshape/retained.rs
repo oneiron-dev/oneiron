@@ -289,8 +289,7 @@ pub(super) fn retained(
         let own = |name: &str| -> Vec<u8> {
             look.and_then(|(_, at)| xml::child(tree, at, C, name))
                 .filter(|_| order(to).contains(&name))
-                .map(|at| piece(bytes, tree, at).to_vec())
-                .unwrap_or_default()
+                .map_or_default(|at| piece(bytes, tree, at).to_vec())
         };
         entries.push(("spPr", own("spPr")));
         entries.push(("marker", own("marker")));

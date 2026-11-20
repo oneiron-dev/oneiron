@@ -233,7 +233,7 @@ fn column(text: &str) -> Option<Part> {
 /// than seven digits refused, as before (a zero-padded 8-digit row would
 /// otherwise pass the grid bound).
 fn row(text: &str) -> Option<Part> {
-    if text.bytes().filter(|b| b.is_ascii_digit()).count() > 7 {
+    if text.bytes().filter(u8::is_ascii_digit).count() > 7 {
         return None;
     }
     match crate::a1::parse_line_side(text)? {
@@ -249,7 +249,7 @@ fn row(text: &str) -> Option<Part> {
 
 /// `$B$12`, `B$12`, `$B12` or `B12`. Case-insensitive (R5).
 fn cell(text: &str) -> Option<(Part, Part)> {
-    if text.bytes().filter(|b| b.is_ascii_digit()).count() > 7 {
+    if text.bytes().filter(u8::is_ascii_digit).count() > 7 {
         return None;
     }
     let parsed = crate::a1::parse_cell(text)?;

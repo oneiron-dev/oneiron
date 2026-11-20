@@ -238,14 +238,12 @@ struct List {
 impl List {
     fn read(tree: &XmlTree, name: &'static str, entry: &str) -> Result<Self> {
         let node = tree.child(0, SML, name)?.map(|(index, _)| index);
-        let entries: Vec<Element> = node
-            .map(|list| {
-                tree.children(list)
-                    .filter(|(_, node)| node.is(SML, entry))
-                    .map(|(index, _)| Element::read(tree, index))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let entries: Vec<Element> = node.map_or_default(|list| {
+            tree.children(list)
+                .filter(|(_, node)| node.is(SML, entry))
+                .map(|(index, _)| Element::read(tree, index))
+                .collect()
+        });
         Ok(Self {
             name,
             node,

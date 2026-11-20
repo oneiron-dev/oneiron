@@ -23,7 +23,7 @@ pub fn preserve_missing_root_extensions(
     let names: Vec<String> = after
         .names()
         .filter(|n| is_worksheet_part(n))
-        .map(|s| s.to_owned())
+        .map(std::borrow::ToOwned::to_owned)
         .collect();
     for name in names {
         let (Some(b), Some(a)) = (before.part(&name), after.part(&name)) else {

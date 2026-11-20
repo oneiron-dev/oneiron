@@ -66,18 +66,16 @@ pub(super) fn read(tree: &XmlTree, kind: ChartKind, at: usize, plot: &mut ChartP
     }
     if surface(kind) {
         plot.wireframe = super::flag(tree, at, "wireframe");
-        let bands: Vec<SurfaceBand> = xml::child(tree, at, C, "bandFmts")
-            .map(|bands| {
-                children(tree, bands, C, "bandFmt")
-                    .filter_map(|band| {
-                        Some(SurfaceBand {
-                            index: number(tree, band, "idx")?,
-                            fill: Some(fill(tree, band)?),
-                        })
+        let bands: Vec<SurfaceBand> = xml::child(tree, at, C, "bandFmts").map_or_default(|bands| {
+            children(tree, bands, C, "bandFmt")
+                .filter_map(|band| {
+                    Some(SurfaceBand {
+                        index: number(tree, band, "idx")?,
+                        fill: Some(fill(tree, band)?),
                     })
-                    .collect()
-            })
-            .unwrap_or_default();
+                })
+                .collect()
+        });
         plot.bands = (!bands.is_empty()).then_some(bands);
     }
     if kind == ChartKind::OfPie {

@@ -271,7 +271,7 @@ pub(super) fn written(
         let name = alias(&element.name);
         if let Some(here) = rank(name) {
             for (at, (entry, bytes)) in entries.iter().enumerate() {
-                if !done[at] && rank(*entry).is_some_and(|rank| rank < here) {
+                if !done[at] && rank(entry).is_some_and(|rank| rank < here) {
                     done[at] = true;
                     pending.extend_from_slice(bytes);
                 }
@@ -654,7 +654,7 @@ pub(in crate::live) fn same_settings(read: &NodePayload, wanted: &NodePayload) -
     let plots_held = plots.iter().all(|plot| {
         let want = plot.fit(plot.family, plot.nth).0;
         let found = held.iter().find(|have| have.is(plot.family, plot.nth));
-        let have = found.map(tokens).unwrap_or_default();
+        let have = found.map_or_default(tokens);
         tokens(&want).iter().all(|token| have.contains(token)) && special::same(found, &want)
     });
     let view_held = view.is_none_or(|view| {

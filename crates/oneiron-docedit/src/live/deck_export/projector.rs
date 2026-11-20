@@ -80,8 +80,7 @@ pub fn project(
     let slides: Vec<NodeId> = deck
         .nodes
         .get(&NodeId(0))
-        .map(|root| root.children.clone())
-        .unwrap_or_default();
+        .map_or_default(|root| root.children.clone());
     let order = deck.descendants(NodeId(0));
 
     // 1. Live-born slides, each after its live predecessor, over the
@@ -162,7 +161,7 @@ pub fn project(
         for id in copied.values() {
             work.raise_shape(&to, *id);
         }
-        for (other, place) in work.at.iter_mut() {
+        for (other, place) in &mut work.at {
             if place.0 == part
                 && home.get(other) == Some(&to)
                 && let Some(new) = copied.get(&place.1)

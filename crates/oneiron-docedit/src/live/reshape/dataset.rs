@@ -443,16 +443,14 @@ fn shown_first(
             }
         };
         let selected = name == sheet;
-        let views: Vec<usize> = xml::child(&tree, 0, SML, "sheetViews")
-            .map(|list| {
-                tree.nodes[list]
-                    .children
-                    .iter()
-                    .copied()
-                    .filter(|&at| tree.nodes[at].is(SML, "sheetView"))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let views: Vec<usize> = xml::child(&tree, 0, SML, "sheetViews").map_or_default(|list| {
+            tree.nodes[list]
+                .children
+                .iter()
+                .copied()
+                .filter(|&at| tree.nodes[at].is(SML, "sheetView"))
+                .collect()
+        });
         let mut edits = Vec::new();
         if selected && views.is_empty() {
             // CT_Worksheet: sheetPr?, dimension?, sheetViews?, ...,
