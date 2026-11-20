@@ -13,6 +13,13 @@
 //! session end on a standing one, the logs waiting land after the session's
 //! own. The import still needs the agent's Grant naming the verb.
 //!
+//! The ruling's change (PR 2): the first session end that finds no
+//! hand-over sign-in files the request itself. It starts `hosted login
+//! --hand-over --unattended` detached, which loads the consent page with no
+//! browser (the owner's inbox ask) and polls his answer; once he allows it,
+//! the sign-in is kept and the next session end lands the logs. While a
+//! request waits, and after a deny, no session end asks again.
+//!
 //! The vault runs in process on a loopback port, rooted, with an https
 //! `oauth_resource_indicator` so its OAuth routes answer. The built binary
 //! is the client and the hooks (`hook --host claude-code`), and it runs its
@@ -192,6 +199,65 @@ impl Served {
         )
         .expect("the owner grants the agent the import");
         assert!(minted.grant.confers, "FIXTURE: the Grant confers");
+    }
+
+    /// The requests the owner's inbox asks about for a hand-over sign-in
+    /// (the ask names its purpose).
+    fn hand_over_asks(&self) -> Vec<EntityId> {
+        self.vault
+            .memory(self.owner_person, EdgeActorClass::Human)
+            .inbox_list(None, 100)
+            .expect("the owner's inbox")
+            .rows
+            .into_iter()
+            .filter(|row| row.source.producer == OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER)
+            .filter(|row| {
+                row.source
+                    .detail
+                    .as_deref()
+                    .and_then(|detail| serde_json::from_str::<Value>(detail).ok())
+                    .is_some_and(|detail| detail["purpose"] == PURPOSE)
+            })
+            .map(|row| {
+                EntityId::from_hex(row.source.result.as_deref().expect("the ask's request"))
+                    .expect("the request id")
+            })
+            .collect()
+    }
+
+    /// [`Served::hand_over_asks`], once there is one.
+    async fn hand_over_asks_soon(&self) -> Vec<EntityId> {
+        let deadline = tokio::time::Instant::now() + STEP_TIMEOUT;
+        loop {
+            let asks = self.hand_over_asks();
+            if !asks.is_empty() {
+                return asks;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "no hand-over sign-in request reached the owner's inbox"
+            );
+            // testkit-lint: allow(sleep) polls for a request a detached child process files; no event marks it.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    /// The owner's answer to the request `request_ref`, in his inbox: the
+    /// agent an allow admits.
+    fn answer(&self, request_ref: EntityId, allow: bool) -> Option<EntityId> {
+        answer_oauth_authorization_as(
+            &self.vault,
+            &self.owner,
+            ActSurface::ThisInstall,
+            OAuthAuthorizationAnswer {
+                request_ref,
+                allow,
+                tier: None,
+                world_ref: None,
+            },
+        )
+        .expect("the owner answers the request")
+        .agent
     }
 
     /// How many Claude Code messages the vault has imported.
@@ -394,6 +460,25 @@ impl Scratch {
                     })
             })
             .collect()
+    }
+
+    /// The hooks' record of their hand-over sign-in request, when there is
+    /// one.
+    fn ask_record(&self) -> Option<Value> {
+        self.named_in_user_dir("hosted-hand-over-ask-", ".json")
+            .first()
+            .map(|file| read_json(file))
+    }
+
+    /// Waits until `done` holds, which a detached child process brings
+    /// about.
+    async fn until(&self, what: &str, done: impl Fn(&Self) -> bool) {
+        let deadline = tokio::time::Instant::now() + STEP_TIMEOUT;
+        while !done(self) {
+            assert!(tokio::time::Instant::now() < deadline, "{what}");
+            // testkit-lint: allow(sleep) polls files a detached child process writes; no event marks them.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
 
     /// The queued logs' files: each `.json` in the vault's hand-over queue
@@ -892,6 +977,102 @@ fn logout_signs_out_the_hand_over_sign_in_and_empties_the_queue() {
         let (status, body) = refresh_at_vault(&served, &held).await;
         assert_eq!(status, 400, "{body}");
         assert_eq!(body["error"], "invalid_grant", "{body}");
+    });
+}
+
+/// The first session end on a read login files the hand-over sign-in
+/// request itself: the owner's inbox asks for `full` at `/mcp` alone, worded
+/// as ruled, and a second end while it waits asks nothing more. Once he
+/// allows it, the sign-in is kept, the hooks' record of the ask goes, and
+/// the next session end lands the log that waited and its own.
+#[test]
+fn the_first_session_end_files_the_hand_over_ask_itself() {
+    run_on_engine_stack("hosted-hand-over-self-ask", || async {
+        let served = Served::start().await;
+        let scratch = Scratch::new();
+        let recall = scratch.login(&served, &[]).await;
+        served.grant_import(recall.agent);
+        let first = scratch.session_log(FIRST_SESSION);
+        scratch.session_start(&served, FIRST_SESSION, &first).await;
+
+        let said = scratch.session_end(FIRST_SESSION, &first).await;
+        assert!(said.contains("inbox now asks"), "it says it asked: {said}");
+        let asks = served.hand_over_asks_soon().await;
+        assert_eq!(asks.len(), 1, "one request");
+        let detail = served.ask_detail(asks[0]);
+        assert_eq!(detail["tier"], "full", "{detail}");
+        assert_eq!(detail["resources"], json!([MCP]), "never /git: {detail}");
+        assert_eq!(
+            scratch.ask_record().expect("the ask is recorded")["state"],
+            "asked"
+        );
+
+        scratch.session_end(FIRST_SESSION, &first).await;
+        assert_eq!(
+            served.hand_over_asks().len(),
+            1,
+            "no second ask while one waits"
+        );
+        assert_eq!(served.landed(), 0);
+
+        let agent = served.answer(asks[0], true);
+        assert_eq!(agent, Some(recall.agent), "the recall sign-in's agent");
+        scratch
+            .until(
+                "the allowed sign-in is kept and the ask forgotten",
+                |scratch| {
+                    !scratch
+                        .named_in_user_dir("hosted-oauth-hand-over-", ".json")
+                        .is_empty()
+                        && scratch.ask_record().is_none()
+                },
+            )
+            .await;
+        assert_eq!(read_json(&scratch.hand_over_file())["scope"], "full");
+
+        let next = scratch.session_log(NEXT_SESSION);
+        scratch.session_start(&served, NEXT_SESSION, &next).await;
+        scratch.session_end(NEXT_SESSION, &next).await;
+        assert_eq!(
+            served.landed(),
+            kept(FIRST_SESSION) + kept(NEXT_SESSION),
+            "the log that waited and the next one landed"
+        );
+        assert!(scratch.queued().is_empty(), "the queue is empty");
+    });
+}
+
+/// A request the owner denies is never filed again by a session end: the
+/// hooks record the deny, the log keeps waiting, and the explicit `hosted
+/// login --hand-over` stays the way.
+#[test]
+fn a_denied_hand_over_ask_is_not_filed_again() {
+    run_on_engine_stack("hosted-hand-over-self-ask-denied", || async {
+        let served = Served::start().await;
+        let scratch = Scratch::new();
+        scratch.login(&served, &[]).await;
+        let log = scratch.session_log(FIRST_SESSION);
+        scratch.session_start(&served, FIRST_SESSION, &log).await;
+        scratch.session_end(FIRST_SESSION, &log).await;
+        let asks = served.hand_over_asks_soon().await;
+
+        assert_eq!(
+            served.answer(asks[0], false),
+            None,
+            "a deny admits no agent"
+        );
+        scratch
+            .until("the deny is recorded", |scratch| {
+                scratch
+                    .ask_record()
+                    .is_some_and(|record| record["state"] == "denied")
+            })
+            .await;
+        let said = scratch.session_end(FIRST_SESSION, &log).await;
+        assert_eq!(served.hand_over_asks().len(), 1, "no second ask: {said}");
+        assert_eq!(scratch.ask_record().expect("the record")["state"], "denied");
+        assert_eq!(scratch.queued().len(), 1, "the log keeps waiting");
+        assert_eq!(served.landed(), 0);
     });
 }
 
