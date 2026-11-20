@@ -9,6 +9,9 @@
 //!   BM25+ profile, then serves the other CLAIM and never the kept one.
 //! * `bare_vector_search_keeps_a_use_limited_row_out`: the same, for two CLAIMs with vectors
 //!   and the bare vector search.
+//! * `a_use_limited_row_takes_no_place_among_the_text_hits`: two CLAIMs carry the same indexed
+//!   text. The one that leads a one-place text search is kept; the search then gives its one
+//!   place to the other CLAIM, under both rank profiles, rather than to the kept one or to none.
 //! * `a_prebuilt_persona_snapshot_export_of_a_kept_subject_refuses`: a persona snapshot compiled
 //!   before its PERSON is kept carries the person's words; its export after the keep refuses as
 //!   a fresh compile of the kept PERSON does, and records nothing. Another PERSON's prebuilt
@@ -16,7 +19,7 @@
 //! * `a_prebuilt_persona_snapshot_export_citing_a_kept_claim_refuses`: a compile whose identity
 //!   row cites a CLAIM that is then kept refuses to export.
 //!
-//! All four run red at main f75de13fe4c, whose bare hit lists check deletion and staleness only
+//! All five run red at main f75de13fe4c, whose bare hit lists check deletion and staleness only
 //! and whose export renders a prebuilt compile without asking any row's use limit, and green at
 //! the fix.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test serving_doors_ask_use_limit`.
@@ -41,6 +44,7 @@ const AT: u64 = 100;
 const DIMENSIONS: usize = 4;
 const HELD_MARKER: &str = "quillwort";
 const KEPT_MARKER: &str = "bladderwrack";
+const SHARED_MARKER: &str = "samphire";
 
 fn range() -> TimeRange {
     TimeRange { start: AT, end: AT }
@@ -244,6 +248,49 @@ fn bare_vector_search_keeps_a_use_limited_row_out() {
     assert!(
         after.contains(&kept),
         "the bare vector search still serves the other CLAIM: {after:?}"
+    );
+}
+
+#[test]
+fn a_use_limited_row_takes_no_place_among_the_text_hits() {
+    let (_dir, vault) = open_hosted_vault();
+    let person = put_person(&vault, b"a person");
+    let first = put_indexed_claim(&vault, person, SHARED_MARKER);
+    let second = put_indexed_claim(&vault, person, SHARED_MARKER);
+    let top = |vault: &Vault, profile: &Bm25RankProfile| -> Vec<EntityId> {
+        vault
+            .search_text_with_profile(SHARED_MARKER, 1, profile)
+            .expect("the bare text search answers")
+            .into_iter()
+            .map(|hit| hit.id)
+            .collect()
+    };
+    let leader = top(&vault, &Bm25RankProfile::default());
+    let (held, other) = match leader.as_slice() {
+        [lead] if *lead == first => (first, second),
+        [lead] if *lead == second => (second, first),
+        _ => panic!("FIXTURE: one of the two CLAIMs fills the one place: {leader:?}"),
+    };
+
+    keep_use_limited(&vault, held);
+
+    for profile in [Bm25RankProfile::default(), plus_profile()] {
+        assert_eq!(
+            top(&vault, &profile),
+            vec![other],
+            "the kept CLAIM gives its place to the other one ({profile:?})"
+        );
+    }
+    let bare: Vec<EntityId> = vault
+        .search_text(SHARED_MARKER, 1)
+        .expect("the bare text search answers")
+        .into_iter()
+        .map(|hit| hit.id)
+        .collect();
+    assert_eq!(
+        bare,
+        vec![other],
+        "search_text gives the kept CLAIM's place to the other one"
     );
 }
 
