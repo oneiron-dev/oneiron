@@ -261,3 +261,51 @@ pub(super) fn effective_grant(
     let txn = vault.store.env.read_txn()?;
     effective_grant_in_txn(vault, &txn, binding_id, binding)
 }
+
+#[cfg(test)]
+mod tests {
+    use rmpv::Value;
+
+    use super::*;
+    use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, base_world_id};
+
+    fn grant(worlds: Vec<EntityId>) -> HookGrant {
+        HookGrant {
+            reader: EntityId::from_bytes([0x51; 16]).expect("reader id"),
+            reader_class: HookActorClass::Agent,
+            predicates: Vec::new(),
+            worlds,
+        }
+    }
+
+    fn fact_in(world: Option<EntityId>) -> ClaimBody {
+        let mut body = ClaimBody::new(
+            "foreign.factprobe.input",
+            ClaimSubject::Entity(EntityId::from_bytes([0x52; 16]).expect("subject id")),
+            Value::from("fixture input"),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )
+        .expect("claim body");
+        body.world = world;
+        body
+    }
+
+    /// HOOKS-05 (20 Nov nightly E2E): the owner's grant on a foreign fact
+    /// hook names the base world, and a base-world fact decodes to
+    /// `world: None`, so the grant admitted none and the hook never ran.
+    #[test]
+    fn a_grant_naming_the_base_world_admits_a_base_world_fact() {
+        let other = EntityId::from_bytes([0x53; 16]).expect("world id");
+        let base_fact = fact_in(None);
+        assert!(grant(vec![base_world_id()]).admits(&base_fact));
+        assert!(grant(vec![other, base_world_id()]).admits(&base_fact));
+        assert!(grant(Vec::new()).admits(&base_fact));
+        assert!(!grant(vec![other]).admits(&base_fact));
+
+        let other_fact = fact_in(Some(other));
+        assert!(grant(vec![other]).admits(&other_fact));
+        assert!(!grant(vec![base_world_id()]).admits(&other_fact));
+    }
+}
