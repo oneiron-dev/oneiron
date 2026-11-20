@@ -4,7 +4,10 @@
 //! pushes nothing, a machine off the predicted level is refused, a prediction keeps to the
 //! owner's budget, and a key the machine no longer stands on gets neither a prediction nor a set
 //! body (REVIEW-7955). An entity document a touch reaches predicts beside the windows, and the
-//! owner's document budget binds it (PREDICTED-DOC-BRANCH-NO-FIXTURE).
+//! owner's document budget binds it (PREDICTED-DOC-BRANCH-NO-FIXTURE). A second ask inside the
+//! home's push spacing appends nothing, a push leaves the home's memory once the spacing has
+//! passed, and a later prediction the home holds no body for leaves its own last set the base of
+//! the hysteresis (PREDICTED-DIRECTIVES-GROW-AUTHORITY-LOG, REVIEW-9762).
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -25,7 +28,8 @@ use oneiron::store::GateDecisionId;
 use oneiron::sync::WindowKey;
 use oneiron::sync::residence::{PredictedResidenceAnswer, ResidenceDirectiveState};
 use oneiron::test_doors::predicted_residence::{
-    age_predicted_pushes, predict_residence_withholding,
+    age_predicted_pushes, append_prediction_dated, noted_predicted_pushes,
+    predict_residence_withholding,
 };
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -264,7 +268,7 @@ fn predict(fixture: &Fixture) -> PredictedResidenceAnswer {
 }
 
 /// The home's spacing between two predictions it pushes one machine under one parent, in seconds
-/// (`PREDICT_PUSH_MIN_SECS` in `sync/residence/predict.rs`, crate-private).
+/// (`PREDICT_PUSH_MIN_SPACING` in `sync/residence/predict.rs`, crate-private).
 const PUSH_SPACING_SECS: u64 = 30 * 60;
 
 /// Lets the push spacing pass since the home's last push, as time passing does.
@@ -560,6 +564,115 @@ fn a_second_ask_inside_the_push_spacing_appends_nothing() {
             .windows
             .contains(window_c.as_str()),
         "C's window predicts after the push spacing"
+    );
+}
+
+/// REVIEW-9762 round 2: the home forgets a push once the spacing has passed, so pushes under
+/// predicted-level approvals the owner has since replaced do not pile up while the vault is open.
+#[test]
+fn a_push_leaves_the_home_memory_once_the_spacing_has_passed() {
+    let fixture = Fixture::open();
+    let subject = person_in(&fixture.vault, LEARNED_AT_A);
+    let a = EntityId::now();
+    claim_in(
+        &fixture.vault,
+        &a,
+        subject,
+        Some(fixture.world),
+        LEARNED_AT_A,
+    );
+    predict_level(&fixture, 32, 128);
+    fixture
+        .vault
+        .record_machine_touch(fixture.machine, a)
+        .expect("the touch lands");
+    assert!(
+        matches!(predict(&fixture), PredictedResidenceAnswer::Pushed(_)),
+        "a first prediction pushes"
+    );
+    assert_eq!(
+        noted_predicted_pushes(&fixture.vault),
+        1,
+        "FIXTURE: the home notes its push"
+    );
+
+    // The owner approves the predicted level again: the next prediction names the new approval.
+    let replaced = predict_level(&fixture, 32, 128);
+    advance_past_push_spacing(&fixture);
+    assert!(
+        matches!(predict(&fixture), PredictedResidenceAnswer::Pushed(_)),
+        "a first prediction under the new approval pushes"
+    );
+    let (named, _, _, _) =
+        predicted_act(predictions_of(&fixture).last().expect("the new prediction"));
+    assert_eq!(
+        named, replaced,
+        "FIXTURE: the new prediction names the new approval"
+    );
+    assert_eq!(
+        noted_predicted_pushes(&fixture.vault),
+        1,
+        "the push under the replaced approval left once the spacing had passed"
+    );
+}
+
+/// REVIEW-9762 round 2: a later prediction this home holds no body for (another home's, dated by
+/// this home's clock) never stands in for this home's own last set. The hysteresis keeps toward
+/// the set the home pushed, and the home pushes it again, so the machine applies it last.
+#[test]
+fn a_later_foreign_prediction_leaves_the_home_its_own_set() {
+    let fixture = Fixture::open();
+    // Two lone entity documents that score alike: `early` takes the lower id, so it ranks first.
+    let early = document_holder(&fixture, LEARNED_AT_B);
+    let late = document_holder(&fixture, LEARNED_AT_B);
+    let parent = predict_level(&fixture, 32, 1);
+    fixture
+        .vault
+        .record_machine_touch(fixture.machine, late)
+        .expect("the touch lands");
+    assert!(
+        matches!(predict(&fixture), PredictedResidenceAnswer::Pushed(_)),
+        "a first prediction pushes"
+    );
+    let own = predictions_of(&fixture)
+        .pop()
+        .expect("the home's prediction");
+    let (_, own_digest, _, _) = predicted_act(&own);
+    assert_eq!(
+        predicted_set_of(&fixture, &own_digest).documents,
+        BTreeSet::from([late]),
+        "FIXTURE: the home's first set names the touched document"
+    );
+
+    // Another home's prediction at the same date, with a later id: it sorts after the home's own.
+    let foreign = PredictedResidenceSet {
+        windows: BTreeSet::new(),
+        documents: BTreeSet::from([EntityId::now()]),
+    };
+    append_prediction_dated(
+        &fixture.vault,
+        &fixture.issuer,
+        fixture.machine,
+        parent,
+        &foreign,
+        own.directive.issued_at,
+    )
+    .expect("the foreign prediction appends");
+    // The machine touches `early` too: from no previous set, `early` alone would fill the budget.
+    fixture
+        .vault
+        .record_machine_touch(fixture.machine, early)
+        .expect("the second touch lands");
+    advance_past_push_spacing(&fixture);
+
+    let PredictedResidenceAnswer::Pushed(pushed) = predict(&fixture) else {
+        panic!("the home pushes again over a later prediction it holds no body for");
+    };
+    let (_, digest, _, _) = predicted_act(&pushed);
+    assert_eq!(
+        predicted_set_of(&fixture, &digest).documents,
+        BTreeSet::from([late]),
+        "the hysteresis keeps the home's own last document, ranked second"
     );
 }
 

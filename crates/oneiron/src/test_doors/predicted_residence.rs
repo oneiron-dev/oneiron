@@ -54,6 +54,23 @@ pub fn append_prediction(
     parent: EntityId,
     set: &PredictedResidenceSet,
 ) -> crate::error::Result<EntityId> {
+    append_prediction_dated(vault, issuer, machine, parent, set, vault.now_recorded_at())
+}
+
+/// [`append_prediction`] dated `issued_at`, as another home's clock dates the predictions it
+/// signs. This home holds no body for it.
+///
+/// # Errors
+///
+/// As [`append_prediction`].
+pub fn append_prediction_dated(
+    vault: &Vault,
+    issuer: &HostSlipIssuer,
+    machine: EntityId,
+    parent: EntityId,
+    set: &PredictedResidenceSet,
+    issued_at: u64,
+) -> crate::error::Result<EntityId> {
     let owner = SyncConnection::directives_naming_machine(vault, machine)?
         .into_iter()
         .find_map(|directive| (directive.id == parent).then_some(directive.owner))
@@ -70,7 +87,7 @@ pub fn append_prediction(
         id,
         machine,
         owner,
-        issued_at: vault.now_recorded_at(),
+        issued_at,
         act: ResidenceAct::Predicted {
             parent,
             set_digest: set.digest()?,
@@ -97,4 +114,10 @@ pub async fn run_predicted_pass(connection: &SyncConnection) -> Result<(), Trans
 /// so a test reaches the end of the push spacing without waiting.
 pub fn age_predicted_pushes(vault: &Vault, secs: u64) {
     vault.store.predicted_pushes.age(secs);
+}
+
+/// How many prediction pushes the home holds noted for its push spacing: only those younger than
+/// the spacing once the next ask has run.
+pub fn noted_predicted_pushes(vault: &Vault) -> usize {
+    vault.store.predicted_pushes.noted()
 }
