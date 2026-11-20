@@ -15,8 +15,11 @@
 //!   about a link between two other PERSONs still reads.
 //! * `a_kept_privacy_erase_keeps_the_claims_about_the_person_out_of_recall`: the owner's lexical
 //!   recall serves a CLAIM about held and one about kept before the hold, and only kept's after.
+//! * `a_retained_revision_about_the_kept_person_reads_as_absent_at_its_pin`: a CLAIM about held is
+//!   pinned, then re-put under its id about another PERSON. After the hold the pinned revision
+//!   reads as absent, while the current row, about the other PERSON, still reads.
 //!
-//! All three run red at main 57bf91c64fc, whose read doors ask each row's own use limit only,
+//! All four run red at main 57bf91c64fc, whose read doors ask each row's own use limit only,
 //! and green at the fix.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test kept_privacy_erase_use_limits_person_content`.
 
@@ -35,6 +38,7 @@ use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeActorClass, EdgeKind,
     EntityId, HostingPrivacyPosture, Memory, TimeRange, Vault, VaultConfig,
 };
+use oneiron_store::vault::entity_revision::types::ReadMode;
 use rmpv::Value;
 use serde_json::json;
 
@@ -120,9 +124,8 @@ fn put_person(vault: &Vault, name: &[u8]) -> EntityId {
     id
 }
 
-fn put_claim(vault: &Vault, predicate: &str, subject: ClaimSubject, value: &str) -> EntityId {
-    let id = EntityId::now();
-    let body = ClaimBody::new(
+fn claim_body(predicate: &str, subject: ClaimSubject, value: &str) -> ClaimBody {
+    ClaimBody::new(
         predicate,
         subject,
         Value::from(value),
@@ -130,10 +133,26 @@ fn put_claim(vault: &Vault, predicate: &str, subject: ClaimSubject, value: &str)
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     )
-    .expect("FIXTURE: claim body");
+    .expect("FIXTURE: claim body")
+}
+
+fn put_claim(vault: &Vault, predicate: &str, subject: ClaimSubject, value: &str) -> EntityId {
+    let id = EntityId::now();
     vault
-        .put_claim(&id, &body, range(), AT)
+        .put_claim(&id, &claim_body(predicate, subject, value), range(), AT)
         .expect("FIXTURE: put the claim");
+    id
+}
+
+/// A CLAIM whose value lexical recall finds: the raw door posts no text, so the fixture indexes
+/// the value as a typed claim writer does.
+fn put_recallable_claim(vault: &Vault, subject: EntityId, value: &str) -> EntityId {
+    let id = put_claim(vault, "profile.note", ClaimSubject::Entity(subject), value);
+    vault
+        .batch()
+        .text(&id, &[("body", value)])
+        .commit()
+        .expect("FIXTURE: index the claim's value");
     id
 }
 
@@ -329,6 +348,13 @@ fn a_kept_privacy_erase_keeps_the_content_about_the_person_from_every_read() {
                 .is_some(),
             "FIXTURE: the kept erase leaves the {kind} stored"
         );
+        assert!(
+            vault
+                .legal_hold_use_limit(&id)
+                .expect("FIXTURE: read the row's own use limit")
+                .is_none(),
+            "FIXTURE: the {kind} carries no use limit of its own"
+        );
     }
     assert!(
         vault.get(&held).expect("read the PERSON").is_none(),
@@ -416,18 +442,8 @@ fn a_kept_privacy_erase_keeps_the_claims_about_the_person_out_of_recall() {
     let (_dir, vault) = open_hosted_vault();
     let held = put_person(&vault, b"held person");
     let kept = put_person(&vault, b"kept person");
-    let held_claim = put_claim(
-        &vault,
-        "profile.note",
-        ClaimSubject::Entity(held),
-        HELD_MARKER,
-    );
-    let kept_claim = put_claim(
-        &vault,
-        "profile.note",
-        ClaimSubject::Entity(kept),
-        KEPT_MARKER,
-    );
+    let held_claim = put_recallable_claim(&vault, held, HELD_MARKER);
+    let kept_claim = put_recallable_claim(&vault, kept, KEPT_MARKER);
     let memory = owner_memory(&vault);
     assert!(
         recalled(&memory, HELD_MARKER, &held_claim),
@@ -447,5 +463,61 @@ fn a_kept_privacy_erase_keeps_the_claims_about_the_person_out_of_recall() {
     assert!(
         recalled(&memory, KEPT_MARKER, &kept_claim),
         "recall still serves the claim about another PERSON"
+    );
+}
+
+#[test]
+fn a_retained_revision_about_the_kept_person_reads_as_absent_at_its_pin() {
+    let (_dir, vault) = open_hosted_vault();
+    let held = put_person(&vault, b"held person");
+    let other = put_person(&vault, b"other person");
+    let claim = put_claim(
+        &vault,
+        "preference.food",
+        ClaimSubject::Entity(held),
+        "matcha",
+    );
+    let pin = vault
+        .pin_entity_revision(&claim)
+        .expect("FIXTURE: pin the revision about held");
+    vault
+        .put_claim(
+            &claim,
+            &claim_body("preference.food", ClaimSubject::Entity(other), "sencha"),
+            range(),
+            AT,
+        )
+        .expect("FIXTURE: re-put the claim about the other PERSON");
+    let current = vault
+        .get_claim(&claim)
+        .expect("FIXTURE: read the claim")
+        .expect("FIXTURE: the claim reads");
+    assert!(
+        matches!(current.subject, ClaimSubject::Entity(subject) if subject == other),
+        "FIXTURE: the current row is about the other PERSON"
+    );
+    assert!(
+        vault
+            .get_raw_with_mode(&claim, ReadMode::Pinned(pin))
+            .expect("FIXTURE: read the pinned revision")
+            .is_some(),
+        "FIXTURE: before the hold the pinned revision reads"
+    );
+
+    keep_use_limited(&vault, held);
+
+    assert!(
+        vault
+            .get_raw_with_mode(&claim, ReadMode::Pinned(pin))
+            .expect("read the pinned revision")
+            .is_none(),
+        "the revision about the use-limited PERSON reads as absent at its pin"
+    );
+    assert!(
+        vault
+            .get_raw_with_mode(&claim, ReadMode::Live)
+            .expect("read the current row")
+            .is_some(),
+        "the current row, about another PERSON, still reads"
     );
 }
