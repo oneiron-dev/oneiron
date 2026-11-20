@@ -35,8 +35,10 @@ use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingMode
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::verbs::{
-    AgentDefinitionCreateRequest, AgentGrantMintRequest, ConnectorWitnessReadGrantRevokeRequest,
-    create_agent_definition_as, mint_agent_grant_as, revoke_connector_witness_read_grant_as,
+    AgentDefinitionCreateRequest, AgentGrantMintRequest, ConnectorWitnessReadGrantRequest,
+    ConnectorWitnessReadGrantRevokeRequest, create_agent_definition_as,
+    grant_connector_witness_read_grant_as, mint_agent_grant_as,
+    revoke_connector_witness_read_grant_as,
 };
 use oneiron::voice_call::PhoneReach;
 use oneiron::{EdgeActorClass, EdgeKind, EntityId, Vault, VaultConfig};
@@ -560,6 +562,7 @@ struct Reach {
     doc: EntityId,
     doc_part: EntityId,
     other_doc: EntityId,
+    generic: EntityId,
     l_key: ScopedReadActorKey,
     g_key: ScopedReadActorKey,
     b_call_key: ScopedReadActorKey,
@@ -663,6 +666,7 @@ fn reach_fixture(reach: PhoneReach) -> Reach {
         doc,
         doc_part,
         other_doc,
+        generic,
         l_key,
         g_key,
         b_call_key,
@@ -739,6 +743,59 @@ fn a_generic_read_grant_does_not_read_a_claim_learnt_from_a_kept_call() {
             "{who} reads the CLAIM learnt from A's call",
         );
     }
+}
+
+/// The strictest reading of who reads a fact learnt from a caller, until the
+/// owner answers OUTSIDER-REACH-FAMILY (the Engine, 21 Nov 04:30;
+/// `SourceReaders::OwnSourceReaders`): only that caller's own thread readers.
+/// G holds the owner's witness-read grant over caller B's thread, on the same
+/// line, and reads B's words. It does not read a CLAIM learnt from caller A's
+/// kept TURN until the owner grants it A's thread too.
+#[test]
+fn a_fact_learnt_from_a_caller_reads_only_to_that_callers_thread_readers() {
+    let reach = reach_fixture(custom_base());
+    let learnt = write_owner_claim_with_evidence(
+        &reach.fixture,
+        base_world_id(),
+        "learnt from caller A",
+        vec![reach.turn_a1.to_hex()],
+    );
+    let grant_thread = |conversation: EntityId| {
+        grant_connector_witness_read_grant_as(
+            &reach.fixture.vault,
+            &reach.fixture.owner_proof,
+            ActSurface::ThisInstall,
+            ConnectorWitnessReadGrantRequest {
+                agent: reach.generic,
+                conversation,
+            },
+        )
+        .expect("the owner grants G a caller's thread");
+    };
+    grant_thread(reach.conv_b);
+    let reader = reach.fixture.vault.scoped_read(reach.g_key.clone());
+    assert!(
+        reader
+            .is_entity_readable(&reach.msg_b_caller)
+            .expect("G reads B's MESSAGE"),
+        "precondition: G's grant over B's thread reads B's words",
+    );
+    assert!(
+        !reader
+            .is_entity_readable(&learnt)
+            .expect("G reads the learnt CLAIM"),
+        "LEAK: a reader of caller B's thread reads a CLAIM learnt from caller A",
+    );
+    grant_thread(reach.conv_a);
+    assert!(
+        reach
+            .fixture
+            .vault
+            .scoped_read(reach.g_key.clone())
+            .is_entity_readable(&learnt)
+            .expect("G reads the learnt CLAIM"),
+        "a reader of caller A's thread reads the CLAIM learnt from A",
+    );
 }
 
 #[test]

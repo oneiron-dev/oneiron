@@ -55,8 +55,8 @@ use crate::store::source_audience_obligation::SourceAudienceObligation;
 use crate::{EntityId, Vault};
 
 pub(crate) use floor::{
-    FloorSource, facts_hidden_source_unknown_in, floor_source_in, floor_threads_in,
-    raise_floors_in_txn, seal_births_from_erased_inputs_in_txn,
+    FloorSource, SOURCE_READERS, SourceReaders, facts_hidden_source_unknown_in, floor_source_in,
+    floor_threads_in, raise_floors_in_txn, seal_births_from_erased_inputs_in_txn,
 };
 pub(crate) use obligation::{
     SourceAudienceBirth, admit_obligation_in_txn, admit_session_obligation_in_txn,

@@ -947,7 +947,13 @@ impl Judge<'_, '_, '_> {
             match self.ask {
                 Ask::Read(viewers) => {
                     for policy in policies {
-                        if !self.policy_readable(policy, viewers)?
+                        // A policy's own people (`SourceReaders`).
+                        let admitted = match super::SOURCE_READERS {
+                            super::SourceReaders::OwnSourceReaders => {
+                                self.policy_readable(policy, viewers)?
+                            }
+                        };
+                        if !admitted
                             && super::floor_source_in(self.vault, self.txn, &policy)?
                                 != super::FloorSource::Thread
                         {

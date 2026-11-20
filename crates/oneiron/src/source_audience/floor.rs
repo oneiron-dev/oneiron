@@ -58,13 +58,30 @@ pub(crate) enum FloorSource {
     /// A source-audience policy: it reads to the policy's people
     /// ([`super::readers_in`]).
     Policy,
-    /// A phone thread's CONVERSATION: it reads to the vault owner and under
-    /// a live `ConversationMessages` grant naming it.
+    /// A phone thread's CONVERSATION: it reads to the vault owner and to
+    /// the readers [`SOURCE_READERS`] admits.
     Thread,
     /// [`sealed_source`], a policy that does not resolve here, or a thread
     /// that is gone: it reads to no one.
     Unknown,
 }
+
+/// Who besides the vault owner reads a source on a floor. Until the owner
+/// answers the OUTSIDER-REACH-FAMILY card it is the strictest reading (the
+/// Engine, 21 Nov 04:30): per surface, only that source's own readers. The
+/// card widens it by a variant here; every floor read matches on
+/// [`SOURCE_READERS`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SourceReaders {
+    /// A phone thread reads under a live `ConversationMessages` grant naming
+    /// that very thread, and a policy to its own people. A grant over
+    /// another thread of the same line, a standing permission over a line or
+    /// a mailbox, and a generic MESSAGE or CLAIM grant read none of it.
+    OwnSourceReaders,
+}
+
+/// The admission every floor read applies ([`SourceReaders`]).
+pub(crate) const SOURCE_READERS: SourceReaders = SourceReaders::OwnSourceReaders;
 
 /// What the id `source` on a floor names in `txn` (E4 = A: by lookup, with
 /// no tag stored beside it).
