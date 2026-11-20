@@ -25,7 +25,7 @@
 //!
 //! A projection records each row it read and what that row held ([`BesideHeld`]), and a later
 //! pass reads the target again once one holds otherwise: the value arrived, was erased here, or
-//! no longer matches its act. It also names each such row in [`SETTING_BESIDE_WATCH`]: a put of
+//! no longer matches its act. It also names each such row in [`WATCH`]: a put of
 //! a row named there, or of any row whose body is a value beside an act, notes that pass, whatever
 //! the row's body ([`notes_projection_pass_in_txn`]); an erase here is read at the next one (the
 //! next authority commit, or the open).
