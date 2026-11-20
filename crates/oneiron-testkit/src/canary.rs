@@ -43,11 +43,13 @@
 //! then [`CanaryVault::scan_prompts`] over every prompt the passes sent, as
 //! the owner the Dreamer's model speaks for, and every actor's scan again.
 //!
-//! Step 3 ([CANARY-SCAN-COVERAGE]): the point doors, every receipt ledger
-//! and the caller's own inbox items (`canary/point_doors.rs`), and every ref
-//! an answer names, followed through the doors of its form
+//! Step 3 ([CANARY-SCAN-COVERAGE]): the point doors, every receipt ledger,
+//! the caller's own inbox items and the owner's decoded export
+//! (`canary/point_doors.rs`, `canary/export_archive.rs`), and every ref an
+//! answer names, followed through the doors of its form
 //! (`canary/named_refs.rs`).
 
+mod export_archive;
 mod named_refs;
 mod point_doors;
 
@@ -672,15 +674,15 @@ impl CanaryVault {
     /// `vault.refs.links` and `vault.summaries.read`, whatever its kind, and
     /// each class's refs in one `vault.hydrate`; the change and settlement
     /// feed from its beginning; the gate receipt ledger and each receipt
-    /// kind's pages; `vault.proactivity.digest`; and last, every ref those
-    /// answers name, followed by its form
+    /// kind's pages; `vault.proactivity.digest`; `vault.export`, its archive
+    /// decoded; and last, every ref those answers name, followed by its form
     /// (an entity through `vault.get`, `vault.refs.resolve` and the doors of
     /// the kind `vault.get` names; a `call:` or `emit:` receipt; a report
     /// issue; a summary proposal), until no answer names a new one.
     ///
     /// What writes: a diary read logs itself, a feed subscription is a row,
-    /// and `self.inbox.get` marks its item opened (a digest item seen).
-    /// Refused to every
+    /// `self.inbox.get` marks its item opened (a digest item seen), and an
+    /// export records its receipt and logs its diary reads. Refused to every
     /// in-process caller, and recorded as refused: `ai.steps.receipt`,
     /// `vault.proactivity.digest.get` and `vault.export.transfer.read` (a
     /// served host's doors) and `vault.export.scoped` (a verified
@@ -773,6 +775,7 @@ impl CanaryVault {
         );
         reader.read_feed(vault);
         reader.read_point_doors();
+        reader.read_export(vault);
         reader.follow_named_refs();
         reader.scan
     }
