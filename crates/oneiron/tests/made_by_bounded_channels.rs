@@ -17,7 +17,7 @@ use oneiron::{
 };
 
 const DAY: u64 = 86_400;
-const NOW: u64 = 1_800_000_000;
+const NOW: u64 = 1_700_000_000;
 const ANCHOR: u64 = NOW - 10 * DAY;
 /// More concluded rows than a channel fetches while its scope does not
 /// widen it (the fusion floor, 80 rows), and fewer than a widened window
@@ -41,7 +41,8 @@ fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("temporary vault");
     let mut config = VaultConfig::device();
     config.dimensions = DIMENSIONS;
-    config.embedding_model = None;
+    // A vector write needs a declared embedding model.
+    config.embedding_model = Some("test/model@v1".to_owned());
     let vault = Vault::open(dir.path(), config).expect("open vault");
     Fixture {
         _dir: dir,
@@ -99,10 +100,11 @@ impl Fixture {
         id
     }
 
-    /// `CONCLUDED_ROWS` concluded rows made from `input`, each nearer the
-    /// query than the stated row on every channel: a vector at cosine 0.92
-    /// or more, the query word three times, and a time within
-    /// `CONCLUDED_ROWS` minutes of the anchor.
+    /// `CONCLUDED_ROWS` concluded rows made from `input`, each ranked above
+    /// the stated row on every channel: a vector at cosine 0.89 or more, the
+    /// query word three times, and a time within `CONCLUDED_ROWS` minutes
+    /// before the anchor. Before it, a row nearer the anchor is also learned
+    /// later, so the temporal channel's own recency term ranks it higher too.
     fn concluded_rows(&mut self, input: EntityId) {
         for index in 0..CONCLUDED_ROWS {
             let step = u64::try_from(index + 1).expect("small index");
@@ -112,7 +114,7 @@ impl Fixture {
                 MadeByClass::Concluded,
                 &[input],
                 (
-                    ANCHOR + 60 * step,
+                    ANCHOR - 60 * step,
                     &unit([1.0, lean, 0.0, 0.0]),
                     CONCLUDED_TEXT,
                 ),
@@ -121,15 +123,15 @@ impl Fixture {
         }
     }
 
-    /// The stated row, farther from the query than every concluded row on
-    /// every channel, then the concluded rows made from it.
+    /// The stated row, ranked below every concluded row on every channel,
+    /// then the concluded rows made from it.
     fn stated_behind_concluded(&mut self) -> EntityId {
         let past = u64::try_from(CONCLUDED_ROWS + 1).expect("small count");
         let stated = self.born(
             "stated",
             MadeByClass::Stated,
             &[],
-            (ANCHOR + 60 * past, &far_vector(), STATED_TEXT),
+            (ANCHOR - 60 * past, &far_vector(), STATED_TEXT),
         );
         self.concluded_rows(stated);
         stated
@@ -245,8 +247,9 @@ fn a_stated_row_past_the_text_fetch_is_found() {
     );
 }
 
-/// The temporal channel: the stated row is farther from the anchor than
-/// every concluded row, and a stated-only query still finds it.
+/// The temporal channel: the stated row is farther before the anchor than
+/// every concluded row, so it ranks below them all, and a stated-only query
+/// still finds it.
 #[test]
 fn a_stated_row_past_the_temporal_fetch_is_found() {
     let mut fixture = fixture();
