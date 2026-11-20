@@ -30,7 +30,7 @@ pub struct BlendComponentWork {
 pub fn count_blend_component_work<T>(run: impl FnOnce() -> T) -> (T, BlendComponentWork) {
     RERANK_COMPONENT_ROWS.with(|rows| rows.borrow_mut().clear());
     let (value, blend) = count_blend_work(run);
-    let rerank_component_rows = RERANK_COMPONENT_ROWS.with(|rows| rows.take());
+    let rerank_component_rows = RERANK_COMPONENT_ROWS.with(RefCell::take);
     (
         value,
         BlendComponentWork {
