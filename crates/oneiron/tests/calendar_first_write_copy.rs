@@ -2,8 +2,10 @@
 //! write of a native EVENT to a seat stages under the UID it mints
 //! (`<event>@calendar.invalid`), and nothing resolves that UID to the EVENT
 //! until the write's receipt settles. A pull of the provider's copy before
-//! then, or after a replay the provider refused on its precondition, must
-//! land on that one EVENT and never import the copy as a second EVENT.
+//! then, or after a replay the provider refused on its precondition, or
+//! after a call refused over the copy an overlapping replay of the same
+//! write stored, must land on that one EVENT and never import the copy as a
+//! second EVENT.
 //!
 //! Each test checks the UID after the pull: it resolves to the native EVENT
 //! or, while the write is in flight, to none. A second EVENT carrying the
@@ -270,5 +272,77 @@ fn a_host_s_change_proving_an_unread_first_write_replay_lands_on_its_event() {
         seat_passport(&fixture.vault, native, &uid),
         Some((CalendarPassportDirection::Outbound, stored + 1)),
         "the host's cancel is a change of the native EVENT"
+    );
+}
+
+#[test]
+fn a_first_write_refused_over_an_overlapping_replay_s_copy_lands_on_its_event() {
+    // Review round 1 of #9903: two calls of the first write overlap. The
+    // second finds the write prepared and replays it while the first call's
+    // request is out; the provider stores the replay, but its answer is
+    // lost. The first call's own request is then refused on its
+    // precondition, and its reconciliation reads the replay's stored copy.
+    // Only the write stores a resource under the UID it minted, so the
+    // refusal publishes the write as its receipt would have, and the seat's
+    // report of the copy lands on the native EVENT.
+    let fixture = Fixture::open(None);
+    let seat = Seat::install(&fixture.vault, SEAT_SYSTEM);
+    let native = mint_native_event(&fixture.vault);
+
+    let stored = seat.write_refused_over_overlapping_replay(
+        &fixture.vault,
+        native,
+        false,
+        NOW + 15,
+        NOW + 10,
+    );
+    let uid = staged_uid(&fixture.vault, native);
+    let locator = seat.resource_locator(&uid);
+    seat.pull_own_write(&fixture.vault, &locator, NOW + 30)
+        .expect("seat pull");
+    assert_no_second_event(
+        &fixture.vault,
+        &uid,
+        native,
+        "the seat's report of the overlapping replay's copy",
+    );
+    assert_eq!(
+        seat_passport(&fixture.vault, native, &uid),
+        Some((CalendarPassportDirection::Outbound, stored)),
+        "the refused call publishes the replay's stored copy"
+    );
+}
+
+#[test]
+fn a_first_write_refused_over_an_overlapping_replay_unread_is_proved_by_the_next_pull() {
+    // Review round 1 of #9903: as above, but the first call's
+    // reconciliation read fails, so the refusal reads no copy. The proof
+    // stays owed: the seat's next pull of the replay's stored copy proves it
+    // the write's before admitting it, on the native EVENT.
+    let fixture = Fixture::open(None);
+    let seat = Seat::install(&fixture.vault, SEAT_SYSTEM);
+    let native = mint_native_event(&fixture.vault);
+
+    let stored = seat.write_refused_over_overlapping_replay(
+        &fixture.vault,
+        native,
+        true,
+        NOW + 15,
+        NOW + 10,
+    );
+    let uid = staged_uid(&fixture.vault, native);
+    let locator = seat.resource_locator(&uid);
+    seat.pull_own_write(&fixture.vault, &locator, NOW + 30)
+        .expect("seat pull");
+    assert_no_second_event(
+        &fixture.vault,
+        &uid,
+        native,
+        "the pull of the overlapping replay's unproven copy",
+    );
+    assert_eq!(
+        seat_passport(&fixture.vault, native, &uid),
+        Some((CalendarPassportDirection::Outbound, stored)),
+        "the pull proves the replay's stored copy"
     );
 }
