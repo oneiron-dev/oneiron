@@ -106,7 +106,7 @@ fn strict_v1_bodies_round_trip_and_reject_everything_else() {
         entries.push((Value::from("extra"), Value::from(1_u8)));
     }));
     // A binding generation rides only on a consult's party fact, only as
-    // one to eight 32-byte binaries in strictly ascending order, and only
+    // one or more 32-byte binaries in strictly ascending order, and only
     // for a party the fact names.
     cases.push(rewrite_body(&encoded, |entries| {
         entries.push((
@@ -133,7 +133,6 @@ fn strict_v1_bodies_round_trip_and_reject_everything_else() {
         Value::Array(vec![binding(0xB1), binding(0xB1)]),
         Value::Array(vec![Value::Binary(vec![0xB1; 31])]),
         Value::Array(vec![Value::from("b1".repeat(32))]),
-        Value::Array((0..=8).map(binding).collect()),
     ] {
         cases.push(body_with(
             &parties_encoded,
