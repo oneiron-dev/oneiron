@@ -163,6 +163,7 @@ mod principal_standing;
 mod readonly_fold;
 mod recover_many;
 mod recovery;
+mod recovery_authority_generation;
 mod restored_join;
 mod restored_join_door;
 mod retired_signers;
@@ -510,6 +511,7 @@ pub use slip_vault::{
     ConnectOffer, ConnectRescopeOffer, ConnectWindow, GuestDocumentContext, GuestDocumentEnvelope,
     HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT, HostSlipIssuer, ScopeOpeningKey,
 };
+pub(crate) use slip_vault::{ConnectOfferTerms, fresh_pact_id};
 pub use step_up::{
     EnrolledPasskey, EnrolledTotp, PasskeyAssertion, PasskeyDescriptor, PasskeyRegistration,
     STEP_UP_CHALLENGE_STALE, STEP_UP_CHALLENGE_TTL_SECS, STEP_UP_NO_PASSKEY, STEP_UP_NOT_HOLDER,
@@ -620,9 +622,7 @@ pub(crate) use readonly_fold::{
 };
 use readonly_fold::{authority_log_rows_in_txn, decode_stored_authority_log_body};
 pub(crate) use recovery::arriving_re_root;
-pub(crate) use retired_signers::{
-    authority_row_held, authority_row_resident, door_ancestor_row, stored_authority_row,
-};
+pub(crate) use retired_signers::{authority_row_resident, door_ancestor_row, stored_authority_row};
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
 
 // Module-internal only: nothing here leaves `authority`.

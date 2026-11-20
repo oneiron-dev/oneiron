@@ -228,7 +228,7 @@ pub(super) fn bound_inputs(
         let verified = bound
             .verify_observation_candidate_in_txn(
                 &memory,
-                &read,
+                (&read, &read),
                 &txn,
                 operand,
                 &row.proposal,

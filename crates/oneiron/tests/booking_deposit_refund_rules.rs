@@ -31,7 +31,7 @@ mod common;
 
 use std::sync::Mutex;
 
-use booking_host_seat_support::{Seat, SeatChange};
+use booking_host_seat_support::{Seat, SeatChange, seat_owner};
 use oneiron::booking::lifecycle::{
     DepositCheckoutStart, DepositProviderEvent, DepositProviderEventKind,
     DepositProviderEventOutcome, DepositProviderFailure, DepositSettleMove, DepositSettleRequest,
@@ -50,6 +50,7 @@ use oneiron::booking::{
     mint_publish_page_invite_grant, plan_emergency_reschedule, run_booking_lifecycle_once,
 };
 use oneiron::calendar::CalendarError;
+use oneiron::calendar::claims::PREDICATE_CALENDAR_STATUS;
 use oneiron::calendar::connectors::{CalendarConnectorError, RemoteWriteReceipt};
 use oneiron::calendar::ingest::{
     IcsFeedFetcher, IcsFeedPollConfig, IcsFetchResponse, run_ics_feed_poll,
@@ -58,7 +59,10 @@ use oneiron::calendar::ingest::{
 use oneiron::calendar::outcome::{EventOutcome, read_event_outcome};
 use oneiron::calendar::query::CalendarRangeDto;
 use oneiron::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
-use oneiron::memory::EmergencyInstructionInput;
+use oneiron::memory::{
+    ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest, ClaimSettlementVerdict,
+    EmergencyInstructionInput,
+};
 use oneiron::outbound::{
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
 };
@@ -446,6 +450,48 @@ fn read_booking_on_seat(
         now,
     )
     .expect("the seat reads the booking");
+}
+
+/// The owner reviews and approves every proposed `calendar.status` import on
+/// `event`, as the connector smoke approves an import's passports: a pulled
+/// calendar's cancellation lands Proposed, and a booking reads only
+/// surfaceable heads, so it counts once the owner approves it.
+fn approve_imported_status(vault: &Vault, event: EntityId) {
+    let (id, owner) = seat_owner(vault);
+    let memory = vault.memory(id, EdgeActorClass::Human);
+    for claim in vault
+        .claims_for_subject(&event)
+        .expect("claims on the EVENT")
+    {
+        let body = vault.get_claim(&claim).expect("read claim").expect("claim");
+        if body.predicate != PREDICATE_CALENDAR_STATUS
+            || body.approval != ClaimApprovalStatus::Proposed
+            || body.lifecycle != ClaimLifecycleStatus::Active
+        {
+            continue;
+        }
+        let review = memory
+            .claim_review_as_owner(
+                &owner,
+                &ClaimProposalReviewRequest {
+                    claim_ref: claim.to_hex(),
+                    grant_ref: None,
+                },
+            )
+            .expect("the owner reviews the imported status");
+        let settled = memory
+            .claim_settle_as_owner(
+                &owner,
+                &ClaimSettleRequest {
+                    claim_ref: claim.to_hex(),
+                    review_id: review.review_id,
+                    decision: ClaimSettleDecision::Approve,
+                    grant_ref: None,
+                },
+            )
+            .expect("the owner approves the imported status");
+        assert_eq!(settled.verdict, ClaimSettlementVerdict::Landed);
+    }
 }
 
 /// The host's seat reads the booking at its slot starting `start`, and
@@ -1284,7 +1330,10 @@ fn a_host_cancel_naming_no_start_refunds_against_the_booked_start() {
 
 /// FIX BK-DEPOSIT-CANCELLED-ELSEWHERE-FEED-REWRITES-BOOKED-SLOT: a calendar
 /// the booking was never written to cancels it, which moves no money (RULING
-/// DEPOSIT-HOST-CANCEL-SOURCE = A). The host's calendar then carries the
+/// DEPOSIT-HOST-CANCEL-SOURCE = A). The pulled cancellation lands Proposed,
+/// so the owner approves it and the booking reads cancelled (FIX
+/// BK-CANCELLED-ELSEWHERE-PROOF-RED-ON-MAIN: unapproved, the pre-fix code
+/// never met a cancelled booking here and the test passed there). The host's calendar then carries the
 /// booking live with no DTSTART or DTEND, and its EVENT keeps the booked
 /// slot, so the host's cancel from that calendar before the start refunds in
 /// full.
@@ -1324,6 +1373,8 @@ fn a_host_cancel_after_another_calendar_cancelled_refunds_against_the_booked_sta
             NOW + 120,
         )
         .expect("the visitor calendar's cancellation");
+    // The owner approves that cancellation, so the booking reads cancelled.
+    approve_imported_status(&fixture.vault, event);
     assert_eq!(
         fixture.state_of("pi_cancelled_elsewhere"),
         DepositState::Captured {

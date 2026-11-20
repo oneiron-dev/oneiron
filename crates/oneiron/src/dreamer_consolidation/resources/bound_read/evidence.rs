@@ -4,7 +4,9 @@
 //! and meet rule native verification uses, over the same snapshot it was rebuilt
 //! in. Whole turns and unmasked ranges bind directly to stored bytes. Masked
 //! ranges map from served coordinates to stored coordinates through the native
-//! lifted-key masking exactly, so no span is refused and none falls back.
+//! lifted-key masking exactly, so no span is refused and none falls back. A
+//! cited claim binds as a claim reference and reads on the ordinary lane; the
+//! TURN reader is used for TURN projections only.
 
 use super::BoundBranchRead;
 use crate::Vault;
@@ -27,8 +29,10 @@ use oneiron_model::llm::ScopeResource;
 struct BoundEvidenceReader<'a> {
     /// Borrows the bound projection that holds pins, texts, and priors.
     bound: &'a BoundBranchRead,
-    /// Borrows the live scoped read that rebuilt the projection.
+    /// Borrows the live scoped read that rebuilt the projection, for CLAIM rows.
     read: &'a ScopedRead<'a>,
+    /// Borrows the relationship-gated TURN reader, for TURN rows.
+    turn_read: &'a ScopedRead<'a>,
     /// Borrows the caller transaction that holds the snapshot.
     txn: &'a heed::RoTxn<'a>,
 }
@@ -99,8 +103,12 @@ impl BoundEvidenceReader<'_> {
         if !self.bound.scope.allows_read(&pin.resource) {
             return Err(invalid_consolidation("branch evidence read refused"));
         }
-        let row = self
-            .read
+        let lane = if entry.claim_id.is_some() {
+            self.read
+        } else {
+            self.turn_read
+        };
+        let row = lane
             .get_entities_parts_in_txn(self.txn, std::slice::from_ref(&entry.source_id))?
             .pop()
             .flatten()
@@ -207,10 +215,11 @@ impl BoundBranchRead {
     /// Whole turns bind whole stored text while unmasked ranges bind directly.
     /// Masked ranges map from served coordinates to stored coordinates exactly with no fallback.
     /// Times stamp through the one shared native clock rule from the caller milliseconds.
+    /// `reads` is the ordinary lane with the TURN reader, as the operand checks take them.
     pub(crate) fn verify_observation_candidate_in_txn(
         &self,
         memory: &Memory<'_>,
-        read: &ScopedRead<'_>,
+        reads: (&ScopedRead<'_>, &ScopedRead<'_>),
         txn: &heed::RoTxn<'_>,
         operand: &CandidateOperand,
         checked: &PromotionCandidate,
@@ -221,29 +230,47 @@ impl BoundBranchRead {
         let mut stamped = checked.clone();
         stamped.occurred = occurred;
         stamped.learned_at = learned_at;
-        self.verify_observation_evidence_in_txn(memory, read, txn, operand, &stamped)
+        self.verify_observation_evidence_in_txn(memory, reads, txn, operand, &stamped)
     }
     /// Verifies one observation operand's evidence against this projection in the caller transaction.
     /// Whole turns bind whole stored text while unmasked ranges bind directly.
     /// Masked ranges map from served coordinates to stored coordinates exactly with no fallback.
+    /// Each distinct cited claim binds as one claim reference after the turns, read on the ordinary lane.
     /// The checked proposal verifies as is with no clock stamp, so rebuilds without a frozen clock share one rule.
     pub(crate) fn verify_observation_evidence_in_txn(
         &self,
         memory: &Memory<'_>,
-        read: &ScopedRead<'_>,
+        (read, turn_read): (&ScopedRead<'_>, &ScopedRead<'_>),
         txn: &heed::RoTxn<'_>,
         operand: &CandidateOperand,
         checked: &PromotionCandidate,
     ) -> MemoryResult<VerifiedCandidate> {
-        let mut locators = Vec::with_capacity(operand.evidence.len());
+        let mut locators =
+            Vec::with_capacity(operand.evidence.len() + operand.claim_evidence.len());
         for evidence in &operand.evidence {
-            locators.push(self.stored_locator_in_txn(memory, read, txn, evidence)?);
+            locators.push(self.stored_locator_in_txn(memory, turn_read, txn, evidence)?);
+        }
+        let mut cited = Vec::with_capacity(operand.claim_evidence.len());
+        for pin in &operand.claim_evidence {
+            cited.push(
+                crate::dreamer_consolidation::extraction_pack::parse_reference(&pin.claim)
+                    .map_err(|error| MemoryError::bad_request(error.to_string()))?,
+            );
+        }
+        cited.sort_unstable();
+        cited.dedup();
+        for claim in cited {
+            locators.push(
+                EvidenceLocator::claim(claim, claim)
+                    .map_err(|error| MemoryError::bad_request(error.to_string()))?,
+            );
         }
         let extracted = ExtractedCandidate::new(checked.clone(), locators)
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
         let reader = BoundEvidenceReader {
             bound: self,
             read,
+            turn_read,
             txn,
         };
         crate::dreamer_consolidation::evidence::VerifiedCandidate::from_extracted_with_reader(

@@ -128,8 +128,9 @@ pub(in crate::api::facade) enum ContinueCaller {
 }
 
 /// The continue rows' caller (census L10-17, WHO = B), as `door_admits` checks it first and
-/// each door acts under it: the owner's proof, else the credential's own actor; a credential
-/// bound to none keeps the owner refusal.
+/// each door acts under it: the owner's proof, else the credential's own actor, whose live Grant
+/// naming the act the engine judges here, before any verb hook runs, and again in the door. A
+/// credential bound to none keeps the owner refusal.
 pub(in crate::api::facade) fn continue_caller(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -137,8 +138,13 @@ pub(in crate::api::facade) fn continue_caller(
 ) -> MemoryResult<ContinueCaller> {
     match owner_proof(auth, server, verb) {
         Ok(owner) => Ok(ContinueCaller::Owner(owner)),
-        Err(refusal) => super::owner_binding::facade_caller_or(server, auth, || refusal)
-            .map(|(actor, _class)| ContinueCaller::Agent(actor)),
+        Err(refusal) => {
+            let (actor, _class) = super::owner_binding::facade_caller_or(server, auth, || refusal)?;
+            server
+                .vault()
+                .admit_runner_continue_caller(RunnerContinueCaller::GrantedAgent(actor))?;
+            Ok(ContinueCaller::Agent(actor))
+        }
     }
 }
 

@@ -73,6 +73,14 @@
 //! gate and dropped the exemption: the saved question's asker and source
 //! readers refused that claim. Red at 2aa095cbe59 (#9716's head) plus this
 //! case: both readers refuse it.
+//!
+//! The owner's own human-class key keeps that reach too, where no gate
+//! binds it and a base-world bound keeps its saved question from its
+//! principal's own lane (FIX SAVED-UNGATED-LANE-ASKER-GATES-RELATIONSHIP-ROW,
+//! Sol R3 on #8061): under the human-class row both readers read the
+//! relationship claim as the human it saved, below the owner's floor. Red at
+//! 0ce739a8bef (#9716's round 1 test commit, the lib of 2aa095cbe59) plus
+//! this case: both readers refuse it.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test saved_lane_actor_class`.
 #![cfg(oneiron_test_support)]
@@ -813,6 +821,13 @@ fn unbound_classless_key(fixture: &Fixture) -> ScopedReadActorKey {
 /// through `key`'s live lane (`create_question_with_lane`) and read back
 /// from the store, as the question's own reads find it.
 fn stored_question_lane(fixture: &Fixture, key: ScopedReadActorKey) -> FrozenReadLane {
+    stored_question_lane_through(fixture, &fixture.vault.scoped_read(key))
+}
+
+/// The lane the owner's standing question over the claim keeps, saved
+/// through `lane` (`create_question_with_lane`) and read back from the
+/// store, as the question's own reads find it.
+fn stored_question_lane_through(fixture: &Fixture, lane: &ScopedRead<'_>) -> FrozenReadLane {
     use oneiron::WriteActor;
     use oneiron::llm::decision::questions::{
         QuestionActivation, QuestionDefinitionInput, RefreshPolicy, create_question_with_lane,
@@ -856,7 +871,7 @@ fn stored_question_lane(fixture: &Fixture, key: ScopedReadActorKey) -> FrozenRea
     let record = create_question_with_lane(
         &fixture.vault,
         WriteActor::new(fixture.owner, EdgeActorClass::Human),
-        &fixture.vault.scoped_read(key),
+        lane,
         definition,
         2,
     )
@@ -1001,6 +1016,70 @@ fn an_unbound_classless_owner_key_saved_question_still_reads_its_ungated_relatio
         assert!(
             read,
             "actor=a live owner's key that names no class, under no bound; expected its saved question's {reader} reader to read the relationship claim its live lane read past the relationship gate, while the owner's binding holds; seen {seen}"
+        );
+    }
+}
+
+/// The owner's own human-class key that no gate binds, held to the base
+/// world, reads the owner's claim inside a relationship the owner holds no
+/// grant on: no gate binds the key, and the human-class row admits it. The
+/// bound keeps its saved question from its principal's own lane, so the
+/// question keeps the key's grant basis: ungated, with no owner standing.
+/// Each rebuild from its principal's row starts under the relationship gate
+/// with the owner's exemption, and the meet dropped the exemption and kept
+/// the gate, so the saved question refused the row its live lane read (FIX
+/// SAVED-UNGATED-LANE-ASKER-GATES-RELATIONSHIP-ROW, Sol R3 on #8061; the
+/// human-class form of `saved_lane_owner_basis.rs`
+/// `an_ungated_bounded_saved_lane_keeps_its_asker_under_the_relationship_gate`).
+/// The gate now stays lifted on the owner's binding, as for the classless
+/// key above, and each rebuild reads as the human it saved, below the
+/// owner's floor.
+#[test]
+fn an_ungated_bounded_human_owner_key_saved_question_still_reads_its_relationship_claim() {
+    let fixture = fixture(ReadRow::HumanAdmitsBaseWorld);
+    let relationship_claim = write_relationship_claim(&fixture);
+    let key = ScopedReadActorKey::with_actor_class(fixture.owner.to_hex(), "human")
+        .expect("the owner's own human-class key no gate binds");
+    assert!(
+        !key.reads_as_vault_owner(),
+        "precondition: the ungated human-class key holds no owner floor"
+    );
+    let lane = fixture.vault.scoped_read(key).within_worlds(
+        WorldAuthoritySet::new(true, std::iter::empty::<EntityId>()).expect("the base world alone"),
+    );
+    let (live, seen) = reads(
+        &lane.recorded_lane().expect("record read lane"),
+        relationship_claim,
+    );
+    assert!(
+        live,
+        "precondition: the bounded human-class key's live lane, which no gate binds, reads the owner's relationship claim the human-class row admits; seen {seen}"
+    );
+    let frozen = stored_question_lane_through(&fixture, &lane);
+    assert!(
+        !frozen.is_principal() && !frozen.reads_as_principal(),
+        "precondition: the base-world bound keeps the saved question from its principal's own lane"
+    );
+    for (reader, rebuilt) in [
+        (
+            "asker",
+            saved_question_reader(&fixture.vault, fixture.owner, &frozen),
+        ),
+        (
+            "source",
+            saved_source_reader(&fixture.vault, fixture.owner, &frozen),
+        ),
+    ] {
+        let rebuilt = rebuilt.expect("the saved question's reader rebuilds");
+        assert!(
+            rebuilt.actor_class() == Some("human") && !rebuilt.reads_as_vault_owner(),
+            "actor=the owner's ungated human-class key held to the base world; expected its saved question's {reader} reader to read as the human it saved and below the owner's floor; seen class {:?}",
+            rebuilt.actor_class()
+        );
+        let (read, seen) = reads(&question_lane(&fixture, rebuilt), relationship_claim);
+        assert!(
+            read,
+            "actor=the owner's ungated human-class key held to the base world; expected its saved question's {reader} reader to read the relationship claim its live lane read past the relationship gate, while the owner's binding holds; seen {seen}"
         );
     }
 }

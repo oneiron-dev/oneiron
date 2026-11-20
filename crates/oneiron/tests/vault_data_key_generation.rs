@@ -35,8 +35,8 @@ use oneiron::test_doors::data_key_custody_head::{
 use oneiron::test_doors::data_key_preset_switch::start_generation_across;
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
 use oneiron::world_keys::{
-    DataKeyGenerationCause, DataKeyGenerationWays, KitPasskey, RecoveryPreset, VaultKeyStatus,
-    VaultKeyUnlock, escrow_recipient,
+    DataKeyGenerationCause, DataKeyGenerationWays, KitPasskey, NoRecoveryBox, RecoveryPreset,
+    VaultKeyStatus, VaultKeyUnlock, escrow_recipient,
 };
 use oneiron::{Vault, VaultConfig};
 use zeroize::Zeroizing;
@@ -702,6 +702,7 @@ fn a_recovery_preset_switch_committed_before_the_acts_write_refuses_the_act() {
                     prf: &prf,
                 }),
                 |_| Ok(()),
+                &NoRecoveryBox,
             ));
         },
     ) else {

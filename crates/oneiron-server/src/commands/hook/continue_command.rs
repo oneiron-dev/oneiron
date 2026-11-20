@@ -34,6 +34,7 @@
 //! is not an MCP tool.
 
 mod hand_off;
+mod hosted_hand_over;
 mod transcript;
 
 use std::io::Write;
@@ -53,6 +54,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
 use self::hand_off::{CustodyRepo, HandOff};
+pub(super) use self::hosted_hand_over::hand_over_hosted;
 use super::hosted_selection::{self, HostedAuthMode, HostedDiscovery, HostedVault};
 use super::recall::{Bridge, RpcRefusal};
 use crate::cli::ContinueArgs;
@@ -100,7 +102,13 @@ pub fn continue_work(args: ContinueArgs) -> anyhow::Result<()> {
     };
     let oneiron = super::oneiron(None);
     let mut out = std::io::stdout().lock();
-    let mut remote = match Hosted::open(&oneiron, &vault, deadline) {
+    let mut remote = match Hosted::open(
+        &oneiron,
+        &vault,
+        POLICY_REF.to_owned(),
+        Stdio::inherit(),
+        deadline,
+    ) {
         Ok(remote) => remote,
         Err(error) => {
             writeln!(out, "{NOT_MOVED}")?;
@@ -137,6 +145,8 @@ pub(crate) trait ContinueRemote {
     ) -> anyhow::Result<ContinueOutsideWorkCheckView>;
     /// Whether the selection can push: a paired slip.
     fn can_push(&self) -> bool;
+    /// The longest spec one call carries ([`transcript::carried_bytes`]).
+    fn carried_bytes(&self) -> usize;
     fn import(
         &mut self,
         request: &HookTranscriptImportRequest,
@@ -197,7 +207,8 @@ fn steps(remote: &mut dyn ContinueRemote, plan: &Plan, out: &mut dyn Write) -> a
         session.request.subagents.len(),
         session.path.display()
     )?;
-    let imported = remote.import(&session.request)?;
+    let calls = transcript::calls_within(&session, remote.carried_bytes())?;
+    let imported = import_calls(remote, &calls)?;
     writeln!(
         out,
         "Imported: conversation {}{}.",
@@ -417,25 +428,56 @@ fn passed_over(skipped: &[SkippedRunnerSeatView]) -> String {
         .join("; ")
 }
 
+/// Lands the calls of one session's logs ([`transcript::calls_within`]) in
+/// turn, their answers as one: the session's CONVERSATION, every
+/// conversation each call reported, and the last review named.
+fn import_calls(
+    remote: &mut dyn ContinueRemote,
+    calls: &[HookTranscriptImportRequest],
+) -> anyhow::Result<HookTranscriptImportView> {
+    let mut landed: Option<HookTranscriptImportView> = None;
+    for call in calls {
+        let view = remote.import(call)?;
+        landed = Some(match landed {
+            None => view,
+            Some(mut all) => {
+                all.conversations.extend(view.conversations);
+                all.review = view.review.or(all.review);
+                all
+            }
+        });
+    }
+    landed.ok_or_else(|| anyhow::anyhow!("no call carried the session's log"))
+}
+
 /// The selected hosted vault, spoken to through one `oneiron mcp`.
 struct Hosted<'a> {
     vault: &'a HostedVault,
     bridge: Bridge,
     calls: u64,
+    /// The consent policy every call names.
+    policy_ref: String,
     /// When the push must have ended, as the bridge's calls must.
     deadline: Instant,
 }
 
 impl<'a> Hosted<'a> {
     /// `oneiron mcp` at the vault's origin as the selection's credential,
-    /// past its handshake. Its own refusal goes to this process's stderr.
-    fn open(oneiron: &Path, vault: &'a HostedVault, deadline: Instant) -> anyhow::Result<Self> {
+    /// past its handshake, its calls naming `policy_ref`. Its own refusal
+    /// goes to `stderr`.
+    fn open(
+        oneiron: &Path,
+        vault: &'a HostedVault,
+        policy_ref: String,
+        stderr: Stdio,
+        deadline: Instant,
+    ) -> anyhow::Result<Self> {
         let mut bridge = Bridge::start(
             oneiron,
             &vault.origin,
             vault.recall_auth(),
             deadline,
-            Stdio::inherit(),
+            stderr,
         )?;
         if let Err(error) = bridge.initialize() {
             bridge.close();
@@ -448,6 +490,7 @@ impl<'a> Hosted<'a> {
             vault,
             bridge,
             calls: 1,
+            policy_ref,
             deadline,
         })
     }
@@ -484,7 +527,7 @@ impl<'a> Hosted<'a> {
                 "name": verb,
                 "arguments": {
                     "schema_version": TOOL_ARGS_VERSION,
-                    "consent": {"policy_ref": POLICY_REF, "purpose": purpose},
+                    "consent": {"policy_ref": self.policy_ref, "purpose": purpose},
                     "arguments": {"spec": spec},
                 },
                 "_meta": meta,
@@ -530,6 +573,10 @@ impl ContinueRemote for Hosted<'_> {
 
     fn can_push(&self) -> bool {
         self.vault.auth_mode == HostedAuthMode::Slip
+    }
+
+    fn carried_bytes(&self) -> usize {
+        transcript::carried_bytes(self.vault.auth_mode)
     }
 
     fn import(
@@ -669,6 +716,10 @@ pub(crate) mod test_support {
 
         fn can_push(&self) -> bool {
             self.script.can_push
+        }
+
+        fn carried_bytes(&self) -> usize {
+            usize::MAX
         }
 
         fn import(

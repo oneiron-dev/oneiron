@@ -7,7 +7,9 @@
 pub mod access_request_seed;
 pub mod action_mode_pass;
 pub mod action_replay_custody;
+pub mod adopted_owner_work;
 pub mod advisory_rate_window;
+pub mod affect_state_signals;
 pub mod agent_authoring;
 pub mod agent_definition_scans;
 pub mod agent_health;
@@ -53,6 +55,7 @@ pub mod checkpoint_descriptor;
 pub mod checkpoint_pins;
 pub mod checkpoint_registry;
 pub mod claim_facet_birth;
+pub mod claim_publication_text;
 pub mod claim_refinement_erase;
 pub mod claim_source_recheck;
 pub mod claim_transition;
@@ -107,6 +110,7 @@ pub mod disclosure_word_sources;
 pub mod do_not_contact_subject_reads;
 pub mod dreamer_attempt_binding;
 pub mod dreamer_exclusion_forgets;
+pub mod dreamer_extraction_room;
 pub mod dreamer_partition_window;
 pub mod dreamer_promotion_seconds;
 pub mod dreamer_signed_claim_recall;
@@ -271,6 +275,8 @@ pub mod pending_write_tray;
 #[cfg(feature = "sync")]
 pub mod predicted_residence;
 pub mod profiles_other_machine;
+#[cfg(feature = "sync")]
+pub mod project_replicated_revision;
 pub mod provenance_body_checkpoint;
 pub mod psych_profile;
 pub mod question_saved_lane;
@@ -281,10 +287,14 @@ pub mod recall_gate_judgements;
 pub mod removal_import_passes;
 pub mod repeated_key_lib_rows;
 pub mod replay_rows;
+#[cfg(feature = "sync")]
+pub mod replicated_authority_batch;
 pub mod reply_attachments;
 pub mod repo_base_manifest;
 pub mod repo_secret_marks;
 pub mod research_continuation;
+#[cfg(feature = "sync")]
+pub mod residence_directive_run;
 pub mod resident_wake_hold;
 pub mod restored_enrolment;
 pub mod retrieval_policy_default_floor;

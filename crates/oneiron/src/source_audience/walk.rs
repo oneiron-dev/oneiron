@@ -11,7 +11,9 @@
 //! - the records and MESSAGEs a summary, a merge header or a copied reply
 //!   carries words from ([`crate::scope_summary::word_sources_in`]), and a
 //!   scope summary's covers;
-//! - a CLAIM's entity subject.
+//! - a CLAIM's entity subject, and for a machine birth control also the
+//!   entity subject of the signed initial body it embeds (FIX
+//!   MACHINE-HISTORY-SOURCE-LINEAGE-SUBJECT-MOVE).
 //!
 //! Each of those must read: a summary of a private thread is as private as
 //! the thread. A CLAIM is the one union: its supporting sources (`Supports`
@@ -110,10 +112,21 @@ fn word_sources(
     }
     let mut supports = Vec::new();
     if header.entity_type == ENTITY_TYPE_CLAIM {
-        if let Ok(claim) = crate::claim::decode_claim_body(body, true)
-            && let crate::claim::ClaimSubject::Entity(subject) = claim.subject
-        {
-            every.push(subject);
+        if let Ok(claim) = crate::claim::decode_claim_body(body, true) {
+            // A machine birth control carries the birth's signed body, whose
+            // subject a same-id successor of the target may have left (FIX
+            // MACHINE-HISTORY-SOURCE-LINEAGE-SUBJECT-MOVE): that subject's
+            // words are the control's too, beside the target's.
+            if let Some(Ok(initial)) =
+                crate::claim::history_store::machine_birth_initial_body(&claim)
+                && let Ok(birth) = crate::claim::decode_claim_body(&initial, true)
+                && let crate::claim::ClaimSubject::Entity(subject) = birth.subject
+            {
+                every.push(subject);
+            }
+            if let crate::claim::ClaimSubject::Entity(subject) = claim.subject {
+                every.push(subject);
+            }
         }
         supports =
             crate::conversation_dag::counted_edge_ids(dbs, txn, &id, EdgeKind::Supports, true)?;

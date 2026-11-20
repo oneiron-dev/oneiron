@@ -6,7 +6,7 @@ use super::{
     PressedThrough, SlotCandidate, SlotField,
 };
 use crate::library::secret_slots::SlotBook;
-use crate::library::{ProposeInput, SecretParam, site_of};
+use crate::library::{ProposeInput, SecretParam, holds_slot_opening, site_of};
 use crate::{
     BatchStep, BrowserError, EFFECT_DESTRUCTIVE, EFFECT_PAY, EFFECT_PUBLISH, EFFECT_SEND,
     EFFECT_UNKNOWN, ExpectInput, OperandGap, ReplayAction, SecretKind, TypeOperand, is_live_handle,
@@ -269,8 +269,14 @@ impl Draft {
     }
 
     /// The step's act as the proposal's step, its literal a candidate and
-    /// its secret a typed slot.
+    /// its secret a typed slot; a text of the record that opens a `{{`
+    /// slot is named a gap, and the step is kept.
     fn take(&mut self, step: &DraftStep, action: &ReplayAction) {
+        // The record's own texts, read before the draft writes a slot of
+        // its own. A record that does not encode counts as holding one.
+        if serde_json::to_value(action).map_or(true, |texts| holds_slot_opening(&texts)) {
+            self.gap(step, DraftGapKind::LiteralOpensSlot);
+        }
         let at = self.steps.len();
         let batch = match action {
             ReplayAction::Open { url } => BatchStep::Open { url: url.clone() },

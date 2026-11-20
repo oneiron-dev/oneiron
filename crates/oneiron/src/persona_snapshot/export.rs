@@ -115,6 +115,15 @@ impl crate::Vault {
                 compile_stamp,
             }));
         }
+        // A row kept for storage only under a use limit never leaves in a
+        // render. A compile made before the keep carries its words, so the
+        // export refuses it as a fresh compile of a kept subject does (FIX
+        // USE-LIMIT-NOT-ASKED-BY-SERVING-DOORS).
+        for row in self.persona_snapshot_compile_rows(compile) {
+            if crate::store::legal_hold::use_limit_in_txn(&self.store, txn, &row)?.is_some() {
+                return Err(Error::EntityNotFound);
+            }
+        }
 
         let known_row_ids: BTreeSet<&str> =
             compile.rows.iter().map(|row| row.row_id.as_str()).collect();

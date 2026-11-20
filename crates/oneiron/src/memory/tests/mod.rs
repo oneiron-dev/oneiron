@@ -8,6 +8,7 @@
 mod asset_hydrate;
 mod asset_resolve;
 mod authority_revocation;
+mod brief_delete_fence;
 mod commit_claims;
 mod delete_tombstone;
 mod device_local_receipts;

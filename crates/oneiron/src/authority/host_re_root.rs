@@ -23,7 +23,7 @@ use crate::claim::history_projection::{
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::store::recovery_kit::RestoredKitSecret;
-use crate::world_keys::RecoveryAuthoritySigner;
+use crate::world_keys::{RecoveryAuthoritySigner, RecoveryRootSeed};
 use crate::{EntityId, Vault};
 use rand_core::{OsRng, RngCore};
 use std::collections::BTreeSet;
@@ -80,9 +80,14 @@ enum RootMoveSigner<'a> {
 impl<'a> RootMoveProof<'a> {
     /// The signer this proof stands for, when it is a live owner key of the
     /// vault's one settled root in `before`; the kit's key is derived for
-    /// `vault_id`, the fold's own.
+    /// `vault_id`, the fold's own, at the kit's live generation in `txn`, so
+    /// the same kit moves the root with generation 1 after a kit-only
+    /// rotation. With none live, the highest enrolled (revoked) generation or
+    /// generation 0 meets the refusal below, as at the kit's ReRoot door
+    /// ([`Vault::recover_owner_authority_from_kit`]).
     fn signer(
         self,
+        (vault, txn): (&Vault, &heed::RoTxn<'_>),
         before: &AuthorityFold,
         vault_id: &AuthorityVaultId,
     ) -> Result<RootMoveSigner<'a>> {
@@ -92,7 +97,13 @@ impl<'a> RootMoveProof<'a> {
                 Ok(RootMoveSigner::Root(current))
             }
             Self::Kit(secret) => {
-                let kit = RecoveryAuthoritySigner::from_restored_kit(secret, vault_id)?;
+                let seed = RecoveryRootSeed::from_restored_kit(secret)?;
+                let found = vault.recovery_authority_generations_in_txn(txn, &seed, vault_id)?;
+                let kit = match (found.live, found.enrolled) {
+                    (Some((_, live)), _) => live,
+                    (None, Some((_, enrolled))) => enrolled,
+                    (None, None) => RecoveryAuthoritySigner::from_seed(&seed, vault_id, 0)?,
+                };
                 // `vault_id` is the fold's own, so its root is not conflicted.
                 if !roster_has_live_owner(&before.roster, &kit.authority_key()) {
                     return Err(authority_refused(RECOVERY_KIT_NOT_ENROLLED));
@@ -186,7 +197,7 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let before = self.authority_fold_readonly_in_txn(&txn)?;
         let vault_id = before.vault_id.ok_or_else(invalid_authority)?;
-        let signer = proof.signer(&before, &vault_id)?;
+        let signer = proof.signer((self, &txn), &before, &vault_id)?;
         if before.roster.contains_key(&next.public_key()) {
             return Err(invalid_authority());
         }

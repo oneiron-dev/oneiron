@@ -99,7 +99,10 @@ impl crate::Vault {
     /// [`Self::get_psych_profile`] in the caller's snapshot. A profile row
     /// whose own deletion is recorded is gone, whatever bytes it still holds
     /// (FIX 10056); a deletion marker that cannot be read leaves the read as
-    /// it was.
+    /// it was. A profile kept from use, by its own limit or as content about a
+    /// PERSON a kept privacy erase limits, reads as none, as through
+    /// [`Self::get_psych_profile`] (FIX
+    /// KEPT-PRIVACY-ERASE-USE-LIMITS-DERIVED-PERSON-CONTENT).
     pub(crate) fn get_psych_profile_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -107,6 +110,7 @@ impl crate::Vault {
     ) -> Result<Option<PsychProfile>> {
         if crate::ports::removed_in_txn(&self.store, rtxn, id).unwrap_or(false)
             || crate::ports::stale_in_txn(&self.store, rtxn, id)?
+            || crate::store::legal_hold::use_limit_in_txn(&self.store, rtxn, id)?.is_some()
         {
             return Ok(None);
         }
@@ -145,10 +149,14 @@ impl crate::Vault {
 
     /// List-safe read: a deleted/archived or withdrawn profile is absent, and
     /// so is a row of an earlier schema (FIX 11766), while malformed live profile
-    /// bytes still fail closed in the same transaction snapshot.
+    /// bytes still fail closed in the same transaction snapshot. A profile
+    /// kept from use, by its own limit or as content about a PERSON a kept
+    /// privacy erase limits, is absent too.
     pub fn get_live_psych_profile(&self, id: &EntityId) -> Result<Option<PsychProfile>> {
         let txn = self.store.env.read_txn()?;
-        if crate::ports::stale_in_txn(&self.store, &txn, id)? {
+        if crate::ports::stale_in_txn(&self.store, &txn, id)?
+            || crate::store::legal_hold::use_limit_in_txn(&self.store, &txn, id)?.is_some()
+        {
             return Ok(None);
         }
         match live_entity_row_in_txn(&self.store, &txn, id)? {

@@ -330,13 +330,13 @@ fn kit_target(server: &SyncServer, named: &str) -> Result<EntityId, ApiError> {
 
 /// A kit as its caller gave it: the pieces, and the passphrase. Wiped on
 /// drop.
-struct Kit {
+pub(crate) struct Kit {
     pieces: Vec<KitPiece>,
-    passphrase: Option<KitPassphrase>,
+    pub(crate) passphrase: Option<KitPassphrase>,
 }
 
 impl Kit {
-    fn parse(pieces: Vec<String>, passphrase: Option<String>) -> OwnerResult<Self> {
+    pub(crate) fn parse(pieces: Vec<String>, passphrase: Option<String>) -> OwnerResult<Self> {
         let codes = Zeroizing::new(pieces);
         let passphrase = Zeroizing::new(passphrase);
         let pieces = codes
@@ -353,7 +353,7 @@ impl Kit {
         })
     }
 
-    fn pieces(&self) -> Vec<&KitPiece> {
+    pub(crate) fn pieces(&self) -> Vec<&KitPiece> {
         self.pieces.iter().collect()
     }
 

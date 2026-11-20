@@ -86,7 +86,7 @@ impl Vault {
             owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let fold = self.authority_view_readonly_in_txn(txn)?;
             self.kit_seed_gate_in_txn(txn, &fold, seed, confirm)?;
-            let authority = self.kit_root_authority_signer(&fold, seed)?;
+            let authority = self.kit_root_authority_signer(txn, &fold, seed)?;
             self.restored_join_by_key_precheck(txn, &fold, &authority.authority_key())?;
             let stored = self.restore_key_pads_in_txn(txn, pads)?;
             owed(txn);
@@ -115,26 +115,35 @@ impl Vault {
     ) -> Result<(MachineSecret, MachineEnrolmentRequest)> {
         self.precheck_root_door(owner, |txn, fold| {
             self.kit_seed_gate_in_txn(txn, fold, seed, confirm)?;
-            let authority = self.kit_root_authority_signer(fold, seed)?;
+            let authority = self.kit_root_authority_signer(txn, fold, seed)?;
             self.restored_join_by_key_precheck(txn, fold, &authority.authority_key())
         })?;
         self.own_request()
     }
 
-    /// The kit's root authority key R for this vault, while `fold`'s roster
-    /// holds it as a live owner key: what signs the restored machine's
-    /// roster row. Refused with [`KIT_NOT_CURRENT`] otherwise
+    /// The kit's root authority key R for this vault, at the kit's live
+    /// generation, while `fold`'s roster holds it as a live owner key: what
+    /// signs the restored machine's roster row. Old kits read as generation
+    /// 0, and after a switch to kit-only the same kit holds the rotated
+    /// generation ([`Self::recovery_authority_generations_in_txn`]). Refused
+    /// with [`KIT_NOT_CURRENT`] when no generation of the kit is live
     /// (WAYBACK-KIT-RESTORE-NO-LIVE-R = A), and with
     /// [`KIT_ROOT_KEY_UNCONFIRMED`] while the passkey limits hold R. The
     /// sealed bundle's kit restore asks it too, on the fold its import would
     /// commit.
     pub(crate) fn kit_root_authority_signer(
         &self,
+        txn: &heed::RoTxn<'_>,
         fold: &AuthorityFold,
         seed: &RecoveryRootSeed,
     ) -> Result<RecoveryAuthoritySigner> {
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-        let signer = RecoveryAuthoritySigner::from_seed(seed, &vault_id)?;
+        let Some((_, signer)) = self
+            .recovery_authority_generations_in_txn(txn, seed, &vault_id)?
+            .live
+        else {
+            return Err(authority_refused(KIT_NOT_CURRENT));
+        };
         let live = fold
             .roster
             .get(&signer.authority_key())
@@ -167,7 +176,7 @@ impl Vault {
         let signing = self.door_signing_key_in_txn(txn, secret.machine)?;
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let (root, publish) = self.kit_seed_gate_in_txn(txn, &fold, seed, confirm)?;
-        let authority = self.kit_root_authority_signer(&fold, seed)?;
+        let authority = self.kit_root_authority_signer(txn, &fold, seed)?;
         let pin = PinnedRoot {
             id: root.id,
             anchor_key: root.anchor_key,

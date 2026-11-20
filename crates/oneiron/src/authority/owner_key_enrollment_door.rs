@@ -65,7 +65,6 @@ const NOT_ON_ROSTER: &str = "the vault's roster does not name this key; a confir
 /// that would sign its own entry.
 const NOT_VALID: &str = "the enrollment does not verify: the proof must be the new key's own \
                          signature over its challenge for this vault, machine, key and owner";
-
 /// The enrollment would name more rows than one authority entry may: the
 /// log's encoding bound, never a possession test.
 const TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than one key enrollment \
