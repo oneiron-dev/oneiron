@@ -55,6 +55,47 @@ fn restored_withdrawal_id(event_id: &str) -> Option<&str> {
     event_id.strip_prefix(VOICE_CONSENT_RESTORE_EVENT_PREFIX)
 }
 
+/// Which of a person's live credentials
+/// [`Vault::holds_live_human_credential_in_txn`] counts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HumanCredentialReach {
+    /// Every one, a limited-purpose slip included: a pending invitation, a
+    /// share link, a support delegation, a trusted-contact or a seat slip, an
+    /// organization-bound slip and a single-use slip. Its holder's consent is
+    /// never an agent's to log (VOICE-MEMBER-CREDENTIAL-SCOPE = B, lead 21 Nov
+    /// 06:27): it comes from the owner, or from their own proof once they hold
+    /// an ordinary credential.
+    Any,
+    /// Only one that acts at the voice doors and reads its inbox on its own
+    /// proof: an ordinary slip (a paired person or an accepted member) or the
+    /// binding. A limited-purpose slip reaches only its own doors, so its
+    /// holder gets no notice of a logged withdrawal and no tap they could not
+    /// send.
+    Ordinary,
+}
+
+/// Whether `left` and `right` name the same purposes, in any order.
+fn same_purposes(left: &[VoicePrintPurpose], right: &[VoicePrintPurpose]) -> bool {
+    let names = |purposes: &[VoicePrintPurpose]| {
+        purposes
+            .iter()
+            .map(VoicePrintPurpose::as_str)
+            .collect::<BTreeSet<_>>()
+    };
+    names(left) == names(right)
+}
+
+/// A withdrawal its subject may still disown, with the purposes it ended
+/// ([`Vault::voice_withdrawal_open_to_disown_in_txn`]).
+#[derive(Clone, Debug)]
+pub(crate) struct DisownableVoiceWithdrawal {
+    /// The withdrawal as the consent log holds it.
+    pub(crate) withdrawal: VoiceConsentEventV1,
+    /// The purposes it ended, by name: the only ones the subject's restore
+    /// grants (REVIEW-10046 P1).
+    pub(crate) ended_purposes: Vec<VoicePrintPurpose>,
+}
+
 /// Both consent doors compare inside the transaction that holds the event
 /// write and any hard deletion.
 fn put_consent_event_once(
@@ -82,11 +123,13 @@ fn put_consent_event_once(
 /// [`put_consent_event_once`] for a withdrawal `event` whose request asked
 /// for the date `asked` and which is recorded at `event.occurred_at`, the
 /// asked date met with this vault's clock (VOICE-FUTURE-DATED-WITHDRAWAL =
-/// B). The replay compares with that clamp applied: a stored withdrawal under
-/// the same id that differs only by a date at or before `asked` is this
-/// request recorded before, so the recorder's retry stays idempotent after
-/// the clock has moved. Answers the stored date on a replay and `None` on the
-/// first insertion; any other decision stored under the id is refused.
+/// B). A stored withdrawal under the same id is a replay only when it is the
+/// same decision and its own request asked for `asked`
+/// ([`super::withdrawal_requested_at`] keeps that date when the clock moved
+/// it), so the recorder's retry stays idempotent after the clock has moved,
+/// and a request under the same id with another date is refused
+/// (REVIEW-10046 P1). Answers the stored date on a replay and `None` on the
+/// first insertion, which also keeps the asked date where it differs.
 fn put_withdrawal_once(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
@@ -97,25 +140,24 @@ fn put_withdrawal_once(
         event.subject_ref,
         digest16(b"voice_identity.consent", event.event_id.as_bytes()),
     );
-    match CONSENT.get(store, txn, &key)? {
-        Some(stored)
-            if stored.occurred_at <= asked
-                && stored
-                    == (VoiceConsentEventV1 {
-                        occurred_at: stored.occurred_at,
-                        ..event.clone()
-                    }) =>
+    if let Some(stored) = CONSENT.get(store, txn, &key)? {
+        let same_decision = stored
+            == (VoiceConsentEventV1 {
+                occurred_at: stored.occurred_at,
+                ..event.clone()
+            });
+        if same_decision
+            && super::withdrawal_requested_at::requested_date(store, txn, &stored)? == asked
         {
-            Ok(Some(stored.occurred_at))
+            return Ok(Some(stored.occurred_at));
         }
-        Some(_) => Err(invalid_voice(
+        return Err(invalid_voice(
             "voice consent event id already names another decision",
-        )),
-        None => {
-            CONSENT.put(store, txn, &key, event)?;
-            Ok(None)
-        }
+        ));
     }
+    CONSENT.put(store, txn, &key, event)?;
+    super::withdrawal_requested_at::record_requested_date_in_txn(store, txn, event, asked)?;
+    Ok(None)
 }
 
 impl Vault {
@@ -694,8 +736,8 @@ impl Vault {
     /// or a Grant revoked while the request waited, appends and deletes
     /// nothing. On the first insertion each live owner is told in the same
     /// transaction, naming who asked, which consent it was, and the agent and
-    /// Grant that logged it, and so is the subject when they hold a
-    /// credential in this vault (VOICE-CONSENT-LOG-MEMBERS: a live member's
+    /// Grant that logged it, and so is the subject when they hold an
+    /// ordinary credential in this vault (VOICE-CONSENT-LOG-MEMBERS: a live member's
     /// withdrawal stands, and the member hears of it); a replay tells no one
     /// again. A withdrawal dated past this vault's clock is recorded at that
     /// clock, as at every withdrawal door.
@@ -726,8 +768,8 @@ impl Vault {
 
     /// One notice per live owner that `request.recorded_by_ref`, an agent
     /// under `grant`, logged `request`'s spoken withdrawal of
-    /// voice-recognition consent, and one to the subject when they hold a
-    /// credential in this vault ([`Self::holds_live_human_credential_in_txn`]).
+    /// voice-recognition consent, and one to the subject when they hold an
+    /// ordinary credential in this vault ([`HumanCredentialReach::Ordinary`]).
     /// Told again under the same event, a row is found, not written twice.
     fn tell_of_logged_withdrawal_in_txn(
         &self,
@@ -747,7 +789,11 @@ impl Vault {
         let now = self.instant_in_txn(wtxn)?.secs();
         let owners = crate::policy_model::owners_in_txn(self, wtxn)?;
         let member = !owners.contains(&request.subject_ref)
-            && self.holds_live_human_credential_in_txn(wtxn, request.subject_ref)?;
+            && self.holds_live_human_credential_in_txn(
+                wtxn,
+                request.subject_ref,
+                HumanCredentialReach::Ordinary,
+            )?;
         let member_notice = if member {
             let who = crate::reaction::person_name_in(self, wtxn, request.recorded_by_ref)?
                 .unwrap_or_else(|| "An agent".to_owned());
@@ -795,20 +841,15 @@ impl Vault {
         Ok(())
     }
 
-    /// Whether `person` holds a live member credential in this vault
-    /// (VOICE-CONSENT-LOG-MEMBERS): a live ordinary human-class slip minted to
-    /// them (a paired person or an accepted member, who can act at the voice
-    /// doors on their own proof), or an active human actor binding that
-    /// speaks for them. A limited-purpose slip does not count: a pending
-    /// invitation, a share link, a support delegation, a trusted-contact or a
-    /// seat binding reaches only its own doors, an organization-bound slip
-    /// only its organization's administration powers, and a single-use slip
-    /// only its one consuming door, so its holder cannot consent on their own
-    /// proof there. A counterparty an agent hears on a call holds none.
+    /// Whether `person` holds a live credential in this vault of `reach`
+    /// (VOICE-CONSENT-LOG-MEMBERS): a live human-class slip minted to them,
+    /// or an active human actor binding that speaks for them. A counterparty
+    /// an agent hears on a call holds none.
     pub(crate) fn holds_live_human_credential_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         person: EntityId,
+        reach: HumanCredentialReach,
     ) -> Result<bool> {
         let (bound, slips) = {
             let fold = self.authority_view_readonly_in_txn(txn)?;
@@ -825,13 +866,18 @@ impl Vault {
                     let claims = &mint.action.claims;
                     EntityId::from_hex(&claims.holder_ref).ok() == Some(person)
                         && claims.actor_class.as_deref() == Some(ACTOR_CLASS_HUMAN)
-                        && !claims.single_use
-                        && claims.org_ref.is_none()
-                        && claims.invitation_ref.is_none()
-                        && claims.share_ref.is_none()
-                        && claims.delegation.is_none()
-                        && claims.trusted_contact.is_none()
-                        && claims.seat_claim.is_none()
+                        && match reach {
+                            HumanCredentialReach::Any => true,
+                            HumanCredentialReach::Ordinary => {
+                                !claims.single_use
+                                    && claims.org_ref.is_none()
+                                    && claims.invitation_ref.is_none()
+                                    && claims.share_ref.is_none()
+                                    && claims.delegation.is_none()
+                                    && claims.trusted_contact.is_none()
+                                    && claims.seat_claim.is_none()
+                            }
+                        }
                 })
                 .map(|(id, _)| *id)
                 .collect();
@@ -858,17 +904,22 @@ impl Vault {
     /// recognition order a tie. Another recorder's withdrawal in the same
     /// second leaves it open (REVIEW-10022 P1): the consent log keeps no order
     /// within a second, and the grant either one's tap logs, a second later,
-    /// is the subject's latest decision over both.
-    /// Their "that wasn't me" logs a grant dated one second after it, which
-    /// the consent door then accepts, and which reverses only that
-    /// withdrawal: a later one still voids it. It restores consent only; the
-    /// withdrawal already hard-deleted the print (promise-dura-13).
+    /// is the subject's latest decision over both. It must also have ended
+    /// some consent of theirs ([`super::consent_void::purposes_withdrawal_ended`]):
+    /// one that a withdrawal recorded after it with an earlier date had
+    /// already ended, such as their own on a slow clock, is no longer theirs
+    /// to disown (REVIEW-10046 P1).
+    /// Their "that wasn't me" logs a grant dated one second after it for the
+    /// purposes it ended, and no other (REVIEW-10046 P1), which the consent
+    /// door then accepts, and which reverses only that withdrawal: a later
+    /// one still voids it. It restores consent only; the withdrawal already
+    /// hard-deleted the print (promise-dura-13).
     pub(crate) fn voice_withdrawal_open_to_disown_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         subject: EntityId,
         event_id: &str,
-    ) -> Result<Option<VoiceConsentEventV1>> {
+    ) -> Result<Option<DisownableVoiceWithdrawal>> {
         let Some(withdrawal) = read_consent_event(&self.store, txn, &subject, event_id)? else {
             return Ok(None);
         };
@@ -878,7 +929,8 @@ impl Vault {
         {
             return Ok(None);
         }
-        for other in read_consent_events(&self.store, txn, &subject)? {
+        let events = read_consent_events(&self.store, txn, &subject)?;
+        for other in &events {
             if other.event_id == withdrawal.event_id {
                 continue;
             }
@@ -888,7 +940,7 @@ impl Vault {
                         && !super::consent_void::grant_voided_by(
                             &self.store,
                             txn,
-                            &other,
+                            other,
                             &withdrawal,
                         )?
                 }
@@ -902,7 +954,15 @@ impl Vault {
                 return Ok(None);
             }
         }
-        Ok(Some(withdrawal))
+        let ended_purposes =
+            super::consent_void::purposes_withdrawal_ended(&self.store, txn, &withdrawal, &events)?;
+        if ended_purposes.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(DisownableVoiceWithdrawal {
+            withdrawal,
+            ended_purposes,
+        }))
     }
 
     /// The withdrawal transaction: `admit` runs first inside it, so a
@@ -1169,10 +1229,13 @@ impl Vault {
     /// Admits `event`, a consent under a restore id, only as the subject's
     /// own restore of their withdrawal `withdrawal` while it is open to
     /// disown ([`Self::voice_withdrawal_open_to_disown_in_txn`]): recorded by
-    /// the subject, a grant, dated one second after the withdrawal, for its
-    /// purposes. A stored identical event is a replay. It runs in the grant's
-    /// write transaction, so a decision recorded after the tap was offered,
-    /// such as the subject's own withdrawal, closes the tap (REVIEW-10022 P1).
+    /// the subject, a grant, dated one second after the withdrawal, for the
+    /// purposes it ended in any order (the consent door orders a grant's
+    /// purposes by name, REVIEW-10046 P1), and no purpose it did not end
+    /// (REVIEW-10046 P1). A stored identical event is a replay. It runs in
+    /// the grant's write transaction, so a decision recorded after the tap
+    /// was offered, such as the subject's own withdrawal, closes the tap
+    /// (REVIEW-10022 P1).
     fn admit_consent_restore_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -1189,8 +1252,8 @@ impl Vault {
             && self
                 .voice_withdrawal_open_to_disown_in_txn(txn, subject, withdrawal)?
                 .is_some_and(|open| {
-                    event.occurred_at == open.occurred_at.saturating_add(1)
-                        && event.purposes == open.purposes
+                    event.occurred_at == open.withdrawal.occurred_at.saturating_add(1)
+                        && same_purposes(&event.purposes, &open.ended_purposes)
                 });
         if restores {
             Ok(())
