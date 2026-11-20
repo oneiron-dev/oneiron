@@ -269,7 +269,7 @@ pub struct SettingsProjected {
 /// Whether an owner's change of a row of `spec` travels as its signed act (stage 7a-2): a
 /// `sync: vault` key that is not learned, whose seed weight does not travel yet. Its value rides
 /// inside the act where the key's value type is closed and its JSON fits, else beside it (stage
-/// 7c-1, [`slot_value_in_txn`]). A carried row travels too (stage 7a-4): a move's copy brings it
+/// 7c-1, [`slot_value`]). A carried row travels too (stage 7a-4): a move's copy brings it
 /// to every machine, and the owner's clear of it is his act.
 pub(super) fn travels(spec: &SettingSpec) -> bool {
     spec.sync == SettingSync::Vault && !spec.is_learned()
@@ -289,7 +289,7 @@ pub(super) fn rooted_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool
 
 /// Appends the owner `owner`'s applied change `recorded` of a row of `spec` that travels as its
 /// signed act, in the change's write `txn`, from `surface`, with its value inside the act or
-/// beside it ([`slot_value_in_txn`]); names the entry on the change row; and projects the row
+/// beside it ([`slot_value`]); names the entry on the change row; and projects the row
 /// from the fold in the same write.
 ///
 /// # Errors
