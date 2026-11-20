@@ -571,12 +571,17 @@ impl crate::Vault {
     /// ([`super::log_budget`]) and nothing in any fold. An agent's Grant, a
     /// delegated holder, a narrowed or delegated owner credential, a queued
     /// retry and automatic upkeep author no such write, so their acts are
-    /// carried unproven and never spend another install's reserve.
+    /// carried unproven and never spend another install's reserve. Nor does
+    /// a write whose proof came with a request's slip
+    /// ([`crate::consent::OwnerAuthoredWrite::bound_to_request_slip`]): that
+    /// slip's cut is read for nothing but its liveness (REVIEW-9955 P1).
     pub(crate) fn owner_act_proof_signer(
         &self,
         fold: &AuthorityFold,
         owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
     ) -> Option<OwnerProofSigner<'_>> {
-        owner_authored.and_then(|_| self.owner_proof_signer(fold))
+        owner_authored
+            .filter(|write| !write.bound_to_request_slip())
+            .and_then(|_| self.owner_proof_signer(fold))
     }
 }

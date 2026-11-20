@@ -331,7 +331,10 @@ impl AuthenticatedOwner {
             )));
         }
         self.revalidate_as_vault_owner_in_txn(vault, txn)?;
-        Ok(OwnerAuthoredWrite { actor: self.actor })
+        Ok(OwnerAuthoredWrite {
+            actor: self.actor,
+            bound_to_request_slip: self.request_credential.is_some(),
+        })
     }
 
     /// This proof as an owner-tier answer to a claim's owner-answer
@@ -422,12 +425,22 @@ fn host_action_lapse(error: Error) -> Error {
 #[derive(Debug)]
 pub(crate) struct OwnerAuthoredWrite {
     actor: EntityId,
+    /// Whether a request's slip came with the proof (`request_credential`).
+    bound_to_request_slip: bool,
 }
 
 impl OwnerAuthoredWrite {
     /// The owner who authored the write.
     pub(crate) const fn actor(&self) -> EntityId {
         self.actor
+    }
+
+    /// Whether a request's slip came with this write's proof
+    /// ([`Vault::bind_request_credential`]): its cut is read for liveness
+    /// alone, so no owner key's proof vouches for the write past another
+    /// install's reserve ([`Vault::owner_act_proof_signer`], REVIEW-9955 P1).
+    pub(crate) const fn bound_to_request_slip(&self) -> bool {
+        self.bound_to_request_slip
     }
 }
 
