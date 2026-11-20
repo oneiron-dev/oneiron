@@ -503,7 +503,9 @@ pub(crate) fn open_conflict_in_txn(
 /// owner (RULING RESTRICTION-CLOSE-BY-CONFLICT-SETTLE). So is a Keep by no
 /// person that approves a retained curator finding whose rung would retract,
 /// weaken or mark stale a restricting claim, a member or not (RULING
-/// RESTRICTION-CLOSE-BY-CURATOR-APPROVAL). `close_as`
+/// RESTRICTION-CLOSE-BY-CURATOR-APPROVAL), and a Keep by no person of a
+/// retained alternative whose staged Keep was approved and then retracted
+/// (`retained_keep::approved_keep_withdrawn_in_txn`). `close_as`
 /// attributes a delegate's close; the owner's close is the owner's. The
 /// answering claim then records the settlement on the marker's own axes.
 /// `keep_as` says how a kept retained alternative lands (FIX 5753). `now` is
@@ -533,6 +535,17 @@ pub(crate) fn apply_settlement_in_txn(
             .iter()
             .find(|alternative| alternative.id == selected)
         {
+            // After its approved Keep was retracted, an alternative is a
+            // person's to keep again (lead ruling 21 Nov): no page offers it
+            // to another responder, so such a Keep was chosen before the
+            // retraction.
+            if !person
+                && super::retained_keep::approved_keep_withdrawn_in_txn(vault, txn, alternative)?
+            {
+                return Err(invalid_consolidation(
+                    "only a person keeps again an alternative whose approved Keep was retracted",
+                ));
+            }
             // A Keep that approves its landing applies a curator finding's
             // rung as the finding lands (FIX 5423), on a target that need not
             // be a member. Asked before the landing: once the rung applied,

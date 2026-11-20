@@ -29,7 +29,10 @@
 //! Proposed, as `derive.revert` takes one back, or the owner had approved it
 //! there and retracted it later (FIX
 //! KEEP-HISTORY-APPROVED-THEN-RETRACTED-STAGED-KEEP-BLOCKS-ALTERNATIVE): its
-//! alternative is the owner's to keep again, by an explicit Keep.
+//! alternative is keepable again, by an explicit Keep. After an approved Keep
+//! was retracted that Keep is a person's alone: a responder that is no person
+//! is refused at the write (`approved_keep_withdrawn_in_txn`), so a ruling
+//! chosen before the retraction never stages the alternative again.
 
 use super::retained_conflict::{RetainedAlternative, retained_alternatives};
 use super::settle::keep_approval::KeepAs;
@@ -284,6 +287,30 @@ fn of_selector(kept: &[(EntityId, EntityId)], selector: EntityId) -> Vec<EntityI
         .filter(|(of, _)| *of == selector)
         .map(|(_, claim)| *claim)
         .collect()
+}
+
+/// Whether a Keep of `alternative`, staged in its import's review, was
+/// approved there and later retracted (lead ruling 21 Nov, FIX
+/// KEEP-HISTORY-APPROVED-THEN-RETRACTED-STAGED-KEEP-BLOCKS-ALTERNATIVE). The
+/// owner made that alternative true and took it back, so it is a person's to
+/// keep again: the settlement write refuses a responder that is no person,
+/// whose ruling may have been chosen before the retraction. A Keep the owner
+/// declined, or one retracted while still Proposed, is not counted: after
+/// those any responder's explicit Keep stages the alternative afresh.
+pub(super) fn approved_keep_withdrawn_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    alternative: &RetainedAlternative,
+) -> Result<bool> {
+    for id in &alternative.declined {
+        if vault.get_claim_in_txn(txn, id)?.is_some_and(|claim| {
+            claim.approval == ClaimApprovalStatus::Approved
+                && claim.lifecycle == ClaimLifecycleStatus::Retracted
+        }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Keeps `alternative` of the conflict `marker` in the settlement's
