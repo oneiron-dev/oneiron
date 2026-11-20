@@ -154,3 +154,105 @@ fn a_sparse_list_is_scaled_by_its_best_hits_however_many_follow() {
 
     assert_eq!(relevance_of(&short, best), relevance_of(&long, best));
 }
+
+/// A msgpack map of `entries`, in order.
+fn msgpack_map(entries: Vec<(Value, Value)>) -> Vec<u8> {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(&mut body, &Value::Map(entries)).expect("encode map");
+    body
+}
+
+/// One parse reads salience and confidence by the rule each lone read keeps:
+/// the first entry of a field counts, a key that is no string ends the search
+/// of each field not yet read, and an empty, truncated or non-map body reads
+/// nothing.
+#[test]
+fn one_parse_reads_each_field_by_the_lone_read_rule() {
+    let sal = || Value::from("sal");
+    let conf = || Value::from("conf");
+    let mut array = Vec::new();
+    rmpv::encode::write_value(&mut array, &Value::Array(vec![sal(), Value::F32(0.5)]))
+        .expect("encode array");
+    let mut truncated = msgpack_map(vec![(sal(), Value::F32(0.5)), (conf(), Value::F32(0.5))]);
+    truncated.truncate(truncated.len() - 2);
+    let mut trailing = msgpack_map(vec![(sal(), Value::F32(0.5)), (conf(), Value::F32(0.25))]);
+    trailing.push(0xC1);
+    // {<2 bytes that are no UTF-8>: 0, "sal": 0.5}
+    let invalid_key = vec![
+        0x82, 0xA2, 0xFF, 0xFE, 0x00, 0xA3, b's', b'a', b'l', 0xCA, 0x3F, 0x00, 0x00, 0x00,
+    ];
+    let cases: Vec<(&str, Vec<u8>, [Option<f32>; 2])> = vec![
+        (
+            "both fields",
+            msgpack_map(vec![(sal(), Value::F32(0.25)), (conf(), Value::F64(0.75))]),
+            [Some(0.25), Some(0.75)],
+        ),
+        (
+            "one field absent",
+            msgpack_map(vec![(conf(), Value::F32(0.5))]),
+            [None, Some(0.5)],
+        ),
+        (
+            "integers clamped",
+            msgpack_map(vec![(sal(), Value::from(7)), (conf(), Value::from(-3))]),
+            [Some(1.0), Some(0.0)],
+        ),
+        (
+            "not finite, not numeric",
+            msgpack_map(vec![
+                (sal(), Value::F32(f32::NAN)),
+                (conf(), Value::from("x")),
+            ]),
+            [None, None],
+        ),
+        (
+            "the first entry counts",
+            msgpack_map(vec![
+                (sal(), Value::from("x")),
+                (sal(), Value::F32(0.5)),
+                (conf(), Value::F32(0.5)),
+                (conf(), Value::F32(0.9)),
+            ]),
+            [None, Some(0.5)],
+        ),
+        (
+            "a key that is no string between the fields",
+            msgpack_map(vec![
+                (sal(), Value::F32(0.5)),
+                (Value::from(1), Value::Nil),
+                (conf(), Value::F32(0.5)),
+            ]),
+            [Some(0.5), None],
+        ),
+        (
+            "a key that is no string first",
+            msgpack_map(vec![(Value::from(1), Value::Nil), (sal(), Value::F32(0.5))]),
+            [None, None],
+        ),
+        ("a key that is no UTF-8 first", invalid_key, [None, None]),
+        ("no map", array, [None, None]),
+        ("empty body", Vec::new(), [None, None]),
+        ("truncated map", truncated, [None, None]),
+        (
+            "trailing bytes after the map",
+            trailing,
+            [Some(0.5), Some(0.25)],
+        ),
+    ];
+    for (case, body, expected) in cases {
+        assert_eq!(
+            decode_msgpack_body_floats(&body, ["sal", "conf"]),
+            expected,
+            "{case}: both fields from one parse"
+        );
+        let row = [&[0_u8; ENTITY_METADATA_HEADER_LEN][..], &body].concat();
+        assert_eq!(
+            [
+                decode_msgpack_float(&row, "sal"),
+                decode_msgpack_float(&row, "conf")
+            ],
+            expected,
+            "{case}: each field read alone"
+        );
+    }
+}
