@@ -317,6 +317,8 @@ impl PipelineBuilder<'_> {
             for (id, components) in rerank_components {
                 merged.entry(id).or_default().extend(components);
             }
+            #[cfg(oneiron_test_support)]
+            crate::test_doors::blend_component_work::record_rerank_component_rows(merged.len());
             rerank_merged_components = Some(merged);
 
             if inputs.capture_retrieval_trace {

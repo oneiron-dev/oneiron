@@ -218,6 +218,8 @@ pub fn linear_log_blend_scores_with_weights(
     inputs: &[RetrievalBlendInput],
     weights: RetrievalBlendWeights,
 ) -> LinearLogBlendScores {
+    #[cfg(oneiron_test_support)]
+    blend_work::record_blend();
     let inputs = canonical_blend_inputs(inputs);
     let columns = normalized_blend_columns(&inputs);
 
@@ -330,6 +332,8 @@ struct NormalizedBlendColumns {
 }
 
 fn normalized_blend_columns(inputs: &[RetrievalBlendInput]) -> NormalizedBlendColumns {
+    #[cfg(oneiron_test_support)]
+    blend_work::record_column_pass();
     NormalizedBlendColumns {
         relevance: inputs.iter().map(|input| input.relevance).collect(),
         recency: z_normalized(inputs.iter().map(|input| input.recency.ln_1p()).collect()),
@@ -464,6 +468,9 @@ fn decode_numeric_value(value: Value) -> Option<f32> {
     }
     Some(parsed.clamp(0.0, 1.0))
 }
+
+#[cfg(oneiron_test_support)]
+pub mod blend_work;
 
 #[cfg(test)]
 mod tests;
