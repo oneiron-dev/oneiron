@@ -155,6 +155,7 @@ async fn run_against(status: &'static str, credentialed: bool) -> Run {
     let connection = reconnecting_connection(manager, url, credentialed);
     let (stop, shutdown) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
+        // testkit-lint: allow(sleep) the window is what the cases observe: no redial within it
         tokio::time::sleep(RUN_WINDOW).await;
         let _ = stop.send(());
     });
@@ -179,14 +180,14 @@ async fn run_against(status: &'static str, credentialed: bool) -> Run {
 
 /// Polls `done` every 20 ms for up to 10 s; whether it held by then.
 async fn wait_until(mut done: impl FnMut() -> bool) -> bool {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    while tokio::time::Instant::now() < deadline {
-        if done() {
-            return true;
+    let polled = tokio::time::timeout(Duration::from_secs(10), async {
+        while !done() {
+            // testkit-lint: allow(sleep) a bounded poll of state that has no change signal
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    done()
+    })
+    .await;
+    polled.is_ok() || done()
 }
 
 /// The rows of window `window` that `queue` holds.
