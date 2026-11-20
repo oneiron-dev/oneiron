@@ -16,6 +16,12 @@
 //! * `owner_restore_without_signing_keys_keeps_them_separate`: a
 //!   destination that cannot load signing keys restores none, and its
 //!   receipt names each as `SigningUnavailable`.
+//! * `owner_restore_of_an_archive_without_secrets_brings_merges_and_splits_back`:
+//!   the same restore from an archive exported without secrets, whose
+//!   type-76 rows keep their typed id slots (REVIEW-9756 round 1 P1-1).
+//! * `owner_restore_into_a_vault_holding_rows_keeps_its_machine_identity`:
+//!   that restore loads no signing keys, so a keystore lacking this install's
+//!   slot does not make it forget its machine (REVIEW-9756 round 1 P1-2).
 //!
 //! Red on main d4c26c681b6 (the tests-only commit): the first test fails at
 //! its first lifecycle check (the merged PERSON is back Active); the other
@@ -177,10 +183,16 @@ impl Topology {
     }
 }
 
+/// [`topology_archive_with`] secrets included, the export's default.
+fn topology_archive() -> Topology {
+    topology_archive_with(true)
+}
+
 /// A source vault with one current merge, one current split into two heads,
 /// one current zero-head split and one undone merge, all through the local
-/// identity-topology door (auto decisions sealed by this install).
-fn topology_archive() -> Topology {
+/// identity-topology door (auto decisions sealed by this install), exported
+/// whole with or without its secrets.
+fn topology_archive_with(include_secrets: bool) -> Topology {
     let (_dir, source) = open_signing_vault();
     let merged = put_person(&source);
     let survivor = put_person(&source);
@@ -230,7 +242,7 @@ fn topology_archive() -> Topology {
         );
     }
     let archive = source
-        .export_whole_vault(true)
+        .export_whole_vault(include_secrets)
         .expect("whole-vault export")
         .bytes()
         .to_vec();
@@ -284,6 +296,18 @@ fn assert_restored(receipt: &WholeVaultImportReceipt, restored: &Topology) -> En
     EntityId::from_hex(&merge.restored).expect("the restored merge's id")
 }
 
+/// The state each source PERSON comes back in once the current decisions are
+/// restored: the merged row Merged, the split rows Split, every other Active.
+fn restored_state(restored: &Topology, row: &EntityId) -> EntityLifecycleState {
+    if *row == restored.merged {
+        EntityLifecycleState::Merged
+    } else if *row == restored.split || *row == restored.gone {
+        EntityLifecycleState::Split
+    } else {
+        EntityLifecycleState::Active
+    }
+}
+
 /// `dest` holds every source PERSON, each in `state_of`'s state.
 fn assert_states(
     dest: &Vault,
@@ -331,15 +355,7 @@ fn owner_restore_into_a_fresh_vault_brings_merges_and_splits_back() {
     let receipt = dest
         .import_whole_vault_archive_from_as_owner(Cursor::new(&restored.archive), &owner)
         .expect("the owner's restore completes");
-    assert_states(&dest, &restored, |row| {
-        if *row == restored.merged {
-            EntityLifecycleState::Merged
-        } else if *row == restored.split || *row == restored.gone {
-            EntityLifecycleState::Split
-        } else {
-            EntityLifecycleState::Active
-        }
-    });
+    assert_states(&dest, &restored, |row| restored_state(&restored, row));
     assert!(
         dest.edge_exists(&restored.merged, EdgeKind::MergedInto, &restored.survivor)
             .expect("read the merged_into link"),
@@ -468,5 +484,48 @@ fn owner_restore_without_signing_keys_keeps_them_separate() {
     assert_eq!(
         receipt.unrestored_identity_topology_shells, 2,
         "the merged and the split rows are counted back separate"
+    );
+}
+
+#[test]
+fn owner_restore_of_an_archive_without_secrets_brings_merges_and_splits_back() {
+    let restored = topology_archive_with(false);
+    let (_dir, dest) = open_later_signing_vault();
+    let owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&restored.archive), &owner)
+        .expect("the owner's restore of an archive without secrets completes");
+    assert_restored(&receipt, &restored);
+    assert_states(&dest, &restored, |row| restored_state(&restored, row));
+    assert!(
+        dest.edge_exists(&restored.merged, EdgeKind::MergedInto, &restored.survivor)
+            .expect("read the merged_into link"),
+        "the restored merge's shell link names the survivor"
+    );
+}
+
+#[test]
+fn owner_restore_into_a_vault_holding_rows_keeps_its_machine_identity() {
+    let restored = topology_archive();
+    let (_dir, dest) = open_later_vault();
+    let keystore = Arc::new(oneiron_keystore::MemoryKeystore::new());
+    dest.install_device_keystore(keystore.clone());
+    let machine = dest
+        .prepare_install_signing()
+        .expect("load this install's signing keys");
+    put_person(&dest);
+    // A keystore without this install's slot: loading signing keys through it
+    // forgets the machine and joins as a new one.
+    dest.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    let owner = owner_proof(&dest);
+    dest.import_whole_vault_archive_from_as_owner(Cursor::new(&restored.archive), &owner)
+        .expect("the owner's restore completes");
+    assert_back_separate(&dest, &restored);
+    dest.install_device_keystore(keystore);
+    assert_eq!(
+        dest.prepare_install_signing()
+            .expect("load this install's signing keys again"),
+        machine,
+        "a restore that seals no decision keeps this install's machine identity"
     );
 }
