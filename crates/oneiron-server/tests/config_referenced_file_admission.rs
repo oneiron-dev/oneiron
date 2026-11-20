@@ -275,6 +275,105 @@ fn a_relay_token_file_any_user_can_read_or_write_is_refused() {
     }
 }
 
+/// A token's mode does not say who can read it once it carries an access
+/// control list: its group bits then show the list's mask. So a token at the
+/// installer's 0440 whose list lets in a user outside its group is refused
+/// before it is read, on the plain room and on the guarded one, and its text
+/// is never printed (REVIEW-9811).
+#[cfg(target_os = "linux")]
+#[test]
+fn a_relay_token_file_with_an_access_control_list_is_refused() {
+    // The target directory's file system keeps POSIX ACLs; a host's /tmp
+    // need not.
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let token = file(dir.path(), "token-listed", SHORT_TOKEN, 0o440);
+    let reader = grant_read_to_another_user(&token);
+    let mode = std::fs::metadata(&token).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o440, "uid {reader} reads a token whose mode is 0440");
+    let room = file(
+        dir.path(),
+        "room-listed.json",
+        &room_text(dir.path(), &token),
+        0o440,
+    );
+    for guarded in [false, true] {
+        let error = relay_refused(dir.path(), &room, guarded);
+        assert!(
+            error.contains("access control list"),
+            "guarded: {guarded}: {error}"
+        );
+        assert!(error.contains("setfacl -b"), "guarded: {guarded}: {error}");
+        assert!(
+            error.contains("token-listed"),
+            "guarded: {guarded}: {error}"
+        );
+        assert!(
+            !error.contains(TOKEN_READ),
+            "the listed token was read (guarded: {guarded}): {error}"
+        );
+        assert!(
+            !error.contains(SHORT_TOKEN.trim()),
+            "the token was printed: {error}"
+        );
+    }
+}
+
+/// Gives a user outside the test's group read of `path` through a POSIX
+/// access ACL whose mask is read alone, as `setfacl -m u:<uid>:r` does, and
+/// returns that user's uid: `nobody` (65534), or the test's own uid where
+/// the user namespace maps no other. The test owns `path`, which is all
+/// setting a list asks.
+#[cfg(target_os = "linux")]
+fn grant_read_to_another_user(path: &Path) -> u32 {
+    // <linux/posix_acl_xattr.h> and <linux/posix_acl.h>.
+    const VERSION: u32 = 2;
+    const USER_OBJ: u16 = 0x01;
+    const USER: u16 = 0x02;
+    const GROUP_OBJ: u16 = 0x04;
+    const MASK: u16 = 0x10;
+    const OTHER: u16 = 0x20;
+    const UNDEFINED_ID: u32 = u32::MAX;
+    const READ: u16 = 0o4;
+    const NOBODY: u32 = 65534;
+    let list = |reader: u32| {
+        let mut value = VERSION.to_le_bytes().to_vec();
+        for (tag, permissions, id) in [
+            (USER_OBJ, READ, UNDEFINED_ID),
+            (USER, READ, reader),
+            (GROUP_OBJ, READ, UNDEFINED_ID),
+            (MASK, READ, UNDEFINED_ID),
+            (OTHER, 0, UNDEFINED_ID),
+        ] {
+            value.extend(tag.to_le_bytes());
+            value.extend(permissions.to_le_bytes());
+            value.extend(id.to_le_bytes());
+        }
+        value
+    };
+    let set = |reader: u32| {
+        rustix::fs::setxattr(
+            path,
+            "system.posix_acl_access",
+            &list(reader),
+            rustix::fs::XattrFlags::empty(),
+        )
+    };
+    let reader = match set(NOBODY) {
+        Err(error) if error == rustix::io::Errno::INVAL => {
+            let own = rustix::process::getuid().as_raw();
+            set(own).map(|()| own)
+        }
+        outcome => outcome.map(|()| NOBODY),
+    };
+    reader.unwrap_or_else(|error| {
+        panic!(
+            "set an access ACL on {}: {error}; this test needs a file system that keeps \
+             POSIX ACLs",
+            path.display()
+        )
+    })
+}
+
 /// The control of both refusals: the installer's modes (room file and token
 /// at 0440, shared with the room's group) and owner-only files are read, on
 /// the plain room and on the guarded one. The token is too short to serve
