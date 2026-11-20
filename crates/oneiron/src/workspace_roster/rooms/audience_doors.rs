@@ -487,8 +487,10 @@ impl Memory<'_> {
     /// caller's standing, the target, an add's check-in and the edit's
     /// TURN. `history` is an add's; `None` removes. An add of someone else,
     /// or a walk-in into a closed room, that waits writes nothing but its
-    /// pending check-in. A walk-in that entered, and the Owner's add with
-    /// full history, tell the thread's members once it committed.
+    /// pending check-in. A call that spends no check-in, a self re-add
+    /// included, refuses a `check_in_ref` and writes nothing. A walk-in that
+    /// entered, and the Owner's add with full history, tell the thread's
+    /// members once it committed.
     fn edit_thread_audience(
         &self,
         thread_ref: &str,
@@ -523,7 +525,8 @@ impl Memory<'_> {
             let entering = !thread.folded.current().contains(&person);
             // An add of someone else, and a walk-in that enters, which into a
             // closed room asks its owners as any add does (P26B-WALKIN = A);
-            // a self re-add is none.
+            // a self re-add is none, so it spends no check-in and refuses
+            // the one its call names (REVIEW-9839 P1).
             let judged = if matches!(event.op, AudienceOp::Add | AudienceOp::OpenFullHistory) {
                 crate::check_in::agent_add_is_from_now(
                     self,
@@ -555,7 +558,7 @@ impl Memory<'_> {
                     check_in_ref,
                 )?
             } else {
-                None
+                crate::check_in::refuse_unspent_check_in_ref(None, check_in_ref)?
             };
             let check_in = match judged {
                 Some(DoorCheckIn::Go(decision)) => Some(decision),
