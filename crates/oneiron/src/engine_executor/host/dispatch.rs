@@ -371,18 +371,26 @@ impl RecordingJsHost<'_, '_> {
     /// stores every large answer, a hook's view leaving it record-only
     /// ([`Shown::View`]). A whole answer nesting past that depth is read as
     /// its JSON text instead ([`ReadAnswer::Text`]), which the call's own
-    /// chain judges as text ([`Self::judge_text_answer`]).
+    /// chain judges as text ([`Self::judge_text_answer`]) when `as_text`
+    /// says one does; every other chain still reads one value, so there it
+    /// is refused with its cause before any of it is read. Text a value
+    /// could not hold but for its nesting is refused as non-JSON, as the
+    /// value read refuses it ([`scalars_read_as_values`]).
     pub(super) fn skill_answer(
         &mut self,
         seq: u64,
         mut answer: crate::skill::CallableSkillAnswer,
         whole: bool,
+        as_text: bool,
     ) -> Result<ReadAnswer> {
         let non_json =
             || Error::InvalidConfig("callable skill returned non-JSON output".to_owned());
         if whole || answer.byte_len() <= RESULT_REPLY_INLINE_BYTES as u64 {
             let nests_past = answer_nests_past_whole_depth(&mut answer)?;
             if nests_past && whole {
+                if !as_text {
+                    return Err(Error::Refused(ANSWER_TOO_DEEP.to_owned()));
+                }
                 let mut text = String::new();
                 std::io::Read::read_to_string(answer.reader()?, &mut text)
                     .map_err(|_| non_json())?;
@@ -390,6 +398,9 @@ impl RecordingJsHost<'_, '_> {
                 // depth, so no recursion follows the answer's.
                 let text =
                     serde_json::value::RawValue::from_string(text).map_err(|_| non_json())?;
+                if !scalars_read_as_values(text.get()) {
+                    return Err(non_json());
+                }
                 return Ok(ReadAnswer::Text(text));
             }
             if !nests_past {
@@ -434,12 +445,14 @@ impl RecordingJsHost<'_, '_> {
         hooked: crate::code_run::HookedCall,
         text: &serde_json::value::RawValue,
     ) -> Result<serde_json::Value> {
-        let post = self.gated_write.leave_verb_hooks_text(hooked, text)?;
+        // The answer's bytes are held on the run's share before the chain
+        // reads them, as the copy that stores them is (FIX 10674).
         let bytes = text.get().as_bytes();
         let _copy_hold = self
             .result_share
             .zip(self.storage)
             .and_then(|(share, storage)| share.hold(bytes.len() as u64, storage.limit_watch()));
+        let post = self.gated_write.leave_verb_hooks_text(hooked, text)?;
         // The answer first, then the view in its place, as a value's
         // answer is stored before its view is served.
         let shown = match &post {
@@ -698,21 +711,21 @@ impl RecordingJsHost<'_, '_> {
         let rewritten = hooked.as_ref().and_then(|hooked| hooked.1.clone());
         let outcome = match ran {
             Ok(answer) => {
-                let output = match self.skill_answer(seq, answer, whole_for_hooks)? {
+                // An answer nesting past what a value may hold, which a
+                // live chain must judge, is read as text only for the call's
+                // own chain on the canonical vault. The admitted outer
+                // caller's chain and a room's still read one value, so
+                // `skill_answer` refuses it there with its cause, before any
+                // of it is read.
+                let as_text = hooked.is_some() && self.gated_write.post_chain_reads_text();
+                let output = match self.skill_answer(seq, answer, whole_for_hooks, as_text)? {
                     ReadAnswer::Value(output) => output,
-                    // An answer nesting past what a value may hold, which a
-                    // live chain must judge: the call's own chain on the
-                    // canonical vault judges its text here, and the answer
-                    // is stored once it is done. The admitted outer caller's
-                    // chain and a room's still read one value, so there it
-                    // is refused with its cause.
+                    // The call's own chain judges its text here, and the
+                    // answer is stored once it is done.
                     ReadAnswer::Text(text) => {
-                        let own = hooked
-                            .take()
-                            .filter(|_| self.gated_write.post_chain_reads_text());
-                        let Some(own) = own else {
-                            return Err(Error::Refused(ANSWER_TOO_DEEP.to_owned()));
-                        };
+                        let own = hooked.take().ok_or(Error::InvariantViolation(
+                            "a skill answer read as text has no chain to judge it",
+                        ))?;
                         self.judge_text_answer(seq, own, &text)?
                     }
                 };
@@ -1156,7 +1169,8 @@ const WHOLE_ANSWER_MAX_DEPTH: u32 = 127;
 
 /// Whether a spooled answer nests past [`WHOLE_ANSWER_MAX_DEPTH`]: the
 /// whole-answer parse cannot read it, however valid its JSON. Reads the
-/// spool from its first byte and leaves it rewound, as it found it.
+/// spool from its first byte; each [`crate::skill::CallableSkillAnswer::reader`]
+/// call rewinds it again.
 fn answer_nests_past_whole_depth(answer: &mut crate::skill::CallableSkillAnswer) -> Result<bool> {
     let reader = answer.reader()?;
     let mut scan = NestingScan::default();
@@ -1176,6 +1190,53 @@ fn answer_nests_past_whole_depth(answer: &mut crate::skill::CallableSkillAnswer)
 /// may be read from it.
 fn text_nests_past_whole_depth(text: &str) -> bool {
     NestingScan::default().passes_whole_depth(text.as_bytes())
+}
+
+/// Whether each string and number JSON `text` holds reads as a value's
+/// does. `text` is JSON already (a [`serde_json::value::RawValue`]), but
+/// that reader takes a lone surrogate escape and a number past `f64`,
+/// which a value refuses. Each scalar is read on its own, so no recursion
+/// follows the nesting; a string with no escape reads as it is.
+fn scalars_read_as_values(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    while let Some(&byte) = bytes.get(at) {
+        match byte {
+            b'"' => {
+                let mut end = at + 1;
+                let mut escaped = false;
+                loop {
+                    match bytes.get(end) {
+                        None => return false,
+                        Some(b'\\') => {
+                            escaped = true;
+                            end += 2;
+                        }
+                        Some(b'"') => break,
+                        Some(_) => end += 1,
+                    }
+                }
+                if escaped && serde_json::from_str::<String>(&text[at..=end]).is_err() {
+                    return false;
+                }
+                at = end + 1;
+            }
+            b'-' | b'0'..=b'9' => {
+                let end = bytes[at..]
+                    .iter()
+                    .position(|byte| {
+                        !matches!(byte, b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9')
+                    })
+                    .map_or(bytes.len(), |length| at + length);
+                if serde_json::from_str::<serde_json::Number>(&text[at..end]).is_err() {
+                    return false;
+                }
+                at = end;
+            }
+            _ => at += 1,
+        }
+    }
+    true
 }
 
 /// JSON nesting counted byte by byte, outside strings: it keeps no stack,
