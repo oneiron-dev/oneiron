@@ -19,6 +19,7 @@ use super::neighbourhood::Neighbourhood;
 use super::resources::BoundBranchRead;
 use super::roles::{DREAMER_EXTRACTION_ROLE, bind_reasoning};
 use super::support::invalid_consolidation;
+use super::value_projection::rmpv_to_json;
 use super::watermark::decode_turn_body;
 use crate::claim::ScopedRead;
 use crate::dreamer_runner::ExtractionStepLoan;
@@ -37,8 +38,11 @@ use oneiron_model::llm::Scope;
 /// material through the shared helper before the request hashes. The
 /// scope is the bound attenuated scope for the cited TURNs under the
 /// slice's kept listing. The sources are every row the transcript was
-/// read from. The correctable set freezes the listed and speaker Entity
-/// ids whose step scope holds a correctable claim. The inputs name the
+/// read from. The correctable map freezes the listed and speaker Entity
+/// ids whose step scope holds a correctable claim, with those claims, and
+/// the heads freeze each labelled claim the branch holds as a prior head,
+/// so the reply check applies native's restatement rule and its
+/// claim-evidence rule without a read. The inputs name the
 /// version of every row whose words the transcript shows, so a receipt
 /// answers only while each still reads at it. No person-mint namespace
 /// binds the request; the decoded reply retains declared persons without
@@ -54,9 +58,12 @@ pub(crate) struct PreparedExtractionStep {
     scope: Scope,
     /// Holds every row the transcript was read from, for the sourced backend.
     sources: Vec<EntityId>,
-    /// Holds the listed and speaker Entity ids whose step scope holds
-    /// a correctable claim.
-    correctable: BTreeSet<EntityId>,
+    /// Holds each listed or speaker Entity id whose step scope holds a
+    /// correctable claim, with those claims.
+    correctable: BTreeMap<EntityId, Vec<EntityId>>,
+    /// Holds each claim the call labelled that the branch holds as a prior
+    /// head, as the reply check reads it.
+    heads: BTreeMap<EntityId, ListedHead>,
     /// Holds the version of every row whose words the transcript shows,
     /// in id order, as the request names them.
     inputs: Vec<SourceVersion>,
@@ -92,6 +99,21 @@ pub(crate) fn slice_group_key(
     text: Option<&str>,
 ) -> (u32, Vec<EntityId>) {
     (line, known.mentioned(body, text))
+}
+
+/// One claim a bound call labelled that its branch holds as a prior head.
+///
+/// The reply check reads a cited head from this copy, frozen in validation,
+/// so the durable check reads no row.
+#[derive(Clone)]
+struct ListedHead {
+    /// Holds the head's predicate, which a candidate that restates it carries.
+    predicate: String,
+    /// Holds the head's value as JSON, which a candidate that restates it carries.
+    value: serde_json::Value,
+    /// Tells whether verification takes the head as evidence; a
+    /// generated-origin head never corroborates (GATE-11).
+    admissible: bool,
 }
 
 /// Holds the one served piece of a TURN at its checked version.
@@ -277,10 +299,30 @@ pub(crate) fn prepare_bound_step(
     }
     sources.extend(scoped.message_sources);
     let inputs = step_input_versions(txn, read, reader_scope, pieces, listed)?;
-    let correctable: BTreeSet<EntityId> = labels
+    let correctable: BTreeMap<EntityId, Vec<EntityId>> = labels
         .labelled(LabelKind::Entity)
-        .map(|(_, id)| id)
-        .filter(|id| !bound.correctable(*id, &scoped.scope).is_empty())
+        .filter_map(|(_, id)| {
+            let claims: Vec<EntityId> = bound
+                .correctable(id, &scoped.scope)
+                .into_iter()
+                .map(|(claim, _, _)| claim)
+                .collect();
+            (!claims.is_empty()).then_some((id, claims))
+        })
+        .collect();
+    let heads: BTreeMap<EntityId, ListedHead> = labels
+        .labelled(LabelKind::Claim)
+        .filter_map(|(_, id)| {
+            let head = bound.prior(id)?;
+            Some((
+                id,
+                ListedHead {
+                    predicate: head.body.predicate.clone(),
+                    value: rmpv_to_json(&head.body.value),
+                    admissible: crate::claim::claim_evidence_admissible(&head.body),
+                },
+            ))
+        })
         .collect();
     Ok(PreparedExtractionStep {
         transcript,
@@ -289,6 +331,7 @@ pub(crate) fn prepare_bound_step(
         scope: scoped.scope,
         sources,
         correctable,
+        heads,
         inputs,
     })
 }

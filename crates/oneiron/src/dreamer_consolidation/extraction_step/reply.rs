@@ -1,12 +1,17 @@
 //! Checks and decodes a bound reply through the native wire and quote binder.
+//!
+//! A candidate cites served TURN words by quote and, as a native reply may,
+//! a listed claim by its label. The decoded candidate carries each cited
+//! claim as a pin at the version the step's request names, the form the
+//! verdict operand takes.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use oneiron_model::llm::LlmResponse;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{ExtractionStepPiece, PreparedExtractionStep};
+use super::{ExtractionStepPiece, ListedHead, PreparedExtractionStep};
 use crate::dreamer_consolidation::call_labels::{
     CallLabelMap, CallSources, LabelKind, SourceShown, SubjectLabel, new_person,
 };
@@ -17,12 +22,13 @@ use crate::dreamer_consolidation::executor::extraction::{
 use crate::entity_id::EntityId;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::snapshot_read::{EvidenceRange, SourceVersion};
+use crate::verbs::PinnedClaim;
 
 /// Holds the decoded candidates, declarations and candidate skips of one bound reply.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BoundExtractionReply {
-    /// Holds the candidates whose labels and TURN quotes bound.
+    /// Holds the candidates whose labels, TURN quotes and claim citations bound.
     candidates: Vec<BoundExtractionCandidate>,
     /// Retains every person declaration without deriving an entity identifier.
     persons: Vec<BoundExtractionPerson>,
@@ -30,7 +36,7 @@ struct BoundExtractionReply {
     skipped: Vec<SkippedExtractionCandidate>,
 }
 
-/// Holds one candidate with evidence in its TURN's coordinates.
+/// Holds one candidate with its quotes in TURN coordinates and its cited claims pinned.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BoundExtractionCandidate {
@@ -54,6 +60,11 @@ struct BoundExtractionCandidate {
     topic_key: Option<Value>,
     /// Holds the bound TURN quotes and their checked source versions.
     evidence: Vec<BoundTurnEvidence>,
+    /// Holds each listed claim the candidate cites, once, at the version the
+    /// step's request names, not a version supplied by the model. Absent
+    /// when the candidate cites no claim.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    claim_evidence: Vec<PinnedClaim>,
 }
 
 /// Names a subject without minting a declared person.
@@ -106,8 +117,14 @@ struct BoundReplySources<'p> {
     labels: &'p CallLabelMap,
     /// Borrows the single served piece and source pin for each TURN.
     pieces: &'p [ExtractionStepPiece],
-    /// Borrows the frozen Entity ids whose step scope holds a correctable claim.
-    correctable: &'p BTreeSet<EntityId>,
+    /// Borrows each frozen Entity id whose step scope holds a correctable
+    /// claim, with those claims.
+    correctable: &'p BTreeMap<EntityId, Vec<EntityId>>,
+    /// Borrows the frozen prior heads behind the call's claim labels.
+    heads: &'p BTreeMap<EntityId, ListedHead>,
+    /// Borrows the versions the request names, a cited claim's among them
+    /// when the job's read serves that claim.
+    inputs: &'p [SourceVersion],
 }
 
 impl CallSources for BoundReplySources<'_> {
@@ -126,13 +143,16 @@ impl CallSources for BoundReplySources<'_> {
     }
 }
 
-/// Separates decode skips from quote faults that refuse a model reply.
-enum CandidateReplyFault {
-    /// Leaves a candidate that decode cannot take as a skip.
-    Skipped(String),
-    /// Refuses an otherwise decoded candidate whose quote bound
-    /// nothing, with its Listed subject when it has one.
-    Unbound(&'static str, Option<EntityId>),
+/// Holds one candidate decode took, with what the reply check judges it by.
+struct ReadCandidate {
+    /// Holds the candidate with every quote and claim citation that bound.
+    candidate: BoundExtractionCandidate,
+    /// Holds the Listed subject, when the candidate names one.
+    subject: Option<EntityId>,
+    /// Holds each listed claim the candidate cites, once.
+    cited: Vec<EntityId>,
+    /// Names the first quote or label that bound nothing.
+    unbound: Option<&'static str>,
 }
 
 impl BoundReplySources<'_> {
@@ -167,7 +187,7 @@ impl BoundReplySources<'_> {
         &self,
         item: &Value,
         persons: &[ExtractedPerson],
-    ) -> Result<BoundExtractionSubject, CandidateReplyFault> {
+    ) -> Result<BoundExtractionSubject, String> {
         let label = item
             .get("subject")
             .and_then(Value::as_str)
@@ -177,11 +197,7 @@ impl BoundReplySources<'_> {
                 .labels
                 .resolve(label)
                 .map(|id| BoundExtractionSubject::Listed(id.to_hex()))
-                .ok_or_else(|| {
-                    CandidateReplyFault::Skipped(
-                        "extracted candidate names an unlisted subject".to_owned(),
-                    )
-                }),
+                .ok_or_else(|| "extracted candidate names an unlisted subject".to_owned()),
             Some(SubjectLabel::NewPerson(number)) => {
                 let person = persons
                     .iter()
@@ -198,31 +214,36 @@ impl BoundReplySources<'_> {
                 if available {
                     Ok(BoundExtractionSubject::Declared(number))
                 } else {
-                    Err(CandidateReplyFault::Skipped(
-                        "extracted candidate names an unavailable declared person".to_owned(),
-                    ))
+                    Err("extracted candidate names an unavailable declared person".to_owned())
                 }
             }
-            _ => Err(CandidateReplyFault::Skipped(
-                "extracted candidate names an unlisted subject".to_owned(),
-            )),
+            _ => Err("extracted candidate names an unlisted subject".to_owned()),
         }
     }
 
-    /// Reads a candidate's fields and binds each quote through the native decoder.
+    /// Reads a candidate's fields and binds each quote and claim label
+    /// through the native decoder.
+    ///
+    /// Every reference is read, as the native reader reads it: a quote or
+    /// label that bound nothing is remembered by its first named result
+    /// while the others still bind. A cited claim is carried only at a
+    /// version the request names, so a claim the job's read does not serve
+    /// leaves its candidate a skip.
+    ///
+    /// # Errors
+    ///
+    /// The reason decode skips this candidate.
     fn read_bound_candidate(
         &self,
         index: usize,
         item: &Value,
         persons: &[ExtractedPerson],
         authored: bool,
-    ) -> Result<BoundExtractionCandidate, CandidateReplyFault> {
+    ) -> Result<ReadCandidate, String> {
         let refs = item
             .get("evidence_refs")
             .and_then(Value::as_array)
-            .ok_or_else(|| {
-                CandidateReplyFault::Skipped("candidate evidence_refs must be an array".to_owned())
-            })?;
+            .ok_or_else(|| "candidate evidence_refs must be an array".to_owned())?;
         let raw_subject = item
             .get("subject")
             .and_then(Value::as_str)
@@ -233,9 +254,9 @@ impl BoundReplySources<'_> {
                 .any(|key| cited.get(key).is_some())
         });
         if authored && (raw_subject || authored_refs) {
-            return Err(CandidateReplyFault::Skipped(
-                "the bound wire carries labels and TURN quotes only; authored raw-id subjects and authored references are not carried".to_owned(),
-            ));
+            return Err(
+                "the bound wire carries labels, TURN quotes and listed claims only; authored raw-id subjects and authored references are not carried".to_owned(),
+            );
         }
         let subject = self.subject(item, persons)?;
         let subject_id = match &subject {
@@ -246,48 +267,59 @@ impl BoundReplySources<'_> {
             .get("predicate")
             .and_then(Value::as_str)
             .filter(|predicate| crate::claim::validate_predicate(predicate, false).is_ok())
-            .ok_or_else(|| {
-                CandidateReplyFault::Skipped(
-                    "extracted candidate's predicate breaks the claim grammar".to_owned(),
-                )
-            })?
+            .ok_or_else(|| "extracted candidate's predicate breaks the claim grammar".to_owned())?
             .to_owned();
         let value = item
             .get("value")
             .filter(|value| !value.is_null())
-            .ok_or_else(|| {
-                CandidateReplyFault::Skipped("extracted candidate names no value".to_owned())
-            })?
+            .ok_or_else(|| "extracted candidate names no value".to_owned())?
             .clone();
         let confidence = item
             .get("confidence")
             .and_then(Value::as_f64)
-            .ok_or_else(|| {
-                CandidateReplyFault::Skipped("extracted candidate names no confidence".to_owned())
-            })?;
-        let prospective_queries = prospective_queries(item)
-            .map_err(|error| CandidateReplyFault::Skipped(error.to_string()))?;
+            .ok_or_else(|| "extracted candidate names no confidence".to_owned())?;
+        let prospective_queries = prospective_queries(item).map_err(|error| error.to_string())?;
         let mut evidence = Vec::with_capacity(refs.len());
+        let mut claim_evidence = Vec::new();
+        let mut cited_claims = Vec::new();
+        let mut unbound = None;
         for cited in refs {
-            let bound = decode_ref(cited, self)
-                .map_err(|error| CandidateReplyFault::Skipped(error.to_string()))?;
-            let locator = bound
-                .locator
-                .map_err(|fault| CandidateReplyFault::Unbound(fault.name(), subject_id))?;
+            let bound = decode_ref(cited, self).map_err(|error| error.to_string())?;
+            let locator = match bound.locator {
+                Ok(locator) => locator,
+                Err(fault) => {
+                    unbound.get_or_insert(fault.name());
+                    continue;
+                }
+            };
             let reference = locator.reference();
+            if let Some(claim) = reference.claim_id {
+                let version = self
+                    .inputs
+                    .iter()
+                    .find(|version| version.entity == claim)
+                    .ok_or_else(|| {
+                        "extracted candidate cites a listed claim the job's read does not serve"
+                            .to_owned()
+                    })?;
+                if !cited_claims.contains(&claim) {
+                    cited_claims.push(claim);
+                    claim_evidence.push(PinnedClaim {
+                        claim: claim.to_hex(),
+                        version: version.clone(),
+                    });
+                }
+                continue;
+            }
             let piece = self
                 .pieces
                 .iter()
                 .find(|piece| piece.turn == reference.source_id)
                 .ok_or_else(|| {
-                    CandidateReplyFault::Skipped(
-                        "the bound wire carries labels and TURN quotes only".to_owned(),
-                    )
+                    "the bound wire carries labels, TURN quotes and listed claims only".to_owned()
                 })?;
             let (start, end) = reference.byte_range.ok_or_else(|| {
-                CandidateReplyFault::Skipped(
-                    "the bound wire carries labels and TURN quotes only".to_owned(),
-                )
+                "the bound wire carries labels, TURN quotes and listed claims only".to_owned()
             })?;
             evidence.push(BoundTurnEvidence {
                 turn: piece.turn.to_hex(),
@@ -298,23 +330,71 @@ impl BoundReplySources<'_> {
                 },
             });
         }
-        Ok(BoundExtractionCandidate {
-            index,
-            subject,
-            predicate,
-            value,
-            confidence,
-            prospective_queries,
-            rel: item.get("rel").filter(|value| !value.is_null()).cloned(),
-            topic_key: item
-                .get("topic_key")
-                .filter(|value| !value.is_null())
-                .cloned(),
-            evidence,
+        Ok(ReadCandidate {
+            candidate: BoundExtractionCandidate {
+                index,
+                subject,
+                predicate,
+                value,
+                confidence,
+                prospective_queries,
+                rel: item.get("rel").filter(|value| !value.is_null()).cloned(),
+                topic_key: item
+                    .get("topic_key")
+                    .filter(|value| !value.is_null())
+                    .cloned(),
+                evidence,
+                claim_evidence,
+            },
+            subject: subject_id,
+            cited: cited_claims,
+            unbound,
         })
     }
 
+    /// Tells whether a correction is asked about `read`, by native's rule:
+    /// its Listed subject holds a correctable claim the candidate does not
+    /// restate. A candidate restates a head it cites when it carries the
+    /// head's predicate and value (FIX 8295).
+    fn asked(&self, read: &ReadCandidate) -> bool {
+        let Some(claims) = read
+            .subject
+            .and_then(|subject| self.correctable.get(&subject))
+        else {
+            return false;
+        };
+        claims.iter().any(|claim| {
+            let restated = read.cited.contains(claim)
+                && self.heads.get(claim).is_some_and(|head| {
+                    head.predicate == read.candidate.predicate && head.value == read.candidate.value
+                });
+            !restated
+        })
+    }
+
+    /// Names why verification refuses one of `cited`: a head that is no
+    /// evidence under GATE-11. A cited claim the branch holds no prior head
+    /// for stays the verdict's to judge.
+    fn claim_fault(&self, cited: &[EntityId]) -> Option<&'static str> {
+        cited
+            .iter()
+            .any(|claim| self.heads.get(claim).is_some_and(|head| !head.admissible))
+            .then_some("generated claim cannot corroborate")
+    }
+
     /// Decodes accepted candidates and declarations while preserving candidate skips.
+    ///
+    /// A candidate no correction is asked about surely reaches verification,
+    /// so its first quote or label that bound nothing, or else a cited head
+    /// that is no evidence, refuses the whole reply, as the native citation
+    /// check refuses it. A candidate a correction is asked about is skipped
+    /// for an unbound quote and kept with a cited head that is no evidence:
+    /// the verdict judges that head. An authored fallback's reply is never
+    /// refused here.
+    ///
+    /// # Errors
+    ///
+    /// A reply that breaks the extraction contract, and the refusal above.
     fn decode(&self, response: &LlmResponse) -> Result<BoundExtractionReply, String> {
         let reply = extraction_reply(response).map_err(|error| error.to_string())?;
         let authored = authored_fallback(response);
@@ -324,24 +404,34 @@ impl BoundReplySources<'_> {
             skipped: Vec::new(),
         };
         for (index, item) in reply.candidates.iter().enumerate() {
-            let reason = match self.read_bound_candidate(index, item, &reply.persons, authored) {
-                Ok(candidate) => {
-                    decoded.candidates.push(candidate);
+            let read = match self.read_bound_candidate(index, item, &reply.persons, authored) {
+                Ok(read) => read,
+                Err(reason) => {
+                    decoded
+                        .skipped
+                        .push(SkippedExtractionCandidate { index, reason });
                     continue;
                 }
-                Err(CandidateReplyFault::Skipped(reason)) => reason,
-                Err(CandidateReplyFault::Unbound(reason, _)) if authored => reason.to_owned(),
-                Err(CandidateReplyFault::Unbound(reason, Some(id)))
-                    if self.correctable.contains(&id) =>
-                {
-                    format!(
-                        "quote unbound ({reason}); the subject holds a correctable claim, skipped like native"
-                    )
-                }
-                Err(CandidateReplyFault::Unbound(reason, _)) => {
+            };
+            let asked = self.asked(&read);
+            let reason = match (read.unbound, self.claim_fault(&read.cited)) {
+                (Some(reason), _) if authored => reason.to_owned(),
+                (Some(reason), _) if asked => format!(
+                    "quote unbound ({reason}); the subject holds a correctable claim, skipped like native"
+                ),
+                (Some(reason), _) => {
                     return Err(format!(
                         "extraction candidate {index} cites outside its source: {reason}",
                     ));
+                }
+                (None, Some(reason)) if !authored && !asked => {
+                    return Err(format!(
+                        "extraction candidate {index} cites outside its source: {reason}",
+                    ));
+                }
+                (None, _) => {
+                    decoded.candidates.push(read.candidate);
+                    continue;
                 }
             };
             decoded
@@ -352,14 +442,16 @@ impl BoundReplySources<'_> {
     }
 }
 
-/// Owns a checked call's labels, pieces and correctable set so the
-/// durable check can outlive this borrow.
+/// Owns a checked call's labels, pieces, correctable claims, listed heads
+/// and input versions so the durable check can outlive this borrow.
 pub(super) fn check_bound_reply(
     prepared: &PreparedExtractionStep,
 ) -> impl Fn(&LlmResponse) -> Result<(), String> + Send + Sync + 'static {
     let labels = prepared.labels.clone();
     let pieces = prepared.pieces.clone();
     let correctable = prepared.correctable.clone();
+    let heads = prepared.heads.clone();
+    let inputs = prepared.inputs.clone();
     move |response| {
         check_extraction_reply(response)?;
         if authored_fallback(response) {
@@ -369,6 +461,8 @@ pub(super) fn check_bound_reply(
             labels: &labels,
             pieces: &pieces,
             correctable: &correctable,
+            heads: &heads,
+            inputs: &inputs,
         }
         .decode(response)
         .map(|_| ())
@@ -384,6 +478,8 @@ pub(super) fn decode_bound_reply(
         labels: &prepared.labels,
         pieces: &prepared.pieces,
         correctable: &prepared.correctable,
+        heads: &prepared.heads,
+        inputs: &prepared.inputs,
     }
     .decode(response)
     .map_err(MemoryError::bad_request)?;

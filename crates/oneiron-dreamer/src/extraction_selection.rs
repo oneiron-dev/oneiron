@@ -249,11 +249,14 @@ fn native_keys(candidate: &CandidateObservation) -> (&str, &str, &str) {
 
 /// Builds one operand per group with an ordered, exact-deduplicated evidence union.
 ///
-/// Operands have the checked `CandidateOperand` shape. All other representative
-/// fields, including the representative's own `corrects`, remain unchanged, so the
-/// union keeps the representative's identity, as native assembly keeps the first
-/// member's. The group's merged correction is [`CandidateGroup::corrects`]. The engine
-/// recounts verified citations, times and diversity on these unions; none are summed.
+/// Operands have the checked `CandidateOperand` shape. The union spans the members'
+/// cited turns (`evidence`) and their cited listed claims (`claim_evidence`), each
+/// list by itself; a group that cites no claim keeps the key absent. All other
+/// representative fields, including the representative's own `corrects`, remain
+/// unchanged, so the union keeps the representative's identity, as native assembly
+/// keeps the first member's. The group's merged correction is
+/// [`CandidateGroup::corrects`]. The engine recounts verified citations, times and
+/// diversity on these unions; none are summed.
 ///
 /// # Panics
 ///
@@ -266,16 +269,25 @@ pub fn union_operands(operands: &[Value], groups: &CandidateGroups) -> Vec<Value
         .map(|group| {
             let mut operand = operands[group.representative_index].clone();
             let mut evidence = Vec::new();
+            let mut claim_evidence = Vec::new();
             for index in &group.member_indexes {
-                if let Some(entries) = operands[*index]["evidence"].as_array() {
-                    for entry in entries {
-                        if !evidence.contains(entry) {
-                            evidence.push(entry.clone());
+                for (key, merged) in [
+                    ("evidence", &mut evidence),
+                    ("claim_evidence", &mut claim_evidence),
+                ] {
+                    if let Some(entries) = operands[*index][key].as_array() {
+                        for entry in entries {
+                            if !merged.contains(entry) {
+                                merged.push(entry.clone());
+                            }
                         }
                     }
                 }
             }
             operand["evidence"] = Value::Array(evidence);
+            if !claim_evidence.is_empty() {
+                operand["claim_evidence"] = Value::Array(claim_evidence);
+            }
             operand
         })
         .collect()

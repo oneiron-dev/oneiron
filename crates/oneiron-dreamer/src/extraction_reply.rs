@@ -2,12 +2,13 @@
 //!
 //! A bound reply is an extraction answer whose labels are already bound: each
 //! candidate names a listed subject id or a person the reply declares, cites
-//! turns with the versions the job read, and carries the proposals the verdict
-//! shows the model. The mirror types read that reply as JSON, with entity ids
-//! as 32 lowercase hexadecimal digits and values as JSON, and refuse unknown
-//! fields. [`verdict_operands`] builds the listed candidates' `CandidateOperand`
-//! JSON for one `ai.verdict` call, following the engine's `CandidateOperand`,
-//! `TurnEvidence`, `SourceVersion` and `EvidenceRange` serialization.
+//! turns and listed claims with the versions the job read, and carries the
+//! proposals the verdict shows the model. The mirror types read that reply as
+//! JSON, with entity ids as 32 lowercase hexadecimal digits and values as JSON,
+//! and refuse unknown fields. [`verdict_operands`] builds the listed candidates'
+//! `CandidateOperand` JSON for one `ai.verdict` call, following the engine's
+//! `CandidateOperand`, `TurnEvidence`, `PinnedClaim`, `SourceVersion` and
+//! `EvidenceRange` serialization.
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -27,7 +28,7 @@ pub struct BoundExtractionReply {
 }
 
 /// Represents one bound candidate: its reply index, its subject, its claim
-/// proposal, and the turns it cites.
+/// proposal, and the turns and listed claims it cites.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BoundExtractionCandidate {
@@ -55,6 +56,10 @@ pub struct BoundExtractionCandidate {
     /// Holds the source turns the candidate cites, each with its served version
     /// and quoted span.
     pub evidence: Vec<BoundTurnEvidence>,
+    /// Holds the listed claims the candidate cites, each once, with the version
+    /// the step read; empty when the reply names none.
+    #[serde(default)]
+    pub claim_evidence: Vec<BoundClaimEvidence>,
 }
 
 /// Represents a bound candidate's subject: a listed entity or a person the reply declares.
@@ -104,6 +109,18 @@ pub struct BoundTurnEvidence {
     pub span: BoundEvidenceRange,
 }
 
+/// Represents one listed claim a candidate cites: the claim with the version
+/// read, following the engine's `PinnedClaim`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoundClaimEvidence {
+    /// Names the claim as 32 lowercase hexadecimal digits.
+    pub claim: String,
+    /// Holds the version the step read the claim at, as the engine's
+    /// `SourceVersion` serializes it.
+    pub version: BoundSourceVersion,
+}
+
 /// Mirrors one source row's version as a scoped read served it, following the
 /// engine's `SourceVersion`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -140,9 +157,11 @@ pub struct BoundEvidenceRange {
 ///
 /// Each operand carries its subject, predicate, value and evidence, with each
 /// turn's version and span as the engine serializes them; a version without a
-/// projection omits it, as the engine does. Declared-subject candidates stay
-/// off: the verdict reads listed subjects only. The candidates' `rel` and
-/// `topic_key` proposals stay on the reply for the caller.
+/// projection omits it, as the engine does. A candidate that cites listed
+/// claims carries them as `claim_evidence`, each with its version; a candidate
+/// that cites none omits the key, as the engine does. Declared-subject
+/// candidates stay off: the verdict reads listed subjects only. The candidates'
+/// `rel` and `topic_key` proposals stay on the reply for the caller.
 #[must_use]
 pub fn verdict_operands(reply: &BoundExtractionReply) -> Vec<Value> {
     let mut operands = Vec::new();
@@ -152,32 +171,52 @@ pub fn verdict_operands(reply: &BoundExtractionReply) -> Vec<Value> {
         };
         let mut evidence = Vec::new();
         for cited in &candidate.evidence {
-            let mut version = json!({
-                "entity": cited.version.entity,
-                "entity_type": cited.version.entity_type,
-                "learned_at": cited.version.learned_at,
-                "revision": cited.version.revision,
-            });
-            if let Some(projection) = &cited.version.projection {
-                version["projection"] = json!(projection);
-            }
             evidence.push(json!({
                 "turn": cited.turn,
-                "version": version,
+                "version": source_version_json(&cited.version),
                 "span": {
                     "start": cited.span.start,
                     "end": cited.span.end,
                 },
             }));
         }
-        operands.push(json!({
+        let mut operand = json!({
             "subject": subject,
             "predicate": candidate.predicate,
             "value": candidate.value,
             "evidence": evidence,
-        }));
+        });
+        if !candidate.claim_evidence.is_empty() {
+            let cited: Vec<Value> = candidate
+                .claim_evidence
+                .iter()
+                .map(|cited| {
+                    json!({
+                        "claim": cited.claim,
+                        "version": source_version_json(&cited.version),
+                    })
+                })
+                .collect();
+            operand["claim_evidence"] = Value::Array(cited);
+        }
+        operands.push(operand);
     }
     operands
+}
+
+/// Builds one source version as the engine's `SourceVersion` serializes it,
+/// omitting a missing projection.
+fn source_version_json(version: &BoundSourceVersion) -> Value {
+    let mut encoded = json!({
+        "entity": version.entity,
+        "entity_type": version.entity_type,
+        "learned_at": version.learned_at,
+        "revision": version.revision,
+    });
+    if let Some(projection) = &version.projection {
+        encoded["projection"] = json!(projection);
+    }
+    encoded
 }
 
 /// Holds complete listed-subject operands and their positions in the decoded reply.
