@@ -8,7 +8,9 @@ use loro::{LoroText, UpdateOptions};
 /// the text's length times the size of the change, so a large body replaced
 /// by an unrelated one diffed for hours while the write held the vault's
 /// writer. The note folder import holds its whole-text diff to the same
-/// budget (`WHOLE_TEXT_TIMEOUT_MS`).
+/// budget (`WHOLE_TEXT_TIMEOUT_MS`). The vendored diff times the budget on a
+/// monotonic clock, so a wall clock stepped back cannot hold it off
+/// (`crates/loro/PROVENANCE.md`).
 const FIELD_DIFF_TIMEOUT_MS: f64 = 2_000.0;
 
 /// Sets `field` to `text` by the smallest edits the diff finds within
