@@ -244,7 +244,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/legal_hold/types.rs` | src | s | 2 struct · 7 enum · 5 fn · 2 const | ErasePendingReason, EraseWithdrawal, LegalHold, LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind, LegalHoldKind, LegalHoldReason +1 | Moved from `crates/oneiron/src/deletion/legal_hold/types.rs` (lib split W1: wire types below the lib) |
 | `src/deletion/mod.rs` | src | s | 2 mod · 47 re-export | — | — |
 | `src/derive/mod.rs` | src | s | 1 mod · 14 re-export | — | — |
-| `src/derive/wire.rs` | src | s | 12 struct · 2 enum | DeriveArchiveInput, DeriveClaimInput, DeriveCommitView, DeriveEvidenceInput, DeriveItemView, DeriveLeftItemView, DeriveRef, DeriveRevertInput +6 | Moved from `crates/oneiron/src/derive/wire.rs` (lib split W3: wire types below the lib) |
+| `src/derive/wire.rs` | src | s | 13 struct · 2 enum | DeriveArchiveInput, DeriveClaimInput, DeriveCommitView, DeriveEvidenceInput, DeriveItemView, DeriveLeftItemView, DerivePsychProfileInput, DeriveRef +7 | Moved from `crates/oneiron/src/derive/wire.rs` (lib split W3: wire types below the lib) |
 | `src/disclosure/mod.rs` | src | s | 2 mod · 2 re-export | — | — |
 | `src/disclosure/model_channel.rs` | src | s | 1 struct · 1 enum · 1 fn | DisclosureCeilingRequest, DisclosureDataClass | Moved from `crates/oneiron/src/disclosure/model_channel.rs` (lib split W1: wire types below the lib) |
 | `src/disclosure/task_ask_default.rs` | src | s | 1 enum | TaskAskDefault | Moved from `crates/oneiron/src/disclosure/task_ask_default.rs` (lib split W1: wire types below the lib) |
