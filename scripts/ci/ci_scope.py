@@ -19,6 +19,7 @@ Outputs:
   it        true when oneiron's integration tests or their support changed
   deny      true when the dependency policy inputs changed
   pytools   true when CI or tooling scripts changed
+  stemma_fork true when the vendored stemma fork, or the script that runs its unit tests, changed
 """
 import argparse
 import json
@@ -37,6 +38,10 @@ RUST_PATHS = FULL_PATHS + ("deny.toml", "oneiron.skills.md", ".github/workflows/
 # Files at the crate root that every module sees.
 ONEIRON_ROOT_FILES = {"lib.rs", "error.rs", "prelude.rs"}
 MAX_MODULES = 12
+# The vendored stemma fork: two packages outside the workspace (root Cargo.toml `exclude`). No workspace run
+# compiles their own unit tests; STEMMA_FORK_RUNNER does.
+STEMMA_FORK_PREFIXES = ("crates/oneiron-docedit/vendor/stemma-engine/", "crates/oneiron-docedit/vendor/stemma-diff/")
+STEMMA_FORK_RUNNER = "scripts/docedit/run_stemma_fork_unit_tests.sh"
 
 
 def changed_files(base, head):
@@ -100,7 +105,7 @@ def reverse_dependents(touched):
 
 def scope(files, force_full):
     out = {"rust": False, "full": force_full, "packages": [], "dependents": [], "oneiron": False,
-           "modules": set(), "it": False, "deny": False, "pytools": False}
+           "modules": set(), "it": False, "deny": False, "pytools": False, "stemma_fork": False}
     for f in files:
         if f in FULL_PATHS or f.startswith(FULL_PREFIXES):
             out["full"] = True
@@ -110,6 +115,9 @@ def scope(files, force_full):
             out["deny"] = True
         if f.startswith(("scripts/", ".github/")):
             out["pytools"] = True
+        if f.startswith(STEMMA_FORK_PREFIXES) or f == STEMMA_FORK_RUNNER:
+            out["stemma_fork"] = True
+            out["rust"] = True  # the runner is a cargo test step: the test job must reach it
         parts = f.split("/")
         if parts[0] == "crates" and len(parts) > 2 and not workspace_excluded(parts[1]):
             pkg = package_of(parts[1])
@@ -160,6 +168,7 @@ def main():
         f"it={str(s['it']).lower()}",
         f"deny={str(s['deny']).lower()}",
         f"pytools={str(s['pytools']).lower()}",
+        f"stemma_fork={str(s['stemma_fork']).lower()}",
     ]
     for line in lines:
         print(line)
