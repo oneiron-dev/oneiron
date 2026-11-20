@@ -63,6 +63,17 @@
 //!    limit (the guest's measured memory room) but not the guest's
 //!    interpreter heap: the guest reports it not taken and the call is
 //!    refused as in 6. Green on main too.
+//! 10. `a_deep_skill_answer_without_a_post_hook_arrives_as_a_card`
+//!     ([SKILL-ANSWER-DEEP-JSON-STACK-SAFE]): a small answer nesting 150
+//!     arrays deep, past the whole-answer parser's depth, with no hook
+//!     bound, reaches the program as a card named `r1` whose body is the
+//!     whole answer, which the guest parses itself. No host value follows
+//!     its depth. Red on main: the call is refused, "nests too deep to
+//!     read whole".
+//! 11. `an_admitted_deep_answer_without_a_live_chain_arrives_as_a_card`:
+//!     the same answer through the admitted entry with no outer chain
+//!     live: the bound card of the readable body, exactly as a large
+//!     answer arrives (4). Red on main as in 10.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron --all-features
@@ -1123,6 +1134,142 @@ fn a_live_post_chain_refuses_a_too_deep_answer_precisely_never_as_non_json() {
     assert!(
         record.bindings.is_empty(),
         "no binding names a body for the refused answer",
+    );
+}
+
+/// The small deep answer's `pad` length: its JSON is far under
+/// `RESULT_REPLY_INLINE_BYTES`, so only its nesting keeps it from the
+/// inline reply.
+const DEEP_SMALL_PAD_BYTES: usize = 16;
+
+/// The deep skill's answer for a `pad` of `bytes` bytes, as its program
+/// writes it: `pad`, then `deep`, [`DEEP_LEVELS`] arrays around `0`.
+fn deep_answer_text(bytes: usize) -> String {
+    format!(
+        r#"{{"pad":"{}","deep":{}0{}}}"#,
+        "b".repeat(bytes),
+        "[".repeat(DEEP_LEVELS),
+        "]".repeat(DEEP_LEVELS),
+    )
+}
+
+/// The deep-card program: it calls the deep skill with a small pad,
+/// checks the reply is a card, reads its body through `slice`, parses it
+/// itself, and finishes with the card's size, the body's nesting under
+/// `deep` and its leaf.
+const DEEP_CARD_PROGRAM: &str = r#"let out = null, callError = null;
+try {
+  out = await self.skills.call({skill: "__SKILL__", args: {bytes: __BYTES__}});
+} catch (e) {
+  callError = String(e).slice(0, 160);
+}
+if (callError !== null) {
+  finish("call-threw:" + callError);
+} else {
+  const isCard = out && typeof out === "object"
+    && typeof out.handle === "string" && typeof out.bytes === "number";
+  if (!isCard) {
+    finish("not-a-card:" + JSON.stringify(out).slice(0, 200));
+  } else {
+    const piece = await slice(out, {bytes: [0, 4096]});
+    let depth = 0, node = null;
+    if (typeof piece.text === "string") {
+      node = JSON.parse(piece.text).deep;
+      while (Array.isArray(node)) {
+        depth++;
+        node = node[0];
+      }
+    }
+    finish("card:bytes:" + out.bytes + ":depth:" + depth + ":leaf:" + node);
+  }
+}"#;
+
+#[test]
+fn a_deep_skill_answer_without_a_post_hook_arrives_as_a_card() {
+    let (_dir, vault) = open_vault();
+    let factory = quickjs_factory();
+    let skill = deep_skill(&vault);
+    let run_id = fresh_id();
+    let program = program_with(DEEP_CARD_PROGRAM, skill, &[])
+        .replace("__BYTES__", &DEEP_SMALL_PAD_BYTES.to_string());
+
+    let (outcome, calls) = execute_run(&vault, &factory, run_id, vec![program]);
+    let outcome = outcome.expect("the run completes");
+    assert_eq!(calls, 1, "one turn runs one program");
+    assert_eq!(outcome.status, EngineExecutorStatus::Complete);
+    let expected = deep_answer_text(DEEP_SMALL_PAD_BYTES);
+    assert_eq!(
+        doors::finish_text(&vault, &run_id).expect("the answer reads back"),
+        format!("card:bytes:{}:depth:{DEEP_LEVELS}:leaf:0", expected.len()),
+    );
+    assert_eq!(outcome.replay_record.bridge_calls.len(), 1);
+    let output = bridge_output(&outcome.replay_record.bridge_calls[0]);
+    assert!(
+        output
+            .get("handle")
+            .and_then(serde_json::Value::as_str)
+            .is_some(),
+        "the deep answer arrives as a card: {output}",
+    );
+    assert_eq!(
+        output.get("name").and_then(serde_json::Value::as_str),
+        Some("r1"),
+    );
+}
+
+#[test]
+fn an_admitted_deep_answer_without_a_live_chain_arrives_as_a_card() {
+    let (_dir, vault) = open_vault();
+    let factory = quickjs_factory();
+    let skill = deep_skill(&vault);
+    let run_id = fresh_id();
+    let (actor, leased) = leased_actor(&vault, run_id);
+
+    let pre = outer_pre_with_bytes(&vault, actor, skill, DEEP_SMALL_PAD_BYTES);
+    assert!(
+        pre.passed_through(),
+        "no hook is bound, so the outer chain passes through",
+    );
+    let answer = admitted_skill_call_result(
+        &vault,
+        &factory,
+        run_id,
+        actor,
+        &leased,
+        skill,
+        DEEP_SMALL_PAD_BYTES,
+        !pre.passed_through(),
+    )
+    .expect("the admitted deep answer arrives");
+    let view = outer_post(&vault, pre, answer.clone());
+    assert_eq!(view, answer, "no live chain, so the caller sees the answer");
+
+    let expected = deep_answer_text(DEEP_SMALL_PAD_BYTES);
+    assert_eq!(
+        answer.get("bytes").and_then(serde_json::Value::as_u64),
+        Some(expected.len() as u64),
+        "the answer is the deep body's card: {answer}",
+    );
+    assert_eq!(
+        answer.get("name").and_then(serde_json::Value::as_str),
+        Some("r1"),
+    );
+    let handle = answer
+        .get("handle")
+        .and_then(serde_json::Value::as_str)
+        .expect("the card carries its handle");
+    let record = admitted_record(&vault, &run_id);
+    assert_eq!(record.bridge_calls.len(), 1);
+    assert!(
+        !record.bridge_calls[0].hook_view_served,
+        "no hook view was served",
+    );
+    assert!(
+        record
+            .bindings
+            .iter()
+            .any(|binding| binding.name == "r1" && binding.handle == handle),
+        "the card's name binds the readable body",
     );
 }
 
