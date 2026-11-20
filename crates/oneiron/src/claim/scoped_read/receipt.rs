@@ -195,21 +195,23 @@ impl ScopedRead<'_> {
     /// its own live Grants reads (`SearchPlan::candidates`), so a search
     /// whose key reads nothing by itself still runs when a Grant reads some
     /// rows. It reports, never authorizes: every row still takes the row gate.
+    /// A receipt that reports the live Grants loads them once
+    /// ([`Self::receipt_candidates_in`]).
     pub(crate) fn search_receipt(
         &self,
         requested: Option<&RetrievalFilter>,
         suppressed: usize,
     ) -> crate::Result<ScopedReadReceipt> {
         let txn = self.grant_read_txn()?;
-        let plan = self.search_plan_in(&txn, requested)?;
-        Ok(self.receipt_in(
+        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
+        let candidates = self.receipt_candidates_in(
             &txn,
+            &policy,
+            &filter,
             requested,
-            &plan.policy,
-            &plan.candidates,
-            suppressed,
-            None,
-        ))
+            self.receipts_include_live_grants,
+        );
+        Ok(self.receipt_in(&txn, requested, &policy, &candidates, suppressed, None))
     }
 
     /// The receipt for a scan that already holds its transaction: the

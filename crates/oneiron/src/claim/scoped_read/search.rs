@@ -553,9 +553,15 @@ impl ScopedRead<'_> {
         // A search's receipt reports the candidates it ranked: the key's own
         // filter's rows and its own live Grants' (FIX 7528), so a later page
         // asked under it never refuses a row this search admitted.
-        let candidates = self.candidate_filter_in(&txn, policy, filter, requested);
-        let fresh_candidates =
-            self.candidate_filter_in(&txn, &fresh_policy, &fresh_filter, requested);
+        let candidates =
+            self.receipt_candidates_in(&txn, policy, filter, requested, report_live_grants);
+        let fresh_candidates = self.receipt_candidates_in(
+            &txn,
+            &fresh_policy,
+            &fresh_filter,
+            requested,
+            report_live_grants,
+        );
         let mut receipt = self.receipt_reporting_in(
             &txn,
             requested,

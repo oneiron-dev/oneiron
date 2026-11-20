@@ -202,6 +202,26 @@ impl ScopedRead<'_> {
         }
     }
 
+    /// The applied scope a search receipt under `filter` starts from (FIX
+    /// 7528). With `report_live_grants` it is `filter` alone:
+    /// [`Self::live_grant_receipt_scope_in`] joins the Grants the rows' gate
+    /// held, so the ceiling and the applied scope name the same Grants even
+    /// when one lapsed between two loads (review round 1 of #9794).
+    /// Otherwise the candidates, joined with the Grants live in `rtxn`.
+    pub(super) fn receipt_candidates_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        requested: Option<&RetrievalFilter>,
+        report_live_grants: bool,
+    ) -> ResolvedRetrievalFilter {
+        if report_live_grants {
+            return filter.clone();
+        }
+        self.candidate_filter_in(rtxn, policy, filter, requested)
+    }
+
     /// The live Grants A may stand on for this key, each with its read
     /// Scope, when A may stand for it ([`Self::grant_reader`]); `None` when
     /// A never stands for it. A lookup that fails adds no Grant and is
