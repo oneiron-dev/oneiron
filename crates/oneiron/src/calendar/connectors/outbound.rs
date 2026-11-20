@@ -141,6 +141,11 @@ pub struct CalendarWriteOutboxRow {
     /// as a read of the staged bytes does, before the passport makes those
     /// bytes an echo.
     pub resource_zone: Option<String>,
+    /// The staged resource's members whose rendered VEVENT reads cancelled.
+    /// Settlement marks each one's passport `written_cancelled`: the seat's
+    /// later report of that cancellation echoes this write and moves no
+    /// deposit money (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
+    pub cancelled_members: Vec<EntityId>,
     /// The precondition the write carries.
     pub expected_etag: Option<String>,
     /// The resource the write targets, when one is known.
@@ -361,6 +366,7 @@ pub fn write_calendar_event(
         content_hash,
         component_hashes: rendered.component_hashes,
         resource_zone: rendered.resource_zone,
+        cancelled_members: rendered.cancelled_members,
         expected_etag: expected_etag.clone(),
         href: href.clone(),
         receipt: None,
@@ -645,6 +651,14 @@ fn finish_remote_applied_write_in_txn(
         } else {
             CalendarPassportDirection::Outbound
         };
+        // A member written cancelled marks its passport, so the seat's later
+        // cancelled versions of it (a provider that rewrites the stored
+        // resource) read as this write, not a host cancel. A seat that
+        // reported the cancellation itself before this write keeps it its own.
+        let written_cancelled = row.cancelled_members.contains(&member)
+            && current
+                .as_ref()
+                .is_none_or(|(_, value)| value.cancelled_since.is_none());
         let next = CalendarPassportValue {
             system: row.system.clone(),
             uid: row.uid.clone(),
@@ -655,12 +669,14 @@ fn finish_remote_applied_write_in_txn(
             last_seen_at: now,
             presence: CalendarPassportPresence::Live,
             cancelled_since: None,
+            written_cancelled,
         };
         let already_applied = current.as_ref().is_some_and(|(_, value)| {
             value.last_sequence == next.last_sequence
                 && value.content_hash == next.content_hash
                 && value.direction == next.direction
                 && value.presence == next.presence
+                && value.written_cancelled == next.written_cancelled
         });
         if !already_applied {
             let new_id = admit_screened_in_txn(
@@ -709,6 +725,8 @@ pub(super) struct StoredOutboxRow {
     component_hashes: Vec<([u8; 16], [u8; 32])>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     resource_zone: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    cancelled_members: Vec<[u8; 16]>,
     expected_etag: Option<String>,
     href: Option<String>,
     receipt: Option<RemoteWriteReceipt>,
@@ -736,6 +754,11 @@ impl StoredOutboxRow {
                 .map(|(member, hash)| (*member.as_bytes(), *hash))
                 .collect(),
             resource_zone: literal::projection(&row.resource_zone)?,
+            cancelled_members: row
+                .cancelled_members
+                .iter()
+                .map(|member| *member.as_bytes())
+                .collect(),
             expected_etag: literal::projection(&row.expected_etag)?,
             href: literal::projection(&row.href)?,
             receipt: literal::projection(&row.receipt)?,
@@ -770,6 +793,14 @@ impl StoredOutboxRow {
                 })
                 .collect::<Result<_, CalendarConnectorError>>()?,
             resource_zone: self.resource_zone,
+            cancelled_members: self
+                .cancelled_members
+                .into_iter()
+                .map(|member| {
+                    EntityId::from_bytes(member)
+                        .map_err(|_| ingest_error("outbox cancelled member carries no entity id"))
+                })
+                .collect::<Result<_, CalendarConnectorError>>()?,
             expected_etag: self.expected_etag,
             href: self.href,
             receipt: self.receipt,

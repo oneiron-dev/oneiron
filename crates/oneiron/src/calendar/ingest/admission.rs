@@ -604,6 +604,12 @@ impl PollAdmission<'_> {
                 .and_then(|prior| prior.cancelled_since)
                 .unwrap_or(self.now)
         });
+        // A cancelled version of an EVENT the engine wrote to this calendar
+        // already cancelled is that write coming back (a provider that
+        // rewrites the stored resource), until the source shows the EVENT
+        // uncancelled.
+        let written_cancelled =
+            event.cancelled && prior.as_ref().is_some_and(|prior| prior.written_cancelled);
         Ok(CalendarPassportValue {
             system: self.system.to_owned(),
             uid: event.uid.clone(),
@@ -614,6 +620,7 @@ impl PollAdmission<'_> {
             last_seen_at: self.now,
             presence,
             cancelled_since,
+            written_cancelled,
         })
     }
 

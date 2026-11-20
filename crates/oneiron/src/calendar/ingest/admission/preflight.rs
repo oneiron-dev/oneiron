@@ -21,6 +21,7 @@ impl PollAdmission<'_> {
             last_seen_at: self.now,
             presence: CalendarPassportPresence::Live,
             cancelled_since: None,
+            written_cancelled: false,
         };
         validate_calendar_claim_value(
             PREDICATE_CALENDAR_PASSPORT,

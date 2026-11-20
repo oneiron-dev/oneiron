@@ -115,4 +115,12 @@ pub struct CalendarPassportValue {
     /// A host-cancel deposit refund is dated by it, not by the newest version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cancelled_since: Option<u64>,
+    /// Whether the cancellation this source reports is the engine's own write
+    /// of the EVENT, already cancelled, to this calendar: set by that write's
+    /// receipt and carried across the source's later cancelled versions (a
+    /// provider that rewrites the stored resource); false once the source
+    /// reports the UID uncancelled. Such a cancellation is no host cancel and
+    /// moves no deposit money.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub written_cancelled: bool,
 }
