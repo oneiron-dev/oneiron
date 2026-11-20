@@ -5,6 +5,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::io::{IsTerminal as _, Read as _, Write as _};
+use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -48,10 +49,9 @@ pub(crate) fn hand_off_commit(
 ) -> anyhow::Result<HandOff> {
     let top = repo_top(dir, deadline)?;
     // The repo's own index, wherever a worktree keeps it; relative to `top`.
-    let index = top.join(git(
+    let index = top.join(git_path(
         &top,
         ["rev-parse", "--git-path", "index"],
-        &[],
         deadline,
     )?);
     let scratch = tempfile::Builder::new()
@@ -84,12 +84,7 @@ pub(crate) fn hand_off_commit(
 
 /// The top directory of the repo that holds `dir`, as git names it.
 pub(super) fn repo_top(dir: &Path, deadline: Instant) -> anyhow::Result<PathBuf> {
-    Ok(PathBuf::from(git(
-        dir,
-        ["rev-parse", "--show-toplevel"],
-        &[],
-        deadline,
-    )?))
+    git_path(dir, ["rev-parse", "--show-toplevel"], deadline)
 }
 
 /// The custody repo a hand-off goes to, and the paired slip that pushes it.
@@ -166,9 +161,16 @@ pub(crate) fn push(
         advertised.refs.iter().map(|(oid, _)| oid.as_str()),
         deadline,
     )?;
-    lfs::send_objects(
+    let old_tip = if old.bytes().all(|byte| byte == b'0') {
+        lfs::OldTip::Created
+    } else if held.contains(&old) {
+        lfs::OldTip::Held(&old)
+    } else {
+        lfs::OldTip::Unheld
+    };
+    let unsent = lfs::send_objects(
         top,
-        held.iter().map(String::as_str).find(|oid| *oid == old),
+        old_tip,
         commit,
         &lfs::LfsDoor {
             client: &client,
@@ -220,7 +222,7 @@ pub(crate) fn push(
     let packed = pack.wait()?;
     let report = answered(sent?, RESULT_TYPE)?;
     anyhow::ensure!(packed.success(), "git pack-objects failed ({packed})");
-    pushed(&report, git_ref)
+    pushed(&report, git_ref).map_err(|refused| lfs::naming_unsent(refused, &unsent))
 }
 
 /// Git reads each object as stored, never through a `refs/replace/` stand-in
@@ -424,6 +426,25 @@ where
         String::from_utf8_lossy(&ran.stderr).trim()
     );
     Ok(String::from_utf8_lossy(&ran.stdout).trim().to_owned())
+}
+
+/// `git -C dir <args>`'s stdout as a path, byte for byte but for the newline
+/// git ends it with: a path may hold any byte but NUL, so it is never decoded
+/// as UTF-8 or trimmed. A failure names git's own words. It ends by
+/// `deadline` ([`run_git`]).
+fn git_path<I, S>(dir: &Path, args: I, deadline: Instant) -> anyhow::Result<PathBuf>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let ran = run_git(dir, args, &[], deadline)?;
+    anyhow::ensure!(
+        ran.status.success(),
+        "git: {}",
+        String::from_utf8_lossy(&ran.stderr).trim()
+    );
+    let path = ran.stdout.strip_suffix(b"\n").unwrap_or(&ran.stdout);
+    Ok(PathBuf::from(OsStr::from_bytes(path)))
 }
 
 /// How one git run ended, with what it wrote.

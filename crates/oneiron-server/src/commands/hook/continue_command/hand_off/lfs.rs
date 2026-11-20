@@ -12,11 +12,17 @@
 //!
 //! The pointers are the ones the custody repo's pre-receive frames: each blob
 //! the tip diff adds or changes (`git diff-tree --diff-filter=AMT`) from the
-//! ref's old commit, or from the empty tree for a new ref or for an old commit
-//! this repo lacks, that reads as a pointer by the landing's own grammar
+//! ref's old commit, or from the empty tree for a new ref, that reads as a
+//! pointer by the landing's own grammar
 //! ([`LfsPushedPointer::from_pointer_content`]). Git reads each object as
 //! stored, as pack-objects and that pre-receive do, never through a local
-//! `refs/replace/` stand-in ([`STORED_OBJECTS`]).
+//! `refs/replace/` stand-in ([`STORED_OBJECTS`]). When this repo lacks the
+//! old commit of an existing ref (another clone made it), the diff from the
+//! empty tree holds every pointer the custody repo's does, and the ones the
+//! old commit already carried too: of those, an object this machine lacks is
+//! not sent, never a reason to stop, since the pre-receive diffs from the old
+//! commit itself and the landing refuses any pointer it frames whose object
+//! the vault lacks ([`OldTip::Unheld`]).
 //!
 //! Every request carries the slip and a fresh holder proof, as receive-pack's
 //! do, and goes to the custody repo's base only: an object's address is built
@@ -40,7 +46,7 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 
-use super::{STORED_OBJECTS, answered, git, run_git, run_git_fed};
+use super::{STORED_OBJECTS, answered, git, git_path, run_git, run_git_fed};
 
 /// Objects one batch call names: the count Git-LFS servers commonly take, and
 /// the engine's own batch client's.
@@ -62,42 +68,97 @@ pub(super) struct LfsDoor<'a> {
     pub(super) proven: &'a Proven<'a>,
 }
 
-/// Sends the Git-LFS objects of the pointers `commit` adds over `old` (the
-/// ref's old commit as this repo holds it; `None` for a new ref or one this
-/// repo lacks) that the custody repo at `door` does not hold yet. Every object
-/// the vault asks for is found on this machine before the first byte goes, so
-/// one that is missing, or is no regular file, stops the push before any
-/// upload, naming its path; each is opened again for its upload. Each git run
-/// and each request ends by `deadline`.
+/// The ref's old commit, which the custody repo's pre-receive diffs the
+/// push's tip from.
+#[derive(Clone, Copy)]
+pub(super) enum OldTip<'a> {
+    /// No ref yet: the custody repo diffs from the empty tree, as this push
+    /// does.
+    Created,
+    /// An old commit this repo holds: this push diffs from it, as the custody
+    /// repo does.
+    Held(&'a str),
+    /// An old commit this repo lacks, so this push diffs from the empty tree:
+    /// it reads every pointer the custody repo frames, and the ones the old
+    /// commit already carried too.
+    Unheld,
+}
+
+/// Sends the Git-LFS objects of the pointers `commit` adds over `old` that
+/// the custody repo at `door` does not hold yet. Every object the vault asks
+/// for is found on this machine before the first byte goes, so one that is
+/// no regular file stops the push before any upload, naming its path, and so
+/// does a missing one, but for an [`OldTip::Unheld`] ref: there a missing
+/// object may be one the old commit already carried, which the custody repo
+/// asks for no more, so it is left out, and the paths of those left out are
+/// answered. Each is opened again for its upload. Each git run and each
+/// request ends by `deadline`.
 pub(super) fn send_objects(
     top: &Path,
-    old: Option<&str>,
+    old: OldTip<'_>,
     commit: &str,
     door: &LfsDoor<'_>,
     deadline: Instant,
-) -> anyhow::Result<()> {
-    let pointers = added_pointers(top, old, commit, deadline)?;
+) -> anyhow::Result<Vec<String>> {
+    let base = match old {
+        OldTip::Held(old) => Some(old),
+        OldTip::Created | OldTip::Unheld => None,
+    };
+    let pointers = added_pointers(top, base, commit, deadline)?;
     if pointers.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let mut asked = Vec::new();
     for batch in pointers.chunks(BATCH_OBJECTS) {
         asked.extend(door.asked(batch, deadline)?);
     }
     if asked.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let store = object_store(top, deadline)?;
-    for (pointer, _) in &asked {
-        local_object(&store, pointer)?;
-    }
+    let mut sent = Vec::new();
+    let mut unsent = Vec::new();
     for (pointer, verify) in asked {
-        door.upload(local_object(&store, pointer)?, pointer, deadline)?;
+        if local_object(&store, pointer)?.is_some() {
+            sent.push((pointer, verify));
+        } else if matches!(old, OldTip::Unheld) {
+            unsent.push(path_of(pointer));
+        } else {
+            return Err(missing(pointer));
+        }
+    }
+    for (pointer, verify) in sent {
+        let object = local_object(&store, pointer)?.ok_or_else(|| missing(pointer))?;
+        door.upload(object, pointer, deadline)?;
         if verify {
             door.verify(pointer, deadline)?;
         }
     }
-    Ok(())
+    Ok(unsent)
+}
+
+/// `refused`, the custody repo's refusal of a push that left out the Git-LFS
+/// objects of the paths `unsent` ([`send_objects`]), naming them: its
+/// pre-receive may have framed their pointers.
+pub(super) fn naming_unsent(refused: anyhow::Error, unsent: &[String]) -> anyhow::Error {
+    if unsent.is_empty() {
+        return refused;
+    }
+    anyhow::anyhow!(
+        "{refused}; the Git-LFS objects of {} are not on this machine, and the vault asked \
+         for them: fetch them (`git lfs fetch`) or leave the files out of the work",
+        unsent.join(", ")
+    )
+}
+
+/// The error of an object the vault asks for that this machine lacks.
+fn missing(pointer: &LfsPushedPointer) -> anyhow::Error {
+    anyhow::anyhow!(
+        "the Git-LFS object of {} ({}) is not on this machine, and the vault does not hold it: \
+         fetch it (`git lfs fetch`) or leave the file out of the work",
+        path_of(pointer),
+        pointer.oid.to_hex()
+    )
 }
 
 impl LfsDoor<'_> {
@@ -349,10 +410,11 @@ fn batch_object<'r>(rest: &'r [u8], oid: &str) -> anyhow::Result<(&'r [u8], &'r 
 
 /// This repo's git-lfs store: `lfs.storage` when the repo's config names
 /// one, below the git directory when it is relative, else the git
-/// directory's `lfs`, as git-lfs reads it. The value is read NUL-ended and
-/// kept byte for byte: a path may end in a space.
+/// directory's `lfs`, as git-lfs reads it. The git directory and the value
+/// are kept byte for byte: a path may end in a space, or hold a byte that is
+/// no UTF-8.
 fn object_store(top: &Path, deadline: Instant) -> anyhow::Result<PathBuf> {
-    let common = top.join(git(top, ["rev-parse", "--git-common-dir"], &[], deadline)?);
+    let common = top.join(git_path(top, ["rev-parse", "--git-common-dir"], deadline)?);
     let named = run_git(
         top,
         ["config", "-z", "--type=path", "--get", "lfs.storage"],
@@ -368,9 +430,10 @@ fn object_store(top: &Path, deadline: Instant) -> anyhow::Result<PathBuf> {
 }
 
 /// `pointer`'s object in `store`, open to read, when it is a regular file of
-/// the size the pointer names. It is opened without waiting, so a FIFO or a
-/// device at its path is refused, never waited on.
-fn local_object(store: &Path, pointer: &LfsPushedPointer) -> anyhow::Result<File> {
+/// the size the pointer names; `None` when nothing is at its path. It is
+/// opened without waiting, so a FIFO or a device at its path is refused, never
+/// waited on.
+fn local_object(store: &Path, pointer: &LfsPushedPointer) -> anyhow::Result<Option<File>> {
     let oid = pointer.oid.to_hex();
     let file = store
         .join("objects")
@@ -384,10 +447,7 @@ fn local_object(store: &Path, pointer: &LfsPushedPointer) -> anyhow::Result<File
         .open(&file)
     {
         Ok(object) => object,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => anyhow::bail!(
-            "the Git-LFS object of {named} ({oid}) is not on this machine, and the vault does \
-             not hold it: fetch it (`git lfs fetch`) or leave the file out of the work"
-        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
     let found = object.metadata()?;
@@ -401,7 +461,7 @@ fn local_object(store: &Path, pointer: &LfsPushedPointer) -> anyhow::Result<File
         "this machine's Git-LFS object of {named} holds {size} bytes, not the {} its pointer names",
         pointer.size_bytes
     );
-    Ok(object)
+    Ok(Some(object))
 }
 
 /// `git -C top <args>` with `input` on its stdin, reading objects as stored
