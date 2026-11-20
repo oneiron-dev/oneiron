@@ -1499,3 +1499,128 @@ fn an_extraction_arm_needs_its_pin_and_a_history_with_a_correction() {
     assert!(reader.dreamer.lock().unwrap().is_empty());
     assert!(reader.requests.lock().unwrap().is_empty());
 }
+
+/// The online arm's model calls by the after-correction probe of `history`
+/// in `report`.
+fn online_calls_after_correction(report: &Value, history: &str) -> u64 {
+    report["extraction"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["history"] == history && row["arm"] == "extract_online")
+        .unwrap()["probes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tally| tally["probe"] == "after_correction")
+        .unwrap()["model_calls"]
+        .as_u64()
+        .unwrap()
+}
+
+/// The after-correction probe comes right after the correcting turn's own
+/// step (#7875 review round 2): a user turn said at the same time, after it
+/// in the history, is replayed only after the probe, so the online arm has
+/// made the same model calls by that probe as on the shipped history.
+#[test]
+fn the_after_correction_probe_stops_at_the_correcting_turn() {
+    let reader = start_reader(BTreeMap::new());
+    let dir = tempfile::tempdir().unwrap();
+    let mut tasks = shipped_tasks();
+    let owen = history_mut(&mut tasks, "owen");
+    let turns = owen["turns"].as_array_mut().unwrap();
+    let correcting = turns
+        .iter()
+        .position(|turn| turn["at"] == 1_780_005_000_u64)
+        .unwrap();
+    turns.insert(
+        correcting + 1,
+        json!({
+            "at": 1_780_005_000_u64,
+            "author": "user",
+            "text": "Actually I now see Dr. Nordin.",
+        }),
+    );
+    let path = dir.path().join("same-time-turn.tasks.json");
+    std::fs::write(&path, tasks.to_string()).unwrap();
+    let output = run_bench(&write_plan_with(
+        dir.path(),
+        &reader.endpoint,
+        &path,
+        &EXTRACTION_ARMS,
+        true,
+    ));
+    assert!(
+        output.status.success(),
+        "the bench run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        online_calls_after_correction(&report, "owen"),
+        online_calls_after_correction(&extraction_run().report, "owen"),
+        "a turn said after the correcting turn was replayed before the probe"
+    );
+}
+
+/// A claim deleted before a later write on its slot holds the slot no
+/// longer, so that write is no correction (#7875 review round 2). With Owen's
+/// first dentist claim deleted before the Lindqvist turn, his history has no
+/// correction, and the extraction arms refuse it before any model call.
+#[test]
+fn a_write_on_a_slot_whose_claim_was_deleted_is_no_correction() {
+    let reader = start_reader(BTreeMap::new());
+    let dir = tempfile::tempdir().unwrap();
+    let mut tasks = shipped_tasks();
+    let owen = history_mut(&mut tasks, "owen");
+    for claim in owen["claims"].as_array_mut().unwrap() {
+        if claim["at"] == 1_780_000_000_u64 {
+            claim["deleted_at"] = json!(1_780_004_000_u64);
+        }
+    }
+    let path = dir.path().join("deleted-before-correction.tasks.json");
+    std::fs::write(&path, tasks.to_string()).unwrap();
+    let output = run_bench(&write_plan_with(
+        dir.path(),
+        &reader.endpoint,
+        &path,
+        &EXTRACTION_ARMS,
+        true,
+    ));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "a deleted claim still held its slot"
+    );
+    assert!(
+        stderr.contains("owen") && stderr.contains("trace check, world"),
+        "{stderr}"
+    );
+    assert!(reader.dreamer.lock().unwrap().is_empty());
+}
+
+/// Each turn is extracted in the world it was said in (#7875 review round
+/// 2): a turn of a world is witnessed into that world's conversation, so a
+/// scoped follow-up's context under an extraction arm holds no claim of
+/// another world's value. Before, every turn sat in one unscoped
+/// conversation, and Owen's home playlist reached his work follow-up.
+#[test]
+fn the_extraction_arms_extract_each_turn_in_its_own_world() {
+    let run = extraction_run();
+    let tasks = shipped_tasks();
+    for id in SCOPED {
+        let other = listed(&follow_up(&tasks, id)["rubric"]["other_scope"]);
+        for arm in &EXTRACTION_ARMS[1..] {
+            let context = probe_row(run, arm, "after_consolidation", id)["context"]
+                .as_str()
+                .unwrap()
+                .to_lowercase();
+            for value in &other {
+                assert!(
+                    !context.contains(&value.to_lowercase()),
+                    "{id} {arm}: another world's {value:?} in {context}"
+                );
+            }
+        }
+    }
+}
