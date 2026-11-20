@@ -1293,6 +1293,7 @@ fn test_memory_board(claim_score: f32) -> MemoriesSection {
         ],
         companion: None,
         disclosure: None,
+        cut: Default::default(),
     }
 }
 
