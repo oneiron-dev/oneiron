@@ -9,7 +9,6 @@ use super::super::types::BookingStatus;
 use super::{DEPOSIT, DEPOSIT_BOOKING, DepositState, booking_key, enqueue_settle, put_deposit};
 use crate::booking::BookingError;
 use crate::consent::AuthenticatedOwner;
-use crate::dreamer_runner::DreamerRunnerStore;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, MemoryError};
 use crate::verbs::{BookingDepositRefundReceipt, BookingDepositRefundState};
 use crate::{EntityId, Vault};
@@ -192,9 +191,11 @@ fn whole_return(state: DepositState) -> Option<DepositState> {
 /// BK-DEPOSIT-OWNER-RETURN-SCOPE = A, Engine 21 Nov 02:56): the owner gives a
 /// booking's held deposit back whole, in one booking writer. The proof is
 /// the vault owner's own unattenuated, undelegated one, revalidated in this
-/// writer; only a host selected at the booking's confirmation may use it, on
-/// the lifecycle home node that holds the deposit, once the booking is
-/// effectively cancelled (its own cancel or a calendar's) or has started. A
+/// writer; only a host selected at the booking's confirmation may use it,
+/// once the booking is effectively cancelled (its own cancel or a calendar's)
+/// or has started. It runs on the node that holds the deposit: the one whose
+/// booking writer confirmed it, which keeps it, with its settle rows, after a
+/// MACRO home move (a move carries no deposit row). A
 /// capture still due is released and a captured deposit owed back whole, as
 /// a host cancel does, with its settle row queued "owner-refund"; the
 /// booking's status and revision stay as they are. A deposit that already
@@ -206,8 +207,8 @@ fn whole_return(state: DepositState) -> Option<DepositState> {
 /// [`BookingError::Boundary`] for a proof that no longer holds or a caller
 /// who was not a selected host; [`BookingError::InvalidConstraint`] for an
 /// EVENT that is no booking; [`BookingError::InvalidConfig`] for a live
-/// booking that has not started, one with no deposit, or a call off the
-/// lifecycle home node; [`BookingError::SlotOracle`] on a store failure.
+/// booking that has not started, or one this node holds no deposit for;
+/// [`BookingError::SlotOracle`] on a store failure.
 pub(crate) fn refund_booking_deposit_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -218,7 +219,6 @@ pub(crate) fn refund_booking_deposit_as_owner(
             .owner_authored_write_in_txn(vault, &*wtxn)
             .map_err(|error| BookingError::Boundary(Box::new(MemoryError::from(error))))?
             .actor();
-        require_home_node_in_txn(vault, &*wtxn)?;
         let booking = read_booking_facts_to_cancel(vault, &*wtxn, event_ref)?;
         if !booking
             .context
@@ -243,7 +243,7 @@ pub(crate) fn refund_booking_deposit_as_owner(
             .map_err(|error| engine_failure("meta read", error))?
         else {
             return Err(BookingError::InvalidConfig(
-                "the booking holds no deposit".to_owned(),
+                "this node holds no deposit for the booking".to_owned(),
             ));
         };
         let Some(mut row) = DEPOSIT
@@ -251,7 +251,7 @@ pub(crate) fn refund_booking_deposit_as_owner(
             .map_err(|error| engine_failure("meta read", error))?
         else {
             return Err(BookingError::InvalidConfig(
-                "the booking holds no deposit".to_owned(),
+                "this node holds no deposit for the booking".to_owned(),
             ));
         };
         let queued = match whole_return(row.state) {
@@ -287,22 +287,6 @@ pub(crate) fn refund_booking_deposit_as_owner(
             queued,
         })
     })
-}
-
-/// A deposit's rows live on the lifecycle home node, beside the writer that
-/// confirmed its booking: on any other node the refund would find none.
-fn require_home_node_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<(), BookingError> {
-    let home = DreamerRunnerStore::new(vault)
-        .home_node_designation_in_txn(txn)
-        .map_err(|error| engine_failure("home node designation read", error))?;
-    let local = crate::identity::read_client_id_in_txn(vault, txn)
-        .map_err(|error| engine_failure("local node identity read", error))?;
-    if local.is_none() || home.is_none_or(|home| Some(home.node_id) != local) {
-        return Err(BookingError::InvalidConfig(
-            "a booking's deposit is refunded on the lifecycle home node".to_owned(),
-        ));
-    }
-    Ok(())
 }
 
 /// Whether the booking `event_ref` has a deposit a host cancel would move:
