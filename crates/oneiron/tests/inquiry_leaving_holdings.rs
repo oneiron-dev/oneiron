@@ -1109,3 +1109,52 @@ fn the_owners_delete_choice_erases_what_it_names() {
     );
     assert_eq!(fx.held_copies(), vec![copies[0]]);
 }
+
+/// Review round 2 of #8379: the leave action's nonce takes no hand-picked
+/// ask, not even one in the leave ask's own shape (the whole pact, at the
+/// terminal epoch), whose signer the peer may never have pinned.
+#[test]
+fn a_hand_picked_whole_pact_ask_cannot_take_the_leave_actions_nonce() {
+    let fx = leaving();
+    fx.land_copy();
+    fx.leave();
+    let pact = fx.pact();
+    let now = fx.member.vault.now_recorded_at();
+    let fold = fx.member.vault.authority_fold().expect("authority fold");
+    let ended = fold.federation_pacts.get(&pact).expect("the ended pact");
+    let terminal_epoch = ended.terminal_epoch.unwrap_or(ended.pact_epoch);
+    let whole_pact = fx
+        .member
+        .issuer
+        .sign_cooperative_deletion_request(
+            &fx.member.vault,
+            &pact,
+            Vec::new(),
+            terminal_epoch,
+            leave_ask_nonce(&pact, terminal_epoch),
+        )
+        .expect("the owner signs a whole-pact ask by hand");
+    assert_eq!(whole_pact.len(), 1, "one page");
+    let refused = fx
+        .member
+        .vault
+        .queue_cooperative_deletion_request_as(
+            &fx.member.proof,
+            &whole_pact[0],
+            &courtesy_route(COMPANY_HOST),
+            now,
+        )
+        .expect_err("only the leave action queues under its nonce");
+    assert!(
+        refused.to_string().contains("leave action"),
+        "refused as the leave action's nonce: {refused}"
+    );
+    assert!(
+        fx.member
+            .vault
+            .cooperative_deletion_notices()
+            .expect("sent asks")
+            .is_empty(),
+        "nothing queued"
+    );
+}
