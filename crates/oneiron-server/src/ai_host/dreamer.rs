@@ -201,13 +201,7 @@ pub(super) struct DreamerStart {
 /// window again). A context no larger than [`EXTRACTION_MAX_TOKENS`] with no
 /// ceiling, or no larger than its ceiling, reserves nothing.
 pub(super) fn dream_windows(models: &ModelsConfig) -> BTreeMap<ModelId, u64> {
-    rung_windows(models, |provider| match provider.max_output_tokens {
-        Some(ceiling) => ceiling,
-        None if provider.context_tokens > EXTRACTION_MAX_TOKENS => {
-            EXTRACTION_MAX_TOKENS.min(provider.context_tokens / 2)
-        }
-        None => 0,
-    })
+    rung_windows(models, |provider| provider.max_output_tokens.unwrap_or(0))
 }
 
 /// The input code mode's reader child may fill on each model a role's rungs
@@ -216,7 +210,13 @@ pub(super) fn dream_windows(models: &ModelsConfig) -> BTreeMap<ModelId, u64> {
 /// ceiling reserves nothing here; the Dreamer's extraction reserve stays in
 /// [`dream_windows`].
 pub(super) fn reader_windows(models: &ModelsConfig) -> BTreeMap<ModelId, u64> {
-    dream_windows(models)
+    rung_windows(models, |provider| match provider.max_output_tokens {
+        Some(ceiling) => ceiling,
+        None if provider.context_tokens > EXTRACTION_MAX_TOKENS => {
+            EXTRACTION_MAX_TOKENS.min(provider.context_tokens / 2)
+        }
+        None => 0,
+    })
 }
 
 /// Each rung model's provider context less the output `reserve` names for
