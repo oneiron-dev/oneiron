@@ -24,7 +24,9 @@ impl Memory<'_> {
         // its policy denies everything reads nothing, so its facet ref is not
         // looked up first, as recall's is not (FIX 6694).
         let selection = self.recall_selection(scope, None)?;
-        let lane = self.read_lane(crate::claim::ClaimReadStatus::Surfaceable)?;
+        let lane = self
+            .read_lane(crate::claim::ClaimReadStatus::Surfaceable)?
+            .with_live_grant_receipts();
         let lane = match selection.worlds() {
             Some(worlds) => lane.within_worlds(worlds.clone()),
             None => lane,

@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib.rs` | src | s | 2 mod | — | Web acquisition of the oneiron engine |
 | `src/web_acquisition/door.rs` | src | s | 2 struct · 1 fn | WebCrawlRequest, WebFetchRequest | Typed inputs for the two acquisition doors |
 | `src/web_acquisition/mod.rs` | src | m | 7 struct · 6 enum · 1 trait · 11 fn · 2 type · 2 const · 2 re-export · 3 crate-vis | CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope, FetchResult, MinExtractedContentBytes +6 | Web acquisition values and the host-supplied acquisition port |
-| `src/web_acquisition/refusal.rs` | src | s | 1 enum · 8 fn · 3 const · 2 crate-vis | HostedEgressRefusal | — |
+| `src/web_acquisition/refusal.rs` | src | s | 1 enum · 9 fn · 3 const · 2 crate-vis | HostedEgressRefusal | — |
 | `src/web_acquisition/result.rs` | src | s | 6 fn · 1 crate-vis | — | — |
 | `src/web_acquisition/url.rs` | src | s | 8 crate-vis | — | — |
 | `src/web_fetch.rs` | src | m | 6 struct · 2 trait · 12 fn · 5 re-export | FirecrawlRenderer, HeadlessDocument, HeadlessRenderer, NativeHeadlessRenderer, NativeReadabilityRenderer, RenderedPage, Renderer, WebFetcher | OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a… |

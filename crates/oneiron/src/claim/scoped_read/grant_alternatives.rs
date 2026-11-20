@@ -179,14 +179,57 @@ impl ScopedRead<'_> {
         raw: &[u8],
         position: &Scope,
     ) -> Result<bool> {
+        self.one_grant_alternative_holds_in(rtxn, authority, |alternative| {
+            self.grant_holds_shell_in(rtxn, id, raw, position, alternative)
+        })
+    }
+
+    /// Whether `grant` alone holds the deleted shell `raw` of `id` at the
+    /// `position` it still proves: that world, its type and its facets.
+    ///
+    /// # Errors
+    /// A store failure reading the shell's facets.
+    fn grant_holds_shell_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+        position: &Scope,
+        grant: &Scope,
+    ) -> Result<bool> {
         let entity_type = EntityMetadataHeader::parse(raw)
             .ok_or(Error::CorruptedIndex("entity header"))?
             .entity_type;
-        self.one_grant_alternative_holds_in(rtxn, authority, |alternative| {
-            Ok(holds_world(position, alternative)
-                && alternative.bands.contains(&entity_type)
-                && self.alternative_facets_admit_in(rtxn, id, Some(raw), alternative)?)
-        })
+        Ok(holds_world(position, grant)
+            && grant.bands.contains(&entity_type)
+            && self.alternative_facets_admit_in(rtxn, id, Some(raw), grant)?)
+    }
+
+    /// Whether `grant`, one live Grant of the reader's own (A), holds the
+    /// deleted shell `raw` of `id` at `position`, as a kept alternative
+    /// holds one ([`Self::grant_holds_shell_in`]). A shell that proves no
+    /// place (`proved` false) reads as if it sat anywhere, so only a Grant
+    /// over every world and every facet holds it (Engine ANSWER
+    /// GRANT-AGENT-DELETED-SHELLS = A).
+    ///
+    /// # Errors
+    /// A store failure reading the shell's facets.
+    pub(super) fn own_grant_holds_shell_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+        position: &Scope,
+        proved: bool,
+        grant: &Scope,
+    ) -> Result<bool> {
+        use oneiron_authority::federation::ScopeAxis;
+        Ok((proved
+            || matches!(
+                (&grant.worlds, &grant.facets),
+                (ScopeAxis::All, ScopeAxis::All)
+            ))
+            && self.grant_holds_shell_in(rtxn, id, raw, position, grant)?)
     }
 
     /// Whether `alternative`'s facets admit the row `id` whose stored row is

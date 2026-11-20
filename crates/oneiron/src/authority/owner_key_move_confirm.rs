@@ -74,8 +74,9 @@ pub struct OwnerKeyMovePlan {
     pub member: EntityId,
     /// The heads the first revoke names.
     pub parents: Vec<AuthorityEntryHash>,
-    /// The member's live owner keys, each of which one revoke ends.
-    pub revoked: Vec<[u8; 32]>,
+    /// The member's live owner keys, each of which one revoke ends: their
+    /// device keys and their passkeys (row WEB-PASSKEY-OWNER-KEY).
+    pub revoked: Vec<AuthorityKey>,
     /// The executor's keys that may sign.
     pub signers: Vec<OwnerKeyMoveSigner>,
     /// When it was planned, advisory unix seconds: each revoke's time.
@@ -114,11 +115,11 @@ where
     if plan.revoked.is_empty() || parents.is_empty() || parents.len() > MAX_PARENTS {
         return Err(not_valid(OWNER_KEY_MOVE_NOT_PLANNED));
     }
+    let signer_key = AuthorityKey::Ed25519(signer);
     let mut keys = plan.revoked.clone();
     // A key that proves the others ends last, after it proved them (as the
     // one-writer move orders its proof key).
-    keys.sort_by_key(|key| *key == signer);
-    let signer_key = AuthorityKey::Ed25519(signer);
+    keys.sort_by_key(|key| *key == signer_key);
     let mut rows = Vec::with_capacity(keys.len());
     for key in keys {
         let mut row = AuthorityLogEntry {
@@ -126,9 +127,7 @@ where
             vault_id: Some(plan.vault_id),
             seq,
             parent_hashes: parents.into_iter().collect(),
-            op: AuthorityOp::RevokeDevice {
-                revoked_key: AuthorityKey::Ed25519(key),
-            },
+            op: AuthorityOp::RevokeDevice { revoked_key: key },
             signer: AuthoritySignature {
                 suite: signer_key.suite(),
                 public_key: signer_key.clone(),
@@ -145,18 +144,12 @@ where
     Ok(rows)
 }
 
-/// The live owner keys enrolled to `member`, but `root` (a self-host root
-/// that is also an owner key ends only its binding), in enrolment order.
-fn member_owner_keys(
-    keys: &[EnrolledOwnerKey],
-    member: EntityId,
-    root: Option<&AuthorityKey>,
-) -> Vec<[u8; 32]> {
-    keys.iter()
-        .filter(|key| key.live && key.owner == member)
-        .map(|key| key.public_key)
-        .filter(|key| root != Some(&AuthorityKey::Ed25519(*key)))
-        .collect()
+/// `keys`, the live owner keys enrolled to a member
+/// (`Vault::live_owner_keys_enrolled_for_in_txn`: their device keys and
+/// their passkeys), but `root` (a self-host root that is also an owner key
+/// ends only its binding).
+fn member_owner_keys(keys: Vec<AuthorityKey>, root: Option<&AuthorityKey>) -> Vec<AuthorityKey> {
+    keys.into_iter().filter(|key| root != Some(key)).collect()
 }
 
 /// The owner keys `person` may confirm a move with on `fold`: live, enrolled
@@ -248,7 +241,10 @@ impl Vault {
             vault_id,
             member,
             parents: fold.append_heads.iter().copied().collect(),
-            revoked: member_owner_keys(&keys, member, root.as_ref()),
+            revoked: member_owner_keys(
+                self.live_owner_keys_enrolled_for_in_txn(txn, member)?,
+                root.as_ref(),
+            ),
             signers: owner_key_move_signers(&fold, &keys, executor, hosted(self))?,
             at: self.instant_in_txn(txn)?.secs(),
         })
@@ -277,7 +273,10 @@ impl Vault {
     /// for a plan of another member than `member`
     /// ([`OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED`]), a plan of another vault,
     /// keys this copy does not show as the plan names them (sync first), or
-    /// when this install holds none of the owner's keys the plan names.
+    /// when this install holds none of the owner's keys the plan names (a
+    /// key that rests under a device PIN counts only inside the window a
+    /// right PIN opened); the signer's refusal, for a key that stopped after
+    /// it was picked.
     pub fn sign_owner_key_move_as(
         &self,
         authority: &ActAuthority,
@@ -297,17 +296,20 @@ impl Vault {
             return Err(not_valid(OWNER_KEY_MOVE_NOT_PLANNED));
         }
         let keys = self.enrolled_owner_keys_in_txn(&txn)?;
-        let shown: BTreeSet<[u8; 32]> = member_owner_keys(&keys, plan.member, None)
-            .into_iter()
-            .collect();
-        let planned: BTreeSet<[u8; 32]> = plan.revoked.iter().copied().collect();
+        let shown: BTreeSet<AuthorityKey> = member_owner_keys(
+            self.live_owner_keys_enrolled_for_in_txn(&txn, plan.member)?,
+            None,
+        )
+        .into_iter()
+        .collect();
+        let planned: BTreeSet<AuthorityKey> = plan.revoked.iter().cloned().collect();
         if shown != planned {
             return Err(not_valid(OWNER_KEY_MOVE_NOT_SYNCED));
         }
         let signer = self
             .owner_proof_signer(&fold)
             .ok_or_else(|| not_valid(OWNER_KEY_MOVE_NO_HELD_KEY))?;
-        let AuthorityKey::Ed25519(held) = signer.root() else {
+        let AuthorityKey::Ed25519(held) = signer.key() else {
             return Err(not_valid(OWNER_KEY_MOVE_NO_HELD_KEY));
         };
         let own = keys
@@ -317,7 +319,7 @@ impl Vault {
             return Err(not_valid(OWNER_KEY_MOVE_NO_HELD_KEY));
         }
         drop(txn);
-        sign_owner_key_move(plan, held, |transcript| signer.sign_owner_proof(transcript))?
+        sign_owner_key_move(plan, held, |transcript| signer.sign(&fold, transcript))?
             .iter()
             .map(encode_authority_log_entry_body)
             .collect()
@@ -394,10 +396,7 @@ impl Vault {
         let mut previous: Option<AuthorityEntryHash> = None;
         let mut hashes = Vec::with_capacity(entries.len());
         for (offset, entry) in entries.iter().enumerate() {
-            let AuthorityOp::RevokeDevice {
-                revoked_key: AuthorityKey::Ed25519(key),
-            } = &entry.op
-            else {
+            let AuthorityOp::RevokeDevice { revoked_key } = &entry.op else {
                 return Err(not_valid(OWNER_KEY_MOVE_NOT_PLANNED));
             };
             let seq = u64::try_from(offset)
@@ -416,20 +415,23 @@ impl Vault {
             {
                 return Err(not_valid(OWNER_KEY_MOVE_NOT_PLANNED));
             }
-            revoked.push(*key);
+            revoked.push(revoked_key.clone());
             let hash = authority_entry_hash(entry)?;
             previous = Some(hash);
             hashes.push(hash);
         }
-        let named: BTreeSet<[u8; 32]> = revoked.iter().copied().collect();
+        let named: BTreeSet<AuthorityKey> = revoked.iter().cloned().collect();
         if named.len() != revoked.len() {
             return Err(not_valid(OWNER_KEY_MOVE_NOT_PLANNED));
         }
-        let live: BTreeSet<[u8; 32]> = member_owner_keys(&keys, member, root).into_iter().collect();
+        let live: BTreeSet<AuthorityKey> =
+            member_owner_keys(self.live_owner_keys_enrolled_for_in_txn(txn, member)?, root)
+                .into_iter()
+                .collect();
         if named != live {
             return Err(not_valid(OWNER_KEY_MOVE_PLAN_STALE));
         }
-        if live.contains(&signer_bytes) && revoked.last() != Some(&signer_bytes) {
+        if live.contains(&signer_key) && revoked.last() != Some(&signer_key) {
             return Err(not_valid(OWNER_KEY_MOVE_NOT_PLANNED));
         }
         let now = self.instant_in_txn(txn)?.secs();
@@ -454,7 +456,9 @@ impl Vault {
         {
             return Err(not_valid(OWNER_KEY_MOVE_PLAN_STALE));
         }
-        if !member_owner_keys(&self.enrolled_owner_keys_in_txn(txn)?, member, root).is_empty() {
+        if !member_owner_keys(self.live_owner_keys_enrolled_for_in_txn(txn, member)?, root)
+            .is_empty()
+        {
             return Err(not_valid(OWNER_KEY_MOVE_PLAN_STALE));
         }
         Ok(())

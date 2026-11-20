@@ -11,6 +11,7 @@
 
 use std::collections::BTreeMap;
 
+use super::super::access_gate::HeldAuthority;
 use super::{WeaveItem, WeaveReport};
 use crate::EntityId;
 use crate::claim::ScopedRead;
@@ -19,20 +20,21 @@ use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
 
 impl ScopedRead<'_> {
     /// Keeps, on each agent-health card in `report`, the moves this reader's
-    /// own floor reads whole ([`Self::is_entity_retrievable_with_policy_in`]
-    /// for every row a move's own door answered with). A floor that does not
-    /// answer leaves the move out.
+    /// own floor reads whole under the read's `held` authority
+    /// ([`Self::is_entity_retrievable_held_in`] for every row a move's own
+    /// door answered with). A floor that does not answer leaves the move out.
     pub(crate) fn project_card_moves_in(
         &self,
         txn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
+        held: &HeldAuthority,
         report: &mut WeaveReport,
     ) {
         let mut floor: BTreeMap<EntityId, bool> = BTreeMap::new();
         let mut admits = |id: EntityId| -> bool {
             *floor.entry(id).or_insert_with(|| {
-                match self.is_entity_retrievable_with_policy_in(txn, policy, filter, &id) {
+                match self.is_entity_retrievable_held_in(txn, policy, filter, &id, held) {
                     Ok(readable) => readable,
                     Err(error) => {
                         tracing::warn!(

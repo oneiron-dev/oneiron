@@ -364,10 +364,7 @@ impl Vault {
             Some(permit) => gate_mode.with_owner_archive_restore(permit),
             None => gate_mode,
         };
-        apply_ops_with_gate_mode(
-            &self.store,
-            &self.config,
-            &self.analyzer,
+        self.apply_ops_restoring_claim_subjects_in_txn(
             wtxn,
             vec![BatchOp::ClaimCandidate {
                 id: claim_id,
@@ -377,8 +374,6 @@ impl Vault {
                 learned_at,
                 internal_lexical_query_hint: false,
             }],
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
             gate_mode,
         )?;
         let mut superseded_claim_ids = Vec::new();

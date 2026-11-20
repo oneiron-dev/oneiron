@@ -81,6 +81,8 @@ impl NativeEngine {
             options: oneiron_remote::OpenOptions {
                 dimensions,
                 device_class: None,
+                machine_reported_name: None,
+                machine_reported_model: None,
                 hold_checkpoint_root_signer: false,
             },
             closed: Arc::new(AtomicBool::new(false)),

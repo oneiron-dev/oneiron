@@ -27,6 +27,8 @@ mod routing;
 mod state;
 
 use self::blobs::copy_admitted_entities;
+#[cfg(feature = "sync")]
+pub(crate) use self::blobs::is_peer_task_authority_fact_refusal;
 pub(crate) use self::blobs::{FEDERATION_IMPORT_SOURCE, admit_federated_entity_blob};
 #[cfg(feature = "test-hooks")]
 pub use self::revalidate::put_selector_test_federation_grant;
@@ -51,8 +53,9 @@ enum ImportGrading {
     Imported { scale: f32 },
     /// A verified member's write in this shared vault, first-party to it
     /// (ARCH-0043): a claim keeps its source and confidence, and a transcript
-    /// takes no import stamp.
-    FirstParty,
+    /// takes no import stamp. A room body is judged as `sender`'s
+    /// (ROOM-BODY-REPLICA-SETTINGS).
+    FirstParty { sender: EntityId },
 }
 
 /// Produces locally admitted window update bytes for a member/guest federation
@@ -183,7 +186,7 @@ pub(in crate::sync) fn admit_peer_window_update_as(
         update,
         role,
         Some(lane),
-        ImportGrading::FirstParty,
+        ImportGrading::FirstParty { sender: peer },
         None,
     )
 }
@@ -368,6 +371,10 @@ fn admit_window_update(
             born_with,
             placements,
             lane: lane.clone(),
+            first_party_sender: match grading {
+                ImportGrading::FirstParty { sender } => Some(sender),
+                ImportGrading::Imported { .. } => None,
+            },
             routed: Vec::new(),
         });
     }
@@ -559,8 +566,6 @@ fn reject_federated_tombstones(source: &LoroDoc) -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-SYNC-SELECTOR-ADMISSION-RETIRED-FACET-TESTS]: the lib test target's type check fails here (1 errors: E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(all(test, feature = "sync"))]
 mod retired_facet_tests {
     use super::*;
@@ -572,7 +577,7 @@ mod retired_facet_tests {
         let legacy = crate::companion::tests::support::retired_persona_facet_body(person);
         assert!(matches!(
             validate_admitted_replicated_body(&id, crate::registry::ENTITY_TYPE_FACET, &legacy),
-            Err(Error::Record(RecordError::InvalidCompanionRecordBody(_)))
+            Err(Error::InvalidClaimBody(_))
         ));
         let scenario = rmp_serde::to_vec_named(&serde_json::json!({
             "kind": "scenario", "person_ref": person.to_hex()

@@ -40,7 +40,7 @@ pub enum AuthorityHistoryReason {
     LateForkWithoutState,
     /// A tail row's op is one the fold past an image does not settle: a kind
     /// it never folds past (an owner record, an anchor's mark, an owner
-    /// answer), a second re-root in one tail, a retired device-key op in a
+    /// answer, a root appointment), a second re-root in one tail, a retired device-key op in a
     /// tail with a re-root, or a row of a kind that folds past only as
     /// rejected that the tail folds to a state.
     OpNotFoldedPast,
@@ -52,14 +52,24 @@ pub enum AuthorityHistoryReason {
     /// A tail row is signed by a key the image retired.
     RetiredSigner,
     /// A tail row moves a covered row's sequence floor or sits past its own
-    /// (the rows floors): only the whole history judges those, though no
-    /// floor refuses a row.
+    /// (the rows floors) where the fold past the image cannot show that the
+    /// floor changes nothing: a floored covered row of an op a floor may
+    /// refuse, a row the image cannot tell was judged, a tail that floors
+    /// covered rows with an issue or a rejected row of its own, or a fold
+    /// with no vouch that may fold the tail otherwise. Only the whole history
+    /// judges those.
     SequenceFloorMoved,
-    /// A residence result past an image that dropped its residence bodies.
+    /// A residence result past an image that dropped its residence bodies,
+    /// or a covered fork whose body it dropped while the roster holds a key
+    /// revoked: only its body names the keys it rests on.
     ResidenceBodiesDropped,
-    /// A tail re-root's fence could refuse a tail row outside its line, or a
-    /// parent of the re-root has no state here.
-    HandoffFence,
+    /// A tail re-root's or device revocation's fence could refuse a tail row
+    /// outside its line (a row its retired key signs), or a parent of the
+    /// re-root has no state here.
+    RetirementFence,
+    /// An owner key enrolment's line in the tail could reach covered rows
+    /// whose kept states do not show it (row CARRIER-PROOF-OLD-PARENTS).
+    OwnerKeyLineReachesCovered,
     /// A key only the tail admits signed a covered slip row, which only the
     /// whole history counts again.
     IssuersRecounted,

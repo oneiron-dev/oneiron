@@ -1013,6 +1013,70 @@ fn successor_image_past_a_device_revocation_keeps_the_whole_history_revoke_facts
 }
 
 #[test]
+fn row_its_revoked_key_cosigns_beside_a_device_revocation_still_needs_history() {
+    let fixture = fixture();
+    // Both on the image's frontier: the host's enrollment of a fresh agent,
+    // which the revoked agent key cosigns, at the host's next sequence, and
+    // the host's revocation of that key one past it. The enrollment is no
+    // approval, so only the revocation's fence refuses it.
+    let beside = sign_next_host_op_cosigned(
+        &fixture.home,
+        &fixture.issuer,
+        AuthorityOp::EnrollDevice {
+            device: fresh_device(0x52, ROLE_AGENT),
+        },
+        &agent_signing(),
+    )
+    .expect("sign the cosigned enrollment");
+    let revoke = sign_host_op_beside_next(
+        &fixture.home,
+        &fixture.issuer,
+        AuthorityOp::RevokeDevice {
+            revoked_key: agent_key(),
+        },
+    )
+    .expect("sign the revocation beside it");
+    assert_eq!(
+        beside.parent_hashes, revoke.parent_hashes,
+        "the two rows stand side by side"
+    );
+    let beside_hash = authority_entry_hash(&beside).expect("beside hash");
+    let hash = authority_entry_hash(&revoke).expect("revoke hash");
+    for vault in [&fixture.home, &fixture.adopting] {
+        put_signed_entries(vault, std::slice::from_ref(&beside)).expect("store the enrollment");
+    }
+    assert!(
+        fixture
+            .adopting
+            .authority_fold()
+            .expect("adopting folds the enrollment")
+            .valid_entries
+            .contains(&beside_hash),
+        "adopting counts the enrollment before the revocation arrives"
+    );
+    put_signed_entries(&fixture.home, std::slice::from_ref(&revoke)).expect("store on home");
+    let home_fold = fixture
+        .home
+        .authority_fold()
+        .expect("home folds the revocation");
+    assert!(
+        home_fold.valid_entries.contains(&hash),
+        "home counts the revocation"
+    );
+    assert!(
+        home_fold
+            .issues
+            .contains(&AuthorityFoldIssue::RetiredSigner(beside_hash)),
+        "home drops the enrollment beside it as signed by a retired key"
+    );
+    asks_history(
+        put_signed_entries(&fixture.adopting, std::slice::from_ref(&revoke))
+            .and_then(|()| fixture.adopting.authority_fold()),
+        AuthorityHistoryReason::RetirementFence,
+    );
+}
+
+#[test]
 fn covered_approval_on_a_revoked_device_lapses_on_the_adoption_clock() {
     let (fixture, confirm) = cosigned_confirm_fixture();
     let key = agent_key();
@@ -1456,7 +1520,7 @@ fn old_root_row_beside_a_re_root_still_needs_history() {
     asks_history(
         put_signed_entries(&fixture.adopting, std::slice::from_ref(&handoff))
             .and_then(|()| fixture.adopting.authority_fold()),
-        AuthorityHistoryReason::HandoffFence,
+        AuthorityHistoryReason::RetirementFence,
     );
 }
 

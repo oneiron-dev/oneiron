@@ -130,6 +130,10 @@ impl DesktopSession {
     /// call failed after the guest took one of its calls lands the same
     /// receipt, its outcome `unknown` (FIX 12257). A failure before the
     /// send lands none.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one parameter per part of an act's receipt"
+    )]
     pub(super) fn sent(
         &mut self,
         verb: &str,
@@ -312,9 +316,7 @@ impl DesktopSession {
         started: Instant,
     ) -> Result<Observation, BrowserError> {
         // A line break can press Return, and a Return sends.
-        let class = text
-            .contains(|c: char| c == '\n' || c == '\r')
-            .then_some(EFFECT_SEND);
+        let class = text.contains(['\n', '\r']).then_some(EFFECT_SEND);
         let press = self.press_or_hold("type", operands, class, Some(row), typing.read)?;
         let (pid, token) = (typing.read.key.pid, typing.token);
         let acted = self.act(typing.read, typing.base, |session| {

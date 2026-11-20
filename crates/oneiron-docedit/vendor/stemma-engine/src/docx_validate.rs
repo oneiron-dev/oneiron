@@ -1027,18 +1027,12 @@ fn collect_hdrftr_refs_missing_rid(
 }
 
 /// True iff the element carries a PRESENT, NON-EMPTY `r:id` attribute
-/// (relationships namespace or `r:` prefix, or the legacy `r:id` local form).
+/// (relationships namespace, or the `r:` prefix or legacy `r:id` local form
+/// when the namespace is unknown).
 /// `use="required"` demands presence, and real Word confirms an empty value is
 /// equally non-conformant for CT_HdrFtrRef (Word repairs it).
 fn has_nonempty_relationship_id(element: &Element) -> bool {
-    element.attributes.iter().any(|(name, value)| {
-        let local = name.local_name.as_str();
-        let is_rid = (local == "id"
-            && (name.namespace.as_deref() == Some(REL_ATTR_NS)
-                || name.prefix.as_deref() == Some("r")))
-            || local == "r:id";
-        is_rid && !value.is_empty()
-    })
+    relationship_id_attr(element).is_some()
 }
 
 /// I-REL-004 for a single story part on the production validate path.
@@ -1107,11 +1101,8 @@ fn collect_hyperlink_relationship_type_findings(
 
 fn relationship_id_attr(element: &Element) -> Option<&str> {
     element.attributes.iter().find_map(|(name, value)| {
-        let local = name.local_name.as_str();
-        let is_rid = (local == "id"
-            && (name.namespace.as_deref() == Some(REL_ATTR_NS)
-                || name.prefix.as_deref() == Some("r")))
-            || local == "r:id";
+        let is_rid = matches!(name.local_name.as_str(), "id" | "r:id")
+            && is_relationship_reference_attr(name);
         (is_rid && !value.is_empty()).then_some(value.as_str())
     })
 }
@@ -1120,41 +1111,47 @@ fn relationship_id_attr(element: &Element) -> Option<&str> {
 ///
 /// Looks for `r:id`, `r:embed`, `r:link` attributes (both prefixed and namespace-qualified).
 pub fn collect_relationship_references(element: &Element, out: &mut Vec<String>) {
-    for (attr_name, value) in &element.attributes {
-        let is_rel_ref = is_relationship_reference_attr(attr_name);
-        if is_rel_ref && !value.is_empty() {
+    collect_relationship_attributes(element, out, is_relationship_reference_attr);
+}
+
+/// Collect every non-empty attribute value in the relationships namespace.
+/// Used only to refuse references when the main part has no relationships part.
+pub fn collect_relationship_namespace_attributes(element: &Element, out: &mut Vec<String>) {
+    collect_relationship_attributes(element, out, is_relationships_namespace);
+}
+
+fn collect_relationship_attributes(
+    element: &Element,
+    out: &mut Vec<String>,
+    predicate: fn(&xmltree::AttributeName) -> bool,
+) {
+    for (name, value) in &element.attributes {
+        if predicate(name) && !value.is_empty() {
             out.push(value.clone());
         }
     }
     for child in &element.children {
         if let XMLNode::Element(el) = child {
-            collect_relationship_references(el, out);
+            collect_relationship_attributes(el, out, predicate);
         }
     }
+}
+
+fn is_relationships_namespace(name: &xmltree::AttributeName) -> bool {
+    name.namespace.as_deref() == Some(REL_ATTR_NS)
 }
 
 /// Check if an attribute name is a relationship reference (r:id, r:embed, r:link).
 fn is_relationship_reference_attr(name: &xmltree::AttributeName) -> bool {
     let local = name.local_name.as_str();
-    // Match by local name if the namespace is the relationships namespace.
-    if let Some(ns) = &name.namespace
-        && ns == REL_ATTR_NS
-        && (local == "id" || local == "embed" || local == "link")
-    {
-        return true;
+    let known_local = matches!(local, "id" | "embed" | "link");
+    if name.namespace.is_some() {
+        return known_local && is_relationships_namespace(name);
     }
-    // Match by prefix: r:id, r:embed, r:link
-    if let Some(prefix) = &name.prefix
-        && prefix == "r"
-        && (local == "id" || local == "embed" || local == "link")
-    {
-        return true;
-    }
-    // Match fully-qualified legacy forms like "r:id" stored as local_name
-    if local == "r:id" || local == "r:embed" || local == "r:link" {
-        return true;
-    }
-    false
+    // Match by prefix or a fully-qualified legacy local name only when the
+    // namespace is unknown.
+    (known_local && name.prefix.as_deref() == Some("r"))
+        || matches!(local, "r:id" | "r:embed" | "r:link")
 }
 
 /// Compute the .rels path for a given part.

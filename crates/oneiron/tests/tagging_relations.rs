@@ -174,6 +174,7 @@ fn turn_of(turn: EntityId, messages: Vec<WitnessMessage>) -> WitnessTurn {
         messages,
         occurred_at: 10,
         assertions: WitnessAssertions::default(),
+        project: None,
     }
 }
 

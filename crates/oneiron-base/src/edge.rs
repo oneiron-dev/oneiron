@@ -448,7 +448,7 @@ pub fn validate_public_edge_kind(kind: EdgeKind) -> crate::error::Result<()> {
 /// `regenerates` joins `same_as` here, and only here (FIX 5972). Its link says
 /// a Retry's reply answers its source again, which only the message stream
 /// proves, so the stream's terminal write is its one creator. On the receive
-/// side a carried link is admitted by [`regeneration_pair`] on the topology
+/// side a carried link is admitted by `regeneration_pair` on the topology
 /// its materializer applies, never by this refusal; on the delete side an
 /// existing link keeps its delete, weight and VAD doors.
 ///

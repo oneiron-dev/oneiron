@@ -282,12 +282,18 @@ fn exact_term_has_scoped_posting(
     else {
         return Ok(false);
     };
+    // A kept row's exact posting matches nothing, so it never stands in for
+    // the readable completions of a final token.
+    let limited = crate::store::legal_hold::any_record_use_limit_in_txn(store, rtxn)?;
     for item in dups {
         let (_, dup) = item?;
         let entry = decode_posting_entry(&store.diagnostics().bm25, &dup)?;
         let Some(scope_id) = lexical_query_hint_scope_id(store, rtxn, &entry.id)? else {
             continue;
         };
+        if limited && scores_for_use_limited(store, rtxn, &entry.id)? {
+            continue;
+        }
         if exact_posting_matches_scope(&scope_id)? && posting_has_enabled_channel(config, &entry)? {
             return Ok(true);
         }
@@ -499,6 +505,27 @@ pub(super) fn scores_for_withdrawn(
     match resolve_lexical_query_hint_record(store, rtxn, id)? {
         LexicalQueryHintResolution::Live { target } => {
             crate::ports::stale_in_txn(store, rtxn, &target)
+        }
+        LexicalQueryHintResolution::DeadHint | LexicalQueryHintResolution::NonHint => Ok(false),
+    }
+}
+
+/// Whether posting `id` scores for a row kept for storage only under a use
+/// limit: itself, or the claim it is a live lexical query hint for. Such a
+/// posting takes no place in any ranking: a kept row's words find no row, and
+/// a kept row never fills a place another hit would take (FIX
+/// USE-LIMIT-NOT-ASKED-BY-SERVING-DOORS).
+pub(super) fn scores_for_use_limited(
+    store: &impl ManifestDbs,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    if crate::store::legal_hold::use_limit_in_txn(store, rtxn, id)?.is_some() {
+        return Ok(true);
+    }
+    match resolve_lexical_query_hint_record(store, rtxn, id)? {
+        LexicalQueryHintResolution::Live { target } => {
+            Ok(crate::store::legal_hold::use_limit_in_txn(store, rtxn, &target)?.is_some())
         }
         LexicalQueryHintResolution::DeadHint | LexicalQueryHintResolution::NonHint => Ok(false),
     }

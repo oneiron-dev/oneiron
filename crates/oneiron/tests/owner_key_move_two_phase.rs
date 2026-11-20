@@ -273,7 +273,11 @@ fn a_hosted_removal_lands_when_the_executors_device_confirms_it() {
 
     let plan = hosted.plan(hosted.owner, &act);
     assert_eq!(plan.member, hosted.co_owner, "{plan:?}");
-    assert_eq!(plan.revoked, vec![public(&co_key)], "{plan:?}");
+    assert_eq!(
+        plan.revoked,
+        vec![AuthorityKey::Ed25519(public(&co_key))],
+        "{plan:?}"
+    );
     assert_eq!(
         plan.signers
             .iter()
@@ -538,7 +542,7 @@ fn the_device_door_signs_the_plan_with_the_key_this_install_holds() {
     let device = ActAuthority::Owner(proof(&hosted.vault, hosted.owner), ActSurface::ThisInstall);
 
     let mut unsynced = plan.clone();
-    unsynced.revoked.push([0x33; 32]);
+    unsynced.revoked.push(AuthorityKey::Ed25519([0x33; 32]));
     let refused = hosted
         .vault
         .sign_owner_key_move_as(&device, &unsynced, hosted.co_owner)
@@ -705,7 +709,7 @@ fn a_plan_swapped_to_another_member_signs_nothing_on_the_device() {
     let act = hosted.propose_removal(hosted.owner, hosted.co_owner);
     let mut swapped = hosted.plan(hosted.owner, &act);
     swapped.member = third;
-    swapped.revoked = vec![public(&third_key)];
+    swapped.revoked = vec![AuthorityKey::Ed25519(public(&third_key))];
     let device = ActAuthority::Owner(proof(&hosted.vault, hosted.owner), ActSurface::ThisInstall);
     let refused = hosted
         .vault
