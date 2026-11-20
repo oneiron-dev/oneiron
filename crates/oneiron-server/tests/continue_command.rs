@@ -26,7 +26,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 use oneiron_server::test_doors::continue_command::{
     Script, discovered_session, hand_off_commit, run_scripted,
@@ -323,15 +323,11 @@ fn a_stalled_clean_filter_is_stopped_at_the_deadline() {
         .expect("write .gitattributes");
     git(dir, &["config", "filter.stall.clean", "sleep 120"]);
 
-    let started = Instant::now();
+    // A filter left running ends after 120 s and the commit would then
+    // succeed, so the deadline error proves the stop.
     let error =
         hand_off_commit(dir, Duration::from_secs(3)).expect_err("the hand-off commit stops");
 
-    assert!(
-        started.elapsed() < Duration::from_secs(60),
-        "it stops at the deadline, not when the filter ends: {:?}",
-        started.elapsed()
-    );
     assert!(
         error.contains("git add did not finish before the hand-off's deadline"),
         "it names the git step: {error}"
@@ -386,9 +382,9 @@ fn discovery_skips_a_nested_repos_log_that_folds_alike() {
     let projects = tempfile::tempdir().expect("temp projects");
     let folder = projects.path().join(project_folder(&here));
     std::fs::create_dir_all(&folder).expect("make project folder");
-    let now = SystemTime::now();
-    let ours = log_in(&folder, SESSION, &here, now - Duration::from_secs(60));
-    log_in(&folder, OTHER_SESSION, &nested, now);
+    let newest = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let ours = log_in(&folder, SESSION, &here, newest - Duration::from_secs(60));
+    log_in(&folder, OTHER_SESSION, &nested, newest);
 
     assert_eq!(
         discovered_session(projects.path(), &here),
@@ -408,14 +404,10 @@ fn a_fifo_named_as_the_log_is_refused_at_once() {
         .expect("run mkfifo");
     assert!(made.success(), "mkfifo: {made}");
 
-    let started = Instant::now();
+    // An open that waited for a writer would never return: no one writes to
+    // the FIFO.
     let ran = run_scripted(repo.path(), &fifo, SLIP);
 
-    assert!(
-        started.elapsed() < Duration::from_secs(30),
-        "it never waits on the FIFO: {:?}",
-        started.elapsed()
-    );
     let error = ran.error.expect("the command stops");
     assert!(
         error.contains("is not a regular file"),

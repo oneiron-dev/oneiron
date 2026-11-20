@@ -99,7 +99,10 @@ fn bound_extraction_observations_page(
             &read,
             txn,
             reader_scope.as_ref(),
-            attempt_id,
+            (
+                attempt_id,
+                binding.and_then(DreamerAttemptBinding::destination_bound),
+            ),
             &input.candidates,
             None,
         )?;

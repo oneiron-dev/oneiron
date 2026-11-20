@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use xmltree::{Element, EmitterConfig, XMLNode};
 
 use crate::docx::{DocxArchive, DocxError};
-use crate::docx_package::{DocxPackage, RelationshipSet};
+use crate::docx_package::{DocxPackage, RelationshipSet, relationship_target_from};
 use crate::domain::{
     BlockNode, Border, CanonDoc, DecorationNode, DecorationType, DocFingerprint, DocHandle,
     HeaderFooterKind, IStr, InlineNode, NodeId, OpaqueKind, PageOrientation, ParagraphNode,
@@ -5129,6 +5129,41 @@ pub(crate) const REVISION_IDS_REL: &str = "http://stemma.sh/2026/relationships/r
 pub(crate) const REVISION_IDS_CONTENT_TYPE: &str = "application/vnd.stemma.revisionids+xml";
 pub(crate) const REVISION_IDS_NS: &str = "http://stemma.sh/2026/revisionIds";
 
+/// Resolve the revision-identity part named by the main part's first internal
+/// revision-identity relationship, if there is one.
+pub(crate) fn related_revision_ids_part(relationships: &RelationshipSet) -> Option<String> {
+    relationships
+        .entries
+        .iter()
+        .find(|relationship| {
+            relationship.rel_type == REVISION_IDS_REL
+                && crate::docx_package::relationship_target_mode_is_internal(
+                    relationship.target_mode.as_deref(),
+                )
+        })
+        .map(|relationship| relationships.resolve_internal_target(&relationship.target))
+}
+
+/// Write to the part already owned through an internal revision-identity
+/// relationship. Otherwise use the conventional name if free, then the first
+/// free numbered name starting at `word/stemmaRevisionIds2.xml`.
+fn revision_ids_part_for_write(package: &DocxPackage) -> String {
+    if let Some(owned) = related_revision_ids_part(&package.document_rels) {
+        return owned;
+    }
+    if !package.has_part(REVISION_IDS_PART) {
+        return REVISION_IDS_PART.to_string();
+    }
+    let mut suffix = 2;
+    loop {
+        let candidate = format!("word/stemmaRevisionIds{suffix}.xml");
+        if !package.has_part(&candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
 /// Build the revision-identity sidecar: the engine identity for every revision
 /// this save emits, keyed by the wire id it was written with plus its author
 /// and date.
@@ -6621,13 +6656,16 @@ pub(crate) fn serialize_canonical_docx(
     // reopening adopts it instead of re-deriving it (see build_revision_ids_xml
     // for why derivation alone cannot satisfy H7's two requirements).
     let revision_ids_xml = build_revision_ids_xml(doc);
-    base_pkg.set_part(REVISION_IDS_PART, revision_ids_xml.into_bytes());
+    let revision_ids_part = revision_ids_part_for_write(&base_pkg);
+    let revision_ids_target =
+        relationship_target_from(base_pkg.main_document_part_name(), &revision_ids_part);
+    base_pkg.set_part(&revision_ids_part, revision_ids_xml.into_bytes());
     base_pkg
         .document_rels
-        .add(REVISION_IDS_REL, "stemmaRevisionIds.xml");
+        .add(REVISION_IDS_REL, &revision_ids_target);
     base_pkg
         .content_types
-        .add_override("/word/stemmaRevisionIds.xml", REVISION_IDS_CONTENT_TYPE);
+        .set_override(&format!("/{revision_ids_part}"), REVISION_IDS_CONTENT_TYPE);
 
     // Reconcile the output as an OPC graph after every modeled/story part has
     // been written. Imported main-story XML may still carry target-owned rIds,
@@ -10097,6 +10135,21 @@ fn import_and_anchor(
 
     // Parse document relationships and stories
     let rels = parse_document_relationships(&archive, &main_part)?;
+    // A main part with no relationships part holds no relationship reference.
+    // Each one would dangle, and the writer numbers the relationships it adds
+    // from `rId1`: one could take the dangling id and bind the reference to a
+    // part it never named. Such a package is refused, as every package with no
+    // relationships part was before an absent part was read as empty.
+    let main_rels_path = crate::docx_package::rels_part_path(&main_part);
+    if archive.get(&main_rels_path).is_none() {
+        let mut referenced_ids = Vec::new();
+        crate::docx_validate::collect_relationship_namespace_attributes(&root, &mut referenced_ids);
+        if let Some(referenced) = referenced_ids.first() {
+            return Err(invalid_docx(&format!(
+                "missing {main_rels_path}: the main part references relationship {referenced:?}"
+            )));
+        }
+    }
     let (header_refs, footer_refs) = parse_header_footer_refs(&root)?;
 
     // Preserve every header/footer part explicitly referenced by sectPr.
@@ -10171,7 +10224,7 @@ fn import_and_anchor(
         endnotes,
         comments,
         even_and_odd_headers,
-        Some(&archive),
+        Some((&archive, &main_part)),
     )?;
     // Empty-running-head tolerances were recorded while parsing the story parts
     // above, before the diagnostics sink existed; fold them in.

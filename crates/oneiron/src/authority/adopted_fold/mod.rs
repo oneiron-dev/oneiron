@@ -367,6 +367,7 @@ pub(super) fn capture_adopted_checkpoint_tail(
             .handoff_or_appointment_retired_keys
             .clone(),
         closed_handoffs: image.safety.closed_handoffs.clone(),
+        crossed_revocations: image.safety.crossed_revocations.clone(),
         unsettled: image.safety.unsettled,
         issues,
         missing_parents,

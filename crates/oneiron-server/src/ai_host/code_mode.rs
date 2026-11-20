@@ -256,7 +256,7 @@ pub(super) async fn bind(
             .with_browser_planner(Arc::clone(&browser))
             .with_host_meter(guard)
             .with_reader_window_tokens(
-                super::dreamer::dream_windows(models)
+                super::dreamer::reader_windows(models)
                     .get(&seat.model)
                     .copied()
                     .unwrap_or(0),

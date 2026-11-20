@@ -457,8 +457,8 @@ fn raw_for_revision(
 }
 
 /// Text fields published from a live revision by the idle pass or a room.
-/// Claims keep their value index text, not generic string leaves; a claim
-/// that is not surfaceable must not publish.
+/// Claims keep their index text (`claim::claim_index_text`), not generic
+/// string leaves; a claim that is not surfaceable must not publish.
 pub(crate) fn publication_text_fields(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -472,7 +472,7 @@ pub(crate) fn publication_text_fields(
         if !crate::claim::claim_surfaceable(&claim) {
             return Ok(None);
         }
-        let text = crate::store::claim_lineage::claim_value_index_text(&claim.value);
+        let text = crate::claim::claim_index_text(&claim.predicate, &claim.value);
         if text.is_empty() {
             Vec::new()
         } else {
@@ -820,7 +820,13 @@ fn read_revision_from_store_in_txn(
             archived,
         );
     }
-    raw_for_revision(store, txn, id, &raw, Some(target)).map(admit)
+    let row = raw_for_revision(store, txn, id, &raw, Some(target))?;
+    // A retained revision names its own subjects: the content about a kept
+    // PERSON stays from use at every version, not only at the current row's.
+    if crate::store::legal_hold::kept_person_content_row_in_txn(store, txn, id, &row)? {
+        return Ok(None);
+    }
+    Ok(admit(row))
 }
 
 /// Whether the revision the ledger indexes `id` at is a retained state of its

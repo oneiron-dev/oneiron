@@ -14,6 +14,7 @@ use crate::entity_id::EntityId;
 use crate::federation::Scope;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
+use crate::settings::ReadDestination;
 use crate::snapshot_read::{
     EvidenceSourceStatus, EvidenceSpansRequest, SourceVersion, SourceVersionCheck,
     evidence_spans_in_txn, extraction_turn_in_txn, extraction_turn_read,
@@ -24,13 +25,15 @@ use crate::verbs::{CandidateOperand, PinnedClaim, TurnEvidence};
 /// Checks the queued branch, turn evidence with pins, bound projection, and subjects.
 /// The caller proves binding, authority, and reader scope before calling.
 /// Verdict passes its listed and prior pins while the page passes none.
+/// The attempt comes with the destination bound its listing is read for: the bound
+/// of the pass that lends the read (FIX 12735), or `None` for a destination nobody proved.
 /// Returns the queued branch with its rebuilt bound read for native checks.
 pub(crate) fn check_extraction_operands_in_txn(
     memory: &Memory<'_>,
     read: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
     reader_scope: Option<&Scope>,
-    attempt: AttemptId,
+    (attempt, destination): (AttemptId, Option<ReadDestination>),
     candidates: &[CandidateOperand],
     pins: Option<(&[PinnedClaim], &[PinnedClaim])>,
 ) -> MemoryResult<(ConsolidationBranchPlan<EntityId>, BoundBranchRead)> {
@@ -56,7 +59,7 @@ pub(crate) fn check_extraction_operands_in_txn(
             attempt,
             branch: &branch,
             caller: None,
-            destination: None,
+            destination,
         },
     )
     .map_err(bound_branch_error)?;

@@ -59,6 +59,9 @@ pub(super) struct Retirements {
     anchored: BTreeSet<AuthorityEntryHash>,
     /// The handoffs a counted appointment's proof fold closed in its line.
     recovered_handoffs: BTreeSet<AuthorityEntryHash>,
+    /// The revocations a counted appointment's proof fold closed in a
+    /// conflict in its line (REVIEW-9799 P1).
+    recovered_crossed_revocations: BTreeSet<AuthorityEntryHash>,
     /// Each closed conflict's rows: the handoffs and revocations that fence
     /// one another round a cycle, all of whose fences closed.
     conflicts: Vec<BTreeSet<AuthorityEntryHash>>,
@@ -217,6 +220,24 @@ impl Retirements {
             .filter(|fence| fence.kind == FenceKind::Handoff)
             .map(|fence| fence.row)
             .chain(self.recovered_handoffs.iter().copied())
+            .collect()
+    }
+
+    /// The revocations whose fences closed in a conflict, here or in a
+    /// counted appointment's proof fold: a closed fence of another member
+    /// holds a signer of each, or of a row below it, so the fold refuses it
+    /// (as `RetiredSigner` when that fence holds its own signer, as
+    /// `InvalidAncestry` when it holds only a signer of a row below; a
+    /// recovered row keeps its proof fold's refusal,
+    /// `Recovered::entry_fold`), and its own fence ended its key all the
+    /// same. The owner's key changes list names only the first kind
+    /// (`owner_key_changes`).
+    pub(super) fn crossed_revocations(&self) -> BTreeSet<AuthorityEntryHash> {
+        self.fences
+            .iter()
+            .filter(|fence| fence.kind == FenceKind::Revocation && fence.conflict)
+            .map(|fence| fence.row)
+            .chain(self.recovered_crossed_revocations.iter().copied())
             .collect()
     }
 
@@ -476,6 +497,7 @@ fn close_fences(
             .collect(),
         anchored,
         recovered_handoffs: recovered.closed_handoffs.clone(),
+        recovered_crossed_revocations: recovered.crossed_revocations.keys().copied().collect(),
         conflicts: conflicts.into_iter().collect(),
     };
     for hash in states
@@ -562,11 +584,11 @@ pub(crate) fn door_ancestor_row(
     }
 }
 
-/// Whether this vault held the row at `hash` before a write: it stores it,
-/// or the checkpoint image it adopted (`evidence`) covers it. A row only the
-/// write brings is not held, so a refused write's sibling rows never stand in
-/// its equivocation evidence as handoffs this vault holds (OF-166).
-pub(crate) fn authority_row_held(
+/// Whether `txn` holds the row at `hash`: the vault stores it, or the adopted
+/// checkpoint image (`evidence`) covers it. The door reads the committed state,
+/// so a row only the write brings is not held. A refused write's sibling rows
+/// never stand in its equivocation evidence as handoffs this vault holds (OF-166).
+pub(super) fn authority_row_held(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     evidence: Option<&super::adopted_evidence::AdoptedEvidence>,
@@ -574,22 +596,6 @@ pub(crate) fn authority_row_held(
 ) -> crate::error::Result<bool> {
     Ok(stored_authority_row(store, txn, hash)?.is_some()
         || evidence.is_some_and(|evidence| evidence.rows().contains_key(hash)))
-}
-
-/// What an import held before its write, as [`authority_row_held`] reads a
-/// vault: whether the row at a hash was resident (`resident`), or covered by
-/// the image the vault had adopted before the import's transaction staged
-/// anything (`held_evidence`). An image the import's own prelude adopts (a
-/// sealed kit restore's) rolls back with a refused import, so a row only it
-/// covers is no handoff this vault holds (REVIEW-9572 round 2).
-pub(super) fn import_row_held<'a>(
-    resident: &'a BTreeSet<AuthorityEntryHash>,
-    held_evidence: Option<&'a super::adopted_evidence::AdoptedEvidence>,
-) -> impl FnMut(&AuthorityEntryHash) -> crate::error::Result<bool> + 'a {
-    move |hash| {
-        Ok(resident.contains(hash)
-            || held_evidence.is_some_and(|evidence| evidence.rows().contains_key(hash)))
-    }
 }
 
 /// Whether `entry` is already in the log at its own id, stored as an

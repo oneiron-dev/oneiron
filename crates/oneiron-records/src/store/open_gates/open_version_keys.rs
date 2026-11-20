@@ -6,7 +6,7 @@ pub const MAX_DBS: u32 = 32;
 /// v44 (OPUS-WAYBACK, the box recovery's wait): stored authority-log rows
 /// keep their bytes and their meaning, and a stored checkpoint image written
 /// before it no longer decodes (its fold has no memory of which keys were the
-/// recovery root's authority key R). The authority fold schema moves 54 -> 55
+/// recovery root's authority key R). The authority fold schema moves 55 -> 56
 /// with it. Two new authority-log row kinds (`recovery_hold`,
 /// `recovery_hold_answer`) are additive: no row a vault already holds changes
 /// meaning. No old-shape reader or migration is provided (the lead's M-1
