@@ -634,24 +634,25 @@ pub(crate) fn merge_replicated_side_row_in_txn(
                 // forms meet here; the erased form wins where the copies
                 // meet, as a carried turn's actor does, whether or not
                 // this vault holds the actor's marker.
-                if (held.at, &held.receipt_ref) == (claim.at, &claim.receipt_ref) {
-                    if let Some(actor) = crate::deletion::carrier_actor_merged(
+                if (held.at, &held.receipt_ref) == (claim.at, &claim.receipt_ref)
+                    && let Some(actor) = crate::deletion::carrier_actor_merged(
                         held.actor.as_str(),
                         claim.actor.as_str(),
                         crate::receipt::ERASED_CALL_IDENTITY,
                     )
                     .map(str::to_owned)
-                        && actor != held.actor
-                    {
-                        let mut merged = held.clone();
-                        merged.actor = actor;
-                        CLAIMS.put(store, txn, &turn, &merged)?;
-                        return Ok(SideMerge::Written);
-                    }
-                    // REVIEW-9956 round 2, own review: that rule alone
-                    // settles one receipt's copies, so neither the seal nor
-                    // the generation below writes a live copy back over the
-                    // erased form.
+                    && actor != held.actor
+                {
+                    let mut merged = held.clone();
+                    merged.actor = actor;
+                    CLAIMS.put(store, txn, &turn, &merged)?;
+                    return Ok(SideMerge::Written);
+                }
+                // REVIEW-9956 round 2, own review: that rule alone settles
+                // one receipt's copies, so neither the seal nor the
+                // generation below writes a live copy back over the erased
+                // form.
+                if (held.at, &held.receipt_ref) == (claim.at, &claim.receipt_ref) {
                     return Ok(SideMerge::Conflict);
                 }
                 // REVIEW-9956 round 2: an answer seals its claim against a
