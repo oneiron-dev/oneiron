@@ -2835,3 +2835,142 @@ fn the_key_door_refuses_a_key_enrolled_as_a_devices_and_as_the_recovery_roots() 
         "a key enrolled both ways stays live after the key door refuses it"
     );
 }
+
+/// A passkey's enrolment is a key change the owner reads as any other: the
+/// changes list names it (row KEY-CHANGE-RECEIPT-EMPTY-NO-NOTICE; pass 27
+/// section 4.4: one notice for every key change).
+#[test]
+fn the_changes_list_names_a_passkeys_enrolment() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    enrol_passkey(&removal_vault);
+    let passkey = removal_vault
+        .vault
+        .enrolled_owner_passkeys()
+        .expect("enrolled passkeys")
+        .into_iter()
+        .next()
+        .expect("guard: the passkey is enrolled");
+    let changes = removal_vault
+        .vault
+        .owner_key_changes(&removal_vault.owner)
+        .expect("the owner reads the key changes");
+    let line = changes
+        .iter()
+        .find(|change| change.entry == passkey.entry)
+        .expect("the changes list names the passkey's enrolment");
+    assert_eq!(
+        line.change,
+        OwnerKeyChangeKind::Enrolled,
+        "the passkey's line is its enrolment"
+    );
+    assert_eq!(
+        line.machine, passkey.machine,
+        "the passkey's line names the carrier that served its ceremony"
+    );
+}
+
+/// A key only a passkey vouched for, confirmed by a device key of the
+/// owner's: the confirmation changes what the key may sign, so the changes
+/// list names it as a line of its own kind, signed by the confirming key,
+/// and keeps the passkey's vouch as the key's one enrolment (row
+/// KEY-CHANGE-RECEIPT-EMPTY-NO-NOTICE; Engine ANSWER 20 Nov 19:03 Q2 = A).
+#[test]
+fn the_changes_list_names_the_confirmation_of_a_passkey_vouched_key() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let (machine, vouched_key) = removal_vault.enrol_passkey_vouched_key_on_second_machine();
+    let confirming = signing(0x6C);
+    let (confirming_key, _) = removal_vault.enrol_owner_key_on_machine(machine, &confirming);
+    let receipt = removal_vault
+        .vault
+        .confirm_owner_key_as(
+            &ActAuthority::Owner(removal_vault.owner.clone(), ActSurface::ThisInstall),
+            keyed_enrollment(&removal_vault, machine, &signing(0x6B)),
+            AuthorityKey::Ed25519(confirming_key),
+            |transcript| Ok(confirming.sign(transcript).to_bytes().to_vec()),
+        )
+        .expect("a device key of the owner's confirms the passkey-vouched key");
+    assert_eq!(
+        receipt.public_key, vouched_key,
+        "guard: the receipt names the confirmed key"
+    );
+    let changes = removal_vault
+        .vault
+        .owner_key_changes(&removal_vault.owner)
+        .expect("the owner reads the key changes");
+    let line = changes
+        .iter()
+        .find(|change| change.entry == receipt.entry)
+        .expect("the changes list names the confirmation");
+    assert!(
+        !matches!(
+            line.change,
+            OwnerKeyChangeKind::Enrolled
+                | OwnerKeyChangeKind::Removed
+                | OwnerKeyChangeKind::RemovedByEndedKey
+        ),
+        "the confirmation is a change of its own kind, no enrolment and no removal: {line:?}"
+    );
+    assert_eq!(
+        line.signed_by,
+        AuthorityKey::Ed25519(confirming_key),
+        "the confirming key signed the confirmation's line"
+    );
+    assert_eq!(line.machine, machine, "the line names the key's machine");
+    assert_eq!(
+        changes
+            .iter()
+            .filter(|change| change.change == OwnerKeyChangeKind::Enrolled
+                && change.signed_by == passkey_roster_key())
+            .count(),
+        1,
+        "the passkey's vouch stays the confirmed key's one enrolment line: {changes:?}"
+    );
+}
+
+/// A passkey's removal is a key change the owner reads: a device key of the
+/// owner's revokes the enrolled passkey, and the changes list names that
+/// removal (row KEY-CHANGE-RECEIPT-EMPTY-NO-NOTICE).
+#[test]
+fn the_changes_list_names_a_passkeys_removal() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    enrol_passkey(&removal_vault);
+    let device = signing(0x6D);
+    let (device_key, _) =
+        removal_vault.enrol_owner_key_on_machine(removal_vault.install(), &device);
+    assert!(
+        oneiron::test_doors::passkey_vouch_limits::revoke_owner_key_signed_by(
+            &removal_vault.vault,
+            AuthorityKey::Ed25519(device_key),
+            passkey_roster_key(),
+            |transcript| device.sign(transcript).to_bytes().to_vec(),
+        )
+        .expect("the revoke is stored"),
+        "guard: the owner's device key revokes the passkey"
+    );
+    let passkey = removal_vault
+        .vault
+        .enrolled_owner_passkeys()
+        .expect("enrolled passkeys")
+        .into_iter()
+        .next()
+        .expect("guard: the passkey is enrolled");
+    assert!(!passkey.live, "guard: the passkey is revoked");
+    let changes = removal_vault
+        .vault
+        .owner_key_changes(&removal_vault.owner)
+        .expect("the owner reads the key changes");
+    let line = changes
+        .iter()
+        .find(|change| {
+            change.change == OwnerKeyChangeKind::Removed
+                && change.signed_by == AuthorityKey::Ed25519(device_key)
+        })
+        .expect("the changes list names the passkey's removal");
+    assert_eq!(
+        line.machine, passkey.machine,
+        "the removal's line names the passkey's carrier"
+    );
+}
