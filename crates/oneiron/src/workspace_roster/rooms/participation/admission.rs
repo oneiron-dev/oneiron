@@ -246,9 +246,12 @@ pub(crate) fn admit_participation_in_txn(
 /// card): it is named on the room turn `answers`, holds that turn's open
 /// thread TASK, or `record` is the turn an accepted offer bound to it. A
 /// project's current leader is also spoken to by a person's turn that names
-/// no agent in the project's home room ([`leader_answers_turn_in_txn`]).
-/// Standing alone never lets an agent speak, and none of these grants a
-/// seat or mints a task.
+/// no agent in the project's home room ([`leader_answers_turn_in_txn`]), on
+/// the claim of that turn it holds: a person may hold that claim, and a live
+/// DAG reply takes none, so the leader answers here only what the claim door
+/// gave it, as the witness checks again (REVIEW-9956 round 2). Standing alone
+/// never lets an agent speak, and none of these grants a seat or mints a
+/// task.
 pub(super) fn agent_spoken_to_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -270,9 +273,15 @@ pub(super) fn agent_spoken_to_in_txn(
     if turn.room_id != room.to_hex() {
         return Ok(false);
     }
-    Ok(turn.addressed_agents.contains(&agent.to_hex())
+    if turn.addressed_agents.contains(&agent.to_hex())
         || held_thread_task_in_txn(vault, txn, &turn, agent)?.is_some()
-        || leader_answers_turn_in_txn(vault, txn, room, agent, &turn)?)
+    {
+        return Ok(true);
+    }
+    Ok(leader_answers_turn_in_txn(vault, txn, room, agent, &turn)?
+        && super::super::CLAIMS
+            .get(&vault.store, txn, &answered)?
+            .is_some_and(|claim| claim.actor == agent.to_hex()))
 }
 
 /// Whether `agent` may answer `turn` in `room` as its project's leader
@@ -325,13 +334,15 @@ pub(in crate::workspace_roster::rooms) fn leader_answers_turn_in_txn(
 
 /// Whether the claim `holder` of `turn` in `room` holds it for no one now
 /// (ROOM-CLAIM-TAKEOVER = A, Engine 21 Nov 03:04): the holder takes part as
-/// an agent, and the turn no longer speaks to it as the claim door reads an
-/// agent claimant, re-read in this transaction: it is not named on the turn,
-/// holds none of its thread's open TASKs, and does not answer it as the
-/// project's current leader. The witness refuses such a holder's answer. A
-/// person, and a holder this vault knows as neither, keep their claim: a
-/// person claims only a turn that names no agent, and a turn's names never
-/// change.
+/// an agent, and the witness would refuse its answer now, each gate re-read
+/// in this transaction as the claim door reads an agent claimant: it is off
+/// the audience of the turn's private thread, it no longer stands there, it
+/// may not speak there, or the turn no longer speaks to it (it is not named
+/// on the turn, holds none of its thread's open TASKs, and does not answer
+/// it as the project's current leader). A name or a task keeps no claim for
+/// a holder the other gates refuse (REVIEW-9956 round 2). A person, and a
+/// holder this vault knows as neither, keep their claim: a person claims
+/// only a turn that names no agent, and a turn's names never change.
 pub(in crate::workspace_roster::rooms) fn claim_holder_released_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -348,6 +359,22 @@ pub(in crate::workspace_roster::rooms) fn claim_holder_released_in_txn(
         Some(JoinSubject::Agent(_))
     ) {
         return Ok(false);
+    }
+    let branch = super::turn_root_in_txn(vault, txn, turn)?;
+    if let Some(thread) = branch {
+        match super::audience::thread_audience_allows_in(vault, txn, room, thread, holder) {
+            Ok(true) => {}
+            Ok(false) | Err(Error::EntityNotFound) => return Ok(true),
+            Err(error) => return Err(error),
+        }
+    }
+    let Some(standing) = agent_standing_in_txn(vault, txn, room, branch, holder, None)? else {
+        return Ok(true);
+    };
+    match admit_speech_in(vault, txn, room, holder, Some(&standing)) {
+        Ok(()) => {}
+        Err(Error::Record(RecordError::RoomSpeakerIneligible { .. })) => return Ok(true),
+        Err(error) => return Err(error),
     }
     Ok(!turn.addressed_agents.contains(&holder.to_hex())
         && held_thread_task_in_txn(vault, txn, turn, holder)?.is_none()

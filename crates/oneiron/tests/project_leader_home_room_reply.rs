@@ -32,6 +32,12 @@
 //! the erased-speaker test (the claim errs). The two tests where the claim
 //! stays pass there.
 //!
+//! Review round 2 (REVIEW-9956) added the module `claim_and_answer`: a
+//! leader answers only on the claim it holds, at the DAG reply door too; a
+//! name or a task keeps no claim for a holder the witness would refuse; an
+//! answer seals its claim against another machine's takeover. Each is red at
+//! the round-1 head 995d059b623.
+//!
 //! The replica and erased-speaker tests reach crate rows through the door
 //! `test_doors::room_turn_claims`; the others use public paths only.
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
@@ -53,6 +59,9 @@ use oneiron::workspace_roster::{ProjectRecord, RoomClaimOutcome};
 use oneiron::{EdgeActorClass, EntityId, MemoryError, Vault, VaultConfig};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+#[path = "project_leader_home_room_reply/claim_and_answer.rs"]
+mod claim_and_answer;
 
 struct Fixture {
     vault: Vault,
