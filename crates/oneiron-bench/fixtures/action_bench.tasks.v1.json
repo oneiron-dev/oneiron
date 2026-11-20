@@ -43,12 +43,14 @@
         {
           "at": 1780000500,
           "author": "user",
-          "text": "At work I play the Lo-fi Beats playlist to focus."
+          "text": "At work I play the Lo-fi Beats playlist to focus.",
+          "world": "work"
         },
         {
           "at": 1780000550,
           "author": "user",
-          "text": "At home in the evening I play the Jazz Classics playlist."
+          "text": "At home in the evening I play the Jazz Classics playlist.",
+          "world": "home"
         },
         {
           "at": 1780005000,
@@ -149,12 +151,14 @@
         {
           "at": 1780000500,
           "author": "user",
-          "text": "At work I sign off my emails with Best regards."
+          "text": "At work I sign off my emails with Best regards.",
+          "world": "work"
         },
         {
           "at": 1780000550,
           "author": "user",
-          "text": "With family I sign off my emails with Love."
+          "text": "With family I sign off my emails with Love.",
+          "world": "family"
         },
         {
           "at": 1780005000,
@@ -250,12 +254,14 @@
         {
           "at": 1780000500,
           "author": "user",
-          "text": "At work I sign my name as M. Novak."
+          "text": "At work I sign my name as M. Novak.",
+          "world": "work"
         },
         {
           "at": 1780000550,
           "author": "user",
-          "text": "At the club I sign my name as Mags."
+          "text": "At the club I sign my name as Mags.",
+          "world": "club"
         },
         {
           "at": 1780005000,

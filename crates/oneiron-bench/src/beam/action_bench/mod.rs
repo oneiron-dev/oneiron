@@ -214,14 +214,14 @@ fn run_with_session(
     let mut histories = Vec::new();
     let mut rows = Vec::new();
     let mut extraction = Vec::new();
-    // Every history's correction point, before any vault opens: an
+    // Every history's correcting turn, before any vault opens: an
     // extraction arm needs one, and a history without one fails the trace
     // check's world part.
     let corrections = match settings.extraction {
         Some(_) => tasks
             .histories
             .iter()
-            .map(tasks::correction_point)
+            .map(tasks::correcting_turn)
             .collect::<BeamResult<Vec<_>>>()?,
         None => Vec::new(),
     };
@@ -246,10 +246,18 @@ fn run_with_session(
                 )?);
             }
         }
-        if let (Some(host), Some(&correction_at)) = (settings.extraction, corrections.get(place)) {
+        if let (Some(host), Some(&correcting_turn)) = (settings.extraction, corrections.get(place))
+        {
             for &arm in settings.arms.iter().filter(|arm| arm.extracts()) {
-                let (row, acted) =
-                    extract(settings, session, tasks, history, arm, correction_at, host)?;
+                let (row, acted) = extract(
+                    settings,
+                    session,
+                    tasks,
+                    history,
+                    arm,
+                    correcting_turn,
+                    host,
+                )?;
                 rows.extend(acted);
                 extraction.push(row);
             }
@@ -286,12 +294,12 @@ fn extract(
     tasks: &TaskFile,
     history: &tasks::History,
     arm: MemoryArm,
-    correction_at: u64,
+    correcting_turn: usize,
     host: &ExtractionHost,
 ) -> BeamResult<(ExtractionRow, Vec<ActionRow>)> {
     let mut rows = Vec::new();
     let mut vault = ExtractionVault::open(history, arm, host)?;
-    vault.replay_through_correction(correction_at, host)?;
+    vault.replay_through_correction(correcting_turn, host)?;
     for follow_up in tasks
         .follow_ups_of(&history.id)
         .filter(|follow_up| follow_up.kind == TaskKind::CorrectedSource)

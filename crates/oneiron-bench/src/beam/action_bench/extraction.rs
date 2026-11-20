@@ -15,7 +15,10 @@
 //! Each history gets one fresh vault per extraction arm, started as a
 //! self-hosted server starts (keystore, root, install profile, the engine's
 //! machine writers). Only the raw turns go in, replayed in time order with
-//! the user's deletes; the history's authored claims never enter it, so
+//! the user's deletes, each in the world it was said in: a turn of a world
+//! goes into that world's own conversation, whose body names the world (the
+//! `world_ref` key the Dreamer's partitions read), and a base turn into the
+//! history's base conversation. The history's authored claims never enter it, so
 //! every claim an extraction arm reads is one its Dreamer extracted. The
 //! extractor is the engine's `ConsolidationExecutor` over the run's pinned
 //! extraction model, reached through the same host transport as the reader.
@@ -33,6 +36,7 @@ mod executor;
 use std::{collections::BTreeMap, path::Path, sync::Arc, time::Instant};
 
 use oneiron::authority::{HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole};
+use oneiron::conversation::ConversationBody;
 use oneiron::dreamer_runner::DreamerAttemptPayload;
 use oneiron::dreamer_wake::{WakeTurnSubject, request_wake};
 use oneiron::serialize::msgpack_value_from_json;
@@ -42,6 +46,7 @@ use oneiron::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DreamerConsolidationScope, DreamerRunnerStore,
     DreamerWakeDriver, EdgeActorClass, EntityId, ModelId, ModelLocality, RunWakePass, Vault,
     VaultConfig, WakeCancellation, WakePassDeadline, WakePassReport, WakePassStop, WakeTrigger,
+    WriteActor,
 };
 use oneiron_keystore::MemoryKeystore;
 use serde::{Deserialize, Serialize};
@@ -318,6 +323,37 @@ fn replay_steps(history: &History) -> (Vec<(u64, Step)>, usize) {
     (steps, sittings)
 }
 
+/// Each of `worlds`' own conversation, made as `owner`'s with the owner its
+/// one member, its body naming the world under the `world_ref` key, which the
+/// Dreamer's partitions read for every turn witnessed into it.
+fn world_conversations(
+    vault: &Vault,
+    owner: EntityId,
+    worlds: &BTreeMap<String, EntityId>,
+) -> BeamResult<BTreeMap<String, EntityId>> {
+    worlds
+        .iter()
+        .map(|(name, world)| {
+            let conversation = EntityId::now();
+            let body = ConversationBody {
+                member_ids: vec![owner],
+                extra: BTreeMap::from([(
+                    "world_ref".to_owned(),
+                    rmpv::Value::Binary(world.as_bytes().to_vec()),
+                )]),
+                ..Default::default()
+            };
+            vault.create_conversation(
+                conversation,
+                &body,
+                WriteActor::new(owner, EdgeActorClass::Human),
+                vault.now_recorded_at(),
+            )?;
+            Ok((name.clone(), conversation))
+        })
+        .collect()
+}
+
 /// One history's vault for one extraction arm: fresh, host-started, holding
 /// only the turns replayed so far.
 pub(super) struct ExtractionVault<'h> {
@@ -328,14 +364,19 @@ pub(super) struct ExtractionVault<'h> {
     _dir: tempfile::TempDir,
     history: &'h History,
     arm: MemoryArm,
-    /// The history's one conversation: the first witness mints it.
+    /// The history's base conversation: the first base turn's witness mints
+    /// it.
     conversation: EntityId,
+    /// Each world's own conversation, by the world's name: made at open, its
+    /// body naming the world, so a turn witnessed into it is extracted there.
+    world_conversations: BTreeMap<String, EntityId>,
     /// The owner's sitting on this install, for an arm with the Meso lane:
     /// a sitting's end is that lane's trigger. The online arm opens none.
     sitting_key: Option<SessionKey>,
     sitting: Option<EntityId>,
-    /// Each witnessed turn's message id, by the turn's place in the history.
-    messages: Vec<Option<EntityId>>,
+    /// Each witnessed turn's conversation and message id, by the turn's
+    /// place in the history.
+    messages: Vec<Option<(EntityId, EntityId)>>,
     steps: Vec<(u64, Step)>,
     next_step: usize,
     sittings: usize,
@@ -367,6 +408,7 @@ impl<'h> ExtractionVault<'h> {
         start_host(&vault, host.pin.locality)?;
         let worlds = create_worlds(&vault, owner, &history.worlds)
             .map_err(|reason| memory_failure(&history.id, &reason))?;
+        let world_conversations = world_conversations(&vault, owner, &worlds)?;
         let sitting_key = if lanes(arm).contains(&Lane::Meso) {
             Some(vault.local_session_key(owner)?)
         } else {
@@ -381,6 +423,7 @@ impl<'h> ExtractionVault<'h> {
             history,
             arm,
             conversation: EntityId::now(),
+            world_conversations,
             sitting_key,
             sitting: None,
             messages: vec![None; history.turns.len()],
@@ -405,20 +448,29 @@ impl<'h> ExtractionVault<'h> {
         }
     }
 
-    /// Replays through the correcting turn's step: every step before it in
-    /// time, and every turn said at its time. A sitting that ends with it
-    /// stays open, as it is when the turn has just been said.
+    /// Replays through the correcting turn's own step, the history's turn at
+    /// `correcting_turn`: every step before it in the replay, then that turn,
+    /// and nothing after it, not even a turn said at the same time. A sitting
+    /// that ends with it stays open, as it is when the turn has just been
+    /// said.
     pub(super) fn replay_through_correction(
         &mut self,
-        correction_at: u64,
+        correcting_turn: usize,
         host: &ExtractionHost,
     ) -> BeamResult<()> {
         let started = Instant::now();
-        while let Some(&(at, step)) = self.steps.get(self.next_step) {
-            let due = at < correction_at || (at == correction_at && matches!(step, Step::Turn(_)));
-            if !due {
-                break;
-            }
+        let Some(last) = self
+            .steps
+            .iter()
+            .position(|&(_, step)| matches!(step, Step::Turn(index) if index == correcting_turn))
+        else {
+            return Err(memory_failure(
+                &self.history.id,
+                "the correcting turn is not in the replay",
+            ));
+        };
+        while self.next_step <= last {
+            let (_, step) = self.steps[self.next_step];
             self.next_step += 1;
             self.apply(step, host)?;
         }
@@ -458,7 +510,7 @@ impl<'h> ExtractionVault<'h> {
                 }
             }
             Step::DeleteTurn(index) => {
-                let Some(Some(message)) = self.messages.get(index).copied() else {
+                let Some(Some((conversation, message))) = self.messages.get(index).copied() else {
                     return Err(memory_failure(
                         &history.id,
                         "a deleted turn was never witnessed",
@@ -466,8 +518,8 @@ impl<'h> ExtractionVault<'h> {
                 };
                 // As the memory arms' vault does: the user deletes what they
                 // said, the turn's message, as its author, through the room
-                // door.
-                let stood = delete_message(&self.vault, self.conversation, message, self.owner)
+                // door of the conversation it was said in.
+                let stood = delete_message(&self.vault, conversation, message, self.owner)
                     .map_err(|reason| memory_failure(&history.id, &reason))?;
                 if !stood {
                     return Err(memory_failure(
@@ -493,9 +545,20 @@ impl<'h> ExtractionVault<'h> {
         Ok(())
     }
 
-    /// Witnesses one turn as the owner, in the open sitting when the arm
-    /// keeps sittings (minting one at a sitting's first turn).
+    /// Witnesses one turn as the owner into the conversation of the world it
+    /// was said in, in the open sitting when the arm keeps sittings (minting
+    /// one at a sitting's first turn).
     fn witness_turn(&mut self, index: usize, turn: &Turn) -> BeamResult<()> {
+        let conversation = match &turn.world {
+            None => self.conversation,
+            Some(world) => self
+                .world_conversations
+                .get(world)
+                .copied()
+                .ok_or_else(|| {
+                    memory_failure(&self.history.id, "a turn names a world the vault lacks")
+                })?,
+        };
         if let Some(key) = self.sitting_key
             && self.sitting.is_none()
         {
@@ -511,10 +574,10 @@ impl<'h> ExtractionVault<'h> {
             Some(key) => memory.with_session(key),
             None => memory,
         };
-        let message = witness(&memory, self.conversation, turn)
+        let message = witness(&memory, conversation, turn)
             .map_err(|reason| memory_failure(&self.history.id, &reason))?;
         if let Some(slot) = self.messages.get_mut(index) {
-            *slot = Some(message);
+            *slot = Some((conversation, message));
         }
         self.turns_witnessed += 1;
         Ok(())

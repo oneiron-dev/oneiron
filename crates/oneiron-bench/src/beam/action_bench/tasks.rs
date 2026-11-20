@@ -65,6 +65,10 @@ pub(super) struct Turn {
     pub(super) at: u64,
     pub(super) author: TurnAuthor,
     pub(super) text: String,
+    /// The world the turn was said in, one of the history's; none is base
+    /// reality. An extraction arm witnesses it into a conversation of that
+    /// world, so its Dreamer extracts what it says there.
+    pub(super) world: Option<String>,
     /// When the user deleted the turn: after `at`, before the freeze.
     pub(super) deleted_at: Option<u64>,
 }
@@ -212,6 +216,17 @@ fn check_history(history: &History) -> BeamResult<()> {
             id,
             "world",
             "a claim names a world its history does not declare",
+        ));
+    }
+    if history.turns.iter().any(|turn| {
+        turn.world
+            .as_ref()
+            .is_some_and(|world| !worlds.contains(world.as_str()))
+    }) {
+        return Err(invalid(
+            id,
+            "world",
+            "a turn names a world its history does not declare",
         ));
     }
     let lives = history
@@ -491,29 +506,38 @@ fn lines<S: AsRef<str>>(items: impl Iterator<Item = S>) -> String {
     })
 }
 
-/// When the history's correction happened, as an extraction arm probes it
-/// (ARCH-0042 #action-bench, "probed right after a correction"): the time of
-/// the first claim before the freeze whose slot (predicate and world) an
-/// earlier claim already holds, when a user turn was said at that time. That
-/// turn is the correcting turn. An extraction arm needs one: with none, the
-/// history fails the trace check's world part.
-pub(super) fn correction_point(history: &History) -> BeamResult<u64> {
-    let mut held: Vec<&DerivedClaim> = history
+/// The history's correcting turn, as an extraction arm probes it (ARCH-0042
+/// #action-bench, "probed right after a correction"): its place in the
+/// history. The correction is the first claim before the freeze whose slot
+/// (predicate and world) another claim holds at its time, said in a user turn
+/// at that time; a claim deleted by then holds its slot no longer. Of the user
+/// turns said at that time, the correcting turn is the first in the history,
+/// the one the replay applies first. An extraction arm needs one: with none,
+/// the history fails the trace check's world part.
+pub(super) fn correcting_turn(history: &History) -> BeamResult<usize> {
+    let mut written: Vec<&DerivedClaim> = history
         .claims
         .iter()
         .filter(|claim| claim.at < history.frozen_at)
         .collect();
-    held.sort_by_key(|claim| claim.at);
-    let mut slots = BTreeSet::new();
-    for claim in held {
-        let fresh = slots.insert((claim.predicate.as_str(), claim.world.as_deref()));
-        if !fresh
-            && history
-                .turns
-                .iter()
-                .any(|turn| turn.at == claim.at && matches!(turn.author, TurnAuthor::User))
+    written.sort_by_key(|claim| claim.at);
+    // Each slot's current claim, by when it is deleted; `None` never is.
+    let mut holders: BTreeMap<(&str, Option<&str>), Option<u64>> = BTreeMap::new();
+    for claim in written {
+        let slot = (claim.predicate.as_str(), claim.world.as_deref());
+        let held = holders
+            .get(&slot)
+            .is_some_and(|deleted| deleted.is_none_or(|at| at > claim.at));
+        holders.insert(slot, claim.deleted_at);
+        if !held {
+            continue;
+        }
+        if let Some(index) = history
+            .turns
+            .iter()
+            .position(|turn| turn.at == claim.at && matches!(turn.author, TurnAuthor::User))
         {
-            return Ok(claim.at);
+            return Ok(index);
         }
     }
     Err(invalid(
