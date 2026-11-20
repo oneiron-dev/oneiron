@@ -37,3 +37,25 @@ pub fn walked_policies_of(
     let dbs = vault.store.read();
     crate::source_audience::read_audience_in(vault, &dbs, &txn, &[row], viewers)
 }
+
+/// Whether the floor of `row` is not known whole here. The head before the
+/// floor's state was written keeps none, so every floor reads as whole
+/// (the red proof of #9289 review 2's tests).
+///
+/// # Errors
+///
+/// None at this head.
+pub fn floor_waits(_vault: &Vault, _row: EntityId) -> Result<bool> {
+    Ok(false)
+}
+
+/// Forgets every floor's state and the floor backfill's. The head before
+/// the floor's state was written keeps none, so there is nothing to forget
+/// (the red proof of #9289 review 2's tests).
+///
+/// # Errors
+///
+/// None at this head.
+pub fn forget_floor_state(_vault: &Vault) -> Result<()> {
+    Ok(())
+}
