@@ -17,17 +17,25 @@
 //! start, a page per write, from a cursor) raises every row once, each with
 //! the rows it was written from that it has not raised yet first, so a
 //! cycle of rows written from each other settles in one write; then it
-//! clears its marks. Until it ends, a row it has not raised that names a
-//! birth input or a dependency source (lineage no read walks) waits like a
-//! pending row, and a write raises the not yet raised rows its row was
+//! clears its marks. Until it ends, a row it has not raised waits like a
+//! pending row when it names a birth input or a dependency source (lineage
+//! no read walks), a word source not held here, or lineage that does not
+//! resolve yet; and a write raises the not yet raised rows its row was
 //! written from first, so a fact born from an old fact holds that fact's
 //! floor at once.
+//!
+//! What a row waits on can resolve in a write that names no row waiting on
+//! it: an epoch's head lands, a source is erased, a dependency or a birth
+//! is taken off the row. So each run of the sweep, once the backfill has
+//! ended, raises every waiting row again (#9289 review 3 P1-4, P1-6): a
+//! row whose wait has resolved reads as its sources say from that run on.
 //!
 //! A row whose floor waits reads to no one but a live owner of this vault
 //! who reads every source it holds ([`waiting_floor_readable_in`]): the
 //! owner of a vault whose sources are all the owner's, never the owner of a
 //! vault that holds a member's own mailbox (READ-LINEAGE-L3 as the lead
-//! reads it, 21 Nov 06:28).
+//! reads it, 21 Nov 06:28). It does not travel on a restricted lane, which
+//! carries no audience (#9289 review 3 P1-3).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
@@ -35,7 +43,7 @@ use std::ops::Bound;
 use heed::{RoTxn, RwTxn};
 
 use super::floor::{OwnSource, RowSources};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
@@ -72,6 +80,10 @@ const RAISING: u8 = 0;
 /// A backfill cursor's first byte: clearing the raised marks.
 const CLEARING: u8 = 1;
 
+/// A backfill cursor's first byte: raising again the waiting rows after the
+/// row id that follows it.
+const SETTLING: u8 = 2;
+
 /// Whether the backfill has raised every row this vault holds.
 ///
 /// # Errors
@@ -83,7 +95,9 @@ pub(crate) fn backfill_done_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<bool> {
 
 /// Whether the floor of `row` is not known whole here: it waits on a row or
 /// binding that has not landed, or the backfill has not raised it yet while
-/// it names a birth input or a dependency source, lineage no read walks.
+/// it names a birth input or a dependency source (lineage no read walks), a
+/// word source not held here, or lineage that does not resolve yet: what
+/// the backfill would leave it waiting on (#9289 review 3 P1-2).
 ///
 /// # Errors
 ///
@@ -98,10 +112,31 @@ pub(crate) fn floor_waits_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> 
     {
         return Ok(false);
     }
-    Ok(
-        !crate::store::birth_record::input_rows_in_txn(&vault.store, txn, row)?.is_empty()
-            || !crate::ports::dependency_sources_in(&vault.store, txn, row)?.is_empty(),
-    )
+    if !crate::store::birth_record::input_rows_in_txn(&vault.store, txn, row)?.is_empty()
+        || !crate::ports::dependency_sources_in(&vault.store, txn, row)?.is_empty()
+    {
+        return Ok(true);
+    }
+    let Some(raw) = vault.get_raw_in(txn, row)? else {
+        return Ok(false);
+    };
+    if crate::scope_summary::carried_summary(&raw).is_err() {
+        return Ok(true);
+    }
+    match crate::scope_summary::word_sources_in(vault, txn, row, &raw) {
+        Ok(crate::scope_summary::WordSources::Own) => Ok(false),
+        Ok(crate::scope_summary::WordSources::From(named)) => {
+            for source in &named {
+                if matches!(presence_in(vault, txn, source)?, Presence::Absent) {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        Ok(crate::scope_summary::WordSources::Unresolved)
+        | Err(Error::InvalidClaimBody(_) | Error::Record(_)) => Ok(true),
+        Err(error) => Err(error),
+    }
 }
 
 /// Whether every one of `viewers` reads a row whose floor waits
@@ -466,10 +501,11 @@ fn take_waiters_in_txn(
 /// stopped, it raises the floor of each live entity row in key order, a page
 /// per write, each with the not yet raised rows it was written from, and
 /// stops between pages once `stop` says so. Once every row is raised it
-/// marks the backfill done, then clears the raised marks. In a vault where
-/// no row can have a floor yet it does nothing, and runs at the next pass
-/// again. The rows it raised, and where an unfinished run goes on (`None`
-/// once this run has ended).
+/// marks the backfill done, then clears the raised marks. Then, and in each
+/// later run, it raises every waiting row again, a page per write
+/// (#9289 review 3 P1-4, P1-6). In a vault where no row can have a floor yet
+/// it does nothing, and runs at the next pass again. The rows it raised, and
+/// where an unfinished run goes on (`None` once this run has ended).
 ///
 /// # Errors
 ///
@@ -484,6 +520,7 @@ pub(crate) fn backfill_floors(
     loop {
         let (page, next) = vault.with_write_txn(|txn| match cursor.split_first() {
             Some((&CLEARING, _)) => clear_page_in_txn(vault, txn),
+            Some((&SETTLING, after)) => settle_page_in_txn(vault, txn, after),
             Some((_, after)) => raise_page_in_txn(vault, txn, after),
             None => raise_page_in_txn(vault, txn, &[]),
         })?;
@@ -562,7 +599,8 @@ fn raise_page_in_txn(
     }
 }
 
-/// One backfill write once every row is raised: clears raised marks.
+/// One backfill write once every row is raised: clears raised marks; once
+/// none is left, the run goes on raising the waiting rows again.
 fn clear_page_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<(u64, Option<Vec<u8>>)> {
     let keys = RAISED
         .iter_from(&vault.store, txn, &[])?
@@ -572,7 +610,58 @@ fn clear_page_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<(u64, Option<
     for row in &keys {
         RAISED.delete(&vault.store, txn, row)?;
     }
-    Ok((0, (keys.len() == CLEAR_PAGE).then(|| vec![CLEARING])))
+    Ok((
+        0,
+        Some(if keys.len() == CLEAR_PAGE {
+            vec![CLEARING]
+        } else {
+            vec![SETTLING]
+        }),
+    ))
+}
+
+/// One write of a run's last part: raises again the waiting rows after the
+/// row id `after`, so a row whose wait resolved in a write that named no row
+/// waiting on it (an epoch's head that landed, an erased source, a
+/// dependency or a birth taken off it) settles. A waiting row gone from
+/// this vault loses its mark.
+fn settle_page_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    after: &[u8],
+) -> Result<(u64, Option<Vec<u8>>)> {
+    let mut rows = Vec::new();
+    for entry in PENDING.iter_from(&vault.store, txn, &[])? {
+        let (row, ()) = entry?;
+        if row.as_bytes().as_slice() <= after {
+            continue;
+        }
+        rows.push(row);
+        if rows.len() == BACKFILL_PAGE {
+            break;
+        }
+    }
+    let mut live = BTreeSet::new();
+    for row in &rows {
+        if crate::vault::live_entity_row_in_txn(&vault.store, txn, row)?.is_live() {
+            live.insert(*row);
+        } else {
+            PENDING.delete(&vault.store, txn, row)?;
+        }
+    }
+    let raised = u64::try_from(live.len()).unwrap_or(u64::MAX);
+    super::floor::raise_floors_in_txn(vault, txn, live)?;
+    Ok((
+        raised,
+        match rows.last() {
+            Some(last) if rows.len() == BACKFILL_PAGE => {
+                let mut next = vec![SETTLING];
+                next.extend_from_slice(last.as_bytes());
+                Some(next)
+            }
+            _ => None,
+        },
+    ))
 }
 
 /// Forgets, in `txn`, every floor's state and the backfill's: the vault
