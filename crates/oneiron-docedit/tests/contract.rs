@@ -102,6 +102,7 @@ fn document() -> Vec<u8> {
 const MAIN_PART_RELATIONSHIPS: &str = "word/_rels/document.xml.rels";
 const PACKAGE_RELATIONSHIPS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
 const RELATIONSHIPS_TYPE: &str = "application/vnd.openxmlformats-package.relationships+xml";
+// testkit-lint: allow(network) a relationship type name the fork writes, compared as text; no test opens it
 const REVISION_IDS_REL: &str = "http://stemma.sh/2026/relationships/revisionIds";
 const CONTENT_TYPES: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
 

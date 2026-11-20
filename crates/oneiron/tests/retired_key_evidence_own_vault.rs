@@ -17,7 +17,7 @@
 //! row then records without naming a handoff it did not sign.
 
 use std::collections::BTreeSet;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
@@ -190,24 +190,26 @@ fn two_vaults() -> TwoVaults {
 }
 
 /// The saved alarms once one is saved: its writer runs after the refusing
-/// transaction ends.
+/// transaction ends. The wait is 1,000 polls of 20 ms, a count and no clock
+/// read; with no alarm after them the answer is empty.
 fn saved_alarms(vault: &Vault) -> Vec<AuthorityHandoffAlarm> {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    for _ in 0..1000 {
         let alarms = vault.authority_handoff_alarms().expect("alarms");
-        if !alarms.is_empty() || Instant::now() > deadline {
+        if !alarms.is_empty() {
             return alarms;
         }
         std::thread::sleep(Duration::from_millis(20));
     }
+    Vec::new()
 }
 
 /// Fails when an alarm appears within `window`, polling every 20 ms. The
 /// alarm's writer is a thread with no completion signal, so absence rests on
-/// this bounded window; the in-memory records are the exact check.
+/// this bounded window; the in-memory records are the exact check. The window
+/// is counted in polls, with no clock read.
 fn no_alarm_for(vault: &Vault, window: Duration) {
-    let deadline = Instant::now() + window;
-    loop {
+    let poll = Duration::from_millis(20);
+    for _ in 0..=window.as_millis() / poll.as_millis() {
         assert!(
             vault
                 .authority_handoff_alarms()
@@ -215,10 +217,7 @@ fn no_alarm_for(vault: &Vault, window: Duration) {
                 .is_empty(),
             "no alarm is saved for a fence the vault never held"
         );
-        if Instant::now() > deadline {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(20));
+        std::thread::sleep(poll);
     }
 }
 
