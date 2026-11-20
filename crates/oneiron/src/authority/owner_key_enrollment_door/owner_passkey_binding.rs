@@ -24,7 +24,7 @@
 //! The binding names the owner for their owner verbs and writes alone: P
 //! stays passkey-limited, so it still re-roots nothing, revokes no other
 //! owner key, binds no other key and proves nothing for the owner. The
-//! owner key changes list names the binding (`OwnerKeyChangeKind::OwnerBound`),
+//! owner key changes list names the binding (`OwnerKeyChangeKind::BoundByPasskey`),
 //! so every owner device shows it.
 
 use oneiron_authority::authority::{verify_entry_signatures, webauthn_assertion_context};

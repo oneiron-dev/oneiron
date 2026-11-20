@@ -711,6 +711,8 @@ fn a_passkey_only_another_passkey_vouched_for_binds_no_one() {
 mod door {
     use oneiron::authority::{OwnerKeyChangeKind, PreparedOwnerPasskeyBinding};
     use oneiron::error::RecordError;
+    use oneiron::test_doors::host_node_seals::copy_authority_log;
+    use oneiron::test_doors::steward;
 
     use super::*;
 
@@ -782,7 +784,7 @@ mod door {
             .expect("the list names the binding's entry");
         assert_eq!(
             listed.change,
-            OwnerKeyChangeKind::OwnerBound,
+            OwnerKeyChangeKind::BoundByPasskey,
             "the list names the passkey's binding of its owner"
         );
         assert_eq!(
@@ -798,6 +800,58 @@ mod door {
         assert_refused(
             hosted.prepare(CREDENTIAL_ID),
             "a second binding of a bound owner",
+        );
+    }
+
+    /// The host made the ceremony, so the owner's other devices must see the
+    /// binding: a second replica that takes the vault's log counts it, and
+    /// its own owner key changes list names it.
+    #[test]
+    fn a_second_replica_of_the_vault_lists_the_passkeys_binding() {
+        let hosted = HostedVault::open();
+        host_enrols_passkey(&hosted);
+        let prepared = hosted
+            .prepare(CREDENTIAL_ID)
+            .expect("the binding is prepared");
+        let receipt = hosted
+            .land(&prepared, FLAGS_PRESENT_VERIFIED)
+            .expect("the passkey's binding lands");
+
+        let dir = tempfile::tempdir().expect("replica directory");
+        let mut config = VaultConfig::device();
+        config.privacy.posture = HostingPrivacyPosture::Hosted;
+        let replica = Vault::open(dir.path(), config).expect("a second replica");
+        replica.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        replica.prepare_install_signing().expect("install signing");
+        copy_authority_log(&hosted.vault, &replica).expect("the replica takes the vault's log");
+        let fold = replica.authority_fold().expect("the replica's fold");
+        assert_eq!(
+            fold.vault_id,
+            hosted
+                .vault
+                .authority_fold()
+                .expect("authority fold")
+                .vault_id,
+            "guard: the replica folds the same vault"
+        );
+        assert!(
+            fold.actor_bindings
+                .get(&passkey_key())
+                .is_some_and(|binding| {
+                    binding.status == ActorBindingStatus::Active
+                        && binding.actor_ref == hosted.owner
+                }),
+            "the replica counts the passkey's binding of the owner"
+        );
+        let replica_owner = steward::owner(&replica).expect("the replica's owner proof");
+        let changes = replica
+            .owner_key_changes(&replica_owner)
+            .expect("the replica's owner key changes list");
+        assert!(
+            changes.iter().any(|change| {
+                change.entry == receipt.entry && change.change == OwnerKeyChangeKind::BoundByPasskey
+            }),
+            "the replica's list names the passkey's binding: {changes:?}"
         );
     }
 

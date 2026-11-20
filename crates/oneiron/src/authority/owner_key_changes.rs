@@ -73,7 +73,7 @@ pub enum OwnerKeyChangeKind {
     /// 21 Nov 05:4x, row PASSKEY-SELF-BIND). The host served the ceremony,
     /// so every owner device lists it: a bind the owner did not make is a
     /// "Not you?" as a key they did not enrol is.
-    OwnerBound,
+    BoundByPasskey,
 }
 
 /// One change of an enrolled owner key, as its authority entry says it.
@@ -106,7 +106,7 @@ impl Vault {
     /// Every change of an enrolled owner key, newest first: each counted
     /// enrolment, confirmation and removal of a key an enrolment names, a
     /// passkey's included, and each counted binding an enrolled passkey
-    /// signed for its owner ([`OwnerKeyChangeKind::OwnerBound`]), from the
+    /// signed for its owner ([`OwnerKeyChangeKind::BoundByPasskey`]), from the
     /// rows this vault keeps (stored, or
     /// carried by an adopted checkpoint image). A key enrolled on two
     /// branches lists its smallest enrolment entry, as
@@ -357,7 +357,7 @@ fn owner_key_change(
                 && entry.signer.public_key == *authority_key =>
         {
             let key = keys.keys.get(authority_key)?;
-            (OwnerKeyChangeKind::OwnerBound, authority_key, key)
+            (OwnerKeyChangeKind::BoundByPasskey, authority_key, key)
         }
         _ => return None,
     };
