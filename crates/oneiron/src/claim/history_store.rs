@@ -78,6 +78,30 @@ pub(crate) fn machine_history_shape_matches(
     machine_history_claim(kind, target, birth, signed).is_ok_and(|expected| record == &expected)
 }
 
+/// The signed initial body a machine birth control `record` embeds, as
+/// stored; `None` for any other CLAIM. The control names the target, never
+/// the birth's subject, and a same-id successor may move the target to
+/// another subject. So a reader that judges a CLAIM by its subject and by
+/// what its words came from judges a birth control by this body as well
+/// (FIX MACHINE-HISTORY-SOURCE-LINEAGE-SUBJECT-MOVE).
+///
+/// # Errors
+///
+/// A birth control whose value is no signed birth.
+pub(crate) fn machine_birth_initial_body(record: &ClaimBody) -> Option<Result<Vec<u8>>> {
+    if record.predicate != MACHINE_BIRTH_PREDICATE {
+        return None;
+    }
+    let Value::Binary(bytes) = &record.value else {
+        return Some(Err(invalid_history()));
+    };
+    Some(
+        super::SignedClaimBirth::decode(bytes)
+            .map(|birth| birth.initial_body)
+            .map_err(|_| invalid_history()),
+    )
+}
+
 pub(crate) fn machine_history_scope_bytes(body: &ClaimBody) -> Result<Vec<u8>> {
     let value = Value::Array(vec![
         body.world
