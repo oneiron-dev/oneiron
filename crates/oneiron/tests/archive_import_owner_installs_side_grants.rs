@@ -300,18 +300,12 @@ fn mirror_room_window_into(source: &Vault, dest: &Vault) {
     );
 }
 
-/// Deletes `room` and its Admin grantee `grantee` from `source`: the grant row survives (only
-/// a Leave deletes it) while both entities leave the export, so the archive carries the grant
-/// and neither principal.
-fn delete_room_and_grantee(source: &Vault, room: EntityId, grantee: EntityId) {
+/// Deletes the Admin grantee `grantee` from `source`, before the export: the grant row survives
+/// (only a Leave deletes it) while the grantee leaves the export, so the archive carries the
+/// grant and its room but not the grantee. The room stays: the export withholds the grant of a
+/// room deleted here (Engine ANSWER RETAINED-ROOM-ROWS-WITHHELD Q1 = A).
+fn delete_grantee(source: &Vault, grantee: EntityId) {
     install_keystore(source);
-    assert!(
-        source
-            .delete_entity_with_reason(&room, DeleteReason::UserDelete)
-            .expect("delete the source room")
-            .existed,
-        "the source room existed before its delete"
-    );
     assert!(
         source
             .delete_entity_with_reason(&grantee, DeleteReason::UserDelete)
@@ -420,7 +414,7 @@ fn the_owner_restore_installs_the_room_admin_grant_and_a_repeat_reports_it_uncha
 #[test]
 fn the_actorless_import_installs_nothing_and_retains_the_grant_byte_for_byte() {
     let (_source_dir, source, room, _owen, yuki) = room_source_with_admin_grant();
-    delete_room_and_grantee(&source, room, yuki);
+    delete_grantee(&source, yuki);
     let archive = export_whole(&source);
     let source_tuple = rows_for(&retained_rows(&archive), "CONVERSATION_ROLE_GRANT");
     assert_eq!(
@@ -442,6 +436,8 @@ fn the_actorless_import_installs_nothing_and_retains_the_grant_byte_for_byte() {
         ),
         "the actorless import installs no CONVERSATION_ROLE_GRANT row: {summary}"
     );
+    // The archive carries the room, whose roster seats owen and yuki through a ledger the
+    // bare vault does not hold, so the actorless import keeps it out (`RoomNotSeatedHere`).
     assert!(
         bare.conversation_body(room).is_err(),
         "the actorless import restores no room for the grant"
@@ -471,8 +467,8 @@ fn the_actorless_import_installs_nothing_and_retains_the_grant_byte_for_byte() {
 ///
 /// The destination keeps a live room (preseeded, as in the first test) while its grantee is
 /// a deleted shell: deleting a person neither refuses for room membership nor erases the
-/// room. The archive carries the grant and neither principal, so the landing reaches past
-/// the live room and holds the row back for the grantee.
+/// room. The archive carries the grant and the room but not the grantee, so the landing
+/// reaches past the live room and holds the row back for the grantee.
 #[test]
 fn a_grant_without_its_live_grantee_is_held_back_missing_live_entity() {
     let (_source_dir, source) = open_source_vault();
@@ -504,7 +500,7 @@ fn a_grant_without_its_live_grantee_is_held_back_missing_live_entity() {
     dest.conversation_body(room)
         .expect("the destination room reads live");
 
-    delete_room_and_grantee(&source, room, yuki);
+    delete_grantee(&source, yuki);
     let archive = export_whole(&source);
     let source_tuple = rows_for(&retained_rows(&archive), "CONVERSATION_ROLE_GRANT");
     assert_eq!(
