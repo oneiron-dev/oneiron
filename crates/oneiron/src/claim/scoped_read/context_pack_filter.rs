@@ -141,6 +141,7 @@ impl ScopedRead<'_> {
                     &filter,
                     &mut neighbors,
                     &results,
+                    &held,
                 )?;
             let suppressed = auxiliary_suppressed
                 .saturating_add(result_rows_suppressed)
@@ -254,13 +255,18 @@ impl ScopedRead<'_> {
             if admission.visible()
                 && self.add_turn_content(rtxn, policy, disclosure, &mut entity, producers)?
             {
-                self.filter_context_entity_edges(rtxn, policy, filter, &mut entity)?;
+                self.filter_context_entity_edges(rtxn, policy, filter, &mut entity, held)?;
                 kept.push(entity);
             }
         }
         Ok((kept, claims_suppressed, suppressed))
     }
 
+    /// Keeps the neighbors an edge of a kept row reaches: the row's own
+    /// edges this filter kept, or, for a row that carries none, its out-edges
+    /// admitted under `held`, the authority that judged the rows, so a peer a
+    /// live Grant admits stays reachable from a row that Grant admits
+    /// (FIX-LIST SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS).
     fn retain_neighbors_reachable_from_results(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -268,6 +274,7 @@ impl ScopedRead<'_> {
         filter: &ResolvedRetrievalFilter,
         neighbors: &mut Vec<ContextEntity>,
         results: &[ContextEntity],
+        held: &HeldAuthority,
     ) -> Result<(usize, usize)> {
         let mut reachable_ids = HashSet::new();
         for entity in results {
@@ -280,7 +287,7 @@ impl ScopedRead<'_> {
                 );
                 continue;
             }
-            let admitted = self.admitted_edges_in(
+            let admitted = self.admitted_edges_held_in(
                 rtxn,
                 policy,
                 filter,
@@ -290,6 +297,7 @@ impl ScopedRead<'_> {
                 usize::MAX,
                 usize::MAX,
                 false,
+                held,
             )?;
             for edge in admitted.edges {
                 let info = edge.info();
@@ -365,17 +373,22 @@ impl ScopedRead<'_> {
         Ok(facets)
     }
 
+    /// Keeps the edges of a kept row whose relation and peer this read
+    /// admits under `held`, the authority that judged the row: an edge
+    /// between two rows a live Grant admits stays with its row
+    /// (FIX-LIST SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS).
     fn filter_context_entity_edges(
         &self,
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
         entity: &mut ContextEntity,
+        held: &HeldAuthority,
     ) -> Result<()> {
         let Some(edges) = entity.edges.as_mut() else {
             return Ok(());
         };
-        let admitted = self.admitted_edges_in(
+        let admitted = self.admitted_edges_held_in(
             rtxn,
             policy,
             filter,
@@ -385,6 +398,7 @@ impl ScopedRead<'_> {
             usize::MAX,
             usize::MAX,
             false,
+            held,
         )?;
         let permitted: HashSet<_> = admitted
             .edges
