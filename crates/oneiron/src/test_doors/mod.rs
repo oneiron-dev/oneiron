@@ -110,6 +110,7 @@ pub mod dreamer_stage_line;
 pub mod enum_name_rows;
 pub mod epoch_lineage_pointer;
 pub mod erase_preview_rows;
+pub mod erased_request_identity;
 pub mod esign_commitments;
 pub mod esign_send_binding;
 pub mod eval_authoring_execution_fault;
