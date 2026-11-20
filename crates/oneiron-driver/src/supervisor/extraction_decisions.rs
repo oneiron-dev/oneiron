@@ -1,7 +1,8 @@
 //! Lends a prepared pass's resources to one extraction attempt's bound calls.
 //!
 //! Verdict reads and generation steps share the original attempt's guard and charge tally.
-//! Every lent read lists for the destination bound the pass stated, as the pass's wake did.
+//! Every lent read lists for the destination bound the pass stated, the bound its wake's
+//! listings were read for.
 
 use std::sync::{Arc, Mutex};
 
@@ -121,10 +122,12 @@ impl DreamerDecisionLender for ExtractionAttemptLender {
         ))
     }
 
-    /// States the bound of the wake this attempt's context was prepared for.
+    /// States the bound of the wake this attempt's context was prepared for, the same value
+    /// at every call.
     ///
-    /// The engine rebuilds every lent extraction listing for it, so the lent job lists
-    /// what the pass's native extraction lists. A context without a prepared wake states none.
+    /// The engine rebuilds each lent extraction listing for it, so the lent reads list for
+    /// the destination the pass's native extraction read for. A context without a prepared
+    /// wake states none.
     fn destination_bound(&self) -> Option<ReadDestination> {
         self.destination_bound.clone()
     }

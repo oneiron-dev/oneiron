@@ -188,7 +188,8 @@ pub fn native_extraction_slice_transcripts(
 /// [`native_extraction_slice_transcripts`] with the wake's listings read for `destination_bound`,
 /// as a driven pass reads them for the bound its executors stated; `None` states no bound.
 ///
-/// A lent step whose lender states the same bound must render the same bytes.
+/// A lent step over the same rows, turns and material, whose lender states the same bound,
+/// renders the same bytes.
 ///
 /// # Errors
 ///

@@ -89,9 +89,14 @@ fn kept_world_fixture() -> ExtractionStepTestResult<KeptWorldFixture> {
         ClaimSubject::Entity(relationship),
         rmpv::Value::from(owen.to_hex()),
         1.0,
-        ClaimApprovalStatus::Approved,
+        ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     )?;
+    // The membership lands Auto. No policy rule names `core.relationship.person_ref`, so it
+    // resolves critical by fallback: an Auto write lifts that fallback floor with nothing to
+    // confirm, while a raw Approved stamp keeps it (only the owner's proof lifts an Approved
+    // one, as `bind_member_person` carries). The membership listing reads Auto and Approved
+    // alike.
     // A RELATIONSHIP subject has no FACET of its own: the claim takes the vault default facet,
     // as the engine's own relationship writer stamps it.
     membership.scope_facet = vault.default_facet()?;
@@ -137,10 +142,10 @@ fn one_turn_request(fixture: &KeptWorldFixture) -> Value {
 }
 
 /// A lent step whose lender states the pass's bound lists what the pass's native extraction
-/// lists for that bound. The pass here runs on this device, so its listing shows the membership
-/// a kept world backs; the lent transcript equals that native transcript byte for byte. The
-/// native transcript for no stated bound is the control: it differs, and it leaves the
-/// membership out.
+/// lists for that bound. The lender here states this device as the pass's bound, so the listing
+/// shows the membership a kept world backs; the lent transcript equals that native transcript
+/// byte for byte. The native transcript for no stated bound is the control: it differs, and it
+/// leaves the membership out.
 #[test]
 fn a_lent_step_lists_for_the_destination_bound_its_lender_states() -> ExtractionStepTestResult<()> {
     let fixture = kept_world_fixture()?;
