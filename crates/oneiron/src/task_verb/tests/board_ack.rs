@@ -1507,6 +1507,53 @@ fn the_owner_dismisses_and_cancels_a_task_whose_body_no_longer_decodes() {
     }
 }
 
+/// F15 (#9680 review round 1): a TASK addressed to a peer has no local
+/// attempt, so the owner's cancel of it is its Cancelled fact, which the
+/// cancel decided on the body's terminal. A body that no longer decodes
+/// turned that cancel into the decode error. Such a body settles nothing, so
+/// the owner cancels it once; the second cancel finds it cancelled.
+#[test]
+fn the_owner_cancels_an_unrealized_task_whose_body_no_longer_decodes() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    grant_cancel(&vault, own, 0xD7);
+    let peer = EntityId::from_bytes([0xE9; 16]).expect("peer id");
+    put_person(&vault, peer);
+    let creator = vault.memory(own, EdgeActorClass::Human);
+    let owner = vault.memory(own, EdgeActorClass::Agent);
+    for subkind in [
+        TASK_VERB_BODY_SUBKIND,
+        crate::outbound::CONNECTOR_SEND_TASK_SUBKIND,
+    ] {
+        let task = creator
+            .tasks_create(&spec(120).with_assignee(TaskAssignee::Peer { actor_ref: peer }))
+            .expect("create task")
+            .task_ref
+            .expect("task ref");
+        assert!(
+            attempts_for(&vault, task).is_empty(),
+            "{subkind}: a peer-addressed TASK has no local attempt"
+        );
+        put_task_body(&vault, task, &undecodable_task_body(subkind));
+
+        let cancel = owner
+            .cancel(TaskCancelTarget::Task(task))
+            .expect("owner cancel");
+        assert_eq!(cancel.approval, ClaimApprovalStatus::Auto, "{subkind}");
+        assert!(cancel.effected, "{subkind}");
+        assert_eq!(cancel.status, Some(RunTreeStatus::Cancelled), "{subkind}");
+        assert!(
+            task_is_cancelled(&vault, task).expect("cancel state"),
+            "{subkind}"
+        );
+
+        let again = owner
+            .cancel(TaskCancelTarget::Task(task))
+            .expect("second owner cancel");
+        assert!(!again.effected, "{subkind}: an already cancelled TASK");
+    }
+}
+
 /// F15 (Bugbot on #1444): for a TASK whose body no longer decodes, anyone the
 /// Owner fact does not name gets the answer an unowned TASK gives: a refused
 /// dismissal and a cancel that only proposes. Never a body-decode error, never
