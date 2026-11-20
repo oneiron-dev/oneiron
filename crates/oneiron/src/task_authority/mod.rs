@@ -1237,6 +1237,57 @@ pub(crate) fn restore_suppressed_in_txn(
     Ok(())
 }
 
+/// The facts this vault keeps refused under `task` ([`REFUSED`]) that a recovered vault
+/// keeps too ([`is_carried_refused_fact_body`]), in key order: each fact's row id and body
+/// as it arrived. A canonical capture carries them, so the recovered vault judges each as
+/// this one would, its carrier's profile arriving before the capture or after the recovery
+/// (FIX TASK-FACT-REFUSED-PENDING-NOT-CAPTURED).
+pub(crate) fn refused_facts_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    task: &EntityId,
+) -> Result<Vec<(EntityId, Vec<u8>)>> {
+    let mut rows = Vec::new();
+    for row in REFUSED.iter_from(store, txn, task.as_bytes())? {
+        let ((_, fact, _), body) = row?;
+        if is_carried_refused_fact_body(task, &body) {
+            rows.push((fact, body));
+        }
+    }
+    Ok(rows)
+}
+
+/// Whether `body` is a refused fact a recovered vault keeps under `task`: it decodes
+/// strictly as a fact about `task` and carries its carrier's signature. A kept row with no
+/// carrier is one this install's door wrote; it counts here alone, so it is never carried.
+pub(crate) fn is_carried_refused_fact_body(task: &EntityId, body: &[u8]) -> bool {
+    decode_carried_task_authority_fact_body(body)
+        .is_ok_and(|carried| carried.fact.task_ref == *task && carried.carrier.is_some())
+}
+
+/// Keeps one refused fact a recovered canonical window carries under its task, as its
+/// source kept it ([`note_suppressed_fact_in_txn`]).
+#[cfg(feature = "sync")]
+pub(crate) fn restore_refused_fact_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    task: [u8; 16],
+    fact: [u8; 16],
+    body: &[u8],
+) -> Result<()> {
+    let hash = oneiron_contracts::fingerprint::ContentHash::of(body).into_bytes();
+    REFUSED.put(
+        store,
+        wtxn,
+        &(
+            EntityId::from_bytes(task)?,
+            EntityId::from_bytes(fact)?,
+            hash,
+        ),
+        &body.to_vec(),
+    )
+}
+
 /// The refusal a task's fact read fails with when it holds a fact this vault refused.
 const FACT_SUPPRESSED: &str = "task authority fact suppressed";
 
@@ -1597,6 +1648,16 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         task_ref: EntityId,
     ) -> Result<TaskAuthorityFacts> {
+        self.task_authority_facts_judging_in(rtxn, task_ref, RefusedRows::Every)
+    }
+
+    /// [`Self::task_authority_facts_in`], judging the refused rows `rows` names.
+    fn task_authority_facts_judging_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        task_ref: EntityId,
+        rows: RefusedRows,
+    ) -> Result<TaskAuthorityFacts> {
         // A fact this vault never admitted is not a fact never made: no
         // cancellation, consent requirement or party is guessed past it.
         if SUPPRESSED.contains(&self.store, rtxn, &task_ref)? {
@@ -1604,7 +1665,7 @@ impl Vault {
         }
         let mut count = FactCountRule::default();
         let proved = self.counted_task_facts_in(rtxn, task_ref, &mut count)?;
-        if self.counts_a_refused_fact_in(rtxn, task_ref, &proved, &mut count)? {
+        if self.counts_a_refused_fact_in(rtxn, task_ref, &proved, &mut count, rows)? {
             return Err(fact_suppressed());
         }
         TaskAuthorityFacts::fold(&proved)
@@ -1685,10 +1746,14 @@ impl Vault {
         task_ref: EntityId,
         facts: &[TaskAuthorityFact],
         count: &mut FactCountRule,
+        rows: RefusedRows,
     ) -> Result<bool> {
         let mut refused = Vec::new();
         for row in REFUSED.iter_from(&self.store, rtxn, task_ref.as_bytes())? {
             let ((_, fact_ref, _), body) = row?;
+            if !rows.judges(&task_ref, &body) {
+                continue;
+            }
             if let Some(fact) = count.counted(self, rtxn, &fact_ref, &body, task_ref)? {
                 refused.push(fact);
             }
@@ -1699,10 +1764,15 @@ impl Vault {
         TaskAuthorityFacts::counts_any_of(facts, &refused)
     }
 
-    /// Whether `task_ref`'s facts read as a refusal for a fact this vault refused: the task
-    /// is marked ([`fact_suppressed_in`]), or its fold would count a refused fact now. A
-    /// canonical capture carries the answer, so the recovered vault marks the task.
-    pub(crate) fn task_fact_suppressed_in(
+    /// Whether a canonical capture marks `task_ref` as holding a fact this vault refused, so
+    /// the recovered vault reads it as a refusal: the task is marked here
+    /// ([`fact_suppressed_in`]), or its fold would count, now, a refused row the capture does
+    /// not carry (one with no carrier, which counts on this install alone). Each row the
+    /// capture carries ([`refused_facts_in`]) is judged where the window is recovered, at each
+    /// read, as here, so no mark depends on what the fold admitted at the capture, and the
+    /// recovery's own recapture reads the same mark (FIX
+    /// TASK-FACT-REFUSED-PENDING-NOT-CAPTURED).
+    pub(crate) fn task_fact_suppression_mark_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         task_ref: EntityId,
@@ -1710,17 +1780,39 @@ impl Vault {
         if fact_suppressed_in(&self.store, rtxn, &task_ref)? {
             return Ok(true);
         }
-        if REFUSED
-            .iter_from(&self.store, rtxn, task_ref.as_bytes())?
-            .next()
-            .is_none()
-        {
+        let mut uncarried = false;
+        for row in REFUSED.iter_from(&self.store, rtxn, task_ref.as_bytes())? {
+            let (_, body) = row?;
+            if RefusedRows::Uncarried.judges(&task_ref, &body) {
+                uncarried = true;
+                break;
+            }
+        }
+        if !uncarried {
             return Ok(false);
         }
         Ok(matches!(
-            self.task_authority_facts_in(rtxn, task_ref),
+            self.task_authority_facts_judging_in(rtxn, task_ref, RefusedRows::Uncarried),
             Err(Error::InvariantViolation(message)) if message == FACT_SUPPRESSED
         ))
+    }
+}
+
+/// Which of a task's refused rows ([`REFUSED`]) its read judges.
+#[derive(Clone, Copy)]
+enum RefusedRows {
+    /// Every one: the task's own read.
+    Every,
+    /// Only those a canonical capture does not carry ([`is_carried_refused_fact_body`]).
+    Uncarried,
+}
+
+impl RefusedRows {
+    fn judges(self, task: &EntityId, body: &[u8]) -> bool {
+        match self {
+            Self::Every => true,
+            Self::Uncarried => !is_carried_refused_fact_body(task, body),
+        }
     }
 }
 

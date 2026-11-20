@@ -47,9 +47,9 @@ pub use vocabulary::{
     CanonicalBaseEdge, CanonicalContainerManifest, CanonicalCustodyTransition,
     CanonicalDocumentFork, CanonicalDocumentPin, CanonicalDocumentPurge, CanonicalDocumentReceipt,
     CanonicalDocumentVersion, CanonicalEntity, CanonicalEntityDocument,
-    CanonicalEntityDocumentHistory, CanonicalForkStatus, CanonicalPinCarrier, CanonicalRoomFact,
-    CanonicalRoomTurn, CanonicalSchemaManifest, CanonicalSettleVerb, CanonicalShellWorld,
-    CanonicalSnapshot, CanonicalTombstone,
+    CanonicalEntityDocumentHistory, CanonicalForkStatus, CanonicalPinCarrier,
+    CanonicalRefusedTaskFact, CanonicalRoomFact, CanonicalRoomTurn, CanonicalSchemaManifest,
+    CanonicalSettleVerb, CanonicalShellWorld, CanonicalSnapshot, CanonicalTombstone,
 };
 pub use withdrawn_cutoffs::CanonicalCutoff;
 
