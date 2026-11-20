@@ -38,6 +38,7 @@ pub mod booking_anti_abuse_manifest;
 pub mod booking_side_table_rows;
 pub mod bootstrap_skills;
 pub mod builtin_pack_seed;
+pub mod burst_receipt_stored_shape;
 pub mod call_receipt_damage;
 pub mod callable_skill;
 pub mod campaign_member_index;

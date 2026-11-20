@@ -9,4 +9,6 @@ pub enum WorkKind {
     Selector,
     MemberUpdate,
     GuestUpdate,
+    /// An own device's window update at its home (L7-41).
+    DeviceUpdate,
 }
