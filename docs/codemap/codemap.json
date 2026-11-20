@@ -9809,7 +9809,7 @@
      "path": "src/batch/secret_scan/mask/side_row.rs",
      "purpose": "The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A)",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -13109,7 +13109,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "CalendarRemoteObjectRow",
@@ -13118,7 +13118,7 @@
      "path": "src/calendar/connectors/outbound.rs",
      "purpose": "Conditional writes plus durable outbox and remote-object cursor store",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 3,
       "re-export": 2,
       "struct": 2
@@ -13144,7 +13144,7 @@
      "path": "src/calendar/connectors/outbound/collection.rs",
      "purpose": "A full listing's omissions, checked against this seat's remote object rows (fix list row 19192)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 2
      }
@@ -13185,7 +13185,7 @@
      "path": "src/calendar/connectors/resource.rs",
      "purpose": "One UID is one remote resource: master plus every live detached exception",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -13372,7 +13372,7 @@
      "path": "src/calendar/ics/parse.rs",
      "purpose": "ICS feed parse half (CAL-02, ONE-1784): RFC 5545 bytes into calendar-owned rows",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1,
       "re-export": 1,
       "struct": 2
@@ -16453,7 +16453,7 @@
      "purpose": "A door's own check-in for a person's act (ARCH-0082 #composing; ROLES-CHECKIN P2.4b, piece 2i; Engine ruling…",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 17,
       "re-export": 1
      }
@@ -16465,7 +16465,7 @@
      "path": "src/check_in/mod.rs",
      "purpose": "Check-in: one mechanism for every act that may need an ask (ONEIRON-ARCH-0082; owner ruling ROLES-CHECKIN =…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "re-export": 15
      }
     },
@@ -16572,7 +16572,7 @@
      "purpose": "The check-in of an add of someone else to a room or thread (ARCH-0082 #agent-room-add; ROLES-CHECKIN P2.6a…",
      "surface": {
       "const": 2,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -17473,7 +17473,7 @@
      "path": "src/claim/scoped_read/agent_grants.rs",
      "purpose": "FIX 7462: an agent's ordinary read also admits what one of its own live owner-minted Grants covers (owner…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -17537,7 +17537,7 @@
      "path": "src/claim/scoped_read/edge_admission.rs",
      "purpose": "The one scoped graph projection: exact relation + both endpoints, then limits",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -18301,7 +18301,7 @@
      "path": "src/claim/scoped_read/weave_report/projection.rs",
      "purpose": "The live weave projection (OF-499; FIX 1259): the one core every weave report runs, a reader's live read, a…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -20630,7 +20630,7 @@
      "path": "src/code_run/replay/request_identity.rs",
      "purpose": "A bridge request's identity apart from its words (FIX 6534)",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -31689,7 +31689,7 @@
      "purpose": "Extraction request/response projection for one admitted branch; the typed pack that decides which listed…",
      "surface": {
       "const": 1,
-      "crate-vis": 22,
+      "crate-vis": 24,
       "fn": 2,
       "struct": 1
      }
@@ -32054,7 +32054,7 @@
      "path": "src/dreamer_consolidation/neighbourhood/render.rs",
      "purpose": "The listing as a call shows it (FIX 7506): each entity, claim and relationship by its call-local label…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -32452,7 +32452,7 @@
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 42,
+      "crate-vis": 43,
       "re-export": 2
      }
     },
@@ -32463,7 +32463,7 @@
      "path": "src/dreamer_consolidation/resources/bound_read.rs",
      "purpose": "A bound verdict's rebuilt read projection of its queued branch",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -32599,13 +32599,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/resources/slices.rs",
      "purpose": "Read-only extraction children attenuated from one prepared branch",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 10
      }
     },
     {
@@ -41428,7 +41428,7 @@
      "path": "src/entity_doc/pins.rs",
      "purpose": "Causal citation floors, retained quotes and the owner's shallow-purge door",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -42795,7 +42795,7 @@
      "path": "src/federation/pending_act.rs",
      "purpose": "Row-driven shared-vault objection windows",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 9,
       "re-export": 4,
       "struct": 2
@@ -60210,7 +60210,7 @@
      "path": "src/note/document_store.rs",
      "purpose": "Actor-bound NOTE editor verbs and atomic entity-document persistence",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 9
      }
     },
@@ -94005,6 +94005,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/adopted_owner_work.rs",
+     "purpose": "The adopted owner-work door (FIX [OWNER-RESERVE-ADOPTED-OWNER-WORK]): an install's machine on a fresh…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/advisory_rate_window.rs",
      "purpose": "Door for `oneiron-server/tests/own_rate_health_ask.rs`: an own actor's acts counted on an advisory rate…",
      "surface": {
@@ -94801,7 +94811,7 @@
      "purpose": "One Dreamer consolidation pass, for integration tests (S63E live leak 1): a witnessed TURN whose words are a…",
      "surface": {
       "crate-vis": 4,
-      "fn": 9,
+      "fn": 11,
       "struct": 1
      }
     },
@@ -95095,6 +95105,19 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "RoomSliceCall"
+     ],
+     "path": "src/test_doors/dreamer_extraction_room.rs",
+     "purpose": "Door for `tests/dreamer_extraction_room.rs` (FIX DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW): one real…",
+     "surface": {
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "WindowFinish"
      ],
      "path": "src/test_doors/dreamer_partition_window.rs",
@@ -95184,7 +95207,7 @@
      "path": "src/test_doors/erased_request_identity.rs",
      "purpose": "Door for `tests/erased_request_custody_identity.rs` (FIX ERASED-IDENTITY-ONE-STAND-IN): one code-run call…",
      "surface": {
-      "fn": 16
+      "fn": 20
      }
     },
     {
@@ -96346,6 +96369,7 @@
      "path": "src/test_doors/meso_extraction_width.rs",
      "purpose": "Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one…",
      "surface": {
+      "crate-vis": 5,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -96373,7 +96397,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 345,
+      "mod": 348,
       "re-export": 2
      }
     },
@@ -96764,6 +96788,16 @@
      "notable": [],
      "path": "src/test_doors/profiles_other_machine.rs",
      "purpose": "Door for `tests/doors_read_standing_heads.rs` (FIX [FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES]…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/project_replicated_revision.rs",
+     "purpose": "Door for `tests/frozen_project_answer_narrowing.rs` (FIX…",
      "surface": {
       "fn": 1
      }
@@ -106294,6 +106328,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_grant_weave_reads.rs",
+     "purpose": "An agent that reads through its own live read Grant sees, in its weave, the owner's claim about it that the…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -106747,6 +106789,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/authority_log_owner_reserve_adopted.rs",
+     "purpose": "FIX [OWNER-RESERVE-ADOPTED-OWNER-WORK] (Astra owner-reserve r3 F1): past the owner reserve of…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/authority_rows_never_applied.rs",
      "purpose": "Canonical recovery and signed-history import leave out the authority rows the source's own fold never…",
      "surface": {}
@@ -106928,7 +106978,7 @@
      "path": "tests/booking_host_seat_support/mod.rs",
      "purpose": "The host's own calendar as a connector seat the booking is written to",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 27
      }
     },
     {
@@ -107412,7 +107462,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/check_in_history_erase_effects.rs",
@@ -108424,6 +108474,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/demoted_owner_relationship_exemption.rs",
+     "purpose": "[EMBEDDED-OWNER-EXEMPTION-IGNORES-SHARED-OWNER-CENSUS]: the owner's relationship exemption…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -108621,6 +108679,14 @@
      "notable": [],
      "path": "tests/doors_read_standing_heads.rs",
      "purpose": "Red/green tests for FOREIGN-ANCHOR PR 2 (K2 of Fable design pass 29): the doors read the heads a machine…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/dreamer_extraction_room.rs",
+     "purpose": "FIX DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW: the main claim extraction call's input is sized by the…",
      "surface": {}
     },
     {
@@ -108955,6 +109021,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/extraction_claim_evidence.rs",
+     "purpose": "Pinned claim evidence on a bound extraction operand is checked under the job's live read",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/extraction_inputs_page.rs",
      "purpose": "Pages one queued Meso extraction attempt's TURNs under the caller's live read",
      "surface": {}
@@ -109121,6 +109195,14 @@
      "notable": [],
      "path": "tests/fenced_erase_form_past_wall.rs",
      "purpose": "FIX FENCE-ERASED-FORM-THROUGH-WALL: a put fence erases, in its writer, the record of a run whose actor is…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fenced_erase_nested_shaped_key.rs",
+     "purpose": "FIX REQUEST-IDENTITY-NESTED-SHAPED-KEY-AS-WRITTEN: an erase keeps each bridge request's stand-in identity…",
      "surface": {}
     },
     {
@@ -109581,6 +109663,14 @@
      "notable": [],
      "path": "tests/frontier_walk.rs",
      "purpose": "Setting stage 7b-1: every read of an authority register's frontier is one walk…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/frozen_project_answer_narrowing.rs",
+     "purpose": "A frozen project's saved view can stop being served while the record itself stays the same, and a standing…",
      "surface": {}
     },
     {
@@ -116084,7 +116174,7 @@
     "calendar": {
      "files": 97,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Calendar module home (CAL-00)"
     },
@@ -117489,7 +117579,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 354,
+     "files": 357,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -117673,8 +117763,8 @@
    },
    "over_bar": 300,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8276,
-   "test_files": 2027
+   "source_files": 8279,
+   "test_files": 2034
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -124306,8 +124396,40 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/draft_from_steps_literal_opens_slot.rs",
+     "purpose": "These tests cover FIX [BROWSER-DRAFT-LITERAL-TEXT-WITH-SLOT-BRACES-READS-AS-A-SLOT]",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/guest_pressure_answer.rs",
      "purpose": "A browser or desktop guest's pids-limit hits reach its session's manifest (FIX 8013 follow-up…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/library_run_mode_and_model_free.rs",
+     "purpose": "These tests hold the run mode and model-free contract (FIX [BROWSER-LIBRARY-PLAIN-FUNCTIONS-HELD-BY-NO-TEST])",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/program_origin_and_filled_checks.rs",
+     "purpose": "These tests hold the plain origin and check-filling rules (FIX…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/replay_args_held_out.rs",
+     "purpose": "Tests for the replay held-out check (FIX [BROWSER-LIBRARY-PLAIN-FUNCTIONS-HELD-BY-NO-TEST])",
      "surface": {}
     },
     {
@@ -124316,6 +124438,14 @@
      "notable": [],
      "path": "tests/switch_source_pressure.rs",
      "purpose": "A switched engine's receipt names the pids pressure its source guest showed before the switch dropped it…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/workflow_program_shape_and_fill.rs",
+     "purpose": "These tests hold the program shape and fill contract (FIX [BROWSER-LIBRARY-PLAIN-FUNCTIONS-HELD-BY-NO-TEST])",
      "surface": {}
     }
    ],
@@ -124527,7 +124657,7 @@
    "over_bar": 0,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
    "source_files": 89,
-   "test_files": 5
+   "test_files": 10
   },
   "oneiron-code-check": {
    "files": [
@@ -165593,7 +165723,7 @@
      "path": "src/commands/hook/bind.rs",
      "purpose": "Which vault a session binds (ARCH-0028 `#plugin-first-run`, owner ruling PLUGIN-FIRSTRUN = D), the first…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -165606,7 +165736,7 @@
      "path": "src/commands/hook/continue_command.rs",
      "purpose": "`oneiron continue --cloud` (census L10-17): moves the Claude Code session working in this repo to the hosted…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 4,
       "struct": 2
      }
@@ -165625,10 +165755,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/commands/hook/continue_command/hosted_hand_over.rs",
+     "purpose": "The hooks' hand-over of a Claude Code session's log to the selected hosted vault ([`hand_over_hosted`])…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/commands/hook/continue_command/transcript.rs",
      "purpose": "The session `oneiron continue --cloud` sends: one Claude Code session log and its subagents' logs, each…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -165669,6 +165809,16 @@
      "purpose": "Recall through `oneiron mcp`, spoken to one JSON-RPC request at a time, and the short block a hook prints…",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/hook/session_binding.rs",
+     "purpose": "What a session's starts bound, recorded by each `session-start` of a Claude Code session for its hand-over…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -165770,7 +165920,7 @@
      "path": "src/commands/mcp_bridge.rs",
      "purpose": "`oneiron mcp`: MCP over stdio for an agent that spawns a command (Claude Code's `claude mcp add`, Codex's…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -178861,6 +179011,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/hook_hosted_hand_over.rs",
+     "purpose": "`oneiron hook --host <host> hand-over` with a hosted vault selected (H41, ARCH-0028 `#plugin-first-run` step…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -180910,7 +181068,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 86,
+     "files": 88,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -181437,8 +181595,8 @@
    },
    "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2052,
-   "test_files": 516
+   "source_files": 2054,
+   "test_files": 517
   },
   "oneiron-setting-contract": {
    "files": [
