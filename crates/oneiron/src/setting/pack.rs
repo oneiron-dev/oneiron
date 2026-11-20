@@ -391,49 +391,35 @@ pub(super) fn birth_pack_row_in_txn(
     ))
 }
 
-/// The tables (their digests) of the owner's yeses whose landings `spec`'s row in `pack`'s layer
-/// stands on here (stage 7c-3d), newest first: the key's landings walked as a reader walks them
-/// ([`birth_pack_row_in_txn`]), while the row is the one each wrote. What a birth names yeses to,
-/// beside the pack's head: each table it names a yes to stops a reader's walk there, so a birth
-/// that names an older table's yes still reads it where the newest table's yes no longer counts.
-/// Empty where no yes wrote the row here.
+/// The table (its digest) of the owner's yes whose landing wrote `spec`'s row in `pack`'s layer
+/// as it stands (stage 7c-3d): the key's newest landing, while the row is the one it wrote. What a
+/// birth names a yes to, beside the pack's head. `None` where no yes wrote the row here.
 ///
 /// # Errors
 ///
 /// Storage errors.
-pub(super) fn yes_landing_tables_in_txn(
+pub(super) fn yes_landing_table_in_txn(
     dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
     pack: &str,
     spec: &SettingSpec,
-) -> Result<Vec<[u8; 32]>> {
+) -> Result<Option<[u8; 32]>> {
     let Some(head) = head_in_txn(dbs, txn, pack)? else {
-        return Ok(Vec::new());
+        return Ok(None);
     };
-    let table = table_of(spec);
-    let mut row = table.get_bytes(dbs, txn, &pack_row_key(spec.name, pack))?;
-    let mut tables = Vec::new();
-    for landing in head
+    let Some(landing) = head
         .landed
         .iter()
         .rev()
-        .filter(|landing| landing.key == spec.name)
-    {
-        if row.as_deref().map(row_digest).as_deref() != Some(landing.wrote.as_str()) {
-            break;
-        }
-        if let Some(digest) = oneiron_hex::decode::<32>(&landing.table)
-            && !tables.contains(&digest)
-        {
-            tables.push(digest);
-        }
-        row = landing
-            .prior
-            .as_ref()
-            .map(|prior| table.encode_value(prior))
-            .transpose()?;
+        .find(|landing| landing.key == spec.name)
+    else {
+        return Ok(None);
+    };
+    let row = table_of(spec).get_bytes(dbs, txn, &pack_row_key(spec.name, pack))?;
+    if row.as_deref().map(row_digest).as_deref() != Some(landing.wrote.as_str()) {
+        return Ok(None);
     }
-    Ok(tables)
+    Ok(oneiron_hex::decode::<32>(&landing.table))
 }
 
 /// The read's default for `spec`: what the vault accepted from its packs. A key a head names
