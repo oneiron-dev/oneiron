@@ -171,11 +171,11 @@ fn message_audience_in_txn(
 }
 
 /// Settles the ask's mention as `answer` and saves the hint: a chosen
-/// candidate takes the span (and absorbs the mention's own provisional
-/// entity, everywhere it is named); someone new keeps that provisional
-/// entity, or mints one for the span, confirms it as a real person and
-/// asserts it distinct from the real candidates, said by `source` and
-/// decided by `seal`.
+/// candidate takes the span, restored when the cleanup archived it (and
+/// absorbs the mention's own provisional entity, everywhere it is named);
+/// someone new keeps that provisional entity, or mints one for the span,
+/// confirms it as a real person and asserts it distinct from the real
+/// candidates, said by `source` and decided by `seal`.
 pub(super) fn apply_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -195,6 +195,10 @@ pub(super) fn apply_in_txn(
                 _ => false,
             };
             if !absorbed {
+                // A chosen person the cleanup archived comes back in this
+                // txn, keeping its id, as the absorption's resolve restores
+                // it (ARCH-0055 section 10: a later mention restores it).
+                vault.restore_mentioned_person_in_txn(txn, &chosen)?;
                 crate::tagging::settle_mention_in_txn(vault, txn, &ask.turn, span, chosen)?;
             }
             chosen
