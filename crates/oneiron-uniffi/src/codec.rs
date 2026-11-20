@@ -22,17 +22,17 @@ use oneiron::task_verb::sdk;
 
 use crate::dto::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView,
-    CitedMessage, ClaimInput, ClaimListFilter, ClaimView, ClaimViews, CommitOutcome, CommitReceipt,
-    ConsolidationJobInput, DeleteReceipt, DeleteRequestState, DreamerJobRef, DreamerJobView,
-    Effort, EntityRead, EntityRefReceipt, EntityView, EntityViews, ExportReceipt, FacadeReceipt,
-    ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem, MemoryPack,
-    MemoryProvenance, MemoryStaleStamp, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
-    OutboundDraftInput, OutboundIntentReceipt, PendingWrite, QueryAffect, QuoteSpan, ReadReceipt,
-    ReadScope, RecallMedia, RecallResidence, RecallResidenceHit, RecallResidenceSource,
-    RecallScope, RecordRefusal, RefusalReason, RerankReport, RerankSkip, RetrievalDegradation,
-    RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralPutInput,
-    TemporalHint, TurnProgramWakeOutcome, UnpersistedWakeReason, WireJson, WitnessAuthor,
-    WitnessMessage, WitnessReceipt, WitnessTurn,
+    CheckInDecision, CitedMessage, ClaimInput, ClaimListFilter, ClaimView, ClaimViews,
+    CommitOutcome, CommitReceipt, ConsolidationJobInput, DeleteReceipt, DeleteRequestState,
+    DreamerJobRef, DreamerJobView, Effort, EntityRead, EntityRefReceipt, EntityView, EntityViews,
+    ExportReceipt, FacadeReceipt, ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits,
+    MemoryItem, MemoryPack, MemoryProvenance, MemoryStaleStamp, MentionProvenance, NeighborHit,
+    NeighborHits, NeighborOpts, OutboundDraftInput, OutboundIntentReceipt, PendingWrite,
+    QueryAffect, QuoteSpan, ReadReceipt, ReadScope, RecallMedia, RecallResidence,
+    RecallResidenceHit, RecallResidenceSource, RecallScope, RecordRefusal, RefusalReason,
+    RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta, RetrievalQuality,
+    SafeDeleteReason, ScopeHonesty, StructuralPutInput, TemporalHint, TurnProgramWakeOutcome,
+    UnpersistedWakeReason, WireJson, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 use crate::error::OneironError;
 
@@ -765,9 +765,9 @@ impl Lift<engine::ClaimView> for ClaimView {
 
 // ── deletion and consent ────────────────────────────────────────────────
 
-impl Lower<sdk::SafeDeleteRequest> for (String, SafeDeleteReason) {
+impl Lower<sdk::SafeDeleteRequest> for (String, SafeDeleteReason, Option<String>) {
     fn lower(self) -> Result<sdk::SafeDeleteRequest, OneironError> {
-        let (entity_ref, reason) = self;
+        let (entity_ref, reason, check_in_ref) = self;
         Ok(sdk::SafeDeleteRequest {
             entity_ref,
             reason: match reason {
@@ -776,7 +776,7 @@ impl Lower<sdk::SafeDeleteRequest> for (String, SafeDeleteReason) {
                 SafeDeleteReason::GdprDelete => engine::SafeDeleteReason::GdprDelete,
                 SafeDeleteReason::PolicyDelete => engine::SafeDeleteReason::PolicyDelete,
             },
-            check_in_ref: None,
+            check_in_ref,
         })
     }
 }
@@ -801,6 +801,20 @@ impl Lift<engine::DeleteReceipt> for DeleteReceipt {
                     DeleteRequestState::CompletionPending
                 }
             },
+            check_in: Lift::lift(value.check_in)?,
+        })
+    }
+}
+
+impl Lift<oneiron::check_in::CheckInDecision> for CheckInDecision {
+    fn lift(value: oneiron::check_in::CheckInDecision) -> Result<Self, OneironError> {
+        Ok(Self {
+            act_class: value.act_class,
+            role: value.role,
+            mode: value.mode,
+            basis: value.basis,
+            check_in: value.check_in,
+            requester: value.requester,
         })
     }
 }
