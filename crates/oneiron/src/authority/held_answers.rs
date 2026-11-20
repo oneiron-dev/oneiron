@@ -320,7 +320,11 @@ impl Vault {
     /// never other keys than it stands under on this install
     /// ([`AuthorityFold::replaces_standing_keys`]). His answer about a
     /// machine ends the ask of every held answer about it that it saw. The
-    /// credentials are sealed again for the roster the confirm changed.
+    /// credentials are sealed again for the roster the confirm changed. The
+    /// rows the write counted (each answer, the revocation of each owner key
+    /// a confirmed removal ended, a frontier join) are marked for the
+    /// vault's loaded windows in the write and announced once it committed,
+    /// as at [`Self::remove_machine`].
     ///
     /// `seen` gives, for any named entry, the answer revision of its machine
     /// that his surface listed beside it ([`ListedHeldAnswer::revision`]).
@@ -374,7 +378,9 @@ impl Vault {
         }
         let after = self.authority_view_readonly_in_txn(&txn)?;
         let listing = self.held_answer_listing_in_txn(&txn, &after)?;
+        let rows = self.mark_rows_counted_since_in_txn(&mut txn, &fold)?;
         txn.commit()?;
+        self.note_committed_authority_rows(rows);
         #[cfg(feature = "sync")]
         self.reseal_after_machine_admission()?;
         Ok(ConfirmedHeldAnswers { removed, listing })
