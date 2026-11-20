@@ -22,7 +22,7 @@ use super::step_index::{
 use super::step_result::step_result;
 #[cfg(oneiron_test_support)]
 use super::step_state::STEP_STATE;
-use super::step_state::{step_state_erased, step_state_read};
+use super::step_state::step_state_read;
 use super::types::KEY_INPUT_VERSIONS;
 use super::{DurableStepError, DurableStepResult, StepOutcome, StepProgression};
 use crate::Vault;
@@ -107,37 +107,6 @@ pub(crate) fn request_hash_submit_receipt(
         retry: ModelStepRetryPolicy::default(),
         progression,
         result: Some(result),
-    })
-}
-
-/// [`request_hash_submit_receipt`] for a step an owner's erase may take while its call is in
-/// flight (KS-2B1, FIX 6226): a refused outcome whose step-state row reads erased answers
-/// [`ModelStepResult::Erased`], typed, so the job ends its attempt; the step is over and is
-/// never asked, or paid for, again. Every other outcome converts as there.
-pub(crate) fn request_hash_submit_receipt_keeping_erased(
-    vault: &Vault,
-    attempt: AttemptId,
-    request: &LlmRequest,
-    outcome: DurableStepResult<StepOutcome>,
-) -> MemoryResult<ModelStepReceipt> {
-    let refused = matches!(&outcome, Err(DurableStepError::Engine(Error::Refused(_))));
-    let receipt = request_hash_submit_receipt(vault, attempt, request, outcome);
-    if !refused || receipt.is_ok() {
-        return receipt;
-    }
-    let step_hash = request
-        .canonical_hash()
-        .map_err(|error| MemoryError::bad_request(error.to_string()))?;
-    if !step_state_erased(vault, attempt, &step_hash)? {
-        return receipt;
-    }
-    Ok(ModelStepReceipt {
-        step_ref: bytes_to_hex_lower(&step_hash),
-        step_hash: bytes_to_hex_lower(&step_hash),
-        model: request.model.clone(),
-        retry: ModelStepRetryPolicy::default(),
-        progression: None,
-        result: Some(ModelStepResult::Erased),
     })
 }
 

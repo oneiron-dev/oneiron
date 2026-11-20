@@ -12,7 +12,7 @@
 use super::{PsychMirrorSourceCandidate, PsychProfileKey, PsychProfileSource};
 use super::{PsychProfileSourceWords, rank_psych_mirror_sources};
 use crate::claim::{ClaimBody, ClaimSource, ClaimSubject, ScopedRead};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::consolidation_evidence::swarm_evidence_content_hash;
 use crate::{EntityId, Result, Vault};
 
@@ -81,9 +81,7 @@ pub(crate) fn admitted_key(
 }
 
 /// Every claim about `person` that `read` serves in `txn`, with the key
-/// each falls under; a claim no profile may read is left out. A profile is
-/// about a PERSON: an id that is not a live PERSON in `txn` (a NOTE with
-/// claims of its own, any other entity, or none) has no profile claims.
+/// each falls under; a claim no profile may read is left out.
 ///
 /// # Errors
 ///
@@ -94,11 +92,6 @@ pub(crate) fn person_claims_in(
     txn: &heed::RoTxn<'_>,
     person: EntityId,
 ) -> Result<Vec<(PsychProfileKey, ProfileClaim)>> {
-    if crate::vault::live_entity_row_in_txn(&vault.store, txn, &person)?.live_type()
-        != Some(ENTITY_TYPE_PERSON)
-    {
-        return Ok(Vec::new());
-    }
     let default_facet = vault.default_facet_in_txn(txn)?;
     let ids = vault.claims_for_subject_in_txn(txn, &person)?;
     let rows = read.get_entities_parts_in_txn(txn, &ids)?;

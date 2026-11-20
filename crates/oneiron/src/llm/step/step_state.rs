@@ -440,18 +440,6 @@ fn erased_in_txn(
     }
 }
 
-/// Whether an erase took the step-state row of `(attempt_id, step_hash)`
-/// (KS-2B1, FIX 6226 and 6227): its erased skeleton, or the erased marker of
-/// a retired response. Such a step is over and is never asked again.
-pub(super) fn step_state_erased(
-    vault: &Vault,
-    attempt_id: AttemptId,
-    step_hash: &[u8; 32],
-) -> Result<bool> {
-    let rtxn = vault.store.env.read_txn()?;
-    erased_in_txn(vault, &rtxn, &(attempt_id, *step_hash))
-}
-
 pub(super) fn step_state_delete(
     vault: &Vault,
     attempt_id: AttemptId,

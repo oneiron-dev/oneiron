@@ -92,10 +92,7 @@ impl DreamerAttemptBinding {
             BoundFacet::PsychProfile => {
                 matches!(
                     verb,
-                    PSYCH_PROFILE_SOURCES_PAGE_VERB
-                        | BOUND_STEP_SUBMIT_VERB
-                        | BOUND_STEP_RECEIPT_VERB
-                        | DERIVE_COMMIT_VERB
+                    PSYCH_PROFILE_SOURCES_PAGE_VERB | BOUND_STEP_SUBMIT_VERB | DERIVE_COMMIT_VERB
                 )
             }
         };
@@ -170,12 +167,6 @@ impl DreamerAttemptBinding {
                     validate_extraction_step,
                     |input| self.extraction_step_submit(input),
                 )?)
-            }
-            BOUND_STEP_RECEIPT_VERB if self.facet == BoundFacet::PsychProfile => {
-                let input: ModelStepReceiptRequest = decode(verb, input)?;
-                encode(&typed_row(&memory, &VERB_TABLE, verb, input, |input| {
-                    self.psych_profile_step_receipt(input)
-                })?)
             }
             BOUND_STEP_RECEIPT_VERB => {
                 let input: ModelStepReceiptRequest = decode(verb, input)?;
