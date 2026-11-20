@@ -33,6 +33,7 @@ enum Group {
     WithdrawnCutoffs,
     AssetBodyRefs,
     SourceAudiences,
+    RefusedTaskFacts,
     Complete,
 }
 
@@ -80,6 +81,7 @@ impl CanonicalComparison {
             withdrawn_cutoffs,
             asset_body_refs,
             source_audiences,
+            refused_task_facts,
         } = &self.actual;
         let (done, next_group) = match self.group {
             Group::Window => {
@@ -188,6 +190,14 @@ impl CanonicalComparison {
             ),
             Group::SourceAudiences => (
                 compare_rows(source_audiences, &wanted.source_audiences, &mut self.next)?,
+                Group::RefusedTaskFacts,
+            ),
+            Group::RefusedTaskFacts => (
+                compare_rows(
+                    refused_task_facts,
+                    &wanted.refused_task_facts,
+                    &mut self.next,
+                )?,
                 Group::Complete,
             ),
             Group::Complete => return Ok(true),

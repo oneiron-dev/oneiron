@@ -18,21 +18,40 @@
 //! only from the verified `tasks.create` / `cancel` / `tasks.update` write
 //! transactions; the generic raw TASK doors refuse role 6 outright
 //! (`habit::reject_public_streak_fields`), so no caller can mint the proof of
-//! its own ownership. The own-device replication/replay door admits role 6
-//! exactly like any other TASK row. A federation peer's fact is refused at
-//! admission, and an export to another vault withholds every fact, until a
-//! fact carries its carrier's signature (pass 28 R5; FIX
-//! TASK-FACT-FROM-FEDERATION-PEER). The ask records share role 6 under their
-//! own subkinds and proofs, and still cross.
+//! its own ownership.
+//!
+//! A fact proves itself to another machine (Fable pass 28 R5). The own-device
+//! replication/replay door still admits role 6 like any other TASK row, but a
+//! row is not a fact because it arrived: the fold counts a fact this install's
+//! own door wrote, and any other only when its carrier's signature verifies and
+//! the fold admitted the carrier ([`fact_proof`]). A row that proves nothing is
+//! skipped, never an error, so a sender that proves nothing cannot cancel a
+//! task, make itself its owner, or fail its read. A federation peer's fact is
+//! refused at admission, and an export to another vault withholds every fact
+//! (FIX TASK-FACT-FROM-FEDERATION-PEER). The ask records share role 6 under
+//! their own subkinds and proofs, and still cross.
+//!
+//! A proved fact counts only when its actor may make it
+//! ([`TaskAuthorityFacts::admits`], Fable pass 28 DESIGN 2.2). The mint door
+//! asks the same function before it writes, so the writing device and every
+//! other device count the same facts. The fold reads Owner facts first, then
+//! the facts whose rule reads the owner, then those whose rule reads the
+//! assignee or the consult's parties, so no arrival order changes the answer.
+//!
+//! A TASK's id commits to its maker and its owner ([`task_maker`], FIX
+//! TASK-ID-COMMITS-TO-MAKER). An Owner fact carries its maker and nonce, and
+//! counts only when they and its owner derive its task's id, so a second
+//! proved Owner fact naming another owner is skipped, not a fork.
 
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ports::EdgeStoreRead;
 
 use rmpv::Value;
 
 use crate::Vault;
+use crate::authority::CarrierSignature;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -41,7 +60,6 @@ use crate::registry::ENTITY_TYPE_TASK;
 use crate::scan_check::ScanCount;
 use crate::side_table::{self, SideTable};
 use crate::store::EngineScan;
-#[cfg(test)]
 use crate::temporal::TimeRange;
 use crate::write_envelope::task_body::{TaskRole, task_role_from_body_bytes};
 
@@ -51,11 +69,18 @@ pub(crate) use crate::store::task_authority_guard::{
 
 mod binding_generation;
 mod consult_executor;
+mod fact_proof;
+mod task_maker;
 pub use binding_generation::{BindingGeneration, BindingId};
+pub use task_maker::{TaskMaker, task_ref_of_maker};
 
-/// Strict body schema for authority facts. Version 1 is the only shape ever
-/// written; a row naming any other version is refused rather than guessed at.
-pub const TASK_AUTHORITY_FACT_SCHEMA_VERSION: u8 = 1;
+/// Strict body schema for authority facts. Version 2 is version 1 plus the
+/// carrier signature, all three of its keys or none. Version 3 is version 2
+/// plus the Owner fact's maker and nonce, both on every Owner fact and on no
+/// other kind. It is the only shape written, and a row naming any other
+/// version is refused rather than guessed at. Version 1 and 2 rows do not
+/// survive the launch reset.
+pub const TASK_AUTHORITY_FACT_SCHEMA_VERSION: u8 = 3;
 /// Subkind naming this body shape, alongside the role byte — the same
 /// role-plus-subkind discrimination every other TASK body carries.
 pub const TASK_AUTHORITY_FACT_SUBKIND: &str = "tasks.authority_fact";
@@ -71,12 +96,21 @@ const BODY_KEY_ACTOR_GENERATION: &str = "actor_generation";
 const BODY_KEY_ASSIGNED_GENERATION: &str = "assigned_generation";
 const BODY_KEY_OCCURRED_AT: &str = "occurred_at";
 const BODY_KEY_ANSWERED_HEADS: &str = "answered_heads";
+const BODY_KEY_CARRIER_MACHINE: &str = "carrier_machine";
+const BODY_KEY_CARRIER_KEY: &str = "carrier_key";
+const BODY_KEY_CARRIER_SIGNATURE: &str = "carrier_signature";
+const BODY_KEY_MAKER_REF: &str = "maker_ref";
+const BODY_KEY_NONCE: &str = "nonce";
 
-/// Base v1 key count. HumanAssigned carries one additional assigned_ref;
-/// ConsultAssignee carries each of assigned_ref and the two generations when
-/// it has one; an Acked fact carries answered_heads when it was written with
-/// them.
+/// Base key count, without a carrier. HumanAssigned carries one additional
+/// assigned_ref; ConsultAssignee carries each of assigned_ref and the two
+/// generations when it has one; Owner carries its maker and nonce; an Acked
+/// fact carries answered_heads when it was written with them.
 const FACT_BODY_KEY_COUNT: usize = 7;
+/// The keys an Owner fact adds: its maker and its nonce.
+const MAKER_KEY_COUNT: usize = 2;
+/// The keys a carried fact adds: its carrier's machine, key and signature.
+const CARRIER_KEY_COUNT: usize = 3;
 
 /// Hex digits of one answered head: an attempt id's 16 bytes.
 const ANSWERED_HEAD_HEX_LEN: usize = 32;
@@ -177,6 +211,26 @@ pub struct TaskAuthorityFact {
     /// other kind.
     pub answered_heads: Option<BTreeSet<String>>,
     pub occurred_at: u64,
+    /// Owner only, and on every Owner fact: the TASK's maker and nonce, which
+    /// with `actor_ref` derive `task_ref` ([`task_ref_of_maker`]).
+    pub maker: Option<TaskMaker>,
+}
+
+impl TaskAuthorityFact {
+    /// Whether this fact's maker commitment derives its task's id from the
+    /// owner it names. An Owner fact counts only when it does, so a second
+    /// Owner fact naming another owner of the same task never counts. Every
+    /// other kind carries no maker.
+    #[must_use]
+    pub fn commits_to_its_task(&self) -> bool {
+        match (self.kind, self.maker) {
+            (TaskAuthorityFactKind::Owner, Some(maker)) => maker
+                .task_ref(self.actor_ref)
+                .is_ok_and(|task_ref| task_ref == self.task_ref),
+            (TaskAuthorityFactKind::Owner, None) => false,
+            (_, maker) => maker.is_none(),
+        }
+    }
 }
 
 /// The authority a TASK's fact set proves, once an owner exists.
@@ -336,6 +390,24 @@ pub(crate) struct ConsultStanding {
     pub(crate) generation: Option<BindingGeneration>,
 }
 
+impl TaskAuthorityFactKind {
+    /// The pass of [`TaskAuthorityFacts::fold`] that reads this kind: Owner
+    /// first; then the kinds whose rule reads the owner; then the kinds whose
+    /// rule reads the assignee or the consult's parties, which the pass before
+    /// sets.
+    const fn fold_pass(self) -> u8 {
+        match self {
+            Self::Owner => 0,
+            Self::Cancelled
+            | Self::Acked
+            | Self::HumanAssigned
+            | Self::ConsultAssignee
+            | Self::Assigned => 1,
+            Self::ConsentRequired | Self::Accepted => 2,
+        }
+    }
+}
+
 impl TaskAuthorityFacts {
     /// The public lens: authority exists only on proof of an owner.
     fn into_state(self) -> Option<TaskAuthorityState> {
@@ -346,9 +418,113 @@ impl TaskAuthorityFacts {
         })
     }
 
+    /// Folds `facts` pass by pass ([`TaskAuthorityFactKind::fold_pass`]),
+    /// each counted only when [`Self::admits`] it, so every arrival order of
+    /// one set folds the same answer.
+    fn fold(facts: &[TaskAuthorityFact]) -> Result<Self> {
+        let mut folded = Self::default();
+        for pass in 0..=2 {
+            for fact in facts.iter().filter(|fact| fact.kind.fold_pass() == pass) {
+                if folded.admits(fact) {
+                    folded.absorb(fact)?;
+                }
+            }
+        }
+        Ok(folded)
+    }
+
+    /// Whether the fold of `facts` would also count one of `refused`: each is judged as
+    /// [`Self::fold`] judges a fact of its pass, against the facts folded before that pass.
+    /// A fact the actor rule refuses, or an Owner fact whose maker derives another task, is
+    /// never counted.
+    fn counts_any_of(facts: &[TaskAuthorityFact], refused: &[TaskAuthorityFact]) -> Result<bool> {
+        let mut folded = Self::default();
+        for pass in 0..=2 {
+            if refused
+                .iter()
+                .filter(|fact| fact.kind.fold_pass() == pass)
+                .any(|fact| folded.admits(fact))
+            {
+                return Ok(true);
+            }
+            for fact in facts.iter().filter(|fact| fact.kind.fold_pass() == pass) {
+                if folded.admits(fact) {
+                    folded.absorb(fact)?;
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Whether `fact`'s actor may make it, judged against the facts folded
+    /// before its pass (Fable pass 28, DESIGN 2.2). The mint door asks the
+    /// same before it writes ([`put_task_authority_fact_in_txn`]); each
+    /// door's own check stands in front and is never looser. A fact it
+    /// refuses is not counted, and is not an error.
+    pub(crate) fn admits(&self, fact: &TaskAuthorityFact) -> bool {
+        let actor = fact.actor_ref;
+        match fact.kind {
+            // The fact's maker and owner derive its task's id, so an owner
+            // the task was not minted for is skipped. Two owners that both
+            // derive it would be a hash collision: absorb fails that closed.
+            TaskAuthorityFactKind::Owner => fact.commits_to_its_task(),
+            TaskAuthorityFactKind::HumanAssigned
+            | TaskAuthorityFactKind::Assigned
+            | TaskAuthorityFactKind::ConsultAssignee
+            | TaskAuthorityFactKind::Acked => self.owner_admits(actor),
+            // A cancel only takes away, and its doors prove standing the
+            // facts do not hold: a connector send's actor, an approved cancel
+            // proposal, the vault owner's force. Any proved actor's counts
+            // (Engine RULING 16 Nov 03:39, TASK-FACT-ACTOR-RULE-EXCEPTIONS = B).
+            TaskAuthorityFactKind::Cancelled => true,
+            TaskAuthorityFactKind::ConsentRequired => self.consent_required_admits(actor),
+            TaskAuthorityFactKind::Accepted => self.accepted_admits(actor),
+        }
+    }
+
+    /// The owner's own act. With no proved owner the fact counts: every
+    /// reader of the owner's kinds asks for the owner itself (standing, the
+    /// human assigner, the consult's parties), so such a fact gives nothing
+    /// until an owner is proved; and a task its door wrote with no Owner fact
+    /// (a connector send, acked by its own actor) still reads acked.
+    fn owner_admits(&self, actor: EntityId) -> bool {
+        self.owner_ref.is_none_or(|owner| owner == actor)
+    }
+
+    /// The owner, or a party of the consult as its ConsultAssignee fact
+    /// names them.
+    fn consent_required_admits(&self, actor: EntityId) -> bool {
+        self.owner_admits(actor)
+            || match &self.consult_parties {
+                ConsultParties::Minted(parties) => {
+                    parties.asker == actor || parties.assignee == Some(actor)
+                }
+                ConsultParties::Unminted | ConsultParties::Forked => false,
+            }
+    }
+
+    /// A taker with standing: the assignee; the owner, who may reclaim or
+    /// take over its own task; or anyone on a task the facts address to
+    /// nobody, which a runner takes under its lease, and no fact records the
+    /// lease.
+    fn accepted_admits(&self, actor: EntityId) -> bool {
+        self.owner_admits(actor) || self.assignee().is_none_or(|assignee| assignee == actor)
+    }
+
+    /// The actor the facts address the task to: the Assigned fact's
+    /// assignee, else the human-assignment witness's agent.
+    fn assignee(&self) -> Option<EntityId> {
+        self.assigned
+            .map(|(_, assignee)| assignee)
+            .or(self.human_assigner.map(|(_, assigned)| assigned))
+    }
+
     /// Folds one decoded fact in. Duplicate Owner facts naming the SAME owner
     /// are idempotent set duplicates — two replicas minting the proof for the
-    /// same create converge, they do not fork.
+    /// same create converge, they do not fork. An Owner fact naming another
+    /// owner reaches here only when its maker commitment also derives the
+    /// task's id ([`Self::admits`]), which no second owner does; the fork
+    /// error stays as the backstop.
     fn absorb(&mut self, fact: &TaskAuthorityFact) -> Result<()> {
         match fact.kind {
             TaskAuthorityFactKind::Owner => match self.owner_ref {
@@ -461,13 +637,65 @@ impl TaskAuthorityFacts {
 /// failure anywhere leaves none of them.
 ///
 /// This door earns the bypass by BUILDING the body it writes: nothing
-/// a caller supplied reaches storage unvalidated.
+/// a caller supplied reaches storage unvalidated. It refuses a fact whose
+/// actor may not make it ([`TaskAuthorityFacts::admits`]), which the fold
+/// would not count on any device. An Owner or Cancelled fact counts from
+/// any proved actor, so the door reads no fact before it writes one: a task
+/// whose facts fail the read (a suppressed fact) still takes its cancel, and
+/// the vault owner's force still stops its branches. An Owner fact must
+/// derive its task's id from its maker and owner, and no other kind may name
+/// a maker ([`TaskAuthorityFact::commits_to_its_task`]).
 pub(crate) fn put_task_authority_fact_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     fact: TaskAuthorityFact,
 ) -> Result<EntityId> {
+    if !fact.commits_to_its_task() {
+        return Err(Error::InvariantViolation(
+            "task authority fact's maker does not derive its task id",
+        ));
+    }
+    if !matches!(
+        fact.kind,
+        TaskAuthorityFactKind::Owner | TaskAuthorityFactKind::Cancelled
+    ) && !vault
+        .task_authority_facts_in(&*wtxn, fact.task_ref)?
+        .admits(&fact)
+    {
+        return Err(Error::InvariantViolation(
+            "task authority fact names an actor that may not make it",
+        ));
+    }
+    write_task_authority_fact_in_txn(vault, wtxn, fact)
+}
+
+/// [`write_task_authority_fact_in_txn`] for the test door that stands in for a
+/// member machine whose door lacks the actor check.
+#[cfg(oneiron_test_support)]
+pub(crate) fn write_unjudged_task_authority_fact_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    fact: TaskAuthorityFact,
+) -> Result<EntityId> {
+    write_task_authority_fact_in_txn(vault, wtxn, fact)
+}
+
+/// Writes `fact` on a new row, signed by this install's carrier when one is
+/// loaded: [`put_task_authority_fact_in_txn`] past its check, and the root's
+/// twin of a fact a door already wrote.
+fn write_task_authority_fact_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    fact: TaskAuthorityFact,
+) -> Result<EntityId> {
     let fact_ref = vault.store.clock.entity_id()?;
+    // The carrier signs the fact's own bytes under its own row id, so its
+    // signature proves this fact on this row and on no other.
+    let unsigned = encode_task_authority_fact_body(&fact);
+    let body = match fact_proof::carrier_signature_in_txn(vault, &*wtxn, &fact_ref, &unsigned)? {
+        Some(carrier) => encode_carried_fact_body(&fact, &carrier),
+        None => unsigned,
+    };
     // The fact is born under its TASK's facet (UNBUILT item 10), so a reader
     // outside that facet reads none of the facts about it. A TASK at its own
     // substrate facet, which no FACET row holds, leaves the vault default.
@@ -478,11 +706,7 @@ pub(crate) fn put_task_authority_fact_in_txn(
     vault
         .batch_in()
         .mask(mask)
-        .put_task_fact(
-            &fact_ref,
-            &encode_task_authority_fact_body(&fact),
-            fact.occurred_at,
-        )
+        .put_task_fact(&fact_ref, &body, fact.occurred_at)
         .edge(
             &fact_ref,
             EdgeKind::ScopedTo,
@@ -491,13 +715,47 @@ pub(crate) fn put_task_authority_fact_in_txn(
         )
         .apply(wtxn)?;
     crate::federation::record_scope::stamp_task_fact(&vault.store, wtxn, fact_ref, fact.task_ref)?;
+    fact_proof::record_written_fact_in_txn(&vault.store, wtxn, &fact_ref, &body)?;
     Ok(fact_ref)
 }
 
-/// Serializes one fact under schema v1. Writing MessagePack into a `Vec` is
-/// infallible, so this returns bytes directly — the same shape
-/// `task_verb::wire_encode` uses for the primary TASK body.
+/// Serializes one fact under the current schema, without a carrier: the body
+/// an unsigned fact stores, and the canonical bytes its carrier signs. Writing
+/// MessagePack into a `Vec` is infallible, so this returns bytes directly —
+/// the same shape `task_verb::wire_encode` uses for the primary TASK body.
 pub(crate) fn encode_task_authority_fact_body(fact: &TaskAuthorityFact) -> Vec<u8> {
+    encode_fact_body_entries(fact_body_entries(fact))
+}
+
+/// [`encode_task_authority_fact_body`] with its carrier's three keys after
+/// the fact's own.
+fn encode_carried_fact_body(fact: &TaskAuthorityFact, carrier: &CarrierSignature) -> Vec<u8> {
+    let mut entries = fact_body_entries(fact);
+    entries.extend([
+        (
+            Value::from(BODY_KEY_CARRIER_MACHINE),
+            Value::from(carrier.machine.to_hex()),
+        ),
+        (
+            Value::from(BODY_KEY_CARRIER_KEY),
+            Value::Binary(carrier.key.to_vec()),
+        ),
+        (
+            Value::from(BODY_KEY_CARRIER_SIGNATURE),
+            Value::Binary(carrier.signature.to_vec()),
+        ),
+    ]);
+    encode_fact_body_entries(entries)
+}
+
+fn encode_fact_body_entries(entries: Vec<(Value, Value)>) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Value::Map(entries))
+        .expect("writing msgpack into a Vec is infallible");
+    bytes
+}
+
+fn fact_body_entries(fact: &TaskAuthorityFact) -> Vec<(Value, Value)> {
     let mut entries = vec![
         (
             Value::from(BODY_KEY_ROLE),
@@ -542,6 +800,18 @@ pub(crate) fn encode_task_authority_fact_body(fact: &TaskAuthorityFact) -> Vec<u
             entries.push((Value::from(key), generation.encode()));
         }
     }
+    if let Some(maker) = fact.maker {
+        entries.extend([
+            (
+                Value::from(BODY_KEY_MAKER_REF),
+                Value::from(maker.maker_ref.to_hex()),
+            ),
+            (
+                Value::from(BODY_KEY_NONCE),
+                Value::from(maker.nonce.to_hex()),
+            ),
+        ]);
+    }
     if let Some(heads) = &fact.answered_heads {
         entries.push((
             Value::from(BODY_KEY_ANSWERED_HEADS),
@@ -553,18 +823,13 @@ pub(crate) fn encode_task_authority_fact_body(fact: &TaskAuthorityFact) -> Vec<u
             ),
         ));
     }
-    let value = Value::Map(entries);
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &value)
-        .expect("writing msgpack into a Vec is infallible");
-    bytes
+    entries
 }
 
 /// Whether a TASK body is a task authority fact, well-formed or not: role 6
 /// with a `subkind` member naming [`TASK_AUTHORITY_FACT_SUBKIND`]. These are
 /// the rows the task fold can believe. The ask records share role 6 under
 /// their own subkinds and carry their own proofs, so they are not facts here.
-#[cfg(feature = "sync")]
 pub(crate) fn is_task_authority_fact_body(body: &[u8]) -> bool {
     if !matches!(task_role_from_body_bytes(body), Ok(TaskRole::AuthorityFact)) {
         return false;
@@ -579,13 +844,26 @@ pub(crate) fn is_task_authority_fact_body(body: &[u8]) -> bool {
     )
 }
 
-/// Decodes one fact body STRICTLY: exactly the v1 key set, no trailing bytes,
-/// no unknown keys, no duplicates, pinned version and subkind.
+/// One stored fact and the carrier that signed its row, if one did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CarriedTaskAuthorityFact {
+    fact: TaskAuthorityFact,
+    carrier: Option<CarrierSignature>,
+}
+
+/// [`decode_carried_task_authority_fact_body`]'s fact, whoever carried it.
+pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthorityFact> {
+    decode_carried_task_authority_fact_body(bytes).map(|carried| carried.fact)
+}
+
+/// Decodes one fact body STRICTLY: exactly the current key set, with the
+/// three carrier keys or none, no trailing bytes, no unknown keys, no
+/// duplicates, pinned version and subkind.
 ///
 /// Strictness is the authority boundary. A body that two decoders could read
 /// differently is a body an attacker can aim at one of them, so anything that
-/// is not exactly a v1 fact is refused rather than partially understood.
-pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthorityFact> {
+/// is not exactly a current fact is refused rather than partially understood.
+fn decode_carried_task_authority_fact_body(bytes: &[u8]) -> Result<CarriedTaskAuthorityFact> {
     let mut cursor = bytes;
     let value = rmpv::decode::read_value(&mut cursor)
         .map_err(|_| Error::Record(RecordError::InvalidTaskBody("task authority fact body")))?;
@@ -601,9 +879,18 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
         )))?;
     // The key set is EXACT: a base fact has seven keys, HumanAssigned
     // carries exactly one additional agent id, ConsultAssignee carries
-    // exactly the optional party and generation keys it has, and Acked
-    // carries its answered heads when it was written with them, so no unread
-    // field can ride along in a body two decoders would disagree about.
+    // exactly the optional party and generation keys it has, Owner exactly
+    // its maker and nonce, Acked its answered heads when it was written with
+    // them, and a carried fact exactly the three carrier keys more, so no
+    // unread field can ride along in a body two decoders would disagree
+    // about.
+    let carrier = carrier_fields(entries)?;
+    let own_keys = entries.len()
+        - if carrier.is_some() {
+            CARRIER_KEY_COUNT
+        } else {
+            0
+        };
     let byte = |key| {
         fact_body_field(entries, key)?
             .as_u64()
@@ -644,9 +931,22 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
             .map(BindingGeneration::decode)
             .transpose()
     };
+    let mut maker = None;
     let (assigned_ref, actor_generation, assigned_generation, answered_heads) = match kind {
+        TaskAuthorityFactKind::Owner => {
+            if own_keys != FACT_BODY_KEY_COUNT + MAKER_KEY_COUNT {
+                return Err(Error::Record(RecordError::InvalidTaskBody(
+                    "task owner key set",
+                )));
+            }
+            maker = Some(TaskMaker {
+                maker_ref: entity_ref(BODY_KEY_MAKER_REF)?,
+                nonce: entity_ref(BODY_KEY_NONCE)?,
+            });
+            (None, None, None, None)
+        }
         TaskAuthorityFactKind::HumanAssigned | TaskAuthorityFactKind::Assigned => {
-            if entries.len() != FACT_BODY_KEY_COUNT + 1 {
+            if own_keys != FACT_BODY_KEY_COUNT + 1 {
                 return Err(Error::Record(RecordError::InvalidTaskBody(
                     "task human assignment key set",
                 )));
@@ -655,7 +955,7 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
         }
         TaskAuthorityFactKind::Accepted => {
             let actor_generation = generation(BODY_KEY_ACTOR_GENERATION)?;
-            if entries.len() != FACT_BODY_KEY_COUNT + usize::from(actor_generation.is_some()) {
+            if own_keys != FACT_BODY_KEY_COUNT + usize::from(actor_generation.is_some()) {
                 return Err(Error::Record(RecordError::InvalidTaskBody(
                     "task acceptance key set",
                 )));
@@ -673,7 +973,7 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
                 actor_generation.is_some(),
                 assigned_generation.is_some(),
             ];
-            if entries.len() != FACT_BODY_KEY_COUNT + present.iter().filter(|key| **key).count()
+            if own_keys != FACT_BODY_KEY_COUNT + present.iter().filter(|key| **key).count()
                 || (assigned_generation.is_some() && assigned_ref.is_none())
             {
                 return Err(Error::Record(RecordError::InvalidTaskBody(
@@ -686,17 +986,15 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
             let answered_heads = optional_fact_body_field(entries, BODY_KEY_ANSWERED_HEADS)?
                 .map(decode_answered_heads)
                 .transpose()?;
-            if entries.len() != FACT_BODY_KEY_COUNT + usize::from(answered_heads.is_some()) {
+            if own_keys != FACT_BODY_KEY_COUNT + usize::from(answered_heads.is_some()) {
                 return Err(Error::Record(RecordError::InvalidTaskBody(
                     "task acknowledgement key set",
                 )));
             }
             (None, None, None, answered_heads)
         }
-        TaskAuthorityFactKind::Owner
-        | TaskAuthorityFactKind::Cancelled
-        | TaskAuthorityFactKind::ConsentRequired => {
-            if entries.len() != FACT_BODY_KEY_COUNT {
+        TaskAuthorityFactKind::Cancelled | TaskAuthorityFactKind::ConsentRequired => {
+            if own_keys != FACT_BODY_KEY_COUNT {
                 return Err(Error::Record(RecordError::InvalidTaskBody(
                     "task authority fact key set",
                 )));
@@ -704,7 +1002,7 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
             (None, None, None, None)
         }
     };
-    Ok(TaskAuthorityFact {
+    let fact = TaskAuthorityFact {
         task_ref: entity_ref(BODY_KEY_TASK_REF)?,
         kind,
         actor_ref: entity_ref(BODY_KEY_ACTOR_REF)?,
@@ -717,7 +1015,42 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
             .ok_or(Error::Record(RecordError::InvalidTaskBody(
                 "task authority fact timestamp",
             )))?,
-    })
+        maker,
+    };
+    Ok(CarriedTaskAuthorityFact { fact, carrier })
+}
+
+/// The carrier a fact body names: its machine (hex) and its key and
+/// signature (binary, exact lengths). All three keys or none; any other mix,
+/// or a value of another shape, is refused.
+fn carrier_fields(entries: &[(Value, Value)]) -> Result<Option<CarrierSignature>> {
+    let invalid = || Error::Record(RecordError::InvalidTaskBody("task authority fact carrier"));
+    let fields = (
+        optional_fact_body_field(entries, BODY_KEY_CARRIER_MACHINE)?,
+        optional_fact_body_field(entries, BODY_KEY_CARRIER_KEY)?,
+        optional_fact_body_field(entries, BODY_KEY_CARRIER_SIGNATURE)?,
+    );
+    match fields {
+        (None, None, None) => Ok(None),
+        (Some(machine), Some(key), Some(signature)) => Ok(Some(CarrierSignature {
+            machine: machine
+                .as_str()
+                .and_then(|hex| EntityId::from_hex(hex).ok())
+                .ok_or_else(invalid)?,
+            key: exact_binary(key).ok_or_else(invalid)?,
+            signature: exact_binary(signature).ok_or_else(invalid)?,
+        })),
+        _ => Err(invalid()),
+    }
+}
+
+/// A MessagePack binary of exactly `N` bytes; a string of the same bytes is
+/// not one.
+fn exact_binary<const N: usize>(value: &Value) -> Option<[u8; N]> {
+    match value {
+        Value::Binary(bytes) => <[u8; N]>::try_from(bytes.as_slice()).ok(),
+        _ => None,
+    }
 }
 
 /// An Acked fact's answered heads, STRICTLY: an array of attempt ids, each
@@ -768,16 +1101,31 @@ fn optional_fact_body_field<'a>(
     Ok(value)
 }
 
-/// Tasks an authority fact of which was refused at admission because its id
-/// was deleted here before the fact arrived. Presence-only.
+/// Tasks a recovered canonical window names as holding a fact its source refused
+/// ([`restore_suppressed_in_txn`]). Presence-only. A fact refused here is kept in
+/// [`REFUSED`] instead, and judged when its task is read.
 const SUPPRESSED: SideTable<EntityId, [u8; 1], side_table::Raw> =
     SideTable::new(&side_table::TASK_FACT_SUPPRESSED);
 
-/// A replicated row `id` refused because it was deleted here: when it is a
-/// task authority fact this vault does not hold, its task is marked, so the
-/// task's facts read as a refusal. A tombstone that reached this vault before
-/// a fact would otherwise make a cancellation or a consent requirement read
-/// as never made.
+/// Each task authority fact refused at admission because its id was deleted here before it
+/// arrived, as it arrived: its body, under its task, its id and the body's content hash. The
+/// task's read judges each as the fold judges any fact, at the time of the read
+/// ([`Vault::task_authority_facts_in`]). Each body an id arrived with is kept apart, so a
+/// replay of the id with a body no carrier signed cannot replace one that counts (blind
+/// review round 2 P1, REVIEW-9438).
+const REFUSED: SideTable<(EntityId, EntityId, [u8; 32]), Vec<u8>, side_table::Raw> =
+    SideTable::new(&side_table::TASK_FACT_REFUSED);
+
+/// A replicated row `id` refused because it was deleted here: when it is a task authority
+/// fact this vault does not hold, it is kept under its task ([`REFUSED`]), and the task's
+/// facts read as a refusal once the fold would count it. A tombstone that reached this vault
+/// before a fact would otherwise make a cancellation or a consent requirement read as never
+/// made. The read judges it, not this step: a fact whose carrier's profile arrives later
+/// counts once it has (blind review P1, REVIEW-9438), and a fact the fold's actor rule
+/// refuses, or an Owner fact whose maker derives another task than the one it names, never
+/// counts, so it never fails its task's read (blind review P1, REVIEW-9365). A row that can
+/// never prove itself, one with no carrier signature that this install's door did not
+/// write, is not kept.
 pub(crate) fn note_suppressed_fact_in_txn(
     store: &crate::store::Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -785,19 +1133,31 @@ pub(crate) fn note_suppressed_fact_in_txn(
     entity_type: u8,
     body: &[u8],
 ) -> Result<()> {
-    if entity_type != ENTITY_TYPE_TASK || is_task_authority_fact_in(store, wtxn, id)? {
+    if entity_type != ENTITY_TYPE_TASK
+        || !is_task_authority_fact_body(body)
+        || is_task_authority_fact_in(store, wtxn, id)?
+    {
         return Ok(());
     }
-    let Ok(fact) = decode_task_authority_fact_body(body) else {
+    let Ok(carried) = decode_carried_task_authority_fact_body(body) else {
         return Ok(());
     };
-    SUPPRESSED.put(store, wtxn, &fact.task_ref, &[1])
+    if carried.carrier.is_none() && !fact_proof::written_here_in(store, wtxn, id, body)? {
+        return Ok(());
+    }
+    let hash = oneiron_contracts::fingerprint::ContentHash::of(body).into_bytes();
+    REFUSED.put(
+        store,
+        wtxn,
+        &(carried.fact.task_ref, *id, hash),
+        &body.to_vec(),
+    )
 }
 
 /// [`note_suppressed_fact_in_txn`] for a window document's entity carrier,
 /// header and body, that a local path removes because its id was deleted
-/// here: a fact the carrier holds that this vault never admitted marks its
-/// task, as admission would have.
+/// here: a fact the carrier holds that this vault never admitted is kept
+/// under its task, as admission would have kept it.
 pub(crate) fn note_removed_carrier_in_txn(
     store: &crate::store::Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -877,11 +1237,348 @@ pub(crate) fn restore_suppressed_in_txn(
     Ok(())
 }
 
+/// The facts this vault keeps refused under `task` ([`REFUSED`]) that a recovered vault
+/// keeps too ([`is_carried_refused_fact_body`]), in key order: each fact's row id and body
+/// as it arrived. A canonical capture carries them, so the recovered vault judges each as
+/// this one would, its carrier's profile arriving before the capture or after the recovery
+/// (FIX TASK-FACT-REFUSED-PENDING-NOT-CAPTURED).
+pub(crate) fn refused_facts_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    task: &EntityId,
+) -> Result<Vec<(EntityId, Vec<u8>)>> {
+    let mut rows = Vec::new();
+    for row in REFUSED.iter_from(store, txn, task.as_bytes())? {
+        let ((_, fact, _), body) = row?;
+        if is_carried_refused_fact_body(task, &body) {
+            rows.push((fact, body));
+        }
+    }
+    Ok(rows)
+}
+
+/// Whether `body` is a refused fact a recovered vault keeps under `task`: it decodes
+/// strictly as a fact about `task` and carries its carrier's signature. A kept row with no
+/// carrier is one this install's door wrote; it counts here alone, so it is never carried.
+pub(crate) fn is_carried_refused_fact_body(task: &EntityId, body: &[u8]) -> bool {
+    decode_carried_task_authority_fact_body(body)
+        .is_ok_and(|carried| carried.fact.task_ref == *task && carried.carrier.is_some())
+}
+
+/// Keeps one refused fact a recovered canonical window carries under its task, as its
+/// source kept it ([`note_suppressed_fact_in_txn`]).
+#[cfg(feature = "sync")]
+pub(crate) fn restore_refused_fact_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    task: [u8; 16],
+    fact: [u8; 16],
+    body: &[u8],
+) -> Result<()> {
+    let hash = oneiron_contracts::fingerprint::ContentHash::of(body).into_bytes();
+    REFUSED.put(
+        store,
+        wtxn,
+        &(
+            EntityId::from_bytes(task)?,
+            EntityId::from_bytes(fact)?,
+            hash,
+        ),
+        &body.to_vec(),
+    )
+}
+
+/// The refusal a task's fact read fails with when it holds a fact this vault refused.
+const FACT_SUPPRESSED: &str = "task authority fact suppressed";
+
 fn fact_suppressed() -> Error {
-    Error::InvariantViolation("task authority fact suppressed")
+    Error::InvariantViolation(FACT_SUPPRESSED)
+}
+
+/// The fact `body` on row `fact_ref` states about `task_ref`, when it proves
+/// itself here: it decodes, names `task_ref`, and carries a signature that
+/// `proof` accepts over its canonical bytes. `None` for a row that proves
+/// nothing: malformed, about another task, unsigned, or signed by a key the
+/// fold never admitted.
+fn proved_fact(
+    proof: &fact_proof::FactProof,
+    fact_ref: &EntityId,
+    body: &[u8],
+    task_ref: EntityId,
+) -> Option<TaskAuthorityFact> {
+    let carried = decode_carried_task_authority_fact_body(body).ok()?;
+    let carrier = carried.carrier?;
+    (carried.fact.task_ref == task_ref
+        && proof.proves(
+            fact_ref,
+            &encode_task_authority_fact_body(&carried.fact),
+            &carrier,
+        ))
+    .then_some(carried.fact)
+}
+
+/// Which fact rows count, as [`Vault::task_authority_facts_in`] counts them: a row this
+/// install's door wrote with exactly that body (the written-here index), or one its
+/// carrier's signature proves ([`proved_fact`]). The proof reads the fold once, at the first
+/// row that needs it, so a reader that judges many rows builds it at most once. The fold's
+/// actor rules still bound a counted fact: [`Self::counts`] asks them too.
+#[derive(Default)]
+pub(crate) struct FactCountRule {
+    proof: Option<fact_proof::FactProof>,
+    /// Each task's counted facts, read once per task by [`Self::counts`]; `None` for a
+    /// task whose own row fails its strict read, which the live fold refuses.
+    task_facts: BTreeMap<EntityId, Option<Vec<TaskAuthorityFact>>>,
+}
+
+impl FactCountRule {
+    /// The fact the row `fact_ref` with `body` states about `task_ref`, when its carrier's
+    /// signature proves it; `None` for a row that proves nothing.
+    fn proved(
+        &mut self,
+        vault: &Vault,
+        rtxn: &heed::RoTxn<'_>,
+        fact_ref: &EntityId,
+        body: &[u8],
+        task_ref: EntityId,
+    ) -> Result<Option<TaskAuthorityFact>> {
+        if self.proof.is_none() {
+            self.proof = Some(fact_proof::FactProof::in_txn(&vault.store, rtxn)?);
+        }
+        Ok(self
+            .proof
+            .as_ref()
+            .and_then(|proof| proved_fact(proof, fact_ref, body, task_ref)))
+    }
+
+    /// The fact the row `fact_ref` with `body` states about `task_ref`, when the row counts:
+    /// this install's door wrote exactly `body` and it names `task_ref`, or its carrier's
+    /// signature proves it.
+    fn counted(
+        &mut self,
+        vault: &Vault,
+        rtxn: &heed::RoTxn<'_>,
+        fact_ref: &EntityId,
+        body: &[u8],
+        task_ref: EntityId,
+    ) -> Result<Option<TaskAuthorityFact>> {
+        if fact_proof::written_here_in(&vault.store, rtxn, fact_ref, body)? {
+            return Ok(decode_task_authority_fact_body(body)
+                .ok()
+                .filter(|fact| fact.task_ref == task_ref));
+        }
+        self.proved(vault, rtxn, fact_ref, body, task_ref)
+    }
+
+    /// Whether the fact row `fact_ref` with `body`, about `task_ref`, counts in `vault`'s
+    /// fold: the row counts (this install's door wrote exactly `body`, or its carrier's
+    /// signature proves it), and the fold admits its fact, judged against `task_ref`'s other
+    /// counted facts as [`TaskAuthorityFacts::fold`] judges a fact of its pass. So an Owner
+    /// fact whose maker derives another task, or a fact by an actor its kind does not admit,
+    /// does not count (FIX TASK-FACT-RESTORE-COUNT-SKIPS-ADMISSION).
+    ///
+    /// A task the live fold refuses (a forked owner or assignment, or an own row that fails
+    /// its strict read) reads on no device, so each of its counted rows still counts here:
+    /// no answer is guessed past the refusal.
+    pub(crate) fn counts(
+        &mut self,
+        vault: &Vault,
+        rtxn: &heed::RoTxn<'_>,
+        fact_ref: &EntityId,
+        body: &[u8],
+        task_ref: EntityId,
+    ) -> Result<bool> {
+        let Some(fact) = self.counted(vault, rtxn, fact_ref, body, task_ref)? else {
+            return Ok(false);
+        };
+        let facts = match self.task_facts.remove(&task_ref) {
+            Some(facts) => facts,
+            None => match vault.counted_task_facts_in(rtxn, task_ref, self) {
+                Ok(facts) => Some(facts),
+                Err(Error::Record(RecordError::InvalidTaskBody(_))) => None,
+                Err(error) => return Err(error),
+            },
+        };
+        let counts = match &facts {
+            None => Ok(true),
+            Some(facts) => {
+                match TaskAuthorityFacts::counts_any_of(facts, std::slice::from_ref(&fact)) {
+                    Ok(admitted) => Ok(admitted),
+                    // The fold refuses the task (a fork), over facts in hand: no store read.
+                    Err(Error::InvariantViolation(_)) => Ok(true),
+                    Err(error) => Err(error),
+                }
+            }
+        };
+        self.task_facts.insert(task_ref, facts);
+        counts
+    }
 }
 
 impl Vault {
+    /// Adopts the facts this install's doors wrote unsigned, before the vault's root or with
+    /// no signer loaded. Each gets a twin: the same fact on a new row, which this install's
+    /// carrier signs. The unsigned row leaves the written-here index. So the fact counts on
+    /// every device of the vault, and still counts here (Engine RULING 16 Nov 03:18,
+    /// TASK-FACT-RULING-CROSSED-OPTION-D = B). The fold absorbs a twin as a set duplicate of
+    /// its fact, so no task changes meaning.
+    ///
+    /// Each root door calls it once the root is minted with this install's signer loaded, and
+    /// every later open that profiles this install calls it again, so a root whose adoption
+    /// failed or was cut off adopts at the next start. With no root, no signer or nothing to
+    /// adopt it writes nothing. It runs in one transaction, so a failure leaves no twin, and a
+    /// second call finds nothing left to adopt. Returns how many twins it wrote.
+    pub fn adopt_unsigned_task_facts(&self) -> Result<usize> {
+        {
+            let rtxn = self.store.env.read_txn()?;
+            if self.task_facts_to_adopt_in(&rtxn)?.is_empty() {
+                return Ok(0);
+            }
+        }
+        self.with_write_txn(|wtxn| self.adopt_task_facts_in_txn(wtxn))
+    }
+
+    /// [`Self::adopt_unsigned_task_facts`] in the caller's transaction: it twins each fact
+    /// [`Self::task_facts_to_adopt_in`] names. A twin carries this install's signature, so a
+    /// second call twins nothing.
+    pub(crate) fn adopt_task_facts_in_txn(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<usize> {
+        let mut adopted = 0;
+        for (fact_ref, fact) in self.task_facts_to_adopt_in(wtxn)? {
+            // The same fact on a new row: it counts exactly when the
+            // indexed row did, so it asks no door's rule again.
+            write_task_authority_fact_in_txn(self, wtxn, fact)?;
+            fact_proof::forget_written_fact_in_txn(&self.store, wtxn, &fact_ref)?;
+            adopted += 1;
+        }
+        Ok(adopted)
+    }
+
+    /// The facts [`Self::adopt_task_facts_in_txn`] twins: every fact the written-here index
+    /// holds, its row still holding the body written, that this install's carrier did not sign
+    /// and that does not prove itself here: an unsigned one, and one an owner's restore landed
+    /// under another machine's signature ([`Self::restore_archived_task_fact_in_txn`]), or
+    /// under a carrier that names this install's machine without its verified signature
+    /// (blind review round 2 P1, REVIEW-9365). Its task must still be a live TASK: a task's
+    /// delete takes the fact's link to it and leaves the fact, so a twin would link the
+    /// deleted task again (blind review round 2 P1, REVIEW-8610). None when this install
+    /// signs nothing.
+    fn task_facts_to_adopt_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<(EntityId, TaskAuthorityFact)>> {
+        if !fact_proof::signs_in_txn(self, txn)? {
+            return Ok(Vec::new());
+        }
+        let proof = fact_proof::FactProof::in_txn(&self.store, txn)?;
+        let mut facts = Vec::new();
+        for (fact_ref, _) in fact_proof::facts_written_here_in(&self.store, txn)? {
+            let Some(raw) = self.get_raw_in(txn, &fact_ref)? else {
+                continue;
+            };
+            if EntityMetadataHeader::parse(&raw)
+                .is_none_or(|header| header.entity_type != ENTITY_TYPE_TASK)
+            {
+                continue;
+            }
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            if !fact_proof::written_here_in(&self.store, txn, &fact_ref, body)? {
+                continue;
+            }
+            let carried = decode_carried_task_authority_fact_body(body)?;
+            if let Some(carrier) = &carried.carrier {
+                let unsigned = encode_task_authority_fact_body(&carried.fact);
+                if fact_proof::signed_by_this_install_in_txn(
+                    self, txn, &fact_ref, &unsigned, carrier,
+                )? || proof.proves(&fact_ref, &unsigned, carrier)
+                {
+                    continue;
+                }
+            }
+            if crate::vault::live_entity_row_in_txn(&self.store, txn, &carried.fact.task_ref)?
+                .live_type()
+                != Some(ENTITY_TYPE_TASK)
+            {
+                continue;
+            }
+            facts.push((fact_ref, carried.fact));
+        }
+        Ok(facts)
+    }
+
+    /// The owner's restore of one archived TASK authority fact (FIX
+    /// OWNER-RESTORE-REFUSES-TASK-AUTHORITY-FACTS; TASK-FACT-ARCHIVE-CROSSING = A: archives
+    /// keep the facts). The fact lands at its archived id with its archived body, byte for
+    /// byte, born at `birth_facet`, its archived birth; its `ScopedTo` link to its TASK comes
+    /// back with the archive's other links. The body must read as a fact under the current
+    /// schema, an Owner fact must derive its task's id from its maker, and the row's times
+    /// must be the fact's own, as its door writes them; any other refuses the import.
+    ///
+    /// The owner's restore counts the fact as a local write (ASK
+    /// OWNER-RESTORE-TASK-FACT-COUNT, option A): it enters this install's written-here
+    /// index, and the import's [`Self::adopt_task_facts_in_txn`] then twins it under this
+    /// install's signature, so it counts on every device of the vault. The fold still
+    /// judges it as any fact: maker derive, actor rule and owner fork.
+    pub(crate) fn restore_archived_task_fact_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        fact_ref: &EntityId,
+        body: &[u8],
+        occurred: TimeRange,
+        learned_at: u64,
+        birth_facet: Option<EntityId>,
+    ) -> Result<()> {
+        let carried = decode_carried_task_authority_fact_body(body)?;
+        if !carried.fact.commits_to_its_task() {
+            return Err(Error::InvariantViolation(
+                "task authority fact's maker does not derive its task id",
+            ));
+        }
+        let at = carried.fact.occurred_at;
+        if occurred.start != at || occurred.end != at || learned_at != at {
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "archived task authority fact times",
+            )));
+        }
+        self.batch_in()
+            .mask(birth_facet)
+            .put_task_fact(fact_ref, body, at)
+            .apply(wtxn)?;
+        fact_proof::record_written_fact_in_txn(&self.store, wtxn, fact_ref, body)
+    }
+
+    /// The owner's restore of an archived row this vault already holds byte for byte, as the
+    /// import's unchanged-row shortcut meets it (blind review P1, REVIEW-9365). When the row
+    /// is a TASK authority fact, the restore counts it as
+    /// [`Self::restore_archived_task_fact_in_txn`] counts a fact it lands: a fact an own
+    /// device sent here unsigned proves nothing here, and the owner's restore of his own
+    /// archive is his own act (OWNER-RESTORE-TASK-FACT-COUNT = A). It enters this install's
+    /// written-here index, and the import's [`Self::adopt_task_facts_in_txn`] twins it. An
+    /// Owner fact whose maker does not derive its task's id refuses the import, as the
+    /// restore door refuses it. Any other row is left as it is.
+    pub(crate) fn restore_held_task_fact_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        fact_ref: &EntityId,
+    ) -> Result<()> {
+        let Some(raw) = self.get_raw_in(wtxn, fact_ref)? else {
+            return Ok(());
+        };
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        if header.entity_type != ENTITY_TYPE_TASK || !is_task_authority_fact_body(body) {
+            return Ok(());
+        }
+        if !decode_carried_task_authority_fact_body(body)?
+            .fact
+            .commits_to_its_task()
+        {
+            return Err(Error::InvariantViolation(
+                "task authority fact's maker does not derive its task id",
+            ));
+        }
+        fact_proof::record_written_fact_in_txn(&self.store, wtxn, fact_ref, body)
+    }
+
     /// The authority one TASK's replicated facts prove.
     ///
     /// `Ok(None)` means NO Owner fact exists, and direct authority therefore
@@ -905,22 +1602,15 @@ impl Vault {
 
     /// The separate, engine-authored human-assignment witness. Owner alone
     /// is not evidence that the human authored the assignment: tasks.create
-    /// permits a caller to nominate another `owner_ref`.
+    /// permits a caller to nominate another `owner_ref`. With an owner
+    /// proved, the fold counts only a witness whose assigner is that owner.
     pub(crate) fn task_human_assigner_in(
         &self,
         txn: &heed::RoTxn<'_>,
         task_ref: EntityId,
     ) -> Result<Option<(EntityId, EntityId)>> {
         let facts = self.task_authority_facts_in(txn, task_ref)?;
-        match (facts.owner_ref, facts.human_assigner) {
-            (Some(owner), Some((assigner, assigned))) if owner == assigner => {
-                Ok(Some((owner, assigned)))
-            }
-            (Some(_), Some(_)) => Err(Error::InvariantViolation(
-                "task human assigner is not owner",
-            )),
-            _ => Ok(None),
-        }
+        Ok(facts.owner_ref.and(facts.human_assigner))
     }
 
     /// What `task_ref`'s facts prove about who may act on it, or `None`
@@ -935,36 +1625,61 @@ impl Vault {
         let Some(owner) = facts.owner_ref else {
             return Ok(None);
         };
-        let witnessed = match facts.human_assigner {
-            Some((assigner, assigned)) if assigner == owner => Some(assigned),
-            _ => None,
-        };
         Ok(Some(TaskStanding {
             owner,
-            assignee: facts.assigned.map(|(_, assignee)| assignee).or(witnessed),
+            assignee: facts.assignee(),
             taker: facts.accepted,
             cancelled: facts.cancelled,
         }))
     }
 
-    /// Folds every authority fact scoped to `task_ref`.
+    /// Folds every authority fact scoped to `task_ref` that counts here.
     ///
     /// Inbound `ScopedTo` is a shared structural relation, so identification is
-    /// LENIENT — anything that is not a role-6 TASK entity is simply not a fact
-    /// and is skipped — while validation is STRICT: a row that claims to be a
-    /// fact and is malformed, or whose body names a different subject than the
-    /// edge it was reached through, fails the read closed.
+    /// LENIENT — anything that is not a TASK row of the fact subkind is simply
+    /// not a fact and is skipped. A fact this install's own door wrote is read
+    /// STRICTLY: malformed, or naming a different subject than the edge it was
+    /// reached through, it fails the read closed. Any other row counts only
+    /// when it proves itself ([`proved_fact`]), and is skipped otherwise.
+    /// Either way a fact counts only when its actor may make it
+    /// ([`TaskAuthorityFacts::fold`]).
     pub(crate) fn task_authority_facts_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         task_ref: EntityId,
+    ) -> Result<TaskAuthorityFacts> {
+        self.task_authority_facts_judging_in(rtxn, task_ref, RefusedRows::Every)
+    }
+
+    /// [`Self::task_authority_facts_in`], judging the refused rows `rows` names.
+    fn task_authority_facts_judging_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        task_ref: EntityId,
+        rows: RefusedRows,
     ) -> Result<TaskAuthorityFacts> {
         // A fact this vault never admitted is not a fact never made: no
         // cancellation, consent requirement or party is guessed past it.
         if SUPPRESSED.contains(&self.store, rtxn, &task_ref)? {
             return Err(fact_suppressed());
         }
-        let mut facts = TaskAuthorityFacts::default();
+        let mut count = FactCountRule::default();
+        let proved = self.counted_task_facts_in(rtxn, task_ref, &mut count)?;
+        if self.counts_a_refused_fact_in(rtxn, task_ref, &proved, &mut count, rows)? {
+            return Err(fact_suppressed());
+        }
+        TaskAuthorityFacts::fold(&proved)
+    }
+
+    /// Every authority fact scoped to `task_ref` whose row counts here, read as
+    /// [`Self::task_authority_facts_in`] reads them, before the fold's actor rules.
+    fn counted_task_facts_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        task_ref: EntityId,
+        count: &mut FactCountRule,
+    ) -> Result<Vec<TaskAuthorityFact>> {
+        let mut proved = Vec::new();
         // Rule 5: every inbound edge is read and every fact absorbed, however
         // many; past its threshold row the fold asks, and never refuses.
         let mut scanned = ScanCount::start(
@@ -992,22 +1707,112 @@ impl Vault {
                 continue;
             }
             let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-            if !matches!(task_role_from_body_bytes(body), Ok(TaskRole::AuthorityFact)) {
+            // An ask record shares role 6 under its own subkind and proves
+            // itself by its own rules: it is not a fact.
+            if !is_task_authority_fact_body(body) {
                 continue;
             }
-            let fact = decode_task_authority_fact_body(body)?;
-            // The edge is the index; the body is the claim. A fact reachable
-            // from one task while naming another would let a proof minted for
-            // a task the actor owns be re-pointed at one they do not.
-            if fact.task_ref != task_ref {
-                return Err(Error::Record(RecordError::InvalidTaskBody(
-                    "task authority fact subject",
-                )));
-            }
-            facts.absorb(&fact)?;
+            let fact = if fact_proof::written_here_in(&self.store, rtxn, &fact_ref, body)? {
+                let fact = decode_task_authority_fact_body(body)?;
+                // The edge is the index; the body is the claim. A fact
+                // reachable from one task while naming another would let a
+                // proof minted for a task the actor owns be re-pointed at
+                // one they do not.
+                if fact.task_ref != task_ref {
+                    return Err(Error::Record(RecordError::InvalidTaskBody(
+                        "task authority fact subject",
+                    )));
+                }
+                fact
+            } else {
+                match count.proved(self, rtxn, &fact_ref, body, task_ref)? {
+                    Some(fact) => fact,
+                    None => continue,
+                }
+            };
+            proved.push(fact);
         }
         scanned.finish(self);
-        Ok(facts)
+        Ok(proved)
+    }
+
+    /// Whether the fold of `task_ref`'s counted `facts` would count a fact this vault refused
+    /// because its id was deleted here first ([`note_suppressed_fact_in_txn`]), judged now:
+    /// a refused row counts as any row counts ([`FactCountRule`]), so one whose carrier's
+    /// profile arrived since it was refused counts, and the fold's actor rule bounds it.
+    fn counts_a_refused_fact_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        task_ref: EntityId,
+        facts: &[TaskAuthorityFact],
+        count: &mut FactCountRule,
+        rows: RefusedRows,
+    ) -> Result<bool> {
+        let mut refused = Vec::new();
+        for row in REFUSED.iter_from(&self.store, rtxn, task_ref.as_bytes())? {
+            let ((_, fact_ref, _), body) = row?;
+            if !rows.judges(&task_ref, &body) {
+                continue;
+            }
+            if let Some(fact) = count.counted(self, rtxn, &fact_ref, &body, task_ref)? {
+                refused.push(fact);
+            }
+        }
+        if refused.is_empty() {
+            return Ok(false);
+        }
+        TaskAuthorityFacts::counts_any_of(facts, &refused)
+    }
+
+    /// Whether a canonical capture marks `task_ref` as holding a fact this vault refused, so
+    /// the recovered vault reads it as a refusal: the task is marked here
+    /// ([`fact_suppressed_in`]), or its fold would count, now, a refused row the capture does
+    /// not carry (one with no carrier, which counts on this install alone). Each row the
+    /// capture carries ([`refused_facts_in`]) is judged where the window is recovered, at each
+    /// read, as here, so no mark depends on what the fold admitted at the capture, and the
+    /// recovery's own recapture reads the same mark (FIX
+    /// TASK-FACT-REFUSED-PENDING-NOT-CAPTURED).
+    pub(crate) fn task_fact_suppression_mark_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        task_ref: EntityId,
+    ) -> Result<bool> {
+        if fact_suppressed_in(&self.store, rtxn, &task_ref)? {
+            return Ok(true);
+        }
+        let mut uncarried = false;
+        for row in REFUSED.iter_from(&self.store, rtxn, task_ref.as_bytes())? {
+            let (_, body) = row?;
+            if RefusedRows::Uncarried.judges(&task_ref, &body) {
+                uncarried = true;
+                break;
+            }
+        }
+        if !uncarried {
+            return Ok(false);
+        }
+        Ok(matches!(
+            self.task_authority_facts_judging_in(rtxn, task_ref, RefusedRows::Uncarried),
+            Err(Error::InvariantViolation(message)) if message == FACT_SUPPRESSED
+        ))
+    }
+}
+
+/// Which of a task's refused rows ([`REFUSED`]) its read judges.
+#[derive(Clone, Copy)]
+enum RefusedRows {
+    /// Every one: the task's own read.
+    Every,
+    /// Only those a canonical capture does not carry ([`is_carried_refused_fact_body`]).
+    Uncarried,
+}
+
+impl RefusedRows {
+    fn judges(self, task: &EntityId, body: &[u8]) -> bool {
+        match self {
+            Self::Every => true,
+            Self::Uncarried => !is_carried_refused_fact_body(task, body),
+        }
     }
 }
 

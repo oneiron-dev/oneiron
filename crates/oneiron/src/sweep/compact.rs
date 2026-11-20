@@ -1189,6 +1189,7 @@ mod scoped_update_tests {
             assigned_generation: None,
             answered_heads: None,
             occurred_at: learned_at,
+            maker: None,
         };
         let owner = EntityId::now();
         vault

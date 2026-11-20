@@ -144,6 +144,7 @@ impl Memory<'_> {
                         assigned_generation: None,
                         answered_heads: None,
                         occurred_at: interrupted.interrupted_at,
+                        maker: None,
                     },
                 )?;
                 let generation = self

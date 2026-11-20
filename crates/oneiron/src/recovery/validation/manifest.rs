@@ -4,7 +4,7 @@ use oneiron_contracts::fingerprint::ContentHash;
 
 use super::{EntityMetadataHeader, invalid, strict};
 use crate::error::Result;
-use crate::recovery::canonical::{CanonicalSnapshot, ExpectedContainers};
+use crate::recovery::canonical::{CanonicalRefusedTaskFact, CanonicalSnapshot, ExpectedContainers};
 
 #[derive(Default)]
 pub(in crate::recovery) struct ManifestValidation {
@@ -30,6 +30,7 @@ enum Stage {
     TombStrict,
     SuppressedStrict,
     TaskOwners,
+    RefusedStrict,
     Origins,
     ContainerStrict,
     ContainerBuild,
@@ -208,7 +209,7 @@ impl ManifestValidation {
                 }
                 Stage::TaskOwners => {
                     let Some(task) = snapshot.suppressed_tasks.get(self.next) else {
-                        self.start(Stage::Origins);
+                        self.start(Stage::RefusedStrict);
                         continue;
                     };
                     let held = snapshot
@@ -222,6 +223,36 @@ impl ManifestValidation {
                         header.entity_type != crate::registry::ENTITY_TYPE_TASK
                     }) {
                         return Err(invalid("suppressed task outside the window"));
+                    }
+                }
+                Stage::RefusedStrict => {
+                    let Some(row) = snapshot.refused_task_facts.get(self.next) else {
+                        self.start(Stage::Origins);
+                        continue;
+                    };
+                    // In the kept rows' key order: task, fact, and the body's content hash.
+                    let key = |row: &CanonicalRefusedTaskFact| {
+                        (row.task, row.fact, *ContentHash::of(&row.body).as_bytes())
+                    };
+                    if let Some(prev) = self.next.checked_sub(1) {
+                        ordered(key(&snapshot.refused_task_facts[prev]), key(row))?;
+                    }
+                    let task = crate::entity_id::EntityId::from_bytes(row.task)?;
+                    if !crate::task_authority::is_carried_refused_fact_body(&task, &row.body) {
+                        return Err(invalid("refused task fact body"));
+                    }
+                    // Only a window TASK keeps a refused fact, as only one carries a refusal.
+                    let held = snapshot
+                        .entity_blobs
+                        .binary_search_by_key(&row.task, |entity| entity.id)
+                        .ok()
+                        .and_then(|at| {
+                            EntityMetadataHeader::parse(&snapshot.entity_blobs[at].blob)
+                        });
+                    if held.is_none_or(|header| {
+                        header.entity_type != crate::registry::ENTITY_TYPE_TASK
+                    }) {
+                        return Err(invalid("refused task fact outside the window"));
                     }
                 }
                 Stage::Origins => {
@@ -300,6 +331,7 @@ impl ManifestValidation {
             Stage::TombStrict => "tombstone order",
             Stage::SuppressedStrict => "suppressed order",
             Stage::TaskOwners => "task owners",
+            Stage::RefusedStrict => "refused order",
             Stage::Origins => "origins",
             Stage::ContainerStrict => "container order",
             Stage::ContainerBuild => "container build",

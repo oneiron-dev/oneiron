@@ -25,6 +25,58 @@ fn fact_kind(bytes: &[u8]) -> Option<&'static str> {
     })
 }
 
+/// Whether `body` is an ask record: a TASK body under one of the ask subkinds
+/// this guard checks. Its role and schema are checked when it is put.
+pub(crate) fn is_ask_record_body(body: &[u8]) -> bool {
+    fact_kind(body).is_some()
+}
+
+/// The rows an ask record names that land before it (FIX
+/// OWNER-RESTORE-REFUSES-TASK-ASK-RECORDS): an answer's, a settlement's, a
+/// soft confirm's and a relayed intent's group, a relayed result's intent and
+/// a late ask's attendee entry. The whole-vault import queues the record
+/// after them, so its guard finds them stored. A body that is no ask record,
+/// or does not decode, names none; its put refuses it.
+pub(crate) fn ask_record_dependencies(body: &[u8]) -> Vec<EntityId> {
+    use super::attendee_late_ask::ATTENDEE_LATE_ASK;
+    use crate::task_verb::ask_forward::{INTENT, RESULT};
+    use crate::task_verb::ask_soft_confirm::SOFT_CONFIRM;
+    let named = match fact_kind(body) {
+        Some(ANSWER) => decode::<AskAnswerFact>(body, ANSWER)
+            .ok()
+            .flatten()
+            .map(|fact| fact.group),
+        Some("tasks.ask_settlement") => {
+            decode::<crate::task_verb::TaskAskResult>(body, "tasks.ask_settlement")
+                .ok()
+                .flatten()
+                .map(|result| result.settlement.group_ref)
+        }
+        Some(SOFT_CONFIRM) => {
+            decode::<crate::task_verb::TaskAskSoftConfirmNotice>(body, SOFT_CONFIRM)
+                .ok()
+                .flatten()
+                .map(|notice| notice.group_ref)
+        }
+        Some(INTENT) => decode::<crate::task_verb::ask_forward::AskForwardIntent>(body, INTENT)
+            .ok()
+            .flatten()
+            .map(|intent| intent.group),
+        Some(RESULT) => decode::<crate::task_verb::ask_forward::AskForwardResult>(body, RESULT)
+            .ok()
+            .flatten()
+            .map(|result| result.intent),
+        Some(ATTENDEE_LATE_ASK) => {
+            decode::<super::attendee_late_ask::AttendeeLateAskFact>(body, ATTENDEE_LATE_ASK)
+                .ok()
+                .flatten()
+                .map(|fact| fact.entry_ref)
+        }
+        _ => None,
+    };
+    named.into_iter().collect()
+}
+
 /// An ask word or receipt is checked against its group row, so a replicated
 /// batch applies it after the batch's other rows.
 #[cfg(feature = "sync")]
@@ -149,12 +201,19 @@ pub(crate) fn guard_ask_fact_put(
             } else if !group.guest_grants.is_empty() {
                 return Err(invalid());
             }
+            // Each member's TASK is the asker's, made for itself under its
+            // member id (FIX TASK-ID-COMMITS-TO-MAKER).
+            let owner = entity(&group.owner)?;
             for member in &group.members {
-                if entity(&member.task)? != member_id(id, entity(&member.actor)?)? {
+                let made = crate::task_authority::task_ref_of_maker(
+                    owner,
+                    owner,
+                    member_id(id, entity(&member.actor)?)?,
+                )?;
+                if entity(&member.task)? != made {
                     return Err(invalid());
                 }
             }
-            entity(&group.owner)?;
             // Local admission and sync replay both keep the group here: its
             // rows are measured once, on this store's watch, and never
             // refuse it. A class key no band key can hold still does.
