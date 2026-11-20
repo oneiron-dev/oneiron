@@ -258,7 +258,7 @@ fn thin_cached_windows(vault: &crate::Vault) -> crate::Result<Vec<WindowKey>> {
     let mut windows = std::collections::BTreeSet::new();
     for row in vault.store.sync_state.prefix_iter(&txn, "ro:e:")? {
         let (_, value) = row?;
-        if let Ok(window) = std::str::from_utf8(value) {
+        if let Ok(window) = std::str::from_utf8(&value) {
             windows.insert(window.to_owned());
         }
     }
