@@ -11,6 +11,13 @@
 //! scope asks each row of that list before the blend, as the bounded
 //! channels' admission does.
 //!
+//! In a pack clamped for an audience (REVIEW-9911 round 2), a hit the
+//! audience could not read whatever its status records no suppression and
+//! leaves the run's empty reason as it is; a hit the clamp refuses that
+//! meets every other check still counts among the pack's clamped rows; and
+//! the preselection before the cuts asks a summary's sources, so a summary
+//! the pack's sweep would remove holds no slot a readable row could take.
+//!
 //! The agent fixture is `tests/pack_member_count.rs`'s, through its test
 //! doors: run the file with `RUSTFLAGS="--cfg oneiron_test_support" cargo
 //! test --locked -p oneiron --all-features --test phonetic_exact_hits_scoped`.
@@ -24,19 +31,27 @@ use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole, PairingPrincip
 use oneiron::batch::generate_phonetic_codes;
 use oneiron::claim::{ScopedReadActorKey, base_world_id, default_project_id};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::conversation_dag::{ScopePath, ScopeSelector};
+use oneiron::core_write::{ConversationCreateInput, DagRecordAppendInput};
+use oneiron::counterparty_contact::CounterpartyFirstTouch;
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
+use oneiron::interlocutor::{Interlocutor, InterlocutorSet};
 use oneiron::memory::{AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput};
-use oneiron::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
+use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron::store::RetrievalRunRecord;
+use oneiron::test_doors::disclosure_word_sources::{
+    clamp_admits_with_contact, mark_tier_a, seed_cleared_contact,
+};
 use oneiron::test_doors::label_writers::embedded_owner;
+use oneiron::test_doors::scope_summary::mint_scope_summary;
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
 };
 use oneiron::{
-    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EdgeKind,
-    EmptyReason, EntityId, PipelineBuilder, TimeRange, Vault, VaultConfig, WriteActor,
-    WriteEnvelope, WriteProvenance,
+    ClaimApprovalStatus, ClaimBody, ClaimCandidate, ClaimLifecycleStatus, ClaimSource,
+    ClaimSubject, DisclosureContext, EdgeActorClass, EdgeKind, EmptyReason, EntityId,
+    PipelineBuilder, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
 };
 use serde_json::json;
 
@@ -588,4 +603,365 @@ fn paired_agent_slip(
     vault
         .verify_capability_slip(&issuer.public_key(), &slip, REQUEST_CHALLENGE, &signature)
         .expect("paired agent proves possession of its credential")
+}
+
+/// The contact a clamped pack is assembled for.
+const COUNTERPARTY: &str = "owen@example.com";
+
+/// An owned vault and one contact, cleared for every axis, present with the
+/// owner: the pack's clamp is the contact's row test.
+struct ClampFixture {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    contact: EntityId,
+}
+
+fn clamp_fixture() -> ClampFixture {
+    let dir = tempfile::tempdir().expect("temporary vault");
+    let vault = Vault::open_owned(dir.path(), VaultConfig::device()).expect("open vault");
+    vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the vault's owner");
+    let contact = cleared_contact(&vault);
+    ClampFixture {
+        _dir: dir,
+        vault,
+        contact,
+    }
+}
+
+/// A contact of `vault` cleared for every axis: only a Tier-A mark keeps a
+/// row from it.
+fn cleared_contact(vault: &Vault) -> EntityId {
+    let contact = EntityId::now();
+    seed_cleared_contact(vault, contact, COUNTERPARTY, Scope::top())
+        .expect("FIXTURE: seed the cleared contact");
+    contact
+}
+
+/// The clamp of a pack the owner holds with `contact` present.
+fn with_contact(vault: &Vault, contact: EntityId) -> DisclosureContext {
+    DisclosureContext::resolve(
+        vault,
+        InterlocutorSet::with_session_owner(vec![Interlocutor::known_contact(
+            contact,
+            COUNTERPARTY,
+            CounterpartyFirstTouch::UserIntroduction,
+        )]),
+    )
+    .expect("FIXTURE: resolve the contact's clamp")
+}
+
+/// A claim about a person whose name holds none of [`NAME`]'s codes, put
+/// with approval `approval` and posted under `codes`.
+fn put_posted_claim(vault: &Vault, approval: ClaimApprovalStatus, codes: &[&str]) -> EntityId {
+    let subject = EntityId::now();
+    vault
+        .put_entity(
+            &subject,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"",
+        )
+        .expect("FIXTURE: put the subject");
+    let body = ClaimBody::new(
+        "profile.note",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("fact"),
+        1.0,
+        approval,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("FIXTURE: claim body");
+    let claim = EntityId::now();
+    let at = vault.now_recorded_at();
+    vault
+        .put_claim(&claim, &body, TimeRange { start: at, end: at }, at)
+        .expect("FIXTURE: put the claim");
+    post_codes(vault, &claim, codes);
+    claim
+}
+
+fn post_codes(vault: &Vault, id: &EntityId, codes: &[&str]) {
+    vault
+        .batch()
+        .phonetic(id, codes)
+        .commit()
+        .expect("FIXTURE: post the codes");
+}
+
+/// A live claim the contact may not read (Tier A) is the clamped pack's
+/// only exact hit. The pack serves nothing and counts it among the rows its
+/// clamp withheld, as main's preselection counted it. Before, the scope's
+/// own disclosure test dropped it before the blend and nothing counted it.
+#[test]
+fn a_clamped_pack_counts_an_exact_hit_its_audience_may_not_read() {
+    let fixture = clamp_fixture();
+    let vault = &fixture.vault;
+    let exact = exact_codes(NAME);
+    let codes: Vec<&str> = exact.iter().map(String::as_str).collect();
+    let claim = put_posted_claim(vault, ClaimApprovalStatus::Auto, &codes);
+    mark_tier_a(vault, &claim).expect("FIXTURE: mark the claim Tier A");
+    assert!(
+        !clamp_admits_with_contact(vault, fixture.contact, COUNTERPARTY, &claim)
+            .expect("FIXTURE: ask the clamp"),
+        "FIXTURE: the contact may not read the Tier-A claim"
+    );
+    let owner: Vec<EntityId> = vault
+        .context_pack()
+        .search_phonetic(&codes)
+        .limit(10)
+        .run()
+        .expect("the owner's pack")
+        .results
+        .iter()
+        .map(|entity| entity.id)
+        .collect();
+    assert_eq!(owner, [claim], "FIXTURE: the owner's pack finds the claim");
+
+    let run = vault
+        .context_pack()
+        .search_phonetic(&codes)
+        .limit(10)
+        .disclosure_context(with_contact(vault, fixture.contact))
+        .run_unfinalized_with_telemetry()
+        .expect("the clamped pack");
+    assert!(
+        run.value.results.is_empty(),
+        "the clamped pack serves no row its audience may not read"
+    );
+    assert_eq!(
+        run.clamped_out(),
+        1,
+        "FAILBEFORE REVIEW-9911-R2-CLAMPED-COUNT: the clamp's withheld rows count the exact hit"
+    );
+}
+
+/// What an empty clamped pack says of itself: its empty reason, its
+/// candidates in scope and its suppressed claims.
+fn empty_clamped_pack(vault: &Vault, contact: EntityId) -> (Option<(EmptyReason, usize)>, usize) {
+    let exact = exact_codes(NAME);
+    let codes: Vec<&str> = exact.iter().map(String::as_str).collect();
+    let pack = vault
+        .context_pack()
+        .search_phonetic(&codes)
+        .filter_types(&[ENTITY_TYPE_CLAIM])
+        .limit(10)
+        .include_stats(true)
+        .disclosure_context(with_contact(vault, contact))
+        .run()
+        .expect("the clamped pack");
+    assert!(
+        pack.results.is_empty(),
+        "FIXTURE: the clamped claim search serves nothing"
+    );
+    (
+        pack.empty
+            .as_ref()
+            .map(|empty| (empty.reason, empty.total_in_scope)),
+        pack.stats.claims_suppressed,
+    )
+}
+
+/// A clamped claim search whose exact hits are a person and, in the second
+/// read, a proposed claim the contact may not read whatever its status
+/// (Tier A). Both reads say the same: the run's gate judged no row the
+/// audience could not read, so the claim counts no suppression and the
+/// empty reason does not change with it. Before, the scope dropped the
+/// person before the D19 gate and the gate counted the hidden claim, so the
+/// second read said `AllActivated` with one suppressed claim: a claim the
+/// audience may not read matched.
+#[test]
+fn a_clamped_claim_search_reads_alike_with_a_proposed_claim_its_audience_may_not_read() {
+    let fixture = clamp_fixture();
+    let vault = &fixture.vault;
+    vault
+        .put_entity(
+            &EntityId::now(),
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &name_body(NAME),
+        )
+        .expect("FIXTURE: put the person named by the query");
+    let without = empty_clamped_pack(vault, fixture.contact);
+
+    let exact = exact_codes(NAME);
+    let codes: Vec<&str> = exact.iter().map(String::as_str).collect();
+    let claim = put_posted_claim(vault, ClaimApprovalStatus::Proposed, &codes);
+    mark_tier_a(vault, &claim).expect("FIXTURE: mark the claim Tier A");
+    let with = empty_clamped_pack(vault, fixture.contact);
+
+    assert_eq!(
+        with, without,
+        "FAILBEFORE REVIEW-9911-R2-EMPTY-REASON: the hidden proposed claim changes nothing \
+         the pack says"
+    );
+    assert_eq!(
+        with.1, 0,
+        "FAILBEFORE REVIEW-9911-R2-EMPTY-REASON: the gate counts no claim the audience may \
+         not read"
+    );
+}
+
+/// A rooted vault whose owner wrote a two-record conversation, a scope
+/// summary minted over it and a contact cleared for every axis
+/// (`tests/disclosure_summary_word_sources.rs`'s fixture).
+struct SummaryFixture {
+    vault: Vault,
+    trunk_first: EntityId,
+    summary: EntityId,
+    contact: EntityId,
+    _dir: tempfile::TempDir,
+}
+
+fn summary_fixture() -> SummaryFixture {
+    let dir = tempfile::tempdir().expect("temporary vault");
+    let vault = Vault::open_owned(dir.path(), VaultConfig::default()).expect("open vault");
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the vault's owner");
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    oneiron::test_support::bind_host_owner(&vault, &issuer, owner)
+        .expect("FIXTURE: bind the host owner");
+    let (conversation, trunk_first) = {
+        let host = vault.memory(owner, EdgeActorClass::Human);
+        let receipt = host
+            .conversations_create(&ConversationCreateInput {
+                id: None,
+                occurred_start: None,
+                occurred_end: None,
+                learned_at: None,
+                body: json!({}),
+                text: None,
+            })
+            .expect("FIXTURE: create the conversation");
+        let conversation = EntityId::from_hex(&receipt.id).expect("FIXTURE: conversation id");
+        let first = host
+            .conversations_records_append(&trunk_record(conversation, None, "the plan"))
+            .expect("FIXTURE: append the first record");
+        host.conversations_records_append(&trunk_record(
+            conversation,
+            Some(&first.id),
+            "the first step",
+        ))
+        .expect("FIXTURE: append the second record");
+        (
+            conversation,
+            EntityId::from_hex(&first.id).expect("FIXTURE: record id"),
+        )
+    };
+    let summary = mint_scope_summary(
+        &vault,
+        &ScopeSelector {
+            conversation,
+            session: None,
+            path: ScopePath::Canonical,
+            include_forks: false,
+        },
+        "The plan, and its first step.",
+    )
+    .expect("FIXTURE: mint the scope summary");
+    let contact = cleared_contact(&vault);
+    SummaryFixture {
+        vault,
+        trunk_first,
+        summary,
+        contact,
+        _dir: dir,
+    }
+}
+
+/// One trunk record that advances HEAD from `parent`.
+fn trunk_record(conversation: EntityId, parent: Option<&str>, text: &str) -> DagRecordAppendInput {
+    DagRecordAppendInput {
+        conversation: conversation.to_hex(),
+        parent: parent.map(str::to_owned),
+        reply_to: None,
+        containing_turn: None,
+        addr: None,
+        to: None,
+        advance: true,
+        body: json!({"txt": text, "speaker": "user"}),
+        text: None,
+        occurred_start: None,
+        occurred_end: None,
+        learned_at: None,
+        session: None,
+        quote: None,
+        thread_audience: None,
+    }
+}
+
+/// A one-row clamped pack whose top exact hit is a scope summary the
+/// contact may not read (one of its sources is Tier A, its own row is not)
+/// serves the readable person below it. Before, the preselection asked the
+/// summary's row alone, so the summary took the one slot and the pack's
+/// sweep removed it after the cut: the pack came back empty.
+#[test]
+fn a_clamped_pack_gives_a_summary_with_a_hidden_source_no_slot() {
+    let fixture = summary_fixture();
+    let vault = &fixture.vault;
+    let exact = exact_codes(NAME);
+    assert!(
+        exact.len() >= 2,
+        "FIXTURE: the summary matches more codes than the person"
+    );
+    let codes: Vec<&str> = exact.iter().map(String::as_str).collect();
+    post_codes(vault, &fixture.summary, &codes);
+    let person = EntityId::now();
+    vault
+        .put_entity(
+            &person,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"",
+        )
+        .expect("FIXTURE: put the person");
+    post_codes(vault, &person, &codes[..1]);
+    mark_tier_a(vault, &fixture.trunk_first).expect("FIXTURE: mark a source Tier A");
+    let admits = |id: &EntityId| {
+        clamp_admits_with_contact(vault, fixture.contact, COUNTERPARTY, id)
+            .expect("FIXTURE: ask the clamp")
+    };
+    assert_eq!(
+        (admits(&fixture.summary), admits(&person)),
+        (false, true),
+        "FIXTURE: the contact may read the person and not the summary"
+    );
+    let owner: Vec<EntityId> = vault
+        .context_pack()
+        .search_phonetic(&codes)
+        .limit(1)
+        .run()
+        .expect("the owner's pack")
+        .results
+        .iter()
+        .map(|entity| entity.id)
+        .collect();
+    assert_eq!(
+        owner,
+        [fixture.summary],
+        "FIXTURE: the summary ranks above the person"
+    );
+
+    let clamped: Vec<EntityId> = vault
+        .context_pack()
+        .search_phonetic(&codes)
+        .limit(1)
+        .disclosure_context(with_contact(vault, fixture.contact))
+        .run()
+        .expect("the clamped pack")
+        .results
+        .iter()
+        .map(|entity| entity.id)
+        .collect();
+    assert_eq!(
+        clamped,
+        [person],
+        "FAILBEFORE PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT: the readable person \
+         takes the slot"
+    );
 }
