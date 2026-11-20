@@ -200,6 +200,15 @@ impl Retirements {
             .collect()
     }
 
+    /// Every key a closed handoff or appointment fence holds.
+    pub(super) fn handoff_or_appointment_retired_keys(&self) -> BTreeSet<AuthorityKey> {
+        self.fences
+            .iter()
+            .filter(|fence| matches!(fence.kind, FenceKind::Handoff | FenceKind::Appointment))
+            .flat_map(|fence| fence.keys.iter().cloned())
+            .collect()
+    }
+
     /// The handoffs whose fences are closed, settled or in conflict, here or
     /// in a counted appointment's proof fold.
     pub(super) fn handoffs(&self) -> BTreeSet<AuthorityEntryHash> {

@@ -107,7 +107,10 @@ use serde::Serialize;
 /// machine's restore origin (row RESTORED-COPIES-ENROL-EACH-OTHER).
 /// 52: a `ReRoot` by a key without the host's stamp never counts while a live owner key with that
 /// stamp stands, and every row above such a move is refused with it (FIX HOSTED-REROOT-FOLD-RULE).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 52;
+/// 53: the image's fold and its safety index each hold the keys a closed handoff or appointment
+/// fence holds, the signers a door records handoff evidence for (FIX
+/// RETIRED-STANDING-REFUSAL-RECORDS-HANDOFF-ALARM-FOR-PLAIN-REVOKE).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 53;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
