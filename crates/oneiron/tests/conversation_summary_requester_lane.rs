@@ -31,6 +31,20 @@
 //!   queued, composed and landed with no lane judging it. A narrowed lane now
 //!   declares no Arc; the owner's own declaration of the same Arc stands.
 //!
+//! Round 1 of #9683 found two more, each red at #9683's head 11ceb00fa49:
+//! - P1 requester_lane.rs:192: the owner edits the landed summary with words
+//!   from a MESSAGE outside the device's lane and names it as the row the
+//!   edit read. The re-derivation pinned that MESSAGE as an editor source
+//!   and gave the edited text to the model; the lane judged only the
+//!   evidence's own MESSAGEs. Guard: a lane that reads the edit's source
+//!   re-derives the edited summary.
+//! - P1 derivation.rs:209: the owner reverts a summary whose credential has
+//!   since been revoked. The rollback re-registered the predecessor under
+//!   the reverted summary's lane, its observation refused the revoked lane,
+//!   and the revert failed before it archived the summary. A rollback now
+//!   restores the predecessor under its own declaration's lane, and leaves
+//!   it unobserved when that lane no longer reads its sources.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test conversation_summary_requester_lane`.
 #![cfg(oneiron_test_support)]
@@ -53,7 +67,10 @@ use oneiron::dreamer_runner::{
 use oneiron::federation::Scope;
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext, ReplyAssertions};
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
-use oneiron::scope_summary::{ScopeSummaryQueued, ScopeSummaryRequest, ScopeSummaryTarget};
+use oneiron::scope_summary::{
+    ScopeSummaryQueued, ScopeSummaryRequest, ScopeSummaryTarget, SummaryEdit, SummaryPatchRequest,
+    SummaryReadRequest, SummarySpan,
+};
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallPurpose, ContentPart,
@@ -75,6 +92,10 @@ const SOURCE_TEXT: &str = "We moved the review to Thursday.";
 const SUMMARY_TEXT: &str = "The review moved to Thursday.";
 /// The words of the TURN the owner appends after the first summary landed.
 const LATER_TEXT: &str = "Thursday's review now starts at noon.";
+/// The words of a MESSAGE in another conversation of the owner's.
+const OTHER_TEXT: &str = "The offsite budget doubled.";
+/// What the owner's edit adds to a landed summary, from [`OTHER_TEXT`].
+const EDIT_TEXT: &str = " The offsite budget doubled too.";
 /// The plan's refusal of a source its declared lane does not read.
 const LANE_REFUSAL: &str = "summary source outside the requester's read lane";
 /// The refusal of an Arc declared under a narrowed lane.
@@ -87,6 +108,8 @@ struct Fixture {
     _dir: tempfile::TempDir,
     issuer: HostSlipIssuer,
     owner: EntityId,
+    /// The owner's proof, which their revert of a Dreamer change presents.
+    owner_proof: oneiron::consent::AuthenticatedOwner,
     device_slip: CapabilitySlip,
     conversation: EntityId,
     turn: EntityId,
@@ -123,6 +146,7 @@ fn fixture() -> Fixture {
         _dir: dir,
         issuer,
         owner,
+        owner_proof,
         device_slip,
         conversation,
         turn,
@@ -273,6 +297,35 @@ fn turn_only_lane(fixture: &Fixture) -> ScopedRead<'_> {
             .is_ref_readable(&fixture.message)
             .expect("the MESSAGE's readability"),
         "FIXTURE: the records caveat does not name the MESSAGE, so the lane does not read its words"
+    );
+    lane
+}
+
+/// The device's credential narrowed by the device itself to the
+/// conversation's TURN and its MESSAGE: its lane reads the conversation's
+/// words, and not `outside`, a row its records caveat does not name.
+fn conversation_records_lane(fixture: &Fixture, outside: EntityId) -> ScopedRead<'_> {
+    let lane = narrowed_lane(
+        fixture,
+        SlipCaveat {
+            ttl_secs: Some(CAVEAT_TTL_SECS),
+            records: Some([fixture.turn.to_hex(), fixture.message.to_hex()].into()),
+            ..Default::default()
+        },
+    );
+    for row in [fixture.turn, fixture.message] {
+        assert!(
+            lane.is_ref_readable(&row).expect("the row's readability"),
+            "FIXTURE: the records caveat names the conversation's row {}, so its lane reads it",
+            row.to_hex()
+        );
+    }
+    assert!(
+        !lane
+            .is_ref_readable(&outside)
+            .expect("the outside row's readability"),
+        "FIXTURE: the records caveat does not name row {}, so the lane does not read it",
+        outside.to_hex()
     );
     lane
 }
@@ -554,6 +607,116 @@ fn landed(fixture: &Fixture, queued: ScopeSummaryQueued) -> Option<String> {
         .map(|result| result.summary)
 }
 
+/// The SUMMARY `run` of `queued` landed, once it composed.
+fn landed_summary(
+    fixture: &Fixture,
+    queued: ScopeSummaryQueued,
+    run: &oneiron::Result<DreamerAttemptExecution>,
+) -> EntityId {
+    assert!(
+        matches!(run, Ok(DreamerAttemptExecution::Completed { .. })),
+        "FIXTURE: with its credential live, the summary composes; run {run:?}"
+    );
+    let summary = landed(fixture, queued).expect("FIXTURE: the composed summary lands");
+    EntityId::from_hex(&summary).expect("the landed SUMMARY's id")
+}
+
+/// The summary `lane` declares, composed by `model` and landed: its
+/// declaration and its SUMMARY.
+fn landed_in_lane(
+    fixture: &Fixture,
+    lane: &ScopedRead<'_>,
+    model: &ScriptedSummaryModel<'_>,
+) -> (ScopeSummaryQueued, EntityId) {
+    let queued = declare_in_lane(fixture, lane);
+    let run = run_summary(fixture, queued, model);
+    (queued, landed_summary(fixture, queued, &run))
+}
+
+/// The owner appends a TURN of [`LATER_TEXT`], and the Dreamer re-derives
+/// the landed summary with `model`: the new declaration and its SUMMARY.
+fn rederived_after_later_turn(
+    fixture: &Fixture,
+    model: &ScriptedSummaryModel<'_>,
+) -> (ScopeSummaryQueued, EntityId) {
+    witness_turn(
+        &fixture.vault,
+        fixture.owner,
+        fixture.conversation,
+        LATER_TEXT,
+    );
+    let (rederived, run) = run_next(fixture, model);
+    (rederived, landed_summary(fixture, rederived, &run))
+}
+
+/// The owner edits the landed `summary`, adding [`EDIT_TEXT`], and names
+/// `source` as the row the edit's words were read from.
+fn owner_edits_summary(fixture: &Fixture, summary: EntityId, source: EntityId) {
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let read = |spans| {
+        memory
+            .read_summary(&SummaryReadRequest {
+                summary_ref: summary.to_hex(),
+                spans,
+            })
+            .expect("the owner reads the landed summary")
+            .value
+            .expect("FIXTURE: the landed summary has its document")
+    };
+    let text = read(Vec::new()).text;
+    let view = read(vec![SummarySpan {
+        start: 0,
+        end: text.chars().count(),
+    }]);
+    let anchor = view
+        .anchors
+        .first()
+        .cloned()
+        .expect("FIXTURE: an anchor over the summary's text");
+    memory
+        .patch_summary(&SummaryPatchRequest {
+            summary_ref: summary.to_hex(),
+            base: view.frontier,
+            keep: view.metadata.keep,
+            edits: vec![SummaryEdit::InsertAfterAnchor {
+                anchor,
+                text: EDIT_TEXT.to_owned(),
+            }],
+            read_refs: vec![source.to_hex()],
+        })
+        .expect("the owner's edit of the summary");
+    let edited = read(Vec::new());
+    assert!(
+        edited.text.contains(EDIT_TEXT.trim()),
+        "FIXTURE: the owner's edit merged into the summary: {:?}",
+        edited.text
+    );
+    assert!(
+        edited.read_refs.contains(&source.to_hex()),
+        "FIXTURE: the edited summary keeps row {} as a source of its words; read refs {:?}",
+        source.to_hex(),
+        edited.read_refs
+    );
+}
+
+/// The owner's revert of the Dreamer's `summary`: the SUMMARY it archived
+/// and the one current after it, or the refusal.
+fn owner_reverts(
+    fixture: &Fixture,
+    summary: EntityId,
+) -> Result<(Option<EntityId>, Option<EntityId>), String> {
+    fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .revert_dreamer_change(
+            &fixture.owner_proof,
+            summary,
+            fixture.vault.now_recorded_ms(),
+        )
+        .map(|receipt| (receipt.reverted.archived, receipt.reverted.current))
+        .map_err(|error| format!("{error} ({error:?})"))
+}
+
 #[test]
 fn a_conversation_summary_whose_credential_ends_before_the_dreamer_runs_is_not_composed() {
     let fixture = fixture();
@@ -735,4 +898,138 @@ fn an_arc_summary_is_not_declared_under_a_narrowed_lane() {
         .vault
         .request_scope_summary(&request)
         .expect("the owner's own Arc declaration is admitted");
+}
+
+#[test]
+fn an_edited_summary_is_not_rederived_from_a_row_the_edit_read_outside_its_lane() {
+    let fixture = fixture();
+    let (_, outside) = witness_turn(&fixture.vault, fixture.owner, EntityId::now(), OTHER_TEXT);
+    let lane = conversation_records_lane(&fixture, outside);
+    let model = ScriptedSummaryModel::new(&fixture, false);
+    let (queued, summary) = landed_in_lane(&fixture, &lane, &model);
+    owner_edits_summary(&fixture, summary, outside);
+    let rederive = ScriptedSummaryModel::new(&fixture, false);
+    let (rederived, run) = run_next(&fixture, &rederive);
+    assert_ne!(
+        rederived.attempt, queued.attempt,
+        "FIXTURE: the owner's edit re-queued the landed summary as a new attempt"
+    );
+    let reason = refusal(&run);
+    assert!(
+        reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains(LANE_REFUSAL)),
+        "actor=the owner's device under a credential whose records caveat names conversation {}'s TURN and MESSAGE; the owner edited its landed SUMMARY {} with words read from MESSAGE {}, outside that lane; expected the re-derivation's plan to refuse the edited text's source; run {run:?}",
+        fixture.conversation.to_hex(),
+        summary.to_hex(),
+        outside.to_hex()
+    );
+    assert_eq!(
+        rederive.calls(),
+        0,
+        "actor=the owner's device under a records-caveat credential; expected no model call to read the edited text, which quotes MESSAGE {}",
+        outside.to_hex()
+    );
+    assert_eq!(
+        landed(&fixture, rederived),
+        None,
+        "actor=the owner's device under a records-caveat credential; expected no re-derived SUMMARY to land"
+    );
+}
+
+/// Guard: the refusal is the lane's. A lane that reads the edit's source
+/// re-derives the edited summary.
+#[test]
+fn an_edited_summary_is_rederived_under_a_lane_that_reads_the_edits_source() {
+    let fixture = fixture();
+    let (_, outside) = witness_turn(&fixture.vault, fixture.owner, EntityId::now(), OTHER_TEXT);
+    let lane = attenuated_lane(&fixture);
+    assert!(
+        lane.is_ref_readable(&outside)
+            .expect("the edit's source's readability"),
+        "FIXTURE: the device's lane reads MESSAGE {}, the edit's source",
+        outside.to_hex()
+    );
+    let model = ScriptedSummaryModel::new(&fixture, false);
+    let (queued, summary) = landed_in_lane(&fixture, &lane, &model);
+    owner_edits_summary(&fixture, summary, outside);
+    let rederive = ScriptedSummaryModel::new(&fixture, false);
+    let (rederived, run) = run_next(&fixture, &rederive);
+    assert_ne!(
+        rederived.attempt, queued.attempt,
+        "FIXTURE: the owner's edit re-queued the landed summary as a new attempt"
+    );
+    assert!(
+        matches!(run, Ok(DreamerAttemptExecution::Completed { .. })),
+        "actor=the owner's device under a live credential that reads MESSAGE {}; the owner edited SUMMARY {} from it; expected the edited summary to re-derive; run {run:?}",
+        outside.to_hex(),
+        summary.to_hex()
+    );
+    assert_eq!(rederive.calls(), 1, "expected one model call");
+}
+
+#[test]
+fn the_owner_reverts_a_summary_whose_declaring_credential_has_ended() {
+    let fixture = fixture();
+    let lane = attenuated_lane(&fixture);
+    let model = ScriptedSummaryModel::new(&fixture, false);
+    let (_, first) = landed_in_lane(&fixture, &lane, &model);
+    let (_, second) = rederived_after_later_turn(&fixture, &model);
+    revoke_device_credential(&fixture);
+    let reverted = owner_reverts(&fixture, second);
+    assert_eq!(
+        reverted,
+        Ok((Some(second), Some(first))),
+        "actor=the owner; SUMMARY {} re-derived SUMMARY {} under the device's narrowed credential, since revoked; expected the owner's revert to archive it and restore its predecessor",
+        second.to_hex(),
+        first.to_hex()
+    );
+}
+
+#[test]
+fn a_reverted_summary_restores_its_predecessor_under_the_predecessors_own_lane() {
+    let fixture = fixture();
+    let model = ScriptedSummaryModel::new(&fixture, false);
+    let request = ScopeSummaryRequest {
+        target: ScopeSummaryTarget::Scope {
+            scope: canonical(fixture.conversation),
+            land_on: None,
+            as_record: false,
+        },
+        requester: WriteActor::new(fixture.owner, EdgeActorClass::Human),
+    };
+    let queued = fixture
+        .vault
+        .request_scope_summary(&request)
+        .expect("the owner declares a summary on their own lane");
+    let run = run_summary(&fixture, queued, &model);
+    let first = landed_summary(&fixture, queued, &run);
+    // The device's narrowed lane declares the next generation of the same
+    // summary, the owner's first its predecessor.
+    let lane = attenuated_lane(&fixture);
+    let (_, second) = landed_in_lane(&fixture, &lane, &model);
+    revoke_device_credential(&fixture);
+    let reverted = owner_reverts(&fixture, second);
+    assert_eq!(
+        reverted,
+        Ok((Some(second), Some(first))),
+        "actor=the owner; the device declared SUMMARY {} under a narrowed credential, since revoked, after the owner's own SUMMARY {}; expected the owner's revert to archive it and restore the owner's",
+        second.to_hex(),
+        first.to_hex()
+    );
+    let (later, _) = witness_turn(
+        &fixture.vault,
+        fixture.owner,
+        fixture.conversation,
+        LATER_TEXT,
+    );
+    let rederive = ScriptedSummaryModel::new(&fixture, false);
+    let (_, run) = run_next(&fixture, &rederive);
+    assert!(
+        matches!(run, Ok(DreamerAttemptExecution::Completed { .. })),
+        "actor=the owner; their SUMMARY {} was restored by the revert; the owner appended TURN {}; expected the restored summary to re-derive on the owner's own lane, not the revoked lane of the summary reverted; run {run:?}",
+        first.to_hex(),
+        later.to_hex()
+    );
+    assert_eq!(rederive.calls(), 1, "expected one model call");
 }
