@@ -483,12 +483,13 @@ fn safe_delete_live_tombstone_reaches_attached_outbound_channel() {
         "facade-live-route",
     ));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    manager.outbound().attach(tx);
     let window = manager
         .open_window(&WindowKey::from_timestamp(1))
         .expect("open deletion window");
     let receiver_base = crate::sync::loro_support::export_snapshot(&window.doc)
         .expect("receiver starts from the sender's pre-delete state");
+    // FIX 3787/5133: cold-open recovery routes live, so attach after it; first receive is the tombstone.
+    manager.outbound().attach(tx);
 
     facade_for(&vault, actor)
         .safe_delete(&victim.to_hex(), SafeDeleteReason::UserHardDelete)
