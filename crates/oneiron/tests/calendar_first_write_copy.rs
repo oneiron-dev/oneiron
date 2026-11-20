@@ -460,3 +460,168 @@ fn a_sibling_seat_s_pull_of_an_unproven_first_write_imports_no_second_event() {
         "the sibling seat reads the copy on the native EVENT"
     );
 }
+
+/// Registers `value` as a custody value under `name`, so a row or claim the
+/// vault stores from now on keeps it as a custody handle (`[secret sc..]`).
+fn register_custody_value(vault: &Vault, name: &str, value: &str) {
+    vault
+        .register_test_secret(name, value.as_bytes(), Vec::new(), NOW)
+        .expect("the value is a custody value");
+}
+
+/// The UID a first write of `event` mints: `<event>@calendar.invalid`.
+fn minted_uid(event: EntityId) -> String {
+    format!("{}@calendar.invalid", event.to_hex())
+}
+
+/// Asserts that the seat's staged write of `event` keeps its minted `uid` as
+/// a custody handle. The row is found by its EVENT: its strings no longer
+/// name the UID.
+fn assert_staged_uid_masked(vault: &Vault, event: EntityId, uid: &str) {
+    let row = calendar_write_outbox_rows(vault)
+        .expect("the outbox rows")
+        .into_iter()
+        .find(|row| row.event_ref == event)
+        .expect("the seat's write of the EVENT is staged");
+    assert!(
+        row.uid != uid && row.uid.contains("[secret sc"),
+        "FIXTURE: the stored outbox row keeps the minted UID as a custody handle: {}",
+        row.uid
+    );
+}
+
+/// The number of EVENTs the vault holds: a pull that imports the copy as a
+/// second EVENT raises it, whatever its passport's UID reads as.
+fn event_count(vault: &Vault) -> u64 {
+    vault
+        .count_entities_by_type(ENTITY_TYPE_EVENT)
+        .expect("count the EVENTs")
+}
+
+/// The SEQUENCE of the live passport of the seat installed under `system`
+/// on `event`, found by the system alone: its UID may be a custody handle.
+fn system_sequence(vault: &Vault, event: EntityId, system: &str) -> Option<u32> {
+    live_passports_for_event(vault, &event)
+        .expect("the EVENT's passports")
+        .into_iter()
+        .find(|(_, value)| value.system == system)
+        .map(|(_, value)| value.last_sequence)
+}
+
+#[test]
+fn a_sibling_seat_s_pull_of_a_masked_first_write_in_flight_imports_no_second_event() {
+    // Blind review round 1 of #10090 (P1-1),
+    // CAL-OUTBOX-SCAN-MASKED-SYSTEM-MISSES-ROW: as the sibling test above,
+    // but the first seat's system name and the UID its first write mints
+    // are custody values when the write stages, so the stored outbox row
+    // keeps both as custody handles. The sibling reads the collection under
+    // another system name, so neither the row's readable strings nor a key
+    // either seat derives name the UID; only the row's UID read as custody
+    // reads it does. The copy waits, owed, and the sibling's pull after the
+    // settlement reads it on the native EVENT.
+    let fixture = Fixture::open(None);
+    let seat = Seat::install(&fixture.vault, SEAT_SYSTEM);
+    let sibling = Seat::install(&fixture.vault, SIBLING_SEAT_SYSTEM);
+    let native = mint_native_event(&fixture.vault);
+    let uid = minted_uid(native);
+    register_custody_value(&fixture.vault, "first-write-seat-system", SEAT_SYSTEM);
+    register_custody_value(&fixture.vault, "first-write-minted-uid", &uid);
+    let events = event_count(&fixture.vault);
+
+    let stored = seat.write_with_lost_answer(&fixture.vault, native, NOW + 10);
+    assert_staged_uid_masked(&fixture.vault, native, &uid);
+    sibling
+        .pull(&fixture.vault, &[seat.stored_own_write(&uid)], NOW + 20)
+        .expect("sibling seat pull");
+    assert_eq!(
+        event_count(&fixture.vault),
+        events,
+        "the sibling seat's pull of the masked first write in flight imports no second EVENT"
+    );
+
+    let wrote = seat.write(&fixture.vault, native, NOW + 30);
+    assert_eq!(
+        wrote.sequence, stored,
+        "the replay settles the staged write"
+    );
+    sibling
+        .pull(&fixture.vault, &[seat.stored_own_write(&uid)], NOW + 40)
+        .expect("sibling seat pull");
+    assert_eq!(
+        event_count(&fixture.vault),
+        events,
+        "the sibling seat's pull after the settlement imports no second EVENT"
+    );
+    assert_eq!(
+        resolve_event_by_uid(&fixture.vault, &uid).expect("resolve the UID"),
+        Some(native),
+        "the masked minted UID resolves to the native EVENT"
+    );
+    assert_eq!(
+        system_sequence(&fixture.vault, native, SIBLING_SEAT_SYSTEM),
+        Some(stored),
+        "the sibling seat reads the copy on the native EVENT"
+    );
+}
+
+#[test]
+fn a_sibling_seat_s_pull_after_a_masked_first_write_settles_lands_on_its_event() {
+    // Blind review round 1 of #10090 (P1-2): only the UID the first write
+    // mints is a custody value, so the stored outbox row keeps it as a
+    // custody handle and matches by its key: the sibling's pull of the copy
+    // waits, owed. The settlement indexes the UID, and the passport it files
+    // keeps the UID as a custody handle too. That passport must still vouch
+    // for the index entry, or the sibling's pull after the settlement
+    // imports the copy as a second EVENT.
+    let fixture = Fixture::open(None);
+    let seat = Seat::install(&fixture.vault, SEAT_SYSTEM);
+    let sibling = Seat::install(&fixture.vault, SIBLING_SEAT_SYSTEM);
+    let native = mint_native_event(&fixture.vault);
+    let uid = minted_uid(native);
+    register_custody_value(&fixture.vault, "first-write-minted-uid", &uid);
+    let events = event_count(&fixture.vault);
+
+    let stored = seat.write_with_lost_answer(&fixture.vault, native, NOW + 10);
+    assert_staged_uid_masked(&fixture.vault, native, &uid);
+    sibling
+        .pull(&fixture.vault, &[seat.stored_own_write(&uid)], NOW + 20)
+        .expect("sibling seat pull");
+    assert_eq!(
+        event_count(&fixture.vault),
+        events,
+        "the sibling seat's pull while the masked first write is in flight imports no second EVENT"
+    );
+
+    let wrote = seat.write(&fixture.vault, native, NOW + 30);
+    assert_eq!(
+        wrote.sequence, stored,
+        "the replay settles the staged write"
+    );
+    assert!(
+        live_passports_for_event(&fixture.vault, &native)
+            .expect("the EVENT's passports")
+            .iter()
+            .any(|(_, value)| value.system == SEAT_SYSTEM
+                && value.uid != uid
+                && value.uid.contains("[secret sc")),
+        "FIXTURE: the settled write's passport keeps the minted UID as a custody handle"
+    );
+    sibling
+        .pull(&fixture.vault, &[seat.stored_own_write(&uid)], NOW + 40)
+        .expect("sibling seat pull");
+    assert_eq!(
+        event_count(&fixture.vault),
+        events,
+        "the sibling seat's pull after the masked first write settles imports no second EVENT"
+    );
+    assert_eq!(
+        resolve_event_by_uid(&fixture.vault, &uid).expect("resolve the UID"),
+        Some(native),
+        "the masked minted UID resolves to the native EVENT"
+    );
+    assert_eq!(
+        system_sequence(&fixture.vault, native, SIBLING_SEAT_SYSTEM),
+        Some(stored),
+        "the sibling seat reads the copy on the native EVENT"
+    );
+}
