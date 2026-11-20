@@ -412,8 +412,10 @@ pub struct WholeVaultImportReceipt {
     /// bring back before it, an edge-provenance claim among them
     /// (`ClaimSubjectEdgeNotRestored`), a coreference share consent
     /// (`CoreferenceConsentNotRestored`), a claim about a row kept out
-    /// (`ClaimSubjectNotRestored`), and an edge-provenance claim the gate
-    /// would hold for review (`ProvenanceAutoNotPermitted`). One more entry
+    /// (`ClaimSubjectNotRestored`), an edge-provenance claim the gate would
+    /// hold for review (`ProvenanceAutoNotPermitted`), and, on every door but
+    /// the owner's restore, a room this vault cannot seat with the TURNs and
+    /// MESSAGEs in it (`RoomNotSeatedHere`). One more entry
     /// is no omitted row: a provenance claim this vault already holds open,
     /// whose archived close the gate would hold, stays here as it was and is
     /// named under `ProvenanceAutoNotPermitted` too.

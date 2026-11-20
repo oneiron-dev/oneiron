@@ -7,6 +7,7 @@ mod claim_pair_same_as;
 mod issue_archive_restore;
 mod owner_archive_restore;
 mod seed_replacement;
+mod unseated_rooms;
 
 use owner_archive_restore::OwnerRestore;
 pub(crate) use owner_archive_restore::{
@@ -356,6 +357,16 @@ impl Vault {
         withhold_unborn_projects(self, &wtxn, &mut archive)?;
         let projects = map_project_root(self, &wtxn, &mut archive)?;
         omit_project_revisions(self, &mut archive)?;
+        // ARCHIVE-IMPORT-ACTORLESS-SEATED-ROOM = B: every door but the owner's
+        // restore keeps an archived room it cannot seat as archive data, and
+        // every room the import keeps out keeps its speech out with it
+        // (`unseated_rooms`).
+        let mut room_omissions = if owner.is_none() {
+            unseated_rooms::omit_rooms_not_seated_here(self, &wtxn, &mut archive)?
+        } else {
+            Vec::new()
+        };
+        room_omissions.extend(unseated_rooms::omit_speech_of_omitted_rooms(&mut archive)?);
         // Each runtime pack row maps onto this vault's pack handles; the
         // mapping is read again, alike, as each row goes in.
         let mut after = None;
@@ -635,7 +646,7 @@ impl Vault {
             pending += 1;
         }
         let mut inserted_entities = pending + model_imports.inserted + inserted_descriptors;
-        let mut destination_omissions = Vec::new();
+        let mut destination_omissions = room_omissions;
         // ISSUE stayed omitted through generic indexing; only this owner's permit restores it.
         if let Some(permit) = permit.as_ref() {
             let (inserted, unchanged) = issue_archive_restore::restore_in_txn(
@@ -1217,10 +1228,12 @@ fn insert_ready_row<R: Read + Seek>(
                     &body,
                 );
                 // The owner's restore of the owner's own archive brings a
-                // room's shared pins, the records its unpins removed and its
-                // pin policy back as the room pin doors wrote them: it writes
-                // under their marker (ROOM-SCOPED-PINS, ROOM-PINS-LWW-MERGE).
-                let room_pins = owner_restore.is_some()
+                // room's shared pins, the records its unpins removed, its pin
+                // policy and its closed bit back as the room pin doors and the
+                // room's closed-setting door wrote them: it writes under their
+                // markers (ROOM-SCOPED-PINS, ROOM-PINS-LWW-MERGE,
+                // ARCHIVE-IMPORT-ROOM-PINS-OR-CLOSED-REFUSED).
+                let room_door_markers = owner_restore.is_some()
                     && row.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION;
                 if !sources.is_empty() {
                     let weight =
@@ -1233,15 +1246,20 @@ fn insert_ready_row<R: Read + Seek>(
                         batch = batch.edge(&id, EdgeKind::DerivedFrom, source, weight);
                     }
                 }
-                if room_pins {
+                if room_door_markers {
                     crate::conversation::PIN_UPDATES.put(&vault.store, wtxn, &id, &[1])?;
+                    crate::conversation::CLOSED_UPDATES.put(&vault.store, wtxn, &id, &[1])?;
                 }
                 let applied = batch.apply(wtxn);
-                if room_pins {
+                if room_door_markers {
                     // The apply's own error comes back first.
-                    let cleared = crate::conversation::PIN_UPDATES.delete(&vault.store, wtxn, &id);
+                    let pins_cleared =
+                        crate::conversation::PIN_UPDATES.delete(&vault.store, wtxn, &id);
+                    let closed_cleared =
+                        crate::conversation::CLOSED_UPDATES.delete(&vault.store, wtxn, &id);
                     if applied.is_ok() {
-                        cleared?;
+                        pins_cleared?;
+                        closed_cleared?;
                     }
                 }
                 applied
