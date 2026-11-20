@@ -528,8 +528,9 @@ pub fn step_up_reset_effect_digest(person: &EntityId, factor: StepUpFactor) -> [
 /// effect lands outside the vault's writer (a custody journal; 2k3,
 /// P25-SHAPE Q1 = A): the Owner on their own proof, and with `applied` the
 /// asker's approved check-in, spent in a writer of its own on the Owner's
-/// live proof before the act runs, as the NOTE history purge spends it
-/// (2k2). A refusal after it leaves the approval spent.
+/// live proof before the act runs. A refusal after it leaves the approval
+/// spent; an act that lands in the vault's writer spends it there instead
+/// ([`owner_act_decision_in_txn`]), as the NOTE history purge does (2k2).
 ///
 /// # Errors
 ///
