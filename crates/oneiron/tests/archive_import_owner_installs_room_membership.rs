@@ -85,6 +85,11 @@
 //!   room's revision row under a key one byte too long and one of its ledger rows with a value
 //!   that reads as no ledger row; the export carries neither copy and still carries the room's
 //!   two live ledger rows and its revision.
+//! * `an_inert_ledger_copy_naming_a_use_limited_person_is_withheld_alone` (REVIEW-9739 round 2
+//!   P1-1; door `retain_inert_side_row`): on a hosted source the room keeps an inert copy of
+//!   yuki's ledger row that names another person, held, in her place; a customer hold then
+//!   refuses held's privacy erase. The export carries no such copy and still carries the
+//!   room's two live ledger rows and its revision.
 //!
 //! Tests 5 and 6 use public doors only and run red at the review test commit (the round-1
 //! head with #9721 merged, plus tests 5 and 6), where tests 1-4 pass. Tests 7 and 8 use the
@@ -94,7 +99,8 @@
 //! grant only for a room the export keeps out, where tests 1 to 13 pass.
 //! Test 16 runs red at the review-1 test commit (ec7407c4e2a with this test and its door, no
 //! fix), whose export withholds the room's whole ledger for either copy, where tests 1 to 15
-//! pass.
+//! pass. Test 17 runs red at f71253a24a9 (the round-1 fix), where an inert copy that reads
+//! as a ledger row and names a kept-out person still withholds the room's whole ledger.
 //!
 //! New report counts are read through `serde_json::to_value` of the SIDE-1 summary, so this
 //! file compiles where the landing is absent; an absent field fails its assertion as a
@@ -1546,6 +1552,66 @@ fn a_malformed_inert_ledger_copy_is_withheld_alone() {
             room_tuples(&after, table, room),
             rows,
             "the export carries the room's live {table} rows and no malformed copy"
+        );
+    }
+}
+
+/// `bytes` with every run of `from` replaced by `to`, of the same length.
+fn replace_bytes(bytes: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
+    let mut out = bytes.to_vec();
+    let mut at = 0;
+    while let Some(found) = out[at..].windows(from.len()).position(|run| run == from) {
+        out[at + found..at + found + from.len()].copy_from_slice(to);
+        at += found + from.len();
+    }
+    out
+}
+
+#[test]
+fn an_inert_ledger_copy_naming_a_use_limited_person_is_withheld_alone() {
+    let (_source_dir, source) = open_hosted_source_vault();
+    let now = source.now_recorded_at();
+    let at = TimeRange {
+        start: now,
+        end: now,
+    };
+    let (room, _owen, yuki) = seat_room(&source, at, now);
+    let held = fixed_id(0x5C);
+    put_person_at(&source, held, b"held", at, now);
+    let before = retained_rows(&export_whole(&source));
+    let yuki_hex = yuki.to_hex();
+    let (_, row_key, row_value) = rows_for(&before, "CONVERSATION_MEMBERSHIP_ROW")
+        .into_iter()
+        .find(|(_, key, value)| {
+            key.starts_with(room.as_bytes())
+                && value
+                    .windows(yuki_hex.len())
+                    .any(|run| run == yuki_hex.as_bytes())
+        })
+        .expect("FIXTURE: the archive carries yuki's ledger row of the room");
+    let copy = replace_bytes(&row_value, yuki_hex.as_bytes(), held.to_hex().as_bytes());
+    assert_ne!(
+        copy, row_value,
+        "FIXTURE: the copy names held in yuki's place"
+    );
+    archive_room_ledger::retain_inert_side_row(
+        &source,
+        "CONVERSATION_MEMBERSHIP_ROW",
+        row_key,
+        copy,
+    )
+    .expect("FIXTURE: keep an inert ledger row copy that names held");
+
+    use_limit(&source, held);
+    let after = retained_rows(&export_whole(&source));
+    for (table, rows) in [
+        ("CONVERSATION_MEMBERSHIP_ROW", 2),
+        ("CONVERSATION_MEMBERSHIP_SEQ", 1),
+    ] {
+        assert_eq!(
+            room_tuples(&after, table, room),
+            rows,
+            "the export carries the room's live {table} rows and no copy naming the held person"
         );
     }
 }

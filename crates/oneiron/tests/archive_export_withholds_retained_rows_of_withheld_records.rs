@@ -20,21 +20,37 @@
 //!   which files one `HOUSE_LINK_RECEIPT` keyed by the house and naming the org in its value. A
 //!   customer hold then refuses the org's privacy erase: the export carries neither the org nor
 //!   the receipt (REVIEW-9739 P1-1).
+//! * `a_whole_vault_export_withholds_a_house_link_receipt_whose_key_names_a_use_limited_person`
+//!   (round 2 P1-2; door `retain_inert_side_row`): the same vault keeps an inert copy of the
+//!   bind receipt whose key leads with another person, held, and whose value is the live one; a
+//!   customer hold then refuses held's privacy erase. The export carries no such copy and still
+//!   carries the live receipt.
+//! * `a_whole_vault_export_withholds_a_standing_policy_whose_scope_names_a_use_limited_person`
+//!   (round 2 P1-3): N agreeing rulings in the scope `consult:<held hex>:brief` earn one
+//!   proposed `EDIT_DISTANCE_ESCALATION_POLICY` row; after a customer hold refuses held's
+//!   privacy erase the export carries no such row.
 //!
 //! The first test runs red at the base (#9446 head 1adbb2714bf), whose export checks only the
 //! rows of three room tables, and green at the fix. The second runs red at 0b834f36c37, whose
 //! export reads only a setting change's scope, and green at the fix. The third runs red at
-//! ec7407c4e2a, whose export reads only the receipt's house, and green at the fix.
+//! ec7407c4e2a, whose export reads only the receipt's house, and green at the fix. The fourth
+//! and fifth run red at f71253a24a9, which reads a receipt's value alone and no standing
+//! policy's scope, and green at the round-2 fix.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test archive_export_withholds_retained_rows_of_withheld_records`.
 
 #[path = "archive_import_retained_side_rows.rs"]
 mod retained_side_rows;
 
 use oneiron::deletion::LegalHoldTarget;
+use oneiron::edit_distance::escalation::{
+    EscalationReceipt, EscalationRuling, EscalationTrigger, escalation_standing_n,
+    maybe_propose_standing_policy, record_escalation,
+};
 use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::note::{NoteProgramEdit, NoteVerdict};
-use oneiron::registry::ENTITY_TYPE_ORG;
+use oneiron::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
+use oneiron::test_doors::archive_room_ledger;
 use oneiron::workspace_roster::{DEFAULT_HOUSE_ROLE, WorkCompanionPolicy, WorkspaceRosterPreset};
 use oneiron::{
     EdgeActorClass, EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig, WriteActor,
@@ -261,9 +277,10 @@ fn a_whole_vault_export_withholds_a_setting_change_whose_reason_names_a_use_limi
 const WORKSPACE: &str = "retained-rows-house-link-workspace";
 const WORKSPACE_VAULT_ID: u64 = 41;
 
-#[test]
-fn a_whole_vault_export_withholds_a_house_link_receipt_naming_a_use_limited_org() {
-    let (_dir, vault) = open_hosted_vault();
+/// A hosted vault rooted under its host whose owner bound the workspace's house to run its org,
+/// which filed one `HOUSE_LINK_RECEIPT`. Returns the vault and the org.
+fn bound_house_link_vault() -> (tempfile::TempDir, Vault, EntityId) {
+    let (dir, vault) = open_hosted_vault();
     let owner = vault
         .ensure_embedded_owner_actor()
         .expect("FIXTURE: the vault names its embedded owner actor");
@@ -319,7 +336,18 @@ fn a_whole_vault_export_withholds_a_house_link_receipt_naming_a_use_limited_org(
     vault
         .bind_workspace_house_leader(WORKSPACE, DEFAULT_HOUSE_ROLE, &proof, &signer)
         .expect("FIXTURE: the owner binds the house to run its org");
-    let receipts = |archive: &[u8]| rows_for(&retained_rows(archive), "HOUSE_LINK_RECEIPT").len();
+    (dir, vault, org)
+}
+
+/// The `HOUSE_LINK_RECEIPT` tuples of whole-vault `archive`.
+fn house_link_receipts(archive: &[u8]) -> Vec<(String, Vec<u8>, Vec<u8>)> {
+    rows_for(&retained_rows(archive), "HOUSE_LINK_RECEIPT")
+}
+
+#[test]
+fn a_whole_vault_export_withholds_a_house_link_receipt_naming_a_use_limited_org() {
+    let (_dir, vault, org) = bound_house_link_vault();
+    let receipts = |archive: &[u8]| house_link_receipts(archive).len();
     assert_eq!(
         receipts(&export_whole(&vault)),
         1,
@@ -336,5 +364,91 @@ fn a_whole_vault_export_withholds_a_house_link_receipt_naming_a_use_limited_org(
         receipts(&archive),
         0,
         "LEAK: the archive carries no house link receipt naming the use-limited org"
+    );
+}
+
+#[test]
+fn a_whole_vault_export_withholds_a_house_link_receipt_whose_key_names_a_use_limited_person() {
+    let (_dir, vault, _org) = bound_house_link_vault();
+    let held = EntityId::from_bytes([0xB4; 16]).expect("FIXTURE: the held person's id");
+    vault
+        .put_entity(
+            &held,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"retained rows held house",
+        )
+        .expect("FIXTURE: store the held person");
+    let live = house_link_receipts(&export_whole(&vault));
+    let [(_, key, value)] = live.as_slice() else {
+        panic!("FIXTURE: the archive carries one bind receipt: {live:?}");
+    };
+    let mut forged = held.as_bytes().to_vec();
+    forged.extend_from_slice(&key[16..]);
+    archive_room_ledger::retain_inert_side_row(
+        &vault,
+        "HOUSE_LINK_RECEIPT",
+        forged.clone(),
+        value.clone(),
+    )
+    .expect("FIXTURE: keep an inert receipt copy whose key leads with held");
+
+    use_limit(&vault, held);
+    let after = house_link_receipts(&export_whole(&vault));
+    assert!(
+        after.iter().all(|(_, key, _)| *key != forged),
+        "LEAK: the archive carries no receipt whose key names the use-limited person"
+    );
+    assert_eq!(after.len(), 1, "the live bind receipt still travels");
+}
+
+#[test]
+fn a_whole_vault_export_withholds_a_standing_policy_whose_scope_names_a_use_limited_person() {
+    let (_dir, vault) = open_hosted_vault();
+    let held = EntityId::from_bytes([0xB5; 16]).expect("FIXTURE: the held person's id");
+    vault
+        .put_entity(
+            &held,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"retained rows held consultee",
+        )
+        .expect("FIXTURE: store the held person");
+    let scope = format!("consult:{}:brief", held.to_hex());
+    let trigger = EscalationTrigger::Unsure;
+    let standing_n = escalation_standing_n(&vault).expect("FIXTURE: read the standing threshold");
+    for _ in 0..standing_n {
+        record_escalation(
+            &vault,
+            EscalationReceipt {
+                task_ref: EntityId::from_bytes([0xB6; 16]).expect("FIXTURE: the task id"),
+                scope: scope.clone(),
+                trigger,
+                question: "may the consult proceed".to_owned(),
+                ruling: EscalationRuling::Approve,
+                rationale: "the owner agrees".to_owned(),
+                budget_band: None,
+            },
+        )
+        .expect("FIXTURE: record one agreeing ruling");
+    }
+    maybe_propose_standing_policy(&vault, &scope, trigger)
+        .expect("FIXTURE: propose the standing policy")
+        .expect("FIXTURE: N agreeing rulings earn a proposal");
+    let policies =
+        |archive: &[u8]| rows_for(&retained_rows(archive), "EDIT_DISTANCE_ESCALATION_POLICY").len();
+    assert_eq!(
+        policies(&export_whole(&vault)),
+        1,
+        "FIXTURE: before the hold the archive carries the standing policy"
+    );
+
+    use_limit(&vault, held);
+    assert_eq!(
+        policies(&export_whole(&vault)),
+        0,
+        "LEAK: the archive carries no standing policy whose scope names the use-limited person"
     );
 }
