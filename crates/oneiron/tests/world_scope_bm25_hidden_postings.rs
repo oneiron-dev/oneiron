@@ -65,6 +65,7 @@ struct Fixture {
     owner_proof: AuthenticatedOwner,
     second_world: EntityId,
     agent: EntityId,
+    agent_slip: VerifiedSlip,
     agent_key: ScopedReadActorKey,
 }
 
@@ -119,6 +120,7 @@ fn fixture() -> Fixture {
         owner_proof,
         second_world,
         agent,
+        agent_slip,
         agent_key,
     }
 }
@@ -240,13 +242,14 @@ fn agent_search_order(fixture: &Fixture) -> Vec<EntityId> {
         .collect()
 }
 
-/// The claims of `claims` the agent's own memory recall serves for
-/// [`QUERY`] (Light effort), in rank order, each found by the revision its
-/// item's provenance names.
+/// The claims of `claims` the agent's memory recall under its credential
+/// serves for [`QUERY`] (Light effort), in rank order, each found by the
+/// revision its item's provenance names.
 fn agent_recall_order(fixture: &Fixture, claims: &BTreeSet<EntityId>) -> Vec<EntityId> {
     fixture
         .vault
         .memory(fixture.agent, EdgeActorClass::Agent)
+        .with_read_proof(&fixture.agent_slip)
         .recall(
             QUERY,
             Effort::Light,
@@ -346,9 +349,9 @@ fn an_agent_text_search_ranks_alike_with_claims_of_a_world_its_grant_leaves_out(
     );
 }
 
-/// The agent's own memory recall, whose read is held to the agent Grants
-/// that stand for it in each snapshot: its pack scored with every posting
-/// before, as it named no reader to the pipeline.
+/// The agent's memory recall under its credential, whose read is held to its
+/// Grant's worlds: the recall pack scored with every posting before, as it
+/// named no reader to the pipeline.
 #[test]
 fn an_agent_recall_ranks_alike_with_claims_of_a_world_its_grant_leaves_out() {
     let fixture = fixture();
@@ -374,7 +377,7 @@ fn an_agent_recall_ranks_alike_with_claims_of_a_world_its_grant_leaves_out() {
         with.first(),
         Some(&rare),
         "FAILBEFORE WORLD-SCOPE-BM25-DF-COUNTS-HIDDEN-POSTINGS: claims of a world the agent's \
-         standing Grant leaves out count in no word's document frequency, so the rarer readable \
+         Grant leaves out count in no word's document frequency, so the rarer readable \
          word's claim still leads the agent's recall"
     );
 }
