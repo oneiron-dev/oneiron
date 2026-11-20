@@ -167,7 +167,7 @@ fn scripted_lightpanda(mut stream: UnixStream) {
         "the host asks discovery first: {}",
         String::from_utf8_lossy(&head)
     );
-    let body = r#"{"Browser":"Lightpanda/1.0","webSocketDebuggerUrl":"ws://localhost:9222/"}"#;
+    let body = r#"{"Browser":"Lightpanda/1.0","webSocketDebuggerUrl":"ws://localhost/"}"#;
     let answer = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
