@@ -30,9 +30,9 @@ use root::ResourceOrigin;
 pub(super) mod signals;
 pub(crate) use signals::facet as claim_facet;
 mod slices;
-#[cfg(oneiron_test_support)]
-pub(crate) use slices::fitted_chunk_sizes_for_test;
 pub(super) use slices::{ExtractionSlice, SliceBound};
+#[cfg(oneiron_test_support)]
+pub(crate) use slices::{fitted_chunk_sizes_for_test, native_slice_transcripts_in_room_for_test};
 mod write;
 use super::provenance::{ConsolidationSink, PromotionCandidate};
 use super::support::invalid_consolidation;
