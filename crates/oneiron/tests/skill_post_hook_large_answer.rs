@@ -2062,6 +2062,16 @@ fn admitted_deep_text(
 ) -> (VerbHookPre, EntityId, AdmittedSkillText) {
     let skill = deep_skill(vault);
     bind_redact_hook(vault, paths);
+    admitted_text_of(vault, factory, skill)
+}
+
+/// [`admitted_deep_text`] for the deep answer of callable `skill`, its post
+/// hook already bound.
+fn admitted_text_of(
+    vault: &Arc<Vault>,
+    factory: &QuickJsRuntimeFactory,
+    skill: EntityId,
+) -> (VerbHookPre, EntityId, AdmittedSkillText) {
     let run_id = fresh_id();
     let (actor, leased) = leased_actor(vault, run_id);
     let pre = outer_pre_with_bytes(vault, actor, skill, DEEP_SMALL_PAD_BYTES);
@@ -2235,5 +2245,145 @@ fn a_deep_hook_input_names_no_row_inside_a_longer_hex_run() {
     assert!(
         handle_doors::rows_named_by_hook_input(&input).is_empty(),
         "a longer hex run names no row",
+    );
+}
+
+/// Stores the active callable whose answer is the deep skill's with the
+/// custody `secret` as its `pad`: past the whole-answer parser's depth
+/// limit, so the admitted entry holds it as text. Answers its id.
+fn deep_secret_skill(vault: &Vault, secret: &str) -> EntityId {
+    let literal = serde_json::to_string(secret).expect("the secret encodes");
+    let source = format!(
+        r#"let deep = 0;for (let i = 0; i < {DEEP_LEVELS}; i++) deep = [deep];finish(JSON.stringify({{pad:{literal},deep}}));"#,
+    );
+    callable_skill::put_active_callable(
+        vault,
+        "fixture.deep-secret-answer",
+        &source,
+        &serde_json::json!({"bytes":"integer"}),
+        &serde_json::json!("object"),
+    )
+    .expect("the deep secret callable is stored and active")
+}
+
+/// The served claim row of [`deep_pack_skill`]'s answer.
+fn served_claim_item() -> serde_json::Value {
+    serde_json::json!({"short_id": "c1", "kind": "claim", "predicate": "test.likes"})
+}
+
+/// Stores the active callable whose answer is shaped as a pack: a
+/// `pack_version`, one claim item ([`served_claim_item`]) and the deep
+/// skill's `deep`, past the whole-answer parser's depth limit. Answers its
+/// id.
+fn deep_pack_skill(vault: &Vault) -> EntityId {
+    let source = format!(
+        r#"let deep = 0;for (let i = 0; i < {DEEP_LEVELS}; i++) deep = [deep];finish(JSON.stringify({{pack_version:1,items:[{}],deep}}));"#,
+        served_claim_item(),
+    );
+    callable_skill::put_active_callable(
+        vault,
+        "fixture.deep-pack-answer",
+        &source,
+        &serde_json::json!({"bytes":"integer"}),
+        &serde_json::json!("object"),
+    )
+    .expect("the deep pack callable is stored and active")
+}
+
+/// Binds the non-blocking Redact post hook on `self.skills.call` with served
+/// filter `served` and installs the runtime that redacts `paths`.
+fn bind_served_redact_hook(vault: &Arc<Vault>, paths: Vec<String>, served: Vec<String>) {
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault
+        .prepare_install_signing()
+        .expect("this install's signing keys");
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner");
+    let proof = vault
+        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+        .expect("owner proof");
+    handle_doors::bind_served_redact_post_hook(vault, owner, &proof, "self.skills.call", served)
+        .expect("the served-filter Redact hook binds");
+    handle_doors::install_redact_runtime(vault, paths).expect("the Redact runtime installs");
+}
+
+/// REVIEW-9908 round 1 (P1-1): the outer chain reads a deep admitted answer
+/// masked, as it reads a value answer (`shown_skill_output`). The hook that
+/// redacts `deep` only when its input holds the custody value never finds
+/// it, so the view keeps its depth and goes out as its card, the value
+/// masked in its body too. Red at the red pin: the hook read the value and
+/// redacted `deep`, so the view answered inline.
+#[test]
+fn a_live_outer_chain_reads_a_deep_admitted_answer_masked() {
+    let (_dir, vault) = open_vault();
+    let factory = quickjs_factory();
+    let skill = deep_secret_skill(&vault, SECRET_CANARY);
+    bind_input_match_hook(&vault, vec!["/deep".to_owned()], SECRET_CANARY.to_owned());
+    hold_secret_canary(&vault);
+    let (pre, run_id, text) = admitted_text_of(&vault, &factory, skill);
+    let view = judge_admitted_skill_text(&vault, pre, text, None)
+        .expect("the outer chain judges the answer as text");
+    let body = spilled_view(&vault, run_id, &view);
+    assert!(
+        !body.contains(SECRET_CANARY),
+        "the card's body masks the custody value",
+    );
+    assert!(
+        body.contains(&format!(
+            "{}0{}",
+            "[".repeat(DEEP_LEVELS),
+            "]".repeat(DEEP_LEVELS)
+        )),
+        "no hook read the value, so the view keeps its whole depth",
+    );
+}
+
+/// REVIEW-9908 round 1 (P1-2): a deep admitted answer shaped as a pack
+/// serves its rows to a served filter, as its value would: the hook whose
+/// filter takes the answer's claim row runs and hides `deep`, so a value
+/// answers inline. Red at the red pin: a view held as text served no row,
+/// so the hook was passed over and the answer went out as its card.
+#[test]
+fn a_served_filter_takes_the_rows_a_deep_pack_shaped_answer_serves() {
+    let (_dir, vault) = open_vault();
+    let factory = quickjs_factory();
+    let skill = deep_pack_skill(&vault);
+    bind_served_redact_hook(
+        &vault,
+        vec!["/deep".to_owned()],
+        vec!["claim:test.*".to_owned()],
+    );
+    let (pre, run_id, text) = admitted_text_of(&vault, &factory, skill);
+    let view = judge_admitted_skill_text(&vault, pre, text, None)
+        .expect("the outer chain judges the answer as text");
+    assert_eq!(
+        view,
+        serde_json::json!({"pack_version": 1, "items": [served_claim_item()]}),
+        "the hook ran on the served claim row and hid the deep part",
+    );
+    assert!(
+        admitted_record(&vault, &run_id).bindings.is_empty(),
+        "nothing is spilled",
+    );
+}
+
+/// A served filter that takes no row a deep pack-shaped answer serves
+/// leaves its hook unrun: the answer keeps its depth and goes out as its
+/// card. Passes at the red pin too: it pins that the rows are read, not
+/// that every filtered hook runs.
+#[test]
+fn a_served_filter_that_takes_no_row_of_a_deep_answer_leaves_its_card() {
+    let (_dir, vault) = open_vault();
+    let factory = quickjs_factory();
+    let skill = deep_pack_skill(&vault);
+    bind_served_redact_hook(&vault, vec!["/deep".to_owned()], vec!["fact:*".to_owned()]);
+    let (pre, run_id, text) = admitted_text_of(&vault, &factory, skill);
+    let view = judge_admitted_skill_text(&vault, pre, text, None)
+        .expect("the outer chain judges the answer as text");
+    let body = spilled_view(&vault, run_id, &view);
+    assert!(
+        body.contains(&"[".repeat(DEEP_LEVELS)),
+        "no hook ran, so the view keeps its whole depth",
     );
 }

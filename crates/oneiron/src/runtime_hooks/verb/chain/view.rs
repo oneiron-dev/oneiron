@@ -46,9 +46,10 @@ impl PostView for Value {
 /// value answer, so a Redact names the paths it names in a value view: the
 /// call's own chain reads it as the code-mode bridge frames its reply,
 /// `{"output": <answer>}`, and an admitted call's outer chain reads the
-/// answer unframed. Such a view is a write's result (`self.skills.call`)
-/// and no pack, so a hook's input takes it whole and it serves no row
-/// ([`super::super::served::rows`] needs a top-level `pack_version`).
+/// answer unframed. Such a view is a write's result (`self.skills.call`),
+/// so a hook's input takes it whole. The framed view is no pack; an
+/// unframed answer shaped as one serves the rows its value would, read off
+/// its text flat ([`super::super::served::text_pack`]).
 #[derive(Clone)]
 pub(crate) struct TextView {
     text: Box<RawValue>,

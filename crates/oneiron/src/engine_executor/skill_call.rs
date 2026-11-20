@@ -270,8 +270,10 @@ fn shown_skill_output(
 
 /// What an admitted skill call's caller reads of answer `answer`, held as
 /// JSON text ([`AdmittedSkillAnswer::Text`]), once its post chain `pre`
-/// judged it ([`verb_hook_boundary::row_post_text`]). The view is masked as
-/// a value view goes out ([`masked_in_run`]), over its text. A view that
+/// judged it ([`verb_hook_boundary::row_post_text`]). The answer is masked
+/// before any hook reads it, as a value answer is masked before its outer
+/// chain ([`shown_skill_output`], [`masked_in_run`]), over its text: a hook
+/// never reads a value the run knows, and its Redact only hides text. A view that
 /// nests no deeper than a value may hold, as a Redact may leave it, is then
 /// read into one; its caller spills it past the inline size as it spills a
 /// value view ([`spill_admitted_skill_view`]). Any other view, the answer as
@@ -292,14 +294,25 @@ pub fn judge_admitted_skill_text(
     rows: Option<Vec<EntityId>>,
 ) -> MemoryResult<serde_json::Value> {
     let AdmittedSkillText { run, text } = answer;
-    let view = verb_hook_boundary::row_post_text(vault, pre, text)?;
-    // A flat sweep of the text: no recursion follows the view's nesting.
+    // A flat sweep of the text, its JSON escapes read: no recursion follows
+    // the answer's nesting, and the masked text reads back as raw JSON
+    // with none either.
     let masked =
-        crate::guest_error::mask_run_known_values(vault.run_known_source(run)?, view.get())?;
-    if text_nests_past_whole_depth(&masked) {
-        return spill_admitted_body(vault, run, rows, |sink| sink.write(masked.as_bytes()));
+        crate::guest_error::mask_run_known_values(vault.run_known_source(run)?, text.get())?;
+    drop(text);
+    let masked = RawValue::from_string(masked).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_INTERNAL,
+            "the skill answer could not be masked",
+            &[],
+        )
+    })?;
+    let view = verb_hook_boundary::row_post_text(vault, pre, masked)?;
+    let view = view.get();
+    if text_nests_past_whole_depth(view) {
+        return spill_admitted_body(vault, run, rows, |sink| sink.write(view.as_bytes()));
     }
-    serde_json::from_str(&masked).map_err(|_| {
+    serde_json::from_str(view).map_err(|_| {
         MemoryError::new(
             MEMORY_CODE_INTERNAL,
             "a judged skill answer view does not read",
