@@ -133,25 +133,29 @@ impl Vault {
         Ok(true)
     }
 
-    /// Restores the PERSON `id` for the Dreamer's new mention of it, when the
-    /// vault cleanup archived it: the same record through the cleanup's
+    /// Restores the PERSON `id` for the Dreamer's new mention of it, when it
+    /// bears a cleanup-archive marker: the same record through the cleanup's
     /// restore door ([`Self::restore_archived_in_txn`]), never a second one
     /// (ARCH-0073 §6, ARCH-0055 §10; FIX
-    /// NATIVE-CLAIM-LANDS-ON-ARCHIVED-PERSON). The Dreamer's person mint
-    /// calls it when [`Self::put_attempt_minted_person_in_txn`] wrote nothing
-    /// for the id a mention derives, and its promotion calls it for the
-    /// entity subject of each claim it lands, so no claim of a pass stands
-    /// on a PERSON the owner does not read. A derivation's person item never
-    /// calls it: that item stays refused for an archived id.
+    /// NATIVE-CLAIM-LANDS-ON-ARCHIVED-PERSON). Two callers, both the
+    /// Dreamer's: its person mint, when
+    /// [`Self::put_attempt_minted_person_in_txn`] wrote nothing for the id a
+    /// declaration derives, and its promotion writer, for the entity subject
+    /// of a claim it writes. A derivation's person item never calls it: that
+    /// item stays refused for an archived id.
     ///
-    /// Returns `false` without writing where that door would refuse: `id`
-    /// bears no cleanup-archive marker, its stored row is not a PERSON, or a
-    /// delete or an erase names it beside the marker (a delete keeps an
-    /// archived row's marker).
+    /// Returns `false` without writing when `id` bears no marker with the
+    /// cleanup-archive reason, when no row is stored for it, when the stored
+    /// row is not a PERSON, or when anything but the archive removes it: a
+    /// delete or an erase, applied, pending or published (a delete keeps the
+    /// marker of an archived row, and the door would fail the caller's
+    /// transaction there). Otherwise it calls the door and returns `true`.
+    /// It asks who archived the PERSON no more than the door does.
     ///
     /// # Errors
     ///
-    /// Storage errors, and the restore door's.
+    /// Storage errors, a stored row whose header does not parse, and the
+    /// restore door's.
     pub(crate) fn restore_mentioned_person_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -166,7 +170,11 @@ impl Vault {
         let Some(row) = self.store.port_entity_record(wtxn, id)? else {
             return Ok(false);
         };
+        // The door looks for a hard-delete marker and a pending or published
+        // tombstone. A delete applied here whose publication was withdrawn
+        // leaves neither, only its row fence: `removed_in_txn` reads that too.
         if row.entity_type != ENTITY_TYPE_PERSON
+            || crate::ports::removed_in_txn(&self.store, wtxn, id)?
             || self.local_hard_delete_marker_exists_in_txn(wtxn, id)?
             || self
                 .store
