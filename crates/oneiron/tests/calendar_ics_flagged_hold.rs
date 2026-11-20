@@ -17,6 +17,7 @@
 //! --all-features --test calendar_ics_flagged_hold`.
 #![cfg(oneiron_test_support)]
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use oneiron::attempt_queue::{
@@ -33,10 +34,10 @@ use oneiron::calendar::ingest::{
     ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND, IcsFeedFetcher, IcsFeedPollConfig, IcsFetchResponse,
     IcsPropertyContinuationPayload,
 };
-use oneiron::calendar::passport::resolve_event_by_uid;
+use oneiron::calendar::passport::{live_passport_for, resolve_event_by_uid};
 use oneiron::calendar::{
     CALENDAR_SAFEGUARD_CONFIG_KEY, CalendarBodyScreener, CalendarError, CalendarInboundBody,
-    CalendarScreenVerdict,
+    CalendarPassportPresence, CalendarScreenVerdict,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{
@@ -150,15 +151,33 @@ impl Fixture {
     }
 
     fn poll(&self, config: &IcsFeedPollConfig, response: IcsFetchResponse) {
+        self.poll_with(config, response, &MarkerScreener);
+    }
+
+    /// [`Self::poll`] with `screener` in place of [`MarkerScreener`].
+    fn poll_with(
+        &self,
+        config: &IcsFeedPollConfig,
+        response: IcsFetchResponse,
+        screener: &dyn CalendarBodyScreener,
+    ) {
         feed::run_installed_poll(
             &self.memory(),
             &self.proof,
             &StubFetcher::with([response]),
-            Some(&MarkerScreener),
+            Some(screener),
             config,
             EntityId::now().to_hex(),
         )
         .expect("poll the feed");
+    }
+
+    /// The presence of the live passport `system` holds for `uid`, if any.
+    fn passport_presence(&self, system: &str, uid: &str) -> Option<CalendarPassportPresence> {
+        let event = resolve_event_by_uid(&self.vault, uid).expect("resolve uid")?;
+        live_passport_for(&self.vault, &event, system, uid)
+            .expect("read the passport")
+            .map(|(_, value)| value.presence)
     }
 
     fn consent(&self, system: &str) -> CalendarIcsFeedConsent {
@@ -329,6 +348,54 @@ impl CalendarBodyScreener for MarkerScreener {
 
     fn name(&self) -> Option<&str> {
         Some("fixture-marker-screener")
+    }
+}
+
+/// [`MarkerScreener`] that also flags the empty body an omission's admission
+/// is screened on, so the standing consent holds the omission's cancellation,
+/// and that lands the owner's approval of `omission` while the next
+/// cancellation of its EVENT is screened. A cancelled VEVENT admits its
+/// properties, then its passport, then its `calendar.status`, so the first
+/// flagged body screened once `uid-0@work`'s passport reads live again is the
+/// status's own screen.
+struct ApprovingScreener<'f> {
+    fixture: &'f Fixture,
+    omission: Mutex<Option<EntityId>>,
+    approved: AtomicBool,
+}
+
+impl<'f> ApprovingScreener<'f> {
+    fn new(fixture: &'f Fixture) -> Self {
+        Self {
+            fixture,
+            omission: Mutex::new(None),
+            approved: AtomicBool::new(false),
+        }
+    }
+}
+
+impl CalendarBodyScreener for ApprovingScreener<'_> {
+    fn screen(&self, body: &CalendarInboundBody) -> oneiron::Result<CalendarScreenVerdict> {
+        if body.description.is_empty() && body.attachment_text.is_empty() {
+            return Ok(CalendarScreenVerdict::Flagged {
+                reason_codes: vec!["fixture.empty".to_owned()],
+            });
+        }
+        let omission = *self.omission.lock().expect("omission");
+        if let Some(omission) = omission
+            && body.description.contains(FLAG_MARKER)
+            && !self.approved.load(Ordering::SeqCst)
+            && self.fixture.passport_presence("work", "uid-0@work")
+                == Some(CalendarPassportPresence::Live)
+        {
+            self.fixture.owner_releases(omission);
+            self.approved.store(true, Ordering::SeqCst);
+        }
+        MarkerScreener.screen(body)
+    }
+
+    fn name(&self) -> Option<&str> {
+        Some("fixture-approving-screener")
     }
 }
 
@@ -729,5 +796,65 @@ fn the_owner_s_release_of_a_held_cancellation_closes_the_omission_beside_it() {
             ClaimApprovalStatus::Approved
         )],
         "the released cancellation is the one live status: {statuses:?}"
+    );
+}
+
+/// Review round 1 of #9877: the writer that would close a prior status
+/// decides on the prior as it stands in that writer. On a feed under its
+/// standing consent whose screen flags the empty body an omission is screened
+/// on, the omission's cancellation waits on the owner. The next feed carries
+/// the EVENT cancelled in a flagged body, and the owner approves the omission
+/// while that cancellation's own status is screened. The held cancellation
+/// closes no status the owner has admitted, so the omission stays admitted
+/// beside it. The head before the fix read the omission as a proposal before
+/// the screen and superseded it after the owner's approval had landed.
+#[test]
+fn an_omission_the_owner_approves_while_a_held_cancellation_is_screened_stays_admitted() {
+    let f = Fixture::open();
+    let work = f.install("work");
+    f.poll(
+        &work,
+        calendar(&[Event::new("uid-0@work", "weekly sync")], "v1"),
+    );
+    f.approve_first_poll("work");
+
+    // A complete feed leaves the EVENT out: the omission's cancellation,
+    // screened on an empty body this screener flags, waits on the owner.
+    let screener = ApprovingScreener::new(&f);
+    f.poll_with(&work, calendar(&[], "v2"), &screener);
+    let statuses = live_statuses(&f.imported_claims("uid-0@work"));
+    let [(omission, CalendarStatusBasis::ImportedAbsence, ClaimApprovalStatus::Proposed)] =
+        statuses.as_slice()
+    else {
+        panic!("the standing consent holds the omission's cancellation: {statuses:?}");
+    };
+    let omission = *omission;
+    *screener.omission.lock().expect("omission") = Some(omission);
+
+    f.poll_with(
+        &work,
+        cancelled_calendar(&[Event::new("uid-0@work", FLAG_MARKER)], "v3"),
+        &screener,
+    );
+    assert!(
+        screener.approved.load(Ordering::SeqCst),
+        "the owner's approval landed while the cancellation's status was screened"
+    );
+    let statuses = live_statuses(&f.imported_claims("uid-0@work"));
+    assert_eq!(
+        admitted(&statuses),
+        vec![(
+            omission,
+            CalendarStatusBasis::ImportedAbsence,
+            ClaimApprovalStatus::Approved
+        )],
+        "the omission the owner approved stays admitted: {statuses:?}"
+    );
+    assert!(
+        statuses.iter().any(|(_, basis, approval)| {
+            *basis == CalendarStatusBasis::ImportedCancel
+                && *approval == ClaimApprovalStatus::Proposed
+        }),
+        "the flagged cancellation waits on the owner beside it: {statuses:?}"
     );
 }
