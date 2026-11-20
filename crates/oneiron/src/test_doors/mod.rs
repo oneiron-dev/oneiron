@@ -39,6 +39,8 @@ pub mod blend_component_work;
 pub mod board_child_done;
 pub mod board_task_wakes;
 pub mod booking_anti_abuse_manifest;
+#[cfg(feature = "sync")]
+pub mod booking_home_move;
 pub mod booking_side_table_rows;
 pub mod bootstrap_skills;
 pub mod builtin_pack_seed;
