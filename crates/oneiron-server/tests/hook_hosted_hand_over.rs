@@ -1508,15 +1508,15 @@ fn another_hosts_resumed_session_with_no_record_sends_nowhere_and_a_pinned_one_k
     );
 }
 
-/// Another Claude Code session, whose start removes the records of
+/// Another Claude Code session, whose start removes the `local` records of
 /// sessions that wrote nothing for 30 days.
 const OTHER_SESSION: &str = "0b5e55e0-3333-4444-8555-a66677779999";
 
 impl Bench {
-    /// Makes every file of the record of the Claude Code session `SESSION`
-    /// 31 days old.
+    /// Dates every file of the record of the Claude Code session `SESSION`
+    /// 1 January 2020, older than the 30 days a `local` record is kept.
     fn age_record(&self) {
-        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(31 * 24 * 60 * 60);
+        let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_577_836_800);
         let record = self.run_dir().join("hook-sessions").join(SESSION);
         for entry in std::fs::read_dir(record).expect("the session's record") {
             std::fs::File::options()
@@ -1546,11 +1546,11 @@ impl Bench {
 }
 
 #[test]
-fn a_session_whose_record_was_removed_as_old_sends_its_log_nowhere_and_a_hand_over_keeps_it() {
-    // REVIEW-9914, session_binding.rs:268: a session whose record another
-    // session's start removed as old may still hand over; its log goes
-    // nowhere, never to the local queue. On the PR's base it is queued
-    // locally.
+fn a_record_other_than_local_is_never_removed_as_old() {
+    // REVIEW-9914 round 2, session_binding.rs:313: a session that bound the
+    // selected hosted vault, then waited past 30 days while another session
+    // started, still hands its log over to that vault. On the round-1 head
+    // its record is removed, and its log goes nowhere.
     let bench = Bench::new();
     let origin = answering_vault();
     bench.select_hosted(&origin, VAULT_ID, "slip", &bench.path("slip-credential"));
@@ -1558,35 +1558,71 @@ fn a_session_whose_record_was_removed_as_old_sends_its_log_nowhere_and_a_hand_ov
     bench.session_start(&[], &log);
     bench.age_record();
     bench.other_session_start();
+    let record = bench.run_dir().join("hook-sessions").join(SESSION);
     assert!(
-        !bench.run_dir().join("hook-sessions").join(SESSION).exists(),
-        "the old record stays"
+        record.exists(),
+        "the old record of a session that bound the selected hosted vault went"
     );
-    bench.forget_runs();
-    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
-    assert!(
-        bench.ran_nothing(),
-        "the session whose record went sent its log: {:?}",
-        bench.recorded("argv")
-    );
-
-    // A hand-over keeps its session's record, so a session that hands over
-    // goes on sending to the vault it bound. On the PR's base the record
-    // goes, and the next hand-over queues locally.
-    let bench = Bench::new();
-    let origin = answering_vault();
-    bench.select_hosted(&origin, VAULT_ID, "slip", &bench.path("slip-credential"));
-    let log = bench.session_log();
-    bench.session_start(&[], &log);
-    bench.age_record();
-    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
-    bench.other_session_start();
     bench.forget_runs();
     bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
     assert_eq!(
         bench.argv().get(..3),
         Some(&words(&["mcp", "--url", &origin])[..]),
-        "the record of a session that hands over went"
+        "an old session that bound the selected hosted vault sent its log elsewhere"
+    );
+
+    // REVIEW-9914 round 2, session_binding.rs:313: every record of a session
+    // whose starts bound two hosted vaults stays past 30 days, so no removal
+    // leaves one of them alone, and the log goes to neither. On the round-1
+    // head both are removed.
+    let bench = Bench::new();
+    let credential = bench.path("slip-credential");
+    let first = answering_vault();
+    bench.select_hosted(&first, VAULT_ID, "slip", &credential);
+    let log = bench.session_log();
+    bench.session_start(&[], &log);
+    bench.select_hosted(&answering_vault(), OTHER_VAULT_ID, "slip", &credential);
+    bench.session_start_from("resume", &[], &log);
+    bench.age_record();
+    bench.other_session_start();
+    let record = bench.run_dir().join("hook-sessions").join(SESSION);
+    assert_eq!(
+        std::fs::read_dir(&record).map(Iterator::count).ok(),
+        Some(2),
+        "the old records of a session that bound two hosted vaults went"
+    );
+    bench.select_hosted(&first, VAULT_ID, "slip", &credential);
+    bench.forget_runs();
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    assert!(
+        bench.ran_nothing(),
+        "an old session that bound two hosted vaults sent its log: {:?}",
+        bench.recorded("argv")
+    );
+
+    // A session whose start bound a pin has its old `local` record removed,
+    // and queues locally as it did with it.
+    let bench = Bench::new();
+    bench.select_hosted(
+        &answering_vault(),
+        VAULT_ID,
+        "slip",
+        &bench.path("slip-credential"),
+    );
+    let log = bench.session_log();
+    let log_arg = log.to_str().expect("UTF-8 path");
+    bench.session_start(&["--url", &answering_vault()], &log);
+    bench.age_record();
+    bench.other_session_start();
+    assert!(
+        !bench.run_dir().join("hook-sessions").join(SESSION).exists(),
+        "the old record of a pinned session stays"
+    );
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    assert_eq!(
+        bench.argv(),
+        words(&["import", "claude-code", log_arg, "--queue"]),
+        "an old pinned session left the local queue"
     );
 }
 
