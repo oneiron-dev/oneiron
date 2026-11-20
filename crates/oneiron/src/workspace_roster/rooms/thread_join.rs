@@ -199,7 +199,8 @@ impl Memory<'_> {
 
     /// Approves a request to join a private thread: any one member in its
     /// audience now adds the one who asked from now on, citing the request,
-    /// and they are told. A settled request answers how it settled. The add
+    /// and they are told. A settled request answers how it settled; that
+    /// answer spends no check-in, so it refuses a `check_in_ref`. The add
     /// is judged by check-in (ROLES-CHECKIN P2.6a): an agent's approval
     /// waits (`CHECK_IN_PENDING`) until the approval that names the
     /// approved check-in as `check_in_ref`.
@@ -307,6 +308,10 @@ impl Memory<'_> {
             let asked = folded.request(request).ok_or_else(unknown_request)?;
             let requester = asked.person.live().ok_or_else(unknown_request)?;
             if asked.settled.is_some() {
+                // A settled request's answer adds no one and spends no
+                // check-in, so one the call names is refused, never left
+                // unspent while the answer replays how it settled.
+                crate::check_in::refuse_unspent_check_in_ref(None, check_in_ref.as_ref())?;
                 let view = view_in(vault, txn, root, asked)?.ok_or_else(unknown_request)?;
                 return Ok(JoinAnswer::Done(Box::new(view), None));
             }
