@@ -34,10 +34,10 @@ use std::sync::Arc;
 
 use oneiron::authority::MachineRole;
 use oneiron::memory::Memory;
-use oneiron::registry::ENTITY_TYPE_ASSET;
+use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use oneiron::test_doors::steward::owner as owner_proof;
 use oneiron::{EdgeActorClass, EdgeKind, EntityId, MemoryTimelineRecordState, TimeRange, Vault};
-use oneiron::{MemoryTimeline, VaultConfig};
+use oneiron::{MemoryTimeline, RetrievalFilter, VaultConfig};
 use oneiron_server::test_doors::memory_timeline_projection::project_timeline;
 use serde_json::{Value, json};
 
@@ -412,5 +412,53 @@ fn a_refused_deleted_anchor_counts_none_of_its_linked_records() {
         json!(0),
         "the projection refused the anchor, which the agent can no longer read at all, yet the \
          receipt counts withheld rows of its chain: {answer:#}"
+    );
+}
+
+/// Review round 2 of #10031, P1 2: the body-only timeline parts read keeps
+/// main's receipt. A deleted record there is `None` before any check, so the
+/// owner's PERSON-only read of an ASSET shell counts no withheld row and
+/// names no row-authority axis.
+#[test]
+fn the_body_only_parts_read_counts_no_deleted_record() {
+    let fixture = Fixture::open();
+    let owner = fixture.owner();
+    let asset = fixture.asset_in(fixture.harbor, WRITTEN_AT, &[]);
+    fixture.delete(asset);
+    let timeline = fixture.read(&owner, asset);
+    assert_eq!(
+        states(&timeline),
+        [(asset, MemoryTimelineRecordState::Deleted)],
+        "FIXTURE: the owner's own timeline lists the deleted ASSET's shell"
+    );
+
+    let person_only = RetrievalFilter {
+        entity_types: Some([ENTITY_TYPE_PERSON].into()),
+        ..RetrievalFilter::default()
+    };
+    let key = owner.read_key().expect("the owner's read key");
+    let parts = fixture
+        .vault
+        .scoped_read(key)
+        .memory_timeline_parts_with_receipt(&timeline.value.records, Some(&person_only))
+        .expect("the owner's timeline parts read");
+    assert_eq!(
+        parts.value,
+        [None],
+        "FIXTURE: a deleted record has no body in the parts read"
+    );
+    assert_eq!(
+        parts.receipt.suppressed_count, 0,
+        "the body-only parts read counts the deleted ASSET as a withheld row: {:?}",
+        parts.receipt
+    );
+    assert!(
+        !parts
+            .receipt
+            .narrowed_axes
+            .iter()
+            .any(|axis| axis == "row_authority"),
+        "the body-only parts read names a row-authority axis for a deleted record: {:?}",
+        parts.receipt
     );
 }
