@@ -162,7 +162,8 @@ impl<'vault> ScopedRead<'vault> {
 impl crate::ports::PprNodeVisibility for RetrievalVisibility<'_, '_> {
     fn ppr_node_visible(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
         // The held authority is the walk's transaction's; a node checked in
-        // any other transaction loads its own.
+        // any other transaction loads its own, asking what the walk asked
+        // (FIX 7528).
         if std::ptr::eq(txn, self.txn) {
             return self.scoped.is_entity_retrievable_held_in(
                 txn,
@@ -172,7 +173,12 @@ impl crate::ports::PprNodeVisibility for RetrievalVisibility<'_, '_> {
                 &self.held,
             );
         }
-        self.scoped
-            .is_entity_retrievable_with_policy_in(txn, &self.policy, &self.filter, id)
+        self.scoped.is_entity_retrievable_held_in(
+            txn,
+            &self.policy,
+            &self.filter,
+            id,
+            &self.held.for_another_txn(),
+        )
     }
 }
