@@ -1,12 +1,14 @@
 //! `oneiron hook --host <host> hand-over` with a hosted vault selected (H41,
 //! ARCH-0028 `#plugin-first-run` step 3; FIX-LIST
-//! HOOK-HOSTED-HAND-OVER-TRANSCRIPT). Where a session binds the selected
-//! hosted vault (no pin is set and no local vault runs), a Claude Code
-//! session's log and its subagents' logs go to that vault through
-//! `vault.imports.hook_transcript`, over `oneiron mcp` as the credential the
-//! selection names, in its own auth mode. A pin, a running local vault, a
-//! config named and a host whose log the verb does not read each keep the
-//! local queue, as before.
+//! HOOK-HOSTED-HAND-OVER-TRANSCRIPT; REVIEW-9834). Where the session's own
+//! `session-start` bound the selected hosted vault, and it is still the one
+//! selected, a Claude Code session's log and its subagents' logs, a workflow
+//! run's included, go to that vault through `vault.imports.hook_transcript`,
+//! over `oneiron mcp` as the credential the selection names, in its own auth
+//! mode, read below Claude Code's `projects` folder through no link. A
+//! session that bound a pin or another hosted vault, a session with no
+//! start, a running local vault, a config named and a host whose log the
+//! verb does not read each keep the local queue, as before.
 //!
 //! The shipped binary runs the hook. The `oneiron` it runs for the bridge
 //! and the import is a stand-in that records its arguments and, as `oneiron
@@ -22,6 +24,7 @@
 )]
 
 use std::io::{Read as _, Write as _};
+use std::net::TcpListener;
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -29,14 +32,21 @@ use std::process::{Command, Stdio};
 use base64::Engine as _;
 use serde_json::{Value, json};
 
-/// The selected hosted vault's origin. The stand-in bridge never reaches it.
+/// A selected hosted vault's origin that answers no probe. The stand-in
+/// bridge never reaches an origin.
 const ORIGIN: &str = "https://vault.example";
 /// The selected hosted vault's id.
 const VAULT_ID: &str = "4f6e6569726f6e2d686f737465642d68616e642d6f7665722d7465737430303031";
+/// Another hosted vault's id, selected after a session bound the first.
+const OTHER_VAULT_ID: &str = "4f6e6569726f6e2d686f737465642d68616e642d6f7665722d7465737430303032";
 /// The Claude Code session the hand-over sends.
 const SESSION: &str = "0b5e55e0-3333-4444-8555-a66677778888";
-/// Its one subagent's log stem.
+/// Its one subagent's log stem, in its `subagents` folder.
 const SUBAGENT: &str = "agent-a1b2c3";
+/// A workflow run's subagent's log stem, in the run's folder there.
+const WORKFLOW_SUBAGENT: &str = "agent-d4e5f6";
+/// What a server's `GET /.well-known/oneiron` answers, for a probe.
+const DESCRIPTOR: &str = r#"{"protocol":"oneiron-pairing","slip_version":2,"binding":"ed25519","pairing_endpoint":"/v1/core/pairing/redeem"}"#;
 /// The conversation the stand-in answers the import with.
 const CONVERSATION: &str = "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0";
 
@@ -68,9 +78,10 @@ impl Bench {
         let bench = Self {
             dir: tempfile::tempdir().expect("test fixture"),
         };
-        for dir in ["home", "config", "runtime", "record", "projects"] {
+        for dir in ["home", "config", "runtime", "record", "outside"] {
             std::fs::create_dir(bench.path(dir)).expect("test fixture");
         }
+        std::fs::create_dir_all(bench.projects()).expect("test fixture");
         let script = STAND_IN
             .replace(
                 "@RECORD@",
@@ -97,6 +108,16 @@ impl Bench {
         self.path("oneiron-stand-in")
     }
 
+    /// Claude Code's config folder, where `CLAUDE_CONFIG_DIR` points.
+    fn claude_config(&self) -> PathBuf {
+        self.path("claude")
+    }
+
+    /// Claude Code's folder of project folders.
+    fn projects(&self) -> PathBuf {
+        self.claude_config().join("projects")
+    }
+
     /// The per-user oneiron folder, where `hosted.json` and `hook.toml` live.
     fn user_dir(&self) -> PathBuf {
         self.path("config").join("oneiron")
@@ -111,21 +132,24 @@ impl Bench {
         }
     }
 
-    /// Records one hosted vault signed in to here in `mode`, selected, as
-    /// `oneiron hosted` publishes it: owner-only, naming the credential file
-    /// and never a value in it.
-    fn select_hosted(&self, mode: &str, credential: &Path) {
+    /// Records one hosted vault at `origin` with id `vault_id` signed in to
+    /// here in `mode`, selected, as `oneiron hosted` publishes it:
+    /// owner-only, naming the credential file and never a value in it. It
+    /// replaces any selection made before.
+    fn select_hosted(&self, origin: &str, vault_id: &str, mode: &str, credential: &Path) {
         let selection = json!({
             "vaults": [{
-                "origin": ORIGIN,
-                "vault_id": VAULT_ID,
+                "origin": origin,
+                "vault_id": vault_id,
                 "auth_mode": mode,
                 "credential_file": credential,
                 "verified_at_ms": 1_790_000_000_000_u64,
             }],
-            "selected": VAULT_ID,
+            "selected": vault_id,
         });
-        owner_only_file(&self.user_dir().join("hosted.json"), &selection.to_string());
+        let file = self.user_dir().join("hosted.json");
+        let _ = std::fs::remove_file(&file);
+        owner_only_file(&file, &selection.to_string());
     }
 
     /// A runtime file as `serve` writes it, for a server whose pid lives
@@ -146,7 +170,7 @@ impl Bench {
     /// A Claude Code session log and its subagent's, in Claude Code's own
     /// layout, every line a whole record: the session's log path.
     fn session_log(&self) -> PathBuf {
-        let folder = self.path("projects").join("-tmp-heron-lantern");
+        let folder = self.projects().join("-tmp-heron-lantern");
         let log = folder.join(format!("{SESSION}.jsonl"));
         let subagents = folder.join(SESSION).join("subagents");
         std::fs::create_dir_all(&subagents).expect("test fixture");
@@ -156,18 +180,19 @@ impl Bench {
         log
     }
 
-    /// Runs `oneiron hook --host <host> hand-over <args>` with `payload` on
-    /// stdin and `env` set, which exits 0 and prints nothing.
-    fn hand_over(&self, host: &str, args: &[&str], env: &[(&str, &str)], payload: &Value) {
+    /// Runs `oneiron hook --host <host> <event> <args>` with `payload` on
+    /// stdin and `env` set, which exits 0; what it printed.
+    fn hook(&self, host: &str, event: &[&str], env: &[(&str, &str)], payload: &Value) -> String {
         let mut command = Command::new(env!("CARGO_BIN_EXE_oneiron"));
         command
-            .args(["hook", "--host", host, "hand-over"])
-            .args(args)
+            .args(["hook", "--host", host])
+            .args(event)
             .arg("--oneiron")
             .arg(self.stand_in())
             .env("HOME", self.path("home"))
             .env("XDG_CONFIG_HOME", self.path("config"))
             .env("XDG_RUNTIME_DIR", self.path("runtime"))
+            .env("CLAUDE_CONFIG_DIR", self.claude_config())
             .env_remove("ONEIRON_CONFIG")
             .env_remove("ONEIRON_URL")
             .env_remove("ONEIRON_SECRET")
@@ -191,13 +216,34 @@ impl Bench {
         assert_eq!(
             output.status.code(),
             Some(0),
-            "{host} hand-over: a hook always exits 0; stderr: {}",
+            "{host} {event:?}: a hook always exits 0; stderr: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(
-            output.stdout.is_empty(),
-            "{host}: a hand-over prints nothing"
-        );
+        String::from_utf8(output.stdout).expect("UTF-8 stdout")
+    }
+
+    /// Runs `oneiron hook --host <host> hand-over <args>` with `payload` on
+    /// stdin and `env` set, which exits 0 and prints nothing.
+    fn hand_over(&self, host: &str, args: &[&str], env: &[(&str, &str)], payload: &Value) {
+        let mut event = vec!["hand-over"];
+        event.extend(args);
+        let said = self.hook(host, &event, env, payload);
+        assert!(said.is_empty(), "{host}: a hand-over prints nothing");
+    }
+
+    /// Starts the Claude Code session whose log is at `log`, with `args`
+    /// and no recall: the vault it binds, as its first line names it.
+    fn session_start(&self, args: &[&str], log: &Path) -> String {
+        let mut event = vec!["session-start", "--query", ""];
+        event.extend(args);
+        let payload = json!({
+            "hook_event_name": "SessionStart",
+            "session_id": SESSION,
+            "transcript_path": log,
+            "cwd": "/tmp/heron-lantern",
+            "source": "startup",
+        });
+        self.hook("claude-code", &event, &[], &payload)
     }
 
     /// What the stand-in wrote to `name`.
@@ -210,6 +256,46 @@ impl Bench {
     fn argv(&self) -> Vec<String> {
         self.recorded("argv").lines().map(str::to_owned).collect()
     }
+
+    /// Whether the stand-in bridge was sent a call.
+    fn called(&self) -> bool {
+        self.path("record").join("call").exists()
+    }
+
+    /// The `vault.imports.hook_transcript` spec the stand-in bridge was
+    /// sent.
+    fn sent_spec(&self) -> Value {
+        let call: Value = serde_json::from_str(&self.recorded("call")).expect("one JSON-RPC call");
+        assert_eq!(call["params"]["name"], "vault.imports.hook_transcript");
+        call["params"]["arguments"]["arguments"]["spec"].clone()
+    }
+}
+
+/// A listener that answers every request as a server's
+/// `GET /.well-known/oneiron` does, for a probe of a pinned or selected
+/// vault: its origin.
+fn answering_vault() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("test fixture");
+    let url = format!("http://{}", listener.local_addr().expect("test fixture"));
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut request = Vec::new();
+            let mut byte = [0_u8; 1];
+            while !request.ends_with(b"\r\n\r\n") {
+                match stream.read(&mut byte) {
+                    Ok(1) => request.push(byte[0]),
+                    _ => break,
+                }
+            }
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{DESCRIPTOR}",
+                DESCRIPTOR.len()
+            );
+        }
+    });
+    url
 }
 
 /// `body` at `path`, owner-only, in an owner-only folder.
@@ -313,15 +399,21 @@ fn a_claude_code_hand_over_sends_its_log_to_the_selected_hosted_vault_in_its_own
         ("oauth", &["--auth-mode", "oauth", "--oauth-token-file"][..]),
     ] {
         let bench = Bench::new();
+        let origin = answering_vault();
         let credential = bench.path(&format!("{mode}-credential"));
         let credential_arg = credential.to_str().expect("UTF-8 path");
-        bench.select_hosted(mode, &credential);
+        bench.select_hosted(&origin, VAULT_ID, mode, &credential);
         let log = bench.session_log();
+        let said = bench.session_start(&[], &log);
+        assert!(
+            said.contains("uses your hosted vault") && said.contains(&origin),
+            "{mode}: the session binds the selected hosted vault: {said}"
+        );
         bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
 
         // One bridge to the selected vault as its own credential, in its
         // own mode; nothing queued here.
-        let mut bridge = words(&["mcp", "--url", ORIGIN, "--surface", "tool-first"]);
+        let mut bridge = words(&["mcp", "--url", &origin, "--surface", "tool-first"]);
         bridge.extend(words(flags));
         bridge.push(credential_arg.to_owned());
         assert_eq!(bench.argv(), bridge, "{mode}");
@@ -365,10 +457,15 @@ fn a_claude_code_hand_over_sends_its_log_to_the_selected_hosted_vault_in_its_own
 #[test]
 fn a_pin_a_running_local_vault_a_named_config_or_another_hosts_log_keeps_the_local_queue() {
     let bench = Bench::new();
-    bench.select_hosted("slip", &bench.path("slip-credential"));
+    bench.select_hosted(ORIGIN, VAULT_ID, "slip", &bench.path("slip-credential"));
     let log = bench.session_log();
     let log_arg = log.to_str().expect("UTF-8 path");
     let local_queue = words(&["import", "claude-code", log_arg, "--queue"]);
+
+    // A session with no start that bound the hosted vault: its log goes to
+    // no vault the session did not bind.
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    assert_eq!(bench.argv(), local_queue, "no session start");
 
     // A config named here is a local queue's.
     let config = bench.path("oneiron.toml");
@@ -430,5 +527,143 @@ fn a_pin_a_running_local_vault_a_named_config_or_another_hosts_log_keeps_the_loc
     assert!(
         !bench.path("record").join("call").exists(),
         "no case called the hosted vault"
+    );
+}
+
+#[test]
+fn a_session_that_bound_a_pin_or_another_hosted_vault_never_sends_its_log_to_the_selected_one() {
+    // REVIEW-9834 P1 bind.rs:250: a session pinned by its hook's `--url`
+    // binds the pin, which its hand-over never sees; the selected hosted
+    // vault answers, and no local vault runs.
+    let bench = Bench::new();
+    bench.select_hosted(
+        &answering_vault(),
+        VAULT_ID,
+        "slip",
+        &bench.path("slip-credential"),
+    );
+    let log = bench.session_log();
+    let log_arg = log.to_str().expect("UTF-8 path");
+    let local_queue = words(&["import", "claude-code", log_arg, "--queue"]);
+    let pin = answering_vault();
+    let said = bench.session_start(&["--url", &pin], &log);
+    assert!(
+        said.contains("pinned by --url") && said.contains(&pin),
+        "the session binds its pin: {said}"
+    );
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    assert!(
+        !bench.called(),
+        "the pinned session's log went to the hosted vault"
+    );
+    assert_eq!(bench.argv(), local_queue, "a session that bound a pin");
+
+    // A session that bound one hosted vault, which another selection then
+    // replaced: its log goes to neither.
+    let bench = Bench::new();
+    let credential = bench.path("slip-credential");
+    bench.select_hosted(&answering_vault(), VAULT_ID, "slip", &credential);
+    let log = bench.session_log();
+    let log_arg = log.to_str().expect("UTF-8 path");
+    let said = bench.session_start(&[], &log);
+    assert!(
+        said.contains("uses your hosted vault"),
+        "the session binds the selected hosted vault: {said}"
+    );
+    bench.select_hosted(&answering_vault(), OTHER_VAULT_ID, "slip", &credential);
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    assert!(
+        !bench.called(),
+        "the session's log went to a hosted vault it did not bind"
+    );
+    assert_eq!(
+        bench.argv(),
+        words(&["import", "claude-code", log_arg, "--queue"]),
+        "a session whose hosted vault is no longer selected"
+    );
+}
+
+#[test]
+fn a_session_that_bound_the_hosted_vault_past_a_silent_local_one_sends_its_log_there() {
+    // REVIEW-9834 P1 bind.rs:254: a local `serve` that keeps its pid and
+    // runtime file but answers no probe (stopped, say) is passed over at
+    // session start, which binds the selected hosted vault; the hand-over
+    // sends there, not to the silent vault's queue.
+    let bench = Bench::new();
+    let origin = answering_vault();
+    bench.select_hosted(&origin, VAULT_ID, "slip", &bench.path("slip-credential"));
+    bench.running_local_vault(&bench.path("silent.toml"));
+    let log = bench.session_log();
+    let said = bench.session_start(&[], &log);
+    assert!(
+        said.contains("uses your hosted vault") && said.contains(&origin),
+        "the session passes the silent local vault over: {said}"
+    );
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    assert_eq!(
+        bench.argv().get(..3),
+        Some(&words(&["mcp", "--url", &origin])[..]),
+        "the hand-over goes to the vault the session bound"
+    );
+    assert_eq!(bench.sent_spec()["session"], SESSION);
+}
+
+#[test]
+fn a_hand_over_sends_a_workflow_runs_subagent_logs_and_follows_no_link() {
+    // REVIEW-9834 P1 transcript.rs:71: a workflow run's subagent log, one
+    // folder down in `subagents`, goes with the session's.
+    let bench = Bench::new();
+    bench.select_hosted(
+        &answering_vault(),
+        VAULT_ID,
+        "slip",
+        &bench.path("slip-credential"),
+    );
+    let log = bench.session_log();
+    let run = log
+        .with_extension("")
+        .join("subagents")
+        .join("workflow-run-1");
+    std::fs::create_dir(&run).expect("test fixture");
+    std::fs::write(run.join(format!("{WORKFLOW_SUBAGENT}.jsonl")), turns(true))
+        .expect("test fixture");
+    bench.session_start(&[], &log);
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    let spec = bench.sent_spec();
+    let stems: Vec<&str> = spec["subagents"]
+        .as_array()
+        .expect("subagent logs")
+        .iter()
+        .map(|subagent| subagent["stem"].as_str().expect("a stem"))
+        .collect();
+    assert_eq!(stems, [SUBAGENT, WORKFLOW_SUBAGENT], "{spec}");
+
+    // REVIEW-9834 P1 continue_command.rs:439: a `subagents` folder that is a
+    // link to logs outside the session's folders is not followed; the
+    // session's own log still goes.
+    let bench = Bench::new();
+    bench.select_hosted(
+        &answering_vault(),
+        VAULT_ID,
+        "slip",
+        &bench.path("slip-credential"),
+    );
+    let log = bench.session_log();
+    let subagents = log.with_extension("").join("subagents");
+    std::fs::remove_dir_all(&subagents).expect("test fixture");
+    std::fs::write(
+        bench.path("outside").join("agent-outside.jsonl"),
+        turns(true),
+    )
+    .expect("test fixture");
+    std::os::unix::fs::symlink(bench.path("outside"), &subagents).expect("test fixture");
+    bench.session_start(&[], &log);
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    let spec = bench.sent_spec();
+    assert_eq!(spec["session"], SESSION);
+    assert_eq!(
+        spec["subagents"],
+        json!([]),
+        "a log behind a link went with the session"
     );
 }
