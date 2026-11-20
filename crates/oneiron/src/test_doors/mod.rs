@@ -172,7 +172,10 @@ pub mod free_time_handoff;
 pub mod frontier_walk;
 #[cfg(feature = "sync")]
 pub mod full_copy_mark;
+pub mod gate_amendment_attribution;
 pub mod gate_receipt_rows;
+#[cfg(feature = "sync")]
+pub mod gate_receipt_unclear;
 pub mod gpu_job;
 pub mod grant_roles;
 pub mod graph_ask_centre;
@@ -219,6 +222,7 @@ pub mod live_task;
 pub mod live_window_import;
 #[cfg(feature = "sync")]
 pub mod live_window_note_scrub;
+pub mod loop_kept_position;
 pub mod machine_history;
 pub mod machine_names;
 pub mod mail_counterparty;

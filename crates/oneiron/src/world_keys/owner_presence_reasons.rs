@@ -4,6 +4,7 @@
 //! the line, so each starts with a verb and ends with no period. These are
 //! the engine's words until the owner fixes them.
 
+pub(crate) const ACCEPT_PACK_DEFAULTS: &str = "accept new default settings";
 pub(crate) const AGENT_WORLD_ACCESS: &str = "change which worlds an agent can access";
 pub(crate) const BOARD_LAYOUT: &str = "change the board layout";
 pub(crate) const CHANGE_SHARED_MEMBER_ROLE: &str = "change a member's role in the shared vault";

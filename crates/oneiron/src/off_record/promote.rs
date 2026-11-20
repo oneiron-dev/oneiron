@@ -94,6 +94,22 @@ impl<'store> FloorWrites<'store> {
         }
     }
 
+    /// The carry of the room this floor saves out of, for the NOTE, CLAIM
+    /// and conversation shell a selected save lands
+    /// (ROOM-CUSTODY-SAVED-ARTIFACTS): each room handle they name takes a
+    /// base custody record, as a saved turn's rows do. `None` for a floor
+    /// that saves out of no room, or out of one that keeps no secret.
+    ///
+    /// # Errors
+    ///
+    /// A poisoned room custody lock.
+    pub(crate) fn room_carry(&self) -> Result<Option<crate::batch::secret_scan::RoomCarry>> {
+        match &self.room {
+            Some(room) => crate::batch::secret_scan::RoomCarry::of(room),
+            None => Ok(None),
+        }
+    }
+
     /// Floor operation 1/3 (K1): append one evaluated EGRESS gate decision.
     ///
     /// Egress decisions are floor survivors and never conflate with the

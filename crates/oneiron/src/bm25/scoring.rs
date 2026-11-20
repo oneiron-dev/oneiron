@@ -42,8 +42,9 @@ pub(super) fn score_query_terms(
     // A vault with no limit asks no posting.
     let limited = crate::store::legal_hold::any_record_use_limit_in_txn(store, rtxn)?;
     let mut use_limited: HashMap<EntityId, bool> = HashMap::new();
-    // Under a clamp, whether each posting scores for a row the audience
-    // could not read, asked once per posting across the query's terms.
+    // Under a clamp, or a world that keeps rows from the reader, whether
+    // each posting scores for a row the reader may not read, asked once per
+    // posting across the query's terms.
     let mut hidden_postings: HashMap<EntityId, bool> = HashMap::new();
 
     for query_term in query_terms {

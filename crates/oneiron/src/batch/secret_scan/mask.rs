@@ -93,7 +93,7 @@ use crate::store::known_value_index::KnownValues;
 use crate::write_envelope::ClaimCandidate;
 pub(in crate::batch) use batch_door::mask_batch_ops;
 pub(crate) use promoted_message_parts::seal_promoted_message_ops_in_txn;
-pub(crate) use room_carry::carry_room_secrets_in_txn;
+pub(crate) use room_carry::{RoomCarry, carry_room_secrets_in_txn};
 use split_phrase::Spread;
 pub(crate) use text_spans::{file_spans, span_placed_for};
 use text_spans::{merged, occurrences, secret_spans};

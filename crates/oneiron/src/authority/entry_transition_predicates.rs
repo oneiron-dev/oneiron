@@ -26,6 +26,7 @@ pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
             | AuthorityOp::ConversationTrainingVaultSet(_)
             | AuthorityOp::PolicySettingSet(_)
             | AuthorityOp::SettingCopy(_)
+            | AuthorityOp::SettingPackHead(_)
             | AuthorityOp::MachineProfile(_)
             | AuthorityOp::FrontierJoin(_)
             | AuthorityOp::CustodyPermitPiece(_)

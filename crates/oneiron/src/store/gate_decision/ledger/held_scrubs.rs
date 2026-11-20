@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
-use crate::edit_distance::delta::forget_gate_amendment_delta_in_txn;
+use crate::edit_distance::attribution::forget_gate_amendment_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
@@ -184,7 +184,11 @@ impl Store {
     /// a bundle that names a claim that stays, and a batch preflight's future
     /// receipt keep their bytes, and so does a claim-bound decision whose
     /// reasons a saved weave period copies: shared content, which a later
-    /// erase still finds and scrubs with it. The number made skeletons.
+    /// erase still finds and scrubs with it. The unclear row filed under a
+    /// skeleton's receipt leaves the Coach's clustering, and a label proposal
+    /// that copied its notes stays where it is: the discard is local (FIX
+    /// [GATE-RECEIPT-UNCLEAR-ROW-OUTLIVES-RECORD-REMOVAL]). The number made
+    /// skeletons.
     pub(crate) fn discard_claim_gate_payload_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -218,7 +222,13 @@ impl Store {
         }
         let count = redact.len();
         for record in redact.into_values() {
+            let decision = record.decision_id;
             self.skeleton_gate_decision_in_txn(wtxn, record, at)?;
+            crate::skill_attribution::release_gate_receipt_unclear_in_txn(
+                self,
+                wtxn,
+                std::slice::from_ref(&decision),
+            )?;
         }
         Ok(count)
     }
@@ -308,7 +318,7 @@ impl Store {
             &record.decision_id,
             &encode_gate_decision(&record)?,
         )?;
-        forget_gate_amendment_delta_in_txn(self, wtxn, record.decision_id)?;
+        forget_gate_amendment_in_txn(self, wtxn, record.decision_id)?;
         self.forget_gate_scrubs_of_decision_in_txn(wtxn, record.decision_id)
     }
 

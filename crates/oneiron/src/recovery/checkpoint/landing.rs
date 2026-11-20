@@ -389,6 +389,20 @@ impl Vault {
             // quote, history included, as the live erase scrubs it (FIX
             // 18270). Every row it reads is back by now.
             crate::note::erase_restored_citations_in_txn(&vault, txn, &erased)?;
+            // A Gate decision dropped above takes the unclear row the image
+            // filed under its receipt with it, and the label proposals that
+            // copied its notes and wait on their owner, now their index rows
+            // are back (FIX [GATE-RECEIPT-UNCLEAR-ROW-OUTLIVES-RECORD-REMOVAL]).
+            let dropped: Vec<_> = gate_custody
+                .dropped()
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect();
+            crate::skill_attribution::delete_gate_receipt_unclear_in_txn(
+                &crate::secret_custody::CustodyWrite::of(&vault),
+                txn,
+                &dropped,
+            )?;
             #[cfg(test)]
             fail_at(RestoreStep::ImageWrite)?;
             Ok(cancelled)
