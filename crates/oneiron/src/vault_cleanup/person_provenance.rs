@@ -197,8 +197,9 @@ impl Vault {
     /// claim's own transaction, after the claim is written: the promotion
     /// writer, the open-conflict marker, a recipe's output, a settlement's
     /// answer and the alternative it keeps, a revert's copy, the nightly
-    /// merge and the curator's stand-copy (FIX
-    /// DREAMER-DIRECT-CLAIM-WRITERS-LAND-ON-ARCHIVED-PERSON).
+    /// merge, the curator's stand-copy, a tournament's winner, a maintenance
+    /// finding (a stewardship reach-out) and a durable step's `dreamer.step`
+    /// claim (FIX DREAMER-DIRECT-CLAIM-WRITERS-LAND-ON-ARCHIVED-PERSON).
     ///
     /// # Errors
     ///
