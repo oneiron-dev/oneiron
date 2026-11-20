@@ -8,7 +8,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::EngineControlClass;
 use crate::setting::{
-    ItemDomain, Kind, ReadBy, ScopeKind, SetBy, SettingChange, SettingSync, SettingValue,
+    Born, ItemDomain, Kind, ReadBy, ScopeKind, SetBy, SettingChange, SettingSync, SettingValue,
 };
 
 /// `test.bounds`'s value: a struct whose every part names its order.
@@ -324,5 +324,18 @@ crate::setting::setting_keys! {
     pub TEST_CHANNEL_CAP: u64 = "test.channel_cap" {
         kind: Kind::new(ten).strictest(zero).lower(),
         item: Some(ItemDomain { name: "outbound channels", admits: channel }),
+    };
+    /// A depth whose rows meet, lower is stricter, at the vault (its cap, default 10) and a
+    /// project: each new project starts with a row copied from `test.born_depth_default`
+    /// (stage 7c-2, `born`), and a project with no row reads 0.
+    pub TEST_BORN_DEPTH: u64 = "test.born_depth" {
+        kind: Kind::new(ten).strictest(zero).lower(),
+        scopes: &[ScopeKind::Vault, ScopeKind::Project],
+        born: Some(Born { from: "test.born_depth_default" }),
+    };
+    /// The depth a new project starts from (stage 7c-2): `test.born_depth`'s source, at the vault,
+    /// lower is stricter, default 7.
+    pub TEST_BORN_DEPTH_DEFAULT: u64 = "test.born_depth_default" {
+        kind: Kind::new(seven).strictest(zero).lower(),
     };
 }

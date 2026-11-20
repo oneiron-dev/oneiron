@@ -145,21 +145,12 @@ pub fn decide_met<'a, V: Clone + PartialEq>(
     meet: &dyn Fn(&V, &V) -> V,
     default: &V,
 ) -> Met<'a, V> {
-    let pin = rows
-        .iter()
-        .filter(|row| row.mode == SettingMode::Pin && row.by_owner)
-        .min_by_key(|row| row.rank());
-    let mut taking: Vec<&FoundRow<V>> = rows
-        .iter()
-        .filter(|row| row.mode != SettingMode::Pin && pin.is_none_or(|pin| row.at <= pin.at))
-        .chain(pin)
-        .collect();
-    // Narrowest first; at one place the item's row first, and a pin before a value row.
-    taking.sort_by_key(|row| (row.rank(), row.mode != SettingMode::Pin));
+    let taking = taking(rows);
     if let Some(row) = taking.iter().find(|row| row.value.is_none()) {
         return Met::Unreadable(row.at);
     }
-    let starts_at_default = pin.is_none() && !taking.iter().any(|row| row.at == vault_at);
+    let pinned = taking.iter().any(|row| row.mode == SettingMode::Pin);
+    let starts_at_default = !pinned && !taking.iter().any(|row| row.at == vault_at);
     let mut met = starts_at_default.then(|| default.clone());
     for value in taking.iter().filter_map(|row| row.value.as_ref()) {
         met = Some(match met {
@@ -177,6 +168,51 @@ pub fn decide_met<'a, V: Clone + PartialEq>(
         by,
         rows: taking.len(),
     }
+}
+
+/// The rows that take part in [`decide_met`]: the narrowest owner pin and every value row at its
+/// scope or narrower (with no pin, every value row), narrowest first; at one place the item's row
+/// first, and a pin before a value row.
+fn taking<V>(rows: &[FoundRow<V>]) -> Vec<&FoundRow<V>> {
+    let pin = rows
+        .iter()
+        .filter(|row| row.mode == SettingMode::Pin && row.by_owner)
+        .min_by_key(|row| row.rank());
+    let mut taking: Vec<&FoundRow<V>> = rows
+        .iter()
+        .filter(|row| row.mode != SettingMode::Pin && pin.is_none_or(|pin| row.at <= pin.at))
+        .chain(pin)
+        .collect();
+    taking.sort_by_key(|row| (row.rank(), row.mode != SettingMode::Pin));
+    taking
+}
+
+/// The rows that decided [`decide_met`]'s value over the same `rows` (DESIGN 1.6, "Explicit
+/// against seeded"): of the rows that take part, narrowest first, the first, and each wider one
+/// that makes the value stricter than the rows before it. A wider row that only repeats or loosens
+/// decides nothing. Empty when no row takes part; a row that does not decode is passed over (the
+/// read is then unreadable).
+#[must_use]
+pub fn deciding_met<'a, V: Clone + PartialEq>(
+    rows: &'a [FoundRow<V>],
+    meet: &dyn Fn(&V, &V) -> V,
+) -> Vec<&'a FoundRow<V>> {
+    let mut deciding = Vec::new();
+    let mut so_far: Option<V> = None;
+    for row in taking(rows) {
+        let Some(value) = row.value.as_ref() else {
+            continue;
+        };
+        let met = match &so_far {
+            None => value.clone(),
+            Some(so_far) => meet(so_far, value),
+        };
+        if so_far.as_ref() != Some(&met) {
+            deciding.push(row);
+        }
+        so_far = Some(met);
+    }
+    deciding
 }
 
 #[cfg(test)]

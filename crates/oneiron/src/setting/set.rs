@@ -416,13 +416,18 @@ fn set_in_txn(
     // where the row changes hands, and the row becomes the caller's. Over the engine's row any
     // other caller's does; over a row the owner did not set (a holder's, a subject's, a standing
     // approval's, an approved check-in's) the owner's does, so a later move of a non-owner meets
-    // the owner's row (FIX SETTING-OWNER-EQUAL-VALUE-OVER-HOLDER-ROW = A).
-    let setter_changes = prior_row.as_ref().is_some_and(|row| match caller {
-        SettingCaller::Owner(_) => !matches!(row.setter, Setter::Owner),
-        SettingCaller::Agent(_) | SettingCaller::Person(_) => {
-            matches!(row.setter, Setter::Engine { .. })
-        }
-        SettingCaller::Engine(_) => false,
+    // the owner's row (FIX SETTING-OWNER-EQUAL-VALUE-OVER-HOLDER-ROW = A). A copy of a pack's
+    // default is no one's choice: over it every caller's equal value writes, and the row it leaves
+    // is explicit (stage 7c-2).
+    let setter_changes = prior_row.as_ref().is_some_and(|row| {
+        row.seeded
+            || match caller {
+                SettingCaller::Owner(_) => !matches!(row.setter, Setter::Owner),
+                SettingCaller::Agent(_) | SettingCaller::Person(_) => {
+                    matches!(row.setter, Setter::Engine { .. })
+                }
+                SettingCaller::Engine(_) => false,
+            }
     });
     let prior_weight = prior_row.as_ref().and_then(|row| row.weight_runs);
     let prior_value = prior_row.map(|row| row.value);
@@ -548,6 +553,7 @@ fn set_in_txn(
                 change: recorded.sequence,
                 weight_runs: change.weight_runs,
                 local: None,
+                seeded: false,
             };
             table.put(&vault.store, txn, &key_bytes, &row)?;
             recorded.sequence
@@ -647,8 +653,9 @@ fn direction_in_txn(
                 value: Some(value.clone()),
             },
             revision: 0,
-            // The door's own change, as it would load once written: not a raced pin.
+            // The door's own change, as it would load once written: not a raced pin, and someone's.
             pin_read_as_value: false,
+            seeded: false,
         });
     }
     let layer = layer_default_in_txn(&vault.store, txn, spec)?;

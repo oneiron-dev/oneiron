@@ -363,6 +363,7 @@ pub(crate) fn apply_pack_defaults_in_txn(
                     change: 0,
                     weight_runs: None,
                     local: None,
+                    seeded: false,
                 };
                 table.put(&vault.store, txn, &key, &row)?;
                 accepted.insert(name.clone());
@@ -488,6 +489,7 @@ fn write_layer_row_in_txn(
         change: recorded.sequence,
         weight_runs: None,
         local: None,
+        seeded: false,
     };
     table_of(spec).put(&vault.store, txn, &pack_row_key(spec.name, pack), &row)?;
     if let Some(on_change) = spec.on_change {

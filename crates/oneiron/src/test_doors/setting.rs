@@ -724,6 +724,18 @@ pub fn ordered_cap_read(vault: &Vault, known: &[SettingScope]) -> Result<Resolve
     super::setting_keys::TEST_ORDERED_CAP.read_in_txn(vault, &txn, known, None)
 }
 
+/// `test.born_depth` as a read at the places `known` resolves it (stage 7c-2): the value, its
+/// source and how it stands.
+///
+/// # Errors
+///
+/// As `Setting::read_in_txn`.
+#[cfg(feature = "test-support")]
+pub fn born_depth_read(vault: &Vault, known: &[SettingScope]) -> Result<Resolved<u64>> {
+    let txn = vault.store.env.read_txn()?;
+    super::setting_keys::TEST_BORN_DEPTH.read_in_txn(vault, &txn, known, None)
+}
+
 /// `test.permit_list` at the vault, read through its typed handle (stage 7c-1: a list that
 /// travels beside its act).
 ///

@@ -27,7 +27,7 @@ mod order;
 mod scope;
 mod value;
 
-pub use self::decide::{Decided, FoundFit, FoundRow, Met, decide, decide_met};
+pub use self::decide::{Decided, FoundFit, FoundRow, Met, decide, decide_met, deciding_met};
 pub use self::key::{RowKey, check_item, check_name};
 pub use self::order::{
     AbsentEnd, ChainOrder, ChangeDirection, EachOrder, Order, Quorum, SetOrder, absent_meet,
@@ -273,6 +273,10 @@ pub enum SettingSource {
     Met,
     /// No row: the catalogue default.
     Default,
+    /// Every row that decided is a copy of a pack's default, the row at this scope among them: a
+    /// thing's birth row copied from a default no one chose (DESIGN 1.6, "Explicit against
+    /// seeded"). Like [`Self::Default`], no one made it; a row someone set reads [`Self::Row`].
+    Seeded(SettingScope),
     /// The deciding row at this scope does not decode: the key's strictest value, never the
     /// default (DEC-0005, four substrate rules, rule 4).
     Unreadable(SettingScope),
