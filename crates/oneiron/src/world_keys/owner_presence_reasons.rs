@@ -23,10 +23,12 @@ pub(crate) const INFERENCE_DEFAULTS: &str = "change the default AI settings";
 pub(crate) const JOIN_RESTORED_INSTALL: &str = "join this restored vault";
 pub(crate) const KIT_ACTIVATION: &str = "activate a recovery kit";
 pub(crate) const LEAVE_SHARED_VAULT: &str = "leave the shared vault";
+pub(crate) const MODEL_PACK_REVERT: &str = "switch back to the earlier AI model pack";
 pub(crate) const NAME_DEVICE_PREDECESSOR: &str = "name this device as the replacement for another";
 pub(crate) const NON_BASE_WORLD_CLAIM_FRACTION: &str =
     "change how much context comes from other worlds";
 pub(crate) const ORIGIN_CUT: &str = "change which host writes this repository";
+pub(crate) const PROACTIVITY_POLICY: &str = "change how your digest is delivered";
 pub(crate) const REMOVE_MACHINE: &str = "remove a device linked to this vault";
 pub(crate) const REMOVE_OWNER_KEY: &str = "remove a device that can approve changes";
 pub(crate) const REMOVE_SHARED_MEMBER: &str = "remove a member from the shared vault";

@@ -22,6 +22,7 @@ use super::{
     model_pack_preference_change,
 };
 use crate::Vault;
+use crate::authority::OwnerProofGround;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
@@ -316,11 +317,16 @@ impl Vault {
     /// with no pack before it, or whose pack before it is neither installed
     /// nor kept at its bytes, fails an install's checks (a frozen hub ref
     /// that pins other bytes named apart) or is not served, answers why it
-    /// cannot run now and changes nothing. It hands no ground: its change
-    /// appends no act today, and an act it appended would carry no owner proof.
+    /// cannot run now and changes nothing. The preference is a row that
+    /// travels (stage 7c-1), so in a rooted vault the revert appends the
+    /// owner's act, which can carry an owner key's proof: the door asks for
+    /// the person at this device before its write, and the change signs on
+    /// that ground.
     ///
     /// # Errors
-    /// The owner proof; [`crate::Error::InvalidConfig`] for a blank change id.
+    /// The owner proof; [`crate::Error::InvalidConfig`] for a blank change
+    /// id; the presence check's refusal ([`Vault::owner_presence`]), before
+    /// anything is read.
     pub fn revert_model_pack_change_as_owner(
         &self,
         owner: &AuthenticatedOwner,
@@ -329,6 +335,13 @@ impl Vault {
         if request.change_ref.trim().is_empty() {
             return Err(invalid("a revert names a change"));
         }
+        // The confirm is for an owner proof, so it stands before the write
+        // opens, while the door holds nothing: the prompt can block.
+        let witness = self.owner_presence(
+            crate::world_keys::OwnerActImportance::Important,
+            crate::world_keys::owner_presence_reasons::MODEL_PACK_REVERT,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         self.with_write_txn_grouped_after_commit(
             |txn| {
                 owner.revalidate_as_vault_owner_in_txn(self, txn)?;
@@ -353,7 +366,7 @@ impl Vault {
                             let _held = RevertBefore::hold(before.clone());
                             self.set_setting_in_txn(
                                 txn,
-                                None,
+                                Some(&ground),
                                 SettingCaller::Owner(owner),
                                 &change,
                             )?

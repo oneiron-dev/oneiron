@@ -7,6 +7,7 @@
 //! (FIX 2332), and every read, answer and delivery of it is its viewer's
 //! own view, screened of private thread words they do not read (FIX 6411).
 use super::{invalid, setting_keys};
+use crate::authority::OwnerProofGround;
 use crate::limit_ask::EngineLimit;
 use crate::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingSource, SettingValue};
 use crate::side_table::{self, LegacyJson, SideTable};
@@ -556,11 +557,13 @@ fn presentation_row_in_txn(
 
 /// Changes one of the digest's settings in `txn` as `caller`: `Some` sets its value row, `None`
 /// clears it. An owner's or the engine's change applies; the caller signals the host after its
-/// commit. It hands no ground: its change appends no act today, and an act it appended would
-/// carry no owner proof.
+/// commit. The digest's rows travel (stage 7c-1), so in a rooted vault an owner's change appends
+/// his act: it signs on `ground`, or with no owner proof where that is `None`, as the engine's
+/// change hands it.
 fn set_digest_setting_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    ground: Option<&OwnerProofGround>,
     caller: SettingCaller<'_>,
     key: &str,
     value: Option<serde_json::Value>,
@@ -571,7 +574,7 @@ fn set_digest_setting_in_txn(
         why: why.map(str::to_owned),
         ..SetSetting::vault_value(key, serde_json::Value::Null)
     };
-    match vault.set_setting_in_txn(txn, None, caller, &request)? {
+    match vault.set_setting_in_txn(txn, ground, caller, &request)? {
         SetSettingOutcome::Applied { .. } => Ok(()),
         SetSettingOutcome::Pending { .. } => Err(crate::Error::InvariantViolation(
             "an owner's or the engine's digest setting change waits on a check-in",
@@ -583,11 +586,12 @@ fn setting_json(value: impl Serialize) -> Result<serde_json::Value> {
     serde_json::to_value(value).map_err(|_| invalid())
 }
 
-/// Sets the cadence in `txn` as `caller`, as its two settings: `None` clears both. It hands
-/// no ground: its change appends no act today, and an act it appended would carry no owner proof.
+/// Sets the cadence in `txn` as `caller`, as its two settings: `None` clears both. An owner's
+/// change signs on `ground` ([`set_digest_setting_in_txn`]).
 fn set_cadence_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    ground: Option<&OwnerProofGround>,
     caller: SettingCaller<'_>,
     cadence: Option<&ProactivityCadence>,
     why: Option<&str>,
@@ -602,10 +606,11 @@ fn set_cadence_in_txn(
         ),
         None => (None, None),
     };
-    set_period_in_txn(vault, txn, caller, period, why)?;
+    set_period_in_txn(vault, txn, ground, caller, period, why)?;
     set_digest_setting_in_txn(
         vault,
         txn,
+        ground,
         caller,
         setting_keys::PROACTIVITY_DELIVERY.spec.name,
         delivery,
@@ -613,11 +618,12 @@ fn set_cadence_in_txn(
     )
 }
 
-/// Sets the period alone in `txn` as `caller` (`None` clears it). It hands no ground: its
-/// change appends no act today, and an act it appended would carry no owner proof.
+/// Sets the period alone in `txn` as `caller` (`None` clears it). An owner's change signs on
+/// `ground` ([`set_digest_setting_in_txn`]).
 fn set_period_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    ground: Option<&OwnerProofGround>,
     caller: SettingCaller<'_>,
     period: Option<ProactivityPeriod>,
     why: Option<&str>,
@@ -626,6 +632,7 @@ fn set_period_in_txn(
     set_digest_setting_in_txn(
         vault,
         txn,
+        ground,
         caller,
         setting_keys::PROACTIVITY_PERIOD.spec.name,
         value,
@@ -633,11 +640,12 @@ fn set_period_in_txn(
     )
 }
 
-/// Sets the presentation in `txn` as `caller`: `None` clears it. It hands no ground: its
-/// change appends no act today, and an act it appended would carry no owner proof.
+/// Sets the presentation in `txn` as `caller`: `None` clears it. An owner's change signs on
+/// `ground` ([`set_digest_setting_in_txn`]).
 fn set_presentation_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    ground: Option<&OwnerProofGround>,
     caller: SettingCaller<'_>,
     presentation: Option<&ProactivityPresentation>,
     why: Option<&str>,
@@ -646,6 +654,7 @@ fn set_presentation_in_txn(
     set_digest_setting_in_txn(
         vault,
         txn,
+        ground,
         caller,
         setting_keys::PROACTIVITY_PRESENTATION.spec.name,
         value,
