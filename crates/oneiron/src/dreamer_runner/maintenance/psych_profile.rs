@@ -155,21 +155,23 @@ pub(crate) struct PsychProfileSweep {
     pub(crate) withdrawn: Vec<EntityId>,
 }
 
-/// The read of [`enqueue_due_psych_profiles`], in one snapshot.
+/// The read of [`enqueue_due_psych_profiles`], in one snapshot: the PERSON
+/// and profile type indexes are scanned in the transaction that reads the
+/// claims and the stored profiles.
 ///
 /// # Errors
 ///
 /// A vault with no Dreamer actor, and storage errors.
 pub(crate) fn read_psych_profile_sweep(vault: &Vault, now: u64) -> Result<PsychProfileSweep> {
     let mut sweep = PsychProfileSweep::default();
-    let persons = vault.entities_by_type(ENTITY_TYPE_PERSON)?;
+    let read = profile_reader(vault)?;
+    vault.store.authorization_now()?;
+    let txn = vault.store.env.read_txn()?;
+    let persons = entity_ids_of_type_in(vault, &txn, ENTITY_TYPE_PERSON)?;
     if persons.is_empty() {
         return Ok(sweep);
     }
-    let read = profile_reader(vault)?;
-    let profiles = vault.entities_by_type(ENTITY_TYPE_PSYCH_PROFILE)?;
-    vault.store.authorization_now()?;
-    let txn = vault.store.env.read_txn()?;
+    let profiles = entity_ids_of_type_in(vault, &txn, ENTITY_TYPE_PSYCH_PROFILE)?;
     // The profiles some eligible claim still stands under.
     let mut standing = std::collections::BTreeSet::new();
     for person in &persons {
@@ -235,6 +237,33 @@ pub(crate) fn write_psych_profile_sweep(
         vault.store.notify_attempt_observers();
     }
     Ok(enqueued)
+}
+
+/// Every entity id of `entity_type` in `txn`, the scan counted as
+/// [`Vault::entities_by_type`] counts it.
+fn entity_ids_of_type_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entity_type: u8,
+) -> Result<Vec<EntityId>> {
+    let mut count = crate::store::scan_count::ScanCount::start(
+        &vault.store,
+        txn,
+        crate::store::EngineScan::TypeIndexRows,
+        &[entity_type],
+    )?;
+    let mut ids = Vec::new();
+    for entry in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+        &vault.store,
+        txn,
+        entity_type,
+        None,
+    )? {
+        count.row();
+        ids.push(entry?);
+    }
+    count.finish(vault);
+    Ok(ids)
 }
 
 /// The Dreamer's own scoped read, through which a sweep reads the claims
