@@ -323,6 +323,24 @@ const PROPERTY_DESCRIPTIONS: &[(&str, &[(&str, &str)])] = &[
                 "companion",
                 "Companion assembly metadata when companion controls are present.",
             ),
+            (
+                "disclosure",
+                "Disclosure block for the clamp the board's assembly read under; absent when no disclosure context was supplied.",
+            ),
+            (
+                "cut",
+                "How many optional rows the projection cut past their slot's cap or the shared cap, per slot; absent when it cut none.",
+            ),
+        ],
+    ),
+    (
+        "ContextBoardMemoriesCut",
+        &[
+            ("claims", "Claim rows cut."),
+            ("turns", "Turn/message rows cut."),
+            ("summaries", "Summary rows cut."),
+            ("facets", "Facet rows cut."),
+            ("other", "Rows of all other entity types cut."),
         ],
     ),
     (
