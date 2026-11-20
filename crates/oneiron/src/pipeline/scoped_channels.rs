@@ -219,8 +219,10 @@ impl PipelineBuilder<'_> {
     ///
     /// A clamped pack's disclosure clamp is asked apart (REVIEW-9911 round
     /// 2). A row the audience could not read whatever its status is judged
-    /// in caches of its own, so the run's gate records no suppression of it
-    /// and neither the run's count nor its empty reason changes with it. A
+    /// in caches of its own, so the run records no gate decision and no
+    /// `read_suppressed` entry (an archived row, a claim the caller's scalar
+    /// ceiling refuses) for it, and neither the run's counts nor its empty
+    /// reason change with it. A
     /// row the clamp refuses takes no rank in the blend, as at a bounded
     /// channel's fetch; one that meets every other check of the scope, the
     /// gate included, is returned, and the pack counts it among the rows its
