@@ -29,6 +29,10 @@
 //!   P1, REVIEW-9365): red at dc76908e14 (the adoption takes a carrier that only names this
 //!   install's machine for its own signature and writes no twin: 3 facts, and the second
 //!   device reads the task open); green on the head.
+//! - `an_owners_archive_holding_a_misderived_owner_fact_restores` and
+//!   `the_owners_restore_keeps_a_held_misderived_owner_fact` (blind review round 1 P1,
+//!   REVIEW-9981): red at 0fea72ae9d1 (the import fails whole: "maker does not derive its
+//!   task id"); green on the head.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test archive_task_authority_facts`.
 #![cfg(oneiron_test_support)]
@@ -595,6 +599,147 @@ fn a_restored_fact_naming_this_machine_under_another_key_is_twinned() -> TestRes
     assert!(
         there.cancelled,
         "the signed twin of the restored cancel counts on the device"
+    );
+    Ok(())
+}
+
+/// A second Owner fact about `task` whose owner, maker and nonce do not derive its id,
+/// written past the mint door's check as a peer's door without the check would carry it:
+/// the fact row.
+fn misderived_owner_fact(
+    vault: &Vault,
+    task: EntityId,
+) -> Result<EntityId, Box<dyn std::error::Error>> {
+    let owner = EntityId::now();
+    let maker = EntityId::now();
+    let nonce = EntityId::now();
+    assert_ne!(
+        oneiron::test_doors::task_fact_actor::task_ref_of_maker(maker, owner, nonce)?,
+        task,
+        "the second fact's maker does not derive the task's id"
+    );
+    Ok(
+        oneiron::test_doors::task_fact_actor::write_unjudged_owner_fact(
+            vault, task, owner, maker, nonce,
+        )?,
+    )
+}
+
+/// Blind review round 1 P1 (REVIEW-9981): a second Owner fact whose maker does not derive
+/// its task's id rides the whole-vault export beside the true Owner fact. The owner's
+/// restore lands it as the archive holds it, unmarked, and the fold skips it here as it
+/// did on the source vault.
+#[test]
+fn an_owners_archive_holding_a_misderived_owner_fact_restores() -> TestResult {
+    let source_directory = tempfile::tempdir()?;
+    let source = Vault::open(source_directory.path(), VaultConfig::default())?;
+    let (task, fact) = owned_task(&source)?;
+    let owner = source.ensure_embedded_owner_actor()?;
+    let second = misderived_owner_fact(&source, task)?;
+    let here = source
+        .task_authority_state(task)?
+        .expect("the fold skips the misderived fact on the source vault");
+    assert_eq!(here.owner_ref, owner);
+    let archive = source.export_whole_vault(true)?.bytes().to_vec();
+
+    let (_dest_directory, dest) = open_destination_vault()?;
+    let proof = owner_proof(&dest)?;
+    if let Err(error) = dest.import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &proof)
+    {
+        panic!("the owner's whole archive holding a misderived fact must restore: {error:?}");
+    }
+    assert!(holds_task_row(&dest, task)?, "the TASK comes back");
+    let restored = authority_facts(&dest, task)?;
+    assert!(
+        restored.contains(&fact),
+        "the true Owner fact comes back at its archived id"
+    );
+    assert!(
+        holds_task_row(&dest, second)?,
+        "the misderived row lands as the archive holds it"
+    );
+    assert!(
+        restored.contains(&second),
+        "the misderived row keeps its link to its task"
+    );
+    assert_eq!(
+        restored.len(),
+        2,
+        "the true fact and the misderived row: an unrooted vault twins nothing"
+    );
+    let state = dest
+        .task_authority_state(task)?
+        .expect("the restored Owner fact counts on the restored vault");
+    assert_eq!(state.owner_ref, owner);
+    assert!(!state.cancelled);
+    Ok(())
+}
+
+/// Blind review round 1 P1 (REVIEW-9981), the unchanged-row path: the destination already
+/// holds the misderived Owner fact byte for byte, as sync gave it. The owner's restore
+/// meets it unchanged and leaves it as it is, unmarked, instead of refusing the import.
+#[test]
+fn the_owners_restore_keeps_a_held_misderived_owner_fact() -> TestResult {
+    let source_directory = tempfile::tempdir()?;
+    let source = Vault::open(source_directory.path(), VaultConfig::default())?;
+    let (task, fact) = owned_task(&source)?;
+    let owner = source.ensure_embedded_owner_actor()?;
+    let second = misderived_owner_fact(&source, task)?;
+    let archive = source.export_whole_vault(true)?.bytes().to_vec();
+    let raw = source
+        .get_raw(&second)?
+        .expect("the source's misderived Owner fact row");
+    let header = EntityMetadataHeader::parse(&raw).expect("the fact row's header");
+
+    let dest_directory = tempfile::tempdir()?;
+    let dest = Vault::open_owned(dest_directory.path(), VaultConfig::device())?;
+    dest.install_device_keystore(Arc::new(MemoryKeystore::default()));
+    assert_eq!(
+        dest.profile_local_open(Some(b"archive task facts held misderived"), true)?,
+        LocalOpenProfile::RootedAndProfiled,
+    );
+    replay_entity(
+        &dest,
+        ReplicatedEntity {
+            id: second,
+            entity_type: ENTITY_TYPE_TASK,
+            occurred: TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            learned_at: header.learned_at,
+            row_version: 0,
+            body: &raw[ENTITY_METADATA_HEADER_LEN..],
+        },
+        ImportTier::OwnDevice,
+    )?;
+    assert!(
+        holds_task_row(&dest, second)?,
+        "the own-device replay door lands the misderived row"
+    );
+
+    let proof = owner_proof(&dest)?;
+    if let Err(error) = dest.import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &proof)
+    {
+        panic!("the owner's whole archive must restore over the held misderived row: {error:?}");
+    }
+    let state = dest
+        .task_authority_state(task)?
+        .expect("the restored Owner fact counts on the restored vault");
+    assert_eq!(state.owner_ref, owner);
+    let restored = authority_facts(&dest, task)?;
+    assert!(
+        restored.contains(&fact),
+        "the true Owner fact comes back at its archived id"
+    );
+    assert!(
+        restored.contains(&second),
+        "the held misderived row stays at its id"
+    );
+    assert_eq!(
+        restored.len(),
+        3,
+        "the true fact and its signed twin, and the misderived row with no twin"
     );
     Ok(())
 }
