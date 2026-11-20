@@ -317,6 +317,7 @@ fn owner_turn(content: String, occurred_at: u64) -> WitnessTurn {
         conversation_ref: String::new(),
         turn_ref: None,
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: None,
             author: WitnessAuthor::User,
@@ -435,7 +436,7 @@ fn a_call_with_others_keeps_their_words_as_another_speaker() -> TestResult {
         );
         let voice = voice_of(rows[2])?;
         assert!(
-            voice.get("speaker").is_none(),
+            voice.get("speaker_key").is_none(),
             "an unkeyed final keeps no speaker key"
         );
         assert_eq!(
@@ -493,7 +494,7 @@ fn speaker_keys_number_unplaced_speakers_by_first_heard() -> TestResult {
             .map(|row| {
                 voice_of(row)
                     .ok()
-                    .and_then(|voice| voice.get("speaker").and_then(Value::as_str))
+                    .and_then(|voice| voice.get("speaker_key").and_then(Value::as_str))
             })
             .collect();
         assert_eq!(
@@ -531,7 +532,7 @@ fn a_key_the_roster_places_on_a_contact_keeps_the_contacts_name() -> TestResult 
         );
         let voice = voice_of(words)?;
         assert_eq!(
-            voice.get("speaker").and_then(Value::as_str),
+            voice.get("speaker_key").and_then(Value::as_str),
             Some("k1"),
             "the kept turn carries its speaker key"
         );
