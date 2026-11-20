@@ -3,15 +3,18 @@
 //! retry.
 
 use super::super::super::{
-    OUTCOME_PREFIX, SharedActExecutionReceipt, SharedActOutcome, SharedVaultChange, check_vault,
-    decode, invalid, key,
+    SharedActExecutionReceipt, SharedActOutcome, SharedVaultChange, check_vault, decode, invalid,
 };
 use super::SharedInvitationState;
 use crate::authority::{ConnectOffer, HostSlipIssuer};
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::inquiry::InquiryJoinOffer;
+use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault};
+
+/// Outcome notices. Key: hex32 (recipient) ":" hex32 (receipt id).
+const OUTCOMES: SideTable<String, Vec<u8>, Raw> = SideTable::new(&side_table::SHARED_ACT_OUTCOME);
 
 impl Vault {
     /// [`Self::accept_shared_invitation`] with the member's inquiry edge, in
@@ -120,8 +123,8 @@ impl Vault {
         vault_id: u64,
         invitation: &str,
     ) -> Result<Option<SharedActExecutionReceipt>> {
-        let prefix = key(OUTCOME_PREFIX, &format!("{}:", actor.to_hex()));
-        for entry in self.store.vault_meta.prefix_iter(txn, &prefix)? {
+        let prefix = format!("{}:", actor.to_hex());
+        for entry in OUTCOMES.iter_raw_from(&self.store, txn, prefix.as_bytes())? {
             let (_, bytes) = entry?;
             let outcome: SharedActOutcome = decode(&bytes)?;
             let accepted = matches!(
