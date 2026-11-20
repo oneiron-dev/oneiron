@@ -63,7 +63,8 @@ pub(crate) use self::mask::spool::{
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
 pub(super) use self::mask::{MaskedClaimBodies, MaskedFiles};
 pub(crate) use self::mask::{
-    file_mints_in_txn, move_mask_origin_in_txn, rebind_mask_origin_in_txn, side_row::admission_form,
+    file_mints_in_txn, move_mask_origin_in_txn, rebind_mask_origin_in_txn,
+    side_row::admission_form, side_row::known_nested_form,
 };
 pub(crate) use self::mask::{
     file_spans, mask_origin_in_txn, seal_promoted_message_ops_in_txn, seal_whole_part_in_txn,
