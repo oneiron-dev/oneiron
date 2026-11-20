@@ -270,10 +270,12 @@ impl LiveCompactionFork {
 /// whether any of `sources`, the rows a model call's text was read from (a
 /// live fork's prefix, a compaction window, a home), is deleted in `vault`
 /// now, erased or deleted, hard or soft, as [`Vault::is_deleted_shell`]
-/// reads each. The text was rendered before that delete and still holds the
-/// row's words, and a provider's prompt cache, keyed by those bytes, would
+/// reads each, or withdrawn: marked stale or waiting on its withdrawal, as
+/// a summary is once a row it covers is erased and its words are scrubbed
+/// (REVIEW-9900 round 2). The text was rendered before that and still holds
+/// the old words, and a provider's prompt cache, keyed by those bytes, would
 /// be warmed with them again by a send: such a call is stale. A row that
-/// cannot be read counts as deleted. One read transaction answers for all.
+/// cannot be read counts as withdrawn. One read transaction answers for all.
 #[must_use]
 pub fn source_rows_withdrawn(vault: &Vault, sources: &[EntityId]) -> bool {
     if sources.is_empty() {
@@ -282,9 +284,10 @@ pub fn source_rows_withdrawn(vault: &Vault, sources: &[EntityId]) -> bool {
     let Ok(txn) = vault.store.env.read_txn() else {
         return true;
     };
-    sources
-        .iter()
-        .any(|source| vault.is_deleted_shell_in_txn(&txn, source).unwrap_or(true))
+    sources.iter().any(|source| {
+        vault.is_deleted_shell_in_txn(&txn, source).unwrap_or(true)
+            || crate::ports::stale_in_txn(&vault.store, &txn, source).unwrap_or(true)
+    })
 }
 
 /// A live fork its run's driver admitted (FIX 4465 C): the one Frontier-tier

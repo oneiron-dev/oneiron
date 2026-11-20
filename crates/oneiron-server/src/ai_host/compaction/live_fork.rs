@@ -290,6 +290,15 @@ impl ServedCompactionBackend {
                     .then_some(request.sources.clone()),
                 Some(fork.prefix_sources().to_vec()),
             ]),
+            // Every row known, whole or not, for the freshness asks: the
+            // prefix's stay known though the window's ids are only asserted
+            // (REVIEW-9900 round 2).
+            request
+                .sources
+                .iter()
+                .chain(fork.prefix_sources())
+                .copied()
+                .collect(),
             request.summary_token_budget,
             |call, room| {
                 let home = home.render(compaction_home_budget(
