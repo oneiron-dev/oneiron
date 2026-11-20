@@ -5,8 +5,8 @@
 //! records, in its own write, what it changed, before and after: the
 //! mention's link and every saved span of a provisional entity the mention
 //! named (which the settle may absorb or retire), those provisional
-//! entities, the name's context hint, and the distinct assertions a
-//! someone-new answer made, under the Dreamer's receipt.
+//! entities, the name's context hint, and the distinct assertions and the
+//! role edge a someone-new answer made, under the Dreamer's receipt.
 //!
 //! The owner's revert counters each change only where it still stands as
 //! the settle left it, and never lays the snapshot over newer state: a span
@@ -103,6 +103,11 @@ pub(in crate::dreamer_runner::maintenance) struct SettleInverse {
     /// Each distinct assertion a someone-new answer made, at its revision
     /// then.
     distinct: Vec<(EntityId, [u8; 32])>,
+    /// The role edge a someone-new answer's confirm asserted on the role
+    /// phrase's possessor, at its revision then. A settle stored before
+    /// asserted none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    role_edge: Option<(EntityId, [u8; 32])>,
 }
 
 impl SettleInverse {
@@ -110,8 +115,8 @@ impl SettleInverse {
     /// copy's ids while it stands, each held provisional's id, name span
     /// and origin while its row stands, the settled entity, and both hint
     /// copies' spans. The source anchor, the spans' links, the distinct
-    /// assertions and the confirmed person are none: the erase never
-    /// scrubs them.
+    /// assertions, the role edge and the confirmed person are none: the
+    /// erase never scrubs them.
     pub(super) fn named_ids(&self) -> BTreeSet<EntityId> {
         let mut ids = BTreeSet::new();
         if let Some(ask) = &self.ask {
@@ -296,7 +301,8 @@ pub(super) fn settle_in_txn(
         (Answer::SomeoneNew, None) => (heads_in_txn(vault, txn, ask)?, BTreeSet::new(), false),
         (Answer::Is(_), _) => (BTreeSet::new(), BTreeSet::new(), true),
     };
-    let entity = apply_in_txn(vault, txn, ask, answer, said, now)?;
+    let written = apply_in_txn(vault, txn, ask, answer, said, now)?;
+    let entity = written.entity;
     let mut mentions = Vec::new();
     for ((turn, message, start, end), before) in spans {
         let Some(after) = vault.saved_mention_link_in_txn(txn, &turn, (&message, start, end))?
@@ -334,6 +340,14 @@ pub(super) fn settle_in_txn(
     let confirmed = (!was_present
         && EntityStoreRead::port_entity_present(&vault.store, txn, &entity)?)
     .then_some(entity);
+    let role_edge = match written.role_edge {
+        Some(claim) => {
+            let revision = applied::claim_revision_in_txn(vault, txn, &claim)?
+                .ok_or_else(|| invalid("a role edge has no body"))?;
+            Some((claim, revision))
+        }
+        None => None,
+    };
     let inverse = SettleInverse {
         ask: Some(ask.clone()),
         source,
@@ -346,6 +360,7 @@ pub(super) fn settle_in_txn(
         hint_after: hint_in_txn(vault, txn, ask, entity)?,
         confirmed,
         distinct,
+        role_edge,
     };
     let actor = vault.dreamer_authority_in_txn(txn, now)?;
     applied::record_disposition_in_txn(
@@ -368,10 +383,11 @@ pub(super) fn settle_in_txn(
 /// the settle left it and it, its message and the entities it linked stand
 /// (a held entity's origin turn first), a held entity no restored span names
 /// goes again, the hint and the resolution go back where they still hold
-/// what the settle saved, and each distinct assertion it made is retracted
-/// where it stands at its revision then. Once the mention links as before,
-/// still reads as it did and no ask is open on it, the ask goes to the owner
-/// as today's question. What an erase took is listed as left alone.
+/// what the settle saved, and each distinct assertion and the role edge it
+/// made are retracted where they stand at their revision then. Once the
+/// mention links as before, still reads as it did and no ask is open on it,
+/// the ask goes to the owner as today's question. What an erase took is
+/// listed as left alone.
 pub(in crate::dreamer_runner::maintenance) fn revert_settle_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -481,7 +497,7 @@ pub(in crate::dreamer_runner::maintenance) fn revert_settle_in_txn(
             inverse.settled_at,
         )?;
     }
-    for (claim, revision) in &inverse.distinct {
+    for (claim, revision) in inverse.distinct.iter().chain(&inverse.role_edge) {
         let stands = vault
             .get_claim_in_txn(&*txn, claim)?
             .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active);
