@@ -129,6 +129,7 @@ pub mod extraction_verdict;
 pub mod fanout_admission;
 pub mod feed_prune;
 pub mod feeds;
+pub mod fenced_erase_form;
 pub mod file_custody_marks;
 pub mod fingerprint_keep_booking_dreamer_digests;
 pub mod fingerprint_keep_code_run_digests;
