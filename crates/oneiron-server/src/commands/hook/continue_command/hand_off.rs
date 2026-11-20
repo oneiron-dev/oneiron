@@ -1,6 +1,7 @@
 //! The workspace half of `oneiron continue --cloud` (census L10-17): a
 //! hand-off commit of the working tree as git sees it, built in an index of
-//! its own, and its push to the hosted vault's custody repo.
+//! its own, and its push to the hosted vault's custody repo, the Git-LFS
+//! objects of the pointers it adds first ([`lfs`]).
 
 use std::ffi::{OsStr, OsString};
 use std::io::{IsTerminal as _, Read as _, Write as _};
@@ -13,6 +14,8 @@ use std::time::{Duration, Instant};
 use oneiron_vault_contract::BINDING_HEADER;
 
 use crate::commands::api::signed_binding_for_seed;
+
+mod lfs;
 
 /// Who a hand-off commit names when the repo names no one: git refuses a
 /// commit with no identity, and the hand-off is this command's own commit.
@@ -107,12 +110,16 @@ pub(crate) struct CustodyRepo<'a> {
 /// request it admits), and stock git repeats one static header on every
 /// request of a push. So the ref advertisement and the push each carry the
 /// slip and a fresh proof; the pack is `git pack-objects` of what the commit
-/// reaches and the advertised refs do not. The ref is the conversation's own
-/// hand-off ref, so a later hand-off of it replaces it whatever it held. The
-/// repo's pre-push hook does not run: it guards pushes to the user's own
-/// remotes, and a hand-off ref is none of them. The requests go straight to
-/// the vault, never through a proxy the environment names: they carry the
-/// slip, a fresh proof and the workspace. Each request ends by `deadline`.
+/// reaches and the advertised refs do not. Before the pack, the Git-LFS
+/// objects of the pointers the push adds go up through the custody repo's
+/// LFS door, each request with the slip and a fresh proof too
+/// ([`lfs::send_objects`]): the landing refuses a pointer whose object the
+/// vault lacks. The ref is the conversation's own hand-off ref, so a later
+/// hand-off of it replaces it whatever it held. The repo's pre-push hook does
+/// not run: it guards pushes to the user's own remotes, and a hand-off ref is
+/// none of them. The requests go straight to the vault, never through a proxy
+/// the environment names: they carry the slip, a fresh proof and the
+/// workspace. Each request ends by `deadline`.
 pub(crate) fn push(
     top: &Path,
     custody: &CustodyRepo<'_>,
@@ -154,6 +161,22 @@ pub(crate) fn push(
     if old == commit {
         return Ok(());
     }
+    let held = held(
+        top,
+        advertised.refs.iter().map(|(oid, _)| oid.as_str()),
+        deadline,
+    )?;
+    lfs::send_objects(
+        top,
+        held.iter().map(String::as_str).find(|oid| *oid == old),
+        commit,
+        &lfs::LfsDoor {
+            client: &client,
+            base: &base,
+            proven: &proven,
+        },
+        deadline,
+    )?;
 
     let mut pack = Command::new("git")
         .arg("-C")
@@ -169,7 +192,7 @@ pub(crate) fn push(
         .stderr(Stdio::inherit())
         .spawn()?;
     let mut revisions = format!("{commit}\n");
-    for oid in held(top, advertised.refs.iter().map(|(oid, _)| oid.as_str()))? {
+    for oid in &held {
         revisions.push_str(&format!("^{oid}\n"));
     }
     pack.stdin
@@ -317,35 +340,25 @@ fn pkt_line(payload: &str) -> Vec<u8> {
 }
 
 /// Which of `oids` this repo holds as commits, so the pack leaves out what
-/// they reach.
-fn held<'a>(top: &Path, oids: impl Iterator<Item = &'a str>) -> anyhow::Result<Vec<String>> {
+/// they reach. It ends by `deadline` ([`run_git_fed`]).
+fn held<'a>(
+    top: &Path,
+    oids: impl Iterator<Item = &'a str>,
+    deadline: Instant,
+) -> anyhow::Result<Vec<String>> {
     let asked: String = oids.map(|oid| format!("{oid}^{{commit}}\n")).collect();
     if asked.is_empty() {
         return Ok(Vec::new());
     }
-    let mut check = Command::new("git")
-        .arg("-C")
-        .arg(top)
-        .args(["cat-file", "--batch-check=%(objectname) %(objecttype)"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
-    let mut stdin = check
-        .stdin
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("no stdin for git cat-file"))?;
-    // Fed apart from the read, so a long answer never stalls the question.
-    let fed = std::thread::spawn(move || stdin.write_all(asked.as_bytes()));
-    let output = check.wait_with_output()?;
-    fed.join()
-        .map_err(|_| anyhow::anyhow!("feeding git cat-file failed"))??;
-    anyhow::ensure!(
-        output.status.success(),
-        "git cat-file failed ({})",
-        output.status
-    );
-    Ok(String::from_utf8_lossy(&output.stdout)
+    let ran = run_git_fed(
+        top,
+        ["cat-file", "--batch-check=%(objectname) %(objecttype)"],
+        &[],
+        Some(asked.into_bytes()),
+        deadline,
+    )?;
+    anyhow::ensure!(ran.status.success(), "git cat-file failed ({})", ran.status);
+    Ok(String::from_utf8_lossy(&ran.stdout)
         .lines()
         .filter_map(|line| line.strip_suffix(" commit"))
         .map(str::to_owned)
@@ -429,6 +442,23 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    run_git_fed(dir, args, env, None, deadline)
+}
+
+/// [`run_git`] with `input`, when there is one, written to git's stdin on a
+/// thread of its own, so a long answer never stalls the question; a git that
+/// stops reading ends the write, and its status says why.
+fn run_git_fed<I, S>(
+    dir: &Path,
+    args: I,
+    env: &[(OsString, OsString)],
+    input: Option<Vec<u8>>,
+    deadline: Instant,
+) -> anyhow::Result<GitRun>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
     let args: Vec<OsString> = args
         .into_iter()
         .map(|arg| arg.as_ref().to_owned())
@@ -438,11 +468,20 @@ where
         .arg(dir)
         .args(&args)
         .envs(env.iter().map(|(name, value)| (name, value)))
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0)
         .spawn()?;
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(&input);
+        });
+    }
     let stdout = drained(child.stdout.take());
     let stderr = drained(child.stderr.take());
     let left = || deadline.saturating_duration_since(Instant::now());
