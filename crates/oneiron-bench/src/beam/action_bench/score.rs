@@ -28,6 +28,12 @@ pub(super) struct FollowUpScore {
     pub(super) unsupported_change: bool,
     /// No JSON action, or one naming no tool of the follow-up.
     pub(super) invalid: bool,
+    /// Follow-ups whose rubric names another world's values: a valid
+    /// action gave one (cross-scope leakage).
+    pub(super) leaked: Option<bool>,
+    /// Follow-ups whose rubric names deleted values: a valid action gave
+    /// one (reappearance after deletion).
+    pub(super) reappeared: Option<bool>,
 }
 
 pub(super) fn score(follow_up: &FollowUp, reply: &str) -> FollowUpScore {
@@ -65,6 +71,17 @@ pub(super) fn score(follow_up: &FollowUp, reply: &str) -> FollowUpScore {
             .any(|(field, value)| given(field).is_some_and(|given| given != fold(value)));
         off_tool || changed
     });
+    let gives_one_of = |named: &BTreeMap<String, Vec<String>>| {
+        (!named.is_empty()).then(|| {
+            !invalid
+                && named.iter().any(|(field, values)| {
+                    given(field)
+                        .is_some_and(|given| values.iter().any(|value| fold(value) == given))
+                })
+        })
+    };
+    let leaked = gives_one_of(&rubric.other_scope);
+    let reappeared = gives_one_of(&rubric.deleted);
     FollowUpScore {
         action,
         fields,
@@ -72,6 +89,8 @@ pub(super) fn score(follow_up: &FollowUp, reply: &str) -> FollowUpScore {
         correction_persisted,
         unsupported_change,
         invalid,
+        leaked,
+        reappeared,
     }
 }
 
@@ -95,19 +114,23 @@ fn fold(value: &str) -> String {
     value.trim().to_lowercase()
 }
 
-/// The three scores, as numbers a mean can be taken of.
+/// The five scores, as numbers a mean can be taken of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Metric {
     ActionCorrect,
     CorrectionPersisted,
     UnsupportedChange,
+    Leaked,
+    Reappeared,
 }
 
-const METRICS: [Metric; 3] = [
+const METRICS: [Metric; 5] = [
     Metric::ActionCorrect,
     Metric::CorrectionPersisted,
     Metric::UnsupportedChange,
+    Metric::Leaked,
+    Metric::Reappeared,
 ];
 
 impl Metric {
@@ -116,6 +139,8 @@ impl Metric {
             Self::ActionCorrect => Some(score.action_correct),
             Self::CorrectionPersisted => score.correction_persisted,
             Self::UnsupportedChange => Some(score.unsupported_change),
+            Self::Leaked => score.leaked,
+            Self::Reappeared => score.reappeared,
         };
         value.map(|hit| if hit { 1.0 } else { 0.0 })
     }
@@ -130,6 +155,10 @@ pub(super) struct ArmSummary {
     /// Over correction follow-ups only; absent when there are none.
     correction_persisted: Option<f64>,
     unsupported_change: f64,
+    /// Over follow-ups scored on leakage only; absent when there are none.
+    leaked: Option<f64>,
+    /// Over follow-ups scored on reappearance only; absent when there are none.
+    reappeared: Option<f64>,
     invalid: usize,
     /// Stage: recall (zero for an arm that never reads the vault).
     recall_elapsed_us: u64,
@@ -165,6 +194,11 @@ pub(super) fn summarize(rows: &[ActionRow], arms: &[MemoryArm]) -> BeamResult<Ve
                         .filter_map(|row| Metric::UnsupportedChange.of(&row.score)),
                 )
                 .unwrap_or(0.0),
+                leaked: mean(mine.iter().filter_map(|row| Metric::Leaked.of(&row.score))),
+                reappeared: mean(
+                    mine.iter()
+                        .filter_map(|row| Metric::Reappeared.of(&row.score)),
+                ),
                 invalid: mine.iter().filter(|row| row.score.invalid).count(),
                 recall_elapsed_us: mine.iter().map(|row| row.recall_elapsed_us).sum(),
                 context_lines: mine.iter().map(|row| row.context_lines).sum(),

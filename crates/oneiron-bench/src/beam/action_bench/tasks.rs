@@ -5,6 +5,10 @@
 //! Histories and follow-ups sit apart: a history is the frozen past a vault
 //! is built from; a follow-up is held out and reaches the reader only as its
 //! prompt and its tools. Its rubric reaches the scorer only.
+//!
+//! A history may hold worlds besides base reality (a claim names its world;
+//! a follow-up acts in one), and the user may delete a turn or a claim before
+//! the freeze: the vault then holds it no longer.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -45,6 +49,9 @@ impl TaskFile {
 pub(super) struct History {
     pub(super) id: String,
     pub(super) frozen_at: u64,
+    /// The worlds the history's vault holds besides base reality, by name.
+    #[serde(default)]
+    pub(super) worlds: Vec<String>,
     pub(super) turns: Vec<Turn>,
     /// The derived memory, held fixed across the memory arms: the claims an
     /// extraction of these turns stands for. A later claim on the same
@@ -58,6 +65,8 @@ pub(super) struct Turn {
     pub(super) at: u64,
     pub(super) author: TurnAuthor,
     pub(super) text: String,
+    /// When the user deleted the turn: after `at`, before the freeze.
+    pub(super) deleted_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -74,6 +83,11 @@ pub(super) struct DerivedClaim {
     /// A `profile.*` predicate about the vault owner.
     pub(super) predicate: String,
     pub(super) value: String,
+    /// The world the claim holds in, one of the history's; none is base
+    /// reality. One predicate may hold a value of its own in each world.
+    pub(super) world: Option<String>,
+    /// When the user deleted the claim: after `at`, before the freeze.
+    pub(super) deleted_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -82,6 +96,10 @@ pub(super) enum TaskKind {
     CorrectedSource,
     StableDefinition,
     RepeatedWorkflow,
+    /// A preference that differs by world; the follow-up acts in one.
+    ScopedPreference,
+    /// A memory the user deleted before the freeze.
+    DeletedMemory,
 }
 
 /// A held-out follow-up: what the reader is asked to do, the tools it may
@@ -92,6 +110,9 @@ pub(super) struct FollowUp {
     pub(super) id: String,
     pub(super) history: String,
     pub(super) kind: TaskKind,
+    /// The world the follow-up acts in, one of its history's; none is base
+    /// reality. Its reads see that world and base, never another world.
+    pub(super) world: Option<String>,
     pub(super) prompt: String,
     pub(super) tools: Vec<Tool>,
     pub(super) gold_memory: Vec<String>,
@@ -120,6 +141,12 @@ pub(super) struct Rubric {
     /// Standing values per field: giving another is an unsupported change.
     #[serde(default)]
     pub(super) keep: BTreeMap<String, String>,
+    /// Another world's values per field: giving one is cross-scope leakage.
+    #[serde(default)]
+    pub(super) other_scope: BTreeMap<String, Vec<String>>,
+    /// Deleted values per field: giving one is reappearance after deletion.
+    #[serde(default)]
+    pub(super) deleted: BTreeMap<String, Vec<String>>,
 }
 
 impl FollowUp {
@@ -148,6 +175,7 @@ fn check(file: &TaskFile) -> BeamResult<()> {
         if !history_ids.insert(history.id.as_str()) {
             return Err(invalid(&history.id, "world", "the history id repeats"));
         }
+        check_history(history)?;
     }
     let mut follow_up_ids = BTreeSet::new();
     for follow_up in &file.follow_ups {
@@ -164,11 +192,52 @@ fn check(file: &TaskFile) -> BeamResult<()> {
     Ok(())
 }
 
-/// The four parts (world, intent, tools, grader), then the leak clause:
-/// RULING L9-34-TRACE-LEAK = A (Engine 14 Nov 09:31). The workspace is the
-/// follow-up's own inputs (its prompt and tool descriptions; an option list
-/// may name the answer among others), and each expected value is stated in
-/// the frozen history and the gold memory, else memory cannot answer.
+/// A history's worlds and deletions: distinct named worlds, every claim's
+/// world declared, and each deletion after its item and before the freeze.
+fn check_history(history: &History) -> BeamResult<()> {
+    let id = history.id.as_str();
+    let mut worlds = BTreeSet::new();
+    for world in &history.worlds {
+        if world.trim().is_empty() || !worlds.insert(world.as_str()) {
+            return Err(invalid(id, "world", "a world name is blank or repeats"));
+        }
+    }
+    if history.claims.iter().any(|claim| {
+        claim
+            .world
+            .as_ref()
+            .is_some_and(|world| !worlds.contains(world.as_str()))
+    }) {
+        return Err(invalid(
+            id,
+            "world",
+            "a claim names a world its history does not declare",
+        ));
+    }
+    let lives = history
+        .turns
+        .iter()
+        .map(|turn| (turn.at, turn.deleted_at))
+        .chain(
+            history
+                .claims
+                .iter()
+                .map(|claim| (claim.at, claim.deleted_at)),
+        );
+    for (at, deleted_at) in lives {
+        if deleted_at.is_some_and(|deleted_at| deleted_at <= at || deleted_at >= history.frozen_at)
+        {
+            return Err(invalid(
+                id,
+                "world",
+                "a deletion falls outside its item's life before the freeze",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The four parts (world, intent, tools, grader), then the leak clause.
 fn check_follow_up(history: &History, follow_up: &FollowUp) -> BeamResult<()> {
     let id = follow_up.id.as_str();
     let frozen = frozen_text(history);
@@ -179,10 +248,27 @@ fn check_follow_up(history: &History, follow_up: &FollowUp) -> BeamResult<()> {
             "the history holds nothing before its freeze",
         ));
     }
+    if let Some(world) = &follow_up.world
+        && !history.worlds.contains(world)
+    {
+        return Err(invalid(
+            id,
+            "world",
+            "the follow-up's world is not one of its history's",
+        ));
+    }
     if follow_up.prompt.trim().is_empty() {
         return Err(invalid(id, "intent", "the prompt is blank"));
     }
     check_tools(follow_up)?;
+    check_grader(follow_up)?;
+    check_leak(history, follow_up, &frozen)
+}
+
+/// The grader: the rubric's tool, its expected fields, every value it names
+/// offered by that tool, and the values its kind is scored on.
+fn check_grader(follow_up: &FollowUp) -> BeamResult<()> {
+    let id = follow_up.id.as_str();
     let rubric = &follow_up.rubric;
     let Some(tool) = follow_up.tool(&rubric.action) else {
         return Err(invalid(
@@ -200,9 +286,9 @@ fn check_follow_up(history: &History, follow_up: &FollowUp) -> BeamResult<()> {
         .chain(&rubric.keep)
         .map(|(field, value)| (field, std::slice::from_ref(value)))
         .chain(
-            rubric
-                .stale
-                .iter()
+            [&rubric.stale, &rubric.other_scope, &rubric.deleted]
+                .into_iter()
+                .flatten()
                 .map(|(field, values)| (field, values.as_slice())),
         );
     for (field, values) in named {
@@ -218,13 +304,36 @@ fn check_follow_up(history: &History, follow_up: &FollowUp) -> BeamResult<()> {
             ));
         }
     }
-    if follow_up.kind == TaskKind::CorrectedSource && rubric.stale.is_empty() {
-        return Err(invalid(
-            id,
-            "grader",
-            "a corrected source names no superseded value",
-        ));
+    let lacking = match follow_up.kind {
+        TaskKind::CorrectedSource => rubric
+            .stale
+            .is_empty()
+            .then_some("a corrected source names no superseded value"),
+        TaskKind::ScopedPreference => (follow_up.world.is_none() || rubric.other_scope.is_empty())
+            .then_some("a scoped preference names no world or no other world's value"),
+        TaskKind::DeletedMemory => rubric
+            .deleted
+            .is_empty()
+            .then_some("a deleted memory names no deleted value"),
+        TaskKind::StableDefinition | TaskKind::RepeatedWorkflow => None,
+    };
+    match lacking {
+        Some(detail) => Err(invalid(id, "grader", detail)),
+        None => Ok(()),
     }
+}
+
+/// The leak clause, RULING L9-34-TRACE-LEAK = A (Engine 14 Nov 09:31): the
+/// workspace is the follow-up's own inputs (its prompt and tool
+/// descriptions; an option list may name the answer among others), and each
+/// expected value is stated in what the vault holds at the freeze and in the
+/// gold memory, else memory cannot answer. Each other world's value is
+/// stated in a claim of another world, and each deleted value only in a
+/// deleted item, so leakage and reappearance can come from memory alone; the
+/// gold memory states neither.
+fn check_leak(history: &History, follow_up: &FollowUp, frozen: &str) -> BeamResult<()> {
+    let id = follow_up.id.as_str();
+    let rubric = &follow_up.rubric;
     let workspace =
         follow_up
             .tools
@@ -247,7 +356,7 @@ fn check_follow_up(history: &History, follow_up: &FollowUp) -> BeamResult<()> {
             return Err(invalid(
                 id,
                 "world",
-                "an expected value is stated nowhere before the freeze",
+                "an expected value is stated nowhere the vault holds at the freeze",
             ));
         }
         if !gold.contains(&value) {
@@ -258,7 +367,49 @@ fn check_follow_up(history: &History, follow_up: &FollowUp) -> BeamResult<()> {
             ));
         }
     }
+    let elsewhere = text_of(
+        history,
+        |_| false,
+        |claim| claim.world.is_some() && claim.world != follow_up.world,
+    );
+    for value in values_of(&rubric.other_scope) {
+        if !elsewhere.contains(&value) {
+            return Err(invalid(
+                id,
+                "world",
+                "another world's value is stated in no claim of another world",
+            ));
+        }
+        if gold.contains(&value) {
+            return Err(invalid(
+                id,
+                "grader",
+                "the gold memory states another world's value",
+            ));
+        }
+    }
+    let deleted = deleted_text(history);
+    for value in values_of(&rubric.deleted) {
+        if !deleted.contains(&value) || frozen.contains(&value) {
+            return Err(invalid(
+                id,
+                "world",
+                "a deleted value is stated in no deleted item, or still in an item the vault holds",
+            ));
+        }
+        if gold.contains(&value) {
+            return Err(invalid(
+                id,
+                "grader",
+                "the gold memory states a deleted value",
+            ));
+        }
+    }
     Ok(())
+}
+
+fn values_of(named: &BTreeMap<String, Vec<String>>) -> impl Iterator<Item = String> {
+    named.values().flatten().map(|value| value.to_lowercase())
 }
 
 fn check_tools(follow_up: &FollowUp) -> BeamResult<()> {
@@ -289,23 +440,53 @@ fn check_tools(follow_up: &FollowUp) -> BeamResult<()> {
     Ok(())
 }
 
-/// Every turn and claim before the freeze, lower-cased, one per line.
+/// What the vault holds at the freeze: every turn and claim from before
+/// it that the user did not delete, lower-cased, one per line.
 fn frozen_text(history: &History) -> String {
+    text_of(history, |_| true, |_| true)
+}
+
+/// Every turn and claim the user deleted before the freeze, lower-cased.
+fn deleted_text(history: &History) -> String {
     let turns = history
         .turns
         .iter()
-        .filter(|turn| turn.at < history.frozen_at)
+        .filter(|turn| turn.at < history.frozen_at && turn.deleted_at.is_some())
         .map(|turn| turn.text.as_str());
     let claims = history
         .claims
         .iter()
-        .filter(|claim| claim.at < history.frozen_at)
+        .filter(|claim| claim.at < history.frozen_at && claim.deleted_at.is_some())
         .map(|claim| claim.value.as_str());
-    turns.chain(claims).fold(String::new(), |mut text, line| {
+    lines(turns.chain(claims))
+}
+
+/// The held items `turn` and `claim` admit (from before the freeze, not
+/// deleted), lower-cased, one per line.
+fn text_of(
+    history: &History,
+    turn: impl Fn(&Turn) -> bool,
+    claim: impl Fn(&DerivedClaim) -> bool,
+) -> String {
+    let turns = history
+        .turns
+        .iter()
+        .filter(|item| item.at < history.frozen_at && item.deleted_at.is_none() && turn(item))
+        .map(|item| item.text.as_str());
+    let claims = history
+        .claims
+        .iter()
+        .filter(|item| item.at < history.frozen_at && item.deleted_at.is_none() && claim(item))
+        .map(|item| item.value.as_str());
+    lines(turns.chain(claims))
+}
+
+fn lines<S: AsRef<str>>(items: impl Iterator<Item = S>) -> String {
+    items.fold(String::new(), |mut text, line| {
         if !text.is_empty() {
             text.push('\n');
         }
-        text.push_str(&line.to_lowercase());
+        text.push_str(&line.as_ref().to_lowercase());
         text
     })
 }

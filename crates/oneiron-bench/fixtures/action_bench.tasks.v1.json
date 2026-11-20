@@ -4,6 +4,10 @@
     {
       "id": "owen",
       "frozen_at": 1780010000,
+      "worlds": [
+        "work",
+        "home"
+      ],
       "turns": [
         {
           "at": 1780000000,
@@ -26,9 +30,35 @@
           "text": "Every Friday the weekly report goes to Yuki as a PDF, with Mara on cc."
         },
         {
+          "at": 1780000400,
+          "author": "user",
+          "text": "My backup card is the Visa ending 1111.",
+          "deleted_at": 1780006000
+        },
+        {
+          "at": 1780000450,
+          "author": "user",
+          "text": "My main card is the Mastercard ending 2222."
+        },
+        {
+          "at": 1780000500,
+          "author": "user",
+          "text": "At work I play the Lo-fi Beats playlist to focus."
+        },
+        {
+          "at": 1780000550,
+          "author": "user",
+          "text": "At home in the evening I play the Jazz Classics playlist."
+        },
+        {
           "at": 1780005000,
           "author": "user",
           "text": "Correction about my dentist: Dr. Okafor retired, I now see Dr. Lindqvist."
+        },
+        {
+          "at": 1780006000,
+          "author": "user",
+          "text": "Please forget my backup card, I cut it up."
         }
       ],
       "claims": [
@@ -48,6 +78,29 @@
           "value": "weekly report: to Yuki as a PDF, Mara on cc"
         },
         {
+          "at": 1780000400,
+          "predicate": "profile.backup_card",
+          "value": "backup card: Visa ending 1111",
+          "deleted_at": 1780006000
+        },
+        {
+          "at": 1780000450,
+          "predicate": "profile.main_card",
+          "value": "main card: Mastercard ending 2222"
+        },
+        {
+          "at": 1780000500,
+          "predicate": "profile.playlist",
+          "value": "playlist: Lo-fi Beats",
+          "world": "work"
+        },
+        {
+          "at": 1780000550,
+          "predicate": "profile.playlist",
+          "value": "playlist: Jazz Classics",
+          "world": "home"
+        },
+        {
           "at": 1780005000,
           "predicate": "profile.dentist",
           "value": "dentist: Dr. Lindqvist at Harbor Dental"
@@ -57,6 +110,10 @@
     {
       "id": "yuki",
       "frozen_at": 1780010000,
+      "worlds": [
+        "work",
+        "family"
+      ],
       "turns": [
         {
           "at": 1780000000,
@@ -79,9 +136,35 @@
           "text": "Got it, studio rent from the joint account."
         },
         {
+          "at": 1780000400,
+          "author": "user",
+          "text": "Deliveries can go to my home address, 3-2-1 Nakameguro."
+        },
+        {
+          "at": 1780000450,
+          "author": "user",
+          "text": "Or to my office address, 7-5 Shibuya.",
+          "deleted_at": 1780006000
+        },
+        {
+          "at": 1780000500,
+          "author": "user",
+          "text": "At work I sign off my emails with Best regards."
+        },
+        {
+          "at": 1780000550,
+          "author": "user",
+          "text": "With family I sign off my emails with Love."
+        },
+        {
           "at": 1780005000,
           "author": "user",
           "text": "Correction: after the repair the parcel locker code changed to 9052."
+        },
+        {
+          "at": 1780006000,
+          "author": "user",
+          "text": "I left that job, so forget my office address."
         }
       ],
       "claims": [
@@ -101,6 +184,29 @@
           "value": "studio rent: paid from the joint account, reference STUDIO-RENT"
         },
         {
+          "at": 1780000400,
+          "predicate": "profile.home_address",
+          "value": "home address: 3-2-1 Nakameguro"
+        },
+        {
+          "at": 1780000450,
+          "predicate": "profile.office_address",
+          "value": "office address: 7-5 Shibuya",
+          "deleted_at": 1780006000
+        },
+        {
+          "at": 1780000500,
+          "predicate": "profile.email_sign_off",
+          "value": "email sign-off: Best regards",
+          "world": "work"
+        },
+        {
+          "at": 1780000550,
+          "predicate": "profile.email_sign_off",
+          "value": "email sign-off: Love",
+          "world": "family"
+        },
+        {
           "at": 1780005000,
           "predicate": "profile.parcel_locker",
           "value": "parcel locker code: 9052"
@@ -110,6 +216,10 @@
     {
       "id": "mara",
       "frozen_at": 1780010000,
+      "worlds": [
+        "work",
+        "club"
+      ],
       "turns": [
         {
           "at": 1780000000,
@@ -127,9 +237,35 @@
           "text": "Every Sunday I order groceries from Greenleaf for delivery between 9-11."
         },
         {
+          "at": 1780000400,
+          "author": "user",
+          "text": "My emergency contact is my brother Tom, 555-0199."
+        },
+        {
+          "at": 1780000450,
+          "author": "user",
+          "text": "If Tom does not pick up, my backup emergency contact is my ex, 555-0142.",
+          "deleted_at": 1780006000
+        },
+        {
+          "at": 1780000500,
+          "author": "user",
+          "text": "At work I sign my name as M. Novak."
+        },
+        {
+          "at": 1780000550,
+          "author": "user",
+          "text": "At the club I sign my name as Mags."
+        },
+        {
           "at": 1780005000,
           "author": "user",
           "text": "Correction: the airline moved my Lisbon flight to Terminal 3."
+        },
+        {
+          "at": 1780006000,
+          "author": "user",
+          "text": "Forget my backup emergency contact, we no longer talk."
         },
         {
           "at": 1780020000,
@@ -152,6 +288,29 @@
           "at": 1780000300,
           "predicate": "profile.sunday_groceries",
           "value": "Sunday groceries: from Greenleaf, delivery 9-11"
+        },
+        {
+          "at": 1780000400,
+          "predicate": "profile.emergency_contact",
+          "value": "emergency contact: brother Tom, 555-0199"
+        },
+        {
+          "at": 1780000450,
+          "predicate": "profile.backup_emergency_contact",
+          "value": "backup emergency contact: my ex, 555-0142",
+          "deleted_at": 1780006000
+        },
+        {
+          "at": 1780000500,
+          "predicate": "profile.signature",
+          "value": "name to sign: M. Novak",
+          "world": "work"
+        },
+        {
+          "at": 1780000550,
+          "predicate": "profile.signature",
+          "value": "name to sign: Mags",
+          "world": "club"
         },
         {
           "at": 1780005000,
@@ -455,6 +614,207 @@
         },
         "keep": {
           "window": "9-11"
+        }
+      }
+    },
+    {
+      "id": "owen-playlist",
+      "history": "owen",
+      "kind": "scoped_preference",
+      "world": "work",
+      "prompt": "Put on my playlist while I write this design doc.",
+      "tools": [
+        {
+          "name": "play_music",
+          "description": "Plays one playlist.",
+          "fields": {
+            "playlist": [
+              "Jazz Classics",
+              "Top Hits",
+              "Lo-fi Beats"
+            ]
+          }
+        }
+      ],
+      "gold_memory": [
+        "playlist at work: Lo-fi Beats"
+      ],
+      "rubric": {
+        "action": "play_music",
+        "expect": {
+          "playlist": "Lo-fi Beats"
+        },
+        "other_scope": {
+          "playlist": [
+            "Jazz Classics"
+          ]
+        }
+      }
+    },
+    {
+      "id": "owen-card",
+      "history": "owen",
+      "kind": "deleted_memory",
+      "prompt": "Pay the plumber's invoice with my card.",
+      "tools": [
+        {
+          "name": "pay_invoice",
+          "description": "Pays one invoice with one card.",
+          "fields": {
+            "card_ending": [
+              "1111",
+              "3333",
+              "2222"
+            ]
+          }
+        }
+      ],
+      "gold_memory": [
+        "main card: Mastercard ending 2222"
+      ],
+      "rubric": {
+        "action": "pay_invoice",
+        "expect": {
+          "card_ending": "2222"
+        },
+        "deleted": {
+          "card_ending": [
+            "1111"
+          ]
+        }
+      }
+    },
+    {
+      "id": "yuki-signoff",
+      "history": "yuki",
+      "kind": "scoped_preference",
+      "world": "family",
+      "prompt": "Email my sister about the weekend plans.",
+      "tools": [
+        {
+          "name": "send_email",
+          "description": "Sends one email.",
+          "fields": {
+            "sign_off": [
+              "Best regards",
+              "Cheers",
+              "Love"
+            ]
+          }
+        }
+      ],
+      "gold_memory": [
+        "email sign-off with family: Love"
+      ],
+      "rubric": {
+        "action": "send_email",
+        "expect": {
+          "sign_off": "Love"
+        },
+        "other_scope": {
+          "sign_off": [
+            "Best regards"
+          ]
+        }
+      }
+    },
+    {
+      "id": "yuki-delivery",
+      "history": "yuki",
+      "kind": "deleted_memory",
+      "prompt": "Ship the new rice cooker to my address.",
+      "tools": [
+        {
+          "name": "ship_order",
+          "description": "Ships one order to one address.",
+          "fields": {
+            "address": [
+              "7-5 Shibuya",
+              "1-1 Ginza",
+              "3-2-1 Nakameguro"
+            ]
+          }
+        }
+      ],
+      "gold_memory": [
+        "home address: 3-2-1 Nakameguro"
+      ],
+      "rubric": {
+        "action": "ship_order",
+        "expect": {
+          "address": "3-2-1 Nakameguro"
+        },
+        "deleted": {
+          "address": [
+            "7-5 Shibuya"
+          ]
+        }
+      }
+    },
+    {
+      "id": "mara-signature",
+      "history": "mara",
+      "kind": "scoped_preference",
+      "world": "club",
+      "prompt": "Sign my name under the club newsletter.",
+      "tools": [
+        {
+          "name": "sign_document",
+          "description": "Signs one document.",
+          "fields": {
+            "signature": [
+              "M. Novak",
+              "Mara",
+              "Mags"
+            ]
+          }
+        }
+      ],
+      "gold_memory": [
+        "name to sign at the club: Mags"
+      ],
+      "rubric": {
+        "action": "sign_document",
+        "expect": {
+          "signature": "Mags"
+        },
+        "other_scope": {
+          "signature": [
+            "M. Novak"
+          ]
+        }
+      }
+    },
+    {
+      "id": "mara-contact",
+      "history": "mara",
+      "kind": "deleted_memory",
+      "prompt": "Text my emergency contact that I landed safely.",
+      "tools": [
+        {
+          "name": "send_text",
+          "description": "Sends one text message.",
+          "fields": {
+            "phone": [
+              "555-0142",
+              "555-0100",
+              "555-0199"
+            ]
+          }
+        }
+      ],
+      "gold_memory": [
+        "emergency contact: brother Tom, 555-0199"
+      ],
+      "rubric": {
+        "action": "send_text",
+        "expect": {
+          "phone": "555-0199"
+        },
+        "deleted": {
+          "phone": [
+            "555-0142"
+          ]
         }
       }
     }

@@ -7,7 +7,9 @@
 //!
 //! The loopback reader reads only what it is sent: for each field of the
 //! question's first tool it answers the option the context names last, and
-//! the field's first option when the context names none.
+//! the field's first option when the context names none. In the shipped
+//! tasks a field's first option is the worst answer: a superseded value,
+//! another world's value or a deleted one.
 //!
 //! `cargo test --locked -p oneiron-bench --test action_bench_cli`.
 #![allow(
@@ -31,6 +33,8 @@ const PROVIDER_MODEL: &str = "action-reader";
 const READER_PROMPT: &str = "You act for the user. Reply with one JSON action.";
 const ARMS: [&str; 5] = ["none", "raw", "derived", "raw_plus_derived", "gold"];
 const CORRECTIONS: [&str; 3] = ["owen-dentist", "yuki-locker", "mara-taxi"];
+const SCOPED: [&str; 3] = ["owen-playlist", "yuki-signoff", "mara-signature"];
+const DELETIONS: [&str; 3] = ["owen-card", "yuki-delivery", "mara-contact"];
 
 fn shipped_tasks_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/action_bench.tasks.v1.json")
@@ -38,6 +42,48 @@ fn shipped_tasks_path() -> PathBuf {
 
 fn shipped_tasks() -> Value {
     serde_json::from_slice(&std::fs::read(shipped_tasks_path()).unwrap()).unwrap()
+}
+
+fn follow_up_count(tasks: &Value) -> usize {
+    tasks["follow_ups"].as_array().unwrap().len()
+}
+
+/// Every value of a rubric map whose values are lists.
+fn listed(named: &Value) -> Vec<String> {
+    named
+        .as_object()
+        .unwrap()
+        .values()
+        .flat_map(|values| values.as_array().unwrap())
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect()
+}
+
+fn history<'a>(tasks: &'a Value, id: &str) -> &'a Value {
+    tasks["histories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|history| history["id"] == id)
+        .unwrap()
+}
+
+fn history_mut<'a>(tasks: &'a mut Value, id: &str) -> &'a mut Value {
+    tasks["histories"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|history| history["id"] == id)
+        .unwrap()
+}
+
+fn follow_up_mut<'a>(tasks: &'a mut Value, id: &str) -> &'a mut Value {
+    tasks["follow_ups"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|follow_up| follow_up["id"] == id)
+        .unwrap()
 }
 
 /// The loopback reader and every request body it was sent.
@@ -268,7 +314,7 @@ fn follow_up(tasks: &Value, id: &str) -> Value {
 fn the_no_memory_arm_never_reads_the_vault_and_the_gold_arm_acts_on_every_follow_up() {
     let run = shipped_run();
     let tasks = shipped_tasks();
-    assert_eq!(rows(run, "none").len(), 9);
+    assert_eq!(rows(run, "none").len(), follow_up_count(&tasks));
     for row in rows(run, "none") {
         assert_eq!(row["context"], "", "{row}");
         assert_eq!(row["recall_elapsed_us"], 0);
@@ -290,10 +336,16 @@ fn the_no_memory_arm_never_reads_the_vault_and_the_gold_arm_acts_on_every_follow
     let gold = summary.iter().find(|arm| arm["arm"] == "gold").unwrap();
     assert_eq!(gold["action_correct"], 1.0);
     assert_eq!(gold["correction_persisted"], 1.0);
+    assert_eq!(gold["leaked"], 0.0);
+    assert_eq!(gold["reappeared"], 0.0);
     let none = summary.iter().find(|arm| arm["arm"] == "none").unwrap();
     assert_eq!(none["action_correct"], 0.0);
-    // The first option of each corrected field is its superseded value.
+    // The first option of each corrected field is its superseded value, of
+    // each scoped field another world's value, of each deleted field the
+    // deleted value.
     assert_eq!(none["correction_persisted"], 0.0);
+    assert_eq!(none["leaked"], 1.0);
+    assert_eq!(none["reappeared"], 1.0);
 }
 
 #[test]
@@ -348,21 +400,41 @@ fn the_raw_arm_reads_only_turns_the_derived_arm_only_claims_and_no_arm_reads_pas
             );
         }
     }
-    let mara = run.report["histories"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|history| history["history"] == "mara")
-        .unwrap();
-    assert_eq!(mara["items_after_freeze"], 1);
-    assert_eq!(mara["turns_witnessed"], 4);
-    assert_eq!(mara["claims_written"], 4);
+    let tasks = shipped_tasks();
+    for reported in run.report["histories"].as_array().unwrap() {
+        let shipped = history(&tasks, reported["history"].as_str().unwrap());
+        let frozen_at = shipped["frozen_at"].as_u64().unwrap();
+        let items = |key: &str| shipped[key].as_array().unwrap();
+        let before = |key: &str| {
+            items(key)
+                .iter()
+                .filter(|item| item["at"].as_u64().unwrap() < frozen_at)
+                .count()
+        };
+        let after_freeze =
+            items("turns").len() + items("claims").len() - before("turns") - before("claims");
+        assert_eq!(reported["items_after_freeze"], after_freeze, "{reported}");
+        assert_eq!(reported["turns_witnessed"], before("turns"), "{reported}");
+        assert_eq!(reported["claims_written"], before("claims"), "{reported}");
+    }
+    let mara = history(&tasks, "mara");
+    assert!(
+        mara["turns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|turn| turn["at"].as_u64().unwrap() >= mara["frozen_at"].as_u64().unwrap()),
+        "mara holds a turn after the freeze"
+    );
 }
 
 #[test]
 fn the_reader_sees_only_the_question_and_the_arms_context() {
     let run = shipped_run();
-    assert_eq!(run.requests.len(), 45);
+    assert_eq!(
+        run.requests.len(),
+        follow_up_count(&shipped_tasks()) * ARMS.len()
+    );
     let sent: BTreeSet<(String, String)> = run
         .requests
         .iter()
@@ -402,7 +474,18 @@ fn the_reader_sees_only_the_question_and_the_arms_context() {
         .unwrap()
         .iter()
         .map(|item| item["id"].as_str().unwrap().to_owned())
-        .chain(["rubric", "gold_memory", "expect", "stale", "keep"].map(str::to_owned))
+        .chain(
+            [
+                "rubric",
+                "gold_memory",
+                "expect",
+                "stale",
+                "keep",
+                "other_scope",
+                "deleted_at",
+            ]
+            .map(str::to_owned),
+        )
         .collect();
     for request in &run.requests {
         let text = request.to_string();
@@ -467,6 +550,8 @@ fn forced_replies_score_as_their_rubric_says_and_pairs_add_up() {
             "action_correct",
             "correction_persisted",
             "unsupported_change",
+            "leaked",
+            "reappeared",
         ] {
             let mut differences = Vec::new();
             for history in ["owen", "yuki", "mara"] {
@@ -519,7 +604,7 @@ fn forced_replies_score_as_their_rubric_says_and_pairs_add_up() {
                 .map(|row| row[key].as_u64().unwrap())
                 .sum::<u64>()
         };
-        assert_eq!(summary["follow_ups"], 9);
+        assert_eq!(summary["follow_ups"], follow_up_count(&tasks));
         assert_eq!(summary["context_lines"], sum("context_lines"));
         assert_eq!(summary["recall_elapsed_us"], sum("recall_elapsed_us"));
         let input: u64 = mine
@@ -534,32 +619,59 @@ fn forced_replies_score_as_their_rubric_says_and_pairs_add_up() {
 fn a_follow_up_missing_a_trace_part_stops_the_run() {
     let reader = start_reader(BTreeMap::new());
     let dir = tempfile::tempdir().unwrap();
-    let cases: [(&str, fn(&mut Value), &str); 3] = [
+    // Each case breaks one part of the shipped tasks; the run names the
+    // follow-up (or history) and the part.
+    let cases: [(&str, fn(&mut Value), &str); 6] = [
         (
             "owen-usual",
-            |follow_up| follow_up["rubric"]["expect"] = json!({}),
+            |tasks| follow_up_mut(tasks, "owen-usual")["rubric"]["expect"] = json!({}),
             "grader",
         ),
         (
             "yuki-close",
-            |follow_up| follow_up["prompt"] = json!("Set a reminder for 17:30 tomorrow."),
+            |tasks| {
+                follow_up_mut(tasks, "yuki-close")["prompt"] =
+                    json!("Set a reminder for 17:30 tomorrow.");
+            },
             "leak",
         ),
         (
             "mara-taxi",
-            |follow_up| follow_up["tools"] = json!([]),
+            |tasks| follow_up_mut(tasks, "mara-taxi")["tools"] = json!([]),
             "tools",
+        ),
+        (
+            "owen-playlist",
+            |tasks| follow_up_mut(tasks, "owen-playlist")["world"] = json!("moon"),
+            "world",
+        ),
+        (
+            "yuki-delivery",
+            |tasks| {
+                // The deleted office address stays in a turn the vault holds.
+                for turn in history_mut(tasks, "yuki")["turns"].as_array_mut().unwrap() {
+                    turn.as_object_mut().unwrap().remove("deleted_at");
+                }
+            },
+            "world",
+        ),
+        (
+            "mara",
+            |tasks| {
+                let mara = history_mut(tasks, "mara");
+                let frozen_at = mara["frozen_at"].clone();
+                for claim in mara["claims"].as_array_mut().unwrap() {
+                    if claim.get("deleted_at").is_some() {
+                        claim["deleted_at"] = frozen_at.clone();
+                    }
+                }
+            },
+            "world",
         ),
     ];
     for (id, break_part, part) in cases {
         let mut tasks = shipped_tasks();
-        let follow_ups = tasks["follow_ups"].as_array_mut().unwrap();
-        break_part(
-            follow_ups
-                .iter_mut()
-                .find(|follow_up| follow_up["id"] == id)
-                .unwrap(),
-        );
+        break_part(&mut tasks);
         let path = dir.path().join(format!("{id}.tasks.json"));
         std::fs::write(&path, tasks.to_string()).unwrap();
         let output = run_bench(&write_plan(dir.path(), &reader.endpoint, &path));
@@ -574,4 +686,113 @@ fn a_follow_up_missing_a_trace_part_stops_the_run() {
         reader.requests.lock().unwrap().is_empty(),
         "a reader call before the check"
     );
+}
+
+#[test]
+fn the_derived_arm_reads_the_follow_ups_world_and_never_the_other() {
+    let run = shipped_run();
+    let tasks = shipped_tasks();
+    for id in SCOPED {
+        let task = follow_up(&tasks, id);
+        let rubric = &task["rubric"];
+        let other = listed(&rubric["other_scope"]);
+        for arm in ["derived", "raw_plus_derived"] {
+            let row = row(run, arm, id);
+            let claims: Vec<&str> = row["context"]
+                .as_str()
+                .unwrap()
+                .lines()
+                .filter(|line| line.starts_with("- CLAIM"))
+                .collect();
+            for value in rubric["expect"].as_object().unwrap().values() {
+                let value = value.as_str().unwrap();
+                assert!(claims.iter().any(|line| line.contains(value)), "{row}");
+            }
+            for value in &other {
+                assert!(
+                    claims.iter().all(|line| !line.contains(value.as_str())),
+                    "{row}"
+                );
+            }
+        }
+        let derived = &row(run, "derived", id)["score"];
+        assert_eq!(derived["action_correct"], true, "{derived}");
+        assert_eq!(derived["leaked"], false, "{derived}");
+        assert_eq!(row(run, "gold", id)["score"]["leaked"], false);
+        assert_eq!(row(run, "none", id)["score"]["leaked"], true);
+    }
+    // A follow-up with no world reads base reality: no world's claim.
+    for row in rows(run, "derived") {
+        let task = follow_up(&tasks, row["follow_up"].as_str().unwrap());
+        if task.get("world").is_some() {
+            continue;
+        }
+        let shipped = history(&tasks, row["history"].as_str().unwrap());
+        for claim in shipped["claims"].as_array().unwrap() {
+            if claim.get("world").is_some() {
+                let value = claim["value"].as_str().unwrap();
+                assert!(!row["context"].as_str().unwrap().contains(value), "{row}");
+            }
+        }
+        assert_eq!(row["score"]["leaked"], Value::Null);
+    }
+    let worlds: BTreeMap<&str, usize> = run.report["histories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|reported| {
+            (
+                reported["history"].as_str().unwrap(),
+                reported["worlds_created"].as_u64().unwrap() as usize,
+            )
+        })
+        .collect();
+    for (id, created) in worlds {
+        assert_eq!(
+            created,
+            history(&tasks, id)["worlds"].as_array().unwrap().len()
+        );
+    }
+}
+
+#[test]
+fn a_deleted_claim_and_turn_reach_no_arm() {
+    let run = shipped_run();
+    let tasks = shipped_tasks();
+    // Every deleted value of a history, from its deletion follow-ups.
+    let mut deleted: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for id in DELETIONS {
+        let task = follow_up(&tasks, id);
+        deleted
+            .entry(task["history"].as_str().unwrap().to_owned())
+            .or_default()
+            .extend(listed(&task["rubric"]["deleted"]));
+    }
+    for row in run.report["rows"].as_array().unwrap() {
+        let context = row["context"].as_str().unwrap();
+        for value in &deleted[row["history"].as_str().unwrap()] {
+            assert!(!context.contains(value.as_str()), "{row}");
+        }
+    }
+    for id in DELETIONS {
+        for arm in &ARMS[1..] {
+            assert_eq!(
+                row(run, arm, id)["score"]["reappeared"],
+                false,
+                "{arm} {id}"
+            );
+        }
+        assert_eq!(row(run, "none", id)["score"]["reappeared"], true);
+        assert_eq!(row(run, "derived", id)["score"]["action_correct"], true);
+    }
+    for reported in run.report["histories"].as_array().unwrap() {
+        let shipped = history(&tasks, reported["history"].as_str().unwrap());
+        let marked = ["turns", "claims"]
+            .iter()
+            .flat_map(|key| shipped[*key].as_array().unwrap())
+            .filter(|item| item.get("deleted_at").is_some())
+            .count();
+        assert!(marked > 0);
+        assert_eq!(reported["items_deleted"], marked, "{reported}");
+    }
 }

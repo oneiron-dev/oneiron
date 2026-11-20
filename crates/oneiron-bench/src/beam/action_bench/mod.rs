@@ -101,9 +101,12 @@ pub(super) struct ActionBenchReport {
 struct HistoryRow {
     history: String,
     frozen_at: u64,
+    worlds_created: usize,
     turns_witnessed: usize,
     claims_written: usize,
     items_after_freeze: usize,
+    /// Turns and claims the user deleted before the freeze.
+    items_deleted: usize,
     ingest_elapsed_us: u64,
 }
 
@@ -174,9 +177,11 @@ fn run_with_session(
         histories.push(HistoryRow {
             history: history.id.clone(),
             frozen_at: history.frozen_at,
+            worlds_created: seeded.worlds_created(),
             turns_witnessed: seeded.turns_witnessed,
             claims_written: seeded.claims_written,
             items_after_freeze: seeded.items_after_freeze,
+            items_deleted: seeded.items_deleted,
             ingest_elapsed_us: seeded.ingest_elapsed_us,
         });
         for follow_up in tasks.follow_ups_of(&history.id) {

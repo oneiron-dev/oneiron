@@ -8192,6 +8192,7 @@ dependencies = [
  "loro",
  "oneiron",
  "oneiron-hex",
+ "oneiron-keystore",
  "oneiron-llm",
  "oneiron-organ-protocol",
  "oneiron-remote",
