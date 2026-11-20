@@ -102,6 +102,7 @@ fn document() -> Vec<u8> {
 const MAIN_PART_RELATIONSHIPS: &str = "word/_rels/document.xml.rels";
 const PACKAGE_RELATIONSHIPS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
 const RELATIONSHIPS_TYPE: &str = "application/vnd.openxmlformats-package.relationships+xml";
+const REVISION_IDS_REL: &str = "http://stemma.sh/2026/relationships/revisionIds";
 const CONTENT_TYPES: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
 
 fn has_part(bytes: &[u8], name: &str) -> bool {
@@ -123,24 +124,37 @@ fn document_with_no_relationships_part() -> Vec<u8> {
 
 /// `bytes` with the part `name` holding `data`, and every other part as it was.
 fn with_part(bytes: &[u8], name: &str, data: &[u8]) -> Vec<u8> {
+    rewrite_part(bytes, Some(name), name, data)
+}
+
+/// Write `data` under `name`, replacing `original_name` in place or adding a new part.
+fn rewrite_part(bytes: &[u8], original_name: Option<&str>, name: &str, data: &[u8]) -> Vec<u8> {
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).expect("open archive");
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let mut replaced = false;
     for index in 0..archive.len() {
         let mut part = archive.by_index(index).expect("archive part");
-        let part_name = part.name().to_owned();
         let mut held = Vec::new();
-        part.read_to_end(&mut held).expect("read archive part");
-        if part_name == name {
-            held = data.to_vec();
+        let (part_name, part_bytes) = if original_name == Some(part.name()) {
             replaced = true;
-        }
+            (name, data)
+        } else {
+            part.read_to_end(&mut held).expect("read archive part");
+            (part.name(), held.as_slice())
+        };
         writer
             .start_file(part_name, zip::write::FileOptions::default())
             .expect("start archive part");
-        writer.write_all(&held).expect("write archive part");
+        writer.write_all(part_bytes).expect("write archive part");
     }
-    assert!(replaced, "the archive holds no part {name}");
+    if let Some(original_name) = original_name {
+        assert!(replaced, "the archive holds no part {original_name}");
+    } else {
+        writer
+            .start_file(name, zip::write::FileOptions::default())
+            .expect("start new archive part");
+        writer.write_all(data).expect("write new archive part");
+    }
     writer.finish().expect("finish archive").into_inner()
 }
 
@@ -168,31 +182,36 @@ fn content_type_of(bytes: &[u8], part: &str) -> Option<String> {
 /// `docx.revise` of `bytes` that replaces its paragraph "second." by
 /// SECOND-AS-REVISED.
 fn revise_second_paragraph(bytes: &[u8]) -> Done {
+    revise_paragraph(bytes, "second.", "SECOND-AS-REVISED", "Editor")
+}
+
+fn revise_paragraph(bytes: &[u8], original: &str, revised: &str, author: &str) -> Done {
     let parsed = oneiron_docedit::Document::parse(bytes).expect("parse base document");
     let view = parsed.read();
     let block = view
         .blocks
         .iter()
-        .find(|block| block.text == "second.")
-        .expect("the second paragraph");
+        .find(|block| block.text == original)
+        .expect("the paragraph to revise");
     run(
         "docx.revise",
         json!({
             "document": 0, "limits": docx_limits(),
             "transaction": {"ops": [{"op": "replace", "target": block.id, "guard": block.guard,
-                "content": {"type": "paragraph", "content": [{"type": "text", "text": "SECOND-AS-REVISED"}]}}],
-                "revision": {"author": "Editor", "date": REVISION_DATE}}
+                "content": {"type": "paragraph", "content": [{"type": "text", "text": revised}]}}],
+                "revision": {"author": author, "date": REVISION_DATE}}
         }),
         &[bytes],
     )
 }
 
-/// The part that a relationship of `word/document.xml` names by `target`: a
-/// leading slash counts from the package root, anything else from `word/`.
-fn main_part_target(target: &str) -> String {
+/// The part that a relationship names by `target`: a leading slash counts
+/// from the package root, anything else from the main part's directory.
+fn main_part_target(main_dir: &str, target: &str) -> String {
     let path = match target.strip_prefix('/') {
         Some(from_root) => from_root.to_owned(),
-        None => format!("word/{target}"),
+        None if main_dir.is_empty() => target.to_owned(),
+        None => format!("{main_dir}/{target}"),
     };
     let mut segments = Vec::new();
     for segment in path.split('/') {
@@ -520,7 +539,12 @@ fn docx_revise_writes_the_relationships_part_its_input_lacked() {
             node.has_tag_name((PACKAGE_RELATIONSHIPS, "Relationship"))
                 && node.attribute("TargetMode") != Some("External")
         })
-        .map(|node| main_part_target(node.attribute("Target").expect("a relationship's Target")))
+        .map(|node| {
+            main_part_target(
+                "word",
+                node.attribute("Target").expect("a relationship's Target"),
+            )
+        })
         .collect();
     assert!(
         !targets.is_empty(),
@@ -599,6 +623,252 @@ fn docx_read_refuses_a_reference_with_no_relationships_part() {
     assert!(
         refusal.contains(MAIN_PART_RELATIONSHIPS) && refusal.contains("rId1"),
         "the refusal names neither the absent part nor the reference: {refusal}"
+    );
+}
+
+/// A revision owns its identity part through its relationship, not its file name.
+/// Two writes keep a foreign part at the conventional name, and reopening reads the related part.
+#[test]
+fn docx_revise_keeps_another_producers_part_at_the_revision_ids_name() {
+    let base = document_with_no_relationships_part();
+    let foreign_part = "word/stemmaRevisionIds.xml";
+    let foreign_type = "urn:example:metadata-part";
+    let payload = b"<payload/>";
+    let root_rels = xml_part(&base, "_rels/.rels").replace(
+        "</Relationships>",
+        &format!(
+            r#"<Relationship Id="rId2" Type="{foreign_type}" Target="{foreign_part}"/></Relationships>"#
+        ),
+    );
+    let bytes = with_part(&base, "_rels/.rels", root_rels.as_bytes());
+    let bytes = rewrite_part(&bytes, None, foreign_part, payload);
+    assert_eq!(
+        content_type_of(&bytes, foreign_part).as_deref(),
+        Some("application/xml")
+    );
+    let done = revise_second_paragraph(&bytes);
+    let changed = output(&done, "document", contract::DOCX_MEDIA_TYPE);
+    assert_eq!(zip_part(changed, foreign_part).as_slice(), payload);
+    let rel_xml = xml_part(changed, "_rels/.rels");
+    let root = roxmltree::Document::parse(&rel_xml).expect("root relationships XML");
+    let foreign_link = root
+        .descendants()
+        .find(|node| {
+            node.has_tag_name((PACKAGE_RELATIONSHIPS, "Relationship"))
+                && node.attribute("Type") == Some(foreign_type)
+        })
+        .expect("the foreign root relationship is kept");
+    assert_eq!(foreign_link.attribute("Target"), Some(foreign_part));
+
+    let rel_xml = xml_part(changed, MAIN_PART_RELATIONSHIPS);
+    let main = roxmltree::Document::parse(&rel_xml).expect("main part relationships XML");
+    let revision_link = main
+        .descendants()
+        .find(|node| {
+            node.has_tag_name((PACKAGE_RELATIONSHIPS, "Relationship"))
+                && node.attribute("Type") == Some(REVISION_IDS_REL)
+                && node.attribute("TargetMode") != Some("External")
+        })
+        .expect("the writer relates its own revision identities");
+    let sidecar = main_part_target(
+        "word",
+        revision_link
+            .attribute("Target")
+            .expect("revision identities target"),
+    );
+    assert_eq!(sidecar, "word/stemmaRevisionIds2.xml");
+    assert_eq!(
+        content_type_of(changed, &sidecar).as_deref(),
+        Some("application/vnd.stemma.revisionids+xml")
+    );
+    assert!(
+        read_document(changed)
+            .iter()
+            .any(|block| block.text.contains("SECOND-AS-REVISED"))
+    );
+
+    // Record a distinguishable identity without changing the carrier walk; merely
+    // reopening the text could succeed with derived identities and miss a bad binding.
+    let revisions = oneiron_docedit::Document::parse(changed)
+        .expect("reopen revised document")
+        .revisions();
+    let probe_id = (1..)
+        .find(|id| revisions.iter().all(|rev| rev.revision_id != *id))
+        .expect("an unused revision identity");
+    let sidecar_xml = xml_part(changed, &sidecar);
+    let persisted = roxmltree::Document::parse(&sidecar_xml).expect("revision identities XML");
+    let recorded_id = persisted
+        .root_element()
+        .children()
+        .filter_map(|node| node.attribute("identity"))
+        .find(|id| *id != "0")
+        .expect("a recorded nonzero body revision identity");
+    let probe_xml = sidecar_xml.replace(
+        &format!(r#"identity="{recorded_id}""#),
+        &format!(r#"identity="{probe_id}""#),
+    );
+    let probe = with_part(changed, &sidecar, probe_xml.as_bytes());
+    let reopened = oneiron_docedit::Document::parse(&probe).expect("reopen with recorded identity");
+    assert!(
+        reopened
+            .revisions()
+            .iter()
+            .any(|rev| rev.revision_id == probe_id)
+    );
+
+    let second = revise_paragraph(
+        changed,
+        "Untouched third.",
+        "THIRD-AS-REVISED",
+        "Second Editor",
+    );
+    let changed_again = output(&second, "document", contract::DOCX_MEDIA_TYPE);
+    assert_eq!(zip_part(changed_again, foreign_part).as_slice(), payload);
+    assert!(!has_part(changed_again, "word/stemmaRevisionIds3.xml"));
+    assert!(
+        read_document(changed_again)
+            .iter()
+            .any(|block| block.text.contains("THIRD-AS-REVISED"))
+    );
+}
+
+/// A main part outside `word/` can gain valid relationships to generated sidecars.
+#[test]
+fn docx_revise_takes_a_main_part_outside_word_with_no_relationships_part() {
+    let base = document_with_no_relationships_part();
+    let old_main = "word/document.xml";
+    let main = "body/document.xml";
+    let root_rels = xml_part(&base, "_rels/.rels").replace(old_main, main);
+    let types = xml_part(&base, "[Content_Types].xml").replace(old_main, main);
+    let document = zip_part(&base, old_main);
+    let bytes = rewrite_part(&base, Some(old_main), main, &document);
+    let bytes = with_part(&bytes, "_rels/.rels", root_rels.as_bytes());
+    let bytes = with_part(&bytes, "[Content_Types].xml", types.as_bytes());
+    assert!(!has_part(&bytes, "body/_rels/document.xml.rels"));
+    let done = revise_second_paragraph(&bytes);
+    let changed = output(&done, "document", contract::DOCX_MEDIA_TYPE);
+    let relationships = xml_part(changed, "body/_rels/document.xml.rels");
+    let tree = roxmltree::Document::parse(&relationships).expect("main part relationships XML");
+    let targets: Vec<_> = tree
+        .descendants()
+        .filter(|node| {
+            node.has_tag_name((PACKAGE_RELATIONSHIPS, "Relationship"))
+                && node.attribute("TargetMode") != Some("External")
+        })
+        .map(|node| {
+            (
+                node.attribute("Type").expect("relationship type"),
+                node.attribute("Target").expect("relationship target"),
+            )
+        })
+        .collect();
+    for &(_, target) in &targets {
+        let part = main_part_target("body", target);
+        assert!(has_part(changed, &part), "missing related part {part}");
+    }
+    for (rel_type, target) in [
+        (
+            "http://schemas.microsoft.com/office/2011/relationships/people",
+            "/word/people.xml",
+        ),
+        (REVISION_IDS_REL, "/word/stemmaRevisionIds.xml"),
+    ] {
+        assert_eq!(
+            targets
+                .iter()
+                .find(|(held, _)| *held == rel_type)
+                .map(|(_, held)| *held),
+            Some(target)
+        );
+    }
+}
+
+/// A generated relationships part needs an Override if the `rels` Default has the wrong type.
+#[test]
+fn docx_revise_types_the_relationships_part_it_creates_under_another_default() {
+    let base = document_with_no_relationships_part();
+    let types = xml_part(&base, "[Content_Types].xml").replace(
+        &format!(r#"<Default Extension="rels" ContentType="{RELATIONSHIPS_TYPE}"/>"#),
+        &format!(r#"<Default Extension="rels" ContentType="application/xml"/><Override PartName="/_rels/.rels" ContentType="{RELATIONSHIPS_TYPE}"/>"#),
+    );
+    let bytes = with_part(&base, "[Content_Types].xml", types.as_bytes());
+    assert_eq!(
+        content_type_of(&bytes, "_rels/.rels").as_deref(),
+        Some(RELATIONSHIPS_TYPE)
+    );
+    assert_eq!(
+        content_type_of(&bytes, MAIN_PART_RELATIONSHIPS).as_deref(),
+        Some("application/xml")
+    );
+    let done = revise_second_paragraph(&bytes);
+    let changed = output(&done, "document", contract::DOCX_MEDIA_TYPE);
+    assert_eq!(
+        content_type_of(changed, MAIN_PART_RELATIONSHIPS).as_deref(),
+        Some(RELATIONSHIPS_TYPE)
+    );
+}
+
+/// SmartArt's `r:dm`, `r:lo`, `r:qs`, and `r:cs` also need a main relationships part.
+#[test]
+fn docx_read_refuses_a_diagram_reference_with_no_relationships_part() {
+    let base = document_with_no_relationships_part();
+    let document = xml_part(&base, "word/document.xml");
+    let referencing = document.replace("<w:sectPr/>", concat!(
+        r#"<w:sdt><w:sdtPr/><w:sdtContent><w:p><w:r><w:drawing>"#,
+        r#"<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">"#,
+        r#"<wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Diagram"/>"#,
+        r#"<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">"#,
+        r#"<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram">"#,
+        r#"<dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" "#,
+        r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" "#,
+        r#"r:dm="rId1" r:lo="rId2" r:qs="rId3" r:cs="rId4"/>"#,
+        r#"</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:sdtContent></w:sdt><w:sectPr/>"#,
+    ));
+    assert!(referencing.contains(r#"r:dm="rId1""#));
+    let bytes = with_part(&base, "word/document.xml", referencing.as_bytes());
+    let text = call_text("docx.read", json!({"document": 0, "limits": docx_limits()}));
+    let result = contract::execute_json(text.as_bytes(), &[&bytes], Ports::default());
+    let detail = &result
+        .as_ref()
+        .expect_err("the diagram reference dangles")
+        .detail;
+    assert!(
+        ["rId1", "rId2", "rId3", "rId4"]
+            .iter()
+            .any(|id| detail.contains(&format!(
+                "missing {MAIN_PART_RELATIONSHIPS}: the main part references relationship {id:?}"
+            ))),
+        "unexpected refusal: {detail}"
+    );
+    assert_error(result, ErrorCode::InvalidDocument);
+}
+
+/// A foreign namespace bound to `r` does not make its ignorable `r:id` a relationship reference.
+#[test]
+fn docx_read_takes_an_attribute_of_another_namespace_under_the_r_prefix() {
+    let base = document_with_no_relationships_part();
+    let document = xml_part(&base, "word/document.xml");
+    let labeled = document
+        .replace(
+            r#"mc:Ignorable="u""#,
+            r#"xmlns:r="urn:example:metadata" mc:Ignorable="u r""#,
+        )
+        .replacen("<w:p>", r#"<w:p r:id="label">"#, 1);
+    assert!(labeled.contains(r#"xmlns:r="urn:example:metadata" mc:Ignorable="u r""#));
+    assert!(labeled.contains(r#"<w:p r:id="label">"#));
+    let bytes = with_part(&base, "word/document.xml", labeled.as_bytes());
+    let blocks = read_document(&bytes);
+    let read: Vec<_> = blocks
+        .iter()
+        .map(|block| (block.kind, block.text.as_str()))
+        .collect();
+    assert_eq!(
+        read,
+        [
+            (DocxBlockKind::Paragraph, "First "),
+            (DocxBlockKind::Paragraph, "second."),
+            (DocxBlockKind::Paragraph, "Untouched third."),
+        ]
     );
 }
 
