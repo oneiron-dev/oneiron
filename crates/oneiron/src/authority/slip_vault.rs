@@ -242,7 +242,6 @@ impl Vault {
         };
         let claims = &mint.action.claims;
         Ok(now >= claims.issued_at
-            && now < claims.expires_at
             && fold.vault_id == Some(claims.vault_id)
             && fold.slip_is_live(id)
             && self.slip_refs_stand_in_txn(txn, claims, now)?
