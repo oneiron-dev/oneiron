@@ -344,11 +344,22 @@ impl ChatBrain {
             BudgetExhaustionPolicy::Suspend,
             payer.clone(),
         )?;
+        // Whether the call's room has a live stretch that keeps no record,
+        // read once at the turn's arrival: for the turn's run here and for
+        // whether the turn is kept (census L5-25).
+        let room = self.bindings.room;
+        let no_record_at_arrival = room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
         let run = ai.model_runtime().funded_run(line, meter, funding.clone());
         // Its permits and metered settlement carry the rows the input was
-        // read from (FIX 6935).
+        // read from (FIX 6935). In a stretch that keeps no record they name
+        // no rows, so no receipt names them or their worlds.
         let read = oneiron::skill_optimize::union_source_rows([Some(said_from.as_slice())]);
         let run = run.sourced(read);
+        let run = if no_record_at_arrival {
+            run.off_record()
+        } else {
+            run
+        };
         let run = match &self.bindings.phone {
             Some(phone) => {
                 let phone = Arc::clone(phone);
@@ -368,8 +379,6 @@ impl ChatBrain {
             .ladder
             .stream_recorded(&run, admitted.request.clone(), None)
             .map_err(|error| refused(format!("{error:?}")))?;
-        let room = self.bindings.room;
-        let no_record_at_arrival = room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
         let capture = ModelCallCapture {
             vault: Arc::clone(vault),
             ladder: Arc::clone(&admitted.ladder),

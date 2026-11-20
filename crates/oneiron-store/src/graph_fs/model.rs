@@ -1,6 +1,7 @@
 //! Graph-FS public projection types: caps, host imports, mount and options, entry, page and file, coreutils verb, decision and output, and the resolver with its ScopedRead constructor.
 
 use crate::sandbox_import::SandboxImportClass;
+use crate::vault::entity_revision::types::MemoryFrontier;
 use oneiron_contracts::entity_id::bytes_to_hex_lower;
 
 pub const GRAPH_FS_PROJECTION_VERSION: &str = "graph-fs.v1";
@@ -22,6 +23,9 @@ pub enum GraphFsMount {
     #[default]
     LiveHead,
     ForkHash([u8; 32]),
+    /// The vault's memory as it stood at a frontier the engine handed out
+    /// (L3-39): every row is read at the revision it held there.
+    MemoryFork(MemoryFrontier),
 }
 
 impl GraphFsMount {
@@ -30,6 +34,7 @@ impl GraphFsMount {
         match self {
             Self::LiveHead => "live-head".to_owned(),
             Self::ForkHash(hash) => format!("forkHash:{}", bytes_to_hex_lower(&hash)),
+            Self::MemoryFork(frontier) => format!("memoryFork:{}", frontier.to_hex()),
         }
     }
 }

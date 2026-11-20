@@ -30,8 +30,9 @@ pub(super) fn request_floor(server: &SyncServer) -> usize {
 }
 
 /// The layer every API route reads its body under, unless its own layer
-/// (the facade nest, e-sign, the webhooks) sets another.
-pub(super) fn request_floor_layer(server: &SyncServer) -> DefaultBodyLimit {
+/// (the facade nest, e-sign, the webhooks) sets another; the MCP socket's
+/// routes read under it too.
+pub(crate) fn request_floor_layer(server: &SyncServer) -> DefaultBodyLimit {
     DefaultBodyLimit::max(request_floor(server))
 }
 
@@ -42,7 +43,7 @@ pub(super) fn request_floor_layer(server: &SyncServer) -> DefaultBodyLimit {
 /// A body that declared within the row, an undeclared body that stopped
 /// within it (a smaller route bound refused it), a route's own typed 413 and
 /// any other response pass as they are.
-pub(super) async fn name_request_floor(
+pub(crate) async fn name_request_floor(
     State(server): State<Arc<SyncServer>>,
     request: Request,
     next: Next,

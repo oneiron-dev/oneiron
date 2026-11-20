@@ -56,7 +56,12 @@ impl Vault {
         let signing = self.door_signing_key_in_txn(txn, executor)?;
         let public_key = signing.verifying_key().to_bytes();
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        if !owner_act_signer_admits(fold.machine(executor), &fold.roster, &public_key) {
+        if !owner_act_signer_admits(
+            fold.machine(executor),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
             return Err(no_executor_key());
         }
         // FIX 7908: join a frontier wider than one entry names, else today's path.

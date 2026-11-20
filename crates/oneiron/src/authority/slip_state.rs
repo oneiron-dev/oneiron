@@ -3,22 +3,24 @@ use super::*;
 use crate::error::Result;
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_persistent_collections::{PersistentMap, PersistentSet};
+
 #[doc(hidden)]
 pub use oneiron_records::authority::slip_state::FoldedSlip;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SlipAuthorityState {
-    pub mints: BTreeMap<[u8; 32], FoldedSlip>,
+    pub mints: PersistentMap<[u8; 32], FoldedSlip>,
     /// Denied identifiers: explicit withdrawals AND colliding mint IDs.
-    pub revoked: BTreeSet<[u8; 32]>,
+    pub revoked: PersistentSet<[u8; 32]>,
     /// Only verified `SlipRevoke` operations. A collision is not an operator act.
-    pub explicit_revoked: BTreeSet<[u8; 32]>,
-    pub consumed: BTreeSet<[u8; 32]>,
+    pub explicit_revoked: PersistentSet<[u8; 32]>,
+    pub consumed: PersistentSet<[u8; 32]>,
     /// Each Grant a verified `SlipGrantRevoke` withdrew (FIX 1978), in hex as
     /// a mint's claims name it. Every mint under one joins `revoked`, one
     /// merged in after the withdrawal from whichever replica minted it
     /// included.
-    pub revoked_grants: BTreeSet<String>,
+    pub revoked_grants: PersistentSet<String>,
 }
 impl SlipAuthorityState {
     pub(super) fn apply(
@@ -257,7 +259,7 @@ impl SlipAuthorityState {
     pub(crate) fn is_explicitly_revoked(&self, ancestry: &[[u8; 32]]) -> bool {
         ancestry.iter().any(|id| self.explicit_revoked.contains(id))
     }
-    fn revoked_ancestor_in(&self, id: &[u8; 32], revoked: &BTreeSet<[u8; 32]>) -> bool {
+    fn revoked_ancestor_in(&self, id: &[u8; 32], revoked: &PersistentSet<[u8; 32]>) -> bool {
         let mut current = Some(*id);
         let mut seen = BTreeSet::new();
         while let Some(id) = current {

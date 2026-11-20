@@ -62,4 +62,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/systemone/tests.rs` | test | s | — | — | — |
 | `tests/native_budget_wire.rs` | test | m | — | — | L9-19 (ARCH-0036 #decision-deadline part 4, #system-one-codec): a System One server that takes a native… |
 | `tests/openai_compat_family.rs` | test | s | — | — | L9-25 PR 4 (ARCH-0036 `#adapters`, MED-1 = A): the OpenAI-compatible media backend splits by family over one… |
+| `tests/provider_finish_engine_prefix.rs` | test | s | — | — | [AUTHORED-FINISH-NAME-FROM-PROVIDER] (FIX-LIST 26080): a provider finish string the adapters do not know… |
 | `tests/remote_transport.rs` | test | s | — | — | Own-server conformance through the shipped HTTP transport, not a trait-only fake |

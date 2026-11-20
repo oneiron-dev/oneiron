@@ -28,7 +28,9 @@ use super::types::{
 /// other channels, but at most [`temporal_widening_bound`].
 /// Unbounded, every scoped recall reads, scores and sorts every row of the
 /// vault (ARCH-0004 #temporal-bound); bounded, its rankings may differ from
-/// that scan only past the bound.
+/// that scan only past the bound. The count itself stops at the bound: past
+/// it the limit is the bound whatever the count, and a room or session union
+/// counts by walking its merged rows.
 pub(super) fn scoped_temporal_channel_limit(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
@@ -39,11 +41,11 @@ pub(super) fn scoped_temporal_channel_limit(
     if !scope_widening_active || requested == 0 {
         return Ok(requested);
     }
-    let entity_count = usize::try_from(store.port_entity_count(rtxn)?)
+    let bound = temporal_widening_bound(requested, params);
+    let cap = u64::try_from(bound).unwrap_or(u64::MAX);
+    let entity_count = usize::try_from(store.port_entity_count_at_most(rtxn, cap)?)
         .map_err(|_| Error::IndexOverflow("entity count"))?;
-    Ok(requested
-        .max(entity_count)
-        .min(temporal_widening_bound(requested, params)))
+    Ok(requested.max(entity_count).min(bound))
 }
 
 /// How far a scoped temporal channel asking for `requested` rows widens at
@@ -140,6 +142,9 @@ pub(super) struct ReadableRows<'p, 'f> {
     predicate: &'p SnapshotCandidateFilter<'f>,
     deadline: Option<&'p RetrievalDeadline>,
     answers: Mutex<HashMap<EntityId, bool>>,
+    /// Whether the window's scans ask it too, so a row it refuses also takes
+    /// no place under a scan's cap ([`Self::new_asked_by_scans`]).
+    asked_by_scans: bool,
 }
 
 impl<'p, 'f> ReadableRows<'p, 'f> {
@@ -151,7 +156,28 @@ impl<'p, 'f> ReadableRows<'p, 'f> {
             predicate,
             deadline,
             answers: Mutex::new(HashMap::new()),
+            asked_by_scans: false,
         }
+    }
+
+    /// A reader the window's scans ask as well: each endpoint scan, the
+    /// query range's scan and the spanner buffer give a place under their cap
+    /// only to a row it reads. A call's made_by slice reads this way, so rows
+    /// the slice drops cannot fill a scan ahead of the rows it keeps
+    /// (REVIEW-9842 round 2). A scope alone keeps [`Self::new`]: its scans
+    /// stay as cheap as before.
+    pub(super) fn new_asked_by_scans(
+        predicate: &'p SnapshotCandidateFilter<'f>,
+        deadline: Option<&'p RetrievalDeadline>,
+    ) -> Self {
+        Self {
+            asked_by_scans: true,
+            ..Self::new(predicate, deadline)
+        }
+    }
+
+    pub(super) fn asked_by_scans(&self) -> bool {
+        self.asked_by_scans
     }
 
     pub(super) fn reads(

@@ -78,10 +78,19 @@ pub struct ListedHeldAnswer {
     /// ([`FoldedMachine::answer_revision`]; zero when no revision names the
     /// machine): what a confirm of this entry presents back as `seen`.
     pub revision: [u8; 32],
-    /// The role the answer's carrier stands in; `None` when no revision
-    /// names the carrier.
+    /// This install's reading of the key that signed the held answer, on
+    /// the machine the answer names as its carrier
+    /// ([`AuthorityFold::carrier_reading`]); `None` for an answer that names
+    /// no carrier. A surface names who asked from this reading, never from
+    /// the machine id the answer names (FIX
+    /// [HELD-ANSWER-LISTING-CARRIER-BY-ID]).
+    pub carrier_reading: Option<CarrierReading>,
+    /// `carrier_reading`'s role: the role this install's records give the
+    /// signing key on the carrier; `None` when they tie the two to no
+    /// profile.
     pub carrier_role: Option<MachineRole>,
-    /// Whether this install trusts the carrier as the owner's machine.
+    /// `carrier_reading`'s `is_mine`: whether this install trusts the
+    /// signing key as the owner's machine.
     pub carrier_is_mine: bool,
     /// Whether the owner dismissed this ask on this install.
     pub dismissed: bool,
@@ -90,6 +99,26 @@ pub struct ListedHeldAnswer {
     /// an answer: no door of this crate writes one, so its keys are its
     /// carrier's word alone.
     pub replaces_keys: bool,
+}
+
+impl ListedHeldAnswer {
+    /// The question a surface asks about this held answer
+    /// ([`held_answer_prompt`]): what it asks for, then on the last line
+    /// who carried it by this install's reading, or that it can only be
+    /// dismissed. No name is held for either device here, so each is named
+    /// by its kind.
+    #[must_use]
+    pub fn prompt(&self) -> String {
+        held_answer_prompt(
+            self.answer.profile.role,
+            self.answer.profile.device_class,
+            PromptDeviceName::NotHeld,
+            self.carrier_reading
+                .as_ref()
+                .map(|reading| (reading, PromptDeviceName::NotHeld)),
+            self.replaces_keys,
+        )
+    }
 }
 
 /// The owner's acts that wait for his proof, as this install lists them.
@@ -254,17 +283,20 @@ impl Vault {
         let mut answers = Vec::new();
         for (machine, held) in fold.held_machine_answers() {
             for (entry, answer) in held {
-                let carrier = answer.carrier();
+                let carrier_reading = answer
+                    .carrier()
+                    .map(|carrier| self.stored_carrier_reading_in_txn(txn, fold, carrier, entry))
+                    .transpose()?;
                 answers.push(ListedHeldAnswer {
                     entry: *entry,
                     answer: answer.clone(),
                     standing: role_of(*machine),
-                    revision: fold
-                        .machine(*machine)
-                        .map_or([0; 32], FoldedMachine::answer_revision),
-                    carrier_role: carrier.and_then(role_of),
-                    carrier_is_mine: carrier
-                        .is_some_and(|carrier| fold.trusted_machine(carrier).is_some()),
+                    revision: fold.machine(*machine).map_or([0; 32], |folded| {
+                        folded.answer_revision(fold.pinned_root.as_ref())
+                    }),
+                    carrier_reading,
+                    carrier_role: carrier_reading.and_then(|reading| reading.role),
+                    carrier_is_mine: carrier_reading.is_some_and(|reading| reading.is_mine),
                     dismissed: DISMISSED
                         .get(&self.store, txn, &dismissal_key(entry))?
                         .is_some(),
@@ -288,7 +320,11 @@ impl Vault {
     /// never other keys than it stands under on this install
     /// ([`AuthorityFold::replaces_standing_keys`]). His answer about a
     /// machine ends the ask of every held answer about it that it saw. The
-    /// credentials are sealed again for the roster the confirm changed.
+    /// credentials are sealed again for the roster the confirm changed. The
+    /// rows the write counted (each answer, the revocation of each owner key
+    /// a confirmed removal ended, a frontier join) are marked for the
+    /// vault's loaded windows in the write and announced once it committed,
+    /// as at [`Self::remove_machine`].
     ///
     /// `seen` gives, for any named entry, the answer revision of its machine
     /// that his surface listed beside it ([`ListedHeldAnswer::revision`]).
@@ -342,7 +378,9 @@ impl Vault {
         }
         let after = self.authority_view_readonly_in_txn(&txn)?;
         let listing = self.held_answer_listing_in_txn(&txn, &after)?;
+        let rows = self.mark_rows_counted_since_in_txn(&mut txn, &fold)?;
         txn.commit()?;
+        self.note_committed_authority_rows(rows);
         #[cfg(feature = "sync")]
         self.reseal_after_machine_admission()?;
         Ok(ConfirmedHeldAnswers { removed, listing })

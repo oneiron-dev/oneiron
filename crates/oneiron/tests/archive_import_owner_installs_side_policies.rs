@@ -7,8 +7,7 @@
 //!
 //! * `the_owner_restore_installs_the_owner_policies_and_the_actorless_import_does_not`:
 //!   the owner import installs one PROJECT_HISTORY_POLICY row, one
-//!   MESSAGE_STREAM_POLICY row, one MERGE_QUEUE_REVIEW_POLICY row and one
-//!   owner LEARNING_SETTING pin live
+//!   MESSAGE_STREAM_POLICY row and one owner LEARNING_SETTING pin live
 //!   and reports one installed row for each; a repeat owner import reports
 //!   one unchanged live row for each; the actorless import of the same
 //!   archive leaves every read at its default and installs nothing.
@@ -44,7 +43,6 @@ mod retained_side_rows;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
-use oneiron::critic::LensCatalog;
 use oneiron::drafter::{
     DrafterPolicySetRequest, DrafterStatusRequest, drafter_status_as_owner,
     set_drafter_policy_as_owner,
@@ -57,13 +55,8 @@ use oneiron::learning_setting_doors::{
     LearningSettingMode, LearningSettingPut, LearningSettingsRequest, learning_settings_as_owner,
     put_learning_setting_as_owner,
 };
-use oneiron::memory::merge_queue_doors::{
-    QueueReviewPolicyInput, QueueReviewPolicyProof, QueueReviewPolicySetRequest,
-    QueueReviewPolicyState,
-};
 use oneiron::memory::origin_doors::OriginLfsPathPolicySetRequest;
 use oneiron::memory::{MessageStreamPolicy, MessageWriteMode, StreamCadence, StreamSyncVisibility};
-use oneiron::merge_queue::QueueReviewThresholds;
 use oneiron::origin::lfs::{LfsAssetClass, OriginLfsPathMatch, OriginLfsPathRule};
 use oneiron::store::{RetrievalBlendSignal, RetrievalPolicyPin, RetrievalPolicyPins};
 use oneiron::workspace_roster::ProjectHistoryPolicy;
@@ -106,15 +99,14 @@ fn held_back_for_table(summary: &serde_json::Value, table: &str) -> Option<serde
         .cloned()
 }
 
-/// The four owner-policy tables the first test carries through the archive.
-const OWNER_POLICY_TABLES: [&str; 4] = [
+/// The three owner-policy tables the first test carries through the archive.
+const OWNER_POLICY_TABLES: [&str; 3] = [
     "PROJECT_HISTORY_POLICY",
     "MESSAGE_STREAM_POLICY",
-    "MERGE_QUEUE_REVIEW_POLICY",
     "LEARNING_SETTING",
 ];
 
-/// The owner restore installs the four owner policies live; the actorless
+/// The owner restore installs the three owner policies live; the actorless
 /// import leaves every read at its default.
 #[test]
 fn the_owner_restore_installs_the_owner_policies_and_the_actorless_import_does_not() {
@@ -159,31 +151,6 @@ fn the_owner_restore_installs_the_owner_policies_and_the_actorless_import_does_n
         "the source holds the stream row"
     );
 
-    let catalog = LensCatalog::of366_seed().expect("the seed lens catalog reads");
-    let source_review = source_memory
-        .merge_queue_review_policy_set_as(
-            &QueueReviewPolicyProof::Owner(source_owner.clone()),
-            QueueReviewPolicySetRequest {
-                policy: Some(QueueReviewPolicyInput {
-                    catalog,
-                    thresholds: QueueReviewThresholds {
-                        critics: 3,
-                        votes: 70,
-                    },
-                }),
-            },
-        )
-        .expect("the owner stores the source review policy");
-    assert_eq!(
-        source_review.state,
-        QueueReviewPolicyState::Set,
-        "the source review policy is set"
-    );
-    let source_review_policy = source_review
-        .policy
-        .clone()
-        .expect("a set review policy reads back");
-
     let spec = setting_spec(CALL_BUDGET_KEY).expect("the catalog names the call-budget knob");
     let pinned = 12_000.0;
     put_learning_setting_as_owner(
@@ -211,10 +178,8 @@ fn the_owner_restore_installs_the_owner_policies_and_the_actorless_import_does_n
 
     let (_dest_dir, dest) = open_later_vault();
     let dest_owner = owner_proof(&dest);
-    let dest_actor = dest
-        .ensure_embedded_owner_actor()
+    dest.ensure_embedded_owner_actor()
         .expect("the destination names its embedded owner actor");
-    let dest_memory = dest.memory(dest_actor, EdgeActorClass::Human);
     let receipt = dest
         .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
         .expect("the owner import succeeds");
@@ -229,19 +194,6 @@ fn the_owner_restore_installs_the_owner_policies_and_the_actorless_import_does_n
             .expect("read the restored stream policy"),
         stream,
         "the owner import installs the stream row live"
-    );
-    let dest_review = dest_memory
-        .merge_queue_review_policy_get_as(&QueueReviewPolicyProof::Owner(dest_owner.clone()))
-        .expect("read the restored review policy");
-    assert_eq!(
-        dest_review.state,
-        QueueReviewPolicyState::Set,
-        "the owner import installs the review row live"
-    );
-    assert_eq!(
-        dest_review.policy,
-        Some(source_review_policy.clone()),
-        "the owner import keeps the review row byte for byte"
     );
     assert_eq!(
         setting_value(&dest, spec).expect("read the restored call budget"),
@@ -277,11 +229,8 @@ fn the_owner_restore_installs_the_owner_policies_and_the_actorless_import_does_n
     }
 
     let (_bare_dir, bare) = open_later_vault();
-    let bare_owner = owner_proof(&bare);
-    let bare_actor = bare
-        .ensure_embedded_owner_actor()
+    bare.ensure_embedded_owner_actor()
         .expect("the actorless vault names its embedded owner actor");
-    let bare_memory = bare.memory(bare_actor, EdgeActorClass::Human);
     let bare_receipt = bare
         .import_whole_vault_archive_from(Cursor::new(&archive))
         .expect("the actorless import succeeds");
@@ -296,14 +245,6 @@ fn the_owner_restore_installs_the_owner_policies_and_the_actorless_import_does_n
             .expect("read the actorless stream policy"),
         MessageStreamPolicy::default(),
         "the actorless import leaves the stream policy at its default"
-    );
-    let bare_review = bare_memory
-        .merge_queue_review_policy_get_as(&QueueReviewPolicyProof::Owner(bare_owner))
-        .expect("read the actorless review policy");
-    assert_eq!(
-        bare_review.state,
-        QueueReviewPolicyState::Absent,
-        "the actorless import leaves the review policy absent"
     );
     assert_eq!(
         setting_value(&bare, spec).expect("read the actorless call budget"),

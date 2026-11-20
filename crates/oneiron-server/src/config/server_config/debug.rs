@@ -49,6 +49,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("runtime", &self.runtime)
             .field("skills", &self.skills)
             .field("line", &self.line)
+            .field("mail", &self.mail)
             .field("channel_endpoints", &self.channel_endpoints)
             .field("apns", &self.apns)
             .field("linear", &self.linear)
@@ -137,8 +138,10 @@ impl fmt::Debug for ServeConfig {
             .field("device_sync", &self.device_sync)
             .field("shared_env", &self.shared_env)
             .field("connectors", &self.connectors)
+            .field("gpu_jobs", &self.gpu_jobs)
             .field("embedding", &self.embedding)
             .field("line", &self.line)
+            .field("mail", &self.mail)
             .field("channel_endpoints", &self.channel_endpoints)
             .field("apns", &self.apns)
             .field("linear", &self.linear)
@@ -155,6 +158,8 @@ impl fmt::Debug for ServeConfig {
                 &self.off_record_dump_suppression,
             )
             .field("device_class", &self.device_class)
+            .field("machine_reported_name", &self.machine_reported_name)
+            .field("machine_reported_model", &self.machine_reported_model)
             .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
             .field(
                 "publisher_training_outbox_dir",

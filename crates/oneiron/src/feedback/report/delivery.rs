@@ -30,6 +30,8 @@ pub use self::owner::{
     ReportDeliveryRun, ReportDeliveryRunRequest, ReportDeliveryStatus, ReportDeliveryStatusRequest,
     ReportPublisherBinding, ReportPublisherBindingRequest,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::packet_signature::packet_content_hash_for_test;
 pub use self::retry::ReportDeliveryRetryRequest;
 pub(crate) use self::wire::received_issue_signature;
 use self::wire::{SignatureSink, signature_request, wire_body};

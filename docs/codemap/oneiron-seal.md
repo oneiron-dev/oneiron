@@ -22,8 +22,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/cms/der.rs` | src | s | 11 crate-vis | — | Strict-DER TLV writer/reader plus the shared sha256 helper |
 | `src/native/cms/mod.rs` | src | s | 7 crate-vis | — | CMS/CAdES SignedData assembly and parsing with exact byte control (§7.3) |
 | `src/native/cms/oids.rs` | src | s | 14 crate-vis | — | Canonical CMS, suite, and attribute OID constants |
-| `src/native/cms/parse.rs` | src | m | 7 crate-vis | — | Strict CMS ContentInfo/SignerInfo parsing with version gating |
-| `src/native/cms/policy.rs` | src | s | 10 crate-vis | — | Attribute/ESS binding and frozen signature-suite verification gates |
+| `src/native/cms/parse.rs` | src | m | 8 crate-vis | — | Strict CMS ContentInfo/SignerInfo parsing with version gating |
+| `src/native/cms/parse/issuer_link.rs` | src | m | 3 crate-vis | — | Bounded certificate-signature issuer walks for CMS certificate bags |
+| `src/native/cms/policy.rs` | src | s | 11 crate-vis | — | Attribute/ESS binding and frozen signature-suite verification gates |
 | `src/native/cms/tests.rs` | test | m | — | — | CMS assembly/parsing round-trip, canonicality, and version-gating tests |
 | `src/native/engine.rs` | src | m | 1 struct · 3 fn | NativeSealEngine | `NativeSealEngine`: composition of config, backend, fetcher, and clock |
 | `src/native/fetch.rs` | src | m | 1 struct · 1 fn · 1 re-export · 2 crate-vis | SsrfGuardedHttpFetcher | SSRF-guarded fetcher (§5) |
@@ -61,7 +62,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/verify/timestamp_evidence.rs` | src | s | 7 crate-vis | — | Total private RFC 3161 outcomes; one projection emits crypto and TSA trust |
 | `src/native/verify/verify_chain_gates.rs` | src | m | 12 crate-vis | — | Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and… |
 | `src/native/verify/verify_dss_core.rs` | src | L | 14 crate-vis | — | DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage… |
-| `src/native/verify/verify_evidence.rs` | src | s | 6 crate-vis | — | Private, bounded evidence collected before trust, time, and profile decisions |
+| `src/native/verify/verify_evidence.rs` | src | s | 7 crate-vis | — | Private, bounded evidence collected before trust, time, and profile decisions |
 | `src/native/verify/verify_report_build.rs` | src | s | 2 crate-vis | — | Project completed evidence into the public per-envelope report once |
 | `src/native/verify/verify_revisions.rs` | src | m | 1 crate-vis | — | Bounded revision snapshots and default-deny classification of post-sign changes |
 | `src/native/verify/verify_revocation.rs` | src | m | 11 crate-vis | — | CRL/OCSP evidence validators: issuer key-binding, freshness windows and clock-skew bounds |
@@ -87,6 +88,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/seal_vectors.rs` | test | m | — | — | Seal-path vectors: B-B/B-T/B-LT/B-LTA assembly, degradation warnings, evidence digests, and backend seam… |
 | `tests/it/verify_vectors.rs` | test | s | — | — | Verify-path vectors: mutation matrix, prepared-input rejection codes, and structural failure classification… |
 | `tests/oracle.rs` | test | s | — | — | CI differential oracle (§9, amendment A6) |
+| `tests/seal_covered_set_includes_unrelated_cms_certs.rs` | test | m | — | — | An unrelated certificate carried in a CMS certificate bag is on no selected certification path |
 | `tests/seal_delta_crl_oid.rs` | test | s | — | — | Seal-path rows for the CRL complete-scope OID gate (FIX-LIST [SEAL-DELTA-CRL-OID]): a delta CRL (carrying… |
 | `tests/seal_ocsp_byname_responder_first_match.rs` | test | s | — | — | [SEAL-OCSP-BYNAME-RESPONDER-FIRST-MATCH] (FIX-LIST line 22803): a ByName OCSP responder used to be the first… |
 | `tests/support/mod.rs` | test | m | 45 crate-vis | — | Shared test support: ephemeral identities, fixture backend/fetcher/clock, and a functional fixture TSA |

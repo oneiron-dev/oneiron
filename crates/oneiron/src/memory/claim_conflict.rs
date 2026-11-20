@@ -17,6 +17,7 @@ use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{GateDecisionId, PolicyBasis};
 use crate::temporal::TimeRange;
 use crate::{EntityId, WriteActor, WriteEnvelope, WriteProvenance};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
 
 /// Content-addressed claim-conflict review packet. Key: bytes32 (bundle id).
@@ -61,10 +62,22 @@ fn encode(bundle: &ClaimConflictBundle) -> Result<Vec<u8>, Error> {
 fn digest(bundle: &ClaimConflictBundle) -> Result<[u8; 32], Error> {
     let mut input = bundle.clone();
     input.bundle_id = [0; 32];
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron.consent_bundle.claim_conflict.v1\0");
-    hash.update(&encode(&input)?);
-    Ok(*hash.finalize().as_bytes())
+    Ok(packet_digest(&encode(&input)?))
+}
+/// A packet's content address: BLAKE3 over
+/// `purposes::claim::CONFLICT_PACKET`'s tag (its NUL included) and then the
+/// stripped packet's bytes, with its own id zeroed. The packet row is keyed
+/// by it and every load checks it, so it keeps its bytes (K, PLAN-UC-04
+/// stage 6).
+fn packet_digest(stripped: &[u8]) -> [u8; 32] {
+    LegacyDigest::new(purposes::claim::CONFLICT_PACKET)
+        .raw(stripped)
+        .finish()
+}
+/// The content address of a packet whose stripped bytes are `stripped`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn claim_conflict_packet_digest_for_test(stripped: &[u8]) -> [u8; 32] {
+    packet_digest(stripped)
 }
 fn load(
     vault: &crate::Vault,
