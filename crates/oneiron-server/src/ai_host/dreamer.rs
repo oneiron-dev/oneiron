@@ -194,8 +194,10 @@ pub(super) struct DreamerStart {
 /// provider that names no output ceiling reserves [`EXTRACTION_MAX_TOKENS`],
 /// the largest output a Dreamer call asks, since its server's own default
 /// sizes the reply: an input that filled the whole context would leave an
-/// extraction's thought and answer no room. A context no larger than its
-/// reserve reserves nothing.
+/// extraction's thought and answer no room. That reserve is at most half the
+/// context, so an input keeps room just above it too (a resident halves its
+/// window again). A context no larger than [`EXTRACTION_MAX_TOKENS`] with no
+/// ceiling, or no larger than its ceiling, reserves nothing.
 pub(super) fn dream_windows(models: &ModelsConfig) -> BTreeMap<ModelId, u64> {
     let mut windows = BTreeMap::new();
     for rungs in models.roles.values() {
@@ -206,7 +208,13 @@ pub(super) fn dream_windows(models: &ModelsConfig) -> BTreeMap<ModelId, u64> {
             let Ok(model) = rung.model.engine_id(&provider.revision) else {
                 continue;
             };
-            let output = provider.max_output_tokens.unwrap_or(EXTRACTION_MAX_TOKENS);
+            let output = match provider.max_output_tokens {
+                Some(ceiling) => ceiling,
+                None if provider.context_tokens > EXTRACTION_MAX_TOKENS => {
+                    EXTRACTION_MAX_TOKENS.min(provider.context_tokens / 2)
+                }
+                None => 0,
+            };
             let room = provider
                 .context_tokens
                 .checked_sub(output)

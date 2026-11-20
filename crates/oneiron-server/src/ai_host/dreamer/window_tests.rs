@@ -7,21 +7,38 @@ use super::dream_windows;
 use crate::ai_host::test_support::models_toml;
 
 /// The house layout (deploy/house-model/models.toml): a 32,768-token server
-/// that names no output ceiling, and beside it one that names 2,048.
+/// that names no output ceiling, and beside it one that names 2,048; then
+/// two servers with no ceiling, one a token past the extraction ask and one
+/// below it.
 const MODELS: &str = r#"
 [providers.house]
 kind = "local-openai-compat"
-base_url = "http://127.0.0.1:18091"
+base_url = "http://127.0.0.1/house"
 context_tokens = 32768
 
 [providers.capped]
 kind = "local-openai-compat"
-base_url = "http://127.0.0.1:18134"
+base_url = "http://127.0.0.1/capped"
 context_tokens = 32768
 max_output_tokens = 2048
 
+[providers.tight]
+kind = "local-openai-compat"
+base_url = "http://127.0.0.1/tight"
+context_tokens = 12289
+
+[providers.small]
+kind = "local-openai-compat"
+base_url = "http://127.0.0.1/small"
+context_tokens = 8192
+
 [roles.dreamer_current]
-rungs = [{ model = "house:qwen" }, { model = "capped:qwen" }]
+rungs = [
+    { model = "house:qwen" },
+    { model = "capped:qwen" },
+    { model = "tight:qwen" },
+    { model = "small:qwen" },
+]
 "#;
 
 /// The window the Dreamer lends `provider`'s model.
@@ -38,4 +55,15 @@ fn a_provider_naming_no_output_ceiling_leaves_the_extraction_ask_room() {
 #[test]
 fn a_provider_output_ceiling_stays_its_reserve() {
     assert_eq!(window("capped"), 32_768 - 2_048);
+}
+
+#[test]
+fn an_uncapped_context_just_past_the_ask_keeps_half_its_window() {
+    assert_eq!(EXTRACTION_MAX_TOKENS + 1, 12_289);
+    assert_eq!(window("tight"), 12_289 - 12_289 / 2);
+}
+
+#[test]
+fn an_uncapped_context_below_the_ask_keeps_its_whole_window() {
+    assert_eq!(window("small"), 8_192);
 }
