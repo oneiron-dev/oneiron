@@ -235,11 +235,14 @@ fn an_agent_grant_ends_on_wall_time_at_an_owner_act() {
 /// and its delete is refused after, the NOTE untouched, even though the
 /// authority clock still precedes the deadline.
 ///
-/// The `delete` Grant expires; a separate `read` Grant has no end, so the
+/// The expiring Grant names `read` and `delete`: the delete arm takes only
+/// a Grant that confers (`delete_authority.rs` `agent_arm`), and `confers`
+/// reports the `read` verb only, so a Grant naming `delete` alone never
+/// admits a delete, live or not. A separate `read` Grant has no end, so the
 /// NOTE still resolves for the agent after the deadline and the refusal
-/// comes from the delete arm itself. One expiring Grant naming both verbs
-/// would be refused earlier, at `entity_ref` resolution, once its `read`
-/// ends (INVENTED_REFERENCE).
+/// comes from the delete arm itself. The expiring Grant alone would be
+/// refused earlier, at `entity_ref` resolution, once its `read` ends
+/// (INVENTED_REFERENCE).
 #[test]
 fn an_agent_grant_ends_on_wall_time_at_vault_delete() {
     let fixture = Fixture::open();
@@ -255,7 +258,7 @@ fn an_agent_grant_ends_on_wall_time_at_vault_delete() {
         &fixture.proof,
         agent,
         "expiry_delete_agent",
-        &["delete"],
+        &["read", "delete"],
         Some(GRANT_END),
     );
     // A `user_delete` may write: both NOTEs exist before the clock moves,

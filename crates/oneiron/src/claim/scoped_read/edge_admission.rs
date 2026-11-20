@@ -240,7 +240,11 @@ impl ScopedRead<'_> {
     ) -> std::result::Result<ScopedReadResult<T>, E> {
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
-        let anchor = self.admit_entity_in(&txn, &policy, &filter, center)?;
+        // One held authority for the anchor and every peer in this txn, as
+        // a point read holds (FIX 7462): a row a live Grant of this key
+        // admits is a neighbor here too.
+        let held = self.held_for(None);
+        let anchor = self.admit_entity_held_in(&txn, &policy, &filter, center, &held)?;
         let mut neighbors = Vec::new();
         // A withheld peer counts once however many edges reach it.
         let mut suppressed_peers = HashSet::new();
@@ -281,7 +285,7 @@ impl ScopedRead<'_> {
                         tgt,
                         edge,
                         || Ok(ReadAdmission::Visible(())),
-                        || self.admit_entity_in(&txn, &policy, &filter, &peer),
+                        || self.admit_entity_held_in(&txn, &policy, &filter, &peer, &held),
                     )?;
                     if admitted.suppression() > 0 {
                         suppressed_peers.insert(peer);
@@ -303,7 +307,7 @@ impl ScopedRead<'_> {
             }
         }
         let suppressed = anchor.suppression() + suppressed_peers.len();
-        let receipt = self.receipt_for(None, &policy, &filter, suppressed);
+        let receipt = self.receipt_in(&txn, None, &policy, &filter, suppressed, Some(&held));
         Ok(ScopedReadResult {
             value: project(&txn, anchor.visible().then_some(neighbors))?,
             receipt,
@@ -313,8 +317,8 @@ impl ScopedRead<'_> {
     /// The `ChildOf` tree under `root` from ONE snapshot under one receipt:
     /// the root at depth zero, then breadth-first each child whose exact
     /// relation and both endpoints are admitted, down to `max_depth`. `node`
-    /// decodes each admitted live row; a row it declines is not in the tree
-    /// and is not descended. The value is `None` when the root is withheld,
+    /// decodes each admitted live row in the tree's snapshot; a row it
+    /// declines is not in the tree and is not descended. The value is `None` when the root is withheld,
     /// missing or declined. `project` labels the nodes in the same snapshot.
     /// A withheld root or child counts once in the receipt and its subtree is
     /// not read; an opaque or declined row, or one below `max_depth`, never
@@ -326,7 +330,7 @@ impl ScopedRead<'_> {
         root: &EntityId,
         max_depth: u32,
         node_type: Option<u8>,
-        node: impl Fn(&[u8]) -> std::result::Result<Option<N>, E>,
+        node: impl Fn(&heed::RoTxn<'_>, &[u8]) -> std::result::Result<Option<N>, E>,
         project: impl FnOnce(
             &heed::RoTxn<'_>,
             Option<Vec<ChildOfTreeNode<N>>>,
@@ -334,7 +338,8 @@ impl ScopedRead<'_> {
     ) -> std::result::Result<ScopedReadResult<T>, E> {
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
-        // One held authority for the tree's node reads in this txn (FIX 7462).
+        // One held authority for the tree's root, edges and node reads in
+        // this txn (FIX 7462).
         let held = self.held_for(None);
         let read_node = |id: &EntityId| {
             self.admit_in(&txn, id, || {
@@ -349,7 +354,7 @@ impl ScopedRead<'_> {
                     .is_some_and(|row| row.entity_type == wanted),
             })
         };
-        let root_row = match self.admit_entity_in(&txn, &policy, &filter, root)? {
+        let root_row = match self.admit_entity_held_in(&txn, &policy, &filter, root, &held)? {
             ReadAdmission::Visible(()) => read_node(root)?,
             ReadAdmission::Suppressed => ReadAdmission::Suppressed,
             ReadAdmission::OpaqueAbsent => ReadAdmission::OpaqueAbsent,
@@ -357,7 +362,7 @@ impl ScopedRead<'_> {
         let mut suppressed = root_row.suppression();
         let mut tree = None;
         if let Some(row) = root_row.into_option()
-            && let Some(value) = node(&row.raw)?
+            && let Some(value) = node(&txn, &row.raw)?
         {
             let mut nodes = vec![ChildOfTreeNode {
                 id: *root,
@@ -373,7 +378,7 @@ impl ScopedRead<'_> {
                 if depth >= max_depth {
                     continue;
                 }
-                let admitted = self.admitted_edges_in(
+                let admitted = self.admitted_edges_held_in(
                     &txn,
                     &policy,
                     &filter,
@@ -383,6 +388,7 @@ impl ScopedRead<'_> {
                     usize::MAX,
                     usize::MAX,
                     true,
+                    &held,
                 )?;
                 // A child its edge admission withholds counts here, unread.
                 for peer in &admitted.suppressed_peers {
@@ -406,7 +412,7 @@ impl ScopedRead<'_> {
                     let Some(row) = child_row.into_option() else {
                         continue;
                     };
-                    if let Some(value) = node(&row.raw)? {
+                    if let Some(value) = node(&txn, &row.raw)? {
                         nodes.push(ChildOfTreeNode {
                             id: child,
                             parent: Some(parent),
@@ -418,7 +424,7 @@ impl ScopedRead<'_> {
             }
             tree = Some(nodes);
         }
-        let receipt = self.receipt_for(None, &policy, &filter, suppressed);
+        let receipt = self.receipt_in(&txn, None, &policy, &filter, suppressed, Some(&held));
         self.charge_served(tree.iter().flatten().map(|node| node.id));
         Ok(ScopedReadResult {
             value: project(&txn, tree)?,

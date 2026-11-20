@@ -71,14 +71,18 @@ pub fn append_prediction_dated(
     set: &PredictedResidenceSet,
     issued_at: u64,
 ) -> crate::error::Result<EntityId> {
-    let owner = SyncConnection::directives_naming_machine(vault, machine)?
-        .into_iter()
-        .find_map(|directive| (directive.id == parent).then_some(directive.owner))
-        .ok_or_else(|| {
-            crate::error::Error::InvalidConfig(
-                "a prediction names its owner's directive".to_owned(),
-            )
-        })?;
+    let owner = {
+        let txn = vault.store.env.read_txn()?;
+        crate::sync::residence::directive_states_in_txn(vault, &txn)?
+            .into_iter()
+            .find_map(|state| {
+                (state.directive.machine == machine && state.directive.id == parent)
+                    .then_some(state.directive.owner)
+            })
+    }
+    .ok_or_else(|| {
+        crate::error::Error::InvalidConfig("a prediction names its owner's directive".to_owned())
+    })?;
     let id = EntityId::now();
     let (window_count, document_count) = set.counts().ok_or_else(|| {
         crate::error::Error::InvalidConfig("a prediction fits its counts".to_owned())

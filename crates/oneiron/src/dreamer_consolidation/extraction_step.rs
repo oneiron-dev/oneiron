@@ -484,7 +484,8 @@ pub(crate) async fn execute_bound_step(
 /// The helper prepares the queued attempt the way native extraction
 /// does, opens its branch, and slices the given TURNs natively with
 /// `material` on the wake, so each transcript leads with the shared
-/// material prefix. Tests compare the bound request text against the
+/// material prefix. The wake's listings are read for `destination_bound`,
+/// as a driven pass reads them. Tests compare the bound request text against the
 /// matching slice transcript, mapping native order to request evidence
 /// positions through the turns.
 ///
@@ -498,14 +499,20 @@ pub(crate) fn native_slice_transcripts_for_test(
     attempt: crate::attempt_queue::AttemptId,
     turns: &[EntityId],
     material: &[String],
+    destination_bound: Option<&crate::settings::ReadDestination>,
 ) -> MemoryResult<Vec<(Vec<EntityId>, String)>> {
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     let attempt_entity = EntityId::from_bytes(*attempt.as_bytes()).map_err(crate::Error::from)?;
     let (scope, _) =
         crate::snapshot_read::queued_extraction_branch_in_txn(vault, &txn, attempt_entity)?;
     drop(txn);
-    let wake = super::wake_plan::PreparedWake::prepare_one(vault, scope, None, attempt)
-        .map_err(MemoryError::from)?;
+    let wake = super::wake_plan::PreparedWake::prepare_one_for_bound(
+        vault,
+        scope,
+        attempt,
+        destination_bound,
+    )
+    .map_err(MemoryError::from)?;
     let plan = match wake.preparation(attempt) {
         Some(super::wake_plan::AttemptPreparation::Ready(plan)) => plan.clone(),
         _ => {

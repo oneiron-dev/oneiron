@@ -300,21 +300,7 @@ pub fn decode_scope_summary_body(bytes: &[u8]) -> Result<ScopeSummaryBody> {
     if !bytes.is_empty() {
         return Err(invalid("trailing summary bytes"));
     }
-    let version = match &value {
-        Value::Map(entries) => entries
-            .iter()
-            .find(|(key, _)| key.as_str() == Some("v"))
-            .and_then(|(_, v)| v.as_u64()),
-        _ => None,
-    };
-    let v = closed_map(
-        &value,
-        if version == Some(2) {
-            &V2_KEYS[..]
-        } else {
-            &V1_KEYS[..]
-        },
-    )?;
+    let v = closed_map(&value, body_keys(&value))?;
     let covers = v[4]
         .as_array()
         .ok_or_else(|| invalid("covers must be an array"))?;
@@ -380,6 +366,48 @@ pub fn decode_scope_summary_body(bytes: &[u8]) -> Result<ScopeSummaryBody> {
     };
     validate(&body)?;
     Ok(body)
+}
+
+/// The closed key set of a scope-summary body at `value`'s version: the
+/// composed body's at version 2, the first body's otherwise.
+fn body_keys(value: &Value) -> &'static [&'static str] {
+    let version = match value {
+        Value::Map(entries) => entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("v"))
+            .and_then(|(_, v)| v.as_u64()),
+        _ => None,
+    };
+    if version == Some(2) {
+        &V2_KEYS
+    } else {
+        &V1_KEYS
+    }
+}
+
+/// The producer of the scope-summary body `bytes`, read without its text
+/// (review P1 of #9808). The producer is fixed when the summary is minted;
+/// the text is an editable document, and its merged edits may leave a blank
+/// text, which [`decode_scope_summary_body`] refuses. The body must be a
+/// scope summary's, by its closed key set at a version this codec writes:
+/// an epoch SUMMARY has the same entity type and an `actor` too (review
+/// round 2 of #9808). Refuses any other body, trailing bytes, and a body
+/// that names no valid producer.
+pub fn scope_summary_actor(bytes: &[u8]) -> Result<EntityId> {
+    let mut cursor = bytes;
+    let value = rmpv::decode::read_value(&mut cursor)
+        .map_err(|_| invalid("invalid summary MessagePack"))?;
+    if !cursor.is_empty() {
+        return Err(invalid("trailing summary bytes"));
+    }
+    let v = closed_map(&value, body_keys(&value))?;
+    if !matches!(v[0].as_u64(), Some(1 | 2)) {
+        return Err(invalid("unsupported scope summary version"));
+    }
+    let actor = v[3]
+        .as_str()
+        .ok_or_else(|| invalid("actor must be a string"))?;
+    EntityId::from_hex(actor).map_err(|_| invalid("invalid summary actor"))
 }
 
 /// Recognizes scope-summary identity before strict decoding, including a

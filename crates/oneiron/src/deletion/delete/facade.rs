@@ -1,6 +1,7 @@
 //! Public and gated delete entry points plus the headerful orchestration state machine.
 
 use crate::Vault;
+use crate::batch::EntityMetadataHeader;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -325,20 +326,22 @@ impl Vault {
 
     /// Under the single LMDB writer, refuse live grants and fence the target
     /// before either headerful or headerless tombstone publication. Fully
-    /// absent IDs never reach this method.
+    /// absent IDs never reach this method. A user delete gets its hold on the
+    /// fence, which [`crate::deletion::conclude_brief_delete`] ends with the
+    /// delete's outcome.
     pub(super) fn reserve_user_brief_delete(
         &self,
         id: &EntityId,
         reason: DeleteReason,
         gate: Option<&GatedDeletion<'_>>,
         owner: Option<&AuthenticatedOwner>,
-    ) -> Result<()> {
+    ) -> Result<Option<crate::deletion::BriefDeleteFence<'_>>> {
         if matches!(
             reason,
             DeleteReason::UserDelete | DeleteReason::UserHardDelete | DeleteReason::OwnerErase
         ) {
             self.retract_brief_shares_unconfirmed(id, gate)?;
-            let mut txn = self.store.env.write_txn()?;
+            let txn = self.store.env.write_txn()?;
             reverify_deletion_authority_before_publication(gate, &txn)?;
             reverify_owner_proof_before_publication(self, owner, &txn)?;
             self.store.delete_guards.precheck_goal_delete(
@@ -359,10 +362,13 @@ impl Vault {
                     "active brief share requires confirmed delete",
                 ));
             }
-            crate::share::reserve_brief_delete(&self.store, &mut txn, id)?;
-            txn.commit()?;
+            return self
+                .store
+                .brief_delete_fences
+                .reserve(&self.store, txn, id)
+                .map(Some);
         }
-        Ok(())
+        Ok(None)
     }
 
     /// With the owner's `deletion.brief_share.require_confirmed` off, the owner's own delete first
@@ -465,12 +471,41 @@ impl Vault {
                 header,
             } => (requested_at, header),
         };
-        let plan = self.delete_plan_phase(id, reason, &gate, owner, requested_at, header)?;
+        let fence = self.delete_reserve_phase(id, reason, &gate, owner)?;
+        let outcome = self.delete_entity_reserved(
+            id,
+            reason,
+            &gate,
+            allow_replay_test,
+            due,
+            owner,
+            requested_at,
+            header,
+        );
+        crate::deletion::conclude_brief_delete(fence, &self.store, outcome)
+    }
+
+    /// [`Self::delete_entity_with_reason_impl_across`] past its reservation:
+    /// plans the delete, then runs its soft arm, or its hard setup and its
+    /// receipt. Its outcome concludes the reservation's hold.
+    #[expect(clippy::too_many_arguments)]
+    fn delete_entity_reserved(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+        gate: &Option<GatedDeletion<'_>>,
+        allow_replay_test: bool,
+        due: Option<&PendingConfirmedErase>,
+        owner: Option<&AuthenticatedOwner>,
+        requested_at: u64,
+        header: EntityMetadataHeader,
+    ) -> Result<DeleteEntityOutcome> {
+        let plan = self.delete_plan_phase(id, reason, gate, requested_at, header)?;
         if !reason.active_store_hard_purge_v1() {
             return self.delete_soft_arm_phase(
                 id,
                 reason,
-                &gate,
+                gate,
                 allow_replay_test,
                 due,
                 owner,
@@ -485,7 +520,7 @@ impl Vault {
         let hard = self.delete_hard_setup_phase(
             id,
             reason,
-            &gate,
+            gate,
             allow_replay_test,
             due,
             owner,
@@ -498,7 +533,7 @@ impl Vault {
         self.delete_receipt_phase(
             id,
             reason,
-            &gate,
+            gate,
             allow_replay_test,
             due,
             owner,

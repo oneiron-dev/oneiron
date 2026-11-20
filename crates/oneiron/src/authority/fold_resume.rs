@@ -685,6 +685,7 @@ impl FoldBase {
                     .handoff_or_appointment_retired_keys
                     .clone(),
                 closed_handoffs: settlement.closed_handoffs.clone(),
+                crossed_revocations: settlement.crossed_revocations.clone(),
                 unsettled: settlement.unsettled,
                 counted_ancestor_pairs: tail.counted_pairs,
                 issues: settlement.issues.clone(),

@@ -188,7 +188,9 @@ impl Memory<'_> {
         refs: &[String],
         mode: crate::vault::ReadMode,
     ) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
         let targets = refs
             .iter()
             .map(|reference| self.read_target(reference, mode))
@@ -224,7 +226,9 @@ impl Memory<'_> {
         refs: &[String],
         whole_body: bool,
     ) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
         let targets = refs
             .iter()
             .map(|reference| match reference.rsplit_once('@') {
@@ -389,8 +393,12 @@ impl Memory<'_> {
     }
 
     /// Returns the supersession timeline for one claim, oldest first.
+    /// Its revisions are admitted under the key's live Grants too, so its
+    /// receipt reports what admitted them.
     pub fn claim_history(&self, claim_ref: &str) -> MemoryResult<ScopedReadResult<Vec<ClaimView>>> {
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
         let id = self.resolve_ref_in_lane(&lane, claim_ref)?;
         let ScopedReadResult {
             value: timeline,
@@ -644,7 +652,11 @@ impl Memory<'_> {
             })?),
             None => None,
         };
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        // Its anchor and peers are admitted under the key's live Grants too,
+        // so its receipt reports what admitted them.
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
         let id = self.resolve_ref_in_lane(&lane, entity_ref)?;
         // Scan inside the ONE read snapshot. Hidden edges are not results:
         // count only edges admitted by both endpoint and exact-pair gates.

@@ -44,6 +44,7 @@ pub use purpose::SummaryPurpose;
 pub use status::{ArcPendingStatus, ScopeSummaryResult, ScopeSummaryStatus, SummaryStale};
 mod word_sources;
 
+pub(crate) use codec::scope_summary_actor;
 pub use codec::{
     ScopeSummaryBody, SummarySourceMessage, SummarySourceNote, decode_scope_summary_body,
     encode_scope_summary_body,

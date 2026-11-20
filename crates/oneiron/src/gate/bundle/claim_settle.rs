@@ -202,7 +202,7 @@ impl Vault {
                     // pass. Move the indexed frontier before Text, otherwise
                     // the text arm would defer the approved revision again.
                     crate::vault::entity_revision::publish_room_revision(&self.store, wtxn, &id)?;
-                    let text = crate::claim::claim_value_index_text(&resolved.value);
+                    let text = crate::claim::claim_index_text(&resolved.predicate, &resolved.value);
                     self.batch_in()
                         .text(&id, &[("val", text.as_str())])
                         .apply(wtxn)?;
