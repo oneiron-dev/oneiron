@@ -1,7 +1,11 @@
 //! Shared helpers for lent step tests over words that carry a relationship label: witnessing
-//! labelled MESSAGEs, storing relationships, and granting the Dreamer the MESSAGEs of one.
+//! labelled MESSAGEs, storing relationships, and granting the Dreamer the MESSAGEs and the
+//! CLAIMs of one.
 //!
 //! The recipe is the one of `tests/extraction_operand_relationship_bound.rs`.
+
+// Each test file that includes this module uses only some of its helpers.
+#![allow(dead_code)]
 
 use std::collections::BTreeSet;
 
@@ -91,6 +95,36 @@ pub(crate) fn grant_relationship_messages(
     vault: &Vault,
     relationship: EntityId,
 ) -> LabelledTurnsResult<()> {
+    grant_relationship_read(
+        vault,
+        AccessGrantScope::Messages {
+            space_ref: relationship,
+        },
+        AccessGrantCapability::MessagesRead,
+    )
+}
+
+/// Grants the Dreamer a live `RelationshipClaimsRead` grant on `relationship`, so its claim
+/// reader serves the CLAIMs scoped to that relationship.
+pub(crate) fn grant_relationship_claims(
+    vault: &Vault,
+    relationship: EntityId,
+) -> LabelledTurnsResult<()> {
+    grant_relationship_read(
+        vault,
+        AccessGrantScope::RelationshipClaims {
+            space_ref: relationship,
+        },
+        AccessGrantCapability::RelationshipClaimsRead,
+    )
+}
+
+/// Grants the Dreamer one live read grant of `capability` over `scope`.
+fn grant_relationship_read(
+    vault: &Vault,
+    scope: AccessGrantScope,
+    capability: AccessGrantCapability,
+) -> LabelledTurnsResult<()> {
     let actor = dreamer(vault)?;
     let mut authority_scope = Scope::top();
     authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
@@ -99,10 +133,8 @@ pub(crate) fn grant_relationship_messages(
         &AccessGrant {
             authority_scope,
             principal_ref: actor,
-            scope: AccessGrantScope::Messages {
-                space_ref: relationship,
-            },
-            capability: AccessGrantCapability::MessagesRead,
+            scope,
+            capability,
             status: AccessGrantStatus::Active,
             created_at: vault.now_recorded_at(),
             revoked_at: None,
