@@ -1,10 +1,11 @@
 //! The retired-standing checks of a signed-history import and of a delivery
-//! page: an arriving row never stands on a key a handoff retired.
+//! page: an arriving row never stands on a retired key (one a handoff, a
+//! counted root appointment or a revocation retired).
 
 use super::*;
 
-/// Refuses the import when an arriving row stands on a key a handoff retired
-/// in `fold` ([`retired_standing`]).
+/// Refuses the import when an arriving row stands on a key `fold` holds
+/// retired ([`retired_standing`]).
 pub(super) fn refuse_retired_standing(
     store: &crate::store::Store,
     posture: crate::HostingPrivacyPosture,
@@ -19,7 +20,7 @@ pub(super) fn refuse_retired_standing(
     }
 }
 
-/// Whether an arriving row stands on a key a handoff retired in `fold`, as
+/// Whether an arriving row stands on a key `fold` holds retired, as
 /// [`retired_standing`] reads it, recording nothing (FIX 2536). The fold
 /// before staging may lack a handoff's own ancestry, so an import it flags is
 /// judged again on the merged history it stages, and refused, with its
@@ -45,13 +46,16 @@ pub(super) fn flags_retired_standing(
     Ok(false)
 }
 
+/// The refusal of an import or a page that holds such a row. Its text names
+/// no cause of the retirement: the same check refuses a row that stands on a
+/// key a handoff, a counted root appointment or a revocation retired.
 pub(super) fn retired_standing_refusal() -> Error {
     Error::Record(RecordError::InvalidAuthorityLogBody(
-        "authority history standing on a key a handoff retired",
+        "authority history standing on a retired key",
     ))
 }
 
-/// The first arriving row that stands on a key a handoff retired in `fold`:
+/// The first arriving row that stands on a key `fold` holds retired:
 /// such a key signs nothing new into this history, and nothing new stands on
 /// a row one signed. `merged` holds the resident and arriving rows. On a
 /// vault that adopted a checkpoint image (`evidence`), an ancestor `merged`
