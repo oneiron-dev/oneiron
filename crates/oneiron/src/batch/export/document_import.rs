@@ -1097,17 +1097,6 @@ fn insert_ready_row<R: Read + Seek>(
                 }
                 Some(ReservedClaimImport::Restore(ReservedClaimRestore::ActorProjection)) => vault
                     .restore_actor_projection_in_txn(wtxn, &id, &claim, occurred, row.learned_at),
-                _ if claim.predicate
-                    == crate::write_envelope::learning_predicate::PREDICATE_LEARNING_RELIABILITY =>
-                {
-                    vault.restore_reliability_claim_in_txn(
-                        wtxn,
-                        &id,
-                        &claim,
-                        occurred,
-                        row.learned_at,
-                    )
-                }
                 // The owner's restore lists each open proposal it inserts in its
                 // inbox group (R1, RULING 02:26 13 Nov). A claim about a link
                 // goes in after its link, staged here; one whose link does not
