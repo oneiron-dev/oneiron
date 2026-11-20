@@ -235,7 +235,8 @@ impl Vault {
         };
         // A row no reader decodes is never stored: a scope id of a reserved pattern encodes to
         // key bytes `RowKey::decode` refuses (FIX SETTING-SCOPE-RESERVED-ID-NOT-ROUND-TRIPPED).
-        if RowKey::decode(&key.encode()).as_ref() != Some(&key) {
+        // A clear still runs, so it removes such a row stored before.
+        if request.value.is_some() && RowKey::decode(&key.encode()).as_ref() != Some(&key) {
             return Err(Error::InvalidConfig(format!(
                 "`{}` has no row at a {} scope whose id no reader decodes",
                 spec.name,
