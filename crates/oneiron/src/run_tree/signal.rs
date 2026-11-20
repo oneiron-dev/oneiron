@@ -35,6 +35,32 @@ fn measure_questions(watch: &LimitWatch, questions: &[RunAskQuestion]) {
     }
 }
 
+/// The ask `asks` holds under `handle`: as written, or as the side-row wall
+/// stored it, a value base custody holds read as its record's handle in the
+/// handle too (blind review round 1 of #9803). `known` gives the values
+/// custody holds now, read only when no ask holds `handle` as written; two
+/// values custody holds apart stay two handles ([`admitted_from_known`]).
+fn held_ask<'a>(
+    asks: &'a [RunAsk],
+    handle: &str,
+    known: impl FnOnce() -> Result<Option<std::sync::Arc<KnownValues>>>,
+) -> Result<Option<&'a RunAsk>> {
+    if let Some(ask) = asks.iter().find(|ask| ask.handle == handle) {
+        return Ok(Some(ask));
+    }
+    if asks.is_empty() {
+        return Ok(None);
+    }
+    let known = known()?;
+    let offered = named_tree(&handle)?;
+    for ask in asks {
+        if admitted_from_known(&named_tree(&ask.handle)?, &offered, || Ok(known.clone()))? {
+            return Ok(Some(ask));
+        }
+    }
+    Ok(None)
+}
+
 fn live(state: AttemptState) -> bool {
     matches!(state, AttemptState::Leased | AttemptState::Landing)
 }
@@ -71,9 +97,10 @@ impl RunTreeAdapter<'_> {
     /// Creates an ask under the worker's lease. It is a durable handle: hosts
     /// unable to receive an observer invalidation may read it via `peek_ask`.
     ///
-    /// Answers the ask as the side-row wall stored it, which `peek_ask` reads
-    /// and the identical ask opened again replays, as `signal` answers its
-    /// receipt (FIX KNOWN-ASK-REOPEN-ANSWERS-MASKED-ROW).
+    /// Answers the ask as the side-row wall stored it, its handle too, which
+    /// `peek_ask` reads under that handle and the identical ask opened again
+    /// replays, as `signal` answers its receipt (FIX
+    /// KNOWN-ASK-REOPEN-ANSWERS-MASKED-ROW).
     pub fn open_ask(
         &self,
         branch: AttemptId,
@@ -98,7 +125,9 @@ impl RunTreeAdapter<'_> {
         {
             return Err(Error::InvalidConfig("ask branch lease mismatch".into()));
         }
-        if let Some(existing) = record.asks.iter().find(|ask| ask.handle == handle) {
+        if let Some(existing) = held_ask(&record.asks, handle, || {
+            KnownValues::shared_in_writer(&self.vault.store, &txn)
+        })? {
             // The held questions are as the side-row wall stored them: a
             // secret it lifted reads as its handle there (OF-067), and so
             // does a value base custody holds, which the wall planned with
@@ -116,24 +145,30 @@ impl RunTreeAdapter<'_> {
             return Ok(existing.clone());
         }
         measure_questions(&self.vault.store.limit_watch, &questions);
-        let ask = RunAsk {
+        let appended_at = record.asks.len();
+        record.asks.push(RunAsk {
             handle: handle.into(),
             questions,
             answers: Vec::new(),
-        };
-        record.asks.push(ask.clone());
+        });
         self.save(&mut txn, &mut record)?;
+        // The ask as the side-row wall stored it, at the place it was
+        // appended: a secret it lifted, or a value base custody holds, reads
+        // as its record's handle there, in the ask's handle as in its words
+        // (blind review round 1 of #9803), so the handle as written may name
+        // no held ask. Answering the ask as written would give the identical
+        // ask opened again another ask than its first open gave, and a
+        // handle `peek_ask` does not know.
+        let stored = record
+            .asks
+            .get(appended_at)
+            .cloned()
+            .ok_or(Error::InvariantViolation(
+                "an opened ask is missing from the branch its writer stored",
+            ))?;
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
-        // The ask as the side-row wall stored it: a secret it lifted, or a
-        // value base custody holds, reads as its handle there. Answering the
-        // questions as written would give the identical ask opened again
-        // another ask than its first open gave.
-        Ok(record
-            .asks
-            .into_iter()
-            .find(|held| held.handle == handle)
-            .unwrap_or(ask))
+        Ok(stored)
     }
 
     /// Non-blocking Signal admission. Reusing a key with identical input
