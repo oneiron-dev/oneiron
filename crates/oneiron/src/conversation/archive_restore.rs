@@ -16,7 +16,7 @@ mod ledger;
 #[cfg(oneiron_test_support)]
 pub(crate) use ledger::test_support as ledger_test_support;
 pub(crate) use ledger::{
-    preland_room_ledgers_in_txn, remove_orphaned_prelanded_rooms_in_txn,
+    is_ledger_table, preland_room_ledgers_in_txn, remove_orphaned_prelanded_rooms_in_txn,
     rooms_owner_restore_cannot_seat,
 };
 

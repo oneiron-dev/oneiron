@@ -70,6 +70,24 @@ pub(super) fn rows_in(
     Ok(rows)
 }
 
+/// The entities stored membership row `value` names: its PERSON, its actor and, on a speaker
+/// handoff's Join, the receipt's entry, room, contact and PERSON. `None` when the bytes do not
+/// read as a row. The whole-vault export asks its egress check about each (REVIEW-9446 round 2
+/// P1-2).
+pub(crate) fn membership_row_named_entities(value: &[u8]) -> Option<Vec<EntityId>> {
+    let row = MEMBERSHIP_ROWS.decode_value(value).ok()?;
+    let mut named = vec![row.person, row.actor];
+    if let Some(receipt) = &row.handoff {
+        named.extend([
+            receipt.entry_ref,
+            receipt.container,
+            receipt.contact,
+            receipt.person,
+        ]);
+    }
+    Some(named)
+}
+
 /// The row version and time order of a ledger, shared by the stored read and the owner's
 /// archive landing.
 pub(super) fn check_row_order(rows: &[MembershipRow]) -> Result<()> {

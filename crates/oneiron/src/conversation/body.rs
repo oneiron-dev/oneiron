@@ -137,6 +137,21 @@ fn leader_chat_bound_in(
         == Some(encoded))
 }
 
+/// Whether room `id`'s `body` carries a leader chat binding this vault's project door did not
+/// make: [`validate_put_in_txn`] refuses it on a room this vault does not hold.
+pub(crate) fn leader_chat_binding_unbound_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    body: &ConversationBody,
+) -> Result<bool> {
+    let Some(value) = body.extra.get(crate::workspace_roster::LEADER_CHAT_FIELD) else {
+        return Ok(false);
+    };
+    let encoded = rmp_serde::to_vec_named(value).map_err(|_| invalid("leader chat binding"))?;
+    Ok(!leader_chat_bound_in(store, txn, id, &encoded)?)
+}
+
 /// Whether [`validate_put_in_txn`] would refuse `bytes` as the first local
 /// put of room `id`, which this vault does not hold, when no room door marks
 /// the write (ARCHIVE-IMPORT-ACTORLESS-SEATED-ROOM = B): the body seats
@@ -153,11 +168,8 @@ pub(crate) fn new_room_needs_a_door_in_txn(
     bytes: &[u8],
 ) -> Result<bool> {
     let body = ConversationBody::from_bytes(bytes)?;
-    if let Some(value) = body.extra.get(crate::workspace_roster::LEADER_CHAT_FIELD) {
-        let encoded = rmp_serde::to_vec_named(value).map_err(|_| invalid("leader chat binding"))?;
-        if !leader_chat_bound_in(store, txn, id, &encoded)? {
-            return Ok(true);
-        }
+    if leader_chat_binding_unbound_in_txn(store, txn, id, &body)? {
+        return Ok(true);
     }
     let members = membership::current_members_in(store, txn, id)?;
     Ok(members != body.member_ids.iter().copied().collect()

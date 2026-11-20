@@ -6,6 +6,7 @@ use std::io::{Read, Seek};
 use super::*;
 use crate::batch::export::archive_retained_side_rows::visit_retained_side_rows;
 use crate::batch::export::{IndexedArchive, Tag};
+use crate::conversation::SpeakerHandoffBoundary;
 use crate::conversation::body::ConversationBody;
 use crate::conversation::membership::{
     self, MEMBERSHIP_ROWS, MEMBERSHIP_SEQ, MembershipAction, MembershipRow,
@@ -14,7 +15,8 @@ use crate::conversation::membership_index;
 use crate::serialize::ExportSecrets;
 use crate::side_table::{self, SideKey};
 
-pub(super) fn is_ledger_table(name: &str) -> bool {
+/// Whether `name` is a room membership ledger table: its rows or its revision.
+pub(crate) fn is_ledger_table(name: &str) -> bool {
     name == side_table::CONVERSATION_MEMBERSHIP_ROW.name
         || name == side_table::CONVERSATION_MEMBERSHIP_SEQ.name
 }
@@ -66,11 +68,9 @@ fn decode_ledger<'a>(
     }
     let mut windows = BTreeMap::new();
     for row in &rows {
-        // The membership door opens a Join's window at its join time at the latest
-        // (REVIEW-9446 P1-4); the stored read never re-checks that, so the archive does.
-        if matches!(row.action, MembershipAction::Join)
-            && row.visible_from.is_none_or(|from| from > row.at)
-        {
+        // The stored read never re-checks where a Join's window opens, so the archive does
+        // (REVIEW-9446 P1-4, round 2 P1-4).
+        if matches!(row.action, MembershipAction::Join) && !join_window_admitted(room, row) {
             return Err(InvalidValue);
         }
         membership::apply_window_row(windows.entry(row.person).or_default(), row)
@@ -84,6 +84,30 @@ fn decode_ledger<'a>(
             .collect(),
         sequence,
     })
+}
+
+/// Whether archived Join `row` of room `room` opens its window where a membership door opens
+/// one. A plain Join opens it at the room's origin or at its join time. A speaker handoff's
+/// Join opens it where its own receipt, for this room, this PERSON and this join time, says:
+/// at the join time, or, for the entry's cut, at the latest at the join time. Any other
+/// boundary is a history cut no door wrote (REVIEW-9446 round 2 P1-4).
+fn join_window_admitted(room: EntityId, row: &MembershipRow) -> bool {
+    let Some(from) = row.visible_from else {
+        return false;
+    };
+    match &row.handoff {
+        None => from == 0 || from == row.at,
+        Some(receipt) => {
+            receipt.container == room
+                && receipt.person == row.person
+                && receipt.joined_at == row.at
+                && receipt.visible_from == from
+                && match receipt.boundary {
+                    SpeakerHandoffBoundary::JoinTime => from == row.at,
+                    SpeakerHandoffBoundary::EntryEnteredAt => from <= row.at,
+                }
+        }
+    }
 }
 
 /// Only an empty destination can install; even a partial destination is kept intact.
@@ -109,11 +133,18 @@ fn land_ledger_in_txn(
     if same {
         // The pre-pass kept out every room whose seat would not stand
         // ([`rooms_owner_restore_cannot_seat`]), so a prelanded room counts as installed only
-        // while it, each member and its roster stand live here (REVIEW-9446 P1-2).
-        if prelanded && ledger_companion_holdback(vault, txn, room, &ledger.rows)?.is_some() {
-            return Err(Error::InvariantViolation(
-                "a prelanded room ledger lost a live companion",
-            ));
+        // while it, each member and its roster stand live here (REVIEW-9446 P1-2). An
+        // identical destination ledger counts as unchanged only beside the same live
+        // companions; without them it is held back and kept as it is (round 2 P1-3).
+        if require_companions
+            && let Some(reason) = ledger_companion_holdback(vault, txn, room, &ledger.rows)?
+        {
+            if prelanded {
+                return Err(Error::InvariantViolation(
+                    "a prelanded room ledger lost a live companion",
+                ));
+            }
+            return Ok(ArchivedSideRowOutcome::HeldBack(reason));
         }
         return Ok(if prelanded {
             ArchivedSideRowOutcome::Installed
@@ -259,9 +290,10 @@ fn archived_live_ledgers<R: Read + Seek>(
 }
 
 /// The archived rooms the owner's restore cannot seat (REVIEW-9446 P1-2, P1-3): each archived
-/// room this vault does not hold, kept in by every earlier pass, whose roster names a member
-/// and whose seat would not stand here. A seat stands when the room's archived ledger lands
-/// whole and its current members are the roster (or this vault already holds a ledger whose
+/// room this vault does not hold, kept in by every earlier pass, whose body carries a leader
+/// chat binding this vault's project door did not make (round 2 P1-5), or whose roster names
+/// a member and whose seat would not stand here. A seat stands when the room's archived ledger
+/// lands whole and its current members are the roster (or this vault already holds a ledger whose
 /// current members are), and each member is a live PERSON here or an archived PERSON the
 /// import puts, which then lands live or aborts the import. Read in `txn` before the entity
 /// pass, so the caller keeps each such room out with its speech, and the late pass counts its
@@ -293,6 +325,12 @@ pub(crate) fn rooms_owner_restore_cannot_seat<R: Read + Seek>(
         let Ok(body) = ConversationBody::from_bytes(&bytes) else {
             continue;
         };
+        // The room guard refuses a binding the project door did not make here, and no
+        // owner door restores one, so the room stays archive data with its speech.
+        if body::leader_chat_binding_unbound_in_txn(&vault.store, txn, room, &body)? {
+            unseated.push(room);
+            continue;
+        }
         let roster: BTreeSet<EntityId> = body.member_ids.into_iter().collect();
         if !roster.is_empty() && !seat_stands(vault, txn, archive, room, &roster, &ledgers)? {
             unseated.push(room);
