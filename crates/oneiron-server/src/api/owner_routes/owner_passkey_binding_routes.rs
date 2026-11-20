@@ -25,7 +25,7 @@
 //! owner the host enrolled it for. The binding names the owner for their
 //! owner verbs and writes alone; the passkey still re-roots nothing, revokes
 //! no other owner key and proves nothing for the owner. Every owner device
-//! lists the binding as `owner_bound` in `/owner-signing-keys/changes`. The
+//! lists the binding as `bound_by_passkey` in `/owner-signing-keys/changes`. The
 //! wire form is the passkey routes': the browser's bytes and the prepared
 //! entry base64url, engine keys and entries hex.
 
