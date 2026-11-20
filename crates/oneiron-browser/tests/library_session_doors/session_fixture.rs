@@ -32,31 +32,7 @@ pub(crate) struct SessionFixture {
 impl SessionFixture {
     /// Attaches Chromium on a socket pair and installs an empty library.
     pub(crate) fn attach(url: &str) -> Self {
-        let (stream, peer) = ScriptedChromium::start(url, false);
-        let config = BrowserGuest {
-            runtime: PathBuf::from("no-runtime"),
-            image: IMAGE.to_owned(),
-            limits: GuestLimits {
-                memory_mib: 256,
-                cpu_millis: 1000,
-                pids: 64,
-                tmpfs_mib: 64,
-            },
-            wait_cap: Duration::from_secs(2),
-            policy: SendPolicy::default(),
-            fixture: None,
-            fixture_forward: None,
-            engine: BrowserEngine::Chromium,
-        };
-        let attached = BrowserSession::attach(
-            &config,
-            transport(stream),
-            Arc::new(NoEgress),
-            Box::new(Unmetered),
-            None,
-            None,
-        );
-        let mut session = expect_answer(&peer, attached, "the scripted Chromium session attaches");
+        let (mut session, peer) = attach_session(url);
         let store = Arc::new(Mutex::new(StoreState::default()));
         session.set_library(Box::new(WorkflowStore(Arc::clone(&store))));
         Self {
@@ -73,22 +49,46 @@ impl SessionFixture {
 
     /// Checks all methods since a mark for a path without poll-dependent sends.
     pub(crate) fn assert_methods(&self, mark: usize, methods: &[&str]) {
-        assert_eq!(
-            self.peer.unanswered(),
-            Vec::<String>::new(),
-            "unanswered CDP calls"
-        );
-        let requests = self.peer.requests_since(mark);
-        let actual: Vec<_> = requests
-            .iter()
-            .map(|request| request.method.as_str())
-            .collect();
-        assert_eq!(actual, methods, "CDP methods since the mark");
+        self.peer.assert_methods(mark, methods);
     }
 }
 
+/// Attaches the real session on a socket pair without installing a library.
+pub(crate) fn attach_session(url: &str) -> (BrowserSession, ScriptedChromium) {
+    let (stream, peer) = ScriptedChromium::start(url, false);
+    let config = BrowserGuest {
+        runtime: PathBuf::from("no-runtime"),
+        image: IMAGE.to_owned(),
+        limits: GuestLimits {
+            memory_mib: 256,
+            cpu_millis: 1000,
+            pids: 64,
+            tmpfs_mib: 64,
+        },
+        wait_cap: Duration::from_secs(2),
+        policy: SendPolicy::default(),
+        fixture: None,
+        fixture_forward: None,
+        engine: BrowserEngine::Chromium,
+    };
+    let attached = BrowserSession::attach(
+        &config,
+        transport(stream),
+        Arc::new(NoEgress),
+        Box::new(Unmetered),
+        None,
+        None,
+    );
+    let session = expect_answer(&peer, attached, "the scripted Chromium session attaches");
+    (session, peer)
+}
+
 /// Reports a failed answer together with methods the peer could not answer.
-fn expect_answer<T>(peer: &ScriptedChromium, result: Result<T, BrowserError>, expected: &str) -> T {
+pub(crate) fn expect_answer<T>(
+    peer: &ScriptedChromium,
+    result: Result<T, BrowserError>,
+    expected: &str,
+) -> T {
     match result {
         Ok(value) => value,
         Err(error) => panic!(

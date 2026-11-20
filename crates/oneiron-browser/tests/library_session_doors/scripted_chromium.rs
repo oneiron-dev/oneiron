@@ -20,6 +20,7 @@ struct State {
     current_url: String,
     title: String,
     heading: String,
+    password_field: bool,
     refuse_page_enable: bool,
     page_exists: bool,
     log: Vec<Request>,
@@ -41,6 +42,7 @@ impl ScriptedChromium {
             current_url: url.to_owned(),
             title: "Ready".to_owned(),
             heading: "Ready".to_owned(),
+            password_field: false,
             refuse_page_enable,
             page_exists: false,
             log: Vec::new(),
@@ -51,6 +53,11 @@ impl ScriptedChromium {
         (host, Self { state, control })
     }
 
+    /// Adds a blank password field to the fixture page.
+    pub(crate) fn show_password_field(&self) {
+        self.state.lock().expect("peer state locks").password_field = true;
+    }
+
     /// The log length now, for a test's mark before its door call.
     pub(crate) fn mark(&self) -> usize {
         self.state.lock().expect("peer state locks").log.len()
@@ -59,6 +66,21 @@ impl ScriptedChromium {
     /// Every request logged since `mark`, in order.
     pub(crate) fn requests_since(&self, mark: usize) -> Vec<Request> {
         self.state.lock().expect("peer state locks").log[mark..].to_vec()
+    }
+
+    /// Checks all methods since a mark for a path without poll-dependent sends.
+    pub(crate) fn assert_methods(&self, mark: usize, methods: &[&str]) {
+        assert_eq!(
+            self.unanswered(),
+            Vec::<String>::new(),
+            "unanswered CDP calls"
+        );
+        let requests = self.requests_since(mark);
+        let actual: Vec<_> = requests
+            .iter()
+            .map(|request| request.method.as_str())
+            .collect();
+        assert_eq!(actual, methods, "CDP methods since the mark");
     }
 
     /// Every method the page had no answer for, in order.
@@ -221,14 +243,7 @@ fn dom_answer(state: &mut State, method: &str, params: &Value) -> Result<Value, 
             "nodeType": 9,
             "nodeName": "#document",
             "baseURL": &state.current_url,
-            "children": [{
-                "nodeId": 2,
-                "backendNodeId": 2,
-                "nodeType": 1,
-                "nodeName": "H1",
-                "localName": "h1",
-                "attributes": [],
-            }],
+            "children": dom_children(state),
         }})),
         Some(0) => Ok(json!({"root": {
             "nodeId": 1,
@@ -239,6 +254,29 @@ fn dom_answer(state: &mut State, method: &str, params: &Value) -> Result<Value, 
         }})),
         _ => unknown_answer(state, method),
     }
+}
+
+/// The heading and any input in the full DOM read.
+fn dom_children(state: &State) -> Vec<Value> {
+    let mut children = vec![json!({
+        "nodeId": 2,
+        "backendNodeId": 2,
+        "nodeType": 1,
+        "nodeName": "H1",
+        "localName": "h1",
+        "attributes": [],
+    })];
+    if state.password_field {
+        children.push(json!({
+            "nodeId": 3,
+            "backendNodeId": 3,
+            "nodeType": 1,
+            "nodeName": "INPUT",
+            "localName": "input",
+            "attributes": ["type", "password"],
+        }));
+    }
+    children
 }
 
 /// Answers Runtime calls.
@@ -265,22 +303,41 @@ fn runtime_answer(state: &mut State, method: &str, params: &Value) -> Result<Val
 fn accessibility_answer(state: &mut State, method: &str) -> Result<Value, (i32, String)> {
     match method {
         "Accessibility.enable" => Ok(json!({})),
-        "Accessibility.getFullAXTree" => Ok(json!({"nodes": [
-            {
-                "nodeId": "ax0",
-                "role": {"value": "RootWebArea"},
-                "childIds": ["ax1"],
-            },
-            {
-                "nodeId": "ax1",
-                "parentId": "ax0",
-                "backendDOMNodeId": 2,
-                "role": {"value": "heading"},
-                "name": {"value": &state.heading},
-            },
-        ]})),
+        "Accessibility.getFullAXTree" => Ok(json!({"nodes": accessibility_nodes(state)})),
         _ => unknown_answer(state, method),
     }
+}
+
+/// The fixture page's AX nodes, with an optional blank textbox.
+fn accessibility_nodes(state: &State) -> Vec<Value> {
+    let mut child_ids = vec!["ax1"];
+    if state.password_field {
+        child_ids.push("ax2");
+    }
+    let mut nodes = vec![
+        json!({
+            "nodeId": "ax0",
+            "role": {"value": "RootWebArea"},
+            "childIds": child_ids,
+        }),
+        json!({
+            "nodeId": "ax1",
+            "parentId": "ax0",
+            "backendDOMNodeId": 2,
+            "role": {"value": "heading"},
+            "name": {"value": &state.heading},
+        }),
+    ];
+    if state.password_field {
+        nodes.push(json!({
+            "nodeId": "ax2",
+            "parentId": "ax0",
+            "backendDOMNodeId": 3,
+            "role": {"value": "textbox"},
+            "name": {"value": "Password"},
+        }));
+    }
+    nodes
 }
 
 /// Answers Emulation calls.
