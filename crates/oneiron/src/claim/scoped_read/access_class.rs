@@ -336,7 +336,7 @@ fn class_judge_in(
         }
     }
     if !key.guest_bound_admits_at(vault, txn, || Ok(Some(record.clone())))
-        || !key.facets_allow_placed_in(vault, txn, &view.facets)?
+        || !key.facets_allow_placed_in(vault, txn, &view.facets, Some(authority))?
         || !key.admits_principal(view.principal)
         || (view.mined_preference && view.principal.is_none())
         || !reader.status.admits_status(

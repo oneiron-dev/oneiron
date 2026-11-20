@@ -469,7 +469,7 @@ impl ScopedReadActorKey {
         txn: &heed::RoTxn<'_>,
         facet: EntityId,
     ) -> Result<bool> {
-        if !self.facets_allow_placed_in(vault, txn, &[facet])? {
+        if !self.facets_allow_placed_in(vault, txn, &[facet], None)? {
             return Ok(false);
         }
         let Some(reader) = self.grant_reader() else {

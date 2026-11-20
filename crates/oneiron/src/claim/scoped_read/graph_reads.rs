@@ -641,7 +641,7 @@ impl ScopedRead<'_> {
                     crate::registry::ENTITY_TYPE_MESSAGE | crate::registry::ENTITY_TYPE_SUMMARY
                 ))
             && raw.len() == ENTITY_METADATA_HEADER_LEN
-            && self.deleted_shell_position_allowed_in(txn, policy, id, &raw)?
+            && self.deleted_shell_position_allowed_in(txn, policy, id, &raw, held)?
             && self
                 .vault
                 .store
@@ -659,13 +659,14 @@ impl ScopedRead<'_> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
         raw: &[u8],
+        held: &HeldAuthority,
     ) -> Result<bool> {
         use crate::federation::record_scope::{default_stamp, scope_for_blob};
         use oneiron_authority::federation::{Scope, ScopeAxis};
         // A read limited to facets names only a shell that still proves a
         // place inside them. The credential's records and channel caveats
         // bound a shell as they bound its live row (FIX 8666).
-        if !self.credential_allows_id(id) || !self.facets_allow_in(txn, id, raw)? {
+        if !self.credential_allows_id(id) || !self.facets_allow_held_in(txn, id, raw, held)? {
             return Ok(false);
         }
         let header =
@@ -777,7 +778,7 @@ impl ScopedRead<'_> {
                 ));
             return Ok(!scope_erased
                 && raw.len() == ENTITY_METADATA_HEADER_LEN
-                && self.deleted_shell_position_allowed_in(txn, policy, &record.id, &raw)?
+                && self.deleted_shell_position_allowed_in(txn, policy, &record.id, &raw, held)?
                 && self.vault.store.entity_deletion_present_in_txn(
                     txn,
                     &record.id,

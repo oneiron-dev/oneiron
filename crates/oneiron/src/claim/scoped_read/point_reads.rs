@@ -737,7 +737,7 @@ impl ScopedRead<'_> {
             && !filter.deny_all
             && filter.read_scope().bands.contains(&entity_type)
             && self.credential_allows_id(id)
-            && self.facets_allow_shell_in(txn, id)?
+            && self.facets_allow_shell_in(txn, id, Some(authority))?
             && crate::gate::scoped_read_record_allowed(
                 policy,
                 &self.actor_key,

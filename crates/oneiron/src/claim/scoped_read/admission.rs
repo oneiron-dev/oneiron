@@ -602,7 +602,7 @@ impl ScopedRead<'_> {
             && !self.outside_credential_worlds_in(txn, id, &row)?
             && !self.device_withholds_in(txn, id, None)?
             && !self.outside_credential_task_position_in(txn, id, &row)?
-            && !self.outside_credential_facets_in(txn, id, &row)?
+            && !self.outside_credential_facets_in(txn, id, &row, authority)?
             && crate::note::countable_read_suppression(row.entity_type, &row.body)
             && matches!(
                 self.vault.room_structure_admitted_held_in(
