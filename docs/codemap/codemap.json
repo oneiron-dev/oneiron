@@ -61314,7 +61314,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "StoryCell",
@@ -61506,6 +61506,14 @@
      "surface": {
       "crate-vis": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/office_body/pptx/doc/text_diff_budget_tests.rs",
+     "purpose": "A large deck paragraph synced to unrelated runs is refused within the whole-text diff budget",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -89923,6 +89931,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/sync/selector/secret_projection/documents/text_diff_budget_tests.rs",
+     "purpose": "A large copy lineage brought to an unrelated copy is refused within the whole-text diff budget",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -97715,6 +97731,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/text_diff.rs",
+     "purpose": "A Loro text set to a new text, its diff held to a budget",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -98494,16 +98520,6 @@
      "purpose": "The revisions a row retains, read for a TURN's text revision search",
      "surface": {
       "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/vault/entity_revision/storage/text_field.rs",
-     "purpose": "A revision document's text field set to a row's new text, its diff held to a budget",
-     "surface": {
-      "crate-vis": 1
      }
     },
     {
@@ -116189,7 +116205,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116665,7 +116681,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 436,
+     "files": 437,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116762,6 +116778,13 @@
      "layout": "file",
      "purpose": "—"
     },
+    "text_diff": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A Loro text set to a new text, its diff held to a budget"
+    },
     "thread_lens": {
      "files": 2,
      "impl_vault": false,
@@ -116791,7 +116814,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 62,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116899,7 +116922,7 @@
    "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8239,
-   "test_files": 1986
+   "test_files": 1988
   },
   "oneiron-agent-runtime": {
    "files": [
