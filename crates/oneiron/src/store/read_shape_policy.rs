@@ -79,10 +79,32 @@ pub struct ReadShapeStamp {
     pub model: ModelId,
     pub shape: ReadShape,
     pub tier: ReadShapeTier,
-    /// The model units the attempt's run settled, as its host recorded them
-    /// when the run ended; `None` until then. The token cost term reads it.
+    /// The model units the attempt's run settled: `own_units` plus
+    /// `reader_units`, once its host recorded `own_units` as the run ended;
+    /// `None` until then. The token cost term reads it.
     #[serde(default)]
     pub model_units: Option<u64>,
+    /// The model units the attempt's spend scope had settled when this stamp
+    /// was written. A retry spends under the scope of the try it retries, so
+    /// the run's own units are the scope's total less these; zero for a
+    /// first try.
+    #[serde(default)]
+    pub scope_units_at_wake: u64,
+    /// What reader children had settled into the attempt's spend scope when
+    /// this stamp was written. A reader's units are the units of the try
+    /// that spawned it, which can be an earlier try of the run and can have
+    /// ended: the run's own units leave out every reader that settled while
+    /// it ran.
+    #[serde(default)]
+    pub scope_reader_units_at_wake: u64,
+    /// The units the run spent under its scope while it ran, every reader's
+    /// left out, as its host recorded them when it ended; `None` until then.
+    #[serde(default)]
+    pub own_units: Option<u64>,
+    /// The units this attempt's own reader children settled, during its run
+    /// or after it ended.
+    #[serde(default)]
+    pub reader_units: u64,
 }
 
 /// One owner pin: `model` always reads through `shape`.
@@ -315,6 +337,8 @@ const POSTERIOR: SideTable<(), ReadShapePosterior, Named> =
     SideTable::new(&side_table::READ_SHAPE_POSTERIOR);
 const STAMP: SideTable<AttemptId, ReadShapeStamp, Named> =
     SideTable::new(&side_table::READ_SHAPE_STAMP);
+const SCOPE_READER_UNITS: SideTable<String, u64, Named> =
+    SideTable::new(&side_table::READ_SHAPE_SCOPE_READER_UNITS);
 
 /// One attempt's labelled retrieval runs, as the sleep rebuild gathers them:
 /// each run's gated reward mapped to 0..=1 and its mean gate score.
@@ -385,52 +409,6 @@ impl Store {
         posterior.pick(model, pin, explore_share, rng)
     }
 
-    /// Stamps `attempt` with `pick` unless it already holds a stamp, and
-    /// returns the stamp in force: a re-leased attempt keeps the shape its
-    /// first wake picked. A stamp for another model than the attempt's
-    /// executor stamp, or than its own earlier stamp, is refused.
-    pub(crate) fn stamp_read_shape(
-        &self,
-        attempt: AttemptId,
-        model: &ModelId,
-        pick: ReadShapePick,
-    ) -> Result<ReadShapeStamp> {
-        if active_write_txn_depth() > 0 {
-            return Err(Error::ConcurrentWrite(
-                "read shape stamp skipped inside active write transaction",
-            ));
-        }
-        let mut txn = self.env.write_txn()?;
-        let record = attempt_record_read::get_in_txn(self, &txn, attempt)?
-            .ok_or_else(|| Error::InvalidConfig("unknown attempt".to_owned()))?;
-        if record
-            .executor_model
-            .as_deref()
-            .is_some_and(|stamped| stamped != model.as_str())
-        {
-            return Err(Error::InvalidConfig(
-                "read shape stamp names another model than the attempt's executor".to_owned(),
-            ));
-        }
-        if let Some(existing) = STAMP.get(self, &txn, &attempt)? {
-            if existing.model != *model {
-                return Err(Error::InvalidConfig(
-                    "read shape stamp names another model than the attempt's first wake".to_owned(),
-                ));
-            }
-            return Ok(existing);
-        }
-        let stamp = ReadShapeStamp {
-            model: model.clone(),
-            shape: pick.shape,
-            tier: pick.tier,
-            model_units: None,
-        };
-        STAMP.put(self, &mut txn, &attempt, &stamp)?;
-        txn.commit()?;
-        Ok(stamp)
-    }
-
     /// Records the model units `attempt`'s run settled. A run's settled total
     /// only grows, so a later report keeps the larger total. An attempt with
     /// no stamp is refused.
@@ -441,17 +419,11 @@ impl Store {
             ));
         }
         let mut txn = self.env.write_txn()?;
-        let mut stamp = STAMP
-            .get(self, &txn, &attempt)?
-            .ok_or_else(|| Error::InvalidConfig("attempt holds no read shape stamp".to_owned()))?;
-        let total = stamp
-            .model_units
-            .map_or(units, |recorded| recorded.max(units));
-        if stamp.model_units == Some(total) {
-            return Ok(());
+        if !record_read_shape_units_in_txn(self, &mut txn, attempt, units)? {
+            return Err(Error::InvalidConfig(
+                "attempt holds no read shape stamp".to_owned(),
+            ));
         }
-        stamp.model_units = Some(total);
-        STAMP.put(self, &mut txn, &attempt, &stamp)?;
         txn.commit()?;
         Ok(())
     }
@@ -461,6 +433,160 @@ impl Store {
         let txn = self.env.read_txn()?;
         STAMP.get(self, &txn, &attempt)
     }
+}
+
+/// What one spend scope held when a run under it woke: its settled total
+/// and the part of it its reader children settled.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ScopeUnitsAtWake {
+    pub(crate) scope_units: u64,
+    pub(crate) reader_units: u64,
+}
+
+/// Stamps `attempt` with `pick` in `txn` unless it already holds a stamp,
+/// and returns the stamp in force: a re-leased attempt keeps the shape its
+/// first wake picked. A stamp for another model than the attempt's executor
+/// stamp, or than its own earlier stamp, is refused. `at_wake` is what the
+/// attempt's spend scope holds now, read in the same `txn`.
+pub(crate) fn stamp_read_shape_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    model: &ModelId,
+    pick: ReadShapePick,
+    at_wake: ScopeUnitsAtWake,
+) -> Result<ReadShapeStamp> {
+    let record = attempt_record_read::get_in_txn(store, txn, attempt)?
+        .ok_or_else(|| Error::InvalidConfig("unknown attempt".to_owned()))?;
+    if record
+        .executor_model
+        .as_deref()
+        .is_some_and(|stamped| stamped != model.as_str())
+    {
+        return Err(Error::InvalidConfig(
+            "read shape stamp names another model than the attempt's executor".to_owned(),
+        ));
+    }
+    if let Some(existing) = STAMP.get(store, txn, &attempt)? {
+        if existing.model != *model {
+            return Err(Error::InvalidConfig(
+                "read shape stamp names another model than the attempt's first wake".to_owned(),
+            ));
+        }
+        return Ok(existing);
+    }
+    let stamp = ReadShapeStamp {
+        model: model.clone(),
+        shape: pick.shape,
+        tier: pick.tier,
+        model_units: None,
+        scope_units_at_wake: at_wake.scope_units,
+        scope_reader_units_at_wake: at_wake.reader_units,
+        own_units: None,
+        reader_units: 0,
+    };
+    STAMP.put(store, txn, &attempt, &stamp)?;
+    Ok(stamp)
+}
+
+/// What reader children have settled into the spend scope keyed `scope`.
+pub(crate) fn scope_reader_units_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    scope: &str,
+) -> Result<u64> {
+    Ok(SCOPE_READER_UNITS
+        .get(store, txn, &scope.to_owned())?
+        .unwrap_or(0))
+}
+
+/// Records the model units `attempt`'s run settled itself, in `txn`. A
+/// later, larger total replaces a recorded one. Answers whether the attempt
+/// holds a stamp; an attempt with none records nothing.
+pub(crate) fn record_read_shape_units_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    units: u64,
+) -> Result<bool> {
+    let Some(stamp) = STAMP.get(store, txn, &attempt)? else {
+        return Ok(false);
+    };
+    raise_own_units_in_txn(store, txn, attempt, stamp, units)?;
+    Ok(true)
+}
+
+/// Records the model units `attempt`'s run spent, from `scope_units`, the
+/// total of its spend scope keyed `scope`, in `txn` (census L9-37): the
+/// scope records them as the run ends, and again when a child settles into
+/// it later. A retry spends under the scope of the try it retries, so the
+/// run's own units are what the scope settled since the run woke, less what
+/// reader children settled into it meanwhile: a reader's units are its
+/// spawning try's ([`record_reader_read_shape_units_in_txn`]). Answers
+/// whether the attempt holds a stamp.
+pub(crate) fn record_read_shape_scope_units_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    scope: &str,
+    scope_units: u64,
+) -> Result<bool> {
+    let Some(stamp) = STAMP.get(store, txn, &attempt)? else {
+        return Ok(false);
+    };
+    let readers_since_wake = scope_reader_units_in_txn(store, txn, scope)?
+        .saturating_sub(stamp.scope_reader_units_at_wake);
+    let units = scope_units
+        .saturating_sub(stamp.scope_units_at_wake)
+        .saturating_sub(readers_since_wake);
+    raise_own_units_in_txn(store, txn, attempt, stamp, units)?;
+    Ok(true)
+}
+
+/// Records `units` a reader child of `spawner` settled into the spend scope
+/// keyed `scope`, in `txn` (census L9-37): the scope's reader total, which
+/// every run under it leaves out of its own units, and the spawner's own
+/// readers' total, which its stamp adds to its own units, whether it still
+/// runs or ended before the reader. A spawner with no stamp records only the
+/// scope's total.
+pub(crate) fn record_reader_read_shape_units_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    scope: &str,
+    spawner: AttemptId,
+    units: u64,
+) -> Result<()> {
+    let total = scope_reader_units_in_txn(store, txn, scope)?.saturating_add(units);
+    SCOPE_READER_UNITS.put(store, txn, &scope.to_owned(), &total)?;
+    if let Some(mut stamp) = STAMP.get(store, txn, &spawner)? {
+        stamp.reader_units = stamp.reader_units.saturating_add(units);
+        stamp.model_units = stamp
+            .own_units
+            .map(|own| own.saturating_add(stamp.reader_units));
+        STAMP.put(store, txn, &spawner, &stamp)?;
+    }
+    Ok(())
+}
+
+/// Keeps the larger of `stamp`'s recorded own units and `units`; the stamp's
+/// model units are then those plus its readers'.
+fn raise_own_units_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    mut stamp: ReadShapeStamp,
+    units: u64,
+) -> Result<()> {
+    let own = stamp
+        .own_units
+        .map_or(units, |recorded| recorded.max(units));
+    let total = own.saturating_add(stamp.reader_units);
+    if stamp.own_units != Some(own) || stamp.model_units != Some(total) {
+        stamp.own_units = Some(own);
+        stamp.model_units = Some(total);
+        STAMP.put(store, txn, &attempt, &stamp)?;
+    }
+    Ok(())
 }
 
 fn read_shape_pins_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<ReadShapePins> {

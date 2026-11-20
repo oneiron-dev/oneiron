@@ -24,7 +24,7 @@ use std::collections::BTreeSet;
 
 use oneiron::authority::CommReach;
 use oneiron::context_board::{
-    BriefCredentialCeiling, BriefRunCeiling, BriefWorkingHandle, BriefWorkingSet,
+    BriefCredentialCeiling, BriefReadShape, BriefRunCeiling, BriefWorkingHandle, BriefWorkingSet,
     CommunicationLimits, SelfBriefState, SessionReadSet, StreamConnectionId,
 };
 use oneiron::llm::run_admission::RunAdmission;
@@ -61,6 +61,10 @@ pub(crate) struct BriefHostFacts {
     /// The working set's pins family as the host's board projection read it
     /// at describe time ([`brief_pins_family`]).
     pub(crate) pins: Option<Vec<BriefWorkingHandle>>,
+    /// The read shape the run's attempt woke under, as its pump stamped it
+    /// (census L9-37). Only a pumped run's wake picks one, so a credential's
+    /// call and a turn program hold none.
+    pub(crate) read_shape: Option<oneiron::store::ReadShape>,
 }
 
 /// The working set's pins family (FIX 17594, WORKING SET A) from the
@@ -351,6 +355,7 @@ pub(super) fn resolved_state(
         class_verdicts,
         budget_lease_id: line.map(|line| line.run().to_owned()),
         budget: line.map(RunAdmission::read),
+        read_shape: host.read_shape.map(BriefReadShape::new),
         clock_ms,
         skill_index,
         working_set: BriefWorkingSet {

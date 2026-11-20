@@ -880,6 +880,12 @@ crate::side_table::side_tables! {
     READ_SHAPE_STAMP: VaultMeta b"retr_read_shape_stamp:v1:" Named
         // Restore class: An attempt's own stamp, content as DREAMER_RESIDENT_ATTEMPT.
         [restore: content] [family: unclassified] [tier: canonical];
+    /// What reader children settled into one spend scope, in model units (census L9-37): a run
+    /// under the scope leaves them out of its own read-shape units, as each reader's units are
+    /// its spawning try's. Key: the spend scope id.
+    READ_SHAPE_SCOPE_READER_UNITS: VaultMeta b"retr_read_shape_scope_readers:v1:" Named
+        // Restore class: The read-shape stamps' own tally, content as READ_SHAPE_STAMP.
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Retrieval run telemetry record. Key: id16.
     ///
     /// Codec fixed to `Raw` (T47 store slice), for the same reason as

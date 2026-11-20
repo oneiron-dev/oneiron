@@ -57,6 +57,7 @@ impl Vault {
             external_git_source_host: None,
             repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient::OFF,
             read_filter: None,
+            dispatch_attempt: None,
         }
     }
 
@@ -118,6 +119,7 @@ impl Vault {
             external_git_source_host: None,
             repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient::OFF,
             read_filter: None,
+            dispatch_attempt: None,
         }
     }
 }
@@ -190,6 +192,8 @@ impl<'v> Memory<'v> {
                 repo_tool_recipient: self.repo_tool_recipient.clone(),
                 // The caller's own filter narrows the turn's reads too.
                 read_filter: self.read_filter.clone(),
+                // The turn runs inside the same leased run.
+                dispatch_attempt: self.dispatch_attempt,
             },
         })
     }

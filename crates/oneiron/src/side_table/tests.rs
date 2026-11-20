@@ -575,6 +575,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "READ_EXPOSURE_RECORD",
         "READ_SHAPE_PINS",
         "READ_SHAPE_POSTERIOR",
+        "READ_SHAPE_SCOPE_READER_UNITS",
         "READ_SHAPE_STAMP",
         "RETRIEVAL_AGE",
         "RETRIEVAL_AGE_BY_RUN",
