@@ -4,8 +4,9 @@
 //! past in silence. That holds in the policy table, in a CLI seat, and in an
 //! official seat, whose seat settings and endpoint bindings share one table.
 //! The same settings given to `oneiron seat runner-policy` as JSON refuse an
-//! unknown field, as the server's request types do. Public paths only: the
-//! shipped `oneiron` binary.
+//! unknown field, as the server's request types do. An official seat is
+//! one table of named settings, and a list of bare values in its place is
+//! refused in both. Public paths only: the shipped `oneiron` binary.
 #![cfg(unix)]
 #![allow(clippy::unwrap_used)]
 #![allow(
@@ -13,11 +14,11 @@
     reason = "a test process starts its own subprocesses; the rule covers the server's crates"
 )]
 
-use std::fs::File;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::time::{Duration, Instant};
+use std::sync::mpsc;
+use std::time::Duration;
 
 /// A setting serve refuses once the whole config file has parsed, so a
 /// config whose runner seats were read stops serve all the same.
@@ -46,6 +47,20 @@ const RUNNER_SEATS: [&str; 15] = [
     "account_ref = \"owner-codex\"",
     "machine_ref = \"owner-machine\"",
     "openai_hosted_plan_approved = true",
+];
+
+/// Runner seats whose one official seat is written as a list of bare values
+/// (its route and account), not as a table of named settings.
+const OFFICIAL_SEAT_AS_A_LIST: [&str; 9] = [
+    REFUSED_SETTING,
+    "",
+    "[models.dreamer.runner_seats]",
+    "official = [[\"codex_app_server_chatgpt_plan\", \"owner-codex\"]]",
+    "",
+    "[[models.dreamer.runner_seats.seats]]",
+    "runner = \"codex\"",
+    "auth = \"vendor_login\"",
+    "egress_profile_ref = \"egress/test-default\"",
 ];
 
 /// Each misspelt key, and the line of [`RUNNER_SEATS`] it is written after:
@@ -157,6 +172,49 @@ fn a_runner_policy_with_an_unknown_field_is_refused() {
     }
 }
 
+/// An official seat written as a list of bare values is refused, in a config
+/// file at the list's line and in the runner policy's JSON. It is never read
+/// by position, with every setting the list leaves out taken from its
+/// default.
+#[test]
+fn an_official_seat_written_as_a_list_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = file(
+        dir.path(),
+        "official-list.toml",
+        &(OFFICIAL_SEAT_AS_A_LIST.join("\n") + "\n"),
+    );
+    let line = OFFICIAL_SEAT_AS_A_LIST
+        .iter()
+        .position(|text| text.starts_with("official = "))
+        .unwrap()
+        + 1;
+    let error = serve_refused(dir.path(), &config);
+    assert!(
+        error.contains(&format!(
+            "parse config file {}: invalid configuration at line {line},",
+            config.display()
+        )),
+        "{error}"
+    );
+    assert!(
+        !error.contains(READ_AND_PARSED),
+        "the list was read by position: {error}"
+    );
+
+    let policy = serde_json::json!({
+        "seats": [{
+            "runner": "codex",
+            "auth": "vendor_login",
+            "egress_profile_ref": "egress/test-default",
+        }],
+        "official": [["codex_app_server_chatgpt_plan", "owner-codex"]],
+    });
+    let settings = file(dir.path(), "official-list.json", &policy.to_string());
+    let error = refused(dir.path(), &runner_policy(&settings));
+    assert!(error.contains("invalid type: sequence"), "{error}");
+}
+
 /// [`RUNNER_SEATS`] with `inserted` written after its line `after`, and the
 /// one-based line `inserted` takes.
 fn with_line_after(after: &str, inserted: &str) -> (String, usize) {
@@ -199,9 +257,9 @@ fn refused(home: &Path, args: &[&str]) -> String {
 }
 
 /// How `oneiron <args>` ended, then its standard output and its standard
-/// error. Both are written to files, so no full pipe holds the command. A
+/// error, both read while it runs, so no full pipe holds the command. A
 /// command that was not refused would serve until it is stopped, so one that
-/// outlasts [`STOPS_WITHIN`] is stopped and fails the test.
+/// outlasts [`STOPS_WITHIN`] is killed and fails the test.
 fn ran(home: &Path, args: &[&str]) -> (ExitStatus, String, String) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_oneiron"));
     // Do not inherit vault, model or switch settings from the build host.
@@ -210,29 +268,24 @@ fn ran(home: &Path, args: &[&str]) -> (ExitStatus, String, String) {
             command.env_remove(name);
         }
     }
-    let printed = tempfile::tempdir().unwrap();
-    let output = printed.path().join("output");
-    let error = printed.path().join("error");
-    let mut child = command
+    let child = command
         .args(args)
         .env("HOME", home)
         .stdin(Stdio::null())
-        .stdout(File::create(&output).unwrap())
-        .stderr(File::create(&error).unwrap())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("run oneiron");
-    let deadline = Instant::now() + STOPS_WITHIN;
-    let status = loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("oneiron {args:?} did not stop within {STOPS_WITHIN:?}: it was not refused");
-        }
-        std::thread::sleep(Duration::from_millis(50));
+    let pid = child.id();
+    let (sender, ended) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(child.wait_with_output());
+    });
+    let Ok(output) = ended.recv_timeout(STOPS_WITHIN) else {
+        let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+        panic!("oneiron {args:?} did not stop within {STOPS_WITHIN:?}: it was not refused");
     };
-    let text = |path: &Path| String::from_utf8_lossy(&std::fs::read(path).unwrap()).into_owned();
-    (status, text(&output), text(&error))
+    let output = output.expect("wait for oneiron");
+    let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
+    (output.status, text(&output.stdout), text(&output.stderr))
 }
