@@ -1726,6 +1726,415 @@ fn a_host_cancel_held_back_by_a_refused_owner_write_refunds_by_its_first_sightin
 }
 
 #[test]
+fn a_host_cancel_that_keeps_an_earlier_write_marker_refunds_after_the_refused_replay() {
+    // BK-ECHO-MARK-TAKES-HOST-CANCEL-AT-STAGED-SEQUENCE: the owner's
+    // cancelled write never reaches the provider. The host cancels the
+    // booking in a client over the seat's live copy, at the SEQUENCE the
+    // owner's write staged, and the client keeps the marker of an earlier
+    // write. A pull before the start holds the cancel back; after the start
+    // the replay is refused on it. The copy carries another write's marker,
+    // so it is the host's cancel, dated by its first sighting: it refunds
+    // whole.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let (booked, live, start) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"host-cancel-earlier-marker",
+        "pi_host_cancel_earlier_marker",
+    );
+
+    seat.write_unsent(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    let staged = seat.staged_sequence(&fixture.vault, &booked.calendar.uid);
+    let host_cancel = seat.host_cancel_of_own_write(&live, staged);
+    seat.pull(
+        &fixture.vault,
+        std::slice::from_ref(&host_cancel),
+        NOW + 160,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_host_cancel_earlier_marker"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the cancellation held back while the owner's write is in flight moves no money yet"
+    );
+
+    seat.replay_refused_over(
+        &fixture.vault,
+        booked.calendar.event_ref,
+        &host_cancel,
+        start + 60,
+    );
+    seat.pull(
+        &fixture.vault,
+        std::slice::from_ref(&host_cancel),
+        start + 120,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_host_cancel_earlier_marker"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the host's cancel at the staged SEQUENCE under another write's marker refunds the whole deposit"
+    );
+}
+
+#[test]
+fn a_replay_refused_over_its_stored_copy_without_the_write_marker_keeps_the_deposit() {
+    // ASK BK-ECHO-UNMARKED-SAME-SHAPE-COPY: the provider stores the owner's
+    // cancelled write, rewrites it and drops the properties it does not
+    // know, the write's marker with them; the answer is lost, and the replay
+    // is refused on the rewritten copy. Nothing tells a copy with no marker
+    // from the host's cancel at the same SEQUENCE, so it reads as the
+    // owner's own write and moves no money.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let (booked, live, _) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"replay-stripped-own-copy",
+        "pi_replay_stripped_own_copy",
+    );
+
+    let stored = seat.write_with_lost_answer(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    let copy = seat.stripped_rewrite_of_own_write(&live, stored, NOW + 160);
+    seat.replay_refused_over(&fixture.vault, booked.calendar.event_ref, &copy, NOW + 170);
+    seat.pull(&fixture.vault, std::slice::from_ref(&copy), NOW + 180)
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_replay_stripped_own_copy"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the seat's report of the owner's own copy with its marker dropped moves no money"
+    );
+}
+
+#[test]
+fn a_replay_whose_reconcile_read_failed_keeps_the_deposit_when_the_seat_reports_its_copy() {
+    // BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY: the provider stores
+    // the owner's cancelled write, rewrites it, and the answer is lost. The
+    // replay is refused on the rewritten copy's ETag, and its reconciliation
+    // pull fails, so the write reads no copy. The seat's next pull proves
+    // the copy the owner's own before it admits it: no money moves.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let (booked, live, _) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"replay-unread-own-copy",
+        "pi_replay_unread_own_copy",
+    );
+
+    let stored = seat.write_with_lost_answer(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    seat.replay_refused_unread(&fixture.vault, booked.calendar.event_ref, NOW + 170);
+    assert_eq!(
+        state_of(&fixture, "pi_replay_unread_own_copy"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the refused replay moves no money"
+    );
+
+    seat.pull_rewritten_own_write(&fixture.vault, &live, stored, NOW + 180)
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_replay_unread_own_copy"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the seat's report of the owner's own stored copy moves no money"
+    );
+    seat.pull_rewritten_own_write(&fixture.vault, &live, stored, NOW + 190)
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_replay_unread_own_copy"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a later report of the owner's own stored copy moves no money"
+    );
+}
+
+#[test]
+fn a_host_cancel_after_a_restore_read_during_the_refused_replay_refunds() {
+    // BK-ECHO-MARK-OVER-NEWER-LIVE-RESTORE: the provider stores the owner's
+    // cancelled write, rewrites it, and the answer is lost. The replay is
+    // refused; its reconciliation reads the rewritten copy, but before the
+    // write takes the copy in, a pull reads the host's live restore at the
+    // next SEQUENCE. The copy is the owner's, yet the newer restore takes no
+    // mark, so the host's cancel after it refunds whole.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let (booked, live, start) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"restore-during-replay",
+        "pi_restore_during_replay",
+    );
+
+    let stored = seat.write_with_lost_answer(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    let copy = seat.rewrite_of_own_write(&live, stored, NOW + 160);
+    let restore = SeatChange::upsert(&live, start, start + 30 * 60, stored + 1, false);
+    seat.replay_refused_over_while_restored(
+        &fixture.vault,
+        booked.calendar.event_ref,
+        &copy,
+        &restore,
+        NOW + 165,
+        NOW + 170,
+    );
+    assert_eq!(
+        state_of(&fixture, "pi_restore_during_replay"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the refused replay and the host's restore move no money"
+    );
+
+    pull_seat(
+        &seat,
+        &fixture,
+        &[(&live, start)],
+        stored + 2,
+        true,
+        NOW + 180,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_restore_during_replay"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the host's cancel after the restore refunds the whole deposit"
+    );
+}
+
+#[test]
+fn a_host_cancel_after_a_restore_read_before_the_first_write_settled_refunds() {
+    // BK-ECHO-NEWER-RESTORE-DROPS-WRITTEN-DIRECTION: the seat holds the
+    // booking only as read (Inbound), from its own cancel before the
+    // booking was written to it. The owner writes the cancelled EVENT to
+    // the seat; the provider stores it, but before the answer settles the
+    // host restores the booking live at the next SEQUENCE and a pull reads
+    // that. The settlement keeps the restore, yet the write landed, so the
+    // seat is a calendar the booking was written to: the host's cancel
+    // after the restore refunds whole.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let mut provider = RecordingProvider::default();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let booked = paid_booking(
+        &fixture,
+        SessionKey::derive(b"inbound-seat-restored"),
+        "pi_inbound_seat_restored",
+        9,
+    );
+    settle_booking_deposit(
+        &fixture.vault,
+        &booked.calendar.event_ref,
+        &mut provider,
+        NOW + 50,
+    )
+    .expect("capture");
+    let start = MONDAY + 9 * 3_600;
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::foreign(
+            &seat,
+            &booked.calendar.uid,
+            start,
+            start + 30 * 60,
+            0,
+            true,
+        )],
+        NOW + 60,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_inbound_seat_restored"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a cancel from a seat the booking was not written to moves no money"
+    );
+
+    let locator = seat.resource_locator(&booked.calendar.uid);
+    let wrote = seat.write_settled_after_restore(
+        &fixture.vault,
+        booked.calendar.event_ref,
+        &locator,
+        (start, start + 30 * 60),
+        NOW + 160,
+        NOW + 150,
+    );
+    assert_eq!(
+        state_of(&fixture, "pi_inbound_seat_restored"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the host's restore and the late settlement move no money"
+    );
+
+    pull_seat(
+        &seat,
+        &fixture,
+        &[(&locator, start)],
+        wrote.sequence + 2,
+        true,
+        NOW + 180,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_inbound_seat_restored"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the host's cancel after the restore refunds the whole deposit"
+    );
+}
+
+#[test]
+fn a_host_cancel_after_a_first_write_replayed_over_its_stored_copy_refunds() {
+    // BK-ECHO-NEWER-RESTORE-DROPS-WRITTEN-DIRECTION: the seat holds no
+    // passport of the booking. A feed the booking was not written to
+    // cancels it, and the owner writes the cancelled EVENT to the seat; the
+    // provider stores it and rewrites it, but the answer is lost, and the
+    // replay is refused on the rewritten copy, which proves the owner's
+    // own. The seat now holds a booking written to it: its report of the
+    // copy moves no money, and the host's cancel after a live restore
+    // refunds whole.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let mut provider = RecordingProvider::default();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let booked = paid_booking(
+        &fixture,
+        SessionKey::derive(b"first-write-replayed"),
+        "pi_first_write_replayed",
+        9,
+    );
+    settle_booking_deposit(
+        &fixture.vault,
+        &booked.calendar.event_ref,
+        &mut provider,
+        NOW + 50,
+    )
+    .expect("capture");
+    let start = MONDAY + 9 * 3_600;
+    poll_visitor_feed(&fixture, &booked, start, 0, false, "v1", NOW + 60);
+    poll_visitor_feed(&fixture, &booked, start, 1, true, "v2", NOW + 120);
+
+    let locator = seat.resource_locator(&booked.calendar.uid);
+    let stored = seat.write_with_lost_answer(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    seat.replay_refused_over_rewritten_own_write(
+        &fixture.vault,
+        booked.calendar.event_ref,
+        &locator,
+        stored,
+        NOW + 170,
+    );
+    seat.pull_rewritten_own_write(&fixture.vault, &locator, stored, NOW + 180)
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_first_write_replayed"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the seat's report of the owner's own stored copy moves no money"
+    );
+
+    pull_seat(
+        &seat,
+        &fixture,
+        &[(&locator, start)],
+        stored + 1,
+        false,
+        NOW + 190,
+    )
+    .expect("seat pull");
+    pull_seat(
+        &seat,
+        &fixture,
+        &[(&locator, start)],
+        stored + 2,
+        true,
+        NOW + 200,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_first_write_replayed"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the host's cancel after the restore refunds the whole deposit"
+    );
+}
+
+#[test]
+fn a_host_cancel_first_seen_after_the_start_keeps_the_deposit_after_a_live_echo_withdrew_a_held_one()
+ {
+    // BK-ECHO-DEFERRED-SIGHTING-OUTLIVES-ECHO-RESTORE: the owner's cancelled
+    // write is out when a pull before the start reads a cancellation from
+    // the seat and holds it back. The provider refuses the write on its
+    // precondition, storing nothing, and the seat then shows the booking
+    // live again, byte for byte as the owner's last live write. That
+    // withdraws the held sighting: a cancel the seat reports after the
+    // start is first seen then, and keeps the deposit.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let (booked, live, start) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"held-sighting-withdrawn",
+        "pi_held_sighting_withdrawn",
+    );
+
+    let held = SeatChange::upsert(&live, start, start + 30 * 60, live.sequence, true);
+    seat.write_refused_after_pull(
+        &fixture.vault,
+        booked.calendar.event_ref,
+        &held,
+        NOW + 160,
+        NOW + 150,
+    );
+    assert_eq!(
+        state_of(&fixture, "pi_held_sighting_withdrawn"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the cancellation held back while the owner's write is out moves no money"
+    );
+
+    seat.pull_own_write(&fixture.vault, &live, NOW + 180)
+        .expect("seat pull");
+    pull_seat(
+        &seat,
+        &fixture,
+        &[(&live, start)],
+        live.sequence + 3,
+        true,
+        start + 60,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_held_sighting_withdrawn"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a cancel first seen after the start keeps the deposit"
+    );
+}
+
+#[test]
 fn a_tombstone_from_a_seat_the_booking_was_not_written_to_keeps_the_deposit() {
     let fixture = Fixture::open(Some(two_hour_terms()));
     fixture.enable_host_feed();
