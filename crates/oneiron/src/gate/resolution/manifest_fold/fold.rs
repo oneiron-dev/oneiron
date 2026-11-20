@@ -239,6 +239,17 @@ pub(super) fn fold_policy_manifest(
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
+                // One one-vault row per vault, as the inquiry row above:
+                // two different rows have no deterministic mode, so the
+                // policy fails closed and the vault reads no mode, marked
+                // unreadable.
+                if let Some(policy) = decoded.one_vault_policy {
+                    match &resolution.one_vault_policy {
+                        None => resolution.one_vault_policy = Some(policy),
+                        Some(existing) if *existing == policy => {}
+                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                    }
+                }
                 // One erase-request reply row per vault, as the inquiry row:
                 // two different rows have no deterministic reply, so the
                 // policy fails closed and the vault reads `ask`, marked

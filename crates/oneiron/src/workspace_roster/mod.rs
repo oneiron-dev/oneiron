@@ -89,6 +89,7 @@ pub(crate) use codec::roster_required_for_test;
 mod companion_bind;
 mod house_link;
 mod intent;
+mod one_vault;
 mod records;
 mod runner;
 mod scrub;
@@ -125,6 +126,10 @@ pub use self::records::{
 // The bind-interval read: the room reads' statement byline (FIX row
 // SPEAKER-BYLINE-FOR-ORG) and its test door.
 pub(crate) use self::house_link::house_org_at_in_txn;
+pub(crate) use self::one_vault::{ONE_VAULT_ROW_KEY, OneVaultRead};
+pub use self::one_vault::{
+    ONE_VAULT_ROW_VERSION, OneVaultMode, OneVaultPolicy, OneVaultSetting, OneVaultSource,
+};
 pub(crate) use self::scrub::{
     erase_companion_principal_actor_in_txn, erase_member_actor_in_txn,
     erase_member_intent_actor_in_txn, member_actor_refs_in_txn,

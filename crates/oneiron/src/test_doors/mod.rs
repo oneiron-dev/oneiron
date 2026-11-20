@@ -351,6 +351,7 @@ pub mod split_phrase_carrier;
 #[cfg(feature = "sync")]
 pub mod staged_vault_import;
 pub mod steward;
+pub mod stored_workspace_roster_rows;
 pub mod stretch_pack_finalize;
 pub mod substrate_reads;
 pub mod summarize_note_set;
@@ -378,6 +379,7 @@ pub mod wake_envelope_ack;
 pub mod weave_arc_rederive;
 pub mod witness_project;
 pub mod workaround_skills;
+pub mod workspace_onboarding_halt;
 pub mod workspace_token;
 pub mod world_access;
 #[cfg(feature = "sync")]

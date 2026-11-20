@@ -43,6 +43,7 @@ pub(super) fn house_mind_entry(
         facet_ref: None,
         identity_ref: preset.house_identity_ref,
         display_name,
+        one_vault_told: None,
     })
 }
 
@@ -83,6 +84,7 @@ pub(super) fn companion_entry(
         // Only the shared house identity may represent this roster presence.
         identity_ref: preset.house_identity_ref,
         display_name,
+        one_vault_told: row.one_vault_told,
     })
 }
 
@@ -305,7 +307,7 @@ pub(super) fn decode_preset_row(bytes: &[u8]) -> Result<PresetRow> {
 }
 
 pub(super) fn roster_member_value(row: &RosterMemberRow) -> Value {
-    Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from("schema_version"),
             Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
@@ -331,7 +333,13 @@ pub(super) fn roster_member_value(row: &RosterMemberRow) -> Value {
             optional_ref(row.companion_facet_ref),
         ),
         (Value::from("identity_ref"), optional_ref(row.identity_ref)),
-    ])
+    ];
+    // Written only when set, so a member who was not told keeps the row
+    // shape stored before one-vault mode.
+    if let Some(told) = row.one_vault_told {
+        entries.push((Value::from("one_vault_told"), Value::from(told)));
+    }
+    Value::Map(entries)
 }
 
 pub(super) fn decode_roster_member_row(bytes: &[u8]) -> Result<RosterMemberRow> {
@@ -346,6 +354,15 @@ pub(super) fn decode_roster_member_row(bytes: &[u8]) -> Result<RosterMemberRow> 
         companion_actor_ref: optional_entity(&entries, "companion_actor_ref")?,
         companion_facet_ref: optional_entity(&entries, "companion_facet_ref")?,
         identity_ref: optional_entity(&entries, "identity_ref")?,
+        // Absent on a member who was not told, and on every row stored
+        // before one-vault mode.
+        one_vault_told: optional_key(&entries, "one_vault_told")
+            .map(|value| {
+                value
+                    .as_u64()
+                    .ok_or_else(|| invalid("roster member one_vault_told must be a u64"))
+            })
+            .transpose()?,
     })
 }
 
@@ -725,11 +742,14 @@ pub(super) fn require_mailbox_revision(vault: &Vault, revision: Option<usize>) -
 }
 
 /// `suggested`: the policy in force now recommends a work companion to this
-/// member, who brought her own.
+/// member, who brought her own. `one_vault`: the member's roster row holds
+/// a told mark, so the joining client shows onboarding line 2's one-vault
+/// form.
 pub(super) fn outcome_of(
     intent: &MemberOnboardingIntent,
     completed_at: u64,
     suggested: bool,
+    one_vault: bool,
 ) -> MemberOnboardingOutcome {
     MemberOnboardingOutcome {
         onboarding_id: intent.onboarding_id.clone(),
@@ -739,6 +759,7 @@ pub(super) fn outcome_of(
         companion_person_ref: Some(intent.companion.person_ref()),
         companion_actor_ref: Some(intent.companion.actor_ref()),
         work_companion_suggested: suggested,
+        one_vault,
         delegated_identity_ref: intent.delegated_mailbox.as_ref().map(|m| m.identity_ref),
         completed_at,
     }
@@ -817,6 +838,14 @@ pub(super) fn required<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&
 #[cfg(oneiron_test_support)]
 pub(crate) fn roster_required_for_test(entries: &[(Value, Value)], key: &str) -> Result<Value> {
     required(entries, key).cloned()
+}
+
+/// The value of `key` when the body holds it: a key added within a schema
+/// version, which a row stored before it lacks.
+pub(super) fn optional_key<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
+    entries
+        .iter()
+        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
 }
 
 pub(super) fn required_str(entries: &[(Value, Value)], key: &str) -> Result<String> {
