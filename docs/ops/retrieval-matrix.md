@@ -179,7 +179,9 @@ each corpus vault, about `--hidden-share` per mille of the records
 picks each one) land as the owner's claims in a second world, and the rest
 in the base world.
 It grades the scoped text channel alone (BM25 under the agent's world
-scope, no vectors, no recency blend), on the readable records only: a
+scope, no vectors, no recency blend; every claim of a corpus is stamped
+at the corpus's first session, so claim-age decay reorders no hit), on
+the readable records only: a
 hidden relevant record leaves the qrels, a query left with none is
 dropped, and a second-world record served to the agent fails the run.
 Run it with the same flags on the build before and after a change to the
