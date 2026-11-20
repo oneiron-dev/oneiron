@@ -15,6 +15,12 @@ use crate::commands::oauth_sign_in::MAX_ANSWER_BYTES;
 /// How often an unattended sign-in asks the vault for the owner's answer,
 /// as the page's script does.
 const ANSWER_POLL: Duration = Duration::from_secs(2);
+/// How long past the command's own deadline it goes on asking while the
+/// vault still says the request waits: the vault's request lives from the
+/// page's load, a little after the command starts, and answers `expired`
+/// once it lapses, so an answer the owner gives just before then is still
+/// collected.
+const SETTLE_GRACE: Duration = Duration::from_secs(60);
 
 /// How an unattended sign-in ended with no code: the owner's answer, or
 /// none within the request's life.
@@ -92,41 +98,46 @@ pub(super) async fn polled_code(
     let token = page_token(&page)
         .ok_or_else(|| anyhow::anyhow!("the sign-in page carries no request token"))?;
     let status_url = authorize.join(AUTHORIZE_STATUS_PATH)?;
+    let until = deadline + SETTLE_GRACE;
     loop {
-        if Instant::now() >= deadline {
+        if Instant::now() >= until {
             return Err(SignInEnded::Lapsed.into());
         }
-        let answer = client
-            .get(status_url.clone())
-            .header(PAGE_TOKEN_HEADER, token)
-            .send()
-            .await
-            .map_err(|error| {
-                anyhow::anyhow!("could not reach the vault: {}", error.without_url())
-            })?;
-        let polled: Polled = serde_json::from_str(&bounded_text(answer).await?)
-            .map_err(|_| anyhow::anyhow!("the vault answered the poll with no status"))?;
-        match polled.status.as_str() {
-            "pending" => {
-                tokio::time::sleep(
-                    ANSWER_POLL.min(deadline.saturating_duration_since(Instant::now())),
-                )
-                .await;
+        if let Some(polled) = poll(client, &status_url, token).await {
+            match polled.status.as_str() {
+                "pending" => {}
+                "allowed" => {
+                    let redirect = polled
+                        .redirect
+                        .ok_or_else(|| anyhow::anyhow!("the vault's allow names no redirect"))?;
+                    return code_from_redirect(&redirect, state, issuer);
+                }
+                "denied" => return Err(SignInEnded::Denied.into()),
+                "expired" => return Err(SignInEnded::Lapsed.into()),
+                other => anyhow::bail!(
+                    "the vault no longer knows this sign-in request ({})",
+                    printable(other)
+                ),
             }
-            "allowed" => {
-                let redirect = polled
-                    .redirect
-                    .ok_or_else(|| anyhow::anyhow!("the vault's allow names no redirect"))?;
-                return code_from_redirect(&redirect, state, issuer);
-            }
-            "denied" => return Err(SignInEnded::Denied.into()),
-            "expired" => return Err(SignInEnded::Lapsed.into()),
-            other => anyhow::bail!(
-                "the vault no longer knows this sign-in request ({})",
-                printable(other)
-            ),
         }
+        tokio::time::sleep(ANSWER_POLL.min(until.saturating_duration_since(Instant::now()))).await;
     }
+}
+
+/// One poll of the request the page's `token` proves, at `status_url`: the
+/// vault's answer, or `None` when it gave none this time (no connection, a
+/// 5xx, a body that is no answer), which the next poll asks again.
+async fn poll(client: &reqwest::Client, status_url: &reqwest::Url, token: &str) -> Option<Polled> {
+    let answer = client
+        .get(status_url.clone())
+        .header(PAGE_TOKEN_HEADER, token)
+        .send()
+        .await
+        .ok()?;
+    if answer.status().is_server_error() {
+        return None;
+    }
+    serde_json::from_str(&bounded_text(answer).await.ok()?).ok()
 }
 
 /// The code an allow's redirect `redirect` carries, when it is this
@@ -165,15 +176,21 @@ fn page_token(page: &str) -> Option<&str> {
     .then_some(token)
 }
 
-/// `response`'s body as text, read up to [`MAX_ANSWER_BYTES`].
-async fn bounded_text(response: reqwest::Response) -> anyhow::Result<String> {
-    let body = response.bytes().await.map_err(|error| {
-        anyhow::anyhow!("the vault's answer broke off: {}", error.without_url())
-    })?;
-    anyhow::ensure!(
-        body.len() <= MAX_ANSWER_BYTES,
-        "the vault's answer is too large"
-    );
+/// `response`'s body as text, read chunk by chunk and refused once it
+/// passes [`MAX_ANSWER_BYTES`], so no answer is held whole past the bound.
+async fn bounded_text(mut response: reqwest::Response) -> anyhow::Result<String> {
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| anyhow::anyhow!("the vault's answer broke off: {}", error.without_url()))?
+    {
+        anyhow::ensure!(
+            body.len() + chunk.len() <= MAX_ANSWER_BYTES,
+            "the vault's answer is too large"
+        );
+        body.extend_from_slice(&chunk);
+    }
     Ok(String::from_utf8_lossy(&body).into_owned())
 }
 

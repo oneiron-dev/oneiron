@@ -17,8 +17,15 @@
 //! a deny, and after a request that lapsed unanswered (the vault keeps one
 //! for 10 minutes) at most one a day. `oneiron hosted login --hand-over`
 //! stays the explicit form, and `hosted logout` forgets the record.
+//!
+//! Every read-and-write of the record runs under its lock, a file beside
+//! it, so two session ends at once file one ask. Each ask is an attempt
+//! with its own id; the command it starts records how it ended only while
+//! the record still names that attempt, so a logout that forgot it is never
+//! undone.
 
 use std::io::Read as _;
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::os::unix::process::CommandExt as _;
 use std::path::Path;
 use std::process::Stdio;
@@ -52,6 +59,9 @@ struct AskRecord {
     state: AskState,
     /// When it reached that state, in ms since the Unix epoch.
     at_ms: u64,
+    /// The ask's attempt: drawn when it was filed.
+    #[serde(default)]
+    attempt: String,
 }
 
 /// Whether a session end may ask at `now_ms` after `record`: never after a
@@ -77,8 +87,15 @@ pub(super) fn start_if_due(oneiron: &Path, vault: &HostedVault) -> bool {
         return false;
     };
     let now = oauth_sign_in::now_ms();
-    if !due(read(&file).as_ref(), now) || write(&file, AskState::Asked, now).is_err() {
-        return false;
+    let attempt = format!("{now}-{}", std::process::id());
+    {
+        let Ok(_locked) = lock(&file) else {
+            return false;
+        };
+        if !due(read(&file).as_ref(), now) || write(&file, AskState::Asked, now, &attempt).is_err()
+        {
+            return false;
+        }
     }
     let mut command = oneiron_spawn::command(oneiron);
     command
@@ -109,24 +126,67 @@ pub(super) fn start_if_due(oneiron: &Path, vault: &HostedVault) -> bool {
     }
 }
 
-/// Records how a hand-over sign-in for `origin` ended: one that stands now
-/// (`ended` is `None`) forgets the ask; a deny or a lapse is kept with its
-/// time.
-pub(super) fn record_end(origin: &str, ended: Option<SignInEnded>) {
+/// The attempt of the ask that waits for `origin`, if one does: what the
+/// command it started reads before it files the request.
+pub(super) fn waiting_attempt(origin: &str) -> Option<String> {
+    let file = hosted_selection::hand_over_ask_file(origin)?;
+    read(&file)
+        .filter(|record| record.state == AskState::Asked)
+        .map(|record| record.attempt)
+}
+
+/// Records how a hand-over sign-in for `origin` ended, under the record's
+/// lock: one that stands now (`ended` is `None`) forgets the ask; a deny or
+/// a lapse of the ask `attempt` is kept with its time, and only while the
+/// record still names that attempt (a logout since forgot it).
+pub(super) fn record_end(origin: &str, ended: Option<SignInEnded>, attempt: Option<&str>) {
     let Some(file) = hosted_selection::hand_over_ask_file(origin) else {
         return;
     };
-    let now = oauth_sign_in::now_ms();
-    let _ = match ended {
-        None => forget_file(&file),
-        Some(SignInEnded::Denied) => write(&file, AskState::Denied, now),
-        Some(SignInEnded::Lapsed) => write(&file, AskState::Lapsed, now),
+    let Ok(_locked) = lock(&file) else {
+        return;
     };
+    let state = match ended {
+        None => {
+            let _ = forget_file(&file);
+            return;
+        }
+        Some(SignInEnded::Denied) => AskState::Denied,
+        Some(SignInEnded::Lapsed) => AskState::Lapsed,
+    };
+    if let Some(attempt) = attempt
+        && read(&file).is_some_and(|record| record.attempt == attempt)
+    {
+        let _ = write(&file, state, oauth_sign_in::now_ms(), attempt);
+    }
 }
 
-/// Forgets the ask recorded for `origin`, if there is one.
+/// Forgets the ask recorded for `origin`, if there is one, under its lock.
 pub(super) fn forget(origin: &str) -> anyhow::Result<()> {
-    hosted_selection::hand_over_ask_file(origin).map_or(Ok(()), |file| forget_file(&file))
+    let Some(file) = hosted_selection::hand_over_ask_file(origin) else {
+        return Ok(());
+    };
+    let _locked = lock(&file)?;
+    forget_file(&file)
+}
+
+/// The record `file`'s lock, held until the answer drops: an exclusive
+/// `flock` on `<file>.lock`.
+fn lock(file: &Path) -> anyhow::Result<std::fs::File> {
+    hosted_selection::create_user_dir_for(file)?;
+    let mut name = file.as_os_str().to_owned();
+    name.push(".lock");
+    let path = std::path::PathBuf::from(name);
+    let opened = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .open(&path)
+        .map_err(|error| anyhow::anyhow!("open {}: {error}", path.display()))?;
+    rustix::fs::flock(&opened, rustix::fs::FlockOperation::LockExclusive)
+        .map_err(|error| anyhow::anyhow!("lock {}: {error}", path.display()))?;
+    Ok(opened)
 }
 
 fn forget_file(file: &Path) -> anyhow::Result<()> {
@@ -153,9 +213,14 @@ fn read(file: &Path) -> Option<AskRecord> {
     serde_json::from_slice(&body).ok()
 }
 
-/// Writes `state` at `at_ms` to `file`, owner-only and in one rename, in
-/// the per-user folder.
-fn write(file: &Path, state: AskState, at_ms: u64) -> anyhow::Result<()> {
+/// Writes `state` of the ask `attempt` at `at_ms` to `file`, owner-only and
+/// in one rename, in the per-user folder.
+fn write(file: &Path, state: AskState, at_ms: u64, attempt: &str) -> anyhow::Result<()> {
     hosted_selection::create_user_dir_for(file)?;
-    credential_file::replace(file, &serde_json::to_vec(&AskRecord { state, at_ms })?)
+    let record = AskRecord {
+        state,
+        at_ms,
+        attempt: attempt.to_owned(),
+    };
+    credential_file::replace(file, &serde_json::to_vec(&record)?)
 }

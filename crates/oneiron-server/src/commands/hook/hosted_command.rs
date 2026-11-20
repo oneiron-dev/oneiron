@@ -220,6 +220,12 @@ fn step_up_login(args: &HostedLoginArgs, step_up: StepUp, flag: &str) -> anyhow:
     } else {
         CodeDelivery::Browser
     };
+    // The hooks' ask this run answers for, when they started it.
+    let attempt = if args.unattended {
+        hand_over_ask::waiting_attempt(&vault.origin)
+    } else {
+        None
+    };
     let made = step_up.run(
         vault,
         Duration::from_secs(args.sign_in_timeout_secs),
@@ -232,7 +238,7 @@ fn step_up_login(args: &HostedLoginArgs, step_up: StepUp, flag: &str) -> anyhow:
                 .copied()
                 .unwrap_or(SignInEnded::Lapsed)
         });
-        hand_over_ask::record_end(&vault.origin, ended);
+        hand_over_ask::record_end(&vault.origin, ended, attempt.as_deref());
     }
     made.map(drop)
 }
