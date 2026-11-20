@@ -36,7 +36,7 @@ pub(crate) struct HandOff {
 /// index and files stay as they were; only git's object store gains the
 /// commit's objects, which the push sends.
 pub(crate) fn hand_off_commit(dir: &Path, message: &str) -> anyhow::Result<HandOff> {
-    let top = PathBuf::from(git(dir, ["rev-parse", "--show-toplevel"], &[])?);
+    let top = repo_top(dir)?;
     // The repo's own index, wherever a worktree keeps it; relative to `top`.
     let index = top.join(git(&top, ["rev-parse", "--git-path", "index"], &[])?);
     let scratch = tempfile::Builder::new()
@@ -67,6 +67,15 @@ pub(crate) fn hand_off_commit(dir: &Path, message: &str) -> anyhow::Result<HandO
     })
 }
 
+/// The top directory of the repo that holds `dir`, as git names it.
+pub(super) fn repo_top(dir: &Path) -> anyhow::Result<PathBuf> {
+    Ok(PathBuf::from(git(
+        dir,
+        ["rev-parse", "--show-toplevel"],
+        &[],
+    )?))
+}
+
 /// The custody repo a hand-off goes to, and the paired slip that pushes it.
 pub(crate) struct CustodyRepo<'a> {
     /// The hosted vault's origin, e.g. `https://vault.example`.
@@ -88,7 +97,9 @@ pub(crate) struct CustodyRepo<'a> {
 /// reaches and the advertised refs do not. The ref is the conversation's own
 /// hand-off ref, so a later hand-off of it replaces it whatever it held. The
 /// repo's pre-push hook does not run: it guards pushes to the user's own
-/// remotes, and a hand-off ref is none of them.
+/// remotes, and a hand-off ref is none of them. The requests go straight to
+/// the vault, never through a proxy the environment names: they carry the
+/// slip, a fresh proof and the workspace.
 pub(crate) fn push(
     top: &Path,
     custody: &CustodyRepo<'_>,
@@ -101,6 +112,7 @@ pub(crate) fn push(
         custody.repo
     );
     let client = reqwest::blocking::Client::builder()
+        .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(30))
         .timeout(PUSH_TIMEOUT)

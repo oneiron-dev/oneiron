@@ -14,7 +14,8 @@
 //!    here and the message names what is missing.
 //! 3. **Memory.** `vault.imports.hook_transcript` lands the session's log and
 //!    its subagents' logs ([`transcript`]); its answer names the
-//!    conversation.
+//!    conversation. A log that did not land whole (a turn refused, or one
+//!    waiting behind another import) stops here.
 //! 4. **Workspace.** A hand-off commit of the working tree ([`hand_off`])
 //!    goes to `refs/heads/oneiron/continue/<conversation>` of the custody
 //!    repo.
@@ -38,7 +39,9 @@ use oneiron::dispatch_byoa::{
     ContinueOutsideWorkCheckRequest, ContinueOutsideWorkCheckView, ContinueOutsideWorkRequest,
     ContinueOutsideWorkView, SkippedRunnerSeatView,
 };
-use oneiron::ingest::history::{HookTranscriptImportRequest, HookTranscriptImportView};
+use oneiron::ingest::history::{
+    HookTranscriptConversation, HookTranscriptImportRequest, HookTranscriptImportView,
+};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
@@ -191,6 +194,12 @@ fn steps(remote: &mut dyn ContinueRemote, plan: &Plan, out: &mut dyn Write) -> a
             .map(|review| format!(", review {review}"))
             .unwrap_or_default()
     )?;
+    let partial: Vec<&HookTranscriptConversation> = imported
+        .conversations
+        .iter()
+        .filter(|conversation| conversation.refused > 0 || conversation.pending > 0)
+        .collect();
+    anyhow::ensure!(partial.is_empty(), "{}", not_landed_whole(&partial));
 
     let git_ref = format!("{CONTINUE_REF_PREFIX}{}", imported.conversation);
     let message = format!(
@@ -240,6 +249,30 @@ fn steps(remote: &mut dyn ContinueRemote, plan: &Plan, out: &mut dyn Write) -> a
             anyhow::bail!("{}", exhausted(back_at, &skipped))
         }
     }
+}
+
+/// Why the session's log did not land whole: each conversation with a turn
+/// refused or waiting behind another import.
+fn not_landed_whole(partial: &[&HookTranscriptConversation]) -> String {
+    let each: Vec<String> = partial
+        .iter()
+        .map(|conversation| {
+            let reasons = if conversation.refusal_reasons.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", conversation.refusal_reasons.join(", "))
+            };
+            format!(
+                "{}: {} turns refused{reasons}, {} waiting behind another import",
+                conversation.native_id, conversation.refused, conversation.pending
+            )
+        })
+        .collect();
+    format!(
+        "the session's log did not land whole, so the session cannot go on there: {}; run the \
+         command again once the waiting turns land",
+        each.join("; ")
+    )
 }
 
 fn no_runner_seat(runner: &str) -> String {
