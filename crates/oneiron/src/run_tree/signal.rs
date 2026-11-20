@@ -12,7 +12,9 @@ use crate::store::known_value_index::KnownValues;
 
 use super::RunTreeAdapter;
 
+mod held_ask;
 mod intent;
+use held_ask::held_ask;
 pub(crate) use intent::SignalIntent;
 
 pub use crate::attempt_queue::run_signal::{
@@ -33,32 +35,6 @@ fn measure_questions(watch: &LimitWatch, questions: &[RunAskQuestion]) {
             watch.measure(EngineLimit::AskOptionTextBytes, measured(longest));
         }
     }
-}
-
-/// The ask `asks` holds under `handle`: as written, or as the side-row wall
-/// stored it, a value base custody holds read as its record's handle in the
-/// handle too (blind review round 1 of #9803). `known` gives the values
-/// custody holds now, read only when no ask holds `handle` as written; two
-/// values custody holds apart stay two handles ([`admitted_from_known`]).
-fn held_ask<'a>(
-    asks: &'a [RunAsk],
-    handle: &str,
-    known: impl FnOnce() -> Result<Option<std::sync::Arc<KnownValues>>>,
-) -> Result<Option<&'a RunAsk>> {
-    if let Some(ask) = asks.iter().find(|ask| ask.handle == handle) {
-        return Ok(Some(ask));
-    }
-    if asks.is_empty() {
-        return Ok(None);
-    }
-    let known = known()?;
-    let offered = named_tree(&handle)?;
-    for ask in asks {
-        if admitted_from_known(&named_tree(&ask.handle)?, &offered, || Ok(known.clone()))? {
-            return Ok(Some(ask));
-        }
-    }
-    Ok(None)
 }
 
 fn live(state: AttemptState) -> bool {
