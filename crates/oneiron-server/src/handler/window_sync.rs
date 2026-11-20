@@ -543,9 +543,15 @@ pub(super) async fn handle_window_sync(
                 // device), the send is answered by the batch's durable record
                 // at the home, never by the claim alone, since that landing
                 // may yet fail before it retains anything (#9954 review round
-                // 1): held while the batch is retained, by its receipt once it
-                // settled, and closed to be sent again while nothing of it is
-                // retained.
+                // 1): by its receipt once it settled, and closed to be sent
+                // again while nothing of it is retained. A retained batch is
+                // answered as held only to a residence socket, whose queued
+                // row a held answer never retires; a sync-all device clears
+                // its queue on the version a held answer names, and that
+                // landing may yet end without landing the batch (the home
+                // stops before it appends, and the retained copy expires
+                // before its replay), so its send is closed to be sent again
+                // too (#9954 review round 2).
                 let promoted = row_admission.is_some();
                 let batch_ref = device_update_batch_ref(&device, &key, update, promoted)
                     .map_err(map_update_admission_err)?;
@@ -556,9 +562,15 @@ pub(super) async fn handle_window_sync(
                         batch_ref = %batch_ref,
                         "an own device's burst is landing at its home already"
                     );
-                    contended_device_update(server.vault(), &device, &key, update, promoted)
+                    match contended_device_update(server.vault(), &device, &key, update, promoted)
                         .map_err(map_update_admission_err)?
-                        .ok_or(ProtocolError::LandingInProgress)?
+                    {
+                        Some(DeviceBurstAdmission::Defer { .. }) if residence_seq.is_none() => {
+                            return Err(ProtocolError::LandingInProgress);
+                        }
+                        Some(admitted) => admitted,
+                        None => return Err(ProtocolError::LandingInProgress),
+                    }
                 } else {
                     let carried = inserts.ids().collect::<Vec<_>>();
                     match row_admission {

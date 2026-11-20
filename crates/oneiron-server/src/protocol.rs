@@ -384,9 +384,11 @@ pub(crate) enum ProtocolError {
     #[error("waited for its turn past its deadline")]
     WaitedOut,
     /// Another landing holds an own device's burst batch (the home's drain,
-    /// or another socket of the device), and nothing of the batch is retained
-    /// or settled at the home yet. Nothing was applied, and the update may be
-    /// sent again (#9954 review round 1). Closed with
+    /// or another socket of the device), and the batch has not settled at the
+    /// home: nothing of it is retained yet (#9954 review round 1), or it is
+    /// retained and the sender is a sync-all device, which a held answer
+    /// would have clear its queue (#9954 review round 2). Nothing was
+    /// applied, and the update may be sent again. Closed with
     /// `close_codes::TRY_AGAIN_LATER`, so the device keeps the update queued.
     #[error("another landing holds this batch")]
     LandingInProgress,

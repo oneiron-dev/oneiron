@@ -487,8 +487,10 @@ pub fn device_update_batch_ref(
 /// How `peer`'s window `update` to `key` is answered while another landing
 /// holds its batch (the home's drain, or another socket of the device): by
 /// the batch's durable record at its home, never by the claim alone (#9954
-/// review round 1). A batch retained `Pending` answers `Defer`, since the
-/// landing that holds it, or the drain after it, lands it; a settled batch
+/// review round 1). A batch retained `Pending` answers `Defer`: the landing
+/// that holds it, or the drain after it, lands it unless the retained copy
+/// expires first, so a caller answers it as held only to a sender that keeps
+/// its queued copy on a held answer (#9954 review round 2). A settled batch
 /// answers `Settled` with its receipt's state. `None` when nothing of the
 /// batch is retained or settled here (the holder's admission has not
 /// committed, or failed, or the batch ended unsettled): the device must send

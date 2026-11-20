@@ -70,7 +70,7 @@ pub(super) async fn close_on(
             tracing::info!(
                 conn_id,
                 reason = "landing_in_progress",
-                "own device batch held by another landing, nothing retained — closing"
+                "own device batch held by another landing, not settled — closing"
             );
             super::super::protocol_close::refuse_frame(
                 transport,
