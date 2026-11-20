@@ -16,11 +16,26 @@
 //! in its home room.
 //!
 //! Red on main (by assertion): there `lead`'s claim of owen's unaddressed
-//! turn settles NotAddressed, so the two answer tests and the replaced-leader
-//! test fail at that claim. The other-agent test passes on both.
+//! turn settles NotAddressed, so every test in which the leader claims an
+//! unaddressed turn fails at that claim. The other-agent test and the
+//! erased-speaker test pass on both.
 //!
-//! Public paths only; no test door.
-//! `cargo test --locked -p oneiron --all-features --test project_leader_home_room_reply`.
+//! Review round 1 (REVIEW-9956) added the rest. A claim whose holder the
+//! turn no longer speaks to holds it for no one, so a claimant the turn
+//! speaks to takes it over until it is answered (ROOM-CLAIM-TAKEOVER = A,
+//! Engine 21 Nov 03:04; FIX ROOM-CLAIM-HELD-AFTER-SPEECH-STANDING-ENDS), and
+//! another machine's copy of the replaced claim leaves the takeover standing
+//! (P1-1). A turn that names only people names no agent (P1-3). An erased
+//! speaker's turn is no person's, read without an error (P1-2). Red at the
+//! round-1 head 2a6b5c00dbf: the takeover and replica tests (the new
+//! leader's claim settles HeldBy), the person-name test (NotAddressed) and
+//! the erased-speaker test (the claim errs). The two tests where the claim
+//! stays pass there.
+//!
+//! The replica and erased-speaker tests reach crate rows through the door
+//! `test_doors::room_turn_claims`; the others use public paths only.
+//! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
+//! -p oneiron --all-features --test project_leader_home_room_reply`.
 
 use std::collections::BTreeSet;
 
@@ -275,9 +290,7 @@ fn grant_messages(vault: &Vault, room: EntityId, agent: EntityId) -> TestResult 
             },
             capability: AccessGrantCapability::MessagesRead,
             status: AccessGrantStatus::Active,
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs(),
+            created_at: vault.now_recorded_at(),
             revoked_at: None,
             expires_at: None,
             companion_bounds: None,
@@ -423,6 +436,210 @@ fn a_replaced_leader_is_refused_at_once() -> TestResult {
     assert!(
         fixture.landed(answer, fixture.other)?,
         "the new leader's answer lands"
+    );
+    Ok(())
+}
+
+/// The receipt of a claim `outcome` settled as Claimed.
+fn claimed_receipt(
+    outcome: RoomClaimOutcome,
+) -> TestResult<oneiron::workspace_roster::RoomClaimReceipt> {
+    match outcome {
+        RoomClaimOutcome::Claimed(receipt) => Ok(receipt),
+        other => Err(format!("the claim did not settle Claimed: {other:?}").into()),
+    }
+}
+
+/// A claim receipt's generation, as its row spells it: absent on a turn's
+/// first claim.
+fn generation(receipt: &oneiron::workspace_roster::RoomClaimReceipt) -> TestResult<u64> {
+    Ok(serde_json::to_value(receipt)?
+        .get("generation")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0))
+}
+
+/// ROOM-CLAIM-TAKEOVER = A, ruled test 1: `lead` claims owen's unaddressed
+/// turn while it leads, and the owner then makes `other` the leader. The turn
+/// no longer speaks to `lead`, so its claim holds the turn for no one:
+/// `other`, the new leader, takes the claim over, `lead`'s late answer is
+/// refused, and `other`'s answer lands.
+///
+/// Red before the takeover: `other`'s claim settles HeldBy `lead`'s claim.
+#[test]
+fn a_replaced_leaders_claim_no_longer_blocks_the_new_leader() -> TestResult {
+    let fixture = Fixture::open()?;
+    let asked = fixture.owen_speaks(serde_json::json!({}))?;
+    let first = claimed_receipt(fixture.claim(fixture.lead, asked)?)?;
+    assert_eq!(generation(&first)?, 0, "a turn's first claim");
+    fixture.replace_leader()?;
+    let taken = fixture.claim(fixture.other, asked)?;
+    assert!(
+        claimed_by(&taken, fixture.other),
+        "the new leader takes over the replaced leader's claim: {taken:?}"
+    );
+    let taken = claimed_receipt(taken)?;
+    assert_eq!(
+        generation(&taken)?,
+        1,
+        "the takeover stands one above the claim it replaced"
+    );
+    assert!(
+        fixture.reply(fixture.lead, asked).is_err(),
+        "the replaced leader's late answer is refused"
+    );
+    let answer = fixture.reply(fixture.other, asked)?;
+    assert!(
+        fixture.landed(answer, fixture.other)?,
+        "the new leader's answer lands"
+    );
+    Ok(())
+}
+
+/// ROOM-CLAIM-TAKEOVER = A, ruled test 2: a holder the turn still speaks to
+/// keeps its claim. `lead` claims owen's unaddressed turn and still leads;
+/// owen, whom the turn also speaks to, finds it held by `lead`.
+///
+/// Green before and after the takeover (a guard).
+#[test]
+fn a_holder_still_spoken_to_keeps_its_claim() -> TestResult {
+    let fixture = Fixture::open()?;
+    let asked = fixture.owen_speaks(serde_json::json!({}))?;
+    let held = claimed_receipt(fixture.claim(fixture.lead, asked)?)?;
+    let outcome =
+        fixture
+            .owen()
+            .rooms_claim(fixture.room, asked, fixture.vault.now_recorded_at())?;
+    assert_eq!(
+        outcome,
+        RoomClaimOutcome::HeldBy(held),
+        "the leader still leads, so its claim holds the turn"
+    );
+    Ok(())
+}
+
+/// A turn its holder answered keeps its claim: the answer took the turn's
+/// one answer slot. `lead` claims and answers owen's turn, and the owner
+/// then makes `other` the leader; `other` finds the turn held.
+///
+/// Green before and after the takeover (a guard).
+#[test]
+fn an_answered_turn_keeps_its_claim() -> TestResult {
+    let fixture = Fixture::open()?;
+    let asked = fixture.owen_speaks(serde_json::json!({}))?;
+    let held = claimed_receipt(fixture.claim(fixture.lead, asked)?)?;
+    let answer = fixture.reply(fixture.lead, asked)?;
+    assert!(fixture.landed(answer, fixture.lead)?, "the answer lands");
+    fixture.replace_leader()?;
+    assert_eq!(
+        fixture.claim(fixture.other, asked)?,
+        RoomClaimOutcome::HeldBy(held),
+        "an answered turn is not taken over"
+    );
+    Ok(())
+}
+
+/// Another machine of the vault carries claim rows, and the merge keeps a
+/// takeover over the claim it replaced, in either order. `lead` claims two
+/// of owen's turns while it leads; the owner then makes `other` the leader.
+/// On `first`, this vault took the claim over and a copy of `lead`'s claim
+/// arrives: it changes nothing. On `second`, this vault still holds `lead`'s
+/// claim and the other machine's takeover arrives: it stands, and a copy of
+/// `lead`'s claim again changes nothing.
+///
+/// Red before the takeover: `other`'s claim of `first` settles HeldBy.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_replica_copy_of_a_replaced_claim_leaves_the_takeover() -> TestResult {
+    use oneiron::test_doors::room_turn_claims::{held_claim, merge_replicated_claim};
+    use oneiron::workspace_roster::RoomClaimReceipt;
+
+    let fixture = Fixture::open()?;
+    let first = fixture.owen_speaks(serde_json::json!({}))?;
+    let second = fixture.owen_speaks(serde_json::json!({}))?;
+    let replaced_first = claimed_receipt(fixture.claim(fixture.lead, first)?)?;
+    let replaced_second = claimed_receipt(fixture.claim(fixture.lead, second)?)?;
+    fixture.replace_leader()?;
+
+    let taken = claimed_receipt(fixture.claim(fixture.other, first)?)?;
+    assert_eq!(
+        merge_replicated_claim(&fixture.vault, &replaced_first)?,
+        "Held",
+        "a copy of the replaced claim changes nothing"
+    );
+    assert_eq!(
+        held_claim(&fixture.vault, first)?,
+        Some(taken),
+        "the takeover still holds the turn"
+    );
+
+    let mut carried = serde_json::to_value(&replaced_second)?;
+    carried["actor"] = serde_json::json!(fixture.other.to_hex());
+    carried["receipt_ref"] = serde_json::json!("rooms.claim:replica-takeover");
+    carried["at"] = serde_json::json!(replaced_second.at + 1);
+    carried["generation"] = serde_json::json!(1);
+    let carried: RoomClaimReceipt = serde_json::from_value(carried)?;
+    assert_eq!(
+        merge_replicated_claim(&fixture.vault, &carried)?,
+        "Written",
+        "the other machine's takeover replaces the claim it took over"
+    );
+    assert_eq!(
+        merge_replicated_claim(&fixture.vault, &replaced_second)?,
+        "Held",
+        "a copy of the replaced claim changes nothing"
+    );
+    assert_eq!(
+        held_claim(&fixture.vault, second)?,
+        Some(carried),
+        "the carried takeover holds the turn"
+    );
+    Ok(())
+}
+
+/// REVIEW-9956 P1-3: a turn that names only a person names no agent, so the
+/// leader still answers it. owen binds `@owen` to himself and names only
+/// that handle, so the turn's names hold owen alone.
+///
+/// Red on main and at the round-1 head: the leader's claim settles
+/// NotAddressed.
+#[test]
+fn the_leader_answers_a_turn_naming_only_a_person() -> TestResult {
+    let fixture = Fixture::open()?;
+    fixture
+        .vault
+        .bind_room_handle(fixture.room, "@owen", fixture.owen)?;
+    let asked = fixture.owen_speaks(serde_json::json!({"room_mentions": ["@owen"]}))?;
+    let claimed = fixture.claim(fixture.lead, asked)?;
+    assert!(
+        claimed_by(&claimed, fixture.lead),
+        "the leader claims a turn that names only a person: {claimed:?}"
+    );
+    let answer = fixture.reply(fixture.lead, asked)?;
+    assert!(
+        fixture.landed(answer, fixture.lead)?,
+        "the leader's answer lands"
+    );
+    Ok(())
+}
+
+/// REVIEW-9956 P1-2: an erased speaker's turn is no person's, so it does not
+/// speak to the leader, and the claim door says so rather than failing.
+/// owen speaks, and his turns are then erased to the erased marker, as an
+/// actor erase leaves them.
+///
+/// Green on main; red at the round-1 head, where the claim errs on the
+/// erased marker.
+#[cfg(oneiron_test_support)]
+#[test]
+fn an_erased_speakers_turn_does_not_speak_to_the_leader() -> TestResult {
+    let fixture = Fixture::open()?;
+    let asked = fixture.owen_speaks(serde_json::json!({}))?;
+    oneiron::test_doors::room_turn_claims::erase_turn_actor(&fixture.vault, fixture.owen)?;
+    assert_eq!(
+        fixture.claim(fixture.lead, asked)?,
+        RoomClaimOutcome::NotAddressed,
+        "an erased speaker's turn speaks to no leader"
     );
     Ok(())
 }
