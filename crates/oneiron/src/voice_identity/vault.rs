@@ -85,6 +85,17 @@ fn same_purposes(left: &[VoicePrintPurpose], right: &[VoicePrintPurpose]) -> boo
     names(left) == names(right)
 }
 
+/// A withdrawal its subject may still disown, with the purposes it ended
+/// ([`Vault::voice_withdrawal_open_to_disown_in_txn`]).
+#[derive(Clone, Debug)]
+pub(crate) struct DisownableVoiceWithdrawal {
+    /// The withdrawal as the consent log holds it.
+    pub(crate) withdrawal: VoiceConsentEventV1,
+    /// The purposes it ended, by name: the only ones the subject's restore
+    /// grants (REVIEW-10046 P1).
+    pub(crate) ended_purposes: Vec<VoicePrintPurpose>,
+}
+
 /// Both consent doors compare inside the transaction that holds the event
 /// write and any hard deletion.
 fn put_consent_event_once(
@@ -893,17 +904,22 @@ impl Vault {
     /// recognition order a tie. Another recorder's withdrawal in the same
     /// second leaves it open (REVIEW-10022 P1): the consent log keeps no order
     /// within a second, and the grant either one's tap logs, a second later,
-    /// is the subject's latest decision over both.
-    /// Their "that wasn't me" logs a grant dated one second after it, which
-    /// the consent door then accepts, and which reverses only that
-    /// withdrawal: a later one still voids it. It restores consent only; the
-    /// withdrawal already hard-deleted the print (promise-dura-13).
+    /// is the subject's latest decision over both. It must also have ended
+    /// some consent of theirs ([`super::consent_void::purposes_withdrawal_ended`]):
+    /// one that a withdrawal recorded after it with an earlier date had
+    /// already ended, such as their own on a slow clock, is no longer theirs
+    /// to disown (REVIEW-10046 P1).
+    /// Their "that wasn't me" logs a grant dated one second after it for the
+    /// purposes it ended, and no other (REVIEW-10046 P1), which the consent
+    /// door then accepts, and which reverses only that withdrawal: a later
+    /// one still voids it. It restores consent only; the withdrawal already
+    /// hard-deleted the print (promise-dura-13).
     pub(crate) fn voice_withdrawal_open_to_disown_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         subject: EntityId,
         event_id: &str,
-    ) -> Result<Option<VoiceConsentEventV1>> {
+    ) -> Result<Option<DisownableVoiceWithdrawal>> {
         let Some(withdrawal) = read_consent_event(&self.store, txn, &subject, event_id)? else {
             return Ok(None);
         };
@@ -913,7 +929,8 @@ impl Vault {
         {
             return Ok(None);
         }
-        for other in read_consent_events(&self.store, txn, &subject)? {
+        let events = read_consent_events(&self.store, txn, &subject)?;
+        for other in &events {
             if other.event_id == withdrawal.event_id {
                 continue;
             }
@@ -923,7 +940,7 @@ impl Vault {
                         && !super::consent_void::grant_voided_by(
                             &self.store,
                             txn,
-                            &other,
+                            other,
                             &withdrawal,
                         )?
                 }
@@ -937,7 +954,15 @@ impl Vault {
                 return Ok(None);
             }
         }
-        Ok(Some(withdrawal))
+        let ended_purposes =
+            super::consent_void::purposes_withdrawal_ended(&self.store, txn, &withdrawal, &events)?;
+        if ended_purposes.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(DisownableVoiceWithdrawal {
+            withdrawal,
+            ended_purposes,
+        }))
     }
 
     /// The withdrawal transaction: `admit` runs first inside it, so a
@@ -1204,12 +1229,13 @@ impl Vault {
     /// Admits `event`, a consent under a restore id, only as the subject's
     /// own restore of their withdrawal `withdrawal` while it is open to
     /// disown ([`Self::voice_withdrawal_open_to_disown_in_txn`]): recorded by
-    /// the subject, a grant, dated one second after the withdrawal, for its
-    /// purposes in any order (the consent door orders a grant's purposes by
-    /// name; a withdrawal keeps its recorder's order, REVIEW-10046 P1). A
-    /// stored identical event is a replay. It runs in the grant's
-    /// write transaction, so a decision recorded after the tap was offered,
-    /// such as the subject's own withdrawal, closes the tap (REVIEW-10022 P1).
+    /// the subject, a grant, dated one second after the withdrawal, for the
+    /// purposes it ended in any order (the consent door orders a grant's
+    /// purposes by name, REVIEW-10046 P1), and no purpose it did not end
+    /// (REVIEW-10046 P1). A stored identical event is a replay. It runs in
+    /// the grant's write transaction, so a decision recorded after the tap
+    /// was offered, such as the subject's own withdrawal, closes the tap
+    /// (REVIEW-10022 P1).
     fn admit_consent_restore_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -1226,8 +1252,8 @@ impl Vault {
             && self
                 .voice_withdrawal_open_to_disown_in_txn(txn, subject, withdrawal)?
                 .is_some_and(|open| {
-                    event.occurred_at == open.occurred_at.saturating_add(1)
-                        && same_purposes(&event.purposes, &open.purposes)
+                    event.occurred_at == open.withdrawal.occurred_at.saturating_add(1)
+                        && same_purposes(&event.purposes, &open.ended_purposes)
                 });
         if restores {
             Ok(())

@@ -6,6 +6,8 @@
 //! subject or kind. A withdrawn row installs as a row: the landing never mirrors a
 //! withdrawal's deletes, rebuilds no render history, and evicts no targets.
 
+use std::collections::BTreeSet;
+
 use super::consent_void::{CONSENT_VOID, consent_void_digest};
 use super::math_keys::digest16;
 use super::ref_bank::{
@@ -44,6 +46,7 @@ pub(crate) fn land_archived_voice_rows_in_txn(
     permit: &OwnerArchiveRestorePermit,
     rows: &[ArchiveRetainedSideRow],
 ) -> Result<Vec<ArchivedSideRowOutcome>> {
+    let held_withdrawals = withdrawals_held_before_landing(vault, txn, rows)?;
     let mut outcomes = Vec::with_capacity(rows.len());
     for row in rows {
         let outcome = match row.source_table.as_str() {
@@ -54,7 +57,13 @@ pub(crate) fn land_archived_voice_rows_in_txn(
                 land_archived_voice_consent_void_row_in_txn(vault, txn, permit, row)?
             }
             name if name == side_table::VOICE_IDENTITY_WITHDRAWAL_REQUESTED_AT.name => {
-                land_archived_voice_withdrawal_requested_at_row_in_txn(vault, txn, permit, row)?
+                land_archived_voice_withdrawal_requested_at_row_in_txn(
+                    vault,
+                    txn,
+                    permit,
+                    row,
+                    &held_withdrawals,
+                )?
             }
             name if name == side_table::VOICE_REF_RENDER_CONSENT.name => {
                 land_archived_voice_render_row_in_txn(vault, txn, permit, row)?
@@ -122,17 +131,42 @@ fn land_archived_voice_consent_void_row_in_txn(
     install_archived_row(&CONSENT_VOID, vault, txn, permit, &key, row)
 }
 
+/// The consent-log keys of the withdrawals that the requested-date rows in `rows` name and that
+/// this vault held before any of `rows` lands.
+fn withdrawals_held_before_landing(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    rows: &[ArchiveRetainedSideRow],
+) -> Result<BTreeSet<(EntityId, [u8; 16])>> {
+    let mut held = BTreeSet::new();
+    for row in rows {
+        if row.source_table != side_table::VOICE_IDENTITY_WITHDRAWAL_REQUESTED_AT.name {
+            continue;
+        }
+        let Ok((key, _)) = decode_archived_row(&WITHDRAWAL_REQUESTED_AT, row) else {
+            continue;
+        };
+        if CONSENT.get_bytes(vault, txn, &key)?.is_some() {
+            held.insert(key);
+        }
+    }
+    Ok(held)
+}
+
 /// Lands one archived requested date of a withdrawal recorded at the vault's clock
 /// (REVIEW-10046 P1) for a live person subject. The key must be the subject and the digest of
-/// the withdrawal's event id it names. It lands as written: it answers a replay only for the
-/// exact withdrawal row it fingerprints, which the read takes from the consent log, so a row
-/// whose withdrawal stays out, or is held here under the same id with other content, changes no
-/// replay.
+/// the withdrawal's event id it names. It joins only a withdrawal this landing installs: one
+/// this vault held before it, named in `held_withdrawals`, keeps its own requested date, its row
+/// here or, with none, its recorded date, so a restore never changes which request replays a
+/// live withdrawal (REVIEW-10046 P1). Otherwise it lands as written: it answers a replay only
+/// for the exact withdrawal row it fingerprints, which the read takes from the consent log, so a
+/// row whose withdrawal stays out changes no replay.
 fn land_archived_voice_withdrawal_requested_at_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     permit: &OwnerArchiveRestorePermit,
     row: &ArchiveRetainedSideRow,
+    held_withdrawals: &BTreeSet<(EntityId, [u8; 16])>,
 ) -> Result<ArchivedSideRowOutcome> {
     let (key, requested) = match decode_archived_row(&WITHDRAWAL_REQUESTED_AT, row) {
         Ok(decoded) => decoded,
@@ -149,6 +183,12 @@ fn land_archived_voice_withdrawal_requested_at_row_in_txn(
     }
     if let Some(reason) = live_person_held_back(vault, txn, &key.0)? {
         return Ok(ArchivedSideRowOutcome::HeldBack(reason));
+    }
+    if held_withdrawals.contains(&key) {
+        return Ok(match WITHDRAWAL_REQUESTED_AT.get_bytes(vault, txn, &key)? {
+            Some(stored) if stored == row.source_value => ArchivedSideRowOutcome::Unchanged,
+            _ => ArchivedSideRowOutcome::KeptLive,
+        });
     }
     install_archived_row(&WITHDRAWAL_REQUESTED_AT, vault, txn, permit, &key, row)
 }

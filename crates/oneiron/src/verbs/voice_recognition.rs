@@ -332,7 +332,7 @@ impl Memory<'_> {
             .and_then(|txn| {
                 vault.voice_withdrawal_open_to_disown_in_txn(&txn, self.actor(), event_id)
             });
-        let Ok(Some(withdrawal)) = open else {
+        let Ok(Some(open)) = open else {
             return Vec::new();
         };
         vec![crate::inbox::NotificationAction {
@@ -342,8 +342,11 @@ impl Memory<'_> {
                     "{}{event_id}",
                     crate::voice_identity::VOICE_CONSENT_RESTORE_EVENT_PREFIX
                 ),
-                "occurred_at": withdrawal.occurred_at.saturating_add(1),
-                "purposes": withdrawal.purposes,
+                "occurred_at": open.withdrawal.occurred_at.saturating_add(1),
+                // Only what the withdrawal ended: an agent's withdrawal names
+                // every purpose, and the member may have granted fewer
+                // (REVIEW-10046 P1).
+                "purposes": open.ended_purposes,
                 "basis": {"SettingsToggle": {"surface_ref": format!("inbox:{}", row.id)}},
             }),
         }]
