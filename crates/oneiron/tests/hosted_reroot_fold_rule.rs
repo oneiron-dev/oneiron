@@ -620,10 +620,7 @@ fn the_kit_door_never_re_roots_a_hosted_vault_whose_host_root_serves() {
 fn a_re_root_imported_by_an_owner_key_the_host_does_not_hold_never_counts() {
     let fixture = door_fixture(HostingPrivacyPosture::Hosted);
     let host_root = fixture.issuer.public_key();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("a clock after 1970")
-        .as_secs();
+    let now = fixture.vault.now_recorded_at();
     let row = signed(
         Some(fixture.vault_id),
         1,

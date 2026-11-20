@@ -1069,9 +1069,11 @@ fn a_read_of_the_owner_signing_slot_waits_for_its_renewal() {
 
     let appointing_owner = proof(&owned.vault, owned.person);
     let (vault, seed) = (&owned.vault, &owned.seed);
-    let (rest_ended, rest_heard) = mpsc::channel();
-    let (hold_ended, hold_heard) = mpsc::channel();
-    let (appointment, rest, held, rest_beside, hold_beside) = thread::scope(|scope| {
+    // Both readers report on one channel, so one wait of SLOT_LOCK_WAIT
+    // hears the first of them to end while the renewal holds the lock.
+    let (hold_ended, ended) = mpsc::channel();
+    let rest_ended = hold_ended.clone();
+    let (appointment, rest, held, ended_beside) = thread::scope(|scope| {
         let (reached, resume) = keystore.pause_next_owner_slot_create();
         let appointment =
             scope.spawn(move || vault.appoint_owner_root(&appointing_owner, seed, None));
@@ -1080,28 +1082,21 @@ fn a_read_of_the_owner_signing_slot_waits_for_its_renewal() {
             .expect("the appointment empties the slot and pauses before the successor's seed");
         let rest = scope.spawn(move || {
             let rest = vault.device_owner_key_rest();
-            let _heard = rest_ended.send(());
+            let _heard = rest_ended.send("the rest read");
             rest
         });
         let held = scope.spawn(move || {
             let held = vault.hold_device_owner_signer_logged();
-            let _heard = hold_ended.send(());
+            let _heard = hold_ended.send("the hold");
             held
         });
-        let deadline = Instant::now() + SLOT_LOCK_WAIT;
-        let rest_beside = rest_heard
-            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .is_ok();
-        let hold_beside = hold_heard
-            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .is_ok();
+        let ended_beside = ended.recv_timeout(SLOT_LOCK_WAIT).ok();
         resume.send(()).expect("the renewal goes on");
         (
             appointment.join().expect("the appointment's thread ends"),
             rest.join().expect("the rest read's thread ends"),
             held.join().expect("the hold's thread ends"),
-            rest_beside,
-            hold_beside,
+            ended_beside,
         )
     });
 
@@ -1112,13 +1107,9 @@ fn a_read_of_the_owner_signing_slot_waits_for_its_renewal() {
         OwnerKeyRest::Slot,
         "the rest read finds the successor's seed in the slot, never the emptied slot"
     );
-    assert!(
-        !rest_beside,
-        "the rest read waits for the renewal that holds the owner signing slot lock"
-    );
-    assert!(
-        !hold_beside,
-        "the hold waits for the renewal that holds the owner signing slot lock"
+    assert_eq!(
+        ended_beside, None,
+        "the rest read and the hold wait for the renewal that holds the owner signing slot lock"
     );
     assert_eq!(
         held,
