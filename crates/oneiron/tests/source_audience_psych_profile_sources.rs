@@ -11,25 +11,34 @@
 //! * `a_profile_built_from_a_held_claim_reads_to_no_one_and_stays_home`: once its claim is held
 //!   back here, the profile reads to no one and does not travel, while the PERSON it describes
 //!   still does both.
+//! * `a_companion_read_withholds_a_profile_of_a_mailbox_claim` (REVIEW-9906 round 1): the
+//!   companion profile read (`companion_profile_snapshot_admitted`) reads the sealed profile past
+//!   the scoped row gate, so it asks the source audience itself: under a companion grant, a read
+//!   that authenticates no reader of the mailbox gets the profile of its claim withheld, while the
+//!   profile of a free claim is still admitted.
 //!
-//! The read asserts run red at #9874's head c351d3d0d6a, whose walk adds the profile's sources
-//! to the hold walk alone, and green at the fix.
+//! The first two run red at #9874's head c351d3d0d6a, whose walk adds the profile's sources to
+//! the hold walk alone, and green at the fix; the third runs red at the first fix eb92b8d5fea,
+//! whose companion read asks no source audience, and green at the round-1 fix.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test source_audience_psych_profile_sources`
 #![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
 
+use oneiron::companion::CompanionProfileAdmission;
 use oneiron::psych_profile::{
-    PsychProfile, PsychProfileConfidence, PsychProfileSource, PsychProfileSourceWords,
+    PsychProfile, PsychProfileConfidence, PsychProfileKey, PsychProfileSource,
+    PsychProfileSourceWords, psych_profile_entity_id,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::settings::ReadDestination;
 use oneiron::store::revision_ref::RevisionRef;
 use oneiron::test_doors::source_audience::land_source_bound_artifact;
 use oneiron::test_doors::source_audience_binding::{reads, travels};
 use oneiron::test_doors::turn_programs::withhold_turn;
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeKind, EntityId,
-    TimeRange, Vault, VaultConfig,
+    AccessGrant, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeKind,
+    EntityId, TimeRange, Vault, VaultConfig,
 };
 use rmpv::Value;
 
@@ -74,6 +83,18 @@ fn put_profile_from(
     person: EntityId,
     claim: EntityId,
 ) -> Result<EntityId, Box<dyn std::error::Error>> {
+    let id = EntityId::now();
+    put_profile_at(vault, id, person, claim)?;
+    Ok(id)
+}
+
+/// [`put_profile_from`] at the row `id`.
+fn put_profile_at(
+    vault: &Vault,
+    id: EntityId,
+    person: EntityId,
+    claim: EntityId,
+) -> Result<(), Box<dyn std::error::Error>> {
     let profile = PsychProfile::new(
         person,
         "compact",
@@ -91,9 +112,8 @@ fn put_profile_from(
             content: [0x5C; 32],
         },
     }])?;
-    let id = EntityId::now();
     vault.put_psych_profile(&id, &profile)?;
-    Ok(id)
+    Ok(())
 }
 
 #[test]
@@ -183,6 +203,65 @@ fn a_profile_built_from_a_held_claim_reads_to_no_one_and_stays_home() -> TestRes
     assert!(
         travels(&vault, person)?,
         "the PERSON the profile describes still travels"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_companion_read_withholds_a_profile_of_a_mailbox_claim() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner_actor = vault.ensure_embedded_owner_actor()?;
+    let insider = EntityId::now();
+    let principal = EntityId::now();
+
+    // Two PERSONs, each with one profile from one claim: one claim learned from a mailbox alone,
+    // one nothing binds. The companion principal holds a profile grant for each.
+    let mailbox =
+        land_source_bound_artifact(&vault, BTreeSet::from([insider]), false, owner_actor, 1)?;
+    let mailbox_person = put_person(&vault)?;
+    let mailbox_claim = put_claim(
+        &vault,
+        "test.mailbox",
+        mailbox_person,
+        "words from the mailbox",
+    )?;
+    vault.put_edge(&mailbox.row, EdgeKind::Supports, &mailbox_claim, 1.0)?;
+    let free_person = put_person(&vault)?;
+    let free_claim = put_claim(&vault, "test.free", free_person, "open words")?;
+    let key = |person: EntityId| PsychProfileKey {
+        person,
+        facet: None,
+        world: None,
+    };
+    for (person, claim) in [(mailbox_person, mailbox_claim), (free_person, free_claim)] {
+        put_profile_at(&vault, psych_profile_entity_id(&key(person)), person, claim)?;
+        vault.create_access_grant(
+            &EntityId::now(),
+            &AccessGrant::companion_profile_read(principal, person, None, 1),
+        )?;
+    }
+    // A companion read whose caller has no read lane: it authenticates no reader of the mailbox.
+    let admitted = |person: EntityId| {
+        vault.companion_profile_snapshot_admitted(
+            &principal,
+            &key(person),
+            &ReadDestination::on_device(),
+            None,
+            None,
+        )
+    };
+
+    let free = admitted(free_person)?;
+    assert!(
+        matches!(free, CompanionProfileAdmission::Admitted { .. }),
+        "FIXTURE: the grant admits the profile of a free claim: {free:?}"
+    );
+    let copied = admitted(mailbox_person)?;
+    assert!(
+        matches!(copied, CompanionProfileAdmission::Withheld { .. }),
+        "a companion read with no reader of the mailbox returned a profile copying its claim: \
+         {copied:?}"
     );
     Ok(())
 }
