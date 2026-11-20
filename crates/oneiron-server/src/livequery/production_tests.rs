@@ -529,10 +529,10 @@ async fn http_recall_and_receipts_defaults_limits_and_error_order_are_preserved(
         json!({"query":"solar","limit":1001}),
     );
     assert!(reply.get("error").is_none(), "{reply}");
-    assert_eq!(
-        reply["result"]["retrieval_meta"]["limit_clamped"], false,
-        "{reply}"
-    );
+    // The wire leaves a false flag out (`skip_serializing_if = "is_false"`).
+    let meta = &reply["result"]["retrieval_meta"];
+    assert!(meta.is_object(), "{reply}");
+    assert!(meta.get("limit_clamped").is_none(), "{reply}");
     let reply = rpc(
         &server,
         &auth,
