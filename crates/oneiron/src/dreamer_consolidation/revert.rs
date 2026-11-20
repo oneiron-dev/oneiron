@@ -55,6 +55,26 @@ const CHANGE_REVERT: RevertSurface = RevertSurface {
     marker: None,
 };
 
+const DERIVE_REVERT: RevertSurface = RevertSurface {
+    surface: "derive_revert",
+    birth: "derive.revert",
+    marker: None,
+};
+
+/// Stands `old` again after `new` superseded it through a derivation batch's
+/// `supersede` item, which that batch's revert takes back: as a reverted
+/// change stands each claim it superseded ([`restore_member_in_txn`]). A
+/// fresh copy is born of `old` and of `new`. `now` is milliseconds.
+pub(crate) fn restore_replaced_claim_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    new: EntityId,
+    old: EntityId,
+    now: u64,
+) -> Result<MemberRestore> {
+    restore_member_in_txn(vault, txn, new, old, new, &DERIVE_REVERT, now)
+}
+
 /// What a Dreamer change was.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DreamerChangeKind {
@@ -112,9 +132,9 @@ pub struct DreamerChanges {
 
 /// What reverting one Dreamer change did: the claims it retracted, the
 /// markers open again for the owner, the members standing again in place,
-/// the Dreamer's fresh copies of its own MACHINE members as (member, copy),
-/// the members a later write closed, the SUMMARY or NOTE archived, and the
-/// summary current again in a reverted one's place.
+/// the fresh copies of the members that do not reopen, each written as its
+/// original author, as (member, copy), the members left closed, the SUMMARY
+/// or NOTE archived, and the summary current again in a reverted one's place.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RevertedDreamerChange {
     pub kind: DreamerChangeKind,

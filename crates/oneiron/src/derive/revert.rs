@@ -4,12 +4,21 @@
 //! of today leaves it. The committing actor may revert its own batch while
 //! its derive verdict still stands; the owner may revert any batch
 //! (decision C-2).
+//!
+//! A claim an undone item had replaced stands again as a reverted Dreamer
+//! change stands the claims it superseded: reopened in place, or, where it
+//! does not reopen (a claim the Dreamer signed; an unsigned `generated`
+//! claim at `auto`), as a fresh copy under a new id written as its original
+//! author, which the receipt names. A claim that neither reopens nor is
+//! copied stays closed, and a `supersede` item whose claim stays closed is
+//! listed as left (lead ruling 21 Nov, INTENT-17 rows 1+2 = A).
 
 use serde::{Deserialize, Serialize};
 
 use super::record::{AppliedEdge, ItemRecord, batch_record_in_txn};
 use crate::claim::PREDICATE_CONFLICT_RESOLVED;
 use crate::consent::AuthenticatedOwner;
+use crate::dreamer_consolidation::MemberRestore;
 use crate::dreamer_promotion::KeptConflictLink;
 use crate::edge::EdgeKind;
 use crate::error::{Error, GateError, Result};
@@ -113,7 +122,9 @@ impl Vault {
     /// in a savepoint of one write while every row it landed still stands at
     /// its recorded revision; an item changed since, one whose kind has no
     /// inverse here, or one whose inverse refuses is left standing and
-    /// listed. The revert keeps its own receipt.
+    /// listed. A claim an undone item had replaced that does not reopen
+    /// stands again as a fresh copy, which the receipt names. The revert
+    /// keeps its own receipt.
     ///
     /// # Errors
     ///
@@ -160,6 +171,7 @@ impl Vault {
         let now_ms = crate::ports::recorded_at_in_txn(&self.store, txn)?.saturating_mul(1_000);
         let mut reverted = Vec::new();
         let mut left = Vec::new();
+        let mut copied = Vec::new();
         let mut reverted_rows = std::collections::BTreeSet::new();
         for item in record.items.iter().rev().filter(|item| item.landed) {
             let read: &heed::RoTxn<'_> = txn;
@@ -194,12 +206,17 @@ impl Vault {
                 now_ms,
                 &reverted_rows,
             ) {
-                Ok(true) => {
+                Ok(Some(copies)) => {
                     savepoint.commit()?;
                     reverted_rows.extend(item.rows.iter().copied());
                     reverted.push(item.local.clone());
+                    copied.extend(
+                        copies
+                            .into_iter()
+                            .map(|(replaced, copy)| (item.local.clone(), replaced, copy)),
+                    );
                 }
-                Ok(false) => {
+                Ok(None) => {
                     savepoint.abort();
                     left.push((item.local.clone(), REVERT_NO_INVERSE.to_owned()));
                 }
@@ -218,7 +235,7 @@ impl Vault {
             reverted,
             left,
             receipt,
-            copied: Vec::new(),
+            copied,
         })
     }
 
@@ -266,7 +283,9 @@ impl Vault {
     }
 
     /// Undoes one landed item in `txn`, after this revert took back the rows
-    /// `taken_back` names. `false` when its kind has no inverse here.
+    /// `taken_back` names: each claim the item had replaced that stands
+    /// again as a fresh copy, as (replaced claim, copy). `None` when its kind
+    /// has no inverse here.
     fn undo_item_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -275,25 +294,27 @@ impl Vault {
         item: &ItemRecord,
         now_ms: u64,
         taken_back: &std::collections::BTreeSet<EntityId>,
-    ) -> Result<bool> {
+    ) -> Result<Option<Vec<(EntityId, EntityId)>>> {
         let first = || {
             item.rows
                 .first()
                 .copied()
                 .ok_or(Error::InvariantViolation("a landed item names no row"))
         };
+        let mut copied = Vec::new();
         match item.kind.as_str() {
             // A claim, and a person's `about` landing: the Dreamer's own
             // per-row inverse, for this batch's author.
             "claim" | "person_about" => {
-                crate::dreamer_consolidation::revert_authored_change_in_txn(
+                copied = crate::dreamer_consolidation::revert_authored_change_in_txn(
                     self,
                     txn,
                     first()?,
                     *author,
                     reverter,
                     now_ms,
-                )?;
+                )?
+                .copied;
             }
             "evidence" => {
                 // The provenance retract takes Unix seconds, as the other
@@ -306,8 +327,14 @@ impl Vault {
                 let [new, old] = item.rows.as_slice() else {
                     return Err(Error::InvariantViolation("a supersession names two rows"));
                 };
-                if !self.restore_superseded_claim_in_txn(txn, new, old, now_ms / 1_000)? {
-                    return Err(Error::InvalidClaimBody("the superseded claim stays closed"));
+                match crate::dreamer_consolidation::restore_replaced_claim_in_txn(
+                    self, txn, *new, *old, now_ms,
+                )? {
+                    MemberRestore::Restored => {}
+                    MemberRestore::Copied(copy) => copied.push((*old, copy)),
+                    MemberRestore::LeftClosed => {
+                        return Err(Error::InvalidClaimBody("the superseded claim stays closed"));
+                    }
                 }
             }
             // A settlement's first row is its answer or its staged Keep.
@@ -318,9 +345,10 @@ impl Vault {
                     .get_claim_in_txn(txn, &staged)?
                     .ok_or(Error::EntityNotFound)?;
                 if claim.predicate == PREDICATE_CONFLICT_RESOLVED {
-                    crate::dreamer_consolidation::revert_settlement_in_txn(
+                    copied = crate::dreamer_consolidation::revert_settlement_in_txn(
                         self, txn, staged, reverter, now_ms,
-                    )?;
+                    )?
+                    .copied;
                 } else {
                     if !KeptConflictLink::of_claim(&claim)
                         .is_some_and(|link| item.rows.get(1) == Some(&link.marker))
@@ -357,21 +385,22 @@ impl Vault {
                 self.put_archive_tombstone_in_txn(txn, &person, &marker)?;
             }
             "same_as" => {
-                crate::dreamer_consolidation::revert_authored_change_in_txn(
+                copied = crate::dreamer_consolidation::revert_authored_change_in_txn(
                     self,
                     txn,
                     first()?,
                     *author,
                     reverter,
                     now_ms,
-                )?;
+                )?
+                .copied;
                 if let Some(edge) = &item.applied_edge {
                     unlink_applied_edge_in_txn(self, txn, edge)?;
                 }
             }
-            _ => return Ok(false),
+            _ => return Ok(None),
         }
-        Ok(true)
+        Ok(Some(copied))
     }
 }
 
