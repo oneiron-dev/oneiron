@@ -18,8 +18,20 @@
 //! * `enabled_restored_agents_resubmit_their_diary_pair_link`: the source's
 //!   diary pair link stays out of the restore, counted; once the owner
 //!   enables both agents, one of them submits the link again and it holds.
+//! * `a_restored_agent_enabled_by_a_native_put_lists_and_reads_its_imported_diary`:
+//!   the owner's native put of the definition row turns the agent on as the
+//!   typed door does, and the listing and the read follow (REVIEW-9994
+//!   round 1).
+//! * `an_authored_by_edge_without_the_enable_restores_no_imported_diary`: an
+//!   `AuthoredBy` edge that lands on the imported entry while the agent is
+//!   still off (as a peer's sync update can land one) gives it neither the
+//!   listing nor the read (REVIEW-9994 round 1).
+//! * `a_use_limited_imported_entry_stays_out_of_the_restored_agents_diary`:
+//!   after the enable, an entry kept under a use limit is neither listed nor
+//!   read (REVIEW-9994 round 1).
 //!
-//! Red on main c8a36a0461b: each test's first assertion after the enable
+//! Red on main c8a36a0461b: each of the first three tests' and the native
+//! put test's first assertion after the enable
 //! fails (no entry listed, the read holds the entry, the link submission is
 //! refused: the agent owns no endpoint). Green on the fix.
 //!
@@ -38,14 +50,16 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
-use oneiron::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
+use oneiron::agent_def::{AgentCeiling, AgentDefinition, AgentScope, encode_agent_definition};
 use oneiron::authority::MachineRole;
 use oneiron::batch::export::WholeVaultImportReceipt;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::edge::EdgeKind;
 use oneiron::memory::DiaryReadOutcome;
 use oneiron::note::{NoteKind, NoteReadRequest, NoteScope, NoteWriteEnvelope};
+use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::campaign_member_index::restrict_record;
 use oneiron::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EdgeActorClass, EntityId, TimeRange,
     Vault, VaultConfig, WriteActor,
@@ -235,9 +249,9 @@ fn restored() -> Restored {
 }
 
 impl Restored {
-    /// The owner reviews restored agent `agent` and turns it on, as after
-    /// any restore.
-    fn enable(&self, agent: EntityId) {
+    /// Restored agent `agent`'s definition as the owner's review turns it
+    /// on.
+    fn enabled_definition(&self, agent: EntityId) -> AgentDefinition {
         let mut definition = self
             .dest
             .get_agent_definition(&agent)
@@ -250,6 +264,13 @@ impl Restored {
         definition.enabled = true;
         definition.approval_status = ClaimApprovalStatus::Approved;
         definition.version = "2".to_owned();
+        definition
+    }
+
+    /// The owner reviews restored agent `agent` and turns it on, as after
+    /// any restore.
+    fn enable(&self, agent: EntityId) {
+        let definition = self.enabled_definition(agent);
         self.dest
             .update_agent_definition_as(
                 &self.dest_owner,
@@ -259,6 +280,30 @@ impl Restored {
                 2,
             )
             .expect("the owner enables the restored agent");
+    }
+
+    /// The owner turns restored agent `agent` on through the native put of
+    /// its definition row, not the typed door.
+    fn enable_natively(&self, agent: EntityId) {
+        let body = encode_agent_definition(&self.enabled_definition(agent))
+            .expect("encode the enabled definition");
+        self.dest
+            .put_entity(
+                &agent,
+                ENTITY_TYPE_AGENT_DEF,
+                TimeRange { start: 2, end: 2 },
+                2,
+                &body,
+            )
+            .expect("the owner's native put enables the restored agent");
+    }
+
+    /// Whether `agent`'s own diary read lists `entry`.
+    fn lists(&self, agent: EntityId, entry: EntityId) -> bool {
+        self.diary(agent, agent)
+            .unwrap_or_default()
+            .iter()
+            .any(|(id, _)| *id == entry)
     }
 
     /// The ids and texts `reader`'s read of `agent`'s diary returns, or
@@ -369,5 +414,61 @@ fn enabled_restored_agents_resubmit_their_diary_pair_link() {
     assert!(
         holds_link(&restored.dest, first_entry, second_entry),
         "the resubmitted diary pair link holds"
+    );
+}
+
+#[test]
+fn a_restored_agent_enabled_by_a_native_put_lists_and_reads_its_imported_diary() {
+    let restored = restored();
+    let first = restored.first;
+    restored.enable_natively(first);
+    assert_eq!(
+        restored.diary(first, first),
+        Some(vec![(restored.first_entry, FIRST_MARKDOWN.to_owned())]),
+        "MISSED-RESTORE: a restored agent the owner enabled through the native put lists no \
+         imported diary entry"
+    );
+    assert_eq!(
+        restored.read(first, restored.first_entry),
+        Ok(Some(FIRST_MARKDOWN.to_owned())),
+        "MISSED-RESTORE: a restored agent the owner enabled through the native put cannot read \
+         its own imported entry"
+    );
+}
+
+#[test]
+fn an_authored_by_edge_without_the_enable_restores_no_imported_diary() {
+    let restored = restored();
+    let first = restored.first;
+    restored
+        .dest
+        .put_edge(&restored.first_entry, EdgeKind::AuthoredBy, &first, 1.0)
+        .expect("FIXTURE: an AuthoredBy edge lands on the imported entry");
+    assert!(
+        !restored.lists(first, restored.first_entry),
+        "LEAK: an AuthoredBy edge alone lists the imported entry to a restored agent the owner \
+         has not enabled"
+    );
+    assert!(
+        !matches!(restored.read(first, restored.first_entry), Ok(Some(_))),
+        "LEAK: an AuthoredBy edge alone lets a restored agent the owner has not enabled read the \
+         imported entry"
+    );
+}
+
+#[test]
+fn a_use_limited_imported_entry_stays_out_of_the_restored_agents_diary() {
+    let restored = restored();
+    let first = restored.first;
+    restored.enable(first);
+    restrict_record(&restored.dest, restored.first_entry)
+        .expect("FIXTURE: restrict the imported entry");
+    assert!(
+        !restored.lists(first, restored.first_entry),
+        "LEAK: the restored agent's diary lists an imported entry kept under a use limit"
+    );
+    assert!(
+        !matches!(restored.read(first, restored.first_entry), Ok(Some(_))),
+        "LEAK: the restored agent reads an imported entry kept under a use limit"
     );
 }
