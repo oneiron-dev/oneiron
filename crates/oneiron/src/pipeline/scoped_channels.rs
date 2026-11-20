@@ -394,12 +394,13 @@ impl PipelineBuilder<'_> {
     }
 
     /// The temporal channel's list for the call's scope, and the rows a
-    /// clamped pack's unnarrowed list kept out of its cut because the
-    /// audience could not read them whatever their status, among its first
-    /// `limit` lane rows inside the window's bound, best first. That is the
-    /// place a call without the clamp gave them, as far as the window is
-    /// the same: hidden rows no longer stop its rounds, so it can grow
-    /// further. The count is the owner's; no audience-visible output reads it.
+    /// clamped pack's list kept out of its cut because the audience could
+    /// not read them whatever their status, among its first `limit` lane
+    /// rows inside the bound a reader without the clamp gives, best first.
+    /// That is the place a call without the clamp gave them, as far as the
+    /// window is the same: hidden rows no longer stop its rounds, so it can
+    /// grow further. The count is the owner's; no audience-visible output
+    /// reads it.
     pub(super) fn scoped_temporal_results(
         &self,
         rtxn: &RoTxn<'_>,
@@ -440,23 +441,35 @@ impl PipelineBuilder<'_> {
         // clamp drops them (REVIEW-9980 round 1).
         let clamp = filters.disclosure;
         let clamp_metadata = RefCell::new(EntityMetadataCache::default());
-        let in_reader = |store: &crate::store::StoreRead<'_>,
-                         txn: &RoTxn<'_>,
-                         id: &crate::EntityId|
+        let hides = |store: &crate::store::StoreRead<'_>,
+                     txn: &RoTxn<'_>,
+                     id: &crate::EntityId|
          -> Result<bool> {
-            if let Some(scope) = filters.candidate_filter
-                && !scope(store, txn, id)?
-            {
-                return Ok(false);
+            clamp_hides_row(store, txn, id, clamp, &mut clamp_metadata.borrow_mut())
+        };
+        // The call's scope, asked before the clamp, and its slice, after: a
+        // call without the clamp reads through these two alone.
+        let in_scope = |store: &crate::store::StoreRead<'_>,
+                        txn: &RoTxn<'_>,
+                        id: &crate::EntityId|
+         -> Result<bool> {
+            match filters.candidate_filter {
+                Some(scope) => scope(store, txn, id),
+                None => Ok(true),
             }
-            if clamp_hides_row(store, txn, id, clamp, &mut clamp_metadata.borrow_mut())? {
-                return Ok(false);
-            }
+        };
+        let in_slice = |txn: &RoTxn<'_>, id: &crate::EntityId| -> Result<bool> {
             if !sliced {
                 return Ok(true);
             }
             let (metadata, gate) = &mut *slice_caches.borrow_mut();
             self.made_by_slice_admits(txn, id, metadata, gate)
+        };
+        let in_reader = |store: &crate::store::StoreRead<'_>,
+                         txn: &RoTxn<'_>,
+                         id: &crate::EntityId|
+         -> Result<bool> {
+            Ok(in_scope(store, txn, id)? && !hides(store, txn, id)? && in_slice(txn, id)?)
         };
         let narrowed = filters.candidate_filter.is_some() || sliced;
         // Widen the collector's window, scan caps and score truncation, not
@@ -525,20 +538,7 @@ impl PipelineBuilder<'_> {
             // A hidden row among the first `limit` of those, in the lane,
             // held a place in the list before, and the pack counts it as it
             // did then.
-            let mut withheld = Vec::new();
-            let mut places = 0_usize;
-            for (id, hidden) in held_before {
-                if places == config.limit {
-                    break;
-                }
-                if self.memory_category && !CapabilityLane::Memory.admits(&self.read, rtxn, &id)? {
-                    continue;
-                }
-                places += 1;
-                if hidden {
-                    withheld.push(id);
-                }
-            }
+            let withheld = self.hidden_rows_in_first_places(rtxn, held_before, config.limit)?;
             self.truncate_to_scope(
                 &mut readable,
                 rtxn,
@@ -549,6 +549,29 @@ impl PipelineBuilder<'_> {
             )?;
             return Ok((readable, withheld));
         }
+        // A clamped pack's narrowed list: a hidden row the call's scope and
+        // slice admit takes a place in the bound a reader without the clamp
+        // gives, and the pack counts it as the unnarrowed list's
+        // (REVIEW-9980 round 2). Inside that bound, a row the reader does
+        // not read is a hidden one.
+        let withheld = if clamp.is_some() {
+            let held = cut.rows_inside_bound_where(|id| {
+                Ok(reader.reads(&self.read, rtxn, id)?
+                    || (in_scope(&self.read, rtxn, id)?
+                        && hides(&self.read, rtxn, id)?
+                        && in_slice(rtxn, id)?))
+            })?;
+            let mut held_before = Vec::new();
+            for scored in &scores {
+                if held.contains(&scored.id) {
+                    let hidden = !reader.reads(&self.read, rtxn, &scored.id)?;
+                    held_before.push((scored.id, hidden));
+                }
+            }
+            self.hidden_rows_in_first_places(rtxn, held_before, config.limit)?
+        } else {
+            Vec::new()
+        };
         let memory = self.memory_category;
         let kept = |store: &crate::store::StoreRead<'_>,
                     txn: &RoTxn<'_>,
@@ -569,7 +592,33 @@ impl PipelineBuilder<'_> {
             self.has_strict_text_scope_filter(),
             (metadata_cache, claim_gate),
         )?;
-        Ok((scores, Vec::new()))
+        Ok((scores, withheld))
+    }
+
+    /// The hidden rows among the first `limit` lane rows of `held_before`
+    /// (the rows a temporal list held without the clamp, best first, each
+    /// with whether the clamp hides it): the places such a list gave them.
+    fn hidden_rows_in_first_places(
+        &self,
+        rtxn: &RoTxn<'_>,
+        held_before: Vec<(crate::EntityId, bool)>,
+        limit: usize,
+    ) -> Result<Vec<crate::EntityId>> {
+        let mut withheld = Vec::new();
+        let mut places = 0_usize;
+        for (id, hidden) in held_before {
+            if places == limit {
+                break;
+            }
+            if self.memory_category && !CapabilityLane::Memory.admits(&self.read, rtxn, &id)? {
+                continue;
+            }
+            places += 1;
+            if hidden {
+                withheld.push(id);
+            }
+        }
+        Ok(withheld)
     }
 
     /// `filters` for a bounded result channel's own admission and cut

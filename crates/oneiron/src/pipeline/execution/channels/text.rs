@@ -174,6 +174,26 @@ impl PipelineBuilder<'_> {
         Ok(claim_gate_text_widening_active)
     }
 
+    /// A clamped read's own-row test for its BM25 statistics
+    /// ([`crate::bm25::Bm25SearchOptions::hidden_row`]), `None` without a
+    /// clamp. Each row it judges is a deadline checkpoint, as at the scope's
+    /// admission: under a clamp a term's document frequency asks it of every
+    /// posting.
+    fn hidden_row_test<'t>(
+        &'t self,
+        rtxn: &'t RoTxn<'_>,
+        clamp: Option<&'t DisclosureContext>,
+        metadata: &'t mut EntityMetadataCache,
+    ) -> Option<Box<dyn FnMut(&EntityId) -> Result<bool> + 't>> {
+        let clamp = clamp?;
+        Some(Box::new(move |id: &EntityId| {
+            if let Some(deadline) = self.deadline {
+                deadline.checkpoint()?;
+            }
+            clamp_hides_row(&self.read, rtxn, id, Some(clamp), metadata)
+        }))
+    }
+
     /// Runs the text channel, the next of `stages_left` deadline stages, and
     /// its HyDE-retry extra queries, admitting each into `acc`. Returns the
     /// index the primary text list took in the ranked lists, `None` when no
@@ -241,6 +261,12 @@ impl PipelineBuilder<'_> {
                 let mut scan_metadata = EntityMetadataCache::default();
                 let retry_metadata = inputs.scan_metadata(self, metadata_cache, &mut scan_metadata);
                 let retry_filters = self.bounded_result_filters(inputs.filter_config);
+                let mut retry_hidden_metadata = EntityMetadataCache::default();
+                let mut retry_hidden_row = self.hidden_row_test(
+                    rtxn,
+                    inputs.filter_config.disclosure,
+                    &mut retry_hidden_metadata,
+                );
                 let mut retry_exact_posting_matches_scope = |id: &EntityId| {
                     pipeline_candidate_matches_filters_and_gate(
                         &self.read,
@@ -265,6 +291,9 @@ impl PipelineBuilder<'_> {
                             recency: None,
                             exact_posting_matches_scope: &mut retry_exact_posting_matches_scope,
                             private_note_ids: inputs.private_note_ids,
+                            hidden_row: retry_hidden_row
+                                .as_deref_mut()
+                                .map(|hidden| hidden as &mut dyn FnMut(&EntityId) -> Result<bool>),
                         },
                         (inputs.filter_config.disclosure, &mut acc.clamped_at_fetch),
                     )?
@@ -284,6 +313,9 @@ impl PipelineBuilder<'_> {
                             // table_default 0.35; the pipeline blends recency
                             // post-fusion on the non-port path instead.
                             recency: None,
+                            hidden_row: retry_hidden_row
+                                .as_deref_mut()
+                                .map(|hidden| hidden as &mut dyn FnMut(&EntityId) -> Result<bool>),
                         },
                     )?
                 };
@@ -358,6 +390,9 @@ impl PipelineBuilder<'_> {
         let mut scan_metadata = EntityMetadataCache::default();
         let stage_metadata = inputs.scan_metadata(self, metadata_cache, &mut scan_metadata);
         let result_filters = self.bounded_result_filters(inputs.filter_config);
+        let mut hidden_metadata = EntityMetadataCache::default();
+        let mut hidden_row =
+            self.hidden_row_test(rtxn, inputs.filter_config.disclosure, &mut hidden_metadata);
         let mut exact_posting_matches_scope = |id: &EntityId| {
             pipeline_candidate_matches_filters_and_gate(
                 &self.read,
@@ -399,6 +434,9 @@ impl PipelineBuilder<'_> {
                         recency: None,
                         exact_posting_matches_scope: &mut exact_posting_matches_scope,
                         private_note_ids: inputs.private_note_ids,
+                        hidden_row: hidden_row
+                            .as_deref_mut()
+                            .map(|hidden| hidden as &mut dyn FnMut(&EntityId) -> Result<bool>),
                     },
                     (inputs.filter_config.disclosure, &mut withheld),
                 )?
@@ -418,6 +456,9 @@ impl PipelineBuilder<'_> {
                         // table_default 0.35; the pipeline blends recency
                         // post-fusion on the non-port path instead.
                         recency: None,
+                        hidden_row: hidden_row
+                            .as_deref_mut()
+                            .map(|hidden| hidden as &mut dyn FnMut(&EntityId) -> Result<bool>),
                     },
                 )?
             };
@@ -550,6 +591,9 @@ impl PipelineBuilder<'_> {
             recency: options.recency,
             exact_posting_matches_scope: &mut matches_scope,
             private_note_ids: options.private_note_ids,
+            hidden_row: options
+                .hidden_row
+                .map(|hidden| hidden as &mut dyn FnMut(&EntityId) -> Result<bool>),
         };
         if filter_all {
             crate::bm25::search_text_filtered_with_recency(

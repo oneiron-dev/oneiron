@@ -247,6 +247,26 @@ impl<'r, 'p, 'f> WindowCut<'r, 'p, 'f> {
             .is_some_and(|&position| position < self.bound)
     }
 
+    /// The first `bound` rows `held` admits, in the window's order: the
+    /// places the bound gives rows when its reader asks only `held`. With a
+    /// `held` that admits every row, these are the rows
+    /// [`Self::ranks_inside_bound`] names.
+    pub(super) fn rows_inside_bound_where(
+        &self,
+        mut held: impl FnMut(&EntityId) -> Result<bool>,
+    ) -> Result<HashSet<EntityId>> {
+        let mut inside = HashSet::new();
+        for id in &self.order {
+            if inside.len() == self.bound {
+                break;
+            }
+            if held(id)? {
+                inside.insert(*id);
+            }
+        }
+        Ok(inside)
+    }
+
     pub(super) fn keeps(
         &self,
         store: &StoreRead<'_>,
