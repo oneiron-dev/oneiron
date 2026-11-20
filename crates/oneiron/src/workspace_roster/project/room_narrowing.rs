@@ -12,14 +12,17 @@
 //! than its row, and of each frozen view it refreshes: a frozen view is served
 //! only while it still fits its parents, so a parent's narrowing can empty its
 //! room with the record unchanged. A delete or a purge that unbinds a home
-//! room queues it too, with the rows it detaches. The vault's batch terminal,
-//! and the delete and purge doors after their unbind, then mark stale each
+//! room queues it too, with the rows it detaches. The owner's history budget
+//! change, which changes at once what each frozen project serves, queues each
+//! room it leaves reading less. The vault's batch terminal, the delete and
+//! purge doors after their unbind, and the budget door then mark stale each
 //! standing answer a queued room left wider than a row it rests on, and empty
 //! the queue before the transaction commits.
 
 use super::fold::ProjectEffective;
 use super::*;
 use crate::store::Store;
+use std::collections::BTreeMap;
 
 /// [`PROJECT_ROOM_NARROWING`]'s value.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,11 +102,69 @@ pub(super) fn queue_narrowed_room_in(
     if !strands {
         return Ok(());
     }
+    queue_home_room_in(store, txn, project)
+}
+
+/// Queues `project`'s home room, unless it is queued already.
+fn queue_home_room_in(store: &Store, txn: &mut heed::RwTxn<'_>, project: EntityId) -> Result<()> {
     let room = home_room_id(project)?;
     if PROJECT_ROOM_NARROWING.contains(store, txn, &room)? {
         return Ok(());
     }
     PROJECT_ROOM_NARROWING.put(store, txn, &room, &NarrowedRoom::default())
+}
+
+/// What the home room of each project reads through its served view now:
+/// only the rooms that read something.
+fn room_reaches_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    posture: crate::HostingPrivacyPosture,
+) -> Result<BTreeMap<EntityId, RoomReach>> {
+    let mut reaches = BTreeMap::new();
+    let (Some(kind), Some(reader)) = (
+        project_type(store),
+        super::read::ProjectReader::new(store, txn, posture)?,
+    ) else {
+        return Ok(reaches);
+    };
+    for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(store, txn, kind, None)? {
+        let id = id?;
+        let reach = RoomReach::of(reader.effective(id)?.as_ref());
+        if reach != RoomReach::Nothing {
+            reaches.insert(id, reach);
+        }
+    }
+    Ok(reaches)
+}
+
+/// Runs `change`, a write that can change what every project serves at once
+/// without a refresh writing any record (the owner's history budget: a raised
+/// budget folds a frozen project's whole history again, which can meet its
+/// room's facets narrower than the saved view), and queues the home room of
+/// each project whose served view it leaves reading less than before.
+pub(super) fn queue_rooms_narrowed_by_in<'t>(
+    store: &Store,
+    txn: &mut heed::RwTxn<'t>,
+    posture: crate::HostingPrivacyPosture,
+    change: impl FnOnce(&mut heed::RwTxn<'t>) -> Result<()>,
+) -> Result<()> {
+    let before = room_reaches_in(store, txn, posture)?;
+    change(txn)?;
+    if before.is_empty() {
+        return Ok(());
+    }
+    let after = room_reaches_in(store, txn, posture)?;
+    for (project, reach) in before {
+        // A room missing now reads nothing.
+        if after
+            .get(&project)
+            .is_none_or(|now| reach.strands_answers_at(now))
+        {
+            queue_home_room_in(store, txn, project)?;
+        }
+    }
+    Ok(())
 }
 
 /// Queues `room`, which a delete is about to unbind from its project, with
