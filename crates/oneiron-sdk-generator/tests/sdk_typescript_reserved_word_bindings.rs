@@ -4,9 +4,11 @@
 //! and destructured bindings in `facade-verbs.ts` and `native-verbs.ts`, and a code-mode root,
 //! bare verb or `self` member becomes a `const`, `function` or `namespace` in the catalog
 //! fragment; a reserved word there does not parse, and no PR-time job parses these files (the
-//! 21 Nov nightly e2e found the Python twin, `def continue`). The generator runs on the repository
-//! through its public `outputs` entry. Today's table names no reserved word at these positions,
-//! so this test guards the emitters' escape and refusal.
+//! 21 Nov nightly e2e found the Python twin, `def continue`). A facade binding also must not take
+//! a name the verb's body reads (`host`, `facadeCall`, `facadeClient`, `JSON`, an imported helper
+//! such as `keyedJson`): it would shadow it, and the call would miss. The generator runs on the
+//! repository through its public `outputs` entry. Today's table names no reserved word or body
+//! read at these positions, so this test guards the emitters' escape and refusal.
 //! `cargo test --locked -p oneiron-sdk-generator --all-features
 //! --test sdk_typescript_reserved_word_bindings`.
 
@@ -170,6 +172,26 @@ fn parameter_bindings(list: &str) -> Vec<&str> {
         .collect()
 }
 
+/// The names a facade verb's body reads besides its own bindings, which no parameter or
+/// destructured field of `facade-verbs.ts` may take: the handle `host`, the two symbols the call
+/// goes through, the `JSON` global and each name the file imports as a value
+/// (`import { keyedJson } from ...`).
+fn facade_body_reads(text: &str) -> Vec<String> {
+    let mut names: Vec<String> = ["host", "JSON", "facadeCall", "facadeClient"]
+        .map(str::to_owned)
+        .into();
+    for line in text.lines() {
+        let Some(list) = line.strip_prefix("import { ") else {
+            continue;
+        };
+        let Some(end) = list.find(" }") else {
+            continue;
+        };
+        names.extend(list[..end].split(", ").map(str::to_owned));
+    }
+    names
+}
+
 /// The names an object destructure binds: `field: binding` binds the name after the colon, any
 /// other entry its leading identifier.
 fn destructure_bindings(list: &str) -> Vec<&str> {
@@ -194,17 +216,27 @@ fn generated_typescript_binds_no_javascript_reserved_word() {
             .get(path)
             .unwrap_or_else(|| panic!("{path} is an output"))
     };
+    let reads = facade_body_reads(text_of(FACADE_VERBS));
+    assert!(
+        reads.iter().any(|name| name == "keyedJson"),
+        "{FACADE_VERBS}: no `keyedJson` import found"
+    );
     let mut offenders = Vec::new();
-    // A binding must not be a reserved word; a callable member of an interface or type literal
-    // must not be `new`, which there opens a construct signature.
+    // A binding must not be a reserved word, nor in `facade-verbs.ts` a name the body reads; a
+    // callable member of an interface or type literal must not be `new`, which there opens a
+    // construct signature.
     let mut check = |path: &str, line: usize, form: &str, name: &str| {
-        let bad = if form == CALLABLE_MEMBER {
-            name == "new"
+        let fault = if form == CALLABLE_MEMBER {
+            (name == "new").then_some("construct signature")
+        } else if JS_RESERVED_WORDS.contains(&name) {
+            Some("reserved word")
+        } else if path == FACADE_VERBS && reads.iter().any(|read| read == name) {
+            Some("shadows a name the body reads")
         } else {
-            JS_RESERVED_WORDS.contains(&name)
+            None
         };
-        if bad {
-            offenders.push(format!("{path}:{line} {form} {name}"));
+        if let Some(fault) = fault {
+            offenders.push(format!("{path}:{line} {form} {name} ({fault})"));
         }
     };
 
@@ -300,7 +332,7 @@ fn generated_typescript_binds_no_javascript_reserved_word() {
 
     assert!(
         offenders.is_empty(),
-        "the generated TypeScript binds a JavaScript reserved word (it does not parse): {}",
+        "the generated TypeScript binds a reserved word or a name a facade body reads: {}",
         offenders.join("; ")
     );
 }
@@ -341,4 +373,20 @@ fn the_scan_reads_each_binding_form() {
     let at = line.find("const { ").expect("a destructure") + "const ".len();
     assert_eq!(enclosed(line, at), Some(" requestId, ...rest "));
     assert_eq!(enclosed("(a, (b)", 0), None);
+    let imports = concat!(
+        "import type * as Facade from \"./facade-types.js\"\n",
+        "import type { NativeClient } from \"./native.js\"\n",
+        "import { itemFromWire, keyedJson } from \"./key-value.js\"\n",
+    );
+    assert_eq!(
+        facade_body_reads(imports),
+        [
+            "host",
+            "JSON",
+            "facadeCall",
+            "facadeClient",
+            "itemFromWire",
+            "keyedJson"
+        ]
+    );
 }

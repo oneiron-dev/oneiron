@@ -123,10 +123,12 @@ fn membership_is_pythons() {
 // FIX-LIST [SDK-TS-RESERVED-WORD-IDENTIFIERS]: a JSON-wire row's input fields are destructured into bindings of
 // their own names, so a reserved word, or a name the block binds or reads itself, is renamed
 // (`const { default: default_, ...rest } = request`), with no two fields bound alike; the request sent on is
-// rebuilt from those bindings. Today's three such fields keep their shorthand.
+// rebuilt from those bindings. Today's three such fields keep their shorthand. The fixed names are the emitter's own
+// (`wire_block_fixed`), so a field named like a helper the block calls (`keyedJson`, review round 2 of #10011)
+// cannot shadow it.
 #[test]
 fn a_reserved_wire_field_destructures_into_a_binding_of_its_own() {
-    let fixed = ["host", "rest", "result", "request"];
+    let fixed = wire_block_fixed("request");
     let entries = |fields: &[&str]| {
         let fields: Vec<String> = fields.iter().map(|field| (*field).to_owned()).collect();
         destructure_entries(&fields, &fixed)
@@ -154,4 +156,49 @@ fn a_reserved_wire_field_destructures_into_a_binding_of_its_own() {
             pair("request: request_", "request_")
         ]
     );
+    // Each name the block reads besides its bindings: the handle, the symbols, the `key-value.js` helpers and
+    // `JSON`.
+    for read in [
+        "host",
+        "facadeCall",
+        "facadeClient",
+        "JSON",
+        "keyedJson",
+        "itemFromWire",
+    ] {
+        let alias = format!("{read}_");
+        assert_eq!(
+            entries(&[read]),
+            [pair(&format!("{read}: {alias}"), &alias)],
+            "{read}"
+        );
+    }
+    assert_eq!(
+        entries(&["default", "keyedJson"]),
+        [
+            pair("default: default_", "default_"),
+            pair("keyedJson: keyedJson_", "keyedJson_")
+        ]
+    );
+}
+
+// The parameter lists of a facade verb (typed binding with and without options, generic door) bind no name the
+// body reads, so a parameter named like a helper the call goes through is renamed too.
+#[test]
+fn a_facade_parameter_named_like_a_body_read_is_renamed() {
+    let names: Vec<String> = TS_BODY_READS
+        .iter()
+        .chain(&["opts", "requestId"])
+        .map(|name| (*name).to_owned())
+        .collect();
+    let renamed: Vec<String> = TS_BODY_READS
+        .iter()
+        .map(|name| format!("{name}_"))
+        .collect();
+    let with_options = js_binding_names(&names, &ts_fixed_names(&["opts"]));
+    assert_eq!(with_options[..TS_BODY_READS.len()], renamed[..]);
+    assert_eq!(with_options[TS_BODY_READS.len()..], ["opts_", "requestId"]);
+    let plain = js_binding_names(&names, &ts_fixed_names(&[]));
+    assert_eq!(plain[..TS_BODY_READS.len()], renamed[..]);
+    assert_eq!(plain[TS_BODY_READS.len()..], ["opts", "requestId"]);
 }

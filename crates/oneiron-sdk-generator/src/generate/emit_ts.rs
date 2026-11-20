@@ -331,14 +331,10 @@ fn ts_facade(generator: &mut Generator, row: &Dict) -> Result<TsVerb, GenerateEr
     for a in &arg_list {
         names.push(js_method(str_receiver(a.getitem("name")?, "replace")?));
     }
-    // The parameters bind the arguments' names; a namespace member's body reads `host`, and with options `opts`
-    // is a parameter too.
-    let fixed: &[&str] = if options {
-        &["host", "opts"]
-    } else {
-        &["host"]
-    };
-    let bindings = js_binding_names(&names, fixed);
+    // The parameters bind the arguments' names; the body reads the names of [`TS_BODY_READS`], and with options
+    // `opts` is a parameter too.
+    let more: &[&str] = if options { &["opts"] } else { &[] };
+    let bindings = js_binding_names(&names, &ts_fixed_names(more));
     let mut declaration: Vec<String> = Vec::new();
     for (a, name) in arg_list.iter().zip(&bindings) {
         let kind = a.getitem("kind")?;
@@ -416,6 +412,32 @@ fn ts_facade(generator: &mut Generator, row: &Dict) -> Result<TsVerb, GenerateEr
     })
 }
 
+/// The names a facade verb's body reads beside its own bindings: the handle `host` (a namespace member's), the two
+/// symbols it reaches the native client through, the `key-value.js` helpers it calls and the `JSON` global. A
+/// parameter or a destructured field of the same name would shadow it inside the verb, so each binding list of a
+/// facade verb passes these to [`js_binding_names`] as fixed.
+const TS_BODY_READS: [&str; 6] = [
+    "host",
+    "facadeCall",
+    "facadeClient",
+    "JSON",
+    "keyedJson",
+    "itemFromWire",
+];
+
+/// [`TS_BODY_READS`] and `more`, the other names one binding list's scope binds or reads.
+fn ts_fixed_names<'a>(more: &[&'a str]) -> Vec<&'a str> {
+    let mut names: Vec<&'a str> = TS_BODY_READS.to_vec();
+    names.extend_from_slice(more);
+    names
+}
+
+/// The fixed names of `ts_wire_body`'s destructure: the block binds `rest` and `result` and reads `request`, the
+/// binding of the request parameter, beside the names of [`TS_BODY_READS`].
+fn wire_block_fixed(request: &str) -> Vec<&str> {
+    ts_fixed_names(&["rest", "result", request])
+}
+
 /// `ts_wire_body`'s destructure: each input field's entry and the name it binds, in field order. A field binds its
 /// own name unless [`js_binding_names`] renames it (a reserved word, or a name of `fixed`); then the entry renames it
 /// (`default: default_`), since the name is still a valid key.
@@ -454,8 +476,7 @@ fn ts_wire_body(
         for name in &names {
             keys.push(concat_left(name)?.to_owned());
         }
-        // The block binds `rest` and `result` and reads `host` and the request beside the fields.
-        let entries = destructure_entries(&keys, &["host", "rest", "result", request.as_str()]);
+        let entries = destructure_entries(&keys, &wire_block_fixed(&request));
         let mut destructure = Vec::new();
         for (name, (entry, _)) in names.iter().zip(&entries) {
             // `name + (' = ' + json.dumps(defaults[name]) if name in defaults else '')`: the subscript with the field
@@ -517,8 +538,8 @@ fn ts_handle_shape(
     for a in &handle_args {
         names.push(js_method(str_receiver(a.getitem("name")?, "replace")?));
     }
-    // A namespace member's body reads `host` beside the parameters.
-    let bindings = js_binding_names(&names, &["host"]);
+    // The body reads the names of [`TS_BODY_READS`] beside the parameters.
+    let bindings = js_binding_names(&names, &TS_BODY_READS);
     let mut params = Vec::new();
     let mut fields = Vec::new();
     for (a, name) in handle_args.iter().zip(bindings) {
