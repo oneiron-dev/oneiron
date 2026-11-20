@@ -9,7 +9,7 @@ use crate::pipeline::builder::PipelineBuilder;
 use crate::pipeline::channels::{fusion_fetch_limit, truncate_widened_channel_results_to_scope};
 use crate::pipeline::execution::types::HydeAttemptOverrides;
 use crate::pipeline::filters::{
-    claim_status_gate_allows, import_claim_gate_decisions_for_scores,
+    claim_status_gate_allows, clamp_hides_row, import_claim_gate_decisions_for_scores,
     pipeline_candidate_matches_filters_and_gate,
 };
 use crate::pipeline::types::{
@@ -84,10 +84,21 @@ impl PipelineBuilder<'_> {
                 expansion.grounded_query.as_str()
             });
             // A posting a device-local world keeps is no posting of this
-            // run: it neither fails the gate nor matches the scope.
+            // run: it neither fails the gate nor matches the scope. Nor is
+            // one a clamped pack's audience could not read whatever its
+            // status: the probe's rejections join the run's gate, so such a
+            // dead claim would count as suppressed.
             let exact_posting_fails_claim_gate = {
                 let mut exact_posting_fails_claim_gate = |id: &EntityId| {
-                    if claim_gate_widening_probe.keeps_device_local(&self.read, rtxn, id)? {
+                    if claim_gate_widening_probe.keeps_device_local(&self.read, rtxn, id)?
+                        || clamp_hides_row(
+                            &self.read,
+                            rtxn,
+                            id,
+                            filter_config.disclosure,
+                            metadata_cache,
+                        )?
+                    {
                         return Ok(false);
                     }
                     claim_status_gate_allows(
@@ -112,7 +123,15 @@ impl PipelineBuilder<'_> {
                 true
             } else {
                 let mut classify_prefix_posting = |id: &EntityId| {
-                    if claim_gate_widening_probe.keeps_device_local(&self.read, rtxn, id)? {
+                    if claim_gate_widening_probe.keeps_device_local(&self.read, rtxn, id)?
+                        || clamp_hides_row(
+                            &self.read,
+                            rtxn,
+                            id,
+                            filter_config.disclosure,
+                            metadata_cache,
+                        )?
+                    {
                         return Ok(crate::bm25::PrefixExpansionPostingDecision {
                             matches_scope: false,
                             rejected_by_gate: false,

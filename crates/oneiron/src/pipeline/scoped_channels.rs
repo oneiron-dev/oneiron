@@ -4,6 +4,7 @@ use heed::RoTxn;
 
 use crate::corpus::CorpusScope;
 use crate::error::{Error, Result};
+use crate::store::StoreRead;
 
 use super::builder::PipelineBuilder;
 use super::capabilities::CapabilityLane;
@@ -12,8 +13,8 @@ use super::channels::{
     truncate_widened_channel_results_to_scope,
 };
 use super::filters::{
-    claim_status_gate_allows, import_claim_gate_decisions_for_scores, made_by_admits,
-    pipeline_candidate_matches_filters_and_gate,
+    claim_status_gate_allows, clamp_hides_row, import_claim_gate_decisions_for_scores,
+    made_by_admits, pipeline_candidate_matches_filters_and_gate,
 };
 use super::temporal_bound::{
     ReadableRows, execute_temporal_for_reader, scoped_temporal_channel_limit,
@@ -271,15 +272,8 @@ impl PipelineBuilder<'_> {
                 continue;
             };
             if !clamp.admits_row_ignoring_status(&self.read, rtxn, &scored.id, entity_type)? {
-                let mut own_metadata = EntityMetadataCache::default();
-                let mut own_gate = claim_gate.fresh(filters.authority_filter.include_stale);
-                if pipeline_candidate_matches_filters_and_gate(
-                    &self.read,
-                    rtxn,
-                    &scored.id,
-                    filters,
-                    &mut own_metadata,
-                    &mut own_gate,
+                if meets_every_check_but_the_clamp(
+                    &self.read, rtxn, &scored.id, filters, claim_gate,
                 )? {
                     clamped.push(scored.id);
                 }
@@ -303,6 +297,58 @@ impl PipelineBuilder<'_> {
             )? {
                 kept.push(scored);
             } else {
+                clamped.push(scored.id);
+            }
+        }
+        *results = kept;
+        Ok(clamped)
+    }
+
+    /// Keeps the rows of a ranked list that a clamped pack's audience could
+    /// read were they live, before the list joins a blend
+    /// (D19-GATE-COUNTS-CLAIMS-THE-DISCLOSURE-CLAMP-REFUSES). A list no
+    /// bounded fetch asked (an unnarrowed vector, text or temporal list) held
+    /// every row it ranked, so a dead claim the audience could not read whatever
+    /// its status took a fusion rank, counted as a candidate in scope, and the
+    /// run's D19 gate over the fused union counted its suppression and made an
+    /// empty pack read `AllActivated`: the audience learned that a claim it may
+    /// not read matched. Such a row now takes no rank, as at a bounded fetch
+    /// and as the phonetic code rung's hits since #9911
+    /// ([`Self::retain_phonetic_hits_in_scope`]); one that meets every other
+    /// check of the call, judged in caches of its own, is returned, and the
+    /// pack counts it among the rows its clamp withheld. A list a bounded
+    /// fetch already asked loses no row here. With no clamp, nothing changes.
+    pub(super) fn retain_rows_the_clamp_admits(
+        &self,
+        rtxn: &RoTxn<'_>,
+        results: &mut Vec<ScoredEntity>,
+        filters: PipelineFilterConfig<'_>,
+        metadata: &mut EntityMetadataCache,
+        claim_gate: &ClaimStatusGateCache,
+    ) -> Result<Vec<crate::EntityId>> {
+        let Some(clamp) = filters.disclosure else {
+            return Ok(Vec::new());
+        };
+        let admission = filters.candidate_filter;
+        let scope = PipelineFilterConfig {
+            candidate_filter: None,
+            deadline: None,
+            disclosure: None,
+            ..self.bounded_result_filters(filters)
+        };
+        let mut kept = Vec::with_capacity(results.len());
+        let mut clamped = Vec::new();
+        for scored in std::mem::take(results) {
+            if !clamp_hides_row(&self.read, rtxn, &scored.id, Some(clamp), metadata)? {
+                kept.push(scored);
+                continue;
+            }
+            if let Some(admits) = admission
+                && !admits(&self.read, rtxn, &scored.id)?
+            {
+                continue;
+            }
+            if meets_every_check_but_the_clamp(&self.read, rtxn, &scored.id, scope, claim_gate)? {
                 clamped.push(scored.id);
             }
         }
@@ -523,4 +569,28 @@ impl PipelineBuilder<'_> {
             || self.corpus_scope != CorpusScope::All
             || self.made_by != crate::provenance::made_by::MadeByPredicate::All
     }
+}
+
+/// Whether `id`, a row a clamped pack's audience could not read whatever its
+/// status, meets every other check of `filters` (no candidate filter, no
+/// clamp): judged in caches of its own, so the run records no gate decision
+/// and no `read_suppressed` entry for it. The pack counts such a row among
+/// the rows its clamp withheld.
+fn meets_every_check_but_the_clamp(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &crate::EntityId,
+    filters: PipelineFilterConfig<'_>,
+    claim_gate: &ClaimStatusGateCache,
+) -> Result<bool> {
+    let mut own_metadata = EntityMetadataCache::default();
+    let mut own_gate = claim_gate.fresh(filters.authority_filter.include_stale);
+    pipeline_candidate_matches_filters_and_gate(
+        store,
+        rtxn,
+        id,
+        filters,
+        &mut own_metadata,
+        &mut own_gate,
+    )
 }

@@ -155,6 +155,31 @@ pub(super) fn claim_status_gate_allows_with_row(
     Ok(allowed)
 }
 
+/// Whether a clamped pack's audience could not read `id` whatever its status
+/// ([`crate::disclosure::DisclosureContext::admits_row_ignoring_status`]).
+/// Such a row leaves no trace in the run: it takes no rank, and no check that
+/// records a refusal (the D19 gate's `claims_suppressed`, its empty reason)
+/// judges it in the run's caches. False with no clamp, and for a row with no
+/// parseable envelope, which the filters drop downstream as before.
+pub(super) fn clamp_hides_row(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    clamp: Option<&crate::disclosure::DisclosureContext>,
+    metadata_cache: &mut EntityMetadataCache,
+) -> Result<bool> {
+    let Some(clamp) = clamp else {
+        return Ok(false);
+    };
+    let Some(entity_type) = metadata_cache
+        .get(store, rtxn, id)?
+        .map(|meta| meta.entity_type)
+    else {
+        return Ok(false);
+    };
+    Ok(!clamp.admits_row_ignoring_status(store, rtxn, id, entity_type)?)
+}
+
 pub(super) fn import_claim_gate_decisions_for_scores(
     claim_gate: &mut ClaimStatusGateCache,
     probe_gate: &mut ClaimStatusGateCache,
@@ -685,6 +710,17 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     let Some(meta) = meta else {
         return Ok(false);
     };
+    // A clamped pack: a row its audience could not read whatever its status
+    // leaves no trace in the run. The clamp's own-row test comes before every
+    // check below that records a refusal (entity-type authority, the D19
+    // gate), so a hidden dead claim counts in no `claims_suppressed` and
+    // moves no empty reason. The clamp's test with the decoded claim body
+    // still runs after the gate.
+    if let Some(clamp) = filters.disclosure
+        && !clamp.admits_row_ignoring_status(store, rtxn, id, meta.entity_type)?
+    {
+        return Ok(false);
+    }
 
     if !super::authority::type_allowed(
         filters.authority_filter,

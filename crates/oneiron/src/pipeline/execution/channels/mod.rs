@@ -507,9 +507,10 @@ impl PipelineBuilder<'_> {
                 )?;
             }
 
-            // The exact phonetic hits a clamped pack's audience may not read,
-            // kept out of the blend below; the preselection counts them.
-            let mut phonetic_clamped = Vec::new();
+            // The rows a clamped pack's audience may not read, kept out of
+            // the blend below (exact phonetic hits, and the rows of a list no
+            // bounded fetch asked); the preselection counts them.
+            let mut clamped_before_blend: Vec<crate::EntityId> = Vec::new();
             // Entity-type authority can narrow each channel before fusion.
             // CLAIM scalar constraints use the decoded post-fusion stage below.
             for (index, scores) in acc.ranked_lists.iter_mut().enumerate() {
@@ -531,16 +532,40 @@ impl PipelineBuilder<'_> {
                 // visibility asks the rest), once the lane and the authority
                 // above have narrowed the lists, so the run's gate judges
                 // only rows the D19 gate judges anyway (REVIEW-9842 round 2).
-                if phonetic_channel_index == Some(index) {
-                    phonetic_clamped = self.retain_phonetic_hits_in_scope(
+                // A row a clamped pack's audience could not read whatever
+                // its status takes no rank in any list: the run's gate never
+                // judges it, so it counts in no suppression and no empty
+                // reason (D19-GATE-COUNTS-CLAIMS-THE-DISCLOSURE-CLAMP-REFUSES).
+                let clamped = if phonetic_channel_index == Some(index) {
+                    self.retain_phonetic_hits_in_scope(
                         rtxn,
                         scores,
                         filter_config,
                         &mut metadata_cache,
                         &mut claim_gate,
+                    )?
+                } else {
+                    let clamped = self.retain_rows_the_clamp_admits(
+                        rtxn,
+                        scores,
+                        filter_config,
+                        &mut metadata_cache,
+                        &claim_gate,
                     )?;
-                } else if ppr_channel_index == Some(index) {
-                    self.retain_made_by_slice(rtxn, scores, &mut metadata_cache, &mut claim_gate)?;
+                    if ppr_channel_index == Some(index) {
+                        self.retain_made_by_slice(
+                            rtxn,
+                            scores,
+                            &mut metadata_cache,
+                            &mut claim_gate,
+                        )?;
+                    }
+                    clamped
+                };
+                for id in clamped {
+                    if !clamped_before_blend.contains(&id) {
+                        clamped_before_blend.push(id);
+                    }
                 }
             }
             if acc.ranked_lists.is_empty() {
@@ -898,9 +923,10 @@ impl PipelineBuilder<'_> {
                         &claim_gate,
                     )?;
                     emptied_by_policy |= !withheld.is_empty() && scores.is_empty();
-                    // An exact phonetic hit the clamp refused before the
-                    // blend counts once, though another list held it too.
-                    for id in phonetic_clamped {
+                    // A row the clamp kept out of the blend, an exact
+                    // phonetic hit or a row of any other list, counts once,
+                    // though another list held it too.
+                    for id in clamped_before_blend {
                         if !withheld.contains(&id) {
                             withheld.push(id);
                         }
