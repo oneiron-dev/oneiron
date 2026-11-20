@@ -90,6 +90,7 @@ use super::beside::{
     BesideHeld, BesideRead, beside_row_id, beside_row_read_in_txn, put_beside_value_in_txn,
     slot_value, watch_rows_in_txn,
 };
+use super::born::is_born_value_slot;
 use super::change::{
     change_in_txn, hex_id_mentions, record_change_in_txn, record_receipt_in_txn,
     record_signed_entry_in_txn,
@@ -715,11 +716,7 @@ fn name_value_in_txn(
         None if named.count == ChoiceCount::Full => Rule::Meet,
         None => return Ok(Err(Short::Unreadable)),
     };
-    let empty = if is_vault_value_row(&name.slot) {
-        Some(layer_default_in_txn(&vault.store, txn, spec)?.value)
-    } else {
-        None
-    };
+    let empty = empty_of_in_txn(vault, txn, spec, &name.slot)?;
     let mut walk = Walk {
         vault,
         txn,
@@ -810,11 +807,7 @@ fn combine(
     }
     let counted = counted_standing(fold);
     if let Some(rule) = rule_of(spec) {
-        let empty = if is_vault_value_row(&newest.slot) {
-            Some(layer_default_in_txn(&vault.store, txn, spec)?.value)
-        } else {
-            None
-        };
+        let empty = empty_of_in_txn(vault, txn, spec, &newest.slot)?;
         let mut walk = Walk {
             vault,
             txn,
@@ -1192,6 +1185,24 @@ impl Walk<'_, '_> {
 /// read with no item-less vault row starts from the item's row alone.
 fn is_vault_value_row(slot: &RowKey) -> bool {
     slot.mode == SettingMode::Value && slot.scope == SettingScope::Vault
+}
+
+/// What `slot`'s empty slot gives (DESIGN 1.6, "What the empty slot gives"): on a vault value row
+/// the accepted default; on a born thing's own value row the strictest value, since the thing must
+/// have its row (stage 7c-2); on any other slot no bound.
+fn empty_of_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    spec: &SettingSpec,
+    slot: &RowKey,
+) -> Result<Option<EncodedValue>> {
+    if is_vault_value_row(slot) {
+        Ok(Some(layer_default_in_txn(&vault.store, txn, spec)?.value))
+    } else if is_born_value_slot(spec, slot) {
+        spec.kind.strictest_value()
+    } else {
+        Ok(None)
+    }
 }
 
 /// Projects the row the acts on `target` name, in `txn`, at `now`, when the target's basis
@@ -1574,6 +1585,7 @@ fn write_row_in_txn(
                 change: recorded.sequence,
                 weight_runs: None,
                 local: local.cloned(),
+                seeded: false,
             },
         )?,
         None => {

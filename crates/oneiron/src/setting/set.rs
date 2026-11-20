@@ -6,12 +6,14 @@ use oneiron_authority::authority::{ActSurface, Direction, Permitted};
 use oneiron_contracts::fingerprint::{Fingerprinter, purposes};
 use oneiron_setting_contract::{ChangeDirection, FoundRow, Order, Quorum, RowKey};
 
+use super::born::is_born_value_slot;
 use super::change::record_change_in_txn;
 use super::learned::{checked_weight, fits_in_txn};
 use super::pack::layer_default_in_txn;
 use super::project::{append_act_in_txn, rooted_in_txn, travels};
 use super::read::{
-    Loaded, StoredRow, in_force_of, key_line_grant_in_txn, load_in_txn, names_subject, table_of,
+    Loaded, StoredRow, chain_of, in_force_of, key_line_grant_in_txn, load_in_txn, names_subject,
+    table_of,
 };
 use super::signed_act::sign_owner_change_in_txn;
 use super::{
@@ -431,13 +433,18 @@ fn set_in_txn(
     // where the row changes hands, and the row becomes the caller's. Over the engine's row any
     // other caller's does; over a row the owner did not set (a holder's, a subject's, a standing
     // approval's, an approved check-in's) the owner's does, so a later move of a non-owner meets
-    // the owner's row (FIX SETTING-OWNER-EQUAL-VALUE-OVER-HOLDER-ROW = A).
-    let setter_changes = prior_row.as_ref().is_some_and(|row| match caller {
-        SettingCaller::Owner(_) => !matches!(row.setter, Setter::Owner),
-        SettingCaller::Agent(_) | SettingCaller::Person(_) => {
-            matches!(row.setter, Setter::Engine { .. })
-        }
-        SettingCaller::Engine(_) => false,
+    // the owner's row (FIX SETTING-OWNER-EQUAL-VALUE-OVER-HOLDER-ROW = A). A copy of a pack's
+    // default is no one's choice: over it every caller's equal value writes, and the row it leaves
+    // is explicit (stage 7c-2).
+    let setter_changes = prior_row.as_ref().is_some_and(|row| {
+        row.seeded
+            || match caller {
+                SettingCaller::Owner(_) => !matches!(row.setter, Setter::Owner),
+                SettingCaller::Agent(_) | SettingCaller::Person(_) => {
+                    matches!(row.setter, Setter::Engine { .. })
+                }
+                SettingCaller::Engine(_) => false,
+            }
     });
     let prior_weight = prior_row.as_ref().and_then(|row| row.weight_runs);
     let prior_value = prior_row.map(|row| row.value);
@@ -563,6 +570,7 @@ fn set_in_txn(
                 change: recorded.sequence,
                 weight_runs: change.weight_runs,
                 local: None,
+                seeded: false,
             };
             table.put(&vault.store, txn, &key_bytes, &row)?;
             recorded.sequence
@@ -615,9 +623,11 @@ const fn authority_direction(direction: ChangeDirection) -> Direction {
 /// - On a key whose rows meet, a value row below the vault, or a row a move carried, is a bound,
 ///   judged against the row it replaces: an added row only narrows, a changed one is compared
 ///   with its prior value, and a clear drops a bound.
-/// - Any other slot (a vault value row, a pin, every row of a key that reads one row) is judged on
-///   what its readers read: the walk at the slot's scope before the change against the walk with
-///   the slot as the change leaves it.
+/// - Any other slot (a vault value row, a pin, every row of a key that reads one row, and a born
+///   thing's own value row) is judged on what its readers read: the walk at the slot's scope
+///   before the change against the walk with the slot as the change leaves it. A born thing's
+///   empty value slot reads the strictest value, not "no bound" (DESIGN 1.6, "What the empty slot
+///   gives"), so a first row there can widen and a clear can narrow.
 fn direction_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -635,6 +645,7 @@ fn direction_in_txn(
     if spec.reads_met()
         && matches!(change.key.mode, SettingMode::Value | SettingMode::Carried)
         && change.key.scope != SettingScope::Vault
+        && !is_born_value_slot(spec, &change.key)
     {
         return Ok(match (change.value, prior) {
             (Some(_), None) => ChangeDirection::Tighter,
@@ -642,7 +653,7 @@ fn direction_in_txn(
             (None, _) => ChangeDirection::Looser,
         });
     }
-    let chain = slot_chain(change)?;
+    let chain = slot_chain_in_txn(vault, txn, change)?;
     let item = change.key.item.as_deref();
     let loaded = load_in_txn(&vault.store, txn, spec, &chain, item)?;
     let fits = fits_in_txn(&vault.store, txn, spec, &chain)?;
@@ -662,8 +673,9 @@ fn direction_in_txn(
                 value: Some(value.clone()),
             },
             revision: 0,
-            // The door's own change, as it would load once written: not a raced pin.
+            // The door's own change, as it would load once written: not a raced pin, and someone's.
             pin_read_as_value: false,
+            seeded: false,
         });
     }
     let layer = layer_default_in_txn(&vault.store, txn, spec)?;
@@ -672,20 +684,40 @@ fn direction_in_txn(
     Ok(ChangeDirection::of(&after, &before, no_wider))
 }
 
-/// The scopes the readers of `change`'s slot read through: its scope and every wider one the key
-/// admits, narrowest first.
-fn slot_chain(change: &Change<'_>) -> Result<Vec<SettingScope>> {
+/// The scopes the readers of `change`'s slot read through, in `txn`: its scope and every wider
+/// one the key admits, narrowest first. A project's readers walk its whole stored line, the
+/// project and then its ancestors over the stored parents, as a read from it does
+/// ([`chain_of`]): a parent's pin or row changes what the slot's change gives them.
+fn slot_chain_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    change: &Change<'_>,
+) -> Result<Vec<SettingScope>> {
     match &change.key.scope {
         SettingScope::Vault => Ok(vec![SettingScope::Vault]),
+        SettingScope::Project(project) => {
+            let lines: Vec<SettingScope> = vault
+                .project_lines_in_txn(txn, *project)?
+                .into_iter()
+                .map(SettingScope::Project)
+                .collect();
+            chain_of(change.spec, &lines)
+        }
         scope => SettingScope::chain(std::slice::from_ref(scope), change.spec.scopes),
     }
 }
 
-/// Whether the loaded row `row` is `change`'s own slot.
+/// Whether the loaded row `row` is `change`'s own slot: by the mode its row is stored under, so a
+/// pin read as a value row (stage 7b-3) is never the value slot a change of that slot replaces.
 fn is_slot(row: &Loaded, change: &Change<'_>) -> bool {
+    let stored_mode = if row.pin_read_as_value {
+        SettingMode::Pin
+    } else {
+        row.found.mode
+    };
     row.found.at == 0
         && row.found.item == change.key.item.is_some()
-        && row.found.mode == change.key.mode
+        && stored_mode == change.key.mode
 }
 
 /// What `agent` may do to `change`'s row, and in which capacity: A0's reading of the actor, or
@@ -812,7 +844,7 @@ fn one_row_bounds_in_txn(
     if spec.reads_met() {
         return Ok(true);
     }
-    let chain = slot_chain(change)?;
+    let chain = slot_chain_in_txn(vault, txn, change)?;
     let item = change.key.item.as_deref();
     let loaded = load_in_txn(&vault.store, txn, spec, &chain, item)?;
     if loaded
