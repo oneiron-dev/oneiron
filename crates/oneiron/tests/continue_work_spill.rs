@@ -15,7 +15,6 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::attempt_queue::{AttemptId, AttemptQueue};
 use oneiron::authority::{HostSlipIssuer, MachineRole};
@@ -244,13 +243,6 @@ fn hex_bytes(hex: &str) -> [u8; 16] {
     bytes
 }
 
-fn wall_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock after the epoch")
-        .as_secs()
-}
-
 /// A seat run reaches no endpoint (the seat host's own stub).
 struct NoEndpoints;
 
@@ -344,7 +336,7 @@ fn spend_on_the_seat_host(
     policy: &RunnerSeatPolicy,
 ) -> SeatRoute {
     let mut dispatcher = ByoaDispatcher::new(&continued.vault, NoEndpoints, NoEgress);
-    let now = wall_now();
+    let now = continued.vault.now_recorded_at();
     let fence = dispatcher
         .claim_host_cli_attempt(continued.attempt, HOST_LEASE_OWNER, now, &[], |_| true)
         .expect("the claim reads")
@@ -538,7 +530,7 @@ fn a_resume_of_a_continue_never_takes_another_runners_seat() {
                 binding: continued.binding,
                 expected_attempt: continued.attempt,
                 choice: Some(RunnerSeatChoice::Seat(1)),
-                now: wall_now() + 2,
+                now: continued.vault.now_recorded_at() + 2,
             },
         )
         .expect("the resume answers");
