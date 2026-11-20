@@ -14,6 +14,7 @@ use super::super::shapes::{
     normalized_key_byte,
 };
 use super::advance;
+use crate::session_overlay::ROOM_SECRET_SIGIL;
 
 /// The release assignment rule over one segment as it streams.
 #[derive(Default)]
@@ -365,10 +366,15 @@ impl ValueForm {
 // The handle's two forms differ at their first character, so its first
 // character picks the form.
 const _: () = assert!(HANDLE_OPEN.as_bytes()[0] != HANDLE_TAG.as_bytes()[0]);
+// A room's handle is one sigil character, which no vault handle opens with,
+// so its first character picks it inside the bracket.
+const _: () = assert!(ROOM_SECRET_SIGIL.len() == 1);
+const _: () = assert!(ROOM_SECRET_SIGIL.as_bytes()[0] != HANDLE_TAG.as_bytes()[0]);
 
 /// The custody handle as a value streams, read as `custody_handle` reads
 /// it: past the handle quotes trimmed from both ends, `sc` and digits
-/// whole, or `[secret `, `sc`, digits, `]` and then blanks only. The
+/// whole, or `[secret `, `sc` or a room's `r`, digits, `]` and then blanks
+/// only. The
 /// handle reading's last trim, of `,` and `;`, takes nothing here: no
 /// segment holds either.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -412,6 +418,13 @@ impl Handle {
                     Self::Open(matched)
                 }
             }
+            Self::Tag {
+                bracketed: true,
+                matched: 0,
+            } if ROOM_SECRET_SIGIL.starts_with(ch) => Self::Digits {
+                bracketed: true,
+                digit: false,
+            },
             Self::Tag { bracketed, matched } if HANDLE_TAG[matched..].starts_with(ch) => {
                 let matched = matched + ch.len_utf8();
                 if matched == HANDLE_TAG.len() {

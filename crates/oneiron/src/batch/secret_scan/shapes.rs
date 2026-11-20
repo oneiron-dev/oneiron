@@ -18,6 +18,8 @@ use std::ops::Range;
 use sha2::{Digest, Sha256};
 
 use super::wordlist::WORDS;
+use crate::session_overlay::is_room_secret_handle;
+
 const BLOCKLIST: &str = include_str!("blocklist.txt");
 
 /// Which door asks. A hit at the write door refuses the whole write, so an
@@ -476,7 +478,8 @@ pub(super) const HANDLE_OPEN: &str = "[secret ";
 
 /// The handle a mask on write leaves where it lifted a secret into custody
 /// (ARCH-0069 #handles-in-fields): `sc12` as a whole value, or `[secret sc12]`
-/// as a whole value. It names a custody record and holds no value.
+/// as a whole value, or an off-record room's `[secret r1]`
+/// (ROOM-LOCAL-CUSTODY). It names a custody record and holds no value.
 fn custody_handle(value: &str) -> bool {
     let bare = |text: &str| {
         text.strip_prefix(HANDLE_TAG).is_some_and(|digits| {
@@ -490,7 +493,9 @@ fn custody_handle(value: &str) -> bool {
         || value
             .strip_prefix(HANDLE_OPEN)
             .and_then(|rest| rest.split_once(']'))
-            .is_some_and(|(handle, tail)| bare(handle) && tail.trim().is_empty())
+            .is_some_and(|(handle, tail)| {
+                (bare(handle) || is_room_secret_handle(handle)) && tail.trim().is_empty()
+            })
 }
 
 /// Placeholder words a person writes in place of a secret.

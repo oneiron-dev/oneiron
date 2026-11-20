@@ -27,6 +27,7 @@ pub use self::journal::{
     zeroize_batch_op_payload,
 };
 pub use self::keyspace::OverlayKeyspace;
+pub use self::overlay::room_secrets::{KeptRoomSecret, ROOM_SECRET_SIGIL, is_room_secret_handle};
 pub use self::overlay::{RecordMetaRows, SessionOverlay, TxnSegmentGuard, txn_segment_installed};
 pub use self::route::{RouteTarget, SessionWriteRoute};
 pub use self::snapshot::{

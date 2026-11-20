@@ -98,10 +98,12 @@ impl RoomCustody {
     ///
     /// A poisoned lock.
     pub fn secret(&self, handle: &str) -> Result<Option<Vec<u8>>> {
-        // RED: a room keeps no custody of its own before
-        // ROOM-LOCAL-CUSTODY; the fix reads the room's store here.
-        let _ = (&self.0, handle);
-        Ok(None)
+        let bare = handle
+            .trim()
+            .strip_prefix("[secret ")
+            .and_then(|rest| rest.strip_suffix(']'))
+            .unwrap_or(handle);
+        Ok(self.0.room_secret(bare)?.map(|value| value.to_vec()))
     }
 
     /// How many secrets the room keeps now.
@@ -110,8 +112,7 @@ impl RoomCustody {
     ///
     /// A poisoned lock.
     pub fn count(&self) -> Result<usize> {
-        // RED: see `secret`.
-        Ok(0)
+        self.0.room_secret_count()
     }
 }
 

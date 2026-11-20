@@ -83,6 +83,7 @@ use crate::secret_record::{CustodyWrite, FoundNote};
 use crate::secret_record::{
     SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
 };
+use crate::session_overlay::SessionOverlay;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::store::file_key_masks::{MASKED_FILE_BAND, MaskedFile};
@@ -1091,6 +1092,19 @@ impl Masker {
         }
         // The owner hears of what was lifted, once per record.
         note_found_keys_in_txn(write.store, wtxn, &notes, at)?;
+        Ok(handles)
+    }
+
+    /// Keeps each found value in `room`'s own custody, in memory only
+    /// (ROOM-LOCAL-CUSTODY): no record, origin row, notice or fingerprint is
+    /// written anywhere. Each value maps to its room handle, the one the
+    /// room already holds it under, if any.
+    fn keep_in_room(self, room: &SessionOverlay) -> Result<PlanValues<String>> {
+        let mut handles = PlanValues::default();
+        for mut found in self.found {
+            let handle = room.keep_room_secret(&found.value, found.reason)?;
+            handles.insert(std::mem::take(&mut *found.value), handle);
+        }
         Ok(handles)
     }
 }

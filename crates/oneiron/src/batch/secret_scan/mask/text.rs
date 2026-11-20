@@ -7,7 +7,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::ops::Range;
 
-use super::side_row::bare_handle;
+use super::side_row::{bare_handle, bracket_handle};
 use super::text_log::TextSpans;
 use super::{HANDLE_OPEN, Masker, STAND_IN, secret_spans};
 use crate::error::Result;
@@ -251,7 +251,8 @@ pub(super) fn handle_slots(text: &str) -> Vec<(Range<usize>, &str)> {
 }
 
 /// The spans of `text` a mask on write placed a handle in, in order: each
-/// `[secret sc12]`, and the whole text when it is a bare `sc12`.
+/// `[secret sc12]` or room `[secret r1]`, and the whole text when it is a
+/// bare `sc12`.
 fn handle_spans(text: &str) -> Vec<Range<usize>> {
     if bare_handle(text) {
         return vec![0..text.len()];
@@ -261,7 +262,7 @@ fn handle_spans(text: &str) -> Vec<Range<usize>> {
     while let Some(open) = text[at..].find(HANDLE_OPEN).map(|found| at + found) {
         let body = open + HANDLE_OPEN.len();
         at = match text[body..].find(']') {
-            Some(len) if bare_handle(&text[body..body + len]) => {
+            Some(len) if bracket_handle(&text[body..body + len]) => {
                 spans.push(open..body + len + 1);
                 body + len + 1
             }
