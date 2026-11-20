@@ -4,19 +4,23 @@
 //! the mention. A later try of that lineage, or another child of that
 //! parent, derives the same id for the same mention. When the vault cleanup
 //! archived that PERSON in between (an extraction mint with no live claim
-//! and no pending try of its lineage), the new mention restores her: the
-//! same record, never a second one (ARCH-0073 §6, ARCH-0055 §10). And a
-//! claim the Dreamer's promotion lands about an archived PERSON restores
-//! her in the claim's own transaction, whether or not a mint came before
-//! it, so no claim of a pass stands on a PERSON the owner does not read.
+//! and no pending try of its lineage), the mint restores her: the same
+//! record, never a second one (ARCH-0073 §6, ARCH-0055 §10). And a claim
+//! the Dreamer's promotion writer lands about a PERSON the cleanup archived
+//! restores her in the claim's own transaction, whether or not a mint came
+//! before it.
+//!
+//! The extractions here are ids the fixture supplies to the mint door: no
+//! attempt of theirs is queued, so no try of a minting lineage is pending,
+//! and a retry's resolution to its lineage's first try is not exercised. The
+//! one queued attempt is the promotion run of the third test.
 //!
 //! Red without the fix (the first three tests): the mint door writes
 //! nothing for an id whose row stands, and the promotion asks only that its
-//! subject's row is stored, so the PERSON stays archived and the claim
-//! lands on a row the owner does not see.
+//! subject's row is stored, so the PERSON stays archived.
 //!
 //! Guards that hold with and without the fix (the last two tests): a
-//! mention under another extraction derives another id and leaves the
+//! mention under another extraction id derives another id and leaves the
 //! archived PERSON archived, and a mention of a PERSON the owner deleted
 //! while she was archived restores nothing and does not fail the mint.
 //!
@@ -79,7 +83,8 @@ fn name(vault: &Vault, person: EntityId) -> Option<String> {
         .and_then(|body| body.name)
 }
 
-/// The extraction of `attempt` under `parent` mints Ann from `said`; her id.
+/// The mint door mints Ann from `said` under the extraction ids `attempt`
+/// and `parent`; her id.
 fn mint_ann(
     vault: &Vault,
     attempt: AttemptId,
@@ -128,7 +133,7 @@ fn assert_restored(vault: &Vault, person: EntityId, minted_as: &str) {
 }
 
 #[test]
-fn a_later_try_of_the_lineage_restores_the_person_the_cleanup_archived() {
+fn the_same_mention_under_the_same_first_try_restores_the_person_the_cleanup_archived() {
     let (_dir, vault) = open();
     let said = turn(&vault);
     let first_try = AttemptId::now();
@@ -137,15 +142,15 @@ fn a_later_try_of_the_lineage_restores_the_person_the_cleanup_archived() {
     assert_eq!(name(&vault, ann).as_deref(), Some("Ann"));
     archive_by_cleanup(&vault, ann);
 
-    // A later try of the same lineage reads the same TURN and names her
-    // again: its ids are derived under the lineage's first try.
+    // The same TURN names her again under the same first try, as a later
+    // try of that lineage would after its origin resolved to it.
     let again = mint_ann(&vault, first_try, None, said);
     assert_eq!(again, ann, "the same mention derives the same id");
     assert_restored(&vault, ann, "Ann");
 }
 
 #[test]
-fn another_child_of_the_parent_restores_the_person_the_cleanup_archived() {
+fn the_same_mention_under_the_same_parent_restores_the_person_the_cleanup_archived() {
     let (_dir, vault) = open();
     let said = turn(&vault);
     let parent = AttemptId::now();
@@ -153,9 +158,10 @@ fn another_child_of_the_parent_restores_the_person_the_cleanup_archived() {
     assert!(row_live(&vault, ann).expect("read"), "the mint wrote her");
     archive_by_cleanup(&vault, ann);
 
-    // Another child of the same nightly parent names her from the same TURN.
+    // Another attempt id under the same parent id names her from the same
+    // TURN, as another child of one parent would.
     let again = mint_ann(&vault, AttemptId::now(), Some(parent), said);
-    assert_eq!(again, ann, "children of one parent derive one id");
+    assert_eq!(again, ann, "two attempts under one parent derive one id");
     assert_restored(&vault, ann, "Ann");
 }
 
@@ -164,8 +170,8 @@ fn a_claim_the_promotion_lands_about_an_archived_person_restores_her() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = open_auto_promotion_vault(dir.path()).expect("vault");
     let mut run = promotion_run(&vault).expect("a queued Dreamer run");
-    // The run's TURN reads "my name is Ada". An extraction that has ended
-    // minted Ada from it, and no claim about her landed.
+    // The run's TURN reads "my name is Ada". The mint door minted Ada from
+    // it under an attempt id that is not queued, and no claim names her.
     let ada =
         mint_named_person(&vault, AttemptId::now(), None, run.turn, "Ada").expect("the mint runs");
     assert!(row_live(&vault, ada).expect("read"), "the mint wrote her");
@@ -189,10 +195,10 @@ fn a_mention_under_another_extraction_leaves_the_archived_person_archived() {
     let ann = mint_ann(&vault, AttemptId::now(), None, said);
     archive_by_cleanup(&vault, ann);
 
-    // An unrelated extraction names an Ann in the same TURN: no two mentions
+    // Another extraction id names an Ann in the same TURN: no two mentions
     // merge by name alone, so it mints its own PERSON.
     let other = mint_ann(&vault, AttemptId::now(), None, said);
-    assert_ne!(other, ann, "another extraction derives another id");
+    assert_ne!(other, ann, "another extraction id derives another id");
     assert!(
         row_live(&vault, other).expect("read"),
         "its own mint landed"
@@ -205,19 +211,36 @@ fn a_mention_under_another_extraction_leaves_the_archived_person_archived() {
 
 #[test]
 fn a_mention_of_a_person_the_owner_deleted_restores_nothing() {
-    let (_dir, vault) = open();
+    // A delete signs with this install's key: the vault needs a keystore.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_auto_promotion_vault(dir.path()).expect("vault");
     let said = turn(&vault);
     let first_try = AttemptId::now();
     let ann = mint_ann(&vault, first_try, None, said);
     archive_by_cleanup(&vault, ann);
-    vault.delete_entity(&ann).expect("the owner's delete");
-    assert!(!row_live(&vault, ann).expect("read"), "her row is deleted");
+    assert!(
+        vault.delete_entity(&ann).expect("the owner's delete"),
+        "the delete found her row"
+    );
+    assert!(
+        vault.archived_entity(&ann).expect("read").is_some(),
+        "a delete keeps the archive marker of the row it scrubs"
+    );
 
     // The same mention again: the mint neither fails nor brings her back.
     let again = mint_ann(&vault, first_try, None, said);
     assert_eq!(again, ann, "the same mention derives the same id");
     assert!(
+        vault.archived_entity(&ann).expect("read").is_some(),
+        "the mention cleared no marker of a deleted PERSON"
+    );
+    assert!(
         !row_live(&vault, ann).expect("read"),
         "a deletion stands: no mention restores a deleted PERSON"
+    );
+    assert_eq!(
+        name(&vault, ann),
+        None,
+        "the words the delete scrubbed stay gone"
     );
 }
