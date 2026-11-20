@@ -710,7 +710,7 @@ fn a_phone_callers_speaker_binds() -> TestResult {
         assert_eq!(words.len(), 1, "the caller's words are kept");
         let voice = voice_of(words[0])?;
         assert_eq!(
-            voice.get("speaker").and_then(Value::as_str),
+            voice.get("speaker_key").and_then(Value::as_str),
             Some("caller"),
             "FIXTURE: the phone caller speaks under its key"
         );

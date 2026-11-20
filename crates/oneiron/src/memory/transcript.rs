@@ -209,7 +209,7 @@ fn message_voice_triple(message: &TranscriptMessage) -> Option<(&str, &str, &str
     let voice = message.metadata.as_ref()?.get("voice")?;
     Some((
         voice.get("call")?.as_str()?,
-        voice.get("speaker")?.as_str()?,
+        voice.get("speaker_key")?.as_str()?,
         voice.get("speaker_label")?.as_str()?,
     ))
 }
