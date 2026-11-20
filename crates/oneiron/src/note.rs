@@ -74,7 +74,7 @@ pub use proposals::{
 };
 pub(crate) use proposals::{
     NoteEditLanding, erase_fork_actor_in_txn, erase_proposal_actor_in_txn,
-    erase_receipt_actor_in_txn, recovery_fork_value,
+    erase_receipt_actor_in_txn, landing_receipt_note, recovery_fork_value,
 };
 pub use sync_rows::{ACTOR_ERASE_NOTE_REQUEST_RECEIPT, NoteRequestReceiptErase};
 #[cfg(oneiron_test_support)]

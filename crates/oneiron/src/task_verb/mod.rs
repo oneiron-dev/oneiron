@@ -83,7 +83,8 @@ mod lifecycle_receipt;
 pub(crate) use lifecycle_receipt::{
     discard_payload_in_txn as discard_lifecycle_receipt_payload_in_txn,
     erase_in_txn as erase_lifecycle_receipts_in_txn, erase_lifecycle_actor_in_txn,
-    lifecycle_field_holds_words, settled_receipt_in, task_lifecycle_receipts,
+    lifecycle_field_holds_words, lifecycle_receipt_records, settled_receipt_in,
+    task_lifecycle_receipts,
 };
 mod linear_store;
 mod mirror_edit;

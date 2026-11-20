@@ -35,6 +35,16 @@ const TARGETS: SideTable<VoiceRowKey, VoiceTargetRecord, Named> =
 const RENDER_CONSENT: SideTable<String, VoiceRenderConsent, Named> =
     SideTable::new(&side_table::VOICE_REF_RENDER_CONSENT);
 
+/// The voice subject a stored render decision's value bytes name, whose erase drops the
+/// decision; `None` for bytes that do not read as a decision. The whole-vault export withholds
+/// the decision of a subject it keeps out.
+pub(crate) fn render_consent_subject(value: &[u8]) -> Option<EntityId> {
+    RENDER_CONSENT
+        .decode_value(value)
+        .ok()
+        .map(|consent| consent.decision.subject)
+}
+
 /// Every render decision recorded for a voice, kept once and never rewritten
 /// (FIX 4396). Key: voice id `\0` event id.
 const RENDER_EVENTS: SideTable<VoiceRowKey, VoiceRenderEventReceipt, Named> =

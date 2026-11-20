@@ -52,8 +52,8 @@ pub use self::change::SettingChange;
 pub(crate) use self::change::change_in_txn;
 pub(crate) use self::change::{
     erase_setting_change_actor_in_txn, erase_setting_content_actor_in_txn,
-    erase_setting_entity_in_txn, erase_setting_row_actor_in_txn, settings_after_in_txn,
-    settings_head_in_txn,
+    erase_setting_entity_in_txn, erase_setting_row_actor_in_txn, setting_change_records,
+    settings_after_in_txn, settings_head_in_txn,
 };
 pub use self::learned::{LEARNED_SCOPES, LearnedRange, SettingFitView};
 pub use self::page_max::PageMax;

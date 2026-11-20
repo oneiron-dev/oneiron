@@ -377,6 +377,21 @@ pub(crate) fn erase_in_txn(
     Ok(())
 }
 
+/// The records a stored lifecycle receipt's value bytes name as its TASK or its parked
+/// proposal, whose erase drops it ([`erase_in_txn`]); `None` for bytes that do not read as a
+/// receipt. The whole-vault export withholds a receipt of a record it keeps out.
+pub(crate) fn lifecycle_receipt_records(value: &[u8]) -> Option<Vec<EntityId>> {
+    let row = RECEIPTS.decode_value(value).ok()?;
+    let proposal = row.fields.get(FIELD_PROPOSAL_REF).map(String::as_str);
+    Some(
+        [row.trigger_ref.as_deref(), proposal]
+            .into_iter()
+            .flatten()
+            .filter_map(|hex| EntityId::from_lower_hex(hex).ok())
+            .collect(),
+    )
+}
+
 /// The lifecycle fields a call's words sit under, as the highway's writers
 /// put them: a worker's note, error and confession, and a block's reason.
 /// Every other field is an id, a code, a count, a time or a digest, which
