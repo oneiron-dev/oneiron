@@ -24,6 +24,13 @@
 //! * `an_actor_import_keeps_the_annotation_out`: the actor-taking door, with
 //!   the destination's owner as the actor; only the owner's restore door
 //!   carries the permit.
+//! * `a_later_import_without_the_owner_keeps_a_restored_annotation_open`
+//!   (REVIEW-9687 P1): the owner's restore brought the annotation back; the
+//!   source then retracted it, and the actorless door imports the later
+//!   archive. The gate pends the retraction, so the held annotation stays
+//!   live and the receipt names the archived close; red on the PR head
+//!   19b0d7396bd, where the import aborts with `archive provenance ID
+//!   collision`.
 //!
 //! Red on main 384cf8319e6b: each test fails at its import with
 //! `Gate(GateWriteRejected { outcome: "pending", reason_codes:
@@ -303,4 +310,44 @@ fn an_actor_import_keeps_the_annotation_out() {
         )
         .expect("the actor import of the annotated link completes");
     assert_annotation_kept_out(&dest, &linked, &receipt, annotation);
+}
+
+#[test]
+fn a_later_import_without_the_owner_keeps_a_restored_annotation_open() {
+    let (linked, annotation, archive) = annotated_archive();
+    let (_dir, dest) = open_later_vault();
+    let owner = owner_proof(&dest);
+    dest.import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner)
+        .expect("the owner's restore of the annotated link completes");
+    assert_eq!(
+        lifecycle(&dest, &annotation),
+        Some(ClaimLifecycleStatus::Active),
+        "precondition: the owner's restore brought the annotation back live"
+    );
+    next_second();
+    linked
+        .vault
+        .retract_edge_provenance(&annotation, linked.vault.now_recorded_at())
+        .expect("the source retracts the annotation");
+    assert_eq!(
+        lifecycle(&linked.vault, &annotation),
+        Some(ClaimLifecycleStatus::Retracted),
+        "precondition: the source retracted the annotation"
+    );
+    let later = export(&linked.vault);
+    let receipt = dest
+        .import_whole_vault_archive_from(Cursor::new(&later))
+        .expect("the actorless import of the later archive completes");
+    assert!(link_here(&dest, &linked), "the link stays");
+    assert_eq!(
+        lifecycle(&dest, &annotation),
+        Some(ClaimLifecycleStatus::Active),
+        "the restored annotation stays as it is: the gate pends its close here"
+    );
+    assert_eq!(
+        omission_reason(&receipt, annotation).as_deref(),
+        Some("ProvenanceAutoNotPermitted"),
+        "the receipt names the archived close: {:?}",
+        receipt.destination_omissions
+    );
 }
