@@ -158,6 +158,7 @@ fn witness(
             conversation_ref: conversation.to_owned(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: match author {
