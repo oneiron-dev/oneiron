@@ -20,7 +20,8 @@
 //! revocation or a slip or Grant withdrawal, a federation lifecycle act or a
 //! membership execution with every covered row in its causal past, on a
 //! clean image this install judges as it was built, whose whole tail then
-//! folds, a device revocation so placed, a re-root so placed as the tail's
+//! folds, a device revocation so placed, an actor binding or rebinding so
+//! placed whether the fold accepts it or not, a re-root so placed as the tail's
 //! only handoff, whose whole tail then folds and whose fence closes as in the
 //! whole fold, or a row of a kind that folds past
 //! the image only as rejected, with no state (FIX 11760), each on a
@@ -768,9 +769,10 @@ fn serial_withdrawal(
 /// that folds past the image all the same (FIX 11760), under [`folds_serially`]'s
 /// conditions: a federation lifecycle act or a membership execution, whose
 /// tail must then fold whole, a device revocation
-/// ([`settle::serial_roster_revoke_op`]), a re-root that is the tail's only
-/// one ([`settle::serial_handoff_op`]), whose tail must then fold whole, or
-/// a row of a kind that folds past only as rejected
+/// ([`settle::serial_roster_revoke_op`]), an actor binding or rebinding
+/// ([`settle::serial_binding_op`]), a re-root that is the tail's only one
+/// ([`settle::serial_handoff_op`]), whose tail must then fold whole, or a
+/// row of a kind that folds past only as rejected
 /// ([`settle::folds_rejected_op`]), which must then fold with no state. Two
 /// tail re-roots could fence one another, which only the whole history
 /// settles. A rotation or a non-agent enrollment stands only in a re-root's
@@ -783,7 +785,9 @@ fn serial_fold_past(
     log: AdoptedTail<'_>,
     entry: &AuthorityLogEntry,
 ) -> bool {
-    let op = if settle::serial_fold_past_op(&entry.op) || settle::serial_roster_revoke_op(&entry.op)
+    let op = if settle::serial_fold_past_op(&entry.op)
+        || settle::serial_roster_revoke_op(&entry.op)
+        || settle::serial_binding_op(&entry.op)
     {
         true
     } else if settle::serial_handoff_op(&entry.op) {
