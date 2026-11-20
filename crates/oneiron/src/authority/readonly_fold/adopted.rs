@@ -6,7 +6,9 @@ use super::*;
 /// The fold on a vault that adopted `adopted` (OF-469): its stored rows are
 /// the covered rows it still holds, never tail and never read again, and the
 /// tail past the image, which folds from the image with the tail's own
-/// first-seen times and observations alone; no clock is read for a covered
+/// first-seen times and observations, and the first-seen receipts of the
+/// image's carried rows this install kept (its adoption keeps one for each
+/// row the stale-roster window reads); no other clock is read for a covered
 /// row. None where the image cannot answer yet every covered row is held:
 /// the stored log then folds whole. Each `arriving` row folds as a stored row
 /// first seen now (FIX 2535).
@@ -28,16 +30,21 @@ pub(super) fn fold_adopted_in_txn(
         .filter_map(|hash| Some((authority_log_entity_id_from_hash(hash).ok()?, *hash)))
         .collect();
     let mut held_covered = BTreeSet::new();
+    // The covered rows stored here, never an arriving one: each is this
+    // install's own row, with its own first-seen receipt.
+    let mut stored_covered = BTreeSet::new();
     let mut tail = Vec::new();
     for id in authority_log_ids_in_txn(store, txn)? {
         if let Some(hash) = covered_ids.get(&id) {
             held_covered.insert(*hash);
+            stored_covered.insert(*hash);
             continue;
         }
         let entry = decode_stored_authority_log_body(&authority_log_body_in_txn(store, txn, &id)?)?;
         let hash = authority_entry_hash(&entry)?;
         if image.rows.contains_key(&hash) {
             held_covered.insert(hash);
+            stored_covered.insert(hash);
         } else {
             tail.push((hash, entry));
         }
@@ -62,6 +69,25 @@ pub(super) fn fold_adopted_in_txn(
             readonly_first_seen_for(store, txn, hash, backfilled, key.now_secs)?
         };
         first_seen_at_secs.insert(*hash, first_seen);
+    }
+    // This install's own first sight of a carried covered row, where it kept
+    // a receipt: at its adoption of the image, for a row it never stored
+    // (FOLDPAST-COVERED-APPROVAL-CLOCK). A row never stored with none gets no
+    // clock here; the fold asks for the history where the window would need
+    // it. A covered row stored here keeps its own receipt like any stored
+    // row, so once the backfill ran a missing one is corruption, as the
+    // whole-history read finds it (Astra re-review P1).
+    for (hash, row) in &image.rows {
+        let stored = stored_covered.contains(hash);
+        if row.body.is_none() && !stored {
+            continue;
+        }
+        if let Some(first_seen) =
+            readonly_first_seen_receipt(store, txn, hash, backfilled && stored)?
+            && row.body.is_some()
+        {
+            first_seen_at_secs.entry(*hash).or_insert(first_seen);
+        }
     }
     let observations =
         crate::authority::sequence_observation::authority_local_observations_in_txn(store, txn)?;
