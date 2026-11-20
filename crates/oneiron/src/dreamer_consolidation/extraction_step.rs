@@ -7,9 +7,6 @@
 //! after it, in execution, so a retracted rule never shapes a prepared input.
 
 mod reply;
-mod slice_scope;
-
-pub(crate) use slice_scope::bound_step_scope;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -24,6 +21,7 @@ use super::resources::BoundBranchRead;
 use super::roles::{DREAMER_EXTRACTION_ROLE, bind_reasoning};
 use super::support::invalid_consolidation;
 use super::value_projection::rmpv_to_json;
+use super::watermark::decode_turn_body;
 use crate::claim::ScopedRead;
 use crate::dreamer_runner::ExtractionStepLoan;
 use crate::entity_id::EntityId;
@@ -32,7 +30,6 @@ use crate::snapshot_read::SourceVersion;
 use crate::store::model_step_submission::ModelStepResult;
 use crate::verbs::{PinnedClaim, TurnEvidence};
 use oneiron_model::llm::Scope;
-use slice_scope::slice_groups;
 
 /// One bound extraction step's checked input, snapshotted in validation.
 ///
@@ -86,8 +83,8 @@ pub(crate) struct PreparedExtractionStep {
 impl PreparedExtractionStep {
     /// What this step's call shows beside its words, as its request names it
     /// and its record keeps it: the row behind each label, the served byte
-    /// range of each piece in request order, and the sources in id order,
-    /// each once.
+    /// range of each piece in request order, the sources in id order, each
+    /// once, and the correctable claims of each labelled subject.
     fn call_inputs(&self) -> crate::llm::StepCallInputs {
         let sources: BTreeSet<EntityId> = self.sources.iter().copied().collect();
         crate::llm::StepCallInputs {
@@ -102,6 +99,14 @@ impl PreparedExtractionStep {
                 })
                 .collect(),
             sources: sources.into_iter().collect(),
+            correctable: self
+                .correctable
+                .iter()
+                .map(|(subject, claims)| crate::llm::StepInputCorrectable {
+                    subject: *subject,
+                    claims: claims.clone(),
+                })
+                .collect(),
         }
     }
 }
@@ -204,7 +209,40 @@ pub(crate) fn prepare_bound_step(
     page: Option<usize>,
 ) -> MemoryResult<PreparedExtractionStep> {
     let cited: Vec<EntityId> = pieces.iter().map(|piece| piece.turn).collect();
-    let (speakers, groups) = slice_groups(txn, read, bound, pieces)?;
+    let distinct: BTreeSet<EntityId> = cited.iter().copied().collect();
+    let ordered: Vec<EntityId> = distinct.iter().copied().collect();
+    let rows = read
+        .get_entities_parts_in_txn(txn, &ordered)
+        .map_err(bound_branch_error)?;
+    let mut speakers: BTreeMap<EntityId, Option<String>> = BTreeMap::new();
+    let mut bodies: BTreeMap<EntityId, Vec<u8>> = BTreeMap::new();
+    for (turn, row) in ordered.iter().zip(rows) {
+        bound
+            .turn_conversation(*turn)
+            .ok_or_else(|| bound_branch_error(invalid_consolidation("unlisted branch turn")))?;
+        let Some((kind, _, body)) = row else {
+            return Err(bound_branch_error(invalid_consolidation(
+                "branch source is not readable",
+            )));
+        };
+        if kind != crate::registry::ENTITY_TYPE_TURN {
+            return Err(bound_branch_error(invalid_consolidation(
+                "invalid branch source type",
+            )));
+        }
+        speakers.insert(*turn, decode_turn_body(&body).speaker);
+        bodies.insert(*turn, body);
+    }
+    let mut groups: BTreeMap<(u32, Vec<EntityId>), Vec<usize>> = BTreeMap::new();
+    for (index, piece) in pieces.iter().enumerate() {
+        let body = bodies
+            .get(&piece.turn)
+            .ok_or_else(|| bound_branch_error(invalid_consolidation("unlisted branch turn")))?;
+        let frozen = bound.turn_text(piece.turn).and_then(TurnText::text);
+        let line = bound.turn_line(piece.turn);
+        let key = slice_group_key(bound.neighbourhood(), line, body, frozen);
+        groups.entry(key).or_default().push(index);
+    }
     if groups.len() != 1 {
         let slices = layout_slices(bound, &groups);
         return Err(extraction_layout_refusal(

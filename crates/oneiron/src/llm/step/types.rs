@@ -73,6 +73,11 @@ pub(super) const KEY_INPUT_RANGES: &str = "input_ranges";
 /// order, each once; carried and kept as the labels are.
 pub(super) const KEY_INPUT_SOURCES: &str = "input_sources";
 
+/// The listed claims a bound step's scope lets a candidate about each labelled
+/// subject correct, as one JSON string, in subject order; carried and kept as
+/// the labels are.
+pub(super) const KEY_INPUT_CORRECTABLE: &str = "input_correctable";
+
 pub(super) const KEY_TRAP_KIND: &str = "trap_kind";
 
 pub(super) const KEY_STATE: &str = "state";

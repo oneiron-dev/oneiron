@@ -8,7 +8,9 @@ use super::codec::{
     decode_attempt_id_value, decode_entity_id_value, decode_hash_hex, expect_key, expect_map,
     expect_string, expect_u64, invalid_step, pinned_key_index,
 };
-use super::request_hash_step::{StepInputLabels, StepInputRange, step_input_records};
+use super::request_hash_step::{
+    StepInputCorrectable, StepInputLabels, StepInputRange, step_input_records,
+};
 use super::response_pins::{StepResponseRef, register_step_response_pin_in_txn};
 use super::source::StepSource;
 use super::step_state::{
@@ -19,10 +21,10 @@ use super::types::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_VALUE_KEYS,
     DREAMER_STEP_VALUE_SCHEMA_VERSION, DurableStepContext, DurableStepError, DurableStepResult,
     ENVELOPE_PROVENANCE_ATTEMPT_KEY, ENVELOPE_PROVENANCE_RUN_KEY, ENVELOPE_PROVENANCE_SURFACE_KEY,
-    KEY_AT, KEY_ATTEMPT_ID, KEY_INPUT_LABELS, KEY_INPUT_RANGES, KEY_INPUT_SOURCES,
-    KEY_INPUT_VERSIONS, KEY_MODEL_ID, KEY_PARAMS_HASH, KEY_PROGRESSION, KEY_PURPOSE, KEY_RESPONSE,
-    KEY_RESPONSE_HASH, KEY_RESPONSE_REF, KEY_RESPONSE_VERSION, KEY_SCHEMA_VERSION, KEY_STEP_HASH,
-    KEY_USAGE_IN, KEY_USAGE_OUT, StepProgression,
+    KEY_AT, KEY_ATTEMPT_ID, KEY_INPUT_CORRECTABLE, KEY_INPUT_LABELS, KEY_INPUT_RANGES,
+    KEY_INPUT_SOURCES, KEY_INPUT_VERSIONS, KEY_MODEL_ID, KEY_PARAMS_HASH, KEY_PROGRESSION,
+    KEY_PURPOSE, KEY_RESPONSE, KEY_RESPONSE_HASH, KEY_RESPONSE_REF, KEY_RESPONSE_VERSION,
+    KEY_SCHEMA_VERSION, KEY_STEP_HASH, KEY_USAGE_IN, KEY_USAGE_OUT, StepProgression,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -566,6 +568,9 @@ pub(super) struct DecodedStepClaim {
     /// The shown range of each cited TURN of a bound step's call, in request
     /// order; `None` for a step that names none.
     pub(crate) input_ranges: Option<Vec<StepInputRange>>,
+    /// The correctable claims of each labelled subject of a bound step's call;
+    /// `None` for a step that names none.
+    pub(crate) input_correctable: Option<Vec<StepInputCorrectable>>,
 }
 
 /// Fail-closed `dreamer.step` claim value decode: pinned keys only, no
@@ -592,6 +597,7 @@ pub(super) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim>
     let mut input_versions = None;
     let mut input_labels = None;
     let mut input_ranges = None;
+    let mut input_correctable = None;
     let mut seen = [false; DREAMER_STEP_VALUE_KEYS.len()];
 
     for (key, value) in entries {
@@ -706,6 +712,13 @@ pub(super) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim>
                     "dreamer step value input_sources must list source rows",
                 )?;
             }
+            KEY_INPUT_CORRECTABLE => {
+                input_correctable = Some(json_fact::<Vec<StepInputCorrectable>>(
+                    value,
+                    "dreamer step value input_correctable must be a string",
+                    "dreamer step value input_correctable must list correctable claims",
+                )?);
+            }
             _ => unreachable!("index resolved from DREAMER_STEP_VALUE_KEYS"),
         }
     }
@@ -757,6 +770,7 @@ pub(super) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim>
         input_versions,
         input_labels,
         input_ranges,
+        input_correctable,
     })
 }
 

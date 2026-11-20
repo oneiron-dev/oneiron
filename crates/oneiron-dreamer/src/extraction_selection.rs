@@ -356,13 +356,14 @@ impl CorrectionFacts {
     /// The read asks an operand about a head it cites only while the operand does
     /// not restate it. So a member the read may ask about `head` carries a predicate
     /// and value that are not both the head's, and a union with that same predicate
-    /// and value does not restate the head. A member the read does not ask about a
-    /// head it cites restates it: the head's predicate and value are the member's,
-    /// and a union with another predicate or value does not restate the head. With
-    /// no read fact for the member, only its own correction of `head`, which its
-    /// read took, stands for the first case. These are sufficient tests, not every
-    /// one: a member the read may ask about `head` that proposes another predicate
-    /// or value proves nothing about the union, and its citation stays out.
+    /// and value does not restate the head. With no read fact for the member, only
+    /// its own correction of `head`, which its read took, stands for that case.
+    /// These are sufficient tests, not every one. A member the read may ask about
+    /// `head` that proposes another predicate or value proves nothing about the
+    /// union, and its citation stays out. So does the citation of a member the read
+    /// does not ask about `head`: a missing pair does not show that the member
+    /// restates the head, since the read also leaves out a head that none of the
+    /// recorded candidates the member names may be asked about in its own step.
     fn keeps_citation(
         &self,
         position: usize,
@@ -372,11 +373,11 @@ impl CorrectionFacts {
     ) -> bool {
         let same_proposal = member["predicate"] == representative["predicate"]
             && member["value"] == representative["value"];
-        match self.correctable.get(&position) {
-            Some(heads) if heads.iter().any(|claim| claim == head) => same_proposal,
-            Some(_) => !same_proposal,
-            None => same_proposal && member["corrects"].as_str() == Some(head),
-        }
+        same_proposal
+            && match self.correctable.get(&position) {
+                Some(heads) => heads.iter().any(|claim| claim == head),
+                None => member["corrects"].as_str() == Some(head),
+            }
     }
 }
 
