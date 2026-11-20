@@ -31,7 +31,10 @@
 //!
 //! On main the first two tests fail (the edit door answers an error after
 //! its edit landed; the owner's read of the merged summary refuses); the
-//! third guards the mint's refusal.
+//! third guards the mint's refusal. The fourth (review P1 of #9931) guards
+//! the row put: a replicated scope-summary body that names no document is
+//! as minted, so its text is never blank. Main's decode refused one; the
+//! first fix head, 90064fa2b41, stored it.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test summary_blank_text_reads_empty`.
@@ -45,17 +48,20 @@ use oneiron::authority::{HostSlipIssuer, VerifiedSlip};
 use oneiron::conversation_dag::{ScopePath, ScopeSelector};
 use oneiron::core_write::{ConversationCreateInput, DagRecordAppendInput};
 use oneiron::memory::Memory;
+use oneiron::registry::ENTITY_TYPE_SUMMARY;
 use oneiron::scope_summary::{
     SummaryEdit, SummaryEditRequest, SummaryKeepRequest, SummaryReadRequest, SummarySpan,
 };
 use oneiron::store::GateDecisionId;
 use oneiron::sync::bridge::Materializer;
+use oneiron::sync::client::ImportTier;
 use oneiron::sync::documents::EntityDocument;
 use oneiron::sync::manager::WindowManager;
+use oneiron::sync::replay::{ReplicatedEntity, replay_entity};
 use oneiron::sync::transport::{decode_document, document_sub_tags};
 use oneiron::test_doors::scope_summary::mint_born_scope_summary;
 use oneiron::test_support::{bind_host_owner, provision_engine_machines};
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use oneiron_testkit::door;
 use serde_json::{Value, json};
 
@@ -501,6 +507,80 @@ fn a_summary_is_never_minted_with_a_blank_text() -> TestResult {
     assert!(
         format!("{error:?}").contains("summary text is blank"),
         "the mint refuses the blank text: {error:?}"
+    );
+    Ok(())
+}
+
+/// `body`, a scope summary's msgpack map, with its `text` set to `text`;
+/// every other key, and the key order, as they were.
+fn with_text(body: &[u8], text: &str) -> TestResult<Vec<u8>> {
+    let mut value = rmpv::decode::read_value(&mut &body[..])?;
+    let rmpv::Value::Map(entries) = &mut value else {
+        return Err("FIXTURE: a scope summary's body is a map".into());
+    };
+    let slot = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("text"))
+        .ok_or("FIXTURE: a scope summary's body has a text")?;
+    slot.1 = rmpv::Value::from(text);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &value)?;
+    Ok(bytes)
+}
+
+/// The own-device replay of `body` as a scope summary under the fresh id
+/// `id`.
+fn replay_summary(vault: &Vault, id: EntityId, body: &[u8]) -> oneiron::Result<()> {
+    let now = vault.now_recorded_at();
+    replay_entity(
+        vault,
+        ReplicatedEntity {
+            id,
+            entity_type: ENTITY_TYPE_SUMMARY,
+            occurred: TimeRange {
+                start: now,
+                end: now,
+            },
+            learned_at: now,
+            row_version: 0,
+            body,
+        },
+        ImportTier::OwnDevice,
+    )
+}
+
+/// A replicated scope summary under a fresh id names no document: its body
+/// is as the Dreamer minted it, and the mint never writes a blank text. A
+/// replicated row skips the producer check, so the row put refuses the blank
+/// text itself (review P1 of #9931); only a document's edit or merge may
+/// leave one. The same body with its words replays.
+#[test]
+fn a_replicated_scope_summary_with_no_document_is_refused_a_blank_text() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let (vault, _issuer, seeded) = seed(dir.path())?;
+    let minted = vault
+        .get(&seeded.summary)?
+        .ok_or("FIXTURE: the minted summary's body")?;
+    let worded = EntityId::now();
+    replay_summary(&vault, worded, &with_text(&minted, TEXT)?).unwrap_or_else(|error| {
+        panic!("FIXTURE: the minted body replays as a fresh row: {error:?}")
+    });
+    assert!(
+        vault.get(&worded)?.is_some(),
+        "FIXTURE: the replayed summary with its words stands"
+    );
+    let blank = EntityId::now();
+    let replayed = replay_summary(&vault, blank, &with_text(&minted, "")?);
+    let error =
+        replayed.expect_err("an own-device replay of a blank-text summary with no document");
+    assert!(
+        format!("{error:?}").contains("summary text is blank"),
+        "the row put refuses the blank text: {error:?}"
+    );
+    assert!(
+        vault.get(&blank)?.is_none(),
+        "the refused blank-text summary {} is not stored",
+        blank.to_hex()
     );
     Ok(())
 }
