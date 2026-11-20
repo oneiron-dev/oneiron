@@ -496,3 +496,36 @@ fn stop_group(child: &mut Child) {
     }
     let _ = child.wait();
 }
+
+/// Seam for `tests/continue_command.rs`, reached through
+/// `crate::test_doors::continue_command`: the push of a hand-off commit to a
+/// custody repo the test serves.
+#[cfg(oneiron_test_support)]
+pub(crate) mod test_support {
+    use super::*;
+
+    /// Builds the hand-off commit of the repo that holds `dir` and pushes it
+    /// to `git_ref` of the custody repo `repo` at `origin` with the slip
+    /// `token` and its holder `seed`, as `continue --cloud` does, Git-LFS
+    /// objects first; answers the commit.
+    pub fn push_hand_off(
+        dir: &Path,
+        origin: &str,
+        repo: &str,
+        (token, seed): (&str, &str),
+        git_ref: &str,
+    ) -> Result<String, String> {
+        let deadline = Instant::now() + super::super::DEADLINE;
+        let hand_off = hand_off_commit(dir, "a test hand-off", deadline)
+            .map_err(|error| format!("{error:#}"))?;
+        let custody = CustodyRepo {
+            origin,
+            repo,
+            token,
+            seed,
+        };
+        push(&hand_off.top, &custody, &hand_off.commit, git_ref, deadline)
+            .map_err(|error| format!("{error:#}"))?;
+        Ok(hand_off.commit)
+    }
+}

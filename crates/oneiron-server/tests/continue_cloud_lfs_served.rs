@@ -1,0 +1,280 @@
+#![cfg(all(unix, oneiron_test_support))]
+//! `oneiron continue --cloud` sends the work's Git-LFS objects (FIX
+//! CONTINUE-CLOUD-LFS-OBJECTS-NOT-SENT). The custody landing stores a pointer
+//! only once the vault holds the object it names, so the hand-off push sends
+//! those objects through the custody repo's own Git-LFS door before its pack.
+//!
+//! Each case runs the command's real push (`hand_off::push`, through
+//! `oneiron_server::test_doors::continue_command::push_hand_off`) against the
+//! served app on a loopback port, with the vault owner's holder-bound slip and
+//! its seed, as a paired selection holds them: the push proves each request
+//! itself, so no proof middleware sits in front of the app. The custody repo
+//! `demo` is an empty served repo, and the work is a repo whose hand-off
+//! carries a Git-LFS pointer file, its object in the repo's git-lfs store
+//! (`.git/lfs/objects/<2>/<2>/<oid>`), as `git lfs` leaves it.
+//!
+//! - The hand-off lands on its continue ref, and the vault then holds the
+//!   object. Before the fix the push sent no object: the landing refused the
+//!   pointer, the report named the ref `ng`, the command failed, and the vault
+//!   held no object.
+//! - A pointer whose object is on neither this machine nor the vault stops
+//!   the push before its pack, naming the path and `git lfs fetch`, and the
+//!   custody repo gains no ref. Before the fix the pack went and the landing
+//!   refused it, with no word of the missing object.
+//!
+//! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
+//! oneiron-server --all-features --features oneiron/test-support --test
+//! continue_cloud_lfs_served`. Stock `git` (with `http-backend`) must be on
+//! PATH.
+
+#[path = "support/engine_stack.rs"]
+mod engine_stack;
+
+use std::path::Path;
+use std::process::Command;
+use std::sync::Arc;
+
+use ed25519_dalek::SigningKey;
+use engine_stack::on_engine_stack;
+use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole};
+use oneiron::federation::Scope;
+use oneiron::origin::lfs::LfsOid;
+use oneiron::origin::smart_http::{ORIGIN_REPO_DIR_SUFFIX, origin_serving_root};
+use oneiron::{EntityId, Vault, VaultConfig};
+use oneiron_server::config::SyncServerConfig;
+use oneiron_server::test_doors::continue_command::push_hand_off;
+use oneiron_server::{build_app, server::SyncServer};
+
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+/// The custody repo's served name.
+const REPO: &str = "demo";
+/// The conversation's hand-off ref, as the command names it.
+const CONTINUE_REF: &str = "refs/heads/oneiron/continue/0b5e2c1d7a444c399f0e5d2a6b8c9e10";
+/// The holder seed byte of the owner's slip.
+const OWNER_SEED: u8 = 0x71;
+/// The bytes of the work's Git-LFS object.
+const OBJECT: &[u8] = b"a model checkpoint the work goes on from\x00\x01\x02\n";
+
+/// The served app on a loopback port, the vault behind it, its empty custody
+/// repo, and the owner's slip.
+struct Served {
+    vault: Arc<Vault>,
+    /// `http://127.0.0.1:<port>`.
+    origin: String,
+    /// The custody repo's bare store.
+    bare: std::path::PathBuf,
+    token: String,
+    _serving: ServingTask,
+    _vault_dir: tempfile::TempDir,
+}
+
+/// The task that serves the app; dropping it stops it.
+struct ServingTask(tokio::task::JoinHandle<()>);
+
+impl Drop for ServingTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+impl Served {
+    async fn start() -> TestResult<Self> {
+        let vault_dir = tempfile::tempdir()?;
+        let vault = Arc::new(Vault::open(vault_dir.path(), VaultConfig::device())?);
+        let keystore = Arc::new(oneiron_keystore::MemoryKeystore::default());
+        vault.install_device_keystore(keystore);
+        let issuer = oneiron::test_support::provision_engine_machines(&vault);
+        vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
+        let root = vault.ensure_host_root_slip(&issuer)?;
+        let owner = vault.ensure_embedded_owner_actor()?;
+        oneiron::test_support::bind_host_owner(&vault, &issuer, owner)?;
+        let token = owner_slip(&vault, &issuer, &root, owner)?;
+        let serving_root = origin_serving_root(&vault)?;
+        let bare_name = format!("{REPO}{ORIGIN_REPO_DIR_SUFFIX}");
+        git(
+            &serving_root,
+            &["init", "--bare", "--initial-branch=main", &bare_name],
+        );
+        let server = Arc::new(SyncServer::new(
+            Arc::clone(&vault),
+            SyncServerConfig {
+                auth_secret: Some("continue-cloud-lfs-served".into()),
+                ..Default::default()
+            },
+        )?);
+        let app = build_app(server);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        let serving = ServingTask(tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        }));
+        Ok(Self {
+            vault,
+            origin,
+            bare: serving_root.join(bare_name),
+            token,
+            _serving: serving,
+            _vault_dir: vault_dir,
+        })
+    }
+
+    /// Runs the command's push of the work in `dir` to [`CONTINUE_REF`] on
+    /// a blocking thread, as the command runs it.
+    async fn push(&self, dir: &Path) -> TestResult<Result<String, String>> {
+        let (dir, origin, token) = (dir.to_owned(), self.origin.clone(), self.token.clone());
+        let seed = hex(&[OWNER_SEED; 32]);
+        Ok(tokio::task::spawn_blocking(move || {
+            push_hand_off(
+                &dir,
+                &origin,
+                REPO,
+                (token.as_str(), seed.as_str()),
+                CONTINUE_REF,
+            )
+        })
+        .await?)
+    }
+
+    /// The commit the custody repo's bare store holds on [`CONTINUE_REF`].
+    fn landed(&self) -> Option<String> {
+        let output = git_output(
+            &self.bare,
+            &["rev-parse", "--verify", "--quiet", CONTINUE_REF],
+        );
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    }
+}
+
+/// The owner's slip, holder-bound to the key of [`OWNER_SEED`], as a paired
+/// selection holds it.
+fn owner_slip(
+    vault: &Vault,
+    issuer: &HostSlipIssuer,
+    root: &CapabilitySlip,
+    owner: EntityId,
+) -> TestResult<String> {
+    let key = SigningKey::from_bytes(&[OWNER_SEED; 32]);
+    let mut claims = root.claims.clone();
+    claims.parent_id = None;
+    claims.slip_id = [OWNER_SEED; 32];
+    claims.holder_ref = owner.to_hex();
+    claims.binding_key = key.verifying_key().to_bytes();
+    claims.actor_class = Some("human".to_owned());
+    claims.scope = Scope::top();
+    Ok(vault.mint_capability_slip(issuer, claims)?.to_token()?)
+}
+
+/// A work repo with one commit and, untracked, a Git-LFS pointer file
+/// `assets/model.bin` for [`OBJECT`]; with `stored`, the object sits in the
+/// repo's git-lfs store. Answers the object's id.
+fn work_repo(dir: &Path, stored: bool) -> TestResult<LfsOid> {
+    git(dir, &["init", "--initial-branch=main"]);
+    git(dir, &["config", "user.name", "Oneiron"]);
+    git(dir, &["config", "user.email", "oneiron@example.invalid"]);
+    std::fs::write(dir.join("README.md"), "outside work\n")?;
+    git(dir, &["add", "--", "README.md"]);
+    git(dir, &["commit", "-m", "first"]);
+    let oid = LfsOid::digest(OBJECT);
+    let hex = oid.to_hex();
+    std::fs::create_dir_all(dir.join("assets"))?;
+    std::fs::write(
+        dir.join("assets/model.bin"),
+        format!(
+            // testkit-lint: allow(network) the pointer grammar's version line names a URI; nothing fetches it.
+            "version https://git-lfs.github.com/spec/v1\noid sha256:{hex}\nsize {}\n",
+            OBJECT.len()
+        ),
+    )?;
+    if stored {
+        let store = dir
+            .join(".git/lfs/objects")
+            .join(&hex[..2])
+            .join(&hex[2..4]);
+        std::fs::create_dir_all(&store)?;
+        std::fs::write(store.join(&hex), OBJECT)?;
+    }
+    Ok(oid)
+}
+
+fn size() -> u64 {
+    u64::try_from(OBJECT.len()).expect("the object's length fits u64")
+}
+
+#[test]
+fn the_hand_off_sends_its_lfs_objects_and_lands() -> TestResult {
+    on_engine_stack(|| async {
+        let served = Served::start().await?;
+        let work = tempfile::tempdir()?;
+        let oid = work_repo(work.path(), true)?;
+        assert!(
+            !served.vault.has_lfs_object(oid, size())?,
+            "the vault starts without the object"
+        );
+
+        let pushed = served.push(work.path()).await?;
+
+        let commit = pushed.map_err(|error| format!("the push fails: {error}"))?;
+        assert_eq!(
+            served.landed().as_deref(),
+            Some(commit.as_str()),
+            "the hand-off lands on its continue ref"
+        );
+        assert!(
+            served.vault.has_lfs_object(oid, size())?,
+            "the vault holds the work's Git-LFS object"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn an_object_on_neither_side_stops_the_push_before_its_pack() -> TestResult {
+    on_engine_stack(|| async {
+        let served = Served::start().await?;
+        let work = tempfile::tempdir()?;
+        let oid = work_repo(work.path(), false)?;
+
+        let pushed = served.push(work.path()).await?;
+
+        let error = pushed.expect_err("the push fails");
+        assert!(
+            error.contains("assets/model.bin") && error.contains("git lfs fetch"),
+            "the error names the path and how to fetch the object: {error}"
+        );
+        assert_eq!(served.landed(), None, "the custody repo gains no ref");
+        assert!(
+            !served.vault.has_lfs_object(oid, size())?,
+            "the vault holds no object"
+        );
+        Ok(())
+    })
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn git_output(cwd: &Path, args: &[&str]) -> std::process::Output {
+    Command::new("git")
+        .current_dir(cwd)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .args(args)
+        .output()
+        .expect("run git")
+}
+
+fn git(cwd: &Path, args: &[&str]) -> String {
+    let output = git_output(cwd, args);
+    assert!(
+        output.status.success(),
+        "git {args:?} failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
