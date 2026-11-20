@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use oneiron::booking::{
     BookingError, BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest,
-    BookingSolver, BookingVerbReceipt, BookingVerbRequest, SessionKey, SlotOracle, SolveRequest,
-    SolveResult, VaultActiveHoldSource, run_booking_lifecycle_attempt,
+    BookingSolver, BookingVerbReceipt, BookingVerbRequest, EventTypeKey, SessionKey, SlotOracle,
+    SolveRequest, SolveResult, VaultActiveHoldSource, run_booking_lifecycle_attempt,
     run_booking_lifecycle_attempt_with_invites,
 };
 use oneiron::dreamer_runner::DreamerHomeNodeClass;
@@ -217,6 +217,10 @@ impl SlotOracle for ServerBookingOracle<'_> {
             Some(producers) => solver.solve_listing(request, Some(moving), producers),
             None => solver.solve_moving(request, moving),
         })
+    }
+
+    fn minimum_notice_secs(&self, event_type: &EventTypeKey) -> Result<u64, BookingError> {
+        self.with_solver(|solver| solver.minimum_notice_secs(event_type))
     }
 
     fn solve_past_caps(&self, request: &SolveRequest) -> Result<SolveResult, BookingError> {

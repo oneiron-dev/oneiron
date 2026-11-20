@@ -69,6 +69,7 @@ pub(crate) use self::storage::{confirm_receipt_key_for_test, revision_receipt_ke
 mod token;
 mod transition;
 mod types;
+mod waitlist;
 
 #[cfg(test)]
 mod tests;
@@ -122,7 +123,8 @@ pub use self::types::{
     BookingStatusValue, BookingVerb, BookingVerbReceipt, BookingVerbRequest, CalendarRevision,
     CancelSpec, ConfirmReceipt, ConfirmSpec, DEFAULT_HOLD_TTL_SECS, HoldReceipt, HoldSpec,
     LifecycleTokenScope, MAX_CAP_OVERRIDE_REASON_BYTES, MAX_CHECKOUT_HOLD_TTL_SECS, RescheduleSpec,
-    RevisionReceipt, SoftHoldRow,
+    RevisionReceipt, SoftHoldRow, WAITLIST_OFFER_TTL_SECS, WaitlistAction, WaitlistClaim,
+    WaitlistJoin, WaitlistReceipt, WaitlistSpec,
 };
 
 pub(crate) use self::confirmation_state::{

@@ -287,6 +287,13 @@ pub trait SlotOracle: Send + Sync {
         self.solve(req)
     }
 
+    /// The notice a slot of `event_type` must keep before it starts: no
+    /// solve offers a slot nearer than this. A waitlist offer ends at that
+    /// cutoff. An oracle that keeps no notice answers zero.
+    fn minimum_notice_secs(&self, _event_type: &EventTypeKey) -> Result<u64, BookingError> {
+        Ok(0)
+    }
+
     /// [`Self::solve`] with the event type's meeting caps lifted: the owner's
     /// own hold past a full day, which a confirm records with its reason
     /// (RULING BK-CAP-OVERRIDE-WHO = B). An oracle that cannot lift the caps
