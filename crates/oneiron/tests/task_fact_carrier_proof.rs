@@ -9,7 +9,8 @@
 //! `a_replayed_unsigned_cancel_leaves_the_task_open`; the forged signed cancel fails the read
 //! in `a_cancel_signed_by_a_key_the_fold_never_admitted_leaves_the_task_open`; the forged
 //! second owner forks the owner in `a_fact_the_hosts_machine_signed_counts_on_the_device`;
-//! the ask record fails the read in its test. Green on the head.
+//! a role-6 record that is no fact fails the read in
+//! `a_role6_record_that_is_no_fact_does_not_fail_its_read`. Green on the head.
 //! `a_row_replaced_under_an_indexed_id_does_not_count` is red on the base when the replay
 //! door lands the new body (the forger owns the task), and a guard when it refuses it.
 //! `a_malformed_fact_from_another_install_does_not_fail_its_read` is a guard on both: the
@@ -398,8 +399,13 @@ fn a_row_replaced_under_an_indexed_id_does_not_count() {
     );
 }
 
+/// A role-6 record of a subkind no decoder of this build claims (a later build's record, or
+/// a peer's), linked to a task. The replay door lands it: the ask guard decodes only the ask
+/// subkinds it names, and the fact guard only facts. A well-formed ask group would do the
+/// same, but its body needs the ask door's own types (FIX TASK-FACT-CARRIER-PROOF-ASK-FIXTURE:
+/// a bare `tasks.ask_group` body is refused at the replay door, so it never reached the read).
 #[test]
-fn an_ask_record_linked_to_a_task_does_not_fail_its_read() {
+fn a_role6_record_that_is_no_fact_does_not_fail_its_read() {
     let host = host();
     let task = owner_task(&host.vault, host.owner, "the owner's task");
     let record = EntityId::now();
@@ -412,14 +418,14 @@ fn an_ask_record_linked_to_a_task_does_not_fail_its_read() {
                 Value::from("role"),
                 Value::from(TaskRole::AuthorityFact.role_byte()),
             ),
-            (Value::from("subkind"), Value::from("tasks.ask_group")),
+            (Value::from("subkind"), Value::from("tasks.unknown_record")),
             (Value::from("task_ref"), Value::from(task.to_hex())),
         ]),
     );
     let state = host
         .vault
         .task_authority_state(task)
-        .expect("an ask record is not a fact, so the read stands")
+        .expect("a role-6 record that is no fact is skipped, so the read stands")
         .expect("the owner's own Owner fact counts");
     assert_eq!(state.owner_ref, host.owner);
 }

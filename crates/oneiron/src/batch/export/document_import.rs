@@ -368,6 +368,8 @@ impl Vault {
                 receipt_ref,
                 fresh: restore_fresh,
                 source_vault: source_vault.as_deref(),
+                foreign_chain: authority.classification
+                    == crate::batch::export::VaultImportClassification::ForeignAuthorityChain,
             });
         withhold_unborn_projects(self, &wtxn, &mut archive)?;
         let projects = map_project_root(self, &wtxn, &mut archive)?;
@@ -470,6 +472,13 @@ impl Vault {
                             self, &wtxn, &archive, &id,
                         )?;
                     }
+                    // Blind review P1 (REVIEW-9365): the owner's restore counts a
+                    // TASK authority fact it finds held unchanged, as one it lands.
+                    if row.entity_type == ENTITY_TYPE_TASK
+                        && owner_restore.is_some_and(|restore| !restore.foreign_chain)
+                    {
+                        self.restore_held_task_fact_in_txn(&mut wtxn, &id)?;
+                    }
                     stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                     unchanged_entities += 1;
                     continue;
@@ -510,6 +519,12 @@ impl Vault {
                         super::evidence_import::validate_stored_message(
                             self, &wtxn, &archive, &id,
                         )?;
+                    }
+                    // Blind review P1 (REVIEW-9365), as above.
+                    if row.entity_type == ENTITY_TYPE_TASK
+                        && owner_restore.is_some_and(|restore| !restore.foreign_chain)
+                    {
+                        self.restore_held_task_fact_in_txn(&mut wtxn, &id)?;
                     }
                     stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                     unchanged_entities += 1;
@@ -907,6 +922,12 @@ impl Vault {
         // they index are in: each family's records, then indexes, then heads.
         let (restored_side_rows, unchanged_side_rows) =
             super::archive_side_tables::restore_side_rows_in_txn(&self.store, &mut wtxn, &archive)?;
+        // FIX OWNER-RESTORE-REFUSES-TASK-AUTHORITY-FACTS: the owner's restore
+        // twins each task authority fact it restored under this install's
+        // signature, once every link is in, so it counts on every device.
+        if owner_restore.is_some() {
+            self.adopt_task_facts_in_txn(&mut wtxn)?;
+        }
         // FIX 1162: every imported agent gets its model PERSON in this same
         // writer, once the bundle's own PERSON and anchor rows are in.
         super::agent_person_import::ensure_imported_agent_persons_in_txn(
@@ -1226,6 +1247,24 @@ fn insert_ready_row<R: Read + Seek>(
             } else {
                 vault.put_skill_record_in_txn(wtxn, &id, &record, occurred, row.learned_at)
             }
+        }
+        // FIX OWNER-RESTORE-REFUSES-TASK-AUTHORITY-FACTS (TASK-FACT-ARCHIVE-CROSSING
+        // = A, archives keep the facts): the owner's restore lands a TASK's
+        // authority fact through the engine's fact restore door, at its archived
+        // id, body and birth. Every other import, and a foreign chain's archive,
+        // refuses it at the raw put below.
+        ENTITY_TYPE_TASK
+            if owner_restore.is_some_and(|restore| !restore.foreign_chain)
+                && crate::task_authority::is_task_authority_fact_body(&body) =>
+        {
+            vault.restore_archived_task_fact_in_txn(
+                wtxn,
+                &id,
+                &body,
+                occurred,
+                row.learned_at,
+                archived_birth_facet(archive, &id)?,
+            )
         }
         _ => {
             // Blind-review P1b (REVIEW-4389): an EVENT/TURN born under a

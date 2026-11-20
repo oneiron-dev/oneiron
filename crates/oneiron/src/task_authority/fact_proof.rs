@@ -86,6 +86,34 @@ pub(super) fn signs_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool>
         && signer_in_txn(vault, txn)?.is_some())
 }
 
+/// Whether `carrier` is this install's own signature over the fact row `fact_ref`, whose
+/// canonical body without its carrier is `unsigned`: it names the machine and key of the
+/// signer the host loaded, and it verifies under the vault's id. A twin of its own would not
+/// prove such a fact any further. A carrier that only names this install's machine, as an
+/// archived row may, is no signature of its own (blind review round 2 P1, REVIEW-9365).
+pub(super) fn signed_by_this_install_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    fact_ref: &EntityId,
+    unsigned: &[u8],
+    carrier: &CarrierSignature,
+) -> Result<bool> {
+    let Some(vault_id) = vault.authority_view_readonly_in_txn(txn)?.vault_id else {
+        return Ok(false);
+    };
+    Ok(signer_in_txn(vault, txn)?.is_some_and(|signer| {
+        signer.machine == carrier.machine
+            && signer.machine_key.verifying_key().to_bytes() == carrier.key
+            && carrier_signature_verifies(
+                carrier,
+                TASK_FACT_CARRIER_DOMAIN,
+                &vault_id,
+                fact_ref,
+                unsigned,
+            )
+    }))
+}
+
 /// The signer the host loaded for the machine id `txn` holds. A signer loaded for an id
 /// since dropped would sign as a machine this install no longer is, so it is none.
 fn signer_in_txn(
