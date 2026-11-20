@@ -73,8 +73,9 @@ pub use self::schema::{AmendmentDelta, DeltaSource, MEASUREMENT_ENGINE_VERSION, 
 pub(crate) use self::store::{
     AMENDMENT_UNCAPTURED_INBOX, AMENDMENT_UNCAPTURED_STORE, OUTCOME_APPROVED_AMENDED,
     amendment_uncaptured_count, approved_claim_body_bytes, attach_amendment_deltas,
-    bump_amendment_uncaptured_in_txn, measured_claim_amendment_in_txn, put_amendment_delta_in_txn,
-    put_amendment_measurement_in_txn, put_amendment_uncaptured_in_txn,
+    bump_amendment_uncaptured_in_txn, forget_gate_amendment_delta_in_txn,
+    measured_claim_amendment_in_txn, put_amendment_delta_in_txn, put_amendment_measurement_in_txn,
+    put_amendment_uncaptured_in_txn,
 };
 pub use self::store::{amendment_delta, project_identity_amendment_deltas};
 pub(in crate::edit_distance) use self::store::{

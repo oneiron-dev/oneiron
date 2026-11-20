@@ -11,7 +11,7 @@ use crate::receipt::{
 };
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
-use crate::store::Store;
+use crate::store::{GateDecisionId, Store};
 use crate::vault::RevisionRef;
 use crate::write_envelope::claim_body::{ClaimBody, decode_claim_body, encode_claim_body};
 
@@ -181,6 +181,27 @@ pub(super) fn put_amendment_row_in_txn(
     }
     AMENDMENT_DELTA.put(store, wtxn, &key, row)?;
     Ok(true)
+}
+
+/// Drops the row recorded for the Gate decision `decision`'s receipt, if
+/// there is one. The ledger calls it wherever the decision's content goes: its
+/// retention skeleton (an erase, a delete, a discard, a restore's rerun), a
+/// restore's drop of a row an erase retired, and the row's removal. A
+/// skeleton keeps the receipt's id and its `approved_amended` outcome, so a
+/// row left behind would still be attached to the redacted receipt, with the
+/// revisions of the bodies it measured. The uncaptured counter keeps its
+/// count: it counts measurements that failed, not rows.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn forget_gate_amendment_delta_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    decision: GateDecisionId,
+) -> Result<()> {
+    AMENDMENT_DELTA.delete(store, wtxn, &format!("gate:{}", decision.to_hex()))?;
+    Ok(())
 }
 
 /// The Δ of a claim amendment: from `reviewed`, the claim body a decider
