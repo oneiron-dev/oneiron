@@ -179,6 +179,9 @@ impl Vault {
 
     /// Writes duration-v1 policy for subsequent folds and observations. This
     /// local configuration never changes signed entries or their advisory `ts`.
+    /// Then the rows the owner's imports kept at the owner's reserve are
+    /// imported again, so each lands once the floor row lets it (FIX
+    /// [OWNER-RESERVE-IMPORT-PARTIAL]).
     pub fn set_authority_observation_policy(
         &self,
         policy: AuthorityObservationPolicy,
@@ -187,6 +190,8 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             POLICY.put(&self.store, txn, &(), &policy)?;
             Ok(())
-        })
+        })?;
+        self.import_owner_reserve_held_history();
+        Ok(())
     }
 }
