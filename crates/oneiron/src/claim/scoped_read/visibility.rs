@@ -227,7 +227,7 @@ impl<'v> ScopedRead<'v> {
     /// policy and its own floor (ARCH-0006a); a request's narrowing applies
     /// to the row, not to what it was written from. Each source is judged by
     /// its own row admission; a body whose sources no longer resolve refuses.
-    fn derived_sources_readable_in(
+    pub(super) fn derived_sources_readable_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,

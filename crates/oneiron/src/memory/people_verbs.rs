@@ -180,9 +180,7 @@ impl Memory<'_> {
         let mut people = People::load(self.vault, crate::unix_millis_now(), &mut |person| {
             read.is_entity_readable(&person)
         })?;
-        let applied = read.read_receipt(None, 0)?.applied;
-        let ceiling = (!applied.deny_all).then_some(applied.max_sensitivity_band);
-        people.set_about(&mut |person| self.vault.person_about_sourced(person, ceiling))?;
+        people.set_about_for_reader(&read)?;
         people.disclose_names(self.vault, read.actor_key())?;
         read.charge_served(people.rows().iter().map(|row| row.person));
         Ok(people)

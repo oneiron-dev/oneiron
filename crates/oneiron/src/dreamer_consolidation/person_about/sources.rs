@@ -9,6 +9,17 @@ use super::super::turn_text::{dreamer_read, snapshot};
 use super::{ABOUT_MAX_CHARS, AboutLine, PERSON_ABOUT, PersonAbout};
 use crate::{EntityId, Result, Vault};
 
+/// The `about` line a reader at one sensitivity ceiling sees
+/// ([`Vault::person_about_line_in`]).
+pub(crate) struct ShownAboutLine {
+    /// The band the line was written for.
+    pub(crate) band: u8,
+    /// The line, clipped as the board prints it.
+    pub(crate) text: String,
+    /// The CLAIM ids the line stands on.
+    pub(crate) fact_claim_ids: Vec<EntityId>,
+}
+
 impl Vault {
     /// `person`'s `about` line for a reader whose sensitivity ceiling is
     /// `ceiling`, with the CLAIM ids the line stands on: the line
@@ -25,15 +36,44 @@ impl Vault {
             return Ok(None);
         };
         let txn = snapshot(self)?;
-        let Some(row) = PERSON_ABOUT.get(&self.store, &txn, &person)? else {
+        Ok(self
+            .person_about_line_in(&txn, person, ceiling)?
+            .map(|line| (line.text, line.fact_claim_ids)))
+    }
+
+    /// A snapshot to read `about` lines in
+    /// ([`Vault::person_about_line_in`]): the grant clock persisted first, so
+    /// a grant's expiry is judged at a real floor.
+    ///
+    /// # Errors
+    /// The grant clock's or the snapshot's.
+    pub(crate) fn person_about_snapshot(&self) -> Result<heed::RoTxn<'_>> {
+        snapshot(self)
+    }
+
+    /// [`Vault::person_about_sourced`] at the ceiling `ceiling`, read in
+    /// `txn` ([`Vault::person_about_snapshot`]), with the line's band: the
+    /// line of the highest band at or below `ceiling`, shown under the same
+    /// freshness rules, or none.
+    ///
+    /// # Errors
+    /// A store or decode failure reading the stored lines or their facts.
+    pub(crate) fn person_about_line_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+        ceiling: u8,
+    ) -> Result<Option<ShownAboutLine>> {
+        let Some(row) = PERSON_ABOUT.get(&self.store, txn, &person)? else {
             return Ok(None);
         };
-        Ok(current_line_in_txn(self, &txn, &row, ceiling)?.map(|line| {
-            (
-                line.text.chars().take(ABOUT_MAX_CHARS).collect(),
-                line.fact_claim_ids.clone(),
-            )
-        }))
+        Ok(
+            current_line_in_txn(self, txn, &row, ceiling)?.map(|line| ShownAboutLine {
+                band: line.band,
+                text: line.text.chars().take(ABOUT_MAX_CHARS).collect(),
+                fact_claim_ids: line.fact_claim_ids.clone(),
+            }),
+        )
     }
 }
 
