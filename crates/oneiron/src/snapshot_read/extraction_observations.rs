@@ -62,6 +62,18 @@ fn bound_extraction_observations_page(
     input: &ExtractionObservationsPageRequest,
     binding: Option<&DreamerAttemptBinding>,
 ) -> MemoryResult<ScopedReadResult<ExtractionObservationsPage>> {
+    // A step's saved reply is read back only where its receipt is served: on the attempt's
+    // own binding. A reader without one has its operands checked by their own fields.
+    if binding.is_none()
+        && input
+            .candidates
+            .iter()
+            .any(|operand| !operand.from_steps.is_empty())
+    {
+        return Err(MemoryError::bad_request(
+            "an extraction operand names its recorded step candidates only through its own attempt's binding",
+        ));
+    }
     let vault = memory.vault();
     let attempt = extraction_attempt_key(&input.attempt)?;
     let attempt_id = AttemptId::from_bytes(attempt.as_bytes())?;

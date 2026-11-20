@@ -133,7 +133,9 @@ pub struct CandidateOperand {
     /// cited turn quote and cited claim is carried by a named candidate. On a branch
     /// with no relationship set the operand is then bound to the relationships every
     /// labelled word of those steps' turns shares. An operand that names none is checked
-    /// by its own fields, and on such a branch is bound over every queued turn.
+    /// by its own fields, and on such a branch is bound over every queued turn. Only the
+    /// attempt's own binding may name them, as only it is served a step's receipt: the
+    /// observations page refuses the field from a reader without that binding.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub from_steps: Vec<RecordedCandidate>,
 }

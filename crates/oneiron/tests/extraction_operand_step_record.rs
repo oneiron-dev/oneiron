@@ -6,7 +6,7 @@
 //! field, a quote, or a cited claim is refused by name before any verdict model is asked. An
 //! index the step skipped, kept only as a declaration, or never held is refused by name. A
 //! step this attempt did not record, another attempt's among them, answers as an unknown
-//! step does.
+//! step does. A reader without the attempt's binding may name no recorded step.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test extraction_operand_step_record`
 #![cfg(oneiron_test_support)]
@@ -18,6 +18,7 @@ mod verdict_support;
 
 use oneiron::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptBinding};
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_NOT_FOUND, MemoryResult};
+use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::extraction_inputs::{
     enqueue_admitted_extraction_attempt, witness_extraction_turns,
 };
@@ -27,7 +28,7 @@ use oneiron::test_doors::extraction_verdict::{
 };
 use oneiron::test_doors::steward::{STEWARD_VERBS, dreamer, stand_steward_grant};
 use oneiron::test_doors::untangle_regressions::seed_named_person;
-use oneiron::{EntityId, Vault};
+use oneiron::{EdgeActorClass, EntityId, Vault};
 use serde_json::{Value, json};
 use std::slice::from_ref;
 use std::sync::Arc;
@@ -515,6 +516,34 @@ fn another_attempts_step_answers_as_an_unknown_step_does() -> ExtractionStepTest
         foreign.code, MEMORY_CODE_NOT_FOUND,
         "Another attempt's step is not found: {foreign:?}."
     );
+    Ok(())
+}
+
+/// A reader without the attempt's binding may name no recorded step: the owner's page over
+/// an operand that names one is refused by name, since a step's saved reply is read back
+/// only where its receipt is served.
+#[test]
+fn the_unbound_page_refuses_an_operand_that_names_a_recorded_step() -> ExtractionStepTestResult<()>
+{
+    let fixture = record_fixture(&[FIRST_WORDS, SECOND_WORDS], first_turn_reply())?;
+    let submit = fixture.submit_first_turn()?;
+    assert_eq!(submit["result"]["status"], json!("finished"));
+    let step = submit["step_ref"]
+        .as_str()
+        .expect("The submit answers its step ref.")
+        .to_owned();
+    let operand = operand_from_candidate(&submit["result"]["json"]["candidates"][0]);
+    let owner = fixture.vault.ensure_embedded_owner_actor()?;
+    let refused = invoke(
+        &fixture.vault.memory(owner, EdgeActorClass::Human),
+        OBSERVATIONS_PAGE_VERB,
+        json!({
+            "attempt": fixture.attempt,
+            "now_ms": OBSERVATION_NOW_MS,
+            "candidates": [with_from_steps(operand, &step, &[0])],
+        }),
+    );
+    assert_bad_request(refused, &["only through its own attempt's binding"]);
     Ok(())
 }
 
