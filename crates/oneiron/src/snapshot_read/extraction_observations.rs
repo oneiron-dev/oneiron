@@ -106,7 +106,7 @@ fn bound_extraction_observations_page(
     memory.prove_read_authority_in_txn(&txn)?;
     let reader_scope = extraction_reader_scope_in_txn(memory, &txn, owner.as_ref())?;
     read.read_projected_in_txn(&txn, &[], None, |txn, _| {
-        let (branch, bound, relationships) = check_extraction_operands_in_txn(
+        let (branch, bound, bounds) = check_extraction_operands_in_txn(
             memory,
             &read,
             txn,
@@ -118,13 +118,9 @@ fn bound_extraction_observations_page(
             &input.candidates,
             None,
         )?;
-        let checked = check_pack_candidates(
-            &input.candidates,
-            (&bound, &relationships),
-            attempt_id,
-            &branch,
-        )
-        .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+        let checked =
+            check_pack_candidates(&input.candidates, (&bound, &bounds), attempt_id, &branch)
+                .map_err(|error| MemoryError::bad_request(error.to_string()))?;
         // The pin covers exactly the key rules the tokens below hash under.
         let policy = ExtractionPolicy {
             prefilter: vault.prefilter_config_in_txn(txn)?,

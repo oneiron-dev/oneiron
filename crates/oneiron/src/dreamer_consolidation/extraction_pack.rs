@@ -66,9 +66,9 @@ pub(crate) struct ExtractionRebuildContext<'a> {
     pub(crate) txn: &'a heed::RoTxn<'a>,
     /// Borrows the original operands, including their served evidence spans.
     pub(crate) operands: &'a [crate::verbs::CandidateOperand],
-    /// Borrows the relationship set each operand is assembled under, by operand
-    /// position, as the shared operand check returned them.
-    pub(crate) relationships: &'a [Option<std::collections::BTreeSet<EntityId>>],
+    /// Borrows what the shared operand check fixed for each operand, by operand
+    /// position, as that check returned it.
+    pub(crate) bounds: &'a [step_records::OperandBound],
 }
 
 /// What the checked rebuild returns: the derived candidate ids, the rebuilt
@@ -137,12 +137,8 @@ pub(crate) fn rebuild_checked_pack(
         )
         .into());
     }
-    let checked = reads::check_pack_candidates(
-        &pack.candidates,
-        (bound, context.relationships),
-        attempt,
-        branch,
-    )?;
+    let checked =
+        reads::check_pack_candidates(&pack.candidates, (bound, context.bounds), attempt, branch)?;
     let candidate_ids = checked.candidate_ids();
     let scope = bound.scope().clone();
     let (listed, priors, questions, execution) = match pack.read {

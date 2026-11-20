@@ -7,10 +7,8 @@
 //! is compared with the recorded step candidates it names and takes the relationship set
 //! it is assembled under (`step_records`).
 
-use std::collections::BTreeSet;
-
 use super::super::ConsolidationBranchPlan;
-use super::step_records::{OperandReads, bind_operands_in_txn};
+use super::step_records::{OperandBound, OperandReads, bind_operands_in_txn};
 use super::{BoundBranchInput, BoundBranchRead, project_bound_branch};
 use crate::attempt_queue::AttemptId;
 use crate::claim::ScopedRead;
@@ -32,8 +30,8 @@ use crate::verbs::{CandidateOperand, PinnedClaim, TurnEvidence};
 /// Verdict passes its listed and prior pins while the page passes none.
 /// The attempt comes with the destination bound its listing is read for: the bound
 /// of the pass that lends the read (FIX 12735), or `None` for a destination nobody proved.
-/// Returns the queued branch with its rebuilt bound read for native checks, and the
-/// relationship set each operand is assembled under, by operand position.
+/// Returns the queued branch with its rebuilt bound read for native checks, and what
+/// the check fixed for each operand, by operand position.
 pub(crate) fn check_extraction_operands_in_txn(
     memory: &Memory<'_>,
     read: &ScopedRead<'_>,
@@ -45,7 +43,7 @@ pub(crate) fn check_extraction_operands_in_txn(
 ) -> MemoryResult<(
     ConsolidationBranchPlan<EntityId>,
     BoundBranchRead,
-    Vec<Option<BTreeSet<EntityId>>>,
+    Vec<OperandBound>,
 )> {
     let vault = memory.vault();
     let turn_read = extraction_turn_read(read, None)?;
@@ -74,7 +72,7 @@ pub(crate) fn check_extraction_operands_in_txn(
     )
     .map_err(bound_branch_error)?;
     check_operand_subjects(read, txn, reader_scope, candidates)?;
-    let relationships = bind_operands_in_txn(
+    let bounds = bind_operands_in_txn(
         &OperandReads {
             memory,
             read,
@@ -87,7 +85,7 @@ pub(crate) fn check_extraction_operands_in_txn(
         candidates,
         &bound,
     )?;
-    Ok((branch, bound, relationships))
+    Ok((branch, bound, bounds))
 }
 
 /// Rechecks cited turn projections, spans, cited claims and claim pins before interpreting proposals.

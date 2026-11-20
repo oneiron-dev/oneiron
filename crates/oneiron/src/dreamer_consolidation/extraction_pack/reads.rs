@@ -32,7 +32,7 @@ use super::super::settle::decision_pages::{json_len, split_pages};
 use super::super::support::invalid_consolidation;
 use super::super::value_projection::rmpv_to_json;
 use super::observed_beside::route_observed_priors;
-use super::step_records::takes_head_relationship;
+use super::step_records::{OperandBound, takes_head_relationship};
 use super::{
     BoundBranchRead, ExtractionRebuildContext, extraction_layout_refusal, select_conflict,
 };
@@ -163,8 +163,9 @@ pub(in crate::dreamer_consolidation) fn parse_reference(reference: &str) -> Resu
 /// candidate restates and a claim whose relationship set the candidate may
 /// not take. Native never asks about a restated claim (FIX 8295), and a
 /// claim left in no pair is not listed. `cited` holds each operand's
-/// admitted claim evidence and `relationships` the relationship set each
-/// operand is assembled under, both by position.
+/// admitted claim evidence and `bounds` what the shared operand check fixed
+/// for each operand, both by position. An operand that names recorded
+/// candidates is paired only with a head one of them may be asked about.
 ///
 /// A correcting candidate takes the relationship set of the head it
 /// corrects, and assembly refuses a set outside the candidate's own
@@ -177,15 +178,20 @@ pub(super) fn correction_sets(
     operands: &[CandidateOperand],
     subjects: &[EntityId],
     cited: &[Vec<EntityId>],
-    (bound, relationships): (&BoundBranchRead, &[Option<BTreeSet<EntityId>>]),
+    (bound, bounds): (&BoundBranchRead, &[OperandBound]),
 ) -> Result<(Vec<(usize, usize)>, Vec<CorrectionListed>)> {
     let mut entries: Vec<(usize, usize)> = Vec::new();
     let mut listed: Vec<CorrectionListed> = Vec::new();
     let rows = operands.iter().zip(subjects).zip(cited);
     for (position, ((operand, subject), cited)) in rows.enumerate() {
-        let within = relationships.get(position).and_then(Option::as_ref);
+        let fixed = bounds.get(position);
+        let within = fixed.and_then(|fixed| fixed.relationship.as_ref());
+        let askable = fixed.and_then(|fixed| fixed.askable.as_ref());
         for (claim, predicate, value) in bound.correctable(*subject, bound.scope()) {
             if cited.contains(&claim) && restates(operand, bound, claim) {
+                continue;
+            }
+            if askable.is_some_and(|heads| !heads.contains(&claim)) {
                 continue;
             }
             if !takes_head_relationship(bound, claim, within) {
@@ -213,7 +219,11 @@ pub(super) fn correction_sets(
 /// carries the head's own predicate and its value as JSON. The subject is the
 /// head's, since the listing shows the head about that subject. This mirrors
 /// the native correction read's restatement rule over the bound prior heads.
-fn restates(operand: &CandidateOperand, bound: &BoundBranchRead, claim: EntityId) -> bool {
+pub(super) fn restates(
+    operand: &CandidateOperand,
+    bound: &BoundBranchRead,
+    claim: EntityId,
+) -> bool {
     bound.prior(claim).is_some_and(|prior| {
         operand.predicate == prior.body.predicate
             && rmpv_to_json(&prior.body.value) == operand.value
@@ -284,19 +294,19 @@ pub(super) fn correction_project(checked: &CheckedPack) -> Option<EntityId> {
 /// project the common one of its sources, and each id derived with the native
 /// deterministic id.
 ///
-/// `relationships` holds, by operand position, the relationship set the shared
-/// operand check fixed for each operand: the branch's own set, or on a branch
+/// `bounds` holds, by operand position, what the shared operand check fixed
+/// for each operand. Its relationship set is the branch's own, or on a branch
 /// with none the set every labelled word the candidate was drawn from shares.
 /// A candidate that names no relationship is assembled under it, as a native
 /// candidate is under its call's scope, and one that names a relationship
 /// stays inside it, except a correction that names its recorded candidates.
 pub(crate) fn check_pack_candidates(
     candidates: &[CandidateOperand],
-    (bound, relationships): (&BoundBranchRead, &[Option<BTreeSet<EntityId>>]),
+    (bound, bounds): (&BoundBranchRead, &[OperandBound]),
     attempt: AttemptId,
     branch: &ConsolidationBranchPlan<EntityId>,
 ) -> Result<CheckedPack> {
-    if relationships.len() != candidates.len() {
+    if bounds.len() != candidates.len() {
         return Err(invalid_consolidation(
             "extraction operands and their relationship sets differ in count",
         ));
@@ -307,7 +317,7 @@ pub(crate) fn check_pack_candidates(
         subjects.push(parse_reference(&operand.subject)?);
         cited.push(cited_claims(operand, bound)?);
     }
-    let (pairs, listed) = correction_sets(candidates, &subjects, &cited, (bound, relationships))?;
+    let (pairs, listed) = correction_sets(candidates, &subjects, &cited, (bound, bounds))?;
     let mut rows = Vec::with_capacity(candidates.len());
     let operands = candidates.iter().zip(&subjects).zip(&cited);
     for (position, ((operand, subject), cited)) in operands.enumerate() {
@@ -372,7 +382,7 @@ pub(crate) fn check_pack_candidates(
         // set, and the set folded over several steps may be narrower than the
         // proposing step's. The head's set, which the correction binds, is held
         // inside the folded set by the pairs above and by assembly below.
-        let scope_relationship = relationships[position].as_ref();
+        let scope_relationship = bounds[position].relationship.as_ref();
         let recorded_correction = corrects.is_some() && !operand.from_steps.is_empty();
         if !recorded_correction
             && let PackRelationship::Set(ids) = &rel
