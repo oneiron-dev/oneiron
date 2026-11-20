@@ -94,7 +94,9 @@ pub(crate) enum FeedMoveOutcome {
 /// A). An omission's cancellation is no bar: this live VEVENT ends it, so
 /// the booking moves as a live one, and the move retracts it in its own
 /// transaction, so the revised invite it queues never reads the booking
-/// cancelled (review round 1 of #9677).
+/// cancelled (review round 1 of #9677). Calendar ingest screens the VEVENT's
+/// body before it asks for the move, so a body its admission would refuse
+/// moves nothing and ends no omission (review round 2 of #9677).
 ///
 /// The move does not consult the solver: a clash with another booking is two
 /// overlapping EVENTs, as any feed drift makes.
