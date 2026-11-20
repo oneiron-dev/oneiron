@@ -83,7 +83,7 @@ pub(crate) use self::codec::{continuation_prefix_digest, encode_code_run_replay_
 pub use self::compaction_fork::{
     AdmittedLiveFork, CACHE_BOUNDARIES_KEY, CacheBoundary, HOST_PROVIDER_OPTIONS,
     LiveCompactionFork, LiveForkRung, cache_boundaries, live_fork_offer_digest,
-    main_prefix_boundary, mark_cache_boundary, shift_cache_boundaries,
+    main_prefix_boundary, mark_cache_boundary, shift_cache_boundaries, source_rows_withdrawn,
 };
 pub use self::compaction_home::{
     CompactionHome, CompactionHostBinding, CompactionIdentity, RenderedHome,
@@ -144,6 +144,7 @@ pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
     RepoRequestWitness, SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
+pub(crate) use self::dispatcher::{HookedCall, TextAnswerPost};
 pub(crate) use self::model_call::{
     erase_model_call_actor_as_in_txn, erase_model_call_actor_in_txn,
 };

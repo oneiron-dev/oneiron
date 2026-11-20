@@ -128,7 +128,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/owner-signing-keys/changes",
-                summary: "Every enrollment, confirmation and removal of an enrolled owner key, a device's, the recovery root's or a passkey, that the vault's log holds, newest first: the entry, `enrolled`, `confirmed` (a key only a passkey vouched for now signs in full), `removed` or `removed_by_ended_key` (two removals that crossed ended both keys), the key, its `shape` (`device_key` or `passkey`), the machine its enrollment names, its kind (null for a passkey), the key that signed the entry and when. Every owner device reads the same list, so it is the notice of a key change. Empty before any enrollment.",
+                summary: "Every enrollment, confirmation and removal of an enrolled owner key, a device's, the recovery root's or a passkey, that the vault's log holds, newest first: the entry, `enrolled`, `confirmed` (a key only a passkey vouched for now signs in full), `removed`, `removed_by_ended_key` (two removals that crossed ended both keys) or `removed_in_conflict` (a removal that conflicted with another removal: the vault counted neither, and the key ended), the key, its `shape` (`device_key` or `passkey`), the machine its enrollment names, its kind (null for a passkey), the key that signed the entry and when. Every owner device reads the same list, so it is the notice of a key change. Empty before any enrollment.",
                 row: None,
                 shape: None,
             },
@@ -250,9 +250,11 @@ struct ChangeReply {
     entry: String,
     /// `enrolled`; `confirmed`: a key only a passkey vouched for was vouched
     /// for again by a key that may confirm it, and now signs in full;
-    /// `removed`; or `removed_by_ended_key`: the key ended through a removal
+    /// `removed`; `removed_by_ended_key`: the key ended through a removal
     /// the vault did not count, because a crossing removal ended that
-    /// removal's own signer.
+    /// removal's own signer; or `removed_in_conflict`: the key ended through
+    /// a removal that conflicted with another removal, which refused a row
+    /// below it while its own signer stands, so the vault counted neither.
     change: &'static str,
     /// The key, as hex: 64 for a device's or the recovery root's Ed25519
     /// key, 66 for a passkey's compressed SEC1 key.
@@ -456,6 +458,7 @@ fn change_reply(change: &OwnerKeyChange) -> ChangeReply {
             OwnerKeyChangeKind::Confirmed => "confirmed",
             OwnerKeyChangeKind::Removed => "removed",
             OwnerKeyChangeKind::RemovedByEndedKey => "removed_by_ended_key",
+            OwnerKeyChangeKind::RemovedInConflict => "removed_in_conflict",
         },
         public_key: authority_key_hex(&change.public_key),
         shape: match change.public_key {

@@ -651,6 +651,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "SYNC_RESIDENCE_PREDICTED_WINDOW",
         "SYNC_RESIDENCE_PROMOTED_WINDOW",
         "SYNC_RESIDENCE_RETAIN_REFUSED_WINDOW",
+        "SYNC_RESTRICTED_DROPPED_CARRIER",
         "TAGGING_MARKER_SEQUENCE",
         "TAGGING_MENTION_REF",
         "TAGGING_PROVISIONAL",
@@ -695,6 +696,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "WEAVE_DIGEST_SOURCE",
         "WEAVE_WRONG_LINK_LABEL",
         "WIRE_LIMIT_QUESTION",
+        "WORK_TALK_REGISTRATION",
     ]
     .into_iter()
     .collect();

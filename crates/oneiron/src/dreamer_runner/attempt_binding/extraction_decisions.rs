@@ -99,6 +99,7 @@ fn check_pack_bounds(pack: &ExtractionPack) -> MemoryResult<()> {
         || pack.candidates.iter().any(|candidate| {
             candidate.evidence.len() > MAX_DECISION_STATE_BYTES
                 || candidate.claim_evidence.len() > MAX_DECISION_STATE_BYTES
+                || candidate.from_steps.len() > MAX_DECISION_STATE_BYTES
         })
     {
         return Err(MemoryError::bad_request(

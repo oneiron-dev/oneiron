@@ -597,6 +597,7 @@ fn a_pin_changed_before_its_record_replays_the_served_revision() {
         rows: Vec::new(),
         companion: None,
         disclosure: None,
+        cut: Default::default(),
     };
     memories.include_pinned_refs(&caller, &[pin]).unwrap();
     assert_eq!(memories.rows.len(), 1, "the pin is served");

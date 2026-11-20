@@ -58,7 +58,14 @@ pub fn media_vectors_reply(
     // answer leaves; this door answers the reply at once, as the wire would
     // with the basis still standing.
     let (reply, _release_basis) = crate::livequery::residence_rpc(
-        server, &auth, peer, request, &mut None, &mut None, &mut None,
+        server,
+        &auth,
+        peer,
+        &crate::handler::selector_scope::SelectorLane::OwnDevice,
+        request,
+        &mut None,
+        &mut None,
+        &mut None,
     )
     .map_err(|error| anyhow::anyhow!("rpc refused: {error:?}"))?;
     Ok(crate::livequery::test_wire::reply(&reply.queued(0)))

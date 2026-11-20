@@ -9,8 +9,10 @@ use rmpv::Value;
 use super::{MERGED, MergeResult, Proposal};
 use crate::attempt_queue::AttemptId;
 use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimSource, ScopedRead as ClaimRead, claim_evidence_taint,
+    ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject, ScopedRead as ClaimRead,
+    claim_evidence_taint, support_refs,
 };
+use crate::dreamer_consolidation::{ConsolidationEvidenceEnvelope, encode_consolidation_evidence};
 use crate::dreamer_runner::{DreamerAttemptStatus, DreamerRunnerStore};
 use crate::model_step_context::StepEffectBinding;
 use crate::write_envelope::WriteActor;
@@ -191,4 +193,85 @@ pub(in crate::dreamer_consolidation) fn scoped_draft(
         candidate = candidate.with_scope(scope);
     }
     Ok((candidate.with_evidence_taint(meet)?, meet))
+}
+
+/// One claim a nightly merge writes, in the order it writes them: drafted
+/// before the commit, or an exposure group's arc summary, whose citations
+/// are read in the commit's own snapshot.
+pub(in crate::dreamer_consolidation) enum MergeDraft<'a> {
+    /// An identity link or an open conflict, drafted by [`scoped_draft`].
+    Drafted(Draft),
+    /// The narrative the merge call wrote from `members`.
+    ArcSummary {
+        members: &'a [&'a Proposal],
+        narrative: Value,
+    },
+}
+
+impl MergeDraft<'_> {
+    /// The draft this claim writes in `txn`, its citations as `read` reads
+    /// them.
+    pub(in crate::dreamer_consolidation) fn in_txn(
+        self,
+        read: &ClaimRead<'_>,
+        txn: &heed::RoTxn<'_>,
+    ) -> Draft {
+        match self {
+            Self::Drafted(draft) => draft,
+            Self::ArcSummary { members, narrative } => {
+                arc_summary_draft_in_txn(read, txn, members, narrative)
+            }
+        }
+    }
+}
+
+/// One exposure group's arc summary: `narrative` about the first member's
+/// project, drafted as [`scoped_draft`] drafts it, but with a consolidation
+/// envelope for its evidence that cites what `members` stand on, under the
+/// meet of their sources. Each member gives the rows its own live support
+/// rests on that `read` reads in `txn`, as the claim gate reads every typed
+/// ref. A member that asks no support, or none of whose cited rows `read`
+/// reads, gives itself: it stands while its row does. The narrative is
+/// written from the members, so it is served only while one of them is
+/// (ARC-SUMMARY-SERVED-AFTER-ITS-PROPOSALS-LOSE-SUPPORT).
+fn arc_summary_draft_in_txn(
+    read: &ClaimRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    members: &[&Proposal],
+    narrative: Value,
+) -> Draft {
+    let first = &members
+        .first()
+        .ok_or(Error::InvalidClaimBody("an arc summary needs a proposal"))?
+        .body;
+    let candidate = ClaimCandidate::new(
+        "dreamer.arc.summary",
+        ClaimSubject::Entity(first.scope_project),
+        narrative,
+        1.0,
+    );
+    let (candidate, meet) = scoped_draft(candidate, first, members)?;
+    let mut refs = Vec::new();
+    for member in members {
+        let cited = support_refs(&member.body).unwrap_or_default();
+        let readable = read.entities_readable_in_txn(txn, &cited)?;
+        let given = refs.len();
+        refs.extend(
+            cited
+                .into_iter()
+                .zip(readable)
+                .filter_map(|(id, kept)| kept.then_some(id)),
+        );
+        if refs.len() == given {
+            refs.push(member.id);
+        }
+    }
+    refs.sort();
+    refs.dedup();
+    let evidence = encode_consolidation_evidence(&ConsolidationEvidenceEnvelope {
+        refs,
+        chain: Vec::new(),
+        source_meet: meet,
+    });
+    Ok((candidate.with_evidence(evidence), meet))
 }

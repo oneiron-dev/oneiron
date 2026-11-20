@@ -1,5 +1,8 @@
 //! Doors for `tests/executor_agent_runtime_tier.rs` (FIX LIBTEST-AGENT-RUNTIME-TIER):
-//! the run-bound compaction coverage rows a summary mint commits.
+//! the run-bound compaction coverage rows a summary mint commits; and for
+//! `tests/archive_export_keeps_out_held_copies_carriers_floors.rs`
+//! (REVIEW-9874 P1 3): a lineage's epoch floor, as a removed epoch summary
+//! leaves it.
 //! Compiled only under `--cfg oneiron_test_support`; never API.
 
 use crate::entity_id::EntityId;
@@ -48,4 +51,34 @@ pub fn coverage_rows(vault: &Vault, run_id: EntityId) -> Result<Vec<CoverageRow>
             last: row.last(),
         })
         .collect())
+}
+
+/// Raises the epoch floor of the lineage of `session` (a conversation's
+/// within it when `conversation` names one) to `(epoch, turn_end)`, as a hard
+/// purge of that lineage's epoch summary leaves it (OF-013). The floor only
+/// rises.
+///
+/// # Errors
+///
+/// The store's.
+pub fn raise_epoch_floor(
+    vault: &Vault,
+    session: EntityId,
+    conversation: Option<EntityId>,
+    epoch: u64,
+    turn_end: u64,
+) -> Result<()> {
+    let scope = crate::compaction::EpochScope {
+        session,
+        conversation,
+    };
+    vault.with_write_txn(|txn| {
+        crate::compaction::raise_epoch_scope_floor_in_txn(
+            &vault.store,
+            txn,
+            &scope,
+            epoch,
+            turn_end,
+        )
+    })
 }

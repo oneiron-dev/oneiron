@@ -329,6 +329,7 @@ impl BatchBuilder<'_> {
                 self.origin,
             )?;
         } else {
+            let claims = crate::vault_cleanup::candidate_claim_subjects(&ops);
             apply_ops_with_authority_beside(
                 &vault.store,
                 &vault.config,
@@ -341,6 +342,10 @@ impl BatchBuilder<'_> {
                 authority_beside,
                 own_device,
             )?;
+            // A claim about a PERSON the cleanup archived restores her in
+            // this write, as the actor's apply above does in its own (FIX
+            // PUT-CLAIM-LANDS-ON-ARCHIVED-PERSON).
+            vault.restore_subjects_of_landed_claims_in_txn(wtxn, &claims)?;
         }
         rewired.redirty_in_txn(vault, wtxn)?;
         if let (Some(actor), Some(original)) = (actor, original) {

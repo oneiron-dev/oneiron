@@ -2,8 +2,6 @@
 //! Entry: `Memory::cancel`.
 //! Read/proposal methods live in children; cancellation stays here.
 
-use std::sync::atomic::Ordering;
-
 use rmpv::Value;
 
 use crate::attempt_queue::{
@@ -11,7 +9,7 @@ use crate::attempt_queue::{
     CancelRequestOutcome, CancelStanding, ForceAttemptCancel, ForceCancelAuthority,
     ForceCancelOutcome, InterveneAttempt, LandingTrigger, RequestAttemptCancel,
 };
-use crate::batch::{ApplyOpsGateMode, BatchOp, apply_ops_with_gate_mode};
+use crate::batch::{ApplyOpsGateMode, BatchOp};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::context_board::{
     TaskBoardStatus, TasksSectionRows, ack_task_in_txn, cancel_task_in_txn, expand_task,

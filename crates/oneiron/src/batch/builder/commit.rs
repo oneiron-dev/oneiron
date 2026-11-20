@@ -676,6 +676,7 @@ fn apply_admitted(
     // that TURN after it (ARCH-0026 #sieve-open).
     let rewired =
         crate::dreamer_consolidation::redirty::RewiredTurnEdges::before(vault, wtxn, &batch.ops)?;
+    let claims = crate::vault_cleanup::candidate_claim_subjects(&batch.ops);
     apply_ops_with_origin(
         &vault.store,
         &vault.config,
@@ -686,6 +687,9 @@ fn apply_admitted(
         batch.gate_mode,
         batch.origin,
     )?;
+    // A claim about a PERSON the cleanup archived restores her in this write
+    // (FIX PUT-CLAIM-LANDS-ON-ARCHIVED-PERSON).
+    vault.restore_subjects_of_landed_claims_in_txn(wtxn, &claims)?;
     rewired.redirty_in_txn(vault, wtxn)?;
     // Each NOTE's document is born with its core row (FIX 7783).
     for (id, markdown) in &batch.note_births {

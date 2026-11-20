@@ -72,11 +72,15 @@ fn stopped() -> TransportError {
 
 /// One exchange with the home: see the module notes. Returns how many
 /// attestations an intake kept. Without a root signer held here and with no
-/// root this machine's head awaits, it dials nothing.
+/// root this machine's head awaits, it dials nothing. A member lane exchanges
+/// nothing: the home admits no checkpoint call on it (MEMBER-SYNC P5).
 pub(crate) async fn exchange_checkpoint_roots(
     vault: &Arc<Vault>,
     config: &SyncClientConfig,
 ) -> Result<usize, TransportError> {
+    if config.member_lane {
+        return Ok(0);
+    }
     // Inside a device PIN's window this vault's owner key is opened from
     // under the PIN first, when this handle has not opened it yet. That
     // waits for a device PIN step that runs and reads the keystore, so it

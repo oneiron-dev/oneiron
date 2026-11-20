@@ -743,6 +743,7 @@ fn a_stale_claim_the_filter_admits_is_handed_to_no_reranker() -> Result<()> {
         deny_all: false,
         caller_excludes_stale: false,
         credential: None,
+        work_talk_room: None,
     };
     let reranker = ClaimKeepingReranker::default();
 

@@ -626,6 +626,8 @@ impl ContinueRemote for Hosted<'_> {
 pub(crate) mod test_support {
     use super::*;
 
+    pub use super::hand_off::test_support::push_hand_off;
+
     /// How the scripted vault and the push answer.
     #[derive(Debug, Clone, Copy, Default)]
     pub struct Script {

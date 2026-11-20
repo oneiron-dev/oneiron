@@ -52,6 +52,20 @@ impl Vault {
         actor: &WriteActor,
         revoked_at: u64,
     ) -> Result<Share> {
+        self.revoke_share_checked(share_id, actor, revoked_at, |_| Ok(()))
+    }
+
+    /// [`Self::revoke_share`], with `check` read in the revoking writer
+    /// before the grant changes: a delete's retraction of a brief share lands
+    /// only while that delete's authority, and the check its caller passed,
+    /// still hold (review round 2 of #9902).
+    pub(crate) fn revoke_share_checked(
+        &self,
+        share_id: &EntityId,
+        actor: &WriteActor,
+        revoked_at: u64,
+        check: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+    ) -> Result<Share> {
         let mut txn = self.store.env.write_txn()?;
         let (mut share, mut admission) =
             read_admitted_share_in_txn(&self.store, &txn, share_id)?.ok_or_else(revoke_refused)?;
@@ -63,6 +77,7 @@ impl Vault {
         {
             return Err(revoke_refused());
         }
+        check(&txn)?;
         if share.status == AccessGrantStatus::Revoked {
             return Ok(share);
         }

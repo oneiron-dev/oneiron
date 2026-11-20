@@ -1214,6 +1214,15 @@ pub(super) fn outlived_root_in(
 /// own retry lineage, which carries the context bound its settled parent
 /// handed it ([`AgentRunTaskBody::into_frozen_parent_projection`]). `None` for
 /// any other try.
+///
+/// The flag and the bound count only on a TASK whose writer proof counts
+/// here ([`AgentRunTaskBody::writer_proven_in`]; Engine ASK
+/// AGENT-RUN-OUTLIVED-ROOT-UNPROVEN-BOUND = A, the handover's rule): a
+/// shared vault's member machine or a federation peer can rewrite the TASK,
+/// and a walk that ended at it would run the try as a root under whatever
+/// bound it names. An unproven one reads as no outlived-root TASK, so the
+/// try is a child whose parent is gone here: it does not run, and its
+/// context and depth walks refuse.
 fn outlived_root_task_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -1230,11 +1239,20 @@ fn outlived_root_task_in(
     else {
         return Ok(None);
     };
-    match agent_run_task_body_in(vault, txn, link.task_ref) {
-        Ok(body) => Ok(body.filter(|body| body.outlived_root)),
-        Err(Error::Record(_)) => Ok(None),
-        Err(error) => Err(error),
+    let body = match agent_run_task_body_in(vault, txn, link.task_ref) {
+        Ok(Some(body)) if body.outlived_root => body,
+        Ok(_) | Err(Error::Record(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if !body.writer_proven_in(vault, txn, link.task_ref) {
+        tracing::warn!(
+            reason = super::run_handover::RUN_TASK_WRITER_UNPROVEN,
+            task = %link.task_ref.to_hex(),
+            "an outlived-root run TASK has no writer proof that counts here; its try runs as a child whose parent is gone"
+        );
+        return Ok(None);
     }
+    Ok(Some(body))
 }
 
 /// [`outlived_root_in`] of the try `attempt`, read in `txn`; `false` for a
@@ -1260,6 +1278,38 @@ pub(super) fn attempt_outlived_root_task_in(
         Some(row) => outlived_root_task_in(vault, txn, &row),
         None => Ok(None),
     }
+}
+
+/// Whether the try `attempt`, one of a run pending in this queue, waits for
+/// a claim the agent pump refuses, read in `txn`: queued or scheduled, and
+/// an orphaned child, a spawned child whose parent this queue holds no row
+/// of and no outlived root here ([`outlived_root_in`]; an unproven
+/// outlived-root TASK counts as none), which `agent_run::agent_run_row`
+/// refuses. Such a try runs nowhere here, so it holds its run no lease: the
+/// lease reaper neither renews this machine's lease for it nor keeps it at a
+/// take (REVIEW-9863). `false` for `None`, a try this queue does not hold or
+/// holds in another state, a root, and a payload that does not read.
+pub(super) fn queued_orphaned_child_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: Option<AttemptId>,
+) -> Result<bool> {
+    let queue = AttemptQueue::new(vault);
+    let Some(row) = attempt
+        .map(|attempt| queue.get_in_txn(txn, attempt))
+        .transpose()?
+        .flatten()
+        .filter(|row| matches!(row.state, AttemptState::Queued | AttemptState::Scheduled))
+    else {
+        return Ok(false);
+    };
+    let Some(parent) = spawning_parent(&row.payload) else {
+        return Ok(false);
+    };
+    if queue.get_in_txn(txn, parent)?.is_some() {
+        return Ok(false);
+    }
+    Ok(!outlived_root_in(vault, txn, &row)?)
 }
 
 /// The run TASK id `attempt` names, read in `txn`, with whether a hard erase
@@ -1349,9 +1399,12 @@ pub(super) fn agent_run_task_body_in(
 /// machine of client id `node_id` syncs for a root run it holds, under the
 /// try `attempt`'s run TASK id, in `wtxn`: `payload` frozen, the lease at
 /// the first generation and long expired, born at the store clock's now.
-/// With `writer`, its machine's proof, the signature its `key` makes over
-/// the frozen fields as they stand with `signed_payload` in place of
-/// `payload`. Answers the run TASK's id.
+/// With `outlived`, the run is a child that outlived its root (REVIEW-6638;
+/// FIX AGENT-RUN-OUTLIVED-ROOT-BOUND-FROM-REPLICATED-TASK): its TASK is
+/// flagged `outlived_root` and freezes the bound given, `None` for a parent
+/// that resolved no projection. With `writer`, its machine's proof, the
+/// signature its `key` makes over the frozen fields as they stand with
+/// `signed_payload` in place of `payload`. Answers the run TASK's id.
 ///
 /// # Errors
 ///
@@ -1364,6 +1417,7 @@ pub(crate) fn put_peer_agent_run_task_in_txn(
     attempt: AttemptId,
     payload: &[u8],
     node_id: u64,
+    outlived: Option<Option<ResolvedContextProjection>>,
     writer: Option<(EntityId, &ed25519_dalek::SigningKey, &[u8])>,
 ) -> Result<EntityId> {
     let now = vault.now_recorded_at();
@@ -1398,8 +1452,8 @@ pub(crate) fn put_peer_agent_run_task_in_txn(
             held_until: 0,
         },
         outcome: None,
-        outlived_root: false,
-        parent_context: None,
+        outlived_root: outlived.is_some(),
+        parent_context: outlived.flatten().map(FrozenContextBound::of),
         created_at: now,
         effects: Vec::new(),
         spend: None,
@@ -1463,6 +1517,91 @@ pub(crate) fn proven_agent_run_task_writer_in(
         .writer_proof
         .filter(|_| body.writer_proven_in(vault, txn, task_ref))
         .map(|proof| proof.machine()))
+}
+
+/// Test support (`oneiron_test_support`; FIX
+/// AGENT-RUN-OUTLIVED-ROOT-BOUND-FROM-REPLICATED-TASK): rewrites the run
+/// TASK of the try `attempt` in `wtxn` as a peer that holds no proof would,
+/// its whole row in one write: its frozen parent bound set to
+/// `parent_context` (`None`: none frozen), its writer proof dropped, every
+/// other field as stored.
+///
+/// # Errors
+///
+/// A try with no run TASK under its own id, a TASK that does not decode,
+/// and storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn rewrite_peer_agent_run_task_parent_context_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    parent_context: Option<ResolvedContextProjection>,
+) -> Result<()> {
+    rewrite_peer_agent_run_task_row_in_txn(vault, wtxn, attempt, |body| {
+        body.parent_context = parent_context.map(FrozenContextBound::of);
+        body.writer_proof = None;
+    })
+}
+
+/// Test support (`oneiron_test_support`; REVIEW-9863): rewrites the
+/// executor lease on the run TASK of the try `attempt` in `wtxn`, its whole
+/// row in one write, as the sync of a peer's lease write lands it: the hold
+/// ends at `held_until`, held by the machine of client id `node_id` (`None`:
+/// the holder stays). Every other field, the writer proof included, stays as
+/// stored: the lease is no frozen field.
+///
+/// # Errors
+///
+/// As [`rewrite_peer_agent_run_task_parent_context_in_txn`].
+#[cfg(oneiron_test_support)]
+pub(crate) fn rewrite_peer_agent_run_task_lease_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    node_id: Option<u64>,
+    held_until: u64,
+) -> Result<()> {
+    rewrite_peer_agent_run_task_row_in_txn(vault, wtxn, attempt, |body| {
+        if let Some(node_id) = node_id {
+            body.executor.node_id = node_id;
+        }
+        body.executor.held_until = held_until;
+    })
+}
+
+/// The whole-row write of the run TASK of the try `attempt` in `wtxn`, as a
+/// peer's sync lands it, with `edit` applied to its stored body.
+#[cfg(oneiron_test_support)]
+fn rewrite_peer_agent_run_task_row_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    edit: impl FnOnce(&mut AgentRunTaskBody),
+) -> Result<()> {
+    let task_ref = agent_run_task_id(attempt)?;
+    let raw = vault
+        .store
+        .port_entity_record(&*wtxn, &task_ref)?
+        .ok_or(Error::EntityNotFound)?;
+    let mut body = decode_agent_run_task_body(raw.entity_type, &raw.body)?;
+    edit(&mut body);
+    let encoded = rmp_serde::to_vec_named(&body)
+        .map_err(|_| Error::InvariantViolation("agent run task body encode failed"))?;
+    let now = vault.now_recorded_at();
+    vault
+        .batch_in()
+        .put(
+            &task_ref,
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: body.created_at,
+                end: body.created_at,
+            },
+            now,
+            &encoded,
+        )
+        .apply(wtxn)?;
+    Ok(())
 }
 
 /// Read-modify-write of one run TASK body in the caller's write; a no-op
