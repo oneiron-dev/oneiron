@@ -119,3 +119,21 @@ fn membership_is_pythons() {
         assert_eq!(found, expected, "{key} in {container}");
     }
 }
+
+// FIX-LIST [SDK-TS-RESERVED-WORD-IDENTIFIERS]: a JSON-wire row's input field is destructured into a binding of
+// its own name, so a reserved word is renamed (`const { default: default_, ...rest } = request`), and the request
+// sent on is rebuilt from that binding; today's three such fields keep their shorthand.
+#[test]
+fn a_reserved_wire_field_destructures_into_its_binding_name() {
+    for (field, entry) in [
+        ("requestId", "requestId"),
+        ("maxDepth", "maxDepth"),
+        ("namespacePrefix", "namespacePrefix"),
+        ("default", "default: default_"),
+        ("new", "new: new_"),
+        ("let", "let: let_"),
+        ("type", "type"),
+    ] {
+        assert_eq!(destructured_field(field), entry, "{field}");
+    }
+}

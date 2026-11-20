@@ -15,8 +15,8 @@ use indexmap::IndexMap;
 use regex::Regex;
 
 use super::common::{
-    AGENT_VERBS_TS, argument_kind, boundary_type, container_type, js_method, native_binding,
-    str_receiver,
+    AGENT_VERBS_TS, argument_kind, boundary_type, container_type, js_binding_name, js_method,
+    native_binding, str_receiver,
 };
 use super::row_access::{concat, item, json};
 use super::uniffi::json_eq;
@@ -346,7 +346,7 @@ fn ts_facade(generator: &mut Generator, row: &Dict) -> Result<TsVerb, GenerateEr
     let arg_list = args.iterate()?;
     let mut declaration: Vec<String> = Vec::new();
     for a in &arg_list {
-        let name = js_method(str_receiver(a.getitem("name")?, "replace")?);
+        let name = js_binding_name(&js_method(str_receiver(a.getitem("name")?, "replace")?));
         let kind = a.getitem("kind")?;
         let optional = !kind.is_str("json")
             && argument_kind(kind)?
@@ -377,7 +377,7 @@ fn ts_facade(generator: &mut Generator, row: &Dict) -> Result<TsVerb, GenerateEr
         let first = declaration.first().cloned().ok_or_else(index_error)?;
         let options = concat(binding.getitem("options")?)?;
         declaration = vec![first, format!("opts: {options} = {{}}")];
-        let mut arguments = vec![first_item(args)?.getitem("name")?.str()];
+        let mut arguments = vec![js_binding_name(&first_item(args)?.getitem("name")?.str())];
         for a in arg_list.iter().skip(1) {
             let name = js_method(str_receiver(a.getitem("name")?, "replace")?);
             let default = if a.contains_str("default")? {
@@ -391,7 +391,10 @@ fn ts_facade(generator: &mut Generator, row: &Dict) -> Result<TsVerb, GenerateEr
     } else {
         let mut arguments = Vec::new();
         for a in &arg_list {
-            arguments.push(js_method(str_receiver(a.getitem("name")?, "replace")?));
+            arguments.push(js_binding_name(&js_method(str_receiver(
+                a.getitem("name")?,
+                "replace",
+            )?)));
         }
         arguments
     };
@@ -405,7 +408,7 @@ fn ts_facade(generator: &mut Generator, row: &Dict) -> Result<TsVerb, GenerateEr
             let left = concat_left(name)?;
             fields.push(format!(
                 "{left}: {}",
-                js_method(str_receiver(name, "replace")?)
+                js_binding_name(&js_method(str_receiver(name, "replace")?))
             ));
         }
         format!(
@@ -429,6 +432,17 @@ fn ts_facade(generator: &mut Generator, row: &Dict) -> Result<TsVerb, GenerateEr
     })
 }
 
+/// A field's entry in `ts_wire_body`'s destructure: the field, or `field: field_` for a reserved word, which is a
+/// valid key but no binding.
+fn destructured_field(field: &str) -> String {
+    let binding = js_binding_name(field);
+    if binding == field {
+        binding
+    } else {
+        format!("{field}: {binding}")
+    }
+}
+
 /// `ts_facade`'s JSON-wire branch: the call through `keyedJson` and the result read back.
 fn ts_wire_body(
     generator: &mut Generator,
@@ -439,7 +453,7 @@ fn ts_wire_body(
 ) -> Result<String, GenerateError> {
     let no_fields = Value::Dict(Dict::new());
     let fields = binding.dict_get("input_fields")?.unwrap_or(&no_fields);
-    let mut request = first_item(args)?.getitem("name")?.str();
+    let mut request = js_binding_name(&first_item(args)?.getitem("name")?.str());
     let mut setup = String::new();
     if fields.truthy() {
         let defaults = binding.dict_get("input_defaults")?.unwrap_or(&no_fields);
@@ -452,7 +466,10 @@ fn ts_wire_body(
             } else {
                 String::new()
             };
-            destructure.push(format!("{}{default}", concat_left(&name)?));
+            destructure.push(format!(
+                "{}{default}",
+                destructured_field(concat_left(&name)?)
+            ));
         }
         setup = format!(
             "const {{ {}, ...rest }} = {request};",
@@ -460,7 +477,7 @@ fn ts_wire_body(
         );
         let mut renamed = Vec::new();
         for (name, wire) in dict_items(fields)? {
-            renamed.push(format!("{}: {name}", concat_left(wire)?));
+            renamed.push(format!("{}: {}", concat_left(wire)?, js_binding_name(name)));
         }
         request = format!("{{ ...rest, {} }}", renamed.join(", "));
     }
@@ -502,7 +519,7 @@ fn ts_handle_shape(
     let mut params = Vec::new();
     let mut fields = Vec::new();
     for a in handle_args.iterate()? {
-        let name = js_method(str_receiver(a.getitem("name")?, "replace")?);
+        let name = js_binding_name(&js_method(str_receiver(a.getitem("name")?, "replace")?));
         // `a.get('field', a['name'])` evaluates its default first.
         let own = a.getitem("name")?;
         let field = a.dict_get("field")?.unwrap_or(own).clone();
@@ -760,7 +777,10 @@ pub(crate) fn ts_native_signature(
         let name = concat_left(a.getitem("name")?)?;
         let suffix = if wire_json { "Json" } else { "" };
         let native_ts = argument_kind(a.getitem("kind")?)?.text("native_ts")?;
-        args.push(format!("{name}{suffix}: {native_ts}"));
+        args.push(format!(
+            "{}: {native_ts}",
+            js_binding_name(&format!("{name}{suffix}"))
+        ));
     }
     Ok(format!("{method}({}): {output}", args.join(", ")))
 }

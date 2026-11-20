@@ -547,6 +547,75 @@ pub(crate) fn js_method(name: &str) -> String {
     out
 }
 
+/// The names a JavaScript binding (a parameter, a destructured name, a `const`, a `function`) cannot take in module
+/// code, which is strict: ECMAScript's reserved words, the ones strict mode adds, and `arguments` and `eval`, which
+/// strict code does not bind (ECMA-262, 13.1.1). Each stays valid as a property name, an object key or a type member.
+pub(crate) const JS_RESERVED_WORDS: [&str; 48] = [
+    "arguments",
+    "await",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "eval",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "function",
+    "if",
+    "implements",
+    "import",
+    "in",
+    "instanceof",
+    "interface",
+    "let",
+    "new",
+    "null",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "return",
+    "static",
+    "super",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typeof",
+    "var",
+    "void",
+    "while",
+    "with",
+    "yield",
+];
+
+/// Whether a name is one of [`JS_RESERVED_WORDS`].
+pub(crate) fn is_js_reserved(name: &str) -> bool {
+    JS_RESERVED_WORDS.contains(&name)
+}
+
+/// A name as a JavaScript binding: a reserved word takes a trailing underscore (`default_`), as the Python emitter
+/// gives a Python keyword one; every other name is unchanged.
+pub(crate) fn js_binding_name(name: &str) -> String {
+    if is_js_reserved(name) {
+        format!("{name}_")
+    } else {
+        name.to_owned()
+    }
+}
+
 /// `('Option' | 'Vec', inner)` for a text that starts with `<container><` and ends with `>`, else
 /// `(None, the last `::` segment)`.
 pub(crate) fn container_type(value: &str) -> (Option<&'static str>, &str) {
@@ -813,6 +882,39 @@ mod tests {
     // The expected values below were printed by Python 3.14.7 on nelly with the Python generator's definitions
     // copied verbatim into a probe (main e79eb76df3e):
     //   print(repr(n), repr(js_method(n)))  /  print(repr(v), repr(container_type(v)))  /  ... rust_type(v) ...
+
+    #[test]
+    fn js_binding_name_suffixes_exactly_the_reserved_words() {
+        // FIX-LIST [SDK-TS-RESERVED-WORD-IDENTIFIERS]: each reserved word takes the underscore; a name that only
+        // holds or extends one, a different case, a TypeScript contextual word (`type`, `declare`, `async`) and a
+        // global (`undefined`) bind as they are.
+        for word in JS_RESERVED_WORDS {
+            assert!(is_js_reserved(word), "{word}");
+            assert_eq!(js_binding_name(word), format!("{word}_"));
+        }
+        for name in [
+            "input",
+            "request",
+            "defaults",
+            "default_",
+            "deleteJson",
+            "Default",
+            "NEW",
+            "type",
+            "declare",
+            "async",
+            "of",
+            "undefined",
+            "",
+        ] {
+            assert!(!is_js_reserved(name), "{name}");
+            assert_eq!(js_binding_name(name), name);
+        }
+        let mut sorted = JS_RESERVED_WORDS;
+        sorted.sort_unstable();
+        assert_eq!(sorted, JS_RESERVED_WORDS, "sorted, without repeats");
+        assert!(sorted.windows(2).all(|pair| pair[0] < pair[1]));
+    }
 
     #[test]
     fn js_method_titles_every_later_segment() {
