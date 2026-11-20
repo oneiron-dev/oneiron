@@ -102,6 +102,7 @@ use companion_bind::*;
 use steps::*;
 
 pub(crate) use self::codec::companion_principal_in_txn;
+pub(crate) use self::house_link::house_link_receipt_records;
 pub(crate) use self::house_link::seat_house_owner_by_act_in_txn;
 pub use self::house_link::{DEFAULT_HOUSE_ROLE, parse_house_role};
 pub(crate) use self::house_link::{
@@ -145,6 +146,7 @@ pub(crate) mod project;
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use project::create_project_signed_for_test;
 pub(crate) use project::index_extra_room;
+pub(crate) use project::reject_project_with_live_children;
 #[cfg(test)]
 pub(crate) use project::set_project_depth_signed_for_test;
 pub use project::{
@@ -192,8 +194,8 @@ pub(crate) use project::{
     leader_chat_allowed, leader_chat_reader_in, leader_chat_record_permitted,
     normalize_project_body, note_project_proof, permit_leader_chat_record, precheck_goal_delete,
     project_mint_gate_refs_in_txn, projects_led_in_txn, reconcile_project_rooms,
-    retire_goal_for_delete, room_facets_in, root_project_in, seed_root_project,
-    seeded_root_home_room, settle_leader_chat_record, speaks_as_in_txn,
+    reject_root_project_delete, retire_goal_for_delete, room_facets_in, root_project_in,
+    seed_root_project, seeded_root_home_room, settle_leader_chat_record, speaks_as_in_txn,
     validate_local_leader_chat_turns, validate_project_body, validate_project_edge_delete,
     validate_project_edge_put, validate_project_graph, validate_project_transition,
     validate_room_body, verify_existing_leader_chat_turn,

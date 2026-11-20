@@ -13,6 +13,7 @@ pub(crate) mod archive_restore;
 mod deadline;
 mod driver;
 pub(crate) mod follower;
+mod frame_outline;
 mod grain;
 mod legibility;
 mod night_step;
@@ -44,6 +45,7 @@ pub(crate) use self::driver::{
     check_host_wake_rewrite, executor_error_ends_pass, llm_waits_on_owner_act,
     refuses_attempt_input, waits_on_owner_act,
 };
+pub(crate) use self::frame_outline::build_boxed_future;
 pub use self::grain::*;
 pub use self::legibility::*;
 pub use self::night_step::NightStepRequestId;
@@ -247,3 +249,10 @@ pub(crate) use tests::block_on_ready;
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::follower::dreamer_follower_result_accepts_masked;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::program::response_digest_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::recipe_wake::read_phase_trigger_key_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::scheduling::turn_projection_key_for_test;

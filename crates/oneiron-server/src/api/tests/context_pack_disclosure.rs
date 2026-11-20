@@ -1100,14 +1100,14 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
     }
 }
 
-/// A bare host secret proves no PERSON, so the vault's own agents stay
-/// unknown parties to it: a room of agents alone never reads as the owner
-/// alone, presence asserted or not, and reads only public rows. The agent
-/// reading on its own credential is the room's proven reader: it adds no
-/// clearance term, so the room reads what its own grant admits, and never
-/// Tier A.
+/// The fixture binds the vault's only actor binding to the room agent, so
+/// the host root the bare host secret acts as binds no live owner: its pack
+/// is refused 403 OWNER_BINDING_REQUIRED, presence asserted or not, with no
+/// owner-read fallback. The agent reading on its own credential is the room's
+/// proven reader: it adds no clearance term, so the room reads what its own
+/// grant admits, and never Tier A.
 #[tokio::test]
-async fn an_agent_only_room_never_reads_as_the_owner_alone_for_a_bare_host() {
+async fn a_host_root_whose_owner_binding_was_replaced_by_an_agent_binding_is_refused() {
     let (_dir, server) = interlocutor_test_server();
     let agent = seeded_test_entity_id(0x2094_0401);
     server
@@ -1160,12 +1160,8 @@ async fn an_agent_only_room_never_reads_as_the_owner_alone_for_a_bare_host() {
             Some(&request),
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert_ne!(body["disclosure"]["mode"], "owner_alone", "{body}");
-        assert!(
-            !ids(&body).contains(&private.to_hex()) && !ids(&body).contains(&sensitive.to_hex()),
-            "a bare host reads only public rows through an agent-only room: {body}"
-        );
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"]["code"], "OWNER_BINDING_REQUIRED", "{body}");
     }
 
     let agent_reads = |server: std::sync::Arc<SyncServer>| {
@@ -1451,8 +1447,9 @@ async fn a_narrowed_readers_empty_pack_reads_alike_beside_a_hidden_match() {
         assert_eq!(body["results"], json!([]), "{body}");
         (body["state"].clone(), body["empty"].clone())
     };
-    // FACET-READ: the pack and board doors refuse a credential limited to a
-    // facet before they retrieve, so a hidden match moves neither answer.
+    // FACET-READ: the pack serves a facet-narrowed empty answer; the board
+    // still refuses before retrieval. A hidden match changes neither semantic
+    // answer.
     let faceted = || async {
         let bearer = test_bearer(&format!(
             "scope=core:read;facets={}",
@@ -1471,14 +1468,42 @@ async fn a_narrowed_readers_empty_pack_reads_alike_beside_a_hidden_match() {
                 core_request_with_authz("POST", uri, bearer.clone(), Some(&request)),
             )
             .await;
-            assert_eq!(status, StatusCode::FORBIDDEN, "{uri}: {body}");
-            body["error"].as_object_mut().unwrap().remove("requestId");
-            answers.push(body);
+            if uri == "/v1/core/context-pack" {
+                assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+                assert_eq!(body["results"], json!([]), "{body}");
+                assert_eq!(body["neighbors"], json!([]), "{body}");
+                assert_eq!(body["state"]["reason"], "filter_matched_none", "{body}");
+                assert_eq!(body["state"]["total_in_scope"], 0, "{body}");
+                assert_eq!(body["narrowing"]["suppressed_count"], 0, "{body}");
+                assert_eq!(body["stats"]["claims_suppressed"], 0, "{body}");
+                assert_eq!(body["disclosure"]["mode"], "absence_clamp", "{body}");
+                answers.push(json!({
+                    "results": body["results"],
+                    "neighbors": body["neighbors"],
+                    "capabilities": body["capabilities"],
+                    "grantedData": body["grantedData"],
+                    "state": body["state"],
+                    "empty": body["empty"],
+                    "narrowing": body["narrowing"],
+                    "disclosure": body["disclosure"],
+                    "counts": [
+                        body["stats"]["candidates_considered"],
+                        body["stats"]["entities_hydrated"],
+                        body["stats"]["neighbors_hydrated"],
+                        body["stats"]["cosine_ghosts_dampened"],
+                        body["stats"]["claims_suppressed"]
+                    ]
+                }));
+            } else {
+                assert_eq!(status, StatusCode::FORBIDDEN, "{uri}: {body}");
+                body["error"].as_object_mut().unwrap().remove("requestId");
+                answers.push(body);
+            }
         }
         answers
     };
     let before = empty().await;
-    let refused = faceted().await;
+    let faceted_before = faceted().await;
     // A claim in the base world the clamp admits, which the reader's own
     // grant withholds.
     seed_disclosure_claim_in_world(
@@ -1489,7 +1514,7 @@ async fn a_narrowed_readers_empty_pack_reads_alike_beside_a_hidden_match() {
     );
     assert_eq!(empty().await, before, "a hidden match reads as no match");
     assert_eq!(before.0["reason"], "filter_matched_none", "{before:?}");
-    assert_eq!(faceted().await, refused);
+    assert_eq!(faceted().await, faceted_before);
 }
 
 /// F19 review round 3 (Sol F2 = Astra F3): no key reads every row. A claim
@@ -1534,6 +1559,10 @@ async fn an_owners_empty_pack_reads_alike_beside_another_principals_match() {
             oneiron::ClaimLifecycleStatus::Active,
         )
         .unwrap();
+        claim.scope_facet = server
+            .vault
+            .default_facet()
+            .expect("the vault default facet");
         claim.scope = Some(rmpv::Value::Map(vec![(
             rmpv::Value::from("principal"),
             rmpv::Value::Binary(principal.as_bytes().to_vec()),

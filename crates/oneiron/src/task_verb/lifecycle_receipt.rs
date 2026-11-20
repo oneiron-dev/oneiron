@@ -105,7 +105,16 @@ pub(super) fn stamp_record_in(
             .and_then(|hex| EntityId::from_hex(hex).ok())
         {
             Some(task_ref) => {
-                match task_verb_body_in(vault, &*wtxn, task_ref)?.and_then(|body| body.brief) {
+                // A body no reader decodes places no typeRef, as it holds no
+                // brief anyone can read: the owner's dismissal and cancel of
+                // such a TASK keep their receipt (F15). Any other read fault
+                // still refuses.
+                let stored = match task_verb_body_in(vault, &*wtxn, task_ref) {
+                    Ok(body) => body.and_then(|body| body.brief),
+                    Err(Error::Record(crate::error::RecordError::InvalidTaskBody(_))) => None,
+                    Err(error) => return Err(error.into()),
+                };
+                match stored {
                     Some(stored) => brief_type_ref_in(vault, &*wtxn, &stored.brief)?,
                     None => None,
                 }
@@ -366,6 +375,21 @@ pub(crate) fn erase_in_txn(
         }
     }
     Ok(())
+}
+
+/// The records a stored lifecycle receipt's value bytes name as its TASK or its parked
+/// proposal, whose erase drops it ([`erase_in_txn`]); `None` for bytes that do not read as a
+/// receipt. The whole-vault export withholds a receipt of a record it keeps out.
+pub(crate) fn lifecycle_receipt_records(value: &[u8]) -> Option<Vec<EntityId>> {
+    let row = RECEIPTS.decode_value(value).ok()?;
+    let proposal = row.fields.get(FIELD_PROPOSAL_REF).map(String::as_str);
+    Some(
+        [row.trigger_ref.as_deref(), proposal]
+            .into_iter()
+            .flatten()
+            .filter_map(|hex| EntityId::from_lower_hex(hex).ok())
+            .collect(),
+    )
 }
 
 /// The lifecycle fields a call's words sit under, as the highway's writers

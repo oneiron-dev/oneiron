@@ -30,7 +30,9 @@ use root::ResourceOrigin;
 pub(super) mod signals;
 pub(crate) use signals::facet as claim_facet;
 mod slices;
-pub(super) use slices::ExtractionSlice;
+pub(super) use slices::{ExtractionSlice, PagePastRoom, SliceBound};
+#[cfg(oneiron_test_support)]
+pub(crate) use slices::{fitted_calls_for_test, native_slice_calls_in_room_for_test};
 mod write;
 use super::provenance::{ConsolidationSink, PromotionCandidate};
 use super::support::invalid_consolidation;
@@ -557,7 +559,7 @@ impl<'a> BranchResources<'a> {
             super::gap::ReflectionGap,
             super::evidence::VerifiedEvidenceSet,
         )>,
-        now: u64,
+        now_ms: u64,
     ) -> Result<super::gap::GapQueueDelta> {
         self.check_axes(scope)?;
         let mut persisted = Vec::new();
@@ -583,7 +585,7 @@ impl<'a> BranchResources<'a> {
             self.origin.axes(),
             &self.write_fence(),
             persisted,
-            now,
+            now_ms,
         )
     }
 
@@ -592,7 +594,7 @@ impl<'a> BranchResources<'a> {
         &self,
         scope: &Scope,
         gaps: Vec<super::gap::ReflectionGap>,
-        now: u64,
+        now_ms: u64,
     ) -> Result<super::gap::GapQueueDelta> {
         self.check_axes(scope)?;
         for gap in &gaps {
@@ -629,7 +631,7 @@ impl<'a> BranchResources<'a> {
             self.origin.axes(),
             &self.write_fence(),
             gaps,
-            now,
+            now_ms,
         )
     }
 

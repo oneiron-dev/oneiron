@@ -185,7 +185,7 @@ impl Service {
                 }
                 let checked = check(&checker, job);
                 let diagnostics = checked.type_diagnostics(cell.facts());
-                let (diagnostics, body, finalized) = self.placed(job, diagnostics);
+                let (diagnostics, body, finalized) = self.placed(job, cell.check_id, diagnostics);
                 Landed {
                     diagnostics,
                     body,
@@ -196,7 +196,7 @@ impl Service {
             Err(diagnostics) => Landed::settled(diagnostics),
         };
         if let Some(row) = cell.land(landed, self.publishes(job)) {
-            self.publish(job, &row);
+            self.publish(job, cell.check_id, &row);
         }
     }
 }
@@ -320,12 +320,14 @@ impl Checked {
     }
 }
 
-/// `diagnostics` with a collection past one reply kept whole in a body of
-/// the run, its stored program's marks taken: the body, when one was kept.
-/// A body that cannot be kept leaves the collection inline, traced.
+/// `diagnostics`, check `check_id`'s, with a collection past one reply kept
+/// whole in a body of the run at that check's own path, its stored
+/// program's marks taken: the body, when one was kept. A body that cannot
+/// be kept leaves the collection inline, traced.
 fn keep_collection(
     storage: &ExecutorStorage<'_>,
     key: StepKey,
+    check_id: EntityId,
     source: Option<&CodeRunRawOutput>,
     diagnostics: TypeDiagnostics,
 ) -> (TypeDiagnostics, Option<CodeRunRawOutput>) {
@@ -348,7 +350,7 @@ fn keep_collection(
     let (run, seq, invocation) = key;
     let kept = storage.code_run_output_sink().and_then(|mut sink| {
         write_json(&mut sink, &list)?;
-        let path = type_diagnostics_output_path(seq, invocation);
+        let path = type_diagnostics_output_path(seq, invocation, check_id);
         let body = storage.publish_code_run_output(path, sink, true, run)?;
         if let Some(source) = source {
             storage.inherit_code_run_result_marks(run, &body, &[(run, source.clone())])?;
@@ -418,6 +420,10 @@ impl Landed {
 /// thread. Neither ever waits on the other.
 pub(super) struct StepCell {
     key: StepKey,
+    /// The check's own id, minted as it starts: a later check at the same
+    /// key, the re-entry's program at a step its failed program never
+    /// committed, holds a greater one.
+    check_id: EntityId,
     note: Option<ProgramPreparationNote>,
     actor: Option<EntityId>,
     source: Option<CodeRunRawOutput>,
@@ -439,6 +445,7 @@ impl StepCell {
     fn new(job: &CheckJob, facts: TypeCheckFacts) -> Self {
         Self {
             key: job.key,
+            check_id: EntityId::now(),
             note: job.note.clone(),
             actor: job.actor,
             source: job.source.clone(),
@@ -508,7 +515,7 @@ impl StepCell {
             .landed
             .as_ref()
             .and_then(|landed| landed.body.clone());
-        StoredStepFeedback::of(self.actor, &self.feedback(), body)
+        StoredStepFeedback::of(self.actor, self.check_id, &self.feedback(), body)
     }
 
     /// Keeps a landed collection past one reply in a body on `storage`, the
@@ -522,8 +529,13 @@ impl StepCell {
                 _ => return,
             }
         };
-        let (diagnostics, body) =
-            keep_collection(storage, self.key, self.source.as_ref(), diagnostics);
+        let (diagnostics, body) = keep_collection(
+            storage,
+            self.key,
+            self.check_id,
+            self.source.as_ref(),
+            diagnostics,
+        );
         if let Some(landed) = lock(&self.state).landed.as_mut() {
             landed.diagnostics = diagnostics;
             landed.body = body;

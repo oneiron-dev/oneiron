@@ -32,8 +32,10 @@ pub(crate) fn resolve_core_room(
 
 /// The audience an assembly reads for, resolved once: the room (if any), the
 /// interlocutor set it makes, the caller's read narrowed to it, and the
-/// disclosure clamp it applies, homed by [`super::core_conversation_home`]
-/// (a board names no other vault's conversation). A board's pins, its
+/// disclosure clamp it applies. A keyed board replay supplies its kept
+/// retrieval's independently resolved home, so its recheck meets that home's
+/// clearance as it stands now. Other reads are homed by
+/// [`super::core_conversation_home`]. A board's pins, its
 /// standing block and the read-back of a kept board all read through this
 /// one sequence, so each meets the room's Scope as a room turn's reads do
 /// (ARCH-0067 §8). It spends no once answer: only a retrieval's own assembly
@@ -46,16 +48,62 @@ pub(crate) struct CoreAudience<'a> {
 }
 
 /// [`CoreAudience`] for `read`, the caller's own read, and the room `room_id`
-/// names, if any.
+/// names, if any. `home` is a kept retrieval's home on a keyed board replay,
+/// resolved using that retrieval's own conversation id; every other caller
+/// passes `None` to resolve the home from `room_id`.
 pub(crate) fn resolve_core_audience<'a>(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     read: oneiron::claim::ScopedRead<'a>,
     room_id: Option<oneiron::EntityId>,
+    home: Option<oneiron::ConversationHome>,
+) -> Result<CoreAudience<'a>, ApiError> {
+    resolve_audience(vault, auth, read, room_id, home, None)
+}
+
+/// A kept retrieval resolves the same audience inputs as fresh retrieval,
+/// independently of the board room that may add its own pins afterward.
+impl super::CoreContextPackRequest {
+    pub(crate) fn replay_audience<'a>(
+        &self,
+        vault: &'a oneiron::Vault,
+        auth: &CoreAuth,
+    ) -> Result<CoreAudience<'a>, ApiError> {
+        let read = super::super::scoped_read_for_core_auth(vault, auth)?;
+        let room = self
+            .conversation_id
+            .as_deref()
+            .map(|room| parse_entity_id_param(room, "conversation_id"))
+            .transpose()?;
+        let home = super::core_conversation_home(vault, auth, room, self.conversation_home())?;
+        let mut audience = resolve_audience(
+            vault,
+            auth,
+            read,
+            room,
+            Some(home),
+            self.interlocutors.as_ref(),
+        )?;
+        let filter = self
+            .filter
+            .as_ref()
+            .map(oneiron::memory::ReadFilterInput::to_filter);
+        audience.read = audience.read.with_read_filter(filter.as_ref());
+        Ok(audience)
+    }
+}
+
+fn resolve_audience<'a>(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    read: oneiron::claim::ScopedRead<'a>,
+    room_id: Option<oneiron::EntityId>,
+    home: Option<oneiron::ConversationHome>,
+    interlocutors: Option<&super::CoreInterlocutorControls>,
 ) -> Result<CoreAudience<'a>, ApiError> {
     let (room_members, room) = resolve_core_room(vault, auth, &read, room_id)?;
     let interlocutors =
-        super::resolve_core_interlocutor_set(vault, auth, &read, None, room.as_ref())?;
+        super::resolve_core_interlocutor_set(vault, auth, &read, interlocutors, room.as_ref())?;
     let read = narrow_to_core_audience(
         vault,
         auth,
@@ -64,7 +112,10 @@ pub(crate) fn resolve_core_audience<'a>(
         room.as_ref(),
         interlocutors.as_ref(),
     )?;
-    let home = super::core_conversation_home(vault, auth, room_id, None)?;
+    let home = match home {
+        Some(home) => home,
+        None => super::core_conversation_home(vault, auth, room_id, None)?,
+    };
     let disclosure = super::resolve_core_disclosure(
         vault,
         interlocutors.as_ref(),

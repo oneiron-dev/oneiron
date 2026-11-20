@@ -68,6 +68,8 @@ mod batch_admission;
 #[cfg(feature = "mesh")]
 mod catalog;
 mod dial;
+#[cfg(feature = "mesh")]
+mod dial_gate;
 mod enrolment;
 mod freeze;
 mod host;
@@ -77,12 +79,20 @@ mod renewal;
 #[cfg(feature = "mesh")]
 mod route;
 #[cfg(feature = "mesh")]
+mod selector;
+#[cfg(feature = "mesh")]
 mod url;
 use dial::Dial;
+#[cfg(feature = "mesh")]
+pub(crate) use dial_gate::standing;
 use enrolment::EnrolmentSource;
 pub(crate) use enrolment::{Enrolled, EnrolmentFiles, enrol, enrolment_vault_id, home_bind, join};
 pub(crate) use freeze::ReapFreeze;
 use host::Host;
+#[cfg(feature = "mesh")]
+use selector::residence_selector;
+#[cfg(feature = "mesh")]
+use url::direct;
 
 /// The running connection to the home.
 #[cfg_attr(not(feature = "mesh"), allow(dead_code))]
@@ -252,13 +262,19 @@ pub(crate) fn dials_home_managed(config: &ServeConfig, vault: &oneiron::Vault) -
 }
 
 /// Whether `config` names a home, or an enrolment where `source` says
-/// records one.
+/// records one. A record that is there but does not read or validate counts
+/// as one: this machine enrolled with a home, so its host claims no home and
+/// marks no full copy of its own, while its link refuses to configure on the
+/// record, as [`Dial`] reads it (FIX-LIST HOME-SELF-MARK-STALE-AS-DEVICE).
 fn dials(config: &ServeConfig, vault: &oneiron::Vault, source: EnrolmentSource) -> bool {
     config.device_sync.is_some()
         || EnrolmentFiles::for_serve(&config.keystore, vault, source)
             .ok()
             .flatten()
-            .is_some_and(|files| files.read().is_ok_and(|record| record.is_some()))
+            .is_some_and(|files| match files.read() {
+                Ok(record) => record.is_some(),
+                Err(_) => true,
+            })
 }
 
 #[cfg(not(feature = "mesh"))]
@@ -662,6 +678,14 @@ fn observer(
                 );
             });
         }
+        // The home refuses this credential the socket: the connection does
+        // not redial on it; a renewed credential opens a new one
+        // (MEMBER-SELECTOR-SOCKET).
+        SyncEvent::UpgradeForbidden => tracing::warn!(
+            %home,
+            "device sync: the home refuses this credential a sync socket (403); \
+             it does not redial on it"
+        ),
         SyncEvent::Error(error) => tracing::warn!(%home, %error, "device sync"),
         _ => {}
     }
@@ -727,99 +751,4 @@ fn declare_candidacy(
         );
     }
     Ok(())
-}
-
-/// What residence reads select: the own-device member grant the paired
-/// credential names (`grant_ref`, provisioned at the home), for the
-/// credential's holder, over every world that grant admits. `None` when the
-/// credential names no grant.
-#[cfg(feature = "mesh")]
-fn residence_selector(token: &str) -> anyhow::Result<Option<oneiron::sync::SyncSelector>> {
-    let slip = oneiron::authority::CapabilitySlip::from_token(token)?;
-    let claims = &slip.claims;
-    let Some(grant) = claims.grant_ref.as_deref() else {
-        return Ok(None);
-    };
-    let grant = oneiron::EntityId::from_hex(grant)
-        .map_err(|_| anyhow::anyhow!("the paired credential's grant_ref is not an entity id"))?;
-    let holder = oneiron::EntityId::from_hex(&claims.holder_ref)
-        .map_err(|_| anyhow::anyhow!("the paired credential's holder is not an actor"))?;
-    Ok(Some(oneiron::sync::SyncSelector::new(
-        grant,
-        holder,
-        oneiron::sync::SyncSelectorWorld::All,
-        Vec::new(),
-        Vec::new(),
-    )))
-}
-
-/// A home dialed at its URL, off the mesh: `wss`, or `ws` to a loopback
-/// host, as the NOTE session binds only over TLS or on this machine.
-#[cfg(feature = "mesh")]
-fn direct(url: &str) -> anyhow::Result<()> {
-    let uri: axum::http::Uri = url
-        .parse()
-        .map_err(|_| anyhow::anyhow!("home_url is not a URL"))?;
-    let loopback = uri.host().is_some_and(|host| {
-        host.trim_matches(['[', ']'])
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback())
-    });
-    anyhow::ensure!(
-        uri.scheme_str() == Some("wss") || loopback,
-        "the home has no paired mesh address here, and off the mesh its home_url must be \
-         wss:// (or ws:// to a loopback host)"
-    );
-    Ok(())
-}
-
-/// This install's MACHINE, when it may dial `home`, and whether `home` has a
-/// paired mesh address. It may when it is enrolled and live, and `home` is a
-/// live machine; an elected MACRO home dials its home as any device does. A
-/// machine `oneiron device enrol` added (`enrolled`) is enrolled at the home:
-/// its own profile, and the home's, reach this vault on the first authority
-/// catch-up. A profile the owner has not answered yet (an unanswered serving
-/// install's own) counts here as no profile, so it dials and is dialled as
-/// before it had one (selfprofile).
-#[cfg(feature = "mesh")]
-fn standing(
-    vault: &oneiron::Vault,
-    home: oneiron::EntityId,
-    enrolled: bool,
-) -> anyhow::Result<(oneiron::EntityId, bool)> {
-    let live = |machine: &oneiron::authority::FoldedMachine| {
-        machine.chains().any(|(_, chain)| chain.is_live())
-    };
-    let answered = |machine: &&oneiron::authority::FoldedMachine| {
-        machine
-            .chains()
-            .any(|(_, chain)| chain.profile.role.answered())
-    };
-    let local = vault
-        .local_machine()?
-        .ok_or_else(|| anyhow::anyhow!("this install is not a machine yet"))?;
-    match local.profile.as_ref().filter(answered) {
-        Some(profile) => anyhow::ensure!(
-            live(profile),
-            "this machine is not enrolled live in the vault"
-        ),
-        None => anyhow::ensure!(
-            enrolled,
-            "this machine is not enrolled in the vault; `oneiron device enrol` enrols it"
-        ),
-    }
-    anyhow::ensure!(local.id != home, "home_machine names this machine");
-    match vault.authority_fold()?.machine(home).filter(answered) {
-        Some(machine) => anyhow::ensure!(
-            live(machine),
-            "home_machine {} is not a live machine",
-            home.to_hex()
-        ),
-        None => anyhow::ensure!(
-            enrolled,
-            "home_machine {} is not a machine of this vault",
-            home.to_hex()
-        ),
-    }
-    Ok((local.id, vault.mesh_machine(home)?.is_some()))
 }

@@ -1,4 +1,5 @@
 //! Host-root bootstrap and atomic authority-log capability issuance.
+use super::owner_proof::OwnerProofSigner;
 use super::*;
 use crate::Vault;
 use crate::error::Result;
@@ -15,6 +16,7 @@ pub use connect_lifecycle::{
 mod courtesy;
 mod host_root;
 pub use connect::{ConnectOffer, ScopeOpeningKey};
+pub(crate) use connect::{ConnectOfferTerms, fresh_pact_id};
 mod issuer_custody;
 mod issuer_seed;
 pub use issuer_seed::{HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT, HostSlipIssuer};
@@ -184,6 +186,29 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         verified: &VerifiedSlip,
     ) -> Result<bool> {
+        self.capability_slip_stands_in_txn(txn, verified, None)
+    }
+
+    /// [`Self::capability_slip_is_live_in_txn`] at the publication of a
+    /// delete whose own scrub of `scrubbed` committed before it: a slip
+    /// `scrubbed` holds is judged with that PERSON's row read as undeleted
+    /// ([`Self::slip_refs_stand_after_own_scrub_in_txn`]); every other check
+    /// is the same.
+    pub(crate) fn capability_slip_is_live_after_own_scrub_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        verified: &VerifiedSlip,
+        scrubbed: &crate::EntityId,
+    ) -> Result<bool> {
+        self.capability_slip_stands_in_txn(txn, verified, Some(scrubbed))
+    }
+
+    fn capability_slip_stands_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        verified: &VerifiedSlip,
+        scrubbed: Option<&crate::EntityId>,
+    ) -> Result<bool> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let now = self.instant_in_txn(txn)?.secs();
         let claims = verified.claims();
@@ -192,6 +217,35 @@ impl Vault {
             && fold.vault_id == Some(claims.vault_id)
             && fold.slip_is_live(&claims.slip_id)
             && verified.witness_pact(&fold).is_ok()
+            && match scrubbed {
+                None => self.slip_refs_stand_in_txn(txn, claims, now)?,
+                Some(scrubbed) => {
+                    self.slip_refs_stand_after_own_scrub_in_txn(txn, claims, now, scrubbed)?
+                }
+            }
+            && self.member_slip_scope_is_current_in_txn(txn, claims)?)
+    }
+    /// Whether the slip this vault folded as `id` still stands as
+    /// [`Self::capability_slip_is_live_in_txn`] reads a presented one, from
+    /// its folded mint: inside its lifetime on this vault's clock, for this
+    /// vault, live in the fold, its grant, invitation or delegation standing,
+    /// and its member scope current. No slip is presented, so no pact witness
+    /// is rechecked (L7-41: a burst its home holds for an own device).
+    pub(crate) fn folded_slip_stands_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &[u8; 32],
+    ) -> Result<bool> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let now = self.instant_in_txn(txn)?.secs();
+        let Some(mint) = fold.slips.mints.get(id) else {
+            return Ok(false);
+        };
+        let claims = &mint.action.claims;
+        Ok(now >= claims.issued_at
+            && now < claims.expires_at
+            && fold.vault_id == Some(claims.vault_id)
+            && fold.slip_is_live(id)
             && self.slip_refs_stand_in_txn(txn, claims, now)?
             && self.member_slip_scope_is_current_in_txn(txn, claims)?)
     }
@@ -230,13 +284,39 @@ impl Vault {
         }
     }
 
+    /// Whether the credential `id` minted still bounds a narrowed saved read
+    /// lane (OF-506) in this snapshot: live as
+    /// [`Self::capability_slip_id_is_live_in_txn`] judges it, except that
+    /// only its read Scope must still lie inside its current membership
+    /// grant (`member_slip_read_scope_is_current_in_txn`, round 2 review P1
+    /// of #9583): a saved lane only reads.
+    ///
+    /// # Errors
+    /// A store, fold or clock failure judging it.
+    pub(crate) fn saved_read_credential_is_live_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &[u8; 32],
+    ) -> Result<bool> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let now = self.instant_in_txn(txn)?;
+        if !fold.slip_is_live_at(id, now) {
+            return Ok(false);
+        }
+        match fold.slips.mints.get(id) {
+            Some(mint) => self.mint_bounds_saved_read_in_txn(txn, &mint.action.claims, now.secs()),
+            None => Ok(false),
+        }
+    }
+
     /// Whether the credential `id` minted still stands, whatever its own
     /// lifetime: its mint unrevoked in this snapshot's fold, and its grant,
-    /// invitation and delegation still standing as they bound it (FIX 5952).
-    /// A saved lane that reads as its principal's own judges this at each
-    /// rebuild and each read (FIX OWN-DEVICE-GRANT-NOT-RECHECKED): a paired
-    /// device's renewal lets the old credential run out (FIX 3377), so its
-    /// expiry ends no saved work, while the grant's withdrawal does.
+    /// invitation and delegation still standing as they bound it (FIX 5952),
+    /// its read Scope inside its current membership grant. A saved lane
+    /// that reads as its principal's own judges this at each rebuild and
+    /// each read (FIX OWN-DEVICE-GRANT-NOT-RECHECKED): a paired device's
+    /// renewal lets the old credential run out (FIX 3377), so its expiry
+    /// ends no saved work, while the grant's withdrawal does.
     ///
     /// # Errors
     /// A store, fold or clock failure judging it.
@@ -252,11 +332,24 @@ impl Vault {
         match fold.slips.mints.get(id) {
             Some(mint) => {
                 let now = self.instant_in_txn(txn)?.secs();
-                Ok(self.slip_refs_stand_in_txn(txn, &mint.action.claims, now)?
-                    && self.member_slip_scope_is_current_in_txn(txn, &mint.action.claims)?)
+                self.mint_bounds_saved_read_in_txn(txn, &mint.action.claims, now)
             }
             None => Ok(false),
         }
+    }
+
+    /// Whether a saved read lane's credential minted with `claims` is still
+    /// bound as it was at `now`: its grant, invitation and delegation stand
+    /// (FIX 5952), and its read Scope lies inside its current membership
+    /// grant (round 2 review P1 of #9583).
+    fn mint_bounds_saved_read_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+        now: u64,
+    ) -> Result<bool> {
+        Ok(self.slip_refs_stand_in_txn(txn, claims, now)?
+            && self.member_slip_read_scope_is_current_in_txn(txn, claims)?)
     }
 
     /// Read-only holder verification for repeatable credential checks. One-shot
@@ -622,9 +715,71 @@ impl Vault {
         issuer: &HostSlipIssuer,
         slip_id: [u8; 32],
     ) -> Result<bool> {
+        self.revoke_capability_slip_by(issuer, SlipRevoker::Host, slip_id)
+    }
+    /// [`Self::revoke_capability_slip_once`] asked by the vault's owner, who
+    /// revokes any slip: `owner` is revalidated as the vault's owner in the
+    /// revoking transaction (FIX 8216, lead ruling
+    /// FIX-8216-PAIRING-OWNER-ACT = A).
+    pub fn revoke_capability_slip_as_owner(
+        &self,
+        issuer: &HostSlipIssuer,
+        owner: &crate::consent::AuthenticatedOwner,
+        slip_id: [u8; 32],
+    ) -> Result<bool> {
+        self.revoke_capability_slip_by(issuer, SlipRevoker::Owner(owner), slip_id)
+    }
+    /// [`Self::revoke_capability_slip_once`] asked by a holder that is not
+    /// the owner, on the credential its request authenticated: only a slip
+    /// whose logged mint names that credential's holder (FIX 8216). The
+    /// credential is judged live again in the revoking transaction, so a
+    /// revoke queued behind its own slip's revocation or expiry writes
+    /// nothing (Sol review of #8342, P2). Any other id, one with no logged
+    /// mint included, is refused with `AuthorityRefused` before anything is
+    /// written, already revoked or not, so the answer says nothing about
+    /// another holder's slips.
+    pub fn revoke_capability_slip_held_by(
+        &self,
+        issuer: &HostSlipIssuer,
+        credential: &VerifiedSlip,
+        slip_id: [u8; 32],
+    ) -> Result<bool> {
+        self.revoke_capability_slip_by(issuer, SlipRevoker::Holder(credential), slip_id)
+    }
+    /// Appends one signed revocation of `slip_id` for `by`, judged in the
+    /// revoking transaction.
+    fn revoke_capability_slip_by(
+        &self,
+        issuer: &HostSlipIssuer,
+        by: SlipRevoker<'_>,
+        slip_id: [u8; 32],
+    ) -> Result<bool> {
         let mut txn = self.store.env.write_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
+        match by {
+            SlipRevoker::Host => {}
+            SlipRevoker::Owner(owner) => {
+                owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+            }
+            SlipRevoker::Holder(credential) => {
+                // The request's own slip stands in this writer, as the owner
+                // arm revalidates its proof: judged before the target, so a
+                // lapsed caller learns nothing about the id it names.
+                if !self.capability_slip_is_live_in_txn(&txn, credential)? {
+                    return Err(invalid_authority());
+                }
+                let holder_ref = &credential.claims().holder_ref;
+                let held = fold
+                    .slips
+                    .mints
+                    .get(&slip_id)
+                    .is_some_and(|mint| &mint.action.claims.holder_ref == holder_ref);
+                if !held {
+                    return Err(super::owner_act::authority_refused(SLIP_REVOKE_NOT_HOLDER));
+                }
+            }
+        }
         if fold.slips.explicit_revoked.contains(&slip_id) {
             return Ok(false);
         }
@@ -755,22 +910,23 @@ impl Vault {
         self.append_hashed_slip_op_in_txn(txn, issuer, op)
             .map(|_| ())
     }
-    /// [`Self::append_slip_op_in_txn`] with an owner key's proof beside the
-    /// host root's signature (row HOSTED-ROOT-REVOKES-OWNER-KEY): `proof`
-    /// cosigns the entry ([`next_entry_with_owner_proof`]). The fold must
-    /// count it, as for any slip op.
-    pub(super) fn append_slip_op_with_owner_proof_in_txn(
+    /// [`Self::append_hashed_slip_op_in_txn`] with an owner key's proof
+    /// beside the host root's signature (row HOSTED-ROOT-REVOKES-OWNER-KEY):
+    /// `proof` cosigns the entry ([`next_entry_with_owner_proof`]). The fold
+    /// must count it, as for any slip op; answers the entry's hash. A proof
+    /// key that stopped since it was picked signs nothing, and the append
+    /// fails with its refusal ([`OwnerProofSigner::sign`]).
+    pub(super) fn append_hashed_slip_op_with_owner_proof_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         op: AuthorityOp,
-        proof: &dyn CheckpointRootSigner,
-    ) -> Result<()> {
+        proof: &OwnerProofSigner<'_>,
+    ) -> Result<AuthorityEntryHash> {
         self.prepare_hashed_slip_op_in_txn(txn, issuer, op, Some(proof))?
             .apply(self, txn)
-            .map(|_| ())
     }
-    fn append_hashed_slip_op_in_txn(
+    pub(super) fn append_hashed_slip_op_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
@@ -786,19 +942,30 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         op: AuthorityOp,
-        proof: Option<&dyn CheckpointRootSigner>,
+        proof: Option<&OwnerProofSigner<'_>>,
     ) -> Result<PreparedHashedSlipOp> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(txn)?.secs();
-        // FIX 7908: join a frontier wider than one entry names, else today's path.
+        // An end or a re-pact of a pact the expiry holds suspended names the
+        // pact's expired rows the heads leave out beside them (row
+        // SEQ-FLOOR-S-WITHHELD-COSIGN); a narrowing or a Promote of it is
+        // refused here.
+        let beside = super::stale_roster::suspended_pact_rows_in_txn(&self.store, txn, &fold, &op)?;
+        // FIX 7908: join a frontier wider than one entry names, else today's
+        // path. The rows named beside the heads join with them, so no count
+        // of expired rows takes the act past MAX_PARENTS (REVIEW-9609 round 2).
         let joiner = FrontierSigner::Host(issuer);
-        let fold = self
-            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
-            .unwrap_or(fold);
+        let frontier = fold.append_heads.union(&beside).copied().collect();
+        let (fold, beside) =
+            match self.join_authority_heads_in_txn(txn, &fold, &frontier, joiner, MAX_PARENTS)? {
+                Some(joined) => (joined, std::collections::BTreeSet::new()),
+                None => (fold, beside),
+            };
+        let entry = next_entry_naming(issuer, &fold, &beside, op, now)?;
         let entry = match proof {
-            Some(proof) => next_entry_with_owner_proof(issuer, &fold, op, now, proof)?,
-            None => next_entry(issuer, &fold, op, now)?,
+            Some(proof) => with_owner_proof(issuer, &fold, entry, proof)?,
+            None => entry,
         };
         let hash = authority_entry_hash(&entry)?;
         Ok(PreparedHashedSlipOp {
@@ -818,21 +985,32 @@ impl Vault {
 /// signature (row HOSTED-ROOT-REVOKES-OWNER-KEY): the proof key's slot is in
 /// the entry before either key signs, so both sign the one transcript, in
 /// the order of [`super::world_key_support::sign_side_entry_with_owner_proof`].
+/// The proof key signs on `fold`, the view the entry is built on: a key that
+/// no longer proves there (row OCS-OWNER-PIN) refuses, and no entry is made.
 pub(super) fn next_entry_with_owner_proof(
     issuer: &HostSlipIssuer,
     fold: &AuthorityFold,
     op: AuthorityOp,
     now: u64,
-    proof: &dyn CheckpointRootSigner,
+    proof: &OwnerProofSigner<'_>,
 ) -> Result<AuthorityLogEntry> {
-    let mut entry = next_entry(issuer, fold, op, now)?;
-    let proof_key = proof.root();
+    with_owner_proof(issuer, fold, next_entry(issuer, fold, op, now)?, proof)
+}
+/// `entry`, built on `fold`, with `proof` beside the host root's signature,
+/// as [`next_entry_with_owner_proof`] makes it.
+fn with_owner_proof(
+    issuer: &HostSlipIssuer,
+    fold: &AuthorityFold,
+    mut entry: AuthorityLogEntry,
+    proof: &OwnerProofSigner<'_>,
+) -> Result<AuthorityLogEntry> {
+    let proof_key = proof.key();
     entry.cosigns.push(AuthoritySignature {
         suite: proof_key.suite(),
         public_key: proof_key,
         signature: vec![0; 64],
     });
-    let proved = proof.sign_owner_proof(&authority_transcript(&entry)?)?;
+    let proved = proof.sign(fold, &authority_transcript(&entry)?)?;
     if let Some(cosign) = entry.cosigns.last_mut() {
         cosign.signature = proved;
     }
@@ -842,6 +1020,17 @@ pub(super) fn next_entry_with_owner_proof(
 pub(super) fn next_entry(
     issuer: &HostSlipIssuer,
     fold: &AuthorityFold,
+    op: AuthorityOp,
+    now: u64,
+) -> Result<AuthorityLogEntry> {
+    next_entry_naming(issuer, fold, &std::collections::BTreeSet::new(), op, now)
+}
+/// [`next_entry`] naming `beside` too: rows the act must hold in its
+/// ancestry that the heads leave out.
+fn next_entry_naming(
+    issuer: &HostSlipIssuer,
+    fold: &AuthorityFold,
+    beside: &std::collections::BTreeSet<AuthorityEntryHash>,
     op: AuthorityOp,
     now: u64,
 ) -> Result<AuthorityLogEntry> {
@@ -857,7 +1046,7 @@ pub(super) fn next_entry(
     issuer.sign_entry(
         fold.vault_id,
         seq,
-        fold.append_heads.iter().copied().collect(),
+        fold.append_heads.union(beside).copied().collect(),
         op,
         now,
     )
@@ -935,7 +1124,7 @@ impl Vault {
             return Ok(());
         };
         let now = self.now_recorded_at();
-        let bind = next_entry_with_owner_proof(issuer, &fold, op, now, proof.as_ref())?;
+        let bind = next_entry_with_owner_proof(issuer, &fold, op, now, &proof)?;
         let at = TimeRange {
             start: now,
             end: now,
@@ -1047,6 +1236,19 @@ pub(super) fn require_host(fold: &AuthorityFold, issuer: &HostSlipIssuer) -> Res
         return Err(invalid_authority());
     }
     Ok(())
+}
+/// The refusal of a holder's revoke of a slip whose logged mint names
+/// another holder, or no logged mint at all (FIX 8216).
+const SLIP_REVOKE_NOT_HOLDER: &str = "a holder revokes only the slips its own logged mints name";
+/// Who asks a slip's revocation, judged in the revoking transaction.
+enum SlipRevoker<'a> {
+    /// The host itself: an engine path, or a door that judged its caller.
+    Host,
+    /// The vault's owner, for any slip.
+    Owner(&'a crate::consent::AuthenticatedOwner),
+    /// A holder that is not the owner, on the credential its request
+    /// authenticated, for the slips minted to that credential's holder.
+    Holder(&'a VerifiedSlip),
 }
 pub(super) fn random_slip_id() -> [u8; 32] {
     use rand_core::{OsRng, RngCore};

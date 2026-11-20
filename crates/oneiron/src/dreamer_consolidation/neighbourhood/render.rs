@@ -60,6 +60,14 @@ impl ListingPage<'_> {
         }
         out
     }
+
+    /// The bytes the page renders to with its members' relationships
+    /// listed, as an extraction call sizes its room by (FIX
+    /// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW).
+    pub(in crate::dreamer_consolidation) fn rendered_bytes(&self) -> usize {
+        self.render(&mut CallLabelMap::default(), self.member_relationships())
+            .len()
+    }
 }
 
 fn entity_line(label: CallLabel, name: Option<&str>) -> String {

@@ -321,6 +321,9 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         AuthorityOp::RootAppointment(appointment) => {
             super::root_appointment::root_appointment_value(appointment)
         }
+        AuthorityOp::RestoredMachineJoin(join) => {
+            super::restored_machine_join::restored_machine_join_value(join)
+        }
     }
 }
 

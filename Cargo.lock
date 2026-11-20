@@ -8028,6 +8028,7 @@ dependencies = [
  "oneiron-lens-wire",
  "oneiron-linkedin-policy",
  "oneiron-model",
+ "oneiron-persistent-collections",
  "oneiron-policy-vocabulary",
  "oneiron-records",
  "oneiron-retrieval",
@@ -8211,6 +8212,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-tungstenite 0.26.2",
+ "tracing",
 ]
 
 [[package]]
@@ -8301,6 +8303,7 @@ dependencies = [
  "oneiron-authority",
  "oneiron-base",
  "oneiron-contracts",
+ "oneiron-hex",
  "oneiron-model",
  "oneiron-store",
  "rmpv",
@@ -8752,6 +8755,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-persistent-collections"
+version = "0.1.0"
+dependencies = [
+ "im",
+ "proptest",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-policy-vocabulary"
 version = "0.1.0"
 dependencies = [
@@ -8889,6 +8903,7 @@ dependencies = [
  "oneiron-model",
  "schemars 0.8.22",
  "serde",
+ "serde_json",
  "thiserror 2.0.20",
 ]
 
@@ -8900,6 +8915,8 @@ version = "0.1.0"
 name = "oneiron-schedule-contract"
 version = "0.1.0"
 dependencies = [
+ "oneiron-contracts",
+ "oneiron-setting-contract",
  "schemars 0.8.22",
  "serde",
 ]
@@ -9144,11 +9161,15 @@ dependencies = [
  "futures-core",
  "libc",
  "oneiron",
+ "oneiron-contracts",
  "oneiron-keystore",
  "oneiron-spawn",
+ "rmpv",
  "serde_json",
+ "stacker",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
+ "zip 0.6.6",
 ]
 
 [[package]]

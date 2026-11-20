@@ -62,6 +62,7 @@ mod partition;
 mod persistence;
 mod person_about;
 mod provenance;
+pub(crate) mod psych_profile_step;
 mod recipe_failure;
 pub(crate) mod redirty;
 mod relation_extraction;
@@ -106,7 +107,11 @@ pub(crate) use attempt_reads::{declare_attempt_reads, record_attempt_reads};
 pub use branch::{BranchTurn, ConsolidationBranchPlan, ConversationPart};
 pub use conflict::*;
 pub(crate) use conflict::{candidate_probe_body, topic_key_canonical_bytes};
+#[cfg(oneiron_test_support)]
+pub(crate) use executor::extraction::entity_id_from_hex;
 pub use executor::*;
+#[cfg(oneiron_test_support)]
+pub(crate) use extracted_people::mint_named_person_for_test;
 pub(crate) use extracted_people::{
     delete_lineage_origin_in_txn, has_name_span, normalize_name_span, origin_in_txn,
     pin_lineage_origin_in_txn, speaker_admissible_in_txn,
@@ -259,6 +264,20 @@ pub(crate) fn side_door_turn_text_for_test(
 ) -> crate::Result<TurnText> {
     turn_text::read_turn_text(vault, turn)
 }
+
+/// The stored and compared digests' seams for the K door
+/// (`test_doors::fingerprint_keep_dreamer_consolidation_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    call_labels::labels_digest_for_test,
+    follower_attempt::{cache_identity_digest_for_test, route_digest_for_test},
+    note_text::note_text_fingerprint_for_test,
+    scope_summary_attempt::{
+        arc_composition_params_hash_for_test, arc_parts_params_hash_for_test,
+        session_pages_params_hash_for_test,
+    },
+    turn_text::attribution_hash_for_test,
+};
 
 /// The writer's re-check of a side door's TURN record, read as the Dreamer in
 /// a fresh snapshot, for the integration regression doors (X01). Not API.

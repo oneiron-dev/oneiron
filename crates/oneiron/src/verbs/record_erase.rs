@@ -229,47 +229,33 @@ pub fn confirm_record_erase(
     // destroys a world's keys.
     let world_erase = view.old_backups_notice.is_some();
     // An asker's approved check-in the Owner applies (2j; P24-SHAPE Q7 = A)
-    // is spent in its own writer, on the Owner's live proof, before the
-    // staged erase's writes: a refusal after it leaves the approval spent,
-    // and the Owner confirms again on their own proof alone. The shared
-    // confirm, the veto window, the legal holds and the Owner proof the
-    // erase asks for all still hold; an answer is no proof of its own.
-    let mut decision = crate::check_in::owner_own_proof_decision(crate::check_in::ActClass::Erase);
-    if let Some(applied) = super::shared::check_in_ref(input.check_in_ref.as_deref())? {
-        let effect_digest =
-            crate::check_in::record_erase_effect_digest(&input.record, input.also_same_bytes);
-        let requester = vault
-            .with_write_txn_grouped(|txn| {
-                if owner.revalidate_in_txn(vault, txn)? != memory.actor() {
-                    return Err(crate::Error::InvalidConfig(
-                        "an erase applies a check-in on its caller's own owner proof".into(),
-                    ));
-                }
-                let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-                crate::check_in::spend_applied_check_in_in_txn(
-                    vault,
-                    txn,
-                    &applied,
-                    "vault.records.erase_confirm",
-                    crate::check_in::ActClass::Erase,
-                    &effect_digest,
-                    now,
-                )
-            })
-            .map_err(MemoryError::from)?;
-        decision.check_in = Some(applied.to_hex());
-        decision.requester = Some(requester.to_hex());
-    }
-    // The decision goes on each `erase` act a veto window starts, and from
-    // there on its completion receipt (P24-SHAPE Q9 = A).
-    let outcome = memory.confirm_entity_erase_with_check_in(
+    // is checked before the erase writes and spent, on the Owner's live
+    // proof, in the writer that starts its `erase` act or, just before the
+    // record's delete, in one of its own that finds the delete rail admits
+    // the record: an erase refused before then leaves the approval unspent (FIX
+    // CHECK-IN-SPEND-BEFORE-RECORD-ERASE). The shared confirm, the veto
+    // window, the legal holds and the Owner proof the erase asks for all
+    // still hold; an answer is no proof of its own. The decision goes on
+    // each `erase` act a veto window starts, and from there on its
+    // completion receipt (P24-SHAPE Q9 = A).
+    let applied = super::shared::check_in_ref(input.check_in_ref.as_deref())?.map(|id| {
+        crate::check_in::AppliedCheckIn {
+            id,
+            verb: "vault.records.erase_confirm",
+            effect_digest: crate::check_in::record_erase_effect_digest(
+                &input.record,
+                input.also_same_bytes,
+            ),
+        }
+    });
+    let (outcome, decision) = memory.confirm_entity_erase_with_check_in(
         &preview,
         EraseOptions {
             reason: EraseReason::OwnerErase,
             also_same_bytes: input.also_same_bytes,
             veto_starter: Some(owner),
         },
-        Some(&decision),
+        applied.as_ref(),
     )?;
     // Only an erase applied now destroyed the world's keys; one that waits on
     // a veto window or a hold has not erased it yet.

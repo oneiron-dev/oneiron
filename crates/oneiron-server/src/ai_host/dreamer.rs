@@ -16,12 +16,13 @@ use std::time::{Duration, Instant};
 use oneiron::ModelId;
 use oneiron::agent_def::DreamingMode;
 use oneiron::dreamer_consolidation::{
-    DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, ResidentDreamModel,
-    RoleBackend, RoleBackends, SourcedBackend, TASK_REALIZE_UNLENT_PARK_REASON,
+    DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, EXTRACTION_MAX_TOKENS,
+    ResidentDreamModel, RoleBackend, RoleBackends, SourcedBackend, TASK_REALIZE_UNLENT_PARK_REASON,
     WEAVE_LENS_UNLENT_PARK_REASON, resident_of_dream_input, run_resident_dream,
 };
 use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::dreamer_runner::maintenance::ContributionReplayHost;
+use oneiron::dreamer_runner::maintenance::psych_profile;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::llm::{HostInferenceContext, WorkCancel, WorkClass, WorkContext};
@@ -53,9 +54,13 @@ mod request_sources;
 mod run_log;
 mod task_lend;
 mod urgent_digest;
+#[cfg(test)]
+mod window_tests;
 use super::skill_author::CoachSkillAuthor;
 use super::status::{IdleReason, StatusCell, UnservedNote, UnservedReason, WorkState, WorkStatus};
-use crate::config::models::{DreamerSettings, DreamerWording, ModelsConfig, role_key};
+use crate::config::models::{
+    DreamerSettings, DreamerWording, ModelsConfig, ProviderConfig, role_key,
+};
 use crate::decision_host::DecisionHost;
 use crate::models::{ModelRuntime, OfferLadder, RoleRefusal, RoleRoute, Seat};
 use crate::runtime::wall_clock_ms as now_ms;
@@ -135,6 +140,10 @@ pub(super) type PassAdmission = Option<DreamerControl>;
 /// again, in seconds: the next home-timer pass or so.
 const CONFLICT_SETTLE_RETRY_AFTER_SECS: u64 = 60;
 
+/// How often the home timer sweeps the psych profile keys: daily, as canon
+/// regenerates a profile at most daily per key (ARCH-0025).
+const PSYCH_PROFILE_SWEEP_SECS: u64 = psych_profile::PSYCH_PROFILE_REGENERATE_SECS;
+
 /// What the gate returns for one pass, held until that pass ends; `None`
 /// when the gate refuses.
 pub(super) fn admit(admission: &PassAdmission) -> Option<Box<dyn Send>> {
@@ -188,8 +197,40 @@ pub(super) struct DreamerStart {
 }
 
 /// The input each model a role's rungs name may fill: its provider's context
-/// less the output it reserves, the smallest where several rungs name it.
+/// less the output it reserves, the smallest where several rungs name it. A
+/// provider that names no output ceiling reserves [`EXTRACTION_MAX_TOKENS`],
+/// the largest output a Dreamer call asks, since its server's own default
+/// sizes the reply: an input that filled the whole context would leave an
+/// extraction's thought and answer no room. That reserve is at most half the
+/// context, so an input keeps room just above it too (a resident halves its
+/// window again). A context no larger than [`EXTRACTION_MAX_TOKENS`] with no
+/// ceiling, or no larger than its ceiling, reserves nothing.
 pub(super) fn dream_windows(models: &ModelsConfig) -> BTreeMap<ModelId, u64> {
+    rung_windows(models, |provider| match provider.max_output_tokens {
+        Some(ceiling) => ceiling,
+        None if provider.context_tokens > EXTRACTION_MAX_TOKENS => {
+            EXTRACTION_MAX_TOKENS.min(provider.context_tokens / 2)
+        }
+        None => 0,
+    })
+}
+
+/// The input code mode's reader child may fill on each model a role's rungs
+/// name: its provider's context less only the output ceiling it names. A
+/// summary's budget already halves this window, so a provider naming no
+/// ceiling reserves nothing here; the Dreamer's extraction reserve stays in
+/// [`dream_windows`].
+pub(super) fn reader_windows(models: &ModelsConfig) -> BTreeMap<ModelId, u64> {
+    rung_windows(models, |provider| provider.max_output_tokens.unwrap_or(0))
+}
+
+/// Each rung model's provider context less the output `reserve` names for
+/// it, the smallest where several rungs name the model. A reserve that
+/// leaves no room keeps the whole context.
+fn rung_windows(
+    models: &ModelsConfig,
+    reserve: impl Fn(&ProviderConfig) -> u64,
+) -> BTreeMap<ModelId, u64> {
     let mut windows = BTreeMap::new();
     for rungs in models.roles.values() {
         for rung in rungs {
@@ -199,11 +240,12 @@ pub(super) fn dream_windows(models: &ModelsConfig) -> BTreeMap<ModelId, u64> {
             let Ok(model) = rung.model.engine_id(&provider.revision) else {
                 continue;
             };
-            let output = provider
-                .max_output_tokens
-                .filter(|output| *output < provider.context_tokens)
-                .unwrap_or(0);
-            let room = provider.context_tokens - output;
+            let output = reserve(provider);
+            let room = provider
+                .context_tokens
+                .checked_sub(output)
+                .filter(|room| *room > 0)
+                .unwrap_or(provider.context_tokens);
             windows
                 .entry(model)
                 .and_modify(|held: &mut u64| *held = (*held).min(room))
@@ -378,6 +420,7 @@ async fn supervise(
             serve,
             admission,
             settle_after: ConflictSettleCursor::default(),
+            psych_profile_swept_day: None,
         };
         let factory = ProgramExecutorFactory::new(observed, Some(Box::new(programs)));
         let lifecycle = SessionLifecycleDriver::new(
@@ -542,6 +585,11 @@ struct ObservedFactory {
     /// The last conflict asked about, shared across the factories rebuilt
     /// for each pass. The next settlement attempt starts after it.
     settle_after: ConflictSettleCursor,
+    /// The UTC day (Unix seconds / 86 400) of the last Psych Mirror sweep
+    /// this host ran: the home timer sweeps the profile keys at most once a
+    /// day, so a key whose attempt ended without a profile is asked again
+    /// the next day, not at every timer.
+    psych_profile_swept_day: Option<u64>,
 }
 
 /// A pass's admission, held while the pass runs: the supervisor takes it as
@@ -1051,7 +1099,9 @@ impl PassExecutorFactory for ObservedFactory {
     /// model rungs block on the server's runtime, so it runs on its own
     /// thread, off this pass's runtime. Settlement runs as an admitted
     /// attempt in the next pass, whose lender checks the pause before each ask
-    /// (FIX 7376). A paused timer starts neither the pump nor an enqueue.
+    /// (FIX 7376). Once a day it also enqueues one deduped psych profile
+    /// attempt per due profile key (untangle 6.9i, RULING S69I-PR2-START =
+    /// A). A paused timer starts neither the pump nor an enqueue.
     fn run_home_timer(
         &mut self,
         _vault: &Vault,
@@ -1096,6 +1146,15 @@ impl PassExecutorFactory for ObservedFactory {
                             .enqueue_conflict_settle_in_txn(txn, None, now_secs)
                     }) {
                         tracing::warn!(kind = ?error.kind(), "conflict settlement enqueue failed");
+                    }
+                    let day = now_secs / PSYCH_PROFILE_SWEEP_SECS;
+                    if self.psych_profile_swept_day != Some(day) {
+                        self.psych_profile_swept_day = Some(day);
+                        if let Err(error) =
+                            psych_profile::enqueue_due_psych_profiles(vault, now_secs)
+                        {
+                            tracing::warn!(kind = ?error.kind(), "psych profile enqueue failed");
+                        }
                     }
                 }
                 Ok(false) => {}

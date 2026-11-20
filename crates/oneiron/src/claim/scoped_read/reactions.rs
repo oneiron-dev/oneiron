@@ -63,11 +63,14 @@ impl ScopedRead<'_> {
         disclosure: Option<&'d DisclosureContext>,
     ) -> Result<ReactionAdmission<'d>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(rtxn, None)?;
-        let receipt = self.receipt_for(None, &policy, &filter, 0);
+        // The receipt and every row check share one held authority, so they
+        // stand on the same Grants.
+        let authority = self.held_for(None);
+        let receipt = self.receipt_in(rtxn, None, &policy, &filter, 0, Some(&authority));
         Ok(ReactionAdmission {
             policy,
             filter,
-            authority: self.held_for(None),
+            authority,
             disclosure,
             receipt,
         })
@@ -421,6 +424,7 @@ impl<'a> ScopedRead<'a> {
             records_cover: self.records_cover.clone(),
             judged_at: self.judged_at,
             read_filter: self.read_filter.clone(),
+            receipts_include_live_grants: self.receipts_include_live_grants,
         })
     }
 }

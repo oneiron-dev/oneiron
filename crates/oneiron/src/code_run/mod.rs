@@ -52,7 +52,7 @@ pub use self::scoped_generation::{ScopedChildGeneration, ScopedChildGenerationCa
 pub(crate) mod setting_keys;
 pub mod shadow_runner;
 mod spawn_replay;
-pub(crate) use self::spawn_replay::barrier_spawn_call;
+pub(crate) use self::spawn_replay::{BaseKnownRead, CompareKnown, barrier_spawn_call};
 mod storage;
 pub(crate) use storage::erase_reader_caller_actor_in_txn;
 pub(crate) use storage::replay_rows;
@@ -72,6 +72,8 @@ mod wait_rows;
 pub(crate) use self::action_inputs::self_call_inputs;
 pub(crate) use self::agent_authoring::agent_put_draft;
 pub use self::agent_authoring::{AgentPutInput, AgentPutOutput, parse_agent_put_request};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::codec::pending_step_bytes_digest_for_test;
 pub use self::codec::{
     CODE_RUN_ABI_LAYOUT_CHECK_KEYS, CODE_RUN_BRIDGE_CALL_KEYS, CODE_RUN_DETERMINISM_KEYS,
     CODE_RUN_OUTPUT_PREVIEW_KEYS, CODE_RUN_RAW_OUTPUT_KEYS, CODE_RUN_REPLAY_RECORD_KEYS,
@@ -91,6 +93,8 @@ pub use self::compaction_home::{
 pub(crate) use self::compaction_home::{
     bound_self_model_in, erase_self_model_binding_actor_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::consent_wait::code_consent_run_origin_digest_for_test;
 pub use self::consent_wait::{
     AdmittedBrowserAct, CodeConsentAnswerInput, CodeConsentBrowserAction,
     CodeConsentBrowserOutcome, CodeConsentChoice, CodeConsentEffectHost, CodeConsentParkedRun,
@@ -154,6 +158,8 @@ pub use self::replay::{
     PendingCodeStep, ResultOccurrence, code_run_replay_abi_layout_checks,
 };
 pub(crate) use self::replay::{CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_rows_of};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::replay_capsule::messages_digest_for_test;
 pub use self::replay_capsule::{
     CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ConsoleSlot,
     ExecutorStepStart, ExposureKind, ExposureSlot, ReplayRoutePin, ReplayRung, StepContextRef,
@@ -182,7 +188,7 @@ pub(crate) use self::result_read::{unmarked_secret, unplaced_answer};
 pub use self::run_verb_call::run_verb_call;
 pub use self::storage::ReadWorldUnknown;
 #[cfg(oneiron_test_support)]
-pub(crate) use self::storage::capsule_stored_request_bytes;
+pub(crate) use self::storage::put_record_with_resume_listing_its_calls;
 pub(crate) use self::storage::session_model_heal_count;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
@@ -248,6 +254,8 @@ pub(crate) use self::storage::{bind_owner_pair_ask_in_txn, owner_pair_in_txn};
 pub(crate) use self::storage::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::storage::{capsule_stored_request_bytes, piece_ref_for_test};
 pub(crate) use self::storage::{
     closed_read_world_capture_in_txn, invalidate_imported_read_world_capture_in_txn,
 };
@@ -397,6 +405,19 @@ pub use self::consent_wait::{
 pub(crate) use self::dispatcher::kept_reveal_lease;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::dispatcher::resumed_write_meets_recorded_row;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::dispatcher::resumed_write_meets_stored_receipt;
 pub use self::dispatcher::{SecretUseAnswer, SecretUseRecord, SecretUseStatus, kept_reveal_answer};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::dispatcher::{
+    code_emission_record_id_for_test, consent_request_digest_for_test,
+    program_answer_digest_for_test, program_call_digest_for_test, repo_params_hash_for_test,
+    review_claim_id_for_test, spawn_slip_id_for_test,
+};
 
 pub use self::dispatcher::workflow_operations;
+
+// Door seams for `test_doors::parked_hook_custody`, apart from the block
+// above, so no other re-export edit meets this one.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::dispatcher::{hook_parked_outcome_for_test, parked_note_resumed_for_test};

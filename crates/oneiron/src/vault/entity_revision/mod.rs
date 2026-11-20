@@ -49,6 +49,9 @@ pub(crate) use phonetic::put_pins_pending_phonetic_in_txn;
 pub(crate) use storage::capture_entity_document;
 #[cfg(feature = "sync")]
 pub(crate) use storage::entity_has_pending_revision;
+#[cfg(oneiron_test_support)]
+pub(crate) use storage::publication_text_fields;
+pub(crate) use storage::read_entity_revision_including_archived_in_txn;
 pub use storage::{ClaimValueRedactionBinding, LocalClaimValueRedaction};
 pub(crate) use storage::{ClaimValueRedactionRow, redact_claim_value_fields_in_txn};
 pub(crate) use storage::{

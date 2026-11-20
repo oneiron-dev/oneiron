@@ -54,10 +54,39 @@ pub fn fold_past_prefix_image(
     vault: &Vault,
     covered: &BTreeSet<AuthorityEntryHash>,
 ) -> Result<AdoptedFoldComparison> {
+    fold_past_built_image(vault, covered, false)
+}
+
+/// [`fold_past_prefix_image`], past the image as an overflow leaves it
+/// (FIX 11400): no residence directive's or result's body, and the overflow
+/// marked, as an image past `AUTHORITY_CHECKPOINT_V2_COMPACTION_BYTES`
+/// keeps it, without that many bytes of rows (row
+/// SEQ-FLOOR-S-WITHHELD-COSIGN-REVIEW-TESTS).
+///
+/// # Errors
+///
+/// As [`fold_past_prefix_image`].
+pub fn fold_past_overflow_prefix_image(
+    vault: &Vault,
+    covered: &BTreeSet<AuthorityEntryHash>,
+) -> Result<AdoptedFoldComparison> {
+    fold_past_built_image(vault, covered, true)
+}
+
+/// [`fold_past_prefix_image`], with the image's residence bodies dropped
+/// where `overflow` asks.
+fn fold_past_built_image(
+    vault: &Vault,
+    covered: &BTreeSet<AuthorityEntryHash>,
+    overflow: bool,
+) -> Result<AdoptedFoldComparison> {
     let store = &vault.store;
     let posture = vault.privacy_posture();
     let txn = store.env.read_txn()?;
-    let prefix = vault.build_authority_checkpoint_v2_as_in_txn(&txn, posture, Some(covered))?;
+    let mut prefix = vault.build_authority_checkpoint_v2_as_in_txn(&txn, posture, Some(covered))?;
+    if overflow {
+        prefix.drop_residence_bodies();
+    }
     let adopted = VerifiedAuthorityCheckpoint::unattested_for_door(prefix)?;
     let image = adopted.image();
     let key = authority_cache_key(store, posture, &txn)?;

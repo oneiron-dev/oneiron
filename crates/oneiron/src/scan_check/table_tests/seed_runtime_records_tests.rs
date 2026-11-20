@@ -475,6 +475,9 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
         //   walked past ROW=2; none is an MCP refusal in window, so 0 served.
         EngineScan::CallReceiptRows => {
             use crate::receipt::{CallOutcome, CallReceiptInput, CallTransport};
+            vault.install_device_keystore(std::sync::Arc::new(
+                oneiron_keystore::MemoryKeystore::default(),
+            ));
             for index in 0..PAST {
                 vault
                     .record_call_receipt(CallReceiptInput {
@@ -618,6 +621,7 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
                                 assigned_ref: None,
                                 actor_generation: None,
                                 assigned_generation: None,
+                                answered_heads: None,
                                 occurred_at: LEARNED_AT,
                             },
                         )?;
@@ -937,6 +941,9 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
         // the whole walk in one transaction. Unit: distinct dependents withdrawn
         // for one source; passes ROW when 3 > 2.
         EngineScan::DependentWalkRows => {
+            vault.install_device_keystore(std::sync::Arc::new(
+                oneiron_keystore::MemoryKeystore::default(),
+            ));
             let source = id(0xB6, 0);
             let body = |text: &str| {
                 rmp_serde::to_vec_named(&serde_json::json!({ "txt": text })).expect("body")

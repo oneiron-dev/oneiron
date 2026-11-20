@@ -55,7 +55,8 @@ pub struct AuthorityCheckpointRow {
 /// genesis and each device enrollment the consent structure rests on (an
 /// owner's own device key enrollment among them, FIX 4920), the root records
 /// that name owner anchors and the root appointments those anchors sign, the
-/// actor revocations a signer's
+/// owner's joins of restored machines (each names the held enrolment it
+/// joins; row RESTORED-COPIES-ENROL-EACH-OTHER), the actor revocations a signer's
 /// revocations count, and the world edits, grant travel choices, frontier
 /// joins and custody permit pieces (FIX 11866) that may be a stranger's; each owner handover, whose signed
 /// grant ids a restore across it reads (FIX 5765), and each membership
@@ -76,6 +77,7 @@ fn carries_body(op: &AuthorityOp) -> bool {
                 | AuthorityOp::OwnerKeyEnroll(_)
                 | AuthorityOp::OwnerRoot(_)
                 | AuthorityOp::RootAppointment(_)
+                | AuthorityOp::RestoredMachineJoin(_)
                 | AuthorityOp::RevokeActor { .. }
                 | AuthorityOp::WorldPrivacy(_)
                 | AuthorityOp::GrantTravelSet(_)

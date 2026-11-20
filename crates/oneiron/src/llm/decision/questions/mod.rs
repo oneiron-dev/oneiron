@@ -32,7 +32,7 @@ mod standing_tests;
 pub use answer_scope::{
     answers_in_lane, calibration_pairs_in_lane, closed_outcome_windows_in_lane,
     outcome_labels_in_lane, project_bound_outcomes_in_lane, question_answers_in_lane,
-    read_question_in_lane, schedule_backfill_in_lane,
+    question_outcomes_in_lane, read_question_in_lane, schedule_backfill_in_lane,
 };
 pub use answers::question_answers;
 #[cfg(oneiron_test_support)]
@@ -99,6 +99,7 @@ pub use standing::{
     StandingAnswer, admit_standing_answer, backfill_standing_answer, prepare_standing_answer,
     standing_source_frontier,
 };
+pub(crate) use standing::{answer_rows_in_room_in, mark_answers_stale_in_left_facets_in_txn};
 pub(crate) use store::create_question_in_txn;
 pub use store::{
     create_question, create_question_with_lane, edit_question, edit_question_with_lane,

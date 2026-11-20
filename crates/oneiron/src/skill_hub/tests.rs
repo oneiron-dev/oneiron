@@ -57,6 +57,7 @@ fn hub_ref(pin: HubPin) -> HubRef {
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let temp = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(temp.path(), crate::VaultConfig::default()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     (temp, vault)
 }
 

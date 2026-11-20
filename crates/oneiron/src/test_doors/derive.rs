@@ -865,6 +865,7 @@ pub fn commit_in_attempt(
                             facet: None,
                             world: None,
                             profile: whole_record_profile(profile.subject, profile.document)?,
+                            cites: Vec::new(),
                         })
                     }
                 })
@@ -1578,4 +1579,20 @@ pub fn derive_item_receipts(vault: &Vault, claim: &EntityId) -> Result<Vec<Deriv
 pub fn derive_frontier(vault: &Vault) -> Result<[u8; 32]> {
     let txn = vault.store.env.read_txn()?;
     crate::gate::resolve_policy_manifest(&vault.store, &txn)?.read_frontier_hash()
+}
+
+/// Whether the stored claim `claim` has live support in the vault's own read
+/// now: the read-time test (`claim::has_live_support_in_txn`) a scoped read,
+/// a recall and the model channel apply. `None` when no claim is stored
+/// under the id.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn claim_has_live_support(vault: &Vault, claim: &EntityId) -> Result<Option<bool>> {
+    let txn = vault.store.env.read_txn()?;
+    let Some(body) = vault.get_claim_in_txn(&txn, claim)? else {
+        return Ok(None);
+    };
+    crate::claim::has_live_support_in_txn(&vault.store, &txn, &body).map(Some)
 }

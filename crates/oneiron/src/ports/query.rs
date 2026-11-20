@@ -58,6 +58,11 @@ pub trait EntityStoreRead: Transactions {
         txn: &'a Self::Read<'_>,
     ) -> Result<PortRows<'a, (EntityId, EntityRecord)>>;
     fn port_entity_count(&self, txn: &Self::Read<'_>) -> Result<u64>;
+    /// [`Self::port_entity_count`], but at most `cap`. A backend that counts
+    /// by walking its rows (a room or session union) stops at `cap`.
+    fn port_entity_count_at_most(&self, txn: &Self::Read<'_>, cap: u64) -> Result<u64> {
+        Ok(self.port_entity_count(txn)?.min(cap))
+    }
     fn port_entity_ids_by_type_descending<'a>(
         &self,
         txn: &'a Self::Read<'_>,

@@ -350,10 +350,14 @@ pub(super) fn door_view(
 }
 
 /// Whether `entry`'s signer has standing to store a replicated row: a key
-/// some valid row admitted (live, revoked or retired), a machine's install
-/// key, a valid root's owner anchor, the anchor of the root record it is,
-/// or a key the stored log's structure admits though the fold does not
-/// hold it yet, such as an owner key a pre-handoff rotation named. A key
+/// some valid row admitted (live, revoked or retired), an install key the
+/// roster's chain of a machine names, a valid root's owner anchor, the
+/// anchor of the root record it is, or a key the stored log's structure
+/// admits though the fold does not hold it yet, such as an owner key a
+/// pre-handoff rotation named. An install key only an anchor's chain names
+/// stands through the structure alone, as a stranger's when the anchor is
+/// not this install's own, so its rows count against the stranger bounds
+/// (Fable pass 29: the fold reads no unpinned anchor's chain for it). A key
 /// none of these name signs no valid row, so its rows wait for the
 /// enrollment instead of being stored.
 pub(crate) fn signer_has_standing(
@@ -366,7 +370,7 @@ pub(crate) fn signer_has_standing(
     if fold.roster.contains_key(signer)
         || fold.retired_keys.contains(signer)
         || matches!(signer, AuthorityKey::Ed25519(key)
-            if fold.machines.values().any(|machine| machine.names_key(key))
+            if fold.machines.values().any(|machine| machine.roster_names_key(key))
                 || fold.root_anchors().contains_key(key))
         || self_signed_root(entry).is_some()
     {
@@ -603,12 +607,16 @@ fn signs_for_the_owner(
                 .is_some_and(|device| device.revoked))
 }
 
-/// Whether the stored row `hash`, a request or a directive this install's
-/// pickup answers, is the owner's work at this door: a slip issuer signed or
+/// Whether the row `hash`, a request or a directive this install's pickup
+/// answers, is the owner's work at this door: a slip issuer signed or
 /// cosigned it, or an anchor this install takes as its own signed it, as
 /// [`signs_for_the_owner`] reads `fold`, or this install carries
-/// it ([`carries_own_will`]). A row no raw body of is stored, such as one an
-/// adopted checkpoint image covers, is not.
+/// it ([`carries_own_will`]). The row is the stored one, else, on a vault
+/// that adopted a checkpoint image, the body the image carries of that
+/// covered row, judged the same way: the pickup takes such a request or
+/// directive from the adopted fold, so its result is the owner's work when
+/// the owner signed what it answers (FIX [OWNER-RESERVE-ADOPTED-OWNER-WORK]).
+/// A row neither stored nor carried whole is not.
 fn asks_the_owners_work(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -617,8 +625,12 @@ fn asks_the_owners_work(
     arriving: &[(AuthorityEntryHash, &AuthorityLogEntry)],
     hash: &AuthorityEntryHash,
 ) -> crate::error::Result<bool> {
-    let Some(asked) = super::retired_signers::stored_authority_row(store, txn, hash)? else {
-        return Ok(false);
+    let asked = match super::retired_signers::stored_authority_row(store, txn, hash)? {
+        Some(asked) => asked,
+        None => match super::adopted_evidence::CarriedRows::default().get(store, txn, hash)? {
+            Some(asked) => asked,
+            None => return Ok(false),
+        },
     };
     if names_an_owner_key(structure, &asked)
         && fold.read(store, txn, arriving, |view| {
@@ -630,7 +642,7 @@ fn asks_the_owners_work(
     carries_own_will(store, txn, &asked)
 }
 
-/// Whether the stored request `request` this install's pickup answers is the
+/// Whether the request `request` this install's pickup answers is the
 /// owner's work at this door ([`asks_the_owners_work`], on this vault's
 /// snapshot fold). The key wraps and
 /// joins a pickup signs under this install's key land at the door as the

@@ -2,7 +2,7 @@
 //! bytes, with identity hashes and collection, credential, import and erase passes. The owner
 //! door installs tables with a landing group and retains the rest; other doors retain only.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek};
 
 use heed::{RoTxn, RwTxn};
@@ -11,13 +11,19 @@ use oneiron_records::batch::export::archive_side_tables::byte_values;
 use serde::{Deserialize, Serialize};
 
 use super::archive_index::{IndexedArchive, Loc, Tag};
+use super::archive_retained_room_ledgers::{
+    note_ledger_envelope, retained_row_room, withhold_room_ledger,
+};
+use super::archive_retained_subjects::{RetainedSubjectRule, retained_subject_rule};
 use super::archive_side_dispositions::{omitted_decls, retained_decl, retained_decls};
 use super::{
     ArchiveSideFamily, ArchiveSideRow, ImportOmissionReason, RetainedSideImportSummary,
     RetainedSideTableCount, SideRowBytes,
 };
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::registry::ENTITY_TYPE_SUMMARY;
 use crate::serialize::{ExportBodyFile, null_document_tree_row};
 use crate::side_table::{CodecName, Named, SideKey, SideTable};
 use crate::store::Store;
@@ -131,16 +137,89 @@ pub(crate) fn retained_envelope_source_table(value: &[u8]) -> Option<String> {
         .map(|envelope| envelope.source_table)
 }
 
+/// Whether the whole-vault export keeps record `id` out, as its record pass does: the egress door
+/// keeps it out (off the record, use-limited by a customer hold that refused its privacy erase,
+/// or held back here), or it is an epoch summary one of whose transitive sources the door keeps
+/// out, or whose epoch does not resolve (FIX 1496 S5).
+fn export_keeps_record_out(vault: &crate::Vault, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    if super::export_egress::whole_vault_export_excludes_entity_in_txn(vault, rtxn, id)? {
+        return Ok(true);
+    }
+    let store = &vault.store;
+    let summary_kept_out =
+        crate::ports::EntityStoreRead::port_entity_with_raw(store, rtxn, id, |raw| {
+            if EntityMetadataHeader::parse(raw)
+                .is_none_or(|header| header.entity_type != ENTITY_TYPE_SUMMARY)
+            {
+                return Ok(false);
+            }
+            let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+            let admitted = crate::compaction::epoch_sources_admitted_in(
+                store,
+                rtxn,
+                id,
+                body,
+                |source, _| {
+                    Ok(
+                        !super::export_egress::whole_vault_export_excludes_entity_in_txn(
+                            vault, rtxn, source,
+                        )?,
+                    )
+                },
+            )?;
+            Ok(admitted == Some(false))
+        })?;
+    Ok(summary_kept_out == Some(true))
+}
+
+/// Whether the whole-vault export withholds a retained row, live or inert. It does when a
+/// record the row is about ([`RetainedSubjectRule::records`]) is one the export keeps out
+/// ([`export_keeps_record_out`]), so no receipt, setting, grant or history row of a withheld
+/// record goes either (REVIEW-9446 P1-1; FIX WHOLE-VAULT-EXPORT-RETAINED-ROWS-OF-WITHHELD-RECORDS),
+/// and when its table states no rule or its rule cannot read the row. A ledger row, revision or
+/// role grant of a room deleted here, which the archive does not carry as a record
+/// ([`super::snapshot_body::row_exported_in_txn`]), stays home with it (round 2 P1-1; Engine
+/// ANSWER RETAINED-ROOM-ROWS-WITHHELD Q1 = A).
+fn retained_row_withheld(
+    vault: &crate::Vault,
+    rtxn: &RoTxn<'_>,
+    rule: Option<RetainedSubjectRule>,
+    envelope: &ArchiveRetainedSideRow,
+) -> Result<bool> {
+    let Some(records) =
+        rule.and_then(|rule| rule.records(&envelope.source_key, &envelope.source_value))
+    else {
+        return Ok(true);
+    };
+    for id in &records {
+        if export_keeps_record_out(vault, rtxn, id)? {
+            return Ok(true);
+        }
+    }
+    let Some(room) = retained_row_room(&envelope.source_table, &envelope.source_key) else {
+        return Ok(false);
+    };
+    let exported = super::snapshot_body::row_exported_in_txn(&vault.store, rtxn, &room)?;
+    Ok(!exported)
+}
+
 /// Every retained row this export carries, in physical key order: the live rows of the
 /// retained source tables read raw and marked `source_live`, unioned with the inert envelopes
-/// already stored, deduplicated by [`retained_side_row_key`] with the live row kept. Collected
-/// into memory like the 41-family writer.
+/// already stored, deduplicated by [`retained_side_row_key`] with the live row kept. A row about
+/// a record the export keeps out is withheld ([`retained_row_withheld`]), and so is every live
+/// and inert row of a room ledger one of whose live rows is withheld ([`withhold_room_ledger`])
+/// or names an entity it keeps out ([`note_ledger_envelope`]); a withheld inert copy goes alone.
+/// Collected into memory like the 41-family writer.
 pub(crate) fn collect_retained_side_rows_in_txn(
-    store: &Store,
+    vault: &crate::Vault,
     rtxn: &RoTxn<'_>,
 ) -> Result<Vec<SideRowBytes>> {
+    let store = &vault.store;
     let mut rows: BTreeMap<[u8; 32], SideRowBytes> = BTreeMap::new();
+    let mut ledger_rooms: BTreeMap<[u8; 32], EntityId> = BTreeMap::new();
+    let mut withheld_ledgers: BTreeSet<EntityId> = BTreeSet::new();
     for decl in retained_decls() {
+        let rule = retained_subject_rule(decl.name);
         for row in decl.iter_raw(store, rtxn)? {
             let (source_key, source_value) = row?;
             let envelope = ArchiveRetainedSideRow {
@@ -149,7 +228,21 @@ pub(crate) fn collect_retained_side_rows_in_txn(
                 source_value,
                 source_live: true,
             };
+            if retained_row_withheld(vault, rtxn, rule, &envelope)? {
+                withhold_room_ledger(&envelope, &mut withheld_ledgers);
+                continue;
+            }
             let key = retained_side_row_key(&envelope);
+            if !note_ledger_envelope(
+                vault,
+                rtxn,
+                &envelope,
+                key,
+                &mut ledger_rooms,
+                &mut withheld_ledgers,
+            )? {
+                continue;
+            }
             let value = RETAINED_SIDE_ROWS.encode_value(&envelope)?;
             rows.entry(key).or_insert(SideRowBytes {
                 family: ArchiveSideFamily::RetainedSideRow,
@@ -168,15 +261,35 @@ pub(crate) fn collect_retained_side_rows_in_txn(
             ));
         }
         let envelope = RETAINED_SIDE_ROWS.decode_value(&value)?;
-        rows.entry(retained_side_row_key(&envelope))
-            .or_insert(SideRowBytes {
-                family: ArchiveSideFamily::RetainedSideRow,
-                key,
-                value,
-                owner: None,
-                carriers: Vec::new(),
-            });
+        let rule = retained_subject_rule(&envelope.source_table);
+        if retained_row_withheld(vault, rtxn, rule, &envelope)? {
+            withhold_room_ledger(&envelope, &mut withheld_ledgers);
+            continue;
+        }
+        let identity = retained_side_row_key(&envelope);
+        if !note_ledger_envelope(
+            vault,
+            rtxn,
+            &envelope,
+            identity,
+            &mut ledger_rooms,
+            &mut withheld_ledgers,
+        )? {
+            continue;
+        }
+        rows.entry(identity).or_insert(SideRowBytes {
+            family: ArchiveSideFamily::RetainedSideRow,
+            key,
+            value,
+            owner: None,
+            carriers: Vec::new(),
+        });
     }
+    rows.retain(|identity, _| {
+        ledger_rooms
+            .get(identity)
+            .is_none_or(|room| !withheld_ledgers.contains(room))
+    });
     Ok(rows.into_values().collect())
 }
 
@@ -287,27 +400,12 @@ fn opaque_withholds_credential(bytes: &[u8]) -> bool {
     crate::batch::secret_scan::scan_file_content("", bytes).is_some()
 }
 
-/// Installs the owner's supported source tables and otherwise keeps envelopes inert in the
-/// import transaction; actor and actorless doors retain only, with the original inert counts.
-/// On the owner door, each source-live HOOKS_GRANT tuple kept as a retained row is recorded
-/// under `restore_receipt_hex` (32 hex) for the restore group's accept to install.
-pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
-    vault: &crate::Vault,
-    wtxn: &mut RwTxn<'_>,
+/// Visits retained envelopes in archive order, checking their codec and identity once per pass.
+pub(crate) fn visit_retained_side_rows<R: Read + Seek>(
     archive: &IndexedArchive<'_, R>,
-    permit: Option<&super::OwnerArchiveRestorePermit>,
-    restore_receipt_hex: Option<&str>,
-    refresh: &mut super::archive_side_install::ArchivedSideRowRefresh,
-) -> Result<RetainedSideImportSummary> {
-    use super::archive_side_install::{
-        ArchivedSideGroup, ArchivedSideRowOutcome, archived_side_group,
-        land_archived_side_group_in_txn,
-    };
-
+    mut visit: impl FnMut([u8; 32], ArchiveRetainedSideRow) -> Result<()>,
+) -> Result<()> {
     let mut files = |file: &ExportBodyFile| file.read(&archive.files);
-    let mut tables: BTreeMap<String, RetainedSideTableCount> = BTreeMap::new();
-    let mut groups: BTreeMap<ArchivedSideGroup, Vec<([u8; 32], ArchiveRetainedSideRow)>> =
-        BTreeMap::new();
     let mut after: Option<Vec<u8>> = None;
     while let Some((key, value)) = archive.index.next(Tag::Side, &[], after.as_deref())? {
         let row = archive
@@ -329,12 +427,104 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
                 "retained side row key is not its envelope identity",
             ));
         }
+        visit(typed, envelope)?;
+        after = Some(key);
+    }
+    Ok(())
+}
+
+/// Lands, on the owner's restore, each archived standing grant the source held live, before the
+/// import puts in any row or link (Engine ANSWER CLAIM-NOTE-SAME-AS-RESTORE-PROOF = A): a
+/// `same_as` between two CLAIMs comes back only under a live nightly-link grant, read before its
+/// status claim and its link go in (`document_import::claim_pair_same_as`). The consent group's
+/// own checks run (`consent::archive_restore`), so only a row whose stamp actor is already a live
+/// PERSON here lands now; every other row waits for [`install_or_retain_side_rows_in_txn`],
+/// after the imported persons, as before. Returns the keys of the rows installed here, which that
+/// later pass counts as installed without landing them again. Other doors land nothing here.
+pub(crate) fn land_standing_grants_first_in_txn<R: Read + Seek>(
+    vault: &crate::Vault,
+    wtxn: &mut RwTxn<'_>,
+    archive: &IndexedArchive<'_, R>,
+    permit: Option<&super::OwnerArchiveRestorePermit>,
+    refresh: &mut super::archive_side_install::ArchivedSideRowRefresh,
+) -> Result<BTreeSet<[u8; 32]>> {
+    use super::archive_side_install::{
+        ArchivedSideGroup, ArchivedSideRowOutcome, land_archived_side_group_in_txn,
+    };
+
+    let mut landed = BTreeSet::new();
+    let Some(permit) = permit else {
+        return Ok(landed);
+    };
+    let mut staged = Vec::new();
+    visit_retained_side_rows(archive, |typed, envelope| {
+        if envelope.source_live
+            && envelope.source_table == crate::side_table::CONSENT_STANDING_GRANT.name
+        {
+            staged.push((typed, envelope));
+        }
+        Ok(())
+    })?;
+    if staged.is_empty() {
+        return Ok(landed);
+    }
+    let (keys, rows): (Vec<_>, Vec<_>) = staged.into_iter().unzip();
+    let outcomes = land_archived_side_group_in_txn(
+        ArchivedSideGroup::Consent,
+        vault,
+        wtxn,
+        permit,
+        &rows,
+        refresh,
+    )?;
+    if outcomes.len() != rows.len() {
+        return Err(Error::InvariantViolation(
+            "an archive landing group must return one outcome per envelope",
+        ));
+    }
+    for (key, outcome) in keys.into_iter().zip(outcomes) {
+        if matches!(outcome, ArchivedSideRowOutcome::Installed) {
+            RETAINED_SIDE_ROWS.delete(vault, wtxn, &key)?;
+            landed.insert(key);
+        }
+    }
+    Ok(landed)
+}
+
+/// Installs the owner's supported source tables and otherwise keeps envelopes inert in the
+/// import transaction; actor and actorless doors retain only, with the original inert counts.
+/// A row [`land_standing_grants_first_in_txn`] installed, named in `landed_first`, counts as
+/// installed and lands no second time.
+/// On the owner door, each source-live HOOKS_GRANT tuple kept as a retained row is recorded
+/// under `restore_receipt_hex` (32 hex) for the restore group's accept to install.
+pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
+    vault: &crate::Vault,
+    wtxn: &mut RwTxn<'_>,
+    archive: &IndexedArchive<'_, R>,
+    permit: Option<&super::OwnerArchiveRestorePermit>,
+    restore_receipt_hex: Option<&str>,
+    landed_first: &BTreeSet<[u8; 32]>,
+    refresh: &mut super::archive_side_install::ArchivedSideRowRefresh,
+) -> Result<RetainedSideImportSummary> {
+    use super::archive_side_install::{
+        ArchivedSideGroup, ArchivedSideRowOutcome, archived_side_group,
+        land_archived_side_group_in_txn,
+    };
+
+    let mut tables: BTreeMap<String, RetainedSideTableCount> = BTreeMap::new();
+    let mut groups: BTreeMap<ArchivedSideGroup, Vec<([u8; 32], ArchiveRetainedSideRow)>> =
+        BTreeMap::new();
+    visit_retained_side_rows(archive, |typed, envelope| {
         let count = tables
             .entry(envelope.source_table.clone())
             .or_insert_with(|| RetainedSideTableCount {
                 source_table: envelope.source_table.clone(),
                 ..Default::default()
             });
+        if landed_first.contains(&typed) {
+            count.installed_rows += 1;
+            return Ok(());
+        }
         // Only a tuple the source held live installs; an inert copy stays inert (REVIEW-7771).
         let group = permit
             .filter(|_| envelope.source_live)
@@ -354,8 +544,8 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
                 super::record_deferred_hook_grant_in_txn(vault, wtxn, receipt_hex, typed)?;
             }
         }
-        after = Some(key);
-    }
+        Ok(())
+    })?;
     if let Some(permit) = permit {
         // The enum declaration order is the fixed owning-group dependency order.
         for (group, staged) in groups {
@@ -460,6 +650,29 @@ fn retain_envelope_in_txn(
             count.inserted_rows += 1;
         }
     }
+    Ok(())
+}
+
+/// Keeps an inert copy of a `source_table` row with key `source_key` and value `source_value`
+/// under its envelope identity, as an import keeps an archived copy, unchecked against the
+/// table: a test plants a malformed copy an archive could carry (REVIEW-9739 P1-2). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn retain_inert_copy_for_test(
+    vault: &crate::Vault,
+    source_table: &str,
+    source_key: Vec<u8>,
+    source_value: Vec<u8>,
+) -> Result<()> {
+    let envelope = ArchiveRetainedSideRow {
+        source_table: source_table.to_owned(),
+        source_key,
+        source_value,
+        source_live: false,
+    };
+    let key = retained_side_row_key(&envelope);
+    let mut txn = vault.store.env.write_txn()?;
+    RETAINED_SIDE_ROWS.put(vault, &mut txn, &key, &envelope)?;
+    txn.commit()?;
     Ok(())
 }
 

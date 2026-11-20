@@ -38,8 +38,7 @@ pub(crate) async fn run_host_relay(args: &HostRelayArgs) -> anyhow::Result<()> {
     );
     // The room's engine vault id and objects directory, as the room reads
     // them: never derived from the registry id.
-    let config: RelayConfig = serde_json::from_slice(&std::fs::read(&args.config)?)?;
-    config.validate()?;
+    let config = RelayConfig::from_file(&args.config)?;
     let engine_vault_id = oneiron_vault_contract::from_hex(&config.vault_id)
         .and_then(|id| <[u8; 32]>::try_from(id).ok())
         .ok_or_else(|| anyhow::anyhow!("vault_id must be 32 bytes of lowercase hex"))?;

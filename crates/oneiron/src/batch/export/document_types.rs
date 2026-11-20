@@ -59,6 +59,15 @@ pub struct WholeVaultDocumentManifest {
     /// and row counts; empty in a v5 archive and outside a whole-vault export.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub side_table_omissions: Vec<ArchiveSideTableOmission>,
+    /// RESTORE-KEEPS-MERGES-AND-SPLITS: the merge and split decisions the
+    /// source's effective ledger held current when this whole-vault archive
+    /// was cut, by id (lowercase hex, ascending). The archive's own type-76
+    /// rows cannot show which seal counted there; the owner's restore into a
+    /// fresh vault decides each named one again. Additive, as `provenance`:
+    /// absent when there is none, and an archive written before it restores
+    /// none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub current_identity_topology_events: Vec<String>,
     /// L2-23: the exporting install's signature over this manifest, set last
     /// (`super::archive_provenance`). `None` on an archive no loaded machine
     /// key signed, which proves no provenance. The field is additive, so the
@@ -185,6 +194,14 @@ impl WholeVaultDocumentManifest {
                     .storage
                     .authority()
                     .map(super::ExportAuthorityManifest::vault_id)
+            || !self
+                .current_identity_topology_events
+                .windows(2)
+                .all(|pair| pair[0] < pair[1])
+            || self
+                .current_identity_topology_events
+                .iter()
+                .any(|id| crate::EntityId::from_lower_hex(id).is_err())
         {
             return Err(Error::InvalidConfig(
                 "unsupported whole-vault archive manifest".to_owned(),
@@ -408,8 +425,17 @@ pub struct WholeVaultImportReceipt {
     /// The archived rows among `omitted_entities` that this vault's state kept
     /// out, beyond the manifest's `import_omissions`: an archived
     /// `vault.default_facet` outside the owner's restore into a fresh vault
-    /// (`TargetDefaultFacetKept`), and a claim about a link the import did not
-    /// bring back before it (`ClaimSubjectEdgeNotRestored`).
+    /// (`TargetDefaultFacetKept`), a claim about a link the import did not
+    /// bring back before it, an edge-provenance claim among them
+    /// (`ClaimSubjectEdgeNotRestored`), a coreference share consent
+    /// (`CoreferenceConsentNotRestored`), a claim about a row kept out
+    /// (`ClaimSubjectNotRestored`), an edge-provenance claim the gate would
+    /// hold for review (`ProvenanceAutoNotPermitted`), and, on every door but
+    /// the owner's restore, a room this vault cannot seat with the TURNs and
+    /// MESSAGEs in it (`RoomNotSeatedHere`). One more entry
+    /// is no omitted row: a provenance claim this vault already holds open,
+    /// whose archived close the gate would hold, stays here as it was and is
+    /// named under `ProvenanceAutoNotPermitted` too.
     pub destination_omissions: Vec<ExportImportOmission>,
     /// Domain-owned identities (currently MODEL name/version) rebound locally.
     pub remapped_entities: std::collections::BTreeMap<String, String>,
@@ -440,8 +466,29 @@ pub struct WholeVaultImportReceipt {
     /// `split_into` links stayed out: such a link follows the type-76
     /// events, which stay archive data, so each of these rows is back here as
     /// a separate Active row, and the owner may merge it again
-    /// (OWNEDGES-SHELL-RESTORE = A).
+    /// (OWNEDGES-SHELL-RESTORE = A). A row a merge or split in
+    /// `restored_identity_topology` shelled again is not counted.
     pub unrestored_identity_topology_shells: usize,
+    /// RESTORE-KEEPS-MERGES-AND-SPLITS: the merges and splits the owner's
+    /// restore into a fresh vault decided again here, from those the
+    /// archive's manifest names current at its source. Each is a new event
+    /// of this vault, sealed by this install, that its undo door reverts.
+    pub restored_identity_topology: Vec<RestoredIdentityTopologyEvent>,
+    /// The archive's current merges and splits that restore did not decide
+    /// again here, and why. Empty on every other import.
+    pub unrestored_identity_topology_events: Vec<UnrestoredIdentityTopologyEvent>,
+    /// Archived `same_as` links that stayed out: every link but one between
+    /// two PERSONs this import inserted, or, on the owner's restore, one
+    /// between two CLAIMs it inserted while a live nightly-link grant of a
+    /// live owner of this vault lets the Dreamer apply it here, each with a
+    /// status claim it puts in too. So a diary NOTE pair stays out on every
+    /// door (its proof is its residents' own submission, and an imported
+    /// diary has no local author here), as do a CLAIM pair on any other door
+    /// or with no such grant, a link naming a row already here or one left
+    /// out, and a link with no status claim restored. A claim about such a
+    /// link, its edge provenance among them, stays archive data
+    /// (`ClaimSubjectEdgeNotRestored`).
+    pub unrestored_same_as_links: usize,
     /// Custody records the archive carried as handles only: secrets to
     /// re-enter through the owner's registration door.
     pub missing_secrets: Vec<crate::secret_record::SecretCustodyMetadata>,
@@ -456,6 +503,51 @@ pub struct WholeVaultImportReceipt {
     pub unchanged_side_rows: usize,
     /// SIDE-1: the retained side rows this import kept inert, and the manifest's table omissions.
     pub retained_side_rows: RetainedSideImportSummary,
+}
+
+/// A merge or split the owner's restore decided again here
+/// (RESTORE-KEEPS-MERGES-AND-SPLITS).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoredIdentityTopologyEvent {
+    /// The archived decision, by id (lowercase hex).
+    pub archived: String,
+    /// This vault's new event deciding it, by id (lowercase hex).
+    pub restored: String,
+    pub kind: IdentityTopologyRestoreKind,
+}
+
+/// The kind of decision an owner's restore decides again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum IdentityTopologyRestoreKind {
+    Merge,
+    Split,
+}
+
+/// A current merge or split the archive names that the owner's restore did
+/// not decide again here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnrestoredIdentityTopologyEvent {
+    /// The archived decision, by id (lowercase hex).
+    pub archived: String,
+    pub reason: IdentityTopologyNotRestored,
+}
+
+/// Why an archived current merge or split stayed archive data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IdentityTopologyNotRestored {
+    /// The archive does not hold it whole: a row or part missing, nulled or
+    /// not decoding, or a decision that is no applied merge or split. An
+    /// archive taken without secrets holds a decision recorded over two or
+    /// more parts this way, and one whose text its credential rule nulls: a
+    /// part's payload is then free bytes, so it goes nulled.
+    ArchivedDecisionIncomplete,
+    /// This install could not load its signing keys, so it seals no
+    /// decision.
+    SigningUnavailable,
+    /// This vault's topology door refused it, with the refusal's text: a
+    /// participant not restored, reserved for deletion or in a state the op
+    /// cannot move, or the embedded owner retired.
+    Refused(String),
 }
 
 impl WholeVaultDocument {

@@ -202,6 +202,7 @@ fn owner_restore_installs_absent_setting_rows_and_a_repeat_changes_nothing() {
                 why: None,
                 check_in_ref: None,
                 weight_runs: None,
+                surface: None,
             },
         )
         .expect("the owner pins the project value");
@@ -252,6 +253,7 @@ fn owner_restore_installs_absent_setting_rows_and_a_repeat_changes_nothing() {
                 why: None,
                 check_in_ref: None,
                 weight_runs: None,
+                surface: None,
             },
         )
         .expect("the owner sets the project value");
@@ -502,6 +504,7 @@ fn owner_restore_holds_back_setting_rows_that_fail_their_key_checks() {
                 why: None,
                 check_in_ref: None,
                 weight_runs: None,
+                surface: None,
             },
         )
         .expect("the owner sets a project value naming an absent entity");

@@ -684,6 +684,7 @@ pub(crate) fn apply_settlement_in_txn(
     // put admission refuses it; a person's and an agent's pass unchanged.
     let mut envelope = envelope.clone();
     vault.sign_retained_machine_claim_in_txn(&*txn, &resolved, &candidate, &mut envelope)?;
+    let subject = candidate.subject();
     vault
         .batch_in()
         .claim_candidate(
@@ -695,6 +696,9 @@ pub(crate) fn apply_settlement_in_txn(
         )
         .made_by(&resolved, birth)
         .apply(txn)?;
+    // The answer about a PERSON under a cleanup archive is a new mention of
+    // her: she is restored in the settlement's transaction (ARCH-0073 §6).
+    vault.restore_mentioned_subject_in_txn(txn, subject)?;
     Ok(SettlementApplied::Settled(SettledConflict {
         resolved,
         superseded,
@@ -1034,6 +1038,10 @@ fn restore_dreamer_member_in_txn(
         )
         .made_by(&copy, birth)
         .apply(txn)?;
+    // The copy stands the member's claim again: about a PERSON under a
+    // cleanup archive, it restores her in the revert's transaction
+    // (ARCH-0073 §6).
+    vault.restore_mentioned_subject_in_txn(txn, body.subject)?;
     Ok(Some(copy))
 }
 

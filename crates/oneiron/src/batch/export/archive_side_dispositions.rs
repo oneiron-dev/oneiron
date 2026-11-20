@@ -63,6 +63,14 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ),
     ("CONSENT_STANDING_GRANT", ArchiveSideDisposition::Retained),
     ("CONSENT_WIDEN_PROPOSAL", ArchiveSideDisposition::Retained),
+    (
+        "CONVERSATION_MEMBERSHIP_ROW",
+        ArchiveSideDisposition::Retained,
+    ),
+    (
+        "CONVERSATION_MEMBERSHIP_SEQ",
+        ArchiveSideDisposition::Retained,
+    ),
     ("CONVERSATION_ROLE_GRANT", ArchiveSideDisposition::Retained),
     ("DRAFTER_POLICY", ArchiveSideDisposition::Retained),
     (
@@ -119,11 +127,6 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ("HOOKS_GRANT", ArchiveSideDisposition::Retained),
     ("HOOKS_RECEIPT", ArchiveSideDisposition::Retained),
     ("HOOKS_REGEN_RECEIPT", ArchiveSideDisposition::Retained),
-    (
-        "HOUSEKEEPING_SCHEDULE",
-        ArchiveSideDisposition::Omitted(ImportOmissionReason::LocalProjectionNotRestored),
-    ),
-    ("HOUSEKEEPING_WAKE", ArchiveSideDisposition::Retained),
     ("HOUSE_LINK_RECEIPT", ArchiveSideDisposition::Retained),
     ("INQUIRY_RECEIPT", ArchiveSideDisposition::Retained),
     ("LEARNING_SETTING", ArchiveSideDisposition::Retained),

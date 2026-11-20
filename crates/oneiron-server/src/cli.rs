@@ -9,6 +9,8 @@ mod account_args;
 pub use account_args::{
     AccountCommand, AccountLoginArgs, AccountLogoutArgs, AccountServeArgs, AccountStatusArgs,
 };
+mod continue_args;
+pub use continue_args::ContinueArgs;
 mod deployment_args;
 pub use deployment_args::HostRelayArgs;
 mod files_args;
@@ -252,6 +254,13 @@ pub enum Command {
     /// selected one at its step 3.
     #[command(subcommand)]
     Hosted(HostedCommand),
+    /// Move the Claude Code session working in this repo to the selected
+    /// hosted vault (`--cloud`): check that its node runs the runner, land
+    /// the session's log, push a hand-off commit of the working tree to the
+    /// custody repo, and start the run there. It says "safe to close this
+    /// machine" only once the run is bound; any failure leaves the session
+    /// here as it was.
+    Continue(ContinueArgs),
     /// This user's service for the local vault `oneiron hook` starts: write
     /// it and start it through the person's own supervisor, stop and remove
     /// it, or show it. Optional; without it the hook starts the vault.
@@ -502,7 +511,9 @@ pub struct TokenPairArgs {
     #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
     pub url: String,
 
-    /// Environment variable holding a logged owner-grade capability slip.
+    /// Environment variable holding the owner's own logged full slip (one
+    /// paired to his PERSON with `--actor-class human`): a link mints a slip,
+    /// so only the vault owner makes one.
     #[arg(long, default_value = "ONEIRON_TOKEN")]
     pub token_env: String,
 
@@ -522,6 +533,8 @@ pub struct TokenPairArgs {
 
     /// D13 actor class the slip binds write identity to: `human`, `agent`,
     /// or `system`. Required by `/v1/core/facade` routes; absent by default.
+    /// A slip the owner pairs for himself takes `human`: owner acts (pairing
+    /// links, slip revocation, full sync) admit only his human-class slip.
     #[arg(long = "actor-class")]
     pub actor_class: Option<String>,
 
@@ -1148,6 +1161,11 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         // Blocking: a login asks its origin through a spawned `oneiron mcp`.
         Command::Hosted(command) => {
             crate::logging::off_runtime("hosted", move || commands::hosted(command)).await?
+        }
+        // Blocking: it calls its verbs through a spawned `oneiron mcp` and
+        // runs git.
+        Command::Continue(args) => {
+            crate::logging::off_runtime("continue", move || commands::continue_work(args)).await?
         }
         // Blocking: it waits on the person's supervisor.
         Command::UserService(command) => {

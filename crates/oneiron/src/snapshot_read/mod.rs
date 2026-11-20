@@ -17,6 +17,7 @@ mod evidence_spans;
 mod extraction_inputs;
 mod extraction_observations;
 mod policy_preflight;
+pub(crate) mod psych_profile_sources;
 mod run_reader;
 pub(crate) mod setting_keys;
 mod settings_doors;
@@ -39,6 +40,8 @@ pub use evidence_spans::{
     evidence_spans, validate_evidence_spans,
 };
 pub(crate) use evidence_spans::{evidence_spans_bound, evidence_spans_in_txn};
+#[cfg(oneiron_test_support)]
+pub(crate) use extraction_inputs::pin_of_encoded_policy_for_test;
 pub use extraction_inputs::{
     ExtractionInputsPage, ExtractionInputsPageRequest, ExtractionPolicy, ExtractionTurn,
     extraction_inputs_page,
@@ -53,9 +56,17 @@ pub use extraction_observations::{
     ListedObservation, PriorObservation, ReplayObservation, SimilarityScore,
     extraction_observations_page,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use extraction_observations::{
+    observation_key_tokens_for_test, pin_of_encoded_facts_for_test,
+};
 pub use policy_preflight::{
     POLICY_PREFLIGHT_MAX_REFS, PolicyPreflight, PolicyPreflightAct, PolicyPreflightRef,
     PolicyPreflightRequest, PolicyPreflightVerdict, policy_preflight, validate_policy_preflight,
+};
+pub use psych_profile_sources::{
+    PsychProfileCandidate, PsychProfileSourcesPage, PsychProfileSourcesPageRequest,
+    psych_profile_sources_page,
 };
 pub use run_reader::{
     checkpoint_as_reader, checkpoint_embedded, reply_evidence_as_reader, reply_evidence_embedded,

@@ -62,6 +62,10 @@ mod topology;
 
 #[cfg(oneiron_test_support)]
 #[doc(hidden)]
+#[path = "../../test_doors/home_probe.rs"]
+pub mod home_probe;
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
 #[path = "../../test_doors/sync_outbox.rs"]
 pub mod sync_outbox;
 
@@ -738,6 +742,18 @@ impl SyncConnection {
         self.client()?.open_item(window, item).await
     }
 
+    /// [`Self::open_item`], with `finish` run in the transaction that stamps
+    /// or keeps the copy. An owner's open directive records its result there
+    /// ([`crate::sync::SyncClient::open_item_with`]).
+    pub(crate) async fn open_item_with(
+        &self,
+        window: &crate::sync::WindowKey,
+        item: crate::EntityId,
+        finish: impl FnOnce(&mut heed::RwTxn<'_>) -> crate::error::Result<()> + Send,
+    ) -> Result<crate::sync::OpenedItem, crate::sync::TransportError> {
+        self.client()?.open_item_with(window, item, finish).await
+    }
+
     /// Fetch the current windows' thin index again and return it.
     pub async fn refresh_residence_index(
         &self,
@@ -988,6 +1004,10 @@ enum LoopExit {
     /// A peer session's probe received the home's root (FIX 4748): what was
     /// buffered is queued, and the next connect tries the home's first round.
     HomeReturned,
+    /// The home answered a peer session's probe with a 403 to the credential
+    /// it carried (MEMBER-SELECTOR-SOCKET): what was buffered is queued, and
+    /// the run stops as on a home dial's 403.
+    Forbidden,
 }
 
 #[cfg(test)]

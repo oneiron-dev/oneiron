@@ -6,9 +6,7 @@
 //! referenced anywhere in this lane.
 
 use std::future::Future;
-use std::pin::Pin;
 use std::sync::Mutex;
-use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 use serde_json::{Value as JsonValue, json};
 
@@ -80,32 +78,11 @@ impl LlmBackend for RecordingBackend {
 }
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {
-    let waker = noop_waker();
-    let mut cx = Context::from_waker(&waker);
-    let mut future = Box::pin(future);
-    match Pin::new(&mut future).poll(&mut cx) {
-        Poll::Ready(output) => output,
-        Poll::Pending => panic!("test future unexpectedly pending"),
-    }
-}
-
-fn noop_waker() -> Waker {
-    unsafe fn clone(_: *const ()) -> RawWaker {
-        raw_waker()
-    }
-    unsafe fn wake(_: *const ()) {}
-    unsafe fn wake_by_ref(_: *const ()) {}
-    unsafe fn drop(_: *const ()) {}
-
-    fn raw_waker() -> RawWaker {
-        RawWaker::new(
-            std::ptr::null(),
-            &RawWakerVTable::new(clone, wake, wake_by_ref, drop),
-        )
-    }
-
-    // SAFETY: the noop waker never dereferences the null data pointer.
-    unsafe { Waker::from_raw(raw_waker()) }
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime")
+        .block_on(future)
 }
 
 // -------------------------------------------------------------------------
@@ -210,14 +187,6 @@ fn booking_constraint_canonical_round_trip() {
     let second = parsed_object(&backend_b);
 
     assert_eq!(first, second, "semantically identical payloads converge");
-    assert_eq!(
-        first.canonical_bytes().expect("canonical bytes"),
-        second.canonical_bytes().expect("canonical bytes"),
-    );
-    assert_eq!(
-        first.canonical_hash().expect("canonical hash"),
-        second.canonical_hash().expect("canonical hash"),
-    );
     // De-duplication actually happened.
     assert_eq!(first.weekdays.len(), 2);
     assert_eq!(first.local_time_windows.len(), 2);
@@ -274,10 +243,10 @@ fn booking_constraint_canonical_round_trip() {
         Err(BookingError::InvalidConstraint(_))
     ));
 
-    // A non-canonical object cannot produce bytes at all.
+    // A non-canonical object is refused.
     let unsorted = ConstraintObject {
         weekdays: vec![ConstraintWeekday::Wednesday, ConstraintWeekday::Monday],
         ..canonical_object()
     };
-    assert!(unsorted.canonical_bytes().is_err());
+    assert!(unsorted.validate().is_err());
 }

@@ -81,8 +81,8 @@ impl ConsolidationExecutor<'_> {
             mut charges,
         } = started;
         let run_started = Instant::now();
-        let run = self
-            .run_partition_attempt(
+        let run = build_boxed_future(|| {
+            self.run_partition_attempt(
                 &payload,
                 &resources,
                 ctx,
@@ -91,19 +91,22 @@ impl ConsolidationExecutor<'_> {
                 &mut charges,
                 stages,
             )
-            .await;
+        })
+        .await;
         stages.close_model_run(run_started);
-        self.settle_partition_run(
-            &resources,
-            run,
-            &widened,
-            widened_round,
-            &originals,
-            &returned,
-            ctx,
-            &mut charges,
-            stages,
-        )
+        build_boxed_future(|| {
+            self.settle_partition_run(
+                &resources,
+                run,
+                &widened,
+                widened_round,
+                &originals,
+                &returned,
+                ctx,
+                &mut charges,
+                stages,
+            )
+        })
         .await
     }
 
@@ -236,8 +239,8 @@ impl ConsolidationExecutor<'_> {
                 if let Err(error) = held.publish(ctx.vault, self.actor, resources) {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
                 }
-                if let Err(error) = self
-                    .commit_candidates(
+                if let Err(error) = build_boxed_future(|| {
+                    self.commit_candidates(
                         &resources,
                         candidates,
                         widened,
@@ -247,7 +250,8 @@ impl ConsolidationExecutor<'_> {
                         ctx,
                         stages,
                     )
-                    .await
+                })
+                .await
                 {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
                 }
@@ -263,8 +267,8 @@ impl ConsolidationExecutor<'_> {
                 if let Err(error) = held.publish(ctx.vault, self.actor, resources) {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
                 }
-                if let Err(error) = self
-                    .commit_candidates(
+                if let Err(error) = build_boxed_future(|| {
+                    self.commit_candidates(
                         &resources,
                         candidates,
                         &[],
@@ -274,7 +278,8 @@ impl ConsolidationExecutor<'_> {
                         ctx,
                         stages,
                     )
-                    .await
+                })
+                .await
                 {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
                 }

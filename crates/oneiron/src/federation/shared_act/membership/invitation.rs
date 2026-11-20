@@ -12,15 +12,18 @@
 //! and decline doors, only while it is pending and only while that key is
 //! the one it records.
 use super::super::{
-    Effect, SharedActExecutionReceipt, SharedVaultChange, check_vault, decode, encode, invalid,
-    key, non_root,
+    Effect, OUTCOME_PREFIX, SharedActExecutionReceipt, SharedActOutcome, SharedVaultChange,
+    check_vault, decode, encode, invalid, key, non_root,
 };
-use crate::authority::{CapabilitySlip, HostSlipIssuer, PairingLink, PendingInvitationLink};
+use crate::authority::{
+    CapabilitySlip, ConnectOffer, HostSlipIssuer, PairingLink, PendingInvitationLink,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::federation::setting_keys::SHARED_INVITATION_TTL;
 use crate::federation::{FederationGrantRole as Role, OrgAdminPower, SharedVaultWrite};
+use crate::inquiry::InquiryJoinOffer;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 use std::collections::BTreeSet;
@@ -102,19 +105,29 @@ impl InvitationKeyBinding {
 }
 
 impl Vault {
+    /// `invitee`'s invitation `id` as stored: `None` when no row is stored,
+    /// else the row decoded (`Err` inside when it does not decode).
+    fn stored_invitation_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        invitee: EntityId,
+        id: &str,
+    ) -> Result<Option<Result<SharedInvitation>>> {
+        let id = EntityId::from_hex(id)?.to_hex();
+        Ok(self
+            .store
+            .vault_meta
+            .get(txn, &invitation_key(&invitee, &id))?
+            .map(|raw| decode(&raw)))
+    }
     fn invitation_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         invitee: EntityId,
         id: &str,
     ) -> Result<SharedInvitation> {
-        let id = EntityId::from_hex(id)?.to_hex();
-        let raw = self
-            .store
-            .vault_meta
-            .get(txn, &invitation_key(&invitee, &id))?
-            .ok_or_else(invalid)?;
-        decode(&raw)
+        self.stored_invitation_in_txn(txn, invitee, id)?
+            .ok_or_else(invalid)?
     }
     fn put_invitation_in_txn(
         &self,
@@ -212,6 +225,10 @@ impl Vault {
     /// `holder_key` is the key it records, and the independent credential
     /// that bound it, if one did, is live (FIX 8745). A slip minted to a key
     /// no binding records, or since replaced, does not.
+    ///
+    /// `Err` when the vault cannot answer: a failed read, or a stored
+    /// invitation or key binding row that does not decode. That is this
+    /// vault's fault, never the slip's refusal (RATCHET-9413 review round 2).
     pub(crate) fn invitation_slip_stands_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -219,23 +236,43 @@ impl Vault {
         id: &str,
         holder_key: &[u8; 32],
         now: u64,
-    ) -> bool {
-        let pending = self.invitation_in_txn(txn, invitee, id).is_ok_and(|open| {
-            open.state == SharedInvitationState::Pending
-                && !oneiron_store::expiry::is_expired(now, open.expires_at)
-        });
-        pending
-            && self
-                .invitation_key_binding_in_txn(txn, invitee, id)
-                .is_ok_and(|binding| {
-                    binding.is_some_and(|binding| {
-                        binding.holder_key == *holder_key
-                            && binding.source_slip.is_none_or(|source| {
-                                self.capability_slip_id_is_live_in_txn(txn, &source)
-                                    .unwrap_or(false)
-                            })
-                    })
-                })
+    ) -> Result<bool> {
+        // An id that does not parse names no invitation here.
+        let Ok(id) = EntityId::from_hex(id) else {
+            return Ok(false);
+        };
+        let id = id.to_hex();
+        let open = match self.stored_invitation_in_txn(txn, invitee, &id)? {
+            None => return Ok(false),
+            Some(open) => {
+                open.map_err(|_| crate::error::Error::CorruptedIndex("shared invitation"))?
+            }
+        };
+        if open.state != SharedInvitationState::Pending
+            || oneiron_store::expiry::is_expired(now, open.expires_at)
+        {
+            return Ok(false);
+        }
+        let binding = match self.invitation_key_binding_in_txn(txn, invitee, &id) {
+            Ok(binding) => binding,
+            // The id parsed above, so this is the stored binding not decoding.
+            Err(crate::error::Error::InvalidConfig(_)) => {
+                return Err(crate::error::Error::CorruptedIndex(
+                    "shared invitation key binding",
+                ));
+            }
+            Err(error) => return Err(error),
+        };
+        let Some(binding) = binding else {
+            return Ok(false);
+        };
+        if binding.holder_key != *holder_key {
+            return Ok(false);
+        }
+        match binding.source_slip {
+            None => Ok(true),
+            Some(source) => self.capability_slip_id_is_live_in_txn(txn, &source),
+        }
     }
 
     /// `invitee`'s invitation `id`, open for a slip at `now`: into
@@ -466,6 +503,127 @@ impl Vault {
         self.change_shared_membership(invitee, vault_id, None, |txn, actor, now| {
             self.accept_shared_invitation_in_txn(txn, actor, vault_id, invitation_id, now)
         })
+    }
+
+    /// [`Self::accept_shared_invitation`] with the member's inquiry edge, in
+    /// the same writer (federation.md #inquiry-first-build: "the edge is
+    /// created at joining"; Engine ruling L7-04-COMPANY-HALF = A): after the
+    /// seat, the company's half of the edge that `edge` offers, approved by
+    /// the seat the invitation gives and signed by this vault's host
+    /// `issuer` ([`Self::prepare_inquiry_edge_for_join`] on the member's
+    /// vault makes the offer). One refusal rolls back all of it: no seat
+    /// without the company's half, and no company half without the seat.
+    /// Answers the receipt and the company host's counter, which the member's
+    /// vault applies on its edge; the counter carries the pact's scope
+    /// opening key and is never written to the receipt or a log. A seat
+    /// accepted without an offer takes its edge later through
+    /// [`Self::attach_inquiry_edge_to_seat`] (L7-04-NO-PERSONAL-VAULT = A).
+    ///
+    /// An exact retry answers again and applies nothing: the member's pact
+    /// waits on the counter, so a lost answer must not strand it. The proof
+    /// therefore carries no invitation slip, only the invitee's own
+    /// independent credential (or none, when the host vouches for it): an
+    /// invitation slip stops standing once the acceptance spends its
+    /// invitation (FIX 8745), so it could not retry, and an invitee who holds
+    /// only that slip accepts with a credential, then attaches the edge.
+    pub fn accept_shared_invitation_with_inquiry_edge(
+        &self,
+        invitee: &AuthenticatedOwner,
+        vault_id: u64,
+        invitation_id: &str,
+        issuer: &HostSlipIssuer,
+        edge: &InquiryJoinOffer,
+    ) -> Result<(SharedActExecutionReceipt, ConnectOffer)> {
+        invitee.require_independent_acceptor()?;
+        if let Some(answer) =
+            self.repeat_inquiry_join_acceptance(invitee, vault_id, invitation_id, issuer, edge)?
+        {
+            return Ok(answer);
+        }
+        let mut counter = None;
+        let receipt =
+            self.change_shared_membership(invitee, vault_id, None, |txn, actor, now| {
+                let effect =
+                    self.accept_shared_invitation_in_txn(txn, actor, vault_id, invitation_id, now)?;
+                counter = Some(self.join_inquiry_edge_in_txn(txn, issuer, vault_id, actor, edge)?);
+                Ok(effect)
+            })?;
+        let counter = counter.ok_or(crate::error::Error::InvariantViolation(
+            "accepted membership did not join its offered inquiry edge",
+        ))?;
+        Ok((receipt, counter))
+    }
+
+    /// The answer of an acceptance with an inquiry edge that already applied,
+    /// for its exact retry, in its own writer before the change's: while
+    /// `invitee`'s invitation `invitation_id` in `vault_id` is still pending,
+    /// `None`, and the first call applies. Once it is accepted, `edge`'s pact
+    /// must be logged here as the edge of the seat it gave (any other offer
+    /// refuses, as the spent invitation does); the answer is then the
+    /// original receipt, read back from the invitee's own notice of it, and
+    /// the same counter, from the Connect's exact repeat, which writes
+    /// nothing. A seat accepted without an offer, whose edge `edge` attached
+    /// later, answers the same (review round 2 of #8372): the retry answers
+    /// the seat as it stands, its acceptance and its one inquiry edge, and
+    /// both are true whichever door joined the edge. Telling the two apart
+    /// would keep a pact id per accepted invitee, a row every erase of that
+    /// person must then reach, for no state a member could act on.
+    fn repeat_inquiry_join_acceptance(
+        &self,
+        invitee: &AuthenticatedOwner,
+        vault_id: u64,
+        invitation_id: &str,
+        issuer: &HostSlipIssuer,
+        edge: &InquiryJoinOffer,
+    ) -> Result<Option<(SharedActExecutionReceipt, ConnectOffer)>> {
+        self.with_write_txn_grouped(|txn| {
+            let actor = invitee.revalidate_person_in_txn(self, txn)?;
+            check_vault(self, txn, vault_id)?;
+            let invitation = self.invitation_in_txn(txn, actor, invitation_id)?;
+            if invitation.vault_id != vault_id
+                || !matches!(invitation.state, SharedInvitationState::Accepted { .. })
+            {
+                return Ok(None);
+            }
+            // Only the logged pact is a retry: join_inquiry_edge_in_txn
+            // would mint a new edge for any other.
+            if !self
+                .authority_fold_readonly_in_txn(txn)?
+                .federation_pacts
+                .contains_key(&edge.connect.pact_id)
+            {
+                return Err(invalid());
+            }
+            let receipt = self
+                .invitation_acceptance_receipt_in_txn(txn, actor, vault_id, &invitation.id)?
+                .ok_or_else(invalid)?;
+            let counter = self.join_inquiry_edge_in_txn(txn, issuer, vault_id, actor, edge)?;
+            Ok(Some((receipt, counter)))
+        })
+    }
+
+    /// The receipt of `actor`'s acceptance of `invitation` in `vault_id`,
+    /// read back from their own notice of it: every receipt tells its actor.
+    fn invitation_acceptance_receipt_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: EntityId,
+        vault_id: u64,
+        invitation: &str,
+    ) -> Result<Option<SharedActExecutionReceipt>> {
+        let prefix = key(OUTCOME_PREFIX, &format!("{}:", actor.to_hex()));
+        for entry in self.store.vault_meta.prefix_iter(txn, &prefix)? {
+            let (_, bytes) = entry?;
+            let outcome: SharedActOutcome = decode(&bytes)?;
+            let accepted = matches!(
+                &outcome.change,
+                SharedVaultChange::InvitationAccepted { invitation: id, .. } if id == invitation
+            );
+            if outcome.vault_id == vault_id && accepted {
+                return self.shared_act_receipt_in_txn(txn, &outcome.receipt_id);
+            }
+        }
+        Ok(None)
     }
 
     /// Accepts the invitee's invitation and mints their regular credential in

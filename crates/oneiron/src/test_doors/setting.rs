@@ -371,6 +371,7 @@ pub fn enroll_machine_with_key(
             device_class,
             encryption_key,
             machine_proof,
+            restored_from: None,
         },
         MachineRole::Owned(MachineOwnership::Yours),
         None,

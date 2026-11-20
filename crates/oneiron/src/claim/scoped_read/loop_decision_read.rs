@@ -343,7 +343,7 @@ impl ScopedRead<'_> {
                 let scope = admin.read_scope_in_txn(self.vault, txn).ok()?;
                 (self.actor_key.actor_ref() == admin.actor().to_hex()
                     && !self.actor_key.reads_as_vault_owner()
-                    && self.actor_key.owner_exemption.is_none()
+                    && self.actor_key.relationship_gate_lift_owner().is_none()
                     && self.actor_key.authority_scope().is_some_and(|held| {
                         held.is_narrowing_of(&super::ScopedReadActorKey::read_authority(&scope))
                     }))
@@ -382,14 +382,19 @@ impl ScopedRead<'_> {
                 return None;
             }
         };
-        if filter.deny_all {
+        // One authority for every row this read checks: the key's own floor,
+        // then each of its own live Grants alone (FIX-LIST
+        // SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS). A lane neither reads at all
+        // binds no read.
+        let held = self.held_for(None);
+        if self.reads_nothing_held_in(txn, &policy, &filter, &held) {
             return None;
         }
         Some(LoopRead {
             reader: bound,
             policy,
             filter,
-            held: HeldAuthority::default(),
+            held,
             floor: BTreeMap::new(),
             projects: None,
         })
@@ -515,7 +520,7 @@ impl ScopedRead<'_> {
             return Ok(Some(vec![id]));
         }
         let body = decode_claim_body(&record.body, true)?;
-        if !self.weave_claim_edge_admitted_in(txn, &read.policy, &read.filter, &body)? {
+        if !self.weave_claim_edge_admitted_in(txn, &read.policy, &read.filter, &read.held, &body)? {
             return Ok(None);
         }
         Ok(Some(match body.subject {

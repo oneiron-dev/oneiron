@@ -5,13 +5,16 @@ use crate::attempt_queue::{
     AttemptId, AttemptState, CancelRequestOutcome, CancelStanding, LandingTrigger, PauseAtBoundary,
     RequestAttemptCancel,
 };
-use crate::batch::secret_scan::{admitted_from, named_tree};
+use crate::batch::secret_scan::{admitted_from_known, named_tree};
 use crate::error::{Error, Result};
 use crate::limit_ask::{EngineLimit, LimitWatch};
+use crate::store::known_value_index::KnownValues;
 
 use super::RunTreeAdapter;
 
+mod held_ask;
 mod intent;
+use held_ask::held_ask;
 pub(crate) use intent::SignalIntent;
 
 pub use crate::attempt_queue::run_signal::{
@@ -69,6 +72,11 @@ impl RunTreeAdapter<'_> {
 
     /// Creates an ask under the worker's lease. It is a durable handle: hosts
     /// unable to receive an observer invalidation may read it via `peek_ask`.
+    ///
+    /// Answers the ask as the side-row wall stored it, its handle too, which
+    /// `peek_ask` reads under that handle and the identical ask opened again
+    /// replays, as `signal` answers its receipt (FIX
+    /// KNOWN-ASK-REOPEN-ANSWERS-MASKED-ROW).
     pub fn open_ask(
         &self,
         branch: AttemptId,
@@ -93,27 +101,50 @@ impl RunTreeAdapter<'_> {
         {
             return Err(Error::InvalidConfig("ask branch lease mismatch".into()));
         }
-        if let Some(existing) = record.asks.iter().find(|ask| ask.handle == handle) {
+        if let Some(existing) = held_ask(&record.asks, handle, || {
+            KnownValues::shared_in_writer(&self.vault.store, &txn)
+        })? {
             // The held questions are as the side-row wall stored them: a
-            // secret it lifted reads as its handle there (OF-067).
+            // secret it lifted reads as its handle there (OF-067), and so
+            // does a value base custody holds, which the wall planned with
+            // the values this writer reads (FIX
+            // REPLAY-COMPARE-KNOWN-OTHER-CALLERS).
             if existing.questions != questions
-                && !admitted_from(&named_tree(&existing.questions)?, &named_tree(&questions)?)?
+                && !admitted_from_known(
+                    &named_tree(&existing.questions)?,
+                    &named_tree(&questions)?,
+                    || KnownValues::shared_in_writer(&self.vault.store, &txn),
+                )?
             {
                 return Err(Error::InvalidConfig("ask handle reused".into()));
             }
             return Ok(existing.clone());
         }
         measure_questions(&self.vault.store.limit_watch, &questions);
-        let ask = RunAsk {
+        let appended_at = record.asks.len();
+        record.asks.push(RunAsk {
             handle: handle.into(),
             questions,
             answers: Vec::new(),
-        };
-        record.asks.push(ask.clone());
+        });
         self.save(&mut txn, &mut record)?;
+        // The ask as the side-row wall stored it, at the place it was
+        // appended: a secret it lifted, or a value base custody holds, reads
+        // as its record's handle there, in the ask's handle as in its words
+        // (blind review round 1 of #9803), so the handle as written may name
+        // no held ask. Answering the ask as written would give the identical
+        // ask opened again another ask than its first open gave, and a
+        // handle `peek_ask` does not know.
+        let stored = record
+            .asks
+            .get(appended_at)
+            .cloned()
+            .ok_or(Error::InvariantViolation(
+                "an opened ask is missing from the branch its writer stored",
+            ))?;
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
-        Ok(ask)
+        Ok(stored)
     }
 
     /// Non-blocking Signal admission. Reusing a key with identical input
@@ -214,6 +245,9 @@ impl RunTreeAdapter<'_> {
                 ));
             }
         }
+        // The held answer an answer given again under a new key met, when the
+        // two differ as written: the new receipt carries it.
+        let mut held_answer = None;
         if let RunSignalKind::AskAnswer {
             handle,
             who,
@@ -221,21 +255,43 @@ impl RunTreeAdapter<'_> {
             kind,
         } = &input.kind
         {
-            let ask = record
+            let at_ask = record
                 .asks
-                .iter_mut()
-                .find(|a| &a.handle == handle)
+                .iter()
+                .position(|a| &a.handle == handle)
                 .ok_or_else(|| Error::InvalidConfig("unknown ask handle".into()))?;
+            let ask = &record.asks[at_ask];
             if !ask.questions.iter().any(|q| &q.who == who) {
                 return Err(Error::InvalidConfig("unaddressed ask answer".into()));
             }
             if let Some(prior) = ask.answers.iter().find(|a| &a.who == who) {
-                if &prior.answer != answer || prior.kind != *kind {
+                // The held answer is as the side-row wall stored it: a value
+                // base custody holds reads as its record's handle there, and
+                // the keyed intent (FIX 10066) names the signal's key. An
+                // answer given again under a new key is the same answer only
+                // when it is the first answer exactly as given: the
+                // fingerprint kept beside that answer's signal meets it
+                // restated under that signal's key and actor (FIX
+                // SIGNAL-NEW-KEY-MASKED-ANSWER; blind review round 2 of
+                // #9531: the held form alone cannot tell two values custody
+                // holds apart, nor meet a mask widened to a character).
+                if prior.kind != *kind
+                    || (&prior.answer != answer
+                        && !intent::answer_repeats(self.vault, txn, &record, &input))
+                {
                     return Err(Error::InvalidConfig("ask already answered".into()));
+                }
+                // The new receipt carries the held answer, so the branch holds
+                // one answer for the ask: the raw answer the wall would store
+                // as written with the switch off, or under the handle of a
+                // longer value custody took since, would answer it twice
+                // (blind review round 1 of #9531).
+                if &prior.answer != answer {
+                    held_answer = Some(prior.answer.clone());
                 }
             } else {
                 let at = crate::ports::recorded_at_in_txn(&self.vault.store, txn)?;
-                ask.answers.push(RunAskAnswer {
+                record.asks[at_ask].answers.push(RunAskAnswer {
                     who: who.clone(),
                     answer: answer.clone(),
                     kind: *kind,
@@ -251,22 +307,30 @@ impl RunTreeAdapter<'_> {
             }
         }
         let intent_bytes = intent::intent_bytes(&input);
-        let signal = RunBranchSignal {
+        let given = RunBranchSignal {
             key: input.key,
             actor: input.actor,
             kind: input.kind,
             state: RunSignalState::Pending,
         };
+        let mut signal = given.clone();
+        if let (Some(held), RunSignalKind::AskAnswer { answer, .. }) =
+            (held_answer, &mut signal.kind)
+        {
+            *answer = held;
+        }
         record.signals.push(signal.clone());
         self.save(txn, &mut record)?;
         // The receipt as the side-row wall stored it, which a retry replays.
+        // A receipt that is not the signal as given keeps the fingerprint of
+        // the given intent, so the same signal retried replays it.
         let stored = record
             .signals
             .iter()
             .find(|s| s.key == signal.key)
             .cloned()
             .unwrap_or_else(|| signal.clone());
-        if stored != signal
+        if stored != given
             && let Some(bytes) = intent_bytes
         {
             self.keep_intent_in(txn, &mut record, &stored.key, &bytes);

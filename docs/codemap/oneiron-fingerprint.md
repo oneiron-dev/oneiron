@@ -14,31 +14,45 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/legacy.rs` | src | s | 2 struct · 2 enum · 10 fn · 1 crate-vis | LegacyDigest, LegacyHash, LegacyPurpose, TagMode | The K door: a digest that main already stores or sends keeps its exact bytes |
 | `src/lib.rs` | src | s | 5 struct · 20 fn · 1 const · 1 mod · 3 re-export · 1 crate-vis | ContentHash, ContentHasher, Fingerprint, Fingerprinter, Purpose | One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0) |
 | `src/purposes/agent.rs` | src | s | — | — | Purposes of agent dispatch (`crates/oneiron/src/agent_dispatch`) |
+| `src/purposes/ai_host.rs` | src | s | — | — | Purposes of the AI host (`crates/oneiron-server/src/ai_host`) |
 | `src/purposes/archive.rs` | src | s | — | — | Purposes of the whole-vault archive (`oneiron` `batch::export`) |
 | `src/purposes/booking.rs` | src | s | — | — | Purposes of booking (`crates/oneiron/src/booking`) |
 | `src/purposes/broker.rs` | src | s | — | — | Purposes of the credential broker (`oneiron-broker`; ARCH-0069 `#broker-digest`) |
+| `src/purposes/browser_library.rs` | src | s | — | — | Purposes of the browser library (`oneiron-records`' and the core's `browser_library`) |
 | `src/purposes/calendar.rs` | src | s | — | — | Purposes of the calendar (`crates/oneiron/src/calendar`) |
 | `src/purposes/channel_identity.rs` | src | s | — | — | Purposes of channel identities (`crates/oneiron/src/channel_identity`) |
 | `src/purposes/check_in.rs` | src | s | — | — | Purposes of a person's check-in effects (`oneiron` `check_in::effect`; ARCH-0082 #composing) |
+| `src/purposes/claim.rs` | src | s | — | — | Purposes of claims (`crates/oneiron/src/claim`) |
 | `src/purposes/cluster.rs` | src | s | — | — | Purposes of claim clustering (`oneiron::cluster`, `crates/oneiron/src/memory/claim_cluster.rs`) |
+| `src/purposes/code_run.rs` | src | s | — | — | Legacy code-run digests that existing rows, ids and keys hold |
+| `src/purposes/connector.rs` | src | s | — | — | Purposes of connectors (`crates/oneiron/src/connector_key`, `ingest::connector_*`, `outbound_consent`… |
 | `src/purposes/dreamer.rs` | src | s | — | — | Purposes of the Dreamer (`crates/oneiron/src/dreamer_consolidation`, `crates/oneiron/src/dreamer_promotion`… |
+| `src/purposes/dreamer_consolidation.rs` | src | s | — | — | Legacy dreamer-consolidation digests stored or compared by existing records |
 | `src/purposes/dreamer_runner.rs` | src | s | — | — | Legacy dreamer-runner digests stored or compared by existing records |
+| `src/purposes/dreamer_wake.rs` | src | s | — | — | Legacy identities of Dreamer wake sessions, queued work and sieve readings |
 | `src/purposes/engine_executor.rs` | src | s | — | — | Purposes of the engine executor (`crates/oneiron/src/engine_executor`) |
+| `src/purposes/feedback.rs` | src | s | — | — | Purposes of feedback (`crates/oneiron/src/feedback`) |
 | `src/purposes/git_wire.rs` | src | s | — | — | Purposes of the git wire (`oneiron-store`'s `git_wire` and `crates/oneiron/src/git_wire`) |
+| `src/purposes/ingest.rs` | src | s | — | — | Purposes of imports into the vault: claims from a registered source, and chat history |
+| `src/purposes/inquiry.rs` | src | s | — | — | Purposes of inquiries (`crates/oneiron/src/inquiry`) |
 | `src/purposes/key_custody.rs` | src | s | — | — | Purposes of key custody (`crates/oneiron/src/store/key_custody`, with its store half in `oneiron-store`) |
 | `src/purposes/learning.rs` | src | s | — | — | Purposes of the learning loop (`crates/oneiron/src/edit_distance`, `skill_attribution`) |
 | `src/purposes/mail_pack.rs` | src | s | — | — | Purposes of the mail pack (`crates/oneiron/src/mail_pack`) |
 | `src/purposes/memory.rs` | src | s | — | — | Purposes of memory (`crates/oneiron/src/memory`) |
 | `src/purposes/mod.rs` | src | s | 1 fn · 2 const | — | The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area |
+| `src/purposes/note.rs` | src | s | — | — | Purposes of notes (`crates/oneiron/src/note`) |
 | `src/purposes/origin.rs` | src | s | — | — | Purposes of the git origin (`crates/oneiron/src/origin`) |
 | `src/purposes/outbound_intent_ledger.rs` | src | s | — | — | Purposes of the outbound intent ledger (`crates/oneiron/src/outbound_intent_ledger`) |
+| `src/purposes/phone_line.rs` | src | s | — | — | Purposes of the phone line (`crates/oneiron/src/phone_line`) |
 | `src/purposes/plugin.rs` | src | s | — | — | Purposes of plugin sections (`crates/oneiron/src/context_board/plugin`) and the Dreamer's plugin suggestions… |
 | `src/purposes/policy_model.rs` | src | s | — | — | Purposes of the policy model (`oneiron-records`' `policy_model` and `crates/oneiron/src/policy_model`) |
+| `src/purposes/repo_mutation.rs` | src | s | — | — | Purposes of repository mutations (`crates/oneiron/src/repo_mutation`) |
 | `src/purposes/restore.rs` | src | s | — | — | Purposes of the managed restore contract (`oneiron-vault-contract` `restore`) |
 | `src/purposes/retrieval.rs` | src | s | — | — | Purposes of the retrieval crate (`oneiron-retrieval`) |
 | `src/purposes/runtime_hooks.rs` | src | s | — | — | Purposes of runtime hooks (`crates/oneiron/src/runtime_hooks`) |
 | `src/purposes/saved_query.rs` | src | s | — | — | Purposes of saved queries (`crates/oneiron/src/saved_query` and `oneiron-store`'s `query_memo_codec`) |
 | `src/purposes/secret.rs` | src | s | — | — | Purposes of secret scanning (`crates/oneiron/src/batch/secret_scan`) and secret custody (`secret_custody`) |
+| `src/purposes/self_heal.rs` | src | s | — | — | Legacy self-heal digests that existing rows, keys and findings hold |
 | `src/purposes/setting.rs` | src | s | — | — | Purposes of the Setting primitive (`crates/oneiron/src/setting/`) |
 | `src/purposes/skill.rs` | src | s | — | — | Purposes of a skill's canonical identity (`oneiron-store` `write_envelope::skill_record`) |
 | `src/purposes/skill_attribution.rs` | src | s | — | — | Purposes of skill attribution (`crates/oneiron/src/skill_attribution`) |
@@ -48,6 +62,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/sync.rs` | src | s | — | — | Legacy sync digests stored, sent or compared by existing records and peers |
 | `src/purposes/task.rs` | src | s | — | — | Purposes of tasks (`crates/oneiron/src/task_verb`, `task_type`, `campaign`) |
 | `src/purposes/testing.rs` | src | s | — | — | Purposes for tests only |
+| `src/purposes/training_pack.rs` | src | s | — | — | Purposes of training runs (`crates/oneiron/src/training_pack`; OF-382) |
 | `src/purposes/vault_import.rs` | src | s | — | — | Purposes of a staged foreign vault import (`oneiron-store` `batch::export::foreign_stage`, sync builds) |
 | `src/purposes/vault_shape.rs` | src | s | — | — | Purposes of the vault shape (`crates/oneiron/src/vault_shape`) |
 | `src/purposes/web_fetch.rs` | src | s | — | — | Purposes of web acquisition (`oneiron-web-fetch`; OF-444) |

@@ -10,7 +10,7 @@ use crate::batch::{
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
-use crate::ports::EntityStoreRead;
+use crate::ports::{ClaimReadStatus, EntityStoreRead};
 use crate::provenance::validate_actor_class;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
@@ -88,6 +88,32 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
+        self.put_claim_reading_edge_subject_in_txn(
+            wtxn,
+            id,
+            body,
+            occurred,
+            learned_at,
+            ClaimReadStatus::Surfaceable,
+        )
+    }
+
+    /// [`Vault::put_claim_in_txn`] whose EdgeRef subject the live Owners
+    /// read at `edge_subject_status`. The owner's whole-vault restore of a
+    /// proven CLAIM-pair link reads the subject of each claim about it at
+    /// [`ClaimReadStatus::Recorded`]: the link's two restored CLAIMs come
+    /// back proposed, as every imported claim does
+    /// (`batch::export::document_import::claim_pair_same_as`). Every other
+    /// check is the same.
+    pub(crate) fn put_claim_reading_edge_subject_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+        occurred: TimeRange,
+        learned_at: u64,
+        edge_subject_status: ClaimReadStatus,
+    ) -> Result<()> {
         // The raw door writes a body and nothing else — no supersession at
         // all. For `companion.expression.*` that is not "less"; it is a SECOND
         // live head beside the one the typed door is tracking, with the chain
@@ -109,7 +135,11 @@ impl Vault {
         // through the live Owners' keys. The reserved door keeps its own
         // allowance: provenance lands an edge and its claim in one txn.
         if let ClaimSubject::Edge { .. } = body.subject
-            && !self.owner_reads_edge_subject_in(wtxn, &body.subject)?
+            && !self.owner_reads_edge_subject_at_status_in(
+                wtxn,
+                &body.subject,
+                edge_subject_status,
+            )?
         {
             return Err(Error::EntityNotFound);
         }
@@ -118,7 +148,10 @@ impl Vault {
         if crate::comm::route_projector_only_comm_put_in_txn(self, wtxn, id, body)? {
             return Ok(());
         }
-        self.put_claim_in_txn_with_reserved(wtxn, id, body, occurred, learned_at, false)
+        self.put_claim_in_txn_with_reserved(wtxn, id, body, occurred, learned_at, false)?;
+        // A claim about a PERSON the cleanup archived makes her no husk: she
+        // is restored in this write (FIX PUT-CLAIM-LANDS-ON-ARCHIVED-PERSON).
+        self.restore_subjects_of_landed_claims_in_txn(wtxn, &[(*id, body.subject)])
     }
 
     /// A selected value-field redaction keeps the existing subject edge
@@ -190,10 +223,22 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         subject: &ClaimSubject,
     ) -> Result<bool> {
+        self.owner_reads_edge_subject_at_status_in(txn, subject, ClaimReadStatus::Surfaceable)
+    }
+
+    /// [`Vault::owner_reads_edge_subject_in`] with each Owner's lane
+    /// admitting the endpoint claims `status` admits.
+    fn owner_reads_edge_subject_at_status_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        subject: &ClaimSubject,
+        status: ClaimReadStatus,
+    ) -> Result<bool> {
         let mut failed = None;
         for owner in crate::policy_model::owners_in_txn(self, txn)? {
             match self
                 .scoped_read(ScopedReadActorKey::vault_owner(owner))
+                .with_claim_status(status)
                 .claim_edge_subject_admitted_in_txn(txn, subject)
             {
                 Ok(true) => return Ok(true),
@@ -222,6 +267,35 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         self.put_claim_in_txn_with_reserved(wtxn, id, body, occurred, learned_at, true)
+    }
+
+    /// [`Self::put_reserved_claim_in_txn`] attributed to `envelope` (FIX
+    /// 8118's caller envelope): the put is gated — the source-trust row
+    /// selection included — as that actor's write, so it rides the
+    /// actor-bound permit the owner's policy holds for the actor instead of
+    /// reading unattributed. The envelope is gating only: a reserved put
+    /// records no authorship.
+    pub(crate) fn put_reserved_claim_attributed_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+        occurred: TimeRange,
+        learned_at: u64,
+        envelope: &WriteEnvelope,
+    ) -> Result<()> {
+        let ops = self.claim_put_ops_in_txn(wtxn, id, body, occurred, learned_at, true)?;
+        apply_ops_with_gate_mode(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            ApplyOpsGateMode::new(false, true)
+                .with_caller_envelopes(std::collections::HashMap::from([(*id, envelope.clone())])),
+        )
     }
 
     pub(crate) fn put_reserved_claim_with_setup_owner_in_txn(
@@ -424,31 +498,7 @@ impl Vault {
         landing(&wtxn)?;
         self.validate_code_run_claim_target_in_txn(&wtxn, id, Some(candidate.predicate()))?;
         crate::memory::guard_existing_claim_in_txn(self, &wtxn, envelope.actor(), *id)?;
-        apply_ops_with_gate_mode(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            &mut wtxn,
-            // The batch door's pairing: an overwrite drops the prospective
-            // query hints the prior claim carried (H83).
-            vec![
-                BatchOp::ClaimCandidate {
-                    id: *id,
-                    candidate: Box::new(candidate),
-                    envelope: envelope.clone(),
-                    occurred,
-                    learned_at,
-                    internal_lexical_query_hint: false,
-                },
-                BatchOp::ReconcileLexicalQueryHints {
-                    source: *id,
-                    keep: Vec::new(),
-                },
-            ],
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            ApplyOpsGateMode::new(false, true).with_source_in_gate_input(),
-        )?;
+        self.apply_candidate_in_txn(&mut wtxn, *id, candidate, envelope, occurred, learned_at)?;
         after_apply(self, &mut wtxn, id)?;
         rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;

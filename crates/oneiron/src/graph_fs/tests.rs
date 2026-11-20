@@ -2,7 +2,7 @@ use super::*;
 use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::config::VaultConfig;
-use crate::registry::ENTITY_TYPE_PERSON;
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use crate::temporal::TimeRange;
 use crate::test_util::open_test_vault_with;
 
@@ -1259,6 +1259,9 @@ fn graph_fs_listings_expire_grants_without_other_writes() -> Result<()> {
     )?;
     let author = test_id(0x86);
     put_entity(&vault, author, ENTITY_TYPE_PERSON)?;
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    put_entity(&vault, space, ENTITY_TYPE_RELATIONSHIP)?;
     vault
         .memory(author, crate::EdgeActorClass::Human)
         .witness(&crate::memory::WitnessTurn {

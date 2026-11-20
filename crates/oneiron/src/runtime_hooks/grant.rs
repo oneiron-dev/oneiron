@@ -59,6 +59,11 @@ impl HookGrant {
     }
 
     /// Whether the grant shows `claim`, on top of what the reader's key admits.
+    ///
+    /// A base-world claim decodes to `world: None` (the body's convenience for
+    /// the reserved base id, never absence), so it reads as the base world, as
+    /// a read lane and a world-scoped hook place it: a grant naming the base
+    /// world shows it, and a grant naming only other worlds does not.
     pub(super) fn admits(&self, claim: &ClaimBody) -> bool {
         (self.predicates.is_empty()
             || self
@@ -66,9 +71,9 @@ impl HookGrant {
                 .iter()
                 .any(|glob| glob_match(glob, &claim.predicate)))
             && (self.worlds.is_empty()
-                || claim
-                    .world
-                    .is_some_and(|world| self.worlds.contains(&world)))
+                || self
+                    .worlds
+                    .contains(&claim.world.unwrap_or_else(crate::claim::base_world_id)))
     }
 }
 
@@ -260,4 +265,52 @@ pub(super) fn effective_grant(
 ) -> VaultResult<HookGrant> {
     let txn = vault.store.env.read_txn()?;
     effective_grant_in_txn(vault, &txn, binding_id, binding)
+}
+
+#[cfg(test)]
+mod tests {
+    use rmpv::Value;
+
+    use super::*;
+    use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, base_world_id};
+
+    fn grant(worlds: Vec<EntityId>) -> HookGrant {
+        HookGrant {
+            reader: EntityId::from_bytes([0x51; 16]).expect("reader id"),
+            reader_class: HookActorClass::Agent,
+            predicates: Vec::new(),
+            worlds,
+        }
+    }
+
+    fn fact_in(world: Option<EntityId>) -> ClaimBody {
+        let mut body = ClaimBody::new(
+            "foreign.factprobe.input",
+            ClaimSubject::Entity(EntityId::from_bytes([0x52; 16]).expect("subject id")),
+            Value::from("fixture input"),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )
+        .expect("claim body");
+        body.world = world;
+        body
+    }
+
+    /// HOOKS-05 (20 Nov nightly E2E): the owner's grant on a foreign fact
+    /// hook names the base world, and a base-world fact decodes to
+    /// `world: None`, so the grant admitted none and the hook never ran.
+    #[test]
+    fn a_grant_naming_the_base_world_admits_a_base_world_fact() {
+        let other = EntityId::from_bytes([0x53; 16]).expect("world id");
+        let base_fact = fact_in(None);
+        assert!(grant(vec![base_world_id()]).admits(&base_fact));
+        assert!(grant(vec![other, base_world_id()]).admits(&base_fact));
+        assert!(grant(Vec::new()).admits(&base_fact));
+        assert!(!grant(vec![other]).admits(&base_fact));
+
+        let other_fact = fact_in(Some(other));
+        assert!(grant(vec![other]).admits(&other_fact));
+        assert!(!grant(vec![base_world_id()]).admits(&other_fact));
+    }
 }

@@ -158,6 +158,7 @@ pub(super) fn apply_milestone_claim_in_txn(
         )?;
     }
     let milestone = stamp_agent_dispatch_milestone(attempt, milestone)?;
+    let subject = ClaimSubject::Entity(milestone.subject);
     let value = dreamer_milestone_value(attempt.id, milestone.kind, milestone.occurred.start);
     let candidate = ClaimCandidate::new(
         DREAMER_MILESTONE_PREDICATE,
@@ -181,7 +182,13 @@ pub(super) fn apply_milestone_claim_in_txn(
             milestone.occurred,
             milestone.learned_at,
         )
-        .apply(wtxn)
+        .apply(wtxn)?;
+    // The milestone is a new mention of its final subject: about a PERSON
+    // under a cleanup archive, it restores her in the milestone's own write
+    // (ARCH-0073 §6). An agent dispatch's subject is its attempt id, which
+    // names no PERSON and restores nothing.
+    vault.restore_mentioned_subject_in_txn(wtxn, subject)?;
+    Ok(())
 }
 
 /// Milestones co-committed for an agent-dispatch attempt carry AUTHORITATIVE

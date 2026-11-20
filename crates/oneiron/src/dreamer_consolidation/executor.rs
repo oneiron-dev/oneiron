@@ -34,7 +34,7 @@ pub(crate) use extraction::native_decisions_parity::{
 use conflicts::{ConflictInput, ResolvedSets};
 pub use decisions::ConsolidationDecisions;
 pub(super) use decisions::{Decider, ScopedRead};
-pub use extraction::ExtractionPrompt;
+pub use extraction::{EXTRACTION_MAX_TOKENS, ExtractionPrompt};
 use merge_resolution::MergeResolution;
 
 use super::evidence::{
@@ -63,7 +63,9 @@ use super::support::{
 use super::watermark::{WorkingSetTurn, conversation_of, read_turn_facts};
 use crate::claim::{ClaimSource, ClaimSubject};
 use crate::dreamer_runner::{DreamerClaimAuthoringStrategy, DreamerParkCause, dreamer_turn_role};
-use crate::dreamer_wake::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
+use crate::dreamer_wake::{
+    DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext, build_boxed_future,
+};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::inference_context::HostInferenceContext;
@@ -557,18 +559,18 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             ));
         }
         if attempt.status.payload.attempt_type == super::root_evidence::bridge::ATTEMPT {
-            return self.run_root_bridge(attempt, ctx).await;
+            return build_boxed_future(|| self.run_root_bridge(attempt, ctx)).await;
         }
         if attempt.status.payload.attempt_type == super::nightly_merge::ATTEMPT {
-            return self.run_nightly_merge(attempt, ctx).await;
+            return build_boxed_future(|| self.run_nightly_merge(attempt, ctx)).await;
         }
         if attempt.status.payload.attempt_type == super::nightly_links::ATTEMPT {
-            return self.run_nightly_links(attempt, ctx).await;
+            return build_boxed_future(|| self.run_nightly_links(attempt, ctx)).await;
         }
         if attempt.status.payload.attempt_type
             == crate::dreamer_runner::DREAMER_NOTE_REVIEW_ATTEMPT_KIND
         {
-            return self.run_note_review(attempt, ctx).await;
+            return build_boxed_future(|| self.run_note_review(attempt, ctx)).await;
         }
         if attempt.status.payload.attempt_type == crate::dreamer_wake::nightly::CONTINUE_ATTEMPT {
             return crate::dreamer_wake::nightly::continue_nightly(attempt, ctx);
@@ -582,13 +584,13 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             });
         }
         if attempt.status.payload.attempt_type == crate::dreamer_wake::sieve::RUNG_ATTEMPT {
-            return self.run_sieve_rungs(attempt, ctx).await;
+            return build_boxed_future(|| self.run_sieve_rungs(attempt, ctx)).await;
         }
         if attempt.status.payload.attempt_type == crate::dreamer_wake::sieve::TYPING_BATCH_ATTEMPT {
-            return self.run_typing_batch(attempt, ctx).await;
+            return build_boxed_future(|| self.run_typing_batch(attempt, ctx)).await;
         }
         if attempt.status.payload.attempt_type == crate::dreamer_wake::follower::FOLLOWER_ATTEMPT {
-            return self.run_follower(attempt, ctx).await;
+            return build_boxed_future(|| self.run_follower(attempt, ctx)).await;
         }
         // The session-end miner carries its own pinned `{session}` payload,
         // not a partition map. Reject a supplied branch scope explicitly,
@@ -749,8 +751,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             }
         };
         self.pin_prepared_partition(attempt, ctx, plan)?;
-        self.execute_prepared_partition(attempt, ctx, plan, wake)
-            .await
+        build_boxed_future(|| self.execute_prepared_partition(attempt, ctx, plan, wake)).await
     }
 
     async fn execute_partition_window<'w>(

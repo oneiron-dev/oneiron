@@ -211,6 +211,9 @@ pub(in crate::sync) fn prepare_bounded_replacement(
         bound,
         super::validate_window_update_with_staged_worlds,
     )?;
+    // The rows another machine withheld after they travelled, which the replacement names by its
+    // marker alone: nothing this vault holds of them carries over (REVIEW-9846 round 2).
+    let marked = crate::sync::source_audiences::marked_elsewhere(vault, &candidate)?;
 
     // The work happens on a detached copy of the old window: what this prepares there (queued
     // sends, scrubs, pending mirrors) feeds the carry-over and never leaves through the live
@@ -270,12 +273,22 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     written.extend(newest_ops(&candidate, &before, &candidate.oplog_vv())?.into_keys());
     conflicts.extend(keep_hard_deletes(&candidate, &hard, &written)?);
     conflicts.extend(delete_wins(&candidate, &written)?);
+    // A marker whose soft delete is still publishing it is left to that
+    // publication, which re-proves the delete first. The held set is locked
+    // before the snapshot opens and through the selection. A publication to
+    // this closed window holds it closed from its lookup through its commit
+    // (`WindowManager::publication_window`), and this replacement waited for
+    // it: a held marker's publication either committed before `old` was
+    // read, which then carries its tombstone, or finds this window
+    // registered and publishes through it.
     let pending: Vec<_> = {
+        let held = vault.store.tombstone_publications_in_flight.lock();
         let rtxn = vault.store.env.read_txn()?;
         vault
             .store
             .port_pending_tombstones_in_window(&rtxn, WindowAddress::new(key.as_str()))?
             .filter_map(std::result::Result::ok)
+            .filter(|marker| !held.holds_marker(&marker.window_label, &marker.id, &marker.raw))
             .collect()
     };
     let tombstones = TombstoneIndex::build(&candidate.get_map("tombstones"));
@@ -283,6 +296,18 @@ pub(in crate::sync) fn prepare_bounded_replacement(
         apply_tombstone_to_indexed_window_doc(&candidate, &tombstones, &marker.id, &marker.raw)?;
     }
     candidate.commit();
+    // Their holds land before reverse rematerialization reads them, which then packs none of
+    // them back from this vault's stored copy; a carrier a carried write put back goes. The
+    // forward pass lands the same markers again.
+    crate::sync::source_audiences::hold_back_withheld(vault, &marked)?;
+    let (entities, edges) = (candidate.get_map("entities"), candidate.get_map("edges"));
+    let mut excluded = false;
+    for id in &marked {
+        excluded |= super::reverse::remove_entity_crdt_carriers(&entities, &edges, id)?;
+    }
+    if excluded {
+        candidate.commit();
+    }
     // Reverse rematerialization may remove an uninstalled optional root.
     // Select only this snapshot's still-chosen values before that scrub.
     let positions = positions.and_then(|positions| positions.select_replacement(&candidate));

@@ -13,6 +13,11 @@ pub use types::{
     ListedObservation, PriorObservation, ReplayObservation, SimilarityScore,
 };
 
+#[cfg(oneiron_test_support)]
+pub(crate) use self::paging::pin_of_encoded_facts_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::tokens::observation_key_tokens_for_test;
+
 use self::facts::extraction_observation_facts;
 use self::paging::{observation_facts_pin, page_observation_facts};
 use super::extraction_inputs::{extraction_attempt_key, extraction_policy_pin};
@@ -94,7 +99,10 @@ fn bound_extraction_observations_page(
             &read,
             txn,
             reader_scope.as_ref(),
-            attempt_id,
+            (
+                attempt_id,
+                binding.and_then(DreamerAttemptBinding::destination_bound),
+            ),
             &input.candidates,
             None,
         )?;

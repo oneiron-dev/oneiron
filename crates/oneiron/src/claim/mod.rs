@@ -52,6 +52,7 @@ pub(crate) use dispatch_input as widen_record;
 mod aging_profiles;
 mod authorship;
 mod candidate_write;
+pub(crate) use candidate_write::LandingGateAnswer;
 pub mod code_instruction;
 pub mod consult_payload_ref;
 pub mod retrieval_scope;
@@ -65,6 +66,7 @@ pub(crate) mod enforcement_read;
 mod evidence_support;
 mod expression_archive;
 mod expression_preference;
+pub(crate) mod held_question;
 use oneiron_authority::claim_history_handoff as history_handoff;
 mod history_pin_exchange;
 pub use oneiron_base::learning_estimate;
@@ -148,6 +150,8 @@ pub use scoped_read::*;
 // On its own line so no other change to the re-export list below collides
 // with it (FIX 11766).
 pub(crate) use scoped_read::CompanionProfileSourceJudgement;
+#[cfg(oneiron_test_support)]
+pub(crate) use scoped_read::WeaveItemKey;
 pub(crate) use scoped_read::{
     Admitted, ClaimReadStatusExt, SearchPlan, claim_access_axes,
     erase_weave_decision_labels_in_txn, invalidate_weave_digest_source_in_txn,

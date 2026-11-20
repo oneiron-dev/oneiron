@@ -313,7 +313,7 @@ async fn context_board_companion_resolves_warm_personal_relationship_without_pri
     let person_ref = seeded_test_entity_id(0x1266_0001);
     let persona_ref = seeded_test_entity_id(0x1266_0002);
     let turn_id = seeded_test_entity_id(0x1266_0004);
-    let principal_ref = seeded_test_entity_id(0x1266_0006);
+    let principal_ref = person_ref;
     let grant_id = seeded_test_entity_id(0x1266_0007);
 
     for id in [person_ref, persona_ref] {
@@ -394,12 +394,7 @@ async fn context_board_companion_resolves_warm_personal_relationship_without_pri
         "unauthorized context board must not leak companion relationship metadata"
     );
 
-    let grant = oneiron::AccessGrant::companion_profile_read(
-        principal_ref,
-        person_ref,
-        Some(persona_ref),
-        12,
-    );
+    let grant = oneiron::AccessGrant::companion_profile_read(principal_ref, persona_ref, None, 12);
     server
         .vault
         .create_access_grant(&grant_id, &grant)
@@ -579,7 +574,7 @@ async fn context_board_feeds_explicit_subjects_to_the_l2_producer() {
     let request = json!({
         "session":{"session_id":"l2-observed"},
         "retrieval": {"query":"l2route", "budget":{"max_field_chars":0,"max_item_tokens":0,"token_budget":0}},
-        "companion":{"person_ref":person.to_hex(),"persona_ref":persona.to_hex()}
+        "companion":{"person_ref":person.to_hex(),"counterpart_person_ref":persona.to_hex()}
     });
     let call = || {
         core_request_with_principal_ref(
@@ -620,9 +615,12 @@ async fn context_board_feeds_explicit_subjects_to_the_l2_producer() {
     .await;
     assert_eq!(status, StatusCode::OK, "{shed:#}");
     assert!(shed["pack"].get("l2_base").is_none());
-    // Allowlisting never overrides an unstamped/private evidence tier. A
-    // claim keeps its birth scope: re-putting it without the public scope is
-    // refused, so the private belief is a new claim and the old one retires.
+    // A claim keeps its birth scope: re-putting it without the public scope
+    // is refused, so the new belief is a new claim and the old one retires.
+    // The new claim is unstamped, so it reads at the unstamped floor, band 2
+    // (canon DEC-0006 #unstamped-claims, SAFETY-PACK = A); this reader is
+    // cleared to the top scope, so the board serves it beside the persona's
+    // fact, and never the retracted claim.
     let private = oneiron::ClaimBody::new(
         "profile.route_test",
         oneiron::ClaimSubject::Entity(person),
@@ -654,8 +652,9 @@ async fn context_board_feeds_explicit_subjects_to_the_l2_producer() {
     assert_eq!(status, StatusCode::OK);
     let rows: Value =
         serde_json::from_str(third["pack"]["l2_base"]["body"].as_str().unwrap()).unwrap();
-    assert_eq!(rows.as_array().unwrap().len(), 1);
-    assert_eq!(rows[0]["id"], persona_claim.to_hex());
+    assert_eq!(rows.as_array().unwrap().len(), 2, "{rows}");
+    assert_eq!(rows[0]["val"], "persona base fact");
+    assert_eq!(rows[1]["val"], "now private");
     server.vault.retract_claim(&persona_claim, 3).unwrap();
     for (session, expected) in [
         (
@@ -746,11 +745,14 @@ async fn pinned_memories_bypass_query_scope_but_not_audience_disclosure() {
     assert_eq!(allowed["memories"]["rows"].as_array().unwrap().len(), 1);
     assert_eq!(allowed["memories"]["rows"][0]["tier"], "pinned");
     assert_eq!(allowed["pack"]["pin_narrowing"][0]["suppressed_count"], 0);
+    // FIX 7982: the content hash stays internal reference metadata, so
+    // the board renders a pinned row under its bare short id.
+    let short = reference.split(':').next().unwrap();
     assert!(
         allowed["board"]
             .as_str()
             .unwrap()
-            .contains(&format!("{reference} trust=unknown tier=PINNED")),
+            .contains(&format!("{short} trust=unknown tier=PINNED")),
         "{allowed}"
     );
 }

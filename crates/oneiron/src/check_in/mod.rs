@@ -73,6 +73,8 @@ pub(crate) use effect::{
     DoorAct, DoorCheckIn, owner_own_proof_decision, person_door_check_in_in_txn,
     spend_applied_check_in_in_txn,
 };
+// A Steward's own-item delete refuses a named check-in as the judge does.
+pub(crate) use effect::named_check_in_at_once;
 pub use mode::CheckInMode;
 pub use pending::{
     CapturedWait, DelayWindow, DelayWindowOpen, EligibleBasis, Extension, HolderAnswer, HolderKind,
@@ -85,8 +87,8 @@ pub(crate) use pending::{
 };
 pub use room_add::{ROOM_ADD_FROM_NOW_REASON, ROOM_ADD_NOT_GRANTED_REASON, room_add_effect_digest};
 pub(crate) use room_add::{
-    agent_add_is_from_now, owner_room_add_decision, room_add_check_in_in_txn,
-    walk_in_check_in_in_txn,
+    agent_add_is_from_now, owner_room_add_decision, refuse_unspent_check_in_ref,
+    room_add_check_in_in_txn, walk_in_check_in_in_txn,
 };
 // The doors 2c and 2e-2l call; until then only `test_doors::check_in` does.
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
@@ -109,12 +111,12 @@ pub use verb_act_class::{VerbActClass, verb_act_class, verb_needs_owner_confirm}
 pub use waits::CheckInTransition;
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use waits::advance_pending_check_in_in_txn;
+pub(crate) use wake::CHECK_IN_DUE_JOB;
 #[cfg(oneiron_test_support)]
 pub(crate) use wake::due_rows;
-pub(crate) use wake::next_check_in_due_at;
 
 // The erase doors' apply shape (2k2; P25-SHAPE Q1 = A).
-pub(crate) use effect::{AppliedCheckIn, owner_act_decision_in_txn};
+pub(crate) use effect::{AppliedCheckIn, check_applied_check_in_in_txn, owner_act_decision_in_txn};
 pub use effect::{
     legal_hold_erase_effect_digest, outbound_call_request_erase_effect_digest,
     text_history_erase_effect_digest,

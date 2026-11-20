@@ -25,13 +25,20 @@ pub(in crate::authority) struct FoldCapture {
 
 /// What a root appointment's proof fold settled: each surviving row's state,
 /// the raw merge of them before any restrictive fact, the handoffs whose
-/// fences closed, and the rows of each closed conflict. A counted
-/// appointment's recovered world is made of the first three (PLAN v3 section
-/// 6); the appointment door names its witnesses from the last (section 7).
+/// fences closed, the revocations whose fences closed in a conflict, and the
+/// rows of each closed conflict. A counted appointment's recovered world is
+/// made of the first four (PLAN v3 section 6); the appointment door names its
+/// witnesses from the last (section 7).
 pub(in crate::authority) struct ProofParts {
     pub(in crate::authority) states: BTreeMap<AuthorityEntryHash, FoldState>,
     pub(in crate::authority) merged: FoldState,
     pub(in crate::authority) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    /// Each revocation whose fence closed in a conflict
+    /// (`Retirements::crossed_revocations`), with the refusal the proof fold
+    /// gave it: `RetiredSigner` when a closed fence holds its own signer,
+    /// `InvalidAncestry` when it holds only a signer of a row below
+    /// (REVIEW-9799 P1).
+    pub(in crate::authority) crossed_revocations: BTreeMap<AuthorityEntryHash, AuthorityFoldIssue>,
     pub(in crate::authority) closed_conflicts: Vec<BTreeSet<AuthorityEntryHash>>,
 }
 
@@ -98,10 +105,24 @@ impl FoldCapture {
 
     pub(in crate::authority) fn record(&self, parts: OnceParts<'_>) {
         if let Some(proof) = &self.proof {
+            let crossed_revocations = parts
+                .crossed_revocations
+                .iter()
+                .map(|hash| {
+                    let refused_for_its_signer = AuthorityFoldIssue::RetiredSigner(*hash);
+                    let issue = if parts.issues.contains(&refused_for_its_signer) {
+                        refused_for_its_signer
+                    } else {
+                        AuthorityFoldIssue::InvalidAncestry(*hash)
+                    };
+                    (*hash, issue)
+                })
+                .collect();
             *proof.borrow_mut() = Some(Box::new(ProofParts {
                 states: parts.states.clone(),
                 merged: parts.merged,
                 closed_handoffs: parts.closed_handoffs,
+                crossed_revocations,
                 closed_conflicts: parts.closed_conflicts,
             }));
         } else if let Some(image) = &self.image {
@@ -131,7 +152,11 @@ pub(in crate::authority) struct OnceParts<'a> {
     pub(in crate::authority) valid_entries: ValidEntries,
     pub(in crate::authority) revoke_facts: RevokeFacts,
     pub(in crate::authority) retired_keys: BTreeSet<AuthorityKey>,
+    pub(in crate::authority) handoff_or_appointment_retired_keys: BTreeSet<AuthorityKey>,
     pub(in crate::authority) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    /// The revocations whose fences closed in a conflict
+    /// (`Retirements::crossed_revocations`).
+    pub(in crate::authority) crossed_revocations: BTreeSet<AuthorityEntryHash>,
     /// The rows of each closed conflict (`Retirements::closed_conflicts`).
     pub(in crate::authority) closed_conflicts: Vec<BTreeSet<AuthorityEntryHash>>,
     pub(in crate::authority) unsettled: bool,
@@ -145,7 +170,9 @@ pub(in crate::authority) struct OnceParts<'a> {
 pub(super) struct Settlement {
     pub(super) revoke_facts: RevokeFacts,
     pub(super) retired_keys: BTreeSet<AuthorityKey>,
+    pub(super) handoff_or_appointment_retired_keys: BTreeSet<AuthorityKey>,
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    pub(super) crossed_revocations: BTreeSet<AuthorityEntryHash>,
     pub(super) unsettled: bool,
     pub(super) issues: Vec<AuthorityFoldIssue>,
     /// Parents a judged row names that no judged row is.
@@ -199,7 +226,9 @@ impl Once {
             valid_entries,
             revoke_facts,
             retired_keys,
+            handoff_or_appointment_retired_keys,
             closed_handoffs,
+            crossed_revocations,
             closed_conflicts: _,
             unsettled,
             counted_ancestor_pairs,
@@ -264,9 +293,8 @@ impl Once {
         let marks = valid_entries
             .iter()
             .filter_map(|hash| {
-                let AuthorityOp::MachineProfile(profile) = &by_hash.get(hash)?.op else {
-                    return None;
-                };
+                let profile =
+                    super::super::stale_roster::filed_machine_profile(&by_hash.get(hash)?.op)?;
                 let chain = states
                     .get(hash)?
                     .machines
@@ -291,11 +319,15 @@ impl Once {
             head,
             frontier,
             merged,
-            revocations: final_merged.actor_revocation_hashes.clone(),
+            revocations: crate::authority::fold_state::to_btree_set_map(
+                &final_merged.actor_revocation_hashes,
+            ),
             settlement: Arc::new(Settlement {
                 revoke_facts,
                 retired_keys,
+                handoff_or_appointment_retired_keys,
                 closed_handoffs,
+                crossed_revocations,
                 unsettled,
                 issues,
                 missing_parents,

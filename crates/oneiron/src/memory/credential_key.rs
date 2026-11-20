@@ -354,6 +354,8 @@ pub(crate) fn owner_exemption_holds_in_txn(
     txn: &heed::RoTxn<'_>,
     owner: EntityId,
 ) -> MemoryResult<bool> {
+    #[cfg(oneiron_test_support)]
+    crate::test_doors::owner_exemption_judgements::record_judgement();
     let row = crate::vault::live_entity_row_in_txn(&vault.store, txn, &owner)?;
     if row.live_type() != Some(crate::registry::ENTITY_TYPE_PERSON)
         || !crate::consent::person_is_live_in_txn(vault, txn, &owner)?

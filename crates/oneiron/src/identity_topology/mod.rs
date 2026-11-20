@@ -83,6 +83,7 @@
 
 mod act_admission;
 mod admission_disposition;
+mod archive_restore;
 mod attribution;
 mod distinct_claim;
 mod event_body_codec;
@@ -117,6 +118,11 @@ pub(crate) use admission_disposition::sealed_by_key_for_test;
 pub(crate) use admission_disposition::signed_validated_row_for_test;
 pub use admission_disposition::{AdmissionDisposition, AdmissionVerdict, ProposerStamp};
 pub(crate) use admission_disposition::{SealTrust, core_digest, decision_in_force_by_seal_in_txn};
+pub(crate) use archive_restore::{
+    archived_topology_decision, current_merge_and_split_events_in_txn,
+    is_inline_merge_or_split_body, is_one_part_merge_or_split_manifest, is_topology_refusal,
+    one_part_merge_or_split_payload, operation_part_root, restored_merge_or_split,
+};
 pub(crate) use attribution::{
     admitted_author_in_txn, author_carrier_actor, drop_unheld_author_marks_in_txn,
     effective_author_in_txn, record_author_attribution_in_txn, redact_actor_in_txn,

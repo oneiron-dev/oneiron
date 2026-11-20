@@ -215,6 +215,51 @@ impl SyncServer {
         )
     }
 
+    /// [`Self::persist_imported_update`] for an own device's retained update
+    /// that the home's drain replays (L7-41). No socket sent it, so no Write
+    /// credential is rechecked: the writer requires instead that `work` still
+    /// stands as the burst core handed it back
+    /// ([`DeviceBurstWork::stands_in_txn`]): still held, its device's
+    /// authority unchanged. A batch that no longer stands persists nothing,
+    /// and the drain's next pass ends it (#9226 review). One a residence
+    /// socket sent ([`DeviceBurstWork::promoted`]) is judged as
+    /// [`Self::persist_promoted_imported_update`] judges the socket's own:
+    /// the entities it lands on `source` must still reach the device's
+    /// machine, in the same writer (#9226 review round 2).
+    ///
+    /// [`DeviceBurstWork::stands_in_txn`]: oneiron::sync::federation_burst::DeviceBurstWork::stands_in_txn
+    /// [`DeviceBurstWork::promoted`]: oneiron::sync::federation_burst::DeviceBurstWork::promoted
+    pub(crate) fn persist_retained_device_update(
+        &self,
+        key: &WindowKey,
+        update_bytes: &[u8],
+        inserts: &oneiron::sync::window::UpdateInserts,
+        landings: &oneiron::sync::selector::RepoSyncLandings,
+        work: &oneiron::sync::federation_burst::DeviceBurstWork,
+        source: &loro::LoroDoc,
+    ) -> Result<u64, oneiron::Error> {
+        if work.promoted() {
+            return server_state::persist_promoted_window_update(
+                &self.vault,
+                key,
+                update_bytes,
+                inserts,
+                landings,
+                |txn| retained_work_stands(&self.vault, work, txn),
+                work.peer().machine(),
+                source,
+            );
+        }
+        server_state::persist_admitted_window_update(
+            &self.vault,
+            key,
+            update_bytes,
+            inserts,
+            landings,
+            |txn| retained_work_stands(&self.vault, work, txn),
+        )
+    }
+
     /// Evicts a window doc from the live manager registry.
     ///
     /// Used when an accepted update fails to import into the loaded doc: the
@@ -342,6 +387,20 @@ pub(super) fn spawn_local_change_producer(
             }
         }
     });
+}
+
+/// Whether `work` still stands in `txn`
+/// ([`oneiron::sync::federation_burst::DeviceBurstWork::stands_in_txn`]); a
+/// standing that does not read does not stand.
+fn retained_work_stands(
+    vault: &oneiron::Vault,
+    work: &oneiron::sync::federation_burst::DeviceBurstWork,
+    txn: &heed::RoTxn<'_>,
+) -> bool {
+    work.stands_in_txn(vault, txn).unwrap_or_else(|error| {
+        tracing::warn!(%error, "a retained device batch's standing did not read");
+        false
+    })
 }
 
 #[cfg(test)]

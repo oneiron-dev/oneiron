@@ -59,7 +59,8 @@ mod terms;
 pub(crate) use edge::drop_inquiry_scope_links_in_txn;
 pub use edge::{
     INQUIRY_STATEMENT_PREDICATE, InquiryEdge, InquiryEdgeReciprocalGrant, InquiryEdgeRequest,
-    InquiryScopeItem, InquiryTermsChange, InquiryTermsChangeOutcome, InquiryTermsChanged,
+    InquiryJoinOffer, InquiryJoinPrepared, InquiryScopeItem, InquiryTermsChange,
+    InquiryTermsChangeOutcome, InquiryTermsChanged,
 };
 
 pub(crate) use holder::InquiryAnswerHolder;
@@ -67,6 +68,8 @@ pub(crate) use log::erase_inquiry_log_actor_in_txn;
 pub use log::{InquiryDecider, InquiryLogEntry};
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use log::{log_inquiry_in_txn, settle_inquiry_in_txn};
+#[cfg(oneiron_test_support)]
+pub(crate) use member::effect_digest_for_test;
 pub(crate) use member::erase_inquiry_pending_actor_in_txn;
 pub use member::{
     INQUIRY_ANSWER_VERB, InquiryJudgment, InquiryJudgmentOutcome, InquiryMemberAnswer,

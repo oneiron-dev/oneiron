@@ -48,6 +48,8 @@ fn main() -> std::process::ExitCode {
     let options = oneiron_remote::OpenOptions {
         dimensions: Some(1024),
         device_class: None,
+        machine_reported_name: None,
+        machine_reported_model: None,
         hold_checkpoint_root_signer: false,
     };
     let client =

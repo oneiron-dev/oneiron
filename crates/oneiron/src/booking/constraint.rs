@@ -205,21 +205,6 @@ impl ConstraintObject {
         }
         Ok(())
     }
-
-    /// Canonical JSON bytes. Validation runs first, so a non-canonical object
-    /// can never produce bytes: field order is the declaration order and every
-    /// vector is proven strictly ascending.
-    pub fn canonical_bytes(&self) -> Result<Vec<u8>, BookingError> {
-        self.validate()?;
-        serde_json::to_vec(self).map_err(|error| {
-            BookingError::InvalidConstraint(format!("constraint serialization failed: {error}"))
-        })
-    }
-
-    /// BLAKE3 over [`Self::canonical_bytes`].
-    pub fn canonical_hash(&self) -> Result<[u8; 32], BookingError> {
-        Ok(*blake3::hash(&self.canonical_bytes()?).as_bytes())
-    }
 }
 
 /// What one bounded parse pass concluded. `OffTopic` is a terminal disposition:
@@ -248,6 +233,26 @@ pub struct SolveRequest {
     pub window: TimeRange,
     pub constraint: Option<ConstraintObject>,
     pub visitor_tz: String,
+    /// The meeting length asked, in minutes (BK-VARIABLE-DURATION). `None`:
+    /// the event type's default. A length the event type does not offer
+    /// solves to no slot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_min: Option<u16>,
+}
+
+impl SolveRequest {
+    /// The length `slot` names, in whole minutes, for a solve over exactly
+    /// that slot: a hold, a confirm or a move asks its own slot's length. A
+    /// slot of no whole-minute length (or one too long) names none, and its
+    /// solve at the default length cannot offer it.
+    #[must_use]
+    pub fn slot_duration_min(slot: TimeRange) -> Option<u16> {
+        let secs = slot.end.checked_sub(slot.start)?;
+        if secs % 60 != 0 {
+            return None;
+        }
+        u16::try_from(secs / 60).ok()
+    }
 }
 
 #[doc(hidden)]

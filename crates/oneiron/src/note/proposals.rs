@@ -187,6 +187,16 @@ pub(crate) fn erase_proposal_actor_in_txn(
     Ok(())
 }
 
+/// The NOTE a stored landing receipt's value bytes name, whose delete drops the receipt
+/// (`note::erase::purge`); `None` for bytes that do not read as a receipt. The whole-vault export
+/// withholds a receipt of a NOTE it keeps out.
+pub(crate) fn landing_receipt_note(value: &[u8]) -> Option<EntityId> {
+    NOTE_RECEIPT
+        .decode_value(value)
+        .ok()
+        .map(|receipt| receipt.note)
+}
+
 /// Erasing `actor` from the head-move receipts (FIX 3520): each verdict it
 /// gave keeps its receipt, its heads and its time, and names no one. One-way,
 /// in the erase's own transaction. An id whose entity is no actor scans
@@ -278,6 +288,17 @@ pub(super) fn preserve_recovery_basis(
     if value == fork {
         return Ok(());
     }
+    replace_fork_row_in_txn(vault, txn, &fork, &value)
+}
+
+/// Stores `value` in place of the pending fork row `fork`, and in place of
+/// its copy in the waiting bundle that holds it: the two stay identical.
+pub(super) fn replace_fork_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    fork: &NoteFork,
+    value: &NoteFork,
+) -> Result<()> {
     if let Some(id) = fork.proposal {
         let mut bundle = NOTE_PROPOSAL_BUNDLE
             .get(&vault.store, txn, &id)?
@@ -285,15 +306,15 @@ pub(super) fn preserve_recovery_basis(
         let waiting = bundle
             .waiting
             .iter_mut()
-            .find(|waiting| waiting.fork == head)
+            .find(|waiting| waiting.fork == fork.fork)
             .ok_or(invalid("proposal fork divergence"))?;
-        if *waiting != fork {
+        if *waiting != *fork {
             return Err(invalid("proposal fork divergence"));
         }
         *waiting = value.clone();
         NOTE_PROPOSAL_BUNDLE.put(&vault.store, txn, &id, &bundle)?;
     }
-    NOTE_FORK.put(&vault.store, txn, &head, &value)
+    NOTE_FORK.put(&vault.store, txn, &fork.fork, value)
 }
 
 /// Apply the owner's selected cut to each retained head's actual history.
@@ -797,6 +818,22 @@ pub(super) fn land(
         }
         NoteVerdict::Switch | NoteVerdict::Reject => None,
     };
+    // The fork's found keys and their rulings go to the NOTE before its text
+    // is admitted there: a value ruled in the fork lands kept, and a key
+    // still open is answered on the NOTE
+    // (NOTE-PROPOSAL-FORK-RULING-KEEPS-HANDLE). A reject lands no text. A
+    // switch has no held return, so its move goes first; a merge moves them
+    // in its admission once the write gate lands the text, and one the gate
+    // holds as Proposed moves none (REVIEW-9471 F2; FIX
+    // [NOTE-FORK-PROPOSED-MERGE-KEYS-ON-NOTE]).
+    if verdict == NoteVerdict::Switch {
+        crate::secret_custody::move_side_row_custody_in_txn(
+            &vault.store,
+            txn,
+            &fork.fork,
+            &fork.note,
+        )?;
+    }
     let native_receipt = if verdict == NoteVerdict::Merge && fork.recovery_merge.is_none() {
         Some(
             vault
@@ -822,7 +859,7 @@ pub(super) fn land(
         };
         let receipt = vault
             .memory(actor.entity_ref(), actor.actor_class())
-            .apply_note_operation_in_txn(txn, fork.note, &operation, None)
+            .apply_fork_merge_text_in_txn(txn, fork.note, fork.fork, &operation)
             .map_err(|_| invalid("canonical NOTE proposal admission failed"))?;
         if matches!(receipt.outcome, super::NoteScalarEditOutcome::Proposed(_)) {
             return Ok(None);
@@ -843,6 +880,9 @@ pub(super) fn land(
             .ok_or(invalid("NOTE head sequence exhausted"))?;
         super::documents::set_head(&vault.store, txn, fork.note, fork.fork, seq)?;
         let doc = super::document::NoteDocument::from_loro(fork.note, proposed.doc)?;
+        super::found_key_restore::restore_kept_handles_in_candidate_in_txn(
+            vault, txn, &doc, fork, actor,
+        )?;
         super::document_store::persist_authoritative(vault, txn, &doc)?;
         fork.fork
     } else {

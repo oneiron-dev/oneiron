@@ -32,11 +32,11 @@ pub(crate) use delete_authority::{
 #[allow(unused_imports)]
 pub(crate) use delete_authority::ArchiveDeleteRole;
 mod connect_grant;
-pub use connect_grant::{ConnectGrantMinted, ConnectMemberLeaveConsent, INQUIRE_VERB_CLASS};
 pub(crate) use connect_grant::{
-    ConnectGrantRequest, connect_direction_projection, grant_serves_selector, is_guest_slice,
-    pact_admits_grant, require_connect_grant_in_txn, require_one_connect_per_peer,
+    ConnectGrantApproval, ConnectGrantRequest, connect_direction_projection, grant_serves_selector,
+    is_guest_slice, pact_admits_grant, require_connect_grant_in_txn, require_one_connect_per_peer,
 };
+pub use connect_grant::{ConnectGrantMinted, ConnectMemberLeaveConsent, INQUIRE_VERB_CLASS};
 pub(crate) use connect_grant::{connect_grant_stands_in_txn, connect_guest_standing_in_txn};
 mod connect_proposal;
 pub(crate) use connect_proposal::{
@@ -124,6 +124,9 @@ pub use shared_creation::{
 pub(crate) mod courtesy_scope;
 pub(crate) mod delivery_record;
 pub use delivery_record::FederationDeliveryRecord;
+// What this vault holds from another, by attribution (L7-09).
+mod holdings;
+pub use holdings::{HeldWorld, Holdings};
 mod foreign_world;
 pub use foreign_world::pact_foreign_world;
 pub(crate) use foreign_world::{PactDelivery, foreign_world_for};
@@ -147,7 +150,7 @@ pub use self::coreference::{
 };
 pub(crate) use self::coreference::{
     ConsolidatedSameAs, check_consolidated_same_as, coreference_share_consent_as_owner,
-    put_consolidated_same_as_in_txn, put_coreference_link_as_owner,
+    person_pair_in_txn, put_consolidated_same_as_in_txn, put_coreference_link_as_owner,
 };
 pub use self::grant::{
     ConnectMemberLeaveBinding, FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION,

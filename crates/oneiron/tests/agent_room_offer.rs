@@ -377,3 +377,64 @@ fn the_owners_join_answer_records_her_check_in_decision() -> TestResult {
     );
     Ok(())
 }
+
+/// REVIEW-9839 P1 (round 2): the room's host settles the card's join with
+/// an Admission yes at `vault.rooms.consent`, so the card stays open while
+/// its join adds no one again. A join answer that names a `check_in_ref`
+/// then spends none, so it is refused as a bad request and lands no
+/// acceptance; the answer without one lands it. A yes at the consent door
+/// that names a `check_in_ref` on the settled join is refused the same way.
+///
+/// At #9839's head before this fix (c9d20e5a899e) the answer naming the
+/// check-in lands the acceptance and leaves the check-in unspent.
+#[test]
+fn a_join_answer_on_a_settled_join_refuses_a_named_check_in() -> TestResult {
+    let fixture = open()?;
+    let agent = create_agent(&fixture, "offer-agent-settled-join")?;
+    permit_room_reads(&fixture, agent)?;
+    let host = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let card = fixture
+        .vault
+        .memory(agent, EdgeActorClass::Agent)
+        .rooms_offer(&offer_draft(fixture.room, agent, "offer-settled-join-1"))?;
+    let admission = |check_in_ref: Option<String>| oneiron::workspace_roster::ConsentAnswer {
+        join_ref: card.join_ref.clone(),
+        part: ConsentPart::Admission,
+        grant: true,
+        spend_scope: None,
+        check_in_ref,
+    };
+    let settled = host.rooms_consent(&admission(None))?;
+    assert_eq!(
+        settled.decision.state,
+        JoinDecision::Ready,
+        "the host's yes settles the card's join"
+    );
+    let named = EntityId::now().to_hex();
+    let answer = |check_in_ref: Option<String>| OfferAnswerRequest {
+        offer_id: card.offer_id.clone(),
+        action: OfferAnswer::Join,
+        intent_key: "offer-settled-join-answer".to_owned(),
+        check_in_ref,
+    };
+    let refused = host
+        .rooms_offer_answer(&answer(Some(named.clone())))
+        .expect_err("the answer's join is settled, so it spends no check-in");
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{refused:?}");
+    assert!(
+        refused.message.contains("check_in_ref"),
+        "the refusal names the field: {refused:?}"
+    );
+    let refused = host
+        .rooms_consent(&admission(Some(named)))
+        .expect_err("a yes on a settled join adds no one, so it spends no check-in");
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{refused:?}");
+
+    let accepted = host.rooms_offer_answer(&answer(None))?;
+    assert!(
+        matches!(accepted.state, OfferState::Joined { .. }),
+        "the refused answer landed nothing, so this one lands the acceptance: {:?}",
+        accepted.state
+    );
+    Ok(())
+}

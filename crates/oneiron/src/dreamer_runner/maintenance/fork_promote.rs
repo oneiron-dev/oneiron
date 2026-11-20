@@ -249,7 +249,9 @@ impl Vault {
                 );
                 match fork {
                     Ok(()) => {}
-                    Err(Error::Artifact(ArtifactError::InvalidSkillBody(_))) => {
+                    Err(Error::Artifact(
+                        ArtifactError::InvalidSkillBody(_) | ArtifactError::SkillVersionKept(_),
+                    )) => {
                         report.refused += 1;
                     }
                     Err(error) => return Err(error),

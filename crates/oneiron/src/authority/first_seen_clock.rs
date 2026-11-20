@@ -6,7 +6,7 @@
 //! so it dies with the handle and two vaults in one process cannot read each
 //! other's anchor.
 
-use std::time::Instant;
+use std::time::Duration;
 
 use crate::error::{Error, RecordError};
 use crate::side_table::{self, Raw, SideTable};
@@ -87,7 +87,9 @@ pub(crate) fn is_corrupt_first_seen_sidecar(err: &Error) -> bool {
 }
 
 /// One vault's monotonic observation ANCHOR: the observed second count
-/// `anchor_secs` and the [`Instant`] `anchor_instant` it was taken at.
+/// `anchor_secs` and the monotonic reading `anchor_monotonic` it was taken
+/// at, on the store clock's [`crate::ports::StoreClock::monotonic_now`]: the
+/// host's monotonic clock, or a test clock's own time.
 ///
 /// The pair is an anchor, NOT a running total, and that is the whole point.
 /// `Duration::as_secs` truncates, so a fold at 09:00:00.4 and another at
@@ -109,7 +111,7 @@ pub(crate) struct AuthorityLocalClock {
 }
 
 struct AuthorityClockAnchor {
-    anchor_instant: Instant,
+    anchor_monotonic: Duration,
     anchor_secs: u64,
 }
 
@@ -117,12 +119,11 @@ impl AuthorityLocalClock {
     /// This handle's anchored reading at `now`, when it holds an anchor: the
     /// clock it has measured since it seeded from a floor it read whole. It
     /// seeds none and rebases none.
-    fn anchored_secs(&self, now: Instant) -> Option<u64> {
+    fn anchored_secs(&self, now: Duration) -> Option<u64> {
         self.anchor.as_ref().map(|anchor| {
-            anchor.anchor_secs.saturating_add(
-                now.saturating_duration_since(anchor.anchor_instant)
-                    .as_secs(),
-            )
+            anchor
+                .anchor_secs
+                .saturating_add(now.saturating_sub(anchor.anchor_monotonic).as_secs())
         })
     }
 
@@ -134,7 +135,7 @@ impl AuthorityLocalClock {
         &self,
         previous_floor: u64,
         candidate_wall_secs: u64,
-        now: Instant,
+        now: Duration,
     ) -> u64 {
         match self.anchored_secs(now) {
             Some(anchored) => anchored.max(previous_floor),
@@ -146,28 +147,26 @@ impl AuthorityLocalClock {
     /// The monotone observation this vault reports for `candidate_wall_secs`,
     /// measured from `now` on the monotonic clock. Reachable from `authority`
     /// only: the store path goes through `authority_observation_secs`, and the
-    /// tests that supply an exact monotonic instant live under this module.
+    /// tests that supply an exact monotonic reading live under this module.
     pub(super) fn observation_secs_at(
         &mut self,
         previous_floor: u64,
         candidate_wall_secs: u64,
-        now: Instant,
+        now: Duration,
     ) -> u64 {
         match self.anchor.as_mut() {
             Some(anchor) => {
-                let elapsed = now
-                    .saturating_duration_since(anchor.anchor_instant)
-                    .as_secs();
+                let elapsed = now.saturating_sub(anchor.anchor_monotonic).as_secs();
                 let anchored = anchor.anchor_secs.saturating_add(elapsed);
                 // The persisted floor is the only thing that may REBASE the
                 // anchor: a floor above the anchor-derived value means another
                 // writer (or a reopen) advanced local observation past this
                 // vault's origin, so the floor becomes the new origin and `now`
-                // its instant. Rebasing here is safe precisely because it is
+                // its reading. Rebasing here is safe precisely because it is
                 // monotone upward — observation never runs backward.
                 if previous_floor > anchored {
                     anchor.anchor_secs = previous_floor;
-                    anchor.anchor_instant = now;
+                    anchor.anchor_monotonic = now;
                     return previous_floor;
                 }
                 anchored
@@ -183,7 +182,7 @@ impl AuthorityLocalClock {
                     previous_floor
                 };
                 self.anchor = Some(AuthorityClockAnchor {
-                    anchor_instant: now,
+                    anchor_monotonic: now,
                     anchor_secs: observed,
                 });
                 observed
@@ -192,9 +191,11 @@ impl AuthorityLocalClock {
     }
 }
 
-/// The monotone observation `store`'s vault reports for `candidate_wall_secs`.
-/// Inside a staged clock repair's proof ([`staged_repair_reading`]) it is
-/// read with the handle's anchor left as it stands.
+/// The monotone observation `store`'s vault reports for `candidate_wall_secs`,
+/// measured on the store clock's monotonic reading
+/// ([`crate::ports::StoreClock::monotonic_now`]). Inside a staged clock
+/// repair's proof ([`staged_repair_reading`]) it is read with the handle's
+/// anchor left as it stands.
 pub(crate) fn authority_observation_secs(
     store: &StoreCore,
     previous_floor: u64,
@@ -204,7 +205,7 @@ pub(crate) fn authority_observation_secs(
         .authority_local_clock
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let now = Instant::now();
+    let now = store.clock.monotonic_now();
     if in_staged_repair() {
         return clock.unseeded_observation_secs(previous_floor, candidate_wall_secs, now);
     }
@@ -246,7 +247,7 @@ pub(super) fn authority_anchored_secs(store: &StoreCore) -> Option<u64> {
         .authority_local_clock
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .anchored_secs(Instant::now())
+        .anchored_secs(store.clock.monotonic_now())
 }
 
 /// What an authority reading does over a present floor that does not decode.
@@ -369,18 +370,99 @@ pub(crate) fn read_authority_clock_floor_in_txn(
     }
 }
 
+thread_local! {
+    /// The authority readings this thread holds, innermost last: the store
+    /// and the snapshot each was read in, by address, and the reading
+    /// ([`hold_authority_reading_in_txn`]).
+    static HELD_READINGS: std::cell::RefCell<Vec<(usize, usize, u64)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// One reading of a store's authority clock, held on this thread for one
+/// snapshot while a reply read in it is judged (FIX
+/// QUESTION-OUTCOMES-REPLY-SPANS-SNAPSHOTS, blind review round 2 of #9864).
+/// While it is held, every reading of that store's clock in that snapshot on
+/// this thread ([`authority_clock_reading_in_txn`]) is this one: each
+/// credential, slip and grant the reply judges, under its caller's lane and
+/// under each saved lane, is judged at one second, so an expiry that falls
+/// while the reply is read drops every item it bounds or none. The floor
+/// does not move inside one snapshot, so the held reading never sits below
+/// it. A writer's reading ([`advance_authority_clock_in_txn`]) never takes
+/// it.
+#[must_use = "the snapshot reads the held second only while this is held"]
+pub(crate) struct HeldAuthorityReading {
+    store: usize,
+    txn: usize,
+}
+
+/// Holds `store`'s authority reading in `txn` on this thread until the guard
+/// drops ([`HeldAuthorityReading`]). A reading already held for the same
+/// snapshot stays the one read.
+///
+/// # Errors
+///
+/// As [`authority_clock_reading_in_txn`].
+pub(crate) fn hold_authority_reading_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> crate::error::Result<HeldAuthorityReading> {
+    let secs = authority_clock_reading_in_txn(store, txn, store.clock.now_recorded_at())?;
+    let held = HeldAuthorityReading {
+        store: std::ptr::from_ref(store).addr(),
+        txn: std::ptr::from_ref(txn).addr(),
+    };
+    HELD_READINGS.with(|readings| {
+        readings.borrow_mut().push((held.store, held.txn, secs));
+    });
+    Ok(held)
+}
+
+impl Drop for HeldAuthorityReading {
+    fn drop(&mut self) {
+        HELD_READINGS.with(|readings| {
+            let mut readings = readings.borrow_mut();
+            if let Some(at) = readings
+                .iter()
+                .rposition(|(store, txn, _)| *store == self.store && *txn == self.txn)
+            {
+                readings.remove(at);
+            }
+        });
+    }
+}
+
+/// The reading this thread holds for `store`'s clock in `txn`, when it holds
+/// one.
+fn held_authority_reading(store: &crate::store::Store, txn: &heed::RoTxn<'_>) -> Option<u64> {
+    let (store, txn) = (
+        std::ptr::from_ref(store).addr(),
+        std::ptr::from_ref(txn).addr(),
+    );
+    HELD_READINGS.with(|readings| {
+        readings
+            .borrow()
+            .iter()
+            .find(|(held_store, held_txn, _)| *held_store == store && *held_txn == txn)
+            .map(|(_, _, secs)| *secs)
+    })
+}
+
 /// The authority clock's reading for `candidate_wall_secs` in `txn`: the
 /// floor read strictly ([`read_authority_clock_floor_in_txn`]), raised
 /// through [`authority_observation_secs`]. Over a damaged floor it is this
 /// handle's anchored reading, a clock it measured from a floor it read whole;
 /// with no anchor it is [`RecordError::AuthorityClockCorrupt`], but inside a
 /// restriction-only act (CALLS `FIX 10106 authority clock corrupt policy`).
-/// Pure: it writes nothing.
+/// While this thread holds a reading of `store`'s clock in `txn`
+/// ([`HeldAuthorityReading`]), it is that one. Pure: it writes nothing.
 pub(crate) fn authority_clock_reading_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     candidate_wall_secs: u64,
 ) -> crate::error::Result<u64> {
+    if let Some(held) = held_authority_reading(store, txn) {
+        return Ok(held);
+    }
     match read_authority_clock_floor_in_txn(store, txn) {
         Ok(floor) => Ok(authority_observation_secs(
             store,

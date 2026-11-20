@@ -170,11 +170,9 @@ fn forged_identity_quarantines_and_missing_registration_pends_without_install() 
     let mut forged = PackInstanceEnvelope::from_bytes(&source_raw[ENTITY_METADATA_HEADER_LEN..])?;
     forged.kind.source_hash = [55; 32];
     let forged_body = forged.to_bytes()?;
-    let mut forged_blob = Vec::new();
-    forged_blob.push(128u8);
-    forged_blob.extend_from_slice(&learned_at.to_be_bytes());
-    forged_blob.extend_from_slice(&learned_at.to_be_bytes());
-    forged_blob.extend_from_slice(&learned_at.to_be_bytes());
+    // The forgery reuses the source row's own 33-byte header (kind handle,
+    // stamps, row_version): only the body's source_hash differs.
+    let mut forged_blob = source_raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
     forged_blob.extend_from_slice(&forged_body);
     let doc = create_window_doc("forged", &window_key);
     crate::sync::loro_support::map_insert_bytes(

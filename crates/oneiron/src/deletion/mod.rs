@@ -1,6 +1,8 @@
 //! ARCH-0038 deletion/redaction contract types.
 
 mod actor_fields;
+mod brief_delete_fence;
+pub(crate) use brief_delete_fence::{BriefDeleteFence, BriefDeleteFences, conclude_brief_delete};
 pub(crate) use oneiron_store::deletion::archive_role;
 mod safe_delete_reason;
 pub use safe_delete_reason::SafeDeleteReason;
@@ -35,6 +37,10 @@ pub(crate) mod setting_keys;
 mod sweep_queue;
 mod timeline;
 mod tombstone;
+#[cfg(feature = "sync")]
+mod tombstone_publications_in_flight;
+#[cfg(feature = "sync")]
+pub(crate) use tombstone_publications_in_flight::TombstonePublicationsInFlight;
 pub(crate) mod tombstone_scope;
 pub(crate) mod topology_delete_intent;
 #[cfg(feature = "sync")]
@@ -54,10 +60,16 @@ pub use coop_delivery::{
     CooperativeDeletionDelivery, CooperativeDeletionDeliveryStatus, CooperativeDeletionDisposition,
     CooperativeDeletionDispositionKind, CooperativeDeletionIngress, CooperativeDeletionNotice,
     CooperativeDeletionRetention, CooperativeDeletionTry, CooperativeLocalRedaction,
-    CooperativeRestrictionLiftAttestation, IncomingCooperativeDeletion,
+    CooperativeRestrictionLiftAttestation, ERASE_REQUEST_REPLY_ROW_VERSION,
+    ERASE_REQUEST_SETTING_DECLINE_CODE, ERASE_REQUEST_SETTING_DECLINE_REVIEW_SECS,
+    ERASE_REQUEST_SETTING_HONOUR_CODE, EraseRequestReply, EraseRequestReplyPolicy,
+    EraseRequestReplySetting, EraseRequestReplySource, IncomingCooperativeDeletion,
     cooperative_deletion_recipient_id, parse_hex,
 };
-pub(crate) use coop_delivery::{MAX_REASON_CODE_LEN, courtesy_retained_pacts_in};
+pub(crate) use coop_delivery::{
+    ERASE_REQUEST_REPLY_ROW_KEY, EraseRequestReplyRead, MAX_REASON_CODE_LEN,
+    courtesy_retained_pacts_in,
+};
 pub use coop_reply::{
     COOP_DELETION_REPLY_BODY_KEYS, COOP_DELETION_REPLY_DOMAIN, COOP_DELETION_REPLY_SCHEMA_VERSION,
     CooperativeDeletionReply, CooperativeDeletionReplyOutcome, SignedCooperativeDeletionReply,

@@ -218,8 +218,14 @@ fn unset_recall_reads_base_plus_the_active_world() {
     facade.claim_upsert(&home).expect("base claim");
     // A base claim beside them: base is listed as excluded only when the
     // actor's reading default drops it.
+    // Keep legacy writes above and between probes, but give each pipeline
+    // run the default manifest its claim-aging read requires (cause P).
+    let manifest_id = crate::gate::default_policy_manifest_id().unwrap();
+    let manifest = crate::gate::default_policy_manifest().unwrap();
     let unset = || {
-        facade
+        crate::test_util::put_policy_manifest_bytes(&vault, manifest_id, &manifest)
+            .expect("restore the manifest for recall");
+        let excluded = facade
             .recall(
                 "harbor",
                 Effort::Light,
@@ -230,7 +236,9 @@ fn unset_recall_reads_base_plus_the_active_world() {
             )
             .expect("unset recall")
             .scope_honesty
-            .out_of_scope_worlds
+            .out_of_scope_worlds;
+        crate::test_util::clear_default_policy_manifest_for_legacy_tests(&vault);
+        excluded
     };
     let mut both = vec![active.to_hex(), other.to_hex()];
     both.sort();

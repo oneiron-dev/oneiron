@@ -96,6 +96,7 @@ impl Fixture {
                     why: None,
                     check_in_ref: None,
                     weight_runs: None,
+                    surface: None,
                 },
             )
             .unwrap_or_else(|error| panic!("the owner sets {key}: {error:?}"));
@@ -119,6 +120,7 @@ fn refused_set(fx: &Fixture, key: &str, value: Value) -> String {
                     why: None,
                     check_in_ref: None,
                     weight_runs: None,
+                    surface: None,
                 },
             )
             .expect_err("an out-of-range value is refused")

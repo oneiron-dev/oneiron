@@ -18,6 +18,11 @@
 //!   one the home witness never admitted, so it is left out as well. A TURN
 //!   whose stored body or DAG parent does not decode gets no row either, and
 //!   the open goes on. Each skip is counted by kind.
+//! - No row for a record of a spawned sub-session other than a thread
+//!   reply: it never enters the trunk and answers no thread, and its native
+//!   write keeps no row. A thread reply in a sub-session is rowed as every
+//!   thread reply is. One whose sub-session placement does not resolve is
+//!   skipped as one that does not decode.
 //! - A thread reply is rowed only when the turn it answers keeps a row,
 //!   present or written in the same pass. A reply under an erased or
 //!   skipped reply gets no row, and neither does any reply under it: every
@@ -70,6 +75,9 @@ pub(crate) struct RoomTurnBackfill {
     /// Thread replies whose DAG parent keeps no row, such as one under an
     /// erased reply: no row, as the native writer keeps none for them.
     pub(crate) skipped_unrowed_parent: u64,
+    /// Records of a spawned sub-session other than its thread replies: no
+    /// row, as the native writer keeps none for them.
+    pub(crate) skipped_sub_session: u64,
 }
 
 impl RoomTurnBackfill {
@@ -84,6 +92,7 @@ impl RoomTurnBackfill {
         self.skipped_home_witness += room.skipped_home_witness;
         self.skipped_undecodable += room.skipped_undecodable;
         self.skipped_unrowed_parent += room.skipped_unrowed_parent;
+        self.skipped_sub_session += room.skipped_sub_session;
     }
 }
 
@@ -93,6 +102,7 @@ enum Skip {
     Unbound,
     HomeWitness,
     Undecodable,
+    SubSession,
 }
 
 /// Rows every TURN of every room that has none, once per room, at a
@@ -144,6 +154,7 @@ pub(crate) fn backfill_room_turns_on_open(vault: &Vault) -> Result<RoomTurnBackf
             skipped_home_witness = report.skipped_home_witness,
             skipped_undecodable = report.skipped_undecodable,
             skipped_unrowed_parent = report.skipped_unrowed_parent,
+            skipped_sub_session = report.skipped_sub_session,
             ms = started.elapsed().as_millis() as u64,
             "room turn backfill"
         );
@@ -207,6 +218,7 @@ fn backfill_room_in_txn(
             Err(Skip::Unbound) => report.skipped_unbound += 1,
             Err(Skip::HomeWitness) => report.skipped_home_witness += 1,
             Err(Skip::Undecodable) => report.skipped_undecodable += 1,
+            Err(Skip::SubSession) => report.skipped_sub_session += 1,
         }
     }
     let unrowed = replies_under_unrowed_parent(vault, txn, &built)?;
@@ -273,8 +285,8 @@ fn recorded_turn_in(
 }
 
 /// The writer, recipients, `reply_to` and `thread_of` the TURN `id`, whose
-/// live body is `body`, recorded. An error is a body or DAG parent that
-/// does not decode.
+/// live body is `body`, recorded. An error is a body, DAG parent or
+/// sub-session placement that does not decode.
 fn recorded_shape(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -282,6 +294,13 @@ fn recorded_shape(
     body: &[u8],
     home: bool,
 ) -> Result<std::result::Result<RecordedShape, Skip>> {
+    // A thread reply in a spawned sub-session keeps its row, as its native
+    // write keeps one; the sub-session's other records keep none.
+    if !crate::conversation_dag::is_thread_record(&vault.store, txn, &id)?
+        && crate::conversation_dag::is_sub_session_record(&vault.store, txn, &id)?
+    {
+        return Ok(Err(Skip::SubSession));
+    }
     let Some(actor) = crate::conversation::record_author(body)? else {
         return Ok(Err(Skip::NoWriter));
     };

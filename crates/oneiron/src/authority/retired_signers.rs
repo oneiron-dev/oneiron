@@ -59,6 +59,9 @@ pub(super) struct Retirements {
     anchored: BTreeSet<AuthorityEntryHash>,
     /// The handoffs a counted appointment's proof fold closed in its line.
     recovered_handoffs: BTreeSet<AuthorityEntryHash>,
+    /// The revocations a counted appointment's proof fold closed in a
+    /// conflict in its line (REVIEW-9799 P1).
+    recovered_crossed_revocations: BTreeSet<AuthorityEntryHash>,
     /// Each closed conflict's rows: the handoffs and revocations that fence
     /// one another round a cycle, all of whose fences closed.
     conflicts: Vec<BTreeSet<AuthorityEntryHash>>,
@@ -200,6 +203,15 @@ impl Retirements {
             .collect()
     }
 
+    /// Every key a closed handoff or appointment fence holds.
+    pub(super) fn handoff_or_appointment_retired_keys(&self) -> BTreeSet<AuthorityKey> {
+        self.fences
+            .iter()
+            .filter(|fence| matches!(fence.kind, FenceKind::Handoff | FenceKind::Appointment))
+            .flat_map(|fence| fence.keys.iter().cloned())
+            .collect()
+    }
+
     /// The handoffs whose fences are closed, settled or in conflict, here or
     /// in a counted appointment's proof fold.
     pub(super) fn handoffs(&self) -> BTreeSet<AuthorityEntryHash> {
@@ -208,6 +220,25 @@ impl Retirements {
             .filter(|fence| fence.kind == FenceKind::Handoff)
             .map(|fence| fence.row)
             .chain(self.recovered_handoffs.iter().copied())
+            .collect()
+    }
+
+    /// The revocations whose fences closed in a conflict, here or in a
+    /// counted appointment's proof fold: a closed fence of another member
+    /// holds a signer of each, or of a row below it, so the fold refuses it
+    /// (as `RetiredSigner` when that fence holds its own signer, as
+    /// `InvalidAncestry` when it holds only a signer of a row below; a
+    /// recovered row keeps its proof fold's refusal,
+    /// `Recovered::entry_fold`), and its own fence ended its key all the
+    /// same. The owner's key changes list names the first kind as removed by
+    /// an ended key and the second as removed in conflict
+    /// (`owner_key_changes`).
+    pub(super) fn crossed_revocations(&self) -> BTreeSet<AuthorityEntryHash> {
+        self.fences
+            .iter()
+            .filter(|fence| fence.kind == FenceKind::Revocation && fence.conflict)
+            .map(|fence| fence.row)
+            .chain(self.recovered_crossed_revocations.iter().copied())
             .collect()
     }
 
@@ -328,19 +359,17 @@ pub(super) fn settle_handoffs(
 }
 
 /// Every row of `states` that `refused` names or that descends from one.
+/// One marked pass over the index, not a lookup of each refused row in
+/// each row's ancestry (row [ROSTER-KEY-LOG-FLOOD], PR 3).
 fn with_descendants(
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     refused: &BTreeMap<AuthorityEntryHash, AuthorityFoldIssue>,
     ancestors: &AncestorIndex,
 ) -> BTreeSet<AuthorityEntryHash> {
+    let below_refused = ancestors.marks(|row| refused.contains_key(row));
     states
         .keys()
-        .filter(|hash| {
-            refused.contains_key(*hash)
-                || ancestors
-                    .get(*hash)
-                    .is_some_and(|past| refused.keys().any(|row| past.contains(row)))
-        })
+        .filter(|hash| refused.contains_key(*hash) || below_refused.in_ancestry(hash))
         .copied()
         .collect()
 }
@@ -469,6 +498,7 @@ fn close_fences(
             .collect(),
         anchored,
         recovered_handoffs: recovered.closed_handoffs.clone(),
+        recovered_crossed_revocations: recovered.crossed_revocations.keys().copied().collect(),
         conflicts: conflicts.into_iter().collect(),
     };
     for hash in states
@@ -553,6 +583,20 @@ pub(crate) fn door_ancestor_row(
         Some(row) => Ok(Some(row)),
         None => evidence.map_or(Ok(None), |evidence| evidence.ancestor(hash)),
     }
+}
+
+/// Whether `txn` holds the row at `hash`: the vault stores it, or the adopted
+/// checkpoint image (`evidence`) covers it. The door reads the committed state,
+/// so a row only the write brings is not held. A refused write's sibling rows
+/// never stand in its equivocation evidence as handoffs this vault holds (OF-166).
+pub(super) fn authority_row_held(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    evidence: Option<&super::adopted_evidence::AdoptedEvidence>,
+    hash: &AuthorityEntryHash,
+) -> crate::error::Result<bool> {
+    Ok(stored_authority_row(store, txn, hash)?.is_some()
+        || evidence.is_some_and(|evidence| evidence.rows().contains_key(hash)))
 }
 
 /// Whether `entry` is already in the log at its own id, stored as an

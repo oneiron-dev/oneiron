@@ -192,6 +192,36 @@ fn resolution_initial_packs() {
 }
 
 #[test]
+fn a_set_not_local_to_its_operands_is_refused() {
+    let fixture_data = fixture();
+    let candidate_operands = operands(2);
+    let observations = case_observations(&fixture_data, "two_candidate_cross");
+    // A route's own set names request positions in the selection's ready
+    // order: [1, 0] when the second operand is the stronger one. The engine
+    // rebuilds an ascending member list from the operands as given, so it
+    // would refuse this pack (extraction_pack.rs select_conflict).
+    let routed_judge_set = judge_set(vec![1, 0], vec![]);
+    let routed_input = resolution_input(&candidate_operands, &observations, &routed_judge_set);
+    assert!(matches!(
+        resolution(routed_input, None),
+        Err(Error::Part(_))
+    ));
+    let differing_pages = [
+        page_resolution_answer(0, "merge"),
+        page_resolution_answer(1, "supersede"),
+    ];
+    assert!(matches!(
+        resolution_final(routed_input, &differing_pages),
+        Err(Error::Part(_))
+    ));
+    // The same members, local to their component in ready order, build.
+    let local_judge_set = judge_set(vec![0, 1], vec![]);
+    let local_input = resolution_input(&candidate_operands, &observations, &local_judge_set);
+    let local_pack = resolution(local_input, None).expect("a local set builds");
+    assert_eq!(local_pack.set_members, Some(vec![0, 1]));
+}
+
+#[test]
 fn resolution_final_and_standing() {
     let fixture_data = fixture();
     let candidate_operands = operands(2);
@@ -356,7 +386,7 @@ fn correction_identity_choice() {
                 .expect("falls back");
         match fallback_step {
             Step::Finished(corrections) => {
-                assert_eq!(corrections[0].corrects, Some(expected_claim))
+                assert_eq!(corrections[0].corrects, Some(expected_claim));
             } // native: crates/oneiron/src/dreamer_consolidation/executor/decisions/identity_choice.rs:50 most probable; tie keeps last at :61; probability required at :55; no-probability still names at :30
             Step::Ask(_) => panic!("empty final is terminal"),
         }
@@ -444,9 +474,9 @@ fn mapping_and_layout() {
     let same_pack = resolution(same_input, None).expect("pack builds");
     let resolution_key = same_pack.questions[0].key.clone();
     let identity_key = same_pack.questions[1].key.clone();
-    let mut mapped_entry = choice_entry(identity_key.clone(), &claim_hex(1), Some(0.9));
+    let mut mapped_entry = choice_entry(identity_key, &claim_hex(1), Some(0.9));
     mapped_entry.question = claim_hex(2);
-    let resolution_entry = choice_entry(resolution_key.clone(), "merge", Some(0.9));
+    let resolution_entry = choice_entry(resolution_key, "merge", Some(0.9));
     let mapped_answered = answered_pack(&same_pack, vec![resolution_entry, mapped_entry]);
     let mapped_history = [mapped_answered];
     let mapped_step =

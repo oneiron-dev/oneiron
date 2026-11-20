@@ -5,7 +5,6 @@
 //! before the dispatch returns, so the loop settles from it after.
 
 use std::panic::AssertUnwindSafe;
-use std::pin::pin;
 
 use super::*;
 use crate::dreamer_consolidation::PreparedWake;
@@ -175,7 +174,7 @@ impl DreamerWakeDriver<'_> {
             // parks as its cause says, but this executor is not used
             // again in this pass: the pass ends on the panic and the
             // next one gets a fresh executor (FIX 7322).
-            let mut execute = pin!(async {
+            let mut execute = build_boxed_future(|| async {
                 if admitted.status.attempt.kind
                     == crate::dreamer_runner::DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
                 {
@@ -206,6 +205,8 @@ impl DreamerWakeDriver<'_> {
                         != crate::dreamer_runner::maintenance::CONSOLIDATION_STRENGTH_FACET
                     && admitted.status.payload.attempt_type
                         != crate::dreamer_runner::maintenance::CONFLICT_SETTLE_FACET
+                    && admitted.status.payload.attempt_type
+                        != crate::dreamer_runner::maintenance::PSYCH_PROFILE_FACET
                 {
                     crate::dreamer_runner::maintenance::execute(
                         admitted,

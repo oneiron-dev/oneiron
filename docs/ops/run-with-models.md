@@ -388,6 +388,7 @@ names the field and never its value:
   `kit_bundle_public_urls`, `allow_unauthenticated`, `allowed_origins`,
   `artifact_domains`, `artifact_vault_name`, `trusted_proxies`,
   `lease_vault_id`, `privacy_posture`, `hosted_kms_key_ref`, `device_class`,
+  `machine_reported_name`, `machine_reported_model`,
   every `[models.broker]` key, `[models.voice] socket`, `[keystore] dir` and
   `[linear] response_dir`, which the vault derives itself. A managed vault's
   artifact origin answers on its internal authority alone
@@ -2729,8 +2730,10 @@ written into a one-shot document of that origin which the host answers
 itself, so no page script runs before it, and read back key by key; then
 it loads the URL, scrolls, and reads the page whole. The answer carries
 the switch's `receipt` (verb `switch_engine`), whose `engine_switch` is its
-record (`{from, to, reason, url, carried, not_carried, outcome}`), and the
-new page's `observation`. A carried store names its origin, its item
+record (`{from, to, reason, url, carried, not_carried, outcome}`, and on a
+switched one `source_guest_pressure`: the pids-limit hits the source guest
+showed by the time it went, which no later answer names), and the new
+page's `observation`. A carried store names its origin, its item
 count, its `phase` (`pre_input`, `post_act`, `exit`, `hand_back` or
 `switch_export`) and `after_receipt`, the last receipt the run had landed
 when it was read. `not_carried` lists, by component, origin, cookie
