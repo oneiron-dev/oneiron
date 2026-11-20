@@ -89,7 +89,7 @@ impl Vault {
         let importance = if leave_out {
             OwnerActImportance::Ordinary
         } else {
-            OwnerActImportance::Important
+            OwnerActImportance::Ordinary
         };
         let witness =
             self.owner_presence(importance, owner_presence_reasons::CONVERSATION_TRAINING)?;

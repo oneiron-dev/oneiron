@@ -131,7 +131,7 @@ impl Vault {
         // prompts. The turn itself is taken after the confirm.
         owner.actor_for_read(self)?;
         let witness = self.owner_presence(
-            OwnerActImportance::Important,
+            OwnerActImportance::Ordinary,
             owner_presence_reasons::CHECKPOINT_POLICY,
         )?;
         let ground = OwnerProofGround::witnessed(&witness);

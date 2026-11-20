@@ -307,7 +307,7 @@ impl Vault {
         seen: Option<PolicyRevision>,
     ) -> Result<ConversationLearningView> {
         let importance = if on {
-            OwnerActImportance::Important
+            OwnerActImportance::Ordinary
         } else {
             OwnerActImportance::Ordinary
         };

@@ -241,6 +241,12 @@ impl Vault {
     ) -> Result<PairingRedeemed> {
         let key = VerifyingKey::from_bytes(&binding_key).map_err(|_| invalid_authority())?;
         let signature = Signature::from_slice(signature).map_err(|_| invalid_authority())?;
+        if request.is_some() {
+            let _witness = self.owner_presence(
+                crate::world_keys::OwnerActImportance::Important,
+                "approve a device pairing",
+            )?;
+        }
         let mut txn = self.store.env.write_txn()?;
         let now = self.instant_in_txn(&txn)?.secs();
         let row_key = pairing_row_key(issuer, code)?;

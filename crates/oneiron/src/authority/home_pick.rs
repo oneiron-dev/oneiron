@@ -205,7 +205,7 @@ impl Vault {
             ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
         };
         let witness = self.owner_presence(
-            OwnerActImportance::Ordinary,
+            OwnerActImportance::Important,
             owner_presence_reasons::HOME_PICK,
         )?;
         let ground = OwnerProofGround::witnessed(&witness);
