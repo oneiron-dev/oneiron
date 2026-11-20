@@ -114,6 +114,35 @@ pub fn store_note_call_in_room(
     Ok([agent, run])
 }
 
+/// A note held as a map of `fields`, each a text.
+fn fields_note(fields: &[(&str, &str)]) -> Value {
+    Value::Map(
+        fields
+            .iter()
+            .map(|(key, value)| (Value::from(*key), Value::from(*value)))
+            .collect(),
+    )
+}
+
+/// [`store_note_call_in_room`] for a note held as a map of `fields`, each a
+/// text, staged live: a field the wall lifts whole holds the bare room
+/// handle (REVIEW-10003).
+///
+/// # Errors
+///
+/// The agent cannot be put, the run cannot be bound to the room, or the
+/// record cannot be stored.
+pub fn store_fields_call_in_room(
+    vault: &Vault,
+    session: &OffRecordSession<'_>,
+    fields: &[(&str, &str)],
+) -> Result<[EntityId; 2]> {
+    let ([agent, run], record) = new_note_run(vault, fields_note(fields))?;
+    ExecutorStorage::for_session(session, agent)?
+        .put_owned_code_run_replay_record(&record, None, run, agent)?;
+    Ok([agent, run])
+}
+
 /// The one call `record` holds.
 fn first_call(record: Option<CodeRunReplayRecord>) -> Result<CodeRunBridgeCall> {
     record
@@ -239,6 +268,27 @@ pub fn room_stored_call_is(
         &room_stored_call(session, run)?,
         agent,
         Value::from(words),
+        custody.then_some(read),
+    )
+}
+
+/// [`room_stored_call_is`] for a call made again writing a note held as a
+/// map of `fields`, each a text.
+///
+/// # Errors
+///
+/// The record cannot be read in the room, or the compare fails.
+pub fn room_stored_fields_call_is(
+    session: &OffRecordSession<'_>,
+    [agent, run]: [EntityId; 2],
+    fields: &[(&str, &str)],
+    custody: bool,
+) -> Result<bool> {
+    let read: BaseKnownRead<'_> = &|| session.base_known_values();
+    call_is_read(
+        &room_stored_call(session, run)?,
+        agent,
+        fields_note(fields),
         custody.then_some(read),
     )
 }
