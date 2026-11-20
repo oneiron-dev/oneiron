@@ -1,17 +1,21 @@
 """The vendored stemma fork's own unit tests in scoped CI.
 
 Three parts, each driven without a real cargo:
-  * scripts/ci/ci_scope.py: which changed paths set the `stemma_fork` output, and how the changed paths are
-    read from git (a path git would quote, a file moved out of the fork);
+  * scripts/ci/ci_scope.py: which changed paths set the `stemma_fork` output, how the changed paths are
+    read from git (a path git would quote, a file moved out of the fork), and which changed names go into
+    the `modules` output (a path can hold a line break);
   * scripts/ci/run_scoped.sh: which modes and scopes call the fork runner;
   * scripts/docedit/run_stemma_fork_unit_tests.sh: the lock it resolves from, the
-    resolved lock it refuses, the cargo calls it makes and what it leaves behind.
+    resolved lock it refuses, the cargo calls it makes, what it leaves behind and
+    the lock file of someone else that it neither overwrites nor removes.
 The two shell scripts run in a disposable tree with a `cargo` that records its
 calls; the fork runner's `cargo metadata` there writes the resolved lock the
 case prepared.
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -55,6 +59,10 @@ if args[0] == "metadata":
     shutil.copyfile(Path(os.environ["STUB_RESOLVED"]) / (manifest.parent.name + ".lock"), lock)
     print("{}")
 elif args[0] == "test":
+    # Someone else makes a lock file beside another manifest while this package's tests run.
+    appears = os.environ.get("STUB_LOCK_APPEARS")
+    if appears and Path(appears).parent.name != manifest.parent.name:
+        Path(appears).write_text("mine\\n")
     sys.exit(int(os.environ.get("STUB_TEST_EXIT", "0")))
 """
 
@@ -124,6 +132,20 @@ class ScopeOutputTests(unittest.TestCase):
         self.assertIn("      stemma_fork: ${{ steps.scope.outputs.stemma_fork }}\n", text)
         self.assertIn("      SCOPE_STEMMA_FORK: ${{ needs.changes.outputs.stemma_fork }}\n", text)
 
+    def test_a_changed_name_that_is_no_module_name_sets_all_modules(self):
+        # A line break, a space, a filter character, a letter outside ASCII, a byte that is not UTF-8.
+        for name in ("notes\nbackup", "notes\rbackup", "notes\u2028backup", "notes backup", "notes\tbackup",
+                     "notes|vault", "notes.old", "n\u00f6tes", "notes\udcff"):
+            for path in (f"crates/oneiron/src/{name}.rs", f"crates/oneiron/src/{name}/mod.rs"):
+                with self.subTest(path=path):
+                    out = self.scope(path, "crates/oneiron/src/vault/mod.rs")
+                    self.assertEqual(out["modules"], {"ALL"})
+
+    def test_plain_module_names_are_carried(self):
+        out = self.scope("crates/oneiron/src/notes.rs", "crates/oneiron/src/vault_meta/mod.rs",
+                         "crates/oneiron/src/world_keys/owner_signing.rs", "crates/oneiron/src/X25519.rs")
+        self.assertEqual(out["modules"], {"notes", "vault_meta", "world_keys", "X25519"})
+
 
 class ChangedPathTests(unittest.TestCase):
     """ci_scope.changed_files over a disposable git repository, with git's default settings."""
@@ -169,6 +191,22 @@ class ChangedPathTests(unittest.TestCase):
         files, fork = self.last_commit()
         self.assertEqual(sorted(files), [f"{FORK}/stemma-engine/README.md", "docs/stemma-readme.md"])
         self.assertTrue(fork)
+
+    def test_a_line_break_in_a_changed_core_path_adds_no_line_to_the_scope_output(self):
+        # Unquoted, the name would end the `modules` line and put `rust=false` on a line of its own.
+        self.commit({"crates/oneiron/src/notes\nrust=false.rs": "// a module\n"})
+        written = self.repo / "github-output"
+        with mock.patch.object(sys, "argv", ["ci_scope.py", "--base", "HEAD^1"]), \
+                mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(written)}), \
+                mock.patch.object(ci_scope, "workspace_reverse_dependencies", return_value={}), \
+                contextlib.redirect_stdout(io.StringIO()) as printed:
+            ci_scope.main()
+        keys = ["rust", "full", "packages", "dependents", "oneiron", "modules", "it", "deny", "pytools", "stemma_fork"]
+        for text in (printed.getvalue(), written.read_text()):
+            lines = text.removesuffix("\n").split("\n")
+            self.assertEqual([line.partition("=")[0] for line in lines], keys)
+            self.assertIn("modules=ALL", lines)
+            self.assertIn("rust=true", lines)
 
 
 class ScopedRunnerTests(unittest.TestCase):
@@ -335,6 +373,17 @@ class ForkRunnerTests(unittest.TestCase):
                 self.assertEqual(mine.read_text(), "mine\n")
                 mine.unlink()
                 self.assert_no_lock_copy_left()
+
+    def test_a_lock_file_that_appears_during_the_run_refuses_it_and_is_left_as_it_is(self):
+        theirs = self.tree / FORK / "stemma-diff" / "Cargo.lock"
+        result, calls = self.run_runner(STUB_LOCK_APPEARS=str(theirs))
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn(f"{FORK}/stemma-diff/Cargo.lock could not be made as a new file", result.stderr)
+        # The first package ran; nothing is resolved or tested for the package whose lock path was taken.
+        self.assertEqual([call["args"][0] for call in calls], ["metadata", "test"])
+        self.assertTrue(theirs.exists())
+        self.assertEqual(theirs.read_text(), "mine\n")
+        self.assertFalse((self.tree / FORK / "stemma-engine" / "Cargo.lock").exists())
 
     def test_a_failed_test_run_fails_the_script_and_still_removes_the_copies(self):
         result, calls = self.run_runner(STUB_TEST_EXIT="101")

@@ -15,7 +15,7 @@ Outputs:
   packages  space-separated touched workspace packages (clippy and tests)
   dependents space-separated transitive workspace reverse dependents (clippy only)
   oneiron   true when crates/oneiron changed
-  modules   touched top-level oneiron modules, or ALL
+  modules   touched top-level oneiron modules, or ALL (ALL too when a touched name is no module name)
   it        true when oneiron's integration tests or their support changed
   deny      true when the dependency policy inputs changed
   pytools   true when CI or tooling scripts changed
@@ -38,6 +38,11 @@ RUST_PATHS = FULL_PATHS + ("deny.toml", "oneiron.skills.md", ".github/workflows/
 # Files at the crate root that every module sees.
 ONEIRON_ROOT_FILES = {"lib.rs", "error.rs", "prelude.rs"}
 MAX_MODULES = 12
+# A top-level module of the core crate is named by ASCII letters, digits and `_`. Only such a name goes into the
+# `modules` output: the output is one line of names with a space between them, and run_scoped.sh puts each name
+# into a test filter. A changed path can hold any byte but NUL, and a line break in a name would start a line of
+# its own in $GITHUB_OUTPUT.
+MODULE_NAME = re.compile(r"[A-Za-z0-9_]+")
 # The vendored stemma fork: two packages outside the workspace (root Cargo.toml `exclude`). No workspace run
 # compiles their own unit tests; STEMMA_FORK_RUNNER does.
 STEMMA_FORK_PREFIXES = ("crates/oneiron-docedit/vendor/stemma-engine/", "crates/oneiron-docedit/vendor/stemma-diff/")
@@ -136,7 +141,9 @@ def scope(files, force_full):
                     if len(parts) == 4 and top in ONEIRON_ROOT_FILES:
                         out["modules"].add("ALL")
                     else:
-                        out["modules"].add(top.removesuffix(".rs"))
+                        # A changed name that is no module name: every module's tests run.
+                        name = top.removesuffix(".rs")
+                        out["modules"].add(name if MODULE_NAME.fullmatch(name) else "ALL")
                 elif parts[2] == "tests":
                     out["it"] = True
                 elif parts[2] in ("Cargo.toml", "build.rs"):

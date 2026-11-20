@@ -13,8 +13,10 @@
 # manifest and lets cargo resolve from it: cargo keeps every version the copy names and drops the entries the
 # package does not use. The run is refused when the resolved lock holds a package the workspace lock does not
 # hold (the fork's own two packages apart), and the tests then run with --locked. The copies are removed when
-# the script ends. A lock file that is already beside a manifest refuses the run: the script neither overwrites
-# nor removes a file it did not make.
+# the script ends. The script neither overwrites nor removes a lock file it did not make. One that is already
+# beside a manifest refuses the run at the start. Each copy is made only as a new file, when its package's turn
+# comes, so a lock file that appears beside a manifest during the run refuses the run then and stays as it is.
+# What the script cannot tell apart: a file written over a copy it already made; that file is removed as the copy.
 #
 # Usage: scripts/docedit/run_stemma_fork_unit_tests.sh   (no arguments; from any directory)
 set -euo pipefail
@@ -59,10 +61,21 @@ lock_packages() {
   ' "$1" | LC_ALL=C sort -u
 }
 
+# Makes an empty file at $1 as this run's own. noclobber: the shell creates the file and fails when anything is at
+# the path, in one step, so a lock file that appeared after the check above is not written over. The path joins
+# `created` only once the file is made, so the cleanup never removes a file this run did not make.
+make_own_lock_file() {
+  if ! (set -o noclobber; : > "$1"); then
+    echo "error: $1 could not be made as a new file (the shell's line above says why). The script writes a copy of the workspace's Cargo.lock at that path and removes it at the end, and it never writes over a file it did not make; if a file is there, move it away and run again." >&2
+    exit 2
+  fi
+  created+=("$1")
+}
+
 lock_packages Cargo.lock > "$work/workspace.packages"
 for package in "${packages[@]}"; do
   manifest=$fork/$package/Cargo.toml
-  created+=("$fork/$package/Cargo.lock")
+  make_own_lock_file "$fork/$package/Cargo.lock"
   cp Cargo.lock "$fork/$package/Cargo.lock"
   # Resolve only; nothing is built.
   cargo metadata --manifest-path "$manifest" --format-version 1 > /dev/null
