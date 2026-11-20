@@ -318,6 +318,10 @@ impl Vault {
         // prompts: the served repository, then the door's shape. The
         // drained census is read under the repository lock, after the
         // confirm: no prompt stands inside that lock.
+        let _asked_first = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::ORIGIN_CUT,
+        )?;
         let repo_root = super::smart_http::origin_repo_dir(self, repo_name)?;
         let common_dir = super::smart_http::push_queue_key(self, repo_name)?;
         let id = self.served_repo_id(&repo_root)?;

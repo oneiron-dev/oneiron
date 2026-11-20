@@ -1038,7 +1038,7 @@ impl Vault {
         // The confirm is for an owner proof, so it stands before the write
         // opens, while the door holds nothing: the prompt can block.
         let witness = self.owner_presence(
-            OwnerActImportance::Important,
+            OwnerActImportance::Ordinary,
             owner_presence_reasons::ACCEPT_PACK_DEFAULTS,
         )?;
         let ground = OwnerProofGround::witnessed(&witness);

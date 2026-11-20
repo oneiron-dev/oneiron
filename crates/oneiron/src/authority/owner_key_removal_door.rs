@@ -211,7 +211,7 @@ impl Vault {
         key: [u8; 32],
         confirmation: LastDeviceKeyConfirmation,
     ) -> Result<OwnerKeyRemoval> {
-        let witness = self.owner_presence(OwnerActImportance::Important, REMOVE_OWNER_KEY)?;
+        let witness = self.owner_presence(OwnerActImportance::Ordinary, REMOVE_OWNER_KEY)?;
         let ground = OwnerProofGround::witnessed(&witness);
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
