@@ -46,13 +46,16 @@ use oneiron::agent_dispatch::{
 };
 use oneiron::attempt_queue::{AttemptRecord, ClaimAttempt, ClaimOutcome};
 use oneiron::authority::{CapabilitySlip, MachineRole, holder_proof_challenge};
+use oneiron::code_run::{CODE_RUN_RNG_SEED_LEN, CodeRunDeterminism};
 use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
-use oneiron::engine_executor::{JsCodeModeRuntime, RESULT_REPLY_INLINE_BYTES};
+use oneiron::engine_executor::{
+    EngineExecutorConfig, EngineExecutorLimits, JsCodeModeRuntime, RESULT_REPLY_INLINE_BYTES,
+};
 use oneiron::federation::{Scope as SlipScope, ScopeAxis};
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::{
     AttemptQueue, BudgetLease, EntityId, FatalLlmError, LlmBackend, LlmGenerateFuture, LlmRequest,
-    LlmStreamResult, Vault, VaultConfig, WriteActor,
+    LlmStreamResult, ModelId, ModelLocality, ModelTierRef, Vault, VaultConfig, WriteActor,
 };
 use oneiron_agent_runtime::code_sandbox::quickjs::QuickJsRuntimeFactory;
 use oneiron_server::build_app;
@@ -104,6 +107,29 @@ impl McpCodeModeProvider for SkillProvider {
 
     fn runtime(&self) -> Box<dyn JsCodeModeRuntime + Send> {
         Box::new(self.factory.runtime().expect("a skill runtime"))
+    }
+
+    /// A fixed fixture config, as the other code host fixtures give: the
+    /// skill-call door reads only the runtime and code check, never this.
+    fn executor_config(
+        &self,
+        _: &Vault,
+        run_id: EntityId,
+        task: &str,
+    ) -> oneiron::Result<EngineExecutorConfig> {
+        Ok(EngineExecutorConfig {
+            run_id,
+            task: task.to_owned(),
+            prompt_package_root: oneiron::prompt::workspace_test_prompt_package_root()
+                .expect("workspace test prompt package"),
+            model: ModelId::new(MODEL).expect("fixture model id"),
+            model_locality: ModelLocality::OnDevice,
+            seat_effort: None,
+            global_tier: ModelTierRef("fixture-tier".to_owned()),
+            determinism: CodeRunDeterminism::new(1_000, [7; CODE_RUN_RNG_SEED_LEN]),
+            limits: EngineExecutorLimits::default(),
+            wake: None,
+        })
     }
 }
 
