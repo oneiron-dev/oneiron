@@ -370,8 +370,10 @@ fn ran(run: &JobRun) -> Option<SweepOutcome> {
 /// machine carried that no longer rides from it is retracted before the
 /// admission, and the pass ends by writing the latest row this machine knows
 /// for each carried wake into its live windows (FIX
-/// TURNPROGRAM-LATE-WITHHOLD-DOUBLE-DECIDE). A failure is logged by the
-/// admission and waits for the next pass.
+/// TURNPROGRAM-LATE-WITHHOLD-DOUBLE-DECIDE); a window that is owed such a
+/// row and is not loaded is opened for it first (FIX
+/// TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN). A failure is logged by
+/// the admission and waits for the next pass.
 #[cfg(feature = "sync")]
 fn admit_carried_turn_program_wakes(vault: &Vault, deadline: &Deadline) {
     if deadline.stopped() {

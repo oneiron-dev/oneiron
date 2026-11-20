@@ -500,6 +500,9 @@ fn merge_wakes(vault: &Vault, window: &str, rows: Vec<(String, Option<Vec<u8>>)>
                     tracing::warn!(window, key = %map_key, reason, "turn program wake row does not merge here; left out");
                 }
             }
+            // The answer this vault holds to a carried retraction is owed
+            // to this window, loaded or not when the pass next writes.
+            replica::owe_retraction_answer_in_txn(vault, wtxn, window, map_key, bytes)?;
         }
         Ok(merged)
     });
@@ -677,25 +680,67 @@ impl Vault {
     /// Writes into every live base window the latest wake row this vault
     /// knows for each key it carries, and the row of each wake this vault
     /// retracted ([`mirror_turn_program_wake_answers`]). Housekeeping runs it
-    /// on every pass, after it admits what is owed. Best effort: a window
-    /// opened later writes them as it opens.
+    /// on every pass, after it admits what is owed. A base window this vault
+    /// owes such a row that is not loaded is opened first, as a flush opens
+    /// one: its open writes the row from this vault's marks, stores it and
+    /// routes it (FIX TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN). An
+    /// entry is cleared once its window took this pass's rows; a window that
+    /// did not open keeps its entry for the next pass. Every other window
+    /// opened later writes its rows as it opens.
     pub(crate) fn refresh_turn_program_wake_answers_in_live_windows(&self) {
+        let owed = self.open_windows_owed_turn_program_wake_rows();
+        let mut took = owed
+            .as_ref()
+            .map(|(_, opened)| opened.clone())
+            .unwrap_or_default();
         for window in self.live_windows() {
             if window.key.world().is_some() {
                 continue;
             }
             match mirror_turn_program_wake_answers(self, &window.doc, &window.key) {
-                Ok(true) => {
-                    window
-                        .doc
-                        .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+                Ok(wrote) => {
+                    if wrote {
+                        window
+                            .doc
+                            .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+                    }
+                    took.push(window.key.clone());
                 }
-                Ok(false) => {}
                 Err(error) => {
                     tracing::warn!(window = %window.key, error = %error, "turn program wake answers not mirrored");
                 }
             }
         }
+        if let Some((owed, _)) = owed
+            && let Err(error) = owed.clear(self, &took)
+        {
+            tracing::warn!(%error, "windows owed a turn program wake row not cleared; the next pass clears them");
+        }
+    }
+
+    /// Opens each base window this vault owes a wake row that is not loaded
+    /// (`WindowManager::open_windows_owed_rows`). Answers the entries it
+    /// read and the windows it opened; `None` when no wake owes a window a
+    /// row, when the entries cannot be read, or while no window manager is
+    /// attached: the entries then wait for a later pass.
+    fn open_windows_owed_turn_program_wake_rows(
+        &self,
+    ) -> Option<(replica::RowsOwed, Vec<WindowKey>)> {
+        let owed = match replica::RowsOwed::read(self) {
+            Ok(owed) if owed.is_empty() => return None,
+            Ok(owed) => owed,
+            Err(error) => {
+                tracing::warn!(%error, "windows owed a turn program wake row not read");
+                return None;
+            }
+        };
+        let manager = self
+            .live_window_manager
+            .lock()
+            .ok()
+            .and_then(|manager| manager.upgrade())?;
+        let opened = manager.open_windows_owed_rows(&owed.windows());
+        Some((owed, opened))
     }
 
     /// Mirrors TURN `turn`'s riding wakes into the live window that carries

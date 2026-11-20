@@ -439,6 +439,36 @@ impl WindowManager {
         }
     }
 
+    /// Opens each of `windows` that is not loaded, as a flush opens one
+    /// ([`Self::open_window_for_room_fact_flush`]): a cold open writes what
+    /// this vault owes the window, persists it and routes it, and the window
+    /// stays loaded among the flush-kept ones ([`Self::keep_flush_window`]).
+    /// Answers the windows this call opened; one that did not open is logged
+    /// and left out (FIX TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN).
+    pub(crate) fn open_windows_owed_rows(
+        self: &Arc<Self>,
+        windows: &[WindowKey],
+    ) -> Vec<WindowKey> {
+        let loaded = self.loaded_keys();
+        let mut opened = Vec::new();
+        for key in windows {
+            if loaded.contains(key) {
+                continue;
+            }
+            match self.open_window_for_room_fact_flush(key) {
+                Ok((_, true)) => {
+                    self.keep_flush_window(key);
+                    opened.push(key.clone());
+                }
+                Ok((_, false)) => {}
+                Err(error) => {
+                    tracing::warn!(window = %key, %error, "window owed a turn program wake row not opened");
+                }
+            }
+        }
+        opened
+    }
+
     /// Keeps `key`, just opened for a flush, loaded: most recently used
     /// among [`ROOM_FACT_FLUSH_WINDOWS_KEPT`]; unloads the least recently
     /// used beyond it.

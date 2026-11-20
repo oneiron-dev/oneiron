@@ -46,8 +46,8 @@ pub(crate) use super::carried_row_placement::{
 };
 use super::retraction::CarriedState;
 pub(crate) use super::retraction::{
-    awaits_release_in_txn, mark_carried_wakes, outranking_wake_row_in_txn,
-    retracted_wake_rows_in_txn,
+    RowsOwed, awaits_release_in_txn, mark_carried_wakes, outranking_wake_row_in_txn,
+    owe_retraction_answer_in_txn, retracted_wake_rows_in_txn,
 };
 use super::types::{TurnProgramArming, TurnProgramDisarm, TurnProgramWake};
 use super::{ADMISSION, ARM, DECIDED, DISARMED, WAKE};

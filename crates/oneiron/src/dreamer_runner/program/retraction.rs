@@ -23,6 +23,12 @@
 //! - A `Released` row turns the mark `Released` ([`merge_released_in_txn`]):
 //!   the recording machine admits the wake, whatever rides by then.
 //!
+//! A `Retracted` row, and the home's answer to one, is owed to the window
+//! that carried the wake, loaded or not: the machine notes the window with
+//! the retraction or the answer ([`owe_retraction_answer_in_txn`]), and its
+//! housekeeping pass loads a window that is not loaded, whose open writes
+//! the row (FIX TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN).
+//!
 //! On one key the rows are ordered `Owed`, `Retracted`, `Released`,
 //! `Admitted`, and no machine writes a row over a later one. A window keeps
 //! one writer's row when two write at once, so each machine writes the latest
@@ -91,6 +97,10 @@ const IMPORTED: SideTable<ActorWakeKey, (), Named> =
 /// identity it released.
 const RELEASED: SideTable<ActorWakeKey, [u8; 32], Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_WAKE_RELEASED);
+/// One wake whose latest row this machine owes its window: the key of the
+/// base window that carries the wake's row, which may not be loaded.
+const ROW_OWED: SideTable<ActorWakeKey, String, Named> =
+    SideTable::new(&side_table::DREAMER_TURN_PROGRAM_WAKE_ROW_OWED);
 
 fn actor_wake_key(actor: EntityId, (turn, registration): (EntityId, EntityId)) -> ActorWakeKey {
     (actor, turn, registration)
@@ -196,6 +206,7 @@ pub(super) fn erase_actor_in_txn(
 ) -> Result<()> {
     CARRIED.delete_from(vault, txn, actor.as_bytes())?;
     IMPORTED.delete_from(vault, txn, actor.as_bytes())?;
+    ROW_OWED.delete_from(vault, txn, actor.as_bytes())?;
     RELEASED.delete_from(vault, txn, actor.as_bytes()).map(drop)
 }
 
@@ -324,7 +335,8 @@ fn unridden_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<ActorWake
 }
 
 /// Turns `Retracted`, in one writer, the mark of each wake
-/// [`unridden_in_txn`] names there. Answers how many.
+/// [`unridden_in_txn`] names there, and notes that the mark's window is owed
+/// the `Retracted` row. Answers how many.
 fn retract_unridden(vault: &Vault) -> Result<usize> {
     let none = {
         let txn = vault.store.env.read_txn()?;
@@ -339,6 +351,7 @@ fn retract_unridden(vault: &Vault) -> Result<usize> {
             if let Some(mut carried) = CARRIED.get(vault, &*txn, mark)? {
                 carried.state = CarriedState::Retracted;
                 CARRIED.put(vault, txn, mark, &carried)?;
+                ROW_OWED.put(vault, txn, mark, &carried.window)?;
             }
         }
         Ok(unridden.len())
@@ -554,4 +567,88 @@ pub(crate) fn retracted_wake_rows_in_txn(
         rows.push((replica::wake_key((turn, registration)), encode(&row)?));
     }
     Ok(rows)
+}
+
+/// Notes, in the caller's writer, that base window `window` is owed this
+/// machine's answer to the carried `Retracted` row `bytes`, filed there
+/// under `map_key`: the release it keeps, or the decision it holds. The
+/// window may unload before a pass writes that row; the pass then loads it
+/// ([`Vault::refresh_turn_program_wake_answers_in_live_windows`]). Any other
+/// row, and a retraction this machine knows no later row for, notes nothing.
+pub(crate) fn owe_retraction_answer_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    window: &str,
+    map_key: &str,
+    bytes: &[u8],
+) -> Result<()> {
+    let Ok(WakeRow::Retracted {
+        turn,
+        registration,
+        actor,
+        ..
+    }) = replica::decode_wake(bytes)
+    else {
+        return Ok(());
+    };
+    if outranking_wake_row_in_txn(vault, &*txn, map_key, bytes)?.is_none() {
+        return Ok(());
+    }
+    ROW_OWED.put(
+        vault,
+        txn,
+        &actor_wake_key(actor, (turn, registration)),
+        &window.to_owned(),
+    )
+}
+
+/// The wakes that owed a window a row when one pass read them.
+pub(crate) struct RowsOwed(Vec<(ActorWakeKey, String)>);
+
+impl RowsOwed {
+    /// Reads every entry this machine keeps.
+    pub(crate) fn read(vault: &Vault) -> Result<Self> {
+        let txn = vault.store.env.read_txn()?;
+        let mut entries = Vec::new();
+        for row in ROW_OWED.iter_from(vault, &txn, &[])? {
+            entries.push(row?);
+        }
+        Ok(Self(entries))
+    }
+
+    /// Whether no wake owed a window a row.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The base windows the entries name, each once. An entry whose value is
+    /// no window key names none.
+    pub(crate) fn windows(&self) -> Vec<WindowKey> {
+        let names: std::collections::BTreeSet<&str> =
+            self.0.iter().map(|(_, window)| window.as_str()).collect();
+        names.into_iter().filter_map(WindowKey::try_new).collect()
+    }
+
+    /// Clears, in one writer, each entry read here that names one of
+    /// `windows`: those windows took this machine's rows after the entries
+    /// were read. An entry noted again since stands for the same row, which
+    /// its window took too: a wake's answer on one machine never changes
+    /// once it is known.
+    pub(crate) fn clear(&self, vault: &Vault, windows: &[WindowKey]) -> Result<()> {
+        let taken: Vec<&ActorWakeKey> = self
+            .0
+            .iter()
+            .filter(|(_, window)| windows.iter().any(|key| key.as_str() == window))
+            .map(|(key, _)| key)
+            .collect();
+        if taken.is_empty() {
+            return Ok(());
+        }
+        vault.with_write_txn_grouped(|txn| {
+            for key in &taken {
+                ROW_OWED.delete(vault, txn, *key)?;
+            }
+            Ok(())
+        })
+    }
 }
