@@ -6,6 +6,8 @@
 //! hydration: "one whose cited sources are gone is not served"). A
 //! superseded cited claim still supports it: a newer version replaced it, no
 //! one refuted it. Any other live cited row keeps it served, as before.
+//! The owner's claim history door keeps the derived claim: a retraction ends
+//! serving, not the record (REVIEW-9928 P1).
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -20,8 +22,8 @@ use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derive::claim_has_live_support;
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
-    TimeRange, Vault,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    EdgeActorClass, EntityId, TimeRange, Vault,
 };
 use rmpv::Value;
 
@@ -178,5 +180,43 @@ fn a_live_turn_beside_a_retracted_cited_claim_keeps_a_derived_claim_served() {
     assert!(
         served(&vault, &derived),
         "a live cited TURN keeps the derived claim served"
+    );
+}
+
+/// The owner's claim history keeps a derived claim whose only cited claim is
+/// retracted, while no serving read serves it: a retraction ends serving, not
+/// the record (REVIEW-9928 P1).
+/// Green on main 0aedc807c526. Red at 9898769f28e8: the history's timeline
+/// admission applied the serving rule and read an empty timeline.
+#[test]
+fn the_claim_history_keeps_a_derived_claim_whose_only_cited_claim_is_retracted() {
+    let Fixture { _dir, vault, .. } = fixture();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner");
+    let source = claim(&vault, owner, "o", None);
+    let derived = claim(&vault, owner, "goes by o", Some(vec![source]));
+
+    vault
+        .retract_claim(&source, vault.now_recorded_at())
+        .expect("the owner retracts the cited claim");
+    assert!(
+        !served(&vault, &derived),
+        "a claim derived only from a retracted claim is not served"
+    );
+
+    let history: Vec<String> = vault
+        .memory(owner, EdgeActorClass::Human)
+        .claim_history(&derived.to_hex())
+        .expect("the owner's claim history")
+        .value
+        .into_iter()
+        .map(|view| view.claim_ref)
+        .collect();
+    assert_eq!(
+        history,
+        vec![derived.to_hex()],
+        "FAILBEFORE REVIEW-9928-P1: the owner's claim history hides a derived claim whose only \
+         cited claim is retracted"
     );
 }
