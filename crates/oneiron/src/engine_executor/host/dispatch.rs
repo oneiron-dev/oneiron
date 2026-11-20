@@ -351,6 +351,7 @@ impl RecordingJsHost<'_, '_> {
         whole: bool,
     ) -> Result<serde_json::Value> {
         if whole || answer.byte_len() <= RESULT_REPLY_INLINE_BYTES as u64 {
+            refuse_too_deep_answer(&mut answer, whole)?;
             return serde_json::from_reader(std::io::BufReader::new(answer.reader()?)).map_err(
                 |_| Error::InvalidConfig("callable skill returned non-JSON output".to_owned()),
             );
@@ -1007,4 +1008,66 @@ pub(super) fn records_failed_effect(effect: SelfEffect) -> bool {
             | SelfEffect::ReportBlocked
             | SelfEffect::InferenceDefaultsReplace
     ) || effect.is_speech()
+}
+
+/// The deepest answer `serde_json::from_reader` parses with its default
+/// recursion limit: 128 levels of budget, one spent per `[` or `{`
+/// (`serde_json` 1.0.151 `de.rs`, `remaining_depth: 128`, `check_recursion`
+/// failing at zero), so 127 nests. The spool check accepts any depth
+/// (`skill/call/json_tokens.rs` keeps its own stack); past this one the
+/// whole-answer parse below would fail a valid answer as non-JSON, so the
+/// call is refused with its cause instead, before any value is built.
+const WHOLE_ANSWER_MAX_DEPTH: u32 = 127;
+
+/// Refuses a spooled answer that nests past [`WHOLE_ANSWER_MAX_DEPTH`]:
+/// the whole-answer parse cannot read it, however valid its JSON. With a
+/// live post chain the hook never judges half an answer; without one the
+/// answer still says why it cannot be read whole. Reads the spool from its
+/// first byte and leaves it rewound, as it found it.
+fn refuse_too_deep_answer(
+    answer: &mut crate::skill::CallableSkillAnswer,
+    whole_for_hooks: bool,
+) -> Result<()> {
+    let reader = answer.reader()?;
+    let mut depth: u32 = 0;
+    let mut deepest: u32 = 0;
+    let mut string = false;
+    let mut escaped = false;
+    let mut chunk = vec![0; 8 * 1024];
+    loop {
+        let read = std::io::Read::read(reader, &mut chunk)?;
+        if read == 0 {
+            break;
+        }
+        for byte in &chunk[..read] {
+            if string {
+                if escaped {
+                    escaped = false;
+                } else if *byte == b'\\' {
+                    escaped = true;
+                } else if *byte == b'"' {
+                    string = false;
+                }
+                continue;
+            }
+            match *byte {
+                b'"' => string = true,
+                b'{' | b'[' => {
+                    depth = depth.saturating_add(1);
+                    deepest = deepest.max(depth);
+                    if deepest > WHOLE_ANSWER_MAX_DEPTH {
+                        let why = if whole_for_hooks {
+                            "the skill answer nests too deep for the live post hook to judge"
+                        } else {
+                            "the skill answer nests too deep to read whole"
+                        };
+                        return Err(Error::Refused(why.to_owned()));
+                    }
+                }
+                b'}' | b']' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+    }
+    Ok(())
 }

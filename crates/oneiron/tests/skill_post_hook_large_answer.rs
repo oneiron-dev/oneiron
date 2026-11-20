@@ -36,6 +36,22 @@
 //!    post chain then hides its title. On ae5c9088d10 the entry re-read
 //!    the (disabled) bindings, streamed the real body to a readable
 //!    `r1`, persisted that binding, and answered the card.
+//! 6. `a_blocking_post_hook_that_cannot_judge_a_large_answer_refuses_the_call`
+//!    (P1-A): the same >512 KiB answer, past the 1 MiB hook input cap,
+//!    under a live BLOCKING Redact post hook whose runtime caps inputs as
+//!    the real sandbox does. The hook cannot judge the answer, so the call
+//!    is refused with the cause instead of serving the unredacted body:
+//!    the guest reads the denial (never the title, never a card), no
+//!    guessed ref reads the body, and the row and record keep it as in 1.
+//!    Red without the fix: the failed blocking hook only records on the
+//!    write, the guest reads a bound `r1` card for the unredacted body,
+//!    and the title survives.
+//! 7. `a_live_post_chain_refuses_a_too_deep_answer_precisely_never_as_non_json`
+//!    (P1-B): through the admitted entry with its outer post chain live, a
+//!    >512 KiB object answer nesting 150 arrays deep (valid JSON the spool
+//!    check accepts, past the whole-answer parser's depth limit) is refused
+//!    with the precise depth cause, never reported as non-JSON. Red without
+//!    the fix: the refusal says non-JSON for valid JSON.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron --all-features
@@ -87,6 +103,13 @@ const TAG: &str = "secret-title-7";
 /// The answer's `text` length: its JSON is past `RESULT_REPLY_INLINE_BYTES`
 /// (512 KiB) and past `message_bytes` (1 MiB).
 const ANSWER_BYTES: usize = 1_572_864;
+/// The deep answer's `pad` length: its JSON is past `RESULT_REPLY_INLINE_BYTES`
+/// (512 KiB) but well under `message_bytes` (1 MiB), so only its nesting
+/// refuses it.
+const DEEP_PAD_BYTES: usize = 614_400;
+/// The deep answer's nesting: arrays around `0` under `deep`, past the
+/// whole-answer parser's depth limit.
+const DEEP_LEVELS: usize = 150;
 /// The lease owner this test claims its agent attempt as.
 const WORKER: &str = "skill-post-hook-large-answer";
 
@@ -294,6 +317,24 @@ fn large_skill(vault: &Vault) -> EntityId {
     .expect("the large callable is stored and active")
 }
 
+/// Stores the active callable whose answer is an object with a `pad` of
+/// `skillArgs.bytes` bytes of `b` and `deep`, 150 nested arrays around `0`:
+/// valid JSON past the inline size and past the whole-answer parser's depth
+/// limit, under the `object` return contract. Answers its id.
+fn deep_skill(vault: &Vault) -> EntityId {
+    let source = format!(
+        r#"let deep = 0;for (let i = 0; i < {DEEP_LEVELS}; i++) deep = [deep];finish(JSON.stringify({{pad:"b".repeat(skillArgs.bytes),deep}}));"#,
+    );
+    callable_skill::put_active_callable(
+        vault,
+        "fixture.deep-answer",
+        &source,
+        &serde_json::json!({"bytes":"integer"}),
+        &serde_json::json!("object"),
+    )
+    .expect("the deep callable is stored and active")
+}
+
 /// Binds the Redact post hook on `self.skills.call` redacting `paths` and
 /// installs its runtime, as `tests/typed_reply_handle.rs` binds its hook:
 /// the bind is the owner's own write, signed with this install's key.
@@ -331,10 +372,43 @@ fn bind_redact_hook_for_actors(
     (binding, proof)
 }
 
+/// Binds the BLOCKING Redact post hook on `self.skills.call` redacting
+/// `paths` and installs its input-capped runtime, as
+/// [`bind_redact_hook_for_actors`] binds its hook: the bind is the owner's
+/// own write, signed with this install's key. The runtime caps hook inputs
+/// at `message_bytes`, as the real sandbox does, so a hook whose input
+/// passes it fails the run before its body starts.
+fn bind_blocking_capped_hook(vault: &Arc<Vault>, paths: Vec<String>, message_bytes: usize) {
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault
+        .prepare_install_signing()
+        .expect("this install's signing keys");
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner");
+    let proof = vault
+        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+        .expect("owner proof");
+    handle_doors::bind_blocking_redact_post_hook(vault, owner, &proof, "self.skills.call")
+        .expect("the blocking Redact hook binds");
+    handle_doors::install_capped_redact_runtime(vault, paths, message_bytes)
+        .expect("the capped Redact runtime installs");
+}
+
 /// The outer (host-door) pre chain of one admitted `self.skills.call` by
 /// `actor`, as the generated facade runs it before its door: the chain
 /// over the verb for this caller, on the call's own args.
 fn outer_pre(vault: &Vault, actor: WriteActor, skill: EntityId) -> VerbHookPre {
+    outer_pre_with_bytes(vault, actor, skill, ANSWER_BYTES)
+}
+
+/// [`outer_pre`] for a call whose skill args carry `bytes`.
+fn outer_pre_with_bytes(
+    vault: &Vault,
+    actor: WriteActor,
+    skill: EntityId,
+    bytes: usize,
+) -> VerbHookPre {
     let call = VerbCall {
         verb: "self.skills.call".to_owned(),
         invocation: InvocationId::mint(),
@@ -346,7 +420,7 @@ fn outer_pre(vault: &Vault, actor: WriteActor, skill: EntityId) -> VerbHookPre {
         domain: VerbDomain::Write,
         reader: None,
     };
-    let args = serde_json::json!({"skill": skill.to_hex(), "args": {"bytes": ANSWER_BYTES}});
+    let args = serde_json::json!({"skill": skill.to_hex(), "args": {"bytes": bytes}});
     let check = |_: &serde_json::Value| -> Result<(), String> { Ok(()) };
     vault
         .pre_verb_hooks(call, args, &check)
@@ -376,6 +450,32 @@ fn admitted_skill_call(
     skill: EntityId,
     outer_hooks_live: bool,
 ) -> serde_json::Value {
+    admitted_skill_call_result(
+        vault,
+        factory,
+        run_id,
+        actor,
+        leased,
+        skill,
+        ANSWER_BYTES,
+        outer_hooks_live,
+    )
+    .expect("the admitted skill call answers")
+}
+
+/// [`admitted_skill_call`] for a call whose skill args carry `bytes`,
+/// answering the entry's result itself, so a test can read a refusal.
+#[allow(clippy::too_many_arguments)]
+fn admitted_skill_call_result(
+    vault: &Arc<Vault>,
+    factory: &QuickJsRuntimeFactory,
+    run_id: EntityId,
+    actor: WriteActor,
+    leased: &AttemptRecord,
+    skill: EntityId,
+    bytes: usize,
+    outer_hooks_live: bool,
+) -> oneiron::memory::MemoryResult<serde_json::Value> {
     let binding =
         HostBinding::from_leased(leased, Some(run_id)).expect("the leased run binds its door");
     let record = CodeRunReplayRecord::new(
@@ -399,12 +499,11 @@ fn admitted_skill_call(
         &model,
         SkillCallInput {
             skill: skill.to_hex(),
-            args: serde_json::json!({"bytes": ANSWER_BYTES}),
+            args: serde_json::json!({"bytes": bytes}),
         },
         (runtime, None),
         outer_hooks_live,
     )
-    .expect("the admitted skill call answers")
 }
 
 /// Run `run_id`'s replay record as the admitted entry left it.
@@ -431,6 +530,28 @@ fn bridge_output(row: &CodeRunBridgeCall) -> serde_json::Value {
         })
         .expect("a skill call output");
     serde_json::from_str(text).expect("the output parses")
+}
+
+/// A bridge row's failed outcome as its kind and error: the `kind` and
+/// `error` members of the recorded outcome map.
+fn bridge_failed_error(row: &CodeRunBridgeCall) -> (String, String) {
+    let rmpv::Value::Map(entries) = &row.outcome else {
+        panic!("bridge outcome is a map");
+    };
+    let member = |name: &str| {
+        entries
+            .iter()
+            .find_map(|(key, value)| {
+                if key.as_str() == Some(name) {
+                    value.as_str()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| panic!("a failed outcome names {name}"))
+            .to_owned()
+    };
+    (member("kind"), member("error"))
 }
 
 /// The occurrence refs a guest of run `run_id` derives with no card for
@@ -535,6 +656,25 @@ if (shown && shown.includes("secret-title-")) secret = true;
 if (callError !== null && callError.includes("secret-title-")) secret = true;
 __GUESSES__
 finish("hidden:call-threw:" + (callError !== null) + ":secret-guessed:" + secret);"#;
+
+/// The refused-call program: it calls the skill, which its blocking post
+/// hook cannot judge whole, then probes every guessed ref. The call is
+/// refused: the guest reads the denial (or the call throws), never the
+/// answer and never a card for it.
+const DENIED_PROGRAM: &str = r#"let out = null, callError = null;
+try {
+  out = await self.skills.call({skill: "__SKILL__", args: {bytes: 1572864}});
+} catch (e) {
+  callError = String(e).slice(0, 300);
+}
+let secret = false;
+const shown = typeof out === "undefined" ? "" : JSON.stringify(out);
+if (shown && shown.includes("secret-title-")) secret = true;
+if (callError !== null && callError.includes("secret-title-")) secret = true;
+__GUESSES__
+const denied = out && typeof out === "object" && typeof out.denied === "string" ? out.denied : "";
+const cause = out && typeof out === "object" && out.reasonCodes ? JSON.stringify(out.reasonCodes).slice(0, 200) : "";
+finish("denied:" + denied + ":cause:" + cause + ":call-threw:" + (callError !== null) + ":secret-guessed:" + secret);"#;
 
 /// The control program: it calls the skill, checks the reply is a card,
 /// and reads the body's head through `slice`.
@@ -866,5 +1006,111 @@ fn an_admitted_answer_follows_the_outer_pre_chain_not_the_current_bindings() {
             .and_then(serde_json::Value::as_str)
             .map(str::len),
         Some(ANSWER_BYTES),
+    );
+}
+
+#[test]
+fn a_blocking_post_hook_that_cannot_judge_a_large_answer_refuses_the_call() {
+    let (_dir, vault) = open_vault();
+    let factory = quickjs_factory();
+    let skill = large_skill(&vault);
+    // The blocking Redact takes the call, but its input — the whole >1 MiB
+    // answer — passes the cap its runtime enforces as the real sandbox
+    // does, so the hook never judges it.
+    bind_blocking_capped_hook(&vault, vec!["/output/title".to_owned()], 1024 * 1024);
+    let run_id = fresh_id();
+    let program = program_with(
+        &DENIED_PROGRAM.replace("__GUESSES__", GUESSES),
+        skill,
+        &derived_bridge_refs(run_id),
+    );
+
+    let (outcome, calls) = execute_run(&vault, &factory, run_id, vec![program]);
+    let outcome = outcome.expect("the run completes");
+    assert_eq!(calls, 1, "one turn runs one program");
+    assert_eq!(outcome.status, EngineExecutorStatus::Complete);
+    let text = doors::finish_text(&vault, &run_id).expect("the answer reads back");
+    assert!(
+        text.contains(":secret-guessed:false"),
+        "no guessed read returned the body:\n{text}",
+    );
+    assert!(
+        !text.contains(TAG),
+        "no read returned the secret title:\n{text}"
+    );
+    assert!(
+        text.contains("verb_hook_skipped") || text.contains(":call-threw:true"),
+        "the guest reads the refusal, never the answer:\n{text}",
+    );
+    assert!(
+        text.contains("too large for the live post hook to judge")
+            || text.contains(":call-threw:true"),
+        "the refusal names its cause:\n{text}",
+    );
+    // The real body records record-only, exactly as a served view leaves
+    // it: a nameless card, its body kept, no binding naming it.
+    assert_record_only(&outcome);
+    assert!(
+        outcome.replay_record.bridge_calls[0].hook_view_served,
+        "the row stands as a view-served row",
+    );
+}
+
+#[test]
+fn a_live_post_chain_refuses_a_too_deep_answer_precisely_never_as_non_json() {
+    let (_dir, vault) = open_vault();
+    let factory = quickjs_factory();
+    let skill = deep_skill(&vault);
+    // A live post chain over the call: the admitted entry reads the answer
+    // whole for it. The runtime caps nothing here; the refusal below comes
+    // from the answer's own nesting, before any hook runs.
+    bind_redact_hook(&vault, vec!["/output/title".to_owned()]);
+    let run_id = fresh_id();
+    let (actor, leased) = leased_actor(&vault, run_id);
+
+    let pre = outer_pre_with_bytes(&vault, actor, skill, DEEP_PAD_BYTES);
+    assert!(
+        !pre.passed_through(),
+        "the outer pre chain found its post hook live",
+    );
+    let refused = admitted_skill_call_result(
+        &vault,
+        &factory,
+        run_id,
+        actor,
+        &leased,
+        skill,
+        DEEP_PAD_BYTES,
+        !pre.passed_through(),
+    )
+    .expect_err("a too-deep answer under a live post chain is refused");
+    assert!(
+        refused.message.contains("nests too deep"),
+        "the refusal names the depth cause:\n{}",
+        refused.message,
+    );
+    assert!(
+        !refused.message.contains("non-JSON"),
+        "valid JSON is never reported as non-JSON:\n{}",
+        refused.message,
+    );
+
+    // The record keeps the refusal's cause on its failed row, and binds no
+    // readable body for the answer no hook judged.
+    let record = admitted_record(&vault, &run_id);
+    assert_eq!(record.bridge_calls.len(), 1);
+    let (kind, error) = bridge_failed_error(&record.bridge_calls[0]);
+    assert_eq!(kind, "failed");
+    assert!(
+        error.contains("nests too deep"),
+        "the failed row names the depth cause:\n{error}",
+    );
+    assert!(
+        !error.contains("non-JSON"),
+        "the failed row never reports non-JSON:\n{error}",
+    );
+    assert!(
+        record.bindings.is_empty(),
+        "no binding names a body for the refused answer",
     );
 }

@@ -53,6 +53,49 @@ impl HookBodyRuntime for RedactRuntime {
     }
 }
 
+/// A [`RedactRuntime`] that also caps the hook input it runs on, as the
+/// real sandbox caps its own at `message_bytes`: an input past it fails the
+/// run before the body starts, with the sandbox's own refusal. What a test
+/// installs to stand a blocking post hook on an answer its hook cannot
+/// judge whole.
+pub struct CappedRedactRuntime {
+    paths: Vec<String>,
+    message_bytes: usize,
+}
+
+impl HookBodyRuntime for CappedRedactRuntime {
+    fn run_hook(
+        &self,
+        _body: &str,
+        input_json: &str,
+        context: &mut HookRunContext,
+        _read: &mut dyn FnMut(&str) -> std::result::Result<String, String>,
+    ) -> Result<HookBodyRun> {
+        if input_json.len() > self.message_bytes {
+            context.report_usage(crate::runtime_hooks::HookBodyUsage::NOT_RUN);
+            return Err(Error::InvalidConfig(
+                "hook body or input exceeds the message limit".to_owned(),
+            ));
+        }
+        let outcome_json = serde_json::to_string(&serde_json::json!({
+            "kind": "redact",
+            "paths": self.paths,
+        }))
+        .map_err(|error| {
+            Error::InvalidConfig(format!("redact outcome does not encode: {error}"))
+        })?;
+        Ok(HookBodyRun {
+            outcome_json,
+            fuel_used: Some(0),
+            host_calls: 1,
+        })
+    }
+
+    fn message_limit(&self) -> Option<usize> {
+        Some(self.message_bytes)
+    }
+}
+
 /// Binds one post hook on `verb` whose body answers a Redact, as an owner's
 /// pack bind writes it: its pack source is staged first, so the body's bytes
 /// read back. Answers the binding's id.
@@ -70,6 +113,24 @@ pub fn bind_redact_post_hook(
     bind_redact_post_hook_for_actors(vault, owner, proof, verb, Vec::new())
 }
 
+/// [`bind_redact_post_hook`] as a blocking hook: a run that fails on it
+/// fails safe, as a blocking hook's failure does. What a test binds to
+/// stand a blocking post hook on a skill answer its hook cannot judge.
+/// Answers the binding's id.
+///
+/// # Errors
+///
+/// The owner's proof no longer valid, the pack source's, or the write's
+/// refusal.
+pub fn bind_blocking_redact_post_hook(
+    vault: &Vault,
+    owner: EntityId,
+    proof: &AuthenticatedOwner,
+    verb: &str,
+) -> Result<EntityId> {
+    bind_redact_post_hook_inner(vault, owner, proof, verb, Vec::new(), true)
+}
+
 /// [`bind_redact_post_hook`] taking only calls by one of `actors` (every
 /// class when it is empty, as a selector with no actors reads): what a test
 /// binds to stand a hook on a verb that cannot take its caller.
@@ -85,11 +146,22 @@ pub fn bind_redact_post_hook_for_actors(
     verb: &str,
     actors: Vec<HookActorClass>,
 ) -> Result<EntityId> {
+    bind_redact_post_hook_inner(vault, owner, proof, verb, actors, false)
+}
+
+fn bind_redact_post_hook_inner(
+    vault: &Vault,
+    owner: EntityId,
+    proof: &AuthenticatedOwner,
+    verb: &str,
+    actors: Vec<HookActorClass>,
+    blocking: bool,
+) -> Result<EntityId> {
     let body_bytes = b"return { kind: \"redact\", paths: [\"/output/title\"] };\n";
     let pack_md = "---\nname: test.typed-reply\ndescription: Redact test pack for typed reply handles\nversion: 1.0.0\nkind: capability\nhooks: [\"redact-title\"]\n---\nTest pack body.\n"
         .to_owned();
     let hook_md = format!(
-        "---\nname: redact-title\nversion: 1.0.0\nverbs: [\"{verb}\"]\nphase: post\npriority: 0\nbudget_ms: 200\nblocking: false\noutcomes: [\"redact\"]\n---\nHides the title for the redaction test.\n"
+        "---\nname: redact-title\nversion: 1.0.0\nverbs: [\"{verb}\"]\nphase: post\npriority: 0\nbudget_ms: 200\nblocking: {blocking}\noutcomes: [\"redact\"]\n---\nHides the title for the redaction test.\n"
     );
     let source = PackSource::from_files(vec![
         HubFile::new("PACK.md", pack_md.into_bytes()),
@@ -117,7 +189,7 @@ pub fn bind_redact_post_hook_for_actors(
             phase: HookPhase::Post,
             priority: 0,
             budget_ms: 200,
-            blocking: false,
+            blocking,
             outcomes: vec![HookOutcomeKind::Redact],
             served: Vec::new(),
             render_class: HookRenderClass::default(),
@@ -139,6 +211,26 @@ pub fn bind_redact_post_hook_for_actors(
 pub fn install_redact_runtime(vault: &Vault, paths: Vec<String>) -> Result<()> {
     vault
         .install_hook_runtime(Arc::new(RedactRuntime { paths }))
+        .map_err(Error::InvalidConfig)
+}
+
+/// Hands `vault`'s verb hooks the [`CappedRedactRuntime`] redacting `paths`
+/// over inputs up to `message_bytes`. The runtime is per vault: each test
+/// vault installs its own.
+///
+/// # Errors
+///
+/// Another sandbox already installed on the vault.
+pub fn install_capped_redact_runtime(
+    vault: &Vault,
+    paths: Vec<String>,
+    message_bytes: usize,
+) -> Result<()> {
+    vault
+        .install_hook_runtime(Arc::new(CappedRedactRuntime {
+            paths,
+            message_bytes,
+        }))
         .map_err(Error::InvalidConfig)
 }
 

@@ -40,6 +40,13 @@ use run::RunRecord;
 /// The host verb a pre-hook may never skip: a skipped compaction overflows
 /// the next turn (ARCH-0080 §5).
 const COMPACT: &str = "host.compact";
+/// The skill-answer verb, whose post chain judges the answer's whole body:
+/// a blocking post hook that cannot judge it for its size refuses the call
+/// ([`Chain::skill_answer_unjudged`]).
+const SKILL_CALL: &str = "self.skills.call";
+/// Why that refusal stops the call: the hook never saw the answer.
+const SKILL_ANSWER_TOO_LARGE: &str =
+    "the skill answer is too large for the live post hook to judge";
 /// Why a resumed chain in a build without the sandbox runs no hook.
 const NO_SANDBOX: &str = "this build runs no hook sandbox";
 
@@ -596,7 +603,10 @@ impl<'c> Chain<'c> {
 
     /// Runs the post-hooks over the caller's view of `result`. Redacts
     /// narrow the view; a failed blocking hook hides a read's result and is
-    /// recorded on a write, whose commit stands.
+    /// recorded on a write, whose commit stands. A skill answer a blocking
+    /// post hook could not judge for its size is refused instead
+    /// ([`Self::skill_answer_unjudged`]): its caller never reads the
+    /// unjudged body.
     fn post(mut self, hooks: &[Hook<'c>], args: &Value, result: Value) -> Result<Stopped<Value>> {
         let mut view = result;
         let mut hidden = None;
@@ -622,6 +632,14 @@ impl<'c> Chain<'c> {
                         hidden = Some(self.hide(binding));
                         break;
                     }
+                    if self.skill_answer_unjudged() {
+                        self.fail_safe("skipped");
+                        hidden = Some(VerbHookStop::Skipped {
+                            hook: hook_name(binding),
+                            reason: bounded(SKILL_ANSWER_TOO_LARGE),
+                        });
+                        break;
+                    }
                     self.fail_safe("recorded");
                 }
                 None => {}
@@ -630,6 +648,28 @@ impl<'c> Chain<'c> {
         self.commit()?;
         self.apply();
         Ok(hidden.map_or(Ok(view), Err))
+    }
+
+    /// Whether this post chain's last run left a skill answer unjudged: the
+    /// call is a skill answer (`self.skills.call`, a write, read whole so
+    /// its post chain judges the body itself), the blocking hook's run
+    /// failed, and the input it failed on passed the runtime's message
+    /// limit, so the body never ran on it. Only then does the chain refuse
+    /// the call; every other verb, and every other failure, keeps the
+    /// recorded write behaviour above.
+    fn skill_answer_unjudged(&self) -> bool {
+        if self.call.verb != SKILL_CALL {
+            return false;
+        }
+        let Ok(runtime) = self.runtime else {
+            return false;
+        };
+        let Some(limit) = runtime.message_limit() else {
+            return false;
+        };
+        self.runs
+            .last()
+            .is_some_and(|run| run.token == "failed" && run.input.len() > limit)
     }
 
     /// The verb engine's own checks on an outcome its binding accepted; the
