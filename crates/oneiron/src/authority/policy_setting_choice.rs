@@ -212,7 +212,9 @@ pub(super) fn apply_policy_setting(
 /// source's heads ([`birth_names_source_heads`]). Every row is judged against
 /// the state before the entry, and only then do they all land.
 /// `needs_proof_off_the_line` is the owner key's line's mark on the entry
-/// ([`super::owner_key_line`]), which marks no setting copy yet (FIX
+/// ([`super::owner_key_line`]): a copy outside a proving owner-key
+/// enrolment's line that a carrier other than the owner's machine put there
+/// unproven waits, as on parents that hold the key (FIX
 /// SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
 pub(super) fn apply_setting_copy(
     state: &mut FoldState,
@@ -349,8 +351,9 @@ fn birth_names_source_heads(state: &FoldState, row: &SettingCopyRow) -> Result<b
 /// act on its own target ([`SettingPackHead::target`]): his liveness and his proof are tested as
 /// for every setting act, and one that waits for his proof is in no frontier.
 /// `needs_proof_off_the_line` is the owner key's line's mark on the entry
-/// ([`super::owner_key_line`]), which marks no pack head yet, his yes included, as no setting
-/// copy (FIX SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
+/// ([`super::owner_key_line`]): a head outside a proving owner-key enrolment's line, his yes
+/// included, that a carrier other than the owner's machine put there unproven waits, as a
+/// setting copy does (FIX SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
 pub(super) fn apply_setting_pack_head(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
