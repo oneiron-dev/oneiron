@@ -161,8 +161,9 @@ pub struct CalendarWriteOutboxRow {
     /// staging never unmatches the write's own copy. `None` on a row staged
     /// before writes recorded them, which reads each member's claim instead.
     pub recurrence_ids: Option<Vec<(EntityId, u64)>>,
-    /// A replay refused on its precondition whose read proved the stored copy
-    /// neither this write's nor another writer's: the seat's next pull of the
+    /// A replay, or any call of a first write under the UID it minted,
+    /// refused on its precondition whose read proved the stored copy neither
+    /// this write's nor another writer's: the seat's next pull of the
     /// resource proves it before admitting it
     /// (BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY).
     pub stored_copy_unproven: bool,
@@ -464,7 +465,11 @@ fn ensure_outbox_matches(
 
 /// Sends one prepared upsert. `replay` says an earlier call of this staged
 /// row may have reached the provider (the row was found prepared), so a
-/// precondition failure may be that call's own stored copy.
+/// precondition failure may be that call's own stored copy. A refusal of
+/// the row's first call reads the stored copy too: an overlapping call may
+/// have replayed the prepared row while this request was out. There only
+/// the write's marker, or a first write's minted UID, proves the copy the
+/// write's own ([`stored_copy_of`]).
 #[expect(
     clippy::too_many_arguments,
     reason = "the replay flag joins the seven inputs every send takes"
@@ -492,35 +497,39 @@ fn issue_prepared_upsert(
                 // Reconciliation reads the current remote state so a caller can
                 // intentionally rebase. Blind retries remain blocked on this row.
                 let stored = reconcile_remote_object(vault, operation, transport, uid, now);
-                // The row leaves flight in the admission turn, after a
-                // replay's stored copy, when it is this write's own, was
+                // The row leaves flight in the admission turn, after the
+                // stored copy, when it is this write's own, was
                 // published as the write's lost receipt would have, marking
                 // the passports it cancels: no pull admits that copy
                 // unmarked in between
                 // (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS), and
                 // none imports a first write's copy as a second EVENT
                 // (CAL-FIRST-WRITE-COPY-PULLED-UNSETTLED-IMPORTS-DUPLICATE-EVENT).
-                // A replay whose read proved nothing (a failed or empty pull)
-                // leaves the proof to the seat's next pull of the resource
+                // A replay or a first write whose read proved nothing (a
+                // failed or empty pull) leaves the proof to the seat's next
+                // pull of the resource
                 // (BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY). The
                 // copy is published in the row's own writer, under its exact
                 // carrier, so a replay another call overtook marks nothing.
                 {
                     let _turn = crate::calendar::ingest::admission_turn(vault)?;
-                    let mut own = None;
-                    if replay {
-                        let copy = match stored.as_ref() {
-                            Some(stored) => stored_copy_of(vault, row, stored)?,
-                            None => StoredCopy::Unread,
-                        };
-                        match copy {
-                            StoredCopy::Own(members) => own = Some(members),
-                            StoredCopy::Unread => row.stored_copy_unproven = true,
-                            StoredCopy::Foreign | StoredCopy::Older => {
-                                own = first_write_members(vault, row)?;
-                            }
+                    let copy = match stored.as_ref() {
+                        Some(stored) => stored_copy_of(
+                            vault,
+                            row,
+                            stored,
+                            replay && !row.cancelled_members.is_empty(),
+                        )?,
+                        None => StoredCopy::Unread,
+                    };
+                    let own = match copy {
+                        StoredCopy::Own(members) => Some(members),
+                        StoredCopy::Foreign | StoredCopy::Older => first_write_members(vault, row)?,
+                        StoredCopy::Unread => {
+                            row.stored_copy_unproven = replay || is_first_write(vault, row)?;
+                            None
                         }
-                    }
+                    };
                     row.state = CalendarWriteOutboxState::ReconcileRequired;
                     row.updated_at = now;
                     write_replay_proof(
@@ -828,8 +837,7 @@ fn stored_write_marker(ics: &[u8], uid: &str) -> StoredWriteMarker {
     }
 }
 
-/// What the resource a replayed write read back after its precondition
-/// refusal is.
+/// What the resource a write read back after its precondition refusal is.
 enum StoredCopy {
     /// The write's own copy, stored on an earlier call whose answer was
     /// lost: its members as the provider holds them.
@@ -852,11 +860,11 @@ struct StoredMember {
     content_hash: [u8; 32],
 }
 
-/// Whether `stored` is the write of `row`, a replayed write that the
-/// provider refused on its precondition, stored on an earlier call whose
-/// answer was lost: the precondition then fails on the
-/// ETag the stored copy took. That copy holds exactly the staged members,
-/// each once under the staged UID and its staged RECURRENCE-ID
+/// Whether `stored` is the write of `row`, a write that the provider
+/// refused on its precondition, stored on another call whose answer was
+/// lost (an earlier one, or an overlapping replay): the precondition then
+/// fails on the ETag the stored copy took. That copy holds exactly the
+/// staged members, each once under the staged UID and its staged RECURRENCE-ID
 /// ([`staged_recurrence_id`]: no passport need resolve the UID, which a
 /// first write mints), each at the staged SEQUENCE or above (a
 /// provider that rewrites a stored copy keeps or raises it) and cancelled
@@ -867,13 +875,20 @@ struct StoredMember {
 /// writer's too: a host's client that cancels an earlier write keeps that
 /// write's marker (BK-ECHO-MARK-TAKES-HOST-CANCEL-AT-STAGED-SEQUENCE). A copy
 /// with no marker, from a provider or client that drops unknown properties,
-/// reads as this write's: nothing tells it from the host's own cancel at the
-/// staged SEQUENCE, and the owner's own write must never refund a deposit as
-/// a host cancel (ASK BK-ECHO-UNMARKED-SAME-SHAPE-COPY).
+/// reads as this write's only with `unmarked_reads_own`, which a replay of a
+/// write of members cancelled passes: nothing tells it from the host's own
+/// cancel at the staged SEQUENCE, and the owner's own write must never
+/// refund a deposit as a host cancel (ASK BK-ECHO-UNMARKED-SAME-SHAPE-COPY).
+/// Any other write's copy needs the write's marker: a live copy at the
+/// staged SEQUENCE may be the calendar's own edit, and read as the write it
+/// would make the seat a calendar the booking was written to, whose cancel
+/// moves deposit money; a first call's refusal is most often another
+/// writer's change.
 fn stored_copy_of(
     vault: &Vault,
     row: &CalendarWriteOutboxRow,
     stored: &RemoteCalendarObject,
+    unmarked_reads_own: bool,
 ) -> Result<StoredCopy, CalendarConnectorError> {
     let Ok(feed) = super::remote::parse_remote_resource(stored) else {
         return Ok(StoredCopy::Unread);
@@ -912,15 +927,15 @@ fn stored_copy_of(
             content_hash: parsed.content_hash,
         });
     }
-    let foreign_marker = match (row.write_marker, stored_write_marker(&stored.ics, &row.uid)) {
-        (Some(staged), StoredWriteMarker::One(marker)) => marker != staged,
-        (Some(_), StoredWriteMarker::Conflicting) => true,
-        _ => false,
+    let own = match (row.write_marker, stored_write_marker(&stored.ics, &row.uid)) {
+        (Some(staged), StoredWriteMarker::One(marker)) => marker == staged,
+        (Some(_), StoredWriteMarker::Conflicting) => false,
+        _ => unmarked_reads_own,
     };
-    Ok(if foreign_marker {
-        StoredCopy::Foreign
-    } else {
+    Ok(if own {
         StoredCopy::Own(members)
+    } else {
+        StoredCopy::Foreign
     })
 }
 
@@ -946,12 +961,23 @@ fn staged_recurrence_id(
     }
 }
 
+/// Whether `row` is a first write of its EVENT under the UID it minted
+/// ([`local_uid`]), which no EVENT carries yet: only the calls of this
+/// write store a resource under that UID.
+fn is_first_write(
+    vault: &Vault,
+    row: &CalendarWriteOutboxRow,
+) -> Result<bool, CalendarConnectorError> {
+    Ok(row.uid == local_uid(&row.event_ref)
+        && crate::calendar::passport::resolve_event_by_uid(vault, &row.uid)?.is_none())
+}
+
 /// The staged members of `row`, at the staged SEQUENCE, for its
 /// publication as the write's receipt would have published them, when `row`
-/// is a first write of its EVENT under the UID it minted ([`local_uid`]),
-/// which no EVENT carries yet, and its refused replay read a copy that is
-/// not provably the write's own: another writer's, or one below the staged
-/// SEQUENCE (CAL-FIRST-WRITE-COPY-PULLED-UNSETTLED-IMPORTS-DUPLICATE-EVENT).
+/// is a first write ([`is_first_write`]) and its refusal read a copy that
+/// is not provably the write's own: another writer's, an unmarked one, or
+/// one below the staged SEQUENCE
+/// (CAL-FIRST-WRITE-COPY-PULLED-UNSETTLED-IMPORTS-DUPLICATE-EVENT).
 /// Only this write stores a resource under that UID, so the copy is the
 /// write's own resource as another writer changed it since: the write
 /// landed. Its passports take the staged version, and the seat's pull reads
@@ -962,9 +988,7 @@ fn first_write_members(
     vault: &Vault,
     row: &CalendarWriteOutboxRow,
 ) -> Result<Option<Vec<StoredMember>>, CalendarConnectorError> {
-    if row.uid != local_uid(&row.event_ref)
-        || crate::calendar::passport::resolve_event_by_uid(vault, &row.uid)?.is_some()
-    {
+    if !is_first_write(vault, row)? {
         return Ok(None);
     }
     Ok(Some(
@@ -979,7 +1003,7 @@ fn first_write_members(
     ))
 }
 
-/// Writes `row`, a replayed write, after its stored copy was read, and
+/// Writes `row`, a refused write, after its stored copy was read, and
 /// first publishes `own` ([`publish_own_stored_copy_in_txn`]): the copy's
 /// members when it proved the write's own, or a first write's staged
 /// members ([`first_write_members`]). Both happen in one writer under the
@@ -1013,7 +1037,7 @@ fn write_replay_proof(
     Ok(true)
 }
 
-/// Publishes the stored copy of `row`, a replayed write, that proved the
+/// Publishes the stored copy of `row`, a refused write, that proved the
 /// write's own ([`stored_copy_of`]), or a first write's staged members
 /// ([`first_write_members`]), as the write's lost receipt would have: each
 /// staged member's passport on this
@@ -1093,8 +1117,9 @@ fn publish_own_stored_copy_in_txn(
     Ok(())
 }
 
-/// Proves a pulled resource of `uid` while this seat's replayed write of it
-/// waits on a proof its refusal's read could not give
+/// Proves a pulled resource of `uid` while this seat's refused write of it
+/// (a replay, or a first write's call) waits on a proof its refusal's read
+/// could not give
 /// ([`CalendarWriteOutboxRow::stored_copy_unproven`]), before the pull
 /// admits it, as that read would have proved it: the write's own copy is
 /// published as its lost receipt would have
@@ -1124,7 +1149,10 @@ pub(super) fn prove_unproven_replay(
         return Ok(());
     };
     open_outbox(vault, operation, provider, uid, &mut row)?;
-    let own = match stored_copy_of(vault, &row, object)? {
+    // A row owes this proof only after a replay's refusal or a first
+    // write's, so an unmarked copy reads as the write's where the replay's
+    // own read would have read it so.
+    let own = match stored_copy_of(vault, &row, object, !row.cancelled_members.is_empty())? {
         StoredCopy::Own(members) => Some(members),
         StoredCopy::Foreign => first_write_members(vault, &row)?,
         StoredCopy::Older => match first_write_members(vault, &row)? {

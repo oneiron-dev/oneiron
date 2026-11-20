@@ -14,7 +14,7 @@
 //! pulled copy of a first write in flight ([`first_write_in_flight`]).
 
 use super::super::door::CalendarConnectorOperation;
-use super::super::remote::{ics_content_hash, local_uid};
+use super::super::remote::ics_content_hash;
 use super::super::resource::read_blob_ref;
 use super::super::seat::CalendarConnectorError;
 use super::{
@@ -169,9 +169,10 @@ pub(crate) fn cancelled_members_in_flight(
 }
 
 /// Whether an upsert of `uid` still in flight on this seat (prepared or
-/// remotely applied, not yet settled) is the first write of its EVENT, under
-/// the UID it minted ([`local_uid`]), which no EVENT carries yet: no
-/// passport names it before the write settles. A pulled resource of `uid`
+/// remotely applied, not yet settled) is the first write of its EVENT,
+/// under the UID it minted, which no EVENT carries yet
+/// ([`super::is_first_write`]): no passport names it before the write
+/// settles. A pulled resource of `uid`
 /// may be that write coming back, and would import a second EVENT, so the
 /// pull leaves it owed and reads it again once the write settles or its
 /// refused replay publishes it
@@ -198,9 +199,7 @@ pub(crate) fn first_write_in_flight(
     let Some(row) = stored else {
         return Ok(false);
     };
-    let row = row.into_row()?;
-    Ok(uid == local_uid(&row.event_ref)
-        && crate::calendar::passport::resolve_event_by_uid(vault, uid)?.is_none())
+    super::is_first_write(vault, &row.into_row()?)
 }
 
 /// This seat's outbox row of a replayed upsert of `uid` whose precondition
