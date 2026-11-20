@@ -32,6 +32,10 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     cfg.dimensions = 4;
     cfg.embedding_model = None;
     let vault = Vault::open(tmp.path(), cfg).expect("open vault");
+    // These tests cover identity-provider routing, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     (tmp, vault)
 }
 
@@ -448,6 +452,7 @@ fn register_gmail_custody_for(vault: &Vault, mailbox: &str, custody_ref: &str) -
         name: custody_ref.to_owned(),
         class: CustodyClass::CrossVault,
         device_only: true,
+        model_reveal_allowed: false,
         value_bytes: b"member-oauth-token".to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: 1_800_000_000,
@@ -629,6 +634,7 @@ fn gmail_delegated_doors_refuse_a_row_that_is_not_this_adapters() -> Result<()> 
         name: other_grant.custody_record_ref.clone(),
         class: CustodyClass::CrossVault,
         device_only: true,
+        model_reveal_allowed: false,
         value_bytes: b"other-oauth-token".to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: 1_800_000_000,
@@ -822,6 +828,10 @@ fn gmail_page_progress_survives_reopen_and_policy_change_restarts_scan() -> Resu
     cfg.dimensions = 4;
     cfg.embedding_model = None;
     let vault = Vault::open(tmp.path(), cfg)?;
+    // The reopen reseeds the built-in pack marker; the OF-519 gate is not under test here.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker the reopen reseeded");
     let second = adapter.run_mailbox_page(&vault, id, &wire, 1_800_000_005)?;
     assert_eq!(second.progress.pages_completed, 2);
     assert_eq!(second.progress.last_complete_at, Some(1_800_000_005));

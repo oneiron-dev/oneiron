@@ -114,13 +114,22 @@ impl NativeVault {
     }
     /// Opens `path` as the class its Kotlin host declared, set before the
     /// install enrols (FIX 3833; CALLS: HOST_OPEN_DEVICE_CLASS =
-    /// ExplicitHostInput): never read off the operating system.
-    fn open(path: &str, device_class: MachineDeviceClass) -> Result<Self, String> {
+    /// ExplicitHostInput): never read off the operating system. The reported
+    /// name and model are what the host declares this install reports for
+    /// itself; display only (FIX [DEVICE-DISPLAY-NAME]).
+    fn open(
+        path: &str,
+        device_class: MachineDeviceClass,
+        machine_reported_name: Option<String>,
+        machine_reported_model: Option<String>,
+    ) -> Result<Self, String> {
         // Crash output never carries world text: the engine's hook goes in before
         // any vault opens (owner ruling 2026-10-14, fix 6).
         oneiron::panic_report::install_panic_hook();
         let mut config = VaultConfig::device();
         config.machine_device_class = device_class;
+        config.machine_reported_name = machine_reported_name;
+        config.machine_reported_model = machine_reported_model;
         Vault::open(path, config)
             .map(|vault| Self::opened(Arc::new(vault)))
             .map_err(display)
@@ -313,12 +322,15 @@ fn run<T: Default>(
 
 /// JNI implementation of the private Kotlin constructor hook. `phone` is
 /// the class the Kotlin host declared (FIX 3833): a phone, else a computer.
+/// The reported name and model are nullable, as `bindNative`'s keys are.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_oneiron_EmbeddedVault_openNative(
     mut env: JNIEnv<'_>,
     object: JObject<'_>,
     path: JString<'_>,
     phone: jboolean,
+    machine_reported_name: JString<'_>,
+    machine_reported_model: JString<'_>,
 ) {
     run(&mut env, |env| {
         let path: String = env.get_string(&path).map_err(display)?.into();
@@ -327,7 +339,30 @@ pub extern "system" fn Java_org_oneiron_EmbeddedVault_openNative(
         } else {
             MachineDeviceClass::Computer
         };
-        let vault = NativeVault::open(&path, device_class)?;
+        let machine_reported_name: Option<String> = if machine_reported_name.is_null() {
+            None
+        } else {
+            Some(
+                env.get_string(&machine_reported_name)
+                    .map_err(display)?
+                    .into(),
+            )
+        };
+        let machine_reported_model: Option<String> = if machine_reported_model.is_null() {
+            None
+        } else {
+            Some(
+                env.get_string(&machine_reported_model)
+                    .map_err(display)?
+                    .into(),
+            )
+        };
+        let vault = NativeVault::open(
+            &path,
+            device_class,
+            machine_reported_name,
+            machine_reported_model,
+        )?;
         // SAFETY: Kotlin owns the private long field, initialized to zero.
         // All native hooks execute under that instance's synchronized monitor.
         unsafe { env.set_rust_field(&object, "nativeHandle", vault) }.map_err(display)

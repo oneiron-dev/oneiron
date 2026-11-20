@@ -45,26 +45,28 @@
 //!   its retry pass after it drops the registry lock, and a replacement
 //!   forwards its candidate, which no import reaches before it is
 //!   registered, without the turn. The turn's holder may take the registry
-//!   lock: Observer B's NOTE scrub lists the live windows under the
-//!   materializer lock (FIX 12128).
+//!   lock: Observer B's NOTE scrub lists the live windows inside an import's
+//!   callback (FIX 12128).
 //!   The registry lock before the materializer lock: a cold open takes the
 //!   materializer lock for step-5 forward remat, and an unload for its
-//!   persist, without the registry lock. Two holders break that order and
-//!   can deadlock against each other: a replacement forwards its candidate
-//!   under the registry lock, and that NOTE scrub takes the registry lock
-//!   under the materializer lock (FIX 25183). Every other observer callback
-//!   takes only the materializer lock. Code built on the manager must never
-//!   acquire the registry lock while holding the materializer lock.
+//!   persist, without the registry lock, and a replacement forwards its
+//!   candidate under the registry lock. Observer B's NOTE scrub takes the
+//!   registry lock only once its callback has dropped the materializer lock
+//!   (FIX 25183); every other observer callback takes only the materializer
+//!   lock. Code built on the manager must never acquire the registry lock
+//!   while holding the materializer lock.
 
 mod document_api;
 mod live_mirror;
 mod pending_mirror;
 mod promotion;
+pub(crate) mod publication_window;
 mod ready;
 mod recovery_commits;
 mod replacement;
 
 pub(crate) use self::live_mirror::import_scope;
+pub(crate) use self::publication_window::PublicationWindow;
 // FIX 19634: each connection asks for the windows a policy wake readied.
 pub use self::ready::{READY_WINDOWS_PER_PASS, ReadyProgress};
 // FIX 14534: a world eviction waits for, or on the owner's word discards, the
@@ -277,7 +279,7 @@ impl WindowManager {
         // attach mutex, never the registry lock.
         self.attach_to_vault();
         let mut registry = self.lock_registry_settled(key);
-        // A window a sweep holds closed opens once the sweep is done.
+        // A window a sweep or a publication holds closed opens once it is released.
         while self.sweep_fence.holds(key) {
             drop(registry);
             self.sweep_fence.wait_until_open(key);
@@ -297,6 +299,8 @@ impl WindowManager {
             // (Observer B's NOTE scrub, FIX 12128).
             if !super::quarantine::pending_remat_entities(&self.vault, key.as_str())?.is_empty() {
                 forward_rematerialize(&self.vault, &existing.doc, &self.materializer, key)?;
+                // ROOM-PINS-LWW-MERGE: a room body it merged owes the window.
+                self.wake_for_owed_rows(key);
             }
             return Ok((existing, false));
         }
@@ -390,6 +394,11 @@ impl WindowManager {
         self.track_issued_handle(key, &window);
         drop(opening);
         drop(registry);
+        // ROOM-PINS-LWW-MERGE: a room body the forward pass merged with the
+        // pin records held here left a merged-carrier marker; the live
+        // mirror's next pass writes the merged carrier over the doc's, so the
+        // other machine learns them without waiting for another write.
+        self.wake_for_owed_rows(key);
         // FIX 12129: a window closed while a NOTE was deleted keeps that
         // NOTE's review-bundle attachments; scrub what this vault deleted.
         if let Err(error) =
@@ -458,8 +467,8 @@ impl WindowManager {
     /// The window is marked closed under the registry lock, so no open of it
     /// is under way, and an open that comes during `f` waits and then reads
     /// what `f` wrote, rather than registering the history `f` drops. Opens
-    /// of other windows go through. A window another sweep holds closed is
-    /// left to it, so the mark is released only by the sweep that made it.
+    /// of other windows go through. A window another sweep or a publication
+    /// holds closed is left to it, so the mark is released only by its holder.
     pub(crate) fn while_window_closed<T>(
         &self,
         key: &WindowKey,

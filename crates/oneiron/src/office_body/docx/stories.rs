@@ -11,9 +11,7 @@
 use super::super::invalid;
 use super::{LOCK, TEXT, child_map, lock_token, loro, loro_text, mark_styles, runs, string};
 use crate::error::Result;
-use loro::{
-    Container, LoroDoc, LoroList, LoroMap, LoroText, LoroValue, UpdateOptions, ValueOrContainer,
-};
+use loro::{Container, LoroDoc, LoroList, LoroMap, LoroText, LoroValue, ValueOrContainer};
 use oneiron_docedit::docx_body::{
     DocxBlockKind, DocxChange, DocxMark, DocxRun, DocxStory, DocxStoryScope,
 };
@@ -161,8 +159,7 @@ pub(super) fn set_text(
     text: &str,
 ) -> Result<()> {
     story_line(text)?;
-    editable(doc, scope, block)?
-        .update(text, UpdateOptions::default())
+    crate::text_diff::set_text(&editable(doc, scope, block)?, text)
         .map_err(|_| invalid("story paragraph update"))?;
     Ok(())
 }
@@ -325,4 +322,49 @@ pub(super) fn order_ids(list: &LoroList) -> Result<Vec<String>> {
             _ => Err(invalid("story order entry")),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod text_diff_budget_tests {
+    use super::*;
+    use loro::LoroDoc;
+    use oneiron_docedit::docx_body::{DocxBlock, DocxBlockKind, DocxStory, DocxStoryScope};
+    use std::time::{Duration, Instant};
+
+    /// Before the diff budget this ran for many minutes. Past the budget
+    /// the story paragraph keeps the text it held.
+    #[test]
+    fn an_unrelated_set_text_of_a_large_story_paragraph_is_refused_within_the_budget() {
+        let old = format!("{} tail \u{2713}", "x".repeat((1 << 20) - 16));
+        let new = "\u{e9}dited tail \u{2713}";
+        let scope = DocxStoryScope::Footnote {
+            id: "1".to_string(),
+        };
+        let doc = LoroDoc::new();
+        import(
+            &doc,
+            &[DocxStory {
+                scope: scope.clone(),
+                blocks: vec![DocxBlock {
+                    id: "p1".to_string(),
+                    kind: DocxBlockKind::Paragraph,
+                    role: None,
+                    text: old.clone(),
+                    runs: Vec::new(),
+                    cells: Vec::new(),
+                    locked: None,
+                }],
+            }],
+        )
+        .unwrap();
+        let started = Instant::now();
+        let result = set_text(&doc, &scope, "p1", new);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(60),
+            "the replacement took {elapsed:?}"
+        );
+        assert!(result.is_err(), "the set is refused past the budget");
+        assert_eq!(read(&doc).unwrap()[0].paragraphs[0].text, old);
+    }
 }

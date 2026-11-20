@@ -16,11 +16,12 @@ pub(super) fn search(
     client: &Client,
     key: &str,
     input: &WebSearchInput,
+    count: u32,
 ) -> Result<ProviderAnswer, ProviderError> {
     let body = json!({
         "query": input.query,
         "search_depth": "basic",
-        "max_results": input.result_count(),
+        "max_results": count,
         "include_answer": false,
         "include_raw_content": false,
         "include_usage": true,

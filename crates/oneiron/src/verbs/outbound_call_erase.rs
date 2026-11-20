@@ -10,7 +10,7 @@ use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::MemoryResult;
 
-use super::connector_call_error;
+use super::{connector_call_error, owner_confirm};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::outbound_call_erase::{
@@ -26,6 +26,8 @@ pub fn erase_outbound_call_request_as_owner(
     owner: &AuthenticatedOwner,
     input: OutboundCallRequestEraseRequest,
 ) -> MemoryResult<OutboundCallRequestErased> {
+    let ask = owner_confirm::asked("vault.outbound_calls.request.erase", &input)?;
+    owner_confirm::admit(vault, owner, ask, &())?;
     let attempt_id = AttemptId::from_bytes(input.attempt.as_bytes())?;
     let applied = super::shared::check_in_ref(input.check_in_ref.as_deref())?.map(|id| {
         crate::check_in::AppliedCheckIn {

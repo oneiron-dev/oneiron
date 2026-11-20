@@ -47,6 +47,7 @@ pub use oneiron_store::blob_artifact::native_output;
 pub use oneiron_store::blob_artifact::office_address;
 mod provenance;
 mod references;
+pub(crate) mod setting_keys;
 use oneiron_store::blob_artifact::review_request;
 pub use oneiron_store::blob_artifact::slide_review;
 mod store_keys;
@@ -101,6 +102,7 @@ pub(crate) use self::references::{
     readmit_held_asset_in_txn, readmit_held_asset_with_facts_in_txn, release_fenced_only,
 };
 pub use self::review_request::SlideReviewLimitsInput;
+pub use self::setting_keys::image_edit_max_ops;
 pub(crate) use self::store_keys::require_entity_type;
 pub use self::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
 pub use self::verbs::{
@@ -113,6 +115,8 @@ pub use self::verbs::{
 pub(crate) use self::versions::RoomResponseVersion;
 pub(crate) use self::versions::archive_version_tables;
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::versions::version_content_hash_for_test;
 // FIX 7227: the queue-check completion writer (token-only, no raw bytes/ids),
 // minted/bound in the merge-queue finish writer; the MQ child names these via
 // this BLOB parent alias, never via the private versions child path.

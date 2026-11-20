@@ -41,6 +41,7 @@ pub(super) fn transcript_record() -> GoalRecord {
         exploration_budget: GoalExplorationBudget {
             max_spend: 1000,
             exploration_slice: 100,
+            unit: crate::run_budget::LeaseUnit::tokens(),
             human_minutes: 20,
         },
     }
@@ -227,6 +228,7 @@ fn forged_human_claim_and_generic_or_replicated_project_changes_are_refused() ->
                 vault.project_type_byte()?,
                 TimeRange { start: 2, end: 2 },
                 2,
+                None,
                 &encode(&project_body)?,
             )
             .commit()
@@ -252,6 +254,7 @@ fn forged_human_claim_and_generic_or_replicated_project_changes_are_refused() ->
                 crate::registry::ENTITY_TYPE_CLAIM,
                 TimeRange { start: 3, end: 3 },
                 3,
+                None,
                 &crate::claim::encode_claim_body(&claim)?,
             )
             .commit()
@@ -266,6 +269,7 @@ fn forged_human_claim_and_generic_or_replicated_project_changes_are_refused() ->
             crate::registry::ENTITY_TYPE_CLAIM,
             TimeRange { start: 3, end: 3 },
             3,
+            None,
             &crate::claim::encode_claim_body(&claim)?,
         )
         .commit()?;
@@ -277,6 +281,7 @@ fn forged_human_claim_and_generic_or_replicated_project_changes_are_refused() ->
             vault.project_type_byte()?,
             TimeRange { start: 3, end: 3 },
             3,
+            None,
             &encode(&current_project)?,
         )
         .commit()?;
@@ -293,6 +298,7 @@ fn forged_human_claim_and_generic_or_replicated_project_changes_are_refused() ->
                 vault.project_type_byte()?,
                 TimeRange { start: 4, end: 4 },
                 4,
+                None,
                 &encode(&cleared)?,
             )
             .commit()
@@ -339,6 +345,7 @@ fn intake_does_not_supersede_a_claim_named_by_a_corrupt_project_pointer() -> Res
             crate::registry::ENTITY_TYPE_CLAIM,
             TimeRange { start: 2, end: 2 },
             2,
+            None,
             &crate::claim::encode_claim_body(&body)?,
         )
         .commit()?;
@@ -385,6 +392,8 @@ fn goal_owner_delete_uses_soft_and_hard_rails_without_stranding_project() -> Res
     for hard in [false, true] {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+        vault.prepare_install_signing().expect("install signing");
         let root = vault.root_project()?;
         let root_record = vault.project(root)?.unwrap();
         let human = vault.ensure_embedded_owner_actor().unwrap();
@@ -466,6 +475,8 @@ fn replayed_goal_tombstone_retains_no_dangling_pointer() -> Result<()> {
     ] {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+        vault.prepare_install_signing().expect("install signing");
         let project = vault.root_project()?;
         let human = vault.ensure_embedded_owner_actor().unwrap();
         let owner = vault.authenticate_owner(
@@ -515,6 +526,7 @@ fn receiving_vault_keeps_unverified_goal_out_of_authority() -> Result<()> {
             crate::registry::ENTITY_TYPE_CLAIM,
             TimeRange { start: 2, end: 2 },
             2,
+            None,
             &body[crate::batch::ENTITY_METADATA_HEADER_LEN..],
         )
         .commit()
@@ -544,6 +556,8 @@ fn superseded_goal_erases_after_its_project_is_deleted() -> Result<()> {
     for hard in [false, true] {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+        vault.prepare_install_signing().expect("install signing");
         let root = vault.root_project()?;
         let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
         let human = vault.ensure_embedded_owner_actor().unwrap();

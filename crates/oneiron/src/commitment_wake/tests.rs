@@ -68,6 +68,7 @@ fn at(instant: u64) -> TimeRange {
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     (dir, vault)
 }
 
@@ -285,10 +286,13 @@ fn execute_wrapped(
     let mut ctx = WakeAttemptContext {
         vault,
         deadline: &deadline,
+        cancel: None,
+        device_cancel: None,
         budget_id: "wake",
         now_ms: DUE_AT.saturating_mul(1_000),
         prepared_wake: None,
         prepared_attempt: None,
+        spend_meter: None,
     };
     let mut executor = CommitmentWakeExecutor::new(inner, planner, actor)?;
     block_on_ready(executor.execute(attempt, &mut ctx))
@@ -430,6 +434,7 @@ fn wake_proposal_records_pending_consent() {
     let group = vault
         .inbox_groups(crate::inbox::InboxQuery::at(DUE_AT, 16))
         .expect("inbox projection")
+        .groups
         .into_iter()
         .find(|group| group.run_id == key)
         .expect("the proposal is reviewable in its phase-key group");
@@ -744,7 +749,7 @@ fn quiet_hours_claim(subject: EntityId) -> ClaimBody {
 
 fn put_raw_claim(vault: &Vault, id: EntityId, body: &ClaimBody) {
     let data = crate::claim::encode_claim_body(body).expect("encode claim");
-    let payload = entity_record(crate::registry::ENTITY_TYPE_CLAIM, at(1), 1, &data);
+    let payload = entity_record(crate::registry::ENTITY_TYPE_CLAIM, at(1), 1, 0, &data);
     vault
         .with_write_txn(|wtxn| {
             vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
@@ -905,7 +910,7 @@ fn land_retraction(vault: &Vault, proposal: &EntityId, now: u64) {
     body.lifecycle = ClaimLifecycleStatus::Retracted;
     body.valid_to = Some(now);
     let data = crate::claim::encode_claim_body(&body).expect("encode the retraction");
-    let payload = entity_record(crate::registry::ENTITY_TYPE_CLAIM, at(now), now, &data);
+    let payload = entity_record(crate::registry::ENTITY_TYPE_CLAIM, at(now), now, 0, &data);
     vault
         .with_write_txn(|wtxn| {
             vault
@@ -962,7 +967,7 @@ fn retracting_an_approved_wake_stops_its_scheduled_send() {
 fn an_unreadable_claim_is_reported_by_the_approval_hook() {
     let (_dir, vault) = open_vault();
     let id = party(0x6D);
-    let payload = entity_record(crate::registry::ENTITY_TYPE_CLAIM, at(1), 1, &[0xc1]);
+    let payload = entity_record(crate::registry::ENTITY_TYPE_CLAIM, at(1), 1, 0, &[0xc1]);
     vault
         .with_write_txn(|wtxn| {
             vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;

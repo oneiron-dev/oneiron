@@ -14,7 +14,6 @@
 //!
 //! The implementation of this algorithm is based on the implementation by
 //! Brandon Williams.
-use crate::change::get_sys_timestamp;
 use rustc_hash::FxHashMap;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -115,6 +114,33 @@ impl<D: DiffHandler> OperateProxy<D> {
     }
 }
 
+/// Milliseconds on a monotonic clock, read only for the diff's timeout.
+/// Upstream read the wall clock here, so a clock stepped back after a diff
+/// started held its timeout off by the size of the step (Oneiron vendor
+/// change, `crates/loro/PROVENANCE.md`).
+#[cfg(any(
+    not(target_arch = "wasm32"),
+    target_os = "emscripten",
+    target_os = "wasi"
+))]
+fn diff_clock_ms() -> f64 {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    static ORIGIN: OnceLock<Instant> = OnceLock::new();
+    ORIGIN.get_or_init(Instant::now).elapsed().as_secs_f64() * 1000.0
+}
+
+/// `std::time::Instant` panics on this target, so the diff keeps upstream's
+/// clock here.
+#[cfg(all(
+    target_arch = "wasm32",
+    not(target_os = "emscripten"),
+    not(target_os = "wasi")
+))]
+fn diff_clock_ms() -> f64 {
+    crate::change::get_sys_timestamp()
+}
+
 pub(crate) fn diff<D: DiffHandler>(
     proxy: &mut OperateProxy<D>,
     options: UpdateOptions,
@@ -125,7 +151,7 @@ pub(crate) fn diff<D: DiffHandler>(
     let mut vb = OffsetVec::new(max_d);
     let mut vf = OffsetVec::new(max_d);
     let start_time = if options.timeout_ms.is_some() {
-        get_sys_timestamp()
+        diff_clock_ms()
     } else {
         0.
     };
@@ -225,7 +251,7 @@ fn find_middle_snake(
             }
 
             if let Some(timeout_ms) = timeout_ms {
-                if get_sys_timestamp() - start_time > timeout_ms {
+                if diff_clock_ms() - start_time > timeout_ms {
                     return Err(UpdateTimeoutError::Timeout);
                 }
             }
@@ -256,7 +282,7 @@ fn find_middle_snake(
             }
 
             if let Some(timeout_ms) = timeout_ms {
-                if get_sys_timestamp() - start_time > timeout_ms {
+                if diff_clock_ms() - start_time > timeout_ms {
                     return Err(UpdateTimeoutError::Timeout);
                 }
             }

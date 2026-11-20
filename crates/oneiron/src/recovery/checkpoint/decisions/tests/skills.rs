@@ -133,6 +133,7 @@ fn pack_vault() -> Result<(tempfile::TempDir, Vault, ForeignSkillPublisher, Enti
     config.embedding_model = None;
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), config)?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let at = TimeRange { start: 1, end: 1 };
     let (owner, hub) = (
         vault.ensure_embedded_owner_actor().expect("embedded owner"),
@@ -225,6 +226,7 @@ impl PackFitPolicy for Fit {
                     runtime_id: SANDBOX_JS_COMPONENT_NAME.to_owned(),
                     runtime_hash: "23".repeat(32),
                 }),
+            connector: None,
         }))
     }
 }
@@ -320,12 +322,14 @@ pub(super) fn installed_script_packs() -> Result<Case> {
 #[test]
 fn a_restore_never_reselects_a_script_pack_replaced_since() -> Result<()> {
     let (_dir, vault, publisher, hub) = pack_vault()?;
+    vault.ensure_vault_key().expect("mint the vault data key");
     let script = fetch(&vault, hub, &publisher, script_source()?)?;
     let data = fetch(&vault, hub, &publisher, data_source()?)?;
     let backups = crate::test_support::restore_tempdir();
     let restore = |image: &std::path::Path, destination: &std::path::Path| {
         Vault::restore_checkpoint_keeping_authority(
             image,
+            &vault.checkpoint_key()?,
             destination,
             vault.config.clone(),
             &vault,
@@ -360,6 +364,7 @@ fn a_restore_never_reselects_a_script_pack_replaced_since() -> Result<()> {
     assert!(vault.get_pack_source(&script.0)?.is_some());
     let (historical, _) = Vault::restore_checkpoint(
         &scripted,
+        &vault.checkpoint_key()?,
         &backups.path().join("historical"),
         vault.config.clone(),
         RestoreReason::Restore,

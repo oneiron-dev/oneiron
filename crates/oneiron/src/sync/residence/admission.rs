@@ -12,7 +12,7 @@ use crate::Vault;
 use crate::authority::{Destination, PeerMachine, VerifiedSlip, WorldPrivacyView};
 use crate::claim::{CallerLocality, ResidenceReadContext};
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result, SyncProtocolValidation};
 use crate::federation::FederationGrantScope;
 use crate::sync::SyncSelector;
 use crate::sync::types::WindowKey;
@@ -125,10 +125,44 @@ impl<'v> ResidenceAdmission<'v> {
     /// Storage errors.
     pub fn allows_item(&self, id: EntityId) -> Result<bool> {
         let txn = self.vault.store.env.read_txn()?;
+        self.allows_item_in(&txn, id)
+    }
+
+    /// [`Self::allows_item`] in the caller's transaction, for a prediction
+    /// walk that already holds one.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn allows_item_in(&self, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<bool> {
         // FIX 7608 slice 4: a marked repo item's copy id is judged as its source.
-        let id =
-            crate::sync::selector::secret_projection::stored_item_in_txn(&self.vault, &txn, id)?;
-        self.context.allows_item(&txn, &id)
+        let id = crate::sync::selector::secret_projection::stored_item_in_txn(self.vault, txn, id)?;
+        self.context.allows_item(txn, &id)
+    }
+
+    /// Keeps the tombstones of `entries` whose deleted rows the credential's
+    /// own bounds leave in, judged in one snapshot
+    /// ([`ResidenceReadContext::credential_admits_deleted_in`]): the bound a
+    /// hard-deleted row's tombstone meets, since no row is left to read.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; a credential whose owner no longer stands.
+    pub fn retain_admitted_tombstones(
+        &self,
+        entries: &mut Vec<super::WindowTombstoneEntry>,
+    ) -> Result<()> {
+        let txn = self.vault.store.env.read_txn()?;
+        let mut failed = None;
+        entries.retain(|entry| {
+            self.context
+                .credential_admits_deleted_in(&txn, &entry.entity_id, &entry.value)
+                .unwrap_or_else(|error| {
+                    failed.get_or_insert(error);
+                    false
+                })
+        });
+        failed.map_or(Ok(()), Err)
     }
 
     /// Where the row of the admitted item `id` sits, for the copy the
@@ -213,6 +247,37 @@ pub fn rows_may_reach(vault: &Vault, peer: PeerMachine, rows: &[EntityId]) -> Re
         }
     }
     Ok(true)
+}
+
+/// Refuse a promoted window's write whose rows may not reach `peer`'s
+/// machine. The writer calls this in its committing transaction, so a world
+/// privacy change that landed after the pre-write check still meets the
+/// write, as a document's writer judges its destination. A peer whose proof
+/// no longer stands is an unknown destination; a row whose world cannot be
+/// placed stays.
+///
+/// # Errors
+///
+/// The write's refusal, or storage errors.
+pub(crate) fn admit_promoted_window_destination_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    peer: PeerMachine,
+    rows: &[EntityId],
+) -> Result<()> {
+    let withheld = Withhold::Peer(peer).worlds_in(vault, txn)?;
+    for row in rows {
+        match crate::settings::device_only_withholds(&vault.store, txn, &withheld, row) {
+            Ok(false) => {}
+            Ok(true) | Err(Error::CorruptedIndex(_)) => {
+                return Err(Error::sync_protocol(
+                    SyncProtocolValidation::DocumentAdmissionDenied,
+                ));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 /// The worlds kept off the machine `peer` proved, read now, or `None` when no

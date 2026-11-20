@@ -18,7 +18,7 @@ pub use self::claim_authoring::{BoundClaimAuthoringSelector, ClaimAuthoringSelec
 use self::dispatch::Dispatch;
 use self::observe::WakePassClock;
 pub(crate) use self::park_cause::{
-    executor_error_ends_pass, llm_waits_on_owner_act, waits_on_owner_act,
+    executor_error_ends_pass, llm_waits_on_owner_act, refuses_attempt_input, waits_on_owner_act,
 };
 pub(crate) use self::rewrite::check_host_wake_rewrite;
 use self::stop::boundary_stop;
@@ -817,4 +817,12 @@ impl<'a> DreamerWakeDriver<'a> {
     }
 
     // The Result is only fallible on the sync progress lane.
+}
+
+/// The cause an executor `error` parks under, and whether it ends the
+/// pass, for tests/message_rel_relationship_row.rs. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn executor_error_park_for_test(error: &crate::Error) -> (DreamerParkCause, bool) {
+    let cause = self::park_cause::executor_error_park_cause(error);
+    (cause, cause == DreamerParkCause::ExecutorError)
 }
