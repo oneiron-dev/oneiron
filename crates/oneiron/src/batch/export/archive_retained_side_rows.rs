@@ -2,7 +2,7 @@
 //! bytes, with identity hashes and collection, credential, import and erase passes. The owner
 //! door installs tables with a landing group and retains the rest; other doors retain only.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek};
 
 use heed::{RoTxn, RwTxn};
@@ -320,8 +320,68 @@ pub(crate) fn visit_retained_side_rows<R: Read + Seek>(
     Ok(())
 }
 
+/// Lands, on the owner's restore, each archived standing grant the source held live, before the
+/// import puts in any row or link (Engine ANSWER CLAIM-NOTE-SAME-AS-RESTORE-PROOF = A): a
+/// `same_as` between two CLAIMs comes back only under a live nightly-link grant, read before its
+/// status claim and its link go in (`document_import::claim_pair_same_as`). The consent group's
+/// own checks run (`consent::archive_restore`), so only a row whose stamp actor is already a live
+/// PERSON here lands now; every other row waits for [`install_or_retain_side_rows_in_txn`],
+/// after the imported persons, as before. Returns the keys of the rows installed here, which that
+/// later pass counts as installed without landing them again. Other doors land nothing here.
+pub(crate) fn land_standing_grants_first_in_txn<R: Read + Seek>(
+    vault: &crate::Vault,
+    wtxn: &mut RwTxn<'_>,
+    archive: &IndexedArchive<'_, R>,
+    permit: Option<&super::OwnerArchiveRestorePermit>,
+    refresh: &mut super::archive_side_install::ArchivedSideRowRefresh,
+) -> Result<BTreeSet<[u8; 32]>> {
+    use super::archive_side_install::{
+        ArchivedSideGroup, ArchivedSideRowOutcome, land_archived_side_group_in_txn,
+    };
+
+    let mut landed = BTreeSet::new();
+    let Some(permit) = permit else {
+        return Ok(landed);
+    };
+    let mut staged = Vec::new();
+    visit_retained_side_rows(archive, |typed, envelope| {
+        if envelope.source_live
+            && envelope.source_table == crate::side_table::CONSENT_STANDING_GRANT.name
+        {
+            staged.push((typed, envelope));
+        }
+        Ok(())
+    })?;
+    if staged.is_empty() {
+        return Ok(landed);
+    }
+    let (keys, rows): (Vec<_>, Vec<_>) = staged.into_iter().unzip();
+    let outcomes = land_archived_side_group_in_txn(
+        ArchivedSideGroup::Consent,
+        vault,
+        wtxn,
+        permit,
+        &rows,
+        refresh,
+    )?;
+    if outcomes.len() != rows.len() {
+        return Err(Error::InvariantViolation(
+            "an archive landing group must return one outcome per envelope",
+        ));
+    }
+    for (key, outcome) in keys.into_iter().zip(outcomes) {
+        if matches!(outcome, ArchivedSideRowOutcome::Installed) {
+            RETAINED_SIDE_ROWS.delete(vault, wtxn, &key)?;
+            landed.insert(key);
+        }
+    }
+    Ok(landed)
+}
+
 /// Installs the owner's supported source tables and otherwise keeps envelopes inert in the
 /// import transaction; actor and actorless doors retain only, with the original inert counts.
+/// A row [`land_standing_grants_first_in_txn`] installed, named in `landed_first`, counts as
+/// installed and lands no second time.
 /// On the owner door, each source-live HOOKS_GRANT tuple kept as a retained row is recorded
 /// under `restore_receipt_hex` (32 hex) for the restore group's accept to install.
 pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
@@ -330,6 +390,7 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
     archive: &IndexedArchive<'_, R>,
     permit: Option<&super::OwnerArchiveRestorePermit>,
     restore_receipt_hex: Option<&str>,
+    landed_first: &BTreeSet<[u8; 32]>,
     refresh: &mut super::archive_side_install::ArchivedSideRowRefresh,
 ) -> Result<RetainedSideImportSummary> {
     use super::archive_side_install::{
@@ -347,6 +408,10 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
                 source_table: envelope.source_table.clone(),
                 ..Default::default()
             });
+        if landed_first.contains(&typed) {
+            count.installed_rows += 1;
+            return Ok(());
+        }
         // Only a tuple the source held live installs; an inert copy stays inert (REVIEW-7771).
         let group = permit
             .filter(|_| envelope.source_live)

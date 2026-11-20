@@ -232,7 +232,9 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
                 } if claim.predicate == crate::claim::PREDICATE_COREFERENCE_STATUS => {
                     let mut key = edge_key(&source, kind as u8, &target);
                     key.extend_from_slice(id.as_bytes());
-                    self.index.put(Tag::CoreferenceStatus, &key, &[])?;
+                    let active = claim.lifecycle == crate::claim::ClaimLifecycleStatus::Active;
+                    self.index
+                        .put(Tag::CoreferenceStatus, &key, &[u8::from(active)])?;
                 }
                 _ => {}
             }

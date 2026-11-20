@@ -450,10 +450,15 @@ pub struct WholeVaultImportReceipt {
     /// (OWNEDGES-SHELL-RESTORE = A).
     pub unrestored_identity_topology_shells: usize,
     /// Archived `same_as` links that stayed out: every link but one between
-    /// two PERSONs this import inserted, with a status claim it puts in too
-    /// (a CLAIM pair, a diary NOTE pair, a link naming a row already here or
-    /// one left out, or a link with no status claim restored). A claim about
-    /// such a link, its edge provenance among them, stays archive data
+    /// two PERSONs this import inserted, or, on the owner's restore, one
+    /// between two CLAIMs it inserted while a live nightly-link grant of a
+    /// live owner of this vault lets the Dreamer apply it here, each with a
+    /// status claim it puts in too. So a diary NOTE pair stays out on every
+    /// door (its proof is its residents' own submission, and an imported
+    /// diary has no local author here), as do a CLAIM pair on any other door
+    /// or with no such grant, a link naming a row already here or one left
+    /// out, and a link with no status claim restored. A claim about such a
+    /// link, its edge provenance among them, stays archive data
     /// (`ClaimSubjectEdgeNotRestored`).
     pub unrestored_same_as_links: usize,
     /// Custody records the archive carried as handles only: secrets to
