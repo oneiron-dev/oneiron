@@ -45,8 +45,9 @@ pub(super) struct GradingView {
     pub(super) readable_count: usize,
     /// How many source queries were dropped: each graded hidden records only.
     pub(super) dropped_queries: usize,
-    /// sha256 (hex) over the sorted hidden record ids, one per line: the pin
-    /// of the partition.
+    /// sha256 (hex) over the sorted hidden record ids as one JSON array: the
+    /// pin of the partition. JSON quotes each id, so no id (one holding a
+    /// newline included) can make two partitions hash alike.
     pub(super) partition_digest: String,
 }
 
@@ -132,12 +133,9 @@ pub(super) fn grading_view(
     let pack_digest = slice
         .pack_digest()
         .map_err(|error| ScorecardFailure::Run(error.to_string()))?;
-    let mut listing = String::new();
-    for record_id in &hidden {
-        listing.push_str(record_id);
-        listing.push('\n');
-    }
-    let partition_digest = oneiron_hex::encode(&sha2::Sha256::digest(listing.as_bytes()));
+    let listing = serde_json::to_vec(&hidden)
+        .map_err(|error| ScorecardFailure::Run(format!("hidden id listing: {error}")))?;
+    let partition_digest = oneiron_hex::encode(&sha2::Sha256::digest(&listing));
     Ok(GradingView {
         slice,
         pack_digest,

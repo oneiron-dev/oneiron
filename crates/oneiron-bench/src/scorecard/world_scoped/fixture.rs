@@ -26,7 +26,7 @@ use oneiron_ruler::pack::{Corpus, LoadedPack};
 use sha2::Digest;
 
 use crate::scorecard::ScorecardFailure;
-use crate::scorecard::run::{MAP_SIZE, pack_time};
+use crate::scorecard::run::MAP_SIZE;
 
 /// The claim predicate of every record: one PERSON subject per record keeps
 /// its single-valued key apart from every other record's.
@@ -217,13 +217,17 @@ impl AgentVault {
     /// Write every record of `corpus` as the owner's Public claim, its text
     /// the claim's string value (indexed as the claim lands): a record in
     /// `hidden` in the second world, any other in the base world. Each claim
-    /// has its own PERSON subject. Returns the claim ids.
+    /// has its own PERSON subject. Every claim and subject is stamped at
+    /// `stamped_at` (the corpus's earliest session), not at its own session:
+    /// claim-age decay then weighs every claim of a query alike, and the text
+    /// order stands. Returns the claim ids.
     pub(super) fn ingest(
         &self,
         loaded: &LoadedPack,
         corpus: &Corpus,
         ordinal_of: &BTreeMap<&str, usize>,
         hidden: &BTreeSet<String>,
+        stamped_at: u64,
     ) -> Result<BTreeMap<EntityId, Placed>, ScorecardFailure> {
         let facet = self
             .vault
@@ -236,7 +240,6 @@ impl AgentVault {
         let mut subjects = self.vault.batch();
         let mut claims: Vec<ScopedClaimInput> = Vec::with_capacity(CLAIM_BATCH);
         for session in &corpus.sessions {
-            let moment = pack_time(&session.time).map_err(ScorecardFailure::Input)?;
             for record_id in &session.record_ids {
                 let Some(ordinal) = ordinal_of.get(record_id.as_str()).copied() else {
                     let corpus_id = &corpus.corpus_id;
@@ -264,17 +267,18 @@ impl AgentVault {
                 );
                 let subject = derived_id(SUBJECT_DOMAIN, record_id)?;
                 let at = TimeRange {
-                    start: moment,
-                    end: moment,
+                    start: stamped_at,
+                    end: stamped_at,
                 };
-                subjects = subjects.put(&subject, ENTITY_TYPE_PERSON, at, moment, &subject_body);
+                subjects =
+                    subjects.put(&subject, ENTITY_TYPE_PERSON, at, stamped_at, &subject_body);
                 let world = if in_second_world {
                     self.second_world
                 } else {
                     base_world_id()
                 };
                 let text = &loaded.slice.records[ordinal].text;
-                claims.push(claim_input(id, subject, world, &facet, text, moment));
+                claims.push(claim_input(id, subject, world, &facet, text, stamped_at));
                 if claims.len() >= CLAIM_BATCH {
                     subjects.commit().map_err(failed("subject batch"))?;
                     subjects = self.vault.batch();

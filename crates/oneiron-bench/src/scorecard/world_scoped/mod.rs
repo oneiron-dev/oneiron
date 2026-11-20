@@ -6,10 +6,11 @@
 //! world, and each query runs as an agent whose one Grant reads the base
 //! world. The arm grades the scoped text channel alone: BM25 under the
 //! agent's world scope through the native credential read, with no vectors
-//! and no recency blend, under the eval clock. So a change to what the
-//! agent's term statistics count (#10062: document frequency counts only
-//! postings of rows the reader may read) moves its numbers, and an unscoped
-//! arm's do not. The run is graded on the readable records alone (see
+//! and no recency blend, under the eval clock; every claim of a corpus is
+//! stamped at the corpus's first session, so claim-age decay reorders no
+//! hit. So a change to what the agent's term statistics count (#10062:
+//! document frequency counts only postings of rows the reader may read)
+//! moves its numbers, and an unscoped arm's do not. The run is graded on the readable records alone (see
 //! [`partition::grading_view`]); a second-world record served to the agent
 //! fails the run. Run it on the search or held_out slice, with the same
 //! `--hidden-share` and `--partition-seed` on both builds, then compare the
@@ -123,18 +124,24 @@ pub(super) fn replay(
     }
     let limit = usize::try_from(budget_rows).unwrap_or(usize::MAX);
     let mut repeats_of: BTreeMap<&str, Vec<RepeatRun>> = BTreeMap::new();
+    let mut records_written = 0usize;
+    // Every corpus is written and its claims checked, also one no kept
+    // query reads; only the queries run per graded corpus.
     for corpus in &loaded.slice.corpora {
-        let Some(wanted) = queries_by_corpus.get(corpus.corpus_id.as_str()) else {
-            continue;
-        };
-        // The second world exists from the corpus's earliest session on.
+        // The second world exists from the corpus's earliest session on, and
+        // every claim of the corpus is stamped then.
         let mut created_at: Option<u64> = None;
         for session in &corpus.sessions {
             let moment = pack_time(&session.time).map_err(ScorecardFailure::Input)?;
             created_at = Some(created_at.map_or(moment, |earliest| earliest.min(moment)));
         }
-        let agent_vault = AgentVault::open(created_at.unwrap_or_default())?;
-        let placed = agent_vault.ingest(loaded, corpus, &ordinal_of, &view.hidden)?;
+        let created_at = created_at.unwrap_or_default();
+        let agent_vault = AgentVault::open(created_at)?;
+        let placed = agent_vault.ingest(loaded, corpus, &ordinal_of, &view.hidden, created_at)?;
+        records_written += placed.len();
+        let Some(wanted) = queries_by_corpus.get(corpus.corpus_id.as_str()) else {
+            continue;
+        };
         let slip = agent_vault.pair_agent()?;
         for _ in 0..repeats {
             for query in wanted {
@@ -177,6 +184,7 @@ pub(super) fn replay(
         "partition_digest": view.partition_digest,
         "records_readable": view.readable_count,
         "records_hidden": view.hidden.len(),
+        "records_written": records_written,
         "queries_dropped": view.dropped_queries,
         "source_pack_digest": loaded.pack_digest,
         "pack_digest": view.pack_digest,
