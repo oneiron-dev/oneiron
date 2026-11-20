@@ -4,9 +4,9 @@
 //!
 //! A row is about a record when its key names that record, or when the record's own delete drops
 //! the row by what its value names: a NOTE's landing receipts, a TASK's lifecycle receipts, a
-//! setting change scoped to a record, a voice subject's render decision. Every retained table
-//! states its rule in [`RETAINED_SUBJECT_RULES`], and a compile-time check refuses a retained
-//! table with no rule, or with two.
+//! setting change whose scope, values or reason name a record, a voice subject's render
+//! decision. Every retained table states its rule in [`RETAINED_SUBJECT_RULES`], and a
+//! compile-time check refuses a retained table with no rule, or with two.
 
 use self::RetainedSubjectRule::{Evidence, HexIds, NoRecord, ParsedKey, RawIds, Value};
 use super::archive_side_dispositions::{ArchiveSideDisposition, SIDE_TABLE_DISPOSITIONS};
@@ -41,12 +41,9 @@ pub(crate) enum RetainedSubjectRule {
 const ONE_ID: RetainedSubjectRule = RawIds { len: 16, ids: &[0] };
 /// A key that is a record id and a big-endian u64 (a sequence or a commit peer).
 const ID_AND_U64: RetainedSubjectRule = RawIds { len: 24, ids: &[0] };
-/// A key that is two ids, both looked up: a room and its grantee, or an owner and the id of its
-/// change or receipt (an id that names no record finds nothing to keep out).
-const TWO_IDS: RetainedSubjectRule = RawIds {
-    len: 32,
-    ids: &[0, 16],
-};
+/// A key that is a record id and a 16-byte side id that names no record: a change or receipt id,
+/// or a digest.
+const ID_AND_SIDE_ID: RetainedSubjectRule = RawIds { len: 32, ids: &[0] };
 /// A key that is an `EntityDocument` owner and a receipt id, both lower-case hex, with a colon
 /// between them (`HexPair`).
 const HEX_PAIR_OWNER: RetainedSubjectRule = HexIds { len: 65, ids: &[0] };
@@ -55,8 +52,7 @@ const HEX_PAIR_OWNER: RetainedSubjectRule = HexIds { len: 65, ids: &[0] };
 /// owners in the read leg's table map (lanes/kimi/OPUS-EXPORTDOORS/retainedrows-legs/map).
 pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("ACCESS_GRANT_OWNER_ACT", NoRecord),
-    // A tag byte, then the holder's id: an AGENT_DEF, an attempt or a reader TASK.
-    ("AGENT_DEF_POWER_GRANT", RawIds { len: 17, ids: &[1] }),
+    ("AGENT_DEF_POWER_GRANT", ParsedKey(power_grant_key_records)),
     ("ATTEMPT_HOLD_OVERRIDE_RECEIPT", NoRecord),
     ("ATTEMPT_PACK_RECEIPT", NoRecord),
     ("AUTHORITY_WITHDRAWN_GRANT", Evidence),
@@ -74,18 +70,19 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("CONSENT_WIDEN_PROPOSAL", NoRecord),
     ("CONVERSATION_MEMBERSHIP_ROW", ID_AND_U64),
     ("CONVERSATION_MEMBERSHIP_SEQ", ONE_ID),
-    ("CONVERSATION_ROLE_GRANT", TWO_IDS),
+    // The room, then the grantee PERSON.
+    (
+        "CONVERSATION_ROLE_GRANT",
+        RawIds {
+            len: 32,
+            ids: &[0, 16],
+        },
+    ),
     ("DRAFTER_POLICY", NoRecord),
     ("DREAMER_CONSOLIDATION_STRENGTH_POLICY", NoRecord),
     ("DREAMER_FREE_TIME_POLICY", ONE_ID),
     // The AGENT_DEF, then the cycle and item side ids.
-    (
-        "DREAMER_FREE_TIME_RECEIPT",
-        RawIds {
-            len: 48,
-            ids: &[0, 16, 32],
-        },
-    ),
+    ("DREAMER_FREE_TIME_RECEIPT", RawIds { len: 48, ids: &[0] }),
     ("DREAMER_PROJECTOR_POLICY", NoRecord),
     ("DREAMER_SIEVE_POLICY", NoRecord),
     ("DREAMER_WAKE_POLICY", NoRecord),
@@ -100,7 +97,8 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("HOOKS_GRANT", ONE_ID),
     ("HOOKS_RECEIPT", NoRecord),
     ("HOOKS_REGEN_RECEIPT", NoRecord),
-    ("HOUSE_LINK_RECEIPT", TWO_IDS),
+    // The house, then the receipt id.
+    ("HOUSE_LINK_RECEIPT", ID_AND_SIDE_ID),
     ("INQUIRY_RECEIPT", NoRecord),
     ("LEARNING_SETTING", ParsedKey(learning_setting_key_records)),
     ("LEGAL_HOLD_ERASE_LINK", Evidence),
@@ -164,12 +162,13 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("TYPED_BODY_RECEIPT", ID_AND_U64),
     ("UNDO_SEND_SETTING", NoRecord),
     // The consent's subject PERSON, then a 16-byte digest of the event id.
-    ("VOICE_IDENTITY_CONSENT", RawIds { len: 32, ids: &[0] }),
+    ("VOICE_IDENTITY_CONSENT", ID_AND_SIDE_ID),
     ("VOICE_REF_RENDER_CONSENT", Value(render_consent_records)),
     // A reader tag byte, then the reader's PERSON or AGENT_DEF.
     ("WEAVE_DIGEST_SCHEDULE", RawIds { len: 17, ids: &[1] }),
     ("WEAVE_DIGEST_SETTINGS", ONE_ID),
-    ("WEAVE_DIGEST_SETTING_CHANGE", TWO_IDS),
+    // The owner, then the change id.
+    ("WEAVE_DIGEST_SETTING_CHANGE", ID_AND_SIDE_ID),
     ("WEB_CONNECTOR_SETTING", NoRecord),
 ];
 
@@ -213,6 +212,20 @@ fn hex_id_at(key: &[u8], at: usize) -> Option<EntityId> {
     let text = std::str::from_utf8(key.get(at..at + 32)?).ok()?;
     let bytes = oneiron_hex::decode::<16>(text)?;
     Some(EntityId::from_bytes_unchecked(bytes))
+}
+
+/// The holder an `AGENT_DEF_POWER_GRANT` key names after its tag byte, when that holder is a
+/// record: tag 0 an AGENT_DEF, tag 2 a reader TASK; tag 1 a dispatched attempt, which is none
+/// (`agent_def::powers::decode_power_grant_target`).
+fn power_grant_key_records(key: &[u8]) -> Option<Vec<EntityId>> {
+    if key.len() != 17 {
+        return None;
+    }
+    match key[0] {
+        0 | 2 => raw_id_at(key, 1).map(|holder| vec![holder]),
+        1 => Some(Vec::new()),
+        _ => None,
+    }
 }
 
 /// The record a `SETTING` or `SETTING_CONTENT` key is scoped to: a world, project, sub-project,

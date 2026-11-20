@@ -17,8 +17,10 @@ use super::{
     ArchiveSideFamily, ArchiveSideRow, ImportOmissionReason, RetainedSideImportSummary,
     RetainedSideTableCount, SideRowBytes,
 };
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::registry::ENTITY_TYPE_SUMMARY;
 use crate::serialize::{ExportBodyFile, null_document_tree_row};
 use crate::side_table::{CodecName, Named, SideKey, SideTable};
 use crate::store::Store;
@@ -152,14 +154,48 @@ fn retained_row_room(source_table: &str, source_key: &[u8]) -> Option<EntityId> 
     }
 }
 
+/// Whether the whole-vault export keeps record `id` out, as its record pass does: the egress door
+/// keeps it out (off the record, or use-limited by a customer hold that refused its privacy
+/// erase), or it is an epoch summary one of whose transitive sources the door keeps out, or whose
+/// epoch does not resolve (FIX 1496 S5).
+fn export_keeps_record_out(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    if super::export_egress::whole_vault_export_excludes_entity_in_txn(store, rtxn, id)? {
+        return Ok(true);
+    }
+    let summary_kept_out =
+        crate::ports::EntityStoreRead::port_entity_with_raw(store, rtxn, id, |raw| {
+            if EntityMetadataHeader::parse(raw)
+                .is_none_or(|header| header.entity_type != ENTITY_TYPE_SUMMARY)
+            {
+                return Ok(false);
+            }
+            let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+            let admitted = crate::compaction::epoch_sources_admitted_in(
+                store,
+                rtxn,
+                id,
+                body,
+                |source, _| {
+                    Ok(
+                        !super::export_egress::whole_vault_export_excludes_entity_in_txn(
+                            store, rtxn, source,
+                        )?,
+                    )
+                },
+            )?;
+            Ok(admitted == Some(false))
+        })?;
+    Ok(summary_kept_out == Some(true))
+}
+
 /// Whether the whole-vault export withholds a retained row, live or inert. It does when a
-/// record the row is about ([`RetainedSubjectRule::records`]) is one the export keeps out (off
-/// the record, or use-limited by a customer hold that refused its privacy erase), so no receipt,
-/// setting, grant or history row of a withheld record goes either (REVIEW-9446 P1-1; FIX
-/// WHOLE-VAULT-EXPORT-RETAINED-ROWS-OF-WITHHELD-RECORDS), and when its table states no rule or
-/// its rule cannot read the row. A ledger row, revision or role grant of a room deleted here,
-/// which the archive does not carry as a record ([`super::snapshot_body::row_exported_in_txn`]),
-/// stays home with it (round 2 P1-1; Engine ANSWER RETAINED-ROOM-ROWS-WITHHELD Q1 = A).
+/// record the row is about ([`RetainedSubjectRule::records`]) is one the export keeps out
+/// ([`export_keeps_record_out`]), so no receipt, setting, grant or history row of a withheld
+/// record goes either (REVIEW-9446 P1-1; FIX WHOLE-VAULT-EXPORT-RETAINED-ROWS-OF-WITHHELD-RECORDS),
+/// and when its table states no rule or its rule cannot read the row. A ledger row, revision or
+/// role grant of a room deleted here, which the archive does not carry as a record
+/// ([`super::snapshot_body::row_exported_in_txn`]), stays home with it (round 2 P1-1; Engine
+/// ANSWER RETAINED-ROOM-ROWS-WITHHELD Q1 = A).
 fn retained_row_withheld(
     store: &Store,
     rtxn: &RoTxn<'_>,
@@ -172,7 +208,7 @@ fn retained_row_withheld(
         return Ok(true);
     };
     for id in &records {
-        if super::export_egress::whole_vault_export_excludes_entity_in_txn(store, rtxn, id)? {
+        if export_keeps_record_out(store, rtxn, id)? {
             return Ok(true);
         }
     }
@@ -181,6 +217,20 @@ fn retained_row_withheld(
     };
     let exported = super::snapshot_body::row_exported_in_txn(store, rtxn, &room)?;
     Ok(!exported)
+}
+
+/// Withholds the whole ledger of the room a withheld ledger envelope belongs to, when its key
+/// still names one: the ledger goes whole or not at all ([`note_ledger_envelope`]), so a row the
+/// export withholds, a malformed one among them, takes its room's other rows and revision along.
+fn withhold_room_ledger(
+    envelope: &ArchiveRetainedSideRow,
+    withheld_ledgers: &mut BTreeSet<EntityId>,
+) {
+    if crate::conversation::archive_restore::is_ledger_table(&envelope.source_table)
+        && let Some(room) = retained_row_room(&envelope.source_table, &envelope.source_key)
+    {
+        withheld_ledgers.insert(room);
+    }
 }
 
 /// Notes room ledger envelope `envelope`'s room under its identity, and withholds that room's
@@ -226,8 +276,9 @@ fn note_ledger_envelope(
 /// retained source tables read raw and marked `source_live`, unioned with the inert envelopes
 /// already stored, deduplicated by [`retained_side_row_key`] with the live row kept. A row about
 /// a record the export keeps out is withheld ([`retained_row_withheld`]), and so is every live
-/// and inert row of a room ledger one of whose rows names an entity it keeps out
-/// ([`note_ledger_envelope`]). Collected into memory like the 41-family writer.
+/// and inert row of a room ledger one of whose rows is withheld ([`withhold_room_ledger`]) or
+/// names an entity it keeps out ([`note_ledger_envelope`]). Collected into memory like the
+/// 41-family writer.
 pub(crate) fn collect_retained_side_rows_in_txn(
     store: &Store,
     rtxn: &RoTxn<'_>,
@@ -246,6 +297,7 @@ pub(crate) fn collect_retained_side_rows_in_txn(
                 source_live: true,
             };
             if retained_row_withheld(store, rtxn, rule, &envelope)? {
+                withhold_room_ledger(&envelope, &mut withheld_ledgers);
                 continue;
             }
             let key = retained_side_row_key(&envelope);
@@ -277,6 +329,7 @@ pub(crate) fn collect_retained_side_rows_in_txn(
         let envelope = RETAINED_SIDE_ROWS.decode_value(&value)?;
         let rule = retained_subject_rule(&envelope.source_table);
         if retained_row_withheld(store, rtxn, rule, &envelope)? {
+            withhold_room_ledger(&envelope, &mut withheld_ledgers);
             continue;
         }
         let identity = retained_side_row_key(&envelope);
