@@ -255,6 +255,45 @@ fn policy_setter_in(
     Ok(body)
 }
 
+/// Whether `caller` may change `room`'s pins and their unpin records, read
+/// in `txn` against the stored body as the pin and unpin doors read it
+/// ([`pin_writer_in`]). A federation peer's room body is judged by it,
+/// without the doors' write-actor check: the peer's grant authenticated its
+/// sender (ROOM-BODY-REPLICA-SETTINGS).
+#[cfg(feature = "sync")]
+pub(super) fn changes_pins_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    caller: WriteActor,
+) -> Result<bool> {
+    let body = PinnedBody::read_in(vault, txn, room)?;
+    granted(pin_writer_in(vault, txn, room, caller, &body).map(drop))
+}
+
+/// Whether `caller` may set `room`'s pin policy, read in `txn` as the policy
+/// door reads it ([`policy_setter_in`]), for a federation peer's room body
+/// as [`changes_pins_in`].
+#[cfg(feature = "sync")]
+pub(super) fn sets_pin_policy_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    caller: WriteActor,
+) -> Result<bool> {
+    granted(policy_setter_in(vault, txn, room, caller).map(drop))
+}
+
+/// A pin door's refusal ([`lacks`]) as `false`; any other error stays one.
+#[cfg(feature = "sync")]
+fn granted(check: Result<()>) -> Result<bool> {
+    match check {
+        Ok(()) => Ok(true),
+        Err(Error::Claim(ClaimError::ActorLacksClaimAuthority { .. })) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 impl Memory<'_> {
     /// An agent bound to a room turn changes only that room's pins.
     fn require_pin_room(&self, room: EntityId) -> MemoryResult<()> {

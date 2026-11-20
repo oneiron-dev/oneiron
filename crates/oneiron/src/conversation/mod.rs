@@ -53,6 +53,8 @@ pub(crate) use pins::{PIN_UPDATES, body_without_room_pins, served_room_body};
 pub(crate) use preview::{LatestMessage, PreviewCandidates, snippet, turn_text};
 pub use privacy_erase::RoomPersonEraseOutcome;
 pub(crate) use roles::{RoomHost, room_host_in_txn};
+#[cfg(feature = "sync")]
+pub(crate) use roles::{person_delegates_roles_in, person_room_host_in_txn};
 pub(crate) use roles::{person_role_in, room_owners_in};
 pub use session::{SessionMode, SessionPresence};
 pub use speaker_handoff::{SpeakerHandoff, SpeakerHandoffBoundary, SpeakerHandoffReceipt};

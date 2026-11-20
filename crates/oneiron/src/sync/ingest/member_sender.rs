@@ -1,0 +1,60 @@
+//! The member peer whose first-party update an import lands
+//! (ROOM-BODY-REPLICA-SETTINGS). Window admission judged each room body the
+//! update brings against the row this vault held then; the entity door
+//! judges it again in its writer transaction, against the row the put
+//! replaces, as this span's sender. Only a federation import of a member's
+//! update opens one: own-device replay names no sender and stays trust-blind
+//! (ARCH-0040:261).
+
+use std::cell::RefCell;
+use std::path::PathBuf;
+
+use crate::{EntityId, Vault};
+
+thread_local! {
+    static MEMBER_SENDER: RefCell<Option<MemberSender>> = const { RefCell::new(None) };
+}
+
+/// One import's member sender, and the vault the import lands in.
+struct MemberSender {
+    vault: PathBuf,
+    sender: EntityId,
+}
+
+/// Puts back the span an outer import installed, on every exit.
+struct Restore(Option<MemberSender>);
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        let outer = self.0.take();
+        MEMBER_SENDER.with(|slot| *slot.borrow_mut() = outer);
+    }
+}
+
+/// Runs `import`, which lands a member peer's update in `vault`, while the
+/// entity doors on this thread judge each room body it brings as
+/// `sender`'s. With no sender, no door `import` runs names one, whatever
+/// import encloses it.
+pub(in crate::sync) fn with_member_sender<T>(
+    vault: &Vault,
+    sender: Option<EntityId>,
+    import: impl FnOnce() -> T,
+) -> T {
+    let span = sender.map(|sender| MemberSender {
+        vault: vault.store.env.path().to_path_buf(),
+        sender,
+    });
+    let _restore =
+        Restore(MEMBER_SENDER.with(|slot| std::mem::replace(&mut *slot.borrow_mut(), span)));
+    import()
+}
+
+/// The member sender of the import landing in `vault` on this thread, if one.
+pub(super) fn member_sender(vault: &Vault) -> Option<EntityId> {
+    MEMBER_SENDER.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .filter(|span| span.vault.as_path() == vault.store.env.path())
+            .map(|span| span.sender)
+    })
+}

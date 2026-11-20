@@ -272,6 +272,8 @@ pub(crate) use rooms::{
 
 pub use rooms::RoomClosedSet;
 pub(crate) use rooms::RoomThreadTask;
+#[cfg(feature = "sync")]
+pub(crate) use rooms::peer_room_settings_refusal_in_txn;
 pub(crate) use rooms::room_is_closed_in;
 pub(crate) use rooms::stored_room_pins_in;
 pub use rooms::{

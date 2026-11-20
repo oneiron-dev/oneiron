@@ -53,8 +53,9 @@ enum ImportGrading {
     Imported { scale: f32 },
     /// A verified member's write in this shared vault, first-party to it
     /// (ARCH-0043): a claim keeps its source and confidence, and a transcript
-    /// takes no import stamp.
-    FirstParty,
+    /// takes no import stamp. A room body is judged as `sender`'s
+    /// (ROOM-BODY-REPLICA-SETTINGS).
+    FirstParty { sender: EntityId },
 }
 
 /// Produces locally admitted window update bytes for a member/guest federation
@@ -185,7 +186,7 @@ pub(in crate::sync) fn admit_peer_window_update_as(
         update,
         role,
         Some(lane),
-        ImportGrading::FirstParty,
+        ImportGrading::FirstParty { sender: peer },
         None,
     )
 }
@@ -370,6 +371,10 @@ fn admit_window_update(
             born_with,
             placements,
             lane: lane.clone(),
+            first_party_sender: match grading {
+                ImportGrading::FirstParty { sender } => Some(sender),
+                ImportGrading::Imported { .. } => None,
+            },
             routed: Vec::new(),
         });
     }

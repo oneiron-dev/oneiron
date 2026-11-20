@@ -605,6 +605,18 @@ fn admit(
             )),
         ));
     }
+    // ROOM-BODY-REPLICA-SETTINGS: a member peer's room body changes a room setting only with
+    // the power its door asks of the sender. Admission judged it in a read txn; the writer txn
+    // judges it again against the row the put replaces.
+    if header.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION
+        && let Some(sender) = super::member_sender::member_sender(vault)
+        && crate::sync::ingest::peer_row_in_txn(vault, wtxn, ctx.window_key, &id, blob)?
+        && let Some(refusal) = crate::workspace_roster::peer_room_settings_refusal_in_txn(
+            vault, wtxn, id, sender, data,
+        )?
+    {
+        return Ok(refuse(Some(id), refusal));
+    }
     // Pack remote preflight: a malformed REMOTE envelope is refused here, before the name-based
     // remap reads the local map. `InvalidPackByteMap` stays unclassified, so a later one from
     // the remap is LOCAL corruption and fails closed.

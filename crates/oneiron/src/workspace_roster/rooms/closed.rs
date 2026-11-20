@@ -59,11 +59,42 @@ fn closed_setter_in(
         return Err(MemoryError::bad_request_with(HOME_ROOM, &[HOME_ROOM_HINT]));
     }
     let body = crate::conversation::body_in(vault, txn, room)?;
-    match crate::conversation::person_role_in(vault, txn, room, caller.entity_ref(), true) {
-        Ok(RoomRole::Owner) => Ok(body),
-        Ok(_) | Err(Error::Record(RecordError::ConversationDenied)) => Err(lacks(NOT_ROOM_OWNER)),
-        Err(error) => Err(error.into()),
+    if !owns_room_in(vault, txn, room, caller.entity_ref())? {
+        return Err(lacks(NOT_ROOM_OWNER));
     }
+    Ok(body)
+}
+
+/// Whether PERSON `person`, acting as a human, is an owner of `room`
+/// ([`crate::conversation::person_role_in`]), read in `txn`.
+fn owns_room_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    person: EntityId,
+) -> Result<bool> {
+    match crate::conversation::person_role_in(vault, txn, room, person, true) {
+        Ok(role) => Ok(role == RoomRole::Owner),
+        Err(Error::Record(RecordError::ConversationDenied)) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether `caller` may close or open `room`, read in `txn` as this door
+/// reads it ([`require_person`], [`closed_setter_in`]): a person who owns an
+/// ordinary room. A federation peer's room body is judged by it, without the
+/// door's write-actor check: the peer's grant authenticated its sender
+/// (ROOM-BODY-REPLICA-SETTINGS).
+#[cfg(feature = "sync")]
+pub(super) fn closes_room_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    caller: WriteActor,
+) -> Result<bool> {
+    Ok(caller.actor_class() == EdgeActorClass::Human
+        && project_room_of(vault, txn, room)?.is_none()
+        && owns_room_in(vault, txn, room, caller.entity_ref())?)
 }
 
 fn lacks(reason: &'static str) -> MemoryError {

@@ -58,7 +58,11 @@ impl Memory<'_> {
 
 /// Whether `caller` is the vault's owner: a Human actor the authority log
 /// binds as owner, who removes anyone from a room.
-fn owner_removes_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, caller: WriteActor) -> bool {
+pub(in crate::workspace_roster) fn owner_removes_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    caller: WriteActor,
+) -> bool {
     caller.actor_class() == EdgeActorClass::Human
         && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, caller.entity_ref()).is_ok()
 }
