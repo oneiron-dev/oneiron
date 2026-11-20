@@ -331,7 +331,9 @@ fn reverse_rematerialize_mirrors_lmdb_entities_edges_and_skips_tombstones() {
     window.doc.commit();
     assert!(vault.get(&tombstoned).unwrap().is_none());
 
-    vault
+    // The window's tombstone wrote the hard-delete marker, so no put brings a
+    // row back at that id (BATCH-PUT-OVER-HARD-DELETE-MARKER).
+    let refusal = vault
         .put_entity(
             &tombstoned,
             1,
@@ -342,13 +344,43 @@ fn reverse_rematerialize_mirrors_lmdb_entities_edges_and_skips_tombstones() {
             learned_at,
             b"stale-tombstoned",
         )
+        .expect_err("a put at a hard-deleted id is refused");
+    let names_the_hard_delete = matches!(
+        &refusal,
+        oneiron::Error::Refused(message) if message.contains("was hard-deleted")
+    );
+    assert!(
+        names_the_hard_delete,
+        "the put names the hard delete: {refusal:?}"
+    );
+
+    // A stale LMDB row: the vault still holds it live, and only the document
+    // being rebuilt carries its tombstone (a delete this vault has not applied).
+    let stale = EntityId::now();
+    vault
+        .put_entity(
+            &stale,
+            1,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            b"stale-tombstoned",
+        )
         .unwrap();
+    assert!(
+        vault.get_raw(&stale).unwrap().is_some(),
+        "FIXTURE: the vault holds the stale row live"
+    );
 
     let reverse_doc = create_window_doc(TEST_USER, &key);
     let reverse_tombstones = reverse_doc.get_map("tombstones");
-    reverse_tombstones
-        .insert(tombstoned.to_hex().as_str(), &learned_at.to_le_bytes())
-        .unwrap();
+    for id in [&tombstoned, &stale] {
+        reverse_tombstones
+            .insert(id.to_hex().as_str(), &learned_at.to_le_bytes())
+            .unwrap();
+    }
     reverse_doc.commit();
 
     let mirrored = window::reverse_rematerialize(&vault, &reverse_doc, &key).unwrap();
@@ -369,6 +401,10 @@ fn reverse_rematerialize_mirrors_lmdb_entities_edges_and_skips_tombstones() {
     );
     assert!(
         entities.get(tombstoned.to_hex().as_str()).is_none(),
+        "a hard-deleted row stays out of the rebuilt document"
+    );
+    assert!(
+        entities.get(stale.to_hex().as_str()).is_none(),
         "tombstone should suppress stale LMDB row"
     );
 
