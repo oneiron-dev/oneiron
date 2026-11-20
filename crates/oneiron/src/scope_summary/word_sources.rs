@@ -3,7 +3,7 @@
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::error::{Error, RecordError, Result};
-use crate::ports::{EdgeDirection, EdgeStoreRead};
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 use crate::store::{ManifestDbs, StoreRead};
 use crate::{EntityId, Vault};
@@ -155,6 +155,9 @@ pub(crate) fn word_sources_through_in(
         {
             return Ok(finding_notice_sources(body));
         }
+        crate::registry::ENTITY_TYPE_PSYCH_PROFILE => {
+            return profile_word_sources_through_in(vault, dbs, txn, body);
+        }
         _ => return Ok(WordSources::Own),
     };
     Ok(match sources {
@@ -281,6 +284,71 @@ fn finding_notice_sources(body: &[u8]) -> WordSources {
         }
         _ => WordSources::Unresolved,
     }
+}
+
+/// The word sources of a PSYCH_PROFILE body (FIX
+/// PSYCH-PROFILE-DERIVED-SOURCE-CONJUNCT-MISSES-CITED-CLAIMS): the record each
+/// typed source names, whose words the profile was built from (FIX 11766),
+/// and every record those words came from in turn (review round 1 of #9923):
+/// a cited intent quotes the MESSAGE it cites, so the profile carries that
+/// MESSAGE's words too. Profile landing names its sources in the body and the
+/// dependency index, never as a `DerivedFrom` edge, so a reader reads the
+/// profile only while it reads each one, and a C6 use limit on one withholds
+/// it from the owner too (FIX 1496 S8). A body of an earlier schema, or one
+/// that does not decode, names no source a reader can judge, and neither
+/// does a cited record whose own sources no longer resolve; a profile with no
+/// source is its own. A cited id with no stored row stays named: a reader
+/// refuses it.
+fn profile_word_sources_through_in(
+    vault: &Vault,
+    dbs: &StoreRead<'_>,
+    txn: &RoTxn<'_>,
+    body: &[u8],
+) -> Result<WordSources> {
+    let Some(mut pending) = profile_typed_sources(body) else {
+        return Ok(WordSources::Unresolved);
+    };
+    let mut named = std::collections::BTreeSet::new();
+    while let Some(source) = pending.pop() {
+        if !named.insert(source) {
+            continue;
+        }
+        let Some(raw) = dbs.port_entity_raw_wiped(txn, &source)? else {
+            continue;
+        };
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        // A cited profile adds its typed sources to this one walk, so one
+        // visited set holds however profiles cite each other.
+        let carried = if header.entity_type == crate::registry::ENTITY_TYPE_PSYCH_PROFILE {
+            profile_typed_sources(&raw[ENTITY_METADATA_HEADER_LEN..])
+                .map_or(WordSources::Unresolved, WordSources::From)
+        } else {
+            word_sources_through_in(vault, dbs, txn, &source, &raw)?
+        };
+        match carried {
+            WordSources::Own => {}
+            WordSources::From(sources) => pending.extend(sources),
+            WordSources::Unresolved => return Ok(WordSources::Unresolved),
+        }
+    }
+    if named.is_empty() {
+        return Ok(WordSources::Own);
+    }
+    Ok(WordSources::From(named.into_iter().collect()))
+}
+
+/// The record each typed source of the PSYCH_PROFILE body `body` names;
+/// `None` for a body that does not decode as the current schema.
+fn profile_typed_sources(body: &[u8]) -> Option<Vec<EntityId>> {
+    let profile = crate::psych_profile::decode_psych_profile_body(body).ok()?;
+    Some(
+        profile
+            .sources
+            .iter()
+            .map(|source| source.document_ref)
+            .collect(),
+    )
 }
 
 /// The predicate an owner's stated intent is kept under
