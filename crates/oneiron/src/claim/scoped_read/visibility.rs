@@ -123,7 +123,7 @@ impl<'v> ScopedRead<'v> {
     ) -> Result<bool> {
         // A read by id matches no meaning, so it takes the row predicate
         // alone; the doors that find rows take the TURN rule as well
-        // (`is_entity_retrievable_with_policy_in`).
+        // (`is_entity_retrievable_held_in`).
         let filter = self.actor_retrieval_floor(policy)?;
         let authority = HeldAuthority::for_request(None);
         self.is_entity_readable_held_in(rtxn, policy, id, &filter, &authority)
