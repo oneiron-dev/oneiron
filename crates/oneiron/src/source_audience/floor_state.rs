@@ -760,6 +760,20 @@ fn settle_page_in_txn(
     ))
 }
 
+/// Puts `row`, in `txn`, in the state an archive left a waiting row in: its
+/// wait and its marks dropped, as the sweep dropped them (red-proof stub of
+/// #10117 Opus review P1's door: no floor repair here).
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) fn forget_floor_wait_before_repair_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    row: &EntityId,
+) -> Result<()> {
+    PENDING.delete(&vault.store, txn, row)?;
+    take_marks_of_in_txn(&vault.store, txn, row, &BTreeSet::new())?;
+    Ok(())
+}
+
 /// Forgets, in `txn`, every floor's state and the backfill's: the vault
 /// reads as one whose rows were written before floors were.
 #[cfg(any(test, feature = "test-support", oneiron_test_support))]
