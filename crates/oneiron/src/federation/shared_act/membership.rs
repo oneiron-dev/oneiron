@@ -286,6 +286,30 @@ impl Vault {
         effect: &MemberEffect,
         now: u64,
     ) -> Result<DoorCheckIn> {
+        let door_act = self.member_door_act_in_txn(txn, vault_id, actor, effect)?;
+        crate::check_in::person_door_check_in_in_txn(
+            self,
+            txn,
+            &door_act,
+            effect.check_in_ref.as_ref(),
+            now,
+        )
+    }
+    /// The act `effect` is for `actor`, as check-in judges it: the first
+    /// part of [`Self::member_effect_check_in_in_txn`], on a read of the
+    /// store. The removal door also makes it on its read before it asks
+    /// ([`Self::member_removal_importance_in_txn`]).
+    ///
+    /// # Errors
+    /// A change the door could never apply; an `actor` who holds no
+    /// membership Grant on the vault.
+    fn member_door_act_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        actor: EntityId,
+        effect: &MemberEffect,
+    ) -> Result<DoorAct<'static>> {
         let (verb, act, member, from, to) = match effect.change {
             MemberChange::Add { member, role } => {
                 let preset = self
@@ -333,7 +357,7 @@ impl Vault {
         let (grant, role) = self
             .member_grant_in_txn(txn, vault_id, actor)?
             .ok_or_else(invalid)?;
-        let door_act = DoorAct {
+        Ok(DoorAct {
             person: actor,
             role: RolePreset::of_grant_role(role),
             grant,
@@ -341,14 +365,7 @@ impl Vault {
             act,
             scope: CheckInScope::default(),
             effect_digest: member_effect_digest(vault_id, actor, verb, member, from, to),
-        };
-        crate::check_in::person_door_check_in_in_txn(
-            self,
-            txn,
-            &door_act,
-            effect.check_in_ref.as_ref(),
-            now,
-        )
+        })
     }
     /// Every member of shared vault `vault_id` at their role, delegates and
     /// guests aside: the roster a vault shape reads (ARCH-0070).
@@ -1142,7 +1159,7 @@ impl Vault {
     ) -> Result<SharedActExecutionReceipt> {
         let importance = {
             let txn = self.store.env.read_txn()?;
-            self.member_removal_importance_in_txn(&txn, admin, vault_id, member, ask)?
+            self.member_removal_importance_in_txn(&txn, admin, vault_id, member, ask, check_in_ref)?
         };
         let witness =
             self.owner_presence(importance, owner_presence_reasons::REMOVE_SHARED_MEMBER)?;

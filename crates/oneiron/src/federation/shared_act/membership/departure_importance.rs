@@ -18,6 +18,7 @@
 //! nothing in any fold.
 
 use super::super::{check_vault, invalid};
+use super::{MemberChange, MemberEffect};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
@@ -65,10 +66,13 @@ impl Vault {
     /// store, in the order its write makes them, then the importance the door
     /// asks with: the applier's proof, the vault, the remove power, the live
     /// holders (a conflicted root is refused there), a named `ask` (still
-    /// open, its Steward still a live Steward), the member's role. The door
-    /// runs this before it asks, so a refusal raises no prompt; the write
-    /// makes each check again. The check-in judge and the issuer's checks
-    /// stay in the write.
+    /// open, its Steward still a live Steward), then the refusals the
+    /// check-in judge gives before it opens or spends anything: the member's
+    /// role, the applier's own membership Grant, a role the act's power is
+    /// not given to, and a `check_in_ref` named for a removal that goes at
+    /// once (review of #10358). The door runs this before it asks, so a
+    /// refusal raises no prompt; the write makes each check again. Opening
+    /// and spending a check-in, and the issuer's checks, stay in the write.
     pub(super) fn member_removal_importance_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -76,6 +80,7 @@ impl Vault {
         vault_id: u64,
         member: EntityId,
         ask: Option<&str>,
+        check_in_ref: Option<EntityId>,
     ) -> Result<OwnerActImportance> {
         let actor = self.revalidated_actor_in_txn(txn, admin, vault_id)?;
         self.authorize_shared_vault_write_in_txn(
@@ -88,7 +93,12 @@ impl Vault {
         if let Some(ask) = ask {
             self.member_ask_steward_stands_in_txn(txn, ask, vault_id, &holders)?;
         }
-        self.removable_member_role_in_txn(txn, vault_id, member)?;
+        let effect = MemberEffect {
+            change: MemberChange::Remove { member },
+            check_in_ref,
+        };
+        let act = self.member_door_act_in_txn(txn, vault_id, actor, &effect)?;
+        crate::check_in::judge_person_door_act(&act, effect.check_in_ref.as_ref())?;
         self.member_departure_importance_in_txn(txn, member)
     }
 

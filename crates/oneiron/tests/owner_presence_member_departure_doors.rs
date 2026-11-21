@@ -306,6 +306,18 @@ fn a_removal_refused_on_its_read_raises_no_prompt() {
         &vault.remove_shared_member(&dep.member_proof(), SHARED, holding, None),
         "a removal by a Member, who holds no remove power",
     );
+    // An Owner's removal goes at once and spends no check-in, so one that names a check-in
+    // is refused by the check-in judge, whose refusals the read makes too.
+    assert_refused_unasked(
+        &vault.remove_shared_member_with_check_in(
+            &dep.owner_proof(),
+            SHARED,
+            holding,
+            None,
+            Some(EntityId::now()),
+        ),
+        "an Owner's removal that names a check-in",
+    );
     assert_eq!(presence.prompts(), 0, "no refusal showed a prompt");
     assert_eq!(dep.history(), history, "the log holds the entries it held");
     assert_eq!(dep.role_of(holding), Some(Role::Member));
