@@ -23,21 +23,34 @@ use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSource};
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::{EntityId, Vault};
 
-/// The prefix of the provenance ref a seat's own write records
-/// (`outbound::write_source_record_id`).
-pub(super) const WRITE_SOURCE_RECORD_PREFIX: &str = "calendar-connector-write:";
+/// The prefix of the provenance ref a replay proof records
+/// ([`replay_source_record_id`]).
+const REPLAY_SOURCE_RECORD_PREFIX: &str = "calendar-connector-replay:";
+
+/// The provenance ref of the replay proof of the seat write whose outbox row
+/// is `outbox_id`: the row id's hex, a digest that names no seat calendar,
+/// href or UID, since the claim syncs and carries no ICS, href or payment
+/// data (BK-REPLAY-NOTE-DELIVERY = A; review round 1 of #10166). The write's
+/// own passport ref names the seat's calendar ref, which for a CalDAV seat
+/// is its collection href.
+fn replay_source_record_id(outbox_id: &[u8; 32]) -> String {
+    format!(
+        "{REPLAY_SOURCE_RECORD_PREFIX}{}",
+        oneiron_hex::encode(outbox_id)
+    )
+}
 
 /// Records, in the proof writer `txn`, that a seat's replay of the owner's
 /// cancelled write of the EVENT `member` at `sequence` read an unmarked
-/// stored copy as the owner's own, proved at `now` under the write's own
-/// provenance ref `source_record_id`. The first proof is the one the owner's
-/// line dates, so an EVENT that already carries one takes no second; an
-/// EVENT that is gone takes none.
+/// stored copy as the owner's own, proved at `now` for the write whose outbox
+/// row is `outbox_id` ([`replay_source_record_id`]). The first proof is the
+/// one the owner's line dates, so an EVENT that already carries one takes no
+/// second; an EVENT that is gone takes none.
 pub(super) fn record_replay_cancel_evidence_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     member: EntityId,
-    source_record_id: &str,
+    outbox_id: &[u8; 32],
     sequence: u32,
     now: u64,
 ) -> Result<(), CalendarConnectorError> {
@@ -55,7 +68,7 @@ pub(super) fn record_replay_cancel_evidence_in_txn(
         txn,
         member,
         &CalendarInboundBody::default(),
-        source_record_id,
+        &replay_source_record_id(outbox_id),
         PREDICATE_CALENDAR_REPLAY_CANCEL_EVIDENCE,
         encode_replay_cancel_evidence_value(&value),
         now,
@@ -65,9 +78,9 @@ pub(super) fn record_replay_cancel_evidence_in_txn(
 
 /// The first replay proof recorded on the EVENT `event_ref`
 /// ([`record_replay_cancel_evidence_in_txn`]), read in `txn`: of the live
-/// claims a seat's own write recorded, the earliest proved (claim id breaks
-/// a tie); `None` while none was. A claim of the predicate that no seat's
-/// write recorded, or whose value does not decode, proves nothing and is
+/// claims a seat's replay proof recorded, the earliest proved (claim id breaks
+/// a tie); `None` while none was. A claim of the predicate that no replay
+/// proof recorded, or whose value does not decode, proves nothing and is
 /// skipped.
 ///
 /// # Errors
@@ -85,7 +98,7 @@ pub(crate) fn replay_cancel_evidence_in_txn(
         };
         if body.predicate != PREDICATE_CALENDAR_REPLAY_CANCEL_EVIDENCE
             || body.lifecycle != ClaimLifecycleStatus::Active
-            || !recorded_by_seat_write(&body)
+            || !recorded_by_replay_proof(&body)
         {
             continue;
         }
@@ -102,9 +115,9 @@ pub(crate) fn replay_cancel_evidence_in_txn(
     Ok(first.map(|(_, _, value)| value))
 }
 
-/// Whether `body` came through the calendar import door under a seat's own
-/// write ref, as [`record_replay_cancel_evidence_in_txn`] admits it.
-fn recorded_by_seat_write(body: &ClaimBody) -> bool {
+/// Whether `body` came through the calendar import door under a replay
+/// proof's ref, as [`record_replay_cancel_evidence_in_txn`] admits it.
+fn recorded_by_replay_proof(body: &ClaimBody) -> bool {
     body.source == Some(ClaimSource::Imported)
         && body
             .evidence
@@ -122,7 +135,7 @@ fn recorded_by_seat_write(body: &ClaimBody) -> bool {
                         == Some(crate::ingest::ICS_FEED_SOURCE_ID)
                     && evidence_field(candidate, "source_record_id")
                         .and_then(Value::as_str)
-                        .is_some_and(|source| source.starts_with(WRITE_SOURCE_RECORD_PREFIX))
+                        .is_some_and(|source| source.starts_with(REPLAY_SOURCE_RECORD_PREFIX))
             })
 }
 

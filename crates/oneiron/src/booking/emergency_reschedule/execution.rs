@@ -43,6 +43,14 @@ pub fn execute_emergency_plan(
 ) -> Result<EmergencyExecution, BookingError> {
     let item = deliver_emergency_effects(vault, request, plan, calendars, input, sink)?;
     let repeat_notices = super::uncertain_send::answer_delivered(vault, &item)?;
+    // A picked checkpoint sends nothing of its old revision. Its run still answers a repeat a
+    // run delivered and then stopped before answering, since once the booker picked no other
+    // run would (review round 1 of #10166); with none left it refuses, as before.
+    if item.picked.is_some() && repeat_notices.is_empty() {
+        return Err(refused(
+            "a picked emergency item cannot send its old revision",
+        ));
+    }
     Ok(EmergencyExecution {
         item,
         repeat_notices,
@@ -51,7 +59,8 @@ pub fn execute_emergency_plan(
 
 /// The owner's run up to its answer ([`execute_emergency_plan`]): commits the checkpoint and
 /// delivers each effect it still owes, each delivery committed on the checkpoint before the
-/// next. The checkpoint as it then stands.
+/// next. The checkpoint as it then stands. A picked checkpoint owes neither: the booker's
+/// actions are released only once both deliveries complete.
 pub(crate) fn deliver_emergency_effects(
     vault: &Vault,
     request: &EmergencyRescheduleRequest,
@@ -66,9 +75,7 @@ pub(crate) fn deliver_emergency_effects(
     }
     let mut item = crate::booking::lifecycle::commit_emergency_item(vault, plan, calendars, input)?;
     if item.picked.is_some() {
-        return Err(refused(
-            "a picked emergency item cannot send its old revision",
-        ));
+        return Ok(item);
     }
     if !item.calendar_delivered {
         // Recheck the pinned bytes. The outbound writer admits and publishes

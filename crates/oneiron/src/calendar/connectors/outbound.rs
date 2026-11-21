@@ -22,7 +22,7 @@ use super::remote::{
     CalendarRemoteTransport, RemoteCalendarObject, RemoteWriteReceipt, RemoteWriteRequest,
     ics_content_hash, local_uid, render_owner_vevent, shared_uid,
 };
-use super::replay_evidence::{WRITE_SOURCE_RECORD_PREFIX, record_replay_cancel_evidence_in_txn};
+use super::replay_evidence::record_replay_cancel_evidence_in_txn;
 use super::seat::{CalendarConnectorError, CalendarConnectorSeatState};
 
 use crate::batch::secret_scan::{admitted_from_known, named_tree};
@@ -1053,14 +1053,12 @@ fn write_replay_proof(
             publish_own_stored_copy_in_txn(vault, txn, operation, provider, row, members, now)
                 .map_err(CarrierWriteError::Failed)?;
             if unattributed {
-                let source_record_id =
-                    write_source_record_id(provider, &operation.registration().seat, &row.uid);
                 for &member in &row.cancelled_members {
                     record_replay_cancel_evidence_in_txn(
                         vault,
                         txn,
                         member,
-                        &source_record_id,
+                        &row.outbox_id,
                         row.sequence,
                         now,
                     )
@@ -1954,7 +1952,7 @@ pub fn calendar_remote_uid_for_href(
 /// Provenance ref for a locally originated write's passport head.
 fn write_source_record_id(provider: &str, seat: &CalendarConnectorSeatState, uid: &str) -> String {
     format!(
-        "{WRITE_SOURCE_RECORD_PREFIX}{provider}:{}:{}:{uid}",
+        "calendar-connector-write:{provider}:{}:{}:{uid}",
         seat.config.system, seat.config.calendar_ref
     )
 }
