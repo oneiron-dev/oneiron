@@ -571,3 +571,69 @@ fn a_clamped_expansion_seeds_a_readable_hit_past_hits_with_a_hidden_source() {
          readable hit seeds the expansion and it reaches the claim beside it"
     );
 }
+
+/// The words of the text-only hits the round-2 test's query matches: the
+/// shorter field scores higher.
+const TEXT_ONLY_BEST: &str = "garnet";
+const TEXT_ONLY_WEAKER: &str = "garnet basalt opal slate";
+
+/// A one-row search for [`TEXT_ONLY_BEST`]'s word and for `codes` that blends
+/// no recency.
+fn text_and_phonetic_pack<'v>(fixture: &'v Fixture, codes: &[&str]) -> ContextPackBuilder<'v> {
+    fixture
+        .vault
+        .context_pack()
+        .search_text(TEXT_ONLY_BEST, 10)
+        .search_phonetic(codes)
+        .boost_recency(0.0)
+        .limit(1)
+}
+
+/// The phonetic code list is z-scored as a list of [`FUSION_LIST_LENGTH`]
+/// places, its hits and then non-hits at 0 (REVIEW-10215 round 2). A
+/// readable claim that matches one of the query's two codes, and no word,
+/// outranks a claim that matches the query's word and no code: one code
+/// lifts it far above the list's non-hits. Twelve hits with a hidden source
+/// that match both codes, and no word, must not set that scale, or the
+/// readable hit's lift falls below the text hit's and the clamped pack,
+/// which drops the hidden hits only after the blend, serves the text hit;
+/// the expansion's implicit seeds follow the same order.
+#[test]
+fn a_clamped_blend_scales_exact_hits_without_hits_with_a_hidden_source() {
+    let fixture = fixture();
+    let first = exact_code("Bartholomew");
+    let second = exact_code("Maximilian");
+    assert_ne!(first, second, "FIXTURE: the query asks two codes");
+    let codes = [first.as_str(), second.as_str()];
+    let readable = put_summary_claim(&fixture, READABLE_TEXT, fixture.readable_source, None);
+    post_codes(&fixture, &readable, &[&first]);
+    let text_best = put_summary_claim(&fixture, TEXT_ONLY_BEST, fixture.readable_source, None);
+    let text_weaker = put_summary_claim(&fixture, TEXT_ONLY_WEAKER, fixture.readable_source, None);
+    assert!(
+        [readable, text_best, text_weaker]
+            .iter()
+            .all(|id| admits(&fixture, id)),
+        "FIXTURE: the contact reads the exact hit and both text hits"
+    );
+    assert_eq!(
+        serves(&fixture, text_and_phonetic_pack(&fixture, &codes), true),
+        [readable],
+        "FIXTURE: the clamped pack ranks the one-code hit above the best text hit"
+    );
+    let hidden = put_claims_with_a_hidden_source(&fixture, HIDDEN_SEED_HITS, None);
+    for claim in &hidden {
+        post_codes(&fixture, claim, &codes);
+    }
+    let owner = serves(&fixture, text_and_phonetic_pack(&fixture, &codes), false);
+    assert!(
+        owner.len() == 1 && hidden.contains(&owner[0]),
+        "FIXTURE: a two-code hit with a hidden source ranks first in the owner's pack"
+    );
+    assert_eq!(
+        serves(&fixture, text_and_phonetic_pack(&fixture, &codes), true),
+        [readable],
+        "FAILBEFORE PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT (REVIEW-10215 round 2): \
+         exact hits whose words come from a Tier-A row take no place in the code list the blend \
+         scales, so the readable hit keeps its lift over the text hit"
+    );
+}
