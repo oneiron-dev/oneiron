@@ -26,7 +26,10 @@
 //! such proposal refuses no re-judgment either (FIX
 //! [UNCLEAR-REJUDGE-REFUSED-BY-HELD-LABEL-PROPOSAL]): on main the erase it
 //! asked refused the judge's whole write on every retry, so the outcome's row
-//! could no longer change or go. The held proposal stands as it is.
+//! could no longer change or go. The held proposal stands as it is. So does
+//! one whose signed history a hold keeps: the erase tears the proposal's
+//! history controls with it, and a held control refused it the same way
+//! (round 1 of the review of #10122).
 //!
 //! The discard is reached through a test door that runs its bundle write on a
 //! set of claims, without a world fixture:
@@ -547,5 +550,44 @@ fn a_legal_hold_on_a_label_proposal_refuses_no_rejudgment() {
     assert!(
         claim_kept(&seeded.vault, proposal),
         "the held label proposal stays"
+    );
+}
+
+#[test]
+fn a_legal_hold_on_a_label_proposals_signed_history_refuses_no_rejudgment() {
+    let seeded = seed_restorable();
+    let (_, receipt) = owner_amended_claim(&seeded);
+    judge_unsettled(&seeded, &receipt);
+    let proposal = label_proposal(&seeded, &receipt);
+    let controls = door::machine_history_controls(&seeded.vault, proposal)
+        .expect("FIXTURE: the label proposal's signed history");
+    assert!(
+        !controls.is_empty(),
+        "FIXTURE: the machine birth of the label proposal signed its history"
+    );
+    seeded
+        .vault
+        .place_legal_hold(
+            &owner_proof(&seeded),
+            controls.into_iter().map(LegalHoldTarget::Record).collect(),
+            None,
+        )
+        .expect("FIXTURE: the owner holds the label proposal's signed history, not the proposal");
+
+    let rejudged = judge_settled(&seeded, &receipt);
+
+    assert!(
+        rejudged.is_ok(),
+        "a hold on a label proposal's signed history refuses no re-judgment of the outcome its \
+         note quoted: {:?}",
+        rejudged.err()
+    );
+    assert!(
+        !unclear_kept(&seeded.vault, &receipt),
+        "the re-judgment lands and leaves no unclear row under the receipt"
+    );
+    assert!(
+        claim_kept(&seeded.vault, proposal),
+        "the label proposal whose signed history is held stays"
     );
 }
