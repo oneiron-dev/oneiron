@@ -497,16 +497,28 @@ fn a_human_review_campaign_holds_its_send_for_the_owner() {
     );
 }
 
-/// A campaign with no voice guide and no human pin is not governed: its send
-/// holds only for what held it before copy review existed.
+/// Copy review governs every campaign (lead ruling
+/// COPY-REVIEW-JUDGE-BY-DEFAULT = B): a campaign that names no voice guide is
+/// checked against the vault's house voice guide. This unseeded vault has
+/// none, so no review can cover the copy and the send holds for copy review.
+/// On the base such a campaign is not governed, and its send holds only for
+/// external-effect authority.
 #[test]
-fn a_campaign_without_a_voice_guide_is_not_held_for_copy_review() {
+fn a_campaign_without_a_voice_guide_is_held_for_copy_review() {
     let leg = leg(|_, _| json!({}));
     drive_held(&leg.vault, &leg.attempt);
     let state = held_ask_state(&leg.vault);
     assert!(
-        !strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
-        "an ungoverned campaign is not held for copy review: {state}"
+        strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
+        "an unguided campaign is held for copy review: {state}"
+    );
+    assert!(
+        strings(&state, "gate_receipt_reasons").contains(&COPY_REVIEW_MISSING.to_owned()),
+        "no review covers its copy: {state}"
+    );
+    assert_eq!(
+        state["copy_review"]["mode"], "judge",
+        "the owner ask names the judge's review: {state}"
     );
 }
 
@@ -759,10 +771,19 @@ mod judged {
     /// The copy review's decision path with `judge` as its only model rung.
     /// The default bands are unlearned, so the first rung's answer stands.
     fn decisions(judge: &dyn DecisionProvider) -> CampaignCopyReviewDecisions<'_> {
+        decisions_with(Some(judge))
+    }
+
+    /// A host with no judge seat: no model rung at all.
+    fn unstaffed_decisions() -> CampaignCopyReviewDecisions<'static> {
+        decisions_with(None)
+    }
+
+    fn decisions_with(local: Option<&dyn DecisionProvider>) -> CampaignCopyReviewDecisions<'_> {
         CampaignCopyReviewDecisions {
             ladder: DecisionLadder {
                 rule: None,
-                local: Some(judge),
+                local,
                 system_one: None,
                 precision: None,
                 escalation: None,
@@ -791,6 +812,72 @@ mod judged {
 
     fn voice_guided_leg() -> Leg {
         leg(|vault, owner| json!({ "voice_guide_ref": voice_guide(vault, owner).to_hex() }))
+    }
+
+    /// A campaign that names no voice guide is judged against the vault's
+    /// house voice guide: the verdict names that guide, and a passing one
+    /// lets the send through copy review.
+    #[test]
+    fn a_campaign_without_a_voice_guide_is_judged_against_the_house_guide() {
+        let leg = leg(|_, _| json!({}));
+        let house = leg
+            .vault
+            .ensure_house_voice_guide()
+            .unwrap()
+            .expect("the house voice guide");
+        let judge = CopyJudge {
+            follows: true,
+            reason: "on_voice",
+        };
+        let outcome = leg
+            .vault
+            .review_enrollment_copy(&leg.attempt, &decisions(&judge))
+            .unwrap();
+        let CopyReviewOutcome::Reviewed(verdict) = outcome else {
+            panic!("the judge reviews the unguided campaign's body: {outcome:?}");
+        };
+        assert!(verdict.passed, "the judge passed the copy: {verdict:?}");
+        assert_eq!(
+            verdict.voice_guide_ref, house,
+            "the body was checked against the house voice guide"
+        );
+        drive_held(&leg.vault, &leg.attempt);
+        let state = held_ask_state(&leg.vault);
+        assert!(
+            !strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
+            "a passing review against the house guide clears copy review: {state}"
+        );
+    }
+
+    /// On a host with no judge seat the judge abstains: nothing is stored,
+    /// and the unguided campaign's send holds for the owner's press, with the
+    /// copy-review hold and owner ask a human-review campaign gets.
+    #[test]
+    fn a_host_with_no_judge_holds_an_unguided_send_for_the_owner() {
+        let leg = leg(|_, _| json!({}));
+        leg.vault
+            .ensure_house_voice_guide()
+            .unwrap()
+            .expect("the house voice guide");
+        let outcome = leg
+            .vault
+            .review_enrollment_copy(&leg.attempt, &unstaffed_decisions())
+            .unwrap();
+        assert_eq!(
+            outcome,
+            CopyReviewOutcome::Abstained,
+            "no judge answers on this host"
+        );
+        drive_held(&leg.vault, &leg.attempt);
+        let state = held_ask_state(&leg.vault);
+        assert!(
+            strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
+            "the send holds for the owner's press: {state}"
+        );
+        assert!(
+            strings(&state, "gate_receipt_reasons").contains(&COPY_REVIEW_MISSING.to_owned()),
+            "no review covers its copy: {state}"
+        );
     }
 
     /// The census case: an off-voice draft is held, with its reason, and
