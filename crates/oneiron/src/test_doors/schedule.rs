@@ -557,21 +557,21 @@ pub fn defer_pollable_remote_task(
         RemoteTaskCredential, RemoteTaskHandle, RemoteTaskPoll, defer_record, force_sync,
         insert_pending_in_txn,
     };
-    let now_ms = vault.now_recorded_at().saturating_mul(1_000);
+    let now = vault.now_recorded_at();
     let request = OutboundCallRequest::new(
         crate::attempt_queue::AttemptId::from_bytes(&[attempt; 16]).expect("attempt id"),
         1,
         "email",
         "send",
         vec![attempt; 8],
-        now_ms,
+        now,
     );
     let marker = BudgetChargeMarker {
         key_ref: None,
         budget_class: BudgetClass::Operation,
         matched_rows: Vec::new(),
         sends_debit: 0,
-        accounted_at_ms: now_ms,
+        accounted_at_ms: now,
     };
     let record = IntentLedgerRecord::pending(request, false, marker).expect("pending row");
     let mut wtxn = vault.store.env.write_txn().expect("write transaction");
@@ -588,7 +588,7 @@ pub fn defer_pollable_remote_task(
             form_elicitation: false,
         }),
     };
-    defer_record(vault, record.id, handle, now_ms).expect("defer the row");
+    defer_record(vault, record.id, handle, now).expect("defer the row");
     record.id
 }
 
