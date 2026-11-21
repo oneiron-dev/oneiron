@@ -25,7 +25,7 @@
 //! - a refusal of the value that differing heads keep names the act that value came from;
 //! - the installed CalDAV seat's setup set again is a no-op of its hook;
 //! - a seat refused here offers no tap that leaves the seat with no value, which the machine that
-//!   holds it in service refuses;
+//!   holds it in service refuses (PR 4: no tap that clears it alone);
 //! - another machine's copy of the same notice, which holds no marks, keeps the owner's
 //!   acknowledgement here.
 //!
@@ -53,6 +53,22 @@
 //! - two machines' acts on the pair read in one pass land both, and the notice names the pair the
 //!   pass leaves.
 //!
+//! PR 4 of the row, the calendar pair (SETTING-PROJECTED-CALENDAR-SYSTEM-CLAIM = A: the refusing
+//! machine quarantines the act, reads the strictest value and stops retrying; both machines show
+//! "Your 'work' calendar has two complete sources (...). Pick one"; the pick is one owner act that
+//! settles it on every machine):
+//! - a seat refused here is quarantined, and no later pass reads it again; the notice leads with
+//!   the owner's words of the choice;
+//! - a feed refused here is quarantined the same way, and its notice words the same choice, with
+//!   a tap for each source;
+//! - the owner's pick of the feed settles it where the seat ran: the seat leaves service and its
+//!   system goes to the feed;
+//! - the owner's pick of the seat settles it where the feed ran;
+//! - a quarantined seat is read again once the feed it met is cleared;
+//! - a clear of a seat in service signed elsewhere takes it out of service here (REVIEW-10294
+//!   round 2 P1-4), and its system stays its own;
+//! - a seat refused here offers no tap that clears it alone.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_refusal_notice`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -63,7 +79,8 @@ use oneiron::authority::{HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::Memory;
 use oneiron::setting::{
-    SetSetting, SetSettingOutcome, SettingCaller, SettingChange, SettingMode, SettingScope,
+    ChangeStanding, SetSetting, SetSettingOutcome, SettingCaller, SettingChange, SettingMode,
+    SettingScope,
 };
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
@@ -798,7 +815,7 @@ fn the_installed_seats_setup_set_again_is_a_no_op_of_its_hook() {
 }
 
 #[test]
-fn a_seat_refused_here_offers_no_tap_that_leaves_it_with_no_value() {
+fn a_seat_refused_here_offers_no_tap_that_clears_it_alone() {
     let fx = Fixture::rooted();
     fx.vault
         .set_setting(
@@ -808,32 +825,30 @@ fn a_seat_refused_here_offers_no_tap_that_leaves_it_with_no_value() {
         .expect("the owner installs the seat");
 
     // This install as another machine: it holds the log, no seat row, and an ICS feed on the
-    // seat's system. Its hook refuses the seat, and the machine that installed it holds it in
-    // service, so a change of the seat to no value would be refused there.
+    // seat's system. Its hook refuses the seat, and the notice offers the pick of the two
+    // sources: a tap that clears the seat keeps the feed in the same act, which is what the
+    // machine that holds the seat in service takes it out of service for.
     forget_projected_setting_rows(&fx.vault).expect("the rows forgotten");
     set_setting_as_engine(
         &fx.vault,
         None,
-        item_row(
-            FEED,
-            "work-cal",
-            json!({
-                "secret_ref": "ics-feed:work-cal",
-                "system": "work-cal",
-                "cadence_min_seconds": 600,
-                "cadence_max_seconds": 1200,
-            }),
-        ),
+        item_row(FEED, "work-cal", feed_config("work-cal")),
     )
     .expect("the feed on the seat's system");
     fx.vault.project_settings().expect("the pass");
 
     let notice = fx.the_notice();
-    assert_eq!(
-        notice["actions"],
-        Value::Null,
-        "no tap leaves the seat with no value: {notice:#?}"
-    );
+    let taps = taps_of(&notice);
+    assert_eq!(taps.len(), 2, "a tap for each source: {notice:#?}");
+    for tap in &taps {
+        let rows = rows_of(tap);
+        if rows.get(SEAT).is_some_and(Value::is_null) {
+            assert!(
+                rows.get(FEED).is_some_and(|feed| !feed.is_null()),
+                "a tap that clears the seat keeps the feed: {tap:#?}"
+            );
+        }
+    }
 }
 
 #[cfg(feature = "sync")]
@@ -1412,5 +1427,273 @@ fn two_machines_acts_on_the_booking_pair_read_in_one_pass_name_the_pair_it_leave
             (json!(MIN_PROPOSALS), json!(4)),
         ],
         "one tap over both values the pass left here: {notice:#?}"
+    );
+}
+
+/// The taps `notice` offers: each one's `vault.settings.set` input.
+fn taps_of(notice: &Value) -> Vec<Value> {
+    notice["actions"]
+        .as_array()
+        .map(|actions| {
+            actions
+                .iter()
+                .map(|action| {
+                    assert_eq!(action["verb"], "vault.settings.set", "{action:#?}");
+                    action["args"].clone()
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Each row `tap` changes, by its key, to the value it sets (`null` clears).
+fn rows_of(tap: &Value) -> std::collections::BTreeMap<String, Value> {
+    let further = tap["further"].as_array().cloned().unwrap_or_default();
+    std::iter::once(tap.clone())
+        .chain(further)
+        .map(|row| {
+            let key = row["key"].as_str().expect("a key").to_owned();
+            (key, row["value"].clone())
+        })
+        .collect()
+}
+
+/// The tap of `notice` that keeps the row of `key` and clears every other row it names.
+fn tap_keeping(notice: &Value, key: &str) -> Value {
+    taps_of(notice)
+        .into_iter()
+        .find(|tap| {
+            rows_of(tap)
+                .iter()
+                .all(|(row, value)| (row == key) != value.is_null())
+        })
+        .unwrap_or_else(|| panic!("a tap keeps `{key}` and clears the rest: {notice:#?}"))
+}
+
+impl Fixture {
+    /// The owner's read of the row of `key` for the item `item`.
+    fn reads_item(&self, key: &str, item: &str) -> Value {
+        invoke(
+            &self.as_owner(),
+            "vault.settings.get",
+            json!({ "key": key, "item": item }),
+        )
+        .expect("the owner reads the row")["value"]
+            .clone()
+    }
+
+    /// The owner's change on this install of the row of `key` for the item `item`.
+    fn owner_sets_item(&self, key: &str, item: &str, value: Value) {
+        self.vault
+            .set_setting(
+                SettingCaller::Owner(&self.owner_proof),
+                item_row(key, item, value),
+            )
+            .expect("the owner's change");
+    }
+
+    /// The other machine's act on the row of `key` for the item `item` to `value` (`None`
+    /// clears), signed on `frontier`, landed here as a peer's entry lands: its commit runs the
+    /// pass.
+    fn desktop_sets_item(
+        &self,
+        frontier: &SettingFrontier,
+        (key, item): (&str, &str),
+        value: Option<Value>,
+    ) {
+        land_setting_act_from(
+            &self.vault,
+            &self.desktop,
+            self.owner,
+            frontier,
+            item_slot(key, item),
+            value,
+            T0,
+        )
+        .expect("the act lands");
+    }
+}
+
+/// The calendar pair set on two machines at once (SETTING-PROJECTED-CALENDAR-SYSTEM-CLAIM = A):
+/// the owner installs the ICS feed `work-cal` on this install, and the other machine, before
+/// that act reaches it, installs a CalDAV seat on the feed's system. This install's hook refuses
+/// the seat.
+fn seat_set_elsewhere_on_the_feeds_system(fx: &Fixture) {
+    let frontier = setting_frontier_of(&fx.vault, &[item_slot(SEAT, "work")]).expect("frontier");
+    fx.owner_sets_item(FEED, "work-cal", feed_config("work-cal"));
+    fx.desktop_sets_item(
+        &frontier,
+        (SEAT, "work"),
+        Some(seat_setup("work", "work-cal")),
+    );
+}
+
+/// The other side of the pair: the owner installs the CalDAV seat `work` on the system
+/// `work-cal` on this install, and the other machine installs an ICS feed on it before the seat
+/// reaches it. This install's hook refuses the feed.
+fn feed_set_elsewhere_on_the_seats_system(fx: &Fixture) {
+    let frontier =
+        setting_frontier_of(&fx.vault, &[item_slot(FEED, "work-cal")]).expect("frontier");
+    fx.owner_sets_item(SEAT, "work", seat_setup("work", "work-cal"));
+    fx.desktop_sets_item(&frontier, (FEED, "work-cal"), Some(feed_config("work-cal")));
+}
+
+#[test]
+fn a_seat_refused_here_is_quarantined_and_no_later_pass_reads_it_again() {
+    let fx = Fixture::rooted();
+    seat_set_elsewhere_on_the_feeds_system(&fx);
+
+    assert_eq!(
+        fx.reads_item(SEAT, "work"),
+        Value::Null,
+        "the seat reads the key's strictest value here"
+    );
+    assert_eq!(
+        fx.last_change(SEAT).standing,
+        Some(ChangeStanding::Quarantined),
+        "the seat's act is quarantined here"
+    );
+    assert!(
+        !fx.reads_item(FEED, "work-cal").is_null(),
+        "the feed runs on"
+    );
+    let again = fx.vault.project_settings().expect("a later pass");
+    assert_eq!(
+        again.moved, 0,
+        "no later pass reads the quarantined seat again"
+    );
+    let words = words_of(&fx.the_notice());
+    assert!(
+        words.starts_with(
+            "Your 'work-cal' calendar has two complete sources (an ICS feed set on Laptop, a \
+             CalDAV seat set on Desktop). Pick one."
+        ),
+        "{words:?}"
+    );
+}
+
+#[test]
+fn a_feed_refused_here_is_quarantined_and_its_notice_words_the_same_choice() {
+    let fx = Fixture::rooted();
+    feed_set_elsewhere_on_the_seats_system(&fx);
+
+    assert_eq!(fx.reads_item(FEED, "work-cal"), Value::Null);
+    assert_eq!(
+        fx.last_change(FEED).standing,
+        Some(ChangeStanding::Quarantined),
+        "the feed's act is quarantined here"
+    );
+    assert!(!fx.reads_item(SEAT, "work").is_null(), "the seat runs on");
+    let notice = fx.the_notice();
+    let words = words_of(&notice);
+    assert!(
+        words.starts_with(
+            "Your 'work-cal' calendar has two complete sources (an ICS feed set on Desktop, a \
+             CalDAV seat set on Laptop). Pick one."
+        ),
+        "{words:?}"
+    );
+    assert_eq!(
+        taps_of(&notice).len(),
+        2,
+        "a tap for each source: {notice:#?}"
+    );
+}
+
+#[test]
+fn the_owners_pick_of_the_feed_settles_it_where_the_seat_ran() {
+    let fx = Fixture::rooted();
+    feed_set_elsewhere_on_the_seats_system(&fx);
+
+    // The seat's system goes to the feed the owner keeps: the seat leaves service, and the feed
+    // installs here in the same act.
+    let tap = tap_keeping(&fx.the_notice(), FEED);
+    invoke(&fx.as_owner(), "vault.settings.set", tap).expect("the owner's pick");
+    fx.vault.project_settings().expect("the pass");
+
+    assert!(
+        !fx.reads_item(FEED, "work-cal").is_null(),
+        "the feed is installed here"
+    );
+    assert_eq!(fx.reads_item(SEAT, "work"), Value::Null, "the seat is out");
+    assert_eq!(
+        fx.the_notice()["actions"],
+        Value::Null,
+        "no refusal stands here any more"
+    );
+}
+
+#[test]
+fn the_owners_pick_of_the_seat_settles_it_where_the_feed_ran() {
+    let fx = Fixture::rooted();
+    seat_set_elsewhere_on_the_feeds_system(&fx);
+
+    let tap = tap_keeping(&fx.the_notice(), SEAT);
+    invoke(&fx.as_owner(), "vault.settings.set", tap).expect("the owner's pick");
+    fx.vault.project_settings().expect("the pass");
+
+    assert!(
+        !fx.reads_item(SEAT, "work").is_null(),
+        "the seat is installed here"
+    );
+    assert_eq!(
+        fx.reads_item(FEED, "work-cal"),
+        Value::Null,
+        "the feed is uninstalled"
+    );
+    assert_eq!(
+        fx.the_notice()["actions"],
+        Value::Null,
+        "no refusal stands here any more"
+    );
+}
+
+/// Green on the base too, whose pass reads a refused row again at every pass: it holds the
+/// quarantine's own re-read of a row once a row its hook met it with moves.
+#[test]
+fn a_quarantined_seat_is_read_again_once_the_feed_it_met_is_cleared() {
+    let fx = Fixture::rooted();
+    seat_set_elsewhere_on_the_feeds_system(&fx);
+    assert_eq!(fx.reads_item(SEAT, "work"), Value::Null);
+
+    fx.owner_sets_item(FEED, "work-cal", Value::Null);
+    fx.vault.project_settings().expect("the pass");
+
+    assert!(
+        !fx.reads_item(SEAT, "work").is_null(),
+        "the seat installs here once the feed it met is gone"
+    );
+}
+
+#[test]
+fn a_clear_of_a_seat_in_service_signed_elsewhere_takes_it_out_of_service_here() {
+    let fx = Fixture::rooted();
+    fx.owner_sets_item(SEAT, "work", seat_setup("work", "work-cal"));
+    let frontier = setting_frontier_of(&fx.vault, &[item_slot(SEAT, "work")]).expect("frontier");
+
+    // The other machine clears the seat. This install's hook refuses a change of the seat in
+    // service; the quarantine takes it out of service, as the act asks, so no notice is raised.
+    fx.desktop_sets_item(&frontier, (SEAT, "work"), None);
+
+    assert_eq!(fx.reads_item(SEAT, "work"), Value::Null, "the seat is out");
+    assert_eq!(
+        fx.last_change(SEAT).standing,
+        Some(ChangeStanding::Quarantined)
+    );
+    assert!(
+        fx.refusal_notices().is_empty(),
+        "the row reads as the act asks"
+    );
+    // A seat out of service keeps its system: a plain feed there is refused as before.
+    let refused = fx
+        .vault
+        .set_setting(
+            SettingCaller::Owner(&fx.owner_proof),
+            item_row(FEED, "work-cal", feed_config("work-cal")),
+        )
+        .expect_err("the seat's system stays its own");
+    assert!(
+        refused.to_string().contains("imports under this system"),
+        "{refused}"
     );
 }
