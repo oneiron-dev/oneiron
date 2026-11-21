@@ -278,4 +278,16 @@ impl ImageHolder {
     pub(crate) fn name(&self, copy: &[u8; 32]) -> Result<()> {
         replace_file(&self.dir, &self.name, &encode(copy, &self.instances))
     }
+
+    /// Removes this record, the directory synced after, when the copy it
+    /// was registered for was never made: what only it kept may then retire
+    /// by retention.
+    ///
+    /// # Errors
+    ///
+    /// Custody faults.
+    pub(crate) fn release(self) -> Result<()> {
+        std::fs::remove_file(self.dir.join(&self.name))?;
+        platform::sync_dir(&self.dir)
+    }
 }

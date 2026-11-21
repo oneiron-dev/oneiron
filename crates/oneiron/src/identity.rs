@@ -153,7 +153,8 @@ pub(crate) fn is_residence_choice_row(key: &[u8]) -> bool {
 /// machine holding the choices as they stood when it was made, and the vault it replaces drops
 /// its own when the owner activates it ([`drop_machine_identity_in_txn`]), so a choice made in
 /// between would be in neither (row SETTING-ACTIVATE-ARCHIVED-INSTALL-ROWS). Read in `txn`,
-/// under `store`'s writer, before the swap.
+/// under `store`'s writer, before the swap; the replacement is sealed from before this read until
+/// the swap is over, so the choices read here are the ones the exchange publishes.
 ///
 /// # Errors
 ///

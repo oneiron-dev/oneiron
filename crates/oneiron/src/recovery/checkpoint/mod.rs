@@ -630,7 +630,10 @@ impl Vault {
     /// than this vault now does (H215), and one whose `sync: install` setting
     /// or residence choice moved since: the replacement is this machine from
     /// then on, and this vault drops those choices when it is activated (row
-    /// SETTING-ACTIVATE-ARCHIVED-INSTALL-ROWS). Under the same writer, before the
+    /// SETTING-ACTIVATE-ARCHIVED-INSTALL-ROWS). The replacement takes no write
+    /// from before those reads of it until the swap is over. A swap refused
+    /// before its exchange began releases the hold it registered on this
+    /// vault's bodies for the archive. Under the same writer, before the
     /// exchange, the replacement carries this vault's authorization time:
     /// its committed floor and lease, its journaled bound, the times this
     /// handle judged and its clock now, journaled in the replacement's own
@@ -684,11 +687,12 @@ impl Vault {
         // name, until its custodian releases it (FIX 6022). Its census and
         // registration hold the custody read guard like a snapshot's, so
         // no finisher write guard lands between them (FIX 9067).
-        {
+        let parked_hold = {
             let _custody = self.store.gate_custody_read_guard()?;
-            self.store.hold_parked_archive_bodies()?;
-        }
-        self.store.swap_out(
+            self.store.hold_parked_archive_bodies()?
+        };
+        let exchange_began = std::cell::Cell::new(false);
+        let swapped = self.store.swap_out(
             &replacement.store,
             |txn| {
                 crate::authority::refuse_moved_proof_freshness(self, txn, replacement)?;
@@ -710,8 +714,27 @@ impl Vault {
                     .store
                     .carry_authorization_high(self.store.authorization_high_in_txn(txn)?)
             },
-            swap,
-        )
+            |live, staged| {
+                exchange_began.set(true);
+                swap(live, staged)
+            },
+        );
+        // A swap refused before its exchange began parked no archive, so the
+        // hold registered for one goes, and a refused retry leaves no record
+        // keeping a body past its last row (REVIEW-10247 round 2). Once the
+        // exchange began, a failure is no proof that nothing moved: the hold
+        // stays.
+        if swapped.is_err()
+            && !exchange_began.get()
+            && let Some(hold) = parked_hold
+            && let Err(error) = self.store.release_parked_archive_hold(hold)
+        {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a refused swap's archive hold stays until its custodian releases it"
+            );
+        }
+        swapped
     }
     /// An owner's activation of the archived vault at `path` as a side vault
     /// of `source`, the vault that replaced it. Its key custody forks as a
