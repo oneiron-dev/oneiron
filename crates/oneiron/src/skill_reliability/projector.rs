@@ -530,13 +530,17 @@ pub(super) fn project_in_txn(
         }
         let receipt = crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, receipt_ref)?
             .ok_or(invalid("skill reliability receipt disappeared"))?;
-        let query = receipt_query(&receipt)?;
-        let cell = query.cell(*skill, executor)?;
         // A routed failure or successful attempt alone is not an anchor.
         // Keep its attribution record, but mint no numerical claim from it.
+        // The anchor is read before the task placement: an unanchored
+        // attempt's receipt may carry no typeRef, and requiring one here
+        // failed the whole pass, and every other arm's write with it
+        // (REVIEW-10104 P1).
         let Some(raw_anchor) = receipt.fields.get(FIELD_SKILL_LEARNING_ANCHOR) else {
             continue;
         };
+        let query = receipt_query(&receipt)?;
+        let cell = query.cell(*skill, executor)?;
         let anchor: Anchor = serde_json::from_str(raw_anchor)
             .map_err(|_| invalid("invalid skill receipt learning anchor"))?;
         let source = EvidenceSource::Anchored(anchor);

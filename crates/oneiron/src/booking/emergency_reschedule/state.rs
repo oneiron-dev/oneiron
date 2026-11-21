@@ -27,6 +27,18 @@ pub(super) fn verify_owner_home_in(
             "emergency writes require the lifecycle home node".to_owned(),
         ));
     }
+    // FIX [BK-EMERGENCY-ROWS-NOT-CARRIED-BY-HOME-MOVE]: as the lifecycle door, a node its
+    // election names home is not the rows' home while it does not hold them: it froze them for
+    // a home move and adopted none since, or awaits the move that carries them here. Every
+    // emergency write and every outbound check of an emergency effect asks this, in its own
+    // transaction.
+    if !crate::booking::lifecycle::holds_booking_rows_in_txn(vault, txn)? {
+        return Err(BookingError::InvalidConfig(
+            "emergency writes require the lifecycle home node: this node does not hold the \
+             booking rows during a home move"
+                .to_owned(),
+        ));
+    }
     Ok(())
 }
 

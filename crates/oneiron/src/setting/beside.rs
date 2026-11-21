@@ -30,11 +30,13 @@
 //! the row's body ([`notes_projection_pass_in_txn`]), and so does an erase of a row named there,
 //! which also takes the value out of the setting history (`change::erase_setting_entity_in_txn`).
 //!
-//! A pack's table of defaults travels beside its head act the same way (stage 7c-3c; DESIGN 1.6,
-//! "Packs across machines": "The table's bytes travel beside the act"): one ASSET row per pack
-//! and table digest ([`pack_table_row_id`]), its body [`PACK_TABLE_TAG`] and then the table's
-//! bytes, which the pack's reader checks against the digest the head names
-//! ([`pack_table_read_in_txn`]). Its put notes the projection pass too.
+//! A pack's table of defaults travels beside the acts that carry it the same way (stage 7c-3c;
+//! DESIGN 1.6, "Packs across machines": "The table's bytes travel beside the act"): the pack
+//! door's head and the owner's yes each put one ASSET row in the act's write, whose id is derived
+//! from the pack's target, the table's digest and the act ([`pack_table_row_id`]), its body
+//! [`PACK_TABLE_TAG`] and then the table's bytes. A reader takes the first copy whose bytes are
+//! the table its act names ([`pack_table_read_in_txn`]), so an erase of one copy never keeps a
+//! later act from bringing the same table here. Its put notes the projection pass too.
 
 use oneiron_authority::authority::{
     AuthorityEntryHash, POLICY_SETTING_INLINE_MAX, setting_pack_target, setting_slot_target,
@@ -219,13 +221,38 @@ pub(crate) fn beside_row_watched_in_txn(
     WATCH.contains(dbs, txn, id)
 }
 
-/// The id of the row that holds `pack`'s table of defaults whose digest is `digest`, beside its
-/// head acts (stage 7c-3c): derived from the pack's target and the digest.
+/// The id of the row that holds `pack`'s table of defaults whose digest is `digest` beside the
+/// act `act` that carries it, a pack door's head or the owner's yes (stage 7c-3c review):
+/// derived from the pack's target, the digest and the act, so each act's copy has a row of its
+/// own (module doc).
 ///
 /// # Errors
 ///
 /// A derived id in the reserved range (never in practice).
-pub(super) fn pack_table_row_id(pack: &str, digest: &[u8; 32]) -> Result<EntityId> {
+pub(super) fn pack_table_row_id(
+    pack: &str,
+    digest: &[u8; 32],
+    act: &AuthorityEntryHash,
+) -> Result<EntityId> {
+    let target = setting_pack_target(pack)?;
+    Ok(EntityId::derive(
+        SETTING_BESIDE_VALUE,
+        &[
+            target.as_bytes().as_slice(),
+            digest.as_slice(),
+            act.as_slice(),
+        ],
+    )?)
+}
+
+/// The id of the one row per pack and digest in which builds before rows per act put `pack`'s
+/// table `digest` (stage 7c-3c): no writer puts it now, and a reader still takes it
+/// ([`pack_table_read_in_txn`]), so a vault that holds one reads it as before.
+///
+/// # Errors
+///
+/// A derived id in the reserved range (never in practice).
+fn pack_table_shared_row_id(pack: &str, digest: &[u8; 32]) -> Result<EntityId> {
     let target = setting_pack_target(pack)?;
     Ok(EntityId::derive(
         SETTING_BESIDE_VALUE,
@@ -233,8 +260,9 @@ pub(super) fn pack_table_row_id(pack: &str, digest: &[u8; 32]) -> Result<EntityI
     )?)
 }
 
-/// Puts `pack`'s table `table` (its bytes), whose digest is `digest`, beside its head acts in
-/// `txn`, unless a row of it is here already (stage 7c-3c).
+/// Puts `pack`'s table `table` (its bytes), whose digest is `digest`, beside the act `act` that
+/// carries it, in the act's write `txn` after its append, unless that row is here already (stage
+/// 7c-3c review).
 ///
 /// # Errors
 ///
@@ -242,19 +270,23 @@ pub(super) fn pack_table_row_id(pack: &str, digest: &[u8; 32]) -> Result<EntityI
 pub(super) fn put_pack_table_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    (pack, digest): (&str, &[u8; 32]),
+    (pack, digest, act): (&str, &[u8; 32], &AuthorityEntryHash),
     table: &[u8],
 ) -> Result<()> {
-    let row = pack_table_row_id(pack, digest)?;
+    let row = pack_table_row_id(pack, digest, act)?;
     if beside_body_in_txn(vault, txn, row)?.is_none() {
         put_beside_body_in_txn(vault, txn, row, (PACK_TABLE_TAG, table))?;
     }
     Ok(())
 }
 
-/// What the row of `pack`'s table whose digest is `digest` holds here (stage 7c-3c): its bytes
-/// where `matches` takes them as that table, else unreadable; absent where no row is here and
-/// none was erased here.
+/// What `pack`'s table whose digest is `digest` reads as here for the first of `acts`, the act
+/// that names it, from the rows beside `acts` (that act first, then the other acts here that name
+/// the table) and the row builds before rows per act wrote ([`pack_table_shared_row_id`]) (stage
+/// 7c-3c review): the first copy whose bytes `matches` takes as that table. With none, what the
+/// first act's own row holds: absent where no row of it is here and none was erased here (the
+/// copy has not arrived), else unreadable (other bytes, or erased here); where that act has no
+/// row here, the earlier builds' row stands in for it, so a vault that holds one reads as before.
 ///
 /// # Errors
 ///
@@ -263,16 +295,31 @@ pub(super) fn pack_table_read_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     (pack, digest): (&str, &[u8; 32]),
-    matches: impl FnOnce(&[u8]) -> bool,
+    acts: &[AuthorityEntryHash],
+    matches: impl Fn(&[u8]) -> bool,
 ) -> Result<BesideRead> {
-    let row = pack_table_row_id(pack, digest)?;
-    Ok(match beside_body_in_txn(vault, txn, row)? {
-        Some(body) => match body.strip_prefix(PACK_TABLE_TAG) {
-            Some(table) if matches(table) => BesideRead::Here(table.to_vec()),
-            _ => BesideRead::Unreadable,
-        },
-        None if erased_in_txn(vault, txn, row)? => BesideRead::Unreadable,
-        None => BesideRead::Absent,
+    let read_row = |row: EntityId| -> Result<BesideRead> {
+        Ok(match beside_body_in_txn(vault, txn, row)? {
+            Some(body) => match body.strip_prefix(PACK_TABLE_TAG) {
+                Some(table) if matches(table) => BesideRead::Here(table.to_vec()),
+                _ => BesideRead::Unreadable,
+            },
+            None if erased_in_txn(vault, txn, row)? => BesideRead::Unreadable,
+            None => BesideRead::Absent,
+        })
+    };
+    let mut own = BesideRead::Absent;
+    for (index, act) in acts.iter().enumerate() {
+        match read_row(pack_table_row_id(pack, digest, act)?)? {
+            here @ BesideRead::Here(_) => return Ok(here),
+            read if index == 0 => own = read,
+            _ => {}
+        }
+    }
+    let shared = read_row(pack_table_shared_row_id(pack, digest)?)?;
+    Ok(match (own, shared) {
+        (_, here @ BesideRead::Here(_)) | (BesideRead::Absent, here) => here,
+        (own, _) => own,
     })
 }
 
@@ -459,9 +506,10 @@ pub(crate) fn land_beside_row(
     })
 }
 
-/// Puts, in a write of its own, the row of `pack`'s table whose digest is `digest` holding `held`
-/// (the table's bytes, or other bytes: a row that does not match its digest), as a peer's row
-/// lands: through the batch door, whose commit runs the setting projection (stage 7c-3c tests).
+/// Puts, in a write of its own, the row of `pack`'s table whose digest is `digest` beside the act
+/// `act` holding `held` (the table's bytes, or other bytes: a row that does not match its digest),
+/// as a peer's row lands: through the batch door, whose commit runs the setting projection (stage
+/// 7c-3c tests). The row's id.
 ///
 /// # Errors
 ///
@@ -469,17 +517,73 @@ pub(crate) fn land_beside_row(
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) fn land_pack_table(
     vault: &Vault,
+    (pack, digest, act): (&str, &[u8; 32], &AuthorityEntryHash),
+    held: &[u8],
+) -> Result<EntityId> {
+    let id = pack_table_row_id(pack, digest, act)?;
+    vault.with_write_txn_grouped(|txn| {
+        put_beside_body_in_txn(vault, txn, id, (PACK_TABLE_TAG, held))
+    })?;
+    Ok(id)
+}
+
+/// Puts, in a write of its own, the row of `pack`'s table whose digest is `digest` beside the act
+/// `act` holding `held`, as a sync pass stores a peer's row: a replicated put, which a row erased
+/// here refuses (stage 7c-3c review tests). The row's id.
+///
+/// # Errors
+///
+/// Storage errors, and the put's refusal.
+#[cfg(all(oneiron_test_support, feature = "test-support", feature = "sync"))]
+pub(crate) fn land_pack_table_from_peer(
+    vault: &Vault,
+    (pack, digest, act): (&str, &[u8; 32], &AuthorityEntryHash),
+    held: &[u8],
+) -> Result<EntityId> {
+    let id = pack_table_row_id(pack, digest, act)?;
+    let mut body = PACK_TABLE_TAG.to_vec();
+    body.extend_from_slice(held);
+    vault.with_write_txn_grouped(|txn| {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        vault
+            .batch_in()
+            .put_replicated(
+                &id,
+                ENTITY_TYPE_ASSET,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                None,
+                &body,
+            )
+            .apply(txn)
+    })?;
+    Ok(id)
+}
+
+/// Puts, in a write of its own, `pack`'s table whose digest is `digest` holding `held` in the one
+/// row per pack and digest that builds before rows per act wrote ([`pack_table_shared_row_id`]),
+/// through the batch door (stage 7c-3c review tests).
+///
+/// # Errors
+///
+/// Storage errors, and the put's refusal.
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) fn land_pack_table_shared_row(
+    vault: &Vault,
     (pack, digest): (&str, &[u8; 32]),
     held: &[u8],
 ) -> Result<()> {
-    let id = pack_table_row_id(pack, digest)?;
+    let id = pack_table_shared_row_id(pack, digest)?;
     vault.with_write_txn_grouped(|txn| {
         put_beside_body_in_txn(vault, txn, id, (PACK_TABLE_TAG, held))
     })
 }
 
-/// The bytes the row of `pack`'s table whose digest is `digest` holds here after its tag; `None`
-/// when no row is here (stage 7c-3c tests).
+/// The bytes the row of `pack`'s table whose digest is `digest` beside the act `act` holds here
+/// after its tag; `None` when no row is here (stage 7c-3c tests).
 ///
 /// # Errors
 ///
@@ -487,10 +591,10 @@ pub(crate) fn land_pack_table(
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) fn pack_table_bytes(
     vault: &Vault,
-    (pack, digest): (&str, &[u8; 32]),
+    (pack, digest, act): (&str, &[u8; 32], &AuthorityEntryHash),
 ) -> Result<Option<Vec<u8>>> {
     let txn = vault.store.env.read_txn()?;
-    let body = beside_body_in_txn(vault, &txn, pack_table_row_id(pack, digest)?)?;
+    let body = beside_body_in_txn(vault, &txn, pack_table_row_id(pack, digest, act)?)?;
     Ok(body.map(|body| match body.strip_prefix(PACK_TABLE_TAG) {
         Some(table) => table.to_vec(),
         None => body,

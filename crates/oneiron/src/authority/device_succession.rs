@@ -22,6 +22,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{TimeRange, Vault};
 
 use super::machine_standing::InstallCounted;
@@ -199,6 +200,11 @@ impl Vault {
         client: u64,
         device_key: [u8; 32],
     ) -> Result<()> {
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::NAME_DEVICE_PREDECESSOR,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_in_txn(self, &txn)?;
         let own = (
@@ -229,7 +235,7 @@ impl Vault {
         // The owner key this install holds proves the act; its join carries
         // the proof only for the owner's own write (row
         // OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, REVIEW-9962 P1).
-        let proof = self.owner_proof_signer(&before);
+        let proof = self.owner_proof_signer(&before, &ground);
         let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
         let joiner =
             FrontierSigner::install(machine, &key, proof.as_ref().filter(|_| proves_joins));

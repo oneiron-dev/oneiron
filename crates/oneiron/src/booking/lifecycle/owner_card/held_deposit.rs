@@ -217,7 +217,7 @@ fn owner_line(
 /// `Booking at <date> <time> (<zone>)`, the slot's start in the owner's
 /// zone, or in UTC when the booking froze none or its zone does not
 /// resolve.
-fn booking_label(start: u64, zone: Option<&str>) -> String {
+pub(super) fn booking_label(start: u64, zone: Option<&str>) -> String {
     let wall = zone
         .and_then(|tz| utc_to_wall(start, tz).ok().map(|wall| (wall, tz)))
         .or_else(|| utc_to_wall(start, "UTC").ok().map(|wall| (wall, "UTC")));

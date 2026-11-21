@@ -438,6 +438,15 @@ pub(super) fn validate_domain_carriers(
     ) {
         crate::memory::guard_import_stamp(store, txn, id, data)?;
     }
+    if matches!(
+        entity_type,
+        crate::registry::ENTITY_TYPE_CONVERSATION
+            | crate::registry::ENTITY_TYPE_TURN
+            | crate::registry::ENTITY_TYPE_MESSAGE
+            | crate::registry::ENTITY_TYPE_SESSION
+    ) {
+        crate::memory::guard_phone_thread_mark(store, txn, id, data)?;
+    }
     if entity_type == crate::registry::ENTITY_TYPE_EVENT {
         crate::calendar::origin::validate_event_write(store, txn, id, data, replicated)?;
     }

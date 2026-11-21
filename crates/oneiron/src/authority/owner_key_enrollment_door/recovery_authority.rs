@@ -1,9 +1,12 @@
 //! The recovery root's authority key R on the owner's roster: its enrolment
 //! under its own attestation kind (pass 27 R4 PR 2).
 
+mod carry;
 mod generations;
 
 use super::*;
+use crate::authority::OwnerProofGround;
+use carry::RecoveryAuthorityCarry;
 
 /// A kit activation's predecessor for the root's authority key enrolment
 /// (pass 27 R4 PR 2, WAYBACK-R4-FIRST-KEY = B): this install's live owner
@@ -31,57 +34,23 @@ impl ActivationPredecessor {
         }
     }
 
-    /// The predecessor's signature over the enrolment's authority transcript.
-    fn sign(&self, vault: &Vault, fold: &AuthorityFold, transcript: &[u8]) -> Result<Vec<u8>> {
+    /// The predecessor's signature over the enrolment's authority transcript. The
+    /// owner-key predecessor signs its proof on `ground`; the host-root predecessor
+    /// signs a slip and reads no ground.
+    fn sign(
+        &self,
+        vault: &Vault,
+        fold: &AuthorityFold,
+        ground: &OwnerProofGround,
+        transcript: &[u8],
+    ) -> Result<Vec<u8>> {
         match self {
-            Self::OwnerKey(held) => held.signer.sign_owner_proof(vault, fold, transcript),
+            Self::OwnerKey(held) => held
+                .signer
+                .sign_owner_proof(vault, fold, ground, transcript),
             Self::HostRoot(issuer) => Ok(issuer.sign_slip(transcript)),
         }
     }
-}
-
-/// The fold did not count a row by which a kit change's new R carries an
-/// approval the revoked R signed. Nothing was written.
-const CARRY_NOT_COUNTED: &str = "this install's fold does not count the new kit's carry of an \
-                                 approval the old kit signed; nothing was written";
-
-/// What a kit change's new R must carry, chosen before the act revokes the
-/// R keys it replaces ([`Vault::recovery_authority_carry_in_txn`]).
-#[derive(Debug, Default)]
-pub(crate) struct RecoveryAuthorityCarry {
-    /// Each roster standing the new R signs again, as the next revision
-    /// above its machine's roster head: the head, or the accepted chain's
-    /// head when that is another revision (REVIEW-9488 P1 5).
-    machines: Vec<MachineProfile>,
-    /// Each binding's `RebindActor` one epoch on, which the new R signs.
-    rebinds: Vec<AuthorityOp>,
-}
-
-/// One standing's or binding's approvals, as the carry's one pass over the
-/// history counts them ([`Vault::recovery_authority_carry_in_txn`]).
-#[derive(Debug, Default)]
-struct CarrySupport {
-    /// An approval resting on no key revoked before the act exists.
-    open: bool,
-    /// An approval resting on no key revoked before the act, nor on a key
-    /// the act revokes, exists, or an anchor's row, which never goes stale.
-    independent: bool,
-}
-
-impl CarrySupport {
-    /// The act's revocation would leave no approval that keeps it live.
-    fn carried(&self) -> bool {
-        self.open && !self.independent
-    }
-}
-
-/// Whether `entry`'s primary signature or a cosign names a key `revoked`
-/// holds: the keys an approval rests on, as the stale-roster window reads
-/// them (`stale_roster.rs`).
-fn rests_on(entry: &AuthorityLogEntry, revoked: impl Fn(&AuthorityKey) -> bool) -> bool {
-    std::iter::once(&entry.signer)
-        .chain(&entry.cosigns)
-        .any(|signature| revoked(&signature.public_key))
 }
 
 /// A kit's activation found no predecessor for the root's authority key:
@@ -330,7 +299,8 @@ impl Vault {
     /// this install and `predecessor` from
     /// [`Self::load_activation_predecessor`]. Revalidates the owner, builds
     /// R's enrolment, and calls [`Self::enrol_owner_signing_key_in_txn`]
-    /// with kind `RecoveryAuthority`.
+    /// with kind `RecoveryAuthority`. `ground` is the ground the predecessor's
+    /// owner proof is signed on.
     ///
     /// # Errors
     /// As [`Self::enrol_owner_signing_key_as`].
@@ -341,6 +311,7 @@ impl Vault {
         machine: EntityId,
         seed: &crate::world_keys::RecoveryRootSeed,
         predecessor: &ActivationPredecessor,
+        ground: &OwnerProofGround,
     ) -> Result<OwnerKeyEnrollmentReceipt> {
         let owner = match authority {
             ActAuthority::Owner(owner, _) => owner,
@@ -351,8 +322,9 @@ impl Vault {
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let input = recovery_authority_enrollment(seed, &vault_id, 0, machine, actor)?;
         let predecessor_key = predecessor.predecessor_key();
-        let mut sign =
-            |fold: &AuthorityFold, transcript: &[u8]| predecessor.sign(self, fold, transcript);
+        let mut sign = |fold: &AuthorityFold, transcript: &[u8]| {
+            predecessor.sign(self, fold, ground, transcript)
+        };
         self.enrol_owner_signing_key_in_txn(
             txn,
             authority,
@@ -370,7 +342,8 @@ impl Vault {
     /// then acts as any owner root, the restored machine's roster row
     /// included (REVIEW-9488 P1 3). Nothing on the roster changes. An R the
     /// passkey limits do not hold needs no row (`None`). `signer` is R at
-    /// the kit's live generation, as the activation derived it.
+    /// the kit's live generation, as the activation derived it. `ground` is the
+    /// ground the predecessor's owner proof is signed on.
     ///
     /// # Errors
     /// As [`Self::confirm_owner_key_as`].
@@ -381,6 +354,7 @@ impl Vault {
         machine: EntityId,
         signer: &crate::world_keys::RecoveryAuthoritySigner,
         predecessor: &ActivationPredecessor,
+        ground: &OwnerProofGround,
     ) -> Result<Option<OwnerKeyEnrollmentReceipt>> {
         let owner = match authority {
             ActAuthority::Owner(owner, _) => owner,
@@ -397,8 +371,9 @@ impl Vault {
             input.proof,
             EnrolledOwnerKeyKind::RecoveryAuthority,
         );
-        let mut sign =
-            |fold: &AuthorityFold, transcript: &[u8]| predecessor.sign(self, fold, transcript);
+        let mut sign = |fold: &AuthorityFold, transcript: &[u8]| {
+            predecessor.sign(self, fold, ground, transcript)
+        };
         let (entry, machine) = self.write_owner_key_enroll_in_txn(
             txn,
             authority,
@@ -466,7 +441,8 @@ impl Vault {
     /// ([`Self::append_revoke_device_in_txn`]). Another owner's R stays: the
     /// filter is the enrolment's owner, as at the membership move. Answers
     /// what the activated R must carry, chosen before the first revocation
-    /// ([`Self::recovery_authority_carry_in_txn`]).
+    /// ([`Self::recovery_authority_carry_in_txn`]). `ground` is the ground the
+    /// predecessor's owner proof is signed on.
     ///
     /// # Errors
     /// The writer's: an entry the fold does not count.
@@ -476,6 +452,7 @@ impl Vault {
         actor: EntityId,
         kept: &AuthorityKey,
         predecessor: &ActivationPredecessor,
+        ground: &OwnerProofGround,
     ) -> Result<RecoveryAuthorityCarry> {
         let earlier: Vec<AuthorityKey> = self
             .enrolled_owner_keys_in_txn(txn)?
@@ -491,7 +468,7 @@ impl Vault {
         let carry = self.recovery_authority_carry_in_txn(txn, &earlier)?;
         let predecessor_key = predecessor.predecessor_key();
         let signing_fold = self.authority_view_readonly_in_txn(txn)?;
-        let sign = |transcript: &[u8]| predecessor.sign(self, &signing_fold, transcript);
+        let sign = |transcript: &[u8]| predecessor.sign(self, &signing_fold, ground, transcript);
         for revoked_key in &earlier {
             let signer = match predecessor {
                 ActivationPredecessor::OwnerKey(_) => EntrySigner::Key(&predecessor_key, &sign),
@@ -510,7 +487,8 @@ impl Vault {
     /// revocation, because the activation enrols R before it (the
     /// enrolment's carrier may stand on an approval only a revoked R gave,
     /// until the carry signs it again). Signed by `predecessor`, as the
-    /// enrolment's binding is.
+    /// enrolment's binding is. `ground` is the ground the predecessor's owner
+    /// proof is signed on.
     ///
     /// # Errors
     /// The binding's `BINDING_NOT_COUNTED`, as at the enrolment.
@@ -520,237 +498,17 @@ impl Vault {
         actor: EntityId,
         key: AuthorityKey,
         predecessor: &ActivationPredecessor,
+        ground: &OwnerProofGround,
     ) -> Result<()> {
-        let mut sign =
-            |fold: &AuthorityFold, transcript: &[u8]| predecessor.sign(self, fold, transcript);
+        let mut sign = |fold: &AuthorityFold, transcript: &[u8]| {
+            predecessor.sign(self, fold, ground, transcript)
+        };
         self.bind_unbound_owner_on_self_host_in_txn(
             txn,
             actor,
             key,
             (predecessor.predecessor_key(), &mut sign),
         )
-    }
-
-    /// Chooses, in the caller's write transaction and BEFORE any key in
-    /// `revoking` is revoked, what the R that replaces them must carry
-    /// (WAYBACK-R-REVOCATION-STALES-R-APPROVALS = A, Engine 07:13: a kit
-    /// change must not unpair the owner's own machines). The choice comes
-    /// first because an approval's stale deadline counts from the earlier of
-    /// its own first sight and its key's revocation (`stale_roster.rs`): one
-    /// older than the window goes stale the moment its key is revoked, so a
-    /// fold read after the revocation would miss every aged approval (Sol
-    /// carry F1).
-    ///
-    /// The test is the stale-roster window's own (Sol carry F2): an approval
-    /// rests on every key its primary signature or a cosign names. Of the
-    /// approvals that rest on no key revoked before this act, when at least
-    /// one exists and every one rests on a key in `revoking`, the act would
-    /// unpair the standing, so it is carried; one approval resting on none
-    /// keeps it live and nothing is carried; and a standing that only rests
-    /// on keys revoked before is already going stale (the ruling's guard).
-    /// - A machine's live, act-free roster head: its approvals are the valid
-    ///   roster rows with the head's exact profile (the rows that renew a
-    ///   stale head; an anchor's row renews none). A head an anchor's row
-    ///   carried never goes stale and is not carried.
-    /// - An active binding: its approvals are the valid `BindActor` and
-    ///   `RebindActor` rows of its current tuple (an anchor's row never goes
-    ///   stale, so it keeps the binding live). The binding of a key in
-    ///   `revoking` ends with that key and is not carried.
-    ///
-    /// A head at the last revision, or a binding at the last epoch, has no
-    /// next row, so it is not carried: no row the revoked key signed can
-    /// refuse the kit change that revokes the key (Sol carry F2, F3). Only a
-    /// live R's holder can sign such a row, and the standing goes stale as
-    /// it did before the carry (FIX [KIT-CHANGE-CARRY-SKIPS-LAST-COUNTER]).
-    /// The history is read once (Sol carry F4): the stored rows and the
-    /// bodies an adopted checkpoint image carries (Sol carry-fix F2).
-    ///
-    /// # Errors
-    /// A fold or history read's.
-    pub(crate) fn recovery_authority_carry_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        revoking: &[AuthorityKey],
-    ) -> Result<RecoveryAuthorityCarry> {
-        if revoking.is_empty() {
-            return Ok(RecoveryAuthorityCarry::default());
-        }
-        let fold = self.authority_view_readonly_in_txn(txn)?;
-        let revoked_before: std::collections::BTreeSet<&AuthorityKey> = fold
-            .roster
-            .iter()
-            .filter(|(_, device)| device.revoked)
-            .map(|(key, _)| key)
-            .collect();
-        // Each machine's roster head and the accepted chain's head (a
-        // custodial revision above an owner-held one leaves the accepted
-        // chain at the owner-held one), each with its own support: the
-        // stale-roster window expires either once the R it rests on is
-        // revoked, and renews the accepted chain's only by a mark that chain
-        // accepts (REVIEW-9488 round 2 P1 5).
-        let mut machines: std::collections::BTreeMap<_, Vec<_>> = fold
-            .machines
-            .iter()
-            .filter_map(|(machine, folded)| {
-                let head = folded.roster.as_ref()?;
-                if head.profile.revision == u64::MAX {
-                    return None;
-                }
-                let heads: Vec<_> = [(Some(head), false), (folded.roster_trusted.as_ref(), true)]
-                    .into_iter()
-                    .filter_map(|(head, trusted)| Some((head?, trusted)))
-                    .filter(|(head, _)| {
-                        head.is_live()
-                            && head.profile.act.is_none()
-                            && !fold.anchor_entries.contains(&head.entry)
-                    })
-                    .map(|(head, trusted)| (&head.profile, trusted, CarrySupport::default()))
-                    .collect();
-                (!heads.is_empty()).then_some((*machine, heads))
-            })
-            .collect();
-        let mut bindings: std::collections::BTreeMap<_, _> = fold
-            .actor_bindings
-            .iter()
-            .filter(|(bound, binding)| {
-                matches!(binding.status, ActorBindingStatus::Active)
-                    && binding.epoch < u64::MAX
-                    && !revoking.contains(bound)
-            })
-            .map(|(bound, binding)| (bound, (binding, CarrySupport::default())))
-            .collect();
-        // The approvals the stale-roster window reads: each stored row, and
-        // each body an adopted checkpoint image carries that this vault does
-        // not store (the adopted fold expires those too), a stored row
-        // winning over the image's copy, as the enrolled-key reader reads
-        // them (Sol carry-fix F2).
-        let history = crate::authority::history_transfer::history_in_txn(self, txn)?;
-        let stored: std::collections::BTreeSet<AuthorityEntryHash> =
-            history.keys().copied().collect();
-        let evidence =
-            crate::authority::adopted_evidence::adopted_evidence_in_txn(&self.store, txn)?;
-        let stored = &stored;
-        let carried_past = evidence
-            .iter()
-            .flat_map(move |evidence| evidence.carried_past(stored));
-        let approvals = history
-            .iter()
-            .map(|(hash, (_, entry))| (hash, entry))
-            .chain(carried_past);
-        for (hash, entry) in approvals {
-            if !fold.valid_entries.contains(hash) {
-                continue;
-            }
-            let anchor = fold.anchor_entries.contains(hash);
-            // The accepted chain's head counts only a mark that chain
-            // accepts, as the stale-roster window renews it, never a
-            // custodial copy of its profile (`stale_roster.rs`).
-            let accepted = fold.accepted_roster_marks.contains(hash);
-            // A kit restore's inline join is its R's roster revision of the
-            // machine, so a kit change carries it as a profile row
-            // (REVIEW-9539 round 2 P1).
-            let filed = crate::authority::stale_roster::filed_machine_profile(&entry.op)
-                .filter(|_| !anchor);
-            let supports: Vec<&mut CarrySupport> = match (filed, &entry.op) {
-                (Some(profile), _) => machines
-                    .get_mut(&profile.machine)
-                    .into_iter()
-                    .flatten()
-                    .filter(|(head, trusted, _)| *head == profile && (accepted || !*trusted))
-                    .map(|(_, _, support)| support)
-                    .collect(),
-                (
-                    _,
-                    AuthorityOp::BindActor {
-                        authority_key,
-                        actor_ref,
-                        actor_class,
-                        epoch,
-                    }
-                    | AuthorityOp::RebindActor {
-                        authority_key,
-                        actor_ref,
-                        actor_class,
-                        epoch,
-                    },
-                ) => match bindings.get_mut(authority_key) {
-                    Some((binding, support))
-                        if binding.actor_ref == *actor_ref
-                            && binding.actor_class == *actor_class
-                            && binding.epoch == *epoch =>
-                    {
-                        vec![support]
-                    }
-                    _ => Vec::new(),
-                },
-                _ => Vec::new(),
-            };
-            for support in supports {
-                if anchor {
-                    support.independent = true;
-                } else if !rests_on(entry, |key| revoked_before.contains(key)) {
-                    support.open = true;
-                    if !rests_on(entry, |key| revoking.contains(key)) {
-                        support.independent = true;
-                    }
-                }
-            }
-        }
-        let rebinds = bindings
-            .into_iter()
-            .filter(|(_, (_, support))| support.carried())
-            .map(|(bound, (binding, _))| {
-                Ok(AuthorityOp::RebindActor {
-                    authority_key: bound.clone(),
-                    actor_ref: binding.actor_ref,
-                    actor_class: binding.actor_class.clone(),
-                    epoch: binding.epoch.checked_add(1).ok_or_else(invalid_authority)?,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        // One row per machine: the accepted chain's standing when the act
-        // would leave it with no approval, else the head's.
-        Ok(RecoveryAuthorityCarry {
-            machines: machines
-                .into_values()
-                .filter_map(|heads| {
-                    heads
-                        .into_iter()
-                        .rev()
-                        .find(|(_, _, support)| support.carried())
-                        .map(|(profile, _, _)| profile.clone())
-                })
-                .collect(),
-            rebinds,
-        })
-    }
-
-    /// Carries `carry`, chosen before the act revoked the R keys it names
-    /// ([`Self::recovery_authority_carry_in_txn`]), under `next`, the R that
-    /// replaces them and is live on the roster, as a host re-root carries
-    /// its standings ([`Self::carry_machine_standing_in_txn`]): `next` signs
-    /// the next revision of each chosen machine's roster head
-    /// ([`Self::carry_roster_standing_under_key_in_txn`]), and a
-    /// `RebindActor` one epoch on, with the same key, actor and class, for
-    /// each chosen binding. Stored change: keep (ordinary rows).
-    ///
-    /// # Errors
-    /// A carried row the fold does not count.
-    pub(crate) fn carry_recovery_authority_approvals_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        carry: RecoveryAuthorityCarry,
-        next: &crate::world_keys::RecoveryAuthoritySigner,
-    ) -> Result<()> {
-        let key = next.authority_key();
-        let sign = |transcript: &[u8]| next.sign_authority_transcript(transcript);
-        for standing in &carry.machines {
-            self.carry_roster_standing_under_key_in_txn(txn, (&key, &sign), standing)?;
-        }
-        for rebind in carry.rebinds {
-            self.append_key_signed_op_in_txn(txn, (&key, &sign), rebind, CARRY_NOT_COUNTED)?;
-        }
-        Ok(())
     }
 
     /// What ways back `owner` has: their live device owner keys, their live

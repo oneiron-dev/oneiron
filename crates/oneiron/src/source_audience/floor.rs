@@ -3,10 +3,9 @@
 //! its words, so a read meets them without walking the lineage.
 //!
 //! A **source** is a place where an outsider's words enter the vault, named
-//! by one id: a source-audience policy (a mailbox, a shared mail thread). A
-//! phone thread's CONVERSATION joins as a second kind with the phone-reach
-//! stack (#8609), through this same floor. A row's **floor** is its own
-//! source (the policy it is bound to) and the
+//! by one id: a source-audience policy (a mailbox, a shared mail thread) or
+//! a phone thread's CONVERSATION. A row's **floor** is its own source (the
+//! policy it is bound to, or the thread its bytes are stamped with) and the
 //! floor of every row it was written from, one level per write: each source
 //! row already holds the floor of everything below it. The inherited part is
 //! kept in the `DERIVED` side table beside the policies a full-window
@@ -14,12 +13,11 @@
 //! write, rebuild or merge takes a source off a floor.
 //!
 //! A floor names sources, never readers, so who reads a source is decided
-//! live at each read: sharing a mail thread, and revoking it, reach every row
-//! learnt from it at the next read. What an id names is told by looking it
-//! up (Engine E4 = A): a stored policy is a policy, and any other id names no
-//! source and admits no reader. The read that meets a floor is the
-//! source-audience walk's (`walk.rs`, `Judge::open`): every policy on it
-//! must admit the reader.
+//! live at each read: sharing a thread or granting a caller's history, and
+//! revoking either, reach every row learnt from it at the next read. A
+//! policy is told from a thread by looking the id up (Engine E4 = A): a
+//! stored policy is a policy, a CONVERSATION whose body names its line agent
+//! is a thread, and any other id names no source and admits no reader.
 //!
 //! What binds (READ-LINEAGE-L1 = A, the lead 17 Nov 02:0x): every row a row
 //! was written from (the source-audience walk's lineage, the source
@@ -41,16 +39,20 @@ use std::collections::BTreeSet;
 
 use heed::{RoTxn, RwTxn};
 
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
+use crate::registry::{
+    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
+};
 use crate::{EntityId, Vault};
 
 /// The bytes of [`sealed_source`]: version nibble 2, which no id this
-/// engine mints or derives carries, so it names no row or policy.
+/// engine mints or derives carries, so it names no row, policy or thread.
 const SEALED_SOURCE: [u8; 16] = *b"sealed.source.v1";
 
 /// The source a row is born under when a source its words came from cannot
-/// be read at the write (C5, READ-LINEAGE-L3 = A): it names no policy, so it
-/// admits no reader.
+/// be read at the write (C5, READ-LINEAGE-L3 = A): it names no policy and no
+/// thread, so it admits no reader.
 pub(crate) fn sealed_source() -> EntityId {
     EntityId::from_bytes_unchecked(SEALED_SOURCE)
 }
@@ -61,8 +63,11 @@ pub(crate) enum FloorSource {
     /// A source-audience policy: it reads to the policy's people
     /// ([`super::readers_in`]).
     Policy,
-    /// [`sealed_source`], or a policy that does not resolve here: it reads to
-    /// no one.
+    /// A phone thread's CONVERSATION: it reads to the vault owner and to
+    /// the readers [`SOURCE_READERS`] admits.
+    Thread,
+    /// [`sealed_source`], a policy that does not resolve here, or a thread
+    /// that is gone: it reads to no one.
     Unknown,
 }
 
@@ -73,11 +78,10 @@ pub(crate) enum FloorSource {
 /// [`SOURCE_READERS`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SourceReaders {
-    /// A policy reads to its own people only: a generic MESSAGE or CLAIM
-    /// grant, and any standing permission that names no reader of the
-    /// policy, read none of it. The phone-reach stack adds the thread kind
-    /// under the same reading: a live `ConversationMessages` grant naming
-    /// that very thread.
+    /// A phone thread reads under a live `ConversationMessages` grant naming
+    /// that very thread, and a policy to its own people. A grant over
+    /// another thread of the same line, a standing permission over a line or
+    /// a mailbox, and a generic MESSAGE or CLAIM grant read none of it.
     OwnSourceReaders,
 }
 
@@ -98,7 +102,24 @@ pub(crate) fn floor_source_in(
     if super::POLICIES.contains(&vault.store, txn, source)? {
         return Ok(FloorSource::Policy);
     }
-    Ok(FloorSource::Unknown)
+    if *source == sealed_source() {
+        return Ok(FloorSource::Unknown);
+    }
+    let Some(raw) = vault.get_raw_in(txn, source)? else {
+        return Ok(FloorSource::Unknown);
+    };
+    let thread = EntityMetadataHeader::parse(&raw).is_some_and(|header| {
+        header.entity_type == ENTITY_TYPE_CONVERSATION
+            && crate::voice_call::phone_thread_agent(
+                raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default(),
+            )
+            .is_some()
+    });
+    Ok(if thread {
+        FloorSource::Thread
+    } else {
+        FloorSource::Unknown
+    })
 }
 
 /// The source a row was born in, as a floor reads it.
@@ -106,7 +127,11 @@ pub(crate) fn floor_source_in(
 pub(super) enum OwnSource {
     /// None: its words are its own.
     None,
-    /// The policy it is bound to.
+    /// The policy it is bound to; the thread its own bytes name (a phone
+    /// CONVERSATION is its own thread; a TURN, MESSAGE or SESSION carries its
+    /// thread's stamp); or [`sealed_source`] for a row whose phone mark names
+    /// no thread, which reads to no one, and neither does what is written
+    /// from it.
     Source(EntityId),
     /// A row a source landed whose binding is not here: its landing binds it
     /// later in this very write, or its carried binding waits for its
@@ -128,7 +153,22 @@ pub(super) fn own_source_in(
     if super::obligation::row_obligation(raw).is_present() {
         return Ok(OwnSource::Unbound);
     }
-    Ok(OwnSource::None)
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Ok(OwnSource::None);
+    };
+    let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+    let thread = match header.entity_type {
+        ENTITY_TYPE_CONVERSATION => crate::voice_call::phone_thread_agent(body).map(|_| *row),
+        ENTITY_TYPE_TURN | ENTITY_TYPE_MESSAGE | ENTITY_TYPE_SESSION => {
+            crate::voice_call::phone_thread_stamp(body)
+        }
+        _ => None,
+    };
+    Ok(match thread {
+        Some(thread) => OwnSource::Source(thread),
+        None if crate::voice_call::row_phone_marked(raw) => OwnSource::Source(sealed_source()),
+        None => OwnSource::None,
+    })
 }
 
 /// The sources the row `row` (bytes `raw`) reads under: the one it was born
@@ -183,7 +223,7 @@ pub(crate) struct RowSources {
 }
 
 /// What the words of the row `row` (bytes `raw`) came from, one level: the
-/// single list the source-audience walk reads
+/// single list both the source-audience walk and the phone lineage read
 /// (a MESSAGE's TURN, a TURN's MESSAGEs, every `DerivedFrom`, a summary's or
 /// merge header's word sources, a scope summary's covers, a CLAIM's subject;
 /// the source dependency index; the birth's inputs of every role; a carried
@@ -236,8 +276,8 @@ pub(crate) fn row_sources_in(
 }
 
 /// Whether a write here can give any row a floor: the vault holds a policy
-/// or a stored floor, or a row a source landed (a mail row) was written
-/// here. A vault with none gives no row a floor, so
+/// or a stored floor, or a row a source landed (a mail row or a phone
+/// thread's) was written here. A vault with none gives no row a floor, so
 /// its writes read no lineage.
 ///
 /// # Errors
@@ -282,8 +322,23 @@ pub(super) fn raise_floor_in_txn(
     if !freed {
         add.extend(attested);
     }
-    if let OwnSource::Source(own) = own_source_in(vault, txn, row, &raw)? {
-        add.remove(&own);
+    match own_source_in(vault, txn, row, &raw)? {
+        // A live row born under no source (a peer's phone mark that names
+        // no thread) reads to no one, so its stored floor says so too: the
+        // phone read and doctor read the stored floor (#9289 review 2 P2-5).
+        // An erased row's shell is no fact; what is written from it inherits
+        // the seal from its own source.
+        OwnSource::Source(own) if own == sealed_source() => {
+            if !crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &**txn, row)?
+                .deleted
+            {
+                add.insert(own);
+            }
+        }
+        OwnSource::Source(own) => {
+            add.remove(&own);
+        }
+        OwnSource::None | OwnSource::Unbound => {}
     }
     if add.is_empty() {
         return Ok(false);
@@ -318,11 +373,11 @@ pub(crate) fn raise_floors_in_txn(
 
 /// Seals each row of `born`, in the write that stamps its birth, when that
 /// birth names an input this vault erased: its deletion shell or record
-/// stands (#9289 review r1 P1). An erase takes the input's binding and its
-/// stored floor with its row (`erase_derived_policies_in_txn`), so nothing
-/// here says any more whose words the input held: a prompt that read a
-/// mailbox's MESSAGE, erased before the CLAIM it wrote landed, left that
-/// CLAIM no source to inherit.
+/// stands (#9289 review r1 P1). An erase takes the input's own source with
+/// its body (a phone row's stamp) and its stored floor with its row
+/// (`erase_derived_policies_in_txn`), so nothing here says any more whose
+/// words the input held: a prompt that read caller A's kept TURN, erased
+/// before the CLAIM it wrote landed, left that CLAIM no source to inherit.
 /// The row is born under [`sealed_source`] (C5, READ-LINEAGE-L3 = A). Only
 /// the birth's own write seals: a row born while its inputs stood already
 /// holds their floor, and a later erase takes no source off it. A vault
@@ -356,4 +411,31 @@ pub(crate) fn seal_births_from_erased_inputs_in_txn(
         }
     }
     Ok(())
+}
+
+/// The threads on the stored floor of `row` that a read must hold, or
+/// `None` when an id on it names no source, so the row reads to no one
+/// (READ-LINEAGE-L3 = A). Its policies are the source-audience walk's to
+/// judge ([`super::readable_with_read_in`]).
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn floor_threads_in(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    row: &EntityId,
+) -> Result<Option<Vec<EntityId>>> {
+    let Some(floor) = super::DERIVED.get(&vault.store, txn, row)? else {
+        return Ok(Some(Vec::new()));
+    };
+    let mut threads = Vec::new();
+    for source in floor {
+        match floor_source_in(vault, txn, &source)? {
+            FloorSource::Policy => {}
+            FloorSource::Thread => threads.push(source),
+            FloorSource::Unknown => return Ok(None),
+        }
+    }
+    Ok(Some(threads))
 }
