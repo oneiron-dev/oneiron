@@ -49,7 +49,7 @@ use crate::vault::Vault;
 mod masked_key;
 
 use masked_key::MaskedKey;
-pub(in crate::calendar) use masked_key::{CalendarSystems, passport_uid_among};
+pub(in crate::calendar) use masked_key::{CalendarSystems, derived_uid_among, passport_uid_among};
 
 /// The reason code on the tray resolution of a waiting passport revision
 /// that a later revision replaced.
