@@ -35,8 +35,9 @@ use oneiron::engine_executor::{
     ChangedStep, EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits,
     EngineExecutorOutcome, EngineExecutorResult, EngineExecutorStatus, EngineNativeExecutor,
     JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome, JsCodeModeStream,
-    JsResultCall, JsResultTarget, ResumePreflightReport, ResumeVerdict,
+    JsResultCall, JsResultTarget, ResumePreflightReport, ResumeVerdict, StepCancellation,
 };
+use oneiron::error::CodeError;
 use oneiron::inbox::NotificationKind;
 use oneiron::llm::ReplyAssertions;
 use oneiron::memory::MEMORY_CODE_FORBIDDEN;
@@ -45,7 +46,9 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::code_run_answer::install_actor_ceiling;
-use oneiron::test_doors::resume_preflight::{raise_resume_divergence_ask, restamp_guest_abi};
+use oneiron::test_doors::resume_preflight::{
+    cancellable_root_for_next_unbound_loop, raise_resume_divergence_ask, restamp_guest_abi,
+};
 use oneiron::verbs::{
     ResumeDivergenceAnswer, ResumeDivergenceChoice, answer_code_run_resume_divergence_as,
 };
@@ -200,6 +203,9 @@ struct TwoEntryRuntime {
     failures: Vec<String>,
     /// What entry 2's result calls answered, in order (`None` for an error).
     result_answers: Vec<Option<serde_json::Value>>,
+    /// The entry whose root this runtime cancels once its calls ran, as a hard queue control
+    /// cancels a leased run's step mid-way (FIX 600).
+    cancel_at_entry: Option<u8>,
 }
 
 impl TwoEntryRuntime {
@@ -397,6 +403,23 @@ impl JsCodeModeRuntime for TwoEntryRuntime {
             }
         }
     }
+
+    /// The default check before and after the step, with this runtime's own cancel of the root
+    /// after the calls of `cancel_at_entry` ran.
+    fn run_step_cancellable(
+        &mut self,
+        step: JsCodeModeStep<'_>,
+        host: &mut dyn JsCodeModeHost,
+        cancel: &StepCancellation,
+    ) -> oneiron::Result<JsCodeModeStepOutcome> {
+        cancel.check()?;
+        let outcome = self.run_step(step, host);
+        if self.cancel_at_entry == Some(self.entry) {
+            cancel.cancel();
+        }
+        cancel.check()?;
+        outcome
+    }
 }
 
 fn run_turn<R: JsCodeModeRuntime>(
@@ -457,6 +480,7 @@ impl Fixture {
             three_call,
             failures: Vec::new(),
             result_answers: Vec::new(),
+            cancel_at_entry: None,
         };
         Self {
             _dir,
@@ -1081,6 +1105,62 @@ fn refire_then_dependent_change_parks_with_the_refire_kept() {
     assert!(
         asks.iter().any(|(_, seen, acked)| *seen && *acked),
         "the clear marks the old ask seen and acked",
+    );
+}
+
+/// #7961 review 2: a root cancelled after a refire's live write still keeps that write's row. The
+/// pass parks with its live rows and its recorded tail, and the entry fails on the cancel. Red at
+/// the head before the fix: the cancel returns before the park, so the record keeps the parked
+/// put at seq 1, not the one that fired.
+#[test]
+fn cancel_after_a_refire_keeps_the_refired_row() {
+    let mut fixture = Fixture::open_three_call(Variant::EffectChanged);
+    fixture.park(&[0, 1, 2]);
+    let parked_row = fixture.recorded_request(1);
+    let held = fixture
+        .reenter()
+        .expect_err("the effect-changed step holds");
+    assert!(
+        divergence_line(&held).is_some(),
+        "the hold carries its report"
+    );
+    assert_eq!(
+        answer(&fixture, "refire"),
+        Some("refire_released".to_owned()),
+    );
+    fixture.runtime.cancel_at_entry = Some(fixture.runtime.entry + 1);
+    cancellable_root_for_next_unbound_loop();
+    let error = fixture.reenter().expect_err("the cancelled entry fails");
+    assert!(
+        matches!(
+            error,
+            EngineExecutorError::Engine(oneiron::Error::Code(CodeError::CodeStepCancelled))
+        ),
+        "the entry fails on the cancel: {error:?}",
+    );
+    assert!(
+        fixture
+            .vault
+            .get_claim(&fixture.runtime.new_claim)
+            .expect("a claim read")
+            .is_some(),
+        "the refire's put fired",
+    );
+    let record = fixture
+        .vault
+        .get_code_run_replay_record(&fixture.run_id)
+        .expect("the record reads")
+        .expect("the record is present");
+    let pending = record
+        .pending_step
+        .as_ref()
+        .expect("the cancelled pass parks pending");
+    assert_eq!(pending.step_seq, 0);
+    assert_eq!(record.bridge_calls.len(), 3);
+    assert_eq!(record.bridge_calls[1].seq, 1);
+    assert_ne!(
+        record.bridge_calls[1].request, parked_row,
+        "the record keeps the put that fired at seq 1, not the parked one",
     );
 }
 
