@@ -50,6 +50,34 @@
   transform: rotate(180deg);
 }
 
+/* A vault's mark: a 22 px square at the left of its row, holding the
+   vault's initial or its logo. With marks, the plus of `new vault` sits
+   in the marks' column. */
+.sl-vault-switch-menu[data-marks] .sl-menu-item-icon {
+  width: 22px;
+}
+
+.sl-vault-switch-mark {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  overflow: hidden;
+  border-radius: var(--sl-radius);
+  font-size: var(--sl-t-do);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.sl-vault-switch-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  outline: 1px solid var(--sl-image-line);
+  outline-offset: -1px;
+}
+
 /* A vault row: the name, a quieter word, then the ring and count, then the pick. */
 .sl-vault-switch-item-name {
   flex: none;

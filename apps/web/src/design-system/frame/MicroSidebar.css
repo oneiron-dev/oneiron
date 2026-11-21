@@ -90,10 +90,23 @@
   height: 20px;
 }
 
-/* By day the ground is a deep tone: a resident's line glyph prints in the
-   ground's ink like every other symbol; by night it keeps its own. */
-.sl-micro-sidebar .sl-glyph-line {
+/* A face (a 28 px Glyph) fills the item's mark: the 40 px square holds
+   it with 6 px around. */
+.sl-micro-item-mark:has(> .sl-glyph[data-size="28"]) {
+  width: 28px;
+  height: 28px;
+}
+
+/* By day the ground is a deep tone: a resident's line glyph, and a
+   seal's print and frame, print in the ground's ink like every other
+   symbol; by night they keep their own. */
+.sl-micro-sidebar .sl-glyph-line,
+.sl-micro-sidebar .sl-glyph-print {
   color: light-dark(var(--sl-micro-ink), var(--sl-glyph-ink, var(--sl-micro-ink)));
+}
+
+.sl-micro-sidebar .sl-glyph[data-kind="resident"][data-form="seal"] {
+  border-color: color-mix(in srgb, var(--sl-micro-ink) 55%, transparent);
 }
 
 /* The vault's mark: a 26 px square of the ink at 22 %, the initial in the
@@ -140,11 +153,16 @@
   text-align: center;
 }
 
-/* The waiting ring sits at the top corner; under a count, at the bottom. */
+/* The waiting ring sits at the top corner; under a count, at the bottom.
+   It prints in the ground's ink: this rule outranks the status dot's own
+   waiting ring, which takes the sheet's first ink (dark by day). */
 .sl-micro-item-needs {
   position: absolute;
   top: -3px;
   right: -4px;
+}
+
+.sl-micro-item .sl-micro-item-needs[data-state] {
   box-shadow: inset 0 0 0 1.5px var(--sl-micro-ink);
 }
 

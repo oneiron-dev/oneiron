@@ -4,6 +4,7 @@ import { Figure } from '../primitives/Figure'
 import { flatThemeTones } from '../ground/root-theme'
 import { soundPress } from '../lib/press'
 import { cx } from '../lib/react-utils'
+import { pagePicture } from '../lib/scene'
 import { useResolvedScheme } from '../lib/scheme'
 import { SCENE_STAND_IN_COLOUR, type Theme } from '../lib/theme'
 
@@ -24,7 +25,7 @@ export interface VaultRowProps extends Omit<React.ComponentPropsWithRef<'button'
    show the vault's theme behind the list. */
 export function VaultRow({ theme, name, runs, waiting = 0, className, type = 'button', onClick, ...props }: VaultRowProps) {
   const scheme = useResolvedScheme()
-  const scene = theme.kind === 'scene' && scheme ? (scheme === 'dark' ? theme.night : theme.day) : null
+  const scene = pagePicture(theme, scheme)
   const flat = flatThemeTones(theme.kind === 'flat' ? theme.colour : SCENE_STAND_IN_COLOUR)
   const picture: React.CSSProperties = scene
     ? { backgroundImage: `url(${JSON.stringify(scene)})` }

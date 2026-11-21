@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { bayerThreshold } from '../lib/dither'
 import { cx, mergeRefs } from '../lib/react-utils'
-import { readScene, type SceneReading } from '../lib/scene'
+import { pagePicture, readScene, type SceneReading } from '../lib/scene'
 import { useResolvedScheme } from '../lib/scheme'
 import { hexToRgb } from '../lib/theme'
 import { useRootTheme } from './root-theme'
@@ -67,7 +67,7 @@ export function WindowGround({ ref, className, ...props }: WindowGroundProps) {
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null)
   const [printed, setPrinted] = React.useState<string | null>(null)
   const { theme } = root
-  const url = theme.kind === 'scene' && scheme ? (scheme === 'dark' ? theme.night : theme.day) : null
+  const url = pagePicture(theme, scheme)
   const tones = scheme === 'dark' ? root.night : root.day
   const canPrint = url !== null && root.sceneRead
   const inkA = tones.groundA

@@ -21,3 +21,25 @@ export function atScrollEnd(box: ScrollBox, slack = PLACE_END_SLACK_PX): boolean
 export function followScrollEnd(wasAtEnd: boolean, box: ScrollBox): number | null {
   return wasAtEnd ? Math.max(0, box.scrollHeight - box.clientHeight) : null
 }
+
+/* Whether the body is at its end after a scroll event. A scroll event is
+   read a frame after the scroll that caused it, so its geometry can be
+   newer than the scroll: the body sets its own scrollTop to the end, the
+   content then grows (a chart that measures its width, a pane that lies
+   over the room and widens the column), and the event reads a gap under
+   the content that no person made. Only a scroll on unchanged geometry
+   that moved the position is the person's; any other keeps what the body
+   knew. `measured` is the geometry the body last read or set. */
+export function endAfterScroll(wasAtEnd: boolean, box: ScrollBox, measured: ScrollBox | null, slack = PLACE_END_SLACK_PX): boolean {
+  if (measured) {
+    const layoutChanged = box.scrollHeight !== measured.scrollHeight || box.clientHeight !== measured.clientHeight
+    const moved = Math.abs(box.scrollTop - measured.scrollTop) >= 1
+    if (layoutChanged || !moved) return wasAtEnd
+  }
+  return atScrollEnd(box, slack)
+}
+
+/* The three numbers of a box, copied. */
+export function readScrollBox(box: ScrollBox): ScrollBox {
+  return { scrollTop: box.scrollTop, clientHeight: box.clientHeight, scrollHeight: box.scrollHeight }
+}

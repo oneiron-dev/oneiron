@@ -18,6 +18,15 @@ export interface BarRange {
   label: string
 }
 
+/* The format of the value labels: the caller's function, else a fixed
+   number of digits after the point (data without a function can say how
+   many), else the number as it is. A function wins over digits. */
+export function barValueFormat(formatValue?: (value: number) => string, decimals?: number): (value: number) => string {
+  if (formatValue) return formatValue
+  if (decimals !== undefined && Number.isInteger(decimals) && decimals >= 0 && decimals <= 20) return (value) => value.toFixed(decimals)
+  return String
+}
+
 export interface BarChartInput {
   series: readonly BarPeriod[]
   /* The first n periods are measured; the rest are a forecast. */

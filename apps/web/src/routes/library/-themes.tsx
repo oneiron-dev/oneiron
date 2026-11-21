@@ -14,6 +14,16 @@ export const FIELD_SCENE: Theme = {
 
 export const GALLERY_THEMES: Theme[] = [...THEMES, FIELD_SCENE]
 
+/* A scene whose pictures sit on another host: the library never asks for
+   them, and the ground keeps the scene's stand-in colour. */
+const ELSEWHERE_SCENE: Theme = {
+  id: 'elsewhere',
+  label: 'elsewhere',
+  kind: 'scene',
+  day: 'https://elsewhere.example/field-day.png',
+  night: 'https://elsewhere.example/field-night.png',
+}
+
 /* Each theme's window ground on a small stage, its name in the ground ink. */
 export function WindowGroundSection() {
   return (
@@ -26,6 +36,12 @@ export function WindowGroundSection() {
           </SafelightRoot>
         </Specimen>
       ))}
+      <Specimen name="a scene with its pictures on another host: not fetched, the stand-in colour">
+        <SafelightRoot theme={ELSEWHERE_SCENE} className="lib-ground-stage" data-specimen="ground-elsewhere">
+          <WindowGround />
+          <span className="lib-ground-word">{ELSEWHERE_SCENE.label}</span>
+        </SafelightRoot>
+      </Specimen>
     </Section>
   )
 }

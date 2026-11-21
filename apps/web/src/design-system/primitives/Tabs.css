@@ -94,11 +94,25 @@
   background: var(--sl-rule);
 }
 
+/* A list with the add action: the row takes the room the line gives and is
+   what the fold measures; the list keeps its content's width, so the add
+   follows the last pin, outside the tablist. */
+.sl-tabs-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.sl-tabs-row > .sl-tabs-list {
+  flex: none;
+}
+
 .sl-tabs-add {
   align-self: center;
   width: 28px;
   height: 28px;
-  margin-left: -10px;
+  margin-left: 10px;
   color: var(--sl-ink-3);
 }
 
@@ -114,6 +128,7 @@
 }
 
 .sl-tabs-list[data-folded] > [data-pin-part],
+.sl-tabs-row[data-folded] > [data-pin-part],
 .sl-tabs-list:not([data-folded]) > .sl-tab-fold {
   display: none;
 }

@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { cx, mergeRefs, useIsomorphicLayoutEffect } from '../lib/react-utils'
-import { barChartLayout, valueLabelBaseline, type BarPeriod, type BarRange } from './bar-chart-layout'
+import { barChartLayout, barValueFormat, valueLabelBaseline, type BarPeriod, type BarRange } from './bar-chart-layout'
 
 /* The width the chart lays out in before it is measured. */
 const DEFAULT_WIDTH_PX = 600
@@ -57,7 +57,11 @@ export interface BarChartProps extends Omit<React.ComponentPropsWithRef<'figure'
   compareLabel?: string
   /* The chart's accessible name: what it shows, in one sentence. */
   ariaLabel: string
+  /* The value labels' format. */
   formatValue?: (value: number) => string
+  /* Digits after the point on the value labels, for data that carries no
+     function; formatValue wins when both are given. */
+  decimals?: number
 }
 
 /* Amounts per period as bars from zero, in ink tones only: a measured bar
@@ -77,10 +81,12 @@ export function BarChart({
   forecastLabel,
   compareLabel,
   ariaLabel,
-  formatValue = String,
+  formatValue: formatValueProp,
+  decimals,
   className,
   ...props
 }: BarChartProps) {
+  const formatValue = barValueFormat(formatValueProp, decimals)
   const rootRef = React.useRef<HTMLElement | null>(null)
   const [width, setWidth] = React.useState(DEFAULT_WIDTH_PX)
   const [hover, setHover] = React.useState<number | null>(null)

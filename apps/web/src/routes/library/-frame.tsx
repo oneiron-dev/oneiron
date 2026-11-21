@@ -32,6 +32,10 @@ import {
   Verb,
   WindowGround,
   Figure,
+  THEMES,
+  DAY_GROUND_INK,
+  Tooltip,
+  useMicroSidebarPeek,
   type ActivityAge,
   type ActivityKind,
   type NeedsYouAnswerRecord,
@@ -65,6 +69,18 @@ const VAULTS: VaultSwitchVault[] = [
   { id: 'owen', name: 'owen', caption: 'yours', needsYou: 2 },
   { id: 'acme', name: 'acme', caption: 'a guest slice', needsYou: 1 },
 ]
+
+/* A vault's mark for the switch: its initial in the ground's day ink on
+   its theme's colour. */
+function VaultInitial({ name, colour }: { name: string; colour: string }) {
+  return (
+    <span className="lib-vault-initial" style={{ background: colour, color: DAY_GROUND_INK }}>
+      {name.slice(0, 1).toLocaleUpperCase()}
+    </span>
+  )
+}
+
+const VAULTS_MARKED: VaultSwitchVault[] = VAULTS.map((v, i) => ({ ...v, mark: <VaultInitial name={v.name} colour={THEMES[i % THEMES.length].colour} /> }))
 
 function ThemeItems() {
   const [theme, setTheme] = React.useState<Theme | null>(null)
@@ -121,13 +137,24 @@ function AccountParts() {
   )
 }
 
-function VaultSwitchDemo({ defaultOpen = false, specimen }: { defaultOpen?: boolean; specimen?: string }) {
+function VaultSwitchDemo({
+  defaultOpen = false,
+  marks = false,
+  heading,
+  specimen,
+}: {
+  defaultOpen?: boolean
+  marks?: boolean
+  heading?: string | null
+  specimen?: string
+}) {
   const [current, setCurrent] = React.useState('antevon')
   const [made, setMade] = React.useState(0)
   return (
     <div className="lib-stack">
       <VaultSwitch
-        vaults={VAULTS}
+        vaults={marks ? VAULTS_MARKED : VAULTS}
+        heading={heading}
         currentId={current}
         onSwitch={setCurrent}
         onCreate={() => setMade((n) => n + 1)}
@@ -792,6 +819,61 @@ function sidebarFor(id: string, specimen: string): React.ReactNode | null {
   }
 }
 
+/* A strip item the gallery builds itself, as an app does for a place with
+   a symbol of its own: the library's item classes, a tooltip with a
+   caption (or the word under the symbol), and the frame's peek through
+   useMicroSidebarPeek. */
+function OwnPlaceItem({
+  id,
+  icon,
+  label,
+  caption,
+  current,
+  word,
+  onClick,
+}: {
+  id: string
+  icon: React.ReactNode
+  label: string
+  caption?: string
+  current: boolean
+  word: boolean
+  onClick: () => void
+}) {
+  const peek = useMicroSidebarPeek(id)
+  const control = (
+    <button
+      type="button"
+      className="sl-micro-item-control"
+      aria-label={label}
+      aria-current={current ? 'page' : undefined}
+      data-current={current ? '' : undefined}
+      onKeyDown={peek.onControlKeyDown}
+      onClick={onClick}
+    >
+      <span className="sl-micro-item-mark" aria-hidden="true">
+        {icon}
+      </span>
+      {word ? (
+        <span className="sl-micro-item-word" aria-hidden="true">
+          {label}
+        </span>
+      ) : null}
+    </button>
+  )
+  return (
+    <div className="sl-micro-item" {...peek.itemProps}>
+      {word ? (
+        control
+      ) : (
+        <Tooltip label={label} caption={caption} side="right" disabled={peek.peeking}>
+          {control}
+        </Tooltip>
+      )}
+    </div>
+  )
+}
+
 /* A whole microsidebar on fixture data: the vault's mark (home), activity
    with its count, the vault, more; the divider; the pinned lenses (they
    reorder and unpin); the person at the foot. Alone, it stands on a
@@ -818,9 +900,17 @@ export function MicroSidebarDemo({
   )
   const strip = (
     <MicroSidebar labels={labels} aria-label={`places, ${labels ?? 'symbols'}`} data-specimen={specimen}>
-      <MicroSidebar.VaultMark name="antevon" current={current === 'home'} onClick={() => onCurrent('home')} />
+      <MicroSidebar.VaultMark name="antevon" caption="home" current={current === 'home'} onClick={() => onCurrent('home')} />
       {item('activity', 'activity', <Icon name="activity" />, { count: 3, needsYou: waiting })}
-      {item('vault', 'vault', <Icon name="vault" />)}
+      <OwnPlaceItem
+        id="vault"
+        icon={<Icon name="vault" />}
+        label="vault"
+        caption="ledger and settings"
+        word={labels === 'word'}
+        current={current === 'vault'}
+        onClick={() => onCurrent('vault')}
+      />
       <MicroSidebar.More current={MORE_PLACES.some((m) => m.id === current) && !pinned.includes(current)}>
         {MORE_PLACES.map((m) => (
           <MicroSidebar.MoreItem
@@ -884,6 +974,48 @@ export function MicroSidebarDemo({
         </p>
       ) : null}
     </>
+  )
+}
+
+/* A short strip on the window ground for the parts a caller builds on:
+   the companion's 28 px face with a caption, an item that waits on the
+   person with no count (the ring at its top corner), and the person's
+   menu, whose head line carries an icon action that keeps the menu's inks
+   by day. */
+function MicroSidebarParts({ specimen }: { specimen: string }) {
+  return (
+    <div className="lib-micro-demo">
+      <div className="lib-micro-stage" data-height="short">
+        <WindowGround />
+        <MicroSidebar aria-label="places, parts" data-specimen={specimen}>
+          <MicroSidebar.VaultMark name="antevon" />
+          <MicroSidebar.Item
+            id="parts-eiri"
+            icon={<Glyph glyph="wing" label="Eiri" size={28} ink={EIRI.ink} />}
+            label="eiri"
+            caption="your companion"
+            data-specimen={`${specimen}-face`}
+          />
+          <MicroSidebar.Item id="parts-activity" icon={<Icon name="activity" />} label="activity" needsYou data-specimen={`${specimen}-waiting`} />
+          <MicroSidebar.Foot>
+            <Menu>
+              <Menu.Trigger asChild>
+                <MicroSidebar.Item id="parts-you" icon={<Glyph initial="o" label="Owen" size={24} />} label="Owen" data-specimen={`${specimen}-you`} />
+              </Menu.Trigger>
+              <Menu.Content side="right" align="end" aria-label="account" data-specimen={`${specimen}-menu`}>
+                <Menu.Line icon={<Glyph initial="o" label="Owen" size={18} />}>
+                  Owen
+                  <IconAction label="Account settings" role="menuitem" tabIndex={-1} className="lib-menu-line-action" data-specimen={`${specimen}-menu-action`}>
+                    <Icon name="gear" />
+                  </IconAction>
+                </Menu.Line>
+                <Menu.Item icon={<Icon name="signOut" />}>sign out</Menu.Item>
+              </Menu.Content>
+            </Menu>
+          </MicroSidebar.Foot>
+        </MicroSidebar>
+      </div>
+    </div>
   )
 }
 
@@ -1235,8 +1367,11 @@ export function FrameSections() {
         <Specimen name="closed">
           <VaultSwitchDemo />
         </Specimen>
-        <Specimen name="open: vaults, a new vault, then the account" tall={6} wide={1}>
-          <VaultSwitchDemo defaultOpen specimen="vault-switch" />
+        <Specimen name="open: vaults with their marks, a new vault, then the account" tall={6} wide={1}>
+          <VaultSwitchDemo defaultOpen marks specimen="vault-switch" />
+        </Specimen>
+        <Specimen name="no heading over the vaults (heading null)">
+          <VaultSwitchDemo marks heading={null} specimen="vault-switch-bare" />
         </Specimen>
       </Section>
 
@@ -1348,6 +1483,12 @@ export function FieldSections({ children }: { children?: React.ReactNode }) {
           <figure className="lib-field-specimen">
             <MicroSidebarAlone labels="word" waiting specimen="micro-word" />
             <figcaption className="lib-field-caption">labels word: a word of at most eight letters under each symbol; activity waits on you</figcaption>
+          </figure>
+          <figure className="lib-field-specimen">
+            <MicroSidebarParts specimen="micro-parts" />
+            <figcaption className="lib-field-caption">
+              a caller’s parts: activity waits on you with no count, the ring at its top corner in the ground’s ink; the person’s menu has an icon action on its head line, in the menu’s inks
+            </figcaption>
           </figure>
         </div>
       </section>

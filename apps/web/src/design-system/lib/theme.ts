@@ -25,6 +25,45 @@ export const DEFAULT_THEME: Theme = THEMES[0]
    default theme's, so a scene's first paint is a flat ground. */
 export const SCENE_STAND_IN_COLOUR: string = THEMES[0].colour
 
+/* ── where a scene's pictures may come from ───────────────────────────── */
+
+/* A theme can arrive from a vault or from an agent. A picture on another
+   host would report each opening of the vault to that host, so a scene's
+   picture is drawn only from the page's own origin (a relative path, an
+   absolute path, or the same origin written in full), a `data:` address
+   or a `blob:` address. `pageAddress` is the page's full address; the
+   origin is compared by scheme and host, so it holds for an app page
+   whose scheme has no web origin (a desktop shell). */
+export function sceneAddressAllowed(address: string, pageAddress: string): boolean {
+  const text = address.trim()
+  if (!text) return false
+  const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(text)?.[1]?.toLowerCase()
+  if (scheme === 'data' || scheme === 'blob') return true
+  let page: URL
+  let url: URL
+  try {
+    page = new URL(pageAddress)
+    url = new URL(text, page)
+  } catch {
+    return false
+  }
+  return url.protocol === page.protocol && url.host === page.host && url.host !== ''
+}
+
+export interface ScenePictures {
+  day: string
+  night: string
+}
+
+/* A scene's two pictures when both may be drawn on the page; null for a
+   flat theme, and for a scene with a picture from elsewhere, which then
+   keeps its stand-in colour. */
+export function scenePictures(theme: Theme, pageAddress: string | null): ScenePictures | null {
+  if (theme.kind !== 'scene' || pageAddress === null) return null
+  if (!sceneAddressAllowed(theme.day, pageAddress) || !sceneAddressAllowed(theme.night, pageAddress)) return null
+  return { day: theme.day, night: theme.night }
+}
+
 /* ── conversions ──────────────────────────────────────────────────────── */
 
 /* Lightness 0 to 1, chroma from 0, hue in degrees from 0 up to 360. */
