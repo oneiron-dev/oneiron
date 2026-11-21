@@ -839,6 +839,17 @@ pub(crate) fn stage_machine_birth_after_candidate(
             vad: oneiron_contracts::affect::Vad::NEUTRAL,
         });
     }
+    // The rows this writes, for the live windows' post-commit mirror: a
+    // window's export drops a MACHINE claim whose history controls it lacks
+    // (review 10145 round 1; FIX CLAIM-RAW-TXN-DOORS-DROP-LIVE-WINDOW-ROWS).
+    #[cfg(feature = "sync")]
+    let written: std::collections::BTreeSet<EntityId> = ops
+        .iter()
+        .filter_map(|op| match op {
+            crate::batch::BatchOp::Put { id, .. } => Some(*id),
+            _ => None,
+        })
+        .collect();
     // Same txn, no second writer. A failure rolls back both controls and the
     // staged candidate, including their projection indexes.
     crate::batch::apply_ops_with_gate_mode(
@@ -850,6 +861,8 @@ pub(crate) fn stage_machine_birth_after_candidate(
         text_index_trusted,
         crate::batch::ApplyOpsGateMode::new(false, false),
     )?;
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows_in_txn(store, txn, written);
     let local_pin = super::ClaimHistoryHandoffPin {
         vault_id: &vault_id,
         genesis_hash: &vault_id,

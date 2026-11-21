@@ -115,6 +115,10 @@ pub use self::program::{
     TurnProgramAdmissionRequest, TurnProgramAdmissionView, TurnProgramOwedWakeItem,
     program_checkpoint, program_run, settled_program_step, turn_program_admission,
 };
+// FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY: the paused programs of a vault copy.
+pub use self::program::{
+    PausedTurnProgramItem, PausedTurnProgramsRequest, PausedTurnProgramsView, paused_turn_programs,
+};
 // FIX 5880: the owner's release of a held turn program.
 pub use self::program::{
     PROGRAM_HOLD_RELEASE_VERB, ProgramHoldReleaseAction, ProgramHoldReleaseView,

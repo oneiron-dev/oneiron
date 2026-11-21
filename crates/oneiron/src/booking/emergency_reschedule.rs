@@ -337,10 +337,13 @@ mod execution;
 mod pick;
 mod planning;
 pub(crate) mod setting_keys;
+mod uncertain_send;
 
 use enumeration::enumerate_with_refusals;
 pub use enumeration::{AffectedBooking, enumerate_affected_bookings};
-pub use execution::execute_emergency_plan;
+pub use execution::{
+    EMERGENCY_REPEAT_NOTICE, EmergencyExecution, EmergencyRepeatNotice, execute_emergency_plan,
+};
 pub use pick::{EmergencyPick, counterparty_pick};
 pub(crate) use pick::{verify_pick_blob, verify_pick_invite_in};
 use planning::blob_id;

@@ -344,6 +344,7 @@ pub(super) fn single_owner_state(
         root_anchors: Default::default(),
         anchor_entries: Default::default(),
         host_custody_keys: Default::default(),
+        recovery_authority_keys: Default::default(),
         worlds: Default::default(),
         refused_world_edits: Default::default(),
         grant_travel: Default::default(),
