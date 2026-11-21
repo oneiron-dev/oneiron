@@ -4,7 +4,9 @@
 //! tests: a machine that holds none of the old home's node-local booking
 //! rows, a move of the booking sections from one vault to another as the
 //! carrier runs it, the old home's writer once the new home acknowledged that
-//! move, and a read of whether a node-local booking row holds some bytes.
+//! move, and a read of whether a node-local booking row holds some bytes. A
+//! machine also holds none of the old home's outbound send ledger (FIX
+//! [BK-EMERGENCY-UNCERTAIN-SEND-NOT-SHOWN-TO-OWNER]).
 
 use crate::side_table::{self, SideTableDbs, SideTableDecl};
 use crate::sync::home_handoff::{
@@ -15,9 +17,10 @@ use crate::{EntityId, Result, Vault};
 
 /// The node-local booking declarations: the tokens, leases, deposits,
 /// provider events and emergency picks; the holds; the receipts; the
-/// emergency instructions, plans and checkpoints, and the three lookups those
-/// rows rebuild (no section of their own).
-const BOOKING_ROWS: [&SideTableDecl; 9] = [
+/// emergency instructions, plans and checkpoints, the three lookups those
+/// rows rebuild and the checkpoints' uncertain-send marks (no section of
+/// their own).
+const BOOKING_ROWS: [&SideTableDecl; 10] = [
     &side_table::BOOKING_TOKEN,
     &side_table::BOOKING_HOLD,
     &side_table::BOOKING_LIFECYCLE_RECEIPT,
@@ -27,6 +30,28 @@ const BOOKING_ROWS: [&SideTableDecl; 9] = [
     &side_table::EMERGENCY_REQUEST_PLAN_INDEX,
     &side_table::EMERGENCY_PENDING_EVENT_LOOKUP,
     &side_table::EMERGENCY_EFFECT_LOOKUP,
+    &side_table::EMERGENCY_UNCERTAIN_SEND,
+];
+
+/// The node-local outbound send state: the intent ledger with its attempt
+/// index, accounting, parties, settlements and remote tasks, and the dispatch
+/// chokepoint's dedupe rows. No move and no sync carries it: each node's
+/// ledger names only the sends that node made. The attempt format marker
+/// stays, as on any node.
+const OUTBOUND_ROWS: [&SideTableDecl; 13] = [
+    &side_table::OUTBOUND_INTENT_ACCOUNTING,
+    &side_table::OUTBOUND_INTENT_ATTEMPT_INDEX,
+    &side_table::OUTBOUND_INTENT_LATE_RECIPIENT,
+    &side_table::OUTBOUND_INTENT_LEDGER_RECORD,
+    &side_table::OUTBOUND_INTENT_PARTY,
+    &side_table::OUTBOUND_INTENT_PARTY_OF,
+    &side_table::OUTBOUND_INTENT_SETTLEMENT,
+    &side_table::OUTBOUND_INTENT_UNAVAILABLE,
+    &side_table::OUTBOUND_REMOTE_TASK_INPUT,
+    &side_table::OUTBOUND_REMOTE_TASK_POLL,
+    &side_table::OUTBOUND_REMOTE_TASK_SESSION_END,
+    &side_table::OUTBOUND_DEDUPE_RESERVATION,
+    &side_table::OUTBOUND_DEDUPE_INTENT,
 ];
 
 /// Deletes every row of the node-local booking declarations in `vault`: a
@@ -38,8 +63,24 @@ const BOOKING_ROWS: [&SideTableDecl; 9] = [
 ///
 /// Store errors.
 pub fn drop_node_local_booking_rows(vault: &Vault) -> Result<()> {
+    drop_rows(vault, &BOOKING_ROWS)
+}
+
+/// Deletes every row of the node-local outbound send state in `vault`: a
+/// machine that never made another machine's sends, so a send the old home
+/// made is not one the new home already recorded.
+///
+/// # Errors
+///
+/// Store errors.
+pub fn drop_node_local_outbound_rows(vault: &Vault) -> Result<()> {
+    drop_rows(vault, &OUTBOUND_ROWS)
+}
+
+/// Deletes every row of `decls` in `vault`, in one writer.
+fn drop_rows(vault: &Vault, decls: &[&SideTableDecl]) -> Result<()> {
     vault.with_write_txn(|txn| {
-        for decl in BOOKING_ROWS {
+        for decl in decls {
             let suffixes = decl
                 .iter_raw(vault, txn)?
                 .map(|row| row.map(|(suffix, _)| suffix))

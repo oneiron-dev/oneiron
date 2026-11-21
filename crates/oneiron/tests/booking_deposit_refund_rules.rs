@@ -885,7 +885,8 @@ fn an_owner_emergency_cancel_gives_the_whole_deposit_back() {
             &fixture.consumer(NOW + 90),
             &mut DeliveringSink,
         )
-        .expect("the owner's emergency cancel commits");
+        .expect("the owner's emergency cancel commits")
+        .item;
         assert!(item.calendar_delivered && item.apology_delivered);
     }
 

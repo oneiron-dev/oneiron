@@ -16,6 +16,7 @@ use crate::booking::emergency_reschedule::lookup::{self, EFFECT, PENDING_EVENT};
 use crate::booking::emergency_reschedule::planning::{
     EMERGENCY_ITEM_META_PREFIX, EmergencyItem, ITEM,
 };
+use crate::booking::emergency_reschedule::uncertain_send::{self, UNCERTAIN_SEND, owed_effects};
 use crate::booking::emergency_reschedule::{EmergencyLocalBasis, EmergencyPick, state};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -46,9 +47,11 @@ struct CarriedItem {
     calendar_delivered: bool,
     apology_delivered: bool,
     picked: Option<PickFacts>,
-    /// The owed effects whose send ended uncertain on the old home: it may have reached the
-    /// booker, so the new home's send may repeat it (Engine ANSWER
-    /// BK-EMERGENCY-PENDING-ITEM-MOVE = A: the move names that case).
+    /// The owed effects whose send ended uncertain on the old home, or on a home before it: it
+    /// may have reached the booker, so the new home's send may repeat it (Engine ANSWER
+    /// BK-EMERGENCY-PENDING-ITEM-MOVE = A: the move names that case). The new home keeps them
+    /// as the checkpoint's side row, and the owner's run that delivers one says so
+    /// (`super::super::uncertain_send`; ANSWER BK-EMERGENCY-UNCERTAIN-SEND-RECEIPT = A).
     uncertain_lanes: Vec<String>,
     /// Whether the old home's pending-event lookup names this item: the one whose revision its
     /// fence holds (`state::pending_effect_fences_in`), which the new home's lookup names again.
@@ -67,11 +70,13 @@ struct PickFacts {
     content_hash: [u8; 32],
 }
 
-/// The checkpoint table and the pending-event and effect lookups its rows rebuild.
-const ITEM_DECLS: [&SideTableDecl; 3] = [
+/// The checkpoint table, the pending-event and effect lookups its rows rebuild, and the
+/// checkpoints' uncertain-send marks.
+const ITEM_DECLS: [&SideTableDecl; 4] = [
     &side_table::EMERGENCY_ITEM,
     &side_table::EMERGENCY_PENDING_EVENT_LOOKUP,
     &side_table::EMERGENCY_EFFECT_LOOKUP,
+    &side_table::EMERGENCY_UNCERTAIN_SEND,
 ];
 
 /// The longest one outbound transport call runs before its sink answers: the served sink's
@@ -83,26 +88,6 @@ const ITEM_DECLS: [&SideTableDecl; 3] = [
 /// passes its `now_utc` seconds as the dispatch's `occurred_at`, which the outbound ledger
 /// keeps as the row's `updated_ms` (review round 2 of #10109).
 const MID_CALL_BOUND_SECS: u64 = 60;
-
-/// The effects `item` still owes, each as its lane and the content hash its intent is keyed by
-/// (`super::super::lookup`'s `index_item_in` spells the same three).
-fn owed_effects(item: &EmergencyItem) -> Vec<(&'static str, [u8; 32])> {
-    let mut owed = Vec::new();
-    if !item.calendar_delivered && item.plan.payload.is_some() {
-        owed.push(("calendar", item.plan.content_hash));
-    }
-    if !item.apology_delivered {
-        owed.push(("apology", item.plan.content_hash));
-    }
-    if let Some(picked) = item
-        .picked
-        .as_ref()
-        .filter(|picked| !picked.calendar_delivered)
-    {
-        owed.push(("pick", picked.content_hash));
-    }
-    owed
-}
 
 /// This node's outbound ledger row of `item`'s effect on `lane`, if any. A row that does not
 /// read as a ledger row is none: only a store failure is an error.
@@ -143,8 +128,8 @@ fn uncertain_lanes(
     txn: &RoTxn<'_>,
     item: &EmergencyItem,
     now: u64,
-) -> Result<Vec<String>> {
-    let mut uncertain = Vec::new();
+) -> Result<BTreeSet<String>> {
+    let mut uncertain = BTreeSet::new();
     for (lane, hash) in owed_effects(item) {
         let Some(record) = ledger_record(vault, txn, item, lane, hash)? else {
             continue;
@@ -161,7 +146,7 @@ fn uncertain_lanes(
                 } | IntentResolution::Deferred)
             )
         {
-            uncertain.push(lane.to_owned());
+            uncertain.insert(lane.to_owned());
         }
     }
     Ok(uncertain)
@@ -237,7 +222,10 @@ impl HomeTable for EmergencyItemRows {
         let mut actors = Vec::new();
         for (key, item) in ITEM.scan(&vault.store, txn)? {
             let item = with_ledger_deliveries(vault, txn, item)?;
-            let uncertain = uncertain_lanes(vault, txn, &item, now)?;
+            // This node's own uncertain sends, and those an earlier move carried here that this
+            // node has not delivered since.
+            let mut uncertain = uncertain_lanes(vault, txn, &item, now)?;
+            uncertain.extend(uncertain_send::carried_lanes_in(vault, txn, &key, &item)?);
             let pending_pointer = PENDING_EVENT
                 .get(&vault.store, txn, &item.calendar.event_ref)?
                 .is_some_and(|target| target == full_key(EMERGENCY_ITEM_META_PREFIX, &key));
@@ -286,7 +274,7 @@ impl HomeTable for EmergencyItemRows {
                 calendar_delivered,
                 apology_delivered,
                 picked,
-                uncertain_lanes: uncertain,
+                uncertain_lanes: uncertain.into_iter().collect(),
                 pending_pointer,
             });
         }
@@ -342,7 +330,6 @@ impl HomeTable for EmergencyItemRows {
                 uncertain_lanes,
                 pending_pointer,
             } = carried;
-            uncertain += uncertain_lanes.len();
             let plan = join_plan(plan, &owner, &booker)?;
             check_key(&key, &plan.request, calendar.event_ref)?;
             let picked = match (picked, &owner.pick_organizer, &booker.pick_recipient) {
@@ -377,6 +364,7 @@ impl HomeTable for EmergencyItemRows {
             }
             let item_key = full_key(EMERGENCY_ITEM_META_PREFIX, &key);
             lookup::index_item_in(vault, txn, &item, &item_key).map_err(booking_failure)?;
+            uncertain += uncertain_send::land_in(vault, txn, &key, &item, uncertain_lanes)?;
             if let Some(revision) = lookup::pending_revision(&item) {
                 let rank = (pending_pointer, revision.sequence);
                 let event = item.calendar.event_ref;
@@ -393,6 +381,11 @@ impl HomeTable for EmergencyItemRows {
             for key in ITEM.scan_keys(&vault.store, txn, &[])? {
                 if !landed.contains(&key) {
                     ITEM.delete(&vault.store, txn, &key)?;
+                }
+            }
+            for key in UNCERTAIN_SEND.scan_keys(&vault.store, txn, &[])? {
+                if !landed.contains(&key) {
+                    UNCERTAIN_SEND.delete(&vault.store, txn, &key)?;
                 }
             }
         }
