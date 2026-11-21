@@ -44,6 +44,14 @@ pub const PREDICATE_CALENDAR_STATUS: &str = "calendar.status";
 /// `true` preps the EVENT even when no attendee is outside the house.
 pub const PREDICATE_CALENDAR_PREP_OPT_IN: &str = "calendar.prep_opt_in";
 
+/// A seat's replay proof of the owner's cancelled write of an EVENT that read
+/// a stored copy with no write marker as the owner's own
+/// (BK-ECHO-UNMARKED-SAME-SHAPE-COPY = C): the write's staged SEQUENCE and
+/// the proof's time, recorded by the connector and synced, so the node that
+/// holds the booking's live deposit reads it after a home move
+/// (BK-REPLAY-NOTE-DELIVERY = A). No ICS, href or payment data.
+pub const PREDICATE_CALENDAR_REPLAY_CANCEL_EVIDENCE: &str = "calendar.replay_cancel_evidence";
+
 /// Complete `calendar.*` claim family minted at this layer.
 ///
 /// Membership is an exact table, never a `calendar.` prefix match: an unknown
@@ -67,6 +75,7 @@ pub const CALENDAR_CLAIM_PREDICATES: &[&str] = &[
     PREDICATE_CALENDAR_STATUS,
     PREDICATE_CALENDAR_EVENT_OUTCOME,
     PREDICATE_CALENDAR_PREP_OPT_IN,
+    PREDICATE_CALENDAR_REPLAY_CANCEL_EVIDENCE,
 ];
 
 /// Upper bound for every bounded text field in this family.
@@ -110,7 +119,8 @@ pub struct ClaimClassDescriptorRow {
 
 /// Descriptor rows for the whole `calendar.*` family, one per predicate.
 ///
-/// `calendar.passport` and `calendar.origin` are projector-recorded provenance;
+/// `calendar.passport`, `calendar.origin` and `calendar.replay_cancel_evidence`
+/// are projector-recorded provenance;
 /// every other predicate, including `calendar.status`,
 /// `calendar.event_outcome` and `calendar.prep_opt_in`, is ordinary — an
 /// outcome may be owner-attested and an opt-in is the owner's or an agent's
@@ -123,7 +133,9 @@ pub fn claim_class_descriptors() -> Vec<ClaimClassDescriptorRow> {
         .map(|&predicate| {
             let projector_only = matches!(
                 predicate,
-                PREDICATE_CALENDAR_PASSPORT | PREDICATE_CALENDAR_ORIGIN
+                PREDICATE_CALENDAR_PASSPORT
+                    | PREDICATE_CALENDAR_ORIGIN
+                    | PREDICATE_CALENDAR_REPLAY_CANCEL_EVIDENCE
             );
             ClaimClassDescriptorRow {
                 predicate,

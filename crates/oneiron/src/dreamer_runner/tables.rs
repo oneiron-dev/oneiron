@@ -70,6 +70,14 @@ crate::side_table::side_tables! {
     /// twice. Key: id16.
     COACH_PERSON_CHANGED_READ: VaultMeta b"coach:person_changed_read:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The last nightly retrieval tune's slow-loop status (census L1-18): the review it queued,
+    /// or why it queued none, and the newest run the latest review was queued through. Key: ().
+    COACH_RETRIEVAL_SLOW_LOOP: VaultMeta b"coach:retrieval_slow_loop:v1" Named
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// One slow retrieval loop review's receipt (census L1-18): the proposal, the skill version
+    /// and hub commit it read, and what the engine did with it. Key: id16 (the review attempt).
+    COACH_RETRIEVAL_TUNING_RECEIPT: VaultMeta b"coach:retrieval_tuning_receipt:v1:" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// A hash of the turns the Coach's room upkeep last declared a room's summary from, so an
     /// unchanged room is not declared again. Key: id16 of the room.
     COACH_ROOM_UPKEEP_DECLARED: VaultMeta b"coach:room_upkeep_declared:v1:" Raw
@@ -210,15 +218,9 @@ crate::side_table::side_tables! {
     /// it, the revert. Key: id16 (finding).
     DREAMER_MAINTENANCE_APPLIED: VaultMeta b"dreamer:maintenance:applied:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
-    /// Due-time index of hinted provider-outage parks. Key: u64be(due at) + id16(attempt).
-    DREAMER_OUTAGE_DUE: VaultMeta b"dreamer:outage_due:v1:" Named Engine
-        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// One model seat's durable availability row: whether the seat may take work, its
     /// refusal generation, its latest reset, when it last moved and what moved it. Key: id16.
     MODEL_SEAT_STATE: VaultMeta b"llm:model_seat_state:v1:" Named Engine
-        [restore: not_imaged] [family: not_imaged] [tier: runtime];
-    /// Seats with a reported reset, so the sweep releases what is due. Key: u64be(reset) + id16.
-    MODEL_SEAT_RESET_DUE: VaultMeta b"llm:model_seat_reset_due:v1:" Named Engine
         [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// Seat parks by seat, so one available write wakes every park of its seat. Key: id16 + id16.
     MODEL_SEAT_WAITS: VaultMeta b"llm:model_seat_waits:v1:" Named Engine
@@ -277,6 +279,13 @@ crate::side_table::side_tables! {
     DREAMER_TURN_PROGRAM_ACTOR_ATTEMPT: VaultMeta b"dreamer:turn_program:actor_attempt:v1:"
         Named Engine
         [restore: content] [family: structure] [tier: canonical];
+    /// FIX TURNPROGRAM-ERASE-KEEPS-DECIDED: each decision DREAMER_TURN_PROGRAM_DECIDED_ACTOR names
+    /// an actor for, by that actor, written and deleted with that row; the ARM entry's scrub
+    /// clears it. Key: id16(actor) + id16(turn) + id16(registration).
+    DREAMER_TURN_PROGRAM_ACTOR_DECIDED: VaultMeta b"dreamer:turn_program:actor_decided:v1:"
+        Named Engine
+        // Restore class: the index stands as the decisions it names do (DECIDED).
+        [restore: live] [family: structure] [tier: canonical];
     /// FIX 5774: each owed turn program wake by its waking actor, written and deleted with the
     /// wake. Key: id16(actor) + id16(turn) + id16(registration).
     DREAMER_TURN_PROGRAM_ACTOR_WAKE: VaultMeta b"dreamer:turn_program:actor_wake:v1:"
@@ -306,6 +315,15 @@ crate::side_table::side_tables! {
         // Restore class: FIX 5266: a wake the home decided elsewhere stays decided, as its
         // admission does there.
         [restore: live] [family: structure] [tier: canonical];
+    /// FIX TURNPROGRAM-ERASE-KEEPS-DECIDED: the actor of a decision this machine keeps in
+    /// DREAMER_TURN_PROGRAM_DECIDED, where the row that carried the decision named its actor or the
+    /// wake it consumed here proved it; a decision kept from a row that named none has no row.
+    /// Written in the writer that keeps the decision; the ARM entry's scrub clears it, and none
+    /// is written for an actor erased here. Key: id16(turn) + id16(registration).
+    DREAMER_TURN_PROGRAM_DECIDED_ACTOR: VaultMeta b"dreamer:turn_program:decided_actor:v1:"
+        Named Engine
+        // Restore class: the actor stands as the decision it names does (DECIDED).
+        [restore: live] [family: structure] [tier: canonical];
     /// FIX 5266: a turn program this machine knows was disarmed, and when, so an older window's
     /// arming of it never arms it here again; the ARM entry's scrub clears it.
     /// Key: id16(actor) + id16(registration).
@@ -330,11 +348,6 @@ crate::side_table::side_tables! {
         // Restore class: FIX 7188: an owner Stop's owed abandon works on the outbound ledger, which
         // stands as the live vault holds it; so does what it still owes.
         [restore: live] [family: structure] [tier: canonical];
-    /// Untangle slice 6.8c: each timer turn program's next due time, written and deleted with its
-    /// arming's. Key: u64be(due time) + id16(actor) + id16(registration).
-    DREAMER_TURN_PROGRAM_TIMER_DUE: VaultMeta b"dreamer:turn_program:timer_due:v1:" Named Engine
-        // Restore class: the due index stands as the armings it names do.
-        [restore: live] [family: structure] [tier: canonical];
     /// Untangle slice 6.8c: each idle or feed turn program, by its trigger's kind, written and
     /// deleted with its arming. Key: u8(kind) + id16(actor) + id16(registration).
     DREAMER_TURN_PROGRAM_TRIGGER: VaultMeta b"dreamer:turn_program:trigger:v1:" Named Engine
@@ -350,6 +363,41 @@ crate::side_table::side_tables! {
     /// consumed by its admission. Key: id16(turn) + id16(registration).
     DREAMER_TURN_PROGRAM_WAKE: VaultMeta b"dreamer:turn_program:wake:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
+    /// FIX TURNPROGRAM-LATE-WITHHOLD-DOUBLE-DECIDE: a wake this machine recorded and carried to the
+    /// home as owed: its admission's identity, the window that carries its row, and whether it is
+    /// owed, retracted or released. Written before the window carries the row, deleted with the
+    /// wake. Key: id16(actor) + id16(turn) + id16(registration).
+    DREAMER_TURN_PROGRAM_WAKE_CARRIED: VaultMeta b"dreamer:turn_program:wake_carried:v1:"
+        Named Engine
+        // Restore class: the mark stands as the owed wake it names does.
+        [restore: content] [family: structure] [tier: canonical];
+    /// FIX TURNPROGRAM-LATE-WITHHOLD-DOUBLE-DECIDE: an owed wake this machine took from a window as
+    /// the home, written and deleted with that wake, so it is told from a wake recorded here.
+    /// Key: id16(actor) + id16(turn) + id16(registration).
+    DREAMER_TURN_PROGRAM_WAKE_IMPORTED: VaultMeta b"dreamer:turn_program:wake_imported:v1:"
+        Named Engine
+        // Restore class: the mark stands as the owed wake it names does.
+        [restore: content] [family: structure] [tier: canonical];
+    /// FIX TURNPROGRAM-LATE-WITHHOLD-DOUBLE-DECIDE: a retracted wake this machine released to its
+    /// recording machine as the home: the admission's identity, kept so no window's `Owed` row of
+    /// that wake is taken here again. The ARM entry's scrub clears it.
+    /// Key: id16(actor) + id16(turn) + id16(registration).
+    DREAMER_TURN_PROGRAM_WAKE_RELEASED: VaultMeta b"dreamer:turn_program:wake_released:v1:"
+        Named Engine
+        // Restore class: a release given stays given, as a decision does (DECIDED): an image
+        // never makes the home take the wake again while its recording machine admits it.
+        [restore: live] [family: structure] [tier: canonical];
+    /// FIX TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN: a wake whose latest row this machine
+    /// owes the base window that carries it, which may not be loaded: that window's key. Written
+    /// with a retraction and where the home answers one; the housekeeping pass opens the window
+    /// if it is not loaded, and clears the entry once the window is persisted with the row and
+    /// marked ready.
+    /// Key: id16(actor) + id16(turn) + id16(registration).
+    DREAMER_TURN_PROGRAM_WAKE_ROW_OWED: VaultMeta b"dreamer:turn_program:wake_row_owed:v1:"
+        Named Engine
+        // Restore class: an entry only makes one pass open and persist one window. The rows it
+        // stands for are written from the marks at every open of that window, with or without it.
+        [restore: live] [family: structure] [tier: canonical];
     /// The Coach's code-fix work on one failure case and its local verdicts: the invented
     /// example's and the candidate fix's, kept after the export queue drains. Never real chat
     /// text. Key: id16(case key).

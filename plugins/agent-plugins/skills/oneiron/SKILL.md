@@ -12,12 +12,13 @@ credential decides what you may read and write. The vault checks it on every
 call; you never name your own identity.
 
 Session hooks may run beside you: Codex and Copilot read them from this
-package, and Cursor from a separate Oneiron hooks plugin. Once the person has
-set them up, a session opens with a line naming the vault they bound and a
-short recall for the project, and the session's log is handed to the vault
-as the session goes. They do not recall for each prompt. Without them
-nothing recalls on its own and nothing hands the log over. Either way,
-recall when you need it, and save what is worth keeping yourself.
+package, and Cursor from the separate Oneiron Cursor plugin, which also
+carries Cursor's `oneiron` server. Once the person has set them up, a
+session opens with a line naming the vault they bound and a short recall for
+the project, and the session's log is handed to the vault as the session
+goes. They do not recall for each prompt. Without them nothing recalls on
+its own and nothing hands the log over. Either way, recall when you need it,
+and save what is worth keeping yourself.
 
 ## Recall
 
@@ -53,11 +54,13 @@ The plugin mints no credential: a grant comes only from the person. If the
    none. The plugin's server reaches `oneiron serve` at its default address,
    `http://127.0.0.1:9090`; if `serve` listens elsewhere, add `--url` and
    that origin to the args in the plugin's `mcp.json`.
-2. Find the file the plugin reads. The client gives each installed plugin a
-   data folder of its own, and the plugin reads its credential from
-   `agent.cred` in that folder. Until that file exists, the `oneiron` server
-   fails to start, and its error in the client's MCP server log names the
-   full path it looked for.
+2. Find the file the plugin reads. Codex and Copilot give each installed
+   plugin a data folder of its own, and the plugin reads its credential from
+   `agent.cred` in that folder. Cursor gives this package's server no such
+   folder, so there the server is the Oneiron Cursor plugin's, which reads
+   `~/.config/oneiron/cursor.cred`. Until that file exists, the `oneiron`
+   server fails to start, and its error in the client's MCP server log names
+   the full path it looked for.
 3. Stop `oneiron serve` (minting holds the vault's writer lease), then mint
    the agent's credential to that path. Give each client its own name, such
    as `codex`, `cursor` or `copilot`, so each can be revoked alone:
@@ -78,5 +81,6 @@ the Oneiron repository.
 
 Uninstall the plugin in the client. With `serve` stopped, revoke the
 credential with `oneiron token revoke --jti` and the `slip_id` its mint
-printed, then delete `agent.cred` if the client kept the data folder. What
-you saved stays in the vault, like any write.
+printed, then delete the credential file the server read (`agent.cred`, if
+the client kept the data folder). What you saved stays in the vault, like any
+write.

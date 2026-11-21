@@ -46,10 +46,15 @@ use crate::federation::{
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT};
 use crate::scan_check::ScanCount;
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::EngineScan;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
+
+mod owner_seat;
+pub(crate) use owner_seat::{
+    require_owner_seat_skips_no_wait_in_txn, seat_house_owner_by_act_in_txn,
+};
 
 const RECEIPT_VERSION: u8 = 1;
 
@@ -529,6 +534,11 @@ impl Vault {
     /// (`SharedVaultChange::HouseRoleChanged`). The house
     /// already at `role` is left as it is, with no receipt. No stored preset
     /// is `EntityNotFound`.
+    ///
+    /// An Owner seat over the shared vault that an `add_owner` act would
+    /// hold (an owner-change wait or objection window the vault set) is
+    /// refused: [`Vault::propose_house_owner_role`] starts that act (FIX
+    /// HOUSE-OWNER-ROLE-VIA-ADD-OWNER).
     pub fn set_house_role(
         &self,
         actor: &AuthenticatedOwner,
@@ -539,6 +549,7 @@ impl Vault {
             let actor = actor.revalidate_person_in_txn(self, txn)?;
             let preset = stored_preset_in_txn(self, txn, workspace_ref)?;
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            require_owner_seat_skips_no_wait_in_txn(self, txn, &preset, role, actor, now)?;
             if link_house_in_txn(self, txn, &preset, role, actor, now)? {
                 self.record_admin_act_in_txn(
                     txn,
@@ -676,6 +687,19 @@ pub(crate) fn erase_house_link_actor_in_txn(
         RECEIPTS.delete(&vault.store, wtxn, key)?;
     }
     Ok(())
+}
+
+/// The records a stored house link receipt names, as
+/// [`erase_house_link_actor_in_txn`] matches them: its binder, its house and
+/// its org, whose erase drops the receipt, read from its value; `None` for
+/// bytes that do not read as a receipt, and for a key whose house is not the
+/// value's (the key leads with the house, so it names it too). The
+/// whole-vault export withholds a receipt that names a record it keeps out
+/// (REVIEW-9739 P1-1, round 2 P1-2).
+pub(crate) fn house_link_receipt_records(key: &[u8], value: &[u8]) -> Option<Vec<EntityId>> {
+    let (house, _) = <(EntityId, EntityId) as SideKey>::decode_key(key)?;
+    let receipt = RECEIPTS.decode_value(value).ok()?;
+    (receipt.house == house).then(|| vec![receipt.binder, receipt.house, receipt.org])
 }
 
 /// The org `house` ran at `at`, read from its receipts alone: the org of the

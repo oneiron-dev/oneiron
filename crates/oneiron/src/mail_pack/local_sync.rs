@@ -7,6 +7,8 @@
 //! or on a served vault under the owner's proof; a server host runs it for
 //! every due source as the vault's local owner.
 
+use std::sync::Arc;
+
 use super::caldav_calendar::HttpCalDavCalendarWire;
 use super::gmail::{HttpGmailMailWire, reads_google_mail};
 use super::google_calendar::HttpGoogleCalendarWire;
@@ -18,6 +20,7 @@ use super::microsoft365_calendar::HttpGraphCalendarWire;
 use super::source::MailProvider;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::web_fetch::HostedEgressGuard;
 use crate::{EntityId, Vault};
 
 #[doc(hidden)]
@@ -46,6 +49,28 @@ impl Vault {
         source: EntityId,
         budget: MailSyncBudget,
     ) -> MemoryResult<MailSyncReport> {
+        self.mail_source_sync_step_with_hosted_guard(owner, source, budget, None)
+    }
+
+    /// [`Self::mail_source_sync_step`] on a managed (hosted) node, with its
+    /// egress guard: the one wire that fetches an owner-supplied URL, the
+    /// ICS subscription wire, is built on the guard, so a subscription
+    /// pointing at hosted infrastructure or at a private address no
+    /// operator origin admits is refused before any connect. The other
+    /// wires call their providers' own endpoints and are unchanged. A
+    /// self-hosted host passes no guard and fetches exactly as
+    /// [`Self::mail_source_sync_step`] does.
+    ///
+    /// # Errors
+    ///
+    /// No such source, a provider with no wire here yet, or the step's own.
+    pub fn mail_source_sync_step_with_hosted_guard(
+        &self,
+        owner: &AuthenticatedOwner,
+        source: EntityId,
+        budget: MailSyncBudget,
+        hosted_guard: Option<Arc<HostedEgressGuard>>,
+    ) -> MemoryResult<MailSyncReport> {
         if let Some(calendar) = self.mail_calendar_source(source)? {
             if reads_google_mail(calendar.provider) {
                 let wire = HttpGoogleCalendarWire::new(self)?;
@@ -56,7 +81,7 @@ impl Vault {
                 return self.mail_calendar_sync_step(source, &wire, CALENDAR_PAGES_PER_STEP);
             }
             if calendar.provider == MailProvider::Ics {
-                let wire = HttpIcsCalendarWire::new(self)?;
+                let wire = HttpIcsCalendarWire::with_hosted_guard(self, hosted_guard)?;
                 return self.mail_calendar_sync_step(source, &wire, 1);
             }
             if calendar.provider == MailProvider::Caldav {

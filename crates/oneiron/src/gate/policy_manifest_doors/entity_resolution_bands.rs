@@ -1,5 +1,6 @@
 //! Owner edits of the existing manifest's entity-resolution boundaries.
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use super::{body_in_txn, invalid, rewrite_default_manifest_field_as_owner_in_txn};
@@ -40,7 +41,7 @@ fn view(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<EntityResolutionBandsVie
     }
     Ok(EntityResolutionBandsView {
         manifest_ref: id.to_hex(),
-        body_hash: blake3::hash(&body).to_hex().to_string(),
+        body_hash: ContentHash::of(&body).to_hex(),
         bands: crate::gate::resolve_policy_manifest(&vault.store, txn)?.entity_resolution_bands(),
     })
 }

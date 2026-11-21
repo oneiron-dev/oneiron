@@ -1,10 +1,11 @@
 //! The settlement item (kind 3): an agent answers one open conflict its live
 //! `derive` grant reaches, through the conflict settlement's own door, with
 //! the guards a responder meets (a person alone closes user-stated truth;
-//! the owner's revert and review hold stand). The marker and every member
-//! are read under the actor's own read first: a conflict it does not read
-//! answers as a row that is no open conflict. An imported Keep stages and
-//! lands its proposal pending approval, with the marker open (FIX 5754).
+//! the owner's revert and review hold stand, whichever actor asks). The
+//! marker and every member are read under the actor's own read first: a
+//! conflict it does not read answers as a row that is no open conflict. An
+//! imported Keep stages and lands its proposal pending approval, with the
+//! marker open (FIX 5754).
 
 use std::cell::Cell;
 
@@ -27,7 +28,8 @@ use crate::{EntityId, Vault};
 pub const SETTLE_REFUSED: &str = "gate.deny.derive.settle_refused";
 
 /// The refusal of a settlement the owner reverted, or whose review the owner
-/// holds.
+/// holds. The one hold an owner mints names the Dreamer, and it leaves the
+/// subject's conflicts to the owner whichever actor asks.
 pub const SETTLE_OWNER_HOLD: &str = "gate.deny.derive.settle_owner_hold";
 
 /// The reason a landed settlement's receipt names.
@@ -91,7 +93,7 @@ pub(super) fn stage_in_txn(
         return refuse(vault, txn, context, marker, &[SETTLE_REFUSED]);
     }
     if conflict.reverted
-        || crate::memory::conflict_review_held_in(vault, txn, actor, conflict.subject)?.is_some()
+        || crate::memory::dreamer_conflict_review_held_in(vault, txn, conflict.subject)?.is_some()
     {
         return refuse(vault, txn, context, marker, &[SETTLE_OWNER_HOLD]);
     }
@@ -113,21 +115,46 @@ pub(super) fn stage_in_txn(
         ClaimApprovalStatus::Auto,
     );
     let held = Cell::new(false);
-    let mut savepoint = vault.store.env.nested_write_txn(txn)?;
-    let applied = apply_settlement_in_txn(
-        vault,
-        &mut savepoint,
-        &conflict,
-        settlement,
-        &envelope,
-        Some(actor),
-        false,
-        KeepAs::Auto(&held),
-        context.now.saturating_mul(1_000),
-    );
+    let mut refused = vec![SETTLE_REFUSED];
+    // Hand queued work to this write's owner (FIX DERIVE-COMMIT-ITEM-SAVEPOINTS-DROP-POSTCOMMIT-WORK).
+    let Some((applied, approval)) = crate::batch::savepoint_in_txn(vault, txn, |savepoint| {
+        match apply_settlement_in_txn(
+            vault,
+            savepoint,
+            &conflict,
+            settlement,
+            &envelope,
+            Some(actor),
+            false,
+            KeepAs::Auto(&held),
+            context.now.saturating_mul(1_000),
+        ) {
+            Ok(SettlementApplied::Settled(settled)) => {
+                Ok(Some((SettlementApplied::Settled(settled), None)))
+            }
+            Ok(SettlementApplied::ImportReviewPending(staged)) => {
+                let approval = vault
+                    .get_claim_in_txn(savepoint, &staged.staged)?
+                    .ok_or(Error::InvalidClaimBody("the staged Keep is missing"))?
+                    .approval;
+                Ok(Some((
+                    SettlementApplied::ImportReviewPending(staged),
+                    Some(approval),
+                )))
+            }
+            Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
+                refused = reason_codes;
+                Ok(None)
+            }
+            Err(Error::Claim(_) | Error::InvalidClaimBody(_)) => Ok(None),
+            Err(error) => Err(error),
+        }
+    })?
+    else {
+        return refuse(vault, txn, context, marker, &refused);
+    };
     match applied {
-        Ok(SettlementApplied::Settled(settled)) => {
-            savepoint.commit()?;
+        SettlementApplied::Settled(settled) => {
             let receipt = allowance_receipt_in_txn(
                 vault,
                 txn,
@@ -152,12 +179,7 @@ pub(super) fn stage_in_txn(
                 receipt: Some(receipt),
             })
         }
-        Ok(SettlementApplied::ImportReviewPending(staged)) => {
-            let approval = vault
-                .get_claim_in_txn(&savepoint, &staged.staged)?
-                .ok_or(Error::InvalidClaimBody("the staged Keep is missing"))?
-                .approval;
-            savepoint.commit()?;
+        SettlementApplied::ImportReviewPending(staged) => {
             let receipt = allowance_receipt_in_txn(
                 vault,
                 txn,
@@ -170,19 +192,10 @@ pub(super) fn stage_in_txn(
             // marker or changing any member (FIX 5754).
             Ok(ItemOutcome::Landed {
                 rows: vec![staged.staged, marker],
-                approval: Some(approval),
+                approval,
                 receipt: Some(receipt),
             })
         }
-        Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
-            savepoint.abort();
-            refuse(vault, txn, context, marker, &reason_codes)
-        }
-        Err(Error::Claim(_) | Error::InvalidClaimBody(_)) => {
-            savepoint.abort();
-            refuse(vault, txn, context, marker, &[SETTLE_REFUSED])
-        }
-        Err(error) => Err(error),
     }
 }
 

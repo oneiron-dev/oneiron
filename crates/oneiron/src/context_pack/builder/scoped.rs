@@ -8,6 +8,13 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    /// [`crate::pipeline::PipelineBuilder::statistics_read`]: no row `read`
+    /// refuses and counts nowhere counts in the pack's BM25 statistics.
+    pub(crate) fn statistics_read(mut self, read: &'a crate::claim::ScopedRead<'a>) -> Self {
+        self.pipeline = self.pipeline.statistics_read(read);
+        self
+    }
+
     /// Apply the same scoped retrieval floor to every candidate channel.
     pub(crate) fn authority_filter(mut self, filter: crate::gate::ResolvedRetrievalFilter) -> Self {
         self.pipeline = self.pipeline.authority_filter(filter);

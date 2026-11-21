@@ -34,14 +34,17 @@ mod coreference;
 mod courtesy_delete;
 mod credential;
 mod custody_drain;
+mod data_key_generation;
 mod describe;
 mod diary;
 mod diary_pinned;
 mod disclosure;
+mod display_edits;
 mod embedding_space;
 mod engine_controls;
 mod eval_cohort;
 mod explain;
+mod extraction_verdict;
 mod fanout_launch;
 mod federation;
 #[cfg(feature = "sync")]
@@ -63,11 +66,13 @@ pub(crate) mod host;
 mod hub;
 mod identity_topology;
 mod inquiry;
+mod leave;
 mod legal_hold;
 // The build-time closure of the verb table over linked `self.*` operations.
 mod linked_self_surface;
 mod live_run;
 mod live_voice;
+mod machine_names;
 mod mesh;
 mod model_manifest;
 mod model_pack;
@@ -79,6 +84,7 @@ mod off_record_rooms;
 mod off_record_runs;
 mod outbound_call_erase;
 mod outbox_diverged;
+mod owner_confirm;
 mod pack_preview;
 mod persona;
 mod proxy;
@@ -92,6 +98,7 @@ mod repo_copy_edit;
 mod repo_manifest_conflict;
 mod research;
 mod research_advance;
+mod research_authoring;
 mod research_root;
 mod reservoir_sources;
 mod residence;
@@ -110,6 +117,7 @@ mod self_actor;
 mod self_model_read;
 mod self_verbs;
 mod setting;
+pub(crate) mod setting_keys;
 mod share;
 mod shared;
 mod shared_admin;
@@ -132,7 +140,10 @@ mod support_grant;
 mod sync_outbox;
 #[cfg(feature = "sync")]
 mod sync_quarantine;
+// ROLE-TRAINING-RUN: the owner's role prepare and the bounded run read.
+mod training_runs;
 mod trusted_contact;
+mod turn_program_resume;
 mod uncertain_send;
 mod verb_table;
 mod voice_bank;
@@ -165,10 +176,11 @@ pub struct TaskAnswerRequest {
 pub use oneiron_verb_wire::verbs::{
     BoardFrameReply, BoardRefreshRequest, BoardSubscriptionReply, BoardSubscriptionRequest,
     BoardWakeReply, BoardWakeRequest, CompanionSharingRequest, EmptyRequest, InboxListRequest,
-    InboxMarkRequest, ProjectCardRequest, ProjectConversationRequest, ProjectGoalDismissRequest,
-    ProjectGoalDismissTarget, ProjectRefRequest, ProjectTradeoffRouteRequest, ReceiptsRequest,
-    RoomClaimRequest, RoomHostRequest, RoomRefRequest, RoomRequest, RoomTurnRequest, TaskRequest,
-    TaskWaveReceipt, TaskWaveRequest, WorkspaceRefRequest,
+    InboxMarkRequest, OneVaultAcknowledgeRequest, ProjectCardRequest, ProjectConversationRequest,
+    ProjectGoalDismissRequest, ProjectGoalDismissTarget, ProjectRefRequest,
+    ProjectTradeoffRouteRequest, ReceiptsRequest, RoomClaimRequest, RoomHostRequest,
+    RoomRefRequest, RoomRequest, RoomTurnRequest, TaskRequest, TaskWaveReceipt, TaskWaveRequest,
+    WorkTalkOpenRequest, WorkspaceRefRequest,
 };
 
 /// `vault.projects.goal.dismiss`'s result: `false` when an identical retry
@@ -386,14 +398,17 @@ pub use self::coreference::*;
 pub use self::courtesy_delete::*;
 pub use self::credential::*;
 pub use self::custody_drain::*;
+pub use self::data_key_generation::*;
 pub use self::describe::*;
 pub use self::diary::*;
 pub use self::diary_pinned::*;
 pub use self::disclosure::*;
+pub use self::display_edits::*;
 pub use self::embedding_space::*;
 pub use self::engine_controls::*;
 pub use self::eval_cohort::*;
 pub use self::explain::*;
+pub use self::extraction_verdict::*;
 pub use self::fanout_launch::*;
 pub use self::federation::*;
 #[cfg(feature = "sync")]
@@ -415,9 +430,11 @@ pub use self::host::*;
 pub use self::hub::*;
 pub use self::identity_topology::*;
 pub use self::inquiry::*;
+pub use self::leave::*;
 pub use self::legal_hold::*;
 pub use self::live_run::*;
 pub use self::live_voice::*;
+pub use self::machine_names::*;
 pub use self::mesh::*;
 pub use self::model_manifest::*;
 pub use self::model_pack::*;
@@ -429,6 +446,7 @@ pub use self::off_record_rooms::*;
 pub use self::off_record_runs::*;
 pub use self::outbound_call_erase::*;
 pub use self::outbox_diverged::*;
+pub use self::owner_confirm::*;
 pub use self::pack_preview::*;
 pub use self::persona::*;
 pub use self::proxy::*;
@@ -441,6 +459,7 @@ pub use self::repo_copy_edit::*;
 pub use self::repo_manifest_conflict::*;
 pub use self::research::*;
 pub use self::research_advance::*;
+pub use self::research_authoring::*;
 pub use self::research_root::*;
 pub use self::reservoir_sources::*;
 pub use self::residence::*;
@@ -477,7 +496,9 @@ pub use self::support_grant::*;
 pub use self::sync_outbox::*;
 #[cfg(feature = "sync")]
 pub use self::sync_quarantine::*;
+pub use self::training_runs::*;
 pub use self::trusted_contact::*;
+pub use self::turn_program_resume::*;
 pub use self::uncertain_send::*;
 pub use self::voice_bank::*;
 pub use self::voice_recognition::*;
@@ -661,8 +682,6 @@ fn verb_input_schema_is_built_once_per_process() {
     assert!(std::ptr::eq(first, second));
 }
 
-// FIX [LIBTEST-QUARANTINE-VERBS-ITEMS]: the lib test target's type check fails here (5 errors: E0599 x5); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 #[test]
 fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
@@ -678,11 +697,12 @@ fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
             verb.as_str()
         );
     }
-    assert!(AgentVerb::TasksAsk.is_section());
-    assert!(AgentVerb::RoomsSpeak.writes());
-    assert!(AgentVerb::RoomsList.is_facade());
-    assert!(!AgentVerb::BoardExpand.is_facade());
-    assert_eq!(AgentVerb::Recall.argument_fields(), &["spec"]);
+    assert!(AgentVerb::Ask.is_section());
+    assert!(AgentVerb::VaultRoomsSpeak.writes());
+    assert!(AgentVerb::VaultRoomsList.is_facade());
+    // A host-served row (the browser context) is no facade verb; board.expand, the old pin, is gone.
+    assert!(!AgentVerb::SelfBrowserClick.is_facade());
+    assert_eq!(AgentVerb::VaultRecall.argument_fields(), &["spec"]);
     assert!(AgentVerb::from_name("not.a.verb").is_none());
 }
 

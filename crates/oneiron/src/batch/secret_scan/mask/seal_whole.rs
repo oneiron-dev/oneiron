@@ -47,13 +47,16 @@ use super::body::{BodyForm, body_tree, encode_body};
 use super::changed_scan::scan_reads_same;
 use super::side_row::SidePart;
 use super::wipe::{PlanValues, replace_wiped, wipe_value};
-use super::{Found, HANDLE_OPEN, Masker, STAND_IN, op_record, part_at, scan_screened};
+use super::{
+    Found, HANDLE_OPEN, MaskedClaimBodies, Masker, STAND_IN, op_record, part_at, scan_screened,
+};
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_SECRET_CUSTODY};
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SECRET_CUSTODY};
 use crate::secret_custody::KeptValues;
 use crate::secret_record::CustodyWrite;
+use crate::session_overlay::SessionOverlay;
 use crate::store::Store;
 use crate::store::known_value_index::KnownValues;
 use crate::write_envelope::ClaimCandidate;
@@ -448,53 +451,103 @@ fn stand_in_at(tree: &mut Value, path: &[usize]) -> Result<()> {
     put_handle_at(tree, path, STAND_IN)
 }
 
-/// The pre-mask candidate of each MACHINE claim candidate in `ops`, by op
-/// index, when a seal rewrites a claim: the candidate apply renews a proof
-/// only over its verified pre-mask body (FIX 11356). Read before the minted
-/// pass; `None` when no seal rewrites a claim.
-pub(super) fn claims_before(
-    ops: &[BatchOp],
-    seals: &[Seal],
-) -> Option<Vec<(usize, EntityId, ClaimCandidate)>> {
-    if !seals
-        .iter()
-        .any(|seal| matches!(ops.get(seal.index), Some(BatchOp::ClaimCandidate { .. })))
-    {
-        return None;
-    }
-    Some(
-        ops.iter()
-            .enumerate()
-            .filter_map(|(index, op)| match op {
-                BatchOp::ClaimCandidate {
-                    id,
-                    candidate,
-                    envelope,
-                    ..
-                } if envelope.machine_signature().is_some() => {
-                    Some((index, *id, (**candidate).clone()))
-                }
-                _ => None,
-            })
-            .collect(),
-    )
+/// The pre-mask body of each claim op a seal rewrites, by op index, read
+/// before the minted pass: the minted pass reports only what it rewrote
+/// itself (`Masker::mask_ops`), and each apply reads its claim's preflight
+/// receipt, and a candidate apply renews a MACHINE proof, against the body
+/// as written (FIX 11356, RAW-CLAIM-PUT-MASK-REPLAY-MISMATCH).
+pub(super) struct SealedClaimBodies(Vec<(usize, SealedClaimBody)>);
+
+/// One claim op's body as written.
+enum SealedClaimBody {
+    /// A claim candidate op's candidate.
+    Candidate(ClaimCandidate),
+    /// A local CLAIM put's bytes, wiped when dropped.
+    Put(Zeroizing<Vec<u8>>),
 }
 
-/// Each MACHINE claim candidate of `before` that the minted pass or a seal
-/// rewrote in `ops`, with its pre-mask body, in op order: what the minted
-/// pass alone reports when no seal rewrites a claim.
-pub(super) fn claims_rewritten(
-    ops: &[BatchOp],
-    before: Vec<(usize, EntityId, ClaimCandidate)>,
-) -> Vec<(EntityId, ClaimCandidate)> {
-    before
-        .into_iter()
-        .filter(|(index, _, pre)| {
-            matches!(ops.get(*index), Some(BatchOp::ClaimCandidate { candidate, .. })
-                if **candidate != *pre)
-        })
-        .map(|(_, id, pre)| (id, pre))
-        .collect()
+/// The body as written of each claim candidate op and each local CLAIM put
+/// op in `ops` that a seal of `seals` (in op order) rewrites.
+pub(super) fn claims_before(ops: &[BatchOp], seals: &[Seal]) -> SealedClaimBodies {
+    let mut before: Vec<(usize, SealedClaimBody)> = Vec::new();
+    for seal in seals {
+        if before.last().is_some_and(|(op, _)| *op == seal.index) {
+            continue;
+        }
+        let body = match ops.get(seal.index) {
+            Some(BatchOp::ClaimCandidate { candidate, .. }) => {
+                SealedClaimBody::Candidate((**candidate).clone())
+            }
+            Some(op @ BatchOp::Put { data, .. }) if reports_claim_put(op) => {
+                SealedClaimBody::Put(Zeroizing::new(data.clone()))
+            }
+            _ => continue,
+        };
+        before.push((seal.index, body));
+    }
+    SealedClaimBodies(before)
+}
+
+impl SealedClaimBodies {
+    /// Writes into `masked`, the minted pass's report, the body as written of
+    /// each claim op a seal rewrote and that pass left as written. The
+    /// minted pass gives each claim candidate op one slot, in op order, and
+    /// each local CLAIM put op one (`Masker::mask_ops`): an op's slot is its
+    /// place among those ops.
+    pub(super) fn report(self, ops: &[BatchOp], masked: &mut MaskedClaimBodies) -> Result<()> {
+        let unaligned =
+            || Error::InvariantViolation("a sealed claim op has no slot in the mask's report");
+        for (index, before) in self.0 {
+            let earlier = ops.get(..index).ok_or_else(unaligned)?;
+            match (before, ops.get(index)) {
+                (
+                    SealedClaimBody::Candidate(pre),
+                    Some(BatchOp::ClaimCandidate { id, candidate, .. }),
+                ) => {
+                    let slot = earlier
+                        .iter()
+                        .filter(|op| matches!(op, BatchOp::ClaimCandidate { .. }))
+                        .count();
+                    let (slot_id, rewritten) =
+                        masked.candidates.get_mut(slot).ok_or_else(unaligned)?;
+                    if *slot_id != *id {
+                        return Err(unaligned());
+                    }
+                    if rewritten.is_none() && **candidate != pre {
+                        *rewritten = Some(pre);
+                    }
+                }
+                (SealedClaimBody::Put(pre), Some(op @ BatchOp::Put { id, data, .. }))
+                    if reports_claim_put(op) =>
+                {
+                    let slot = earlier.iter().filter(|op| reports_claim_put(op)).count();
+                    let (slot_id, rewritten) = masked.puts.get_mut(slot).ok_or_else(unaligned)?;
+                    if *slot_id != *id {
+                        return Err(unaligned());
+                    }
+                    if rewritten.is_none() && data.as_slice() != pre.as_slice() {
+                        *rewritten = Some(pre);
+                    }
+                }
+                _ => return Err(unaligned()),
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Whether the minted pass reports `op` as a local CLAIM put: a CLAIM body
+/// this door writes handles into (`Masker::mask_ops`).
+fn reports_claim_put(op: &BatchOp) -> bool {
+    matches!(
+        op,
+        BatchOp::Put {
+            entity_type,
+            allow_maintenance: false,
+            hub_sync_imported: false,
+            ..
+        } if *entity_type == ENTITY_TYPE_CLAIM
+    )
 }
 
 fn unnamed() -> Error {
@@ -520,7 +573,7 @@ pub(super) fn mint_seals(
         let op = ops.get_mut(seal.index).ok_or_else(unnamed)?;
         let record = op_record(op).ok_or_else(unnamed)?;
         let mut sealer = Sealer {
-            door: Some((write, at)),
+            door: Some(SealDoor::Vault(write, at)),
             known,
             sealed: &mut sealed,
             record,
@@ -549,13 +602,15 @@ pub(super) fn mint_seals(
 
 /// Writes each seal [`plan_part_seals`] chose into `parts`, as the minted
 /// pass left them, as [`mint_seals`] writes an op's, each under its part's
-/// record and place in `origins`. Each sealed value goes to custody as one
-/// record through `door`, stamped with its time; or it keeps the handle of
-/// the record that holds it whole (`known`, or `sealed`: the values this
-/// writer sealed before, which each new seal joins). With no door a value
-/// custody does not hold whole refuses the write with its seal's reason.
+/// record and place in `origins`. Each sealed value goes to custody through
+/// `door`: a vault's door mints it as one record stamped with its time, and
+/// an off-record room keeps it in the room's own custody
+/// (ROOM-LOCAL-CUSTODY). Or it keeps the handle of the record that holds it
+/// whole (`known`, or `sealed`: the values this writer sealed before, which
+/// each new seal joins). With no door a value custody does not hold whole
+/// refuses the write with its seal's reason.
 pub(super) fn mint_part_seals(
-    door: Option<(&CustodyWrite<'_>, u64)>,
+    door: Option<SealDoor<'_, '_>>,
     wtxn: &mut RwTxn<'_>,
     parts: &mut [SidePart],
     origins: &[(EntityId, &str)],
@@ -589,12 +644,21 @@ pub(super) fn mint_part_seals(
     Ok(())
 }
 
-/// One seal's custody write: the door its record goes through, with the
-/// time it is stamped (none for a writer whose target holds no custody
-/// door), the values custody already holds, the values sealed so far with
-/// their handles, and the record and reason its value is minted under.
+/// Where a sealed value is kept: base custody through a vault's door, with
+/// the time its record is stamped, or an off-record room's own custody, in
+/// memory only (ROOM-LOCAL-CUSTODY; the lead's ruling of 21 Nov).
+#[derive(Clone, Copy)]
+pub(super) enum SealDoor<'a, 'w> {
+    Vault(&'a CustodyWrite<'w>, u64),
+    Room(&'a SessionOverlay),
+}
+
+/// One seal's custody write: the door its value goes through (none for a
+/// writer whose target holds no custody door), the values custody already
+/// holds, the values sealed so far with their handles, and the record and
+/// reason its value is minted under.
 struct Sealer<'a, 'w> {
-    door: Option<(&'a CustodyWrite<'w>, u64)>,
+    door: Option<SealDoor<'a, 'w>>,
     known: Option<&'a KnownValues>,
     sealed: &'a mut PlanValues<String>,
     record: EntityId,
@@ -608,7 +672,7 @@ impl Sealer<'_, '_> {
             return Ok(handle.clone());
         }
         let handle = match self.door {
-            Some((write, at)) => seal_value_in_txn(
+            Some(SealDoor::Vault(write, at)) => seal_value_in_txn(
                 write,
                 wtxn,
                 self.known,
@@ -618,6 +682,13 @@ impl Sealer<'_, '_> {
                 self.reason,
                 at,
             )?,
+            // A room keeps a fresh value in its own custody, and a value
+            // base custody already holds whole keeps that record's handle,
+            // as the plan's own values do (ROOM-LOCAL-CUSTODY).
+            Some(SealDoor::Room(room)) => match held_whole(self.known, value) {
+                Some(handle) => handle,
+                None => room.keep_room_secret(value, self.reason)?,
+            },
             // With no door nothing is minted (FIX 6647): only a value
             // custody already holds whole takes a handle.
             None => held_whole(self.known, value).ok_or_else(|| secret_scan_error(self.reason))?,

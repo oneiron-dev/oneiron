@@ -41,8 +41,8 @@ use crate::dreamer_consolidation::extracted_people::{MintNamespace, bind_people}
 use crate::dreamer_consolidation::failure_rules::{self, FailureRules, Stage};
 use crate::dreamer_consolidation::resources::{BranchResources, ExtractionSlice};
 use crate::dreamer_consolidation::roles::DREAMER_EXTRACTION_ROLE;
-use crate::dreamer_consolidation::sieve_ports::{NeighbourhoodExtraction, SliceCall, SliceStep};
-use crate::dreamer_consolidation::step_charge::StepChargeTally;
+use crate::dreamer_consolidation::sieve_ports::{NeighbourhoodExtraction, SliceStep};
+use crate::dreamer_consolidation::step_charge::{StepChargeTally, window_fallback};
 use crate::dreamer_wake::WakeAttemptContext;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -94,12 +94,17 @@ impl LaunchedChild {
     }
 }
 
-/// What the parent served of its child so far: each extracted slice, the
-/// first refused reply's reason, whether the pack was decided, and every
-/// draft staged.
+/// What the parent served of its child so far: each extracted slice, each
+/// slice whose parse retry was refused too, the first refused reply's
+/// reason, whether the pack was decided, and every draft staged.
 #[derive(Default)]
 struct SliceTable {
     extracted: BTreeMap<usize, ExtractedSlice>,
+    /// The slices whose reply failed the JSON parse and whose one retry with
+    /// prompt lookup off was refused too: asked again before the child
+    /// settles, each answers refused with no third call (#10269 review,
+    /// round 2).
+    spent: BTreeSet<usize>,
     refused: Option<String>,
     decided: bool,
     issued: Issued,
@@ -308,6 +313,9 @@ impl ConsolidationExecutor<'_> {
         if let Some(done) = table.extracted.get(&index) {
             return Ok(PortServed::Answer(done.answer.clone()));
         }
+        if table.spent.contains(&index) {
+            return Ok(PortServed::Refused(THING_SLICE_REFUSED));
+        }
         let Some(slice) = launched.slice(pass, index) else {
             return Ok(PortServed::Refused(THING_PORT_INPUT_UNKNOWN));
         };
@@ -320,29 +328,21 @@ impl ConsolidationExecutor<'_> {
                 guard: self.guard,
                 call: self.role(DREAMER_EXTRACTION_ROLE),
                 prompt: &self.decisions.extraction_prompt,
-                slices: vec![SliceCall {
-                    transcript: &slice.transcript,
-                    labels: &slice.labels,
-                    scope: &slice.scope,
-                    sources: &slice.sources,
-                }],
+                slices: vec![slice.call()],
                 namespace: pass.namespace.clone(),
                 rules: pass.rules,
                 citations: Arc::clone(pass.citations),
                 width: 1,
             })
             .await?;
-        let Some(SliceStep {
-            step_hash,
-            outcome,
-            unsaved_usage,
-        }) = steps.into_iter().next()
-        else {
+        let Some(step @ SliceStep { step_hash, .. }) = steps.into_iter().next() else {
             return Err(Error::InvariantViolation(
                 "a child extraction port answered another number of slices",
             )
             .into());
         };
+        let retried = step.parse_retry.is_some();
+        let (outcome, unsaved_usage) = step.charge_parse_retry(charges);
         let (response, failure_policy, binding) = match outcome {
             Ok(StepOutcome::Finished {
                 response,
@@ -357,6 +357,9 @@ impl ConsolidationExecutor<'_> {
             }
             Err(DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
                 charges.record_usage(&usage);
+                if retried {
+                    table.spent.insert(index);
+                }
                 table.refused.get_or_insert_with(|| {
                     format!("extraction reply refused: {}", errors.join("; "))
                 });
@@ -379,11 +382,19 @@ impl ConsolidationExecutor<'_> {
                 } else if let Some(usage) = unsaved_usage {
                     charges.record_usage(&usage);
                 }
+                // A window refusal ends the branch, and the try ends Failed
+                // with its text, once (Engine 21 Nov 07:38).
+                if crate::dreamer_wake::step_refuses_window(&error) {
+                    return Ok(PortServed::End(PartitionRun::refused_by(error)));
+                }
                 // A spent model seat refused the slice's step: the branch
                 // ends and the try parks on the seat, as the per-slice path
                 // parks it, never a blind Retry (SEAT-PARK-MODEL-STEP-PATH).
                 if crate::dreamer_runner::dreamer_seat_refusal_of_step(&error).is_some() {
                     return Ok(PortServed::End(PartitionRun::refused_by(error)));
+                }
+                if retried {
+                    table.spent.insert(index);
                 }
                 table.refused.get_or_insert_with(|| error.to_string());
                 return Ok(PortServed::Refused(THING_SLICE_REFUSED));
@@ -395,6 +406,11 @@ impl ConsolidationExecutor<'_> {
             binding.step_hash,
             &response.usage,
         )?;
+        // A fallback that stood in for a window refusal ends the branch as
+        // that refusal does: the try ends Failed with its text, once.
+        if let Some(reason) = window_fallback(&response) {
+            return Ok(PortServed::End(PartitionRun::WindowRefused { reason }));
+        }
         // Live rules, as today's path reads each reply.
         let rules = failure_rules::load(pass.ctx.vault)?;
         let (candidates, persons) = if accepted(rules.as_ref(), failure_policy, &response) {
@@ -538,7 +554,7 @@ impl ConsolidationExecutor<'_> {
                     reason: format!("correction read refused: {}", errors.join("; ")),
                 })
             }
-            Err(error) => PortServed::End(PartitionRun::refused_by(error)),
+            Err(error) => PortServed::End(PartitionRun::refused_with_spend(error, charges)),
         })
     }
 }
@@ -643,6 +659,7 @@ const fn stop_code(run: &PartitionRun) -> &'static str {
         PartitionRun::Checkpoint => THING_CHILD_CHECKPOINT,
         PartitionRun::Refused { .. }
         | PartitionRun::BudgetRefused { .. }
+        | PartitionRun::WindowRefused { .. }
         | PartitionRun::SeatRefused { .. } => THING_CHILD_REFUSED,
         PartitionRun::Completed { .. } | PartitionRun::Held { .. } => THING_CHILD_PARENT_FAILED,
     }

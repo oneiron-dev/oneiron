@@ -10,6 +10,7 @@ use crate::{TimeRange, Vault};
 fn vault() -> Result<(tempfile::TempDir, Vault)> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     Ok((dir, vault))
 }
 fn body() -> ClaimBody {
@@ -68,7 +69,7 @@ fn four_scope_keys_are_required_at_raw_and_replay_write_doors() -> Result<()> {
             assert!(matches!(
                 vault
                     .batch()
-                    .put_replicated(&id, ENTITY_TYPE_CLAIM, AT, 10, &malformed)
+                    .put_replicated(&id, ENTITY_TYPE_CLAIM, AT, 10, None, &malformed)
                     .commit(),
                 Err(Error::InvalidClaimBody(_))
             ));
@@ -77,7 +78,7 @@ fn four_scope_keys_are_required_at_raw_and_replay_write_doors() -> Result<()> {
                 vault
                     .with_write_txn(|txn| vault
                         .batch_in()
-                        .put_replicated(&id, ENTITY_TYPE_CLAIM, AT, 10, &malformed)
+                        .put_replicated(&id, ENTITY_TYPE_CLAIM, AT, 10, None, &malformed)
                         .apply(txn))
                     .is_err()
             );
@@ -86,7 +87,7 @@ fn four_scope_keys_are_required_at_raw_and_replay_write_doors() -> Result<()> {
     }
     vault
         .batch()
-        .put_replicated(&id, ENTITY_TYPE_CLAIM, AT, 10, &bytes)
+        .put_replicated(&id, ENTITY_TYPE_CLAIM, AT, 10, None, &bytes)
         .commit()?;
     assert_eq!(vault.get_claim(&id)?, Some(body()));
     assert!(
@@ -117,7 +118,7 @@ fn person_mints_one_substrate_facet_with_sensitivity_and_replay_is_idempotent() 
     vault.put_entity(&person, ENTITY_TYPE_PERSON, AT, 10, b"person")?;
     vault
         .batch()
-        .put_replicated(&person, ENTITY_TYPE_PERSON, AT, 10, b"person")
+        .put_replicated(&person, ENTITY_TYPE_PERSON, AT, 10, None, b"person")
         .commit()?;
     let raw = vault.get(&facet)?.expect("fixture");
     assert_eq!(vault.get_entity_type(&facet)?, Some(ENTITY_TYPE_FACET));
@@ -164,10 +165,14 @@ fn legacy_claim_scope_sweep_stamps_explicit_base_once() -> Result<()> {
         .contains(&k.as_str().expect("fixture"))
     });
     let legacy = encode(&Value::Map(entries))?;
+    // The stored row is the 33-byte header (type byte, occurred start/end,
+    // learned_at, row_version) plus the body: without the row_version word
+    // the sweep slices 8 bytes into the map and the body stops decoding.
     let mut raw = vec![ENTITY_TYPE_CLAIM];
     raw.extend_from_slice(&10u64.to_be_bytes());
     raw.extend_from_slice(&10u64.to_be_bytes());
     raw.extend_from_slice(&10u64.to_be_bytes());
+    raw.extend_from_slice(&0u64.to_be_bytes());
     raw.extend_from_slice(&legacy);
     vault.with_write_txn(|txn| {
         vault.store.entities.put(txn, id.as_bytes(), &raw)?;
@@ -220,10 +225,13 @@ fn duplicate_legacy_corpus_entries_refuse_both_orders_and_persist_nothing() -> R
             upgrade_pre_scope_body(&legacy),
             Err(Error::InvalidClaimBody(_))
         ));
+        // The full 33-byte header (with row_version), so the sweep reaches
+        // the duplicate corpus refusal, not a misaligned body.
         let mut raw = vec![ENTITY_TYPE_CLAIM];
         raw.extend_from_slice(&10u64.to_be_bytes());
         raw.extend_from_slice(&10u64.to_be_bytes());
         raw.extend_from_slice(&10u64.to_be_bytes());
+        raw.extend_from_slice(&0u64.to_be_bytes());
         raw.extend_from_slice(&legacy);
         vault.with_write_txn(|txn| {
             vault.store.entities.put(txn, id.as_bytes(), &raw)?;
@@ -254,7 +262,7 @@ fn unstamped_records_are_excluded_from_read_export_delete_and_debug_is_explicit(
     vault.put_entity(&local, ENTITY_TYPE_PERSON, AT, 10, b"local")?;
     vault
         .batch()
-        .put_replicated(&remote, ENTITY_TYPE_PERSON, AT, 10, b"remote")
+        .put_replicated(&remote, ENTITY_TYPE_PERSON, AT, 10, None, b"remote")
         .commit()?;
     let mut selector = Scope::top();
     selector.bands = ScopeAxis::Some(BTreeSet::from([ENTITY_TYPE_PERSON]));
@@ -321,14 +329,19 @@ fn stored_grant_scope_roundtrip_and_bottom_deny_at_existing_doors() -> Result<()
     let mut access = crate::access_grant::AccessGrant::companion_profile_read(
         entity(40),
         entity(41),
-        entity(42),
+        Some(entity(42)),
         1,
     );
     access.authority_scope = Scope::default();
     let bytes = crate::access_grant::encode_access_grant_body(&access)?;
     let decoded = crate::access_grant::decode_access_grant_body(&bytes)?;
     assert_eq!(decoded.authority_scope, Scope::default());
-    assert!(!decoded.allows_companion_profile_read(&entity(40), &entity(41), &entity(42), 43));
+    assert!(!decoded.allows_companion_profile_read(
+        &entity(40),
+        &entity(41),
+        Some(&entity(42)),
+        43
+    ));
     let mut federation = crate::federation::FederationGrant::new(
         crate::federation::FederationGrantScope::vault(7),
         entity(40),
@@ -352,7 +365,7 @@ fn legacy_persona_facet_refused_by_raw_and_replay_put_before_person_materializat
     for replicated in [false, true] {
         let mut batch = vault.batch();
         batch = if replicated {
-            batch.put_replicated(&facet, ENTITY_TYPE_FACET, AT, 10, &body)
+            batch.put_replicated(&facet, ENTITY_TYPE_FACET, AT, 10, None, &body)
         } else {
             batch.put(&facet, ENTITY_TYPE_FACET, AT, 10, &body)
         };

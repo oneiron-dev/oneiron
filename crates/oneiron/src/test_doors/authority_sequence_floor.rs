@@ -5,3 +5,7 @@
 //! `--cfg oneiron_test_support`; never API.
 
 pub use crate::authority::sequence_floor_door::{FloorEquivalence, fold_both_ways};
+
+// Whether a fold past a base takes each tail on its signers' top rows per
+// sequence scope (FIX [ADOPTED-FOLD-TAIL-WALK-SIGNER-COST]).
+pub use crate::authority::sequence_floor_door::scope_tops_tails_taken;

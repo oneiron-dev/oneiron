@@ -13,6 +13,7 @@ use oneiron::calendar::{
     caldav_write_status_error, parse_ics_feed,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::web_fetch::HostedEgressGuard;
 use reqwest::blocking::{Client, Response};
 use reqwest::{Method, Url};
 
@@ -36,16 +37,40 @@ fn failure(operation: &'static str, detail: impl Into<String>) -> CalendarConnec
     }
 }
 
+/// The CalDAV wire's endpoint and client at the shared network boundary. On a
+/// managed node (`Some(egress)`) an endpoint the hosted egress guard refuses
+/// gets no client, so no request is sent; every href stays on the endpoint's
+/// origin (`HttpCalDav::url`), and the client's resolver checks the name's
+/// answers as it connects. With `None` (a self-hosted node) as before.
+///
+/// # Errors
+///
+/// The endpoint does not parse, the guard refuses it, or the client cannot be
+/// built.
+pub(crate) fn caldav_endpoint_client(
+    endpoint: &str,
+    egress: Option<Arc<HostedEgressGuard>>,
+) -> Result<(Url, Client), CalendarConnectorError> {
+    let base = Url::parse(endpoint).map_err(|_| failure("configure", "invalid endpoint"))?;
+    if super::hosted_guard_refuses(&base, egress.as_deref()) {
+        return Err(failure("configure", super::PRIVATE_ENDPOINT_REFUSAL));
+    }
+    let client =
+        super::client(egress).map_err(|_| failure("configure", "HTTP client unavailable"))?;
+    Ok((base, client))
+}
+
 impl HttpCalDav {
+    /// `egress` is the node's hosted egress guard
+    /// (`SyncServer::hosted_egress_guard`): `Some` on a managed node, `None`
+    /// on a self-hosted one ([`caldav_endpoint_client`]).
     pub(crate) fn new(
         vault: Arc<Vault>,
         owner: AuthenticatedOwner,
         row: CalendarConnectorRegistration,
+        egress: Option<Arc<HostedEgressGuard>>,
     ) -> Result<Self, CalendarConnectorError> {
-        let base =
-            Url::parse(&row.endpoint).map_err(|_| failure("configure", "invalid endpoint"))?;
-        let client =
-            super::client().map_err(|_| failure("configure", "HTTP client unavailable"))?;
+        let (base, client) = caldav_endpoint_client(&row.endpoint, egress)?;
         let operation =
             CalendarConnectorOperation::new(&vault, owner, row.clone()).map_err(|_| {
                 CalendarConnectorError::CredentialUnavailable {

@@ -20,7 +20,7 @@ use oneiron::ingest::archive_precheck::{
 };
 use oneiron::ingest::history::{
     HistoryConversation, HistoryDryRun, HistoryFile, HistoryImportReport, HistoryLedgerSnapshot,
-    HistoryMessage, HistorySkips, HistorySource,
+    HistoryMessage, HistorySkips, HistorySource, earliest_first,
 };
 use oneiron::limit_ask::EngineLimit;
 use serde::{Deserialize, Serialize};
@@ -267,60 +267,15 @@ impl Totals {
     }
 }
 
-/// Earliest first, so a session's own lines land in it before a resumed or
-/// forked session's copies of them are seen. A resumed Claude Code session
-/// starts with copies of the original's lines, times and all; the original
-/// ends first.
-fn earliest_first(conversations: &mut [HistoryConversation]) {
-    conversations.sort_by_cached_key(order_key);
-}
-
-/// Where [`earliest_first`] puts a conversation: when it started, then when
-/// it ended.
-fn order_key(conversation: &HistoryConversation) -> (u64, u64, String) {
-    let ended = conversation
-        .messages
-        .iter()
-        .filter_map(|message| message.at_ms)
-        .max();
-    (
-        conversation.started_at_ms.unwrap_or(u64::MAX),
-        ended.unwrap_or(u64::MAX),
-        conversation.native_id.clone(),
-    )
-}
-
-/// The one import second owned at a time in this process. The CLI, the
-/// queue pass and the hosted-import worker all own their second through
-/// `own_second`, which holds this from its first read of the vault's clock
-/// until the second is owned, so two imports that start in the same second
-/// own different seconds and each keeps a review of its own.
-static OWN_SECOND: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// The second this import lands at: after every write before it, so no two
-/// imports share one and each has a review of its own. Holds the process's
-/// one import-second lock for the whole wait, so two imports that start in
-/// the same second own different seconds. Waits out the rest of the current
-/// second; a vault clock more than two seconds ahead of this machine's
-/// refuses the import rather than share a second with an earlier one.
+/// The second this import lands at, a second of its own
+/// ([`oneiron::Vault::own_import_second`]). The CLI, the queue pass and the
+/// hosted-import worker all own their second through here, and the engine
+/// holds its one import-second lock for the whole wait, so two imports that
+/// start in the same second own different seconds.
 pub(crate) fn own_second(vault: &oneiron::Vault) -> anyhow::Result<u64> {
-    let _second = OWN_SECOND
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let start = vault.now_recorded_at();
-    let deadline = Instant::now() + std::time::Duration::from_secs(2);
-    loop {
-        let now = vault.now_recorded_at();
-        if now > start {
-            return Ok(now);
-        }
-        anyhow::ensure!(
-            Instant::now() < deadline,
-            "the vault's clock is ahead of this machine's; import again once \
-             the machine's clock passes it, so this import has a review of its own"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
+    vault
+        .own_import_second()
+        .map_err(|error| anyhow::anyhow!(error.message))
 }
 
 /// Queues the Dreamer's rounds over every turn not yet planned, as a session

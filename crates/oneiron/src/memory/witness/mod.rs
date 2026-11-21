@@ -42,14 +42,16 @@ pub(crate) use self::archive::{
     archived_message_body, archived_turn_speaks, import_provenance_foreign,
 };
 pub(crate) use self::codec::{
-    IMPORTED_SOURCE_KEY, guard_import_stamp, turn_admits_message_bodies, witness_message_body,
+    IMPORTED_SOURCE_KEY, guard_import_stamp, guard_phone_thread_mark, turn_admits_message_bodies,
+    witness_message_body,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::foreign_speech::{ForeignTurn, speak_as_counterparty};
 pub(crate) use self::program::ImportedTurnStamp;
 pub use self::program::{SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome};
 pub(crate) use self::source_attribution::{
-    SourceAttribution, SourceSpeaker, imported_message_in_txn, source_speaker_in_txn,
+    SourceAttribution, SourceSpeaker, imported_message_in_txn, live_canonical_person_in_txn,
+    source_speaker_in_txn,
 };
 
 pub(crate) use self::validation::WITNESS_OCCURRENCE_SKEW_SECS;

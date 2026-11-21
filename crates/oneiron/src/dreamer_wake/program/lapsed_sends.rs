@@ -27,12 +27,17 @@ pub(super) fn stop_lapsed_sends(
 ) {
     let stopped = (|| -> Result<usize> {
         let mut wtxn = vault.store.env.write_txn()?;
-        let stopped =
-            abandon_attempt_pending_intents_in_txn(vault, &mut wtxn, attempt, reason, now_ms)
-                .map_err(|error| match error {
-                    IntentLedgerError::Engine(error) => error,
-                    _ => Error::CorruptedIndex("outbound intent ledger row"),
-                })?;
+        let stopped = abandon_attempt_pending_intents_in_txn(
+            vault,
+            &mut wtxn,
+            attempt,
+            reason,
+            now_ms / 1_000,
+        )
+        .map_err(|error| match error {
+            IntentLedgerError::Engine(error) => error,
+            _ => Error::CorruptedIndex("outbound intent ledger row"),
+        })?;
         wtxn.commit()?;
         Ok(stopped)
     })();

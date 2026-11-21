@@ -117,7 +117,19 @@ async fn captured_turns_dream_on_session_end_and_land_through_the_promotion_writ
         .await
     );
     let seen = fake.seen();
-    assert_eq!(seen.len(), 1);
+    // Each call's first message, cut short, so a second call names what
+    // asked it (round-4 R24: two calls were seen, of unknown kind).
+    let firsts: Vec<String> = seen
+        .iter()
+        .map(|call| {
+            call.body["messages"][0]["content"]
+                .to_string()
+                .chars()
+                .take(160)
+                .collect()
+        })
+        .collect();
+    assert_eq!(seen.len(), 1, "{firsts:?}");
     assert_eq!(seen[0].body["model"], serde_json::json!("test-model"));
     host.shutdown().await;
     assert_eq!(handle.status().dreamer.reason, Some(IdleReason::Stopped));

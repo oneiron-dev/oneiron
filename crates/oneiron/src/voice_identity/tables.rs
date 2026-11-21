@@ -5,6 +5,9 @@ crate::side_table::side_tables! {
     /// Voice consent decision event. Key: id16 + digest16.
     VOICE_IDENTITY_CONSENT: VaultMeta b"voice_identity.consent.v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// A grant a withdrawal dated before it voided when it was recorded. Key: id16 + digest16.
+    VOICE_IDENTITY_CONSENT_VOID: VaultMeta b"voice_identity.consent_void.v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Voice print records and the active-space pointer per subject. Key: id16 [+ digest16].
     VOICE_IDENTITY_PRINT: VaultMeta b"voice_identity.print.v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
@@ -13,5 +16,8 @@ crate::side_table::side_tables! {
         [restore: content] [family: unclassified] [tier: canonical];
     /// Enrollment sample row. Key: digest16.
     VOICE_IDENTITY_SAMPLE: VaultMeta b"voice_identity.sample.v1:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// The date a withdrawal recorded at the vault's clock asked for. Key: id16 + digest16.
+    VOICE_IDENTITY_WITHDRAWAL_REQUESTED_AT: VaultMeta b"voice_identity.withdrawal_requested_at.v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
 }

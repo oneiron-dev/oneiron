@@ -565,6 +565,10 @@ impl Vault {
         finish: impl FnOnce(&Self, Option<&super::HostOrderHolds>) -> Result<()>,
     ) -> Result<(Self, RestoreReport)> {
         let (mut image, checkpoint_id, bodies, required) = read_image_required(path, key)?;
+        // The image's machine identity drops here; whether the copy is born
+        // of a restore is read once the image has landed, off its own log
+        // ([`mark_restored_unless_managed`]).
+        let hosted = config.privacy.posture == crate::config::HostingPrivacyPosture::Hosted;
         image.drop_machine_identity();
         let artifact_holds = super::host_holds::artifact_host_holds(&mut image, key);
         let anchor = recovery.and_then(|recovery| recovery.anchor());
@@ -586,7 +590,7 @@ impl Vault {
         };
         let (mut made, forked, mut vault, mut report) = Self::restore_image(
             image,
-            checkpoint_id,
+            checkpoint_id.clone(),
             bodies,
             destination,
             config,
@@ -598,6 +602,7 @@ impl Vault {
             None,
             None,
         )?;
+        mark_restored_unless_managed(&vault, &checkpoint_id, hosted)?;
         finish(&vault, artifact_holds.as_ref())?;
         if let Some(landing) = &landing {
             report.custody_note = landing.note().map(str::to_owned);
@@ -675,3 +680,28 @@ impl AnchorStore for CustodyAnchorRoot {
 /// An erased body whose instance another holder still keeps: its key
 /// retires with that holder's release (KS-2A).
 pub const BODY_SHARED_OWNER_RETAINED: &str = "body_shared_owner_retained";
+
+/// Marks the install `vault` landed as born of a restore of the image
+/// `checkpoint_id` names (row RESTORED-COPIES-ENROL-EACH-OTHER), unless the
+/// vault is managed: a `hosted` destination whose landed log holds no live
+/// owner key outside the host's custody, read off the log's cloud stamp
+/// alone, on any posture ([`crate::authority::AuthorityFold::in_host_custody`]).
+/// A managed vault's host root enrols the node its restores, wakes and
+/// migrates land (RESTORED-COPIES-JOIN-SCOPE = A). The destination's posture
+/// alone proves no custody: a self-host root restored under a Hosted config
+/// stays the owner's, and its copy is marked (REVIEW-9509/9510 round 2 P1).
+fn mark_restored_unless_managed(vault: &Vault, checkpoint_id: &str, hosted: bool) -> Result<()> {
+    let image = blake3::Hash::from_hex(checkpoint_id).map_err(|_| codec_error())?;
+    let mut txn = vault.store.env.write_txn()?;
+    let fold = vault.authority_view_readonly_in_txn(&txn)?;
+    let owner_rooted = fold.roster.keys().any(|key| {
+        crate::authority::roster_has_live_owner(&fold.roster, key) && !fold.in_host_custody(key)
+    });
+    drop(fold);
+    if hosted && !owner_rooted {
+        return Ok(());
+    }
+    crate::identity::put_restored_from_image_in_txn(&vault.store, &mut txn, image.as_bytes())?;
+    txn.commit()?;
+    Ok(())
+}

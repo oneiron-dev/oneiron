@@ -189,7 +189,7 @@ impl Vault {
                 self,
                 record.id,
                 IntentEscalationReason::PreviouslyAbandoned,
-                now_ms,
+                now_ms / 1_000,
             )?;
         }
         Ok(match IntentResolution::from_record(&record)? {
