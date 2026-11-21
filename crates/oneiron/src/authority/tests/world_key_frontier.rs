@@ -21,17 +21,22 @@ use crate::world_keys::{Withheld, WorldKeyFrontierCheck};
 
 const WAY_OUT: &str = "merge this world's settings from one machine that sees every edit";
 
-/// `by` signs 40 concurrent edits of `world` on `vault`'s heads and the
-/// world's live edits, each keeping it `MyMachines`: more live edits than
-/// one record names.
+/// `by` signs 40 concurrent edits of `world` on the world's live edits and
+/// `vault`'s heads, each keeping it `MyMachines`: more live edits than one
+/// record names. Settings edits are main-log rows, so an earlier flood's
+/// edits are heads here too; the edits name every live edit and then heads
+/// up to `MAX_PARENTS`, as many parents as one entry may name.
 fn flood_on(vault: &Vault, host: &Host, by: &Keyed, world: EntityId) {
     let fold = vault.authority_fold().unwrap();
     let signer = authority_key_from_ed(&by.signing);
     let seq = fold.append_sequences.get(&signer).map_or(1, |seq| seq + 1);
-    let mut parents = fold.append_heads.clone();
-    if let Some(folded) = fold.worlds.get(&world) {
-        parents.extend(folded.live.keys().copied());
-    }
+    let mut parents: BTreeSet<_> = fold
+        .worlds
+        .get(&world)
+        .map(|folded| folded.live.keys().copied().collect())
+        .unwrap_or_default();
+    let room = MAX_PARENTS.saturating_sub(parents.len());
+    parents.extend(fold.append_heads.iter().copied().take(room));
     let rows: Vec<_> = (0..40)
         .map(|ts| {
             let entry = unsigned_entry(
@@ -195,7 +200,9 @@ fn a_restore_past_one_wide_world_pins_and_withholds_only_that_key() {
 /// Astra S2-R2 A2-F5: a key whose root and own wraps already count stays
 /// usable when another reader's wrap has to wait. Before, a same-root
 /// restore withheld the whole key as `FrontierWide` because one machine
-/// that joined later lacked a wrap.
+/// that joined later lacked a wrap. Since FIX 8497 the wrap step joins a
+/// frontier wider than one record names first, so that reader no longer
+/// waits: the restore wraps it too and raises no question.
 #[test]
 fn a_deferred_reader_never_hides_a_usable_restore_key() {
     let host = host();
@@ -225,18 +232,10 @@ fn a_deferred_reader_never_hides_a_usable_restore_key() {
         .unwrap();
     assert_eq!(restore.usable, vec![key], "{restore:?}");
     assert!(restore.withheld.is_empty(), "{restore:?}");
-    assert_eq!(
-        host.vault
-            .world_key_frontier_checks()
-            .iter()
-            .map(|check| check.world)
-            .collect::<Vec<_>>(),
-        vec![wide]
-    );
+    assert!(host.vault.world_key_frontier_checks().is_empty());
     let fold = host.vault.authority_fold().unwrap();
     assert!(
-        !fold
-            .world_key(&key)
+        fold.world_key(&key)
             .unwrap()
             .wraps
             .contains_key(&WrapRecipient::Machine(late.machine))
@@ -320,9 +319,10 @@ fn a_skipped_pre_wrap_keeps_the_key_for_a_re_run() {
 
 /// Astra #1422d F1: the settings door counts each parent once. This machine
 /// signs E, making the world its own, and machine B signs, concurrently
-/// with E, as many edits making it B's as fill one entry beside E and the
-/// main log's heads. No key record follows E, so E is this machine's last
-/// row of the world. The owner resolves the conflict to B here in one edit,
+/// with E, as many edits making it B's as fill one entry beside E. Settings
+/// edits are main-log rows, so these edits are then the main log's heads as
+/// well as the world's live edits. No key record follows E, so E is this
+/// machine's last row of the world. The owner resolves the conflict to B here in one edit,
 /// with no move here first: E, the edit's chain parent, is one of the live
 /// edits. Fails before: the door counted E twice, as the chain and as a
 /// live edit, and refused the request for count.
@@ -339,7 +339,6 @@ fn a_conflict_that_fills_one_entry_resolves_in_one_edit() {
             .unwrap()
             .unwrap()
     };
-    let heads = host.vault.authority_fold().unwrap().append_heads.len();
     let mut concurrent = vec![edit_by(
         &host,
         here,
@@ -347,7 +346,7 @@ fn a_conflict_that_fills_one_entry_resolves_in_one_edit() {
         world,
         settings(ReadLocation::OneMachine(here)),
     )];
-    concurrent.extend((0..MAX_PARENTS - heads - 1).map(|ts| {
+    concurrent.extend((0..MAX_PARENTS - 1).map(|ts| {
         let mut entry = edit_by(
             &host,
             other,
@@ -360,8 +359,8 @@ fn a_conflict_that_fills_one_entry_resolves_in_one_edit() {
     }));
     land(&host, &concurrent);
     let fold = host.vault.authority_fold().unwrap();
-    assert_eq!(fold.append_heads.len(), heads);
-    assert_eq!(fold.worlds[&world].live.len(), MAX_PARENTS - heads);
+    assert_eq!(fold.append_heads.len(), MAX_PARENTS);
+    assert_eq!(fold.worlds[&world].live.len(), MAX_PARENTS);
     assert_eq!(
         read_of(&host, world),
         EffectiveRead::Conflicted {
