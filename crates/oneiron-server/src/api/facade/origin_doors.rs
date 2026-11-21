@@ -99,12 +99,19 @@ pub(crate) async fn vault_code_secrets_purge_get(
     auth: &CoreAuth,
     input: RepoSecretPurgeIdRequest,
 ) -> Listed<RepoSecretPurgeView> {
-    as_owner(
-        server,
-        auth,
-        "vault.code.secrets.purge.get",
-        move |memory, owner| memory.code_secrets_purge_get_as(owner, input),
-    )
+    const VERB: &str = "vault.code.secrets.purge.get";
+    let reader = match super::audit_read_doors::audit_reader(server, auth, VERB) {
+        Ok(reader) => reader,
+        Err(error) => return (Err(error), Vec::new()),
+    };
+    let caller =
+        match super::facade_actor(server, auth).map_err(super::FacadeApiError::into_memory_error) {
+            Ok(caller) => caller,
+            Err(error) => return (Err(error), Vec::new()),
+        };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        memory.code_secrets_purge_get_as(&reader, input)
+    })
     .await
 }
 

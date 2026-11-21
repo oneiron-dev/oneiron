@@ -14,6 +14,10 @@ const RESTRICTIONS: SideTable<CooperativeRestrictionKey, CooperativeRestriction,
 
 /// `restricted` is the distinct, present, pact-covered selection from this
 /// SAME writer. Prior restrictions are not implicitly lifted by a new answer.
+/// An audit_read grant in it refuses the whole answer before any marker
+/// changes: a restriction hides the grant from safe reads, and the owner's
+/// revoke alone ends one (Astra delta-5 J2: a delivery-ledger row the
+/// generic sync-state writers planted passes the coverage check).
 pub(super) fn apply_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -25,6 +29,9 @@ pub(super) fn apply_in_txn(
     restricted: &[EntityId],
     now: u64,
 ) -> Result<()> {
+    for record in restricted {
+        crate::access_grant::reject_audit_read_grant_restriction_in_txn(&vault.store, txn, record)?;
+    }
     let mut lifted = Vec::new();
     for record in &answer.restriction_notice_given {
         // Keeping the same copy restricted is not a lift and gets no receipt.
@@ -99,4 +106,63 @@ fn restrictions_in(
         }
     }
     Ok(rows)
+}
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// The restriction step of the owner's answer to a courtesy ask, for
+    /// `record` alone, once the answer's coverage check passed it as a
+    /// present copy the pact delivered: a delivery-ledger row written through
+    /// a generic sync-state writer passes that check (Astra delta-5 J2), and
+    /// no integration fixture builds the pact and the peer's signed ask the
+    /// answer door reads. Test doors only.
+    pub(crate) fn restrict_as_a_cooperative_answer_for_test(
+        &self,
+        record: EntityId,
+        actor: EntityId,
+        now: u64,
+    ) -> Result<()> {
+        let (pact, nonce) = ([0x5a; 32], [0xa5; 16]);
+        let mut filed = IncomingCooperativeDeletion {
+            request_id: "a5".repeat(16),
+            connection_id: "5a".repeat(32),
+            requester_vault_id: "33".repeat(32),
+            worlds: Vec::new(),
+            epoch_cutoff: now,
+            requested_at: now,
+            received_at: now,
+            request: Vec::new(),
+            disposition: None,
+            reply_status: None,
+            reply_started_at: None,
+            courtesy_hold_ids: Vec::new(),
+            courtesy_restriction_records: Vec::new(),
+            restriction_lifts: Vec::new(),
+            local_redactions: Vec::new(),
+        };
+        let answer = CooperativeDeletionAnswer {
+            kind: super::CooperativeDeletionDispositionKind::RestrictPendingReview,
+            reason_code: Some("pending_review".to_owned()),
+            review_at: Some(now + 86_400),
+            delete: Vec::new(),
+            hold: Vec::new(),
+            retention: None,
+            restrict: vec![record],
+            restriction_notice_given: Vec::new(),
+            redact: Vec::new(),
+        };
+        self.with_write_txn_grouped(|txn| {
+            apply_in_txn(
+                self,
+                txn,
+                &pact,
+                &nonce,
+                &mut filed,
+                actor,
+                &answer,
+                &[record],
+                now,
+            )
+        })
+    }
 }

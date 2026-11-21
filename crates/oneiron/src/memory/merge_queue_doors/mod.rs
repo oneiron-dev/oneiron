@@ -18,6 +18,7 @@
 //! checked before any id resolves, so a refusal is no existence oracle.
 //! The vault's review policy (FIX 8268) is the setting
 //! `merge_queue.review_policy`, set through `vault.settings.set`.
+//! `vault.code.checks.get` also reads for a live audit_read holder.
 
 mod check_receipt;
 mod checker;

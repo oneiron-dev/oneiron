@@ -1,6 +1,6 @@
 {
   "name": "vault.receipts.craft_reply_manifest",
-  "description": "Read the craft manifest of one reply emit, as its actor or the live vault owner; never rebuild the pack.",
+  "description": "Read the craft manifest of one reply emit, as its actor, the live vault owner or a live audit_read holder; never rebuild the pack.",
   "input": "crate::receipt::CallReceiptRequest",
   "output": "Option<Vec<crate::attempt_queue::ManifestEntry>>",
   "call": "memory.craft_reply_manifest(&input.receipt_ref)?",

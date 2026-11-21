@@ -20,6 +20,7 @@ pub mod approval_target_round_trip;
 pub mod archive_import;
 pub mod archive_producers;
 pub mod archive_provenance;
+pub mod audit_read_removal;
 pub mod archive_room_ledger;
 pub mod archive_side_binary_credential;
 pub mod archive_side_catalogue;

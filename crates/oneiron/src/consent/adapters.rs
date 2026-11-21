@@ -74,6 +74,9 @@ fn access_grant_scope_selectors(scope: &AccessGrantScope) -> Result<Vec<String>>
         AccessGrantScope::DiaryCoreference { .. } => Err(invalid_bound(
             "diary coreference requires both resident grants at the scoped read door",
         )),
+        AccessGrantScope::VaultAudit => Err(invalid_bound(
+            "audit_read is checked live at each audit door",
+        )),
     }
 }
 

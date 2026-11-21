@@ -123,6 +123,12 @@ pub(in crate::api::facade) fn door_admits(
         Proof::OwnerDelegate => {
             crate::api::facade::owner_binding::owner_delegate_admits(server, auth, verb)
         }
+        // An audit door (RULING AUDIT-READ-POWER-LIST = B): the owner's proof, or a credential bound
+        // to an actor that holds a live audit_read power, which the door judges again in its own
+        // read. A caller with neither keeps the owner refusal.
+        Proof::AuditReader => {
+            crate::api::facade::audit_read_doors::audit_reader(server, auth, verb).map(drop)
+        }
         // `vault.consent.revoke` (FIX 23149): the owner's proof, or a credential bound to an actor,
         // which the door then admits only on a Grant that actor holds. A caller with neither keeps
         // the owner refusal.
@@ -178,6 +184,13 @@ pub(in crate::api::facade) fn door_admits(
         }
         Proof::SharedPerson => {
             crate::api::facade::shared_act_doors::person(server, auth, verb).map(drop)
+        }
+        // `vault.shared.receipt` (RULING AUDIT-READ-POWER-LIST = B): a live
+        // person as today, or a live audit_read holder, told or not, person
+        // or agent. The door judges the same OR for the proof it acts under.
+        Proof::SharedPersonOrAuditReader => {
+            crate::api::facade::shared_act_doors::shared_receipt_reader(server, auth, verb)
+                .map(drop)
         }
         // The voice bank's rows (FIX 4393): a live person on their own proof,
         // owner or not, or a designed voice's creator on its own credential;

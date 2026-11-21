@@ -1,6 +1,6 @@
 //! The lift sweep's state as a caller toward one destination may read it (FIX 8165): its
 //! proposals and their counts, without those filed from a row a world withheld from there keeps.
-//! `secret_lift_as_owner_toward` and `status_where` are its call surface.
+//! `secret_lift_as_reader_toward` and `status_where` are its call surface.
 //! The lift root defines `SecretLiftStatus` and the side tables read here.
 
 use std::collections::BTreeSet;
@@ -9,20 +9,22 @@ use super::accounting::Source;
 use super::{
     LiftCauseCount, PROPOSALS, RECEIPTS, RUN, STATUS_PROPOSALS, SecretLiftHistoryProposal,
     SecretLiftProgress, SecretLiftRequest, SecretLiftStatus, SecretScanMode, accounting, hex,
-    live_owner_in_txn, secret_lift_as_owner, secret_scan_mode_in_txn,
+    live_owner_in_txn, secret_lift_as_reader, secret_scan_mode_in_txn,
 };
 use heed::RoTxn;
 
 use crate::Vault;
+use crate::access_grant::AuditReader;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, GateError, Result};
 use crate::origin::lfs::LfsOid;
 use crate::settings::ReadDestination;
 
-/// [`secret_lift_as_owner`] for a caller whose rows go to `destination`
+/// [`secret_lift_as_reader`] for a caller whose rows go to `destination`
 /// (FIX 8165). The close and the start the input asks for run as there, and
-/// stay committed. On this device the state is the same. Off it, a proposal
+/// stay committed. Close and start stay the owner's: a holder asking for
+/// either is refused. On this device the state is the same. Off it, a proposal
 /// filed from a record a world withheld from that destination keeps is left
 /// out of the proposals shown and of every proposal count, as if it were
 /// never filed. Typed-body document, typed-body fork, office-body fork, codebase-snapshot and
@@ -36,26 +38,58 @@ use crate::settings::ReadDestination;
 /// dependencies that are proven.
 ///
 /// # Errors
-/// As [`secret_lift_as_owner`].
+/// As [`secret_lift_as_reader`].
+pub fn secret_lift_as_reader_toward(
+    vault: &Vault,
+    reader: &AuditReader,
+    input: &SecretLiftRequest,
+    destination: &ReadDestination,
+) -> Result<SecretLiftStatus> {
+    if !destination.is_off_device() {
+        return secret_lift_as_reader(vault, reader, input);
+    }
+    match reader {
+        AuditReader::Owner(owner) => {
+            if let Some(close) = &input.close {
+                vault.close_secret_lift_proposal(owner, &close.proposal, close.reason)?;
+            }
+            if input.start {
+                vault.start_secret_lift(owner, vault.now_recorded_at())?;
+            } else {
+                let txn = vault.store.env.read_txn()?;
+                live_owner_in_txn(vault, owner, &txn)?;
+            }
+            status_where(vault, Some(destination))
+        }
+        AuditReader::Holder(_) => {
+            if input.close.is_some() || input.start {
+                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                    "only the vault owner runs the secret lift sweep",
+                )));
+            }
+            {
+                let txn = vault.store.env.read_txn()?;
+                reader.admit_in_txn(vault, &txn).map(|_| ())?;
+            }
+            status_where(vault, Some(destination))
+        }
+    }
+}
+
+/// [`secret_lift_as_reader_toward`] for the owner's own proof, for callers
+/// that still pass one (the owner's routes).
 pub fn secret_lift_as_owner_toward(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: &SecretLiftRequest,
     destination: &ReadDestination,
 ) -> Result<SecretLiftStatus> {
-    if !destination.is_off_device() {
-        return secret_lift_as_owner(vault, owner, input);
-    }
-    if let Some(close) = &input.close {
-        vault.close_secret_lift_proposal(owner, &close.proposal, close.reason)?;
-    }
-    if input.start {
-        vault.start_secret_lift(owner, vault.now_recorded_at())?;
-    } else {
-        let txn = vault.store.env.read_txn()?;
-        live_owner_in_txn(vault, owner, &txn)?;
-    }
-    status_where(vault, Some(destination))
+    secret_lift_as_reader_toward(
+        vault,
+        &AuditReader::Owner(owner.clone()),
+        input,
+        destination,
+    )
 }
 
 /// The source entity a path actually names. A typed-body document's row key
