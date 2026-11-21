@@ -160,10 +160,11 @@ fn cancel_key_refusal(
 
 impl Vault {
     /// Signs this owner's Cancel of the release pending at the recovery box,
-    /// with this install's owner signing key, on the person's confirm: the
-    /// door asks for the person at the device ([`Vault::owner_presence`], an
-    /// important act, as a hold's Cancel is) before it reads or signs
-    /// anything. The key must be a live owner key of the acting
+    /// with this install's owner signing key, on the person's confirm: once
+    /// the act's proof is this vault's live owner (a proof of another vault
+    /// raises no prompt), the door asks for the person at the device
+    /// ([`Vault::owner_presence`], an important act, as a hold's Cancel is)
+    /// before it reads a key or signs. The key must be a live owner key of the acting
     /// owner's on this install's fold, never the root's authority kind.
     /// `release` is the pending release as the device read its
     /// recovery-started act: the receipt, and the act's `at` when the device
@@ -174,8 +175,10 @@ impl Vault {
     /// # Errors
     /// [`crate::error::RecordError::AuthorityRefused`] for an agent's act
     /// and for an install that holds no live owner key of the actor's (sign-in
-    /// alone); the presence check's refusal (a declined prompt; a device PIN
-    /// whose window is closed); the key's own refusal to sign an owner's
+    /// alone); [`crate::error::GateError::ConsentOwnerNotAuthenticated`] for a
+    /// proof that is not this vault's live owner's, before any prompt; the
+    /// presence check's refusal (a declined prompt; a device PIN whose window
+    /// is closed); the key's own refusal to sign an owner's
     /// proof now (a device PIN, a slot that no longer holds its seed); the
     /// store's, the clock's and the keystore's.
     pub fn sign_recovery_box_cancel_as(
@@ -187,6 +190,9 @@ impl Vault {
             ActAuthority::Owner(owner, _) => owner,
             ActAuthority::Agent(_) => return Err(authority_refused(CANCEL_OWNER_ONLY)),
         };
+        // The proof is this vault's live owner before the door asks; the
+        // read below revalidates it (REVIEW-10128 P1 2).
+        self.owner_key_act_owner(authority)?;
         let witness = self.owner_presence(
             OwnerActImportance::Important,
             owner_presence_reasons::CANCEL_RECOVERY_HOLD,

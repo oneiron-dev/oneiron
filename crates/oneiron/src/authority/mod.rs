@@ -576,7 +576,6 @@ pub(crate) use claim_write::row_causal_admitted_cached;
 pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
 };
-#[cfg(feature = "sync")]
 pub(crate) use current_scope::current_grant_scope;
 pub(crate) use first_seen_clock::*;
 pub use first_seen_clock::{RestrictionOnlyClock, restriction_only_clock};

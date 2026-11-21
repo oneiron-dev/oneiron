@@ -27,7 +27,9 @@ use loro::json::{JsonOpContent, JsonSchema, MapOp};
 use loro::{ContainerID, ContainerType, LoroDoc, LoroMap, LoroValue, VersionVector};
 
 use super::super::bridge::parse_edge_key;
-use super::super::loro_support::{export_updates_from, json_covers_blob, map_for_each_value_bytes};
+use super::super::loro_support::{
+    export_updates_from, json_covers_blob, map_for_each_tombstone_value, map_for_each_value_bytes,
+};
 use super::super::manager::WindowManager;
 use super::super::types::WindowKey;
 use crate::Vault;
@@ -271,6 +273,9 @@ pub fn selector_update_verdict_for_peer(
             return Ok(UpdateVerdict::Uninspectable);
         }
         match bytes_verdict(vault, &flagged, &key, &alone, update)? {
+            UpdateVerdict::Portable if tombstones_withheld(vault, &flagged, &alone)? => {
+                Ok(UpdateVerdict::Withheld)
+            }
             UpdateVerdict::Portable => {
                 super::use_limited::standalone_use_limit_verdict(vault, update)
             }
@@ -278,6 +283,40 @@ pub fn selector_update_verdict_for_peer(
         }
     })()
     .unwrap_or(UpdateVerdict::Uninspectable)
+}
+
+/// Whether a world in `flagged` keeps a row whose delete the standalone
+/// selector update `alone` carries, judged as the selector filter judged the
+/// tombstone when it built the answer: by the row stored at its id, and by the
+/// worlds whose words the capture bound to its delete says the row carried
+/// (REVIEW-10024). A world flagged after the filter ran, while the answer
+/// waited in its queue, withholds it here at its last door
+/// (CROSS-VAULT-DELETE-SELECTOR-ANSWER-RELEASE, emissionreview R3). A
+/// tombstone carries no words, so use limits leave it alone, as the filter
+/// does.
+fn tombstones_withheld(
+    vault: &Vault,
+    flagged: &BTreeSet<EntityId>,
+    alone: &LoroDoc,
+) -> Result<bool> {
+    if flagged.is_empty() {
+        return Ok(false);
+    }
+    let mut tombstones = Vec::new();
+    map_for_each_tombstone_value(&alone.get_map("tombstones"), |key, value| {
+        if let Ok(id) = EntityId::from_hex(key) {
+            tombstones.push((id, value.to_vec()));
+        }
+    });
+    let rtxn = vault.store.env.read_txn()?;
+    for (id, value) in &tombstones {
+        if crate::settings::device_only_withholds(&vault.store, &rtxn, flagged, id)?
+            || crate::sync::selector::device_only_by_capture(vault, &rtxn, flagged, id, value)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn inspect_raw_update(

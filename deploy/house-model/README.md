@@ -463,6 +463,74 @@ ported onto this server without editing exllamav3. Its sampling changes
   exllamav3 extension the server loaded; the `DRAFT_RING` line gives the
   window tables' width in pages (0 when off).
 
+### GEMM FP16 accumulators
+
+exllamav3's EXL3 GEMM accumulates its MMA results in FP16 within each
+k-slice and folds them into FP32 once per slice, where FP32 accumulation runs
+at half rate; upstream turns this on for sm_86 (RTX 3090) only, and gives
+its error as about 1 % of output RMS at k=4096. `build-exl3-ext.sh <dir>`
+builds exllamav3 v1.6.0's extension with the same path on for sm_89 (RTX
+4090): one line of `exllamav3_ext/quant/exl3_gemm_inner.cuh` (QWEN-EVAL-1
+arm opus-skill A-0008). It needs a CUDA 12.8 toolkit (`CUDA_HOME`) and a host
+compiler nvcc 12.8 takes (`CUDAHOSTCXX`, gcc 14 or older; exllamav3's
+setup.py passes it to nvcc as `-ccbin`), takes about 13 minutes with 2 nvcc
+jobs, and writes `exllamav3_ext.build.json` beside the module. `<dir>` must
+not exist: a running worker maps the module in a published directory, and
+overwriting that file can kill the worker, so each build writes a new
+directory (under a temporary name beside it, renamed whole when complete)
+and the next restart points `ONEIRON_HOUSE_EXL3_EXT_DIR` at it.
+
+`ONEIRON_HOUSE_EXL3_EXT_DIR=<dir>` resolves `<dir>` before anything imports
+it, puts the resolved directory first on PYTHONPATH and passes it as
+`--exllamav3-ext-dir`. The server refuses to start when that path is not
+resolved or the extension it loaded is not that directory's own file (no
+link on the way), and names the module's SHA-256 in its server settings
+(`exllamav3_ext`) and in its session snapshots' compatibility, so its answers
+and KV are never taken for the installed build's. Unset, the server runs the
+installed extension and identifies as before. It then refuses any other
+module: the installed extension is the file an installed distribution's
+RECORD lists, with the SHA-256 it gives (a binary exllamav3 wheel), or
+exllamav3's own JIT build in torch's extension directory (the PyPI wheel),
+so a rebuilt module, a copy or a hard link reached through PYTHONPATH never
+runs under the installed one's identity. The managed worker runs the
+installed extension.
+
+Measured on the Dreamer's nightly call (GPU run 4, mel's RTX 4090 at 400 W,
+on the ring, pool and prompt lookup; opus-skill's own build of the same
+line): 280.13 against 273.72 packets/h with lookup alone (x1.023), JSON valid
+19 and 20 of 20 against 16 and 17, graded +0.126 [-0.007, +0.275]; on the
+held-out pack with its own body, x1.031, JSON 18 against 19 of 20 (M02_en10's
+json fence is left open), graded -0.035 [-0.107, +0.003]. Worst-case VRAM
+23712 MiB, 852 MiB spare. Rollback: unset `ONEIRON_HOUSE_EXL3_EXT_DIR`.
+
+### exllamav3's own variables
+
+exllamav3 reads many `EXL3_*` environment variables that pick the target's
+kernels or arithmetic, in Python (`EXL3_FUSED_SAMPLER`, `EXL3_BC_ATTN`, ...)
+and in its extension (`EXL3_INT8_GEMV`, `EXL3_GEMV`, `EXL3_GRAPHS`, ...). The
+server takes every `EXL3_*` variable it inherits (from the unit's
+`EnvironmentFile` or the shell) at load, before it sets any of its own, and
+names their digest in its server settings (`exllamav3_env`) and in its
+session snapshots' compatibility, so answers, cached prefixes and KV computed
+under them are never taken for the stock server's. Every inherited one is
+named, not a list of known ones: one that changes nothing costs a cache miss
+or a refused import (`snapshot_incompatible`), never a wrong reuse. The fusion
+pair (`EXL3_MGEMM_K_THRESHOLD`, `EXL3_MGEMM_N_THRESHOLD`) is the exception:
+the `fuse_projections` switch sets or clears it and names itself in
+`speed_parts`. An `EXL3_ENV` line at load names the variables and the digest,
+never their values: an `EnvironmentFile` can hold a secret under the prefix,
+and the server's stdout goes to the service journal. The digest is an
+HMAC-SHA-256 of the names and values as ASCII-escaped JSON, so a value that
+is not UTF-8 is named like any other. It is keyed because it reaches the
+journal, every reply's execution mode and the snapshots' compatibility, where
+a plain hash of a short value (a six-digit pin) is found by hashing every
+candidate. The key is the file `ONEIRON_HOUSE_EXL3_ENV_KEY_FILE`
+(`--exllamav3-env-key-file`) names: at least 32 random bytes, readable by the
+service only, the same file on every worker that exchanges session snapshots.
+Unset, each process draws a key of its own, so a server with `EXL3_*`
+variables set shares no snapshot or cached answer with any other process. With
+none set, the identity and the compatibility are as before.
+
 ### Solo admission
 
 A request body that sets top-level `"oneiron_solo": true` runs alone. When it

@@ -284,6 +284,9 @@ pub(in crate::booking) fn commit_emergency_item(
             calendar_delivered: plan.payload.is_none(),
             apology_delivered: false,
             picked: None,
+            // Each effect's first send is admitted under its idempotency key.
+            ledger_generations: std::collections::BTreeMap::new(),
+            readopted_sends: std::collections::BTreeMap::new(),
         };
         record_prestart_emergency_outcome(vault, txn, event, &item)?;
         emergency::write_item_in(vault, txn, &item)?;

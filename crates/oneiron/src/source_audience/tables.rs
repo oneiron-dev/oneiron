@@ -31,6 +31,12 @@ crate::side_table::side_tables! {
         // Payload family: The source-audience policies, their events and the thread index stay
         // under the vault-wide seal until a per-owner compartment (row 17208).
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Whether the floor backfill has raised archived rows too (FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS):
+    /// set when a pass ends that began in a build that raises them with no row raised before its
+    /// first page, and when the run again ends (#10265 Opus review P2-2). A vault that lost it
+    /// runs the backfill again. Key: ().
+    SOURCE_AUDIENCE_FLOOR_ARCHIVED_RAISED: VaultMeta b"source_audience:floor_archived_raised:v1:done" Named
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// What a row whose floor waits waits on (READ-LINEAGE L1): each row or binding it waits to
     /// land here, so the write that lands it raises the waiting row again. Key: id16(awaited) +
     /// id16(waiting row).
@@ -48,6 +54,12 @@ crate::side_table::side_tables! {
     /// A row whose floor was raised since the floor backfill began (READ-LINEAGE L1); the
     /// backfill clears them once it has raised every row. Key: id16(row).
     SOURCE_AUDIENCE_FLOOR_RAISED: VaultMeta b"source_audience:floor_raised:v1:" Named
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// A row whose floor was raised since the floor backfill's run again began
+    /// (FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS; #10265 review 2 P1-2): the run's own marks, so the
+    /// marks a pass before it left never make it skip a row; cleared with them once it has raised
+    /// every row. Key: id16(row).
+    SOURCE_AUDIENCE_FLOOR_RAISED_AGAIN: VaultMeta b"source_audience:floor_raised_again:v1:" Named
         [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// What a row whose floor waits waits on, by row (READ-LINEAGE L1; #10108 reviews): the
     /// marks of SOURCE_AUDIENCE_FLOOR_AWAITED, so a raise takes every mark the row no longer

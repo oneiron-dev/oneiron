@@ -58,6 +58,7 @@ impl Vault {
     ) -> Result<PageVerdict> {
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
+        let was_unjoined = crate::setting::restored::possibly_restored_unjoined_in_txn(self, &txn)?;
         let mut merged = history_in_txn(self, &txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
         let (adopted, evidence) = adopted_context_in_txn(&self.store, &txn)?;
@@ -169,6 +170,11 @@ impl Vault {
         txn.commit()?;
         watch.finish()?;
         self.store.notify_proactivity_changes();
+        if was_unjoined {
+            // A joined machine's entry may have joined this copy: the work its
+            // queue held may start now.
+            self.store.notify_attempt_observers();
+        }
         // A row written after its window loaded reaches it only through the
         // live mirror.
         #[cfg(feature = "sync")]

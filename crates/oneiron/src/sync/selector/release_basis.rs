@@ -61,6 +61,9 @@ pub struct SelectorReleaseBasis {
     reader: Option<SelectorReaderReach>,
     /// The coreference links the answer's rows were let carry.
     coreference: CoreferenceDisclosure,
+    /// What the test doors keep on the vault the answer was made in.
+    #[cfg(oneiron_test_support)]
+    test_door_extensions: std::sync::Arc<crate::test_doors::vault_state::VaultTestDoorExtensions>,
 }
 
 impl SelectorReleaseBasis {
@@ -72,6 +75,8 @@ impl SelectorReleaseBasis {
             grant_id,
             reader: None,
             coreference: CoreferenceDisclosure::default(),
+            #[cfg(oneiron_test_support)]
+            test_door_extensions: std::sync::Arc::clone(&vault.test_door_state.extensions),
         }
     }
 
@@ -97,6 +102,15 @@ impl SelectorReleaseBasis {
     #[must_use]
     pub fn grant_id(&self) -> &EntityId {
         &self.grant_id
+    }
+
+    /// What the test doors keep on the vault the answer was made in: a hook a test armed there
+    /// runs in the gap between the answer's queue and its release
+    /// (`oneiron_server::test_doors::selector_release`).
+    #[cfg(oneiron_test_support)]
+    #[must_use]
+    pub fn test_door_extensions(&self) -> &crate::test_doors::vault_state::VaultTestDoorExtensions {
+        &self.test_door_extensions
     }
 
     /// Whether what the answer was made under stands now: the grant still

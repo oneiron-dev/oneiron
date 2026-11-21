@@ -84,6 +84,7 @@ pub use self::claim::{
 pub(in crate::booking) use self::claim::{
     confirmed_booking_starts, confirmed_booking_starts_listed, confirmed_start_for_reminder,
 };
+pub use self::deposit::RefundPermission;
 pub use self::deposit::{
     BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND, BookingDepositSettlementDrain, BookingDepositStatus,
     DEPOSIT_CHECKOUT_WINDOW_SECS, DepositCheckoutLease, DepositCheckoutStart, DepositProviderEvent,
@@ -108,9 +109,11 @@ pub(crate) use self::feed_move::{FeedMoveOutcome, is_booking_event, move_booking
 pub use self::hold_source::VaultActiveHoldSource;
 pub use self::owner_card::BookingOwnerCardRefundMarkedOutside;
 pub use self::owner_card::{
-    BOOKING_HELD_DEPOSIT_ITEM_PREFIX, BOOKING_OWNER_CARD_ITEM_PREFIX, BookingDepositHeld,
-    BookingDepositHeldReason, BookingDepositReturned, BookingOwnerCard, BookingOwnerCardDeposit,
-    BookingOwnerCardEmergencyReturn, BookingOwnerCardOffer,
+    BOOKING_CALENDAR_HOLD_ITEM_PREFIX, BOOKING_HELD_DEPOSIT_ITEM_PREFIX,
+    BOOKING_OWNER_CARD_ITEM_PREFIX, BookingDepositHeld, BookingDepositHeldReason,
+    BookingDepositReturned, BookingOwnerCard, BookingOwnerCardCalendarHold,
+    BookingOwnerCardDeposit, BookingOwnerCardEmergencyReturn, BookingOwnerCardOffer,
+    CALENDAR_HOLD_RECONNECT_VERB,
 };
 pub(crate) use self::owner_card::{
     booking_inbox_row_version_in_txn, booking_owner_card_inbox_items, booking_owner_card_of_item,
