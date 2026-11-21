@@ -2084,15 +2084,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         person: EntityId,
     ) -> Result<()> {
-        let closure = self.owner_authority_closure_in_txn(txn, person)?;
-        let holds_key = !closure.keys.is_empty();
-        let fold = self.authority_view_readonly_in_txn(txn)?;
-        let holds_binding = fold.actor_bindings.iter().any(|(key, binding)| {
-            binding.status == ActorBindingStatus::Active
-                && (binding.actor_ref == person || closure.signed_bindings.contains(key))
-                && binding.actor_class == ACTOR_CLASS_HUMAN
-        });
-        if holds_key || holds_binding {
+        if self.person_holds_owner_authority_in_txn(txn, person)? {
             return Err(authority_refused(OWNER_AUTHORITY_NEEDS_HOST));
         }
         Ok(())

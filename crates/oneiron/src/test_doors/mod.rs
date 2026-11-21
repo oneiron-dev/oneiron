@@ -250,6 +250,7 @@ pub mod masked_checkout;
 #[cfg(feature = "sync")]
 pub mod media_vector_replica;
 pub mod meeting_follow_up;
+pub mod member_departure_between;
 pub mod membership;
 pub mod memory_frontier;
 pub mod merge_queue_check;

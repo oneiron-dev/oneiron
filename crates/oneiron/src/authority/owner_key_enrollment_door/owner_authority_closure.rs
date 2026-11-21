@@ -252,4 +252,31 @@ impl Vault {
             signed_bindings,
         })
     }
+
+    /// Whether `person` holds owner authority on this vault's log that a move
+    /// ending their standing must end: a live owner key whose enrolment names
+    /// them, a live owner key a key of theirs signed in, a live `human`
+    /// binding that names them, or a live `human` binding a key of theirs
+    /// signed. [`crate::Vault::refuse_unrevoked_owner_authority_in_txn`]
+    /// refuses a move no issuer signs while this holds, and
+    /// [`crate::Vault::member_move_importance_in_txn`] asks as important
+    /// while it holds.
+    ///
+    /// # Errors
+    /// The store's, reading the rows.
+    pub(crate) fn person_holds_owner_authority_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+    ) -> Result<bool> {
+        let closure = self.owner_authority_closure_in_txn(txn, person)?;
+        let holds_key = !closure.keys.is_empty();
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let holds_binding = fold.actor_bindings.iter().any(|(key, binding)| {
+            binding.status == ActorBindingStatus::Active
+                && (binding.actor_ref == person || closure.signed_bindings.contains(key))
+                && binding.actor_class == ACTOR_CLASS_HUMAN
+        });
+        Ok(holds_key || holds_binding)
+    }
 }
