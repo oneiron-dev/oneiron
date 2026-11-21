@@ -41,7 +41,6 @@ use oneiron_store::ports::manual_clock::ManualClock;
 const CHECKPOINT_POLICY_REASON: &str = "change which devices vouch for this vault";
 const SET_MACHINE_ROLE_REASON: &str = "change what a device may do in this vault";
 const REMOVE_OWNER_KEY_REASON: &str = "remove a device that can approve changes";
-const ACCEPT_PACK_DEFAULTS_REASON: &str = "accept new default settings";
 
 /// A rooted vault with its serving install profiled and its owner authenticated.
 /// The vault drops before its directory.
@@ -598,31 +597,24 @@ fn each_prompt_shows_its_doors_reason_line() {
     assert_eq!(served.stored_rows(), rows, "the refusals store no row");
 }
 
-/// The owner door that accepts a pack's held defaults asks before it reads
-/// anything: a declined confirm refuses it whatever its arguments name, and
-/// stores nothing.
+/// The owner door that accepts a pack's held defaults makes its own checks
+/// on a read before its confirm: a yes to a proposal that is not the pack's
+/// waiting one is refused with that reason, and the person is never asked.
+/// The door's prompt and its line are held by
+/// `tests/owner_presence_pack_defaults_accept.rs`.
 #[test]
-fn the_pack_defaults_accept_asks_before_it_reads() {
+fn the_pack_defaults_accept_refuses_a_proposal_that_is_not_waiting_and_never_prompts() {
     let served = ServedVault::hosted();
-    let presence = scripted_gate(&served.vault, [Err(PresenceError::Declined)]);
+    let presence = scripted_gate(&served.vault, []);
     let rows = served.stored_rows();
     let refused = served
         .vault
         .accept_pack_defaults(&served.owner, "engine", &"0".repeat(64));
     assert!(
-        matches!(
-            refused,
-            Err(Error::Record(RecordError::OwnerPresenceRequired {
-                here: OwnerPresenceRefusal::Declined
-            }))
-        ),
-        "a declined confirm refuses the door: {refused:?}"
+        matches!(refused, Err(Error::InvalidConfig(_))),
+        "the door refuses the proposal, not the confirm: {refused:?}"
     );
-    assert_eq!(
-        presence.reasons(),
-        [ACCEPT_PACK_DEFAULTS_REASON],
-        "the prompt shows the door's line"
-    );
+    assert_eq!(presence.prompts(), 0, "the door showed no prompt");
     assert_eq!(served.stored_rows(), rows, "the refusal stores no row");
 }
 

@@ -42,6 +42,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+mod accept_checks;
+use accept_checks::{CheckedAccept, checked_accept_in_txn};
 mod door;
 pub(super) use door::project_pack_in_txn;
 mod layer;
