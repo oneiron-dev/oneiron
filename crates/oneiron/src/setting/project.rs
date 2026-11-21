@@ -610,11 +610,15 @@ pub(super) fn project_target_in_txn(
         }
     }
     // A row its key's hook refused in this pass, of a key that quarantines such a row: the key's
-    // quarantine marker (`quarantine`).
+    // quarantine marker where this install holds no row, else the row it holds, the source it
+    // installed first (`quarantine`; REVIEW-10357 round 2 P1-4).
     if quarantines_refused_row(spec)
         && let Some(newest) = heads.first()
     {
-        let has_strictest = spec.kind.strictest_value()?.is_some();
+        let held = table_of(spec)
+            .get_bytes(&vault.store, txn, &slot.encode())?
+            .is_some();
+        let has_strictest = !held && spec.kind.strictest_value()?.is_some();
         projected = quarantined_of(has_strictest, (newest, &heads), &reads);
     }
     let local = match slot.mode {

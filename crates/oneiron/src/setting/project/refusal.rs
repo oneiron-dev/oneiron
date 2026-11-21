@@ -9,8 +9,8 @@
 //! quarantines it ([`RefusedProjection::Quarantine`], the calendar pair:
 //! SETTING-PROJECTED-CALENDAR-SYSTEM-CLAIM = A, `quarantine`). A landed row takes the act's value
 //! without the hook ([`land_refused_row_in_txn`]), as on every machine that folds the act, and the
-//! key's reader holds the line; a quarantined row reads the key's strictest value until its acts
-//! or those of a row its hook met it with move. In the same write the pass raises one
+//! key's reader holds the line; a quarantined row keeps the row this install holds, else reads
+//! the key's strictest value, until its acts or those of a row its hook met it with move. In the same write the pass raises one
 //! NOTIFICATION per owner of the vault, kind `Ask`, producer
 //! [`SETTING_REFUSAL_NOTIFICATION_PRODUCER`]. It names the acts that head the row and the act the
 //! refused value came from: one of them, or, where the heads differ and the row takes the value
@@ -46,8 +46,8 @@
 //! ([`slot_refused_here_in_txn`]), so the act replaces the refused one on every machine, and each
 //! machine's pass projects every row of it, whichever it reads first. A quarantined row's notice
 //! leads with the key's words of the choice, and offers the owner a pick: a tap for each of those
-//! rows that keeps it at the value its act sets and clears the others, one act each. A quarantine
-//! of a clear leaves the row with no value, as the act asks, and raises none.
+//! rows that keeps it at the value its act sets and clears the others, one act each; a lone row
+//! offers the tap any key's does.
 
 use super::*;
 
@@ -204,8 +204,8 @@ struct Peer {
 /// `now`: one row per owner of the vault (module doc). `deciding` is the act the refused value
 /// came from, where the pass knows it; `landed`, whether the pass landed the row all the same
 /// ([`land_refused_row_in_txn`]), once it landed every such row. A target with no setting act
-/// among its heads, on a key this build does not know, landed with rows that no longer conflict,
-/// or quarantined for a clear, which leaves the row with no value as the act asks, raises none.
+/// among its heads, on a key this build does not know, or landed with rows that no longer
+/// conflict, raises none.
 ///
 /// # Errors
 ///
@@ -252,9 +252,6 @@ pub(super) fn raise_refusal_notice_in_txn(
         spec.refused_projection,
         RefusedProjection::Quarantine { .. }
     );
-    if picks && refused.clears {
-        return Ok(());
-    }
     let mut targets = vec![target];
     let mut peers = Vec::new();
     if let Some(peers_of) = spec.refusal_peers {
@@ -639,7 +636,7 @@ pub(in crate::setting) fn slot_refused_here_in_txn(
 /// row is left out, since only a move writes one. A key that quarantines a refused row
 /// ([`RefusedProjection::Quarantine`]) offers the pick: for each of those rows with a value, a
 /// tap that keeps it at the value its act sets (else the value it holds here) and clears the
-/// others, and for a lone row a tap that clears it. Any other key offers one tap of them all, each
+/// others. A lone row, and any other key, offers one tap of them all, each
 /// to the value it holds here, which the owner may edit before he taps. Every row past a tap's
 /// first is a further row of the same change, so each tap is one act. None where no refusal
 /// stands here, and for an event of another shape.
@@ -725,12 +722,13 @@ pub(crate) fn setting_refusal_taps_in_txn(
             rows.push((slot, spec));
         }
     }
-    let picks = rows.first().is_some_and(|(_, spec)| {
-        matches!(
-            spec.refused_projection,
-            RefusedProjection::Quarantine { .. }
-        )
-    });
+    let picks = rows.len() > 1
+        && rows.first().is_some_and(|(_, spec)| {
+            matches!(
+                spec.refused_projection,
+                RefusedProjection::Quarantine { .. }
+            )
+        });
     let mut valued = Vec::with_capacity(rows.len());
     for (slot, spec) in rows {
         let fold = if picks {
@@ -753,9 +751,6 @@ pub(crate) fn setting_refusal_taps_in_txn(
     }
     if !picks {
         return Ok(tap_of(&valued).into_iter().collect());
-    }
-    if let [(slot, _)] = &valued[..] {
-        return Ok(tap_of(&[(slot.clone(), None)]).into_iter().collect());
     }
     let mut taps = Vec::new();
     for (kept, (slot, value)) in valued.iter().enumerate() {

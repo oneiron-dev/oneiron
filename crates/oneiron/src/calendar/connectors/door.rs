@@ -166,6 +166,30 @@ pub(crate) fn seat_systems_in_txn(
     Ok(systems)
 }
 
+/// The seat ref of every seat whose passports carry `system`, read in `txn`: each installed one,
+/// and each taken out of service ([`seat_of_system_in_txn`]).
+pub(crate) fn seats_holding_system_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    system: &str,
+) -> crate::Result<Vec<String>> {
+    let mut seats = Vec::new();
+    for seat_ref in CONNECTOR_SEAT.items_in_txn(vault, txn)? {
+        let setup = CONNECTOR_SEAT
+            .read_in_txn(vault, txn, &[], Some(&seat_ref))?
+            .value;
+        if setup.is_some_and(|setup| setup.config.system == system) {
+            seats.push(seat_ref);
+        }
+    }
+    for seat_ref in retired_seats_of_system_in_txn(vault, txn, system)? {
+        if !seats.contains(&seat_ref) {
+            seats.push(seat_ref);
+        }
+    }
+    Ok(seats)
+}
+
 /// The seat ref of every seat the setting projection took out of service that keeps `system`
 /// its own ([`seat_of_system_in_txn`]), read in `txn`.
 pub(crate) fn retired_seats_of_system_in_txn(
@@ -272,7 +296,9 @@ pub(crate) fn release_seat_to_feed_in_txn(
 /// system with the pack calendar prefix, or the system of an installed seat of another
 /// calendar. A clear of an installed seat whose act installs the feed of the seat's system is the
 /// owner's pick of that feed (SETTING-PROJECTED-CALENDAR-SYSTEM-CLAIM = A): the seat leaves
-/// service and gives its system up to the feed ([`release_seat_system_in_txn`]). One whose act
+/// service and gives its system up to the feed ([`release_seat_system_in_txn`]), where that feed
+/// can install here: else the clear is refused, and the seat runs on (REVIEW-10357 round 2
+/// P1-4). One whose act
 /// installs another seat of the seat's system is the owner's pick of that seat (REVIEW-10357
 /// P1-3): the seat leaves service and keeps its system, as the projection takes a seat out.
 pub(crate) fn seat_setup_changed_in_txn(
@@ -323,6 +349,13 @@ pub(crate) fn seat_setup_changed_in_txn(
                     && row.slot.name == ICS_FEED.spec.name
                     && row.slot.item.as_deref() == Some(system)
             }) {
+                if let Some(reason) = feed_door::feed_refusal_of_system_in_txn(vault, txn, system)?
+                {
+                    return Err(crate::Error::InvalidConfig(format!(
+                        "the ICS feed this change keeps cannot install here ({reason}), so the \
+                         seat runs on"
+                    )));
+                }
                 return release_seat_system_in_txn(vault, txn, seat_ref);
             }
             if rows.iter().any(|row| {

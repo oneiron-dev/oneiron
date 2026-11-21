@@ -3,10 +3,11 @@
 //! quarantines the act, reads the strictest value and stops retrying).
 //!
 //! Once a pass's rounds end, a row its key's hook still refuses, of a key that quarantines it,
-//! is projected again, in a savepoint of the pass's write, as the key's quarantine marker
-//! ([`quarantined_of`]): the row reads the key's strictest value, standing `Quarantined`, and the
-//! key's hook runs on that value, so a calendar seat in service leaves service and no feed is
-//! installed. Its projection is recorded, so no later pass reads it again until its own acts
+//! is projected again, in a savepoint of the pass's write, standing `Quarantined`
+//! ([`quarantined_of`]). Where this install holds no row, it is written as the key's quarantine
+//! marker, which reads the key's strictest value, and the key's hook runs on that value, so no
+//! feed or seat is installed. Where it holds one, the source it installed first, the row stays as
+//! it is (REVIEW-10357 round 2 P1-4). Its projection is recorded, so no later pass reads it again until its own acts
 //! move, or the acts of a row its key's hook judged it against ([`super::super::RefusalPeers`]):
 //! the projection records the basis of each such row ([`PeerSeen`]), which [`moved_since`] reads.
 //! A pass that reads it again projects the act's value and runs the hook again.
