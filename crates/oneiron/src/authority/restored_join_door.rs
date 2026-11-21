@@ -152,6 +152,7 @@ impl Vault {
         // first. The keystore read before it refuses a host that installed
         // none with no prompt.
         self.device_keystore()?;
+        self.prepare_install_signing()?;
         let witness = self.owner_presence(
             OwnerActImportance::Important,
             owner_presence_reasons::JOIN_RESTORED_INSTALL,

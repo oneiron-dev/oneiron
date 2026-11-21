@@ -442,6 +442,7 @@ impl Vault {
         };
         let (row, prepared) = self.draw_kit_confirm(owner, pieces, passphrase)?;
         let predecessor = self.activation_checks(owner, &prepared, carry)?;
+        self.prepare_install_signing()?;
         let witness = self.owner_presence(
             OwnerActImportance::Important,
             owner_presence_reasons::KIT_ACTIVATION,
