@@ -116,6 +116,8 @@ pub(crate) enum ArchivedSideGroup {
     AttemptQueue,
     /// Compliance pack decision history.
     CampaignCompliance,
+    /// The house voice guide's seed marker.
+    CampaignHouseVoiceGuide,
     /// Check-in history and its time index.
     CheckIn,
     /// Passive e-sign audit chains.
@@ -220,6 +222,9 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::ATTEMPT_HOLD_OVERRIDE_RECEIPT.name => Some(Group::AttemptQueue),
         name if name == side_table::CAMPAIGN_COMPLIANCE_RECEIPT.name => {
             Some(Group::CampaignCompliance)
+        }
+        name if name == side_table::CAMPAIGN_HOUSE_VOICE_GUIDE.name => {
+            Some(Group::CampaignHouseVoiceGuide)
         }
         name if name == side_table::CHECK_IN_RECEIPT.name => Some(Group::CheckIn),
         name if name == side_table::ESIGN_AUDIT.name => Some(Group::Esign),
@@ -369,6 +374,11 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::CampaignCompliance => {
             crate::Vault::land_archived_campaign_compliance_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::CampaignHouseVoiceGuide => {
+            crate::campaign::house_voice_guide::land_archived_house_voice_guide_rows_in_txn(
+                vault, txn, permit, rows,
+            )
         }
         ArchivedSideGroup::CheckIn => {
             crate::Vault::land_archived_check_in_rows_in_txn(vault, txn, permit, rows)

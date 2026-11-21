@@ -19,8 +19,17 @@
 //! deleted does, until the owner names a guide or skips its copy review
 //! (`campaign.copy_review.skip`). A failed seed (no owner PERSON yet, an
 //! erased owner) leaves the same hold, and the next create or seeded open
-//! tries again; a vault that has left a share runs no seed at open.
+//! tries again; a vault that has left a share runs no seed at open. The
+//! owner's whole-vault archive carries the marker, and the owner's restore
+//! lands it whether or not its NOTE came too: the restored vault reviews
+//! against the guide its source had (as the owner edited it there), and a
+//! guide the owner deleted stays deleted, so no default guide is seeded in
+//! its place.
 
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{ArchiveRetainedSideRow, OwnerArchiveRestorePermit};
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
@@ -104,6 +113,32 @@ fn holds_live_campaign(vault: &Vault, kind: u8) -> Result<bool> {
         }
         after = page.last().copied();
     }
+}
+
+/// Lands the owner's archived house voice guide marker (the whole-vault
+/// restore), as written, whether or not the NOTE it names came with it: the
+/// archive's vault had seeded its guide, so this vault seeds none of its own,
+/// and a guide the owner deleted there stays deleted here. A vault that holds
+/// its own marker keeps it.
+///
+/// # Errors
+///
+/// Storage faults; validation stays in the returned outcomes.
+pub(crate) fn land_archived_house_voice_guide_rows_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    rows: &[ArchiveRetainedSideRow],
+) -> Result<Vec<ArchivedSideRowOutcome>> {
+    let mut outcomes = Vec::with_capacity(rows.len());
+    for row in rows {
+        let outcome = match decode_archived_row(&GUIDE, row) {
+            Err(reason) => ArchivedSideRowOutcome::HeldBack(reason),
+            Ok((key, _)) => install_archived_row(&GUIDE, vault, txn, permit, &key, row)?,
+        };
+        outcomes.push(outcome);
+    }
+    Ok(outcomes)
 }
 
 /// Test door: drops the marker, so the vault holds no house voice guide, as a
