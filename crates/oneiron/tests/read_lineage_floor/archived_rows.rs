@@ -13,6 +13,10 @@
 //! vault whose backfill ended before it did; an archived row then reads as
 //! held on both sides. Review 3 P2-1: a mark on an archived row is
 //! followed, so a row waiting on it settles when its floor does.
+//!
+//! #10265 review P1-1, P1-2: in that run again, an archived row's first
+//! raise stays its first when the raise stores its floor before it settles,
+//! and when its restore comes before the run reaches it.
 
 use oneiron::test_doors::cleanup_archive::archive_as_cleanup;
 use oneiron::test_doors::read_lineage_floor::{
@@ -382,4 +386,77 @@ fn a_fact_waiting_on_an_archived_source_settles_when_that_sources_floor_does() {
     assert_reads_as_its_landed_source(&mailbox, fact, policy, "after a pass");
     restore(&mailbox, source);
     assert_reads_as_its_landed_source(&mailbox, fact, policy, "once its source is restored");
+}
+
+/// #10265 review P1-1: in a vault whose backfill ended before it raised
+/// archived rows, `fact` was learnt from the mailbox's row and from
+/// `input`, a row learnt from a mailbox the reader does not read, all before
+/// floors; the cleanup archived `fact` and the owner erased `input`. One
+/// more run raises `fact` for the first time over an erased input, so it
+/// waits for good: once restored it reads to no stranger and not to the
+/// mailbox's reader. Before the fix that raise stored `fact`'s floor (the
+/// mailbox's policy) before it asked whether it was the first, and the
+/// stored floor read as an earlier raise's: `fact` settled with the
+/// mailbox's policy alone, and the reader read it.
+#[test]
+fn an_archived_fact_from_a_held_and_an_erased_input_waits_for_good_after_one_more_run() {
+    let mailbox = owners_mailbox();
+    let other = EntityId::now();
+    bound_row_read_by(&mailbox.vault, other, &[mailbox.owner])
+        .expect("FIXTURE: a mailbox the reader does not read");
+    let input = claim_born_before_floors(&mailbox, &[other], "fact.erased_input_of_other_mailbox");
+    let fact = claim_born_before_floors(
+        &mailbox,
+        &[mailbox.row, input],
+        "fact.archived_from_held_and_erased_inputs",
+    );
+    archive(&mailbox, fact);
+    erase(&mailbox, input);
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault written before floors");
+    end_backfill_without_archived_rows(&mailbox.vault)
+        .expect("FIXTURE: the backfill ended before it raised archived rows");
+    housekeeping_pass(&mailbox);
+    restore(&mailbox, fact);
+    assert_no_stranger_or_reader_reads(&mailbox, fact, "once restored");
+    assert!(
+        floor_waits(&mailbox.vault, fact).expect("the floor's state"),
+        "a restored fact whose input was erased before its first raise no longer waits",
+    );
+    housekeeping_pass(&mailbox);
+    assert_no_stranger_or_reader_reads(&mailbox, fact, "after a pass once restored");
+}
+
+/// #10265 review P1-2: in a vault whose backfill ended before it raised
+/// archived rows, `fact` was learnt from `input`, both before floors; the
+/// cleanup archived `fact` and the owner erased `input`. The owner restores
+/// `fact` before one more run reaches it: the restore raise is its first,
+/// over an erased input, so it waits for good, once restored and through
+/// that run, and the owner, who reads every source here, reads it. Before
+/// the fix the restore took the archive marker off before it raised `fact`,
+/// so the raise read a live row that backfill had raised, no first raise:
+/// `fact` settled with an empty floor, a stranger read it, and the run
+/// skipped it as raised.
+#[test]
+fn an_archived_fact_restored_before_one_more_run_waits_for_good_on_its_erased_input() {
+    let mailbox = owners_mailbox();
+    let input =
+        claim_born_before_floors(&mailbox, &[mailbox.row], "fact.erased_input_restored_early");
+    let fact = claim_born_before_floors(&mailbox, &[input], "fact.restored_before_one_more_run");
+    archive(&mailbox, fact);
+    erase(&mailbox, input);
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault written before floors");
+    end_backfill_without_archived_rows(&mailbox.vault)
+        .expect("FIXTURE: the backfill ended before it raised archived rows");
+    restore(&mailbox, fact);
+    assert_no_stranger_or_reader_reads(&mailbox, fact, "once restored");
+    assert!(
+        floor_waits(&mailbox.vault, fact).expect("the floor's state"),
+        "a fact restored before one more run no longer waits on its erased input",
+    );
+    housekeeping_pass(&mailbox);
+    assert_no_stranger_or_reader_reads(&mailbox, fact, "after one more run");
+    assert!(
+        reads(&mailbox.vault, fact, &[mailbox.owner]).expect("the owner's read"),
+        "the owner, who reads every source here, does not read a fact that waits for good",
+    );
 }
