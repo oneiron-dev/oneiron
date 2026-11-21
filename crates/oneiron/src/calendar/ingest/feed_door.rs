@@ -116,6 +116,7 @@ pub(crate) fn registration_in_txn(
 /// was declined (CAL-02), starts no chain: the owner's approval starts it. Clearing an installed
 /// feed uninstalls it in the same write ([`uninstall_in_txn`]), which runs under the calendar
 /// admission turn ([`super::ADMISSION_WRITE_TURN`]), so it never lands inside a poll's admission.
+/// The configuration installed already, set again, is a no-op.
 ///
 /// # Errors
 ///
@@ -144,6 +145,11 @@ pub(crate) fn ics_feed_changed_in_txn(
     };
     let config = decode(change.value.as_ref());
     if let Some(installed) = decode(change.prior.as_ref()) {
+        // The same configuration again changes nothing: the row changes hands (another owner's
+        // act of it, the owner's set over a row he did not set), and the feed runs on.
+        if config.as_ref() == Some(&installed) {
+            return Ok(());
+        }
         if config.is_some() {
             return Err(crate::Error::InvalidConfig(
                 "an installed ICS feed is immutable; use a new system".into(),

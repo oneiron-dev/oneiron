@@ -16,10 +16,14 @@
 //! the owner's words, `source.result` the log entry of the act this install refused, and
 //! `subject_refs` the log entry of every act it names.
 //!
-//! Its taps are read when the row is read ([`setting_refusal_taps_in_txn`]): for each row this
-//! install still refuses an act of, one `vault.settings.set` of that row to the value it holds
-//! here, which the owner may edit. The owner's set signs its act even where this install's row
-//! already holds the value ([`slot_refused_here_in_txn`]), so the act replaces the refused one
+//! The pass also records the refusal here ([`REFUSALS`]): the basis of the acts it refused. A
+//! refusal stands while the row's acts are as they were then and no projection of them stands;
+//! an act that arrived since, which no pass has read yet, is not refused here.
+//!
+//! Its taps are read when the row is read ([`setting_refusal_taps_in_txn`]): for each row of the
+//! named acts this install still refuses, one `vault.settings.set` of that row to the value it
+//! holds here, which the owner may edit. The owner's set signs its act even where this install's
+//! row already holds the value ([`slot_refused_here_in_txn`]), so the act replaces the refused one
 //! on every machine, and each machine's next pass projects the row again.
 
 use super::*;
@@ -131,6 +135,35 @@ pub(super) fn raise_refusal_notice_in_txn(
         )?;
     }
     Ok(())
+}
+
+/// Records that this install's pass found the key's hook refusing the row of `target`'s acts as
+/// they stand, in the pass's write `txn` once the row's own savepoint rolled back ([`REFUSALS`]).
+/// A target with no acts records nothing.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn record_refusal_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    target: EntityId,
+) -> Result<()> {
+    let Some(fold) = vault.setting_slot_fold_in_txn(txn, target)? else {
+        return Ok(());
+    };
+    REFUSALS.put(&vault.store, txn, &target_key(target), &fold_basis(&fold))
+}
+
+/// The basis of `fold`'s acts as a pass reads them ([`basis_of`]).
+fn fold_basis(fold: &SettingSlotFold) -> [u8; 32] {
+    let in_force = fold.in_force.as_ref().map(|head| head.act);
+    basis_of(
+        fold.revision,
+        (&fold.counts, &fold.name_counts),
+        (fold.conflict, in_force),
+        &fold.asking,
+    )
 }
 
 /// The setting acts among `fold`'s live heads, in the fold's order. A move's copy, a pack's head
@@ -271,10 +304,11 @@ fn machine_label_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, machine: EntityId)
         .unwrap_or_else(|| format!("machine {}", &machine.to_hex()[..8])))
 }
 
-/// The row `target`'s acts name where this install's projection of them does not stand: one of
-/// its live heads is a setting act (one of `acts`, where given), and no projection is recorded at
-/// its acts as they are, so the next pass reads it again (a row its key's hook refused here).
-/// `None` where the projection stands, or no such act heads the row.
+/// The row `target`'s acts name where this install's key's hook refuses them: one of its live
+/// heads is a setting act (one of `acts`, where given), this install's pass recorded a refusal of
+/// its acts as they are ([`REFUSALS`]), and no projection is recorded at them. `None` where the
+/// projection stands, where no pass has read the acts as they are (an act that arrived since the
+/// last refusal is not refused here), or where no such act heads the row.
 fn refused_slot_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -293,13 +327,10 @@ fn refused_slot_in_txn(
     else {
         return Ok(None);
     };
-    let in_force = fold.in_force.as_ref().map(|head| head.act);
-    let basis = basis_of(
-        fold.revision,
-        (&fold.counts, &fold.name_counts),
-        (fold.conflict, in_force),
-        &fold.asking,
-    );
+    let basis = fold_basis(&fold);
+    if REFUSALS.get(&vault.store, txn, &target_key(target))? != Some(basis) {
+        return Ok(None);
+    }
     let stands = match PROJECTIONS.get(&vault.store, txn, &target_key(target))? {
         Some(projection) => !moved_since(vault, txn, &projection, basis)?,
         None => false,
@@ -324,7 +355,8 @@ pub(in crate::setting) fn slot_refused_here_in_txn(
 }
 
 /// The taps the owner's notice of a refused projection offers on this install now, from its
-/// `event` (module doc): for each row an act it names heads and this install still refuses
+/// `event` (module doc): for each row an act it names (its first row, and each further row of a
+/// batch) heads and this install still refuses
 /// ([`refused_slot_in_txn`]), the input of one `vault.settings.set` of that row to the value it
 /// holds here, which the owner may edit before he taps. A carried row offers none, since only a
 /// move writes one; an event of another shape offers none.
@@ -354,32 +386,37 @@ pub(crate) fn setting_refusal_taps_in_txn(
         let AuthorityOp::PolicySettingSet(set) = entry.op else {
             continue;
         };
-        let slot = set.slot.unwrap_or_else(|| RowKey {
-            name: set.setting.clone(),
-            item: None,
-            mode: SettingMode::Value,
-            scope: SettingScope::Vault,
-        });
-        let target = setting_slot_target(&slot)?;
-        if !targets.insert(target) {
-            continue;
+        // Every row the act names: its first, and each further row of a batch.
+        let rows = std::iter::once((set.setting, set.slot))
+            .chain(set.more.into_iter().map(|row| (row.setting, row.slot)));
+        for (setting, slot) in rows {
+            let slot = slot.unwrap_or_else(|| RowKey {
+                name: setting,
+                item: None,
+                mode: SettingMode::Value,
+                scope: SettingScope::Vault,
+            });
+            let target = setting_slot_target(&slot)?;
+            if !targets.insert(target) {
+                continue;
+            }
+            let Some(refused) = refused_slot_in_txn(vault, txn, target, Some(&acts))? else {
+                continue;
+            };
+            let Ok(spec) = spec_named(&refused.name) else {
+                continue;
+            };
+            if refused.mode == SettingMode::Carried {
+                continue;
+            }
+            taps.push(serde_json::json!({
+                "key": refused.name,
+                "item": refused.item,
+                "scope": refused.scope,
+                "pin": refused.mode == SettingMode::Pin,
+                "value": value_here_in_txn(vault, txn, spec, &refused)?,
+            }));
         }
-        let Some(refused) = refused_slot_in_txn(vault, txn, target, Some(&acts))? else {
-            continue;
-        };
-        let Ok(spec) = spec_named(&refused.name) else {
-            continue;
-        };
-        if refused.mode == SettingMode::Carried {
-            continue;
-        }
-        taps.push(serde_json::json!({
-            "key": refused.name,
-            "item": refused.item,
-            "scope": refused.scope,
-            "pin": refused.mode == SettingMode::Pin,
-            "value": value_here_in_txn(vault, txn, spec, &refused)?,
-        }));
     }
     Ok(taps)
 }

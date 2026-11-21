@@ -305,6 +305,8 @@ pub(super) fn record_projection_in_txn(
         .unwrap_or_default();
     watch_rows_in_txn(&vault.store, txn, target, (&last, &rows_of(projection)))?;
     PROJECTIONS.put(&vault.store, txn, &key, projection)?;
+    // A refusal of the target's acts no longer stands once they are projected (`refusal`).
+    REFUSALS.delete(&vault.store, txn, &key)?;
     Ok(())
 }
 
@@ -639,28 +641,30 @@ impl Vault {
             for (target, _) in &moved {
                 // Each row in a savepoint of its own: one a key's hook refuses on this install
                 // (its manifest, a seat installed here) stays as it was, and the others land.
-                let mut savepoint = self.store.env.nested_write_txn(txn)?;
-                match project_target_in_txn(self, &mut savepoint, *target, now) {
+                // A savepoint that commits hands the work its writes queued for after the commit
+                // (the live sync mirror, the wakes) to the pass's write (`batch::savepoint_in_txn`).
+                match crate::batch::savepoint_in_txn(self, txn, |savepoint| {
+                    project_target_in_txn(self, savepoint, *target, now).map(Some)
+                }) {
                     Ok(projected) => {
-                        savepoint.commit()?;
-                        changed.extend(projected.changed);
+                        changed.extend(projected.into_iter().flat_map(|projected| projected.changed));
                     }
                     Err(Error::InvalidConfig(reason)) => {
-                        drop(savepoint);
                         tracing::warn!(
                             reason = %reason,
                             "the next pass reads again a setting row its key refused here"
                         );
+                        record_refusal_in_txn(self, txn, *target)?;
                         // The owner's notice of it (`refusal`), in a savepoint of its own: a
                         // fault there is logged, and the pass goes on.
-                        let mut notice = self.store.env.nested_write_txn(txn)?;
-                        match raise_refusal_notice_in_txn(self, &mut notice, (*target, &reason), now)
-                        {
-                            Ok(()) => notice.commit()?,
-                            Err(error) => tracing::warn!(
+                        if let Err(error) = crate::batch::savepoint_in_txn(self, txn, |notice| {
+                            raise_refusal_notice_in_txn(self, notice, (*target, &reason), now)
+                                .map(Some)
+                        }) {
+                            tracing::warn!(
                                 kind = ?error.kind(),
                                 "the owner's notice of a setting row its key refused here was not raised; the next pass tries again"
-                            ),
+                            );
                         }
                     }
                     Err(error) => return Err(error),
