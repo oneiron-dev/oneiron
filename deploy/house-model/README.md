@@ -431,7 +431,7 @@ ported onto this server without editing exllamav3. Its sampling changes
 
 | Variable | Flag | What it changes |
 |---|---|---|
-| `ONEIRON_HOUSE_EXL3_FUSE_PROJECTIONS` | `--fuse-projections` | same-input projections stay one fused GEMM at every bitrate (`EXL3_MGEMM_K_THRESHOLD=0`), where by default a low-bitrate pair runs as separate int8 GEMVs (A-0026) |
+| `ONEIRON_HOUSE_EXL3_FUSE_PROJECTIONS` | `--fuse-projections` | same-input projections stay one fused GEMM at every bitrate (`EXL3_MGEMM_K_THRESHOLD=0`), where by default a low-bitrate pair runs as separate int8 GEMVs (A-0026). The switch owns exllamav3's fusion variables: off, the server clears an inherited `EXL3_MGEMM_K_THRESHOLD` or `EXL3_MGEMM_N_THRESHOLD` (one `FUSION_ENV_REPLACED` line names them), so the identity never misses a fusion |
 | `ONEIRON_HOUSE_EXL3_FP16_PREFILL` | `--fp16-prefill` | a prefill GEMM over a reconstructed FP16 weight with at least 384 rows and an FP16 output accumulates in FP16 (`torch.mm` under `allow_fp16_accumulation`) instead of FP32; decode is unchanged (A-0028) |
 | `ONEIRON_HOUSE_EXL3_PROMPT_LOOKUP` | `--prompt-lookup` | a request whose own sequence repeats an earlier stretch is offered that stretch's continuation in place of the draft's block, per request and match length, only where its own verified lookups have done well (A-0009, A-0012) |
 | `ONEIRON_HOUSE_EXL3_DRAFT_WINDOW_TABLES` | `--draft-window-tables` | the draft forward reads only the pages its 2048-token window can see, so its attention is sized to the window, not the sequence; needs the draft KV ring (A-0016) |

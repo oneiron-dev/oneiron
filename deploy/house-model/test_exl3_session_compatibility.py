@@ -2,10 +2,12 @@
 (`KV_ARITHMETIC_PARTS`): a snapshot exported with FP16 prefill or the fused
 projections on is refused `snapshot_incompatible` by a worker with them off,
 and a worker with both off keeps the compatibility it had before the parts
-existed. CPU only, with the stand-ins of `test_exl3_reply_limits` and
+existed. The fuse_projections switch owns exllamav3's fusion variables, so an
+inherited one cannot fuse projections the compatibility does not name. CPU only, with the stand-ins of `test_exl3_reply_limits` and
 stand-ins for the exllamav3 modules the session layer imports; no model is
 loaded. Run from this folder:
 `python3 -m unittest test_exl3_session_compatibility`."""
+import os
 import sys
 import tempfile
 import types
@@ -111,6 +113,32 @@ class SnapshotCompatibility(unittest.TestCase):
         # The same parts on both workers: the import goes on to its checkpoint check.
         refusal = import_refusal(self, compatibility(["fp16_prefill"]), compatibility(["fp16_prefill"]))
         self.assertNotEqual(str(refusal), INCOMPATIBLE_MESSAGE)
+
+
+class ProjectionFusionSwitch(unittest.TestCase):
+    INHERITED = {"EXL3_MGEMM_K_THRESHOLD": "0", "EXL3_MGEMM_N_THRESHOLD": "4096"}
+
+    def test_off_clears_an_inherited_fusion_override(self):
+        # The review's case: an EnvironmentFile sets EXL3_MGEMM_K_THRESHOLD=0 and the launcher passes
+        # --no-fuse-projections; no Config built after this may see the override.
+        with mock.patch.dict(os.environ, self.INHERITED):
+            self.assertEqual(exl3_server.set_projection_fusion(False), self.INHERITED)
+            for name in exl3_server.PROJECTION_FUSION_ENV:
+                self.assertNotIn(name, os.environ)
+
+    def test_on_fuses_every_pair_whatever_was_inherited(self):
+        with mock.patch.dict(os.environ, self.INHERITED):
+            self.assertEqual(exl3_server.set_projection_fusion(True), self.INHERITED)
+            self.assertEqual(os.environ.get("EXL3_MGEMM_K_THRESHOLD"), "0")
+            self.assertNotIn("EXL3_MGEMM_N_THRESHOLD", os.environ)
+
+    def test_off_with_nothing_inherited_changes_nothing(self):
+        with mock.patch.dict(os.environ, {}):
+            for name in exl3_server.PROJECTION_FUSION_ENV:
+                os.environ.pop(name, None)
+            before = dict(os.environ)
+            self.assertEqual(exl3_server.set_projection_fusion(False), {})
+            self.assertEqual(dict(os.environ), before)
 
 
 if __name__ == "__main__":

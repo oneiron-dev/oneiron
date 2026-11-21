@@ -172,6 +172,12 @@ SPEED_PART_DEFAULTS = {
 # installed, unreplayed, on a worker that computes it the other way. Prompt
 # lookup and the window tables change only what is proposed and verified.
 KV_ARITHMETIC_PARTS = ("fuse_projections", "fp16_prefill")
+# The exllamav3 variables that decide which same-input projections fuse
+# (each Config reads them when it is built). The fuse_projections switch owns
+# them (`set_projection_fusion`): an inherited value, say from a systemd
+# EnvironmentFile, would fuse projections that the identity and the snapshot
+# compatibility do not name.
+PROJECTION_FUSION_ENV = ("EXL3_MGEMM_K_THRESHOLD", "EXL3_MGEMM_N_THRESHOLD")
 # FP16 accumulation runs in a reconstructed prefill GEMM of at least this many
 # rows into an FP16 output (`install_fp16_prefill`).
 FP16_PREFILL_MIN_ROWS = 384
@@ -590,6 +596,18 @@ def kv_arithmetic(parts):
     return sorted(name for name in KV_ARITHMETIC_PARTS if parts.get(name))
 
 
+def set_projection_fusion(on):
+    """Sets exllamav3's fusion variables (PROJECTION_FUSION_ENV) for the fuse_projections switch, before any
+    Config reads them. On: every same-input pair stays one fused GEMM (K threshold 0; QWEN-EVAL-1 arm
+    astra-skill A-0026), where by default a low-bitrate pair runs as separate int8 GEMVs. Off: both are
+    cleared, so exllamav3's defaults apply whatever the environment held. Returns the inherited values it
+    replaced, by name."""
+    replaced = {name: os.environ.pop(name) for name in PROJECTION_FUSION_ENV if name in os.environ}
+    if on:
+        os.environ["EXL3_MGEMM_K_THRESHOLD"] = "0"
+    return replaced
+
+
 SPEED_PART_HELP = {
     "fuse_projections": "keep same-input projections fused at every bitrate (EXL3_MGEMM_K_THRESHOLD=0)",
     "fp16_prefill": f"FP16 accumulation in reconstructed prefill GEMMs of at least {FP16_PREFILL_MIN_ROWS} rows",
@@ -641,10 +659,10 @@ def load(args):
         raise ValueError(f"--cache-tokens must be at least {floor}, so a request the context admits fits alone")
 
     parts = speed_parts(args, ring, args.draft_dir)
-    if parts["fuse_projections"]:
-        # Read by every Config's InferParams: same-input projections stay fused at every bitrate
-        # (QWEN-EVAL-1 arm astra-skill A-0026), where by default a low-bitrate pair runs as separate int8 GEMVs.
-        os.environ["EXL3_MGEMM_K_THRESHOLD"] = "0"
+    replaced = set_projection_fusion(parts["fuse_projections"])
+    if replaced:
+        print("FUSION_ENV_REPLACED " + " ".join(f"{name}={value}" for name, value in sorted(replaced.items())),
+              flush=True)
     print("SPEED_PARTS " + " ".join(f"{name}={int(on)}" for name, on in parts.items())
           + f" ext={getattr(exllamav3_ext, '__file__', '?')}", flush=True)
 
