@@ -1,6 +1,7 @@
 //! Transactional point-claim and retry lineage reads for ordered host composition.
 
 use super::AttemptQueue;
+use super::unjoined_hold::UnjoinedHold;
 use crate::attempt_queue::encoding::ready_at;
 use crate::attempt_queue::lifecycle::{RunEvent, RunLifecycle, RunRow, RunStep};
 use crate::attempt_queue::telemetry::invalid_transition;
@@ -17,18 +18,43 @@ impl AttemptQueue<'_> {
     /// recorded clock, task dispatch readiness and task symbols. The lease is
     /// stamped with the recorded clock. A row this owner may not take yet is
     /// `Empty`; so is a row whose TASK waits on an unattached comment, which
-    /// the claim pauses for that hold (OF-368).
+    /// the claim pauses for that hold (OF-368), and a row of a held kind on a
+    /// copy restored and not joined ([`UnjoinedHold`]).
     pub(crate) fn claim_id_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         id: AttemptId,
+        input: ClaimAttempt,
+    ) -> Result<ClaimOutcome> {
+        self.claim_id_recorded_in_txn(txn, id, input, true)
+    }
+
+    /// [`Self::claim_id_in_txn`] for a row its caller settles in the same
+    /// transaction without starting its work (a workflow wrapper's own
+    /// bookkeeping, an approved fan-out plan's completion): no hold of a copy
+    /// that has not joined applies, since the work such a row leads to is
+    /// claimed apart and held there.
+    pub(crate) fn claim_id_to_settle_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: AttemptId,
+        input: ClaimAttempt,
+    ) -> Result<ClaimOutcome> {
+        self.claim_id_recorded_in_txn(txn, id, input, false)
+    }
+
+    fn claim_id_recorded_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: AttemptId,
         mut input: ClaimAttempt,
+        hold_unjoined: bool,
     ) -> Result<ClaimOutcome> {
         validate_lease_owner(&input.lease_owner)?;
         let cutoff = input.now;
         input.now = crate::ports::recorded_at_in_txn(self.store, txn)?;
         let cutoff = cutoff.min(input.now);
-        self.claim_id_storage_in_txn(txn, id, input, cutoff)
+        self.claim_id_stamped_in_txn(txn, id, input, cutoff, hold_unjoined)
     }
 
     /// [`Self::claim_id_in_txn`] stamped at the caller's `input.now`, ready by
@@ -41,6 +67,17 @@ impl AttemptQueue<'_> {
         input: ClaimAttempt,
         cutoff: u64,
     ) -> Result<ClaimOutcome> {
+        self.claim_id_stamped_in_txn(txn, id, input, cutoff, true)
+    }
+
+    fn claim_id_stamped_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: AttemptId,
+        input: ClaimAttempt,
+        cutoff: u64,
+        hold_unjoined: bool,
+    ) -> Result<ClaimOutcome> {
         validate_lease_owner(&input.lease_owner)?;
         let mut row = self
             .get_in_write_txn(txn, id)?
@@ -50,6 +87,7 @@ impl AttemptQueue<'_> {
         }
         if ready_at(&row) > cutoff
             || !row.accepts_worker(&input.lease_owner)
+            || (hold_unjoined && UnjoinedHold::default().holds(self.store, &*txn, &row.kind)?)
             || !crate::task_verb::task_dispatch_ready(
                 self.store,
                 &*txn,

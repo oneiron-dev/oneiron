@@ -49,6 +49,7 @@ pub mod builtin_pack_seed;
 pub mod burst_receipt_stored_shape;
 pub mod call_receipt_damage;
 pub mod callable_skill;
+pub mod campaign_copy_review;
 pub mod campaign_member_index;
 pub mod campaign_opt_out_line;
 pub mod candidate_scope;
@@ -59,6 +60,7 @@ pub mod checker_masked_candidate;
 pub mod checkpoint_descriptor;
 pub mod checkpoint_pins;
 pub mod checkpoint_registry;
+pub mod claim_body_damage;
 pub mod claim_facet_birth;
 pub mod claim_publication_text;
 pub mod claim_refinement_erase;
@@ -295,6 +297,7 @@ pub mod peer_author_redaction;
 #[cfg(feature = "sync")]
 pub mod pending_work_reports;
 pub mod pending_write_tray;
+pub mod policy_doors_between;
 #[cfg(feature = "sync")]
 pub mod predicted_residence;
 pub mod profiles_other_machine;

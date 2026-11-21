@@ -78,8 +78,10 @@ pub(crate) async fn vault_identity_mention(
 /// (`surface`, the host's own reading of it): audit only (FIX 4650). Any
 /// other live person answers on their own verified human credential, and
 /// the engine admits only a member an ask from their own source went to,
-/// naming a candidate they read (OWNER-NOTICE-MEMBER-ASK-ROUTE Q1 = A):
-/// the choice card's one tap runs as the person who taps it.
+/// naming a candidate they read, or saying "someone new", which goes to
+/// the owner as a proposal he accepts with the same verb
+/// (OWNER-NOTICE-MEMBER-ASK-ROUTE Q1 = A): the choice card's one tap runs as
+/// the person who taps it.
 pub(crate) async fn self_identity_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -106,6 +108,11 @@ pub(crate) async fn self_identity_answer(
     if !input.evidence_refs.is_empty() {
         return refused(MemoryError::bad_request(
             "evidence refs back an owner's identity answer",
+        ));
+    }
+    if input.proposal.is_some() {
+        return refused(MemoryError::bad_request(
+            "a member's someone-new proposal is the owner's to accept",
         ));
     }
     let answer = IdentityAnswerRequest {

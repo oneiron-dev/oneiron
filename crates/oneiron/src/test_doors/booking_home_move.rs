@@ -13,7 +13,9 @@
 //! later move carries the rows back to takes their writes again (FIX
 //! [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]), and the ledger rows
 //! a node holds for an emergency effect under each of its ledger generations
-//! (review round 1 of #10220).
+//! (review round 1 of #10220). A machine also holds none of the old home's
+//! public page token index and deny-only publication markers, which no sync
+//! carries (FIX [BK-HOME-MOVE-PUBLIC-PAGE-INDEX-NOT-CARRIED]).
 
 use crate::side_table::{self, SideTableDbs, SideTableDecl};
 use crate::sync::home_handoff::{
@@ -26,8 +28,9 @@ use crate::{EntityId, Result, Vault};
 /// provider events and emergency picks; the holds; the receipts; the
 /// emergency instructions, plans and checkpoints, the three lookups those
 /// rows rebuild and the checkpoints' uncertain-send marks (no section of
-/// their own).
-const BOOKING_ROWS: [&SideTableDecl; 10] = [
+/// their own); the public page token index, and the publication markers its
+/// section carries with it (no section of their own).
+const BOOKING_ROWS: [&SideTableDecl; 12] = [
     &side_table::BOOKING_TOKEN,
     &side_table::BOOKING_HOLD,
     &side_table::BOOKING_LIFECYCLE_RECEIPT,
@@ -38,6 +41,8 @@ const BOOKING_ROWS: [&SideTableDecl; 10] = [
     &side_table::EMERGENCY_PENDING_EVENT_LOOKUP,
     &side_table::EMERGENCY_EFFECT_LOOKUP,
     &side_table::EMERGENCY_UNCERTAIN_SEND,
+    &side_table::BOOKING_PUBLIC_PAGE_TOKEN_INDEX,
+    &side_table::BOOKING_PUBLIC_PAGE_PROTECTED_CLAIM,
 ];
 
 /// The node-local outbound send state: the intent ledger with its attempt

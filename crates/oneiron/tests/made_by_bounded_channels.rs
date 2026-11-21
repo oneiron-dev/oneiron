@@ -174,10 +174,14 @@ impl Fixture {
         stated
     }
 
+    /// A vector query at `NOW`: the blend ages a row's recency, and a
+    /// claim's access factor, against the call's clock, so a claim learned
+    /// at `NOW` keeps its full factor.
     fn vector(&self, made_by: MadeByPredicate, query: &[f32]) -> Vec<EntityId> {
         ids(self
             .vault
             .query()
+            .with_temporal_now(NOW)
             .search_vector(query, 1)
             .made_by(made_by)
             .limit(1)
@@ -350,9 +354,11 @@ fn a_stated_row_past_the_vector_fetch_is_found() {
 /// A claim with no stamped birth takes its class from its source: the
 /// bounded channel reads the admitted claim body for it, as the post-blend
 /// filter does, so an unborn UserStated claim behind concluded rows is
-/// still found. The claim is learned now and occurs when the stated row of
-/// [`Fixture::stated_behind_concluded`] does, so the unsliced call ranks it
-/// first as it ranks that row.
+/// still found. The claim occurs when the stated row of
+/// [`Fixture::stated_behind_concluded`] does and is learned at `NOW`, the
+/// clock of every vector call, so it keeps its full recency and access
+/// factor and the unsliced call ranks it first by cosine, as it ranks that
+/// row.
 #[test]
 fn an_unborn_stated_claim_past_the_vector_fetch_is_found() {
     let mut fixture = fixture();
@@ -649,17 +655,13 @@ fn a_call_the_nearest_rows_match_keeps_its_nearest_row() {
 /// One live, UserStated claim by a human writer about a person, written
 /// through the public batch (no birth stamp), as
 /// `tests/vault_embedding_spaces_doors.rs` writes it, occurring over
-/// `occurred` and learned now. The blend reads a row's learned time twice:
-/// as its recency, and, for a claim alone, as an access factor that halves
-/// with age down to `ACCESS_FACTOR_FLOOR` (0.05) while a PERSON row keeps
-/// 1.0. A claim learned in 1970 loses on both, so no unsliced call ranks it
-/// above the concluded rows.
+/// `occurred` and learned at `NOW`. The blend reads a row's learned time
+/// twice, against the call's clock: as its recency, and, for a claim alone,
+/// as an access factor that halves with age down to `ACCESS_FACTOR_FLOOR`
+/// (0.05) while a PERSON row keeps 1.0. A claim learned in 1970 loses on
+/// both, so no unsliced call ranks it above the concluded rows.
 fn put_stated_claim(vault: &Vault, occurred: TimeRange) -> EntityId {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("FIXTURE: the clock reads after 1970")
-        .as_secs();
-    put_claim(vault, ClaimApprovalStatus::Auto, (occurred, now))
+    put_claim(vault, ClaimApprovalStatus::Auto, (occurred, NOW))
 }
 
 /// One claim as [`put_stated_claim`] writes it, with approval `approval`,

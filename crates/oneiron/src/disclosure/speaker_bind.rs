@@ -8,6 +8,7 @@
 //! sync tombstone would beat a later rebind on another device. The transcript shows the bound
 //! name at read time; no turn is ever rewritten.
 
+use oneiron_contracts::fingerprint::ContentHash;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -202,14 +203,15 @@ pub(crate) fn call_speaker_bind_in_txn(
     )
 }
 
-/// blake3 of the msgpack encoding of one bind claim value; all zero for no value.
+/// The content hash (plain BLAKE3) of the msgpack encoding of one bind claim value; all zero
+/// for no value.
 fn claim_value_digest(value: Option<&Value>) -> Result<[u8; 32]> {
     let Some(value) = value else {
         return Ok([0; 32]);
     };
     let mut encoded = Vec::new();
     rmpv::encode::write_value(&mut encoded, value).map_err(|_| invalid())?;
-    Ok(*blake3::hash(&encoded).as_bytes())
+    Ok(ContentHash::of(&encoded).into_bytes())
 }
 
 /// A call and speaker the owner may bind: a kept call ref and a trimmed, non-empty speaker

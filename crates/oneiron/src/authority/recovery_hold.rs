@@ -255,9 +255,11 @@ impl Vault {
     /// R's `seed` into `slot`, create-only: true when this call created or
     /// replaced it, so the caller removes it again when its transaction
     /// fails. A slot that already holds this R's seed stays (a retried
-    /// write); one that holds another R's (a rotation between attempts)
-    /// gives way: the old hold is void. An empty slot is not an error at
-    /// the delete below.
+    /// write); one that holds another R's gives way. The root door calls it
+    /// under the vault's recovery-hold lock, once
+    /// [`Self::live_hold_for_successor_in_txn`] found no live hold whose R
+    /// the kept seed is, so the seed it replaces is no live hold's. An empty
+    /// slot is not an error at the delete below.
     ///
     /// # Errors
     /// `KeystoreUnavailable` while the host installed no keystore; the
@@ -339,31 +341,60 @@ impl Vault {
             .collect())
     }
 
-    /// This install's waiting hold for `successor`, if one waits and its
-    /// seed slot is here: the attempt id and its landing second. The root
-    /// door answers it again instead of writing a second hold.
+    /// This install's live hold for `successor`, Waiting or Due: the
+    /// attempt id, its landing second, and whether the seed slot keeps that
+    /// hold's own R. The landing signs only with a hold's own R, so a hold
+    /// whose slot keeps another seed never lands from here. A hold whose R
+    /// the kept seed is comes first; else, while the slot keeps another
+    /// seed, one that `root` (the caller's R) signed, whose seed a racing
+    /// attempt replaced before the door held the recovery-hold lock: the
+    /// door puts R's seed back and answers it. With neither, the kept seed
+    /// is no live hold's, and a new attempt may replace it; an empty slot
+    /// answers no hold, as before.
     ///
     /// # Errors
     /// The log's, the clock's and the keystore's.
-    pub(crate) fn waiting_hold_for_successor_in_txn(
+    pub(crate) fn live_hold_for_successor_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         machine: EntityId,
         successor: &[u8; 32],
-    ) -> Result<Option<(AuthorityEntryHash, u64)>> {
+        root: &AuthorityKey,
+    ) -> Result<Option<(AuthorityEntryHash, u64, bool)>> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let wanted = AuthorityKey::Ed25519(*successor);
-        for view in self.recovery_holds_in_txn(txn)? {
-            if view.successor_key != wanted || view.state != RecoveryHoldState::Waiting {
-                continue;
-            }
-            let slot = self.recovery_hold_slot(&vault_id, machine, successor);
-            if self.read_recovery_hold_seed(&slot)?.is_some() {
-                return Ok(Some((view.hold, view.lands_at)));
-            }
+        let live: Vec<RecoveryHoldView> = self
+            .recovery_holds_in_txn(txn)?
+            .into_iter()
+            .filter(|view| {
+                view.successor_key == wanted
+                    && matches!(
+                        view.state,
+                        RecoveryHoldState::Waiting | RecoveryHoldState::Due
+                    )
+            })
+            .collect();
+        if live.is_empty() {
+            return Ok(None);
         }
-        Ok(None)
+        let slot = self.recovery_hold_slot(&vault_id, machine, successor);
+        let kept = self.read_recovery_hold_seed(&slot)?.map(|seed| {
+            AuthorityKey::Ed25519(SigningKey::from_bytes(&seed).verifying_key().to_bytes())
+        });
+        if let Some(view) = live
+            .iter()
+            .find(|view| kept.as_ref() == Some(&view.root_key))
+        {
+            return Ok(Some((view.hold, view.lands_at, true)));
+        }
+        if kept.is_none() {
+            return Ok(None);
+        }
+        Ok(live
+            .iter()
+            .find(|view| view.root_key == *root)
+            .map(|view| (view.hold, view.lands_at, false)))
     }
 
     /// One `RecoveryHold` row in the caller's write transaction, signed by

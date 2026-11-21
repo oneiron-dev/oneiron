@@ -370,6 +370,14 @@ impl Vault {
                 },
             ));
         }
+        // READ-LINEAGE L1: the restored row reads under its sources as they
+        // stand now (#10117 Opus review P1-1). It is raised while its archive
+        // marker still stands, so a run again of the floor backfill counts
+        // this raise as the first of an archived row the backfill that
+        // skipped archived rows never raised: one whose birth input was
+        // erased before then waits for good (#10265 review P1-2). A restore
+        // refused below undoes the raise with the rest of its write.
+        crate::source_audience::raise_floors_in_txn(self, wtxn, [*entity])?;
         self.clear_archive_tombstone_in_txn(wtxn, entity)?;
         crate::browser_library::reindex_restored_source_in_txn(self, wtxn, entity)?;
         let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, entity)?
@@ -394,9 +402,6 @@ impl Vault {
         }
         crate::dreamer_consolidation::strength::restored_in_txn(self, wtxn, entity)?;
         person_provenance::clear_mint_evidence_in_txn(self, wtxn, entity)?;
-        // READ-LINEAGE L1: the restored row reads under its sources as they
-        // stand now (#10117 Opus review P1-1).
-        crate::source_audience::raise_floors_in_txn(self, wtxn, [*entity])?;
         Ok(())
     }
 }

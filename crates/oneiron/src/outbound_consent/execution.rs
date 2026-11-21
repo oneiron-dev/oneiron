@@ -215,7 +215,7 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
         vault,
         authority,
         crate::outbound_chokepoint::OutboundEffectCommand::New(prepared),
-        now_ms,
+        now_ms / 1_000,
         &mut transport,
     )?;
     let decision =
@@ -296,7 +296,7 @@ pub(super) fn resume_scoped_mcp_outbound_intent<S: OutboundResultSender>(
         vault,
         authority,
         crate::outbound_chokepoint::OutboundEffectCommand::Resume(intent_id),
-        now_ms,
+        now_ms / 1_000,
         &mut transport,
     )?;
     let decision = resumed_decision(&effect);

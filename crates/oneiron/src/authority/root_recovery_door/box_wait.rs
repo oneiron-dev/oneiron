@@ -69,11 +69,14 @@ impl Vault {
     }
 
     /// The landing among `landed` that enrolled `successor`'s key, as the
-    /// box call's [`RootRecovery::Vouched`]: this install's own key for
-    /// [`RootSuccessor::ThisInstall`], the named key for a device.
+    /// box call's [`RootRecovery::Vouched`]: this install's owner signing
+    /// key for [`RootSuccessor::ThisInstall`] (a device successor on the
+    /// same machine is another attempt's), the named key for a device. A
+    /// slot that holds no seed, or one a device PIN bars, is no key here,
+    /// so no landing answers for this install then.
     ///
     /// # Errors
-    /// Preparing this install's signing keys.
+    /// Reading this install's owner signing slot.
     pub(super) fn landing_for_successor(
         &self,
         landed: &[RecoveryHoldLanding],
@@ -82,17 +85,15 @@ impl Vault {
         if landed.iter().all(|landing| landing.enrollment.is_none()) {
             return Ok(None);
         }
-        let machine = match successor {
-            RootSuccessor::ThisInstall => Some(self.prepare_install_signing()?),
-            RootSuccessor::Device(_) => None,
+        let own_key = match successor {
+            RootSuccessor::ThisInstall => self
+                .existing_device_owner_signing_key()?
+                .map(|key| key.public_key()),
+            RootSuccessor::Device(input) => Some(input.public_key),
         };
         Ok(landed.iter().find_map(|landing| {
             let receipt = landing.enrollment.as_ref()?;
-            let names = match successor {
-                RootSuccessor::Device(input) => receipt.public_key == input.public_key,
-                RootSuccessor::ThisInstall => machine == Some(receipt.machine),
-            };
-            names.then(|| RootRecovery::Vouched {
+            (own_key == Some(receipt.public_key)).then(|| RootRecovery::Vouched {
                 enrollment: receipt.clone(),
                 revoked: landing.revoked.clone(),
             })
