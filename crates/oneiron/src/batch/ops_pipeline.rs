@@ -531,6 +531,42 @@ pub(crate) fn apply_ops_session_projecting_restages(
                         data,
                     )?;
                 }
+                // The room stages no SKILL base would refuse (fix list row
+                // 26781): a fresh id is born under the birth law, and a changed body
+                // under the overwrite gate — the same two validators
+                // promote's replay runs, on the same local road (the
+                // journaled op carries every admit flag closed, and the
+                // replay preserves them, so neither the hub inlet nor an
+                // admission proof travels with the call). The decoder is
+                // base dispatch's, and the prior row is the same wiped read
+                // base's old-record arm takes, through the room's view. A
+                // prior row of another type is the retype gate's refusal
+                // below, as on base, so this arm skips it.
+                if *entity_type == crate::registry::ENTITY_TYPE_SKILL {
+                    let created =
+                        crate::write_envelope::skill_record::decode_skill_record(data.as_slice())?;
+                    if let Some(old) =
+                        crate::ports::EntityStoreRead::port_entity_raw_wiped(view, &*wtxn, id)?
+                    {
+                        let header = EntityMetadataHeader::parse(&old)
+                            .ok_or(Error::CorruptedIndex("entity header"))?;
+                        if header.entity_type == *entity_type
+                            && &old[ENTITY_METADATA_HEADER_LEN..] != data.as_slice()
+                        {
+                            validate_skill_body_overwrite(
+                                id,
+                                &old[ENTITY_METADATA_HEADER_LEN..],
+                                &created,
+                                data.as_slice(),
+                                false,
+                                false,
+                                None,
+                            )?;
+                        }
+                    } else {
+                        validate_local_skill_create(view, &*wtxn, id, &created)?;
+                    }
+                }
                 // Every row keeps its type, as on base (`apply_put`, which
                 // reads the old row wiped too): promote would refuse the
                 // retype, and the revision capture would keep the old row, a
@@ -577,6 +613,20 @@ pub(crate) fn apply_ops_session_projecting_restages(
                     *entity_type,
                     data,
                 )?;
+                // VOICE-PHONE-AGENT-REACH R1 fix (F2): the phone-thread birth
+                // guard on the session's union view (its overlay row if any,
+                // else base), as `admit_session_obligation_in_txn` reads its
+                // previous row. An overlay never strips or replaces a stored
+                // stamp.
+                if matches!(
+                    *entity_type,
+                    crate::registry::ENTITY_TYPE_CONVERSATION
+                        | crate::registry::ENTITY_TYPE_TURN
+                        | crate::registry::ENTITY_TYPE_MESSAGE
+                        | crate::registry::ENTITY_TYPE_SESSION
+                ) {
+                    crate::memory::guard_phone_thread_mark(view, wtxn, *id, data)?;
+                }
                 // The ENTRY's stamps, not the op's: they are the witnessing
                 // write's own and are what promote replays into the right
                 // month window (ARCH-0052 D4).

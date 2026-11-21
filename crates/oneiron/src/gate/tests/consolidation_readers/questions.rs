@@ -55,6 +55,7 @@ impl GraphAnswerer for Answerer {
             provider: provider(),
             cost_per_thousand: 0.25,
             paired: None,
+            rule: None,
         }))
     }
 }
@@ -81,7 +82,12 @@ pub(super) fn graph_answer(
 ) -> Result<()> {
     let actor = question_readers(vault, principal, subject)?;
     let ask = |v: &Vault, units: &[EntityId], answerer: &mut Answerer| {
-        run_graph_ask(v, principal, actor, graph_question(), units, answerer, 10)
+        let lane = v.scoped_read(
+            crate::claim::ScopedReadActorKey::with_actor_class(principal.to_hex(), "human")
+                .expect("graph ask lane key")
+                .exempt_while_owner(principal),
+        );
+        run_graph_ask(&lane, actor, graph_question(), units, answerer, 10)
             .map_err(|failure| *failure.error)
     };
     check_transition(vault, claim, reader, |v, id| {
@@ -136,6 +142,7 @@ pub(super) fn standing_answer_source(
             evidence: vec![*id],
             providers: vec![provider()],
             paired: Vec::new(),
+            rule: None,
             source_frontier: pin,
         };
         match backfill_standing_answer(v, principal, question, 1, actor, answer, 10) {
@@ -177,6 +184,8 @@ pub(super) fn question_refresh_source(
                     probability: Some(0.8),
                     providers: vec![provider()],
                     paired: Vec::new(),
+                    rule: None,
+                    cost_per_thousand: None,
                 })
             },
         )?;

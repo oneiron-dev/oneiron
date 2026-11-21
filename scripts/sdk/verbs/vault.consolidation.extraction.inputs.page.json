@@ -1,0 +1,14 @@
+{
+  "name": "vault.consolidation.extraction.inputs.page",
+  "description": "The owner under proof or a reader with a live Steward grant naming read pages one extraction attempt's reached queued turns in order, each source version and the effective extraction policy and pin; words through vault.evidence.spans.",
+  "input": "crate::snapshot_read::ExtractionInputsPageRequest",
+  "output": "crate::claim::ScopedReadResult<crate::snapshot_read::ExtractionInputsPage>",
+  "call": "crate::snapshot_read::extraction_inputs_page(memory, &input)?",
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered"
+}

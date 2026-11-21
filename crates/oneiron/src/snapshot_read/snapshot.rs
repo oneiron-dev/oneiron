@@ -376,8 +376,8 @@ pub fn snapshot_open(
 ///
 /// A handle this caller did not open, that has ended, or that ended while the
 /// page was read; a handle that served its rows, or whose rows a page read at
-/// the same time used; a malformed cursor; the caller's read lane; and storage
-/// errors.
+/// the same time used; a page that passes a bound the owner lowered while it
+/// was read; a malformed cursor; the caller's read lane; and storage errors.
 pub fn snapshot_page(
     memory: &Memory<'_>,
     input: &SnapshotPageRequest,
@@ -513,16 +513,37 @@ pub fn snapshot_page(
         None => reader.read_views_in_txn(&lane, txn, known, &[])?.receipt,
     };
     drop(snapshot);
+    #[cfg(oneiron_test_support)]
+    crate::test_doors::snapshot_page_accounting::run_before_page_accounting(vault);
     let count = u64::try_from(rows.len()).unwrap_or(u64::MAX);
     // The rows are counted against the handle in one write, judged again
     // there: a page read at the same time may have used them (review of
-    // #6964), and the handle may have ended or been erased meanwhile.
+    // #6964), and the handle may have ended or been erased meanwhile. The
+    // handle's end (capped at the credential's) is judged at a time taken
+    // after the read, the closest a decision may take it to the write, and
+    // the owner's bounds are read again in that write: a page whose handle
+    // ended, or that passes a bound lowered, while it was read is refused
+    // (FIX SNAPSHOT-PAGE-STALE-BOUNDS-NO-EXPIRY).
+    let judged_at = vault.store.authorization_now()?;
     let accounted = vault.with_write_txn_grouped(|txn| {
         let Some(mut held) = HANDLES.get(&vault.store, &*txn, &key)? else {
             return Ok(Accounted::Gone);
         };
-        if held.rows_served.saturating_add(count) > bounds.handle_rows {
-            return Ok(Accounted::Spent);
+        if held.expires_at <= judged_at {
+            HANDLES.delete(&vault.store, txn, &key)?;
+            return Ok(Accounted::Gone);
+        }
+        let in_force = vault.snapshot_read_settings_in_txn(&*txn)?;
+        if count > u64::from(in_force.page_rows) || bytes > in_force.page_bytes {
+            return Ok(Accounted::Lowered);
+        }
+        // A page that serves no row passes no rows per snapshot.
+        if count > 0 && held.rows_served.saturating_add(count) > in_force.handle_rows {
+            return Ok(if in_force.handle_rows < bounds.handle_rows {
+                Accounted::Lowered
+            } else {
+                Accounted::Spent
+            });
         }
         held.rows_served = held.rows_served.saturating_add(count);
         HANDLES.put(&vault.store, txn, &key, &held)?;
@@ -542,6 +563,15 @@ pub fn snapshot_page(
                 MEMORY_CODE_FORBIDDEN,
                 "a page read at the same time used the snapshot's rows per snapshot",
                 &["Open a new one with vault.snapshot.open."],
+            ));
+        }
+        Accounted::Lowered => {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "the owner lowered the snapshot bounds while this page was read",
+                &[
+                    "Ask for this page again under the bounds in force, or open a new one with vault.snapshot.open.",
+                ],
             ));
         }
     };
@@ -564,6 +594,9 @@ enum Accounted {
     Gone,
     /// A page read at the same time used the rows this one needs.
     Spent,
+    /// The page passes a bound the owner lowered while it was read: its rows
+    /// per page, bytes per page, or rows per snapshot.
+    Lowered,
 }
 
 /// Deletes every snapshot handle `actor` holds: the scrub an actor's erase

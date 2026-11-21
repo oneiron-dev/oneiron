@@ -112,22 +112,22 @@ pub(super) fn forget_newly_excluded(
 ) -> Result<()> {
     let in_force = vault.dreamer_excluded_conversations_in_txn(txn)?;
     #[cfg(oneiron_test_support)]
-    FORGOTTEN
+    vault
+        .test_door_state
+        .dreamer_exclusion_forgets
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .push(in_force.conversations.clone());
     crate::dreamer_wake::follower::exclude_in_txn(vault, txn, &in_force.conversations)
 }
 
-/// Each set the hook asked the follower to forget in this process, oldest first: the integration
+/// Each set the hook asked the follower to forget on `vault`, oldest first: the integration
 /// tests' view of the hook (`test_doors::dreamer_exclusion_forgets`).
 #[cfg(oneiron_test_support)]
-static FORGOTTEN: std::sync::Mutex<Vec<BTreeSet<EntityId>>> = std::sync::Mutex::new(Vec::new());
-
-/// Each set the hook asked the follower to forget in this process, oldest first.
-#[cfg(oneiron_test_support)]
-pub(crate) fn forgotten_sets() -> Vec<BTreeSet<EntityId>> {
-    FORGOTTEN
+pub(crate) fn forgotten_sets(vault: &Vault) -> Vec<BTreeSet<EntityId>> {
+    vault
+        .test_door_state
+        .dreamer_exclusion_forgets
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone()

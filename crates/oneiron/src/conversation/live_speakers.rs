@@ -243,7 +243,8 @@ impl Vault {
     }
 
     /// `room`'s members as `read` reads them, with its live speakers, in one
-    /// snapshot. A room `read` cannot read is a missing room, unless
+    /// snapshot. A room `read` cannot read, its row or its own admission
+    /// ([`Self::room_structure_admitted`], L9-52), is a missing room, unless
     /// `member` is one of its members, as for
     /// [`Self::room_audience_members_under`]. A live call that is
     /// incomplete holds the read, typed.
@@ -256,7 +257,9 @@ impl Vault {
         read.persist_grant_clock()?;
         let txn = self.store.env.read_txn()?;
         let policy = read.live_policy_manifest_in(&txn)?;
-        let members = if read.is_ref_readable_with_policy_in(&txn, &policy, &room)? {
+        let members = if read.is_ref_readable_with_policy_in(&txn, &policy, &room)?
+            && self.room_structure_admitted_in_txn(read, &txn, &room)?
+        {
             self.room_audience_members_in_txn(&txn, room)?
         } else {
             if !read.reaches_by_membership_in(&txn, &room)? {

@@ -428,7 +428,11 @@ pub(crate) async fn companion_memory_reason(
             anonymous_at_arrival,
         )?;
 
-        let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
+        // Each receipt reports the reach that admitted its rows, an agent
+        // key's live Grants among it; the evidence read asks under the last
+        // one's applied scope (FIX-LIST GRANT-RECEIPT-OTHER-READ-LANES).
+        let scoped_read =
+            scoped_read_for_core_auth(&server.vault, &auth)?.with_live_grant_receipts();
         server.vault.measure_limit_for(
             oneiron::limit_ask::EngineLimit::MemoryReasonEvidenceRows,
             limit as u64,

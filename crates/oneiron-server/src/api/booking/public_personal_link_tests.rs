@@ -56,6 +56,7 @@ fn availability_over(slot: &RankedSlot, session: &str) -> Value {
         visitor_tz: "UTC".to_owned(),
         constraint: None,
         session_ref: session.to_owned(),
+        duration_min: None,
     })
     .expect("availability body")
 }
@@ -362,9 +363,7 @@ async fn facade_verb(
             .method("POST")
             .uri(format!("/v1/core/facade/{verb}"))
             .header(CONTENT_TYPE, "application/json")
-            .extension(ConnectInfo(
-                "127.0.0.1:43123".parse::<SocketAddr>().expect("peer"),
-            ))
+            .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 43123))))
             .body(Body::from(body.to_string()))
             .expect("request"),
     );
@@ -589,9 +588,7 @@ async fn answer_on_this_device(
         .method(method)
         .uri(path)
         .header(CONTENT_TYPE, "application/json")
-        .extension(ConnectInfo(
-            "127.0.0.1:43125".parse::<SocketAddr>().expect("peer"),
-        ))
+        .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 43125))))
         .body(Body::from(serde_json::to_vec(&body).expect("body")))
         .expect("request");
     let response = crate::build_app(fixture.server.clone())

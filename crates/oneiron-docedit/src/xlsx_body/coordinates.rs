@@ -231,7 +231,7 @@ impl Book {
                                 removed.insert(index);
                             }
                             Some(to) if to != id + 1 => {
-                                sets.push((index, "id", (to - 1).to_string()))
+                                sets.push((index, "id", (to - 1).to_string()));
                             }
                             Some(_) => {}
                         }

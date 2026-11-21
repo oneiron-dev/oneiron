@@ -3,7 +3,7 @@
 use super::{Memory, MemoryError, MemoryResult};
 use crate::EntityId;
 use crate::booking::emergency_reschedule::{
-    self as emergency, EmergencyBatchPlan, EmergencyItem, EmergencyPlan,
+    self as emergency, EmergencyBatchPlan, EmergencyExecution, EmergencyPlan,
     EmergencyRescheduleRequest, OwnerInstructionRecord,
 };
 use crate::booking::{BookingLifecycleConsumerInput, CalendarRevision, OpaqueLifecycleToken};
@@ -157,7 +157,7 @@ impl Memory<'_> {
         calendars: &[(EntityId, Vec<CalendarSel>)],
         input: &BookingLifecycleConsumerInput,
         sink: &mut impl OutboundExecutionSink,
-    ) -> MemoryResult<EmergencyItem> {
+    ) -> MemoryResult<EmergencyExecution> {
         self.verify_emergency_owner(request)?;
         emergency::execute_emergency_plan(self.vault, request, plan, calendars, input, sink)
             .map_err(booking_error)

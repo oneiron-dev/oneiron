@@ -2,7 +2,7 @@
 //! reads from this file.
 
 use super::checkpoint_read::CHECKPOINT_READ_MAX_LIMIT;
-use crate::setting::{Kind, lower_is_tighter};
+use crate::setting::Kind;
 
 /// 128: a larger limit reads this many steps.
 fn checkpoint_read_max_limit_default() -> u32 {
@@ -16,6 +16,6 @@ crate::setting::setting_keys! {
     pub(crate) CHECKPOINT_READ_MAX_LIMIT_SETTING: u32 = "engine_executor.checkpoint_read.max_limit" {
         kind: Kind::new(checkpoint_read_max_limit_default)
             .strictest(checkpoint_read_max_limit_default)
-            .tighter(lower_is_tighter::<u32>),
+            .lower(),
     };
 }
