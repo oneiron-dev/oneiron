@@ -402,6 +402,8 @@ impl Vault {
         }
         let caller = SettingCaller::Owner(owner);
         let several = requests.len() > 1;
+        // A key's hook reads which rows the act changes (`act_rows`).
+        let _rows = super::act_rows::hold_owner_change_rows(requests);
         let mut written = Vec::with_capacity(requests.len());
         let mut outcomes = Vec::with_capacity(requests.len());
         for request in requests {

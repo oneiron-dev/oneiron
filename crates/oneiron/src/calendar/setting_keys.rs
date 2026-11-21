@@ -16,7 +16,7 @@ use super::ingest::feed_door::{
 use super::ingest::{ADMISSION_WRITE_TURN, IcsFeedPollConfig};
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::setting::{ItemDomain, Kind, SettingValue};
+use crate::setting::{ItemDomain, Kind, RefusalSource, RefusedProjection, SettingValue};
 
 /// The longest custody name an iMIP transport may carry, in bytes.
 const SECRET_REF_MAX_BYTES: usize = 256;
@@ -115,6 +115,53 @@ fn seat_system_peers(
     Ok(peers)
 }
 
+/// The owner's words of the choice between the sources of one calendar system that the notice of
+/// a refused feed or seat names (SETTING-PROJECTED-CALENDAR-SYSTEM-CLAIM = A, in the lead's
+/// words): "Your 'work' calendar has two complete sources (an ICS feed set on Laptop, a CalDAV
+/// seat set on Desktop). Pick one." The feeds first. `None` for fewer than two sources, a
+/// source of another key, and sources of different systems.
+fn calendar_source_choice(sources: &[RefusalSource<'_>]) -> Option<String> {
+    let mut system: Option<String> = None;
+    let mut named = Vec::with_capacity(sources.len());
+    for source in sources {
+        let Some(value) = source.value.filter(|value| !value.is_null()) else {
+            continue;
+        };
+        let (order, what, of) = if source.slot.name == ICS_FEED.spec.name {
+            (0, "an ICS feed", source.slot.item.clone())
+        } else if source.slot.name == CONNECTOR_SEAT.spec.name {
+            let of = value
+                .pointer("/config/system")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            (1, "a CalDAV seat", of)
+        } else {
+            return None;
+        };
+        let of = of?;
+        if *system.get_or_insert_with(|| of.clone()) != of {
+            return None;
+        }
+        named.push((order, format!("{what} set on {}", source.machine)));
+    }
+    let system = system?;
+    let count = match named.len() {
+        0 | 1 => return None,
+        2 => "two".to_owned(),
+        3 => "three".to_owned(),
+        count => count.to_string(),
+    };
+    named.sort_by_key(|(order, _)| *order);
+    let named = named
+        .into_iter()
+        .map(|(_, words)| words)
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "Your '{system}' calendar has {count} complete sources ({named}). Pick one."
+    ))
+}
+
 crate::setting::setting_keys! {
     /// The host's iMIP mail submission endpoint and the custody name of its credential. It
     /// grants no invite consent and no sending identity. None until the owner installs one.
@@ -126,13 +173,15 @@ crate::setting::setting_keys! {
     /// cadence). An installed seat never changes: a new configuration takes a new seat ref. A seat
     /// never takes the system of an installed ICS feed or a pack calendar source, whose complete
     /// polls and listings would cancel its events. A change waits for a running calendar
-    /// admission, a complete upload's among them, so none lands inside one.
+    /// admission, a complete upload's among them, so none lands inside one. A machine whose hook
+    /// refuses a signed seat holds it out of service (quarantined), and the owner picks the
+    /// source the calendar keeps.
     pub(crate) CONNECTOR_SEAT: Option<CalendarSeatSetup> = "calendar.connector_seat" {
         kind: Kind::new(no_seat).strictest(no_seat),
         item: Some(ItemDomain { name: "calendar seat refs", admits: is_seat_ref }),
         on_change: Some(seat_setup_changed_in_txn),
         refusal_peers: Some(seat_system_peers),
-        refusal_offers_clear: false,
+        refused_projection: RefusedProjection::Quarantine { choice: calendar_source_choice },
         write_turn: Some(ADMISSION_WRITE_TURN),
     };
     /// One ICS feed the owner installed, keyed by its system: the custody name of its URL and its
@@ -141,12 +190,15 @@ crate::setting::setting_keys! {
     /// source imports under.
     /// Installing one starts its poll chain. Clearing one uninstalls it: its standing consent
     /// ends, its cursor goes and its pending polls are cancelled; a system it polled under stays
-    /// retired. A change waits for a running poll's admission, so none lands inside one.
+    /// retired. A change waits for a running poll's admission, so none lands inside one. A
+    /// machine whose hook refuses a signed feed holds it uninstalled (quarantined), and the
+    /// owner picks the source the calendar keeps.
     pub(crate) ICS_FEED: Option<IcsFeedPollConfig> = "calendar.ics_feed" {
         kind: Kind::new(no_feed).strictest(no_feed),
         item: Some(ItemDomain { name: "ICS feed systems", admits: is_feed_system }),
         on_change: Some(ics_feed_changed_in_txn),
         refusal_peers: Some(feed_system_peers),
+        refused_projection: RefusedProjection::Quarantine { choice: calendar_source_choice },
         after_commit: Some(ics_feed_committed),
         write_turn: Some(ADMISSION_WRITE_TURN),
     };

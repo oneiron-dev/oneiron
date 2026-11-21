@@ -9,7 +9,7 @@ use super::{
     CalendarSyncOutcome,
 };
 use crate::calendar::ingest::feed_door;
-use crate::calendar::setting_keys::CONNECTOR_SEAT;
+use crate::calendar::setting_keys::{CONNECTOR_SEAT, ICS_FEED};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::setting::{ChangeStanding, Kind, SettingChange, SettingMode, SettingValue};
@@ -63,7 +63,8 @@ struct CalendarConnectorSeatRecord {
     /// The system of a seat the setting projection took out of service
     /// ([`seat_setup_changed_in_txn`]): its imported events keep their passports, so the system
     /// stays its own ([`seat_of_system_in_txn`]), as its seat ref does. Absent on every other
-    /// record, whose bytes it leaves as they were.
+    /// record, whose bytes it leaves as they were, and on the record of a seat whose system the
+    /// owner gave up to a feed ([`release_seat_system_in_txn`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     retired_system: Option<String>,
 }
@@ -183,6 +184,55 @@ fn retire_seat_system_in_txn(
     Ok(())
 }
 
+/// Gives up the system of the seat at `seat_ref` in its record, which still keeps the seat ref
+/// from being installed again: the owner's act picked the feed of that system over the seat
+/// (SETTING-PROJECTED-CALENDAR-SYSTEM-CLAIM = A), so the seat leaves service and the feed's
+/// complete polls hold the system ([`seat_of_system_in_txn`] no longer finds the seat).
+fn release_seat_system_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    seat_ref: &str,
+) -> crate::Result<()> {
+    let seat_ref = seat_ref.to_owned();
+    let mut record = STATES
+        .get(&vault.store, txn, &seat_ref)?
+        .unwrap_or_default();
+    record.retired_system = None;
+    STATES.put(&vault.store, txn, &seat_ref, &record)?;
+    Ok(())
+}
+
+/// Gives up the system of the seat at `seat_ref` to the feed `change` installs, where the seat is
+/// out of service here and `change`'s act clears its row: the owner picked that feed over the
+/// seat ([`release_seat_system_in_txn`]). Whether it did.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn release_seat_to_feed_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    change: &SettingChange,
+    seat_ref: &str,
+) -> crate::Result<bool> {
+    let in_service = CONNECTOR_SEAT
+        .read_in_txn(vault, txn, &[], Some(seat_ref))?
+        .value
+        .is_some();
+    let cleared = crate::setting::act_rows_of_change_in_txn(vault, txn, change)?
+        .iter()
+        .any(|row| {
+            !row.sets
+                && row.slot.name == CONNECTOR_SEAT.spec.name
+                && row.slot.item.as_deref() == Some(seat_ref)
+        });
+    if in_service || !cleared {
+        return Ok(false);
+    }
+    release_seat_system_in_txn(vault, txn, seat_ref)?;
+    Ok(true)
+}
+
 /// The `calendar.connector_seat` hook, in the write that changes a seat's row. It keeps the
 /// rules the configure door had: a value row at a seat ref, naming that ref, installed once.
 /// A configured seat is immutable (a change or a clear is refused; a new configuration takes a
@@ -205,7 +255,9 @@ fn retire_seat_system_in_txn(
 /// `InvalidConfig` for a pin, a row with no seat ref, a value naming another seat ref, a change
 /// to an installed seat, a seat ref used before, the system of an installed ICS feed, a
 /// system with the pack calendar prefix, or the system of an installed seat of another
-/// calendar.
+/// calendar. A clear of an installed seat whose act installs the feed of the seat's system is the
+/// owner's pick of that feed (SETTING-PROJECTED-CALENDAR-SYSTEM-CLAIM = A): the seat leaves
+/// service and gives its system up to the feed ([`release_seat_system_in_txn`]).
 pub(crate) fn seat_setup_changed_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -244,6 +296,18 @@ pub(crate) fn seat_setup_changed_in_txn(
                 Some(ChangeStanding::Quarantined | ChangeStanding::Conflict)
             );
         if !out_of_service {
+            let system = installed.config.system.as_str();
+            let feed_kept = setup.is_none()
+                && crate::setting::act_rows_of_change_in_txn(vault, txn, change)?
+                    .iter()
+                    .any(|row| {
+                        row.sets
+                            && row.slot.name == ICS_FEED.spec.name
+                            && row.slot.item.as_deref() == Some(system)
+                    });
+            if feed_kept {
+                return release_seat_system_in_txn(vault, txn, seat_ref);
+            }
             return Err(crate::Error::InvalidConfig(
                 "a configured seat is immutable; use a new seat_ref".into(),
             ));

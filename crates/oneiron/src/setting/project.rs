@@ -90,9 +90,13 @@ use projection_rows::{
     basis_of, empty_of_in_txn, leave_in_txn, met_with_local, own_carry_bound_in_txn,
     project_pack_target_in_txn, record_projection_in_txn, target_key, write_row_in_txn,
 };
+mod quarantine;
+use quarantine::{
+    PeerSeen, peers_moved_in_txn, quarantine_refused_row_in_txn, quarantines_refused_row,
+};
 mod refusal;
 pub(super) use refusal::slot_refused_here_in_txn;
-pub(crate) use refusal::{SETTING_REFUSAL_NOTIFICATION_PRODUCER, setting_refusal_tap_in_txn};
+pub(crate) use refusal::{SETTING_REFUSAL_NOTIFICATION_PRODUCER, setting_refusal_taps_in_txn};
 use refusal::{
     equal_row_refusal_in_txn, hook_waived, land_refused_rows_in_txn, raise_refusal_notice_in_txn,
     record_refusal_in_txn,
@@ -174,6 +178,11 @@ struct Projection {
     /// whose bytes it leaves as they were.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     unknown_key: Option<String>,
+    /// The rows a row quarantined where its key's hook refused it was judged against, each with
+    /// the basis of its acts then (`quarantine`): a pass reads the row again once one moves.
+    /// Absent on every other projection, whose bytes it leaves as they were.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    peers: Vec<PeerSeen>,
 }
 
 /// A row beside an act that a projection read, and what it held then (stage 7c-1).
@@ -540,6 +549,7 @@ pub(super) fn project_target_in_txn(
                     pin_read_as_value: false,
                     beside: Vec::new(),
                     unknown_key: None,
+                    peers: Vec::new(),
                 },
             )?;
         }
@@ -598,6 +608,14 @@ pub(super) fn project_target_in_txn(
             projected = quarantined_of(false, (newest, &heads), &reads);
         }
     }
+    // A row its key's hook refused in this pass, of a key that quarantines such a row: the key's
+    // quarantine marker (`quarantine`).
+    if quarantines_refused_row(spec)
+        && let Some(newest) = heads.first()
+    {
+        let has_strictest = spec.kind.strictest_value()?.is_some();
+        projected = quarantined_of(has_strictest, (newest, &heads), &reads);
+    }
     let local = match slot.mode {
         SettingMode::Carried => own_carry_bound_in_txn(vault, txn, spec, &slot, &heads)?,
         SettingMode::Value | SettingMode::Pin => None,
@@ -633,6 +651,7 @@ pub(super) fn project_target_in_txn(
             pin_read_as_value,
             beside: reads.into_seen(!projected.keep),
             unknown_key: None,
+            peers: Vec::new(),
         },
     )?;
     Ok(TargetProjected {
@@ -663,8 +682,9 @@ fn birth_of_in_txn(
 }
 
 /// Whether `target`'s acts moved since `projection` was recorded: its basis is not `basis`, this
-/// build knows the key it did not know then, or a row beside an act it read holds otherwise now
-/// (stage 7c-1): the value arrived, was erased here, or no longer matches its act.
+/// build knows the key it did not know then, a row beside an act it read holds otherwise now
+/// (stage 7c-1): the value arrived, was erased here, or no longer matches its act; or the acts of
+/// a row a quarantined row was judged against moved (`quarantine`).
 fn moved_since(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -684,7 +704,7 @@ fn moved_since(
             return Ok(true);
         }
     }
-    Ok(false)
+    peers_moved_in_txn(vault, txn, &projection.peers)
 }
 
 /// Forgets every row the projection wrote, and its record (stage 7a-3 tests): this install then

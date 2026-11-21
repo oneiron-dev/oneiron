@@ -430,25 +430,26 @@ impl Memory<'_> {
     /// owner's own. Its revert is offered while the change is the vault's
     /// last and the pack before it is installed at its bytes and served.
     /// The producer names every setting act a refused projection is about in `source.event`
-    /// (row SETTING-PROJECTED-ROW-REFUSING-HOOKS). One tap: the owner's set, as one act, of each
-    /// row such an act heads that this install still refuses and of each row the key's hook
-    /// judges it against, each to the value it holds here, which the owner may edit before he
-    /// taps; the act replaces the refused one on every machine. A refusal that no longer stands
-    /// here offers none.
+    /// (row SETTING-PROJECTED-ROW-REFUSING-HOOKS). Each tap is the owner's set, as one act, of
+    /// each row such an act heads that this install still refuses and of each row the key's hook
+    /// judges it against: one tap, each to the value it holds here, which the owner may edit
+    /// before he taps, or, for a key that quarantines a refused row, a tap for each row that keeps
+    /// it and clears the others. The act replaces the refused one on every machine. A refusal
+    /// that no longer stands here offers none.
     fn setting_refusal_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let vault = self.vault();
-        let tap = vault
+        let taps = vault
             .store
             .env
             .read_txn()
             .map_err(crate::error::Error::from)
             .and_then(|txn| {
-                crate::setting::setting_refusal_tap_in_txn(vault, &txn, &row.source.event)
+                crate::setting::setting_refusal_taps_in_txn(vault, &txn, &row.source.event)
             });
-        match tap {
-            Ok(Some(args)) => vec![NotificationAction::new(SETTING_SET_VERB, args)],
-            Ok(None) | Err(_) => Vec::new(),
-        }
+        taps.unwrap_or_default()
+            .into_iter()
+            .map(|args| NotificationAction::new(SETTING_SET_VERB, args))
+            .collect()
     }
 
     fn model_pack_revert_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
