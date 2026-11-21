@@ -28,6 +28,19 @@ set -euo pipefail
 # place of a full-pool copy (README, "The draft KV ring"): unset, the server's
 # DEFAULT_DRAFT_RING_PAGES; 0 turns it off (with the pool unset, stock).
 : "${ONEIRON_HOUSE_EXL3_DRAFT_RING_PAGES:=}"
+# The speed parts (README, "Speed parts"): 1 turns a part on, 0 off; unset,
+# the server's SPEED_PART_DEFAULTS.
+speed_parts=()
+for part in FUSE_PROJECTIONS FP16_PREFILL PROMPT_LOOKUP DRAFT_WINDOW_TABLES; do
+  var="ONEIRON_HOUSE_EXL3_$part"
+  flag=$(printf '%s' "$part" | tr 'A-Z_' 'a-z-')
+  case "${!var:-}" in
+    "") ;;
+    1) speed_parts+=("--$flag") ;;
+    0) speed_parts+=("--no-$flag") ;;
+    *) echo "serve-exl3.sh: $var must be 0, 1 or unset, not '${!var}'" >&2; exit 2 ;;
+  esac
+done
 : "${ONEIRON_HOUSE_EXL3_GPU:=0}"
 : "${ONEIRON_HOUSE_EXL3_PORT:=18091}"
 : "${ONEIRON_HOUSE_PYTHON:=/opt/oneiron-house/.venv/bin/python}"
@@ -46,6 +59,7 @@ exec "$ONEIRON_HOUSE_PYTHON" "$(dirname "$0")/exl3_server.py" \
   --max-in-flight "$ONEIRON_HOUSE_EXL3_IN_FLIGHT" \
   ${ONEIRON_HOUSE_EXL3_CACHE_TOKENS:+--cache-tokens "$ONEIRON_HOUSE_EXL3_CACHE_TOKENS"} \
   ${ONEIRON_HOUSE_EXL3_DRAFT_RING_PAGES:+--draft-ring-pages "$ONEIRON_HOUSE_EXL3_DRAFT_RING_PAGES"} \
+  ${speed_parts[@]+"${speed_parts[@]}"} \
   ${ONEIRON_HOUSE_EXL3_NATIVE_SOCKET:+--native-socket "$ONEIRON_HOUSE_EXL3_NATIVE_SOCKET"} \
   --model-id qwen3.8-27b \
   --host 127.0.0.1 --port "$ONEIRON_HOUSE_EXL3_PORT"

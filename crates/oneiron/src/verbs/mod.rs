@@ -143,6 +143,7 @@ mod sync_quarantine;
 // ROLE-TRAINING-RUN: the owner's role prepare and the bounded run read.
 mod training_runs;
 mod trusted_contact;
+mod turn_program_resume;
 mod uncertain_send;
 mod verb_table;
 mod voice_bank;
@@ -497,6 +498,7 @@ pub use self::sync_outbox::*;
 pub use self::sync_quarantine::*;
 pub use self::training_runs::*;
 pub use self::trusted_contact::*;
+pub use self::turn_program_resume::*;
 pub use self::uncertain_send::*;
 pub use self::voice_bank::*;
 pub use self::voice_recognition::*;

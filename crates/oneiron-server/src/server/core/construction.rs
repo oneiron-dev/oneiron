@@ -222,7 +222,7 @@ impl SyncServer {
         crate::models::install_snapshot_runtime(&vault);
         // A model install on this process reads this vault's owner's
         // licence choice (models.install.allow_noncommercial_licences).
-        crate::model_artifacts::licence::bind_licence_vault(&vault);
+        crate::models::bind_licence_vault(&vault);
         // FIX 14976: this vault's drafter bindings are served on this
         // process's own managed worker, where it launches one for this vault.
         crate::models::install_drafter_serving(&vault);

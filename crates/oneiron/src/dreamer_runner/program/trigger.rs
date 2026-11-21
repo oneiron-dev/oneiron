@@ -566,6 +566,46 @@ pub(crate) fn pause_occurrence_armings_in_txn(
     Ok(standing.len())
 }
 
+/// Resumes each paused arming `keys` name (its actor, then its registration), in the caller's
+/// write: the owner's `vault.turn_programs.resume`. It clears the pause and, for each actor it
+/// resumes a timer of, arms that actor's timer row again over its unpaused timers
+/// ([`arm_actor_timers_in_txn`]; the pause disarmed the row, so without this the timer would
+/// never run). A timer keeps the due time it was paused with: one whose time has passed is
+/// released once by the row's next run and moves on, as a due time missed while no node released.
+/// An idle or a feed program needs no more: its trigger row and its feed scan stood through the
+/// pause, so the next release judges it as any other, an entry that arrived meanwhile included.
+/// Answers `false`, with nothing written, when a key names no arming or one that is not paused.
+///
+/// # Errors
+///
+/// Storage errors; a named arming, or another arming of an actor whose timer it resumes, that
+/// does not decode.
+pub(super) fn resume_occurrence_armings_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    keys: &[(EntityId, EntityId)],
+) -> Result<bool> {
+    let mut paused = Vec::with_capacity(keys.len());
+    for key in keys {
+        match ARM.get(vault, &*txn, key)? {
+            Some(arming) if arming.paused_at.is_some() => paused.push(arming),
+            _ => return Ok(false),
+        }
+    }
+    let mut timer_actors = std::collections::BTreeSet::new();
+    for mut arming in paused {
+        arming.paused_at = None;
+        ARM.put(vault, txn, &(arming.actor, arming.registration), &arming)?;
+        if matches!(arming.trigger, ProgramTrigger::Timer { .. }) {
+            timer_actors.insert(arming.actor);
+        }
+    }
+    for actor in timer_actors {
+        arm_actor_timers_in_txn(vault, txn, actor, None, None)?;
+    }
+    Ok(true)
+}
+
 /// The release step each fact-hook runner pass and each housekeeping pass takes after the due
 /// watcher ticks and timer programs its runner ran: feed programs' wakes, then the admission of
 /// every owed wake, the timers' included, a bounded number of batches, whether or not this pass

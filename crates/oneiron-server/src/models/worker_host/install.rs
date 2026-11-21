@@ -21,7 +21,7 @@ use crate::config::models::{ArtifactSource, NativeServer, WorkerArtifact};
 use crate::model_artifacts::ArtifactError;
 use crate::model_artifacts::catalog::house_artifact;
 use crate::model_artifacts::install::{ArtifactState, ArtifactStore, HubToken};
-use crate::model_artifacts::licence::LicencePolicy;
+use crate::model_artifacts::licence::LicenceVault;
 use crate::model_artifacts::manifest::{ArtifactClass, ArtifactFormat, ArtifactManifest};
 
 /// The interpreter version the embedded EXL3 lock is resolved for.
@@ -171,9 +171,11 @@ pub(super) fn weights_manifest(
 }
 
 /// Makes `artifact`'s weights present and verified: the offline directory
-/// checked file by file, or an install through `store`.
+/// checked file by file, or an install through `store` under the licence
+/// choice of `licence_vault`'s owner, read as the install runs.
 pub(super) async fn weights(
     store: Arc<ArtifactStore>,
+    licence_vault: Arc<LicenceVault>,
     artifact: &WorkerArtifact,
     kind: WorkerKind,
     draft: bool,
@@ -189,7 +191,7 @@ pub(super) async fn weights(
             Some(dir) => store.verify_dir(&manifest, dir),
             None => {
                 note_on_disk(&store, &manifest);
-                store.install(&manifest, token.as_ref(), LicencePolicy::bound())
+                store.install(&manifest, token.as_ref(), licence_vault.policy())
             }
         };
         installed.map(|installed| (installed, manifest))

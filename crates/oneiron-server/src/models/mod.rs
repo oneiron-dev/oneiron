@@ -151,7 +151,7 @@ use reranker_backend::build_reranker;
 pub(crate) use responses_socket::ResponsesContext;
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
-pub use run_backend::RunBackend;
+pub use run_backend::{RunBackend, SourceFence};
 pub(crate) use seat_model::{SeatKeyDoor, SeatModelAnswer, SeatModelRefusal, send_seat_model};
 pub(crate) use seat_model_admission::{SeatModelCall, SeatModelMeter};
 pub(crate) use source_admission::{SourceAdmission, SourceOffer};
@@ -166,7 +166,8 @@ pub use token_ratio::TokenRatios;
 pub(crate) use worker_host::socket_launch_door;
 pub(crate) use worker_host::start_worker_controller;
 pub(crate) use worker_host::{
-    install_snapshot_runtime, permit_worker_launch, session_allocations_for_vault,
+    bind_licence_vault, install_snapshot_runtime, permit_worker_launch,
+    session_allocations_for_vault,
 };
 // FIX 14976: each served vault's drafter bindings, served on this process's
 // own managed EXL3 worker.

@@ -60,7 +60,12 @@ pub fn paused_turn_programs(
         memory,
         page.iter().map(|(arming, _)| arming.definition.skill),
     )?;
-    let skills = skills_now(vault, &readable)?;
+    let skills = if readable.is_empty() {
+        BTreeMap::new()
+    } else {
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        skills_now_in_txn(vault, &txn, &readable)
+    };
     Ok(PausedTurnProgramsView {
         programs: page
             .into_iter()
@@ -91,7 +96,7 @@ impl Vault {
 /// nothing for every actor), each with the time it was paused at, in key
 /// order, in `txn`. A row that does not decode is passed over: the write
 /// that pauses a copy passed it over too, so it is no paused program.
-fn paused_armings_in_txn(
+pub(in crate::dreamer_runner::program) fn paused_armings_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     prefix: &[u8],
@@ -110,29 +115,25 @@ fn paused_armings_in_txn(
     Ok(paused)
 }
 
-/// The name and description each SKILL of `ids` has now, read in one
-/// snapshot. A SKILL that is gone, or whose record does not decode, has
-/// none: it never fails the list.
-fn skills_now(
+/// The name and description each SKILL of `ids` has now, read in `txn`. A SKILL that is gone,
+/// or whose record does not decode, has none: it never fails the list.
+pub(in crate::dreamer_runner::program) fn skills_now_in_txn(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     ids: &BTreeSet<EntityId>,
-) -> Result<BTreeMap<EntityId, (String, String)>> {
+) -> BTreeMap<EntityId, (String, String)> {
     let mut skills = BTreeMap::new();
-    if ids.is_empty() {
-        return Ok(skills);
-    }
-    let txn = vault.store.env.read_txn()?;
     for id in ids {
-        if let Ok(Some(record)) = vault.get_skill_record_in_txn(&txn, id) {
+        if let Ok(Some(record)) = vault.get_skill_record_in_txn(txn, id) {
             skills.insert(*id, (record.skill_id, record.desc));
         }
     }
-    Ok(skills)
+    skills
 }
 
 /// One paused arming as the caller reads it: its pin, and the SKILL's name
 /// and description, only when the SKILL is among `readable`.
-fn paused_item(
+pub(in crate::dreamer_runner::program) fn paused_item(
     arming: TurnProgramArming,
     paused_at: u64,
     readable: &BTreeSet<EntityId>,
