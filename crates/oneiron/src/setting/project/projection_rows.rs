@@ -451,8 +451,10 @@ pub(super) fn write_row_in_txn(
         }
     }
     // The key's hook reads the row as it stood before the change, an erased value included
-    // (a seat or a feed it takes out of service): the history keeps none of it.
+    // (a seat or a feed it takes out of service): the history keeps none of it. A row the pass
+    // lands though the hook refused it runs none (`refusal::land_refused_row_in_txn`).
     if let Some(on_change) = spec.on_change
+        && !hook_waived(spec)
         && let Err(error) = on_change(vault, txn, &SettingChange { prior, ..recorded })
     {
         // The act the refused value came from, for the owner's notice of the refusal (`refusal`).
@@ -688,16 +690,26 @@ impl Vault {
                 round = refused.drain(..).map(|(target, _, _)| target).collect();
             }
             for (target, reason, deciding) in &refused {
-                tracing::warn!(
-                    reason = %reason,
-                    "the next pass reads again a setting row its key refused here"
-                );
+                // A key whose reader holds the line lands the row all the same (`refusal`).
+                let landed = match land_refused_row_in_txn(self, txn, *target, now)? {
+                    Some(landed) => {
+                        changed.extend(landed);
+                        true
+                    }
+                    None => {
+                        tracing::warn!(
+                            reason = %reason,
+                            "the next pass reads again a setting row its key refused here"
+                        );
+                        false
+                    }
+                };
                 record_refusal_in_txn(self, txn, *target)?;
                 // The owner's notice of it (`refusal`), in a savepoint of its own: a fault there
                 // is logged, and the pass goes on.
                 if let Err(error) = crate::batch::savepoint_in_txn(self, txn, |notice| {
                     let refused = (*target, reason.as_str(), *deciding);
-                    raise_refusal_notice_in_txn(self, notice, refused, now).map(Some)
+                    raise_refusal_notice_in_txn(self, notice, refused, landed, now).map(Some)
                 }) {
                     tracing::warn!(
                         kind = ?error.kind(),

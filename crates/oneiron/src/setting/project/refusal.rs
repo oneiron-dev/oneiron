@@ -4,7 +4,10 @@
 //! both acts and offers a one-step fix).
 //!
 //! A pass that projects a row its key's hook refuses here leaves the row as it was, and the next
-//! pass reads it again ([`Vault::project_settings`]). In the same write it raises one
+//! pass reads it again ([`Vault::project_settings`]), unless the key lands it all the same
+//! ([`RefusedProjection::Land`], the booking pair: SETTING-PROJECTED-EMERGENCY-PAIR = A). Then the
+//! row takes the act's value without the hook ([`land_refused_row_in_txn`]), as on every machine
+//! that folds the act, and the key's reader holds the line. In the same write it raises one
 //! NOTIFICATION per owner of the vault, kind `Ask`, producer
 //! [`SETTING_REFUSAL_NOTIFICATION_PRODUCER`]. It names the acts that head the row and the act the
 //! refused value came from: one of them, or, where the heads differ and the row takes the value
@@ -23,7 +26,10 @@
 //!
 //! The pass also records the refusal here ([`REFUSALS`]): the basis of the acts it refused. A
 //! refusal stands while the row's acts are as they were then and no projection of them stands;
-//! an act that arrived since, which no pass has read yet, is not refused here.
+//! an act that arrived since, which no pass has read yet, is not refused here. A row its key
+//! landed all the same is projected at those acts: its refusal stands while the key's
+//! `conflict` reads the rows as conflicting, so a change of the other row that ends the conflict
+//! ends it too.
 //!
 //! Its tap is read when the row is read ([`setting_refusal_tap_in_txn`]): one `vault.settings.set`
 //! of every row this install still refuses an act of and of every row its key's hook judges such
@@ -40,10 +46,73 @@ use super::*;
 
 use oneiron_authority::authority::{AuthorityOp, authority_log_entity_id_from_hash};
 
+use super::super::RefusedProjection;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 
 /// The producer of the owner's notice of a refused projection (module doc).
 pub(crate) const SETTING_REFUSAL_NOTIFICATION_PRODUCER: &str = "setting.projection";
+
+thread_local! {
+    /// Set while this thread's pass lands a row its key's hook refused here, for a key that lands
+    /// such a row all the same ([`land_refused_row_in_txn`]): the row's write runs no hook.
+    static LANDING_REFUSED_ROW: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether the write of a row of `spec` runs without its hook: the pass lands a row the hook
+/// refused, of a key that lands it all the same ([`RefusedProjection::Land`]).
+pub(super) fn hook_waived(spec: &SettingSpec) -> bool {
+    LANDING_REFUSED_ROW.with(Cell::get)
+        && matches!(spec.refused_projection, RefusedProjection::Land { .. })
+}
+
+/// Lands the row of `target` that its key's hook refused in this pass, without the hook, in a
+/// savepoint of the pass's write `txn`, at `now`, where the key lands such a row all the same
+/// ([`RefusedProjection::Land`]): the keys whose rows changed. `None` for a key that leaves the
+/// row for the next pass, and where the row's value itself is refused (logged): the next pass
+/// reads it again.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn land_refused_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    target: EntityId,
+    now: u64,
+) -> Result<Option<Vec<&'static SettingSpec>>> {
+    let Some(fold) = vault.setting_slot_fold_in_txn(txn, target)? else {
+        return Ok(None);
+    };
+    let lands = fold
+        .live
+        .iter()
+        .find_map(|head| head_of(head).ok())
+        .and_then(|head| spec_named(&head.slot.name).ok())
+        .is_some_and(|spec| matches!(spec.refused_projection, RefusedProjection::Land { .. }));
+    if !lands {
+        return Ok(None);
+    }
+    LANDING_REFUSED_ROW.with(|landing| landing.set(true));
+    let landed = crate::batch::savepoint_in_txn(vault, txn, |savepoint| {
+        project_target_in_txn(vault, savepoint, target, now).map(Some)
+    });
+    LANDING_REFUSED_ROW.with(|landing| landing.set(false));
+    match landed {
+        Ok(projected) => Ok(Some(
+            projected
+                .map(|projected| projected.changed)
+                .unwrap_or_default(),
+        )),
+        Err(Error::InvalidConfig(reason)) => {
+            tracing::warn!(
+                reason = %reason,
+                "a setting row its key lands all the same was refused; the next pass reads it again"
+            );
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
 
 /// A setting act a notice names.
 struct NamedAct {
@@ -68,8 +137,9 @@ struct Peer {
 /// Raises the owner's notice that this install's pass refused the row of `target`, with its
 /// key's hook's `reason`, in the pass's write `txn` once the row's own savepoint rolled back, at
 /// `now`: one row per owner of the vault (module doc). `deciding` is the act the refused value
-/// came from, where the pass knows it. A target with no setting act among its heads, or on a key
-/// this build does not know, raises none.
+/// came from, where the pass knows it; `landed`, whether the pass landed the row all the same
+/// ([`land_refused_row_in_txn`]). A target with no setting act among its heads, or on a key this
+/// build does not know, raises none.
 ///
 /// # Errors
 ///
@@ -78,6 +148,7 @@ pub(super) fn raise_refusal_notice_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     (target, reason, deciding): (EntityId, &str, Option<AuthorityEntryHash>),
+    landed: bool,
     now: u64,
 ) -> Result<()> {
     let Some(fold) = vault.setting_slot_fold_in_txn(txn, target)? else {
@@ -146,7 +217,17 @@ pub(super) fn raise_refusal_notice_in_txn(
         .map(authority_log_entity_id_from_hash)
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let result = authority_log_entity_id_from_hash(&refused.act)?.to_hex();
-    let detail = refusal_words_in_txn(vault, txn, (&heads, kept.as_ref()), &peers, reason)?;
+    let conflict = match spec.refused_projection {
+        RefusedProjection::Land { conflict } => conflict(vault, txn, &refused.slot)?,
+        RefusedProjection::Retry => None,
+    };
+    let detail = refusal_words_in_txn(
+        vault,
+        txn,
+        (&heads, kept.as_ref()),
+        &peers,
+        (reason, landed, conflict.as_deref()),
+    )?;
     for owner in crate::policy_model::owners_in_txn(vault, txn)? {
         vault.record_notification_in_txn(
             txn,
@@ -260,15 +341,16 @@ fn value_here_in_txn(
     Ok(value.and_then(|value| spec.kind.to_json(&value)))
 }
 
-/// The owner's words of a refusal: which machine did not apply which act (the heads of the row,
-/// or the act whose value differing `heads` keep, `kept`), the hook's reason, the acts it meets,
-/// and the fix.
+/// The owner's words of a refusal: the key's words of the conflict its reader refuses, where it
+/// gives them (`conflict`), which machine did not apply which act, or applied it all the same
+/// (`landed`) (the heads of the row, or the act whose value differing `heads` keep, `kept`), the
+/// hook's reason, the acts it meets, and the fix.
 fn refusal_words_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     (heads, kept): (&[NamedAct], Option<&NamedAct>),
     peers: &[Peer],
-    reason: &str,
+    (reason, landed, conflict): (&str, bool, Option<&str>),
 ) -> Result<String> {
     let here = match vault.serving_machine_in_txn(txn)? {
         Some(machine) => machine_label_in_txn(vault, txn, machine)?,
@@ -286,10 +368,15 @@ fn refusal_words_in_txn(
         ),
         None => named,
     };
-    let mut words = format!(
-        "{here} did not apply {refused}: {}.",
-        reason.trim_end_matches('.')
-    );
+    let reason = reason.trim_end_matches('.');
+    let mut words = conflict
+        .map(|words| format!("{words} "))
+        .unwrap_or_default();
+    if landed {
+        words.push_str(&format!("{here} applied {refused}, though {reason}."));
+    } else {
+        words.push_str(&format!("{here} did not apply {refused}: {reason}."));
+    }
     let mut met = Vec::with_capacity(peers.len());
     for peer in peers {
         if peer.acts.is_empty() {
@@ -393,7 +480,14 @@ fn refused_slot_in_txn(
         Some(projection) => !moved_since(vault, txn, &projection, basis)?,
         None => false,
     };
-    Ok((!stands).then_some(slot))
+    if !stands {
+        return Ok(Some(slot));
+    }
+    // A row its key landed all the same: the refusal stands while the rows conflict.
+    match spec_named(&slot.name).map(|spec| spec.refused_projection) {
+        Ok(RefusedProjection::Land { conflict }) => Ok(conflict(vault, txn, &slot)?.map(|_| slot)),
+        _ => Ok(None),
+    }
 }
 
 /// Whether this install refuses an act that heads the row `slot` ([`refused_slot_in_txn`]): the

@@ -219,6 +219,32 @@ pub type RefusalPeers = fn(
     Option<&serde_json::Value>,
 ) -> Result<Vec<oneiron_setting_contract::RowKey>>;
 
+/// What a projection pass does with a row of a signed act whose key's hook refuses it on this
+/// install (row SETTING-PROJECTED-ROW-REFUSING-HOOKS). Either way the pass raises the owner's
+/// notice of the refusal.
+#[derive(Clone, Copy)]
+pub enum RefusedProjection {
+    /// The row stays as it was, and the next pass reads it again: for a hook that may refuse on
+    /// this install's own state, which can change.
+    Retry,
+    /// The row takes the act's value all the same, without the hook, as on every machine that
+    /// folds the act (SETTING-PROJECTED-EMERGENCY-PAIR = A), and the key's reader holds the line:
+    /// for a hook that judges its row against other rows and writes nothing. The refusal stands
+    /// while `conflict` says the rows conflict.
+    Land {
+        /// The owner's words of what the key's reader refuses while the rows stand as they do,
+        /// read for the refused row; `None` once they no longer conflict. The notice leads with
+        /// them.
+        conflict: RefusalConflict,
+    },
+}
+
+/// The owner's words of a conflict between a row and the rows its key's hook judges it against,
+/// from the rows as they stand in the transaction; `None` where they do not conflict
+/// ([`RefusedProjection::Land`]).
+pub type RefusalConflict =
+    fn(&Vault, &heed::RoTxn<'_>, &oneiron_setting_contract::RowKey) -> Result<Option<String>>;
+
 /// The one hook a key may run once the write that changed it has committed: wake a host that
 /// reads the key (a reader woken inside the write would see the last commit's value).
 pub type OnCommitted = fn(&Vault);
@@ -275,6 +301,8 @@ pub struct SettingSpec {
     /// for a key whose hook refuses such a change of a row a machine holds in service (a
     /// calendar seat), whose act that machine would keep refusing.
     pub refusal_offers_clear: bool,
+    /// What a projection pass does with a row of a signed act the hook refuses here.
+    pub refused_projection: RefusedProjection,
     /// Run after the commit of each write that applied a change to the key (not on an equal
     /// value, not on a change that waits on a check-in).
     pub after_commit: Option<OnCommitted>,
@@ -315,6 +343,7 @@ impl SettingSpec {
         on_change: None,
         refusal_peers: None,
         refusal_offers_clear: true,
+        refused_projection: RefusedProjection::Retry,
         after_commit: None,
         write_turn: None,
         born: None,
