@@ -1553,6 +1553,7 @@ impl Vault {
     pub(crate) fn revoke_owner_authority_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: &OwnerProofGround,
         issuer: &HostSlipIssuer,
         person: EntityId,
     ) -> Result<()> {
@@ -1572,7 +1573,7 @@ impl Vault {
         let proof = if offers {
             None
         } else {
-            self.owner_proof_signer(&fold)
+            self.owner_proof_signer(&fold, ground)
         };
         if !keys.is_empty() {
             super::slip_vault::require_host(&fold, issuer)?;

@@ -254,7 +254,8 @@ impl Vault {
     /// repository's live cuts, and each must land live and counted here
     /// before the caller commits. Returns the id of every authority log row
     /// it appended, each frontier join it needed among them, for the
-    /// caller's transaction to hand to the live mirror.
+    /// caller's transaction to hand to the live mirror. The owner's proof is
+    /// signed on `ground`.
     ///
     /// # Errors
     /// [`crate::error::RecordError::AuthorityRefused`] for an install that
@@ -263,6 +264,7 @@ impl Vault {
     pub(crate) fn sign_origin_cuts_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: &OwnerProofGround,
         (actor, proves_joins): (EntityId, bool),
         surface: ActSurface,
         repos: &[[u8; 32]],
@@ -295,7 +297,7 @@ impl Vault {
             // The owner key this install holds proves the act; its join
             // carries the proof only for the owner's own write (row
             // OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, REVIEW-9962 P1).
-            let proof = self.owner_proof_signer(&fold);
+            let proof = self.owner_proof_signer(&fold, ground);
             let joiner =
                 FrontierSigner::install(machine, &key, proof.as_ref().filter(|_| proves_joins));
             let fold = self
