@@ -13,14 +13,10 @@
 //! owner's approve-once press, as a compliance hold is. A campaign pinned to
 //! human review holds every send for that press.
 //!
-//! Copy review governs every campaign (lead ruling
-//! COPY-REVIEW-JUDGE-BY-DEFAULT = B, 21 Nov): a campaign that names no voice
-//! guide is checked against the vault's house voice guide
-//! ([`crate::campaign::house_voice_guide`]), and one whose vault has none holds
-//! its sends. On a host with no judge seat the judge abstains, nothing is
-//! stored, and each send holds for the owner's press. The owner can turn copy
-//! review off for one campaign (`campaign.copy_review.skip`): its sends then
-//! go out unreviewed.
+//! Only a campaign that names a voice guide or pins human review is governed;
+//! every other campaign sends as before. The owner can turn copy review off
+//! for one campaign (`campaign.copy_review.skip`, lead ruling
+//! COPY-REVIEW-JUDGE-BY-DEFAULT = B): its sends then go out unreviewed.
 
 use std::time::{Duration, Instant};
 
@@ -117,7 +113,8 @@ pub struct CopyReviewVerdict {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CopyReviewOutcome {
     /// Copy review does not govern this send: not a campaign leg with an
-    /// outward call, or the owner turned copy review off for the campaign.
+    /// outward call, the owner turned copy review off for the campaign, or
+    /// the campaign names no voice guide and pins no human review.
     NotGoverned,
     /// The campaign pins human review: no judge runs, and the send holds
     /// for the owner's press.
@@ -129,8 +126,7 @@ pub enum CopyReviewOutcome {
     /// The judge gave no answer; nothing is stored and the send holds.
     Abstained,
     /// The campaign's owner cannot read the voice guide through the scoped
-    /// NOTE read (its grants, the diary gate, an erased or missing NOTE), or
-    /// the campaign names none and no house voice guide could be seeded: no
+    /// NOTE read (its grants, the diary gate, an erased or missing NOTE): no
     /// judge is asked, nothing is stored, and the send holds.
     GuideUnreadable,
 }
@@ -142,9 +138,7 @@ pub(crate) enum CopyReviewHold {
     Failed,
     /// No passing verdict covers the body: none was stored (no judge seat,
     /// the judge abstained, or the owner cannot read the guide), the guide
-    /// changed or does not read since, there is no guide (the campaign names
-    /// none and the vault has no house voice guide), or the campaign pins
-    /// human review.
+    /// changed or does not read since, or the campaign pins human review.
     Missing,
 }
 
@@ -158,19 +152,18 @@ impl CopyReviewHold {
     }
 }
 
-/// Who reviews one campaign's copy, as the store holds the campaign, the
-/// owner's skip setting and the house voice guide now.
+/// Who reviews one campaign's copy, as the store holds the campaign and the
+/// owner's skip setting now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CopyReviewRule {
     /// Copy review does not govern the campaign: the owner turned it off
-    /// (`campaign.copy_review.skip`).
+    /// (`campaign.copy_review.skip`), or the campaign names no voice guide and
+    /// pins no human review.
     NotGoverned,
     /// The campaign pins human review: every send holds for the owner.
     Human,
-    /// The judge checks each body against this voice guide NOTE: the
-    /// campaign's own, else the house voice guide. `None` when the campaign
-    /// names none and the vault has no house voice guide: each send holds.
-    Judge(Option<EntityId>),
+    /// The judge checks each body against this voice guide NOTE.
+    Judge(EntityId),
 }
 
 /// The rule for `campaign_ref`'s copy under `definition`, in `txn`. The
@@ -187,10 +180,10 @@ fn copy_review_rule_in_txn(
     if definition.copy_review == CopyReviewMode::Human {
         return Ok(CopyReviewRule::Human);
     }
-    Ok(CopyReviewRule::Judge(match definition.voice_guide_ref {
-        Some(guide) => Some(guide),
-        None => crate::campaign::house_voice_guide::house_voice_guide_in_txn(store, txn)?,
-    }))
+    Ok(match definition.voice_guide_ref {
+        Some(guide) => CopyReviewRule::Judge(guide),
+        None => CopyReviewRule::NotGoverned,
+    })
 }
 
 /// The verdict key: the campaign, then the body digest the retained request
@@ -247,22 +240,7 @@ impl Vault {
         let guide = match rule {
             CopyReviewRule::NotGoverned => return Ok(CopyReviewOutcome::NotGoverned),
             CopyReviewRule::Human => return Ok(CopyReviewOutcome::HumanReview),
-            CopyReviewRule::Judge(Some(guide)) => guide,
-            // A campaign that reached this vault without its create door (by
-            // sync, or an archive import) can find no house guide yet: seed
-            // it now. A vault that had one keeps its marker, so a guide the
-            // owner deleted stays deleted.
-            CopyReviewRule::Judge(None) => match self.ensure_house_voice_guide() {
-                Ok(Some(guide)) => guide,
-                Ok(None) => return Ok(CopyReviewOutcome::GuideUnreadable),
-                Err(error) => {
-                    tracing::warn!(
-                        kind = ?error.kind(),
-                        "the house voice guide could not be seeded for a copy review; the send holds"
-                    );
-                    return Ok(CopyReviewOutcome::GuideUnreadable);
-                }
-            },
+            CopyReviewRule::Judge(guide) => guide,
         };
         let Some(guide_view) = read_voice_guide(self, definition.owner_actor, guide)? else {
             return Ok(CopyReviewOutcome::GuideUnreadable);
@@ -468,10 +446,8 @@ pub(crate) fn campaign_copy_review_gate(
     };
     let guide = match copy_review_rule_in_txn(store, txn, facts.campaign_ref, &record.definition)? {
         CopyReviewRule::NotGoverned => return Ok(None),
-        CopyReviewRule::Human | CopyReviewRule::Judge(None) => {
-            return Ok(Some(CopyReviewHold::Missing));
-        }
-        CopyReviewRule::Judge(Some(guide)) => guide,
+        CopyReviewRule::Human => return Ok(Some(CopyReviewHold::Missing)),
+        CopyReviewRule::Judge(guide) => guide,
     };
     Ok(
         match covering_verdict_in_txn(store, txn, facts.campaign_ref, facts.payload_digest, guide)?
@@ -499,8 +475,8 @@ pub(super) fn copy_review_ask_state_in_txn(
     };
     let verdict = match copy_review_rule_in_txn(store, txn, campaign_ref, &record.definition)? {
         CopyReviewRule::NotGoverned => return Ok(None),
-        CopyReviewRule::Human | CopyReviewRule::Judge(None) => None,
-        CopyReviewRule::Judge(Some(guide)) => {
+        CopyReviewRule::Human => None,
+        CopyReviewRule::Judge(guide) => {
             covering_verdict_in_txn(store, txn, campaign_ref, payload_digest, guide)?
         }
     };
