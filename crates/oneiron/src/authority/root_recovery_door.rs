@@ -416,13 +416,13 @@ impl Vault {
 
     /// The box arm with a wait: the vouch writer's checks (R live in the
     /// transaction, the owner revalidated, the lost keys filtered, the
-    /// successor input built, the kit-only refusal), then one `RecoveryHold`
-    /// entry signed by R with `lands_at` on this install's clock, and no
-    /// enrolment and no revocation. The successor key is settled and its
-    /// pending slot record commits first, in its own write; R's released
-    /// seed goes to this install's keystore slot for that successor before
-    /// the transaction, and leaves it again when the transaction fails,
-    /// with its record.
+    /// successor input built, the kit-only refusal), the landing's write
+    /// judged now and rolled back, then one `RecoveryHold` entry signed by R
+    /// with `lands_at` on this install's clock, and no enrolment and no
+    /// revocation. The successor key is settled and its pending slot record
+    /// commits first, in its own write; R's released seed goes to this
+    /// install's keystore slot for that successor before the transaction,
+    /// and leaves it again when the transaction fails, with its record.
     /// A second call while this install's hold for the same successor
     /// waits answers the same held attempt, and writes no second hold.
     ///
@@ -592,11 +592,11 @@ impl Vault {
         }
     }
 
-    /// [`Self::hold_with_root_key`]'s writer half: the checks, the hold row
-    /// and the commit, for `successor_key`, the successor the pending write
-    /// settled and whose slot holds R's seed. It answers the held attempt
-    /// and this install's successor key, which the caller holds once it let
-    /// the slot lock go.
+    /// [`Self::hold_with_root_key`]'s writer half: the checks, the landing's
+    /// write rehearsed and aborted, the hold row and the commit, for
+    /// `successor_key`, the successor the pending write settled and whose
+    /// slot holds R's seed. It answers the held attempt and this install's
+    /// successor key, which the caller holds once it let the slot lock go.
     fn hold_write_with_root_key(
         &self,
         (owner, authority): (&AuthenticatedOwner, &ActAuthority),
@@ -641,22 +641,31 @@ impl Vault {
         }
         let now = self.instant_in_write_txn(&mut txn)?.secs();
         let lands_at = end.lands_at(now);
-        let hold = self.append_recovery_hold_in_txn(
-            &mut txn,
-            &root_key,
-            &sign,
-            RecoveryHold {
-                owner: actor,
-                enrolment: RecoveryHoldEnrolment {
-                    machine: input.machine,
-                    public_key: input.public_key,
-                    proof: input.proof,
-                },
-                lost: lost.into_iter().collect(),
-                lands_at,
+        let body = RecoveryHold {
+            owner: actor,
+            enrolment: RecoveryHoldEnrolment {
+                machine: input.machine,
+                public_key: input.public_key,
+                proof: input.proof,
             },
-            now,
-        )?;
+            lost: lost.into_iter().collect(),
+            lands_at,
+        };
+        // The landing's own write, run in a savepoint that is aborted: a
+        // hold whose revocations or enrolment the fold refuses now (the
+        // holding machine, the carrier, R as predecessor, the binding) is
+        // refused with the landing's refusal before its wait, and writes
+        // nothing (row RECOVERY-HOLD-ENROLMENT-PREFLIGHT).
+        let mut rehearsal = self.store.env.nested_write_txn(&mut txn)?;
+        let rehearsed = self.write_recovery_hold_landing_in_txn(
+            &mut rehearsal,
+            &fold,
+            (&body, &root_key),
+            &sign,
+        );
+        rehearsal.abort();
+        rehearsed?;
+        let hold = self.append_recovery_hold_in_txn(&mut txn, &root_key, &sign, body, now)?;
         let rows = self.mark_authority_rows_counted_since_in_txn(&mut txn, &fold)?;
         txn.commit()?;
         self.note_committed_authority_rows(rows);
