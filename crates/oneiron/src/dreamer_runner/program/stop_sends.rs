@@ -76,7 +76,7 @@ pub(super) fn abandon_sends_in_txn(
         wtxn,
         attempt,
         IntentEscalationReason::OwnerStopped,
-        now.saturating_mul(1_000),
+        now,
     )
     .map_err(ledger_fault)?;
     let cancelled =

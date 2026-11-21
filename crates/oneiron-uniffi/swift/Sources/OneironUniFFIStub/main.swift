@@ -158,18 +158,29 @@ func claimsCompile(client: Oneiron) throws {
 // MARK: Deletion and consent
 
 func deletionAndConsentCompile(client: Oneiron) throws {
-    let _: DeleteReceipt = try client.safeDelete(
+    let _: DeleteReceipt = try client.vaultDelete(
         entityRef: "entity:compile-only",
-        reason: .userDelete
+        reason: .userDelete,
+        checkInRef: nil
     )
     let _: [PendingWrite] = try client.pendingWrites(limit: 10)
 
     let deletion = DeleteReceipt(
         existed: true,
         reason: "user_delete",
-        receiptRef: nil
+        receiptRef: nil,
+        state: .applied,
+        checkIn: CheckInDecision(
+            actClass: "delete",
+            role: "owner",
+            mode: nil,
+            basis: "own_proof",
+            checkIn: nil,
+            requester: nil
+        )
     )
     let _: Bool = deletion.existed
+    let _: String? = deletion.checkIn?.basis
 
     let pending = PendingWrite(
         claimRef: "claim:compile-only",

@@ -391,11 +391,12 @@ pub(crate) fn reconcile_project_rooms(
                 Err(Error::InvalidConfig(_)) => return Err(invalid_room()),
                 other => other?,
             };
-        // The room owns its shared pins and their policy; a project touch
-        // derives everything else and carries those forward unchanged.
-        let (pins, pin_policy) = previous
+        // The room owns its shared pins, the records its unpins removed and
+        // the pin policy; a project touch derives everything else and carries
+        // those forward unchanged.
+        let (pins, unpinned, pin_policy) = previous
             .as_ref()
-            .map(|old| (old.pins.clone(), old.pin_policy))
+            .map(|old| (old.pins.clone(), old.unpinned.clone(), old.pin_policy))
             .unwrap_or_default();
         let room = ProjectRoom {
             schema_version: 1,
@@ -405,6 +406,7 @@ pub(crate) fn reconcile_project_rooms(
             claims_scope_ref: body.claims_scope_ref.clone(),
             origin: body.origin_card(),
             pins,
+            unpinned,
             pin_policy,
         };
         if previous.is_none() && !crate::conversation::fresh_id_in_txn(store, txn, room_id)? {

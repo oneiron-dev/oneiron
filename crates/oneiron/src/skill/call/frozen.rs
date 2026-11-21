@@ -264,6 +264,7 @@ pub fn callable_case_passes(
     if tier != SandboxGuestTier::FirstPartyDreamer {
         let _ = crate::code_sandbox::microvm::select_backend_for_tier(
             &*vault.runtime().sandbox_backends(),
+            vault.sandbox_provider()?,
             tier,
         )?;
     }

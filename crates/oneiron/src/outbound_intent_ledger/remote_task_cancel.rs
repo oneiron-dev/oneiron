@@ -101,9 +101,9 @@ pub(super) fn request_remote_task_cancel_in_txn(
         return Ok(RemoteTaskCancelAsk::Marked(phase));
     }
     state.cancel = Some(RemoteTaskCancelPhase::Requested);
-    // Due at once, however long the task's backoff has grown.
-    state.next_poll_ms = 0;
     POLLS.put(&vault.store, wtxn, id, &state)?;
+    // Due at once, however long the task's backoff has grown.
+    super::remote_task_poll::poll_due_now_in_txn(vault, wtxn, id)?;
     Ok(RemoteTaskCancelAsk::Marked(
         RemoteTaskCancelPhase::Requested,
     ))

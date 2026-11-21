@@ -38,7 +38,8 @@ async fn document_relay_gap_requests_resync_and_preserves_later_edits() {
         "relay-test",
     ));
     let (tx, _) = broadcast::channel(1024);
-    let mut peer = BroadcastSubscriber::new(1, &tx);
+    let sessions = crate::broadcast::BroadcastSessions::default();
+    let mut peer = BroadcastSubscriber::new(1, &tx, &sessions);
     let mut query = ReactiveChangeSubscriber::new(&tx);
     spawn_local_change_producer(&manager, &tx);
     let document = manager.documents().open(first).unwrap();

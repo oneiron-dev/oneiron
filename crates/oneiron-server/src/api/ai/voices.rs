@@ -261,6 +261,10 @@ pub(super) async fn provision(
         target: &target,
         include_generated: body.include_generated,
         language: body.language.as_deref(),
+        off_record: server.vault.model_call_keeps_no_record_for(
+            auth.off_record_session(),
+            crate::api::call_receipt::request_principal(&auth),
+        ),
     };
     match provision_record(&server, None, clone_payer(), request).await {
         Ok(record) => Json(target_receipt(&record)).into_response(),
@@ -325,6 +329,9 @@ pub(crate) async fn provision_clone(
         target,
         include_generated,
         language,
+        // A caller in an off-record session goes through a door that judges
+        // it ([`provision_clone_funded`]'s); this entry names none.
+        off_record: false,
     };
     provision_clone_funded(server, actor, None, request).await
 }
@@ -340,12 +347,16 @@ pub(crate) fn clone_payer() -> Option<oneiron::llm::run_admission::PayerPerson> 
 }
 
 /// One clone a door asks for: the voice, the target, whether generated refs
-/// count, and the clips' language when the target needs it.
+/// count, the clips' language when the target needs it, and whether the
+/// door's caller is verified in an off-record session that keeps no
+/// model-call record, judged at arrival: then the clone's run names no rows
+/// (census L5-25).
 pub(crate) struct CloneRequest<'a> {
     pub(crate) voice_id: &'a str,
     pub(crate) target: &'a str,
     pub(crate) include_generated: bool,
     pub(crate) language: Option<&'a str>,
+    pub(crate) off_record: bool,
 }
 
 /// [`provision_clone`], its vendor calls billed to `payer` when the acting
@@ -378,6 +389,7 @@ async fn provision_record(
         target,
         include_generated,
         language,
+        off_record,
     } = request;
     if let Some(actor) = actor {
         server
@@ -423,6 +435,7 @@ async fn provision_record(
         .map(|identity| vec![identity.owner]);
     let created = match media
         .clone_run_funded(payer, person)
+        .map(|run| if off_record { run.off_record() } else { run })
         .map(|run| run.initiated_by(initiator))
     {
         Ok(run) => cloner
@@ -571,12 +584,13 @@ async fn delete_at_vendor(
     }
 }
 
-/// The voice bank is the owner's: an owner-grade caller, admitted as the
-/// owner by the shared host-owner admission before any bank read, write or
-/// vendor call (FIX 8131). A self-hosted root or the dev mode acts as the
-/// owner; a hosted operator's root is refused with the support-grant
-/// refusal, and a managed vault's attested owner or a verified slip keeps
-/// its own key.
+/// The voice bank is the owner's: the owner door proves the caller is the
+/// vault's owner before any bank read, write or vendor call (FIX 8131). A
+/// self-hosted root or the dev mode acts as the owner; a hosted operator's
+/// root is refused with the support-grant refusal; a managed vault's
+/// attested owner passes while he is its live owner. A full-scope slip
+/// someone else holds is a scope, not ownership, and is refused
+/// (OWNER-GRADE-IS-NOT-OWNERSHIP).
 fn owner_only(server: &SyncServer, auth: &CoreAuth) -> Result<(), Response> {
     if !auth.is_owner_grade() {
         return Err(refusal(
@@ -585,8 +599,8 @@ fn owner_only(server: &SyncServer, auth: &CoreAuth) -> Result<(), Response> {
             "the voice bank is the owner's",
         ));
     }
-    crate::api::host_action::require_host_owner_act(server, auth)
-        .map(|_| ())
+    crate::api::owner_routes::owner(auth, server)
+        .map(drop)
         .map_err(IntoResponse::into_response)
 }
 

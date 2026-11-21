@@ -10,7 +10,7 @@ use crate::error::{Error, OffRecordError, Result};
 use crate::session_overlay::SessionWriteRoute;
 use crate::store::SessionStoreView;
 
-use super::room::ROOM_KEY_PREFIX;
+use super::room::{ROOM_KEY_PREFIX, is_member_in_txn};
 use super::session::{OffRecordSession, OffRecordSessionVault};
 use super::telemetry::SessionRetrievalTelemetry;
 
@@ -19,6 +19,8 @@ use super::telemetry::SessionRetrievalTelemetry;
 pub struct RoomPackSession<'vault> {
     session: OffRecordSession<'vault>,
     route: SessionWriteRoute,
+    stretch: Option<StretchRoom>,
+    reader: EntityId,
 }
 
 /// One pack's read of a [`RoomPackSession`]: the stretch's composed view, one
@@ -27,6 +29,84 @@ pub struct RoomPackSession<'vault> {
 pub struct RoomPackRead<'s> {
     pub(crate) view: SessionStoreView<'s>,
     pub(crate) telemetry: SessionRetrievalTelemetry<'s>,
+    pub(crate) stretch: Option<StretchRoom>,
+}
+
+/// The room a room stretch's staged rows belong to, carried by a read
+/// composed over that stretch (ARCH-0052 #e5-read-union-open = B). A stretch
+/// stages every turn under one conversation shell of its own, minted at
+/// entry and tied to the room by no row or edge, so a rule that finds a
+/// row's room up its ancestry finds the shell, which is no room on base.
+/// [`Self::room_of`] is the one point that maps the shell to its room, for
+/// the grant walk, the audience walk and the own-entry windows alike: a
+/// staged row meets its room's rules as a base row of that room does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StretchRoom {
+    room: EntityId,
+    shell: EntityId,
+    member: Option<EntityId>,
+}
+
+impl StretchRoom {
+    /// `conversation` as a row's room: the stretch's room for its shell,
+    /// any other conversation as it is.
+    pub(crate) fn room_of(&self, conversation: EntityId) -> EntityId {
+        if conversation == self.shell {
+            self.room
+        } else {
+            conversation
+        }
+    }
+
+    /// The conversation shell the stretch stages its turns under.
+    pub(crate) fn shell(&self) -> EntityId {
+        self.shell
+    }
+
+    /// The member whose own sight bounds each row the stretch staged;
+    /// `None` for the vault's owner, whom no window binds in their own
+    /// vault's stretch, as the stretch's copy reads its talk.
+    pub(crate) fn member(&self) -> Option<EntityId> {
+        self.member
+    }
+
+    /// The same stretch read as `member` reads it: a room peer's own read.
+    pub(crate) fn for_member(self, member: EntityId) -> Self {
+        Self {
+            member: Some(member),
+            ..self
+        }
+    }
+
+    /// Whether the member sees a row the stretch staged that occurred at
+    /// `occurred` and that the vault learned at `learned` (D5, as
+    /// `export_talk_for` reads the stretch's talk): on the room's roster in
+    /// this snapshot and inside one of their own membership windows there at
+    /// both times, so a member who joined with no history sees nothing from
+    /// before the join, a row staged before it but dated inside their window
+    /// included. The owner sees every row.
+    ///
+    /// # Errors
+    ///
+    /// The roster or the ledger not reading.
+    pub(crate) fn sees_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        occurred: u64,
+        learned: u64,
+    ) -> Result<bool> {
+        let Some(member) = self.member else {
+            return Ok(true);
+        };
+        if !is_member_in_txn(vault, txn, self.room, member)? {
+            return Ok(false);
+        }
+        Ok(vault
+            .windows_in_txn(txn, self.room, member)?
+            .iter()
+            .any(|window| window.contains(occurred) && window.contains(learned)))
+    }
 }
 
 impl<'vault> OffRecordSessionVault<'vault> {
@@ -47,18 +127,7 @@ impl<'vault> OffRecordSessionVault<'vault> {
         key: &str,
         reader: EntityId,
     ) -> Result<Option<RoomPackSession<'vault>>> {
-        let session = match self.bind_for(key, reader) {
-            Ok(session) => session,
-            // Bind's one config refusal: a ref no stretch can carry.
-            Err(Error::InvalidConfig(_)) => return Ok(None),
-            Err(error) => return read_on_base(error),
-        };
-        let session = match session.for_participant(reader) {
-            Ok(session) => session,
-            Err(error) => return read_on_base(error),
-        };
-        let route = session.write_route()?;
-        Ok(Some(RoomPackSession { session, route }))
+        self.bind_pack(key, reader, None)
     }
 
     /// The stretch `key` names, bound for `member` of its room to read a
@@ -66,9 +135,10 @@ impl<'vault> OffRecordSessionVault<'vault> {
     /// 13 Nov 05:5x): a person or agent other than the owner reads a room's
     /// stretch only while on that room's roster, checked at bind and in
     /// every transaction the pack reads the stretch in, and each row is read
-    /// under the member's own key. `None`, for a base read, as
-    /// [`Self::bind_pack_reader`] answers it, and also for a key that names
-    /// no room: a stretch entered alone has no roster to admit a member by.
+    /// under the member's own key, inside the member's own windows. `None`,
+    /// for a base read, as [`Self::bind_pack_reader`] answers it, and also
+    /// for a key that names no room: a stretch entered alone has no roster
+    /// to admit a member by.
     ///
     /// # Errors
     ///
@@ -81,8 +151,56 @@ impl<'vault> OffRecordSessionVault<'vault> {
         if !key.starts_with(ROOM_KEY_PREFIX) {
             return Ok(None);
         }
-        self.bind_pack_reader(key, member)
+        self.bind_pack(key, member, Some(member))
     }
+
+    /// The stretch `key` names, bound for `reader`, with its room carried
+    /// for the pack's read when it runs in one; `member` when `reader` reads
+    /// as a member rather than as the owner.
+    fn bind_pack(
+        &self,
+        key: &str,
+        reader: EntityId,
+        member: Option<EntityId>,
+    ) -> Result<Option<RoomPackSession<'vault>>> {
+        let session = match self.bind_for(key, reader) {
+            Ok(session) => session,
+            // Bind's one config refusal: a ref no stretch can carry.
+            Err(Error::InvalidConfig(_)) => return Ok(None),
+            Err(error) => return read_on_base(error),
+        };
+        let session = match session.for_participant(reader) {
+            Ok(session) => session,
+            Err(error) => return read_on_base(error),
+        };
+        let stretch = match stretch_room(&session, member) {
+            Ok(stretch) => stretch,
+            Err(error) => return read_on_base(error),
+        };
+        let route = session.write_route()?;
+        Ok(Some(RoomPackSession {
+            session,
+            route,
+            stretch,
+            reader,
+        }))
+    }
+}
+
+/// The room `session` runs in and the shell it stages under, for a read by
+/// `member` (`None` for the owner); `None` for a stretch entered alone.
+fn stretch_room(
+    session: &OffRecordSession<'_>,
+    member: Option<EntityId>,
+) -> Result<Option<StretchRoom>> {
+    let Some(room) = session.room()? else {
+        return Ok(None);
+    };
+    Ok(Some(StretchRoom {
+        room,
+        shell: session.overlay_conversation_shell()?,
+        member,
+    }))
 }
 
 impl RoomPackRead<'_> {
@@ -93,6 +211,41 @@ impl RoomPackRead<'_> {
 }
 
 impl RoomPackSession<'_> {
+    /// The room this stretch runs in; `None` for a stretch entered alone.
+    #[must_use]
+    pub fn room(&self) -> Option<EntityId> {
+        self.stretch.map(|stretch| stretch.room)
+    }
+
+    /// The person or agent this stretch is bound for: the vault's owner on
+    /// their proof ([`OffRecordSessionVault::bind_pack_reader`]), or a member
+    /// on their own live slip ([`OffRecordSessionVault::bind_pack_member`]).
+    /// In a room the bind found them on its roster, and each read of the
+    /// stretch checks it again.
+    #[must_use]
+    pub fn reader(&self) -> EntityId {
+        self.reader
+    }
+
+    /// `disclosure` bound to this room stretch, for a pack whose caller
+    /// checked that every interlocutor is seated in the stretch's room
+    /// (ARCH-0052 D5 rule 1; ROOM-PACK-STRETCH-TIER-A = A, from the owner's
+    /// OFFRECORD-WORDS = A, ARCH-0052:18: "one-way mirror"). The stretch's
+    /// own rows are then not Tier A by rule 1, so its reader reads them
+    /// under the room's rules and the audience's clearance; a row of any
+    /// other live room stays Tier A. A stretch entered alone has no room to
+    /// seat anyone in, so its clamp stays as it was.
+    #[must_use]
+    pub fn bind_disclosure(
+        &self,
+        disclosure: crate::disclosure::DisclosureContext,
+    ) -> crate::disclosure::DisclosureContext {
+        if self.stretch.is_none() {
+            return disclosure;
+        }
+        disclosure.bound_to_stretch(self.session.session_ref())
+    }
+
     /// The pack's read of this stretch: one composed snapshot and the
     /// telemetry door over the route captured at bind.
     ///
@@ -104,6 +257,7 @@ impl RoomPackSession<'_> {
         Ok(RoomPackRead {
             telemetry: self.session.retrieval_telemetry(&self.route)?,
             view: self.session.read_view()?,
+            stretch: self.stretch,
         })
     }
 }

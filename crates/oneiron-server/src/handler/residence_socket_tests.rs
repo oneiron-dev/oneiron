@@ -117,6 +117,7 @@ async fn phone_enrols_with_index_then_opens_one_item_and_searches_home() {
             occurred_at: now,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

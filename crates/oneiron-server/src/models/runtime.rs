@@ -273,16 +273,23 @@ impl ModelRuntime {
             })
             .collect();
         // The reranker's rungs speak `/v1/rerank`, not chat: each provider
-        // that serves one gets a rerank client beside its chat backend.
+        // that serves one gets a rerank client beside its chat backend. One
+        // whose `listen = "unix"` workers this process supervises also gets
+        // its on-device alternative: that same client, whose calls go on
+        // their sockets alone (L9-15).
         let mut rerankers = BTreeMap::new();
+        let mut native_rerankers: BTreeMap<String, NativeLocal> = BTreeMap::new();
         for (name, provider) in &config.providers {
             let models = reranker_models(config, name);
             if models.is_empty() || !provider.kind.reranks() {
                 continue;
             }
-            match build_reranker(provider, &models, site, keys) {
-                Ok(backend) => {
+            match build_reranker(name, provider, &models, &config.workers, site, keys) {
+                Ok((backend, on_device)) => {
                     rerankers.insert(name.clone(), backend);
+                    if let Some(on_device) = on_device {
+                        native_rerankers.insert(name.clone(), on_device);
+                    }
                 }
                 Err(error) => {
                     tracing::warn!(provider = %name, %error, "reranker provider unavailable");
@@ -334,21 +341,36 @@ impl ModelRuntime {
                 }
             }
         }
-        // Each chat model a supervised worker serves natively, alone by its
-        // own id at its on-device route (I2-LOCAL): no owner's fallback past
-        // the device takes its calls.
-        for (name, local) in &native {
-            let provider = &config.providers[name];
-            for model in referenced_models(config, name) {
-                let Some(rung) = native_rung(name, provider, local, &model, 0, None) else {
-                    continue;
+        // Each chat model a supervised worker serves natively, and each
+        // reranker model a `listen = "unix"` worker serves on its own socket
+        // (L9-15), alone by its own id at its on-device route (I2-LOCAL), so
+        // a manifest's or a local-GPU model pack's on-device pin of it takes
+        // that channel alone: no owner's fallback past the device takes its
+        // calls. A reranker model that also serves a chat role keeps its chat
+        // view, as its default route does.
+        for (rerank, locals) in [(false, &native), (true, &native_rerankers)] {
+            for (name, local) in locals {
+                let provider = &config.providers[name];
+                let models = if rerank {
+                    reranker_models(config, name)
+                } else {
+                    referenced_models(config, name)
                 };
-                let ladder = OfferLadder::bare(rung, Arc::clone(&rests)).scoped(SeatScope {
-                    wire: Wire::Chat,
-                    locality_ceiling: Some(ModelLocality::OnDevice),
-                    ..SeatScope::default()
-                });
-                router.insert_on_device(ladder.model().clone(), Arc::new(ladder));
+                for model in models {
+                    let Some(rung) = native_rung(name, provider, local, &model, 0, None, rerank)
+                    else {
+                        continue;
+                    };
+                    if rerank && router.chat_models().any(|chat| *chat == rung.model) {
+                        continue;
+                    }
+                    let ladder = OfferLadder::bare(rung, Arc::clone(&rests)).scoped(SeatScope {
+                        wire: if rerank { Wire::Rerank } else { Wire::Chat },
+                        locality_ceiling: Some(ModelLocality::OnDevice),
+                        ..SeatScope::default()
+                    });
+                    router.insert_on_device(ladder.model().clone(), Arc::new(ladder));
+                }
             }
         }
         let mut seats = BTreeMap::new();
@@ -403,29 +425,30 @@ impl ModelRuntime {
                 configured: ladder.len(),
                 locality_ceiling: None,
             };
-            // The on-device alternatives of the seat's chat rungs (I2-LOCAL),
-            // at their configured positions with their prompts: the seat's
-            // on-device view. The reranker speaks no native protocol.
-            let native_rungs: Vec<LadderRung> = if *role == ModelRole::Reranker {
-                Vec::new()
-            } else {
-                ladder
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(position, rung)| {
-                        let name = &rung.model.provider;
-                        let local = native.get(name)?;
-                        native_rung(
-                            name,
-                            &config.providers[name],
-                            local,
-                            &rung.model,
-                            position,
-                            rung.prompt.clone(),
-                        )
-                    })
-                    .collect()
-            };
+            // The on-device alternatives of the seat's rungs (I2-LOCAL), at
+            // their configured positions with their prompts: the seat's
+            // on-device view. A chat rung's is its EXL3 worker's native
+            // channel; a reranker rung's its `listen = "unix"` worker's
+            // socket (L9-15).
+            let rerank = *role == ModelRole::Reranker;
+            let alternatives = if rerank { &native_rerankers } else { &native };
+            let native_rungs: Vec<LadderRung> = ladder
+                .iter()
+                .enumerate()
+                .filter_map(|(position, rung)| {
+                    let name = &rung.model.provider;
+                    let local = alternatives.get(name)?;
+                    native_rung(
+                        name,
+                        &config.providers[name],
+                        local,
+                        &rung.model,
+                        position,
+                        rung.prompt.clone(),
+                        rerank,
+                    )
+                })
+                .collect();
             if let Some(seat) = seat_for(
                 *role,
                 ladder_locality(&rungs, config),
@@ -534,18 +557,21 @@ impl ModelRuntime {
         self.rests.questions()
     }
 
-    /// The owner's answer to quota question `id`; a top-up or pay-as-you-go
-    /// puts its offer back in rotation now, and `use_fallback` sends its
-    /// calls to `fallback`, one of the question's fallbacks, while it is
-    /// parked. `false` when no such question is open, it offers no such
-    /// choice, or it offers no such fallback.
+    /// The answer to quota question `id`, given by `answerer` (the owner,
+    /// or an agent his key lets give it), which the question's answer row
+    /// keeps; a top-up or pay-as-you-go puts its offer back in rotation now,
+    /// and `use_fallback` sends its calls to `fallback`, one of the
+    /// question's fallbacks, while it is parked. `false` when no such
+    /// question is open, it offers no such choice, or it offers no such
+    /// fallback.
     pub fn answer_quota(
         &self,
         id: &str,
         choice: QuotaChoice,
         fallback: Option<&str>,
+        answerer: QuotaAnswerer,
     ) -> oneiron::Result<bool> {
-        self.rests.answer(id, choice, fallback)
+        self.rests.answer(id, choice, fallback, answerer)
     }
 
     /// The seat for `role`, when at least one of its rungs can serve.

@@ -1,7 +1,8 @@
 //! Transactional review bundles. Every public claim goes through the write gate.
 use super::*;
-use crate::batch::secret_scan::{admitted_from, named_tree};
+use crate::batch::secret_scan::{admitted_from_known, named_tree};
 use crate::side_table::{self, Named, Raw, SideTable};
+use crate::store::known_value_index::KnownValues;
 use std::collections::btree_map::Entry;
 
 mod dissent_rows;
@@ -58,7 +59,8 @@ pub(super) fn persist_review(
         }
         // OF-067: each artifact as the side-row wall keeps it, so its row, the cached review
         // and the result handed back carry the same handles. A held row stands for an artifact
-        // it holds with handles where this one holds the secrets.
+        // it holds with handles where this one holds the secrets, or the values base custody
+        // holds, which the wall read in this writer (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS).
         let mut artifacts = artifacts.to_vec();
         for artifact in &mut artifacts {
             if artifact.out_of_scope {
@@ -70,7 +72,9 @@ pub(super) fn persist_review(
             };
             if let Some(held) = CRITIQUE_ARTIFACT.get(&vault.store, txn, &key)? {
                 if held != *artifact
-                    && !admitted_from(&named_tree(&held)?, &named_tree(&*artifact)?)?
+                    && !admitted_from_known(&named_tree(&held)?, &named_tree(&*artifact)?, || {
+                        KnownValues::shared_in_writer(&vault.store, txn)
+                    })?
                 {
                     return Err(invalid_critic_config("review artifact id already used"));
                 }

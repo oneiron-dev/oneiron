@@ -12,6 +12,7 @@
 //! judges it at serve instead (FIX 10432).
 use std::collections::BTreeSet;
 
+use super::super::access_gate::HeldAuthority;
 use super::{ScopedRead, WeaveItem, WeaveReport, loop_decisions, report_sources};
 use crate::EntityId;
 use crate::dreamer_runner::maintenance::agent_health::{
@@ -154,18 +155,20 @@ impl ScopedRead<'_> {
     /// A saved period's copy as this read serves it, in `txn`: numeric
     /// witnesses with erased or stale members cleared, and draft text
     /// written from an erased row scrubbed, indexed or not (FIX 8672), and
-    /// each audit decision's refs past this reader's own floor (FIX 8322).
-    /// Every row and the period stay.
+    /// each audit decision's refs past this reader's own floor (FIX 8322),
+    /// each under `held`, the authority the read holds in `txn`. Every row
+    /// and the period stay.
     pub(super) fn serve_saved_copy_in(
         &self,
         txn: &heed::RoTxn<'_>,
+        held: &HeldAuthority,
         report: &mut WeaveReport,
     ) -> Result<()> {
         scrub_erased_drafts_in(&self.vault.store, txn, report)?;
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        self.redact_sieve_decisions_in(txn, &policy, &filter, report);
+        self.redact_sieve_decisions_in(txn, &policy, &filter, held, report);
         // A saved card's moves are judged again for this reader (FIX 8536).
-        self.project_card_moves_in(txn, &policy, &filter, report);
+        self.project_card_moves_in(txn, &policy, &filter, held, report);
         Ok(())
     }
 }

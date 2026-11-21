@@ -1,12 +1,25 @@
-//! Core half of `origin::publish::mirror_review`: its store-layer items live in `oneiron_store::origin::publish::mirror_review` and are
-//! re-exported here; the items below stay in the engine.
+//! The review section of one whole ref an automatic mirror plan pushes (FIX
+//! 6866 part 2; CALLS "FIX 6866 automatic review record").
+//!
+//! A commit tip's section is an exact publish's full-ancestry review
+//! (`review`): `Reach(new) - Reach(the tip the plan read)`, with every merge
+//! parent and each path, mode and object each commit introduces against each
+//! parent; the tip is subtracted only when this store holds it as a commit,
+//! else the section covers the whole closure. A plan reviews its refs in
+//! order, and a later ref leaves out what an earlier ref's section already
+//! names, so the plan's pages hold the union once while each ref keeps its
+//! own section. A tag tip names each annotated tag on its way first, its raw
+//! bytes (message included) in the digest, or for a tag too large to read
+//! whole its oid and size; a tree tip names every path it
+//! holds; a blob tip names itself. Every section passes the one history
+//! policy hook an exact publish's review passes.
 
-pub(crate) use oneiron_store::origin::publish::mirror_review::*;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 use super::ORIGIN_PUBLISH_REVIEW_PAGE_ITEMS;
 use super::mirror_plan::MirrorRunScope;
 use super::mirror_plan_types::MirrorObservedTip;
-use super::review::{BuiltReview, admit_review_policy, field, hash_item};
+use super::review::{BuiltReview, admit_review_policy, digest_hex, hash_item};
 use super::types::{
     OriginPublishLfsBytes, OriginPublishReview, OriginPublishReviewItem, OriginPublishReviewPage,
 };
@@ -26,7 +39,7 @@ pub(super) struct RefSection {
 
 /// A section being built: its digest, pages and counts.
 struct Section {
-    hasher: blake3::Hasher,
+    digest: LegacyDigest,
     pages: Vec<OriginPublishReviewPage>,
     page: Vec<OriginPublishReviewItem>,
     paths: BTreeSet<String>,
@@ -36,13 +49,16 @@ struct Section {
 }
 
 impl Section {
+    /// Its digest starts with the ref name, the new object and the observed tip
+    /// (empty when none). Vaults hold section digests, so they keep their bytes (K,
+    /// PLAN-UC-04 3.2): each field framed by its length as a u64 little-endian.
     fn new(name: &GitRefName, new: &GitOid, observed: &MirrorObservedTip) -> Self {
-        let mut hasher = blake3::Hasher::new_derive_key(ORIGIN_MIRROR_REVIEW_DIGEST_CONTEXT);
-        field(&mut hasher, name.as_str().as_bytes());
-        field(&mut hasher, new.as_str().as_bytes());
-        field(&mut hasher, observed.oid().unwrap_or("").as_bytes());
+        let mut digest = LegacyDigest::new(purposes::origin::MIRROR_REVIEW);
+        for field in [name.as_str(), new.as_str(), observed.oid().unwrap_or("")] {
+            digest.len_u64_le(field.len()).raw(field.as_bytes());
+        }
         Self {
-            hasher,
+            digest,
             pages: Vec::new(),
             page: Vec::new(),
             paths: BTreeSet::new(),
@@ -68,12 +84,19 @@ impl Section {
     }
 
     fn tag(&mut self, tag: &GitRefTag) {
-        self.hasher
-            .update(if tag.raw.is_some() { b"t" } else { b"T" });
-        field(&mut self.hasher, tag.tag.as_str().as_bytes());
+        let oid = tag.tag.as_str();
+        self.digest
+            .raw(if tag.raw.is_some() { b"t" } else { b"T" })
+            .len_u64_le(oid.len())
+            .raw(oid.as_bytes());
         match &tag.raw {
-            Some(raw) => field(&mut self.hasher, raw),
-            None => field(&mut self.hasher, &tag.size.to_le_bytes()),
+            Some(raw) => {
+                self.digest.len_u64_le(raw.len()).raw(raw);
+            }
+            None => {
+                let size = tag.size.to_le_bytes();
+                self.digest.len_u64_le(size.len()).raw(&size);
+            }
         }
         self.push(OriginPublishReviewItem::Object {
             object_type: "tag".to_owned(),
@@ -85,9 +108,10 @@ impl Section {
     }
 
     fn object(&mut self, kind: &str, object: &GitOid) {
-        self.hasher.update(b"o");
-        field(&mut self.hasher, kind.as_bytes());
-        field(&mut self.hasher, object.as_str().as_bytes());
+        self.digest.raw(b"o");
+        for field in [kind, object.as_str()] {
+            self.digest.len_u64_le(field.len()).raw(field.as_bytes());
+        }
         self.push(OriginPublishReviewItem::Object {
             object_type: kind.to_owned(),
             object: object.as_str().to_owned(),
@@ -99,7 +123,7 @@ impl Section {
 
     /// A path a tree tip holds.
     fn git_item(&mut self, item: &GitReviewItem) {
-        hash_item(&mut self.hasher, item);
+        hash_item(&mut self.digest, item);
         if let GitReviewItem::Path {
             status,
             mode,
@@ -122,7 +146,8 @@ impl Section {
 
     /// A commit walk's review, whole: its digest, pages and counts.
     fn absorb(&mut self, walk: BuiltReview) {
-        field(&mut self.hasher, walk.review.digest.as_bytes());
+        let walked = walk.review.digest.as_bytes();
+        self.digest.len_u64_le(walked.len()).raw(walked);
         self.flush();
         self.pages.extend(walk.pages);
         self.paths.extend(walk.paths);
@@ -136,7 +161,7 @@ impl Section {
         let count = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
         BuiltReview {
             review: OriginPublishReview {
-                digest: self.hasher.finalize().to_hex().to_string(),
+                digest: digest_hex(&self.digest),
                 subtracted,
                 commits: self.commits,
                 entries: self.entries,
@@ -160,6 +185,42 @@ pub(super) fn covered_section(
     observed: &MirrorObservedTip,
 ) -> BuiltReview {
     Section::new(name, new, observed).finish(observed.oid().map(str::to_owned))
+}
+
+/// A section's digest after `writes`, in order, for the K-proof door
+/// (`test_doors::fingerprint_keep_origin`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn section_digest_for_test(
+    name: &GitRefName,
+    new: &GitOid,
+    observed: &MirrorObservedTip,
+    writes: &[crate::test_doors::fingerprint_keep_origin::MirrorSectionWrite],
+) -> String {
+    use crate::test_doors::fingerprint_keep_origin::MirrorSectionWrite;
+    let mut section = Section::new(name, new, observed);
+    for write in writes {
+        match write {
+            MirrorSectionWrite::Tag(tag) => section.tag(tag),
+            MirrorSectionWrite::Object { kind, object } => section.object(kind, object),
+            MirrorSectionWrite::Item(item) => section.git_item(item),
+            MirrorSectionWrite::Walk(digest) => section.absorb(BuiltReview {
+                review: OriginPublishReview {
+                    digest: digest.clone(),
+                    subtracted: None,
+                    commits: 0,
+                    entries: 0,
+                    paths: 0,
+                    pages: 0,
+                    lfs_bytes: OriginPublishLfsBytes::NotSent,
+                    lossy_paths: false,
+                    secret_history: None,
+                },
+                pages: Vec::new(),
+                paths: BTreeSet::new(),
+            }),
+        }
+    }
+    section.finish(None).review.digest
 }
 
 impl Vault {

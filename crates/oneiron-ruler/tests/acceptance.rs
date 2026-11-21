@@ -92,6 +92,8 @@ fn held_out(
         incumbent: incumbent.clone(),
         candidate: candidate.clone(),
         candidate_params: serde_json::json!({"budget_rows": 10}),
+        model_id: "model".to_owned(),
+        budget_rows: 10,
         incumbent_scorecard_sha256: "e".repeat(64),
         candidate_scorecard_sha256: "f".repeat(64),
         axes: vec![AxisComparison {
@@ -525,6 +527,29 @@ fn the_store_refuses_a_wrong_identity_and_a_bad_id() {
         store.put_sealed(&outcome),
         Err(ProposalError::IdentityMismatch { .. })
     ));
+    // The right experiment under another retriever or budget is not the proposal's arm.
+    let mut right = outcome;
+    right.candidate_sealed = card(
+        Slice::Sealed,
+        "eng2",
+        &candidate.params_digest,
+        &pack,
+        Vec::new(),
+    );
+    let mut other_retriever = right.clone();
+    other_retriever.candidate_sealed.model_id = "bm25f+dicts".to_owned();
+    assert!(matches!(
+        store.put_sealed(&other_retriever),
+        Err(ProposalError::IdentityMismatch { .. })
+    ));
+    let mut other_budget = right;
+    other_budget.incumbent_sealed.budget_rows = 20;
+    assert!(matches!(
+        store.put_sealed(&other_budget),
+        Err(ProposalError::IdentityMismatch { .. })
+    ));
+    let sealed_path = temp.path().join(&proposal.proposal_id).join("sealed.json");
+    assert!(!sealed_path.exists());
     let mut bad = proposal;
     bad.proposal_id = "0".repeat(64);
     assert!(matches!(

@@ -1,7 +1,9 @@
 //! Epoch-bound receive-pack admission, landing and crash recovery.
 
+use super::protected_ref_confirm::ProtectedRefPasses;
 use super::tests::{
-    CapturingSink, advertise, advertised_refs, git, ref_update, served_repo, temp_vault,
+    CapturingSink, advertise, advertised_refs, git, owner_admission_stamp, owner_principal,
+    ref_update, served_repo, temp_vault,
 };
 use super::*;
 use crate::config::VaultConfig;
@@ -33,15 +35,10 @@ fn epoch_request(actor: EntityId) -> ServeRequest {
 fn epoch_intent(
     vault: &Vault,
     root: &Path,
-    actor: EntityId,
     lease: &OriginAuthorityLease,
     updates: Vec<RefUpdate>,
 ) -> EntityId {
-    let mut stamp = DoorAdmissionStamp::from_principal(
-        EntityId::now(),
-        &actor.to_hex(),
-        crate::unix_seconds_now(),
-    );
+    let mut stamp = owner_admission_stamp(vault, root);
     stamp.origin_authority = Some(OriginAuthorityStamp::from_lease(lease));
     vault
         .record_receive_pack_admission(root, &stamp, DoorSeam::Landed)
@@ -54,7 +51,13 @@ fn epoch_intent(
         quarantine_path: None,
     };
     vault
-        .record_receive_pack_intent(&unpinned_repo_ref(root), &stamp, &door)
+        .record_receive_pack_intent(
+            &unpinned_repo_ref(root),
+            &stamp,
+            &door,
+            None,
+            &ProtectedRefPasses::default(),
+        )
         .expect("intent");
     stamp.operation_id()
 }
@@ -86,9 +89,9 @@ fn epoch_receive_pack_host_is_not_the_pusher_and_new_authority_lands() {
     let (_vault_dir, vault) = temp_vault();
     let (_source, root, first, tip) = served_repo(&vault);
     let repo = epoch_repo(&vault, &root, &tip);
-    let old_host = EntityId::now();
+    let old_host = owner_principal(&vault);
     let new_host = EntityId::now();
-    let actor = EntityId::now();
+    let actor = owner_principal(&vault);
     vault
         .set_origin_authority(&repo, None, OriginResidence::LocalVault, old_host, false)
         .expect("epoch 1");
@@ -193,7 +196,7 @@ fn epoch_receive_pack_mirror_and_other_repo_lease_refuse_before_body() {
     let (_vault_dir, vault) = temp_vault();
     let (_source, root, _first, tip) = served_repo(&vault);
     let repo = epoch_repo(&vault, &root, &tip);
-    let host = EntityId::now();
+    let host = owner_principal(&vault);
     vault
         .set_origin_authority(&repo, None, OriginResidence::LocalVault, host, false)
         .expect("authority");
@@ -253,7 +256,7 @@ fn epoch_cutover_drains_crashed_old_admission_and_cannot_reauthorize_its_source(
     let (_source, root, first, tip) = served_repo(&vault);
     let repo = epoch_repo(&vault, &root, &tip);
     let old_host = EntityId::now();
-    let actor = EntityId::now();
+    let actor = owner_principal(&vault);
     vault
         .set_origin_authority(&repo, None, OriginResidence::LocalVault, old_host, false)
         .expect("epoch 1");
@@ -263,7 +266,6 @@ fn epoch_cutover_drains_crashed_old_admission_and_cannot_reauthorize_its_source(
     epoch_intent(
         &vault,
         &root,
-        actor,
         &lease,
         vec![ref_update("refs/heads/recovered", None, Some(&first))],
     );
@@ -322,7 +324,7 @@ fn epoch_cutover_drains_crashed_old_admission_and_cannot_reauthorize_its_source(
         required_objects: row.required_objects,
         required_lfs_oids: row.required_lfs_oids,
         provenance_claim_id: row.provenance_claim_id,
-        actor_id: row.actor_id,
+        actor_id: row.actor_id.id().expect("an unerased publication actor"),
         occurred: row.occurred,
         learned_at: crate::unix_seconds_now(),
     };
@@ -367,7 +369,6 @@ fn epoch_cutover_refuses_pending_prepublication_effect_then_drains() {
     epoch_intent(
         &vault,
         &root,
-        EntityId::now(),
         &lease,
         vec![ref_update("refs/heads/pending", None, Some(&first))],
     );
@@ -432,14 +433,14 @@ fn epoch_delete_crash_drains_before_mirror_cutover_and_stale_replay_cannot_delet
     let (_source, root, first, tip) = served_repo(&vault);
     let repo = epoch_repo(&vault, &root, &tip);
     let host = EntityId::now();
-    let actor = EntityId::now();
+    let actor = owner_principal(&vault);
     vault
         .set_origin_authority(&repo, None, OriginResidence::LocalVault, host, false)
         .expect("epoch 1");
     let lease = vault.lease_origin_authority(&repo, host).expect("lease");
     git(&root, &["update-ref", "refs/heads/deleted", first.as_str()]);
     let update = ref_update("refs/heads/deleted", Some(&first), None);
-    epoch_intent(&vault, &root, actor, &lease, vec![update.clone()]);
+    epoch_intent(&vault, &root, &lease, vec![update.clone()]);
     let source = EntityId::from_hex(
         &vault.receive_pack_intents(&root).expect("pending deletion")[0]
             .1
@@ -605,7 +606,7 @@ fn epoch_recreation_lands_on_the_old_publication_and_its_outcome_cannot_replay()
     let old_lease = vault
         .lease_origin_authority(&repo, old_host)
         .expect("old lease");
-    let request = epoch_request(EntityId::now());
+    let request = epoch_request(owner_principal(&vault));
     let push = |lease: &OriginAuthorityLease, bytes: Vec<u8>| {
         let mut body = io::Cursor::new(bytes);
         let mut sink = CapturingSink::default();

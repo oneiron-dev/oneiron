@@ -8,7 +8,7 @@
 //! guardian join to be killed and reaped; then it kills the worker group and
 //! waits for the actual worker's reaper.
 use std::future::{Future, poll_fn};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::time::Duration;
@@ -17,6 +17,7 @@ use oneiron_driver::{LauncherFuture, RunningWorker, WorkerActivity, WorkerExit};
 use rustix::process::{Pid, Signal, kill_process_group};
 use tokio::sync::watch;
 
+use super::launcher::HealthRoute;
 use super::media_worker::StatsRoute;
 
 #[cfg(target_os = "macos")]
@@ -105,11 +106,11 @@ impl ProcessWorker {
     /// the spawning process has not already disappeared.
     pub(super) fn spawn(
         mut command: tokio::process::Command,
-        health: String,
+        health: &HealthRoute,
         native: Option<PathBuf>,
         stats: Option<StatsRoute>,
     ) -> std::io::Result<Self> {
-        let client = client()?;
+        let client = client(health.socket.as_deref())?;
         command.process_group(0).kill_on_drop(false);
         #[cfg(target_os = "linux")]
         let parent = rustix::process::getpid();
@@ -137,7 +138,7 @@ impl ProcessWorker {
         Ok(Self {
             state,
             exit,
-            health,
+            health: health.url.clone(),
             client,
             native,
             stats,
@@ -286,14 +287,20 @@ fn take_child(
     Ok((state, exit))
 }
 
-fn client() -> std::io::Result<reqwest::Client> {
-    reqwest::Client::builder()
+/// The client of a worker's liveness and `/metrics` routes: over `socket`
+/// when the worker serves HTTP on a Unix socket (L9-15), else over TCP.
+fn client(socket: Option<&Path>) -> std::io::Result<reqwest::Client> {
+    let builder = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(LIVENESS_REQUEST)
-        .timeout(LIVENESS_REQUEST)
-        .build()
-        .map_err(std::io::Error::other)
+        .timeout(LIVENESS_REQUEST);
+    match socket {
+        Some(socket) => builder.unix_socket(socket),
+        None => builder,
+    }
+    .build()
+    .map_err(std::io::Error::other)
 }
 
 #[cfg(target_os = "macos")]

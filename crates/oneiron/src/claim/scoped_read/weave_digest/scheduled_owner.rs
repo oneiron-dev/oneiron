@@ -200,8 +200,15 @@ impl Vault {
             self.store.vault_meta.put(txn, key, &next)?;
             // The period's one due notice, in this same write: the owner
             // learns of it as he always has, and his open finds it saved.
-            let notice =
-                self.record_notification_in_txn(txn, &reader.notification(scheduled_for, now))?;
+            // It is born from the rows the period reads, so a co-Owner
+            // reads it only when he reads them.
+            let notice = self.record_weave_period_notice_in_txn(
+                txn,
+                reader,
+                scheduled_for,
+                &report.value,
+                now,
+            )?;
             // The lens's generate step renders the period on the Dreamer's
             // lent model, queued in this same write.
             if report

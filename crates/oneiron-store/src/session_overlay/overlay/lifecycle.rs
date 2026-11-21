@@ -10,6 +10,7 @@ use super::super::keyspace::{KeyspaceState, OverlayKeyspace, OverlayState, Overl
 use super::ACTIVE_SEGMENT;
 use super::held::Held;
 use super::retained::Retained;
+use super::room_secrets::RoomSecrets;
 use super::segment::{NEXT_OVERLAY_GENERATION, TxnSegment};
 use oneiron_contracts::error::OffRecordError;
 
@@ -107,6 +108,9 @@ pub struct SessionOverlay {
     /// What live snapshots and promotion plans hold beyond the published
     /// state, counted in what the overlay retains.
     pub(super) held: Mutex<Held>,
+    /// The secrets this room keeps in its own custody, in memory only
+    /// (ROOM-LOCAL-CUSTODY): wiped at the close, never written anywhere.
+    pub(super) room_secrets: Mutex<RoomSecrets>,
 }
 
 /// The host's charge beside the bytes its stretch holds before any row.
@@ -137,6 +141,7 @@ impl SessionOverlay {
             budget_bytes,
             charge: Mutex::new(None),
             held: Mutex::new(Held::default()),
+            room_secrets: Mutex::new(RoomSecrets::default()),
         })
     }
 
@@ -180,7 +185,8 @@ impl SessionOverlay {
     /// The bytes the overlay retains now (FIX 10104): its published state,
     /// `segment`, a write's live segment, the states live snapshots read and
     /// the copies live promotion plans hold, each shared allocation once,
-    /// with `incoming`, the heap a copy about to be made will hold.
+    /// and the values the room keeps in its own custody (REVIEW-10003 round
+    /// 2), with `incoming`, the heap a copy about to be made will hold.
     pub(super) fn retained_with(&self, segment: Option<&TxnSegment>, incoming: usize) -> usize {
         let mut retained = Retained::default();
         retained.state(&self.state.load_full());
@@ -188,7 +194,10 @@ impl SessionOverlay {
             retained.segment(segment);
         }
         retained.held(&self.held.lock().unwrap_or_else(PoisonError::into_inner));
-        retained.bytes().saturating_add(incoming)
+        retained
+            .bytes()
+            .saturating_add(self.room_secret_bytes())
+            .saturating_add(incoming)
     }
 
     /// Moves a bound charge to what the overlay retains now: its published
@@ -395,6 +404,9 @@ impl SessionOverlay {
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("session overlay generation"))?;
         lifecycle.state = OverlayLifecycleState::Gone;
+        // The room's own custody goes with its rows: no secret it kept
+        // outlives the close (ROOM-LOCAL-CUSTODY).
+        self.wipe_room_secrets();
         let closing_rows = visitor
             .as_ref()
             .map(|_| self.hold_closed_state(self.state.load_full()));

@@ -329,7 +329,7 @@ impl CancelFixture {
     /// The task's next poll due now, however long its backoff.
     async fn poll_again(&self, intent: &[u8; 32]) {
         self.vault
-            .remote_task_polls_due_at(&[*intent], now_ms())
+            .remote_task_polls_due_at(&[*intent])
             .expect("the poll made due");
         self.poll_once().await;
     }
