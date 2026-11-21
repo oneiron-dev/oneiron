@@ -1,12 +1,16 @@
 //! A turn program's reads (DOOR-141 PR3a, PR3b): what a landed turn's wakes
 //! admitted, where one program's run stands, one settled step's exact
-//! result and the resume checkpoint its restarter reads, each over the
-//! caller's own credential read lane. The program's
+//! result, the resume checkpoint its restarter reads and the programs a
+//! vault copy holds paused, each over the caller's own credential read
+//! lane. The program's
 //! waking actor or the verified owner reads its rows; every record a field
 //! derives from reads on the caller's lane or is withheld. None executes,
 //! admits, resumes or leases anything. Beside them, the owner's release of
 //! a held program (FIX 5880), which takes the vault owner's proof as
-//! `/v1/owner` takes it and rechecks it in its own write.
+//! `/v1/owner` takes it and rechecks it in its own write, and the owner's
+//! resume of paused programs (FIX
+//! TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY), under the same proof
+//! and the owner's confirm of its sheet.
 use std::sync::Arc;
 
 use oneiron::authority::OwnerOrDelegate;
@@ -17,8 +21,17 @@ use oneiron::dreamer_runner::{
     SettledProgramStepView, TurnProgramAdmissionRequest, TurnProgramAdmissionView,
     program_checkpoint, program_run, settled_program_step, turn_program_admission,
 };
+// FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY: the paused programs of a vault copy.
+use oneiron::dreamer_runner::{
+    PausedTurnProgramsRequest, PausedTurnProgramsView, paused_turn_programs,
+};
+// The same row: the owner's resume of paused programs.
+use oneiron::dreamer_runner::{
+    ResumePausedTurnProgramItem, ResumePausedTurnProgramsRequest, ResumedTurnPrograms,
+};
 use oneiron::memory::MemoryError;
 use oneiron::runtime_hooks::InvocationId;
+use oneiron::task_verb::sdk::{TURN_PROGRAMS_RESUME_VERB, resume_paused_turn_programs_as};
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::host_doors::support::{Listed, credential_listing};
@@ -41,6 +54,65 @@ pub(crate) async fn vault_turn_programs_admission(
         move |_, _, memory| turn_program_admission(&memory, &input),
     )
     .await
+}
+
+pub(crate) async fn vault_turn_programs_paused(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    input: PausedTurnProgramsRequest,
+) -> Listed<PausedTurnProgramsView> {
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.turn_programs.paused",
+        move |_, _, memory| paused_turn_programs(&memory, &input),
+    )
+    .await
+}
+
+/// `vault.turn_programs.resume` (FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY): the owner
+/// resumes paused programs of this copy under the vault owner's own proof, as `/v1/owner` takes
+/// it, which the resume's write revalidates, and the owner's confirm of its sheet. An agent's
+/// credential, a delegate's or another person's resumes nothing. The sheet reads each pinned SKILL
+/// on the owner's own lane at the caller's locality, as the preview's door does, so the two show
+/// one sheet. It lists the SKILL each resumed program shows, the rows its answer names; a refusal
+/// lists none.
+pub(crate) async fn vault_turn_programs_resume(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ResumePausedTurnProgramsRequest,
+) -> Listed<ResumedTurnPrograms> {
+    let locality = auth.locality();
+    as_owner_naming(
+        server,
+        auth,
+        TURN_PROGRAMS_RESUME_VERB,
+        move |server, owner| {
+            let memory = server
+                .vault()
+                .memory(
+                    owner.revalidate_person(server.vault())?,
+                    EdgeActorClass::Human,
+                )
+                .at(locality);
+            resume_paused_turn_programs_as(&memory, owner, &input)
+        },
+        |answer| resume_sheet_skills(&answer.resumed),
+    )
+    .await
+}
+
+/// The SKILL rows a resume sheet shows, each once: the pin of every program whose SKILL the
+/// caller reads. The resume's answer and its preview both name them.
+pub(super) fn resume_sheet_skills(programs: &[ResumePausedTurnProgramItem]) -> Vec<EntityId> {
+    let skills: std::collections::BTreeSet<EntityId> = programs
+        .iter()
+        .filter_map(|item| item.program.definition.as_ref().map(|pin| pin.skill))
+        .collect();
+    skills.into_iter().collect()
 }
 
 pub(crate) async fn vault_runs_program(

@@ -165,6 +165,7 @@ mod readonly_fold;
 mod recover_many;
 mod recovery;
 mod recovery_authority_generation;
+mod recovery_hold;
 mod restored_join;
 mod restored_join_door;
 mod retired_signers;
@@ -277,6 +278,14 @@ pub use root_appointment_door::RootAppointmentReceipt;
 pub(crate) use root_appointment_door::refuse_unneeded_appointment;
 pub use root_appointment_judge::{AppointmentVerdict, AppointmentVoidReason};
 pub use root_recovery_door::{RootMaterial, RootRecovery, RootSuccessor};
+// A box recovery's wait and its answers (OPUS-WAYBACK).
+pub use oneiron_authority::authority::{
+    RecoveryHold, RecoveryHoldAnswer, RecoveryHoldAnswerKind, RecoveryHoldEnrolment,
+};
+pub use recovery_hold::{
+    PreparedRecoveryHoldCancel, RECOVERY_WAIT_DEFAULT, RecoveryBoxCancelProof, RecoveryHoldLanding,
+    RecoveryHoldState, RecoveryHoldView,
+};
 // The export secret work body and its sealed result (FIX 4624(b)).
 pub use export_secret_work::{
     ExportSecretSupplement, HolderExportRequest, HolderExportState, HolderExportUnassigned,
@@ -474,7 +483,7 @@ pub use owner_key_enrollment_door::{
 pub use owner_key_move_confirm::{
     OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED, OWNER_KEY_MOVE_NO_HELD_KEY, OWNER_KEY_MOVE_NOT_PLANNED,
     OWNER_KEY_MOVE_NOT_SYNCED, OWNER_KEY_MOVE_PLAN_STALE, OWNER_KEY_MOVE_SIGNER_NOT_EXECUTORS,
-    OwnerKeyMovePlan, OwnerKeyMoveSigner, sign_owner_key_move,
+    OwnerKeyMoveBinding, OwnerKeyMovePlan, OwnerKeyMoveSigner, sign_owner_key_move,
 };
 pub use owner_key_removal_door::{
     EndedOwnerKey, LastDeviceKeyConfirmation, MachineRemoval, MachineRemovalReceipt,
@@ -589,9 +598,15 @@ pub(crate) use log_budget::{
     authority_door, authority_signer_label, carried_work_past_owner_reserve_in_txn,
     end_owner_reserve_work_hold, past_owner_reserve_in_txn, signer_has_standing,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use log_budget::{
+    door_view_differs_from_rebuild_in_txn, door_view_rows_decoded_for_test,
+    staged_door_views_differ_from_rebuild,
+};
 pub(crate) use log_structure::carried_rows_never_applied_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use owner_key_line::tail_reaches_old_parents_past_rows_for_test;
+pub use owner_proof::OwnerProofGround;
 pub(crate) use owner_proof::OwnerProofSigner;
 pub(crate) use owner_work::{RootBasisCheck, check_root_basis};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
@@ -628,7 +643,9 @@ pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation, authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
 };
-use readonly_fold::{authority_log_rows_in_txn, decode_stored_authority_log_body};
+use readonly_fold::{
+    authority_log_body_in_txn, authority_log_rows_in_txn, decode_stored_authority_log_body,
+};
 pub(crate) use recovery::arriving_re_root;
 pub(crate) use retired_signers::{authority_row_resident, door_ancestor_row, stored_authority_row};
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;

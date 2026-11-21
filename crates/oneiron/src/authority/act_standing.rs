@@ -182,7 +182,7 @@ pub(crate) fn causal_points_in_txn(
     }
     let points = Arc::new(points_in_txn(store, txn, generation, &asked)?);
     // A second read txn on this thread fails with MDB_BAD_RSLOT, as for
-    // `per_authority_generation`: only a committed generation is kept.
+    // `readonly_fold::cache_fold_if_committed`: only a committed generation is kept.
     let committed = std::thread::scope(|scope| {
         scope
             .spawn(|| {

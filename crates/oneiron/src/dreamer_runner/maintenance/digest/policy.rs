@@ -18,6 +18,7 @@ use super::{
     cadence_row_in_txn, load_cadence, load_presentation, presentation_row_in_txn,
     set_cadence_in_txn, set_period_in_txn, set_presentation_in_txn,
 };
+use crate::authority::OwnerProofGround;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::dreamer_runner::authority::{BaseAgent, base_agent_for_facet};
@@ -74,13 +75,25 @@ impl Vault {
 
     /// Confirm the exact proposal the host showed the authenticated owner.
     /// Both policy rows and a replay marker commit together; an agent claim
-    /// cannot edit either row directly, nor replay an old confirmation.
+    /// cannot edit either row directly, nor replay an old confirmation. The
+    /// rows travel (stage 7c-1), so in a rooted vault the confirm appends
+    /// the owner's acts, which can carry an owner key's proof: the door asks
+    /// for the person at this device before its write
+    /// ([`Vault::owner_presence`]), and refuses with that check's refusal
+    /// before anything is read.
     pub fn confirm_proactivity_policy_proposal(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         claim_ref: EntityId,
         expected_revision: [u8; 32],
     ) -> Result<()> {
+        // The confirm is for an owner proof, so it stands before the write
+        // opens, while the door holds nothing: the prompt can block.
+        let witness = self.owner_presence(
+            crate::world_keys::OwnerActImportance::Important,
+            crate::world_keys::owner_presence_reasons::PROACTIVITY_POLICY,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         self.with_write_txn_grouped(|txn| {
             let actor = validate_owner_in_txn(self, txn, owner)?;
             if POLICY_CONFIRMED.contains(&self.store, &*txn, &claim_ref)? {
@@ -90,7 +103,7 @@ impl Vault {
             if proposal.revision != expected_revision {
                 return Err(invalid());
             }
-            apply_policy_proposal_in_txn(self, txn, owner, claim_ref, &proposal)
+            apply_policy_proposal_in_txn(self, txn, Some(&ground), owner, claim_ref, &proposal)
         })?;
         self.store.notify_proactivity_changes();
         Ok(())
@@ -99,9 +112,12 @@ impl Vault {
     /// A policy member of the exact bundle already rechecked by the consent
     /// writer. Apply before its Proposed body becomes Approved; an earlier
     /// exact confirmation only needs the ordinary claim and tray closure.
+    /// The rows' acts sign on `ground`, which the bundle's door made before
+    /// this write; with `None` they carry no owner proof.
     pub(crate) fn confirm_bundled_proactivity_policy_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
         owner: &crate::consent::AuthenticatedOwner,
         claim_ref: EntityId,
         original: &crate::claim::ClaimBody,
@@ -127,7 +143,7 @@ impl Vault {
                 Err(invalid())
             };
         }
-        apply_policy_proposal_in_txn(self, txn, owner, claim_ref, &proposal)
+        apply_policy_proposal_in_txn(self, txn, ground, owner, claim_ref, &proposal)
     }
 
     /// Files a Dreamer-born policy request (FIX 8712): it lands Proposed in
@@ -198,7 +214,8 @@ impl Vault {
     /// typed inverse and a receipt naming the Coach and the Grant, and the
     /// owner reverts it. Every other changed
     /// field stays in the Proposed request, never dropped. Any error reading
-    /// the Grant means a proposal, never an apply.
+    /// the Grant means a proposal, never an apply. It hands no ground: the
+    /// field applies as the engine's change, which appends no act.
     ///
     /// # Errors
     ///
@@ -249,6 +266,7 @@ impl Vault {
                 set_period_in_txn(
                     self,
                     txn,
+                    None,
                     SettingCaller::Engine(EngineSetting::own()),
                     Some(ProactivityPeriod(rhythm.period_secs)),
                     Some(&format!(
@@ -289,10 +307,12 @@ impl Vault {
 }
 
 /// The settings and exact replay marker share their caller's writer: the owner's confirm sets
-/// the period, the delivery and the presentation, then the marker.
+/// the period, the delivery and the presentation, then the marker. Each row's act signs on
+/// `ground`, or with no owner proof where that is `None`.
 fn apply_policy_proposal_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    ground: Option<&OwnerProofGround>,
     owner: &crate::consent::AuthenticatedOwner,
     claim_ref: EntityId,
     proposal: &ProactivityPolicyProposal,
@@ -306,6 +326,7 @@ fn apply_policy_proposal_in_txn(
     set_cadence_in_txn(
         vault,
         txn,
+        ground,
         caller,
         Some(&proposal.request.cadence),
         Some(&why),
@@ -313,6 +334,7 @@ fn apply_policy_proposal_in_txn(
     set_presentation_in_txn(
         vault,
         txn,
+        ground,
         caller,
         Some(&proposal.request.presentation),
         Some(&why),
@@ -460,11 +482,16 @@ impl ProactivityPolicyInverse {
 
 /// Puts back each row the request applied that still holds what it applied;
 /// a row a later write changed is left as it is and listed. The owner's revert
-/// writes as the owner; the caller signals the change after commit.
+/// writes as the owner; the caller signals the change after commit. Each
+/// row's act signs on `ground`, which the revert's door made before this
+/// write; with `None` it carries no owner proof.
 pub(in crate::dreamer_runner::maintenance) fn revert_policy_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    proof: &crate::consent::AuthenticatedOwner,
+    (proof, ground): (
+        &crate::consent::AuthenticatedOwner,
+        Option<&OwnerProofGround>,
+    ),
     inverse: &ProactivityPolicyInverse,
     out: &mut MaintenanceRevert,
 ) -> Result<()> {
@@ -481,6 +508,7 @@ pub(in crate::dreamer_runner::maintenance) fn revert_policy_in_txn(
             set_cadence_in_txn(
                 vault,
                 txn,
+                ground,
                 caller,
                 inverse.prior_cadence.as_ref(),
                 Some(why),
@@ -495,6 +523,7 @@ pub(in crate::dreamer_runner::maintenance) fn revert_policy_in_txn(
             set_presentation_in_txn(
                 vault,
                 txn,
+                ground,
                 caller,
                 inverse.prior_presentation.as_ref(),
                 Some(why),

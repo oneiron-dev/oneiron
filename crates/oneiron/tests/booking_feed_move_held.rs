@@ -694,7 +694,8 @@ fn a_held_feed_move_lands_the_rest_of_the_pass_and_moves_the_booking_once_the_de
         &fixture.consumer(NOW + 150),
         &mut FailFirstDelivery { calls: 1 },
     )
-    .expect("the emergency delivery completes");
+    .expect("the emergency delivery completes")
+    .item;
     assert!(item.calendar_delivered && item.apology_delivered);
 
     // The next poll reads the whole feed again (the held pass kept no ETag,

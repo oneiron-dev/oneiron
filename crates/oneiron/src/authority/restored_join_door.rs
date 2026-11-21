@@ -23,6 +23,7 @@ use super::world_key_support::{next_sequence, unsigned_side_entry};
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{EntityId, TimeRange, Vault};
 
 /// The proof was carried by a transport credential or a host action: the
@@ -123,8 +124,10 @@ impl Vault {
     /// held enrolment that is not this install's ask, or a join the fold
     /// does not count; an owner refusal when the proof is no longer the
     /// vault's live owner; storage faults. Nothing is written on any error
-    /// but the install's own identity, minted once the reads above pass: not
-    /// the authority clock's reading either, which commits with the join.
+    /// but the install's own identity, minted once the reads above pass and
+    /// the owner has confirmed: not the authority clock's reading either,
+    /// which commits with the join. A declined confirm, or a host with no
+    /// keystore, therefore leaves this install's machine as it was.
     pub fn join_restored_install(
         &self,
         issuer: &HostSlipIssuer,
@@ -143,7 +146,19 @@ impl Vault {
             self.authority_view_readonly_in_txn(&txn)?.vault_id
         }
         .ok_or_else(|| authority_refused(NOT_ROOTED))?;
-        // The install's identity, minted and signed outside the writer.
+        // The confirm comes before the install's identity is minted: the
+        // mint writes, and on a restored copy, whose signing slot is empty
+        // beside the image's device key, it forgets the image's machine
+        // first. The keystore read before it refuses a host that installed
+        // none with no prompt.
+        self.device_keystore()?;
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::JOIN_RESTORED_INSTALL,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
+        // The install's identity, minted and signed outside the writer. The
+        // preflight read the restore's mark already; the request names it.
         let encryption_key = self.machine_encryption_key(vault_id)?;
         let request = self.machine_enrolment_request(vault_id, encryption_key)?;
         if request.restored_from.is_none() {
@@ -161,7 +176,7 @@ impl Vault {
             };
         }
         let proof = self
-            .owner_proof_signer(&fold)
+            .owner_proof_signer(&fold, &ground)
             .ok_or_else(|| authority_refused(NO_OWNER_KEY))?;
         // Only holds under a scope this install counts, the roster's and its
         // pinned anchor's: an unpinned anchor's mark refuses nothing here
@@ -237,7 +252,7 @@ impl Vault {
         let stands = crate::identity::read_machine_id_in_txn(self, &txn)?
             .is_some_and(|machine| fold.machine(machine).is_some());
         if !stands {
-            if self.owner_proof_signer(&fold).is_none() {
+            if !self.holds_proving_owner_key(&fold) {
                 return Err(authority_refused(NO_OWNER_KEY));
             }
             super::slip_vault::require_host(&fold, issuer)

@@ -220,6 +220,55 @@ pub(crate) fn guard_import_stamp(
     Ok(())
 }
 
+/// A phone row's thread binding is a birth fact (VOICE-PHONE-AGENT-REACH R1,
+/// generalized by the R1 fix): when a stored row's body carries
+/// `phone_line_agent` (its CONVERSATION) or `phone_thread` (its TURN, MESSAGE
+/// or SESSION), an incoming body must carry the identical value. An EMPTY
+/// incoming body over a stamped stored body is REFUSED (the R1 empty-body
+/// exception is gone); erase and withdraw truncate rows via
+/// `port_entity_scrub`, never through this put door, so legitimate erasure
+/// still lands. A fresh row, or a stored row with an empty or unstamped body,
+/// passes here; a stamp's birth is the phone keep's alone, refused at every
+/// other door's early check (`voice_call::refuse_written_phone_mark`, R2
+/// review F1: under the default reach a stamp admits a row to its caller's
+/// call). Every put door runs this beside [`guard_import_stamp`], replay
+/// included; the session overlay arm judges the row its view holds now (its
+/// overlay row if any, else base).
+pub(crate) fn guard_phone_thread_mark(
+    dbs: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: crate::EntityId,
+    body: &[u8],
+) -> crate::Result<()> {
+    use crate::ports::EntityStoreRead;
+    let Some(previous) = dbs.port_entity_record(txn, &id)? else {
+        return Ok(());
+    };
+    if previous.body.is_empty() {
+        return Ok(());
+    }
+    let before_agent = crate::voice_call::phone_thread_agent(&previous.body);
+    let before_thread = crate::voice_call::phone_thread_stamp(&previous.body);
+    if before_agent.is_none() && before_thread.is_none() {
+        return Ok(());
+    }
+    let after_agent = crate::voice_call::phone_thread_agent(body);
+    let after_thread = crate::voice_call::phone_thread_stamp(body);
+    if before_agent != after_agent {
+        return Err(crate::error::RecordError::InvalidConversationBody(
+            "a phone thread's line agent is a birth fact",
+        )
+        .into());
+    }
+    if before_thread != after_thread {
+        return Err(crate::error::RecordError::InvalidConversationBody(
+            "a phone row's thread is a birth fact",
+        )
+        .into());
+    }
+    Ok(())
+}
+
 /// What a TURN or CONVERSATION body says about where its words came from.
 /// The Dreamer reads any `import_source` key as imported evidence, so a body
 /// whose stamp is present but not one non-empty string is its own state:

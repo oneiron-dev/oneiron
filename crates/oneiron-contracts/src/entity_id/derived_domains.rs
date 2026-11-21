@@ -510,9 +510,17 @@ pub const EXECUTOR_CONTINUATION_CHECKPOINT: &[u8] = b"oneiron:executor-continuat
 /// key.
 pub const RESIDENT_MESSAGE_ASK: &[u8] = b"oneiron.agent_dispatch.resident_message_ask.v1\0";
 
+/// The speaker of one call (`disclosure::speaker_bind`, UNBUILT-02-SPEAKER-BIND): the subject
+/// of its bind claim, a derived id with no row. Parts: the call ref, the speaker key.
+pub const CALL_SPEAKER: &[u8] = b"oneiron.disclosure.call_speaker.v1";
+
+/// The owner's bind claim of one call speaker (`disclosure::speaker_bind`). Parts: the call
+/// speaker id.
+pub const CALL_SPEAKER_BIND: &[u8] = b"oneiron.disclosure.call_speaker_bind.v1";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 77] = [
+pub(crate) const ALL: [&[u8]; 79] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -590,4 +598,6 @@ pub(crate) const ALL: [&[u8]; 77] = [
     RESIDENT_MESSAGE_ASK,
     COMMITMENT_LAPSE_ACTOR,
     DERIVE_PERSON,
+    CALL_SPEAKER,
+    CALL_SPEAKER_BIND,
 ];

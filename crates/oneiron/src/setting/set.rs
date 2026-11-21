@@ -15,12 +15,14 @@ use super::read::{
     Loaded, StoredRow, chain_of, in_force_of, key_line_grant_in_txn, load_in_txn, names_subject,
     table_of,
 };
+use super::restored::{RESTORED_NOT_JOINED_CHANGE, RowReading, restored_unjoined_in_txn};
 use super::signed_act::sign_owner_change_in_txn;
 use super::{
-    EncodedValue, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec, set_line,
-    spec_named, widen_line, widen_line_at, widen_scope_line,
+    EncodedValue, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec,
+    SettingSync, set_line, spec_named, widen_line, widen_line_at, widen_scope_line,
 };
 use crate::Vault;
+use crate::authority::OwnerProofGround;
 use crate::batch::secret_scan::{FieldRule, admit_typed_with_rule};
 use crate::check_in::{
     CheckInMode, CheckInScope, HolderAnswer, NoAgentVerdict, OpenPendingCheckIn, PendingState,
@@ -31,6 +33,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 
 /// The verb whose act a waiting change is.
 pub(crate) const SET_VERB: &str = "vault.settings.set";
@@ -210,6 +213,9 @@ impl Vault {
     /// SETTING-OWNER-EQUAL-VALUE-OVER-HOLDER-ROW), so a non-owner's later move meets the owner's
     /// row. Either way the row becomes the caller's. The engine's own equal value writes nothing.
     ///
+    /// The door does not read the value in force before its write, so it asks for every
+    /// change it cannot tell from its arguments to be a narrowing.
+    ///
     /// # Errors
     ///
     /// `InvalidConfig` for an unknown key, an item or scope the key does not admit, a value of
@@ -224,6 +230,18 @@ impl Vault {
         caller: SettingCaller<'_>,
         request: SetSetting,
     ) -> Result<SetSettingOutcome> {
+        // The confirm is for an owner proof, so it stands before the turn is
+        // taken, while the door holds nothing: the prompt can block.
+        let ground = match caller {
+            SettingCaller::Owner(_) if owner_change_signs(&request) => {
+                let witness = self.owner_presence(
+                    OwnerActImportance::Important,
+                    owner_presence_reasons::SETTING_CHANGE,
+                )?;
+                Some(OwnerProofGround::witnessed(&witness))
+            }
+            _ => None,
+        };
         // Taken before the write opens, never inside it: a holder of the turn may be waiting on
         // the writer. An unknown key takes none; the write refuses it.
         let turn = match spec_named(&request.key)
@@ -234,7 +252,7 @@ impl Vault {
             None => None,
         };
         let outcome = self.with_write_txn_grouped_after_commit(
-            |txn| self.set_setting_in_txn(txn, caller, &request),
+            |txn| self.set_setting_in_txn(txn, ground.as_ref(), caller, &request),
             |outcome| {
                 run_after_commit(self, &[(&request, &outcome)]);
                 Ok(outcome)
@@ -252,7 +270,8 @@ impl Vault {
     /// in one write take consecutive sequences. A [`SetSettingOutcome::Pending`] answer opened
     /// its check-in in this write too; a caller whose other writes need the change applied fails
     /// its write on it. The caller runs [`run_after_commit`] over its changes once its write has
-    /// committed.
+    /// committed. `ground` is the act's ground where the change signs one, `None` where no
+    /// owner proof is signed.
     ///
     /// # Errors
     ///
@@ -260,6 +279,7 @@ impl Vault {
     pub(crate) fn set_setting_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
         caller: SettingCaller<'_>,
         request: &SetSetting,
     ) -> Result<SetSettingOutcome> {
@@ -320,8 +340,21 @@ impl Vault {
             value: value.as_ref(),
             weight_runs: checked_weight(spec, request)?,
         };
-        set_in_txn(self, txn, &change, caller, request)
+        set_in_txn(self, txn, ground, &change, caller, request)
     }
+}
+
+/// Whether an owner's change `request` can sign an act, so its door asks.
+/// The confirm is for an owner proof, so a change that can sign none is not
+/// asked. An owner's change reaches a signing arm only when its request names
+/// a surface or its key's row travels ([`travels`], read from the key's spec
+/// alone); a key that does not resolve reaches none, and the write refuses
+/// it.
+fn owner_change_signs(request: &SetSetting) -> bool {
+    let Ok(spec) = spec_named(&request.key) else {
+        return false;
+    };
+    request.surface.is_some() || travels(spec)
 }
 
 /// Where the side-row wall says it found a secret in a setting value (OF-067): `side:` and the
@@ -366,6 +399,7 @@ struct Change<'a> {
 fn set_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    ground: Option<&OwnerProofGround>,
     change: &Change<'_>,
     caller: SettingCaller<'_>,
     request: &SetSetting,
@@ -452,6 +486,17 @@ fn set_in_txn(
         && !setter_changes
         && prior_value.as_ref() == change.value
         && prior_weight == change.weight_runs;
+    // An install born of a restore that has not joined changes no setting the vault's machines
+    // share (stage 7c-4; DESIGN 1.6, "Restore"), whoever asks: it is no machine of the vault, so
+    // no act of its own counts. A change that leaves the row as it is still answers.
+    if !unchanged
+        && change.spec.sync == SettingSync::Vault
+        && restored_unjoined_in_txn(&vault.store, txn)?
+    {
+        return Err(crate::authority::authority_refused(
+            RESTORED_NOT_JOINED_CHANGE,
+        ));
+    }
     let by_owner = matches!(caller, SettingCaller::Owner(_) | SettingCaller::Engine(_));
     // Which way the change moves its row, against the rows this write sees (A3: the key's
     // comparator gives the direction). A change that leaves the row as it is moves nothing.
@@ -587,7 +632,7 @@ fn set_in_txn(
     // append it. Its value rides inside it or beside it (stage 7c-1).
     let appended = match (travelling, by, surface) {
         (true, Some(owner), Some(surface)) => {
-            append_act_in_txn(vault, txn, change.spec, (owner, surface), &recorded)?;
+            append_act_in_txn(vault, txn, ground, change.spec, (owner, surface), &recorded)?;
             true
         }
         _ => false,
@@ -597,7 +642,7 @@ fn set_in_txn(
     if !appended
         && let (SettingCaller::Owner(_), Some(owner), Some(surface)) = (caller, by, surface)
     {
-        sign_owner_change_in_txn(vault, txn, change.spec, owner, surface, &recorded);
+        sign_owner_change_in_txn(vault, txn, ground, change.spec, owner, surface, &recorded);
     }
     Ok(SetSettingOutcome::Applied {
         sequence: Some(recorded.sequence),
@@ -679,8 +724,11 @@ fn direction_in_txn(
         });
     }
     let layer = layer_default_in_txn(&vault.store, txn, spec)?;
-    let (before, _, _) = in_force_of(spec, &loaded, &fits, &chain, &layer)?;
-    let (after, _, _) = in_force_of(spec, &after, &fits, &chain, &layer)?;
+    // A change is judged as a machine of the vault reads its rows: on an install born of a
+    // restore that has not joined, the door refused a `sync: vault` change above, and a `sync:
+    // install` key's rows are the install's own.
+    let (before, _, _) = in_force_of(spec, &loaded, &fits, &chain, &layer, RowReading::Current)?;
+    let (after, _, _) = in_force_of(spec, &after, &fits, &chain, &layer, RowReading::Current)?;
     Ok(ChangeDirection::of(&after, &before, no_wider))
 }
 

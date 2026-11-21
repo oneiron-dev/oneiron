@@ -3,12 +3,14 @@ use super::publication::{
     OriginPublicationReceipt, OriginPublicationRequest, origin_publication_id,
 };
 use crate::Vault;
+use crate::authority::OwnerProofGround;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo, lock_repository};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -73,8 +75,13 @@ struct Cutover<'a> {
     /// The owner proof the installing transaction revalidates, when the
     /// owner's door carried one (FIX 8214), and the surface his act came
     /// from: the transaction signs his cut of each portable id the repo
-    /// stands under with it (FIX 15740).
-    owner: Option<(&'a AuthenticatedOwner, crate::authority::ActSurface)>,
+    /// stands under with it (FIX 15740). The ground his proof is signed on
+    /// travels beside the owner, so a cut with no owner has no ground.
+    owner: Option<(
+        &'a AuthenticatedOwner,
+        crate::authority::ActSurface,
+        OwnerProofGround,
+    )>,
     /// The repository's served name, for a cut through the served door: the
     /// name its manifests carry.
     served_name: Option<&'a str>,
@@ -217,6 +224,21 @@ pub(crate) fn erased_writer_row(live: &OriginAuthority, value: &[u8]) -> bool {
         } == *live
     })
 }
+
+/// The door a former origin hands every admitted pusher: a door base as a
+/// checkout door is, with no userinfo, query or fragment. The refusal never
+/// repeats what was named.
+fn validate_writer_door(writer_door: Option<&str>) -> Result<()> {
+    if let Some(door) = writer_door
+        && crate::git_wire::validate_checkout_door(door).is_err()
+    {
+        return Err(Error::InvalidConfig(
+            "writer_door must be a git door base such as https://host.example/git (HTTP only on loopback), with no userinfo, query or fragment".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 impl Vault {
     pub fn origin_authority(&self, repo: &GitWireRepo) -> Result<Option<OriginAuthority>> {
         let id = crate::origin::lfs::lfs_repo_id(&repo.identity().as_hex())?;
@@ -291,16 +313,30 @@ impl Vault {
         mirror: bool,
         writer_door: Option<&str>,
     ) -> Result<OriginAuthority> {
+        // What refuses with nothing held comes before the confirm, in the
+        // order it always had, so a request those checks refuse never
+        // prompts: the served repository, then the door's shape. The
+        // drained census is read under the repository lock, after the
+        // confirm: no prompt stands inside that lock.
+        let repo_root = super::smart_http::origin_repo_dir(self, repo_name)?;
+        let common_dir = super::smart_http::push_queue_key(self, repo_name)?;
+        let id = self.served_repo_id(&repo_root)?;
+        validate_writer_door(writer_door)?;
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::ORIGIN_CUT,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let cutover = Cutover {
             expected_epoch,
             residence,
             writer,
             mirror,
-            owner: Some((owner, surface)),
+            owner: Some((owner, surface, ground)),
             served_name: Some(repo_name),
             writer_door,
         };
-        self.cut_served_origin_authority(repo_name, cutover)
+        self.cut_origin_authority(&common_dir, &repo_root, id, cutover)
     }
     fn cut_served_origin_authority(
         &self,
@@ -420,16 +456,7 @@ impl Vault {
             served_name,
             writer_door,
         } = cutover;
-        // The door a former origin hands every admitted pusher: a door base
-        // as a checkout door is, with no userinfo, query or fragment. The
-        // refusal never repeats what was named.
-        if let Some(door) = writer_door
-            && crate::git_wire::validate_checkout_door(door).is_err()
-        {
-            return Err(Error::InvalidConfig(
-                "writer_door must be a git door base such as https://host.example/git (HTTP only on loopback), with no userinfo, query or fragment".to_owned(),
-            ));
-        }
+        validate_writer_door(writer_door)?;
         let _guard = lock_repository(common_dir)?;
         self.reconcile_receive_pack_operations(repo_root)?;
         // A re-drive of a Published row runs as its own GitWire attempt, which
@@ -454,7 +481,7 @@ impl Vault {
         };
         let mut txn = self.store.env.write_txn()?;
         let actor = match owner {
-            Some((owner, _)) => Some(owner.revalidate_in_txn(self, &txn)?),
+            Some((owner, _, _)) => Some(owner.revalidate_in_txn(self, &txn)?),
             None => None,
         };
         let current = AUTHORITY.get(&self.store, &txn, &id)?;
@@ -493,10 +520,11 @@ impl Vault {
         };
         AUTHORITY.put(&self.store, &mut txn, &id, &row)?;
         let appended = match (actor, owner) {
-            (Some(actor), Some((owner, surface))) => {
+            (Some(actor), Some((owner, surface, ground))) => {
                 let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
                 self.sign_origin_cuts_in_txn(
                     &mut txn,
+                    &ground,
                     (actor, proves_joins),
                     surface,
                     &portables,

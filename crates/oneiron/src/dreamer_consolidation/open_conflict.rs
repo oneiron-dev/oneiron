@@ -282,7 +282,7 @@ fn write_open_marker_in_txn(
     vault.restore_mentioned_subject_in_txn(txn, subject)?;
     // The marker's id is the attempt's: a retry keeps its first birth.
     if let Some(birth) = &birth {
-        crate::provenance::birth::stamp_birth_if_absent_in_txn(&vault.store, txn, &id, birth)?;
+        crate::provenance::birth::stamp_birth_with_floor_if_absent_in_txn(vault, txn, &id, birth)?;
     }
     verified.record_message_dependencies_in_txn(vault, txn, &id)
 }

@@ -31,6 +31,7 @@ mod kit;
 mod kit_piece;
 mod machine;
 mod owner_presence;
+pub(crate) mod owner_presence_reasons;
 mod owner_signing;
 mod owner_work;
 mod pad_custody;
@@ -170,10 +171,10 @@ pub use self::vault_key::{
     DataKeyGenerationKeptWays, DataKeyGenerationOutcome, DataKeyGenerationProposal,
     DataKeyGenerationWays, EscrowAddWarning, EscrowAdded, EscrowRetirement, KitPasskey,
     NOTIFICATION_PRODUCER_DATA_KEY_GENERATION_PROPOSAL, NewVaultKeyWrap, NoRecoveryBox,
-    RecoveryBoxHold, RecoveryBoxHoldPending, RecoveryPreset, RecoveryPresetAnyTwoChange,
-    RecoveryPresetChange, RecoverySheet, ResealedEscrowCapsule, VaultKeyEscrowCapsule,
-    VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo, VaultKeyWrapKind, escrow_recipient,
-    passkey_prf_input, reseal_escrow_capsule,
+    RecoveryBoxCanceller, RecoveryBoxHold, RecoveryBoxHoldPending, RecoveryBoxKitOnlyFact,
+    RecoveryPreset, RecoveryPresetAnyTwoChange, RecoveryPresetChange, RecoverySheet,
+    ResealedEscrowCapsule, VaultKeyEscrowCapsule, VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo,
+    VaultKeyWrapKind, escrow_recipient, passkey_prf_input, reseal_escrow_capsule,
 };
 pub(crate) use self::wrap::{open_world_key, seal_world_key};
 pub use crate::error::KitRecord;

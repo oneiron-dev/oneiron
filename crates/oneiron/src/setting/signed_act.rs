@@ -24,23 +24,24 @@ use oneiron_contracts::fingerprint::ContentHash;
 use super::change::record_signed_entry_in_txn;
 use super::{EncodedValue, SettingChange, SettingSpec};
 use crate::Vault;
-use crate::authority::PolicySettingAct;
+use crate::authority::{OwnerProofGround, PolicySettingAct};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 /// Signs `recorded`, the owner `owner`'s applied change of a row of `spec`, as one
 /// `PolicySettingSet` in `txn`, from `surface`, and names the entry on its change row. Returns
 /// the entry's hash, or `None` where nothing was signed: whatever it met is logged and rolled
-/// back alone.
+/// back alone. It signs on `ground`, or with no owner proof where that is `None`.
 pub(super) fn sign_owner_change_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    ground: Option<&OwnerProofGround>,
     spec: &SettingSpec,
     owner: EntityId,
     surface: ActSurface,
     recorded: &SettingChange,
 ) -> Option<AuthorityEntryHash> {
-    match sign_in_savepoint(vault, txn, spec, (owner, surface), recorded) {
+    match sign_in_savepoint(vault, txn, ground, spec, (owner, surface), recorded) {
         Ok(signed) => signed,
         Err(error) => {
             tracing::warn!(
@@ -56,6 +57,7 @@ pub(super) fn sign_owner_change_in_txn(
 fn sign_in_savepoint(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    ground: Option<&OwnerProofGround>,
     spec: &SettingSpec,
     (owner, surface): (EntityId, ActSurface),
     recorded: &SettingChange,
@@ -74,6 +76,7 @@ fn sign_in_savepoint(
     // nothing, and dropping it leaves the change as it is.
     let Some(signed) = vault.record_policy_setting_op_in_txn(
         &mut savepoint,
+        ground,
         PolicySettingAct {
             act,
             setting: recorded.key.clone(),

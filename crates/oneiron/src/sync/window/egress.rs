@@ -62,10 +62,12 @@ use loro::{CommitOptions, LoroDoc};
 /// (Engine A, 6 Nov 03:46; `source_audience::withheld_from_replication_in`).
 ///
 /// A row kept for storage only under a use limit (a privacy erase a standing
-/// customer hold refused, C6, or a cooperative review restriction) stays on
-/// this vault too: the owner's devices lose it as they lose an erased row,
-/// and it packs again once the limit goes inert (Engine ANSWER
-/// SERVING-DOORS-OWNER-WINDOW-USE-LIMIT = B, 20 Nov 21:19; LEGAL-HOLD-USE = B).
+/// customer hold refused, C6, or a cooperative review restriction), or one
+/// whose words came from such a row, stays on this vault too: the owner's
+/// devices lose it as they lose an erased row, and it packs again once the
+/// limit goes inert (Engine ANSWER SERVING-DOORS-OWNER-WINDOW-USE-LIMIT = B,
+/// 20 Nov 21:19; LEGAL-HOLD-USE = B; FIX
+/// EGRESS-CARRIES-ROWS-DERIVED-FROM-USE-LIMITED-RECORDS).
 /// A row the window already carries leaves it through
 /// [`super::use_limited::withhold_use_limited_carriers`].
 /// A packing pass asks it through [`window_packing_excludes_entity_with`].
@@ -97,8 +99,7 @@ pub(super) fn window_packing_excludes_entity_with(
             Ok(
                 crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, rtxn, id)?
                     || crate::settings::device_only_withholds(&vault.store, rtxn, device_only, id)?
-                    || crate::store::legal_hold::use_limit_in_txn(&vault.store, rtxn, id)?
-                        .is_some(),
+                    || vault.row_or_word_source_use_limited_in(rtxn, id)?,
             )
         },
     )? {

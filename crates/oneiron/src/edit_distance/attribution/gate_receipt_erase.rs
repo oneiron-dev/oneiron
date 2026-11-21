@@ -16,7 +16,10 @@
 //! recompute from the judgment ledger: the edit-cost target rows stay as the
 //! record of the cells and lessons the next `project_edit_cost_claims` or
 //! `project_amendment_lessons` pass retracts, and `project_amendment_reliability`
-//! withdraws the amended outcome, as after a withdrawal.
+//! withdraws the amended outcome, as after a withdrawal. The gate-decision
+//! housekeeping sweep runs both reconciles after its retention
+//! (`reconcile_amendment_projections`), so they go within its cadence even
+//! when no later amendment is settled.
 //!
 //! The receipt's unclear row is not dropped here: withdrawing it takes a note
 //! waiting in a label proposal with it, which needs the vault's custody

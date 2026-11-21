@@ -503,9 +503,11 @@ pub(super) struct Classes {
     /// The `job_records` keys of every free-time try in `current` or the
     /// image (FIX 6577): they restore live, following the item bindings a
     /// home move carries, and so do the rows keyed by them
-    /// ([`keyed_by_try`]). Empty when the live rows did not read: the
-    /// image's tries and their rows then stand, noted as `job_records`.
-    free_time_attempts: BTreeSet<Vec<u8>>,
+    /// ([`keyed_by_try`]). So do the booking deposit settle rows, following
+    /// the deposits a home move carries (review round 2 of #10060). Empty
+    /// when the live rows did not read: the image's tries and their rows
+    /// then stand, noted as `job_records`.
+    live_attempts: BTreeSet<Vec<u8>>,
 }
 
 impl Classes {
@@ -559,22 +561,29 @@ impl Classes {
             unreadable: mut home_unreadable,
         } = crate::sync::home_handoff::restore_managed_keys(current, image)?;
         // The free-time tries, with their stamps and run-tree rows, follow
-        // their live bindings (FIX 6577). Live rows that do not read leave
-        // them content, noted as a home table's.
+        // their live bindings (FIX 6577), and the deposit settle rows their
+        // live deposits. Live rows that do not read leave them content, noted
+        // as a home table's.
         #[cfg(feature = "sync")]
-        let free_time_attempts = crate::dreamer_runner::free_time_attempt_restore_keys(
-            current, image,
-        )
-        .unwrap_or_else(|error| {
-            tracing::warn!(
-                kind = ?error.kind(),
-                "the free-time attempts' live rows did not read; they restore from the image"
-            );
-            home_unreadable.push("job_records");
-            BTreeSet::new()
-        });
+        let live_attempts = crate::dreamer_runner::free_time_attempt_restore_keys(current, image)
+            .and_then(|mut keys| {
+                keys.extend(
+                    crate::booking::lifecycle::home_rows::settle_attempt_restore_keys(
+                        current, image,
+                    )?,
+                );
+                Ok(keys)
+            })
+            .unwrap_or_else(|error| {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "the free-time and settle attempts did not read; they restore from the image"
+                );
+                home_unreadable.push("job_records");
+                BTreeSet::new()
+            });
         #[cfg(not(feature = "sync"))]
-        let (home_managed, home_unreadable, free_time_attempts) = {
+        let (home_managed, home_unreadable, live_attempts) = {
             let _ = image;
             (BTreeMap::new(), Vec::new(), BTreeSet::new())
         };
@@ -589,7 +598,7 @@ impl Classes {
             handover,
             home_managed,
             home_unreadable,
-            free_time_attempts,
+            live_attempts,
         })
     }
 
@@ -687,9 +696,9 @@ impl Classes {
                     Some((prefix, _))
                         if database == "vault_meta"
                             && keyed_by_try(prefix)
-                            && key.strip_prefix(prefix).is_some_and(|attempt| {
-                                self.free_time_attempts.contains(attempt)
-                            }) =>
+                            && key
+                                .strip_prefix(prefix)
+                                .is_some_and(|attempt| self.live_attempts.contains(attempt)) =>
                     {
                         (LIVE, prefix.len())
                     }
@@ -706,7 +715,7 @@ impl Classes {
                     _ => (UNCLASSIFIED_ROWS, 0),
                 }
             }
-            Some(Rows::Attempts) if self.free_time_attempts.contains(key) => (LIVE, 0),
+            Some(Rows::Attempts) if self.live_attempts.contains(key) => (LIVE, 0),
             Some(Rows::Attempts) => (CONTENT, 0),
             Some(Rows::Whole(class)) => (class, 0),
             Some(Rows::Rebuilt) | None => (UNCLASSIFIED_ROWS, 0),

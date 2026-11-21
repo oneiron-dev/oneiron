@@ -11,7 +11,8 @@ use super::routes;
 use super::store::{self, HandoffHead, HandoffRole, HandoffTransfer, HeadFloor, MoveRequest};
 use super::table::{HomeTableRegistration, TableAdopt, check_registry};
 use super::{
-    AdoptOutcome, HandoffStatus, HomeFence, HomeMove, HomeWrite, IncompleteReason, refused,
+    AdoptOutcome, HandoffId, HandoffStatus, HomeFence, HomeMove, HomeWrite, IncompleteReason,
+    refused,
 };
 use crate::Vault;
 use crate::dreamer_runner::DreamerRunnerStore;
@@ -417,7 +418,29 @@ pub(crate) fn ack_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, ack: &VerifiedHomeA
     }
     transfer.status = HandoffStatus::Acked;
     store::put_transfer_in_txn(vault, txn, &ack.id, &transfer)?;
-    store::put_receipt_in_txn(vault, txn, ack)
+    store::put_receipt_in_txn(vault, txn, ack)?;
+    scrub_acknowledged_in_txn(vault, txn, &ack.id)
+}
+
+/// Runs every registered table's [`super::HomeTable::scrub_after_ack`] once the
+/// target acknowledged handoff `id`, while this node's floor still names `id` frozen here: its
+/// rows are that move's history. A node that adopted a later move since holds live rows again,
+/// and a late ack of the earlier one scrubs none of them.
+pub(super) fn scrub_acknowledged_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    id: &HandoffId,
+) -> Result<()> {
+    let head = store::head_in_txn(vault, txn)?;
+    if head
+        .floor
+        .is_some_and(|floor| floor.role == HandoffRole::Source && floor.handoff == *id)
+    {
+        for table in super::home_tables() {
+            table.scrub_after_ack(vault, txn)?;
+        }
+    }
+    Ok(())
 }
 
 /// Records `reason` for `handoff`, which landed nothing here, on the head and

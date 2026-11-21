@@ -245,7 +245,7 @@ fn apply_remote_change(
             // other seat of the collection, and the next pull after the
             // write binds the UID reads it on the written EVENT
             // (CAL-FIRST-WRITE-COPY-PULLED-UNSETTLED-IMPORTS-DUPLICATE-EVENT).
-            if first_write_unsettled(vault, &primary.uid)? {
+            if first_write_unsettled(vault, operation, &primary.uid)? {
                 counters.owed_first_write_copies += 1;
                 return Ok(());
             }
@@ -458,7 +458,7 @@ fn apply_remote_change(
             //   inbound source carries: a sync delta can report a resource
             //   the host moved gone, on a page before the one carrying its
             //   new href.
-            let writes = unsettled_writes_of(vault, system, uid)?;
+            let writes = unsettled_writes_of(vault, operation, uid)?;
             if writes.cancelled_in_flight
                 || writes.copy_unproven
                 || crate::calendar::ingest::tombstone_cancels_written_only_event(
@@ -503,7 +503,7 @@ fn apply_remote_change(
             // in flight holds the omission back too, since it may be that
             // write coming back gone
             // (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING).
-            let writes = unsettled_writes_of(vault, system, uid)?;
+            let writes = unsettled_writes_of(vault, operation, uid)?;
             if !omission_observed(vault, operation, uid, *observation)?
                 || writes.cancelled_in_flight
             {
