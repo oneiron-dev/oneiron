@@ -56,6 +56,11 @@ fn a_base_agent_without_a_standing_steward_row_is_refused_until_its_grant_stands
         refused.message
     );
     stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
-    psych_profile_sources_page(&vault.memory(actor, EdgeActorClass::System), &request)?;
+    let page = psych_profile_sources_page(&vault.memory(actor, EdgeActorClass::System), &request)?;
+    assert!(
+        page.value.candidates.is_empty(),
+        "the seeded person has no claim a profile reads: {:?}",
+        page.value.candidates
+    );
     Ok(())
 }
