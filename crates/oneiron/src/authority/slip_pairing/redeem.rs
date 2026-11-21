@@ -386,6 +386,19 @@ impl Vault {
                 let possession = possession.map(|proof| (proof, transcript.as_slice()));
                 let (landing, re_paired) = self
                     .redeem_machine_answer_in_txn(&mut txn, issuer, answer, request, possession)?;
+                // A linked peer's link records the machine it enrols and the
+                // slip it minted (L10-16), whether its answer stands or is
+                // held: the slip is live either way, and an unlink revokes it
+                // and removes the machine once a revision names it.
+                if matches!(answer.role(), MachineRole::HostedNode) {
+                    super::linked_peer::record_redeemed_machine_in_txn(
+                        self,
+                        &mut txn,
+                        &row_key,
+                        request.machine,
+                        slip.claims.slip_id,
+                    )?;
+                }
                 (landing.machine().cloned(), landing.held(), re_paired)
             }
             _ => (None, None, false),
