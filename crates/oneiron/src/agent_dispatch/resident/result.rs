@@ -243,7 +243,11 @@ impl AgentDispatcher<'_> {
     /// owner's key [`PLAN_RUN_RESULT_IN_SHARED_ROOM`] lets a shared room take
     /// it too ([`shared_room_filer_in`]). The record
     /// holds no words, only the result's typed refs, so it is labelled
-    /// observed. The result commits first, in its own write: a filing that
+    /// observed. It links the run's trace and never copies it
+    /// (PLAN-RUN-FULL-TRACE-INTO-SUB-SESSION = C, lead 21 Nov 13:4x):
+    /// `trace_ref` is the run's own conversation, where its bubbles land, and
+    /// they stay there under that conversation's read gate, so a room reader
+    /// learns only the id. The result commits first, in its own write: a filing that
     /// fails is logged and never fails the run's settlement, and a replayed
     /// completion files it.
     fn file_plan_run_result(
@@ -274,6 +278,12 @@ impl AgentDispatcher<'_> {
         };
         let session = EntityId::derive(PLAN_RUN_SESSION, &[task.as_bytes()])?;
         let record = EntityId::derive(PLAN_RUN_RESULT_RECORD, &[result.as_bytes()])?;
+        // The conversation the run's speech lands in: its host dispatcher's
+        // run ref for this attempt, and the executor run that settled.
+        let trace = crate::code_run::canonical_speech_conversation_id_for_run(
+            &crate::code_run::agent_attempt_run_ref(attempt.id, attempt.run_id.clone()),
+            Some(run),
+        )?;
         let store = &self.vault.store;
         self.vault.with_write_txn_grouped(|txn| {
             let live = crate::vault::live_entity_row_in_txn(store, txn, &session)?.live_type();
@@ -318,6 +328,7 @@ impl AgentDispatcher<'_> {
                 field("result_ref", Value::from(result.to_hex())),
                 field("run_ref", Value::from(run.to_hex())),
                 field("task_ref", Value::from(task.to_hex())),
+                field("trace_ref", Value::from(trace.to_hex())),
             ]);
             let mut body = Vec::new();
             rmpv::encode::write_value(&mut body, &filed)
