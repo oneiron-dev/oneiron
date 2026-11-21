@@ -152,6 +152,9 @@ pub(super) fn erase_reply_ask_in_txn(
     }
     let (_, vector, graph, neighbors) = crate::batch::deindex_entity(write, txn, &id)?;
     crate::batch::stage_cascade_tombstone_in_txn(store, txn, &id)?;
+    // The Ask's birth goes with it, as on every other erase
+    // (`provenance::erase_row_provenance_in_txn`).
+    crate::provenance::birth::erase_row_birth_in_txn(store, txn, &id)?;
     crate::ppr::invalidate_ppr_for_delete(store, txn, &id, &neighbors)?;
     if graph {
         crate::ppr::increment_graph_version(store, txn)?;
