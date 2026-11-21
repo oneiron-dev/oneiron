@@ -4,9 +4,9 @@
 //! default the vault accepted and nothing more: a loosening waits and a tightening holds, a pin's
 //! included; a `custom` key reads the image's value only when its comparator says it is no wider
 //! than the default; a key with no order reads the image's value. The copy changes no `sync:
-//! vault` setting, and a direct restore leaves the image's `sync: install` rows behind, as an
-//! activated archive leaves its install's with its replacement. Once the owner joins it, every row
-//! reads current: nothing was deleted.
+//! vault` setting, and a direct restore leaves the image's `sync: install` rows and residence
+//! choice behind, as an activated archive leaves its install's with its replacement. Once the
+//! owner joins it, every row reads current: nothing was deleted.
 //!
 //! On main (6ee3f3aafc0) the copy reads the image's rows as the source did, the engine's change
 //! of a vault key commits on it, and the image's `sync: install` row comes back with the copy.
@@ -23,6 +23,8 @@ use oneiron::authority::{HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingSource};
 use oneiron::store::GateDecisionId;
+use oneiron::sync::SyncResidenceMode;
+use oneiron::sync::residence::{load_device_sync_preference, set_device_sync_preference};
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::setting::{
     ordered_cap_read, owner_number_read_both_ways, set_setting_as_engine,
@@ -345,6 +347,8 @@ fn an_activated_archive_leaves_its_install_rows_with_its_replacement() {
         json!(5),
         "FIXTURE: the vault reads its install's choice"
     );
+    set_device_sync_preference(&vault, SyncResidenceMode::Opened)
+        .expect("FIXTURE: the install's residence choice");
     vault
         .ensure_vault_key()
         .expect("FIXTURE: the vault data key");
@@ -391,6 +395,45 @@ fn an_activated_archive_leaves_its_install_rows_with_its_replacement() {
         value_of(&replacement, owner, INSTALL),
         json!(5),
         "the replacement is the machine the vault was, and keeps its choice"
+    );
+    assert_eq!(
+        load_device_sync_preference(&side).expect("the activated vault's residence read"),
+        None,
+        "the activated vault starts at the default residence: the install's choice stayed with \
+         the replacement"
+    );
+    assert_eq!(
+        load_device_sync_preference(&replacement)
+            .expect("the replacement's residence read")
+            .map(|preference| preference.mode),
+        Some(SyncResidenceMode::Opened),
+        "the replacement keeps its residence choice"
+    );
+}
+
+/// A direct restore leaves the image's residence choice behind with its machine identity, as it
+/// leaves its `sync: install` setting rows: the new machine starts at the default (DESIGN
+/// 15-setting-primitive 1.6, "Restore"; row SETTING-RESIDENCE-DEVICE-MODE-RIDES-IMAGE). On #10155's
+/// head (ab7ec09adcf) the copy holds the host's choice.
+#[test]
+fn a_direct_restore_leaves_the_images_residence_choice_behind() {
+    let host = rooted_host();
+    set_device_sync_preference(&host.vault, SyncResidenceMode::Opened)
+        .expect("FIXTURE: the host's residence choice");
+    assert!(
+        load_device_sync_preference(&host.vault)
+            .expect("FIXTURE: the host's residence read")
+            .is_some(),
+        "FIXTURE: the host holds its residence choice"
+    );
+    let backups = oneiron::test_support::restore_tempdir();
+    let copy = restored_copy(&host, backups.path());
+
+    assert_eq!(
+        load_device_sync_preference(&copy.vault).expect("the copy's residence read"),
+        None,
+        "the new machine starts at the default residence: the host's choice about itself stayed \
+         behind"
     );
 }
 

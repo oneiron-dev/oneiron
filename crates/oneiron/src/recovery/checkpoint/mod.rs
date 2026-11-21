@@ -702,8 +702,8 @@ impl Vault {
     /// keeps is read under its own keys before the activation commits; when
     /// this returns `Ok` it is done, and the vault opens live, joining as a
     /// new machine: its replacement is the machine it was, and keeps the
-    /// `sync: install` settings it chose, which the activated vault drops
-    /// as a direct restore does. Refuses a vault
+    /// `sync: install` settings and the residence choice it made, which the
+    /// activated vault drops as a direct restore does. Refuses a vault
     /// that is not archived, a `source` whose custody is not the one it
     /// binds, and, before opening anything, a missing `path` or one where
     /// another user could move a directory on it; a refusal leaves it
