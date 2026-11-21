@@ -5,8 +5,9 @@
 //! included; a `custom` key reads the image's value only when its comparator says it is no wider
 //! than the default; a key with no order reads the image's value. The copy changes no `sync:
 //! vault` setting, and a direct restore leaves the image's `sync: install` rows and residence
-//! choice behind, as an activated archive leaves its install's with its replacement. Once the
-//! owner joins it, every row reads current: nothing was deleted.
+//! choice behind, as an activated archive leaves its install's with its replacement and a vault
+//! that forgets its machine (a raw copy on another host) leaves them with it. Once the owner
+//! joins it, every row reads current: nothing was deleted.
 //!
 //! On main (6ee3f3aafc0) the copy reads the image's rows as the source did, the engine's change
 //! of a vault key commits on it, and the image's `sync: install` row comes back with the copy.
@@ -434,6 +435,55 @@ fn a_direct_restore_leaves_the_images_residence_choice_behind() {
         None,
         "the new machine starts at the default residence: the host's choice about itself stayed \
          behind"
+    );
+}
+
+/// A vault whose install holds no seed for the machine it names (a raw copy on another host, a
+/// lost keychain) forgets that machine and joins as a new one (`Vault::prepare_install_signing`):
+/// the choices about the install it was go with it, its `sync: install` setting and its residence
+/// choice, so the new machine starts at the defaults (DESIGN 15-setting-primitive 1.6,
+/// "Restore"). On #10247's head 9ad1f63f2db the new machine reads the old install's choices.
+#[test]
+fn a_vault_that_forgets_its_machine_forgets_its_install_choices() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("FIXTURE: the vault");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the owner");
+    let machine = vault
+        .prepare_install_signing()
+        .expect("FIXTURE: this install's machine and its signing keys");
+    engine_sets(&vault, INSTALL, json!(5));
+    set_device_sync_preference(&vault, SyncResidenceMode::Opened)
+        .expect("FIXTURE: the install's residence choice");
+    assert_eq!(
+        value_of(&vault, owner, INSTALL),
+        json!(5),
+        "FIXTURE: the vault reads its install's choice"
+    );
+
+    // As on a raw copy on another host: no slot holds the seed of the machine the vault names.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let new_machine = vault
+        .prepare_install_signing()
+        .expect("the signing keys ready under an empty keystore");
+    assert_ne!(
+        new_machine, machine,
+        "FIXTURE: the vault forgot its machine and joined as a new one"
+    );
+
+    assert_eq!(
+        value_of(&vault, owner, INSTALL),
+        json!(0),
+        "the new machine starts at the default: the install's choice about itself went with the \
+         machine it forgot"
+    );
+    assert_eq!(
+        load_device_sync_preference(&vault).expect("the new machine's residence read"),
+        None,
+        "the new machine starts at the default residence: the install's choice went with the \
+         machine it forgot"
     );
 }
 
