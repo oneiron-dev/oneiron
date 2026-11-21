@@ -15,8 +15,9 @@
 //! `ItIsMe` while it takes the same entry as a `Cancel`. An assertion over
 //! another challenge, made at another origin than the passkey's enrollment,
 //! or made without verifying the person, cancels nothing. A key that is not
-//! a live passkey of the acting owner's prepares no Cancel, and a Cancel
-//! prepared for a hold that has ended since lands nothing.
+//! a live passkey of the acting owner's prepares no Cancel, a Cancel
+//! prepared for a hold that has ended since lands nothing, and a Cancel the
+//! passkey signs above the sequence prepare named lands nothing.
 //!
 //! The fixture is `owner_root_recovery_wait.rs`'s (a self-host vault rooted
 //! under its host, with a confirmed kit, on a clock the test moves); the
@@ -28,6 +29,9 @@
 //! lands: `a_passkey_cancels_a_live_hold_and_it_never_lands`,
 //! `the_wire_takes_a_passkeys_cancel_and_refuses_its_it_is_me` and
 //! `only_the_passkeys_verified_assertion_over_the_challenge_cancels` fail.
+//! And the land door without its refusal of a sequence above the prepared
+//! one (review round 2 of #9857, P1), where such a Cancel lands:
+//! `a_cancel_signed_above_the_prepared_sequence_lands_nothing` fails.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test recovery_hold_passkey_cancel`.
@@ -43,12 +47,13 @@ use ed25519_dalek::{Signer as _, SigningKey};
 use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AuthorityEntryHash, AuthorityKey,
     AuthorityLogEntry, AuthorityOp, AuthoritySignature, HostSlipIssuer, MachineRole,
-    OwnerKeyEnrollment, OwnerPasskeyEnrollment, RecoveryHoldAnswer, RecoveryHoldAnswerKind,
-    RecoveryHoldState, RecoveryHoldView, RootMaterial, RootRecovery, RootSuccessor,
-    authority_entry_hash, authority_transcript, decode_authority_log_entry_body,
+    OwnerKeyEnrollment, OwnerPasskeyEnrollment, PreparedRecoveryHoldCancel, RecoveryHoldAnswer,
+    RecoveryHoldAnswerKind, RecoveryHoldState, RecoveryHoldView, RootMaterial, RootRecovery,
+    RootSuccessor, authority_entry_hash, authority_transcript, decode_authority_log_entry_body,
     encode_authority_log_entry_body, webauthn_assertion_envelope, webauthn_challenge,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::error::RecordError;
 use oneiron::recovery::{
     CodeKeeping, KitIssue, KitSecretKind, PassphraseCost, PieceHome, restore_kit,
 };
@@ -58,6 +63,7 @@ use oneiron::test_doors::root_recovery::{recover_owner_root_waiting, released_au
 use oneiron::test_support::bind_host_owner;
 use oneiron::world_keys::{RecoveryAuthoritySigner, RecoveryRootSeed};
 use oneiron::{EntityId, ErrorKind, Vault, VaultConfig};
+use oneiron_authority::authority::{decode_entry_value, encode_value, entry_value};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_store::ports::manual_clock::ManualClock;
 use p256::ecdsa::signature::Signer as _;
@@ -578,6 +584,80 @@ fn only_the_passkeys_verified_assertion_over_the_challenge_cancels() {
             passkey_assertion(&prepared.challenge),
         )
         .expect("the passkey's own assertion over the challenge lands");
+    assert_eq!(
+        fixture.hold_view(&held.hold).state,
+        RecoveryHoldState::Cancelled
+    );
+}
+
+/// The unsigned entry `bytes` encode, as prepare answered it.
+fn entry_of(bytes: &[u8]) -> AuthorityLogEntry {
+    let value = rmpv::decode::read_value(&mut &bytes[..]).expect("one MessagePack value");
+    decode_entry_value(&value).expect("the prepared entry decodes")
+}
+
+/// `prepared`'s entry at `seq` in its one encoding, with the challenge the
+/// passkey's assertion of it names.
+fn at_sequence(prepared: &PreparedRecoveryHoldCancel, seq: u64) -> PreparedRecoveryHoldCancel {
+    let mut entry = entry_of(&prepared.entry);
+    entry.seq = seq;
+    PreparedRecoveryHoldCancel {
+        entry: encode_value(&entry_value(&entry, true)).expect("the entry encodes"),
+        challenge: webauthn_challenge(&authority_transcript(&entry).expect("its transcript")),
+    }
+}
+
+/// Review round 2 of #9857, P1 (as blind review #10043 P1 on the passkey's
+/// vouch door): prepare names the passkey's next sequence, and a Cancel the
+/// passkey signs above it is none prepare built. Landed, the fold would
+/// count it and move the passkey's next sequence to its own; at `u64::MAX`
+/// a passkey-only owner would have no sequence left to sign at.
+#[test]
+fn a_cancel_signed_above_the_prepared_sequence_lands_nothing() {
+    let held = held_fixture();
+    let fixture = &held.fixture;
+    let prepared = fixture
+        .vault
+        .prepare_recovery_hold_cancel_as(&fixture.authority(), held.hold, &held.passkey)
+        .expect("the Cancel is prepared for the passkey");
+    let prepared_seq = entry_of(&prepared.entry).seq;
+    let before = fixture.history().len();
+    for seq in [prepared_seq + 1, u64::MAX] {
+        let raised = at_sequence(&prepared, seq);
+        let landed = fixture.vault.land_recovery_hold_cancel_as(
+            &fixture.authority(),
+            &raised.entry,
+            passkey_assertion(&raised.challenge),
+        );
+        assert!(
+            matches!(
+                landed,
+                Err(oneiron::Error::Record(
+                    RecordError::InvalidAuthorityLogBody(_)
+                ))
+            ),
+            "a Cancel signed at sequence {seq}, above the prepared {prepared_seq}, is refused: \
+             {landed:?}"
+        );
+        assert_eq!(
+            fixture.hold_view(&held.hold).state,
+            RecoveryHoldState::Waiting,
+            "a Cancel at sequence {seq} cancels nothing"
+        );
+        assert_eq!(
+            fixture.history().len(),
+            before,
+            "a Cancel at sequence {seq} writes nothing"
+        );
+    }
+    fixture
+        .vault
+        .land_recovery_hold_cancel_as(
+            &fixture.authority(),
+            &prepared.entry,
+            passkey_assertion(&prepared.challenge),
+        )
+        .expect("the prepared Cancel still lands at its own sequence");
     assert_eq!(
         fixture.hold_view(&held.hold).state,
         RecoveryHoldState::Cancelled
