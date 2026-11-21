@@ -426,13 +426,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/fold_engine/causal.rs` | src | s | 6 crate-vis | — | Whether a row names a hash beneath its own parents: the one structural "beneath these parents" predicate a… |
 | `src/authority/fold_engine/entry_points.rs` | src | s | 4 fn · 8 crate-vis | — | The fold's entry points: the reference, seen-time, posture, peer and local-observation variants over… |
 | `src/authority/fold_project.rs` | src | m | 5 crate-vis | — | The fold's projection: from the raw merge of the surviving rows' states to the folded authority |
-| `src/authority/fold_resume.rs` | src | m | 20 crate-vis | — | A resumed fold: the stored log's reference fold carried over the new rows past its frontier, without folding… |
+| `src/authority/fold_resume.rs` | src | m | 21 crate-vis | — | A resumed fold: the stored log's reference fold carried over the new rows past its frontier, without folding… |
 | `src/authority/fold_resume/capture.rs` | src | m | 18 crate-vis | — | What a strict fold leaves for a resumed one (OF-469): its last once fold, settled, and what its projection… |
 | `src/authority/fold_resume/heads.rs` | src | s | 4 crate-vis | — | A base view's main-log heads, anchor heads, scope heads and next sequences, carried past the tail (FIX 12307) |
 | `src/authority/fold_resume/image.rs` | src | s | 2 crate-vis | — | What the checkpoint image build keeps of the last once fold (OF-469, checkpoint v2), and what an act's… |
 | `src/authority/fold_resume/receipts.rs` | src | s | 2 crate-vis | — | The receipts a base folded its rows under: what a fold past it reads again and what it carries unread (FIX… |
 | `src/authority/fold_resume/resumed.rs` | src | s | 1 crate-vis | — | The base's per-row reads a fold past it carries over the new chain's states (OF-469) |
-| `src/authority/fold_resume/scope_tops.rs` | src | s | 3 crate-vis | — | Each signer's top rows per sequence scope in a base, so that a fold past it takes only new rows that move no… |
+| `src/authority/fold_resume/scope_tops.rs` | src | s | 4 crate-vis | — | Each signer's top rows per sequence scope in a base, so that a fold past it takes only new rows that move no… |
 | `src/authority/fold_resume/side_tail.rs` | src | m | 5 crate-vis | — | A resumed fold's tail as a small DAG (FIX 4881): the main rows still one chain off the base's main head, and… |
 | `src/authority/fold_schedule.rs` | src | s | 2 crate-vis | — | The fold's per-entry scheduler |
 | `src/authority/fold_state.rs` | src | L | 1 struct · 3 fn · 1 re-export · 11 crate-vis | AuthorityFold | Folded-state data model and the two-state merge |
@@ -564,10 +564,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/root_appointment_door.rs` | src | m | 1 struct · 2 crate-vis | RootAppointmentReceipt | The root appointment door's writer half (row OWNER-ANCHOR-ROOT-RECOVERY, PLAN v3 section 7; Engine RULINGs… |
 | `src/authority/root_appointment_judge.rs` | src | m | 1 re-export · 9 crate-vis | — | The fold's judgement of a root appointment (row OWNER-ANCHOR-ROOT-RECOVERY, PLAN v3 sections 4, 4a and 5… |
 | `src/authority/root_recovery_door.rs` | src | m | 3 enum · 1 fn · 1 crate-vis | RootMaterial, RootRecovery, RootSuccessor | The recovery root's one door (pass 27 section 4.3, row R4; Engine RULINGs WAYBACK-E2 = A and… |
-| `src/authority/rows_floor.rs` | src | s | 4 crate-vis | — | Sequence floors from the rows themselves (Engine RULING SEQ-FLOOR-SHAPE = A, 15 Nov 16:37; FIX… |
+| `src/authority/rows_floor.rs` | src | s | 3 crate-vis | — | Sequence floors from the rows themselves (Engine RULING SEQ-FLOOR-SHAPE = A, 15 Nov 16:37; FIX… |
 | `src/authority/seat_child_slip.rs` | src | s | 7 fn · 1 crate-vis | — | FIX 10624: the credential of an official CLI a seat host runs under one claimed BYOA attempt (ARCH-0069 T1… |
 | `src/authority/sequence_ancestry.rs` | src | s | 2 crate-vis | — | A row past its floor still counts where a later row of its signer that descends from it reached that floor… |
-| `src/authority/sequence_floor_door.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | FloorEquivalence | The sequence floor equivalence door (Engine RULING SEQ-FLOOR-SHAPE = A, 15 Nov 16:37; FIX… |
+| `src/authority/sequence_floor_door.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | FloorEquivalence | The sequence floor equivalence door (Engine RULING SEQ-FLOOR-SHAPE = A, 15 Nov 16:37; FIX… |
 | `src/authority/sequence_observation.rs` | src | s | 6 crate-vis | — | Durable signer sequence maxima and content-addressed first-observation receipts |
 | `src/authority/setting_keys.rs` | src | s | 4 crate-vis | — | The authority module's owner Setting keys (DESIGN 15-setting-primitive): rows the setting catalogue reads… |
 | `src/authority/signed_branch_door.rs` | src | s | 1 fn | — | The signed-branch proofs' work door (row [REVOKE-PROOF-BRANCH-REFOLD-CUBIC]): a log's whole fold, with the… |
@@ -743,7 +743,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/claim_materialization/demotion.rs` | src | s | 2 crate-vis | — | The permitted body delta of a demotion materialization |
 | `src/batch/claim_materialization/lifecycle.rs` | src | s | 3 crate-vis | — | The lifecycle close materialization: the exact close of the current active row, its proof, and the closer a… |
 | `src/batch/claim_materialization/provenance_puts.rs` | src | s | 1 crate-vis | — | The edge provenance writer's claim puts (`crate::provenance::writes`) |
-| `src/batch/claim_materialization/succession.rs` | src | m | 7 crate-vis | — | Claim succession: a weakening or a facet fork births a new claim from its predecessor's exact body, never… |
+| `src/batch/claim_materialization/succession.rs` | src | m | 8 crate-vis | — | Claim succession: a weakening or a facet fork births a new claim from its predecessor's exact body, never… |
 | `src/batch/claim_materialization/tests.rs` | test | s | — | — | — |
 | `src/batch/claim_materialization/tests/freshness.rs` | test | m | — | — | Binding freshness after authorized replacements and unbound writes |
 | `src/batch/claim_materialization/tests/lifecycle_actor_regressions.rs` | test | m | — | — | Actor lifecycle counterexamples and controls |
@@ -816,7 +816,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/gate_staging/tests.rs` | test | s | — | — | — |
 | `src/batch/lexical_hint_index.rs` | src | s | 4 crate-vis | — | The lexical query hint CLAIMs by target (FIX-LIST row 24676) |
 | `src/batch/lexical_query_hints.rs` | src | m | 21 crate-vis | — | — |
-| `src/batch/mod.rs` | src | s | 1 mod · 3 re-export · 47 crate-vis | — | — |
+| `src/batch/mod.rs` | src | s | 1 mod · 3 re-export · 48 crate-vis | — | — |
 | `src/batch/ops_derived_copies.rs` | src | s | 1 crate-vis | — | The raw ops door with the derived-text step (FIX 10886): a door that holds the vault and applies ops without… |
 | `src/batch/ops_pipeline.rs` | src | L | 17 crate-vis | — | — |
 | `src/batch/person_substrate.rs` | src | m | 10 crate-vis | — | Atomic deterministic PERSON substrate masks, including replay and open-time repair |
@@ -920,7 +920,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/tests/vectors_embeddings.rs` | test | s | — | — | Pending-embedding markers, vector fill and vector row codec |
 | `src/batch/thread_claim_index.rs` | src | s | 1 crate-vis | — | Thread claims reuse the existing ClaimOf index at every storage door |
 | `src/batch/types.rs` | src | s | 5 crate-vis | — | Core half of `batch::types`: its store-layer items live in `oneiron_store::batch::types` and are re-exported… |
-| `src/batch/vad_postcommit.rs` | src | m | 25 crate-vis | — | Transaction-owner handoff for Dreamer VAD approvals and digest invalidation |
+| `src/batch/vad_postcommit.rs` | src | m | 26 crate-vis | — | Transaction-owner handoff for Dreamer VAD approvals and digest invalidation |
 | `src/batch/vector_apply.rs` | src | s | 3 crate-vis | — | — |
 | `src/batch/verified_claim_transition.rs` | src | m | 20 crate-vis | — | Sealed operation proof: minted only after the owning consent, curation or lifecycle validator checks the… |
 | `src/bin/deck-gate-engine.rs` | src | s | — | — | `deck-gate-engine`: the OF-510 deck gate's engine half with the engine's own Loro body |
@@ -2811,7 +2811,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/resources/write.rs` | src | m | 1 struct · 2 fn · 20 crate-vis | ScopedConsolidationWrite | Sealed resource handoff |
 | `src/dreamer_consolidation/retained_conflict.rs` | src | m | 1 struct · 4 crate-vis | RetainedAlternative | The candidates an escalated consolidation round dropped, retained on its `conflict.open` marker (OF-023, FIX… |
 | `src/dreamer_consolidation/retained_keep.rs` | src | m | 1 struct · 1 enum · 8 crate-vis | ConflictSettleOutcome, StagedKeep | Keeping a conflict's retained alternative (OF-023, FIX 496): where the Keep lands it, and what a Keep of… |
-| `src/dreamer_consolidation/revert.rs` | src | m | 4 struct · 1 enum · 1 fn · 4 crate-vis | DreamerChange, DreamerChangeKind, DreamerChanges, DreamerRevertReceipt, RevertedDreamerChange | The owner's revert of any one Dreamer change (OF-023, owner ruling 10-18: "autoapply + revert rather than… |
+| `src/dreamer_consolidation/revert.rs` | src | m | 4 struct · 1 enum · 1 fn · 5 crate-vis | DreamerChange, DreamerChangeKind, DreamerChanges, DreamerRevertReceipt, RevertedDreamerChange | The owner's revert of any one Dreamer change (OF-023, owner ruling 10-18: "autoapply + revert rather than… |
 | `src/dreamer_consolidation/reviewed.rs` | src | s | 4 crate-vis | — | Claims the owner's review already holds or decided, which a later pass meets again: this attempt's own… |
 | `src/dreamer_consolidation/roles.rs` | src | s | 3 struct · 7 fn · 4 const · 6 crate-vis | RoleBackend, RoleBackends, RoleCall | The Dreamer's model roles, and the backend each one calls out on |
 | `src/dreamer_consolidation/root_evidence.rs` | src | m | 10 crate-vis | — | Root-owned reference pins |
@@ -2847,6 +2847,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/settle/decision_pages.rs` | src | s | 6 crate-vis | — | The engine's single bound settlement ask and shared page splitting |
 | `src/dreamer_consolidation/settle/decision_projection.rs` | src | s | 5 crate-vis | — | The engine's projection of one bound settlement ask (FIX 7506 P2) |
 | `src/dreamer_consolidation/settle/keep_approval.rs` | src | s | 10 crate-vis | — | A Keep the Gate holds (FIX 5753): the responder's approval of the exact retained alternative its Keep… |
+| `src/dreamer_consolidation/settle/member_copy.rs` | src | m | 2 crate-vis | — | How a member a reverted write superseded stands again: reopened in place, or, where it does not reopen, as a… |
 | `src/dreamer_consolidation/settle/preference_pair.rs` | src | s | 1 crate-vis | — | OF-023 (FIX 3079): the observed-versus-stated preference markers of the Memory door and of the derive Claim… |
 | `src/dreamer_consolidation/sieve_attempt.rs` | src | m | 1 crate-vis | — | The sieve's owed novelty/typing rungs and its sampled expensive-path audit |
 | `src/dreamer_consolidation/sieve_attempt/audit.rs` | src | m | 1 crate-vis | — | The sieve audit of an unflagged window (OF-498f, FIX 486): the expensive path reads a source range the cheap… |
@@ -8152,7 +8153,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/authority_ancestor_index.rs` | src | s | 1 re-export | — | The ancestor index equivalence door (row [ROSTER-KEY-LOG-FLOOD], PR 1): one synthetic log's claimed ancestry… |
 | `src/test_doors/authority_floor_probe.rs` | src | s | 1 re-export | — | The floor probe equivalence door (row [ROSTER-KEY-LOG-FLOOD], PR 3): the probe a floored row's voucher folds… |
 | `src/test_doors/authority_fold_encoding.rs` | src | s | 1 re-export | — | The fold state encoding door (row [ROSTER-KEY-LOG-FLOOD], PR 2): every row's folded state of one log, and… |
-| `src/test_doors/authority_sequence_floor.rs` | src | s | 1 re-export | — | The sequence floor equivalence door (Engine RULING SEQ-FLOOR-SHAPE = A): one log folded by its rows' own… |
+| `src/test_doors/authority_sequence_floor.rs` | src | s | 2 re-export | — | The sequence floor equivalence door (Engine RULING SEQ-FLOOR-SHAPE = A): one log folded by its rows' own… |
 | `src/test_doors/authority_signed_branch.rs` | src | s | 1 re-export | — | The signed-branch proofs' work door (row [REVOKE-PROOF-BRANCH-REFOLD-CUBIC]): a log's whole fold with the… |
 | `src/test_doors/authority_stored_damage.rs` | src | s | 3 fn | — | L9-50 (ARCH-0006a #list-read-built): damage one stored authority row in place, past every write door, so a… |
 | `src/test_doors/authority_view_grant.rs` | src | s | 3 fn | — | Fixtures for the warm authority-view regressions: the agent binding of the Grant regression, and the read… |
@@ -8251,6 +8252,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/extraction_decisions.rs` | src | m | 4 struct · 1 enum · 1 fn | NativeAssembledCandidate, NativeConflictOutcome, NativeExtractionDecisions, NativeOperandCorrection, NativeSetOutcome | Native extraction decision oracle door for the decision parity test |
 | `src/test_doors/extraction_inputs.rs` | src | s | 1 struct · 7 fn · 2 const | ExtractionConversation | One Meso extraction attempt over witnessed TURNs, for integration tests |
 | `src/test_doors/extraction_probe.rs` | src | m | 1 struct · 1 fn | ProbedPass | One probed Dreamer consolidation pass, for integration tests: like… |
+| `src/test_doors/extraction_project_bound.rs` | src | s | 1 fn | — | One project-bound Meso extraction attempt over witnessed TURNs, for integration tests |
 | `src/test_doors/extraction_routing.rs` | src | s | 1 fn | — | Thin read-only wrapper over the native extraction routing door |
 | `src/test_doors/extraction_single_valued.rs` | src | s | 1 fn | — | Seeds the resolution policy's single-valued predicates for extraction tests |
 | `src/test_doors/extraction_steps.rs` | src | s | 2 struct · 12 fn | ExtractionStepFixture, NativeExtractionSlice | One admitted extraction attempt's bound step fixture: the verdict parity resources plus a lend switch |
@@ -8355,7 +8357,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mesh_machine_endpoint_index.rs` | src | s | 1 enum · 5 fn | IndexedEndpoint | Doors for `tests/mesh_machine_endpoint_index.rs` (census L3-28B): the endpoint lookup as the MACHINE… |
 | `src/test_doors/meso_extraction_width.rs` | src | m | 1 struct · 1 enum · 1 fn · 5 crate-vis | ExtractionWidth, PriorScenario | Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one… |
 | `src/test_doors/microsoft_token.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ExchangedMicrosoftGrant | Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`… |
-| `src/test_doors/mod.rs` | src | m | 1 fn · 364 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | m | 1 fn · 365 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/model_call_turn_link.rs` | src | s | 1 fn | — | Doors for `oneiron-server/tests/chat_model_call_turn_link.rs` (UNBUILT3-41, FIX [TURN-MODEL-LINK]): the… |
 | `src/test_doors/model_step_submission_codec.rs` | src | s | 1 fn | — | Doors for `tests/model_step_submission_codec.rs` (STEP-CORRECTION-HEALTH-PARK): a model step's submission… |
@@ -9525,6 +9527,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/derive_observed_preference.rs` | test | m | — | — | Engine-stamped observed preferences from cited user TURNs |
 | `tests/derive_person.rs` | test | m | — | — | The person item of a derivation batch (untangle 6.9h, S69-C-KINDS = A): an agent names a PERSON it found in… |
 | `tests/derive_revert.rs` | test | m | — | — | Reverting a derivation batch (untangle 6.7c, decision C-2): the committing actor reverts its own batch and… |
+| `tests/derive_revert_replaced_claim.rs` | test | m | — | — | A reverted derivation batch stands the claim its `supersede` item had replaced again, also when that claim… |
 | `tests/derive_settlement.rs` | test | L | — | — | Supersession and settlement items of a derivation batch (untangle 6.7a): a claim an agent derived replaces… |
 | `tests/derive_sources.rs` | test | s | — | — | The derivation commit's source recheck (untangle 6.7a, from 6.4a's primitive A): every stored source an item… |
 | `tests/derive_topology_branches.rs` | test | s | — | — | The topology-judgment branches `derive_links` leaves unrun (FIX-LIST 23228): an applied judgment, an unread… |
@@ -9595,6 +9598,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/extraction_step_claim_citation.rs` | test | m | — | — | A bound extraction step keeps a candidate that cites a listed claim, as the native reply may |
 | `tests/extraction_step_destination_bound.rs` | test | s | — | — | A lent extraction step lists for the destination bound of the pass that lends it (FIX row… |
 | `tests/extraction_step_listing.rs` | test | L | — | — | The bound extraction step shows the listing its native slice shows, names its layout, and skips an unbound… |
+| `tests/extraction_step_project_bound_citation.rs` | test | s | — | — | A project-bound extraction step skips a candidate whose sources share no one branch project |
 | `tests/extraction_step_relationship_label.rs` | test | s | — | — | A lent extraction step reads the relationship a candidate names back to its id, as the native reply reader… |
 | `tests/extraction_step_reply.rs` | test | s | — | — | Checks bound extraction replies without changing native extraction jobs |
 | `tests/extraction_step_word_bound_relationship.rs` | test | s | — | — | A lent extraction step over words that carry a relationship label holds its scope to that label, and skips a… |
@@ -9654,6 +9658,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/fix_9839_withheld_full_view.rs` | test | s | — | — | FIX 9839: a tainted observation that fits a Full view renders the redacted view instead of aborting assembly… |
 | `tests/fix_l4637_external_stage_evidence.rs` | test | m | — | — | FIX 4637: the external stage-evidence ingress checked only the declared evidence class and that some… |
 | `tests/floor_probe_equivalence.rs` | test | m | — | — | The floor probe folds a voucher's ancestry once, in the ancestor index's id order, on the fold's own… |
+| `tests/fold_resume_scope_tops_signer_cost.rs` | test | m | — | — | FIX [ADOPTED-FOLD-TAIL-WALK-SIGNER-COST], the resumed fold's site: a fold past a base takes the new rows… |
 | `tests/fold_state_encoding.rs` | test | m | — | — | The fold's per-row states hold persistent maps and sets since row [ROSTER-KEY-LOG-FLOOD] PR 2, where they… |
 | `tests/foldpast_tail_scope.rs` | test | XL | — | — | A tail row folds past an adopted checkpoint image (FIX 11760) |
 | `tests/force_cancel_pause.rs` | test | s | — | — | [FORCE-CANCEL-KEEPS-ACTIVE-PAUSE]: the hard cancel of a held row clears its pause, as the operator's Cancel… |

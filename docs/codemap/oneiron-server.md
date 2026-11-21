@@ -40,6 +40,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/code_fix.rs` | src | m | 13 crate-vis | — | The host Coach's code fixes (DEC-0005 FIX6, OF-380) |
 | `src/ai_host/code_fix/shadow.rs` | src | s | 2 crate-vis | — | The Coach's shadow runner for a code fix's engine candidates (FIX 1661, 2144): the host's… |
 | `src/ai_host/code_mode.rs` | src | L | 1 crate-vis | — | MCP `execute_code` on the served vault: the checked-in QuickJS component, run by the engine executor on the… |
+| `src/ai_host/code_mode_reach.rs` | src | s | 2 crate-vis | — | How far a pumped run's code-mode calls may go, judged before any of them is admitted… |
 | `src/ai_host/commitment_reminder_wording.rs` | src | m | 1 crate-vis | — | Native model wording for the durable commitment-reminder queue |
 | `src/ai_host/compaction.rs` | src | m | 13 crate-vis | — | Compaction for code mode's runs (agent-runtime-v1 §d7) |
 | `src/ai_host/compaction/chat.rs` | src | m | 7 crate-vis | — | A self agent's chat compaction (FIX 4465 D, Engine D4): the conversation constructor of the shared writer… |
@@ -103,7 +104,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/live_lease.rs` | src | s | 1 struct · 13 crate-vis | LiveLeaseState | A metered try's spend lease, read live (FIX 1819): a workflow step's try, a reader child's run, or an… |
 | `src/ai_host/local_vision.rs` | src | m | 8 crate-vis | — | The Local-vision seat as the decision ladder's Local rung (OF-329 over OF-600): the small vision model bound… |
 | `src/ai_host/meeting_follow_up_drafting.rs` | src | m | 1 crate-vis | — | The host worker that drafts a meeting's follow-ups (CAL-08; Engine RULING CAL-08-FOLLOWUP-APPROVAL = A, Sun… |
-| `src/ai_host/mod.rs` | src | s | 2 struct · 4 mod · 1 re-export · 30 crate-vis | AiHandle, AiHost | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
+| `src/ai_host/mod.rs` | src | s | 2 struct · 4 mod · 1 re-export · 31 crate-vis | AiHandle, AiHost | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
 | `src/ai_host/payer_funding.rs` | src | m | 14 crate-vis | — | Who pays for a model call that a room's spend scope bounds (OF-531, FIX 805) |
 | `src/ai_host/policy.rs` | src | s | 5 crate-vis | — | The Dreamer's extraction route: what vault policy must already allow before a pass may send a transcript to… |
 | `src/ai_host/question_timer.rs` | src | s | 3 crate-vis | — | The hand-off of a bound Dreamer's timer work (OF-506, FIX 1149) |
@@ -274,7 +275,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/context_board/mod.rs` | src | L | 31 crate-vis | — | The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional… |
 | `src/api/context_board/prefix.rs` | src | s | 7 crate-vis | — | Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter |
 | `src/api/context_board/reply.rs` | src | m | 1 crate-vis | — | The actual context-bearing text emit behind the generated `ai.reply` door |
-| `src/api/context_board/run_self.rs` | src | m | 11 crate-vis | — | A pumped run's own `describe(self)` (FIX 2086): the self brief of the run's agent, rendered by the… |
+| `src/api/context_board/run_self.rs` | src | m | 12 crate-vis | — | A pumped run's own `describe(self)` (FIX 2086): the self brief of the run's agent, rendered by the… |
 | `src/api/context_board/scratchpad.rs` | src | m | 12 crate-vis | — | POST /v1/core/context-board/scratchpad: the caller's one session pad (OF-548) |
 | `src/api/context_board/session.rs` | src | s | 3 crate-vis | — | Actor-bound session observations shared by core reads and board rendering |
 | `src/api/context_board/source_rows.rs` | src | s | 1 crate-vis | — | Board row references kept for read checks and complete model-input lineage |
@@ -1796,7 +1797,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/reranker_backend.rs` | src | s | 1 crate-vis | — | The `reranker` role's backend for one provider: over the provider's own HTTP client, over the credential… |
 | `src/models/responses_socket.rs` | src | m | 4 crate-vis | — | Responses over a held socket (ARCH-0081 §5) |
 | `src/models/responses_socket/context.rs` | src | s | 5 crate-vis | — | One server's Responses state (FIX 9516): the vault its stored chains are kept in, whose owner's `store`… |
-| `src/models/role_route.rs` | src | m | 2 struct · 1 enum · 7 fn · 6 crate-vis | RoleCall, RoleRefusal, RoleRoute | A role-bound call's model under the vault's live model manifest |
+| `src/models/role_route.rs` | src | m | 2 struct · 1 enum · 7 fn · 7 crate-vis | RoleCall, RoleRefusal, RoleRoute | A role-bound call's model under the vault's live model manifest |
 | `src/models/router.rs` | src | m | 1 struct · 8 fn · 12 crate-vis | ModelRouter | Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its… |
 | `src/models/run_backend.rs` | src | s | 1 struct · 1 fn | RunBackend | A ladder as an [`LlmBackend`], for engine code that calls a backend itself (the Dreamer's step layer) |
 | `src/models/runtime.rs` | src | m | 20 fn · 8 crate-vis | — | Model runtime construction and accessors |
@@ -2086,7 +2087,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/run_host_door/graph_skill/answerer.rs` | src | s | 2 crate-vis | — | The run's existing ladder configured from each immutable saved question |
 | `src/server/run_host_door/host_rows.rs` | src | m | 1 crate-vis | — | Host-served verb rows for an agent run and its model options |
 | `src/server/run_host_door/media_step.rs` | src | s | 5 crate-vis | — | The resident entry's dispatcher-owned context for a durable media call |
-| `src/server/run_host_door/resident_rows.rs` | src | s | 3 crate-vis | — | The rows a pumped run's door answers from the run's own seats (FIX 2086): `describe(self)`, the run's own… |
+| `src/server/run_host_door/resident_rows.rs` | src | s | 5 crate-vis | — | The rows a pumped run's door answers from the run's own seats (FIX 2086): `describe(self)`, the run's own… |
 | `src/server/run_host_door/self_brief_port.rs` | src | m | 3 crate-vis | — | A pumped run's self-brief port (FIX 17594, delivery slice D3): its native executor asks the port for the… |
 | `src/server/seat_watcher.rs` | src | s | 2 crate-vis | — | The model-seat watcher: releases Dreamer parks whose spent seat is back |
 | `src/server/self_brief_custody.rs` | src | m | 33 crate-vis | — | The one owner of installed self briefs (FIX 17594 delivery, slice D1) |
@@ -2175,7 +2176,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/residence.rs` | src | s | 1 struct · 3 fn | SlipProof | Doors for `tests/residence_media_vectors_server_test.rs` and `tests/residence_board_seeds_server_test.rs`… |
 | `src/test_doors/residence_connection.rs` | src | s | 1 fn | — | Registers a machine's sync connection with the `vault.residence.*` rows, as the device sync loop registers… |
 | `src/test_doors/resident_pump.rs` | src | s | 1 fn | — | Door for `tests/resident_pump_claim_latency.rs`: the agent run pump on a test's server, started as `serve`… |
-| `src/test_doors/run_brief_people.rs` | src | s | 2 fn | — | Door for `tests/run_brief_roster_off_device.rs`: the PEOPLE roster a pumped run's self brief reads, built as… |
+| `src/test_doors/run_brief_people.rs` | src | s | 2 fn | — | Door for `tests/run_brief_roster_off_device.rs` and `tests/run_brief_route_aware_roster.rs`: the PEOPLE… |
 | `src/test_doors/run_self_brief_port.rs` | src | s | 1 fn | — | Door for `tests/run_brief_prefix_recheck.rs` ([BRIEF-PREFIX-STALE-PAST-REVOKE]): the self-brief port a… |
 | `src/test_doors/sandbox_vendor.rs` | src | s | 5 fn | — | Doors for `tests/sandbox_vendor_daytona.rs`, `tests/sandbox_vendor_e2b.rs`, `tests/sandbox_vendor_modal.rs`… |
 | `src/test_doors/seal_judge.rs` | src | s | 2 struct · 4 fn | SealJudgeCall, SealScriptAnswer | Doors for `tests/seal_judge_host_wire.rs` ([SEAL-JUDGE-HOST-WIRE-UNTESTED]): the host seal check over a stub… |
@@ -2522,6 +2523,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/run_backend_source_rows.rs` | test | s | — | — | A run backend's sourced call names the rows its request was read from (FIX-LIST… |
 | `tests/run_brief_prefix_recheck.rs` | test | m | — | — | [BRIEF-PREFIX-STALE-PAST-REVOKE]: a pumped run's self brief goes again only while every row it shows stands… |
 | `tests/run_brief_roster_off_device.rs` | test | m | — | — | A pumped run's self brief is judged off-device, even for a run on this install |
+| `tests/run_brief_route_aware_roster.rs` | test | m | — | — | A run's PEOPLE roster follows every live code-mode route: only an all-on-device run reads an about line… |
 | `tests/run_reader_record_scope.rs` | test | s | — | — | The HTTP facade refuses facet-limited credentials before reading run branches or spend leases, while an… |
 | `tests/run_settlements_own_agent.rs` | test | m | — | — | RUN-SETTLEMENTS-OWN-AGENT-READ: `vault.budgets.settlements` over the facade |
 | `tests/run_step_live_run.rs` | test | m | — | — | [RUN-STEP-DOOR-SERVER-TEST] (FIX-LIST 23040, 23150, 23621): `ai.steps.submit` on an agent's attached live… |

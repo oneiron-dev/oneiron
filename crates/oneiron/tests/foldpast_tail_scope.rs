@@ -1077,6 +1077,105 @@ fn row_its_revoked_key_cosigns_beside_a_device_revocation_still_needs_history() 
 }
 
 #[test]
+fn tail_approval_its_revoked_key_cosigns_below_the_revocation_needs_history() {
+    let fixture = fixture();
+    // Both past the image: a federation confirm the host signs and the agent
+    // cosigns (an approval resting on the agent's key), then the host's
+    // revocation of that key on top of it. The confirm is in the
+    // revocation's line, so the revocation's fence refuses nothing; the
+    // approval still rests on a key the fold holds revoked, which only the
+    // whole history times.
+    let confirm = sign_next_host_op_cosigned(
+        &fixture.home,
+        &fixture.issuer,
+        AuthorityOp::FederationConfirm(fresh_confirm(0xE4)),
+        &agent_signing(),
+    )
+    .expect("sign the cosigned confirm");
+    let confirm_hash = authority_entry_hash(&confirm).expect("confirm hash");
+    for vault in [&fixture.home, &fixture.adopting] {
+        put_signed_entries(vault, std::slice::from_ref(&confirm)).expect("store the confirm");
+    }
+    assert!(
+        fixture
+            .adopting
+            .authority_fold()
+            .expect("adopting folds the confirm")
+            .valid_entries
+            .contains(&confirm_hash),
+        "adopting counts the confirm while the agent key stands"
+    );
+    let revoke = sign_next_host_op(
+        &fixture.home,
+        &fixture.issuer,
+        AuthorityOp::RevokeDevice {
+            revoked_key: agent_key(),
+        },
+    )
+    .expect("sign the revocation on the confirm");
+    assert_eq!(
+        revoke.parent_hashes,
+        vec![confirm_hash],
+        "the revocation stands on the confirm"
+    );
+    let revoke_hash = authority_entry_hash(&revoke).expect("revoke hash");
+    put_signed_entries(&fixture.home, std::slice::from_ref(&revoke)).expect("store on home");
+    let home_fold = fixture
+        .home
+        .authority_fold()
+        .expect("home folds the revocation");
+    assert!(
+        home_fold.valid_entries.contains(&revoke_hash),
+        "home counts the revocation"
+    );
+    assert!(
+        home_fold
+            .roster
+            .get(&agent_key())
+            .is_some_and(|device| device.revoked),
+        "home holds the agent key revoked"
+    );
+    assert!(
+        home_fold.valid_entries.contains(&confirm_hash),
+        "home counts the approval inside its window"
+    );
+    assert!(
+        !home_fold
+            .issues
+            .contains(&AuthorityFoldIssue::RetiredSigner(confirm_hash)),
+        "the revocation's fence does not retire a row in its line"
+    );
+    asks_history(
+        put_signed_entries(&fixture.adopting, std::slice::from_ref(&revoke))
+            .and_then(|()| fixture.adopting.authority_fold()),
+        AuthorityHistoryReason::StaleRosterWindow,
+    );
+    // Past the window the whole history lets the approval lapse.
+    fixture
+        .home
+        .advance_authority_clock_for_test(fixture.home.now_recorded_at() + PAST_THE_WINDOW_SECS)
+        .expect("advance home's clock");
+    let lapsed = fixture
+        .home
+        .authority_fold()
+        .expect("home folds past the window");
+    assert!(
+        !lapsed.valid_entries.contains(&confirm_hash),
+        "home lets the approval lapse"
+    );
+    assert!(
+        lapsed
+            .issues
+            .contains(&AuthorityFoldIssue::StaleRosterApproval(confirm_hash)),
+        "home lapses it as a stale roster approval"
+    );
+    assert!(
+        lapsed.valid_entries.contains(&revoke_hash),
+        "home still counts the revocation"
+    );
+}
+
+#[test]
 fn covered_approval_on_a_revoked_device_lapses_on_the_adoption_clock() {
     let (fixture, confirm) = cosigned_confirm_fixture();
     let key = agent_key();

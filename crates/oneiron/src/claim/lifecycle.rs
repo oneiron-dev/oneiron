@@ -1004,6 +1004,13 @@ impl Vault {
             return Ok(None);
         }
         self.apply_lifecycle_materialization(wtxn, ops, binding, transition, false, None)?;
+        // The lifecycle applies past the batch door, which is what tells a
+        // write's owner of the rows it wrote: the closed claim is queued
+        // here for the live windows' post-commit mirror. A write with no
+        // post-commit owner drops the queue, as the public retract door's
+        // raw transaction still does (FIX
+        // CLAIM-LIFECYCLE-DOORS-QUEUE-NO-LIVE-WINDOW-ROWS).
+        crate::batch::queue_committed_rows(self, wtxn, std::collections::BTreeSet::from([*id]));
         // A retract parked for the holder has nothing left to close.
         self.drop_parked_retract_in_txn(wtxn, id)?;
         // FIX 22383: a commitment instance retracted while its promise is open
@@ -1092,6 +1099,18 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             crate::batch::ApplyOpsGateMode::new(false, false),
         )?;
+        // Applied past the batch door, which is what tells a write's owner
+        // of the rows it wrote and leaves a removed edge its marker (FIX
+        // 9599): the reopened head and the replacement that lost its link
+        // are queued here for the live windows' post-commit mirror, and the
+        // window that held the link owes its removal.
+        crate::batch::queue_committed_rows(
+            self,
+            wtxn,
+            std::collections::BTreeSet::from([*new_id, *old_id]),
+        );
+        #[cfg(feature = "sync")]
+        self.mark_pending_edge_removals_in_txn(wtxn, &[(*new_id, kind, *old_id)])?;
         Ok(true)
     }
 }

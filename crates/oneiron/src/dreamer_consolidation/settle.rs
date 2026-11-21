@@ -53,6 +53,7 @@ use crate::{ClaimBody, EntityId, TimeRange, Vault};
 
 pub(crate) mod decision_pages;
 pub(crate) mod decision_projection;
+mod member_copy;
 mod preference_pair;
 
 /// The marker-value keys that name a contradiction's claims: the
@@ -170,10 +171,10 @@ pub struct ConflictSettleReceipt {
 }
 
 /// What reverting one settlement did (OF-023, owner ruling 10-18): the marker
-/// it reopened, the members standing again in place, the Dreamer's fresh
-/// copies of its own MACHINE members as (member, copy), the members a later
-/// write closed, left as they are, and the retained alternative the
-/// settlement landed, retracted when it still stood (FIX 496).
+/// it reopened, the members standing again in place, the fresh copies of the
+/// members that do not reopen, each written as its original author, as
+/// (member, copy), the members left closed as they are, and the retained
+/// alternative the settlement landed, retracted when it still stood (FIX 496).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RevertedSettlement {
     pub marker: EntityId,
@@ -758,9 +759,10 @@ pub(crate) fn settled_answers_in_txn(
 /// after the caller has checked the owner's authority. The answer is
 /// retracted as `reverter`'s, so its marker is open again and, as a reverted
 /// one, the owner's to answer. Each member the kept one superseded stands
-/// again: in place, its `supersedes` link gone; a Dreamer-born MACHINE
-/// member, whose signed history never reopens, as the Dreamer's fresh copy
-/// born of it. A member some later write closed stays as it is. A winner
+/// again: in place, its `supersedes` link gone; a member that does not
+/// reopen (a Dreamer-born MACHINE member, whose signed history never
+/// reopens), as a fresh copy written as its original author and born of it
+/// ([`member_copy`]). A member some later write closed stays as it is. A winner
 /// the settlement landed from a retained alternative is retracted while it
 /// still stands. Nothing is deleted: the answer and every closed row stay as
 /// history.
@@ -859,37 +861,49 @@ pub(crate) fn settlement_revert_lifts_restriction_in(
     }
 }
 
-/// Where a revert's fresh Dreamer copy says it came from: its provenance
-/// surface and its birth reason.
+/// Where a revert's fresh copy says it came from, its provenance surface
+/// and its birth reason, and which members the revert may copy.
 pub(super) struct RevertSurface {
     pub(super) surface: &'static str,
     pub(super) birth: &'static str,
     pub(super) marker: Option<EntityId>,
+    /// Whether an unsigned member may stand again as its author's copy. A
+    /// settlement's copy joins its reopened conflict, whose member list
+    /// reads only the Dreamer's copies (`retained_keep`), so a settlement
+    /// revert writes none.
+    pub(super) unsigned_copies: bool,
+    /// Whether a member about an edge may be copied. Such a copy cannot be
+    /// found again (an edge has no subject index), so only a revert that
+    /// also closes the reverted write, and so runs once, may write it.
+    pub(super) edge_subjects: bool,
 }
 
 const SETTLEMENT_REVERT: RevertSurface = RevertSurface {
     surface: "conflict_settlement_revert",
     birth: "dreamer.settlement_revert",
     marker: None,
+    unsigned_copies: false,
+    edge_subjects: true,
 };
 
 /// How a member a reverted write superseded stands after the revert.
-pub(super) enum MemberRestore {
+pub(crate) enum MemberRestore {
     /// In place, its `supersedes` link gone.
     Restored,
-    /// As the Dreamer's fresh copy of its own MACHINE member.
+    /// As a fresh copy written as its original author: the Dreamer's copy
+    /// of its own MACHINE member, or an agent's of its unsigned claim.
     Copied(EntityId),
-    /// As it was: a later write closed it, or another standing claim
-    /// supersedes it too.
+    /// As it was: a later write closed it, another standing claim
+    /// supersedes it too, or it neither reopens nor is copied.
     LeftClosed,
 }
 
-/// Stands `loser` again after `kept`, the write the owner took back (or the
-/// member a reverted answer kept), superseded it: in place, or, for a
-/// Dreamer-born MACHINE member whose signed history never reopens, as the
-/// Dreamer's fresh copy born of it and of `reverted`. A member another
-/// standing claim supersedes too stays closed, so the revert undoes no
-/// write but its own.
+/// Stands `loser` again after `kept`, the write a revert took back (or the
+/// member a reverted answer kept), superseded it: in place, or, for a member
+/// that does not reopen, as a fresh copy written as its original author and
+/// born of it and of `reverted` ([`member_copy`]). A member another standing
+/// claim supersedes too stays closed, so the revert undoes no write but its
+/// own.
 pub(super) fn restore_member_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -902,11 +916,11 @@ pub(super) fn restore_member_in_txn(
     if superseded_elsewhere_in_txn(vault, txn, kept, loser)? {
         return Ok(MemberRestore::LeftClosed);
     }
-    if vault.restore_superseded_claim_in_txn(txn, &kept, &loser, now / 1_000)? {
+    if member_copy::reopen_in_txn(vault, txn, kept, loser, now)? {
         return Ok(MemberRestore::Restored);
     }
     Ok(
-        restore_dreamer_member_in_txn(vault, txn, kept, loser, reverted, surface, now)?
+        member_copy::copy_in_txn(vault, txn, kept, loser, reverted, surface, now)?
             .map_or(MemberRestore::LeftClosed, MemberRestore::Copied),
     )
 }
@@ -945,104 +959,6 @@ fn superseded_elsewhere_in_txn(
     }
     count.finish(vault);
     Ok(standing)
-}
-
-/// Stands a Dreamer-born MACHINE member `loser` again as the Dreamer's fresh
-/// copy of it, when `kept` superseded it and it is still closed: the copy
-/// carries its predicate, value, confidence, window and axes, and is born of
-/// the member and the reverted write. `None` for any other member.
-fn restore_dreamer_member_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    kept: EntityId,
-    loser: EntityId,
-    reverted: EntityId,
-    surface: &RevertSurface,
-    now: u64,
-) -> Result<Option<EntityId>> {
-    use crate::ports::EdgeStoreRead;
-    let dreamer = crate::dreamer_runner::authority::dreamer_actor_id()?;
-    let Some(body) = vault.get_claim_in_txn(txn, &loser)? else {
-        return Ok(None);
-    };
-    if body.lifecycle != ClaimLifecycleStatus::Superseded
-        || crate::memory::claim_author(&body) != Some(dreamer)
-        || !crate::authority::machine_claim_needs_history(&vault.store, txn, &body)?
-    {
-        return Ok(None);
-    }
-    if vault
-        .port_edge_get(&*txn, &kept, crate::edge::EdgeKind::Supersedes, &loser)?
-        .is_none()
-    {
-        return Ok(None);
-    }
-    let candidate = super::persistence::on_axes_of(
-        crate::write_envelope::ClaimCandidate::new(
-            body.predicate.clone(),
-            body.subject,
-            body.value.clone(),
-            body.confidence,
-        )
-        .with_confidence_details(body.confidence_details())
-        .with_validity(body.valid_from, None),
-        &body,
-    );
-    let mut provenance = vec![
-        (Value::from("surface"), Value::from(surface.surface)),
-        (
-            Value::from("restores"),
-            Value::Binary(loser.as_bytes().to_vec()),
-        ),
-        (
-            Value::from("reverted"),
-            Value::Binary(reverted.as_bytes().to_vec()),
-        ),
-    ];
-    if let Some(marker) = surface.marker {
-        provenance.push((
-            Value::from(RESTORED_MARKER_KEY),
-            Value::Binary(marker.as_bytes().to_vec()),
-        ));
-    }
-    let mut envelope = WriteEnvelope::new(
-        WriteActor::new(dreamer, crate::edge::EdgeActorClass::System),
-        body.source.unwrap_or(ClaimSource::Generated),
-        crate::write_envelope::WriteProvenance::new(Value::Map(provenance))?,
-        if body.approval == ClaimApprovalStatus::Proposed {
-            ClaimApprovalStatus::Proposed
-        } else {
-            ClaimApprovalStatus::Auto
-        },
-    );
-    let copy = EntityId::now();
-    // A claim's times are Unix seconds; `now` is milliseconds (FIX 10519).
-    let at = now / 1_000;
-    let birth = RowBirth::written(
-        envelope.actor(),
-        MadeByClass::Concluded,
-        surface.birth,
-        &[loser, reverted],
-        &[],
-        at,
-    );
-    vault.sign_retained_machine_claim_in_txn(&*txn, &copy, &candidate, &mut envelope)?;
-    vault
-        .batch_in()
-        .claim_candidate(
-            &copy,
-            candidate,
-            &envelope,
-            TimeRange { start: at, end: at },
-            at,
-        )
-        .made_by(&copy, birth)
-        .apply(txn)?;
-    // The copy stands the member's claim again: about a PERSON under a
-    // cleanup archive, it restores her in the revert's transaction
-    // (ARCH-0073 §6).
-    vault.restore_mentioned_subject_in_txn(txn, body.subject)?;
-    Ok(Some(copy))
 }
 
 /// The dial a settlement ask runs under unless the host picks another. It

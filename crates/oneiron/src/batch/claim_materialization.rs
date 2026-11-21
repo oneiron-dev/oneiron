@@ -789,7 +789,7 @@ mod provenance_puts;
 mod succession;
 use demotion::demotion_body;
 pub(crate) use provenance_puts::apply_provenance_claim_puts;
-pub(crate) use succession::SuccessionWriter;
+pub(crate) use succession::{SuccessionWriter, inherited_lineage};
 
 #[cfg(test)]
 mod tests;

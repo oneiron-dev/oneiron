@@ -793,7 +793,7 @@ fn rows_floors_unmoved(
 /// Whether every tail row's signer signed its covered rows, in each sequence
 /// scope (`world_privacy::side_world`), as one chain: sequences strictly
 /// rise, and each row descends from the one below it along that scope's rows
-/// (`rows_floor::descends_within_scope`). Then no covered row of a tail
+/// (`rows_floor::highest_key_row_below`). Then no covered row of a tail
 /// row's signer sits past a floor (`rows_floor::rows_sequence_floors`), and
 /// no tail row vouches for one (`sequence_ancestry`): a row vouches only for
 /// rows of its own signer, and [`rows_floors_unmoved`] keeps the tail from
