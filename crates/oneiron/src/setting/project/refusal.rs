@@ -632,8 +632,9 @@ pub(in crate::setting) fn slot_refused_here_in_txn(
 }
 
 /// The taps the owner's notice of a refused projection offers on this install now, from the acts
-/// its `event` names (module doc), each the input of one `vault.settings.set`. Its rows: each row
-/// an act heads and this install still refuses ([`refused_slot_in_txn`]), then each row the key's
+/// and rows its `event` names (module doc), each the input of one `vault.settings.set`. Its rows:
+/// each row the event names that an act heads and this install still refuses
+/// ([`refused_slot_in_txn`]), then each row the key's
 /// hook judges such a row against ([`super::super::RefusalPeers`]), each named once; a carried
 /// row is left out, since only a move writes one. A key that quarantines a refused row
 /// ([`RefusedProjection::Quarantine`]) offers the pick: for each of those rows with a value, a
@@ -651,8 +652,19 @@ pub(crate) fn setting_refusal_taps_in_txn(
     txn: &heed::RoTxn<'_>,
     event: &str,
 ) -> Result<Vec<serde_json::Value>> {
-    let Some((acts, _owner)) = event.split_once(':') else {
+    let mut parts = event.split(':');
+    let Some(acts) = parts.next() else {
         return Ok(Vec::new());
+    };
+    // The rows the notice names (REVIEW-10357 P1-1): a row of the same act that another notice is
+    // about is not this notice's.
+    let named: Option<BTreeSet<EntityId>> = match (parts.next(), parts.next()) {
+        (Some(rows), Some(_owner)) => Some(
+            rows.split('+')
+                .filter_map(|row| EntityId::from_hex(row).ok())
+                .collect(),
+        ),
+        _ => None,
     };
     let acts: BTreeSet<AuthorityEntryHash> = acts
         .split('+')
@@ -681,7 +693,9 @@ pub(crate) fn setting_refusal_taps_in_txn(
                 scope: SettingScope::Vault,
             });
             let target = setting_slot_target(&slot)?;
-            if !targets.insert(target) {
+            if !targets.insert(target)
+                || named.as_ref().is_some_and(|named| !named.contains(&target))
+            {
                 continue;
             }
             let Some(row) = refused_slot_in_txn(vault, txn, target, Some(&acts))? else {

@@ -4,10 +4,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use oneiron_setting_contract::RowKey;
+use oneiron_setting_contract::{RowKey, SettingMode, SettingScope};
 
 use super::connectors::door::{
-    CalendarImipTransportConfig, CalendarSeatSetup, is_seat_ref, seat_of_system_in_txn,
+    CalendarImipTransportConfig, CalendarSeatSetup, is_seat_ref, retired_seats_of_system_in_txn,
     seat_setup_changed_in_txn, validate_endpoint,
 };
 use super::ingest::feed_door::{
@@ -58,10 +58,59 @@ fn no_feed() -> Option<IcsFeedPollConfig> {
     None
 }
 
-/// The rows a feed's hook judges the feed of the system `slot` names against: the seat that
-/// imports under that system, installed or taken out of service, so the owner's notice of a
-/// refused projection of either names both acts, on every machine, as the seat's notice does
-/// ([`seat_system_peers`]; row SETTING-PROJECTED-ROW-REFUSING-HOOKS).
+/// The seats but `except` that hold `system` here: each installed one, and each this install
+/// holds quarantined (its row reads no seat) whose act's seat imports under it, so the owner's
+/// pick of a source names every seat of the system (REVIEW-10357 P1-2); with `retired`, each taken
+/// out of service that keeps it too.
+fn seats_of_system_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    (system, except): (&str, Option<&str>),
+    retired: bool,
+) -> Result<Vec<String>> {
+    let mut seats = Vec::new();
+    for seat_ref in CONNECTOR_SEAT.items_in_txn(vault, txn)? {
+        if except == Some(seat_ref.as_str()) {
+            continue;
+        }
+        let installed = CONNECTOR_SEAT
+            .read_in_txn(vault, txn, &[], Some(&seat_ref))?
+            .value;
+        let setup = match installed {
+            Some(setup) => Some(setup),
+            None => {
+                let slot = RowKey {
+                    name: CONNECTOR_SEAT.spec.name.to_owned(),
+                    item: Some(seat_ref.clone()),
+                    mode: SettingMode::Value,
+                    scope: SettingScope::Vault,
+                };
+                crate::setting::head_act_value_in_txn(vault, txn, &slot)?
+                    .and_then(|value| {
+                        serde_json::from_value::<Option<CalendarSeatSetup>>(value).ok()
+                    })
+                    .flatten()
+            }
+        };
+        if setup.is_some_and(|setup| setup.config.system == system) {
+            seats.push(seat_ref);
+        }
+    }
+    if retired {
+        for seat_ref in retired_seats_of_system_in_txn(vault, txn, system)? {
+            if except != Some(seat_ref.as_str()) && !seats.contains(&seat_ref) {
+                seats.push(seat_ref);
+            }
+        }
+    }
+    Ok(seats)
+}
+
+/// The rows a feed's hook judges the feed of the system `slot` names against: every seat that
+/// imports under that system, installed, quarantined here or taken out of service
+/// ([`seats_of_system_in_txn`]), so the owner's notice of a refused projection of either names
+/// every act, on every machine, as the seat's notice does ([`seat_system_peers`]; row
+/// SETTING-PROJECTED-ROW-REFUSING-HOOKS).
 fn feed_system_peers(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -71,19 +120,16 @@ fn feed_system_peers(
     let Some(system) = slot.item.as_deref() else {
         return Ok(Vec::new());
     };
-    match seat_of_system_in_txn(vault, txn, system)? {
-        Some(seat_ref) => Ok(vec![CONNECTOR_SEAT.deciding_slot_in_txn(
-            vault,
-            txn,
-            Some(&seat_ref),
-        )?]),
-        None => Ok(Vec::new()),
-    }
+    seats_of_system_in_txn(vault, txn, (system, None), true)?
+        .iter()
+        .map(|seat_ref| CONNECTOR_SEAT.deciding_slot_in_txn(vault, txn, Some(seat_ref)))
+        .collect()
 }
 
 /// The rows a seat's hook judges the seat `value` against: the installed feed of its system and
-/// every other installed seat of its system ([`feed_system_peers`]). A seat whose value is not
-/// here (a clear, or a value beside its act that did not arrive) names none.
+/// every other seat of its system, installed or quarantined here ([`seats_of_system_in_txn`],
+/// [`feed_system_peers`]). A seat whose value is not here (a clear, or a value beside its act
+/// that did not arrive) names none.
 fn seat_system_peers(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -101,16 +147,8 @@ fn seat_system_peers(
     if registration_in_txn(vault, txn, system)?.is_some() {
         peers.push(ICS_FEED.deciding_slot_in_txn(vault, txn, Some(system))?);
     }
-    for installed_ref in CONNECTOR_SEAT.items_in_txn(vault, txn)? {
-        if slot.item.as_deref() == Some(installed_ref.as_str()) {
-            continue;
-        }
-        let installed = CONNECTOR_SEAT
-            .read_in_txn(vault, txn, &[], Some(&installed_ref))?
-            .value;
-        if installed.is_some_and(|installed| installed.config.system == system) {
-            peers.push(CONNECTOR_SEAT.deciding_slot_in_txn(vault, txn, Some(&installed_ref))?);
-        }
+    for seat_ref in seats_of_system_in_txn(vault, txn, (system, slot.item.as_deref()), false)? {
+        peers.push(CONNECTOR_SEAT.deciding_slot_in_txn(vault, txn, Some(&seat_ref))?);
     }
     Ok(peers)
 }

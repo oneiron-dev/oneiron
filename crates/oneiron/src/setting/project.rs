@@ -91,6 +91,7 @@ use projection_rows::{
     project_pack_target_in_txn, record_projection_in_txn, target_key, write_row_in_txn,
 };
 mod quarantine;
+pub(crate) use quarantine::head_act_value_in_txn;
 use quarantine::{
     PeerSeen, peers_moved_in_txn, quarantine_refused_row_in_txn, quarantines_refused_row,
 };

@@ -98,6 +98,7 @@ pub(crate) use self::pack::{
 };
 pub use self::page_max::PageMax;
 pub use self::project::SettingsProjected;
+pub(crate) use self::project::head_act_value_in_txn;
 pub(crate) use self::project::{
     SETTING_REFUSAL_NOTIFICATION_PRODUCER, setting_refusal_taps_in_txn,
 };

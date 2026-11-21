@@ -33,6 +33,28 @@ pub(super) struct PeerSeen {
     basis: [u8; 32],
 }
 
+/// The value the act that heads the row `slot` sets, as JSON, where this install holds it: for a
+/// key's peers that read a row quarantined here, which reads the key's strictest value
+/// (REVIEW-10357 P1-2). `None` for a row no setting act heads, a clear, and a value beside its act
+/// that is not here.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn head_act_value_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    slot: &RowKey,
+) -> Result<Option<serde_json::Value>> {
+    let Some(fold) = vault.setting_slot_fold_in_txn(txn, setting_slot_target(slot)?)? else {
+        return Ok(None);
+    };
+    Ok(named_acts_in_txn(vault, txn, &fold)?
+        .into_iter()
+        .next()
+        .and_then(|named| named.value))
+}
+
 /// Whether the pass writes the row of `spec` it projects as the key's quarantine marker: it
 /// quarantines a row the hook refused, of a key that quarantines such a row.
 pub(super) fn quarantines_refused_row(spec: &SettingSpec) -> bool {
