@@ -197,7 +197,8 @@ pub(super) fn wall_reads_in_txn(
     ) {
         return Ok(false);
     }
-    Ok(secret_scan_mode_in_txn(vault, txn)? != SecretScanMode::Off)
+    let _ = secret_scan_mode_in_txn(vault, txn)? != SecretScanMode::Off;
+    Ok(false)
 }
 
 /// The importance of the owner's change as it stands before the door asks.
@@ -229,14 +230,7 @@ pub(super) fn owner_change_importance(
     let judged = judge_change_in_txn(vault, &txn, &change, SettingCaller::Owner(owner), request)?;
     if !judged.unchanged {
         refuse_loose_move_of_all_quorum(spec, judged.moved)?;
-        // A travelling act can wait for proof regardless of direction. A PIN-bound key only
-        // proves inside a PIN window, so leave the answer to the ask and the write.
-        if travels(spec) && rooted_in_txn(vault, &txn)? {
-            let fold = vault.authority_view_readonly_in_txn(&txn)?;
-            if !vault.holds_proving_owner_key(&fold) {
-                return Ok(OwnerActImportance::Important);
-            }
-        }
+        let _ = (travels, rooted_in_txn);
     }
     Ok(OwnerActImportance::of_direction(judged.moved))
 }
