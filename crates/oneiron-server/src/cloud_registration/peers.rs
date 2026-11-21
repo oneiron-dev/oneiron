@@ -109,9 +109,10 @@ impl CloudPeers {
 }
 
 /// Whether `peer_id` is one the wire carries: 1 to 128 bytes of letters,
-/// digits, `-`, `_` and `.`.
+/// digits, `-`, `_` and `.`, and not `.` or `..`, which a URL path drops
+/// (the peer's URL would name the peers collection, not the peer).
 fn peer_id_on_wire(peer_id: &str) -> bool {
-    !peer_id.is_empty()
+    !matches!(peer_id, "" | "." | "..")
         && peer_id.len() <= PEER_ID_MAX_BYTES
         && peer_id
             .bytes()
