@@ -35,9 +35,15 @@
 //!   under (FIX [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]): its
 //!   own ledger's deferred row, which its replay never sends again (FIX
 //!   7960), no longer holds every resume there;
-//! - an invite, whose provider-native key a fresh ledger row would change,
-//!   keeps its row on that former home: its own remote task settles it, and
-//!   it is never sent under a second key (review round 1 of #10220);
+//! - an invite deferred there keeps its row on that former home: its own
+//!   remote task settles it, and it is never handed to the sink again
+//!   (review round 1 of #10220). Once that task fails after the move back,
+//!   the former home's resume sends the invite again, under the key its
+//!   first send reached the provider under: every ledger attempt of an
+//!   effect carries its first row's key (review round 2 of #10220);
+//! - an apology a crash left admitted with no outcome on that former home is
+//!   read back by its own row's replay first: its provider's record proves
+//!   it delivered, so it is never sent again (review round 2 of #10220);
 //! - once that apology's first send is delivered after all (its remote task
 //!   completes), neither the former home's resume nor the next home's sends
 //!   it again (review round 1 of #10220).
@@ -80,8 +86,14 @@
 //! #10220's head 091a2032bf6a: that head gives the deferred invite a fresh
 //! ledger row, so the sink is handed it again under a new key, and it reads
 //! only the apology's fresh attempt, so the former home and the next home
-//! send it again. The door `emergency_effect_ledger_rows` names a node's
-//! ledger rows of an effect under each of its ledger generations.
+//! send it again. The invite whose remote task failed after the move back
+//! and the apology read back first are red on #10220's head c4ed852d1b9b:
+//! that head decides at the move whether a send takes a fresh attempt, so
+//! the invite's failed row holds every resume ("emergency effect is not
+//! delivered; resume its existing intent"), and it gives the crashed apology
+//! a fresh attempt at the move, which the sink is handed with no read-back.
+//! The door `emergency_effect_ledger_rows` names a node's ledger rows of an
+//! effect under each of its ledger generations.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test booking_home_move_carries_emergency`.
 #![cfg(all(oneiron_test_support, feature = "sync"))]
@@ -106,7 +118,7 @@ use oneiron::memory::EmergencyInstructionInput;
 use oneiron::outbound::{
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
 };
-use oneiron::outbound_intent_ledger::{RemoteTaskHandle, RemoteTaskObservation};
+use oneiron::outbound_intent_ledger::{DeliveryReadBack, RemoteTaskHandle, RemoteTaskObservation};
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use oneiron::test_doors::booking_home_move::{
     acknowledge_booking_home_move, booking_rows_hold, deliver_emergency_without_answer,
@@ -541,6 +553,38 @@ impl<S: OutboundExecutionSink> OutboundExecutionSink for RecordingSink<S> {
             .push((request.intent.channel.to_string(), key.to_owned()));
         self.inner.execute(request)
     }
+
+    fn read_back_delivery(&self, request: &OutboundExecutionRequest<'_>) -> DeliveryReadBack {
+        self.inner.read_back_delivery(request)
+    }
+}
+
+/// A sink that delivers every send it is handed, and whose provider's own record reads back
+/// every send the ledger asks about as delivered (FIX 8814 follow-up).
+struct ReadBackDeliveredSink;
+
+impl OutboundExecutionSink for ReadBackDeliveredSink {
+    fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+        DeliveringSink.execute(request)
+    }
+
+    fn read_back_delivery(&self, _request: &OutboundExecutionRequest<'_>) -> DeliveryReadBack {
+        DeliveryReadBack::Delivered
+    }
+}
+
+/// A sink that delivers the calendar invite and whose process stops while every other send's
+/// call runs: the apology's ledger row stays admitted with no outcome, as a crash leaves it.
+struct ApologyCrashingSink;
+
+impl OutboundExecutionSink for ApologyCrashingSink {
+    fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+        if request.intent.channel == "calendar" {
+            DeliveringSink.execute(request)
+        } else {
+            panic!("FIXTURE: the process stops while the apology's call runs")
+        }
+    }
 }
 
 /// A sink that delivers the calendar invite and whose provider takes every other send as a
@@ -622,6 +666,63 @@ struct Emergency {
 }
 
 fn emergency(seed: &Machine, sink: &mut impl OutboundExecutionSink) -> Emergency {
+    let (booked, request, plan) = planned_emergency(seed);
+    let item = execute_emergency_plan(
+        &seed.vault,
+        &request,
+        &plan,
+        &seed.calendars(),
+        &seed.consumer(NOW + 90),
+        sink,
+    )
+    .map(|run| run.item);
+    Emergency {
+        booked,
+        request,
+        plan,
+        item,
+    }
+}
+
+/// The emergency on a seed whose process stops while the apology's call runs, after the
+/// invite was delivered ([`ApologyCrashingSink`]): the apology's ledger row stays admitted with
+/// no outcome.
+fn emergency_crashed_on_apology(seed: &Machine) -> Emergency {
+    let (booked, request, plan) = planned_emergency(seed);
+    // On a thread of its own, so the stop leaves no state of the run on this one.
+    let crashed = std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                execute_emergency_plan(
+                    &seed.vault,
+                    &request,
+                    &plan,
+                    &seed.calendars(),
+                    &seed.consumer(NOW + 90),
+                    &mut ApologyCrashingSink,
+                )
+                .map(|_| ())
+            })
+            .join()
+    });
+    assert!(
+        crashed.is_err(),
+        "FIXTURE: the apology's call stops the process"
+    );
+    Emergency {
+        booked,
+        request,
+        plan,
+        item: Err(BookingError::InvalidConfig(
+            "FIXTURE: the process stopped while the apology's call ran".to_owned(),
+        )),
+    }
+}
+
+/// The booking on a seed, the owner's logged emergency instruction over it, and its one plan.
+fn planned_emergency(
+    seed: &Machine,
+) -> (ConfirmReceipt, EmergencyRescheduleRequest, EmergencyPlan) {
     let booked = book(seed, SessionKey::derive(b"home-move-emergency"), slot_at(9));
     let window = inclusive(slot_at(9));
     let authority = seed
@@ -648,21 +749,7 @@ fn emergency(seed: &Machine, sink: &mut impl OutboundExecutionSink) -> Emergency
         .expect("FIXTURE: plan the emergency");
     assert!(batch.refusals.is_empty(), "{:?}", batch.refusals);
     let [plan] = <[EmergencyPlan; 1]>::try_from(batch.plans).expect("one plan, for the booking");
-    let item = execute_emergency_plan(
-        &seed.vault,
-        &request,
-        &plan,
-        &seed.calendars(),
-        &seed.consumer(NOW + 90),
-        sink,
-    )
-    .map(|run| run.item);
-    Emergency {
-        booked,
-        request,
-        plan,
-        item,
-    }
+    (booked, request, plan)
 }
 
 /// A delivered emergency on the seed, then the old and new home.
@@ -1015,8 +1102,13 @@ fn a_repeat_delivered_before_the_bookers_pick_is_answered_by_the_owners_next_run
 fn carried_back_to_former_home(
     sink: &mut impl OutboundExecutionSink,
 ) -> (Machine, Machine, Emergency) {
+    carried_back_after(|seed| emergency(seed, sink))
+}
+
+/// [`carried_back_to_former_home`] for the emergency `run` leaves on the seed.
+fn carried_back_after(run: impl FnOnce(&Machine) -> Emergency) -> (Machine, Machine, Emergency) {
     let seed = Machine::seed();
-    let emergency = emergency(&seed, sink);
+    let emergency = run(&seed);
     let (former_home, second_home) = seed.into_old_and_new_home();
     assert!(
         move_booking_home(&former_home.vault, &second_home.vault, &[])
@@ -1190,5 +1282,104 @@ fn an_apology_its_first_send_delivered_after_all_is_not_sent_by_the_next_home() 
         delivering.keys("email").is_empty(),
         "the next home never sends the apology the former home's first send delivered \
          (#10220's head 091a2032bf6a reads only the apology's fresh attempt and exports it owed)"
+    );
+}
+
+#[test]
+fn an_invite_its_remote_task_failed_after_a_move_carried_it_back_goes_again_under_its_first_key() {
+    let mut deferring = RecordingSink::new(DeferringSink);
+    let (former_home, _second_home, emergency) = carried_back_to_former_home(&mut deferring);
+    let invite_key = match deferring.keys("calendar")[..] {
+        [key] => key.to_owned(),
+        _ => panic!(
+            "FIXTURE: the seed sends the invite once: {:?}",
+            deferring.sends
+        ),
+    };
+    let rows = emergency_effect_ledger_rows(&former_home.vault, "calendar")
+        .expect("FIXTURE: read the former home's invite rows");
+    let [invite_send] = rows[..] else {
+        panic!("FIXTURE: the former home keeps the invite's one row at the move: {rows:?}");
+    };
+    former_home
+        .vault
+        .settle_remote_outbound_task(&invite_send, RemoteTaskObservation::Failed)
+        .expect(
+            "FIXTURE: the provider reports the invite's remote task failed after the move back",
+        );
+
+    let mut delivering = RecordingSink::new(DeliveringSink);
+    let (item, _) = resume(&former_home, &emergency, &mut delivering).expect(
+        "the former home resumes the invite its remote task failed (#10220's head c4ed852d1b9b \
+         keeps the failed row and refuses every resume)",
+    );
+    assert!(
+        item.calendar_delivered && item.apology_delivered,
+        "the former home delivers the invite and the apology"
+    );
+    assert_eq!(
+        delivering.keys("calendar"),
+        vec![invite_key.as_str()],
+        "the invite goes again once, under the key its first send reached the provider under, so \
+         a provider that drops a repeated key drops it if that send delivered after all"
+    );
+    assert_eq!(
+        emergency_effect_ledger_rows(&former_home.vault, "calendar")
+            .expect("read the former home's invite rows")
+            .len(),
+        2,
+        "the failed row stays, beside the fresh ledger attempt the resume took"
+    );
+}
+
+#[test]
+fn an_apology_a_crash_left_with_no_outcome_on_a_former_home_is_read_back_before_it_goes() {
+    let (former_home, _second_home, emergency) = carried_back_after(emergency_crashed_on_apology);
+
+    let mut reading_back = RecordingSink::new(ReadBackDeliveredSink);
+    let (item, _) = resume(&former_home, &emergency, &mut reading_back)
+        .expect("the former home resumes the owed apology");
+    assert!(
+        item.calendar_delivered && item.apology_delivered,
+        "its provider's own record proves the apology delivered"
+    );
+    assert!(
+        reading_back.keys("email").is_empty(),
+        "the apology is never sent again: its own row's replay reads it back first (#10220's \
+         head c4ed852d1b9b takes a fresh attempt at the move and sends it with no read-back)"
+    );
+    assert_eq!(
+        emergency_effect_ledger_rows(&former_home.vault, "apology")
+            .expect("read the former home's apology rows")
+            .len(),
+        1,
+        "no fresh ledger attempt is taken"
+    );
+}
+
+#[test]
+fn an_apology_a_crash_left_unanswered_on_a_former_home_goes_again_once_its_read_back_cannot_tell() {
+    let (former_home, _second_home, emergency) = carried_back_after(emergency_crashed_on_apology);
+
+    let mut delivering = RecordingSink::new(DeliveringSink);
+    let (item, repeat_notices) = resume(&former_home, &emergency, &mut delivering)
+        .expect("the former home resumes the owed apology");
+    assert!(
+        item.calendar_delivered && item.apology_delivered,
+        "the former home delivers the apology"
+    );
+    assert_eq!(
+        delivering.keys("email").len(),
+        1,
+        "its own row's replay cannot read it back and stops it unasked, sending nothing, so the \
+         resume sends it once under a fresh ledger attempt, as any other new home would"
+    );
+    assert_eq!(
+        repeat_notices,
+        vec![EmergencyRepeatNotice {
+            effect: "apology",
+            message: EMERGENCY_REPEAT_NOTICE,
+        }],
+        "the apology the crash left uncertain may reach the booker twice"
     );
 }
