@@ -41,6 +41,14 @@ impl<E> ScopeSummaryExecutor<'_, E> {
     /// page in order from the first, each a durable step a resume replays
     /// from its memo with no second call, and the lines of all of them
     /// landing as one body through the landing fence over the full evidence.
+    /// `refusal` is the window refusal that brought it to `window`, if one
+    /// did: when no smaller page fits after it, the try ends Failed with
+    /// both reasons, once, since a resume would start at the first size and
+    /// resend the refused call (Engine 21 Nov 07:38).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a paged composition joins the attempt, its plan, its evidence, its window and the refusal that set it"
+    )]
     pub(super) async fn compose_pages(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -49,6 +57,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         evidence: &ScopeSummaryEvidence,
         instruction: &str,
         mut window: u64,
+        mut refusal: Option<String>,
         mut charges: StepChargeTally,
     ) -> Result<DreamerAttemptExecution> {
         let attempt_id = attempt.status.attempt.id;
@@ -114,10 +123,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     None => None,
                 };
                 let Some(pages) = pages else {
-                    return Ok(charges.park_for(
-                        &format!("session summary page does not fit: window_tokens={window} frame_tokens={frame}"),
-                        DreamerParkCause::Retry,
-                    ));
+                    let unfit = format!("session summary page does not fit: window_tokens={window} frame_tokens={frame}");
+                    return Ok(match &refusal {
+                        Some(refusal) => charges.fail_for(&format!("{refusal}; {unfit}")),
+                        None => charges.park_for(&unfit, DreamerParkCause::Retry),
+                    });
                 };
                 let count = pages.len() as u64;
                 let mut steps = Vec::with_capacity(pages.len());
@@ -214,6 +224,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                                 && let Some(smaller) = super::window::smaller_window(window)
                             {
                                 window = smaller;
+                                refusal = Some(other.to_string());
                                 continue 'layouts;
                             }
                             return Ok(

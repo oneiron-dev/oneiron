@@ -130,6 +130,19 @@ impl StepChargeTally {
         }
     }
 
+    /// Ends the try `Failed` for `reason`, untyped, with what it already
+    /// spent and its paid steps' receipts: a call the provider refused for
+    /// its window, which the same input meets on every call, so no later
+    /// pass resends it (Engine 21 Nov 07:38).
+    pub(super) fn fail_for(&self, reason: &str) -> DreamerAttemptExecution {
+        DreamerAttemptExecution::Failed {
+            reason: reason.to_owned(),
+            completed_units: self.units,
+            budget_refusal: None,
+            step_bindings: self.step_bindings.clone(),
+        }
+    }
+
     /// [`Self::park`] with a typed cause, for a failed model call or step.
     pub(super) fn park_for(
         &self,
@@ -357,6 +370,17 @@ pub(super) fn retry_fallback(response: &LlmResponse) -> bool {
     )
 }
 
+/// The text of the window refusal a deterministic fallback's `response`
+/// stood in for ([`crate::dreamer_wake::fatal_refuses_window`]), if it stood
+/// in for one. Its reply carries nothing the call read, and the same input
+/// meets the same refusal on every call: the try ends Failed with that text,
+/// once, never as an empty extraction (Engine 21 Nov 07:38).
+pub(super) fn window_fallback(response: &LlmResponse) -> Option<String> {
+    oneiron_model::llm::FallbackRegistry::source_of(response)
+        .filter(crate::dreamer_wake::fatal_refuses_window)
+        .map(|source| source.to_string())
+}
+
 /// What one slice's terminal step left, once its spend is accounted:
 /// the single classification the serial finish and the window arms
 /// that never reach a finish both tally by, so a paid extraction
@@ -452,15 +476,19 @@ pub(super) fn tally_slice_outcome(
 ) -> Result<SliceFate> {
     charge_borrowed_slice_outcome(vault, &outcome, unsaved_usage.as_ref(), charges)?;
     Ok(match outcome {
+        // A fallback that stood in for a window refusal is that refusal.
         Ok(StepOutcome::Finished {
             binding,
             response,
             failure_policy,
             ..
-        }) => SliceFate::Finished {
-            binding,
-            response,
-            failure_policy,
+        }) => match window_fallback(&response) {
+            Some(reason) => SliceFate::WindowRefused { reason },
+            None => SliceFate::Finished {
+                binding,
+                response,
+                failure_policy,
+            },
         },
         Ok(StepOutcome::Trapped { .. }) => SliceFate::Trapped,
         Err(DurableStepError::SpentFinalizeRefused { .. }) => SliceFate::Checkpoint,
@@ -496,9 +524,10 @@ pub(super) fn tally_slice_outcome(
 /// the run a slice already decided, in the finish loop's order:
 /// `Trapped` when any slice trapped, as that step already parked the
 /// attempt under its durable trap and the caller must never extract
-/// past it (FIX 12487 round 2); else `SeatRefused` when a spent model
-/// seat refused a slice and no slice refused one for good (a spend
-/// scope's or the window's refusal, which the finish ends Failed), so
+/// past it (FIX 12487 round 2); else, with no spend scope's refusal for
+/// good, `WindowRefused` when the provider refused a slice for its
+/// window, since a park or a rerun would resend that call (Engine 21 Nov
+/// 07:38), and `SeatRefused` when a spent model seat refused a slice, so
 /// the try waits on that seat instead of a Retry that a later pass
 /// would resume (and ask the seat again) before the seat's available
 /// write (review round 2 of #7340). `None` leaves the caller's own arm.
@@ -508,7 +537,8 @@ pub(super) fn tally_extracted_outcomes(
     charges: &mut StepChargeTally,
 ) -> Result<Option<PartitionRun>> {
     let mut trapped = false;
-    let mut terminal_refused = false;
+    let mut budget_refused = false;
+    let mut window_refused = None;
     let mut seat_refused = None;
     for SliceStep {
         outcome,
@@ -518,8 +548,9 @@ pub(super) fn tally_extracted_outcomes(
     {
         match tally_slice_outcome(vault, outcome, unsaved_usage, charges)? {
             SliceFate::Trapped => trapped = true,
-            SliceFate::BudgetRefused { .. } | SliceFate::WindowRefused { .. } => {
-                terminal_refused = true;
+            SliceFate::BudgetRefused { .. } => budget_refused = true,
+            SliceFate::WindowRefused { reason } => {
+                window_refused.get_or_insert(reason);
             }
             SliceFate::SeatRefused {
                 reason,
@@ -534,7 +565,13 @@ pub(super) fn tally_extracted_outcomes(
     if trapped {
         return Ok(Some(PartitionRun::Trapped));
     }
-    let Some((reason, seat, reset_at_s)) = seat_refused.filter(|_| !terminal_refused) else {
+    if budget_refused {
+        return Ok(None);
+    }
+    if let Some(reason) = window_refused {
+        return Ok(Some(PartitionRun::WindowRefused { reason }));
+    }
+    let Some((reason, seat, reset_at_s)) = seat_refused else {
         return Ok(None);
     };
     Ok(Some(PartitionRun::SeatRefused {

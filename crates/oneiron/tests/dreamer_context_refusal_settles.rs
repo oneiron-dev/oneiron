@@ -4,9 +4,10 @@
 //!
 //! 1. A window-refused extraction step ends its try failed once: one Micro wake pass through
 //!    `DreamerWakeDriver` over one witnessed TURN, the `ConsolidationExecutor` single pass, on a
-//!    backend that refuses every call for its window. The pass counts the try failed with the
-//!    window's text and parks nothing; a second pass 901 s later asks the backend nothing new
-//!    and the try is still failed.
+//!    backend that refuses every call for its window. The step layer answers the extraction's
+//!    deterministic empty fallback, which names the refusal it stood in for; the pass counts the
+//!    try failed with the window's text and parks nothing; a second pass 901 s later asks the
+//!    backend nothing new and the try is still failed.
 //! 2. `dreamer_failed_on_refused_step` answers Failed for the window refusal in every typed
 //!    shape (`Llm`, `ClassifiedLlm` and `SpentLlm` carrying it, and the legacy invalid-request
 //!    detail naming it), and `None` for a rate limit and an unrelated invalid request.
@@ -15,7 +16,8 @@
 //! 4. `correction_overflow` pages a scope summary correction again when the correction is a
 //!    `SpentLlm` refused for the window, as for the legacy shape; a first call is no correction.
 //!
-//! Red on main 9ae17c14523: the window refusal parks as a `Retry` (cases 1 and 3), so the second
+//! Red on main 9ae17c14523: the extraction's empty fallback stands in for the refused call, so
+//! the try never ends failed (case 1); the window refusal parks as a `Retry` (case 3), so a later
 //! pass asks the backend again; `dreamer_failed_on_refused_step` answers `None` for the window
 //! shapes (case 2); and the `ContextWindowExceeded` correction never re-pages (case 4), since the
 //! wire types that 400 as `ContextWindowExceeded` while the recovery only reads the legacy shape.

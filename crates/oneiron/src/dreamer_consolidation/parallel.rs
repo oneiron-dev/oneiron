@@ -368,6 +368,10 @@ impl ConsolidationExecutor<'_> {
         if trapped {
             return Ok(PartitionRun::Trapped);
         }
+        // A window refusal fails before a seat park or checkpoint resends it (Engine 21 Nov 07:38).
+        if let (None, Some(reason)) = (&budget_refused, window_refused) {
+            return Ok(PartitionRun::WindowRefused { reason });
+        }
         // A spent seat waits for its login or its reset, even once the pass
         // is out of time or stopped: a checkpoint would let a later pass ask
         // the seat again before its available write. A spend scope's refusal
@@ -387,9 +391,6 @@ impl ConsolidationExecutor<'_> {
         // A refusal for good ends the try, before a reply a retry may fix.
         if let Some((reason, refusal)) = budget_refused {
             return Ok(PartitionRun::BudgetRefused { reason, refusal });
-        }
-        if let Some(reason) = window_refused {
-            return Ok(PartitionRun::WindowRefused { reason });
         }
         if let Some(reason) = refused {
             return Ok(PartitionRun::Refused { reason });

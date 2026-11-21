@@ -249,6 +249,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     &evidence,
                     instruction,
                     window,
+                    None,
                     StepChargeTally::default(),
                 )
                 .await;
@@ -394,7 +395,16 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     && let Some(window) = session_window.and_then(window::smaller_window)
                 {
                     return self
-                        .compose_pages(attempt, ctx, &plan, &evidence, instruction, window, charges)
+                        .compose_pages(
+                            attempt,
+                            ctx,
+                            &plan,
+                            &evidence,
+                            instruction,
+                            window,
+                            Some(other.to_string()),
+                            charges,
+                        )
                         .await;
                 }
                 if let Some(failed) = crate::dreamer_runner::dreamer_failed_on_refused_step(

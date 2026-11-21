@@ -161,9 +161,15 @@ pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
 /// detail naming `context_length_exceeded`. The same input meets it on every
 /// call, so no later pass clears it and a Retry would only meet it again.
 pub(crate) fn llm_refuses_window(error: &LlmError) -> bool {
+    matches!(error, LlmError::Fatal(fatal) if fatal_refuses_window(fatal))
+}
+
+/// [`llm_refuses_window`] for a provider's fatal failure, as a deterministic
+/// fallback's reply names the one it stood in for.
+pub(crate) fn fatal_refuses_window(error: &FatalLlmError) -> bool {
     match error {
-        LlmError::Fatal(FatalLlmError::ContextWindowExceeded { .. }) => true,
-        LlmError::Fatal(FatalLlmError::InvalidRequestDetail { code, .. }) => {
+        FatalLlmError::ContextWindowExceeded { .. } => true,
+        FatalLlmError::InvalidRequestDetail { code, .. } => {
             code.as_deref() == Some("context_length_exceeded")
         }
         _ => false,

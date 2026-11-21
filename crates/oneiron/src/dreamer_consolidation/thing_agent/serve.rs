@@ -42,7 +42,7 @@ use crate::dreamer_consolidation::failure_rules::{self, FailureRules, Stage};
 use crate::dreamer_consolidation::resources::{BranchResources, ExtractionSlice};
 use crate::dreamer_consolidation::roles::DREAMER_EXTRACTION_ROLE;
 use crate::dreamer_consolidation::sieve_ports::{NeighbourhoodExtraction, SliceStep};
-use crate::dreamer_consolidation::step_charge::StepChargeTally;
+use crate::dreamer_consolidation::step_charge::{StepChargeTally, window_fallback};
 use crate::dreamer_wake::WakeAttemptContext;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -395,6 +395,11 @@ impl ConsolidationExecutor<'_> {
             binding.step_hash,
             &response.usage,
         )?;
+        // A fallback that stood in for a window refusal ends the branch as
+        // that refusal does: the try ends Failed with its text, once.
+        if let Some(reason) = window_fallback(&response) {
+            return Ok(PortServed::End(PartitionRun::WindowRefused { reason }));
+        }
         // Live rules, as today's path reads each reply.
         let rules = failure_rules::load(pass.ctx.vault)?;
         let (candidates, persons) = if accepted(rules.as_ref(), failure_policy, &response) {
