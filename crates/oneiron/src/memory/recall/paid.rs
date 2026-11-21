@@ -117,9 +117,9 @@ pub trait RecallRerankHost: Sync {
         false
     }
 
-    /// Whether a host that [`Self::runs_on_device`] keeps a rung of that plan
-    /// under `routes`, a block's carried worlds' model order; when not, the
-    /// block is built again as for a host off the device (L9-15).
+    /// Whether a host that [`Self::runs_on_device`] keeps, under `routes` (a
+    /// block's carried worlds' model order), a rung of that plan and each one
+    /// its ordinary plan takes; else the block is built as off the device.
     fn on_device_plan_admitted(&self, _routes: &crate::authority::WorldModelRoutes) -> bool {
         true
     }

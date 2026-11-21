@@ -20,9 +20,13 @@
 //! order leaves a rung of that route is sent the words of a row a
 //! device-only world keeps, and each of its calls is admitted on that
 //! on-device route alone, refused unsent once the route could leave the
-//! device. A block whose worlds' order leaves no such rung is built as for a
-//! host off the device and scored on the reranker's ordinary route, as any
-//! other host's is: a row a device-only world keeps goes to it empty. Each rung a call reaches reserves that price,
+//! device. A block whose worlds' order leaves no such rung, or drops a rung
+//! the reranker's ordinary route takes under that order, is built as for a
+//! host off the device and scored on that ordinary route, as any other
+//! host's is: a row a device-only world keeps goes to it empty, and a
+//! local-GPU model pack's pick whose on-device offer the order leaves takes
+//! its model's own-server rung when the order leaves that (a manifest's pin
+//! stays exact). Each rung a call reaches reserves that price,
 //! so a fallback rung goes out only while the line still covers the whole
 //! payload, and a rung that failed after it went out is charged what it may
 //! have billed. Each rung, the first too, goes out only while the
@@ -203,8 +207,9 @@ impl RecallRerankHost for ServedRerank {
     }
 
     /// The reranker's on-device route as the policy reads now, with a rung
-    /// `routes` admits: else the engine builds the block again as for a host
-    /// off the device, and [`Self::score`] takes the ordinary route.
+    /// `routes` admits and each rung the ordinary route takes under `routes`:
+    /// else the engine builds the block again as for a host off the device,
+    /// and [`Self::score`] takes the ordinary route.
     fn on_device_plan_admitted(&self, routes: &WorldModelRoutes) -> bool {
         self.ai
             .role_routes_on_device(&self.vault, ModelRole::Reranker, routes)
@@ -261,7 +266,8 @@ impl RecallRerankHost for ServedRerank {
         // The vault's model policy places the call: its manifest's binding
         // for the role when it has one, the role's seat otherwise. A block
         // built for a host on the device, which carries a kept row's words,
-        // takes the route that keeps the call there, or none.
+        // takes the route that keeps the call there, or none; any other
+        // block, the route its rows' worlds' model order leaves a rung of.
         let call = if egress.on_device() {
             self.ai.admit_role_on_device(
                 &self.vault,
@@ -269,10 +275,11 @@ impl RecallRerankHost for ServedRerank {
                 rerank_request(query, &texts, ModelLocality::OnDevice),
             )
         } else {
-            self.ai.admit_role(
+            self.ai.admit_role_for_world_routes(
                 &self.vault,
                 ModelRole::Reranker,
                 rerank_request(query, &texts, ModelLocality::OwnServer),
+                egress.model_routes(),
             )
         }
         .map_err(|refusal| unavailable(&format!("the reranker call was refused: {refusal}")))?;

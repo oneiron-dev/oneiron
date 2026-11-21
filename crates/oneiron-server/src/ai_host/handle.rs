@@ -208,8 +208,9 @@ impl AiHandle {
     /// fallback it may take is a managed worker this server supervises,
     /// reached over that child's checked channel alone; and `routes`, the
     /// model order of the worlds whose rows the call carries, leaves a rung
-    /// of that route ([`oneiron::authority::WorldModelRoutes::Inherit`]
-    /// leaves every rung). A route that cannot be read is no such route.
+    /// of that route and each rung the call's route off the device takes
+    /// under it ([`oneiron::authority::WorldModelRoutes::Inherit`] leaves
+    /// every rung). A route that cannot be read is no such route.
     #[must_use]
     pub(crate) fn role_routes_on_device(
         &self,
@@ -217,13 +218,7 @@ impl AiHandle {
         role: ModelRole,
         routes: &oneiron::authority::WorldModelRoutes,
     ) -> bool {
-        self.runtime.seat(role).is_some_and(|seat| {
-            self.runtime
-                .on_device_route_role(vault, role, seat)
-                .is_ok_and(|route| {
-                    route.is_some_and(|route| route.ladder.for_world_routes(routes).has_rungs())
-                })
-        })
+        self.runtime.role_routes_on_device(vault, role, routes)
     }
 
     /// [`Self::admit_role`] on the route that keeps a call of `role` on this
@@ -236,6 +231,21 @@ impl AiHandle {
         request: oneiron::LlmRequest,
     ) -> Result<RoleCall, RoleRefusal> {
         self.runtime.admit_role_on_device(vault, role, request)
+    }
+
+    /// [`Self::admit_role`] for a call of `role` off this device that
+    /// carries rows whose worlds order its offers by `routes`: a local-GPU
+    /// model pack's pick whose on-device offer `routes` leaves takes its
+    /// model's own-server rung when `routes` leaves that (L9-15).
+    pub(crate) fn admit_role_for_world_routes(
+        &self,
+        vault: &Vault,
+        role: ModelRole,
+        request: oneiron::LlmRequest,
+        routes: &oneiron::authority::WorldModelRoutes,
+    ) -> Result<RoleCall, RoleRefusal> {
+        self.runtime
+            .admit_role_for_world_routes(vault, role, request, routes)
     }
 
     /// A run that declares nothing on `meter` (a chat turn's line), with this

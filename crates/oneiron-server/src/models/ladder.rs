@@ -411,6 +411,21 @@ impl OfferLadder {
             })
     }
 
+    /// Whether each rung of `other` has one in this ladder at the same engine
+    /// model, configured position and prompt, in any order: this ladder
+    /// takes every fallback `other`'s call takes, over its own offers
+    /// (L9-15).
+    #[must_use]
+    pub(super) fn holds_rungs_of(&self, other: &Self) -> bool {
+        other.rungs.iter().all(|theirs| {
+            self.rungs.iter().any(|own| {
+                own.model == theirs.model
+                    && own.position == theirs.position
+                    && own.prompt == theirs.prompt
+            })
+        })
+    }
+
     /// Whether this ladder has a rung a call can be sent to.
     #[must_use]
     pub(crate) fn has_rungs(&self) -> bool {

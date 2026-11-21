@@ -1919,9 +1919,12 @@ rung beside its socket rungs is no such route, nor is a view that keeps a
 rung the role's `leave_device = "never"` drops from the seat, so the recall
 still sends that row empty, as it does to any other reranker. When the
 model order of the worlds whose rows a block would send with words leaves
-no rung of the on-device route, that block is built as for any other
+no rung of the on-device route, or drops a rung the reranker's ordinary
+route takes under that order, that block is built as for any other
 reranker: the device-only row goes empty, and the call takes the
-reranker's ordinary route.
+reranker's ordinary route under that order. There a local-GPU model pack's
+pick whose on-device offer the order leaves takes the model's own-server
+rung when the order names that offer; a manifest's pin stays exact.
 
 ## 9. The decision read
 
