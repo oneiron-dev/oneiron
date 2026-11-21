@@ -243,6 +243,13 @@ pub fn write_calendar_event(
         return Err(CalendarConnectorError::KillSwitchEngaged);
     }
     operation.revalidate(vault)?;
+    // An install born of a restore that has not joined writes nothing out,
+    // new or resumed, whoever asks (row RESTORED-UNJOINED-STARTS-NO-WORK):
+    // refused before the outbox row is staged or the provider is called.
+    {
+        let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        vault.refuse_work_while_restored_unjoined_in_txn(&rtxn)?;
+    }
     if vault.get_entity_type(&event_ref)? != Some(ENTITY_TYPE_EVENT) {
         return Err(ingest_error("write target is not an EVENT"));
     }
