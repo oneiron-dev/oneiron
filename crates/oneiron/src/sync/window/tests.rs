@@ -1173,15 +1173,15 @@ fn prune_refuses_keys_outside_the_window_family() {
     let (_dir, vault) = test_vault();
     let key = WindowKey::new("2026-03");
     vault
-        .sync_state_put("u:w:2026-03:00000001", b"in-scope")
+        .sync_state_put("u:w:2026-03:0000000000000001", b"in-scope")
         .unwrap();
     vault
-        .sync_state_put("u:w:2026-02:00000001", b"foreign")
+        .sync_state_put("u:w:2026-02:0000000000000001", b"foreign")
         .unwrap();
 
     let keys = vec![
-        "u:w:2026-03:00000001".to_string(),
-        "u:w:2026-02:00000001".to_string(),
+        "u:w:2026-03:0000000000000001".to_string(),
+        "u:w:2026-02:0000000000000001".to_string(),
     ];
     let err = vault
         .with_write_txn(|wtxn| prune_subsumed_window_updates_in_txn(&vault, wtxn, &key, &keys))
@@ -1197,7 +1197,7 @@ fn prune_refuses_keys_outside_the_window_family() {
     );
     assert_eq!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .as_deref(),
         Some(b"in-scope".as_slice()),
@@ -1205,7 +1205,7 @@ fn prune_refuses_keys_outside_the_window_family() {
     );
     assert_eq!(
         vault
-            .sync_state_get("u:w:2026-02:00000001")
+            .sync_state_get("u:w:2026-02:0000000000000001")
             .unwrap()
             .as_deref(),
         Some(b"foreign".as_slice())
