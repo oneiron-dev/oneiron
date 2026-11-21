@@ -27,6 +27,18 @@ fn fact(task_ref: EntityId, kind: TaskAuthorityFactKind, actor_ref: EntityId) ->
     }
 }
 
+fn owner_fact(nonce: EntityId, owner_ref: EntityId) -> TaskAuthorityFact {
+    let maker = TaskMaker {
+        maker_ref: owner_ref,
+        nonce,
+    };
+    let task_ref = maker.task_ref(owner_ref).expect("derive task id");
+    TaskAuthorityFact {
+        maker: Some(maker),
+        ..fact(task_ref, TaskAuthorityFactKind::Owner, owner_ref)
+    }
+}
+
 fn put_fact(vault: &Vault, fact: TaskAuthorityFact) -> EntityId {
     let mut wtxn = vault.store.env.write_txn().expect("write txn");
     let fact_ref = put_task_authority_fact_in_txn(vault, &mut wtxn, fact).expect("put fact");
@@ -57,9 +69,9 @@ fn body_with(body: &[u8], key: &str, value: Value) -> Vec<u8> {
 }
 
 /// The wire is the contract: every field survives a round trip, and every
-/// shape that is not exactly a v1 fact is refused rather than guessed at.
+/// shape that is not exactly a v3 fact is refused rather than guessed at.
 #[test]
-fn strict_v1_bodies_round_trip_and_reject_everything_else() {
+fn strict_v3_bodies_round_trip_and_reject_everything_else() {
     let original = TaskAuthorityFact {
         task_ref: id(0xA1),
         kind: TaskAuthorityFactKind::Cancelled,
@@ -88,7 +100,7 @@ fn strict_v1_bodies_round_trip_and_reject_everything_else() {
         (BODY_KEY_ROLE, Value::from(TaskRole::Task.role_byte())),
         (BODY_KEY_SCHEMA_VERSION, Value::from(2_u8)),
         (BODY_KEY_SUBKIND, Value::from("typed")),
-        (BODY_KEY_KIND, Value::from(7_u8)),
+        (BODY_KEY_KIND, Value::from(9_u8)),
         (BODY_KEY_TASK_REF, Value::from("not-a-hex-id")),
         (BODY_KEY_OCCURRED_AT, Value::from("not-a-number")),
     ] {
@@ -145,7 +157,7 @@ fn strict_v1_bodies_round_trip_and_reject_everything_else() {
     cases.push(rewrite_body(&parties_encoded, |entries| {
         entries.push((
             Value::from(BODY_KEY_ASSIGNED_GENERATION),
-            Value::Binary(vec![0xB2; 32]),
+            Value::Array(vec![binding(0xB2)]),
         ));
     }));
     for (index, case) in cases.iter().enumerate() {
@@ -154,15 +166,29 @@ fn strict_v1_bodies_round_trip_and_reject_everything_else() {
             "case {index} must be refused"
         );
     }
+
+    let uncapped = body_with(
+        &parties_encoded,
+        BODY_KEY_ACTOR_GENERATION,
+        Value::Array((0..=8).map(binding).collect()),
+    );
+    assert_eq!(
+        decode_task_authority_fact_body(&uncapped).expect("nine bindings decode"),
+        TaskAuthorityFact {
+            actor_generation: BindingGeneration::from_bindings((0..=8).map(|byte| [byte; 32])),
+            ..parties
+        }
+    );
 }
 
 #[test]
 fn human_assignment_witness_requires_matching_owner_and_fails_closed_on_fork() {
     let (_dir, vault) = open_vault();
-    let task = id(0xA5);
     let owner = id(0xA6);
     let other = id(0xA7);
-    put_fact(&vault, fact(task, TaskAuthorityFactKind::Owner, owner));
+    let owner_proof = owner_fact(id(0xA5), owner);
+    let task = owner_proof.task_ref;
+    put_fact(&vault, owner_proof);
     let txn = vault.store.env.read_txn().expect("read txn");
     assert_eq!(vault.task_human_assigner_in(&txn, task).unwrap(), None);
     drop(txn);
@@ -183,25 +209,44 @@ fn human_assignment_witness_requires_matching_owner_and_fails_closed_on_fork() {
     });
     assert!(decode_task_authority_fact_body(&missing_agent).is_err());
     drop(txn);
-    put_fact(
-        &vault,
-        fact(task, TaskAuthorityFactKind::HumanAssigned, other),
-    );
+    let wrong_actor = fact(task, TaskAuthorityFactKind::HumanAssigned, other);
+    let mut wtxn = vault.store.env.write_txn().expect("write txn");
+    assert!(matches!(
+        put_task_authority_fact_in_txn(&vault, &mut wtxn, wrong_actor.clone()),
+        Err(Error::InvariantViolation(
+            "task authority fact names an actor that may not make it"
+        ))
+    ));
+    write_task_authority_fact_in_txn(&vault, &mut wtxn, wrong_actor).expect("seed non-owner fact");
+    wtxn.commit().expect("commit non-owner fact");
     let txn = vault.store.env.read_txn().expect("read txn");
-    assert!(vault.task_human_assigner_in(&txn, task).is_err());
+    assert_eq!(
+        vault.task_human_assigner_in(&txn, task).unwrap(),
+        Some((owner, id(0xA8)))
+    );
     drop(txn);
 
-    let another = id(0xA9);
-    put_fact(&vault, fact(another, TaskAuthorityFactKind::Owner, owner));
+    let owner_proof = owner_fact(id(0xA9), owner);
+    let another = owner_proof.task_ref;
+    put_fact(&vault, owner_proof);
     put_fact(
         &vault,
         fact(another, TaskAuthorityFactKind::HumanAssigned, owner),
     );
     let mut changed = fact(another, TaskAuthorityFactKind::HumanAssigned, owner);
     changed.assigned_ref = Some(other);
-    put_fact(&vault, changed);
+    let mut wtxn = vault.store.env.write_txn().expect("write txn");
+    assert!(matches!(
+        put_task_authority_fact_in_txn(&vault, &mut wtxn, changed.clone()),
+        Err(Error::Record(RecordError::TaskAssignmentConflict { .. }))
+    ));
+    write_task_authority_fact_in_txn(&vault, &mut wtxn, changed).expect("seed assignment fork");
+    wtxn.commit().expect("commit assignment fork");
     let txn = vault.store.env.read_txn().expect("read txn");
-    assert!(vault.task_human_assigner_in(&txn, another).is_err());
+    assert!(matches!(
+        vault.task_human_assigner_in(&txn, another),
+        Err(Error::InvariantViolation("task human assignment fork"))
+    ));
 }
 
 /// Two facts naming the SAME owner are one owner: replicas that both
@@ -209,10 +254,11 @@ fn human_assignment_witness_requires_matching_owner_and_fails_closed_on_fork() {
 #[test]
 fn duplicate_same_owner_facts_are_idempotent() {
     let (_dir, vault) = open_vault();
-    let task_ref = id(0xC1);
     let owner = id(0xC2);
-    put_fact(&vault, fact(task_ref, TaskAuthorityFactKind::Owner, owner));
-    put_fact(&vault, fact(task_ref, TaskAuthorityFactKind::Owner, owner));
+    let proof = owner_fact(id(0xC1), owner);
+    let task_ref = proof.task_ref;
+    put_fact(&vault, proof.clone());
+    put_fact(&vault, proof);
 
     assert_eq!(
         vault.task_authority_state(task_ref).expect("state"),
@@ -230,9 +276,10 @@ fn duplicate_same_owner_facts_are_idempotent() {
 #[test]
 fn fact_body_subject_must_equal_the_edge_target() {
     let (_dir, vault) = open_vault();
-    let owned = id(0xF1);
     let foreign = id(0xF2);
-    let fact_ref = put_fact(&vault, fact(owned, TaskAuthorityFactKind::Owner, id(0xF3)));
+    let proof = owner_fact(id(0xF1), id(0xF3));
+    let owned = proof.task_ref;
+    let fact_ref = put_fact(&vault, proof);
     vault
         .batch()
         .edge(&fact_ref, EdgeKind::ScopedTo, &foreign, 0.7)
@@ -286,9 +333,10 @@ fn generic_write_doors_refuse_the_reserved_role() {
 #[test]
 fn an_authority_fact_admits_only_an_exact_echo() {
     let (_dir, vault) = open_vault();
-    let task_ref = id(0xD1);
     let owner = id(0xD2);
-    let fact_ref = put_fact(&vault, fact(task_ref, TaskAuthorityFactKind::Owner, owner));
+    let proof = owner_fact(id(0xD1), owner);
+    let task_ref = proof.task_ref;
+    let fact_ref = put_fact(&vault, proof);
     let raw = {
         let txn = vault.store.env.read_txn().expect("read txn");
         crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &fact_ref)

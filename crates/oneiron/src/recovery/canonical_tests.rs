@@ -1672,15 +1672,17 @@ fn canonical_capture_refuses_a_deleted_row_without_its_tombstone() -> Result<()>
     Ok(())
 }
 
-/// F24 round 9 (Astra r8 R8-1): a build without sync captures too. Its
-/// capture leaves out the carrier of a deleted fact this vault never
-/// admitted, so it marks that fact's task first, and the artifact carries
-/// the refusal. Positive control: a task with no such fact still reads.
+/// A build without sync can carry the refusal of a fact it never admitted.
+/// The capturing install signs the cancellation, and its fold admits its profile.
+/// The capture keeps that refused row but no suppression mark for it. An unsigned
+/// cancellation at another deleted id leaves its task readable.
+#[cfg(oneiron_test_support)]
 #[test]
 fn a_capture_without_sync_carries_the_refusal_of_a_deleted_fact_never_admitted() -> Result<()> {
     use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
     use crate::task_authority::{
-        TaskAuthorityFact, TaskAuthorityFactKind, encode_task_authority_fact_body,
+        TaskAuthorityFact, TaskAuthorityFactKind, TaskMaker,
+        carried_task_authority_fact_body_in_txn, encode_task_authority_fact_body,
         put_task_authority_fact_in_txn,
     };
     const LEARNED_AT: u64 = 1_772_400_000; // 2026-03 window
@@ -1690,9 +1692,17 @@ fn a_capture_without_sync_carries_the_refusal_of_a_deleted_fact_never_admitted()
     };
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let issuer = crate::test_support::test_host_issuer();
+    vault.ensure_host_root_slip(&issuer)?;
+    let embedded = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    vault.bind_host_owner_for_test(&issuer, embedded)?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing()?;
+    vault.ensure_serving_install_profile(&issuer, crate::authority::MachineRole::Unanswered)?;
+
     let owner = EntityId::now();
     vault.put_entity(&owner, ENTITY_TYPE_PERSON, at, LEARNED_AT, b"x")?;
-    let fact_of = |task_ref, kind| TaskAuthorityFact {
+    let fact_of = |task_ref, kind, maker| TaskAuthorityFact {
         task_ref,
         kind,
         actor_ref: owner,
@@ -1701,14 +1711,17 @@ fn a_capture_without_sync_carries_the_refusal_of_a_deleted_fact_never_admitted()
         assigned_generation: None,
         answered_heads: None,
         occurred_at: LEARNED_AT,
-        maker: None,
+        maker,
     };
     let window = LoroDoc::new();
-    let entities = window.get_map("entities");
     let mut carried = vec![owner];
     let mut tasks = Vec::new();
     for _ in 0..2 {
-        let task = EntityId::now();
+        let maker = TaskMaker {
+            maker_ref: owner,
+            nonce: EntityId::now(),
+        };
+        let task = maker.task_ref(owner)?;
         vault.put_entity(
             &task,
             ENTITY_TYPE_TASK,
@@ -1720,7 +1733,7 @@ fn a_capture_without_sync_carries_the_refusal_of_a_deleted_fact_never_admitted()
             put_task_authority_fact_in_txn(
                 &vault,
                 wtxn,
-                fact_of(task, TaskAuthorityFactKind::Owner),
+                fact_of(task, TaskAuthorityFactKind::Owner, Some(maker)),
             )
         })?;
         carried.extend([task, owner_fact]);
@@ -1728,33 +1741,35 @@ fn a_capture_without_sync_carries_the_refusal_of_a_deleted_fact_never_admitted()
     }
     for id in &carried {
         let raw = vault.get_raw(id)?.expect("stored row");
-        entities.insert(&id.to_hex(), &raw[..]).expect("carrier");
+        canonical::insert(&window, "entities", &id.to_hex(), &raw)?;
     }
-    // A cancellation of the first task, never admitted here, and the hard
-    // tombstone of its id.
+
     let fact = EntityId::now();
-    let body =
-        encode_task_authority_fact_body(&fact_of(tasks[0], TaskAuthorityFactKind::Cancelled));
-    let mut blob = vec![ENTITY_TYPE_TASK];
-    for stamp in [at.start, at.end, LEARNED_AT] {
-        blob.extend_from_slice(&stamp.to_be_bytes());
-    }
-    blob.extend_from_slice(&0u64.to_be_bytes());
-    blob.extend_from_slice(&body);
-    entities
-        .insert(&fact.to_hex(), &blob[..])
-        .expect("fact carrier");
+    let body = {
+        let txn = vault.store.env.read_txn()?;
+        carried_task_authority_fact_body_in_txn(
+            &vault,
+            &txn,
+            &fact,
+            &fact_of(tasks[0], TaskAuthorityFactKind::Cancelled, None),
+        )?
+        .expect("the capturing install signs the cancellation")
+    };
+    let unsigned = EntityId::now();
+    let unsigned_body =
+        encode_task_authority_fact_body(&fact_of(tasks[1], TaskAuthorityFactKind::Cancelled, None));
     let tombstone = crate::deletion::TombstoneValueV2 {
         reason: crate::deletion::TombstoneReason::UserHardDelete,
         deleted_at: LEARNED_AT,
         request_id: [0x5A; 16],
     }
-    .encode()
-    .to_vec();
-    window
-        .get_map("tombstones")
-        .insert(&fact.to_hex(), &tombstone[..])
-        .expect("tombstone");
+    .encode();
+    for (id, bytes) in [(fact, &body), (unsigned, &unsigned_body)] {
+        let blob = crate::test_fixtures::entity_record(ENTITY_TYPE_TASK, at, LEARNED_AT, 0, bytes);
+        canonical::insert(&window, "entities", &id.to_hex(), &blob)?;
+        canonical::insert(&window, "tombstones", &id.to_hex(), &tombstone)?;
+    }
+    window.commit();
 
     let snapshot = capture_canonical_window(&vault, "2026-03", &window)?;
     assert!(
@@ -1766,8 +1781,27 @@ fn a_capture_without_sync_carries_the_refusal_of_a_deleted_fact_never_admitted()
         ),
         "the capturing vault's task reads as a refusal"
     );
-    assert_eq!(snapshot.suppressed_tasks, vec![*tasks[0].as_bytes()]);
+    assert!(snapshot.suppressed_tasks.is_empty());
+    assert_eq!(
+        snapshot.refused_task_facts,
+        vec![CanonicalRefusedTaskFact {
+            task: *tasks[0].as_bytes(),
+            fact: *fact.as_bytes(),
+            body,
+        }],
+        "only the signed cancellation is kept as a refused row"
+    );
+    assert!(
+        snapshot
+            .entity_blobs
+            .iter()
+            .all(|row| row.id != *fact.as_bytes() && row.id != *unsigned.as_bytes())
+    );
     let state = vault.task_authority_state(tasks[1])?.expect("owned task");
-    assert_eq!((state.owner_ref, state.cancelled), (owner, false));
+    assert_eq!(
+        (state.owner_ref, state.cancelled),
+        (owner, false),
+        "an unsigned peer cancellation at a deleted id leaves its task readable"
+    );
     Ok(())
 }

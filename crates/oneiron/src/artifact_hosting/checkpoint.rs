@@ -30,7 +30,10 @@ const ACTOR: &str = "actor";
 /// when its export is a version of that artifact.
 pub(crate) const POINTERS: &dyn AdapterTable = &PlacedTable {
     table: ARTIFACT_POINTERS,
-    place: place_pointer,
+    place: |out, row| {
+        place_pointer(out, row);
+        Ok(())
+    },
 };
 
 /// The publish admissions, each under its export's artifact, its actor split
@@ -66,14 +69,7 @@ fn put_actor(admission: &mut ArtifactPublishAdmission, field: &str, actor: Entit
 
 /// A pointer under its artifact; a code fork's pointer, or one whose key
 /// names another artifact, has no proved owner.
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "a placement callback: PlacedTable's fn pointer returns Result"
-)]
-fn place_pointer(
-    out: &mut Captured,
-    row: TypedRow<ArtifactPointerRowKey, ArtifactPointerRow>,
-) -> Result<()> {
+fn place_pointer(out: &mut Captured, row: TypedRow<ArtifactPointerRowKey, ArtifactPointerRow>) {
     match row.value.export {
         ArtifactExportRef::BlobVersion { artifact_id, .. }
             if row.key.artifact == artifact_id.to_hex() =>
@@ -82,7 +78,6 @@ fn place_pointer(
         }
         _ => out.unclassified(row.at, None, Unresolved::NoOwner),
     }
-    Ok(())
 }
 
 /// An admission under the artifact its export names, when that is its own

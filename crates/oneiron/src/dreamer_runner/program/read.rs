@@ -62,6 +62,7 @@ pub use self::views::{
 
 // FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY: the paused programs of a vault copy.
 pub use self::paused::paused_turn_programs;
+pub(super) use self::paused::{paused_armings_in_txn, paused_item, skills_now_in_txn};
 pub use self::views::{PausedTurnProgramItem, PausedTurnProgramsRequest, PausedTurnProgramsView};
 
 /// Items a page carries when the request names no limit, and the most one
@@ -725,7 +726,7 @@ fn issue_view(issue: &StepIssue) -> ProgramStepIssueView {
 /// Of `ids`, the ones that read on the caller's own lane, each read listed
 /// as a producer. An unknown or withheld row does not read; it never fails
 /// the read.
-fn readable_on_lane(
+pub(super) fn readable_on_lane(
     memory: &Memory<'_>,
     ids: impl IntoIterator<Item = EntityId>,
 ) -> MemoryResult<BTreeSet<EntityId>> {

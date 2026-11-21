@@ -58,7 +58,9 @@ impl PipelineBuilder<'_> {
     // still never seeds; decay simply does not participate. Every
     // list that blend fused holds only the call's made_by slice, so
     // a row the call drops never seeds implicitly; an explicit seed
-    // is the caller's own and stays.
+    // is the caller's own and stays. A row a clamped pack's sweep
+    // refuses takes no implicit seed slot either
+    // ([`Self::clamp_refuses_implicit_seed`]).
     //
     // Returns `None` when `expand_ppr` is not configured.
     pub(super) fn expand_ppr_stage(
@@ -87,7 +89,21 @@ impl PipelineBuilder<'_> {
         } else {
             self.result_limit
         };
-        for scored in scores.iter().take(implicit_seed_limit) {
+        let mut implicit_slots = implicit_seed_limit;
+        for scored in scores {
+            if implicit_slots == 0 {
+                break;
+            }
+            if self.clamp_refuses_implicit_seed(
+                rtxn,
+                &scored.id,
+                inputs.filter_config.disclosure,
+                metadata_cache,
+                claim_gate,
+            )? {
+                continue;
+            }
+            implicit_slots -= 1;
             if seen.insert(scored.id) {
                 seeds.push(scored.id);
             }
@@ -316,5 +332,40 @@ impl PipelineBuilder<'_> {
                 ppr_expand_executed: false,
             }))
         }
+    }
+
+    /// Whether a clamped pack's sweep refuses `id`, the sources of its words
+    /// included ([`crate::context_pack::retained_copies::clamp_admits`]).
+    /// A list no bounded fetch asked keeps a row the audience could read by
+    /// its own row (`PipelineBuilder::retain_rows_the_clamp_admits`), so a
+    /// row whose words come from a row it may not read can rank in the
+    /// preliminary blend until the sweep drops it. Such a row takes no
+    /// implicit seed slot, so the readable rows below it still seed the walk
+    /// (REVIEW-10215 round 1; the exact phonetic hits ask the sources of
+    /// their words before the blend since round 2). False with no clamp, and for a row with
+    /// no parseable envelope.
+    fn clamp_refuses_implicit_seed(
+        &self,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        clamp: Option<&crate::disclosure::DisclosureContext>,
+        metadata_cache: &mut EntityMetadataCache,
+        claim_gate: &ClaimStatusGateCache,
+    ) -> Result<bool> {
+        let Some(clamp) = clamp else {
+            return Ok(false);
+        };
+        let Some(meta) = metadata_cache.get(&self.read, rtxn, id)? else {
+            return Ok(false);
+        };
+        Ok(!crate::context_pack::retained_copies::clamp_admits(
+            clamp,
+            self.vault,
+            &self.read,
+            rtxn,
+            id,
+            meta.entity_type,
+            claim_gate.decisions.get(id).and_then(Option::as_ref),
+        )?)
     }
 }

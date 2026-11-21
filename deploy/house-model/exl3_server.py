@@ -14,7 +14,9 @@ its pages fit in the shared cache beside the pages the admitted ones hold. A
 request that does not fit waits; none is refused for its size, cut short or
 evicted. A request whose body sets `"oneiron_solo": true` runs alone: it
 waits its turn in arrival order, the scheduler lets what is in flight finish,
-runs it by itself, then admits again.
+runs it by itself, then admits again. A request whose body sets
+`"oneiron_prompt_lookup": false` takes no prompt-lookup proposal (the speed
+part prompt_lookup): every proposal it is offered is the draft's.
 
 A thinking reply is split as llama.cpp's `--reasoning-format deepseek` splits
 it: the text before `</think>` comes back as `reasoning_content`, the answer as
@@ -86,6 +88,7 @@ keeps its call's pages, place and reservation charged until it ends.
 import argparse
 import collections
 import json
+import os
 import queue
 import socket
 import sys
@@ -104,6 +107,7 @@ import weights_manifest
 from body_codec import UnsupportedEncoding, decode_body
 from jinja2 import Environment
 from exllamav3 import Cache, CacheLayer_quant, Config, Generator, Job, LLGuidanceFilter, Model, Tokenizer
+from exllamav3.ext import exllamav3_ext
 from exllamav3.generator.sampler import ComboSampler
 
 try:
@@ -129,6 +133,11 @@ DEFAULT_IN_FLIGHT = 4
 # The request body's field that asks for solo admission: true runs the request
 # with nothing else in flight.
 SOLO_FIELD = "oneiron_solo"
+# The request body's field that turns prompt lookup off for one request: false
+# gives its Jobs no lookup proposal, so the draft proposes every block; true or
+# absent keeps the server's setting (a server with lookup off offers none).
+# The engine sends false on its one retry of a reply that failed its JSON parse.
+PROMPT_LOOKUP_FIELD = "oneiron_prompt_lookup"
 # The draft's KV ring, in pages per in-flight slot, when the launcher names
 # none (`install_draft_ring`). Every layer of the DFlash2 draft slides over
 # 2048 tokens, and a ring covers the window plus 3 pages, so 11 is the least
@@ -145,6 +154,43 @@ DEFAULT_CACHE_TOKENS = 85504
 # there is no draft: INF 1's 40192 (FIX 6974), the largest pool measured at
 # four in flight whose peak left 2 GiB of the card's 24564 MiB.
 DEFAULT_CACHE_TOKENS_WITHOUT_RING = 40192
+# The speed parts (README, "Speed parts"; QWEN-EVAL-1 arm astra-skill), each
+# its own switch, `--<part>` or `--no-<part>`, and whether it is on when the
+# launcher names neither. A part is on by default only when its measurement on
+# the Dreamer's nightly call keeps it (prompt lookup so far); with every part
+# off, the server runs as without them.
+SPEED_PART_DEFAULTS = {
+    "fuse_projections": False,     # A-0026: fused same-input projections at every bitrate
+    "fp16_prefill": False,         # A-0028: FP16 accumulation in reconstructed prefill GEMMs
+    "prompt_lookup": True,         # A-0009 + A-0012: proposals from the request's own history
+    "draft_window_tables": False,  # A-0016: the draft's block tables cut to its live window
+}
+# The speed parts that change the arithmetic of the target's own forward, and
+# so the KV a prefill writes. A session snapshot names those that were on, and
+# a worker imports only a snapshot whose list is its own
+# (`exl3_session.layer.compatibility`), so KV computed one way is never
+# installed, unreplayed, on a worker that computes it the other way. Prompt
+# lookup and the window tables change only what is proposed and verified.
+KV_ARITHMETIC_PARTS = ("fuse_projections", "fp16_prefill")
+# The exllamav3 variables that decide which same-input projections fuse
+# (each Config reads them when it is built). The fuse_projections switch owns
+# them (`set_projection_fusion`): an inherited value, say from a systemd
+# EnvironmentFile, would fuse projections that the identity and the snapshot
+# compatibility do not name.
+PROJECTION_FUSION_ENV = ("EXL3_MGEMM_K_THRESHOLD", "EXL3_MGEMM_N_THRESHOLD")
+# FP16 accumulation runs in a reconstructed prefill GEMM of at least this many
+# rows into an FP16 output (`install_fp16_prefill`).
+FP16_PREFILL_MIN_ROWS = 384
+# Prompt lookup (`install_prompt_lookup`): the shortest match of a job's own
+# history that is a candidate; the match lengths that open the second and
+# third bucket; each bucket's starting (accepted, proposed) count; the
+# verified acceptance a bucket needs; and how often a bucket under it is
+# tried anyway, in candidates.
+LOOKUP_MIN_MATCH = 4
+LOOKUP_BUCKET_MATCHES = (8, 16)
+LOOKUP_PRIOR = (8, 14)
+LOOKUP_MIN_ACCEPTANCE = 0.60
+LOOKUP_RETRY_EVERY = 12
 # Submitted requests that wait for admission. Past it a request waits in its
 # own handler for a place; it is never refused.
 INGRESS_CAPACITY = 4
@@ -291,7 +337,7 @@ def launch_draft_identity(manifest_path):
     return value if isinstance(value, str) and value else None
 
 
-def install_draft_ring(generator, draft, ring):
+def install_draft_ring(generator, draft, ring, window_tables=False):
     """Routes every DFlash draft-cache access through a ring of `ring` pages per in-flight slot (`--draft-ring-pages`,
     DEFAULT_DRAFT_RING_PAGES by default). The DFlash2 draft's layers all slide over 2048 tokens, so a slot's draft KV
     never needs more than its window plus the pages in flight, and the VRAM a full-pool draft copy takes goes to the
@@ -299,13 +345,31 @@ def install_draft_ring(generator, draft, ring):
     normalised packets per hour over stock on mel). The slot of each batch row is set around the three Generator paths that touch the draft
     cache (the draft forward, the post-verify KV update, a Job's prefill hand-off); any other access fails loudly
     rather than index the small cache with target page numbers. Defragmentation leaves the draft cache alone
-    (exllamav3's EXL3_DEBUG_NO_DRAFT_DEFRAG): its pages are not the target's. No exllamav3 file is edited."""
-    import os
+    (exllamav3's EXL3_DEBUG_NO_DRAFT_DEFRAG): its pages are not the target's. No exllamav3 file is edited.
+
+    With `window_tables` (the speed part draft_window_tables, QWEN-EVAL-1 arm astra-skill A-0016), the draft
+    forward of a draft round reads only the pages its window can see: each row's table starts at the page that holds
+    its first visible key, its sequence length counts from there, and its positions stay absolute, so every key the
+    window shows is read as before and its rotary position is unchanged. The attention kernels size their work from
+    the table's width, which without the cut grows with the whole sequence. Only a draft whose every attention layer
+    slides, with no sink key, qualifies. The post-verify KV update and the prefill hand-off keep the full table."""
     import torch
     from exllamav3.generator import job as job_module
     os.environ["EXL3_DEBUG_NO_DRAFT_DEFRAG"] = "1"
     tables = {}
-    state = {"slots": None}
+    state = {"slots": None, "window": False}
+    keep = width = 0
+    if window_tables:
+        layers = list(getattr(draft, "attn_modules", None) or [])
+        if not layers or any(int(m.sliding_window) <= 0 or m.sink_key0 for m in layers):
+            raise RuntimeError("--draft-window-tables needs a draft whose every attention layer slides, with no sink key")
+        keep = max(int(m.sliding_window) for m in layers)
+        # The visible keys, the page the first of them may start inside, and the drafted block, in whole pages,
+        # rounded up to 16 as exllamav3 rounds its own draft tables.
+        width = (-(-(keep + PAGE + int(draft.config.block_size)) // PAGE) + 15) // 16 * 16
+        if keep + 2 * PAGE + int(draft.config.block_size) > ring * PAGE:
+            raise RuntimeError(f"--draft-window-tables: a {ring}-page ring cannot hold a {keep}-token window")
+    columns = torch.arange(max(width, 1), dtype=torch.int64)
 
     def slot_of(job):
         if len(job.sequences) != 1 or job.recurrent_state is None:
@@ -334,20 +398,46 @@ def install_draft_ring(generator, draft, ring):
         out["block_table"] = ring_table(params["block_table"])
         return out
 
+    def windowed(params):
+        """The draft round's params with each row's table, length and positions cut to its window."""
+        bt, seqlens = params.get("block_table"), params.get("cache_seqlens")
+        if bt is None or not isinstance(seqlens, torch.Tensor) or seqlens.device.type != "cpu":
+            raise RuntimeError("draft ring: a windowed draft forward without a host block table and lengths")
+        if "dev_cache" in params or "positions" in params or "position_ids" in params:
+            raise RuntimeError("draft ring: a windowed draft forward whose params already hold positions")
+        slots = state["slots"]
+        rows = int(bt.shape[0])
+        if slots is None or rows != len(slots):
+            raise RuntimeError(f"draft ring: {rows} block-table rows against slots {slots}")
+        cols = min(int(bt.shape[-1]), width)
+        table = generator._staging("draft_ring_window_table", rows, cols, dtype=bt.dtype)
+        lengths = generator._staging("draft_ring_window_seqlens", rows, dtype=seqlens.dtype)
+        positions = generator._staging("draft_ring_window_positions", rows, dtype=seqlens.dtype)
+        for row, slot in enumerate(slots):
+            kv = int(seqlens[row])
+            first = max(0, kv - keep) // PAGE
+            table[row].copy_((columns[:cols] + first) % ring + slot * ring)
+            lengths[row] = kv - first * PAGE
+            positions[row] = kv
+        out = dict(params)
+        out["block_table"], out["cache_seqlens"], out["positions"] = table, lengths, positions
+        return out
+
     base_forward = draft.forward
     base_update = draft.update_kv_from_target
 
     def forward(*args, **kwargs):
         if "params" in kwargs:
             params = kwargs["params"]
-            new = remapped(params)
+            new = windowed(params) if state["window"] else remapped(params)
             kwargs["params"] = new
             try:
                 return base_forward(*args, **kwargs)
             finally:
-                # Callers read what forward wrote into params (sample_from_state); keep them on the caller's dict
+                # Callers read what forward wrote into params (sample_from_state); keep them on the caller's dict,
+                # with the caller's own table and lengths
                 for k, v in new.items():
-                    if k not in ("block_table", "dev_cache"):
+                    if k not in ("block_table", "dev_cache", "cache_seqlens"):
                         params[k] = v
                 params["dev_cache"] = None
         raise RuntimeError("draft ring: draft forward without params=")
@@ -358,19 +448,22 @@ def install_draft_ring(generator, draft, ring):
     draft.forward = forward
     draft.update_kv_from_target = update_kv_from_target
 
-    def with_slots(fn, rows):
+    def with_slots(fn, rows, window=False):
         def run(*args, **kwargs):
             state["slots"] = rows()
+            state["window"] = window
             try:
                 return fn(*args, **kwargs)
             finally:
                 state["slots"] = None
+                state["window"] = False
         return run
 
     def batch_rows():
         return [slot_of(job) for job in generator.active_jobs if job.is_prefill_done()]
 
-    generator.iterate_draftmodel_dflash_gen = with_slots(generator.iterate_draftmodel_dflash_gen, batch_rows)
+    generator.iterate_draftmodel_dflash_gen = with_slots(generator.iterate_draftmodel_dflash_gen, batch_rows,
+                                                         window=keep > 0)
     generator.iterate_gen = with_slots(generator.iterate_gen, batch_rows)
 
     base_prefill = job_module.Job.prefill
@@ -386,7 +479,149 @@ def install_draft_ring(generator, draft, ring):
 
     job_module.Job.prefill = prefill
     print(f"DRAFT_RING pages_per_slot={ring} slots={generator.cache.num_slots if hasattr(generator.cache, 'num_slots') else '?'}"
-          f" draft_tokens={draft_cache_tokens(generator)}", flush=True)
+          f" draft_tokens={draft_cache_tokens(generator)} window_tables={width if keep else 0}", flush=True)
+
+
+def install_fp16_prefill():
+    """Runs the reconstructed-weight prefill GEMMs of the EXL3 layers with FP16 accumulation (the speed part
+    fp16_prefill, QWEN-EVAL-1 arm astra-skill A-0028): where a layer has rebuilt its weight in FP16 and multiplies
+    at least FP16_PREFILL_MIN_ROWS rows into an FP16 output, the product is torch.mm under
+    torch.backends.cuda.matmul.allow_fp16_accumulation in place of exllamav3's hgemm_recon, which accumulates in
+    FP32. Decode, where few rows go through exllamav3's own EXL3 kernels, and every other call are unchanged. It
+    changes the arithmetic of prefill, so answers drift from the FP32-accumulated ones as under any numerics
+    change: it is kept only with its measured output check. exllamav3's module global `ext` in
+    modules/quant/exl3.py is replaced by a proxy that forwards every other name; no exllamav3 file is edited."""
+    import torch
+    from exllamav3.modules.quant import exl3 as exl3_quant
+    matmul = torch.backends.cuda.matmul
+    if not hasattr(matmul, "allow_fp16_accumulation"):
+        raise RuntimeError("--fp16-prefill needs torch.backends.cuda.matmul.allow_fp16_accumulation (torch 2.7 or later)")
+    base = exl3_quant.ext
+
+    class PrefillExt:
+        def __getattr__(self, name):
+            return getattr(base, name)
+
+        @staticmethod
+        def hgemm_recon(x, weight, out):
+            if out.dtype != torch.float16 or x.shape[0] < FP16_PREFILL_MIN_ROWS or x.device.type != "cuda":
+                return base.hgemm_recon(x, weight, out)
+            previous = matmul.allow_fp16_accumulation
+            matmul.allow_fp16_accumulation = True
+            try:
+                torch.mm(x, weight, out=out)
+            finally:
+                matmul.allow_fp16_accumulation = previous
+
+    exl3_quant.ext = PrefillExt()
+
+
+def install_prompt_lookup(generator):
+    """Proposes, for a job in a draft round, the continuation of the longest earlier match of its own sequence's
+    suffix (its prompt and output; exllamav3's suffix automaton BC_SAM) in place of the DFlash2 draft's block, when
+    that job's own verified lookups have done well (the speed part prompt_lookup, QWEN-EVAL-1 arm astra-skill A-0009
+    with A-0012's per-request choice). Every proposal, from either source, is verified by the target position by
+    position as a DFlash2 draft is: a token is kept only where the target's own sample equals it, so the output
+    distribution stays the target's; a proposal changes which samples are drawn, not the model. A match of at least
+    LOOKUP_MIN_MATCH tokens with a full draft-depth continuation is a candidate. Candidates fall in three buckets by
+    match length (LOOKUP_BUCKET_MATCHES), and a job takes one when its bucket's verified acceptance, counted from
+    LOOKUP_PRIOR on this job's own rounds only, is at least LOOKUP_MIN_ACCEPTANCE, or on every LOOKUP_RETRY_EVERY-th
+    candidate of the bucket. When every job in the round takes one, the draft model does not run that round. A Job
+    whose request set PROMPT_LOOKUP_FIELD false (`prompt_lookup` False) is never offered one."""
+    import torch
+    from exllamav3.ext import exllamav3_ext as ext
+    depth = generator.num_draft_tokens
+    base = generator.iterate_draftmodel_dflash_gen
+
+    def candidate(job):
+        if not getattr(job, "prompt_lookup", True):
+            return None
+        ids = job.sequences[0].sequence_ids.torch()
+        if getattr(job, "lookup_matcher", None) is None:
+            job.lookup_matcher = ext.BC_SAM()
+            job.lookup_counts = [list(LOOKUP_PRIOR) + [0] for _ in range(len(LOOKUP_BUCKET_MATCHES) + 1)]
+            job.lookup_last = None
+        if job.lookup_last is not None:
+            # The last proposal's verification is the one draft_stats row appended since it was made
+            bucket, stats_index = job.lookup_last
+            job.lookup_last = None
+            if len(job.draft_stats) == stats_index + 1:
+                _, proposed, accepted = job.draft_stats[-1]
+                job.lookup_counts[bucket][0] += accepted
+                job.lookup_counts[bucket][1] += proposed
+        begin, end = job.lookup_matcher.accept_tensor(ids)
+        span = ids[:, end:end + depth]
+        if end - begin < LOOKUP_MIN_MATCH or span.shape[1] != depth:
+            return None
+        bucket = sum(end - begin >= n for n in LOOKUP_BUCKET_MATCHES)
+        counts = job.lookup_counts[bucket]
+        good, total, seen = counts
+        counts[2] += 1
+        if good / total < LOOKUP_MIN_ACCEPTANCE and seen % LOOKUP_RETRY_EVERY:
+            return None
+        job.lookup_last = (bucket, len(job.draft_stats))
+        return span
+
+    def iterate_draftmodel_dflash_gen(results):
+        spans = [candidate(job) for job in generator.active_jobs if job.is_prefill_done()]
+        if spans and all(span is not None for span in spans):
+            return torch.cat(spans, dim=0)
+        drafted = base(results)
+        if drafted is not None:
+            window = drafted.shape[-1]
+            for row, span in enumerate(spans):
+                if span is not None:
+                    drafted[row:row + 1, :window].copy_(span[:, :window])
+        return drafted
+
+    generator.iterate_draftmodel_dflash_gen = iterate_draftmodel_dflash_gen
+
+
+def speed_parts(args, ring, draft_dir):
+    """Each speed part's state: the launcher's `--<part>` or `--no-<part>`, else SPEED_PART_DEFAULTS. Prompt lookup
+    needs the draft, and the window tables the draft ring; without them each stays off, whatever was asked."""
+    parts = {}
+    for name, default in SPEED_PART_DEFAULTS.items():
+        asked = getattr(args, name, None)
+        parts[name] = default if asked is None else bool(asked)
+    if not draft_dir:
+        parts["prompt_lookup"] = False
+    if not ring:
+        parts["draft_window_tables"] = False
+    return parts
+
+
+def kv_arithmetic(parts):
+    """The parts that are on in `parts` (`speed_parts`) and change the KV the target writes, sorted."""
+    return sorted(name for name in KV_ARITHMETIC_PARTS if parts.get(name))
+
+
+def set_projection_fusion(on):
+    """Sets exllamav3's fusion variables (PROJECTION_FUSION_ENV) for the fuse_projections switch, before any
+    Config reads them. On: every same-input pair stays one fused GEMM (K threshold 0; QWEN-EVAL-1 arm
+    astra-skill A-0026), where by default a low-bitrate pair runs as separate int8 GEMVs. Off: both are
+    cleared, so exllamav3's defaults apply whatever the environment held. Returns the inherited values it
+    replaced, by name."""
+    replaced = {name: os.environ.pop(name) for name in PROJECTION_FUSION_ENV if name in os.environ}
+    if on:
+        os.environ["EXL3_MGEMM_K_THRESHOLD"] = "0"
+    return replaced
+
+
+SPEED_PART_HELP = {
+    "fuse_projections": "keep same-input projections fused at every bitrate (EXL3_MGEMM_K_THRESHOLD=0)",
+    "fp16_prefill": f"FP16 accumulation in reconstructed prefill GEMMs of at least {FP16_PREFILL_MIN_ROWS} rows",
+    "prompt_lookup": "propose a request's own earlier continuations, per request where they verify well; "
+                     f"a request that sets {PROMPT_LOOKUP_FIELD} false takes none",
+    "draft_window_tables": "cut the draft's block tables to its sliding window (needs the draft KV ring)",
+}
+
+
+def add_speed_part_flags(parser):
+    """`--<part>` and `--no-<part>` for each speed part; neither keeps SPEED_PART_DEFAULTS (the bench shares them)."""
+    for name, default in SPEED_PART_DEFAULTS.items():
+        parser.add_argument("--" + name.replace("_", "-"), dest=name, action=argparse.BooleanOptionalAction,
+                            default=None, help=f"{SPEED_PART_HELP[name]} (default {'on' if default else 'off'})")
 
 
 def draft_cache_tokens(generator):
@@ -422,6 +657,14 @@ def load(args):
         raise ValueError(f"--cache-tokens must be a multiple of the cache page, {PAGE}")
     if cache_tokens < floor:
         raise ValueError(f"--cache-tokens must be at least {floor}, so a request the context admits fits alone")
+
+    parts = speed_parts(args, ring, args.draft_dir)
+    replaced = set_projection_fusion(parts["fuse_projections"])
+    if replaced:
+        print("FUSION_ENV_REPLACED " + " ".join(f"{name}={value}" for name, value in sorted(replaced.items())),
+              flush=True)
+    print("SPEED_PARTS " + " ".join(f"{name}={int(on)}" for name, on in parts.items())
+          + f" ext={getattr(exllamav3_ext, '__file__', '?')}", flush=True)
 
     # The shards are checked before anything loads them.
     model_digest = weights_digest(args.target_dir, args.weights_manifest)
@@ -498,7 +741,11 @@ def load(args):
                                 record_draft_stats=True)
     if ring and draft is not None:
         draft_cache.max_num_tokens = ring_tokens
-        install_draft_ring(generator, draft, ring)
+        install_draft_ring(generator, draft, ring, window_tables=parts["draft_window_tables"])
+    if parts["fp16_prefill"]:
+        install_fp16_prefill()
+    if parts["prompt_lookup"] and draft is not None:
+        install_prompt_lookup(generator)
     # What answers every request from here on, its epoch minted with the
     # Generator: the caches and Generator as built above, and the server's
     # settings (FIX 6567).
@@ -510,13 +757,19 @@ def load(args):
         # Only a ring names itself, so a server without one keeps the cache
         # identity it had before the ring existed.
         cache_settings["draft_ring_pages"] = ring
+    server_settings = {"context": args.context, "draft": draft is not None, "draft_tokens": depth,
+                       "max_in_flight": batch}
+    if any(parts.values()):
+        # Only a server with a speed part on names them, so one with every part off keeps the identity it had
+        # before the parts existed.
+        server_settings["speed_parts"] = sorted(name for name, on in parts.items() if on)
     identity = cache_usage.BackendIdentity(
         args.target_dir, template_source,
         cache_settings=cache_settings,
-        server_settings={"context": args.context, "draft": draft is not None, "draft_tokens": depth,
-                         "max_in_flight": batch},
+        server_settings=server_settings,
         model_digest=model_digest, launch=launch,
-        draft_digest=launch_draft_identity(args.launch_manifest) if draft is not None else None)
+        draft_digest=launch_draft_identity(args.launch_manifest) if draft is not None else None,
+        kv_arithmetic=kv_arithmetic(parts))
     stop_ids = set()
     eos = getattr(target_config, "eos_token_id", None)
     for token in eos if isinstance(eos, list) else [eos]:
@@ -672,7 +925,7 @@ class Request:
     `final_stats`, both set before its terminal event."""
 
     def __init__(self, request_id, prompt, ids, max_tokens, budget, schema, stops, seed, samplers, solo,
-                 accepted_ns=None, tools=None):
+                 accepted_ns=None, tools=None, prompt_lookup=True):
         # Inputs.
         self.request_id = request_id
         # When the worker accepted the request, before it was rendered
@@ -683,6 +936,9 @@ class Request:
         # Runs alone: admitted once nothing else is in flight, with nothing
         # admitted beside it until it ends.
         self.solo = solo
+        # False when the request turned prompt lookup off (PROMPT_LOOKUP_FIELD):
+        # its Jobs then take no lookup proposal.
+        self.prompt_lookup = prompt_lookup
         self.prompt = prompt
         self.ids = ids
         self.prompt_tokens = int(ids.numel())
@@ -1453,6 +1709,8 @@ class Scheduler:
                 job = evaluation.job(PlainJob, fields, phase)
             else:
                 job = PlainJob(**fields)
+            # Prompt lookup (`install_prompt_lookup`) reads it on the Job.
+            job.prompt_lookup = req.prompt_lookup
             serial = self.generator.enqueue(job)
             if evaluation is not None:
                 evaluation.enqueued(job, phase)
@@ -1800,14 +2058,17 @@ class Server:
         solo = body.get(SOLO_FIELD, False)
         if not isinstance(solo, bool):
             raise RequestError(f"{SOLO_FIELD} must be true or false")
+        prompt_lookup = body.get(PROMPT_LOOKUP_FIELD, True)
+        if not isinstance(prompt_lookup, bool):
+            raise RequestError(f"{PROMPT_LOOKUP_FIELD} must be true or false")
         samplers = {"reason": make_sampler(body), "answer": make_sampler(body)}
         req = Request(request_id, prompt, ids, max_tokens, budget, schema, stops, seed, samplers, solo,
-                      accepted_ns=accepted_ns, tools=tools)
+                      accepted_ns=accepted_ns, tools=tools, prompt_lookup=prompt_lookup)
         if work is None:
             work = exl3_executor.http_context(body, time.monotonic_ns())
             self.scheduler.executor.open_grant(work)
         req.work = work
-        req.execution_mode = self.identity.execution_mode(template_kwargs, solo)
+        req.execution_mode = self.identity.execution_mode(template_kwargs, solo, prompt_lookup)
         if not req.thinking:
             req.answer_prompt = prompt
             req.answer_ids = ids
@@ -2006,6 +2267,7 @@ def main():
                         f"instead of a full-pool copy (default {DEFAULT_DRAFT_RING_PAGES}; 0 turns it off: the draft "
                         f"cache is then as large as the target's, and the pool defaults to "
                         f"{DEFAULT_CACHE_TOKENS_WITHOUT_RING})")
+    add_speed_part_flags(p)
     p.add_argument("--default-max-tokens", type=int, default=4096,
                    help="the reply cap when a request names none; a request with a reasoning budget "
                         "gets that budget on top, so its answer keeps this room")
