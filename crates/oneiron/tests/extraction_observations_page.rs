@@ -350,7 +350,8 @@ fn bound_extraction_serves_normalized_tokens_and_writable_prior() -> Observation
     Ok(())
 }
 
-/// Three user turns across two live sessions observe, while one session does not.
+/// Three user turns across two live sessions observe, while one session does not, and the
+/// page's diversity counts the one speaker once per sitting.
 #[test]
 fn three_user_turns_observe_across_two_live_sessions_only() -> ObservationsTestResult<()> {
     for split_sessions in [true, false] {
@@ -407,6 +408,15 @@ fn three_user_turns_observe_across_two_live_sessions_only() -> ObservationsTestR
                 .as_u64()
                 .unwrap_or_else(|| panic!("evidence_count is a count")),
             3
+        );
+        // One speaker counts once per sitting it spoke in, as native selection counts it
+        // (`strength::turn_diversity_key`): two sittings give two keys, one sitting gives one.
+        assert_eq!(
+            only["diversity"]
+                .as_u64()
+                .unwrap_or_else(|| panic!("diversity is a count")),
+            if split_sessions { 2 } else { 1 },
+            "the page counts the speaker once per sitting: {only}"
         );
     }
     Ok(())
