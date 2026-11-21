@@ -13,6 +13,8 @@
 use crate::error::Result;
 use crate::store::Store;
 
+use super::AttemptQueue;
+
 /// The kinds a copy that has not joined still claims: local work and inbound polls, which send
 /// nothing, start no agent and run no schedule of the image's (the ruling's "engine housekeeping,
 /// sync, pairing and the join door keep running", and inbound polls are no send). A model step
@@ -57,5 +59,22 @@ impl UnjoinedHold {
         let unjoined = crate::setting::restored::restored_unjoined_in_txn(store, txn)?;
         self.unjoined = Some(unjoined);
         Ok(unjoined)
+    }
+}
+
+impl AttemptQueue<'_> {
+    /// Whether a row of `kind` waits in `txn` on a copy restored and not joined
+    /// ([`UnjoinedHold`]), for a caller that reads or acts on a ready row before it claims
+    /// it: Dreamer admission asks first, so a held row is neither leased nor paused by its
+    /// budget checks, and stays ready for the first admission after the join.
+    ///
+    /// # Errors
+    /// [`crate::setting::restored::restored_unjoined_in_txn`]'s errors.
+    pub(crate) fn kind_held_while_unjoined_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: &str,
+    ) -> Result<bool> {
+        UnjoinedHold::default().holds(self.store, txn, kind)
     }
 }
