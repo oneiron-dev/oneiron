@@ -376,6 +376,7 @@ pub mod spent_seat;
 pub mod split_phrase_carrier;
 #[cfg(feature = "sync")]
 pub mod staged_vault_import;
+pub mod stale_world_stamp;
 pub mod steward;
 pub mod stored_workspace_roster_rows;
 pub mod stretch_pack_finalize;
