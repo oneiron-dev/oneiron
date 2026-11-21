@@ -418,10 +418,12 @@ settings); without one, the identity is as before the ring existed.
 
 ### Speed parts
 
-Four switches, each off by default (`SPEED_PART_DEFAULTS` in
-`exl3_server.py`) until its measurement on the Dreamer's nightly call keeps
-it. `ONEIRON_HOUSE_EXL3_<PART>=1` passes `--<part>`, `0` passes
-`--no-<part>`, and unset keeps the default. They come from QWEN-EVAL-1's
+Four switches (`SPEED_PART_DEFAULTS` in `exl3_server.py`). A part is on by
+default only when its measurement on the Dreamer's nightly call keeps it:
+prompt lookup is on (x1.18 packets/h over the ring and pool, with JSON
+validity and graded quality held); the other three are off.
+`ONEIRON_HOUSE_EXL3_<PART>=1` passes `--<part>`, `0` passes `--no-<part>`,
+and unset keeps the default. They come from QWEN-EVAL-1's
 astra-skill arm (`mel:/data/qwen-eval-20261120/arms/astra-skill/LEDGER.md`),
 ported onto this server without editing exllamav3. Its sampling changes
 (A-0017) are not among them.
@@ -440,7 +442,8 @@ ported onto this server without editing exllamav3. Its sampling changes
   FP16 prefill change the arithmetic, so their answers drift as under any
   numerics change, and each is kept only with a measured output check.
 - **Identity.** A server with any part on names them in its server settings
-  (`speed_parts`); with every part off, the identity is as before.
+  (`speed_parts`; the default names `prompt_lookup`); with every part off,
+  the identity is as before.
 - **Logs.** One `SPEED_PARTS` line at load gives each part's state and the
   exllamav3 extension the server loaded; the `DRAFT_RING` line gives the
   window tables' width in pages (0 when off).

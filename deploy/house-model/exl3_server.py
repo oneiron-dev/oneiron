@@ -149,13 +149,13 @@ DEFAULT_CACHE_TOKENS = 85504
 DEFAULT_CACHE_TOKENS_WITHOUT_RING = 40192
 # The speed parts (README, "Speed parts"; QWEN-EVAL-1 arm astra-skill), each
 # its own switch, `--<part>` or `--no-<part>`, and whether it is on when the
-# launcher names neither. Each is off by default until its measurement on the
-# Dreamer's nightly call keeps it; with every part off, the server runs as
-# without them.
+# launcher names neither. A part is on by default only when its measurement on
+# the Dreamer's nightly call keeps it (prompt lookup so far); with every part
+# off, the server runs as without them.
 SPEED_PART_DEFAULTS = {
     "fuse_projections": False,     # A-0026: fused same-input projections at every bitrate
     "fp16_prefill": False,         # A-0028: FP16 accumulation in reconstructed prefill GEMMs
-    "prompt_lookup": False,        # A-0009 + A-0012: proposals from the request's own history
+    "prompt_lookup": True,         # A-0009 + A-0012: proposals from the request's own history
     "draft_window_tables": False,  # A-0016: the draft's block tables cut to its live window
 }
 # FP16 accumulation runs in a reconstructed prefill GEMM of at least this many
