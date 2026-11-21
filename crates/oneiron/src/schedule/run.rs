@@ -106,8 +106,10 @@ fn row_code(row_key: &[u8]) -> Option<&str> {
 
 /// Whether this node runs the row under `row_key`, read in `txn`: its job's
 /// [`JobSpec::runs_here`], read once per job code and kept in `here` for the pass. A row of a job
-/// this build does not know counts as run here, so its run parks it. A read that fails is logged,
-/// and the job's rows wait for the next pass.
+/// this build does not know counts as run here, so its run parks it. A job that waits on a copy
+/// restored and not joined ([`waits_unjoined_in_txn`]) is not run on such a copy: its rows stay
+/// due and wake no stopped copy, and the first pass after the join runs them. A read that fails
+/// is logged, and the job's rows wait for the next pass.
 fn runs_here_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -120,7 +122,9 @@ fn runs_here_in_txn(
     if let Some((_, runs)) = here.iter().find(|(code, _)| *code == spec.code) {
         return *runs;
     }
-    let runs = (spec.runs_here)(vault, txn).unwrap_or_else(|error| {
+    let runs = (spec.runs_here)(vault, txn)
+        .and_then(|runs| Ok(runs && !waits_unjoined_in_txn(vault, txn, spec)?));
+    let runs = runs.unwrap_or_else(|error| {
         tracing::warn!(
             job = spec.code,
             kind = ?error.kind(),
@@ -131,6 +135,17 @@ fn runs_here_in_txn(
     });
     here.push((spec.code, runs));
     runs
+}
+
+/// Whether `spec`'s rows wait in `txn`: a job that starts the image's own work
+/// ([`super::jobs::waits_while_unjoined`]) on a copy restored and not joined
+/// ([`crate::setting::restored::restored_unjoined_in_txn`]; row RESTORED-UNJOINED-STARTS-NO-WORK).
+/// Any other job reads nothing.
+fn waits_unjoined_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, spec: &JobSpec) -> Result<bool> {
+    if !super::jobs::waits_while_unjoined(spec) {
+        return Ok(false);
+    }
+    crate::setting::restored::restored_unjoined_in_txn(vault, txn)
 }
 
 /// The first due-index entry due by `now` whose row is not one of `ran_once`, the rows of the
@@ -297,8 +312,9 @@ impl Vault {
 
     /// Runs `job` about `subject` alone, now, whatever its due time: a support holder's repair
     /// of one sweep. The run answers a "run now". A start marker an interrupted run left counts
-    /// as its failure, and the job then runs. `None` when the job is not armed, or its host
-    /// drives it ([`Drive::Host`]).
+    /// as its failure, and the job then runs. `None` when the job is not armed, its host
+    /// drives it ([`Drive::Host`]), or it waits on a copy restored and not joined
+    /// ([`waits_unjoined_in_txn`]).
     ///
     /// # Errors
     ///
@@ -311,6 +327,12 @@ impl Vault {
     ) -> Result<Option<JobRun>> {
         if job_named(job).is_some_and(|spec| spec.drive == Drive::Host) {
             return Ok(None);
+        }
+        if let Some(spec) = job_named(job) {
+            let txn = self.store.env.read_txn()?;
+            if waits_unjoined_in_txn(self, &txn, spec)? {
+                return Ok(None);
+            }
         }
         let _pass = self
             .housekeeping
