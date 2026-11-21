@@ -42,4 +42,34 @@ pub struct ConversationEvidence {
     /// The check material's ref: `None` until its pass is accepted. Its
     /// landing sets it, so each landed receipt names it.
     pub check_material: Option<CompactionCheckMaterialRef>,
+    /// How the window's one turn was read when its writer could not take it
+    /// whole (FIX-LIST COMPACTION-FIRST-TURN-PAST-INPUT-ROOM-STALLS); `None`
+    /// for a window of whole turns, so an earlier receipt reads, and hashes,
+    /// as it was written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reading: Option<ConversationTurnReading>,
+}
+
+/// How a turn past its writer's input room was read, as its entry's
+/// receipt names it, so the Dreamer's check judges each summary against
+/// exactly the bytes it was given (FIX-LIST COMPACTION-CHECK-JUDGES-PER-CHUNK).
+/// Byte offsets are into the turn's window text, `<role>: <words>`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ConversationTurnReading {
+    /// Read in pieces that cover the whole text in order; the entry carries
+    /// each piece's summary under the byte range it covers.
+    Pieces { pieces: Vec<ConversationTurnPiece> },
+    /// The entry fell back to the turn's head, bytes `0..end`, with a marker
+    /// naming the cut.
+    Head { end: u64 },
+}
+
+/// One piece of a turn read in pieces: the byte range `start..end` of the
+/// turn's window text. Its summary in the entry runs from its marker to the
+/// next piece's, so no length of model words is kept here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConversationTurnPiece {
+    pub start: u64,
+    pub end: u64,
 }

@@ -61,7 +61,10 @@ const CHAT_COMPACTION_RUN_REF: &str = "chat-compaction";
 const STEP_FILING_REFUSED: &str = "step_filing_refused";
 
 #[doc(hidden)]
-pub use oneiron_records::compaction::conversation::{ConversationEvidence, ConversationTurnSpan};
+pub use oneiron_records::compaction::conversation::{
+    ConversationEvidence, ConversationTurnPiece, ConversationTurnReading, ConversationTurnSpan,
+};
+pub(crate) use pieces::entry_piece_summaries;
 
 /// Why a conversation's self-written compaction did not fly at a
 /// breakpoint. The log stays raw for the turn.
@@ -264,6 +267,7 @@ pub fn seal_conversation_flight<'a>(
         branch: log.branch,
         turns: window.spans,
         check_material: None,
+        reading: None,
     };
     Ok(ConversationFlight {
         driver,
@@ -459,19 +463,24 @@ impl ConversationFlight<'_> {
                 }
             },
         };
-        let request = entry.as_ref().map_or(&self.request, |(entry, _)| entry);
+        let request = entry.as_ref().map_or(&self.request, |entry| &entry.request);
         let (pass, mut execution) = run_pass(backend.as_ref(), request, &self.policy);
         if let Some(execution) = execution.as_mut() {
             file_pass(vault, self.job, execution);
         }
         let outcome = match (pass, execution) {
             (Pass::Accepted(gated, material), Some(mut execution)) => {
-                execution.evidence = Some(CompactionEvidence::Conversation(self.evidence.clone()));
                 // The entry's words carry the piece summaries', so its
-                // receipt carries what their passes read (#10050 review).
-                if let Some((_, read)) = &entry {
-                    read.carry_into(&mut execution);
+                // receipt carries what their passes read (#10050 review), and
+                // how its turn was read, so the check judges each summary
+                // against the bytes it was given (FIX-LIST
+                // COMPACTION-CHECK-JUDGES-PER-CHUNK).
+                let mut evidence = self.evidence.clone();
+                if let Some(entry) = &entry {
+                    entry.inputs.carry_into(&mut execution);
+                    evidence.reading = Some(entry.reading.clone());
                 }
+                execution.evidence = Some(CompactionEvidence::Conversation(evidence));
                 let (first, last) = (
                     request.turn_start,
                     request
