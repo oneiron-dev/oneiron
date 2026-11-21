@@ -47,7 +47,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/pdf/work_preflight.rs` | src | L | 2 crate-vis | — | Exact xref framing and lossless object-stream expansion before rewriting (FIX 7980/8157) |
 | `src/native/pdf/work_prepare.rs` | src | m | 4 crate-vis | — | Ported esign PDF preparation orchestration (FIX 7980/8157) |
 | `src/native/pdf/work_present.rs` | src | s | 6 crate-vis | — | Ported page geometry over the shared renderer (FIX 7980/8157) |
-| `src/native/pdf/work_source.rs` | src | L | 12 crate-vis | — | Ported static page-tree and resource-graph admission and copying (FIX 7980/8157) |
+| `src/native/pdf/work_source.rs` | src | m | 11 crate-vis | — | Ported static page-tree and resource-graph admission and copying (FIX 7980/8157) |
+| `src/native/pdf/work_source/page_tree.rs` | src | s | 2 crate-vis | — | Page-tree traversal and inherited page geometry |
 | `src/native/pdf/work_streams.rs` | src | s | 3 crate-vis | — | — |
 | `src/native/profile/assembly.rs` | src | m | 6 crate-vis | — | B-B/B-T/B-LTA orchestration: backend signing, TSA failover, capacity ladder, DocTimeStamp, degrade warnings |
 | `src/native/profile/dss.rs` | src | s | 3 crate-vis | — | DSS serialization: stream objects, global Certs/OCSPs/CRLs arrays, DSS revision append |

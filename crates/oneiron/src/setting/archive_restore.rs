@@ -29,6 +29,13 @@
 //! the highest of the live counter, the archived counter, every landed change's sequence and
 //! every landed row's revision, so a row's revision still only grows and no sequence is handed
 //! out twice.
+//!
+//! A whole-vault import maps the source root project onto this vault's own root
+//! ([`ProjectRootMap`]), so a row scoped at the source root is checked and lands at this root: the
+//! owner's root rows come back, and a row this root already holds (its own birth row of a born
+//! key) is kept. A row of a pack's default layer ([`SettingScope::Pack`]) never lands: the
+//! accepted defaults are the live vault's, so a restore cannot bring back an older, looser default
+//! (DESIGN 1.5 "Restore"). It is unchanged where the live row holds its bytes and kept otherwise.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -37,13 +44,15 @@ use oneiron_setting_contract::RowKey;
 use super::change::{CHANGE_NEXT, CHANGES, SettingChange};
 use super::read::{CONTENT_ROWS, ROWS, StoredRow, table_of};
 use super::restored::install_choice;
-use super::{OnChange, OnCommitted, SettingMode, SettingSpec, WriteTurn, spec_named};
+use super::{
+    OnChange, OnCommitted, ScopeKind, SettingMode, SettingScope, SettingSpec, WriteTurn, spec_named,
+};
 use crate::Vault;
 use crate::batch::export::archive_side_install::{
     ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
 };
 use crate::batch::export::{
-    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, ProjectRootMap, RetainedSideHeldBackReason,
 };
 use crate::error::{Error, Result, StoreError};
 use crate::side_table::{self, Named, SideTable};
@@ -99,8 +108,9 @@ impl Landed<'_> {
 /// Lands the owner's archived setting envelopes, one outcome per row in input order. Rows of a
 /// key with a change hook land after the others, in key order, and are tried again while any of
 /// them lands, so keys whose hooks read each other (a floor and its count) do not depend on the
-/// archive's order. `wakes` receives the after-commit wake of each key with an installed row;
-/// the caller runs them once the import has committed.
+/// archive's order. `projects` maps a whole-vault archive's source root onto this vault's root.
+/// `wakes` receives the after-commit wake of each key with an installed row; the caller runs them
+/// once the import has committed.
 ///
 /// # Errors
 ///
@@ -109,6 +119,7 @@ pub(crate) fn land_archived_setting_rows_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     permit: &OwnerArchiveRestorePermit,
+    projects: Option<&ProjectRootMap>,
     rows: &[ArchiveRetainedSideRow],
     wakes: &mut Vec<OnCommitted>,
 ) -> Result<Vec<ArchivedSideRowOutcome>> {
@@ -147,7 +158,26 @@ pub(crate) fn land_archived_setting_rows_in_txn(
                 continue;
             }
         };
-        let checked = match check_row_in_txn(vault, txn, &table, row)? {
+        let (key_bytes, key, stored) = match decode_row(&table, row) {
+            Ok(decoded) => decoded,
+            Err(reason) => {
+                outcomes[at] = Some(HeldBack(reason));
+                continue;
+            }
+        };
+        // A pack's default layer row never lands, as the accepted defaults are the live vault's
+        // (DESIGN 1.5 "Restore"): unchanged where this vault's row holds the archive's bytes,
+        // and kept otherwise, an absent row too.
+        if key.scope.kind() == ScopeKind::Pack {
+            let live = table.get_bytes(vault, txn, &key_bytes)?;
+            outcomes[at] = Some(if live.as_ref() == Some(&row.source_value) {
+                ArchivedSideRowOutcome::Unchanged
+            } else {
+                ArchivedSideRowOutcome::KeptLive
+            });
+            continue;
+        }
+        let checked = match check_row_in_txn(vault, txn, &table, projects, key, stored)? {
             Ok(checked) => checked,
             Err(reason) => {
                 outcomes[at] = Some(HeldBack(reason));
@@ -308,25 +338,37 @@ fn settle_counter_in_txn(
     Ok(())
 }
 
-/// The checks of one archived value or pin row, in the order the set door makes them: the key
-/// bytes name a row key; the key is in the catalogue and its rows live in `table`; the item and
-/// the scope kind are ones it admits; a learned seed carries its weight and no other row does;
-/// the value passes the key's own check, through its JSON form and back; the entity the scope
-/// names is live here.
+/// One archived value or pin row's key bytes, its key and its stored row: the envelope decodes
+/// as a row of `table`, and its key bytes are the encoding of a row key.
+fn decode_row(
+    table: &RowTable,
+    row: &ArchiveRetainedSideRow,
+) -> std::result::Result<(Vec<u8>, RowKey, StoredRow), RetainedSideHeldBackReason> {
+    let (key_bytes, stored) = decode_archived_row(table, row)?;
+    let key = RowKey::decode(&key_bytes)
+        .filter(|key| key.encode() == key_bytes)
+        .ok_or(RetainedSideHeldBackReason::InvalidEncoding)?;
+    Ok((key_bytes, key, stored))
+}
+
+/// The checks of one decoded archived value or pin row ([`decode_row`]), in the order the set
+/// door makes them: the key is in the catalogue and its rows live in `table`; the item and the
+/// scope kind are ones it admits; a learned seed carries its weight and no other row does; the
+/// value passes the key's own check, through its JSON form and back; the entity the scope names
+/// is live here. A row scoped at the source root (`projects`) is checked, and lands, at this
+/// vault's root.
 fn check_row_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     table: &RowTable,
-    row: &ArchiveRetainedSideRow,
+    projects: Option<&ProjectRootMap>,
+    mut key: RowKey,
+    stored: StoredRow,
 ) -> Result<std::result::Result<CheckedRow, RetainedSideHeldBackReason>> {
-    use RetainedSideHeldBackReason::{InvalidEncoding, InvalidValue, MissingLiveEntity};
-    let (key_bytes, stored) = match decode_archived_row(table, row) {
-        Ok(decoded) => decoded,
-        Err(reason) => return Ok(Err(reason)),
-    };
-    let Some(key) = RowKey::decode(&key_bytes).filter(|key| key.encode() == key_bytes) else {
-        return Ok(Err(InvalidEncoding));
-    };
+    use RetainedSideHeldBackReason::{InvalidValue, MissingLiveEntity};
+    if let (Some(projects), SettingScope::Project(project)) = (projects, &mut key.scope) {
+        *project = projects.local_id(*project);
+    }
     let Ok(spec) = spec_named(&key.name) else {
         return Ok(Err(InvalidValue));
     };
@@ -349,6 +391,7 @@ fn check_row_in_txn(
     {
         return Ok(Err(MissingLiveEntity));
     }
+    let key_bytes = key.encode();
     Ok(Ok(CheckedRow {
         spec,
         key,

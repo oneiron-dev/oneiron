@@ -16,11 +16,13 @@
 //! session and prompt hooks print what they say ([`context_reply`]) and
 //! which import reads the log a hand-over queues ([`import_source`]).
 //!
-//! A hook never blocks the host: whatever fails, it exits 0. It never reads
-//! a credential itself; `oneiron mcp` reads the credential file: the
-//! agent's `--credential-file` for a pinned or local vault, and the one the
-//! hosted selection names, in its own auth mode, for the hosted vault it
-//! selected (`oneiron hosted`, [`hosted_command`]).
+//! A hook never blocks the host: whatever fails, it exits 0. It never sends
+//! a credential itself; `oneiron mcp` reads the credential file and sends
+//! it: the agent's `--credential-file` for a pinned or local vault, and the
+//! one the hosted selection names, in its own auth mode, for the hosted
+//! vault it selected (`oneiron hosted`, [`hosted_command`]). An OAuth
+//! selection's hand-over reads its hand-over sign-in's tier and origin
+//! first, and hands the file to the bridge ([`hand_over_queue`]).
 //!
 //! `oneiron continue --cloud` ([`continue_command`]) lives here too: it
 //! reads the same hosted selection and calls its verbs through the same
@@ -28,6 +30,8 @@
 
 mod bind;
 mod continue_command;
+mod hand_over_ask;
+mod hand_over_queue;
 mod hosted_command;
 mod hosted_continue_sign_in;
 mod hosted_selection;
@@ -264,8 +268,10 @@ fn recall_auth<'a>(
 /// by what the session's starts bound ([`bind::hand_over_target`]): to the
 /// selected hosted vault where every start bound that one and it is still
 /// selected, through `vault.imports.hook_transcript` as the selection's own
-/// credential, by the import that reads the host's logs, when the log is the
-/// event's own session's and sits where the host keeps its logs
+/// credential (an OAuth selection's hand-over sign-in; while none stands,
+/// the log waits in the vault's hand-over queue, [`hand_over_queue`]), by
+/// the import that reads the host's logs, when the log is the event's own
+/// session's and sits where the host keeps its logs
 /// ([`continue_command::hand_over_hosted`]), with nothing queued here;
 /// nowhere where they bound a hosted vault no longer selected, or more than
 /// one vault. A send that fails is sent again whole by the session's next

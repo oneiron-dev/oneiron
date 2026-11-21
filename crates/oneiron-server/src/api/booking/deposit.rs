@@ -91,15 +91,29 @@ pub(super) async fn hold_lease(
 }
 
 /// Before a confirm: Stripe's own word on the hold's deposit, when the
-/// webhook has not yet carried it. Nothing here refuses; the confirm writer
-/// does, for a deposit still unauthorized.
-pub(super) async fn before_confirm(server: &Arc<SyncServer>, session_key: SessionKey, now: u64) {
+/// webhook has not yet carried it or a home move may have kept it from this
+/// node. The confirm writer refuses a deposit still unauthorized; this
+/// refuses only an authorized one Stripe did not confirm still waits for
+/// capture (`sync_hold_authorization`), as the provider being unavailable.
+pub(super) async fn before_confirm(
+    server: &Arc<SyncServer>,
+    session_key: SessionKey,
+    now: u64,
+) -> Result<(), ApiError> {
     let vault = Arc::clone(server.vault());
     let base = server.booking_deposit_stripe_base().to_owned();
-    let _ = tokio::task::spawn_blocking(move || {
-        sync_hold_authorization(&vault, &base, &session_key, now);
+    let confirmable = tokio::task::spawn_blocking(move || {
+        sync_hold_authorization(&vault, &base, &session_key, now)
     })
-    .await;
+    .await
+    .unwrap_or(false);
+    if confirmable {
+        Ok(())
+    } else {
+        Err(ApiError::invalid_state(Some(
+            "booking_deposit_provider_unavailable",
+        )))
+    }
 }
 
 /// After a committed confirm: capture its deposit. A failure leaves the

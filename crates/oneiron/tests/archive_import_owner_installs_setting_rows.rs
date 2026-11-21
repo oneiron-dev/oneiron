@@ -18,12 +18,16 @@
 //!   unchanged live rows and installs none; the actorless import of the same
 //!   archive leaves every read at its default and installs nothing.
 //! * `owner_restore_keeps_a_different_live_setting_row`: a destination that
-//!   already holds another value keeps it, and the report counts one
-//!   kept-live row.
+//!   already holds another value keeps it, and the report counts it as kept
+//!   live beside the open setting rows.
 //! * `owner_restore_holds_back_setting_rows_that_fail_their_key_checks`: a row
 //!   at a scope naming an absent entity reports one held-back row with reason
 //!   `missing_live_entity` and reads its default. Part (a), a row under an
 //!   unknown key name, has no test door and is absent here.
+//! * `owner_restore_lands_a_source_root_row_at_this_root`: the owner's row at
+//!   the source root project reads at this vault's root after the restore,
+//!   and no SETTING row is held back (SETTING-ARCHIVE-SOURCE-ROOT-SCOPE-HELD-BACK;
+//!   red before it: the row was held back as `missing_live_entity`).
 //! * `owner_restore_installs_the_setting_change_history_and_never_lowers_its_counter`:
 //!   three source changes install as three SETTING_CHANGE rows; the next
 //!   destination change takes the highest restored sequence plus one, and the
@@ -43,6 +47,13 @@
 //! from another vault's archive, so four rows install and none is held back);
 //! `owner_restore_of_this_installs_own_export_lands_its_install_choice` is green
 //! on both sides of it.
+//!
+//! Open setting rows: every vault writes the `engine` pack's default layer and
+//! its root's birth row of `test.born_depth` when it opens
+//! (`retained_side_rows::is_open_setting_row`), so every archive carries its
+//! own. The owner restore keeps each live: the accepted defaults are the live
+//! vault's (DESIGN 1.5 "Restore"), and this root holds its own birth row. Each
+//! kept-live count therefore adds the archive's open rows.
 //!
 //! Before the lander this file is red: the archive carries no setting rows
 //! and no owner import installs any, so every installed count is absent and
@@ -65,7 +76,9 @@ use oneiron::verbs::{
 };
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
-use retained_side_rows::{export_whole, open_later_vault, open_source_vault, owner_proof};
+use retained_side_rows::{
+    export_whole, open_later_vault, open_setting_row_count, open_source_vault, owner_proof,
+};
 
 /// A fixed entity id from one repeated byte. The banned bytes (00, 11, 42,
 /// 47, A1..A6, D7, E1, FF) belong to other fixtures.
@@ -507,10 +520,11 @@ fn owner_restore_keeps_a_different_live_setting_row() {
     );
     let summary =
         serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    let open_rows = open_setting_row_count(&archive);
     assert_eq!(
         table_count(&summary, "SETTING", "kept_live_rows"),
-        Some(1),
-        "the owner import reports one kept-live SETTING row; an absent field means it counted no live outcome: {summary}"
+        Some(1 + open_rows),
+        "the owner import reports the different value and {open_rows} open rows as kept-live SETTING rows; an absent field means it counted no live outcome: {summary}"
     );
 }
 
@@ -560,12 +574,10 @@ fn owner_restore_holds_back_setting_rows_that_fail_their_key_checks() {
         .expect("the owner import succeeds");
     let summary =
         serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
-    // The second row is the source root's birth row of `test.born_depth` (stage 7c-2): the
-    // import maps the source root onto this vault's own root, so that row's scope is not live.
     assert_eq!(
         held_back_for_table(&summary, "SETTING"),
-        Some(serde_json::json!([{ "reason": "missing_live_entity", "rows": 2 }])),
-        "the owner import holds back the absent entity's SETTING row and the source root's birth row as missing_live_entity; an absent field means it counted no held-back outcome: {summary}"
+        Some(serde_json::json!([{ "reason": "missing_live_entity", "rows": 1 }])),
+        "the owner import holds back one SETTING row as missing_live_entity; an absent field means it counted no held-back outcome: {summary}"
     );
     let (value, from, _) = owner_number(&dest, &[SettingScope::Project(absent)]);
     assert_eq!(
@@ -576,6 +588,79 @@ fn owner_restore_holds_back_setting_rows_that_fail_their_key_checks() {
         from,
         SettingSource::Default,
         "the held-back read decides from no row"
+    );
+}
+
+/// The owner's row at the source root lands at this vault's root: the import maps the source
+/// root onto this one, so the row's scope is live here (SETTING-ARCHIVE-SOURCE-ROOT-SCOPE-HELD-BACK).
+#[test]
+fn owner_restore_lands_a_source_root_row_at_this_root() {
+    let (_source_dir, source) = open_source_vault();
+    let source_owner = owner_proof(&source);
+    let source_root = source
+        .root_project()
+        .expect("the source names its root project");
+    let outcome = source
+        .set_setting(
+            SettingCaller::Owner(&source_owner),
+            SetSetting {
+                key: "test.owner_number".to_owned(),
+                item: None,
+                scope: SettingScope::Project(source_root),
+                mode: SettingMode::Value,
+                value: Some(serde_json::json!(9)),
+                expected_revision: None,
+                why: None,
+                check_in_ref: None,
+                weight_runs: None,
+                surface: None,
+            },
+        )
+        .expect("the owner sets a value at the source root");
+    assert!(
+        matches!(
+            outcome,
+            SetSettingOutcome::Applied {
+                sequence: Some(_),
+                ..
+            }
+        ),
+        "the root value applies with a sequence: {outcome:?}"
+    );
+    let archive = export_whole(&source);
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let dest_root = dest
+        .root_project()
+        .expect("the destination names its root project");
+    assert_ne!(dest_root, source_root, "each vault is its own root project");
+    let (before, _, _) = owner_number(&dest, &[SettingScope::Project(dest_root)]);
+    assert_eq!(
+        before, 7,
+        "the destination root reads the default before the import"
+    );
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let (value, from, _) = owner_number(&dest, &[SettingScope::Project(dest_root)]);
+    assert_eq!(value, 9, "the owner's root row reads at this vault's root");
+    assert_eq!(
+        from,
+        SettingSource::Row(SettingScope::Project(dest_root)),
+        "the restored read decides from the row at this vault's root"
+    );
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "SETTING", "installed_rows"),
+        Some(1),
+        "the owner import installs the root row; an absent field means it installed nothing: {summary}"
+    );
+    assert_eq!(
+        held_back_for_table(&summary, "SETTING"),
+        None,
+        "the owner import holds back no SETTING row: {summary}"
     );
 }
 
@@ -786,20 +871,16 @@ fn owner_restore_passes_an_absent_row_through_its_keys_change_hook() {
         .expect("the owner import succeeds");
     let second_summary =
         serde_json::to_value(&second_receipt.retained_side_rows).expect("the summary serializes");
+    let open_rows = open_setting_row_count(&archive);
     assert_eq!(
         table_count(&second_summary, "SETTING", "kept_live_rows"),
-        Some(1),
-        "the owner import reports one kept-live SETTING row; an absent field means it counted no live outcome: {second_summary}"
+        Some(1 + open_rows),
+        "the owner import reports the live count and {open_rows} open rows as kept-live SETTING rows; an absent field means it counted no live outcome: {second_summary}"
     );
-    // The missing_live_entity row is the source root's birth row of `test.born_depth` (stage
-    // 7c-2): the import maps the source root onto this vault's own root.
     assert_eq!(
         held_back_for_table(&second_summary, "SETTING"),
-        Some(serde_json::json!([
-            { "reason": "invalid_value", "rows": 1 },
-            { "reason": "missing_live_entity", "rows": 1 }
-        ])),
-        "the owner import holds back one SETTING row as invalid_value and the source root's birth row as missing_live_entity; an absent field means it counted no held-back outcome: {second_summary}"
+        Some(serde_json::json!([{ "reason": "invalid_value", "rows": 1 }])),
+        "the owner import holds back one SETTING row as invalid_value; an absent field means it counted no held-back outcome: {second_summary}"
     );
     let (after_count, _) = setting_at_vault(&second, "booking.emergency.max_proposals");
     assert_eq!(
