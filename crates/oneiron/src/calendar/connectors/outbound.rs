@@ -1887,10 +1887,14 @@ fn seat_uid_of(
         if LiftedKeys::names_a_handle(&row.uid) {
             open_cursor(vault, operation, key.0, &mut row)?;
         }
-        let uids = std::collections::BTreeSet::from([row.uid.as_str()]);
-        if passport_uid_among(vault, event_ref, held, &uids, known)?
-            && found.replace(row.uid).is_some()
-        {
+        let carried = passport_uid_among(
+            vault,
+            event_ref,
+            held,
+            &std::collections::BTreeSet::from([row.uid.as_str()]),
+            known,
+        )?;
+        if carried && found.replace(row.uid).is_some() {
             return Err(ingest_error(
                 "competing calendar UIDs for one stored handle",
             ));
