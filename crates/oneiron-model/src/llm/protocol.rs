@@ -359,6 +359,12 @@ impl LlmUsage {
     /// of the rung that answered. The host's own stamp, not a wire label.
     pub const SERVED_MODEL_ID_KEY: &'static str = "model_id";
 
+    /// Key in a ladder's served receipt naming where the rung that answered
+    /// runs: its binding's [`ModelLocality`], which its wire sent the call
+    /// by. The host's own stamp; the sealed request's locality is the
+    /// ladder's widest route, not the answering rung's.
+    pub const SERVED_LOCALITY_KEY: &'static str = "locality";
+
     /// Key in a ladder's served receipt naming the cached prefix the
     /// provider confirmed for this answer: a [`ServedCacheHorizon`]. The
     /// host's own stamp, written only when the provider reported writing or
@@ -401,6 +407,15 @@ impl LlmUsage {
             .as_str()
             .map(str::trim)
             .filter(|model_id| !model_id.is_empty())
+    }
+
+    /// Where a host's model ladder says the rung that answered this call
+    /// runs: the served receipt's [`Self::SERVED_LOCALITY_KEY`]. `None` when
+    /// no ladder stamped one, as on a receipt kept before the stamp existed.
+    #[must_use]
+    pub fn served_locality(&self) -> Option<ModelLocality> {
+        let stamped = self.served_receipt()?.get(Self::SERVED_LOCALITY_KEY)?;
+        ModelLocality::deserialize(stamped).ok()
     }
 
     /// The cached prefix a host's model ladder says the provider confirmed
