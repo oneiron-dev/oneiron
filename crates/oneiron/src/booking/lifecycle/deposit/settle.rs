@@ -6,64 +6,19 @@
 //! writer held, and recorded in a second writer only while the deposit still
 //! owes exactly that move.
 
-use serde::{Deserialize, Serialize};
-
 use super::super::door::attempt_failure_reason;
-use super::super::storage::{booking_writer, engine_failure, read_txn, refused};
+use super::super::storage::{booking_writer, engine_failure, read_txn};
 use super::super::token::hex_lower;
 use super::home_fence::{SettleStanding, settle_standing_in_txn};
-use super::{
-    DEPOSIT, DEPOSIT_BOOKING, DepositState, MAX_FAILURE_BYTES, booking_key, bounded, put_deposit,
-};
-use crate::attempt_queue::{
-    AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
-    FailAttempt, RequeueAttempt,
-};
+use super::refund_ended_unpaid::{AskedRefund, note_refund_ended_unpaid};
+use super::settle_row::{SettleRow, enqueue_settle, requeue_reason, settle_payload_key};
+use super::{DEPOSIT, DEPOSIT_BOOKING, DepositState, booking_key, put_deposit};
+use crate::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome};
 use crate::booking::BookingError;
 use crate::{EntityId, Vault};
 
 /// The attempt kind whose rows owe one deposit's next provider move.
 pub const BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND: &str = "booking.deposit.settle";
-
-/// The payload of one [`BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND`] row: the
-/// deposit whose next move is owed. The move itself is read from committed
-/// state when the row runs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DepositSettlePayload {
-    /// The deposit's key, lowercase hex.
-    deposit_key: String,
-}
-
-/// Queues `key`'s next owed move as one settle row, deduplicated by the deposit and `cause`.
-pub(super) fn enqueue_settle(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    key: &[u8; 32],
-    cause: &str,
-    now_utc: u64,
-) -> Result<(), BookingError> {
-    let hex = hex_lower(key);
-    let payload = serde_json::to_vec(&DepositSettlePayload {
-        deposit_key: hex.clone(),
-    })
-    .map_err(|_| refused("booking deposit settle payload did not encode"))?;
-    crate::ports::JobQueue::port_job_enqueue(
-        vault,
-        wtxn,
-        EnqueueAttempt {
-            kind: BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND.to_owned(),
-            payload,
-            dedupe_key: Some(format!(
-                "{BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND}:{hex}:{cause}"
-            )),
-            run_id: None,
-            now: now_utc,
-        },
-    )
-    .map_err(|error| engine_failure("booking deposit settle enqueue", error))?;
-    Ok(())
-}
 
 /// The claim of one settle row at which a failed provider call stops running
 /// again promptly: every claim before it retries
@@ -166,6 +121,13 @@ pub struct DepositSettleRequest<'a> {
     pub payment_id: &'a str,
     pub movement: DepositSettleMove,
     pub idempotency_key: &'a str,
+    /// The keys the same refund was asked under before the owner asked for
+    /// it again, oldest first: the provider ended each with nothing paid
+    /// back. Empty for any other move and for a refund never asked again.
+    /// A refund under one of them hides no refund made elsewhere, and when
+    /// refunds made by hand cover a part of what is owed, it still answers
+    /// that the refund ended unpaid (review round 2 of #10149).
+    pub earlier_retry_keys: &'a [String],
 }
 
 /// Why a provider call failed.
@@ -185,12 +147,26 @@ pub enum DepositProviderFailure {
     /// lacks the permission, say). The deposit still owes the move, so its
     /// row asks again later and does not end on this answer.
     Permanent(String),
+    /// The refund asked under this key ended with nothing paid back (failed
+    /// or cancelled at the provider), so asking again under it answers the
+    /// same. The deposit still owes it and notes it for the owner's card,
+    /// whose Return deposit asks again under a new key unless refunds made by
+    /// hand in the provider's dashboard cover a part of it: then only a hand
+    /// refund pays the rest. The row asks again later, as on
+    /// [`Self::Permanent`] (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]).
+    RefundEndedUnpaid {
+        reason: String,
+        part_refunded_by_hand: bool,
+    },
 }
 
 impl DepositProviderFailure {
     fn reason(&self) -> &str {
         match self {
-            Self::Transient(reason) | Self::Pending(reason) | Self::Permanent(reason) => reason,
+            Self::Transient(reason)
+            | Self::Pending(reason)
+            | Self::Permanent(reason)
+            | Self::RefundEndedUnpaid { reason, .. } => reason,
         }
     }
 }
@@ -249,6 +225,9 @@ enum SettlePlan {
         /// What the provider refunded before this refund; 0 for any other
         /// move.
         refunded_before: u64,
+        /// How many times the owner asked again for this refund after the
+        /// provider ended it unpaid; 0 for any other move.
+        refund_retry: u32,
     },
 }
 
@@ -283,7 +262,19 @@ struct SettledMove {
 /// acknowledged it, the old home's settle row ends; before that the row stays
 /// queued, dormant ([`SettleStanding::MoveUnacknowledged`]), so a move that is
 /// cancelled and gives the rows back strands no owed move here.
-fn plan_settle(vault: &Vault, key: &[u8; 32], now_utc: u64) -> Result<SettlePlan, BookingError> {
+///
+/// A queued row stamped with a retry count below the deposit's
+/// (`queued_retry`) plans nothing: the owner asked again for a refund the
+/// provider ended unpaid after it was queued, and the row queued with that
+/// ask stands for the refund now, so the older row ends rather than asking
+/// the same refund hourly beside it (review round 2 of #10149). `None`
+/// (a settle run for a booking, not for a queued row) plans what is owed.
+fn plan_settle(
+    vault: &Vault,
+    key: &[u8; 32],
+    queued_retry: Option<u32>,
+    now_utc: u64,
+) -> Result<SettlePlan, BookingError> {
     booking_writer(vault, |wtxn| {
         match settle_standing_in_txn(vault, &*wtxn)? {
             SettleStanding::Settles => {}
@@ -300,14 +291,17 @@ fn plan_settle(vault: &Vault, key: &[u8; 32], now_utc: u64) -> Result<SettlePlan
         else {
             return Ok(SettlePlan::Nothing);
         };
-        let mut refunded_before = 0;
+        if queued_retry.is_some_and(|queued| queued < row.refund_retry) {
+            return Ok(SettlePlan::Nothing);
+        }
+        let (mut refunded_before, mut refund_retry) = (0, 0);
         let movement = match row.state {
             DepositState::CaptureDue { amount_minor } => {
                 DepositSettleMove::Capture { amount_minor }
             }
             DepositState::VoidDue => DepositSettleMove::Void,
             DepositState::RefundDue { amount_minor } => {
-                refunded_before = row.refunded_minor;
+                (refunded_before, refund_retry) = (row.refunded_minor, row.refund_retry);
                 DepositSettleMove::Refund { amount_minor }
             }
             state if state.is_open() => {
@@ -327,6 +321,7 @@ fn plan_settle(vault: &Vault, key: &[u8; 32], now_utc: u64) -> Result<SettlePlan
             payment_id: row.payment_id,
             movement,
             refunded_before,
+            refund_retry,
         })
     })
 }
@@ -425,6 +420,7 @@ fn record_settled(
             {
                 let refunded = row.refunded_minor.saturating_add(moved);
                 let balance_owed = std::mem::take(&mut row.balance_owed_after_refund);
+                row.refund_ended_unpaid = None;
                 match row.captured_minor {
                     Some(captured) if balance_owed && captured > refunded => {
                         row.refunded_minor = refunded;
@@ -458,48 +454,70 @@ fn record_settled(
     })
 }
 
+/// The idempotency key of `movement` on the deposit whose key's hex starts
+/// with `digest`. One key per deposit, move and amount: a retry of the same
+/// move is deduped by the provider, and a smaller capture after a cancel is
+/// a new request rather than a mismatched replay. A refund after an earlier
+/// one also names what was refunded before it, so a balance equal to the
+/// earlier refund is not taken for its replay, and a refund the owner asked
+/// again after the provider ended it unpaid names its retry count, so the
+/// provider makes a new refund.
+fn settle_idempotency_key(
+    movement: DepositSettleMove,
+    refunded_before: u64,
+    refund_retry: u32,
+    digest: &str,
+) -> String {
+    let after = match refunded_before {
+        0 => String::new(),
+        before => format!("-after-{before}"),
+    };
+    let retry = match refund_retry {
+        0 => String::new(),
+        retry => format!("-retry-{retry}"),
+    };
+    format!(
+        "oneiron-deposit-{}-{}{after}{retry}-{digest}",
+        movement.tag(),
+        movement.amount_minor(),
+    )
+}
+
 /// Runs one deposit's due move: decides it, asks the provider with no
-/// writer held, and records the answer.
+/// writer held, and records the answer. A queued row passes the retry count
+/// it was stamped with (`queued_retry`, [`plan_settle`]).
 fn settle_deposit_key<P: DepositSettlementPort>(
     vault: &Vault,
     key: &[u8; 32],
+    queued_retry: Option<u32>,
     port: &mut P,
     now_utc: u64,
 ) -> Result<DepositSettleStep, BookingError> {
-    let (payment_id, movement, refunded_before) = match plan_settle(vault, key, now_utc)? {
-        SettlePlan::Nothing => return Ok(DepositSettleStep::Nothing),
-        SettlePlan::Wait { due_at } => return Ok(DepositSettleStep::Wait { due_at }),
-        SettlePlan::HomeMoving { due_at } => return Ok(DepositSettleStep::HomeMoving { due_at }),
-        SettlePlan::Move {
-            payment_id,
-            movement,
-            refunded_before,
-        } => (payment_id, movement, refunded_before),
-    };
-    // One key per deposit, move and amount: a retry of the same move is
-    // deduped by the provider, and a smaller capture after a cancel is a
-    // new request rather than a mismatched replay. A refund after an
-    // earlier one also names what was refunded before it, so a balance
-    // equal to the earlier refund is not taken for its replay.
+    let (payment_id, movement, refunded_before, refund_retry) =
+        match plan_settle(vault, key, queued_retry, now_utc)? {
+            SettlePlan::Nothing => return Ok(DepositSettleStep::Nothing),
+            SettlePlan::Wait { due_at } => return Ok(DepositSettleStep::Wait { due_at }),
+            SettlePlan::HomeMoving { due_at } => {
+                return Ok(DepositSettleStep::HomeMoving { due_at });
+            }
+            SettlePlan::Move {
+                payment_id,
+                movement,
+                refunded_before,
+                refund_retry,
+            } => (payment_id, movement, refunded_before, refund_retry),
+        };
     let key_hex = hex_lower(key);
     let digest = &key_hex[..32];
-    let idempotency_key = if refunded_before > 0 {
-        format!(
-            "oneiron-deposit-{}-{}-after-{refunded_before}-{digest}",
-            movement.tag(),
-            movement.amount_minor(),
-        )
-    } else {
-        format!(
-            "oneiron-deposit-{}-{}-{digest}",
-            movement.tag(),
-            movement.amount_minor(),
-        )
-    };
+    let idempotency_key = settle_idempotency_key(movement, refunded_before, refund_retry, digest);
+    let earlier_retry_keys: Vec<String> = (0..refund_retry)
+        .map(|retry| settle_idempotency_key(movement, refunded_before, retry, digest))
+        .collect();
     match port.settle(&DepositSettleRequest {
         payment_id: &payment_id,
         movement,
         idempotency_key: &idempotency_key,
+        earlier_retry_keys: &earlier_retry_keys,
     }) {
         Ok(moved) => Ok(
             match record_settled(
@@ -517,7 +535,15 @@ fn settle_deposit_key<P: DepositSettlementPort>(
                 SettleRecord::HomeMoving { due_at } => DepositSettleStep::HomeMoving { due_at },
             },
         ),
-        Err(failure) => Ok(DepositSettleStep::Failed(failure)),
+        Err(failure) => {
+            let asked = AskedRefund {
+                movement,
+                refunded_before,
+                retry: refund_retry,
+            };
+            note_refund_ended_unpaid(vault, key, asked, &failure, now_utc)?;
+            Ok(DepositSettleStep::Failed(failure))
+        }
     }
 }
 
@@ -541,7 +567,7 @@ pub fn settle_booking_deposit<P: DepositSettlementPort>(
             .map_err(|error| engine_failure("meta read", error))?
     };
     match link {
-        Some(link) => settle_deposit_key(vault, &link.deposit_key, port, now_utc),
+        Some(link) => settle_deposit_key(vault, &link.deposit_key, None, port, now_utc),
         None => Ok(DepositSettleStep::Nothing),
     }
 }
@@ -556,7 +582,9 @@ pub struct BookingDepositSettlementDrain {
     /// end, and rows this node holds dormant while a home move it froze its
     /// booking rows for stands unacknowledged.
     pub waiting: u32,
-    /// Rows that owed nothing any more.
+    /// Rows that owed nothing any more, and rows queued before the owner
+    /// asked again for a refund the provider ended unpaid: the row queued
+    /// with that ask stands for it.
     pub settled_nothing: u32,
     /// Rows whose provider call, or whose store write, failed and runs again
     /// promptly.
@@ -580,9 +608,11 @@ pub struct BookingDepositSettlementDrain {
 /// still failing at that claim, is asked again an hour later, and so is a
 /// move the provider holds pending, however many claims it took: a row ends
 /// only once its deposit owes nothing, so an outage or a broken provider key
-/// strands no capture, void or refund. A store failure while a move is
-/// decided or recorded runs the row again the same way. Only a row whose
-/// payload names no deposit fails for good.
+/// strands no capture, void or refund, or once the owner asked again for a
+/// refund the provider ended unpaid after it was queued: the row queued with
+/// that ask asks it, so one row per deposit keeps asking. A store failure
+/// while a move is decided or recorded runs the row again the same way. Only
+/// a row whose payload names no deposit fails for good.
 ///
 /// # Errors
 ///
@@ -616,8 +646,8 @@ pub fn run_booking_deposit_settlement<P: DepositSettlementPort>(
             lease_owner,
             now_utc,
         };
-        let key = match settle_payload_key(&record) {
-            Ok(key) => key,
+        let (key, queued_retry) = match settle_payload_key(&record) {
+            Ok(queued) => queued,
             Err(error) => {
                 tracing::warn!(%error, "booking deposit settle row names no deposit");
                 settle.fail(&error)?;
@@ -626,7 +656,7 @@ pub fn run_booking_deposit_settlement<P: DepositSettlementPort>(
             }
         };
         let prompt = record.attempt_count < DEPOSIT_SETTLE_PROMPT_ATTEMPTS;
-        match settle_deposit_key(vault, &key, port, now_utc) {
+        match settle_deposit_key(vault, &key, Some(queued_retry), port, now_utc) {
             Ok(DepositSettleStep::Nothing) => {
                 settle.complete()?;
                 drain.settled_nothing += 1;
@@ -694,71 +724,4 @@ pub fn run_booking_deposit_settlement<P: DepositSettlementPort>(
         }
     }
     Ok(drain)
-}
-
-/// The reason a settle row is queued again under: the provider's own,
-/// bounded, and never empty, since the queue refuses an empty reason and the
-/// row would then stay leased.
-fn requeue_reason(reason: &str) -> String {
-    let reason = bounded(reason, MAX_FAILURE_BYTES);
-    if reason.is_empty() {
-        "the provider gave no reason".to_owned()
-    } else {
-        reason
-    }
-}
-
-fn settle_payload_key(record: &AttemptRecord) -> Result<[u8; 32], BookingError> {
-    let payload: DepositSettlePayload = serde_json::from_slice(&record.payload)
-        .map_err(|_| refused("booking deposit settle payload did not decode"))?;
-    oneiron_hex::decode::<32>(&payload.deposit_key)
-        .ok_or_else(|| refused("booking deposit settle payload names no deposit"))
-}
-
-/// One claimed settle row and the three ways its claim ends.
-struct SettleRow<'a> {
-    queue: &'a AttemptQueue<'a>,
-    record: &'a AttemptRecord,
-    lease_owner: &'a str,
-    now_utc: u64,
-}
-
-impl SettleRow<'_> {
-    fn complete(&self) -> Result<(), BookingError> {
-        self.queue
-            .complete(CompleteAttempt {
-                id: self.record.id,
-                lease_owner: self.lease_owner.to_owned(),
-                attempt_count: self.record.attempt_count,
-                now: self.now_utc,
-            })
-            .map(|_| ())
-            .map_err(|error| engine_failure("deposit settle complete", error))
-    }
-
-    fn requeue(&self, reason: &str, due_at: u64) -> Result<(), BookingError> {
-        self.queue
-            .requeue_coalescing(RequeueAttempt {
-                id: self.record.id,
-                lease_owner: self.lease_owner.to_owned(),
-                attempt_count: self.record.attempt_count,
-                reason: reason.to_owned(),
-                due_at,
-            })
-            .map(|_| ())
-            .map_err(|error| engine_failure("deposit settle requeue", error))
-    }
-
-    fn fail(&self, failure: &BookingError) -> Result<(), BookingError> {
-        self.queue
-            .fail(FailAttempt {
-                id: self.record.id,
-                lease_owner: self.lease_owner.to_owned(),
-                attempt_count: self.record.attempt_count,
-                reason: attempt_failure_reason(failure),
-                now: self.now_utc,
-            })
-            .map(|_| ())
-            .map_err(|error| engine_failure("deposit settle fail", error))
-    }
 }

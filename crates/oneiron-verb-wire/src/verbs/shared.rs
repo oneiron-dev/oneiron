@@ -71,11 +71,23 @@ pub struct SharedOwnerKeyMoveSigner {
     pub seq: u64,
 }
 
+/// One `human` binding a move's plan ends with a `RevokeActor`, on a key the
+/// move does not revoke.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SharedOwnerKeyMoveBinding {
+    /// The roster key the binding is on, in hex: 64 digits for an Ed25519
+    /// key, 66 for a compressed P-256 key.
+    pub authority_key: String,
+    /// The binding's live epoch, which the revoke names.
+    pub epoch: u64,
+}
+
 /// `vault.shared.owner_key_move_plan`'s answer and the plan
 /// `vault.shared.owner_key_move_sign` confirms: the rows a device of the
-/// executing Owner signs stand on `parents`, revoke each of `revoked`, and
-/// are signed by one of `signers` at its `seq` and on. Byte fields are
-/// lowercase hex.
+/// executing Owner signs stand on `parents`, end each of `revoked_bindings`
+/// and revoke each of `revoked`, and are signed by one of `signers` at its
+/// `seq` and on. Byte fields are lowercase hex.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SharedOwnerKeyMovePlan {
@@ -90,6 +102,12 @@ pub struct SharedOwnerKeyMovePlan {
     /// The member's live owner keys, one revoke each, in hex: 64 digits for
     /// an Ed25519 key, 66 for a passkey's compressed P-256 key.
     pub revoked: Vec<String>,
+    /// The `human` bindings the move ends on keys outside `revoked`, one
+    /// `RevokeActor` each, signed before the revokes. Absent when there is
+    /// none, so a device that does not know the field still reads every
+    /// plan it can sign in full, and refuses one it cannot.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub revoked_bindings: Vec<SharedOwnerKeyMoveBinding>,
     /// The executing Owner's keys that may sign.
     pub signers: Vec<SharedOwnerKeyMoveSigner>,
     /// When it was planned, advisory unix seconds: each revoke's time.
@@ -113,7 +131,9 @@ pub struct SharedOwnerKeyMoveSignRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SharedOwnerKeyMoveConfirm {
-    /// Each signed `RevokeDevice` row's encoded body, lowercase hex.
+    /// Each signed row's encoded body, lowercase hex, in order: a
+    /// `RevokeActor` per binding the plan ends, then a `RevokeDevice` per
+    /// revoked key.
     pub owner_key_revokes: Vec<String>,
 }
 

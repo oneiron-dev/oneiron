@@ -47,7 +47,8 @@ pub use phone::PhoneCallRead;
 pub(crate) use public::{LiveVoiceSessions, PublicSession, start_public};
 pub use record::voice_home_conversation_id;
 pub(crate) use record::{
-    CallRecord, KeptTurn, phone_call_opening, phone_call_record, standalone_call_record,
+    CallRecord, KeptTurn, phone_call_opening, phone_call_record, room_call_record,
+    standalone_call_record,
 };
 pub use serve_bindings::{VoiceServeBindings, VoiceServeConnection};
 pub use speech::{PlayoutFrame, TurnSources, VoiceBrainOut, VoicePlayout};
