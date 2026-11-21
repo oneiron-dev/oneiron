@@ -368,7 +368,7 @@ impl Vault {
                             source,
                         );
                     }
-                    hold_in_thread_session_in_txn(self, txn, agent, conversation, now)
+                    hold_in_thread_session_in_txn(self, txn, agent, conversation, now, None)
                 })?;
         let read_grant_repair = self
             .issue_connector_witness_read_grant(agent, conversation, now)
@@ -395,16 +395,19 @@ impl Vault {
 /// thread's landed epochs cover is not held: numbered there, it would move
 /// the turns they cover, so it stays a raw line no epoch takes. While that
 /// last covered turn's own row does not read (it was hard-erased), no turn
-/// can be placed against it, so none is held.
+/// can be placed against it, so none is held. A phone keep passes its proof
+/// in `phone_birth` so the minted SESSION carries its thread's stamp;
+/// connector threads pass `None` (VOICE-PHONE-AGENT-REACH R1 fix).
 pub(crate) fn hold_in_thread_session_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     agent: EntityId,
     conversation: EntityId,
     now: u64,
+    phone_birth: Option<&crate::voice_call::PhoneThreadBirth>,
 ) -> MemoryResult<()> {
     let store = &vault.store;
-    let session = vault.thread_session_in_txn(txn, conversation, agent, now)?;
+    let session = vault.thread_session_in_txn(txn, conversation, agent, now, phone_birth)?;
     let end =
         match crate::compaction::conversation_covered_end_in(store, txn, session, conversation)? {
             Some(end) => match crate::compaction::thread_turn_key_in(store, txn, &end)? {
