@@ -14782,7 +14782,7 @@
      "surface": {
       "crate-vis": 3,
       "fn": 2,
-      "mod": 11,
+      "mod": 12,
       "re-export": 2,
       "struct": 1
      }
@@ -15044,7 +15044,7 @@
      "purpose": "Campaign copy review (ARCH-0059 #copy-review): the campaign's reviewer checks each body version a step sends…",
      "surface": {
       "const": 2,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 2,
       "struct": 3
@@ -15114,7 +15114,7 @@
      "path": "src/campaign/enrollment/mod.rs",
      "purpose": "CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 12
      }
     },
@@ -15212,6 +15212,18 @@
      "path": "src/campaign/enrollment/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/house_voice_guide.rs",
+     "purpose": "The vault's house voice guide (ARCH-0059 #copy-review; lead ruling COPY-REVIEW-JUDGE-BY-DEFAULT = B, 21 Nov…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 4,
+      "fn": 2
+     }
     },
     {
      "bucket": "s",
@@ -15363,7 +15375,7 @@
      "path": "src/campaign/setting_keys.rs",
      "purpose": "The campaign sticky sender's pack Setting key (owner ruling PACK-SETTINGS-ALL = B; Engine RULING 23:20 15…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -56084,7 +56096,7 @@
      "surface": {
       "const": 1,
       "enum": 3,
-      "fn": 6,
+      "fn": 5,
       "struct": 4
      }
     },
@@ -61127,7 +61139,7 @@
      "path": "src/note.rs",
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
-      "crate-vis": 71,
+      "crate-vis": 72,
       "re-export": 22
      }
     },
@@ -96149,6 +96161,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/campaign_copy_review.rs",
+     "purpose": "Doors for `tests/campaign_copy_review.rs` (lead ruling COPY-REVIEW-JUDGE-BY-DEFAULT = B): a vault with no…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/campaign_member_index.rs",
      "purpose": "Doors for `tests/campaign_member_index.rs` (census L3-28C): the claims the campaign member index nominates…",
      "surface": {
@@ -98325,7 +98347,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 380,
+      "mod": 381,
       "re-export": 3
      }
     },
@@ -109837,12 +109859,14 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/campaign_copy_review.rs",
-     "purpose": "Campaign copy review (ARCH-0059 #copy-review, Top-15 item 13)",
-     "surface": {}
+     "purpose": "Campaign copy review (ARCH-0059 #copy-review, Top-15 item 13; lead ruling COPY-REVIEW-JUDGE-BY-DEFAULT = B…",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -109850,6 +109874,14 @@
      "notable": [],
      "path": "tests/campaign_enroll_typed_door.rs",
      "purpose": "Control for the Engine's RULING RESTRICTION-FIX-SCOPE = A, item 2 (15 Nov): the generic claim doors refuse a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/campaign_house_voice_guide.rs",
+     "purpose": "The house voice guide seed (ARCH-0059 #copy-review; lead ruling COPY-REVIEW-JUDGE-BY-DEFAULT = B, 21 Nov): a…",
      "surface": {}
     },
     {
@@ -119936,7 +119968,7 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 72,
+     "files": 73,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -121336,7 +121368,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 391,
+     "files": 392,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -121527,8 +121559,8 @@
    },
    "over_bar": 273,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8484,
-   "test_files": 2210
+   "source_files": 8486,
+   "test_files": 2211
   },
   "oneiron-agent-runtime": {
    "files": [

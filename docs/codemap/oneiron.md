@@ -1288,7 +1288,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar/transcript/pending.rs` | src | m | 1 struct · 1 fn · 2 const · 2 crate-vis | PendingTranscriptPass | Retained transcript ingestion through the caller's original hook boundary |
 | `src/calendar/tz.rs` | src | m | 1 struct · 2 fn · 6 crate-vis | WallTime | IANA time-zone border (CAL-01) |
 | `src/calendar/windows_zones.rs` | src | s | 1 crate-vis | — | Windows time-zone names as IANA zones (fix list row 17868): the zone a Microsoft 365 event names… |
-| `src/campaign.rs` | src | s | 1 struct · 2 fn · 11 mod · 2 re-export · 3 crate-vis | CrmPackRegistration | CRM pack engine-side registration home |
+| `src/campaign.rs` | src | s | 1 struct · 2 fn · 12 mod · 2 re-export · 3 crate-vis | CrmPackRegistration | CRM pack engine-side registration home |
 | `src/campaign/claims/codec.rs` | src | s | 7 re-export · 36 crate-vis | — | Cohort claim codecs are defined below the pack |
 | `src/campaign/claims/member_replacement.rs` | src | s | 1 crate-vis | — | The successor body for a live `campaign.member` head |
 | `src/campaign/claims/mod.rs` | src | s | 3 re-export · 6 crate-vis | — | The CRM pack's claim families (CA-01) |
@@ -1312,12 +1312,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/campaign/enrollment/approval.rs` | src | m | 13 crate-vis | — | FIX 6424 part 2a (Engine 10-20 21:0x rulings 6 and 7): the owner's approve-once ask on one campaign… |
 | `src/campaign/enrollment/audience.rs` | src | s | 1 struct · 2 fn | AudienceWakeReport | The saved-query sweep's enrollment leg (ARCH-0059, decide-host 1193): a query campaign programs name as… |
 | `src/campaign/enrollment/copy_arms.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | CampaignArmOutcome | Campaign copy A/B arms (ARCH-0059 #copy-review): a program step may carry an arm label, each member's send… |
-| `src/campaign/enrollment/copy_review.rs` | src | m | 3 struct · 1 enum · 2 fn · 2 const · 4 crate-vis | CampaignCopyReviewDecisions, CampaignCopyReviewWording, CopyReviewOutcome, CopyReviewVerdict | Campaign copy review (ARCH-0059 #copy-review): the campaign's reviewer checks each body version a step sends… |
+| `src/campaign/enrollment/copy_review.rs` | src | m | 3 struct · 1 enum · 2 fn · 2 const · 5 crate-vis | CampaignCopyReviewDecisions, CampaignCopyReviewWording, CopyReviewOutcome, CopyReviewVerdict | Campaign copy review (ARCH-0059 #copy-review): the campaign's reviewer checks each body version a step sends… |
 | `src/campaign/enrollment/detection.rs` | src | m | 2 struct · 1 enum · 4 fn · 7 crate-vis | CampaignEnrollmentEvent, DetectEnrollment, EnrollmentDetection | Persisted membership-transition events, detection pass, cause routing, and per-query baseline |
 | `src/campaign/enrollment/held.rs` | src | m | 3 fn · 1 re-export · 6 crate-vis | — | Campaign enrollment held loop: observe Gate holds, ask the owner once, press to redrive |
 | `src/campaign/enrollment/home_node.rs` | src | m | 2 struct · 2 enum · 9 fn · 2 crate-vis | CampaignHomeNodeAdmission, CampaignHomeNodeCandidate, CampaignHomeNodeClass, CampaignHomeNodeDesignation | Campaign-local MACRO home-node election, designation persistence, and admission checks |
 | `src/campaign/enrollment/manual.rs` | src | s | 3 crate-vis | — | Manual enrollment beside the saved-query MACRO ingress |
-| `src/campaign/enrollment/mod.rs` | src | s | 12 re-export · 8 crate-vis | — | CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership… |
+| `src/campaign/enrollment/mod.rs` | src | s | 12 re-export · 9 crate-vis | — | CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership… |
 | `src/campaign/enrollment/outbound_leg.rs` | src | m | 1 enum · 3 fn · 9 crate-vis | EnrollmentLegDrive | Outward leg bridging persisted refs to the outbound chokepoint and the ledger |
 | `src/campaign/enrollment/program.rs` | src | L | 7 fn · 2 const · 8 re-export · 9 crate-vis | — | Persisted campaign program and step state authorizing both halves of the consequence |
 | `src/campaign/enrollment/reconcile.rs` | src | m | 8 crate-vis | — | One effective `campaign.member` head per person and campaign (FIX 9663, 9664, 10221) |
@@ -1326,6 +1326,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/campaign/enrollment/storage.rs` | src | s | 1 const · 1 re-export · 7 crate-vis | — | Shared campaign-enrollment storage primitives: schema version and hex/JSON row helpers |
 | `src/campaign/enrollment/target.rs` | src | s | 3 crate-vis | — | The pinned send target of one campaign enrollment's outward leg (FIX 11513) |
 | `src/campaign/enrollment/tests.rs` | test | m | — | — | — |
+| `src/campaign/house_voice_guide.rs` | src | s | 2 fn · 2 const · 4 crate-vis | — | The vault's house voice guide (ARCH-0059 #copy-review; lead ruling COPY-REVIEW-JUDGE-BY-DEFAULT = B, 21 Nov… |
 | `src/campaign/judgments.rs` | src | s | 1 struct · 1 fn · 1 const | CampaignJudgmentRow | Campaign membership joins for resident-authored graph judgment workflows |
 | `src/campaign/member_index.rs` | src | m | 9 crate-vis | — | The `campaign.member` claims by the CAMPAIGN their value is scoped to and by the SAVED_QUERY that derived… |
 | `src/campaign/one_click_unsubscribe.rs` | src | s | 1 enum · 3 fn · 1 const · 1 crate-vis | OneClickUnsubscribeOutcome | The one-click unsubscribe link a bulk campaign email carries (ARCH-0059 #opt-out; RFC 8058; FIX… |
@@ -1338,7 +1339,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/campaign/presets/validate.rs` | src | m | 5 crate-vis | — | Content-invariant validators plus the require_text and preset_error helpers |
 | `src/campaign/send_hygiene.rs` | src | m | 1 enum · 2 fn · 1 const · 8 re-export · 4 crate-vis | StickySenderOutcome | CA-05 send hygiene: suppression, unsubscribe headers, and sticky senders |
 | `src/campaign/sender.rs` | src | m | 1 struct · 2 fn · 5 crate-vis | CampaignChannelSender | One campaign program step's send through the served channel transports (FIX 11513) |
-| `src/campaign/setting_keys.rs` | src | s | 1 crate-vis | — | The campaign sticky sender's pack Setting key (owner ruling PACK-SETTINGS-ALL = B; Engine RULING 23:20 15… |
+| `src/campaign/setting_keys.rs` | src | s | 2 crate-vis | — | The campaign sticky sender's pack Setting key (owner ruling PACK-SETTINGS-ALL = B; Engine RULING 23:20 15… |
 | `src/campaign/stage/external.rs` | src | s | 1 fn · 1 re-export · 1 crate-vis | — | External-evidence hook ingress with the owner-attestation proposal-boundary gate |
 | `src/campaign/stage/ladder.rs` | src | s | 11 re-export · 4 crate-vis | — | Pure ladder schema and helpers defined below the pack |
 | `src/campaign/stage/mod.rs` | src | s | 7 re-export · 2 crate-vis | — | CA-04 stage-ladder machinery: the mechanism, never the content |
@@ -4758,7 +4759,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/campaign_records/mod.rs` | src | s | 4 mod · 3 re-export | — | Campaign request, record and membership projection values used by core callers |
 | `src/memory/campaign_records/program.rs` | src | m | 7 struct · 2 re-export · 5 crate-vis | CampaignProgramDefinitionView, CampaignProgramOutboundSpec, CampaignProgramReadResult, CampaignProgramRecord, CampaignProgramStepSpec, CreateCampaignProgramRequest, UpdateCampaignProgramRequest | Wire shapes of the four campaign program verbs (`vault.campaign.program.*`) |
 | `src/memory/campaign_records/program_definition.rs` | src | s | 8 struct · 1 fn · 1 const | AuthoredCampaignProgram, CampaignProgram, CampaignProgramAudience, CampaignProgramDefinition, CampaignProgramDraft, CampaignProgramOutbound, CampaignProgramStep, CampaignProgramStepDraft | Persisted cohort-program values and complete authoring drafts |
-| `src/memory/campaign_records/records.rs` | src | s | 4 struct · 3 enum · 6 fn · 1 const | CampaignDefinition, CampaignLifecycle, CampaignRecord, CampaignSendMode, CopyReviewMode, CreateCampaignRequest, UpdateCampaignRequest | Versioned cohort records, lifecycle values and owner-bound request shapes |
+| `src/memory/campaign_records/records.rs` | src | s | 4 struct · 3 enum · 5 fn · 1 const | CampaignDefinition, CampaignLifecycle, CampaignRecord, CampaignSendMode, CopyReviewMode, CreateCampaignRequest, UpdateCampaignRequest | Versioned cohort records, lifecycle values and owner-bound request shapes |
 | `src/memory/campaign_records/stage_results.rs` | src | s | 3 struct · 4 enum | CampaignEnrollmentAttemptPayload, NoShowRecoveryPlan, NoShowRecoveryStep, ReentryPlan, StageProjectResult, StageRoute, WakeCondition | Stage projection outcomes, wake/re-entry plans and their queued reference payload |
 | `src/memory/campaign_records/verb_names.rs` | src | s | 18 const | — | Stable names and discovery tables of campaign and standing-query verbs |
 | `src/memory/can.rs` | src | s | 1 struct · 2 enum · 1 fn · 1 re-export · 3 crate-vis | CanAnswer, CanEffectAnswer, CanEffectVerdict | `can`: the read-only preflight of an ask, the dated preflight of one effect (C2:207, FIX 22102), or one… |
@@ -5200,7 +5201,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/model_step_context.rs` | src | s | 2 struct · 1 enum · 1 fn · 1 re-export · 1 crate-vis | DurableStepContext, StepOutcome, StepSpendScope | Caller-owned model-step context and terminal outcomes |
 | `src/model_step_effect.rs` | src | s | 1 re-export · 1 crate-vis | — | Durable model-step identity frozen into outbound effects |
 | `src/model_step_error.rs` | src | s | 1 enum · 2 type · 1 crate-vis | DurableStepError | Durable model-step failure and reply-check contracts |
-| `src/note.rs` | src | m | 22 re-export · 71 crate-vis | — | Attributed NOTE records with built-in, plugin and registered PACK kinds |
+| `src/note.rs` | src | m | 22 re-export · 72 crate-vis | — | Attributed NOTE records with built-in, plugin and registered PACK kinds |
 | `src/note/adapter_tests.rs` | test | m | — | — | Canonical program adapter laws; no native snapshot grants authority |
 | `src/note/archive_import.rs` | src | s | 1 fn · 1 re-export · 6 crate-vis | — | Whole-vault archive import of NOTE rows (FIX 7777) |
 | `src/note/archive_read.rs` | src | s | 2 crate-vis | — | Whether an archived NOTE was read since its archive (OF-073, FIX 2419; CALLS "FIX 2419 NOTE read since… |
@@ -8263,6 +8264,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/burst_receipt_stored_shape.rs` | src | s | 1 fn | — | Door to the burst ledger's read of one stored receipt row (L7-41, the lead's M-1 STORED-CHANGE-RULE): a test… |
 | `src/test_doors/call_receipt_damage.rs` | src | s | 1 fn | — | Plants an undecodable CALL_RECEIPT row for `tests/agent_health_calls_drops_unread.rs`: the row sits past the… |
 | `src/test_doors/callable_skill.rs` | src | s | 7 fn | — | Doors for the callable-skill integration tests |
+| `src/test_doors/campaign_copy_review.rs` | src | s | 2 fn | — | Doors for `tests/campaign_copy_review.rs` (lead ruling COPY-REVIEW-JUDGE-BY-DEFAULT = B): a vault with no… |
 | `src/test_doors/campaign_member_index.rs` | src | s | 6 fn | — | Doors for `tests/campaign_member_index.rs` (census L3-28C): the claims the campaign member index nominates… |
 | `src/test_doors/campaign_opt_out_line.rs` | src | s | 1 struct · 5 fn | SealedCampaignEmail | Door for `tests/campaign_opt_out_line.rs` (L3-02, ARCH-0059 #opt-out): the campaign sender's sealing of one… |
 | `src/test_doors/candidate_scope.rs` | src | s | 1 fn | — | Door for `tests/scoped_temporal_scan_caps.rs`: a query whose candidate filter admits only some rows, as a… |
@@ -8458,7 +8460,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mesh_machine_endpoint_index.rs` | src | s | 1 enum · 5 fn | IndexedEndpoint | Doors for `tests/mesh_machine_endpoint_index.rs` (census L3-28B): the endpoint lookup as the MACHINE… |
 | `src/test_doors/meso_extraction_width.rs` | src | m | 1 struct · 1 enum · 1 fn · 5 crate-vis | ExtractionWidth, PriorScenario | Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one… |
 | `src/test_doors/microsoft_token.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ExchangedMicrosoftGrant | Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`… |
-| `src/test_doors/mod.rs` | src | m | 1 fn · 380 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | m | 1 fn · 381 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/model_call_turn_link.rs` | src | s | 1 fn | — | Doors for `oneiron-server/tests/chat_model_call_turn_link.rs` (UNBUILT3-41, FIX [TURN-MODEL-LINK]): the… |
 | `src/test_doors/model_step_submission_codec.rs` | src | s | 1 fn | — | Doors for `tests/model_step_submission_codec.rs` (STEP-CORRECTION-HEALTH-PARK): a model step's submission… |
@@ -9478,8 +9480,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/calendar_system_shared_install.rs` | test | s | — | — | FIX CALENDAR-SYSTEM-SHARED-BY-ICS-AND-CONNECTOR: one calendar system is imported by one kind of source |
 | `tests/calendar_transcript_followups.rs` | test | m | — | — | CAL-08's producer (Engine RULINGs CAL-08-FOLLOWUP-APPROVAL = A, Sun 15 Nov 12:04… |
 | `tests/campaign_bulk_send_mode.rs` | test | m | — | — | Campaign send mode (ARCH-0059 #opt-out; FIX [CAMPAIGN-BULK-SEND-MODE], Engine ruling L3-02-SEND-MODE-SCOPE =… |
-| `tests/campaign_copy_review.rs` | test | L | — | — | Campaign copy review (ARCH-0059 #copy-review, Top-15 item 13) |
+| `tests/campaign_copy_review.rs` | test | XL | 1 crate-vis | — | Campaign copy review (ARCH-0059 #copy-review, Top-15 item 13; lead ruling COPY-REVIEW-JUDGE-BY-DEFAULT = B… |
 | `tests/campaign_enroll_typed_door.rs` | test | s | — | — | Control for the Engine's RULING RESTRICTION-FIX-SCOPE = A, item 2 (15 Nov): the generic claim doors refuse a… |
+| `tests/campaign_house_voice_guide.rs` | test | s | — | — | The house voice guide seed (ARCH-0059 #copy-review; lead ruling COPY-REVIEW-JUDGE-BY-DEFAULT = B, 21 Nov): a… |
 | `tests/campaign_member_index.rs` | test | m | — | — | Census L3-28C (ARCH-0044 H202): a campaign's and a saved query's membership pages nominate their heads from… |
 | `tests/campaign_opt_out_language.rs` | test | m | — | — | The 1:1 campaign email's opt-out line is in the member's language (FIX [CAMPAIGN-OPT-OUT-LINE-LOCALE], filed… |
 | `tests/campaign_opt_out_line.rs` | test | s | — | — | Every campaign email carries a plain opt-out line (L3-02) |
