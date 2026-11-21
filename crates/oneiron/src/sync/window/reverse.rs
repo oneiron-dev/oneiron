@@ -176,6 +176,18 @@ fn reverse_rematerialize_scan(
                 && !EntityMetadataHeader::parse(&raw)
                     .is_some_and(|header| (start_ts..end_ts).contains(&header.learned_at))
             {
+                // A base row's edge to a world's row rides that world's window
+                // of the TARGET's birth month (`edge_belongs_to_window`),
+                // whatever month the base source was learned in. The full pass
+                // finds it through the target index below; this pass has only
+                // the source the write door queued, so a world window takes
+                // that source's edges here, never its row (FIX
+                // LIVE-MIRROR-CROSS-MONTH-EDGE-SOURCE-DROPPED).
+                if window_key.world().is_some()
+                    && super::types::entity_world(&raw).ok() == Some(None)
+                {
+                    base_edge_sources.push(id);
+                }
                 continue;
             }
             if no_pads && crate::world_keys::pad_body_world(&raw).is_some() {

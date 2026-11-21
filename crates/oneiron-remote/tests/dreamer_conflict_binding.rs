@@ -192,6 +192,7 @@ impl DreamerDecisionLender for FakeLender {
             rule: None,
             local: None,
             system_one: None,
+            precision: None,
             escalation: None,
             big: Some(&big),
             human: &human,

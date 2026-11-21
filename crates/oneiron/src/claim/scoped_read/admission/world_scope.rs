@@ -71,30 +71,6 @@ impl ScopedRead<'_> {
         }
     }
 
-    /// The own-row test of a BM25 scan this read admits each posting of
-    /// ([`crate::ports::TextQuery::hidden_row`]), read in `txn` through this
-    /// read's own store: whether a world keeps the row from the read
-    /// ([`ScopedReadActorKey::world_withheld_rows_in`]). The scan serves no
-    /// such row; with this test its words move no readable row's score
-    /// either (FIX WORLD-SCOPE-BM25-DF-COUNTS-HIDDEN-POSTINGS). `None` when
-    /// no world keeps a row from this read.
-    ///
-    /// # Errors
-    /// A store, fold or clock failure reading the holder's Grants or the
-    /// device-local worlds.
-    pub(crate) fn world_withheld_row_test_in<'t>(
-        &'t self,
-        txn: &'t heed::RoTxn<'_>,
-    ) -> Result<Option<crate::bm25::HiddenRowTest<'t>>> {
-        let Some(withheld) = self.actor_key.world_withheld_rows_in(self.vault, txn)? else {
-            return Ok(None);
-        };
-        let store = self.store_read();
-        Ok(Some(Box::new(move |id: &EntityId| {
-            withheld.withholds_in(&store, txn, id)
-        })))
-    }
-
     /// Whether the stored row `row` of `id` sits wholly outside the worlds
     /// the read's verified credential grants ([`outside_worlds_read_in`],
     /// through this read's own store).

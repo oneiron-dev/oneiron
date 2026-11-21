@@ -236,6 +236,54 @@ fn allow_system_rows(vault: &Vault, writer: EntityId) -> Result<()> {
     crate::test_fixtures::put_policy_manifest_bytes(vault, id, &bytes)
 }
 
+/// Declares `predicate`'s class critical in the installed policy manifest:
+/// one exact rule appended to its `rules`, as a trusted policy that names the
+/// class does. A write on `predicate` then meets the declared criticality
+/// floor, which the fallback lift does not clear (ARCH-0003 §Criticality).
+///
+/// # Errors
+///
+/// The store's, or an installed policy that is not a map with `rules`.
+pub fn declare_predicate_critical(vault: &Vault, predicate: &str) -> Result<()> {
+    let id = crate::gate::default_policy_manifest_id()?;
+    let installed = vault
+        .get(&id)?
+        .ok_or_else(|| Error::InvalidConfig("installed policy".into()))?;
+    let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut installed.as_slice())
+        .map_err(|_| Error::InvalidConfig("installed policy".into()))?
+    else {
+        return Err(Error::InvalidConfig("installed policy is not a map".into()));
+    };
+    let rule = rmpv::Value::Map(vec![
+        (rmpv::Value::from("prefix"), rmpv::Value::from(predicate)),
+        (rmpv::Value::from("exact"), rmpv::Value::Boolean(true)),
+        (
+            rmpv::Value::from("axes"),
+            rmpv::Value::Map(vec![
+                (
+                    rmpv::Value::from("criticality"),
+                    rmpv::Value::from("critical"),
+                ),
+                (
+                    rmpv::Value::from("sensitivity"),
+                    rmpv::Value::from("normal"),
+                ),
+            ]),
+        ),
+    ]);
+    match entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("rules"))
+    {
+        Some((_, rmpv::Value::Array(rules))) => rules.push(rule),
+        _ => return Err(Error::InvalidConfig("installed policy has no rules".into())),
+    }
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
+        .map_err(|_| Error::InvalidConfig("encode policy".into()))?;
+    crate::test_fixtures::put_policy_manifest_bytes(vault, id, &bytes)
+}
+
 /// A fixture vault for one Dreamer pass: engine machines provisioned,
 /// fixture extraction allowed on this server, and the shipped policy plus a
 /// `core:read` grant for `reader`.

@@ -127,6 +127,7 @@ pub(in crate::edit_distance) use self::evidence_judge::{
 };
 pub(crate) use self::gate_receipt_erase::forget_gate_amendment_in_txn;
 pub(in crate::edit_distance) use self::origin::UNKNOWN_EXECUTOR;
+pub(crate) use self::projector::reconcile_amendment_projections;
 pub use self::rejection::judge_rejection_with_cause;
 pub(in crate::edit_distance) use self::rejection::{
     Rejection, judge_rejection_in_txn, judge_rejection_with_cause_in_txn,

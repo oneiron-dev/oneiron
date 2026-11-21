@@ -216,6 +216,7 @@ impl Ladder {
             rule: None,
             local: None,
             system_one: Some(&self.first),
+            precision: None,
             escalation: stronger.then_some(&self.stronger as &dyn DecisionProvider),
             big: None,
             human: &self.queue,

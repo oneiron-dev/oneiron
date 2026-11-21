@@ -70,8 +70,9 @@ pub use disclosure_rung::{
     project_calendar_grant,
 };
 pub use emergency_reschedule::{
-    AffectedBooking, EmergencyActionPolicy, EmergencyBatchPlan, EmergencyItem, EmergencyLocalBasis,
-    EmergencyPick, EmergencyPlan, EmergencyRescheduleRequest, OwnerInstructionRecord,
+    AffectedBooking, EMERGENCY_REPEAT_NOTICE, EmergencyActionPolicy, EmergencyBatchPlan,
+    EmergencyExecution, EmergencyItem, EmergencyLocalBasis, EmergencyPick, EmergencyPlan,
+    EmergencyRepeatNotice, EmergencyRescheduleRequest, OwnerInstructionRecord,
     canonical_emergency_request_hash, counterparty_pick, enumerate_affected_bookings,
     execute_emergency_plan, plan_emergency_reschedule, verify_logged_owner_instruction,
 };

@@ -291,6 +291,13 @@ fn prompt_source_readable(
     let Some(raw) = vault.get_raw_in(txn, &source)? else {
         return Ok(false);
     };
+    // VOICE-PHONE-AGENT-REACH R2 review F2, R1 review C-F2: a phone thread's
+    // row, or a row whose words came from one (lineage that does not resolve
+    // counts), is no prompt text a selector carries, as the selector carries
+    // neither row.
+    if crate::voice_call::phone_words_in(vault, txn, &source, None)? {
+        return Ok(false);
+    }
     // A prompt source that carries other rows' words (a scope SUMMARY, the
     // TURN that copies one) reaches the member only when it reads every one
     // of those sources too, as the window filter judges the row itself (FIX
@@ -324,7 +331,12 @@ fn prompt_source_readable(
         txn,
         &source,
         Some(raw.as_slice()),
-        |text_source, raw| member_reads_row(vault, txn, member, text_source, raw),
+        |text_source, raw| {
+            if crate::voice_call::phone_words_in(vault, txn, text_source, Some(raw))? {
+                return Ok(false);
+            }
+            member_reads_row(vault, txn, member, text_source, raw)
+        },
     )
 }
 
