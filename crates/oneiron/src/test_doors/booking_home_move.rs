@@ -81,7 +81,7 @@ pub fn drop_node_local_outbound_rows(vault: &Vault) -> Result<()> {
 }
 
 /// Deletes every row of `decls` in `vault`, in one writer.
-fn drop_rows(vault: &Vault, decls: &[&SideTableDecl]) -> Result<()> {
+fn drop_rows(vault: &Vault, decls: &[&'static SideTableDecl]) -> Result<()> {
     vault.with_write_txn(|txn| {
         for decl in decls {
             let suffixes = decl
