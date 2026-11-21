@@ -184,6 +184,13 @@ fn settle_connector_calls(
     consent_recheck: bool,
 ) -> Result<usize, IntentLedgerError> {
     let vault = server.vault();
+    // A copy restored and not joined drives, expires, repairs, or settles no
+    // connector call, reattaches no exchange and polls no remote task (row
+    // RESTORED-UNJOINED-STARTS-NO-WORK): pending rows wait, and the settler's
+    // first pass after the join drives them.
+    if vault.restored_unjoined()? {
+        return Ok(0);
+    }
     // Expiry first, so a call past its deadline settles in this same pass;
     // then the owner asks a hold tried and failed to queue.
     if let Err(error) = vault.expire_connector_calls(unix_millis_now()) {
