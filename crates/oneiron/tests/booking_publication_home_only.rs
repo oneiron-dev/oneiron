@@ -36,7 +36,8 @@ use fixture::{Fixture, NOW, event_type};
 use oneiron::booking::{
     BOOKING_PUBLIC_PAGE_PREDICATE, BOOKING_PUBLIC_PAGE_SCHEMA_VERSION, BookingLandingContent,
     BookingPagePublication, ConstraintFieldConfig, EventTypeCard, PublicBookingAvailability,
-    PublicBookingPageToken, ThemeTokens, booking_config_hash, resolve_public_booking_token,
+    PublicBookingPageToken, ThemeTokens, booking_config_hash, load_public_booking_page_listing,
+    resolve_public_booking_token,
 };
 use oneiron::memory::{ClaimInput, CommitReceipt, MEMORY_CODE_INVALID_STATE, MemoryError};
 use oneiron::sync::types::WindowKey;
@@ -54,6 +55,7 @@ const NOW_WINDOW: &str = "2026-03";
 const NOT_BOOKING_HOME: &str = "booking.publication.not_booking_home";
 const NO_BOOKING_HOME: &str = "booking.publication.no_booking_home";
 const BOOKING_HOME_MOVING: &str = "booking.publication.booking_home_moving";
+const REVISION_NOT_PENDING: &str = "booking.publication.revision_not_pending";
 /// The egress test's control: a claim predicate every sync door ships.
 const ORDINARY_PREDICATE: &str = "profile.preference";
 
@@ -199,6 +201,14 @@ fn resolved_page(machine: &Fixture) -> Option<EntityId> {
     .expect("token index read")
 }
 
+/// Whether `machine` serves the page to a visitor at `now`: the read every
+/// public route serves the page from.
+fn serves_page(machine: &Fixture, now: u64) -> bool {
+    load_public_booking_page_listing(&machine.vault, machine.page, now)
+        .expect("read the page's publication")
+        .is_some()
+}
+
 /// The publication claims `machine` holds for the page.
 fn publication_claims(machine: &Fixture) -> Vec<EntityId> {
     machine
@@ -328,6 +338,106 @@ fn a_publish_on_the_former_home_of_a_move_is_refused_and_the_new_home_publishes(
 
     publish(&new_home, owner, true);
     assert_eq!(resolved_page(&new_home), Some(new_home.page));
+}
+
+#[test]
+fn a_former_home_serves_no_page_after_a_home_move_and_the_new_home_retract_ends_it() {
+    let (seed, clock, owner) = seed();
+    let (old_home, new_home) = seed.into_machines(|| config(&clock));
+    drop_node_local_booking_rows(&new_home.vault).expect("FIXTURE: the new home's own rows");
+    let live = publish(&old_home, owner, true);
+    assert!(
+        serves_page(&old_home, NOW + 20),
+        "FIXTURE: the old home serves the page"
+    );
+    assert!(
+        move_booking_home(&old_home.vault, &new_home.vault, &[]).expect("the home move"),
+        "FIXTURE: every booking section applied"
+    );
+    assert!(
+        serves_page(&new_home, NOW + 30),
+        "FIXTURE: the new home serves the carried page"
+    );
+
+    assert!(
+        !serves_page(&old_home, NOW + 30),
+        "the former home serves no page once the move froze its booking rows"
+    );
+    new_home
+        .vault
+        .memory(owner, EdgeActorClass::Human)
+        .claim_retract(&live)
+        .expect("the new home retracts the page");
+    assert!(
+        !serves_page(&new_home, NOW + 40),
+        "the owner's retract ends the page on the new home"
+    );
+    assert!(
+        !serves_page(&old_home, NOW + 40),
+        "and the former home serves it no more than before"
+    );
+}
+
+/// The owner's publication input of the page on `machine`, published, with
+/// `owner_display` as its one changed field: a revision of the page.
+fn revised_publication_input(machine: &Fixture, owner_display: &str) -> ClaimInput {
+    let mut input = publication_input(machine, true);
+    input.value["owner_display"] = serde_json::json!(owner_display);
+    input
+}
+
+#[test]
+fn a_move_carried_revision_without_its_confirmation_is_refused_and_the_page_publishes_again() {
+    let (seed, clock, owner) = seed();
+    let (old_home, new_home) = seed.into_machines(|| config(&clock));
+    drop_node_local_booking_rows(&new_home.vault).expect("FIXTURE: the new home's own rows");
+    publish(&old_home, owner, true);
+    let pending = old_home
+        .vault
+        .memory(owner, EdgeActorClass::Human)
+        .claim_upsert(&revised_publication_input(&old_home, "Page owner, revised"))
+        .expect("FIXTURE: the owner's revision write");
+    assert_eq!(
+        pending.approval, "proposed",
+        "FIXTURE: a revision of a publication waits for its confirm"
+    );
+    assert!(
+        move_booking_home(&old_home.vault, &new_home.vault, &[]).expect("the home move"),
+        "FIXTURE: every booking section applied"
+    );
+    let memory = new_home.vault.memory(owner, EdgeActorClass::Human);
+
+    let refused = memory
+        .confirm_booking_publication(&pending.claim_short_id, NOW)
+        .expect_err("a confirm of a revision whose confirmation stayed on the former home");
+    assert_refused(&refused, REVISION_NOT_PENDING);
+    assert!(
+        refused
+            .suggestions
+            .iter()
+            .any(|suggestion| suggestion.starts_with("Retract the revision")
+                && suggestion.contains(&pending.claim_short_id)),
+        "the refusal names the revision to retract: {refused:?}"
+    );
+
+    memory
+        .claim_retract(&pending.claim_short_id)
+        .expect("the new home retracts the carried revision");
+    let again = memory
+        .claim_upsert(&revised_publication_input(
+            &new_home,
+            "Page owner, published again",
+        ))
+        .expect("the owner publishes the page again on the new home");
+    if again.approval == "proposed" {
+        memory
+            .confirm_booking_publication(&again.claim_short_id, NOW)
+            .expect("the new home confirms the page published again");
+    }
+    assert!(
+        serves_page(&new_home, NOW + 30),
+        "the page published again on the new home is served there"
+    );
 }
 
 #[test]

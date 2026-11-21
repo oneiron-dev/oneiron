@@ -353,10 +353,12 @@ impl PublishedPage {
         // The vault has no authority root yet, so the one actor whose owner
         // write it admits is its own live embedded owner.
         let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
-        publish(&vault, owner, page, &config);
+        // The booking home is elected before the owner publishes: a vault no
+        // election names a home for takes no booking publication write.
         DreamerRunnerStore::new(&vault)
             .elect_home_node(&[DreamerHomeNodeCandidate::always_on_local(HOME_NODE)], 1)
             .expect("home node");
+        publish(&vault, owner, page, &config);
         let server = SyncServer::new(
             vault,
             SyncServerConfig {
