@@ -6,7 +6,8 @@
 //! carrier runs it, the old home's writer once the new home acknowledged that
 //! move, and a read of whether a node-local booking row holds some bytes. A
 //! machine also holds none of the old home's outbound send ledger (FIX
-//! [BK-EMERGENCY-UNCERTAIN-SEND-NOT-SHOWN-TO-OWNER]).
+//! [BK-EMERGENCY-UNCERTAIN-SEND-NOT-SHOWN-TO-OWNER]), and a read of the note
+//! a held deposit's row carries (FIX [BK-REPLAY-NOTE-NOT-CARRIED-TO-NEW-HOME]).
 
 use crate::side_table::{self, SideTableDbs, SideTableDecl};
 use crate::sync::home_handoff::{
@@ -149,4 +150,17 @@ pub fn booking_rows_hold(vault: &Vault, needle: &[u8]) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+/// The version the INBOX read state keeps for the booking row `item_id` in
+/// `vault` (`booking::lifecycle::booking_inbox_row_version_in_txn`): for a
+/// held deposit's row, `unattributed_cancel:<SEQUENCE>` once a cancel
+/// Oneiron cannot attribute is noted on its deposit there, else `None`.
+///
+/// # Errors
+///
+/// Store errors.
+pub fn booking_inbox_row_version(vault: &Vault, item_id: &str) -> Result<Option<String>> {
+    let txn = vault.store.env.read_txn()?;
+    crate::booking::lifecycle::booking_inbox_row_version_in_txn(vault, &txn, item_id)
 }
