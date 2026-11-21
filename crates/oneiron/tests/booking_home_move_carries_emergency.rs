@@ -23,7 +23,11 @@
 //!   sends it again answers, once, "this send ended uncertain on the old home
 //!   and may repeat" (FIX [BK-EMERGENCY-UNCERTAIN-SEND-NOT-SHOWN-TO-OWNER];
 //!   Engine ANSWER BK-EMERGENCY-UNCERTAIN-SEND-RECEIPT = A, 21 Nov 09:14); a
-//!   send that failed definitely there answers nothing.
+//!   send that failed definitely there answers nothing;
+//! - a mark the owner was not answered for travels with the next move, even
+//!   once its send was delivered again: a home whose run sent it and then
+//!   stopped on a later effect passes it on, and the next home's run answers
+//!   it (review round 1 of #10125).
 //!
 //! The emergency fixture is `tests/booking_feed_move_held.rs`'s: an
 //! owner-logged RequestUpdate instruction over a booked slot, planned and
@@ -44,7 +48,10 @@
 //!
 //! The repeat answer is red on its base (#10109's head 02f5b7401a4e): the
 //! resume answers the checkpoint alone, so this file does not compile there
-//! (no `EmergencyRepeatNotice`, no `repeat_notices`).
+//! (no `EmergencyRepeatNotice`, no `repeat_notices`). The mark carried past
+//! a second move is red on #10125's first head 57571ff1ad64: the second home
+//! drops the mark of an invite it delivered, so the third home's run answers
+//! nothing.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test booking_home_move_carries_emergency`.
 #![cfg(all(oneiron_test_support, feature = "sync"))]
@@ -466,6 +473,20 @@ impl OutboundExecutionSink for DeferringSink {
     }
 }
 
+/// A sink that delivers the calendar invite and fails every other send
+/// definitely: the owner's run sends the invite, then stops on the apology.
+struct InviteOnlySink;
+
+impl OutboundExecutionSink for InviteOnlySink {
+    fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+        if request.intent.channel == "calendar" {
+            OutboundExecutionOutcome::delivered_to_channel("provider:message:fixture")
+        } else {
+            OutboundExecutionOutcome::failed("definite fixture non-delivery")
+        }
+    }
+}
+
 fn book(machine: &Machine, session_key: SessionKey, slot: TimeRange) -> ConfirmReceipt {
     let hold: HoldReceipt = match machine
         .run(
@@ -767,5 +788,63 @@ fn the_new_homes_resume_of_a_send_that_ended_uncertain_on_the_old_home_says_it_m
     assert!(
         resume().repeat_notices.is_empty(),
         "the resume answers each repeat once"
+    );
+}
+
+#[test]
+fn a_repeat_the_owner_was_not_answered_for_travels_with_the_next_move() {
+    let seed = Machine::seed();
+    let emergency = emergency(&seed, &mut DeferringSink);
+    assert!(
+        emergency.item.is_err(),
+        "FIXTURE: the provider took the invite as a remote task, so the emergency stays owed"
+    );
+    let (old_home, second_home) = seed.into_old_and_new_home();
+    assert!(
+        move_booking_home(&old_home.vault, &second_home.vault, &[]).expect("move the booking home"),
+        "every section applies"
+    );
+    let stopped = execute_emergency_plan(
+        &second_home.vault,
+        &emergency.request,
+        &emergency.plan,
+        &second_home.calendars(),
+        &second_home.consumer(NOW + 200),
+        &mut InviteOnlySink,
+    );
+    assert!(
+        stopped.is_err(),
+        "FIXTURE: the second home sends the invite again, then its apology fails, so its run \
+         answers the owner nothing"
+    );
+
+    let (second_home, third_home) = second_home.into_old_and_new_home();
+    assert!(
+        move_booking_home(&second_home.vault, &third_home.vault, &[])
+            .expect("move the booking home again"),
+        "every section applies"
+    );
+    let run = execute_emergency_plan(
+        &third_home.vault,
+        &emergency.request,
+        &emergency.plan,
+        &third_home.calendars(),
+        &third_home.consumer(NOW + 300),
+        &mut DeliveringSink,
+    )
+    .expect("the third home resumes the owed apology");
+    assert!(
+        run.item.calendar_delivered && run.item.apology_delivered,
+        "the third home delivers what the second home owed"
+    );
+    assert_eq!(
+        run.repeat_notices,
+        vec![EmergencyRepeatNotice {
+            effect: "calendar",
+            message: EMERGENCY_REPEAT_NOTICE,
+        }],
+        "the second home sent the uncertain invite again and never answered the owner, so the \
+         third home's run does (#10125's first head: the delivered invite's mark went at the \
+         second move)"
     );
 }
