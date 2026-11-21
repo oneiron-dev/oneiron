@@ -8,7 +8,7 @@ use super::{
     IcsFeedCursorSnapshot, IcsFeedFetcher, IcsFeedPollConfig, IcsPollRunState,
     IcsPropertyContinuationPayload, consent, enqueue_ics_feed_poll, ics_feed_cursor_snapshot,
 };
-use crate::calendar::connectors::door::seat_of_system_in_txn;
+use crate::calendar::connectors::door::{refuse_system_holding_handle, seat_of_system_in_txn};
 use crate::calendar::safeguard::{CALENDAR_SAFEGUARD_CONFIG_KEY, CalendarBodyScreener};
 use crate::calendar::setting_keys::ICS_FEED;
 use crate::consent::AuthenticatedOwner;
@@ -119,9 +119,9 @@ pub(crate) fn registration_in_txn(
 ///
 /// # Errors
 ///
-/// `InvalidConfig` for a pin, a row with no system, a value naming another system, a change to
-/// an installed feed, a system used before, a system an installed seat imports under, or a
-/// system with the pack calendar prefix; storage errors.
+/// `InvalidConfig` for a pin, a row with no system, a system that holds a custody handle, a
+/// value naming another system, a change to an installed feed, a system used before, a system
+/// an installed seat imports under, or a system with the pack calendar prefix; storage errors.
 pub(crate) fn ics_feed_changed_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -154,6 +154,9 @@ pub(crate) fn ics_feed_changed_in_txn(
     let Some(config) = config else {
         return Ok(());
     };
+    // Before the item compare: a system custody keeps as a secret reaches here masked, so it
+    // differs from its item, and the owner reads why it is refused.
+    refuse_system_holding_handle(&config.system)?;
     if config.system != system {
         return Err(crate::Error::InvalidConfig(
             "the feed's system must be the setting's item".into(),
