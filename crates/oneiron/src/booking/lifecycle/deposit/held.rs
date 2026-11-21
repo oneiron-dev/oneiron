@@ -27,6 +27,14 @@ pub(in crate::booking::lifecycle) enum HeldDepositKind {
     /// Captured, and a smaller refund settled for `refunded_minor`: the
     /// owner's return owes the balance at once.
     BalanceAfterRefund { refunded_minor: u64 },
+    /// A refund is owed, and the provider ended the one asked for it with
+    /// nothing paid back: the owner's return asks the provider for the same
+    /// refund again, under a new key, and for nothing more
+    /// (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]). Where refunds made by hand
+    /// in the provider's dashboard cover a part of it
+    /// (`part_refunded_by_hand`), only a hand refund pays the rest, and the
+    /// owner's return asks nothing.
+    RefundEndedUnpaid { part_refunded_by_hand: bool },
 }
 
 /// A booking's deposit as its owner's line reads it.
@@ -40,14 +48,37 @@ pub(in crate::booking::lifecycle) struct HeldDeposit {
     /// When a cancel Oneiron cannot attribute was first noted on it
     /// ([`note_unattributed_cancel_in_txn`]); `None` while none was.
     pub(in crate::booking::lifecycle) unattributed_cancel_at: Option<u64>,
+    /// When a settle row found the refund it holds ended unpaid at the
+    /// provider ([`HeldDepositKind::RefundEndedUnpaid`]); `None` for any
+    /// other kind.
+    pub(in crate::booking::lifecycle) refund_ended_unpaid_at: Option<u64>,
+    /// The deposit carries an owner's BK-09 emergency cancel's mark: what it
+    /// holds is that cancel's whole return, and a booking that stands live
+    /// again is the visitor's pick of one of its proposals.
+    pub(in crate::booking::lifecycle) emergency_cancelled: bool,
 }
 
 /// What `row` still holds that the owner's return gives back, and how much;
 /// `None` when the return would move nothing: a deposit never confirmed, or
 /// one that owes or has made its whole return. A row refunded before its
-/// capture was recorded holds no balance.
+/// capture was recorded holds no balance. A refund owed whose ask the
+/// provider ended unpaid holds that refund, until the owner asks again;
+/// from then until that refund settles or ends unpaid again, the return
+/// moves nothing, so a second Return deposit changes nothing.
 pub(super) fn held_of(row: &DepositRow) -> Option<(HeldDepositKind, u64)> {
     match row.state {
+        DepositState::RefundDue { amount_minor } if row.refund_ended_unpaid.is_some() => row
+            .refund_ended_unpaid
+            .filter(|ended| ended.retry == row.refund_retry)
+            .map(|ended| {
+                let part_refunded_by_hand = ended.part_refunded_by_hand;
+                (
+                    HeldDepositKind::RefundEndedUnpaid {
+                        part_refunded_by_hand,
+                    },
+                    amount_minor,
+                )
+            }),
         DepositState::CaptureDue { amount_minor } => {
             Some((HeldDepositKind::CaptureDue, amount_minor))
         }
@@ -98,6 +129,11 @@ pub(in crate::booking::lifecycle) fn held_deposit_in_txn(
         amount_minor,
         currency: row.terms.currency.clone(),
         unattributed_cancel_at: row.unattributed_cancel.map(|noted| noted.noted_at),
+        refund_ended_unpaid_at: row
+            .refund_ended_unpaid
+            .filter(|_| matches!(kind, HeldDepositKind::RefundEndedUnpaid { .. }))
+            .map(|ended| ended.noted_at),
+        emergency_cancelled: row.emergency_return_sequence.is_some(),
     }))
 }
 
@@ -115,6 +151,9 @@ pub(in crate::booking::lifecycle) enum EmergencyReturn {
     VoidDue,
     /// The provider voided it: nothing was captured.
     Voided,
+    /// The refund owed back ended unpaid at the provider, and the owner has
+    /// not asked for it again ([`HeldDepositKind::RefundEndedUnpaid`]).
+    RefundEndedUnpaid,
 }
 
 /// What an owner's BK-09 emergency cancel gave back of the deposit of the
@@ -139,7 +178,12 @@ pub(in crate::booking::lifecycle) fn emergency_return_in_txn(
         return Ok(None);
     }
     Ok(match row.state {
-        DepositState::RefundDue { .. } => Some(EmergencyReturn::RefundDue),
+        DepositState::RefundDue { .. } => Some(match held_of(&row) {
+            Some((HeldDepositKind::RefundEndedUnpaid { .. }, _)) => {
+                EmergencyReturn::RefundEndedUnpaid
+            }
+            _ => EmergencyReturn::RefundDue,
+        }),
         DepositState::Refunded { .. } => Some(EmergencyReturn::Refunded),
         DepositState::VoidDue => Some(EmergencyReturn::VoidDue),
         DepositState::Voided => Some(EmergencyReturn::Voided),
@@ -167,6 +211,28 @@ pub(in crate::booking::lifecycle) fn unattributed_cancel_sequence_in_txn(
         .get(&vault.store, rtxn, &link.deposit_key)?
         .and_then(|row| row.unattributed_cancel)
         .map(|noted| noted.sequence))
+}
+
+/// The retry count and the time of the note that a settle row found the
+/// refund the deposit of the booking `event_ref` owes ended unpaid at the
+/// provider, read in `rtxn`; `None` for a booking this node holds no deposit
+/// for, or one with no such note (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(in crate::booking::lifecycle) fn refund_ended_unpaid_note_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+) -> Result<Option<(u32, u64)>> {
+    let Some(link) = DEPOSIT_BOOKING.get(&vault.store, rtxn, &booking_key(event_ref))? else {
+        return Ok(None);
+    };
+    Ok(DEPOSIT
+        .get(&vault.store, rtxn, &link.deposit_key)?
+        .and_then(|row| row.refund_ended_unpaid)
+        .map(|ended| (ended.retry, ended.noted_at)))
 }
 
 /// Records, in the calendar writer `wtxn`, that a seat's replay of the
