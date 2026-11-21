@@ -22672,7 +22672,7 @@
      "purpose": "Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it",
      "surface": {
       "crate-vis": 15,
-      "fn": 10,
+      "fn": 11,
       "re-export": 1,
       "struct": 2
      }
@@ -41993,7 +41993,7 @@
      "path": "src/engine_executor/run_signals.rs",
      "purpose": "The steers and messages that reach a running run between its steps (AGM-2 = C; ARCH-0079 #message-classes…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -55041,7 +55041,7 @@
      "path": "src/llm/step/trap_binding.rs",
      "purpose": "Device-local trap-anchor binding rows (attempt/step-hash/park-owner ground truth for consume)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -73653,6 +73653,16 @@
      "purpose": "The keyed fingerprint of a signal's exact intent (FIX 10066), kept beside a signal the side-row wall masked…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/run_tree/signal/parked_pause.rs",
+     "purpose": "A person's pause of a run parked on a durable wait (FIX PAUSE-BOUNDARY-PARKED-RUN): the park is the step…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -94023,6 +94033,24 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OneLinerBrief",
+      "TaskBriefDraftRequest",
+      "TaskBriefModel",
+      "TaskBriefModelBinding"
+     ],
+     "path": "src/task_verb/compose.rs",
+     "purpose": "The task-brief composer (census L8-07; canon workbench-engine-asks.md:76: the brief is \"composed by a local…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 2,
+      "struct": 3,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -94238,7 +94266,7 @@
      "path": "src/task_verb/create_spec.rs",
      "purpose": "One TASK intent plus its node-local realizing-attempt input",
      "surface": {
-      "fn": 11,
+      "fn": 12,
       "re-export": 1,
       "struct": 1
      }
@@ -94421,7 +94449,7 @@
      "path": "src/task_verb/highway.rs",
      "purpose": "The one task-domain door (OF-220): post, accept, report and status for MCP tool-first, the HTTP facade and…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 7
      }
     },
@@ -94446,13 +94474,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/highway_post.rs",
      "purpose": "The highway's Post arm, its brief revisions, and settlement: the one continuation that turns an approved…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -94482,7 +94510,7 @@
      "path": "src/task_verb/highway_post/parking.rs",
      "purpose": "Parked posts and agent takes",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -94496,13 +94524,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/highway_post/settlement.rs",
      "purpose": "Approved post and brief proposal settlement",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 10
      }
     },
     {
@@ -94720,11 +94748,11 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 87,
+      "crate-vis": 88,
       "enum": 1,
       "fn": 2,
       "mod": 5,
-      "re-export": 33,
+      "re-export": 34,
       "struct": 2
      }
     },
@@ -96824,6 +96852,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/composed_lens_world.rs",
+     "purpose": "Census L8-07 door (review #7814 P1): whether a device kept from one world is kept from a row, as…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/connector_key_suspend.rs",
      "purpose": "Door for `tests/connector_key_suspend_admission.rs` (FIX 22392): the shared suspend writer, as a budget…",
      "surface": {
@@ -98619,7 +98657,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 390,
+      "mod": 392,
       "re-export": 3
      }
     },
@@ -100076,6 +100114,20 @@
      "purpose": "Door for `tests/task_ask_role_routing.rs` (ROLES-EVERYWHERE = A): who a task ask's members are put to, and…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DraftCall",
+      "ScriptedBriefModel"
+     ],
+     "path": "src/test_doors/task_brief_compose.rs",
+     "purpose": "L8-07 door: a scripted local model for the task-brief composer, and the brief a parked post holds",
+     "surface": {
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -109194,6 +109246,14 @@
      "notable": [],
      "path": "tests/agent_pair_default_grant.rs",
      "purpose": "Pairing a named agent mints its default read Grant, and revoking an agent's last Grant narrows its read…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_pause_parked_run.rs",
+     "purpose": "A person's pause of a run parked on a durable wait (FIX PAUSE-BOUNDARY-PARKED-RUN, after Engine RULING…",
      "surface": {}
     },
     {
@@ -119443,6 +119503,38 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/tasks_compose_brief_from_one_liner.rs",
+     "purpose": "A task brief composed by a local model from a one-liner plus lens context (census L8-07; canon…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/tasks_composed_post_keeps_lens_worlds.rs",
+     "purpose": "A composed task post keeps its lens rows' worlds (census L8-07; review #7814 P1)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/tasks_composed_post_waits_for_a_person.rs",
+     "purpose": "A composed post waits for a person: no agent takes it (census L8-07, review #7818 P1)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/tasks_owner_settles_composed_post.rs",
+     "purpose": "The vault owner settles his own composed task post (census L8-07)",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -120048,6 +120140,14 @@
      "notable": [],
      "path": "tests/voice_voxcpm2.rs",
      "purpose": "Host-visible banked-ref → TTS seam → PCM harness (CPU fixture, not GPU proof)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/wait_trap_repark.rs",
+     "purpose": "A run a person's pause took off its park re-enters the same wait and parks again under the trap still bound…",
      "surface": {}
     },
     {
@@ -121635,7 +121735,7 @@
      "purpose": "Room row part codecs without the sync feature (FIX 12405)"
     },
     "run_tree": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -121908,7 +122008,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 190,
+     "files": 191,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -121936,7 +122036,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 402,
+     "files": 404,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -122125,10 +122225,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 271,
+   "over_bar": 272,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8519,
-   "test_files": 2239
+   "source_files": 8523,
+   "test_files": 2245
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -160628,7 +160728,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 35,
       "mod": 4,
       "re-export": 1,
       "struct": 2
@@ -160884,6 +160984,16 @@
      "purpose": "A peer's sync apply wakes the Dreamer (ARCH-0026 #wake): a turn another host wrote gets the turn producer's…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/task_brief.rs",
+     "purpose": "The task-brief composer's model on this server (census L8-07): the `[models.roles.local_reasoner]` seat…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -177914,7 +178024,7 @@
      "path": "src/models/ladder/call_deadline.rs",
      "purpose": "One call's deadline across its whole walk (FIX 7792, FIX 8134, FIX 8213): every rung it sends, every wait…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 1,
       "fn": 7
      }
@@ -182483,7 +182593,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 84
+      "mod": 85
      }
     },
     {
@@ -182809,6 +182919,16 @@
      "purpose": "Doors for `tests/systemone_pack_run_no_cancel.rs` (SYSTEMONE-PACK-RUN-NO-CANCEL): the System One rung bound…",
      "surface": {
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/task_brief_send.rs",
+     "purpose": "Census L8-07 door (review #7821 round 1, P1 x2): one composed brief's model call, sent on a runtime's…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -186282,6 +186402,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/task_brief_egress.rs",
+     "purpose": "The task-brief composer's model call never reaches a model its prompt may not go to (census L8-07; review…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -186874,7 +187002,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 150,
+     "files": 151,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -187434,7 +187562,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 87,
+     "files": 88,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -187506,8 +187634,8 @@
    },
    "over_bar": 65,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2108,
-   "test_files": 565
+   "source_files": 2110,
+   "test_files": 566
   },
   "oneiron-setting-contract": {
    "files": [
