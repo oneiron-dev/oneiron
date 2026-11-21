@@ -33,6 +33,7 @@ pub mod gpu_backend;
 pub mod hex_input_policy;
 pub mod hex_sign_digit;
 pub mod history_import;
+pub mod hook_transcript_uploads;
 #[cfg(unix)]
 pub mod hosted_import;
 pub mod lens_frames;
@@ -51,6 +52,7 @@ pub mod mcp_run_claim_lane;
 pub mod mcp_surface;
 pub mod media_job_spend;
 pub mod memory_owner_commit;
+pub mod memory_timeline_projection;
 #[cfg(unix)]
 pub mod merge_queue_checker_pressure;
 pub mod model_licence;
@@ -59,6 +61,9 @@ pub mod off_router_wire_counts;
 pub mod one_click_wire_counter;
 pub mod openapi_document;
 pub mod owner_backup;
+pub mod owner_check;
+#[cfg(unix)]
+pub mod owner_key_change_report;
 pub mod parked_step_resume;
 pub mod pre_idle_reuse;
 pub mod question_heads;
@@ -70,13 +75,18 @@ pub mod replay_admission;
 pub mod residence;
 pub mod residence_connection;
 pub mod resident_pump;
+pub mod run_brief_people;
+pub mod run_self_brief_port;
 #[cfg(target_os = "linux")]
 pub mod sandbox_vendor;
 pub mod seal_judge;
 pub mod selector_release;
+pub mod shared_env_lane;
 pub mod signing_session;
 pub mod siwc_seat;
 pub mod solved_runs;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod supervised_rerank;
 pub mod system_one_leg;
 pub mod system_one_rung;
 mod vault_acts;

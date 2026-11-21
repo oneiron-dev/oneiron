@@ -5,6 +5,7 @@
 //! lets its Admins do both. The Owner never depends on either switch.
 
 use crate::Vault;
+use crate::authority::OwnerProofGround;
 use crate::batch::export::archive_side_install::{
     ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
 };
@@ -12,6 +13,7 @@ use crate::batch::export::{ArchiveRetainedSideRow, OwnerArchiveRestorePermit};
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 
 /// The owner setting key of the walk-in switch, as a refusal names it. The
 /// delete switch's is `rooms.private_threads.admin_delete`.
@@ -53,7 +55,9 @@ impl Vault {
     /// changes is written. A change records the owner's act with the
     /// settings it replaces when `surface` names where the owner said so
     /// (FIX 6465), in the same commit; a request that changes nothing
-    /// records nothing. Answers the two as they now read.
+    /// records nothing. Answers the two as they now read. The door does not
+    /// read the value in force before its write, so it asks for every
+    /// change it cannot tell from its arguments to be a narrowing.
     pub fn set_room_thread_admin_settings(
         &self,
         owner: &AuthenticatedOwner,
@@ -61,6 +65,17 @@ impl Vault {
         admin_walk_in: Option<bool>,
         admin_delete: Option<bool>,
     ) -> Result<RoomThreadAdminSettings> {
+        // No surface names no act, so none is asked for; with one the act
+        // the write may record is asked before it.
+        let ground = if surface.is_some() {
+            let witness = self.owner_presence(
+                OwnerActImportance::Important,
+                owner_presence_reasons::ROOM_THREAD_ADMIN,
+            )?;
+            Some(OwnerProofGround::witnessed(&witness))
+        } else {
+            None
+        };
         self.with_write_txn_grouped(|txn| {
             let actor = owner.revalidate_in_txn(self, txn)?;
             let prior = room_thread_admin_settings_in_txn(self, txn)?;
@@ -85,7 +100,7 @@ impl Vault {
                 )?;
                 // The signed record goes last, best effort (FIX 4624).
                 if let Some(act) = signed {
-                    self.record_policy_setting_op_in_txn(txn, act);
+                    self.record_policy_setting_op_in_txn(txn, ground.as_ref(), act);
                 }
             }
             Ok(settings)

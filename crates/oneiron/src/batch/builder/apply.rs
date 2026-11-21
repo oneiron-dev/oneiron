@@ -8,6 +8,7 @@ use heed::RwTxn;
 
 #[cfg(feature = "sync")]
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 impl BatchBuilder<'_> {
@@ -141,6 +142,8 @@ impl BatchBuilder<'_> {
             (Some(requested), _) => Some(requested),
             (None, active) => active,
         };
+        let born_rows = self.born_rows();
+        let floor_rows = self.floor_rows();
         if let Some(actor) = actor {
             let has_owner = super::vad_postcommit::has_vad_postcommit_owner(vault, wtxn);
             let mut staged = vault.store.env.nested_write_txn(wtxn)?;
@@ -161,7 +164,50 @@ impl BatchBuilder<'_> {
         } else {
             self.apply_staged(wtxn, gate_mode, None, lane, authority_beside, own_device)?;
         }
+        // READ-LINEAGE L1 hooks 1 and 2: each row this batch gave words or a
+        // source carries the floor of what it came from, in the same write;
+        // a row born here from an input this vault erased is born sealed
+        // (#9289 review r1 P1).
+        crate::source_audience::seal_births_from_erased_inputs_in_txn(vault, wtxn, &born_rows)?;
+        crate::source_audience::raise_floors_in_txn(vault, wtxn, floor_rows)?;
         vault.stamp_agent_authored_creates_in_txn(wtxn, creates)
+    }
+
+    /// The rows this batch gives words or a source (READ-LINEAGE L1): each
+    /// row it puts or births, and the end of each `PartOf`, `DerivedFrom` or
+    /// `Supports` edge it writes whose words the edge adds to (a MESSAGE and
+    /// its TURN each read under the other's sources; a row under what it is
+    /// `DerivedFrom`; a CLAIM under what supports it).
+    fn floor_rows(&self) -> Vec<EntityId> {
+        let mut rows = self.born_rows();
+        for op in &self.ops {
+            let (src, kind, tgt) = match op {
+                BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => {
+                    rows.push(*id);
+                    continue;
+                }
+                BatchOp::Edge { src, kind, tgt, .. }
+                | BatchOp::PublicEdgeWithCreatedAt { src, kind, tgt, .. }
+                | BatchOp::EdgeWithCreatedAt { src, kind, tgt, .. } => (*src, *kind, *tgt),
+                _ => continue,
+            };
+            match kind {
+                crate::EdgeKind::PartOf => rows.extend([src, tgt]),
+                crate::EdgeKind::DerivedFrom => rows.push(src),
+                crate::EdgeKind::Supports => rows.push(tgt),
+                _ => {}
+            }
+        }
+        rows
+    }
+
+    /// The rows this batch stamps a birth for: each birth, document birth
+    /// and note birth it holds.
+    fn born_rows(&self) -> Vec<EntityId> {
+        let mut rows: Vec<EntityId> = self.births.iter().map(|(row, _)| *row).collect();
+        rows.extend(self.text_births.keys().copied());
+        rows.extend(self.note_births.iter().map(|(row, _)| *row));
+        rows
     }
 
     fn apply_staged(
@@ -329,6 +375,7 @@ impl BatchBuilder<'_> {
                 self.origin,
             )?;
         } else {
+            let claims = crate::vault_cleanup::candidate_claim_subjects(&ops);
             apply_ops_with_authority_beside(
                 &vault.store,
                 &vault.config,
@@ -341,6 +388,10 @@ impl BatchBuilder<'_> {
                 authority_beside,
                 own_device,
             )?;
+            // A claim about a PERSON the cleanup archived restores her in
+            // this write, as the actor's apply above does in its own (FIX
+            // PUT-CLAIM-LANDS-ON-ARCHIVED-PERSON).
+            vault.restore_subjects_of_landed_claims_in_txn(wtxn, &claims)?;
         }
         rewired.redirty_in_txn(vault, wtxn)?;
         if let (Some(actor), Some(original)) = (actor, original) {

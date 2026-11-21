@@ -65,6 +65,8 @@ use super::owner_key_enrollment_door::EntrySigner;
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, RecordError, Result};
+use crate::world_keys::OwnerActImportance;
+use crate::world_keys::owner_presence_reasons::{REMOVE_MACHINE, REMOVE_OWNER_KEY};
 use crate::{EntityId, Vault};
 
 /// The key is not one an owner key enrolment of this vault names. Nothing
@@ -209,10 +211,12 @@ impl Vault {
         key: [u8; 32],
         confirmation: LastDeviceKeyConfirmation,
     ) -> Result<OwnerKeyRemoval> {
+        let witness = self.owner_presence(OwnerActImportance::Important, REMOVE_OWNER_KEY)?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        if self.owner_proof_signer(&fold).is_none() {
+        if !self.holds_proving_owner_key(&fold) {
             return Err(Error::Record(RecordError::OwnerKeyRequired));
         }
         let enrolled = self
@@ -234,7 +238,7 @@ impl Vault {
             }
         }
         let ended = self
-            .end_owner_keys_in_txn(&mut txn, ending)?
+            .end_owner_keys_in_txn(&mut txn, &ground, ending)?
             .pop()
             .ok_or_else(invalid_authority)?;
         let after = self.authority_view_readonly_in_txn(&txn)?;
@@ -277,6 +281,8 @@ impl Vault {
         seen: Option<[u8; 32]>,
         confirmation: LastDeviceKeyConfirmation,
     ) -> Result<MachineRemoval> {
+        let witness = self.owner_presence(OwnerActImportance::Important, REMOVE_MACHINE)?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
@@ -301,18 +307,21 @@ impl Vault {
             && !ending.is_empty()
         {
             let receipt = self.end_keys_of_removed_machine_in_txn(
-                &mut txn, machine, standing, pin, seen, ending,
+                &mut txn, &ground, machine, standing, pin, seen, ending,
             )?;
             let rows = self.mark_rows_counted_since_in_txn(&mut txn, &fold)?;
             txn.commit()?;
             self.note_committed_authority_rows(rows);
             return Ok(MachineRemoval::Written(receipt));
         }
-        let mut answer = AnswerAct::by_owner(actor, surface, MachineRole::Removed, seen);
+        let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
+        let mut answer =
+            AnswerAct::by_owner((actor, proves_joins), surface, MachineRole::Removed, seen);
         answer.last_device_key = confirmation;
         let (landing, ended) = self.machine_role_answer_in_txn(
             &mut txn,
             &fold,
+            &ground,
             answer,
             machine,
             MachineRole::Removed,
@@ -360,6 +369,7 @@ impl Vault {
     fn end_keys_of_removed_machine_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: &OwnerProofGround,
         machine: EntityId,
         standing: &FoldedMachine,
         pin: Option<&PinnedRoot>,
@@ -372,7 +382,7 @@ impl Vault {
             ));
         }
         let ended_keys: Vec<[u8; 32]> = self
-            .end_owner_keys_in_txn(txn, ending)?
+            .end_owner_keys_in_txn(txn, ground, ending)?
             .into_iter()
             .map(|key| key.public_key)
             .collect();
@@ -455,7 +465,7 @@ impl Vault {
         fold: &AuthorityFold,
         machine: EntityId,
     ) -> Result<Vec<EnrolledOwnerKey>> {
-        if self.owner_proof_signer(fold).is_none() {
+        if !self.holds_proving_owner_key(fold) {
             return Ok(Vec::new());
         }
         self.device_keys_of_machine_in_txn(txn, machine)
@@ -565,11 +575,12 @@ impl Vault {
     pub(super) fn end_owner_keys_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: &OwnerProofGround,
         mut keys: Vec<EnrolledOwnerKey>,
     ) -> Result<Vec<EndedOwnerKey>> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let signer = self
-            .owner_proof_signer(&fold)
+            .owner_proof_signer(&fold, ground)
             .ok_or(Error::Record(RecordError::OwnerKeyRequired))?;
         let signed_by = signer.key();
         let sign = |transcript: &[u8]| signer.sign(&fold, transcript);

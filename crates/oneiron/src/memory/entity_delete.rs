@@ -7,8 +7,8 @@ use super::support::{
     verify_own_person_deletion_authority_in_txn,
 };
 use super::{
-    DeleteReceipt, DeleteRequestState, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_OWNER_BINDING_REQUIRED,
-    Memory, MemoryError, MemoryResult, SafeDeleteReason,
+    DELETE_RECEIPT_VERSION_RELEASE, DeleteReceipt, DeleteRequestState, MEMORY_CODE_FORBIDDEN,
+    MEMORY_CODE_OWNER_BINDING_REQUIRED, Memory, MemoryError, MemoryResult, SafeDeleteReason,
 };
 use crate::check_in::{
     ActClass, CheckInDecision, CheckInMode, CheckInScope, DoorAct, DoorCheckIn, RolePreset,
@@ -222,8 +222,9 @@ impl Memory<'_> {
     /// # Errors
     ///
     /// `authority`'s refusal; `BAD_REQUEST` for a `check_in_ref` an Owner's
-    /// or an agent's delete names, or a person's that goes at once; a person
-    /// with no membership grant; as [`check_in::person_door_check_in_in_txn`].
+    /// or an agent's delete names, or a person's that goes at once
+    /// ([`check_in::named_check_in_at_once`]); a person with no membership
+    /// grant; as [`check_in::person_door_check_in_in_txn`].
     pub(super) fn role_delete_check_in(
         &self,
         target: &DeleteTarget,
@@ -244,24 +245,26 @@ impl Memory<'_> {
                 ArchiveDeleteRole::Agent => None,
                 ArchiveDeleteRole::Admin
                 | ArchiveDeleteRole::Steward
-                | ArchiveDeleteRole::Member => {
+                | ArchiveDeleteRole::Member
+                | ArchiveDeleteRole::Delegate => {
+                    // A person's Delegate grant is judged on its own row of
+                    // the act table, the grant the judge found.
+                    let delegate = (judged.role() == ArchiveDeleteRole::Delegate)
+                        .then(|| judged.grant())
+                        .flatten();
                     match person_delete_check_in_in_txn(
                         self.vault,
                         txn,
                         self.actor,
+                        delegate,
                         target,
                         reason,
                         verb,
                         check_in_ref,
                     )? {
-                        // A delete that goes at once spends no check-in, so
-                        // the one it names is refused, never left unspent
-                        // while another record goes (REVIEW-9810 P1).
-                        DoorCheckIn::Go(decision)
-                            if check_in_ref.is_some() && decision.check_in.is_none() =>
-                        {
-                            return Err(spends_no_check_in_at_once());
-                        }
+                        // A delete that goes at once comes back with no
+                        // check-in: the judge refuses a `check_in_ref` it
+                        // names ([`check_in::named_check_in_at_once`]).
                         DoorCheckIn::Go(decision) => Some(decision),
                         DoorCheckIn::Wait(check_in) => {
                             return Ok(RoleDeleteCheckIn::Waits(check_in));
@@ -298,7 +301,11 @@ impl Memory<'_> {
         )
     }
 
-    pub(super) fn safe_delete_checked(
+    /// The owner's delete of `entity_ref` with `check` rerun in each of its
+    /// writes before publication, beside the delete's own authority: the
+    /// archive purge's preview, a note's tombstone, and the standing
+    /// `erase_request_reply` setting a courtesy ask is answered under.
+    pub(crate) fn safe_delete_checked(
         &self,
         entity_ref: &str,
         reason: SafeDeleteReason,
@@ -498,7 +505,13 @@ impl Memory<'_> {
             outcome.map_err(|err| refusal.take().unwrap_or_else(|| MemoryError::from(err)))?;
         Ok(DeleteReceipt {
             existed: outcome.existed,
-            reason: reason.as_str().to_owned(),
+            // A live artifact's lone version claim went as its version's release (ASTRA-R2-002).
+            reason: if outcome.version_release {
+                DELETE_RECEIPT_VERSION_RELEASE
+            } else {
+                reason.as_str()
+            }
+            .to_owned(),
             receipt_ref: outcome
                 .receipt_id
                 .map(|receipt| format!("redaction:{}", receipt.to_hex())),
@@ -630,30 +643,26 @@ pub(super) fn spends_no_check_in() -> MemoryError {
     )
 }
 
-/// The refusal of a `check_in_ref` a person's delete names when their role
-/// lets it go at once (their own item, or an Admin's or a Deputy's in
-/// scope): that delete spends no check-in (2k5).
-fn spends_no_check_in_at_once() -> MemoryError {
-    MemoryError::bad_request(
-        "check_in_ref names a waiting delete; this person's delete goes at once and spends none",
-    )
-}
-
 /// `person`'s delete of `target` for `reason` through the saved verb
 /// `verb`, judged under their membership role in `txn`, the judge's writer
 /// (2k5; P25-SHAPE Q1 = A): the digest of the exact delete, the grant their
 /// pending check-in climbs from, and `check_in_ref` when they name an
 /// approved one. A Steward's delete of its own NOTE or TASK goes at once as
 /// `own_item`, as a Member's does (Engine ruling STEWARD-DELETE-WAIT = B).
+/// A person the judge admitted under their Delegate grant `delegate` is
+/// judged as a Delegate on that grant instead (the act table's "if named:
+/// go"; DELEGATE-PERSON-DELETE).
 ///
 /// # Errors
 ///
-/// A person with no membership grant on the shared vault; as
-/// [`check_in::person_door_check_in_in_txn`].
+/// A person with no membership grant on the shared vault; a `check_in_ref`
+/// a Steward's own-item delete names ([`check_in::named_check_in_at_once`]);
+/// as [`check_in::person_door_check_in_in_txn`].
 fn person_delete_check_in_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     person: EntityId,
+    delegate: Option<EntityId>,
     target: &DeleteTarget,
     reason: DeleteReason,
     verb: &str,
@@ -661,14 +670,25 @@ fn person_delete_check_in_in_txn(
 ) -> crate::Result<DoorCheckIn> {
     let not_member =
         || Error::InvalidConfig("a delete by role needs the person's membership grant".into());
-    let creation = vault
-        .shared_vault_creation_in_txn(txn)?
-        .ok_or_else(not_member)?;
-    let (grant, role) = vault
-        .member_grant_in_txn(txn, creation.vault_id, person)?
-        .ok_or_else(not_member)?;
-    let role = RolePreset::of_grant_role(role);
+    let (grant, role) = match delegate {
+        Some(grant) => (grant, RolePreset::Delegate),
+        None => {
+            let creation = vault
+                .shared_vault_creation_in_txn(txn)?
+                .ok_or_else(not_member)?;
+            let (grant, role) = vault
+                .member_grant_in_txn(txn, creation.vault_id, person)?
+                .ok_or_else(not_member)?;
+            (grant, RolePreset::of_grant_role(role))
+        }
+    };
     if role == RolePreset::Steward && target.owned_by_in(vault, txn, person)? {
+        // Its own item goes at once and spends no check-in, so one the call
+        // names is refused, as the judge refuses it for every act that goes
+        // at once (REVIEW-9839 P1).
+        if check_in_ref.is_some() {
+            return Err(check_in::named_check_in_at_once());
+        }
         return Ok(DoorCheckIn::Go(CheckInDecision {
             act_class: ActClass::Delete.as_str().to_owned(),
             role: role.as_str().to_owned(),

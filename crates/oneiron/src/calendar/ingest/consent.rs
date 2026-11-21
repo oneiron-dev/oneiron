@@ -29,7 +29,10 @@ use serde::{Deserialize, Serialize};
 
 use super::IcsFeedPollConfig;
 use super::admission::FLAGGED_VERDICT;
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus};
+use crate::calendar::claims::{
+    CalendarStatus, CalendarStatusBasis, PREDICATE_CALENDAR_STATUS, decode_status_value,
+};
+use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::consent::bundle_projection::GateConsentBundleAction;
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ComposedEffect, EffectFacts,
@@ -456,6 +459,10 @@ fn review_effect(
 /// the owner. A claim the owner settled on its own, or one gone since, is
 /// past this decision and is skipped. Under the standing consent a claim whose
 /// body the inbound screen flagged is not settled: it is answered as held.
+/// An approved omission's cancellation that an admitted cancellation now stands
+/// beside is closed by it ([`close_omission_beside_admitted_cancel_in_txn`]).
+/// The owner's own approval of any other `calendar.status` closes the admitted
+/// status left live beside it ([`close_admitted_status_beside_in_txn`]).
 fn settle_claims_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -469,6 +476,10 @@ fn settle_claims_in_txn(
         Settlement::Every(action) => (action, false),
         Settlement::Standing => (GateConsentBundleAction::Approve, true),
     };
+    let owner_approves = matches!(
+        settlement,
+        Settlement::Every(GateConsentBundleAction::Approve)
+    );
     let mut settled = Settled {
         metrics: Vec::new(),
         held: Vec::new(),
@@ -487,8 +498,100 @@ fn settle_claims_in_txn(
         let done =
             vault.settle_proposed_claim_in_txn(txn, *id, action, actor, owner_answer, now)?;
         settled.metrics.extend(done.recorded);
+        if body.predicate != PREDICATE_CALENDAR_STATUS
+            || !matches!(action, GateConsentBundleAction::Approve)
+        {
+            continue;
+        }
+        let closed =
+            close_omission_beside_admitted_cancel_in_txn(vault, txn, id, &body, actor, now)?;
+        if owner_approves && !closed {
+            close_admitted_status_beside_in_txn(vault, txn, id, &body, actor, now)?;
+        }
     }
     Ok(settled)
+}
+
+/// Closes, in `txn`, the omission's cancellation `id` an approval just settled
+/// with the admitted cancellation of its EVENT beside it, if one stands, and
+/// answers whether it closed it (CAL-OMISSION-STATUS-READS-PRIOR-BEFORE-SCREEN).
+/// The omission's admission reads the EVENT's statuses before its screen and
+/// passes over a cancellation that waits on the owner (`admission.rs`). The
+/// owner's approval of that one closes no omission still waiting on this
+/// settlement, since its review's conflict head is an admitted claim. So an
+/// approval that lands from that read to this settlement would leave two
+/// admitted cancellations. This writer decides on the statuses as they stand:
+/// the omission is the weakest evidence, so the cancellation closes it, as an
+/// approval that lands after this settlement does.
+fn close_omission_beside_admitted_cancel_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+    actor: WriteActor,
+    now: u64,
+) -> crate::Result<bool> {
+    if decode_status_value(&body.value)?.basis != CalendarStatusBasis::ImportedAbsence {
+        return Ok(false);
+    }
+    let Some((head, head_body)) = admitted_status_beside_in_txn(vault, txn, id, body)? else {
+        return Ok(false);
+    };
+    if decode_status_value(&head_body.value)?.status != CalendarStatus::Cancelled {
+        return Ok(false);
+    }
+    vault.supersede_claim_in_txn_as(txn, &head, id, now, Some(actor))?;
+    Ok(true)
+}
+
+/// Closes, in `txn`, the admitted `calendar.status` live beside the status
+/// `id` the owner's review decision just approved: the newest one of its
+/// EVENT, the head the owner's own settlement of `id` closes as its review's
+/// conflict head (`vault.claims.settle`, MEMORY-01). A status whose body the
+/// screen flagged superseded no admitted status at its admission
+/// ([`status_supersedes`]), and an omission is admitted beside a status that
+/// waits on the owner, so the approval is where that one closes. Left live,
+/// the EVENT would hold two admitted statuses, and a retraction of the
+/// approved one would leave the other in force (review round 2 of #9877).
+fn close_admitted_status_beside_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+    actor: WriteActor,
+    now: u64,
+) -> crate::Result<()> {
+    if let Some((head, _)) = admitted_status_beside_in_txn(vault, txn, id, body)? {
+        vault.supersede_claim_in_txn_as(txn, id, &head, now, Some(actor))?;
+    }
+    Ok(())
+}
+
+/// The newest admitted `calendar.status` of the EVENT the status `id` (stored
+/// as `body`) is about, other than `id`, in `txn`, and its body.
+fn admitted_status_beside_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+) -> crate::Result<Option<(EntityId, ClaimBody)>> {
+    let ClaimSubject::Entity(event) = body.subject else {
+        return Ok(None);
+    };
+    let mut head: Option<(EntityId, ClaimBody)> = None;
+    for candidate in vault.claims_for_subject_in_txn(txn, &event)? {
+        // The newest id (UUIDv7 order) is the head, as for the review's.
+        if candidate == *id || head.as_ref().is_some_and(|(head, _)| *head >= candidate) {
+            continue;
+        }
+        let Some(other) = vault.get_claim_in_txn(txn, &candidate)? else {
+            continue;
+        };
+        if other.predicate == PREDICATE_CALENDAR_STATUS && crate::claim::claim_surfaceable(&other) {
+            head = Some((candidate, other));
+        }
+    }
+    Ok(head)
 }
 
 /// Adds `held` to the standing consent's held claims, beside each earlier one
@@ -536,6 +639,18 @@ fn waiting_in_txn(
         body.approval == ClaimApprovalStatus::Proposed
             && body.lifecycle == ClaimLifecycleStatus::Active
     }))
+}
+
+/// Whether a `calendar.status` admitted as `new` closes the prior live status
+/// `old`, as the writer that closes it reads both (`admission.rs`,
+/// `admit_status_if_changed`). A closed claim closes nothing and is closed by
+/// nothing. A status whose body the screen flagged waits on the owner, so it
+/// closes no admitted (Approved/Auto) status, an owner's approval of `old`
+/// that landed while `new` was screened among them.
+pub(super) fn status_supersedes(new: &ClaimBody, old: &ClaimBody) -> bool {
+    new.lifecycle == ClaimLifecycleStatus::Active
+        && old.lifecycle == ClaimLifecycleStatus::Active
+        && !(crate::claim::claim_surfaceable(old) && screen_flagged(new))
 }
 
 /// Whether the inbound screen flagged the body this claim was admitted on, by

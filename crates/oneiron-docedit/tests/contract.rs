@@ -102,6 +102,7 @@ fn document() -> Vec<u8> {
 const MAIN_PART_RELATIONSHIPS: &str = "word/_rels/document.xml.rels";
 const PACKAGE_RELATIONSHIPS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
 const RELATIONSHIPS_TYPE: &str = "application/vnd.openxmlformats-package.relationships+xml";
+// testkit-lint: allow(network) a relationship type name the fork writes, compared as text; no test opens it
 const REVISION_IDS_REL: &str = "http://stemma.sh/2026/relationships/revisionIds";
 const CONTENT_TYPES: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
 
@@ -624,6 +625,372 @@ fn docx_read_refuses_a_reference_with_no_relationships_part() {
         refusal.contains(MAIN_PART_RELATIONSHIPS) && refusal.contains("rId1"),
         "the refusal names neither the absent part nor the reference: {refusal}"
     );
+}
+
+/// The relationships namespace a `r:id` reference lives in.
+const OFFICE_RELATIONSHIPS: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const HYPERLINK_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+const PEOPLE_REL: &str = "http://schemas.microsoft.com/office/2011/relationships/people";
+
+/// A document whose main part holds `<w:altChunk {reference_attribute_text}/>` before
+/// `sectPr`, beside a present but empty relationships part.
+fn document_with_a_dangling_main_reference(reference_attribute_text: &str) -> Vec<u8> {
+    let base = document_with_no_relationships_part();
+    let document = xml_part(&base, "word/document.xml");
+    let reference = format!("<w:altChunk {reference_attribute_text}/>");
+    let referencing = document
+        .replace(
+            r#"xmlns:u="urn:unfamiliar""#,
+            r#"xmlns:u="urn:unfamiliar" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#,
+        )
+        .replace("<w:sectPr/>", &format!("{reference}<w:sectPr/>"));
+    let bytes = with_part(&base, "word/document.xml", referencing.as_bytes());
+    let empty = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="{PACKAGE_RELATIONSHIPS}"/>"#
+    );
+    let bytes = rewrite_part(&bytes, None, MAIN_PART_RELATIONSHIPS, empty.as_bytes());
+    assert!(has_part(&bytes, MAIN_PART_RELATIONSHIPS));
+    bytes
+}
+
+/// A document whose main part links its third paragraph through `rId1` to an external
+/// hyperlink, and, when given, also holds an `altChunk` with the dangling id before
+/// `sectPr`.
+fn document_with_hyperlink(dangling_alt_chunk_id: Option<&str>) -> Vec<u8> {
+    let base = document_with_no_relationships_part();
+    let document = xml_part(&base, "word/document.xml");
+    let with_namespace = document.replace(
+        r#"xmlns:u="urn:unfamiliar""#,
+        r#"xmlns:u="urn:unfamiliar" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#,
+    );
+    let linked = with_namespace.replace(
+        "<w:p><w:r><w:t>Untouched third.</w:t></w:r></w:p>",
+        r#"<w:p><w:hyperlink r:id="rId1"><w:r><w:t>Untouched third.</w:t></w:r></w:hyperlink></w:p>"#,
+    );
+    let referencing = match dangling_alt_chunk_id {
+        Some(id) => linked.replace(
+            "<w:sectPr/>",
+            &format!(r#"<w:altChunk r:id="{id}"/><w:sectPr/>"#),
+        ),
+        None => linked,
+    };
+    let bytes = with_part(&base, "word/document.xml", referencing.as_bytes());
+    let relationships = format!(
+        r#"<Relationships xmlns="{PACKAGE_RELATIONSHIPS}"><Relationship Id="rId1" Type="{HYPERLINK_REL}" Target="https://example.invalid/" TargetMode="External"/></Relationships>"#
+    );
+    let bytes = rewrite_part(
+        &bytes,
+        None,
+        MAIN_PART_RELATIONSHIPS,
+        relationships.as_bytes(),
+    );
+    assert!(has_part(&bytes, MAIN_PART_RELATIONSHIPS));
+    bytes
+}
+
+/// The relationships-namespace `id` of each `tag` in the main part, in document order.
+fn main_part_relationship_ids(bytes: &[u8], tag: &str) -> Vec<String> {
+    let xml = xml_part(bytes, "word/document.xml");
+    let tree = roxmltree::Document::parse(&xml).expect("document XML");
+    tree.descendants()
+        .filter(|node| node.has_tag_name((WORDPROCESSING_ML, tag)))
+        .map(|node| {
+            node.attribute((OFFICE_RELATIONSHIPS, "id"))
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect()
+}
+
+/// The `(Id, Type, Target, TargetMode)` of each `Relationship` in the main part's set.
+fn main_relationships(bytes: &[u8]) -> Vec<(String, String, String, Option<String>)> {
+    let xml = xml_part(bytes, MAIN_PART_RELATIONSHIPS);
+    let tree = roxmltree::Document::parse(&xml).expect("relationships XML");
+    tree.descendants()
+        .filter(|node| node.has_tag_name((PACKAGE_RELATIONSHIPS, "Relationship")))
+        .map(|node| {
+            (
+                node.attribute("Id").unwrap_or_default().to_owned(),
+                node.attribute("Type").unwrap_or_default().to_owned(),
+                node.attribute("Target").unwrap_or_default().to_owned(),
+                node.attribute("TargetMode").map(str::to_owned),
+            )
+        })
+        .collect()
+}
+
+/// `docx.revise` of "second." to "SECOND-AS-REVISED" as a `Result`, for an expected refusal.
+fn try_revise_second_paragraph(bytes: &[u8]) -> Result<Done, ContractError> {
+    let parsed = oneiron_docedit::Document::parse(bytes).expect("parse base document");
+    let view = parsed.read();
+    let block = view
+        .blocks
+        .iter()
+        .find(|block| block.text == "second.")
+        .expect("the paragraph to revise");
+    let text = call_text(
+        "docx.revise",
+        json!({
+            "document": 0, "limits": docx_limits(),
+            "transaction": {"ops": [{"op": "replace", "target": block.id, "guard": block.guard,
+                "content": {"type": "paragraph", "content": [{"type": "text", "text": "SECOND-AS-REVISED"}]}}],
+                "revision": {"author": "Editor", "date": REVISION_DATE}}
+        }),
+    );
+    contract::execute_json(text.as_bytes(), &[bytes], Ports::default())
+}
+
+/// The detail of an expected refusal, after `assert_error` holds the code and length.
+fn refusal_detail(result: Result<Done, ContractError>, code: ErrorCode) -> String {
+    let detail = match &result {
+        Ok(done) => panic!("the call succeeded: {done:?}"),
+        Err(error) => error.detail.clone(),
+    };
+    assert_error(result, code);
+    detail
+}
+
+/// A relationship the writer adds never takes an id the source main part references
+/// without a binding: the revision is refused exactly as for an id the writer would
+/// never mint.
+#[test]
+fn docx_revise_does_not_bind_a_dangling_main_reference() {
+    let mut revise_details = Vec::new();
+    for id in ["rId9", "rId1", "rId2"] {
+        let bytes = document_with_a_dangling_main_reference(&format!(r#"r:id="{id}""#));
+        assert_eq!(
+            main_part_relationship_ids(&bytes, "altChunk"),
+            [id],
+            "FIXTURE: the main part holds one altChunk referencing {id}"
+        );
+        assert!(
+            main_relationships(&bytes).is_empty(),
+            "FIXTURE: the relationships part holds no Relationship"
+        );
+
+        let blocks = read_document(&bytes);
+        assert_eq!(
+            blocks
+                .iter()
+                .map(|block| (block.id.as_str(), block.kind, block.text.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("p_1", DocxBlockKind::Paragraph, "First "),
+                ("p_2", DocxBlockKind::Paragraph, "second."),
+                ("p_3", DocxBlockKind::Paragraph, "Untouched third."),
+                ("opaque_1", DocxBlockKind::Opaque, ""),
+            ],
+            "docx.read of the {id} input"
+        );
+        assert!(
+            blocks[0].locked.is_none() && blocks[1].locked.is_none() && blocks[2].locked.is_none(),
+            "docx.read of the {id} input locks no paragraph"
+        );
+        assert_eq!(
+            blocks[3].locked,
+            Some(oneiron_docedit::docx_body::DocxLock::Opaque),
+            "docx.read of the {id} input locks the altChunk opaque"
+        );
+
+        let text = call_text(
+            "docx.validate",
+            json!({"document": 0, "limits": docx_limits()}),
+        );
+        let detail = refusal_detail(
+            contract::execute_json(text.as_bytes(), &[&bytes], Ports::default()),
+            ErrorCode::Refused,
+        );
+        assert!(
+            detail.contains("I-REL-001")
+                && detail.contains(id)
+                && detail.contains(MAIN_PART_RELATIONSHIPS),
+            "docx.validate of the {id} input names I-REL-001, the id and the part: {detail}"
+        );
+
+        let detail = refusal_detail(
+            try_revise_second_paragraph(&bytes),
+            ErrorCode::InvalidDocument,
+        );
+        let expected = format!(
+            "output main document references relationship \"{id}\", but neither source package supplies that binding"
+        );
+        assert!(
+            detail.contains(&expected),
+            "docx.revise of the {id} input refuses the dangling reference: {detail}"
+        );
+        revise_details.push(detail);
+    }
+    let normalized: Vec<_> = ["rId9", "rId1", "rId2"]
+        .into_iter()
+        .zip(revise_details.iter())
+        .map(|(id, detail)| detail.replace(id, "rIdN"))
+        .collect();
+    assert_eq!(
+        normalized[0], normalized[1],
+        "the rId9 and rId1 revise refusals match once the id is replaced"
+    );
+    assert_eq!(
+        normalized[1], normalized[2],
+        "the rId1 and rId2 revise refusals match once the id is replaced"
+    );
+}
+
+/// The reservation reads the decoded attribute value, not the lexical spelling:
+/// an entity-encoded `rId1` still refuses the projection.
+#[test]
+fn docx_project_does_not_bind_a_dangling_entity_encoded_reference() {
+    let bytes = document_with_a_dangling_main_reference(r#"r:id="rId&#49;""#);
+    assert_eq!(
+        main_part_relationship_ids(&bytes, "altChunk"),
+        ["rId1"],
+        "FIXTURE: the entity-encoded value reads rId1"
+    );
+    assert!(
+        main_relationships(&bytes).is_empty(),
+        "FIXTURE: the relationships part holds no Relationship"
+    );
+
+    let blocks = read_document(&bytes);
+    let block = blocks
+        .iter()
+        .find(|block| block.text == "second.")
+        .expect("p_2");
+    let text = call_text(
+        "docx.project",
+        json!({"source": 0, "limits": docx_limits(),
+            "changes": [{"set_text": {"block": block.id, "text": "SECOND-AS-PROJECTED"}}],
+            "revision": {"author": "Editor", "date": REVISION_DATE, "group": "contract-projection"}
+        }),
+    );
+    let detail = refusal_detail(
+        contract::execute_json(text.as_bytes(), &[&bytes], Ports::default()),
+        ErrorCode::InvalidDocument,
+    );
+    assert!(
+        detail.contains(
+            "output main document references relationship \"rId1\", but neither source package supplies that binding"
+        ),
+        "docx.project of the entity-encoded input refuses the dangling reference: {detail}"
+    );
+}
+
+/// A dangling reference beside a held one still refuses: the writer must not hand
+/// the dangling id to a new part.
+#[test]
+fn docx_revise_does_not_bind_a_dangling_reference_beside_a_held_one() {
+    let bytes = document_with_hyperlink(Some("rId2"));
+    assert_eq!(
+        main_part_relationship_ids(&bytes, "hyperlink"),
+        ["rId1"],
+        "FIXTURE: the hyperlink references rId1"
+    );
+    assert_eq!(
+        main_part_relationship_ids(&bytes, "altChunk"),
+        ["rId2"],
+        "FIXTURE: the altChunk references rId2"
+    );
+    assert_eq!(
+        main_relationships(&bytes),
+        [(
+            "rId1".to_owned(),
+            HYPERLINK_REL.to_owned(),
+            "https://example.invalid/".to_owned(),
+            Some("External".to_owned()),
+        )],
+        "FIXTURE: the relationships part holds the hyperlink"
+    );
+
+    let detail = refusal_detail(
+        try_revise_second_paragraph(&bytes),
+        ErrorCode::InvalidDocument,
+    );
+    assert!(
+        detail.contains(
+            "output main document references relationship \"rId2\", but neither source package supplies that binding"
+        ),
+        "docx.revise beside a held hyperlink refuses rId2: {detail}"
+    );
+}
+
+/// The control: when every reference resolves, the writer keeps today's ids.
+#[test]
+fn docx_revise_keeps_todays_ids_when_every_reference_resolves() {
+    let bytes = document_with_hyperlink(None);
+    assert_eq!(
+        main_part_relationship_ids(&bytes, "hyperlink"),
+        ["rId1"],
+        "FIXTURE: the hyperlink references rId1"
+    );
+    assert!(
+        main_part_relationship_ids(&bytes, "altChunk").is_empty(),
+        "FIXTURE: the main part holds no altChunk"
+    );
+    let done = run(
+        "docx.validate",
+        json!({"document": 0, "limits": docx_limits()}),
+        &[&bytes],
+    );
+    match &done.reply {
+        Reply::Checked => {}
+        reply => panic!("expected Checked: {reply:?}"),
+    }
+
+    let done = revise_second_paragraph(&bytes);
+    match &done.reply {
+        Reply::DocxRevised { transaction, .. } => {
+            assert_eq!(transaction["revision"]["date"], REVISION_DATE);
+        }
+        reply => panic!("expected DocxRevised: {reply:?}"),
+    }
+    let changed = output(&done, "document", contract::DOCX_MEDIA_TYPE);
+    let rels = main_relationships(changed);
+    assert_eq!(
+        rels.len(),
+        3,
+        "the revision keeps the hyperlink and adds people and revision identities"
+    );
+    assert_eq!(
+        rels[0],
+        (
+            "rId1".to_owned(),
+            HYPERLINK_REL.to_owned(),
+            "https://example.invalid/".to_owned(),
+            Some("External".to_owned()),
+        )
+    );
+    assert_eq!(rels[1].0, "rId2");
+    assert_eq!(rels[1].1, PEOPLE_REL);
+    assert_ne!(rels[1].3.as_deref(), Some("External"));
+    let people = main_part_target("word", &rels[1].2);
+    assert_eq!(people, "word/people.xml");
+    assert!(has_part(changed, &people));
+    assert_eq!(rels[2].0, "rId3");
+    assert_eq!(rels[2].1, REVISION_IDS_REL);
+    assert_ne!(rels[2].3.as_deref(), Some("External"));
+    let revision = main_part_target("word", &rels[2].2);
+    assert_eq!(revision, "word/stemmaRevisionIds.xml");
+    assert!(has_part(changed, &revision));
+
+    assert_eq!(
+        main_part_relationship_ids(changed, "hyperlink"),
+        ["rId1"],
+        "the output hyperlink still references rId1"
+    );
+    assert!(
+        main_part_relationship_ids(changed, "altChunk").is_empty(),
+        "the output holds no altChunk"
+    );
+    let done = run(
+        "docx.validate",
+        json!({"document": 0, "limits": docx_limits()}),
+        &[changed],
+    );
+    match &done.reply {
+        Reply::Checked => {}
+        reply => panic!("expected Checked: {reply:?}"),
+    }
 }
 
 /// A revision owns its identity part through its relationship, not its file name.

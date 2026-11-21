@@ -171,6 +171,8 @@ impl SyncServer {
     /// mark in the same transaction (FIX 10732). `inserts`, the entity ids
     /// its history inserts as admission read them, owe the erasure sweep a
     /// compaction in it when one names a row hard-deleted here (census L6-05).
+    /// A member lane's write (`member_write`) has its rows judged again there
+    /// too (MEMBER-SYNC threat F3).
     pub(crate) fn persist_imported_update(
         &self,
         key: &WindowKey,
@@ -178,6 +180,7 @@ impl SyncServer {
         inserts: &oneiron::sync::window::UpdateInserts,
         landings: &oneiron::sync::selector::RepoSyncLandings,
         auth: Option<&crate::auth::CoreAuth>,
+        member_write: Option<&crate::handler::member_lane::MemberPromotedWrite>,
     ) -> Result<u64, oneiron::Error> {
         server_state::persist_admitted_window_update(
             &self.vault,
@@ -185,7 +188,12 @@ impl SyncServer {
             update_bytes,
             inserts,
             landings,
-            |txn| auth.is_none_or(|auth| auth.credential_is_live_in_write_txn(&self.vault, txn)),
+            |txn| {
+                auth.is_none_or(|auth| {
+                    auth.credential_is_live_in_write_txn(&self.vault, txn)
+                        && member_write.is_none_or(|write| write.stands_in(&self.vault, txn, auth))
+                })
+            },
         )
     }
 

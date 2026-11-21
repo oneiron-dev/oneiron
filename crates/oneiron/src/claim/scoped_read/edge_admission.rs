@@ -66,15 +66,38 @@ impl ScopedRead<'_> {
         source: EntityId,
         edge: EdgeInfo,
     ) -> Result<ReadAdmission<AdmittedEdge>> {
+        self.admit_stored_edge_held_in(txn, policy, filter, source, edge, &HeldAuthority::default())
+    }
+
+    /// [`Self::admit_stored_edge_in`] with both endpoints under the
+    /// authority one serving txn holds for all its rows (FIX 7462): an
+    /// endpoint a live Grant of this key admits alone is admitted here too,
+    /// as a point read admits it (FIX-LIST
+    /// SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS).
+    pub(super) fn admit_stored_edge_held_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        source: EntityId,
+        edge: EdgeInfo,
+        authority: &HeldAuthority,
+    ) -> Result<ReadAdmission<AdmittedEdge>> {
         let target = edge.target;
+        let admit = |id: &EntityId| {
+            self.admit_held_in(txn, id, authority, || {
+                self.is_entity_retrievable_held_in(txn, policy, filter, id, authority)
+                    .map(|allowed| allowed.then_some(()))
+            })
+        };
         admit_stored_edge_in(
             self.vault,
             txn,
             source,
             target,
             edge,
-            || self.admit_entity_in(txn, policy, filter, &source),
-            || self.admit_entity_in(txn, policy, filter, &target),
+            || admit(&source),
+            || admit(&target),
         )
     }
 
@@ -82,36 +105,7 @@ impl ScopedRead<'_> {
     /// withheld pair never spends a result/scan/dedup slot. In a session the
     /// edge iterator composes its overlay, while consent is base-only and an
     /// overlay cannot manufacture a base-authorized SameAs link.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "snapshot, policy, direction and two visible budgets are distinct axes"
-    )]
-    pub(super) fn admitted_edges_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        policy: &PolicyManifestResolution,
-        filter: &ResolvedRetrievalFilter,
-        center: &EntityId,
-        direction: EdgeDirection,
-        kind: Option<EdgeKind>,
-        limit: usize,
-        scan_limit: usize,
-        unique_targets: bool,
-    ) -> Result<AdmittedEdgeScan> {
-        self.admitted_edges_held_in(
-            txn,
-            policy,
-            filter,
-            center,
-            direction,
-            kind,
-            limit,
-            scan_limit,
-            unique_targets,
-            &HeldAuthority::default(),
-        )
-    }
-
+    ///
     /// The centre and peers use the walk's held authority, so its Grant and own-owner
     /// alternatives see the request it asked (STANDING-GRAPH-OWNER-CENTRE-READ).
     #[expect(
@@ -132,7 +126,7 @@ impl ScopedRead<'_> {
         authority: &HeldAuthority,
     ) -> Result<AdmittedEdgeScan> {
         let admit = |id: &EntityId| {
-            self.admit_in(txn, id, || {
+            self.admit_held_in(txn, id, authority, || {
                 self.is_entity_retrievable_held_in(txn, policy, filter, id, authority)
                     .map(|allowed| allowed.then_some(()))
             })
@@ -342,7 +336,7 @@ impl ScopedRead<'_> {
         // this txn (FIX 7462).
         let held = self.held_for(None);
         let read_node = |id: &EntityId| {
-            self.admit_in(&txn, id, || {
+            self.admit_held_in(&txn, id, &held, || {
                 self.entity_raw_with_mode_held_in(&txn, &policy, &filter, id, ReadMode::Live, &held)
             })
         };

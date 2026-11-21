@@ -90,9 +90,10 @@ impl FoldContext<'_> {
         (self.consent_arm)(device)
     }
 
-    /// Whether entry `hash` is an owner choice or a carried machine answer
-    /// outside a proving owner-key enrolment's line: it needs the owner's
-    /// proof whatever its parents hold.
+    /// Whether entry `hash` is an owner choice, an engine statement on the
+    /// setting register or a carried machine answer outside a proving
+    /// owner-key enrolment's line: it needs the owner's proof whatever its
+    /// parents hold.
     pub(super) fn needs_owner_proof_off_the_line(self, hash: &AuthorityEntryHash) -> bool {
         self.owner_key_lines
             .is_some_and(|lines| lines.needs_proof(hash))
@@ -567,6 +568,7 @@ pub(super) fn fold_authority_log_once_with(
             handoff_or_appointment_retired_keys: BTreeSet::new(),
             host_custody: BTreeSet::new(),
             passkey_limited_keys: BTreeSet::new(),
+            host_vouched_passkey_owners: BTreeMap::new(),
             closed_handoffs: BTreeSet::new(),
             crossed_revocations: BTreeSet::new(),
             genesis_fragile: false,

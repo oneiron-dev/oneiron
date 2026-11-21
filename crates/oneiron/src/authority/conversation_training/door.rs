@@ -17,6 +17,7 @@
 
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{TimeRange, Vault};
 
 use super::*;
@@ -85,6 +86,14 @@ impl Vault {
         leave_out: bool,
         seen: Option<PolicyRevision>,
     ) -> Result<ConversationTrainingView> {
+        let importance = if leave_out {
+            OwnerActImportance::Ordinary
+        } else {
+            OwnerActImportance::Important
+        };
+        let witness =
+            self.owner_presence(importance, owner_presence_reasons::CONVERSATION_TRAINING)?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let mut txn = self.store.env.write_txn()?;
         let person = owner.revalidate_person_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
@@ -142,7 +151,7 @@ impl Vault {
                 leave_out,
             }),
             now,
-            self.owner_proof_signer(&fold).as_ref(),
+            self.owner_proof_signer(&fold, &ground).as_ref(),
         )?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {

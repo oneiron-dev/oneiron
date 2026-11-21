@@ -38,6 +38,11 @@
 //! room's walk-in is not judged: the Owner's
 //! `rooms.private_threads.admin_walk_in` alone governs it.
 //!
+//! An add that goes at once, or that is not judged, spends no check-in, so
+//! a `check_in_ref` the call names is refused as a bad request
+//! ([`refuse_unspent_check_in_ref`]), never left unspent while the add
+//! lands (FIX row [CHECK-IN-DOOR-GO-AT-ONCE-IGNORES-NAMED-CHECK-IN]).
+//!
 //! An agent's add is from now on (canon #agent-room-add): the door refuses
 //! an agent's add that asks for the earlier history ([`agent_add_is_from_now`])
 //! before it judges, so nothing opens. Full history for the newcomer needs
@@ -48,7 +53,8 @@ use super::act_class::ActClass;
 use super::asker::{AskGo, AskVerdict, agent_door_grant_in_txn, judge_door_act_in_txn};
 use super::chain::{NoAgentVerdict, VerifiedChain};
 use super::effect::{
-    CheckInDecision, DoorAct, DoorCheckIn, person_door_check_in_in_txn, spend_in_txn,
+    CheckInDecision, DoorAct, DoorCheckIn, named_check_in_at_once, person_door_check_in_in_txn,
+    spend_in_txn,
 };
 use super::mode::CheckInMode;
 use super::pending::{
@@ -134,10 +140,47 @@ pub(crate) fn agent_add_is_from_now(memory: &Memory<'_>, full_history: bool) -> 
 /// # Errors
 ///
 /// A Guest's add; an agent no live owner Grant gives the power
-/// (`FORBIDDEN`, [`ROOM_ADD_NOT_GRANTED_REASON`]); a `check_in_ref` that names no row, another
-/// asker's or another act's ask, another effect, or an ask that is not
-/// eligible or already spent; storage errors.
+/// (`FORBIDDEN`, [`ROOM_ADD_NOT_GRANTED_REASON`]); a `check_in_ref` for an
+/// add that goes at once or is not judged ([`refuse_unspent_check_in_ref`]);
+/// a `check_in_ref` that names no row, another asker's or another act's ask,
+/// another effect, or an ask that is not eligible or already spent; storage
+/// errors.
 pub(crate) fn room_add_check_in_in_txn(
+    memory: &Memory<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    verb: &str,
+    room: EntityId,
+    effect_digest: [u8; 32],
+    check_in_ref: Option<&EntityId>,
+) -> MemoryResult<Option<DoorCheckIn>> {
+    let judged = judge_room_add_in_txn(memory, txn, verb, room, effect_digest, check_in_ref)?;
+    refuse_unspent_check_in_ref(judged, check_in_ref)
+}
+
+/// `judged`, the add's check-in, unless the call names a `check_in_ref`
+/// that the add did not spend: an add that goes at once, or that is not
+/// judged, spends no check-in, so the one it names would stay unspent while
+/// the add lands. A door that judges no add, as a thread audience's self
+/// re-add (REVIEW-9839 P1), passes `None`.
+///
+/// # Errors
+///
+/// `BAD_REQUEST` naming `check_in_ref` ([`named_check_in_at_once`]) for
+/// such a `check_in_ref`.
+pub(crate) fn refuse_unspent_check_in_ref(
+    judged: Option<DoorCheckIn>,
+    check_in_ref: Option<&EntityId>,
+) -> MemoryResult<Option<DoorCheckIn>> {
+    let spent = matches!(&judged, Some(DoorCheckIn::Go(decision)) if decision.check_in.is_some());
+    if check_in_ref.is_some() && !spent {
+        return Err(named_check_in_at_once().into());
+    }
+    Ok(judged)
+}
+
+/// [`room_add_check_in_in_txn`]'s judgment, before it checks that a named
+/// `check_in_ref` was spent.
+fn judge_room_add_in_txn(
     memory: &Memory<'_>,
     txn: &mut heed::RwTxn<'_>,
     verb: &str,
@@ -258,8 +301,10 @@ pub(crate) fn room_add_check_in_in_txn(
 ///
 /// # Errors
 ///
-/// A `check_in_ref` that is not the walker's ask of this room's owners for
-/// this walk-in, or that is not eligible or already spent; storage errors.
+/// A `check_in_ref` for a walk-in that goes at once or is not judged
+/// ([`refuse_unspent_check_in_ref`]); a `check_in_ref` that is not the
+/// walker's ask of this room's owners for this walk-in, or that is not
+/// eligible or already spent; storage errors.
 pub(crate) fn walk_in_check_in_in_txn(
     memory: &Memory<'_>,
     txn: &mut heed::RwTxn<'_>,
@@ -270,12 +315,22 @@ pub(crate) fn walk_in_check_in_in_txn(
     check_in_ref: Option<&EntityId>,
 ) -> MemoryResult<Option<DoorCheckIn>> {
     let vault = memory.vault();
-    if !crate::workspace_roster::room_is_closed_in(vault, txn, room)? {
-        return Ok(None);
-    }
-    let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-    let effect_digest = room_add_effect_digest(&room, Some(&thread), &walker, false);
-    closed_room_check_in_in_txn(memory, txn, verb, room, effect_digest, check_in_ref, now).map(Some)
+    let judged = if crate::workspace_roster::room_is_closed_in(vault, txn, room)? {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        let effect_digest = room_add_effect_digest(&room, Some(&thread), &walker, false);
+        Some(closed_room_check_in_in_txn(
+            memory,
+            txn,
+            verb,
+            room,
+            effect_digest,
+            check_in_ref,
+            now,
+        )?)
+    } else {
+        None
+    };
+    refuse_unspent_check_in_ref(judged, check_in_ref)
 }
 
 /// The receipt role of an adder with no role on the vault: a person a room

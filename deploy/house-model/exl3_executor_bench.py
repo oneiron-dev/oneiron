@@ -234,9 +234,12 @@ def main():
     p.add_argument("--port", type=int, default=18991)
     p.add_argument("--context", type=int, default=32768)
     p.add_argument("--draft-tokens", type=int, default=7)
-    p.add_argument("--cache-tokens", type=int, default=40192)
+    p.add_argument("--cache-tokens", type=int, default=None,
+                   help="the server's pool (default: exl3_server.py's, which follows the draft KV ring)")
     p.add_argument("--max-in-flight", type=int, default=4)
     p.add_argument("--recurrent-cache-gib", type=int, default=4)
+    p.add_argument("--draft-ring-pages", type=int, default=None,
+                   help="the draft KV ring per slot (default: exl3_server.py's; 0 turns it off)")
     p.add_argument("--default-max-tokens", type=int, default=4096)
     p.add_argument("--model-id", default="qwen3.8-27b")
     p.add_argument("--weights-manifest")

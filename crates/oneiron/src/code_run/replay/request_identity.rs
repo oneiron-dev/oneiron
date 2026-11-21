@@ -58,8 +58,8 @@ use super::super::types::SelfEffect;
 use super::CodeRunBridgeCall;
 use crate::Result;
 use crate::batch::secret_scan::{
-    MapOrder, admission_form, custody_record_form, custody_records_named, held_row_meets,
-    known_nested_form,
+    MapOrder, NestedBodies, admission_form, custody_record_form, custody_records_named,
+    held_row_meets, known_nested_form,
 };
 use crate::code_run::RESPONSE_ERASED;
 use crate::store::known_value_index::KnownValues;
@@ -180,6 +180,13 @@ impl<'a> ErasedRequest<'a> {
     /// it held that value's handle, or by an erase that read custody, was
     /// taken (FIX FENCE-ERASE-STAND-IN-DIGESTS-RAW-VALUE).
     ///
+    /// Each form reads a body a member carries as the wall reads it (FIX
+    /// REQUEST-IDENTITY-NESTED-SHAPED-KEY-AS-WRITTEN). An erase before that
+    /// fix read a body that is no text as written, so, past a miss in both
+    /// forms, `offered` is read in both again with such a body as written
+    /// ([`NestedBodies::AsWritten`]): a row erased then meets the call it
+    /// met then, and no other (stored-data rule: keep).
+    ///
     /// # Errors
     ///
     /// A request the side-row wall cannot read, one that does not encode,
@@ -195,13 +202,17 @@ impl<'a> ErasedRequest<'a> {
             {
                 return custody.meets(request, &custody_known, &records);
             }
-            if canonical_digest(request, None)? == self.identity {
-                return Ok(true);
+            for bodies in [NestedBodies::Read, NestedBodies::AsWritten] {
+                if canonical_digest(request, None, bodies)? == self.identity {
+                    return Ok(true);
+                }
+                if let Some(known) = known.get()?
+                    && custody_stand_in_digest(request, known, bodies)? == self.identity
+                {
+                    return Ok(true);
+                }
             }
-            Ok(match known.get()? {
-                Some(known) => custody_stand_in_digest(request, known)? == self.identity,
-                None => false,
-            })
+            Ok(false)
         };
         let hit = match (self.ask, offered) {
             (None, _) => identity_meets(offered)?,
@@ -334,7 +345,7 @@ impl CodeRunBridgeCall {
     pub(crate) fn request_identity(&self) -> Result<[u8; 32]> {
         match ErasedRequest::of(&self.request) {
             Some(erased) => Ok(erased.identity),
-            None => live_identity(self.effect, &self.request),
+            None => live_identity(self.effect, &self.request, NestedBodies::Read),
         }
     }
 
@@ -437,15 +448,41 @@ impl CodeRunBridgeCall {
     /// A request the side-row wall cannot read, one that does not encode,
     /// or the read of base custody's values.
     pub(crate) fn erase_request(&mut self, custody: &CompareKnown<'_>) -> Result<bool> {
+        self.erase_request_reading(custody, NestedBodies::Read)
+    }
+
+    /// [`Self::erase_request`] as an erase took it before FIX
+    /// REQUEST-IDENTITY-NESTED-SHAPED-KEY-AS-WRITTEN: each stand-in identity
+    /// read with a body that is no text as written. A test builds the rows
+    /// such an erase stored with it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::erase_request`].
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn erase_request_with_nested_bodies_as_written(
+        &mut self,
+        custody: &CompareKnown<'_>,
+    ) -> Result<bool> {
+        self.erase_request_reading(custody, NestedBodies::AsWritten)
+    }
+
+    /// [`Self::erase_request`], each stand-in identity read with a body a
+    /// member carries as `bodies` reads it.
+    fn erase_request_reading(
+        &mut self,
+        custody: &CompareKnown<'_>,
+        bodies: NestedBodies,
+    ) -> Result<bool> {
         if self.request_erased() {
             return Ok(false);
         }
         let rewritten = self
             .rewritten_request
             .as_ref()
-            .map(|rewritten| erased_value(self.effect, rewritten, custody))
+            .map(|rewritten| erased_value(self.effect, rewritten, custody, bodies))
             .transpose()?;
-        self.request = erased_value(self.effect, &self.request, custody)?;
+        self.request = erased_value(self.effect, &self.request, custody, bodies)?;
         self.rewritten_request = rewritten;
         Ok(true)
     }
@@ -490,9 +527,9 @@ fn typed_ask(effect: SelfEffect, request: &Value) -> Option<&Value> {
 }
 
 /// The identity of the live `request` a call of `effect` made: over its
-/// [`identity_part`].
-fn live_identity(effect: SelfEffect, request: &Value) -> Result<[u8; 32]> {
-    canonical_digest(&identity_part(effect, request), None)
+/// [`identity_part`], with each body it carries read as `bodies` reads it.
+fn live_identity(effect: SelfEffect, request: &Value, bodies: NestedBodies) -> Result<[u8; 32]> {
+    canonical_digest(&identity_part(effect, request), None, bodies)
 }
 
 /// What the identity of the live `request` a call of `effect` made reads:
@@ -510,8 +547,13 @@ fn identity_part(effect: SelfEffect, request: &Value) -> Cow<'_, Value> {
 /// it. The identity is the stand-in identity alone, or, when the request
 /// names a record base custody knows, read through `custody`, the stand-in
 /// identity, the custody identity and the records, in one array.
-fn erased_value(effect: SelfEffect, request: &Value, custody: &CompareKnown<'_>) -> Result<Value> {
-    let stand_in = Value::Binary(stand_in_identity(effect, request, custody)?.to_vec());
+fn erased_value(
+    effect: SelfEffect,
+    request: &Value,
+    custody: &CompareKnown<'_>,
+    bodies: NestedBodies,
+) -> Result<Value> {
+    let stand_in = Value::Binary(stand_in_identity(effect, request, custody, bodies)?.to_vec());
     let identity = match custody_identity(effect, request, custody)? {
         Some(parts) => Value::Array(std::iter::once(stand_in).chain(parts).collect()),
         None => stand_in,
@@ -538,26 +580,43 @@ fn erased_value(effect: SelfEffect, request: &Value, custody: &CompareKnown<'_>)
 /// custody it digests as the handle the wall would place, as a scrub of the
 /// stored row digests it, and never as written, also inside a body of its
 /// own ([`custody_stand_in_digest`]). With no custody read in reach, its
-/// [`live_identity`].
+/// [`live_identity`]. Each body it carries is read as `bodies` reads it.
 fn stand_in_identity(
     effect: SelfEffect,
     request: &Value,
     custody: &CompareKnown<'_>,
+    bodies: NestedBodies,
 ) -> Result<[u8; 32]> {
     match custody.get()? {
-        Some(known) => custody_stand_in_digest(&identity_part(effect, request), known),
-        None => live_identity(effect, request),
+        Some(known) => custody_stand_in_digest(&identity_part(effect, request), known, bodies),
+        None => live_identity(effect, request, bodies),
     }
 }
 
 /// The digest of `request` in its admission form read with `known`, the
-/// values base custody holds: each of them as the stand-in, and each inside
-/// a member that carries a body of its own as its record's handle, as the
-/// wall places it there (blind review round 1 of #9692). A put fence's
-/// request held such a value as written, and the scrub's stored row holds
-/// the handle, so both digest the same here.
-fn custody_stand_in_digest(request: &Value, known: Arc<KnownValues>) -> Result<[u8; 32]> {
-    canonical_digest(&known_nested_form(request, known.clone())?, Some(known))
+/// values base custody holds: each of them as the stand-in, also inside a
+/// member that carries a body of its own, as the wall places its handle
+/// there (blind review round 1 of #9692). A put fence's request held such a
+/// value as written, and the scrub's stored row holds the handle, so both
+/// digest the same here. With [`NestedBodies::Read`], the plan reads such a
+/// body as the wall does, known values and shapes in one pass (FIX
+/// REQUEST-IDENTITY-NESTED-SHAPED-KEY-AS-WRITTEN); with
+/// [`NestedBodies::AsWritten`], the form an erase took before that fix:
+/// each known value in such a body as its record's handle
+/// ([`known_nested_form`]), the rest of the body as written.
+fn custody_stand_in_digest(
+    request: &Value,
+    known: Arc<KnownValues>,
+    bodies: NestedBodies,
+) -> Result<[u8; 32]> {
+    match bodies {
+        NestedBodies::Read => canonical_digest(request, Some(known), bodies),
+        NestedBodies::AsWritten => canonical_digest(
+            &known_nested_form(request, known.clone())?,
+            Some(known),
+            bodies,
+        ),
+    }
 }
 
 /// The custody identity the erased form of the live `request` a call of
@@ -589,9 +648,17 @@ fn custody_identity(
 
 /// The BLAKE3 digest of `request`'s canonical MessagePack, read in its
 /// admission form: each secret the side-row wall places, and each handle
-/// it placed, as one stand-in; with `known`, each value it holds too.
-fn canonical_digest(request: &Value, known: Option<Arc<KnownValues>>) -> Result<[u8; 32]> {
-    digest(REQUEST_IDENTITY_DOMAIN, &admission_form(request, known)?)
+/// it placed, as one stand-in; with `known`, each value it holds too; each
+/// body it carries read as `bodies` reads it.
+fn canonical_digest(
+    request: &Value,
+    known: Option<Arc<KnownValues>>,
+    bodies: NestedBodies,
+) -> Result<[u8; 32]> {
+    digest(
+        REQUEST_IDENTITY_DOMAIN,
+        &admission_form(request, known, bodies)?,
+    )
 }
 
 /// The BLAKE3 digest of `request`'s canonical MessagePack, read for the

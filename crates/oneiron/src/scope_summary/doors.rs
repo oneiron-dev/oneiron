@@ -259,6 +259,13 @@ pub(crate) fn validate_summary_put(
     if was_summary || kind == ENTITY_TYPE_SUMMARY && super::codec::is_scope_summary(bytes) {
         let logical = crate::entity_doc::resolve_record_body(store, txn, id, bytes)?;
         let body = decode_scope_summary_body(&logical)?;
+        // Only a summary's document may hold a blank text, left by an edit
+        // or a sync merge of it. A body with no document is as the Dreamer
+        // minted it, and the mint never writes a blank text (review P1 of
+        // #9931): a replicated row skips the producer check below.
+        if body.text.trim().is_empty() && !crate::entity_doc::has_record_head(store, txn, id)? {
+            return Err(invalid("summary text is blank"));
+        }
         let unchanged = previous
             .as_ref()
             .and_then(|raw| raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..))
@@ -598,6 +605,9 @@ pub(super) fn mint_in_txn(
     for source in word_sources(&body) {
         crate::ports::record_derived_edge_in_txn(&vault.store, txn, &id, source)?;
     }
+    // READ-LINEAGE L1 hooks 1 and 3: the summary reads under what its
+    // words came from.
+    crate::source_audience::raise_floors_in_txn(vault, txn, [id])?;
     Ok(id)
 }
 
@@ -855,6 +865,7 @@ pub(super) fn land_in_txn(
         for source in &sources {
             crate::ports::record_derived_edge_in_txn(&vault.store, txn, &appended.id, source)?;
         }
+        crate::source_audience::raise_floors_in_txn(vault, txn, [appended.id])?;
         Some((appended.id, input))
     } else {
         None

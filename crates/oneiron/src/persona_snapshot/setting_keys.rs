@@ -6,7 +6,7 @@
 //! Direction: the key decides how much of the owner's own data a card may carry, so letting
 //! more in is looser. A row that does not decode reads as false, today's clamp.
 
-use crate::setting::{Kind, lower_is_tighter};
+use crate::setting::Kind;
 
 /// Restricted-band claims stay out: today's clamp, and the strictest value.
 fn kept_out() -> bool {
@@ -24,6 +24,6 @@ crate::setting::setting_keys! {
         "persona_snapshot.compile.include_restricted_band" {
         kind: Kind::new(kept_out)
             .strictest(kept_out)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
     };
 }

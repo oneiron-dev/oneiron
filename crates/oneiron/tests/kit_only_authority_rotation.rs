@@ -1217,11 +1217,30 @@ impl CheckpointRootSigner for KeySigner {
         key_of(&self.0)
     }
 
-    fn sign_checkpoint_statement(&self, statement: &[u8]) -> oneiron::Result<Vec<u8>> {
+    fn sign_checkpoint_statement(
+        &self,
+        _vault: &Vault,
+        statement: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
         Ok(self.0.sign(statement).to_bytes().to_vec())
     }
 
-    fn sign_owner_proof(&self, transcript: &[u8]) -> oneiron::Result<Vec<u8>> {
+    fn sign_owner_proof(
+        &self,
+        _vault: &Vault,
+        _fold: &oneiron::authority::AuthorityFold,
+        _ground: &oneiron::authority::OwnerProofGround,
+        transcript: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
+        Ok(self.0.sign(transcript).to_bytes().to_vec())
+    }
+
+    fn sign_ask_word_proof(
+        &self,
+        _vault: &Vault,
+        _fold: &oneiron::authority::AuthorityFold,
+        transcript: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
         Ok(self.0.sign(transcript).to_bytes().to_vec())
     }
 }
@@ -1258,7 +1277,10 @@ fn the_kit_only_switch_signs_the_fact_on_and_the_switch_back_signs_it_off() {
     let AuthorityOp::PolicySettingSet(set) = &row.op else {
         panic!("the fact is a setting act: {:?}", row.op);
     };
-    assert_eq!(set.setting, PolicySetting::RecoveryBoxKitOnly);
+    assert_eq!(
+        PolicySetting::parse(&set.setting),
+        Some(PolicySetting::RecoveryBoxKitOnly)
+    );
     assert_eq!(set.machine, fixture.machine, "this install carries it");
     assert_eq!(set.value, Some(recovery_box_kit_only_value(true)));
     assert_eq!(set.prior, recovery_box_kit_only_value(false));
@@ -1396,9 +1418,12 @@ fn an_agents_kit_only_act_and_any_third_value_are_no_valid_act() {
     let set = |act: OwnerAct, value: Option<[u8; 32]>| PolicySettingSet {
         act,
         machine: EntityId::now(),
-        setting: PolicySetting::RecoveryBoxKitOnly,
+        setting: PolicySetting::RecoveryBoxKitOnly.wire().to_owned(),
         prior: recovery_box_kit_only_value(false),
         value,
+        slot: None,
+        inline: None,
+        more: Vec::new(),
     };
     assert!(
         set(act, Some(recovery_box_kit_only_value(true)))

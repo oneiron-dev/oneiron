@@ -79,6 +79,7 @@ use crate::authority::{
     CustodyRecipientPermit, CustodyRequestAuthority, OwnerWorkBody, OwnerWorkOutcome,
     OwnerWorkRefusal, OwnerWorkRequest, invalid_authority,
 };
+use crate::consent::OwnerAuthoredWrite;
 use crate::error::{Error, Result, SecretError};
 use crate::secret_rotation::RotationReceipt;
 use crate::world_keys::{MachineSecret, OwnerWorkReceipt, OwnerWorkStatus, OwnerWorkUnassigned};
@@ -359,11 +360,14 @@ impl Vault {
     /// nothing is recorded and the result says the change stays here; the
     /// door then keeps it locally. While the carrier wire is on, an input
     /// that is kept or relayed is sealed under its own carrier key, minted
-    /// here first (FIX 7402, `input::carrier_seal`).
+    /// here first (FIX 7402, `input::carrier_seal`). `owner_authored` when
+    /// the change is the owner's own write, by an undelegated proof: its
+    /// request then carries the owner key's proof this install holds
+    /// ([`Vault::owner_act_proof_signer`]); automatic upkeep passes `None`.
     pub(crate) fn record_custody_change_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        actor: EntityId,
+        (actor, owner_authored): (EntityId, Option<&OwnerAuthoredWrite>),
         surface: ActSurface,
         change: ActiveChange<'_>,
         at: u64,
@@ -511,8 +515,9 @@ impl Vault {
             pieces: None,
             authority: CustodyRequestAuthority::Install,
         };
+        let author = (actor, owner_authored);
         let receipt =
-            self.record_owner_work_for_in_txn(txn, actor, surface, change.id, seen, work)?;
+            self.record_owner_work_for_in_txn(txn, author, surface, change.id, seen, work)?;
         let Some(hash) = receipt.request_entry() else {
             if let Some(door) = &door {
                 door.discard_in_txn(self, txn)?;

@@ -15,8 +15,6 @@ use oneiron::EntityId;
 use oneiron::authority::PeerMachine;
 use oneiron::sync::{SyncSelector, WindowKey, WindowManager, filtered_window_doc_for_peer};
 
-use super::window_sync::selector_grant_scope;
-
 /// How many filtered window copies one federation socket holds at once
 /// (CALLS: FEDERATION_ADMITTED_WINDOW_COPIES). A memory bound, never a
 /// refusal: a window past it is filtered again on its next use.
@@ -126,18 +124,12 @@ pub(super) fn rebuild(
     vault: &oneiron::Vault,
     manager: &Arc<WindowManager>,
     key: &WindowKey,
+    scope: oneiron::FederationGrantScope,
     selector: &SyncSelector,
     peer: PeerMachine,
 ) -> Option<LoroDoc> {
     let rebuilt = manager.open_window(key).and_then(|window| {
-        filtered_window_doc_for_peer(
-            vault,
-            &window.doc,
-            key,
-            selector_grant_scope(),
-            selector,
-            peer,
-        )
+        filtered_window_doc_for_peer(vault, &window.doc, key, scope, selector, peer)
     });
     match rebuilt {
         Ok(copy) => Some(copy),

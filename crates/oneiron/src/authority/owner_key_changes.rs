@@ -1,8 +1,10 @@
 //! The owner's list of owner key changes (the owner's ruling AUTH-5, pass 27
 //! section 4.4): every enrolment, every confirmation and every removal of an
 //! enrolled owner key, in either shape (a device's or the recovery root's
-//! Ed25519 key, or a passkey), that this vault's log holds and its fold
-//! counts, newest first (row KEY-CHANGE-RECEIPT-EMPTY-NO-NOTICE).
+//! Ed25519 key, or a passkey), and every binding of an owner by a key of
+//! their own (their passkey, or one of their device keys), that this vault's
+//! log holds and its fold counts, newest first
+//! (row KEY-CHANGE-RECEIPT-EMPTY-NO-NOTICE; row PASSKEY-SELF-BIND).
 //!
 //! This list is the notice of a key change. It writes no row of its own:
 //! each change is its authority entry, every owner device holds the log, and
@@ -26,9 +28,11 @@
 //! by a crossing of its own with D, the list names D's removal of B alone.
 //! Only a removal that a key of the owner's signed lists so: a managed host's
 //! root may sign a second revoke of a key that had already ended, and that
-//! entry is no act of the owner's. And only one the fold refused for its own
-//! signer (`RetiredSigner`): a crossing removal refused for a row below it,
-//! whose own signer still stands, lists nothing.
+//! entry is no act of the owner's. A crossing removal the fold refused for a
+//! row below it, not for its own signer, names no ended signer: when C
+//! removes A on top of a row B signed and A removes B, A's fence refuses C's
+//! removal of A and B's fence refuses A's, and C stands. The list shows it as
+//! [`OwnerKeyChangeKind::RemovedInConflict`], so A's end has its line too.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -57,6 +61,27 @@ pub enum OwnerKeyChangeKind {
     /// fences closed together, so the fold counts none of them, and this
     /// entry's own signer ended too ([`AuthorityFold::crossed_revocations`]).
     RemovedByEndedKey,
+    /// The key ended, and no counted removal names it: this `RevokeDevice`
+    /// of it conflicted with another removal, whose fence holds the signer
+    /// of a row below it, while its own signer stands. Their fences closed
+    /// together, so the vault counted neither removal, and the key ended
+    /// ([`AuthorityFold::crossed_revocations`]; Engine ANSWER 20 Nov 20:44,
+    /// row OWNER-KEY-CHANGES-CROSSED-REMOVAL-BELOW-REFUSED-ROW = A).
+    RemovedInConflict,
+    /// A passkey the host vouched for as an owner's bound that owner: it
+    /// signed their first `human` binding itself, so their owner verbs pass
+    /// ("your passkey confirmed you as this vault's owner"; the Oneiron lead
+    /// 21 Nov 05:4x, row PASSKEY-SELF-BIND). The host served the ceremony,
+    /// so every owner device lists it: a bind the owner did not make is a
+    /// "Not you?" as a key they did not enrol is.
+    BoundByPasskey,
+    /// An enrolled owner device key bound its owner: it signed their `human`
+    /// binding itself, so their owner verbs pass (lead ruling
+    /// HOSTED-RELAY-OWNER-HUMAN-BIND-CEREMONY = B; the #10007 binding). The
+    /// device signed on its own key, so every owner device lists it: a bind
+    /// the owner did not make is a "Not you?" as a key they did not enrol
+    /// is.
+    BoundByDeviceKey,
 }
 
 /// One change of an enrolled owner key, as its authority entry says it.
@@ -88,8 +113,12 @@ pub struct OwnerKeyChange {
 impl Vault {
     /// Every change of an enrolled owner key, newest first: each counted
     /// enrolment, confirmation and removal of a key an enrolment names, a
-    /// passkey's included, from the rows this vault keeps (stored, or
-    /// carried by an adopted checkpoint image). A key enrolled on two
+    /// passkey's included, and each counted binding an enrolled passkey or
+    /// device key signed for its owner
+    /// ([`OwnerKeyChangeKind::BoundByPasskey`],
+    /// [`OwnerKeyChangeKind::BoundByDeviceKey`]), from the rows this vault
+    /// keeps (stored, or carried by an adopted checkpoint image). A key
+    /// enrolled on two
     /// branches lists its smallest enrolment entry, as
     /// [`Self::enrolled_owner_keys`] and [`Self::enrolled_owner_passkeys`]
     /// do; each other counted enrolment of a key a passkey vouched for, by a
@@ -97,9 +126,10 @@ impl Vault {
     /// ([`OwnerKeyChangeKind::Confirmed`]); a key that two counted entries
     /// removed lists both removals. A key that ended
     /// with no counted removal lists each removal of it that a key of the
-    /// owner's signed, that the fold refused for its signer alone and whose
-    /// fence closed with the removals it crossed
-    /// ([`OwnerKeyChangeKind::RemovedByEndedKey`]). Empty before any
+    /// owner's signed and whose fence closed with the removals it crossed:
+    /// one the fold refused for its signer as
+    /// [`OwnerKeyChangeKind::RemovedByEndedKey`], any other as
+    /// [`OwnerKeyChangeKind::RemovedInConflict`]. Empty before any
     /// enrolment.
     ///
     /// # Errors
@@ -108,17 +138,35 @@ impl Vault {
     pub fn owner_key_changes(&self, owner: &AuthenticatedOwner) -> Result<Vec<OwnerKeyChange>> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        self.owner_key_changes_in_txn(&txn)
+    }
+
+    /// The hosted server's read for its report to the control plane: the same
+    /// list as [`Self::owner_key_changes`] with no person's proof.
+    /// Server-internal, no verb: only the reporter task calls it, and the
+    /// report it feeds carries the entry hash, the change kind, the key's
+    /// shape and the signer-claimed time alone.
+    ///
+    /// # Errors
+    /// The log's read errors.
+    pub fn owner_key_changes_as_host(&self) -> Result<Vec<OwnerKeyChange>> {
+        let txn = self.store.env.read_txn()?;
+        self.owner_key_changes_in_txn(&txn)
+    }
+
+    /// The list in the caller's transaction, after its proof, if any, passed.
+    fn owner_key_changes_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<OwnerKeyChange>> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         let hosted = self.is_hosted();
         let mut rows = Vec::new();
         let mut stored = BTreeSet::new();
-        for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, &txn)? {
+        for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, txn)? {
             let entry = decode_authority_log_entry_body(&body)?;
             let hash = authority_entry_hash(&entry)?;
             stored.insert(hash);
             rows.push((hash, entry));
         }
-        if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, &txn)?
+        if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, txn)?
         {
             rows.extend(
                 evidence
@@ -127,8 +175,8 @@ impl Vault {
             );
         }
         let keys = ListedOwnerKeys::of(
-            self.enrolled_owner_keys_in_txn(&txn)?,
-            self.enrolled_owner_passkeys_in_txn(&txn)?,
+            self.enrolled_owner_keys_in_txn(txn)?,
+            self.enrolled_owner_passkeys_in_txn(txn)?,
             &fold,
             hosted,
             &rows,
@@ -144,8 +192,10 @@ impl Vault {
             .map(|change| change.public_key.clone())
             .collect();
         changes.retain(|change| {
-            change.change != OwnerKeyChangeKind::RemovedByEndedKey
-                || !removed.contains(&change.public_key)
+            !matches!(
+                change.change,
+                OwnerKeyChangeKind::RemovedByEndedKey | OwnerKeyChangeKind::RemovedInConflict
+            ) || !removed.contains(&change.public_key)
         });
         changes.sort_by(|a, b| b.at.cmp(&a.at).then_with(|| a.entry.cmp(&b.entry)));
         Ok(changes)
@@ -290,12 +340,15 @@ impl ListedOwnerKeys {
 /// enrolment that stands for its key among `keys`, a counted enrolment of
 /// such a key that confirms a passkey's vouch for it
 /// ([`ListedOwnerKeys::confirms`]), a counted `RevokeDevice` of a key an
-/// enrolment names, or a `RevokeDevice` of such a key that ended it
-/// uncounted ([`ended_by_a_refused_removal`], signed by a key of the
-/// owner's, and one the fold names as crossed,
-/// [`AuthorityFold::crossed_revocations`]; `hosted` is as
-/// [`AuthorityFold::proves_owner_acts`] takes it). Keys of either shape
-/// alike. None for any other entry.
+/// enrolment names, a `RevokeDevice` of such a key that ended it uncounted
+/// ([`ended_by_an_uncounted_removal`], signed by a key of the owner's;
+/// `hosted` is as [`AuthorityFold::proves_owner_acts`] takes it), or a
+/// counted `BindActor` of an enrolled passkey that the passkey signed itself,
+/// the one binding the fold counts with a passkey as its signer
+/// (`owner_key_enrollment::passkey_self_bind`), or a counted `BindActor` of
+/// an enrolled owner device key that the key signed itself, alone, as
+/// `human` (the #10007 binding). Keys of either shape alike. None for any
+/// other entry.
 fn owner_key_change(
     fold: &AuthorityFold,
     hosted: bool,
@@ -320,19 +373,42 @@ fn owner_key_change(
             let key = keys.keys.get(revoked_key)?;
             if counted {
                 (OwnerKeyChangeKind::Removed, revoked_key, key)
-            } else if ended_by_a_refused_removal(fold, hash, revoked_key, key)
-                && signed_by_a_key_of_the_owners(fold, hosted, entry)
-                && fold.crossed_revocations.contains(&hash)
-            {
-                (OwnerKeyChangeKind::RemovedByEndedKey, revoked_key, key)
             } else {
+                let change = ended_by_an_uncounted_removal(fold, hash, revoked_key, key)?;
+                if !signed_by_a_key_of_the_owners(fold, hosted, entry) {
+                    return None;
+                }
+                (change, revoked_key, key)
+            }
+        }
+        AuthorityOp::BindActor { authority_key, .. }
+            if counted
+                && matches!(authority_key, AuthorityKey::P256(_))
+                && entry.signer.public_key == *authority_key =>
+        {
+            let key = keys.keys.get(authority_key)?;
+            (OwnerKeyChangeKind::BoundByPasskey, authority_key, key)
+        }
+        AuthorityOp::BindActor {
+            authority_key,
+            actor_class,
+            ..
+        } if counted
+            && matches!(authority_key, AuthorityKey::Ed25519(_))
+            && entry.signer.public_key == *authority_key
+            && entry.cosigns.is_empty()
+            && actor_class == ACTOR_CLASS_HUMAN =>
+        {
+            let key = keys.keys.get(authority_key)?;
+            if key.kind != Some(EnrolledOwnerKeyKind::Device) {
                 return None;
             }
+            (OwnerKeyChangeKind::BoundByDeviceKey, authority_key, key)
         }
         _ => return None,
     };
     // An enrolment or a confirmation names its own row's machine and kind; a
-    // removal names those of the key's listed enrolment.
+    // removal and a binding name those of the key's listed enrolment.
     let (machine, kind) = match &entry.op {
         AuthorityOp::OwnerKeyEnroll(enroll) => (enroll.machine, enrolment_kind(enroll)),
         _ => (key.machine, key.kind),
@@ -356,27 +432,39 @@ fn enrolment_kind(enroll: &OwnerKeyEnroll) -> Option<EnrolledOwnerKeyKind> {
         .map(|_| EnrolledOwnerKeyKind::of(enroll))
 }
 
-/// Whether the uncounted `RevokeDevice` of `public_key` (listed as `key`) at
-/// `hash` is a removal that ended it all the same: the key is retired, and
-/// the fold refused the entry for its signer alone (`RetiredSigner`), so the
-/// entry counted on its own branch and only a removal of its signer, on a
-/// branch that never saw it, refused it. A refused entry of any other kind
-/// (a bad signature, a signer the roster never held) is no removal and
+/// How the uncounted `RevokeDevice` of `public_key` (listed as `key`) at
+/// `hash` ended it all the same, if it did: the key is retired, and the fold
+/// names the entry as crossed ([`AuthorityFold::crossed_revocations`]), so
+/// its own fence closed with the removals it crossed and it yielded to no
+/// fence that holds its signer. The fold refused it for its signer
+/// (`RetiredSigner`): a removal of its signer, on a branch that never saw
+/// it, refused it ([`OwnerKeyChangeKind::RemovedByEndedKey`]); or for a row
+/// below it, a crossing removal's fence refusing that row while its own
+/// signer stands ([`OwnerKeyChangeKind::RemovedInConflict`]). An entry the
+/// fold refused before any fence closed (a bad signature, a signer the
+/// roster never held) has no fence, so no crossed entry is one, and it
 /// lists nothing. The caller also asks who signed it
-/// ([`signed_by_a_key_of_the_owners`]) and whether its own fence closed with
-/// the removals it crossed ([`AuthorityFold::crossed_revocations`]), so that
-/// it did not yield to a fence that holds its signer.
-fn ended_by_a_refused_removal(
+/// ([`signed_by_a_key_of_the_owners`]).
+fn ended_by_an_uncounted_removal(
     fold: &AuthorityFold,
     hash: AuthorityEntryHash,
     public_key: &AuthorityKey,
     key: &ListedOwnerKey,
-) -> bool {
-    !key.live
-        && fold.retired_keys.contains(public_key)
-        && fold
-            .issues
-            .contains(&AuthorityFoldIssue::RetiredSigner(hash))
+) -> Option<OwnerKeyChangeKind> {
+    if key.live
+        || !fold.retired_keys.contains(public_key)
+        || !fold.crossed_revocations.contains(&hash)
+    {
+        return None;
+    }
+    if fold
+        .issues
+        .contains(&AuthorityFoldIssue::RetiredSigner(hash))
+    {
+        Some(OwnerKeyChangeKind::RemovedByEndedKey)
+    } else {
+        Some(OwnerKeyChangeKind::RemovedInConflict)
+    }
 }
 
 /// Whether a key of the owner's signed `entry`, as its primary signer or as

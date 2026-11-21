@@ -75,7 +75,7 @@ pub fn put_signed_row(
         RowSigner::Install(_) => None,
         RowSigner::InstallWithOwnerProof(_) | RowSigner::OwnerProof => Some(
             vault
-                .owner_proof_signer(&fold)
+                .owner_proof_signer(&fold, &crate::authority::OwnerProofGround::test_door())
                 .ok_or_else(crate::authority::invalid_authority)?,
         ),
     };

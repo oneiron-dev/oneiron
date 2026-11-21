@@ -98,7 +98,11 @@ pub use lifecycle::{
     run_booking_lifecycle_attempt, run_booking_lifecycle_attempt_with_invites,
     run_booking_lifecycle_once, token_page_ref, validate_booking_family_claim,
 };
-pub use lifecycle::{BOOKING_OWNER_CARD_ITEM_PREFIX, BookingOwnerCard, BookingOwnerCardOffer};
+pub use lifecycle::{
+    BOOKING_HELD_DEPOSIT_ITEM_PREFIX, BOOKING_OWNER_CARD_ITEM_PREFIX, BookingDepositHeld,
+    BookingDepositHeldReason, BookingDepositReturned, BookingOwnerCard, BookingOwnerCardDeposit,
+    BookingOwnerCardEmergencyReturn, BookingOwnerCardOffer,
+};
 pub use public_lens::{
     BookingPageLens, BookingPageModel, BookingPageModelError, BookingPagePresentation,
     ConstraintFieldConfig, EventTypeCard, PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction,
