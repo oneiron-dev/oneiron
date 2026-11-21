@@ -277,6 +277,7 @@ pub(crate) fn put_held_connector_call(vault: &Vault, held_at_ms: u64) -> crate::
         off_record: false,
         paced_until: None,
         agent_run: None,
+        run_ref: None,
     };
     vault.with_write_txn(|txn| PENDING_CALLS.put(&vault.store, txn, &call_ref, &pending))?;
     Ok(call_ref)

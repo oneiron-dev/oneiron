@@ -147,6 +147,9 @@ impl Memory<'_> {
         request.agent_run_fence = self
             .task_host()
             .and_then(|host| self.vault.agent_run_fence(host.parent()));
+        // The code run that asks the schedule: its gate receipt joins that
+        // run's change journal (ARCH-0040 #revert-run).
+        request.run_ref = self.host_run_ref();
         // FIX 6424: the ask names the logical send the executor will run
         // this TASK under, so a press on it pins the send that spends it.
         request.approval_identity_ref = Some(crate::outbound::connector_logical_send_ref(

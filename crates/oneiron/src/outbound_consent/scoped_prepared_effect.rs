@@ -64,5 +64,8 @@ pub(super) fn scoped_prepared_effect(
         admission_ceiling: None,
         co_actor: None,
         exclusive_route: None,
+        // The code run that makes the call, from its pending call's caller
+        // binding (ARCH-0040 #revert-run).
+        run_ref: prepared_call.run_ref().map(str::to_owned),
     })
 }
