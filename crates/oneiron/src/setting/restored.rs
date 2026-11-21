@@ -107,7 +107,7 @@ pub(crate) fn restore_drops_row(full_key: &[u8]) -> bool {
 
 /// Whether the `SETTING` or `SETTING_CONTENT` row of `key` (without its table's prefix) is a
 /// choice about the install that set it, as [`restore_drops_row`] reads one.
-fn install_choice(key: &[u8]) -> bool {
+pub(super) fn install_choice(key: &[u8]) -> bool {
     RowKey::decode(key)
         .filter(|key| !matches!(key.scope, SettingScope::Pack(_)))
         .and_then(|key| spec_named(&key.name).ok())
