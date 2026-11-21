@@ -304,3 +304,15 @@ pub fn store_floor_seal(vault: &Vault, row: EntityId) -> Result<()> {
     txn.commit()?;
     Ok(())
 }
+
+/// The id of the ASSET that holds the bytes whose BLAKE3 hash is
+/// `content_hash`: the same bytes always land at the same id.
+///
+/// # Errors
+///
+/// The id derivation's.
+pub fn asset_id_of(
+    content_hash: &[u8; crate::blob_artifact::BLOB_ARTIFACT_CONTENT_HASH_LEN],
+) -> Result<EntityId> {
+    crate::blob_artifact::blob_artifact_asset_entity_id(content_hash)
+}

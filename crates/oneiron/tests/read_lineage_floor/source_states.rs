@@ -9,20 +9,27 @@
 //! reads sealed, so the migration's heal leaves it alone; an old build's mark
 //! on a support is a support's entry; and an erase at the end of a chain
 //! longer than one judgement's depth seals the chain's first fact.
+//!
+//! Leg ls8-order-map (step L-S8's door map): the owner's delete of an old
+//! fact judges it from its links before they go, and the same bytes
+//! uploaded again after their release land their ASSET as itself.
 
-use oneiron::EdgeKind;
-use oneiron::EntityId;
+use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use oneiron::deletion::TombstoneReason;
 use oneiron::provenance::made_by::MadeByInputRole;
 use oneiron::test_doors::claim_refinement_erase::apply_replayed_tombstone;
 use oneiron::test_doors::read_lineage_floor::{
-    backfill_first_page, floor_of, floor_sealed, floor_waits, forget_floor_state, mark_raised,
-    mark_waiting_on, register_dependency_source, store_floor_seal, walked_policies_of,
+    asset_id_of, backfill_first_page, floor_of, floor_sealed, floor_waits, forget_floor_state,
+    mark_raised, mark_waiting_on, register_dependency_source, store_floor_seal, walked_policies_of,
 };
 use oneiron::test_doors::source_audience_binding::{bound_row_read_by, reads};
+use oneiron::{EdgeActorClass, EdgeKind, EntityId, TimeRange, WriteActor};
 
-use super::erased_sources::{erase, housekeeping_pass};
-use super::{Mailbox, claim_born_from, claim_of_predicate_born_with, mailbox, owners_mailbox};
+use super::erased_sources::{assert_no_stranger_or_reader_reads, erase, housekeeping_pass};
+use super::{
+    Mailbox, claim_born_before_floors, claim_born_from, claim_of_predicate_born_with, mailbox,
+    owners_mailbox,
+};
 
 /// Sections 1.5 and 2: `fact` waits on `middle`, which waits on `late`, a
 /// row not here yet. `late` lands bound to the mailbox: `middle` takes its
@@ -292,5 +299,167 @@ fn a_tombstone_at_the_end_of_a_chain_longer_than_the_depth_bound_seals_its_first
     assert!(
         floor_sealed(&mailbox.vault, first).expect("the floor's state"),
         "a housekeeping pass unsealed the chain's first fact",
+    );
+}
+
+/// Section 2, the owner's delete (leg ls8-order-map): `old` is a fact held
+/// before floors, learnt from `late`, and the migration has not judged it
+/// yet; `fact`, born from `old`, waits on it. The owner deletes `old`: the
+/// delete judges `old` from its birth before the birth goes, so `fact`
+/// takes `late`'s policy if `late` landed bound, and is sealed if `late`
+/// never landed. Before the fix the delete dropped `old`'s birth first and
+/// then judged it with no link: `old` read bound with an empty floor,
+/// `fact` took that, and a stranger read it.
+fn a_fact_learnt_from_an_old_fact_the_owner_deletes_before_the_migration_judged_it(
+    late_lands: bool,
+) {
+    let mailbox = owners_mailbox();
+    let late = EntityId::now();
+    let old = claim_born_before_floors(&mailbox, &[late], "fact.old_from_late");
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault written before floors");
+    let fact = claim_born_from(&mailbox, &[old], "learnt from the old fact");
+    assert!(
+        floor_waits(&mailbox.vault, fact).expect("the floor's state"),
+        "precondition: a fact born from an old fact that waits on a row not here waits too",
+    );
+    if late_lands {
+        bound_row_read_by(&mailbox.vault, late, &[mailbox.owner, mailbox.reader])
+            .expect("late lands, bound to a policy the mailbox's reader reads");
+        assert!(
+            reads(&mailbox.vault, fact, &[mailbox.reader]).expect("the reader's read"),
+            "precondition: the reader of late's policy reads a fact learnt from it",
+        );
+        assert!(
+            !reads(&mailbox.vault, fact, &[mailbox.stranger]).expect("the stranger's read"),
+            "precondition: no stranger reads a fact learnt from late",
+        );
+    }
+    erase(&mailbox, old);
+    for when in [
+        "once the owner deleted the old fact",
+        "after a housekeeping pass",
+    ] {
+        assert!(
+            !reads(&mailbox.vault, fact, &[mailbox.stranger]).expect("the stranger's read"),
+            "LEAK: a stranger reads a fact learnt from an old fact {when}: the delete judged \
+             the old fact after its birth went",
+        );
+        if late_lands {
+            assert!(
+                reads(&mailbox.vault, fact, &[mailbox.reader]).expect("the reader's read"),
+                "the reader of late's policy does not read the fact {when}",
+            );
+        } else {
+            assert_no_stranger_or_reader_reads(&mailbox, fact, when);
+        }
+        housekeeping_pass(&mailbox);
+    }
+}
+
+#[test]
+fn a_fact_learnt_from_an_old_fact_the_owner_deletes_after_its_source_landed_keeps_that_source() {
+    a_fact_learnt_from_an_old_fact_the_owner_deletes_before_the_migration_judged_it(true);
+}
+
+#[test]
+fn a_fact_learnt_from_an_old_fact_the_owner_deletes_while_it_waits_is_sealed() {
+    a_fact_learnt_from_an_old_fact_the_owner_deletes_before_the_migration_judged_it(false);
+}
+
+/// A new blob artifact of the mailbox's owner.
+fn blob_artifact(mailbox: &Mailbox) -> EntityId {
+    let id = EntityId::now();
+    mailbox
+        .vault
+        .put_blob_artifact(
+            &id,
+            &BlobArtifactBody::new("read_lineage_floor.bin", "application/octet-stream"),
+            TimeRange {
+                start: super::AT,
+                end: super::AT,
+            },
+            super::AT,
+        )
+        .expect("FIXTURE: a blob artifact");
+    id
+}
+
+/// The owner uploads `bytes` as a version of `artifact`; the id of the
+/// ASSET that holds them.
+fn upload(mailbox: &Mailbox, artifact: EntityId, bytes: &[u8]) -> EntityId {
+    let version = mailbox
+        .vault
+        .append_blob_artifact_version(
+            &artifact,
+            bytes,
+            &BlobVersionProvenance::UserUpload,
+            WriteActor::new(mailbox.owner, EdgeActorClass::Human),
+            TimeRange {
+                start: super::AT,
+                end: super::AT,
+            },
+            super::AT,
+        )
+        .expect("the owner uploads the bytes");
+    asset_id_of(&version.content_hash).expect("the ASSET's id")
+}
+
+/// Section 2, readmission (case 52; leg ls8-order-map): the bytes of an
+/// ASSET are released when the last artifact holding them goes, and a fact
+/// learnt from the mailbox and from that ASSET is born after the release,
+/// so it waits on the ASSET. The owner uploads the same bytes again: the
+/// ASSET lands as itself, and the fact takes its floor. Before the fix the
+/// upload read the release fence as an erased row's and sealed the fact,
+/// so even the mailbox's reader lost it.
+#[test]
+fn a_fact_waiting_on_released_bytes_takes_their_floor_when_the_same_bytes_are_uploaded_again() {
+    let mailbox = owners_mailbox();
+    let bytes = b"read_lineage_floor: bytes released and uploaded again";
+    let first = blob_artifact(&mailbox);
+    let asset = upload(&mailbox, first, bytes);
+    mailbox
+        .vault
+        .batch()
+        .delete(&first)
+        .commit()
+        .expect("the last artifact holding the bytes goes");
+    assert!(
+        mailbox.vault.get_raw(&asset).expect("the read").is_none(),
+        "precondition: the release took the ASSET with its bytes",
+    );
+    let fact = claim_born_from(
+        &mailbox,
+        &[mailbox.row, asset],
+        "learnt from the mailbox and the released bytes",
+    );
+    assert!(
+        floor_waits(&mailbox.vault, fact).expect("the floor's state"),
+        "precondition: a fact born from released bytes waits until they return",
+    );
+    let again = blob_artifact(&mailbox);
+    assert_eq!(
+        upload(&mailbox, again, bytes),
+        asset,
+        "precondition: the same bytes land at the same ASSET",
+    );
+    assert!(
+        mailbox.vault.get_raw(&asset).expect("the read").is_some(),
+        "precondition: the upload landed the ASSET again",
+    );
+    assert!(
+        !floor_sealed(&mailbox.vault, fact).expect("the floor's state"),
+        "SEALED: the upload of the same bytes sealed a fact that waited on them",
+    );
+    assert!(
+        !floor_waits(&mailbox.vault, fact).expect("the floor's state"),
+        "the fact still waits on an ASSET whose bytes landed again",
+    );
+    assert!(
+        reads(&mailbox.vault, fact, &[mailbox.reader]).expect("the reader's read"),
+        "the mailbox's reader does not read a fact whose sources are all here",
+    );
+    assert!(
+        !reads(&mailbox.vault, fact, &[mailbox.stranger]).expect("the stranger's read"),
+        "LEAK: a stranger reads a fact learnt from the mailbox",
     );
 }
