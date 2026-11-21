@@ -342,6 +342,7 @@ pub(super) fn failure_kind(error: &LlmError) -> &'static str {
         LlmError::Fatal(FatalLlmError::Unsupported(_)) => "unsupported",
         LlmError::Fatal(FatalLlmError::LabelRead(_)) => "label_read",
         LlmError::Fatal(FatalLlmError::ResponseErased) => "response_erased",
+        LlmError::Fatal(FatalLlmError::SourceWithdrawn) => "source_withdrawn",
         LlmError::BudgetDenied(BudgetDenied::Exhausted) => "budget_exhausted",
         LlmError::BudgetDenied(BudgetDenied::LeaseInvalid) => "lease_invalid",
         LlmError::BudgetDenied(BudgetDenied::AdmissionDenied) => "admission_denied",
@@ -361,7 +362,8 @@ pub(super) fn provider_down(error: &LlmError) -> bool {
 /// A failure that ends the call as it came: the request itself failed (a
 /// 400, filtered content, a capability it needs), so the next offer would
 /// fail it too, or the run refused it, so the next rung's admission meets the
-/// same line, an erase took its answer (FIX 6296), or its device queue stopped.
+/// same line, an erase took its answer (FIX 6296) or a row its input was read
+/// from, or its device queue stopped.
 /// Every other failure hands the call on. A world-route refusal needs no arm
 /// here: `unanswered` produces it, so it is never fed into `failed()` (FIX 11768).
 pub(crate) fn ends_call(error: &LlmError) -> bool {
@@ -374,6 +376,7 @@ pub(crate) fn ends_call(error: &LlmError) -> bool {
                 | FatalLlmError::ContentFiltered
                 | FatalLlmError::Unsupported(_)
                 | FatalLlmError::ResponseErased
+                | FatalLlmError::SourceWithdrawn
         ) | LlmError::BudgetDenied(_)
             | LlmError::Retryable(oneiron::RetryableLlmError::DeviceAdmissionStopped)
     )
