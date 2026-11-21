@@ -81,7 +81,7 @@ impl LedgerRow {
         if self.erased.is_empty() {
             return Ok(false);
         }
-        let texts = erasure_hashes(message);
+        let texts = holding_hashes(message);
         for native_id in std::iter::once(&message.native_id).chain(&message.alias) {
             for text in &texts {
                 let id = super::land::derive(
