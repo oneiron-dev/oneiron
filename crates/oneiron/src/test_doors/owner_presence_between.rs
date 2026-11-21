@@ -2,8 +2,8 @@
 
 use crate::Vault;
 use crate::authority::{
-    ActSurface, ConversationLearningView, ConversationTrainingView, MachineAnswerLanding,
-    MachineRole,
+    ActSurface, ConversationLearningView, ConversationTrainingView, LastDeviceKeyConfirmation,
+    MachineAnswerLanding, MachineRemoval, MachineRole, OwnerKeyRemoval,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -55,4 +55,34 @@ pub fn set_conversation_learning_between(
     between: impl FnOnce(),
 ) -> Result<ConversationLearningView> {
     vault.set_conversation_learning_between(owner, surface, on, allow_opt_out, seen, between)
+}
+
+/// [`Vault::remove_owner_key`] runs `between` after the door asks and before its write opens.
+///
+/// # Errors
+/// As [`Vault::remove_owner_key`].
+pub fn remove_owner_key_between(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    key: [u8; 32],
+    confirmation: LastDeviceKeyConfirmation,
+    between: impl FnOnce(),
+) -> Result<OwnerKeyRemoval> {
+    vault.remove_owner_key_between(owner, key, confirmation, between)
+}
+
+/// [`Vault::remove_machine`] runs `between` after the door asks and before its write opens.
+///
+/// # Errors
+/// As [`Vault::remove_machine`].
+pub fn remove_machine_between(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    surface: ActSurface,
+    machine: EntityId,
+    seen: Option<[u8; 32]>,
+    confirmation: LastDeviceKeyConfirmation,
+    between: impl FnOnce(),
+) -> Result<MachineRemoval> {
+    vault.remove_machine_between(owner, surface, machine, seen, confirmation, between)
 }
