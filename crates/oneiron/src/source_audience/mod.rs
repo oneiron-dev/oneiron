@@ -41,6 +41,7 @@ pub(crate) mod checkpoint;
 pub(crate) mod floor;
 mod floor_state;
 mod obligation;
+mod rederive;
 mod replica;
 pub(crate) mod tables;
 mod wake;
@@ -56,8 +57,8 @@ use crate::store::source_audience_obligation::SourceAudienceObligation;
 use crate::{EntityId, Vault};
 
 pub(crate) use floor::{
-    FloorSource, SOURCE_READERS, SourceReaders, facts_hidden_source_unknown_in, floor_source_in,
-    floor_threads_in, raise_floors_in_txn, seal_births_from_erased_inputs_in_txn,
+    FloorSource, SOURCE_READERS, SourceReaders, floor_source_in, floor_threads_in,
+    raise_floors_in_txn, seal_births_from_erased_inputs_in_txn,
 };
 #[cfg(any(test, feature = "test-support", oneiron_test_support))]
 pub(crate) use floor_state::forget_floor_state_in_txn;
@@ -71,6 +72,8 @@ pub(crate) use obligation::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use obligation::{row_obligation, unbound_obligation_in};
+pub use rederive::SealedRowsRederived;
+pub(crate) use rederive::facts_hidden_source_unknown_in;
 pub(crate) use replica::{
     ReplicaMerge, bind_replicated_in_txn, event_conflicts_in, event_join,
     event_names_erased_actor_in, event_without_erased_actors, merge_event_in_txn,
