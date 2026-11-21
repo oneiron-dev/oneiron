@@ -141,8 +141,7 @@ pub(crate) fn seat_of_system_in_txn(
 
 /// The system of every seat, installed or taken out of service, as `txn` reads it: each
 /// system whose passports a seat's pulls and writes key ([`seat_of_system_in_txn`]). A seat
-/// taken out of service keeps its system in its record, so a custody handle may stand there in
-/// place of a value custody holds.
+/// taken out of service keeps its system in its record as its installed setup held it.
 pub(crate) fn seat_systems_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
