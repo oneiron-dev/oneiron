@@ -385,7 +385,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/anchor_marks.rs` | src | s | 5 crate-vis | — | An owner anchor's writes (world privacy P6b, contract §4 and E2(b)): its root's record, and its… |
 | `src/authority/ask_forward_holder.rs` | src | s | 1 crate-vis | — | The holder's operation proof on a relayed ask word (FIX 7494) |
 | `src/authority/backup_signer_delegation.rs` | src | s | 2 struct · 3 fn · 1 re-export | BackupModeRoots, BackupSignerDelegation | Backup signers a vault's mode roots delegate (OF-570 (e), FIX 968) |
-| `src/authority/carried_act.rs` | src | m | 9 crate-vis | — | The signed half of the owner's setting and export doors (FIX 4624, FIX 5660): an act a door already applied… |
+| `src/authority/carried_act.rs` | src | m | 10 crate-vis | — | The signed half of the owner's setting and export doors (FIX 4624, FIX 5660): an act a door already applied… |
 | `src/authority/carrier_prompt.rs` | src | m | 1 enum · 7 fn | PromptDeviceName | The question an owner's surface asks before he confirms an act another device carried: a pending pin of a… |
 | `src/authority/carrier_reading.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | CarrierReading | Who carried a signed act, as this install's own records read the key that signed it (FIX… |
 | `src/authority/causal_write.rs` | src | s | 1 enum · 1 fn · 3 crate-vis | CausalWriteDisposition | Causal authorization across actor revoke/regrant windows |
@@ -557,7 +557,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/past_grant_standing.rs` | src | m | 4 crate-vis | — | Prior signed owner-agent standing for main-log WorldPrivacy acts (FIX 4703) |
 | `src/authority/past_grant_standing/topology.rs` | src | s | 1 crate-vis | — | Prior Grant standing for signed topology decisions outside the log |
 | `src/authority/pinned_root.rs` | src | m | 12 crate-vis | — | This install's pin: the owner recovery root whose anchor it trusts (world privacy P6b, R1) |
-| `src/authority/policy_setting_choice.rs` | src | L | 45 crate-vis | — | Folds every signed act on a vault setting (FIX 4624, FIX 5660): the owner's catalogue settings and the… |
+| `src/authority/policy_setting_choice.rs` | src | L | 46 crate-vis | — | Folds every signed act on a vault setting (FIX 4624, FIX 5660): the owner's catalogue settings and the… |
 | `src/authority/principal_standing.rs` | src | m | 23 crate-vis | — | FIX 6219 (L02 seam): whether a recorded principal still stands, for work a host does later in that… |
 | `src/authority/readonly_fold.rs` | src | L | 27 crate-vis | — | One read-snapshot authority evaluator shared by Vault and the batch write door |
 | `src/authority/readonly_fold/adopted.rs` | src | s | 2 crate-vis | — | The fold on a vault that adopted a checkpoint image (OF-469): see [`fold_adopted_in_txn`] |
@@ -6690,7 +6690,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/setting/change.rs` | src | m | 1 struct · 14 crate-vis | SettingChange | The change stream: one `SETTING_CHANGE` row per change, written in the commit that makes it, and the erase… |
 | `src/setting/learned.rs` | src | s | 2 struct · 1 fn · 1 re-export · 5 crate-vis | LearnedRange, SettingFitView | Learned keys (ARCH-0003 `#learning-settings`; DESIGN 15-setting-primitive, stage 3): a number a fit learns… |
 | `src/setting/mod.rs` | src | L | 7 struct · 2 enum · 2 trait · 25 fn · 6 type · 1 const · 13 re-export · 29 crate-vis | Born, ItemDomain, Kind, RefusalSource, RefusedProjection, SetBy, Setting, SettingKey +3 | The Setting primitive (DESIGN 15-setting-primitive, stage 0.1): one kind of stored choice in place of a… |
-| `src/setting/pack.rs` | src | m | 2 struct · 2 const · 11 crate-vis | PackApplied, ProposedDefaultView | The default layer (DESIGN 1.5 "The four layers", layer 0, and "Packs: a default that changes") |
+| `src/setting/pack.rs` | src | m | 2 struct · 2 const · 12 crate-vis | PackApplied, ProposedDefaultView | The default layer (DESIGN 1.5 "The four layers", layer 0, and "Packs: a default that changes") |
+| `src/setting/pack/accept_checks.rs` | src | s | 3 crate-vis | — | The checks an owner's yes to a pack's waiting proposal passes before anything is written |
 | `src/setting/pack/door.rs` | src | m | 1 fn · 5 crate-vis | — | The pack door: weighing a pack's defaults against what the vault accepted, and landing each owner's yes that… |
 | `src/setting/pack/layer.rs` | src | m | 13 crate-vis | — | The layer's reads and quarantine: the default a read starts from, the packs that hold a key, and the… |
 | `src/setting/page_max.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | PageMax | The value of a list's page-maximum key: the most rows one page of that list serves (restriction wave 19… |
@@ -8577,7 +8578,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/seat_park_model_step.rs` | src | s | 1 struct · 4 fn | PartitionPassExecutor | Doors for `tests/park_seat_model_step.rs` (SEAT-PARK-MODEL-STEP-PATH): a vault whose Micro consolidation… |
 | `src/test_doors/secret_same_value.rs` | src | s | 8 fn | — | Doors for `tests/secret_same_value_exchange.rs` (FIX [SECRETS-SAME-VALUE-FACT]): the machine's half of… |
 | `src/test_doors/selector_grant.rs` | src | s | 1 fn | — | A sync selector's standing member grant, for integration tests |
-| `src/test_doors/setting.rs` | src | m | 1 struct · 39 fn · 2 re-export | PackHeadView | Doors for the Setting primitive's tests (DESIGN 15-setting-primitive, stage 0.1) |
+| `src/test_doors/setting.rs` | src | m | 1 struct · 40 fn · 2 re-export | PackHeadView | Doors for the Setting primitive's tests (DESIGN 15-setting-primitive, stage 0.1) |
 | `src/test_doors/setting/peer_acts.rs` | src | m | 3 struct · 27 fn · 2 type | EnrolledMachine, SettingFrontier, SignedSettingAct | Peer-signed setting acts for the Setting primitive's tests: enrolled peer machines, frontiers, and the… |
 | `src/test_doors/setting_door_between.rs` | src | s | 1 fn | — | The test door for a change in force between the Setting door's read and write |
 | `src/test_doors/setting_keys.rs` | src | m | 3 struct · 4 fn | CredentialNamedMembers, NamedRule, TestBounds | The catalogue keys the Setting primitive's tests set (DESIGN 15-setting-primitive, stage 0.1) |
@@ -10213,6 +10214,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/owner_presence_doors.rs` | test | L | — | — | Every door that signs an owner proof asks for the person first (row OWNER-CONFIRM-SHEET, PR 4b-1): a… |
 | `tests/owner_presence_enrolment_doors.rs` | test | XL | — | — | Every owner key enrolment door asks for the person first (row OWNER-CONFIRM-SHEET, PR 4b-2): a declined… |
 | `tests/owner_presence_member_departure_doors.rs` | test | m | — | — | The removal and leave doors read before they ask (row OWNER-CONFIRM-SHEET, PR 4b-3d1) |
+| `tests/owner_presence_pack_defaults_accept.rs` | test | m | — | — | The owner's yes to a pack's waiting proposal reads before it asks (row OWNER-CONFIRM-SHEET, PR 4b-3c2b): a… |
 | `tests/owner_presence_policy_doors.rs` | test | L | — | — | Five owner policy doors read the value in force before they ask (row OWNER-CONFIRM-SHEET, PR 4b-3c1) |
 | `tests/owner_presence_recovery_preset_doors.rs` | test | L | — | — | Recovery preset doors check owner presence before drawing or readying signing keys, and after every refusal… |
 | `tests/owner_presence_removal_doors.rs` | test | L | — | — | The two removal doors read before they ask (row OWNER-CONFIRM-SHEET, PR 4b-3b) |
