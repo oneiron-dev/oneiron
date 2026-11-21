@@ -4,10 +4,12 @@ use std::collections::BTreeSet;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::dreamer_consolidation::{WorkingSetTurn, decode_turn_body, reopen_watermark_from};
+use crate::dreamer_consolidation::{
+    WorkingSetTurn, decode_turn_body, projected_turn_text_in, reopen_watermark_from,
+};
 use crate::dreamer_runner::{DreamerConsolidationScope, DreamerTurnRole, dreamer_turn_role};
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_TURN;
 
 use super::config::PrefilterConfig;
@@ -64,8 +66,9 @@ impl PrefilterScreen {
     }
 }
 
-/// One screening input: the working-set row plus its body text, or `None` when
-/// the body could not be read.
+/// One screening input: the working-set row plus the words it is scored on
+/// (its own body's, or its MESSAGE rows' for a TURN that stores none), or
+/// `None` when it has none the screen may read.
 pub type PrefilterScreenInput = (WorkingSetTurn, Option<String>);
 
 /// Screens a batch. Pure — every storage read happened in the caller.
@@ -120,9 +123,10 @@ pub fn screen_turn_inputs(
 /// TURN.
 ///
 /// The type check is the custody seal restated in the strongest available
-/// form: the screen reads TURN bodies and nothing else, so a row of any other
-/// type — a SECRET_CUSTODY carrier most of all — yields no text and the turn
-/// passes unscored.
+/// form: the screen takes words from a TURN's own body, or for a TURN that
+/// stores none from that TURN's MESSAGE rows ([`screen_words_in_txn`]), and
+/// from nothing else, so a row of any other type — a SECRET_CUSTODY carrier
+/// most of all — yields no text and the turn passes unscored.
 fn screen_text_from_raw(
     raw: &[u8],
     assistant_display_names: &[String],
@@ -139,12 +143,56 @@ fn screen_text_from_raw(
     ))
 }
 
+/// The words the screen scores one planned TURN on, or `None` when it has
+/// none the screen may read.
+///
+/// A TURN that carries its own words (`txt|text`) is scored on them as
+/// stored. A witnessed or imported chat TURN carries none: its words are its
+/// MESSAGE rows. Once the policy can skip at all (a threshold above zero)
+/// they are read by the projection a consolidation branch reads
+/// ([`projected_turn_text_in`]): as the Dreamer, under the relationship gate,
+/// the visible and final rows of the TURN's own author bucket, joined in
+/// order, in the snapshot that read the TURN's row. So the screen scores the
+/// words extraction would read, and no others. A TURN that projection refuses
+/// (a row the Dreamer may not read, a MESSAGE that is away, a binding that
+/// changed) passes unscored: the branch meets the same refusal and rules on
+/// it. At a zero threshold no score can skip, so no MESSAGE row is read.
+///
+/// # Errors
+///
+/// Storage errors.
+fn screen_words_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    config: &PrefilterConfig,
+    turn: &EntityId,
+    raw: Option<&[u8]>,
+) -> Result<Option<String>> {
+    let Some((_, _, own_words)) =
+        raw.and_then(|raw| screen_text_from_raw(raw, &vault.config.assistant_display_names))
+    else {
+        return Ok(None);
+    };
+    if own_words.is_some() || config.threshold <= 0.0 {
+        return Ok(own_words);
+    }
+    match projected_turn_text_in(vault, txn, turn) {
+        Ok(words) => Ok(words),
+        Err(Error::InvalidClaimBody(_)) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 /// The POST-ROLE-GATE value screen over a partition planner's input.
 ///
 /// Called at the top of [`crate::dreamer_consolidation::plan_partitions`]. The
 /// input has already passed GATE-10; this decides which of it is worth
 /// extracting. A disabled config short-circuits before any read, so the
 /// disabled path is byte-identical planning at zero added cost.
+///
+/// One snapshot holds the policy, every TURN row as [`Vault::get_raw`] reads
+/// it, and the MESSAGE rows a witnessed TURN's words are read from: the store
+/// gives a thread one read transaction at a time.
 ///
 /// # Errors
 ///
@@ -154,18 +202,16 @@ pub(crate) fn prefilter_partition_input(
     vault: &Vault,
     turns: &[WorkingSetTurn],
 ) -> Result<PrefilterScreen> {
-    let config = vault.prefilter_config()?;
+    let txn = vault.store.env.read_txn()?;
+    let config = vault.prefilter_config_in_txn(&txn)?;
     if !config.enabled {
         return Ok(PrefilterScreen::disabled(turns, config.threshold));
     }
     let mut inputs = Vec::with_capacity(turns.len());
     for turn in turns {
-        let text = match vault.get_raw(&turn.turn_id)? {
-            Some(raw) => screen_text_from_raw(&raw, &vault.config.assistant_display_names)
-                .and_then(|(_, _, text)| text),
-            None => None,
-        };
-        inputs.push((*turn, text));
+        let raw = vault.get_raw_sealed_in_txn(&txn, &turn.turn_id)?;
+        let words = screen_words_in_txn(vault, &txn, &config, &turn.turn_id, raw.as_deref())?;
+        inputs.push((*turn, words));
     }
     Ok(screen_turn_inputs(&config, &inputs, &BTreeSet::new()))
 }
@@ -200,12 +246,8 @@ pub(crate) fn prefilter_partition_input_in_txn(
             }
             _ => None,
         };
-        let text = match raw {
-            Some(raw) => screen_text_from_raw(&raw, &vault.config.assistant_display_names)
-                .and_then(|(_, _, text)| text),
-            None => None,
-        };
-        inputs.push((*turn, text));
+        let words = screen_words_in_txn(vault, txn, &config, &turn.turn_id, raw.as_deref())?;
+        inputs.push((*turn, words));
     }
     Ok(screen_turn_inputs(&config, &inputs, &BTreeSet::new()))
 }
