@@ -17,7 +17,11 @@
 //! in a room the owner alone reads. A shared room keeps the result out, and
 //! so does a room a voice speaker entered (OF-365): the speaker's entry reads
 //! the room's records from its entry on, with no seat on its ledger
-//! (PLAN-RUN-RESULT-GUARD-SPEAKER-ENTRIES).
+//! (PLAN-RUN-RESULT-GUARD-SPEAKER-ENTRIES). The owner's Setting key
+//! `agent_dispatch.plan_run.result_in_shared_room`, off by default, lets a
+//! shared room take the record too, filed by the owner who approved the run
+//! while that owner still stands in the room; the filing never seats them
+//! (PLAN-RUN-RESULT-SHARED-ROOM-SETTING).
 //!
 //! Every verdict request is built from JSON and every new settlement field
 //! is read back through JSON, so this file compiles on a tree without the
@@ -46,6 +50,7 @@ use oneiron::note::{
     PlanDocVerdictRequest, PlanDocView, approve_plan_doc_as, reject_plan_doc_as,
 };
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::derive_verbs::define_agent;
 use oneiron::test_doors::room_turn_backfill::{
@@ -886,5 +891,111 @@ fn a_room_a_voice_speaker_entered_keeps_the_runs_result_out_of_its_sub_session()
         fixture.vault.head(&room).expect("the room's head reads"),
         head,
         "the room's HEAD stays where it was"
+    );
+}
+
+/// The owner's Setting key that lets a shared room take a plan run's result
+/// (PLAN-RUN-RESULT-SHARED-ROOM-SETTING).
+const SHARED_ROOM_KEY: &str = "agent_dispatch.plan_run.result_in_shared_room";
+
+/// The owner turns [`SHARED_ROOM_KEY`] on for the vault.
+fn owner_allows_shared_rooms(fixture: &Fixture) {
+    let outcome = fixture
+        .vault
+        .set_setting(
+            SettingCaller::Owner(&owner_proof(fixture)),
+            SetSetting::vault_value(SHARED_ROOM_KEY, json!(true)),
+        )
+        .unwrap_or_else(|error| panic!("the owner sets {SHARED_ROOM_KEY}: {error}"));
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the owner's change applies: {outcome:?}"
+    );
+}
+
+#[test]
+fn a_shared_room_files_the_runs_result_once_its_owner_allows_it() {
+    let fixture = fixture();
+    owner_allows_shared_rooms(&fixture);
+    let plan = propose_run_by(&fixture, fixture.agent).expect("the agent proposes its run");
+    let other = put_person(&fixture);
+    let (room, turn) = room_turn(&fixture, &[fixture.owner, other]);
+    let settled = approve_with(
+        &fixture,
+        plan.plan_ref,
+        &plan.revision,
+        json!({"approving_turn_ref": turn.to_hex()}),
+    )
+    .expect("the approval naming the turn lands");
+    let run = run_of(&settled)
+        .expect("the settlement names its run")
+        .expect("the approval lands the plan's run");
+    let session = sub_session_of(&settled).expect("the approval hangs the run off the turn");
+    let head = fixture.vault.head(&room).expect("the room's head reads");
+    let before = room_reads(&fixture, room);
+    let result = settle_run(&fixture, run);
+    assert_eq!(
+        filed_results(&fixture, room, session, result),
+        1,
+        "with the owner's key on, a room another person reads takes the run's result"
+    );
+    assert_eq!(
+        fixture.vault.head(&room).expect("the room's head reads"),
+        head,
+        "filing the run's result leaves the room's HEAD where it was"
+    );
+    assert_eq!(
+        room_reads(&fixture, room),
+        before,
+        "the filed record adds no turn to the room's trunk or history"
+    );
+}
+
+#[test]
+fn a_shared_room_its_approver_left_keeps_the_runs_result_out_with_the_key_on() {
+    let fixture = fixture();
+    owner_allows_shared_rooms(&fixture);
+    let plan = propose_run_by(&fixture, fixture.agent).expect("the agent proposes its run");
+    let other = put_person(&fixture);
+    let (room, turn) = room_turn(&fixture, &[fixture.owner, other]);
+    let settled = approve_with(
+        &fixture,
+        plan.plan_ref,
+        &plan.revision,
+        json!({"approving_turn_ref": turn.to_hex()}),
+    )
+    .expect("the approval naming the turn lands");
+    let run = run_of(&settled)
+        .expect("the settlement names its run")
+        .expect("the approval lands the plan's run");
+    let session = sub_session_of(&settled).expect("the approval hangs the run off the turn");
+    fixture
+        .vault
+        .leave_member(
+            room,
+            fixture.owner,
+            WriteActor::new(fixture.owner, EdgeActorClass::Human),
+            fixture.vault.now_recorded_at(),
+        )
+        .expect("the approving owner leaves the room");
+    assert!(
+        !fixture
+            .vault
+            .stands_in_room(room, fixture.owner)
+            .expect("the owner's standing reads"),
+        "control: the approving owner no longer stands in the room"
+    );
+    let result = settle_run(&fixture, run);
+    assert_eq!(
+        filed_results(&fixture, room, session, result),
+        0,
+        "a room its approver left never takes the run's result"
+    );
+    assert!(
+        !fixture
+            .vault
+            .stands_in_room(room, fixture.owner)
+            .expect("the owner's standing reads"),
+        "the settlement never seats the approving owner in the room again"
     );
 }
