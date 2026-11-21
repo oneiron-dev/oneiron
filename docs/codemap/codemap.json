@@ -13627,7 +13627,7 @@
      "path": "src/calendar/connectors/door.rs",
      "purpose": "Owner-installed calendar seats, and the host read of the iMIP submission transport, with custody names only",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 12,
       "fn": 9,
       "re-export": 1,
       "struct": 2
@@ -14158,7 +14158,7 @@
      "path": "src/calendar/ingest/feed_door.rs",
      "purpose": "Owner-installed ICS feeds and public observations of completed polls",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 9,
       "re-export": 2,
@@ -77904,6 +77904,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/setting/act_rows.rs",
+     "purpose": "The rows of the owner's act that a change of a row belongs to, for a key's hook that judges its row by what…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -78007,6 +78017,7 @@
       "Born",
       "ItemDomain",
       "Kind",
+      "RefusalSource",
       "RefusedProjection",
       "SetBy",
       "Setting",
@@ -78019,13 +78030,13 @@
      "purpose": "The Setting primitive (DESIGN 15-setting-primitive, stage 0.1): one kind of stored choice in place of a…",
      "surface": {
       "const": 1,
-      "crate-vis": 27,
+      "crate-vis": 29,
       "enum": 2,
       "fn": 25,
       "re-export": 13,
-      "struct": 6,
+      "struct": 7,
       "trait": 2,
-      "type": 5
+      "type": 6
      }
     },
     {
@@ -78087,7 +78098,7 @@
      "path": "src/setting/project.rs",
      "purpose": "The act is the write (stage 7a-2; DESIGN 1.6 \"What travels\", \"The fold and the projection\")",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "struct": 1
      }
     },
@@ -78113,13 +78124,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/setting/project/quarantine.rs",
+     "purpose": "The quarantine of a row its key's hook refused at projection ([`RefusedProjection::Quarantine`]…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/setting/project/refusal.rs",
      "purpose": "The owner's notice of a row a key's hook refused at projection (row SETTING-PROJECTED-ROW-REFUSING-HOOKS…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
@@ -96329,6 +96350,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/calendar_feed_poll.rs",
+     "purpose": "Door for `tests/setting_refusal_notice.rs` (row SETTING-PROJECTED-ROW-REFUSING-HOOKS, review round 2 of PR…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/call_receipt_damage.rs",
      "purpose": "Plants an undecodable CALL_RECEIPT row for `tests/agent_health_calls_drops_unread.rs`: the row sits past the…",
      "surface": {
@@ -98558,7 +98589,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 388,
+      "mod": 389,
       "re-export": 3
      }
     },
@@ -121663,7 +121694,7 @@
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…"
     },
     "setting": {
-     "files": 25,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -121859,7 +121890,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 400,
+     "files": 401,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -122050,7 +122081,7 @@
    },
    "over_bar": 271,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8513,
+   "source_files": 8516,
    "test_files": 2237
   },
   "oneiron-agent-runtime": {
