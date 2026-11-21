@@ -87,6 +87,10 @@ pub(crate) enum OwnerError {
     NotFound(&'static str, String),
     /// The engine refused or failed.
     Engine(Box<oneiron::Error>),
+    /// A one-way act's call carried no confirm, or one that is not the
+    /// owner's live preview of it: the engine's refusal, its code
+    /// (`OWNER_CONFIRM_REQUIRED`), words and suggestions kept.
+    ConfirmRequired(Box<oneiron::memory::MemoryError>),
     /// A host-side failure: files, directories, encoding.
     Host(anyhow::Error),
 }
@@ -99,6 +103,7 @@ impl std::fmt::Display for OwnerError {
             }
             Self::NotFound(what, which) => write!(f, "no {what} {which}"),
             Self::Engine(error) => write!(f, "{error}"),
+            Self::ConfirmRequired(refusal) => f.write_str(&refusal.message),
             Self::Host(error) => write!(f, "{error:#}"),
         }
     }
@@ -202,7 +207,8 @@ fn hook_json(verb: &str, value: &impl serde::Serialize) -> OwnerResult<serde_jso
 /// engine's message names the hook and any ask a retry waits on. A shared
 /// row's absence is not found and its authority refusal rides the carried
 /// owner refusal, so the owner plane answers 404 and 403 as the facade
-/// does, never 409 (FIX 11476).
+/// does, never 409 (FIX 11476). A missing or stale shared confirm keeps its
+/// code and answers 428, as the facade does.
 pub(crate) fn memory_refusal(error: oneiron::memory::MemoryError) -> OwnerError {
     match error.code.as_str() {
         oneiron::memory::MEMORY_CODE_BAD_REQUEST => OwnerError::Invalid(error.message),
@@ -215,6 +221,9 @@ pub(crate) fn memory_refusal(error: oneiron::memory::MemoryError) -> OwnerError 
             OwnerError::Engine(Box::new(oneiron::Error::Claim(
                 oneiron::error::ClaimError::ScopedReadOwnerNotLive(Box::new(error)),
             )))
+        }
+        oneiron::memory::MEMORY_CODE_OWNER_CONFIRM_REQUIRED => {
+            OwnerError::ConfirmRequired(Box::new(error))
         }
         _ => OwnerError::Refused(error.message),
     }

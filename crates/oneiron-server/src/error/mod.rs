@@ -79,6 +79,11 @@ pub enum ErrorCode {
     /// own refusal code, a 403 like [`Self::Forbidden`].
     #[serde(rename = "OWNER_BINDING_REQUIRED")]
     OwnerBindingRequired,
+    /// A one-way act's call carried no confirm, or one that is not the
+    /// owner's live preview of it: the engine's own refusal code, a 428 as
+    /// the facade answers it (DEC-0006 #undo-class).
+    #[serde(rename = "OWNER_CONFIRM_REQUIRED")]
+    OwnerConfirmRequired,
     /// FIX 6032: a courtesy deletion's signed body names no pact, or does not
     /// verify against its pinned key; the two read the same.
     #[serde(rename = "COURTESY_DELETE_UNAUTHENTICATED")]
@@ -131,6 +136,7 @@ impl ErrorCode {
         Self::PayloadTooLarge,
         Self::HostActionRequiresSupportGrant,
         Self::OwnerBindingRequired,
+        Self::OwnerConfirmRequired,
         Self::CourtesyDeleteUnauthenticated,
         Self::ControlScopeDenied,
         Self::ProcessNotReady,
@@ -169,6 +175,7 @@ impl ErrorCode {
                 oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED
             }
             Self::OwnerBindingRequired => oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED,
+            Self::OwnerConfirmRequired => oneiron::memory::MEMORY_CODE_OWNER_CONFIRM_REQUIRED,
             Self::CourtesyDeleteUnauthenticated => COURTESY_DELETE_REFUSAL_CODE,
             Self::ControlScopeDenied => CONTROL_SCOPE_REFUSAL_CODE,
             Self::ProcessNotReady => "PROCESS_NOT_READY",
@@ -210,6 +217,7 @@ impl ErrorCode {
             Self::NotAcceptable => StatusCode::NOT_ACCEPTABLE,
             Self::InvalidHeader | Self::UnsupportedCapability => StatusCode::BAD_REQUEST,
             Self::CrdtFrameTooLarge | Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::OwnerConfirmRequired => StatusCode::PRECONDITION_REQUIRED,
         }
     }
 }
@@ -338,6 +346,8 @@ pub enum ApiErrorDetails {
         expected_version: Option<u16>,
         received_version: Option<u16>,
     },
+    #[serde(rename = "OWNER_CONFIRM_REQUIRED")]
+    OwnerConfirmRequired,
 }
 
 impl ApiErrorDetails {
@@ -369,6 +379,7 @@ impl ApiErrorDetails {
                 ErrorCode::HostActionRequiresSupportGrant
             }
             Self::OwnerBindingRequired { .. } => ErrorCode::OwnerBindingRequired,
+            Self::OwnerConfirmRequired => ErrorCode::OwnerConfirmRequired,
             Self::CourtesyDeleteUnauthenticated { .. } => ErrorCode::CourtesyDeleteUnauthenticated,
             Self::ControlScopeDenied { .. } => ErrorCode::ControlScopeDenied,
             Self::ProcessNotReady { .. } => ErrorCode::ProcessNotReady,
