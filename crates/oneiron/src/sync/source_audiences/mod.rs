@@ -267,19 +267,9 @@ impl AdmissionRows {
                 .and_then(|carried| match carried {
                     Carrier::Open { entries, .. } => Some(entries),
                     _ => None,
-                })
-                .unwrap_or_default();
-            let row_arrivals = arrivals.entry(row).or_default();
-            for (input, flags) in entries {
-                if held_entries.get(&input) != Some(&flags) {
-                    let joined = row_arrivals
-                        .get(&input)
-                        .map_or(flags, |other: &OpenFlags| other.merge(flags));
-                    row_arrivals.insert(input, joined);
-                }
-            }
+                });
+            note_open_arrivals(&mut arrivals, row, entries, held_entries.as_ref());
         }
-        arrivals.retain(|_, entries| !entries.is_empty());
         arrivals
     }
 
@@ -484,6 +474,32 @@ pub(crate) fn admit_carrier(
 /// The open entries carriers bring, by row, then by input (step L-S4).
 pub(crate) type OpenArrivals = BTreeMap<EntityId, BTreeMap<EntityId, OpenFlags>>;
 
+/// The entries of each open carrier a document holds, by map key (step
+/// L-S4): what a sealed mirror held before it takes a merge
+/// ([`held_open_carriers`]).
+pub(crate) type HeldOpen = BTreeMap<String, BTreeMap<EntityId, OpenFlags>>;
+
+/// Joins into `arrivals` each of `entries`, carried for `row`, that `held`,
+/// the same key's entries as this vault held them, did not hold with the same
+/// flags; an input two keys bring takes both flags ([`OpenFlags::merge`]).
+fn note_open_arrivals(
+    arrivals: &mut OpenArrivals,
+    row: EntityId,
+    entries: BTreeMap<EntityId, OpenFlags>,
+    held: Option<&BTreeMap<EntityId, OpenFlags>>,
+) {
+    for (input, flags) in entries {
+        if held.and_then(|held| held.get(&input)) == Some(&flags) {
+            continue;
+        }
+        let row_arrivals = arrivals.entry(row).or_default();
+        let joined = row_arrivals
+            .get(&input)
+            .map_or(flags, |other: &OpenFlags| other.merge(flags));
+        row_arrivals.insert(input, joined);
+    }
+}
+
 /// The open carrier `map` holds under `map_key`, when it decodes.
 fn open_carrier(map: &LoroMap, map_key: &str) -> Option<Carrier> {
     let bytes = map_get_bytes(map, map_key)?;
@@ -513,23 +529,35 @@ pub(crate) fn stage_open_entries(vault: &Vault, arrivals: &OpenArrivals) -> Resu
     })
 }
 
-/// The open entries every open carrier of `doc`'s map holds now, by row
-/// (step L-S4): what a sealed mirror that took a merge stages
-/// ([`stage_open_entries`]).
-pub(crate) fn latest_open_entries(doc: &LoroDoc) -> OpenArrivals {
+/// The entries of every open carrier `doc`'s map holds now, by map key (step
+/// L-S4).
+pub(crate) fn held_open_carriers(doc: &LoroDoc) -> HeldOpen {
+    let mut held = HeldOpen::new();
+    if !holds_map(doc) {
+        return held;
+    }
+    for (map_key, carried) in carriers(&doc.get_map(SOURCE_AUDIENCES_MAP)) {
+        if let Carrier::Open { entries, .. } = carried {
+            held.insert(map_key, entries);
+        }
+    }
+    held
+}
+
+/// The open entries every open carrier of `doc`'s map holds now that `held`,
+/// the same mirror's carriers before it took a merge, did not hold under the
+/// same key, by row (step L-S4): what a sealed mirror that took a merge
+/// stages ([`stage_open_entries`]). A carried entry arrives once, as at the
+/// window's admission ([`AdmissionRows::open_arrivals`]): a later merge that
+/// brings the same key again opens no wait this vault has folded since.
+pub(crate) fn latest_open_entries(doc: &LoroDoc, held: &HeldOpen) -> OpenArrivals {
     let mut arrivals = OpenArrivals::new();
     if !holds_map(doc) {
         return arrivals;
     }
-    for (_, carried) in carriers(&doc.get_map(SOURCE_AUDIENCES_MAP)) {
+    for (map_key, carried) in carriers(&doc.get_map(SOURCE_AUDIENCES_MAP)) {
         if let Carrier::Open { row, entries, .. } = carried {
-            let row_arrivals = arrivals.entry(row).or_default();
-            for (input, flags) in entries {
-                let joined = row_arrivals
-                    .get(&input)
-                    .map_or(flags, |other: &OpenFlags| other.merge(flags));
-                row_arrivals.insert(input, joined);
-            }
+            note_open_arrivals(&mut arrivals, row, entries, held.get(&map_key));
         }
     }
     arrivals

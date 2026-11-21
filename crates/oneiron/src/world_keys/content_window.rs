@@ -345,6 +345,13 @@ impl WindowManager {
             .unwrap_or_else(PoisonError::into_inner);
         let (mirror, mut read) = load_mirror_read(vault, world, window)?;
         let fresh = read.held.is_none();
+        // The open entries this mirror held before the merge: only what the
+        // merge brings beside them joins a row's open set (step L-S4).
+        let held_open = if fresh {
+            crate::sync::source_audiences::HeldOpen::new()
+        } else {
+            crate::sync::source_audiences::held_open_carriers(&mirror)
+        };
         // What the merge brought: its history past here is read for an
         // erased actor below.
         let before = if fresh {
@@ -415,9 +422,10 @@ impl WindowManager {
             let floors =
                 crate::sync::source_audiences::history_derived_floors(&mirror, &from, snapshot)?;
             crate::sync::source_audiences::stage_derived_floors(vault, &floors)?;
-            // And every open entry its rows' carriers hold now joins its row's
-            // open set (pass 31, step L-S4).
-            let open = crate::sync::source_audiences::latest_open_entries(&mirror);
+            // And every open entry its rows' carriers hold now that the mirror
+            // did not hold before joins its row's open set (pass 31, step
+            // L-S4).
+            let open = crate::sync::source_audiences::latest_open_entries(&mirror, &held_open);
             crate::sync::source_audiences::stage_open_entries(vault, &open)?;
         }
         if materialize {

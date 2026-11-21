@@ -19,6 +19,8 @@ const BINDING_UNSPLIT: &str = "a source audience binding is not split from its p
 const POLICY_ACTORS: &str = "a source audience policy names the people who read under it";
 /// A withholding marker names the machine that withheld its row.
 const MARKER_UNSPLIT: &str = "a source audience withholding marker names the machine that set it";
+/// A row's open entries name the machine that holds them open (step L-S4).
+const OPEN_UNSPLIT: &str = "a source audience open entry names the machine that holds it open";
 /// A change receipt names who made the change and the person it named.
 const RECEIPT_ACTORS: &str = "a source audience change receipt names who made the change";
 
@@ -35,13 +37,15 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
         Ok(Carrier::Event { .. }) => {
             Placement::unclassified(None, SyncUnclassified::ActorSplit(RECEIPT_ACTORS))
         }
-        Ok(
-            Carrier::Withheld { row, .. }
-            | Carrier::Derived { row, .. }
-            | Carrier::Open { row, .. },
-        ) => Placement::unclassified(
+        Ok(Carrier::Withheld { row, .. } | Carrier::Derived { row, .. }) => {
+            Placement::unclassified(
+                Some(OwnerRef::entity(&row)),
+                SyncUnclassified::ActorSplit(MARKER_UNSPLIT),
+            )
+        }
+        Ok(Carrier::Open { row, .. }) => Placement::unclassified(
             Some(OwnerRef::entity(&row)),
-            SyncUnclassified::ActorSplit(MARKER_UNSPLIT),
+            SyncUnclassified::ActorSplit(OPEN_UNSPLIT),
         ),
         Err(_) => Placement::unclassified(None, SyncUnclassified::Undecodable),
     }
