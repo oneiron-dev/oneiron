@@ -325,14 +325,16 @@ impl Memory<'_> {
             if packet.authority_root != root_id(self.vault, txn)? {
                 return Err(stale(packet.disputed).into());
             }
+            let reviewer_actor = WriteActor::new(self.actor, EdgeActorClass::Human);
             let required = action_bound(
                 self.vault,
                 txn,
-                WriteActor::new(self.actor, EdgeActorClass::Human),
+                reviewer_actor,
                 "memory.conflict_review",
                 packet.disputed,
             )?;
-            let grant_ref = if is_root_owner(self.vault, txn, self.actor)? {
+            let root_owner = is_root_owner(self.vault, txn, self.actor)?;
+            let grant_ref = if root_owner {
                 None
             } else {
                 Some(
@@ -404,7 +406,7 @@ impl Memory<'_> {
             // relabeling of the proposal itself. Its separate row keeps both
             // original source stamps intact and records the ruling evidence.
             let envelope = WriteEnvelope::new(
-                WriteActor::new(self.actor, EdgeActorClass::Human),
+                reviewer_actor,
                 ClaimSource::UserStated,
                 WriteProvenance::new(Value::Map(vec![
                     (Value::from("conflictBundle"), Value::Binary(id.to_vec())),
@@ -445,8 +447,15 @@ impl Memory<'_> {
                 candidate = candidate.with_salience(salience);
             }
             let ruling_id = EntityId::now();
+            // The root owner's ruling is the owner's own act, in person: the
+            // proof, revalidated in this transaction, confirms the ruling's
+            // Approved row and the close of an Approved disputed head where a
+            // declared critical class asks for it, as the owner's settle does
+            // (FIX OWNER-CONFLICT-RULING-CLOSES-WITH-NO-CLOSER). A delegated
+            // admin's ruling carries none, so such a class waits for the owner.
             self.vault
                 .batch_in()
+                .with_owner_authored(ruling_owner_answer(self.vault, txn, reviewer, root_owner)?)
                 .claim_candidate(
                     &ruling_id,
                     candidate,
@@ -466,8 +475,17 @@ impl Memory<'_> {
                 vec!["gate.memory.admin_conflict_ruling".to_owned()],
                 None,
             )?;
-            self.vault
-                .supersede_claim_in_txn(txn, &ruling_id, &packet.disputed, now)?;
+            // The disputed head's close, as the proposal's below, is the
+            // reviewer's own: the Gate judges it as its verified human
+            // closer, not under the closed row's own envelope.
+            self.vault.supersede_claim_in_txn_as_owner(
+                txn,
+                &ruling_id,
+                &packet.disputed,
+                now,
+                Some(reviewer_actor),
+                ruling_owner_answer(self.vault, txn, reviewer, root_owner)?,
+            )?;
             // The generic lifecycle projector may re-evaluate a Proposed row
             // as pending. A terminal ruled head must not leave an actionable
             // consent behind, so close any such replay in this transaction.
@@ -482,7 +500,7 @@ impl Memory<'_> {
             // value/source/author history, but leave no separate approval that
             // could later create a second canonical head beside the ruling.
             self.vault
-                .retract_claim_in_txn(txn, &packet.proposal, now)?;
+                .retract_claim_in_txn_as(txn, &packet.proposal, now, Some(reviewer_actor))?;
             let mut receipt = decision(
                 envelope.actor(),
                 KIND,
@@ -502,5 +520,21 @@ impl Memory<'_> {
                 ruling_claim: ruling_id,
             })
         })
+    }
+}
+
+/// The root owner's in-person proof for one write of a conflict ruling,
+/// revalidated in `txn` ([`AuthenticatedOwner::owner_answer_in_txn`]). A
+/// delegated admin's ruling carries none.
+fn ruling_owner_answer(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    reviewer: &AuthenticatedOwner,
+    root_owner: bool,
+) -> Result<Option<crate::consent::OwnerAuthoredWrite>, Error> {
+    if root_owner {
+        reviewer.owner_answer_in_txn(vault, txn)
+    } else {
+        Ok(None)
     }
 }
