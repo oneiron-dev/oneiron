@@ -242,6 +242,7 @@ fn transition_entry(
             root_anchors: PersistentMap::new(),
             anchor_entries: PersistentSet::new(),
             host_custody_keys: PersistentSet::new(),
+            recovery_authority_keys: PersistentSet::new(),
             worlds: PersistentMap::new(),
             refused_world_edits: PersistentSet::new(),
             grant_travel: PersistentMap::new(),
@@ -255,6 +256,7 @@ fn transition_entry(
             conversation_training_vault:
                 super::conversation_training_vault::ConversationTrainingVaultState::default(),
             policy_settings: super::policy_setting_choice::PolicySettingChoiceState::default(),
+            setting_copy_names: PersistentMap::new(),
             refused_export_acts: PersistentSet::new(),
             agent_carried_acts: PersistentMap::new(),
             home_candidacy: super::home_candidacy::HomeCandidacyState::default(),
@@ -269,6 +271,7 @@ fn transition_entry(
             passkey_contexts: BTreeMap::new(),
             passkey_vouched_keys: BTreeSet::new(),
             passkey_vouch_confirmations: BTreeSet::new(),
+            host_vouched_passkey_owners: BTreeMap::new(),
         };
         upsert_device(&mut state, device, None);
         state.seqs.insert(device.key.clone(), 0);
@@ -554,6 +557,23 @@ fn fold_merged_entry(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
+    // So is a pack's head, on its pack's frontier, signed by the machine
+    // whose pack door weighed it alone, with no owner act (stage 7c-3a).
+    if let AuthorityOp::SettingPackHead(head) = &entry.op {
+        if let Err(issue) = super::policy_setting_choice::apply_setting_pack_head(
+            &mut state,
+            entry,
+            head,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
     // So is the owner's whole-vault export, which moves no fold state but a
     // refused one's mark (FIX 4624).
     if let AuthorityOp::ExportAct(record) = &entry.op {
@@ -677,6 +697,9 @@ fn fold_merged_entry(
                 apply_op(&mut state, &entry.op, hash, entry.signer_key());
                 super::owner_key_enrollment::remember_passkey_context(&mut state, enroll);
                 super::owner_key_enrollment::remember_passkey_vouch(&mut state, entry, enroll);
+                super::owner_key_enrollment::remember_host_vouched_passkey(
+                    &mut state, entry, enroll,
+                );
             }
             Ok(OwnerKeyEnrollReading::Confirmation) => {
                 state
@@ -771,9 +794,17 @@ fn fold_merged_entry(
     // B; Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B; Sol xhigh stack
     // review F1, F2; Astra stack review finding 1), nor the owner key's proof
     // a revoke of an owner key needs (row HOSTED-ROOT-REVOKES-OWNER-KEY;
-    // REVIEW2 #8451 P2-1): the rest must give both.
-    let barred =
-        super::owner_key_enrollment::passkey_barred_participants(&state, &entry.op, &participants);
+    // REVIEW2 #8451 P2-1): the rest must give both. One binding is a
+    // passkey's to sign: its own first `human` binding to the owner a host
+    // vouched for it as (row PASSKEY-SELF-BIND), which also stands as its own
+    // proof on a hosted fold below.
+    let passkey_self_bind = super::owner_key_enrollment::passkey_self_bind(&state, entry, context);
+    let barred = super::owner_key_enrollment::passkey_barred_participants(
+        &state,
+        &entry.op,
+        &participants,
+        passkey_self_bind.then_some(&signer),
+    );
     if barred.contains(&signer) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
@@ -859,12 +890,14 @@ fn fold_merged_entry(
             | AuthorityOp::RebindActor { .. }
             | AuthorityOp::RevokeActor { .. }
     ) {
-        if !super::owner_proof::human_bind_proved(
-            &state,
-            &entry.op,
-            &participants,
-            context.consent_arm,
-        ) {
+        if !passkey_self_bind
+            && !super::owner_proof::human_bind_proved(
+                &state,
+                &entry.op,
+                &participants,
+                context.consent_arm,
+            )
+        {
             return EntryFold::Invalid(AuthorityFoldIssue::ActorBindingRejected {
                 entry: hash,
                 reason: ActorBindingRejection::OwnerProofRequired,
@@ -878,6 +911,23 @@ fn fold_merged_entry(
         }
         state.seqs.insert(signer, entry.seq);
         return EntryFold::Ready(state);
+    }
+    // A recovery hold needs its signer R (a live recovery-authority key)
+    // and a fresh successor; an answer needs a live owner device key that
+    // is not R, never an admin's or a host's, or a live R for a Cancel (the
+    // kit's). The answer's pairing to its hold is the doors' and the view's
+    // check, not the fold's: a successor is never live while its hold is
+    // live, so a successor-signed answer is refused above as
+    // not-in-ancestry, and any other live answer to an unknown hold is
+    // inert in the view.
+    if let AuthorityOp::RecoveryHold(hold) = &entry.op {
+        if let Err(issue) = super::recovery_hold::judge_recovery_hold(&state, entry, hold, hash) {
+            return EntryFold::Invalid(issue);
+        }
+    } else if let AuthorityOp::RecoveryHoldAnswer(_) = &entry.op {
+        if let Err(issue) = super::recovery_hold::judge_recovery_hold_answer(&state, entry, hash) {
+            return EntryFold::Invalid(issue);
+        }
     }
     apply_op(&mut state, &entry.op, hash, &signer);
     if !state_has_authority_consent(&state, context) {
@@ -979,6 +1029,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::AgentGrantAct(_)
         | AuthorityOp::PolicySettingSet(_)
         | AuthorityOp::SettingCopy(_)
+        | AuthorityOp::SettingPackHead(_)
         | AuthorityOp::ExportAct(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
@@ -991,5 +1042,8 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         // An appointment's successor is judged fresh over its whole ancestry
         // (`root_appointment_judge`, V1).
         AuthorityOp::RootAppointment(_) => false,
+        // A hold's successor is judged fresh by the hold's own arm below,
+        // against the parents' roster; an answer names no key.
+        AuthorityOp::RecoveryHold(_) | AuthorityOp::RecoveryHoldAnswer(_) => false,
     }
 }

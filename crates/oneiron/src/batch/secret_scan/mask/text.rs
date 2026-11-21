@@ -4,7 +4,7 @@
 //! indexes into the text (a replay capsule's exposure spans) moves its
 //! bounds by the replacements the pass made, never by a guess.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
 
 use super::side_row::bracket_handle;
@@ -137,6 +137,7 @@ impl Masker {
                 known,
                 self.records.as_ref(),
                 self.records_longest,
+                self.records_through.as_ref(),
                 text,
                 |value| self.is_kept(value),
                 |handle| names(handle) || self.placed_handle(handle),
@@ -175,12 +176,14 @@ impl Masker {
 /// handle that names no record is read like any other text (blind review
 /// round 2 of #9503): a known value spelled `[secret sc99]` takes its own
 /// record's handle and is never kept as written. With `records`, only those
-/// records' values are read, as far as `longest` ([`known_spans`]), and
-/// `names` takes only their handles.
+/// records' values are read, as far as `longest` and up to each record's
+/// custody slot in `through` ([`known_spans`]), and `names` takes only
+/// their handles.
 fn known_outside_handles(
     known: &KnownValues,
     records: Option<&BTreeSet<String>>,
     longest: Option<usize>,
+    through: Option<&BTreeMap<String, u64>>,
     text: &str,
     keep: impl Fn(&[u8]) -> bool,
     names: impl Fn(&str) -> bool,
@@ -196,7 +199,7 @@ fn known_outside_handles(
     for handle in handles.chain(std::iter::once(end)) {
         let stretch = &bytes[from..handle.start];
         found.extend(
-            known_spans(known, records, longest, stretch, &keep)
+            known_spans(known, records, longest, through, stretch, &keep)
                 .into_iter()
                 .map(|hit| {
                     (
@@ -214,18 +217,28 @@ fn known_outside_handles(
 /// `known` holds, or with `records`, only the values those records hold,
 /// every other value out before the longest at a place is chosen (FIX
 /// RECEIPT-RECORDS-CALL-HELD-INPUT), and with `longest` too, only those at
-/// most that many bytes long.
+/// most that many bytes long. With `through` too, only the values each
+/// record held by the custody slot it names for that record (FIX
+/// ERASED-IDENTITY-ROTATION-GENERATION): a record it names no slot for has
+/// none.
 pub(super) fn known_spans<'k>(
     known: &'k KnownValues,
     records: Option<&BTreeSet<String>>,
     longest: Option<usize>,
+    through: Option<&BTreeMap<String, u64>>,
     data: &[u8],
     keep: impl Fn(&[u8]) -> bool,
 ) -> Vec<KnownSpan<'k>> {
+    let held = |handle: &str, slot: u64| {
+        through.is_none_or(|through| through.get(handle).is_some_and(|pin| slot <= *pin))
+    };
     match records {
-        Some(records) => {
-            known.spans_held_by(data, keep, |handle| records.contains(handle), longest)
-        }
+        Some(records) => known.spans_held_by(
+            data,
+            keep,
+            |handle, slot| records.contains(handle) && held(handle, slot),
+            longest,
+        ),
         None => known.spans_except(data, keep),
     }
 }

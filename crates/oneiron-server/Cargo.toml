@@ -309,6 +309,9 @@ tokio = { version = "1", features = ["full"] }
 oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync"] }
 # The rolling tier enables test-support for the paid-leg TLS fake provider.
 oneiron-broker = { version = "0.1.0", path = "../oneiron-broker" }
+# The passkey binding routes test signs WebAuthn assertions with a software
+# P-256 key, as a browser's authenticator would.
+p256 = { workspace = true }
 
 # The runner seat doors (`vault.runners.seats.*`) root their owner on a `MemoryKeystore` too.
 [[test]]
@@ -646,6 +649,12 @@ required-features = ["oneiron/test-support"]
 [[test]]
 name = "hosted_continue_sign_in"
 path = "tests/hosted_continue_sign_in.rs"
+required-features = ["oneiron/test-support"]
+
+# HOOK-HOSTED-HAND-OVER-OAUTH-READ-TIER's hand-over sign-in roots its served vault on a `MemoryKeystore`.
+[[test]]
+name = "hosted_hand_over_sign_in"
+path = "tests/hosted_hand_over_sign_in.rs"
 required-features = ["oneiron/test-support"]
 
 # L1-07's lost host root: the test door empties this install's issuer seed slot

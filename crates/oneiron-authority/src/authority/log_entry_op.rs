@@ -204,6 +204,10 @@ pub enum AuthorityOp {
     /// install key of the mover alone, with no owner act (stage 7a-4). A
     /// main-log entry, so every machine the owner admits folds it.
     SettingCopy(SettingCopy),
+    /// One pack's head as one engine act, signed by the install key of the
+    /// machine whose pack door weighed it alone, with no owner act (stage
+    /// 7c-3a). A main-log entry, so every machine the owner admits folds it.
+    SettingPackHead(SettingPackHead),
     /// One owner whole-vault export, signed by the install key of a live
     /// machine of the vault, in any role, after the copy left (FIX 4624). A
     /// main-log entry, so every machine the owner admits folds it.
@@ -243,6 +247,17 @@ pub enum AuthorityOp {
     /// as the owner's, alone, with no cosign and no carrier. A main-log
     /// entry, so every machine the owner admits folds it.
     RestoredMachineJoin(RestoredMachineJoin),
+    /// One box recovery's wait (OPUS-WAYBACK): the successor's enrolment
+    /// input, the lost keys, the owner and the second the wait ends, signed
+    /// by the recovered root's authority key alone. A main-log entry; the
+    /// fold judges its signer, and the landing writes the ordinary
+    /// `OwnerKeyEnroll` + `RevokeDevice` rows.
+    RecoveryHold(RecoveryHold),
+    /// One answer to a box recovery's wait: the hold's attempt id and
+    /// whether the attempt stops or is due at once. Signed by a live owner
+    /// key other than the hold's successor, or, for a `Cancel` only, by the
+    /// hold root's authority key R (the kit's). No cosign. A main-log entry.
+    RecoveryHoldAnswer(RecoveryHoldAnswer),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -318,6 +333,8 @@ impl AuthorityLogEntry {
             AuthorityOp::FullCopyMark(mark) => mark.validate_entry(self)?,
             AuthorityOp::RootAppointment(appointment) => appointment.validate_entry(self)?,
             AuthorityOp::RestoredMachineJoin(join) => join.validate_entry(self)?,
+            AuthorityOp::RecoveryHold(hold) => hold.validate_entry(self)?,
+            AuthorityOp::RecoveryHoldAnswer(answer) => answer.validate_entry(self)?,
             _ => {}
         }
         self.signer.validate()?;
@@ -585,6 +602,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::AgentGrantAct(record) => record.validate(),
         AuthorityOp::PolicySettingSet(set) => set.validate(),
         AuthorityOp::SettingCopy(copy) => copy.validate(),
+        AuthorityOp::SettingPackHead(head) => head.validate(),
         AuthorityOp::ExportAct(record) => record.validate(),
         AuthorityOp::OwnerKeyEnroll(enroll) => enroll.validate(),
         AuthorityOp::FrontierJoin(_) => Ok(()),
@@ -593,6 +611,8 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::MembershipExecution(record) => record.validate(),
         AuthorityOp::RootAppointment(appointment) => appointment.validate(),
         AuthorityOp::RestoredMachineJoin(join) => join.validate(),
+        AuthorityOp::RecoveryHold(hold) => hold.validate(),
+        AuthorityOp::RecoveryHoldAnswer(answer) => answer.validate(),
     }
 }
 

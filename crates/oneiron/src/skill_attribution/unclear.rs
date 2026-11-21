@@ -253,7 +253,11 @@ pub(crate) fn put_unclear_in_txn(
         if crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &*wtxn, id)?.deleted
         {
             UNCLEAR.delete(&vault.store, wtxn, &key)?;
-            crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(vault, wtxn, &key)?;
+            crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(
+                &crate::secret_custody::CustodyWrite::of(vault),
+                wtxn,
+                &key,
+            )?;
             return Ok(());
         }
     }
@@ -305,7 +309,65 @@ pub(crate) fn delete_unclear_in_txn(
 ) -> Result<()> {
     let key = unclear_key(lane, reference);
     UNCLEAR.delete(&vault.store, wtxn, &key)?;
-    crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(vault, wtxn, &key)
+    crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(
+        &crate::secret_custody::CustodyWrite::of(vault),
+        wtxn,
+        &key,
+    )
+}
+
+/// Withdraws the amendment row filed under the receipt `gate:<hex>` of each
+/// Gate decision in `decisions`: a retention sweep removed the decision's
+/// record, or a restore dropped a row whose key an erase or a retention
+/// retired, and left its notes no judgment to stand behind (FIX
+/// [GATE-RECEIPT-UNCLEAR-ROW-OUTLIVES-RECORD-REMOVAL]). The Coach's clustering
+/// stops counting its notes, and a label proposal that quoted one and waits on
+/// its owner is withdrawn, as after a re-judgment, unless a legal hold keeps
+/// it. A decision with no row changes nothing.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn delete_gate_receipt_unclear_in_txn(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    decisions: &[crate::store::GateDecisionId],
+) -> Result<()> {
+    for decision in decisions {
+        let key = gate_receipt_unclear_key(*decision);
+        UNCLEAR.delete(write.store, wtxn, &key)?;
+        crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(write, wtxn, &key)?;
+    }
+    Ok(())
+}
+
+/// [`delete_gate_receipt_unclear_in_txn`] for the owner's discard of a world
+/// copy, which made each decision its retention skeleton with no claim
+/// erased. The discard is local, so a label proposal that quoted a note
+/// stands as it is in the window that holds it: no erase, no tombstone.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn release_gate_receipt_unclear_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    decisions: &[crate::store::GateDecisionId],
+) -> Result<()> {
+    for decision in decisions {
+        let key = gate_receipt_unclear_key(*decision);
+        UNCLEAR.delete(store, wtxn, &key)?;
+        crate::dreamer_runner::maintenance::release_unclear_notes_in_txn(store, wtxn, &key)?;
+    }
+    Ok(())
+}
+
+/// The unclear-ledger key of Gate decision `decision`'s amendment row.
+fn gate_receipt_unclear_key(decision: crate::store::GateDecisionId) -> String {
+    unclear_key(
+        AttributionLane::Amendment,
+        &format!("gate:{}", decision.to_hex()),
+    )
 }
 
 /// Drops every unclear row whose context names erased `entity` — its actor,

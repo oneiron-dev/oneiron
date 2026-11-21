@@ -25,7 +25,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::authority::ActSurface;
+use crate::authority::{ActSurface, OwnerProofGround};
 use crate::claim::world_access::{
     PREDICATE_WORLD_ACCESS_ALLOWED_SET, PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET, WorldAuthoritySet,
     world_access_claim_body,
@@ -39,6 +39,7 @@ use crate::pipeline::{FoldedWorldAccess, WorldGrantIndex, folded_world_access};
 use crate::policy_setting_doors::{PolicySetting, record_policy_setting_act_in_txn};
 use crate::registry::ENTITY_TYPE_WORLD;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::write_envelope::{WriteEnvelope, WriteProvenance, write_envelope_evidence};
 use crate::{EntityId, TimeRange, Vault, WriteActor};
 
@@ -197,7 +198,9 @@ impl Vault {
     /// force) where the request names another one or the new grant no longer
     /// covers the default in force, and records the owner's act, all in one
     /// commit, when `surface` names where the owner said so. A set the rows
-    /// in force already state writes and records nothing.
+    /// in force already state writes and records nothing. The door does not
+    /// read the value in force before its write, so it asks for every
+    /// change it cannot tell from its arguments to be a narrowing.
     ///
     /// # Errors
     ///
@@ -210,6 +213,17 @@ impl Vault {
         surface: Option<ActSurface>,
         request: AgentWorldAccessSetRequest,
     ) -> Result<AgentWorldAccessChange> {
+        // No surface names no act, so none is asked for; with one the act
+        // the write may record is asked before it.
+        let ground = if surface.is_some() {
+            let witness = self.owner_presence(
+                OwnerActImportance::Important,
+                owner_presence_reasons::AGENT_WORLD_ACCESS,
+            )?;
+            Some(OwnerProofGround::witnessed(&witness))
+        } else {
+            None
+        };
         let agent = request.agent;
         let changed = self.with_write_txn_grouped(|txn| {
             let actor = owner.revalidate_in_txn(self, txn)?;
@@ -278,7 +292,7 @@ impl Vault {
             )?;
             // The signed record goes last, best effort (FIX 4624).
             if let Some(act) = signed {
-                self.record_policy_setting_op_in_txn(txn, act);
+                self.record_policy_setting_op_in_txn(txn, ground.as_ref(), act);
             }
             Ok(true)
         })?;

@@ -150,6 +150,25 @@ fn word_sources(
     Ok((every, supports))
 }
 
+impl Vault {
+    /// What the words of the row `id` (bytes `bytes`) came from, as this
+    /// walk reads them ([`word_sources`]): the rows each of which must read,
+    /// then a CLAIM's supports. The phone lineage walks the same rows
+    /// (`voice_call::phone_words_in`).
+    ///
+    /// # Errors
+    ///
+    /// Storage failures, and bytes with no readable header.
+    pub(crate) fn lineage_word_sources_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        bytes: &[u8],
+    ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
+        word_sources(self, &self.store.read(), txn, id, bytes)
+    }
+}
+
 /// The records a PSYCH_PROFILE row's `body` read its words from: each typed
 /// source's record and revision. Profile landing names them in the body and
 /// the dependency index, never as a `DerivedFrom` edge, so a profile that
@@ -460,6 +479,7 @@ impl<'a, 't> LineagePass<'a, 't> {
                 every_support,
             },
             policies: BTreeMap::new(),
+            waiting_readable: None,
             rows: self.verdicts.remove(&ask).unwrap_or_default(),
         };
         let readable = judge.row_readable(*id, None);
@@ -507,6 +527,7 @@ pub(crate) fn derived_travel_in(
             every_support: false,
         },
         policies: BTreeMap::new(),
+        waiting_readable: None,
         rows: BTreeMap::new(),
     };
     if judge.row_readable(*id, None)? {
@@ -601,6 +622,7 @@ pub(crate) fn readable_with_read_in(
         txn,
         ask: Ask::Read(viewers),
         policies: BTreeMap::new(),
+        waiting_readable: None,
         rows: BTreeMap::new(),
     };
     judge.row_readable(id, Some(raw))
@@ -615,6 +637,14 @@ pub(crate) fn readable_with_read_in(
 /// policy is named that the read did not meet. A row gone from `dbs` adds
 /// its own binding and carried policies and nothing more. A vault that
 /// holds no policy answers none.
+///
+/// A row it walks whose floor is not known whole here
+/// ([`super::floor_waits_in`]) was read only because every one of `viewers`
+/// reads every source policy this vault holds
+/// ([`super::waiting_floor_readable_in`]): that read met each of them, and
+/// a row derived from it waits too and reads under them, so each is named
+/// (FLOOR-PREFLIGHT-AUDIENCE-IGNORES-WAIT). Once its floor settles, its
+/// floor names its policies as for any other row.
 ///
 /// The caller names every row its read met: a witnessed TURN and each
 /// MESSAGE row its projected text was read from (review of #6985, round 2);
@@ -642,13 +672,26 @@ pub(crate) fn read_audience_in(
         txn,
         ask: Ask::Read(viewers),
         policies: BTreeMap::new(),
+        waiting_readable: None,
         rows: BTreeMap::new(),
     };
     let mut seen: BTreeSet<EntityId> = roots.iter().copied().collect();
     let mut pending: Vec<EntityId> = seen.iter().copied().collect();
+    let mut every_policy_named = false;
     while let Some(row) = pending.pop() {
+        // A row whose floor waits read only to viewers who read every
+        // source policy here, whatever its floor will name once whole.
+        if !every_policy_named && super::floor_waits_in(vault, txn, &row)? {
+            policies.extend(super::POLICIES.scan_keys(&vault.store, txn, &[])?);
+            every_policy_named = true;
+        }
         if let Some(carried) = super::derived_policies_in(vault, txn, &row)? {
-            policies.extend(carried);
+            // A phone thread on a floor is no policy a read meets here.
+            for source in carried {
+                if super::floor_source_in(vault, txn, &source)? != super::FloorSource::Thread {
+                    policies.insert(source);
+                }
+            }
         }
         if let Some(policy) = super::binding_in(vault, txn, &row)? {
             policies.insert(policy);
@@ -697,6 +740,9 @@ struct Judge<'a, 's, 't> {
     /// The settled verdicts that hold whatever row asks. A [`LineagePass`]
     /// keeps them across its rows (see [`Judge::row_readable`]).
     rows: BTreeMap<EntityId, bool>,
+    /// Whether the viewers read a row whose floor waits, once asked
+    /// ([`super::waiting_floor_readable_in`]).
+    waiting_readable: Option<bool>,
 }
 
 /// A row the judge has opened: decided at once, or waiting on what its
@@ -912,16 +958,51 @@ impl Judge<'_, '_, '_> {
         {
             return Ok(Opened::Decided(false));
         }
+        // A row whose floor is not known whole here (READ-LINEAGE L1; #9289
+        // review 2 P1-1, P1-2) reads only to an owner who reads every source
+        // this vault holds, whatever its floor would name; and it does not
+        // travel on a restricted lane, which carries no audience (#9289
+        // review 3 P1-3). The owner's full window carries it, and the vault
+        // it lands in raises its floor from what that vault holds.
+        let restricted = matches!(
+            self.ask,
+            Ask::Travel {
+                every_support: true,
+                ..
+            }
+        );
+        if (matches!(self.ask, Ask::Read(_)) || restricted)
+            && super::floor_waits_in(self.vault, self.txn, &id)?
+        {
+            let admitted = match self.ask {
+                Ask::Read(viewers) => self.waiting_floor_readable(viewers)?,
+                Ask::Travel { .. } => false,
+            };
+            if !admitted {
+                return Ok(Opened::Decided(false));
+            }
+        }
         // The policies a full-window carrier brought for a derived row (fix
-        // list row 17207): every one of them reads, whatever the row's own
-        // lineage here says, before anything else; an unknown one reads to
-        // no one. A replication walk ships such a row only with its carried
-        // policies, as its own sets them (`travel_closure_in`).
+        // list row 17207), and the floor its own write raised (READ-LINEAGE
+        // L1): every policy on it reads, whatever the row's own lineage here
+        // says, before anything else; an id that names no source reads to no
+        // one. A phone thread on it is the scoped read's floor conjunct's to
+        // judge, by its grant. A replication walk ships such a row only with
+        // its carried policies, as its own sets them (`travel_closure_in`).
         if let Some(policies) = super::derived_policies_in(self.vault, self.txn, &id)? {
             match self.ask {
                 Ask::Read(viewers) => {
                     for policy in policies {
-                        if !self.policy_readable(policy, viewers)? {
+                        // A policy's own people (`SourceReaders`).
+                        let admitted = match super::SOURCE_READERS {
+                            super::SourceReaders::OwnSourceReaders => {
+                                self.policy_readable(policy, viewers)?
+                            }
+                        };
+                        if !admitted
+                            && super::floor_source_in(self.vault, self.txn, &policy)?
+                                != super::FloorSource::Thread
+                        {
                             return Ok(Opened::Decided(false));
                         }
                     }
@@ -965,6 +1046,15 @@ impl Judge<'_, '_, '_> {
             every.append(&mut supports);
         }
         Ok(Opened::Waiting(Frame::new(id, every, supports)))
+    }
+
+    fn waiting_floor_readable(&mut self, viewers: &[EntityId]) -> Result<bool> {
+        if let Some(known) = self.waiting_readable {
+            return Ok(known);
+        }
+        let verdict = super::waiting_floor_readable_in(self.vault, self.txn, viewers)?;
+        self.waiting_readable = Some(verdict);
+        Ok(verdict)
     }
 
     fn policy_readable(&mut self, policy: EntityId, viewers: &[EntityId]) -> Result<bool> {

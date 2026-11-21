@@ -108,7 +108,8 @@ pub(crate) use self::feed_move::{FeedMoveOutcome, is_booking_event, move_booking
 pub use self::hold_source::VaultActiveHoldSource;
 pub use self::owner_card::{
     BOOKING_HELD_DEPOSIT_ITEM_PREFIX, BOOKING_OWNER_CARD_ITEM_PREFIX, BookingDepositHeld,
-    BookingDepositHeldReason, BookingOwnerCard, BookingOwnerCardDeposit, BookingOwnerCardOffer,
+    BookingDepositHeldReason, BookingDepositReturned, BookingOwnerCard, BookingOwnerCardDeposit,
+    BookingOwnerCardEmergencyReturn, BookingOwnerCardOffer,
 };
 pub(crate) use self::owner_card::{
     booking_inbox_row_version_in_txn, booking_owner_card_inbox_items, booking_owner_card_of_item,

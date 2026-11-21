@@ -196,11 +196,6 @@ pub(in crate::booking) fn commit_emergency_item(
         // one proposal picked (FIX 9635). Its notification is the apology that
         // carries the proposals; the pick sends the REQUEST.
         let calendar = if cancel {
-            // The owner cancelled: the visitor's deposit comes back whole, in
-            // this commit (RULING DEPOSIT-HOST-CANCEL-REFUND = A). The
-            // calendar's later readback finds the booking cancelled and
-            // moves nothing more.
-            super::deposit::refund_on_host_cancel_in_writer(vault, txn, &event, input.now_utc)?;
             supersede_exact_claim(
                 vault,
                 txn,
@@ -240,6 +235,19 @@ pub(in crate::booking) fn commit_emergency_item(
                     "emergency calendar sequence conflicts with the lifecycle revision",
                 ));
             }
+            // The owner cancelled: the visitor's deposit comes back whole, in
+            // this commit (RULING DEPOSIT-HOST-CANCEL-REFUND = A), marked
+            // with this cancel's SEQUENCE for the card of a booking the
+            // visitor picks again (DEPOSIT-PICK-AFTER-EMERGENCY-CANCEL = A).
+            // The calendar's later readback finds the booking cancelled and
+            // moves nothing more.
+            super::deposit::refund_on_host_cancel_in_writer(
+                vault,
+                txn,
+                &event,
+                Some(calendar.sequence),
+                input.now_utc,
+            )?;
             write_receipt(
                 vault,
                 txn,

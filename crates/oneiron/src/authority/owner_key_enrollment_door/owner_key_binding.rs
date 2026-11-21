@@ -23,8 +23,9 @@
 //! roster.
 //!
 //! K is an Ed25519 owner device key that a counted enrolment names this
-//! owner for, live on the roster. A passkey signs no binding (the fold bars
-//! every passkey from a `BindActor`), and the recovery root's authority key
+//! owner for, live on the roster. A passkey signs only its own first
+//! binding, through its own door ([`Vault::prepare_owner_passkey_binding_as`],
+//! row PASSKEY-SELF-BIND), and the recovery root's authority key
 //! stays off this door: it is the way back, not a key the owner acts with
 //! each day. A device key only a passkey vouched for binds once a key that
 //! is no passkey confirmed it: until then the hosted fold takes no owner
@@ -227,10 +228,16 @@ impl Vault {
             return Err(not_valid(NOT_PREPARED_BINDING));
         }
         self.refuse_owner_key_binding_in_txn(&txn, &fold, actor, &key)?;
-        if entry.seq < next_sequence(&fold, &key)?
-            || epoch != self.next_binding_epoch_in_txn(&txn, &fold, &key)?
-        {
+        let next = next_sequence(&fold, &key)?;
+        if entry.seq < next || epoch != self.next_binding_epoch_in_txn(&txn, &fold, &key)? {
             return Err(not_valid(PREPARED_BINDING_STALE));
+        }
+        // Prepare names the key's next sequence, which only grows: an entry
+        // above it is none prepare built. Landed, it would move the key's
+        // next sequence to its own, at `u64::MAX` past every one it could
+        // sign (blind review #10043 P1).
+        if entry.seq > next {
+            return Err(not_valid(NOT_PREPARED_BINDING));
         }
         if !signs_strictly(&public_key, &authority_transcript(&entry)?, &signature) {
             return Err(not_valid(NOT_KEYS_SIGNATURE));
@@ -352,7 +359,7 @@ impl Vault {
     ///
     /// # Errors
     /// [`invalid_authority`] for a floor at the last epoch; the store's.
-    fn next_binding_epoch_in_txn(
+    pub(super) fn next_binding_epoch_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         fold: &AuthorityFold,

@@ -100,7 +100,10 @@ vault queues locally as above. A Codex or Copilot start whose `source` is
 not a new session's (`startup`, `clear`, `new`) goes on from turns no start
 recorded may have sent elsewhere, so its session sends nowhere until you
 move it; Cursor runs `sessionStart` only for a new conversation. Cursor's
-`stop` names the session as `conversation_id`.
+`stop` names the session as `conversation_id`. An OAuth selection sends as
+its hand-over sign-in (`oneiron hosted login --hand-over`), and while none
+stands the log waits on this machine until one does
+([Claude Code hooks](claude-code-hooks.md#which-vault-a-session-uses)).
 
 The log goes as one file, read on the vault as the local import reads it,
 and only when it is named for the event's own session and sits below the

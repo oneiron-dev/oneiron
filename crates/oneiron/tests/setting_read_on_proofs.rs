@@ -23,6 +23,10 @@
 //! applies the change on its own install. The guard assertions inside these tests hold there
 //! too. Green at the 7b-3 head.
 //!
+//! Stage 7c-2, review round 2 of #9792: the owner's clear of a born thing's value row is judged
+//! with the thing's raced pin standing, which the thing then reads (red at `a63ee158b2c4`, where
+//! the clear drops the pin too and reads as a tightening to the strictest value).
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test
 //! setting_read_on_proofs`.
 
@@ -39,9 +43,9 @@ use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::owner_key_release::release_owner_keys;
 use oneiron::test_doors::setting::{
-    EnrolledMachine, SettingFrontier, SlotName, enroll_machine_with_key, land_setting_act_from,
-    land_signed_setting_act, ordered_cap_read, setting_change, setting_frontier,
-    setting_slot_heads, sign_setting_act_ahead,
+    EnrolledMachine, SettingFrontier, SlotName, born_depth_read, enroll_machine_with_key,
+    land_setting_act_from, land_signed_setting_act, ordered_cap_read, setting_change,
+    setting_frontier, setting_slot_heads, sign_setting_act_ahead,
 };
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
@@ -56,6 +60,9 @@ const CHANNEL_CAP: &str = "test.channel_cap";
 const WINDOW: &str = "test.custom_window";
 /// A number only the owner sets; it has no order.
 const NUMBER: &str = "test.owner_number";
+/// A born key: lower is stricter, its default is 10, its strictest 0; a project with no row of
+/// it reads 0.
+const BORN: &str = "test.born_depth";
 const GET: &str = "vault.settings.get";
 const T0: u64 = 1_790_000_000;
 
@@ -527,4 +534,46 @@ fn the_door_of_an_install_that_cannot_prove_the_owners_act_refuses_it() {
         (6, "Settled".to_owned()),
         "nothing of the refused change is stored"
     );
+}
+
+#[test]
+fn a_clear_of_a_born_things_value_row_is_judged_with_its_raced_pin_standing() {
+    let fx = Fixture::rooted();
+    let at = SettingScope::Project(EntityId::now());
+    let owner_sets_at = |value: Option<Value>| {
+        fx.vault
+            .set_setting(
+                SettingCaller::Owner(&fx.owner_proof),
+                SetSetting {
+                    scope: at.clone(),
+                    value,
+                    ..SetSetting::vault_value(BORN, json!(0))
+                },
+            )
+            .expect("the owner's change")
+    };
+    owner_sets_at(Some(json!(5)));
+    let pin = (BORN, None, SettingMode::Pin, at.clone());
+    let other = fx.other_machine(0x75);
+    let empty = fx.frontier_of(pin.clone());
+    fx.removes(&other);
+    fx.lands_from(&other, &empty, pin, json!(8));
+    assert_eq!(
+        born_depth_read(&fx.vault, std::slice::from_ref(&at))
+            .expect("the read")
+            .value,
+        5,
+        "the raced pin of 8 is read as a value row and meets the thing's 5"
+    );
+
+    // The clear of the value row leaves the raced pin: the thing then reads 8.
+    let SetSettingOutcome::Applied {
+        sequence: Some(sequence),
+        ..
+    } = owner_sets_at(None)
+    else {
+        panic!("the owner's clear writes a change row");
+    };
+    let change = fx.change(sequence);
+    assert_eq!(change["direction"], json!("looser"), "{change}");
 }

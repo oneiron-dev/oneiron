@@ -719,11 +719,10 @@ impl Vault {
             read::stored(&self.store, txn, id, self.project_type_byte()?)?.is_none_or(|old| {
                 old.authority() != body.authority() || old.write_proof != body.write_proof
             });
+        let created = !EntityStoreRead::port_entity_present(&self.store, txn, &id)?;
         // A leader's signed spawn needs no owner birth; the shared door
         // verifies its proof.
-        if !EntityStoreRead::port_entity_present(&self.store, txn, &id)?
-            && body.write_proof.is_none()
-        {
+        if created && body.write_proof.is_none() {
             let posture = self.privacy_posture();
             match crate::gate::project_depth::birth_for_project(&self.store, txn, id)? {
                 Some((_, birth))
@@ -773,6 +772,10 @@ impl Vault {
             .apply(txn)?;
         if let Some(before) = lines_before {
             crate::setting::carry_settings_in_txn(self, txn, id, &before)?;
+        }
+        // A new project starts with its row of each `born` setting key (stage 7c-2).
+        if created {
+            crate::setting::write_born_rows_in_txn(self, txn, id)?;
         }
         let frontier = ProjectReader::new(&self.store, txn, self.privacy_posture())?
             .ok_or_else(invalid)?
@@ -971,6 +974,7 @@ impl Vault {
                 &encode(&child)?,
             )
             .apply(txn)?;
+        crate::setting::write_born_rows_in_txn(self, txn, child_id)?;
         Ok(child)
     }
 
@@ -1050,6 +1054,7 @@ impl Vault {
                     &encode(&body)?,
                 )
                 .apply(txn)?;
+            crate::setting::write_born_rows_in_txn(self, txn, id)?;
             self.require_owner_head_in_txn(txn, id, &body)?;
             Ok(())
         })
@@ -1242,6 +1247,13 @@ impl Vault {
                 ..room
             }))
     }
+    /// Whether `room` is a project room: it has an owner in the project-room
+    /// index. A room call keeps nothing in one yet (UNBUILT-02 PR 4), the
+    /// same check its witness makes.
+    pub fn room_is_project_room(&self, room: EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        Ok(ROOM_PROJECT.contains(&self.store, &txn, &room)?)
+    }
     /// Owner view of stored project rows the fold hides, each with its reason.
     /// They stay in storage and become visible when their authorization does.
     pub fn quarantined_projects(&self) -> Result<Vec<ProjectQuarantine>> {
@@ -1384,6 +1396,9 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
                 &encode(&body)?,
             )
             .apply(txn)?;
+        // The root starts with its row of each `born` setting key, as every new project does
+        // (stage 7c-2).
+        crate::setting::write_born_rows_in_txn(vault, txn, id)?;
         Ok(())
     })?;
     // A vault from before revisions were kept: capture every stored chain once.

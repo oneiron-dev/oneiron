@@ -578,6 +578,25 @@ pub(crate) fn machine_history_indexed(
         .is_some())
 }
 
+/// The signed history controls [`retire_machine_history_for_delete`] retires
+/// with `target`: every control the target index names while the
+/// authenticated pin is present. `None` when no pin is present, so an erase
+/// retires nothing.
+pub(crate) fn machine_history_ids_retired_by_delete(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    target: EntityId,
+) -> Result<Option<Vec<EntityId>>> {
+    if store
+        .vault_meta
+        .get(txn, &super::history_projection::pin_key(target))?
+        .is_none()
+    {
+        return Ok(None);
+    }
+    machine_history_ids_for_target(store, txn, target).map(Some)
+}
+
 /// A local erasure of a MACHINE claim takes its signed history with it, as
 /// the controls embed the born content: this drops the pin, the target index
 /// and a host move's carry record, and returns the controls, which the caller
@@ -590,12 +609,12 @@ pub(crate) fn retire_machine_history_for_delete(
     // A carry names the history the move carried; no later birth at this id
     // inherits it.
     super::history_projection::CARRY.delete(store, txn, &target)?;
-    let pin = super::history_projection::pin_key(target);
-    if store.vault_meta.get(txn, &pin)?.is_none() {
+    let Some(controls) = machine_history_ids_retired_by_delete(store, txn, target)? else {
         return Ok(Vec::new());
-    }
-    let controls = machine_history_ids_for_target(store, txn, target)?;
-    store.vault_meta.delete(txn, &pin)?;
+    };
+    store
+        .vault_meta
+        .delete(txn, &super::history_projection::pin_key(target))?;
     for control in &controls {
         let mut key = target_prefix(target);
         key.extend_from_slice(control.as_bytes());
@@ -820,6 +839,17 @@ pub(crate) fn stage_machine_birth_after_candidate(
             vad: oneiron_contracts::affect::Vad::NEUTRAL,
         });
     }
+    // The rows this writes, for the live windows' post-commit mirror: a
+    // window's export drops a MACHINE claim whose history controls it lacks
+    // (review 10145 round 1; FIX CLAIM-RAW-TXN-DOORS-DROP-LIVE-WINDOW-ROWS).
+    #[cfg(feature = "sync")]
+    let written: std::collections::BTreeSet<EntityId> = ops
+        .iter()
+        .filter_map(|op| match op {
+            crate::batch::BatchOp::Put { id, .. } => Some(*id),
+            _ => None,
+        })
+        .collect();
     // Same txn, no second writer. A failure rolls back both controls and the
     // staged candidate, including their projection indexes.
     crate::batch::apply_ops_with_gate_mode(
@@ -831,6 +861,8 @@ pub(crate) fn stage_machine_birth_after_candidate(
         text_index_trusted,
         crate::batch::ApplyOpsGateMode::new(false, false),
     )?;
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows_in_txn(store, txn, written);
     let local_pin = super::ClaimHistoryHandoffPin {
         vault_id: &vault_id,
         genesis_hash: &vault_id,

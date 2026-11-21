@@ -424,6 +424,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         root_anchors: Default::default(),
         anchor_entries: Default::default(),
         host_custody_keys: Default::default(),
+        recovery_authority_keys: Default::default(),
         worlds: Default::default(),
         refused_world_edits: Default::default(),
         grant_travel: Default::default(),
@@ -435,6 +436,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         conversation_training: Default::default(),
         conversation_training_vault: Default::default(),
         policy_settings: Default::default(),
+        setting_copy_names: Default::default(),
         refused_export_acts: Default::default(),
         agent_carried_acts: Default::default(),
         home_candidacy: Default::default(),
@@ -449,6 +451,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         passkey_contexts: BTreeMap::new(),
         passkey_vouched_keys: BTreeSet::new(),
         passkey_vouch_confirmations: BTreeSet::new(),
+        host_vouched_passkey_owners: BTreeMap::new(),
     };
     let entry = cosign_ed(
         unsigned_entry(
