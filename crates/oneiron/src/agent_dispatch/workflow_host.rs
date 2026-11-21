@@ -127,7 +127,9 @@ impl AgentDispatcher<'_> {
             .get_in_write_txn(&txn, root)?
             .ok_or_else(|| invalid("workflow wrapper is missing"))?;
         let record = self.read_workflow(&txn, &wrapper)?;
-        if wrapper.state != AttemptState::Paused {
+        // L1-03: a run its owner asked to stop runs no further step; the pump
+        // stops the step that waits and ends the run.
+        if wrapper.state != AttemptState::Paused || record.cancel_request.is_some() {
             drop(txn);
             return self.advance_workflow(root, now);
         }

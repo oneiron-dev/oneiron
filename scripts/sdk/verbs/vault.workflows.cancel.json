@@ -1,0 +1,17 @@
+{
+  "name": "vault.workflows.cancel",
+  "description": "The owner asks one workflow run to stop by its root attempt: a waiting step is cancelled, a running step is asked to land, no later step starts, and every committed step result stays.",
+  "input": "crate::task_verb::sdk::WorkflowRunRequest",
+  "output": "crate::task_verb::sdk::WorkflowRunView",
+  "call": "crate::task_verb::sdk::cancel_workflow_run_as(memory.vault(), &memory.embedded_owner(\"vault.workflows.cancel\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

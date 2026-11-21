@@ -181,6 +181,41 @@ pub(super) struct WorkflowRecord {
     /// when the release lands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_refusal: Option<String>,
+    /// The stop the owner asked for (L1-03, `vault.workflows.cancel`), kept
+    /// from the first request on. The pump then releases no further step and
+    /// ends the run `Cancelled` once its active step has settled; a step
+    /// that completed keeps its result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancel_request: Option<WorkflowCancelRequest>,
+}
+
+/// Who asked a run to stop, and when (L1-03). Every stop the engine makes
+/// for the request names that actor: the step it cancels, the landing it
+/// asks for and the run's own end.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WorkflowCancelRequest {
+    /// The asking actor, as hex.
+    pub by: String,
+    /// The recorded clock at the first request.
+    pub at: u64,
+    /// The landing this request asked of a step a worker held, once it asked
+    /// one (L1-03 review of #8193). Only this ask makes that step's later end
+    /// the request's stop: an ask the same actor put to the step before,
+    /// outside this request, never does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked: Option<WorkflowStepAsk>,
+}
+
+/// The landing a run's cancel request asked of one held step: the step, and
+/// the soft-request receipt the ask wrote on it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WorkflowStepAsk {
+    /// The asked step.
+    pub step: AttemptId,
+    /// The `sequence` of the step's `SoftRequested` receipt this ask wrote.
+    pub sequence: u64,
 }
 
 /// A frozen step's dispatch input, as a release reads it.
@@ -405,6 +440,7 @@ impl super::AgentDispatcher<'_> {
             launch: None,
             task_settled: None,
             release_refusal: None,
+            cancel_request: None,
         };
         RECORD.admit(self.vault, txn, &unplaced, &mut record)?;
         Ok(record.intent)
