@@ -1658,6 +1658,66 @@ fn a_second_seat_s_cancelled_version_of_the_first_seat_s_unproven_replay_is_no_h
 }
 
 #[test]
+fn a_second_seat_s_host_cancel_after_the_first_seat_read_an_older_copy_refunds() {
+    // CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS: the owner's cancelled
+    // write never reaches the provider, and the host edits the live copy
+    // without raising its SEQUENCE. The first seat's replay is refused on
+    // that copy and its reconciliation read fails, so its row owes the proof
+    // of the stored copy, and the second seat holds back every cancelled
+    // version that may be the write's. The first seat's next pull, whose
+    // read began after the refusal, finds the copy below the staged
+    // SEQUENCE: another writer's, so the proof is owed no longer. The second
+    // seat's pull of the host's cancel at the staged SEQUENCE then lands:
+    // before the start, it refunds whole.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let second = seat.install_second_seat(&fixture.vault, "seat:host-second");
+    let (booked, live, start) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"second-seat-older-copy-after-unproven-replay",
+        "pi_second_seat_older_copy_after_unproven_replay",
+    );
+
+    seat.write_unsent(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    let staged = seat.staged_sequence(&fixture.vault, &booked.calendar.uid);
+    seat.replay_refused_unread(&fixture.vault, booked.calendar.event_ref, NOW + 170);
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::upsert(
+            &live,
+            start,
+            start + 30 * 60,
+            live.sequence,
+            false,
+        )],
+        NOW + 175,
+    )
+    .expect("seat pull");
+    second
+        .pull(
+            &fixture.vault,
+            &[SeatChange::upsert(
+                &live,
+                start,
+                start + 30 * 60,
+                staged,
+                true,
+            )],
+            NOW + 180,
+        )
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_second_seat_older_copy_after_unproven_replay"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the second seat's host cancel after the first seat proved the copy foreign refunds whole"
+    );
+}
+
+#[test]
 fn a_second_seat_s_cancelled_version_of_a_masked_write_in_flight_is_no_host_cancel() {
     // CAL-SECOND-SEAT-CANCELLED-VERSION-MISSES-OTHER-SEAT-WRITE (review
     // round 1 of #10020, P1-2): as the write in flight above, but the
@@ -3106,9 +3166,12 @@ fn a_stale_live_copy_read_while_a_replay_awaits_its_proof_keeps_the_deposit() {
     // Review round 1 of #9841: the provider stores the owner's cancelled
     // write, rewrites it, and the answer is lost; the replay is refused and
     // its reconciliation pull fails, so the proof waits for the seat's next
-    // pull. A pull read before the write landed then delivers the seat's
+    // pull. A pull whose read began before that refusal, and so may have
+    // read the resource before the write landed, then delivers the seat's
     // live copy at the earlier SEQUENCE: it proves nothing, and the proof
-    // still waits. The seat's report of the owner's own copy moves no money.
+    // still waits (CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS: only a read
+    // that began after the refusal proves such a copy another writer's).
+    // The seat's report of the owner's own copy moves no money.
     let fixture = Fixture::open(Some(two_hour_terms()));
     fixture.enable_host_feed();
     let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
@@ -3120,6 +3183,54 @@ fn a_stale_live_copy_read_while_a_replay_awaits_its_proof_keeps_the_deposit() {
     );
 
     let stored = seat.write_with_lost_answer(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    seat.pull_read_before_replay_refused_unread(
+        &fixture.vault,
+        &[SeatChange::upsert(
+            &live,
+            start,
+            start + 30 * 60,
+            live.sequence,
+            false,
+        )],
+        booked.calendar.event_ref,
+        NOW + 170,
+        NOW + 175,
+    )
+    .expect("seat pull");
+    seat.pull_rewritten_own_write(&fixture.vault, &live, stored, NOW + 180)
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_stale_live_before_proof"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the seat's report of the owner's own copy after a stale live copy moves no money"
+    );
+}
+
+#[test]
+fn a_host_cancel_after_an_older_copy_read_after_an_unproven_replay_refunds() {
+    // CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS: the owner's cancelled
+    // write never reaches the provider, and the host edits the live copy
+    // without raising its SEQUENCE. The replay is refused on that copy and
+    // its reconciliation read fails, so the row owes the proof of the stored
+    // copy. The seat's next pull, whose read began after the refusal, finds
+    // the copy below the staged SEQUENCE: a refused write is never sent
+    // again, so that copy is another writer's and the proof is owed no
+    // longer. The host's later cancel at the staged SEQUENCE carries no
+    // write marker; it is the host's, before the start, and refunds whole.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let (booked, live, start) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"older-copy-after-unproven-replay",
+        "pi_older_copy_after_unproven_replay",
+    );
+
+    seat.write_unsent(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    let staged = seat.staged_sequence(&fixture.vault, &booked.calendar.uid);
     seat.replay_refused_unread(&fixture.vault, booked.calendar.event_ref, NOW + 170);
     seat.pull(
         &fixture.vault,
@@ -3133,14 +3244,24 @@ fn a_stale_live_copy_read_while_a_replay_awaits_its_proof_keeps_the_deposit() {
         NOW + 175,
     )
     .expect("seat pull");
-    seat.pull_rewritten_own_write(&fixture.vault, &live, stored, NOW + 180)
-        .expect("seat pull");
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::upsert(
+            &live,
+            start,
+            start + 30 * 60,
+            staged,
+            true,
+        )],
+        NOW + 180,
+    )
+    .expect("seat pull");
     assert_eq!(
-        state_of(&fixture, "pi_stale_live_before_proof"),
-        DepositState::Captured {
+        state_of(&fixture, "pi_older_copy_after_unproven_replay"),
+        DepositState::RefundDue {
             amount_minor: 4_000
         },
-        "the seat's report of the owner's own copy after a stale live copy moves no money"
+        "the host's cancel after an older copy read after the refusal refunds whole"
     );
 }
 
