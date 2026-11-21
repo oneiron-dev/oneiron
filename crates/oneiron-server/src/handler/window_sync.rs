@@ -7,9 +7,10 @@ use loro::{LoroDoc, VersionVector};
 use oneiron::authority::PeerMachine;
 use oneiron::sync::federation_burst::{
     DeviceBurstAdmission, DevicePeer, FederationBurstWorkState, admit_device_residence_update,
-    admit_device_window_update, admit_promoted_device_window_update,
+    admit_device_window_update, admit_promoted_device_window_update, contended_device_update,
+    device_update_batch_ref,
 };
-use oneiron::sync::residence::promotion_covers_full_window_for;
+use oneiron::sync::residence::{admit_promoted_window_update, promotion_covers_full_window_for};
 use oneiron::sync::schema::read_window_list;
 use oneiron::sync::window::WindowExport;
 use oneiron::sync::{
@@ -20,7 +21,7 @@ use oneiron::sync::{
 use super::app_tier::require_bound_app_auth;
 use super::conn_state::{ConnState, WindowSyncMode};
 use super::device_burst_replay::{DeviceBurstEnd, DeviceLandingError};
-pub(crate) use super::selector_scope::selector_grant_scope;
+use super::selector_scope::selector_grant_scope;
 use crate::auth::CoreAuth;
 use crate::protocol::{self, ProtocolError, window_sub_tags};
 use crate::server::SyncServer;
@@ -94,14 +95,17 @@ pub(super) async fn handle_window_sync(
         // asks as well for each window of a world it follows (ARCH-0023b #partial-sync): a home
         // that does not list the window, or does not grant the whole of it to this machine,
         // answers FOLLOW_REFUSED and keeps the socket. A refused promotion of a window the
-        // machine opened still ends the socket.
+        // machine opened still ends the socket, except on a member lane: the member's grant may
+        // narrow while its device keeps the window's marker, so the home answers FOLLOW_REFUSED
+        // and the lane's other windows still sync (review round 1 of #8364).
         let setup = key == WindowKey::from_timestamp(oneiron::embed::EMBEDDING_SETUP_LEARNED_AT);
-        let follow = sub_tag == window_sub_tags::FOLLOW_REQUEST;
-        if (setup || follow)
+        let refusal_keeps_socket = sub_tag == window_sub_tags::FOLLOW_REQUEST
+            || (conn_state.selector_lane.member().is_some() && !setup);
+        if (setup || refusal_keeps_socket)
             && protocol::is_residence_version(conn_state.protocol_version)
             && !read_window_list(&server.root_doc).contains(&key)
         {
-            if follow {
+            if refusal_keeps_socket {
                 refuse_follow(window_key, direct_tx)?;
             }
             return Ok(ControlFlow::Continue(()));
@@ -136,6 +140,7 @@ pub(super) async fn handle_window_sync(
                 server,
                 auth,
                 conn_state.peer_machine(server.vault()),
+                &conn_state.selector_lane,
                 &key,
                 &selector,
                 &doc,
@@ -144,12 +149,12 @@ pub(super) async fn handle_window_sync(
         if setup && authorized.is_err() {
             return Ok(ControlFlow::Continue(()));
         }
-        if follow && let Err(refusal) = &authorized {
+        if refusal_keeps_socket && let Err(refusal) = &authorized {
             tracing::debug!(
                 conn_id,
                 window = %key,
                 %refusal,
-                "followed window not granted to this machine"
+                "followed or member window not granted to this machine"
             );
             refuse_follow(window_key, direct_tx)?;
             return Ok(ControlFlow::Continue(()));
@@ -282,14 +287,19 @@ pub(super) async fn handle_window_sync(
         return Ok(ControlFlow::Break(()));
     }
     let doc = window.doc.clone();
+    // A member lane's residence update meets the same current promotion
+    // check (MEMBER-SYNC threat F4): its home's world privacy for this
+    // machine, its grant and selector as they stand now, not as they stood
+    // at the promotion.
     if protocol::is_residence_version(conn_state.protocol_version)
-        && matches!(
+        && (matches!(
             sub_tag,
             window_sub_tags::VV_REQUEST
                 | window_sub_tags::VV_RESPONSE
                 | window_sub_tags::UPDATE
                 | window_sub_tags::REPLACEMENT_REQUEST
-        )
+        ) || (sub_tag == window_sub_tags::RESIDENCE_UPDATE
+            && conn_state.selector_lane.member().is_some()))
     {
         let selector = conn_state
             .promoted_windows
@@ -299,6 +309,7 @@ pub(super) async fn handle_window_sync(
             server,
             require_bound_app_auth(server, conn_state)?,
             conn_state.peer_machine(server.vault()),
+            &conn_state.selector_lane,
             &key,
             selector,
             &doc,
@@ -396,6 +407,7 @@ pub(super) async fn handle_window_sync(
                                 server,
                                 require_bound_app_auth(server, conn_state)?,
                                 conn_state.peer_machine(server.vault()),
+                                &conn_state.selector_lane,
                                 &key,
                                 selector,
                                 &doc,
@@ -408,9 +420,11 @@ pub(super) async fn handle_window_sync(
                     }
                     // The device's own bytes refused count on its burst
                     // streak, as a federated peer's do (L7-41); a read fault
-                    // of this home's does not.
+                    // of this home's does not, and a member lane, whose
+                    // writes the burst core never holds, keeps no streak.
                     let refusal = map_update_admission_err(error);
                     if !matches!(refusal, ProtocolError::AdmissionReadFailed(_))
+                        && conn_state.selector_lane.member().is_none()
                         && let Err(error) = oneiron::sync::federation_burst::record_device_refusal(
                             server.vault(),
                             &device_peer(server, conn_state),
@@ -426,6 +440,7 @@ pub(super) async fn handle_window_sync(
             // a burst of it to be held under (#9226 review round 2).
             let device = device_peer(server, conn_state);
             let mut write_auth = None;
+            let mut member_write = None;
             let mut row_admission = None;
             if protocol::is_residence_version(conn_state.protocol_version) {
                 let selector = conn_state
@@ -433,26 +448,67 @@ pub(super) async fn handle_window_sync(
                     .get(&key)
                     .ok_or(ProtocolError::InvalidPayload("window not promoted"))?;
                 let auth = require_bound_app_auth(server, conn_state)?;
-                auth.require(crate::auth::CoreScope::Write)
-                    .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+                // A member lane's whole-grant credential writes as its grant
+                // allows (MEMBER-SYNC review F2); an owner socket keeps the top check.
+                if !conn_state.selector_lane.admits_write(auth) {
+                    return Err(ProtocolError::RpcNoPrincipal);
+                }
                 let proof = auth.verified_slip().ok_or(ProtocolError::RpcNoPrincipal)?;
-                row_admission = Some(
-                    admit_promoted_device_window_update(
-                        server.vault(),
-                        &device,
+                if conn_state.selector_lane.member().is_some() {
+                    let scope = conn_state
+                        .selector_lane
+                        .scope_for(selector)
+                        .map_err(map_selector_filter_err)?;
+                    let rows = admit_promoted_window_update(
+                        &server.vault,
                         &doc,
-                        (selector_grant_scope(), selector, proof),
+                        scope,
+                        selector,
+                        proof,
                         update,
                     )
-                    .map_err(map_selector_filter_err)?,
-                );
+                    .map_err(map_selector_filter_err)?;
+                    // A member lane's rows are judged again in the committing
+                    // transaction (MEMBER-SYNC threat F3), with each world's
+                    // privacy for the machine this socket proved (Astra T2).
+                    member_write = Some(super::member_lane::MemberPromotedWrite {
+                        rows,
+                        scope,
+                        selector: selector.clone(),
+                        peer: conn_state.peer_machine(server.vault()),
+                    });
+                } else {
+                    row_admission = Some(
+                        admit_promoted_device_window_update(
+                            server.vault(),
+                            &device,
+                            &doc,
+                            (selector_grant_scope(), selector, proof),
+                            update,
+                        )
+                        .map_err(map_selector_filter_err)?,
+                    );
+                }
                 write_auth = Some(auth);
             }
             // The pads it owes reach custody here before it persists (FIX
             // 7107). Pads that did not install leave nothing persisted,
             // imported or relayed: the device is told, and sends the same
-            // bytes again as the carrier (KEEP TODAY).
-            let receipt = super::window_pads::admit(server, &key, envelope, &doc);
+            // bytes again as the carrier (KEEP TODAY). A member lane's sealed
+            // capsule never reaches the home's pad custody, which only the
+            // owner's machines fill: it is answered NotReady before any pad
+            // installs, so the member sends the carrier, whose pads land only
+            // as its admitted rows do (OPUS-SECREAD-B #8363 F1).
+            let receipt = if conn_state.selector_lane.member().is_some()
+                && envelope.form == oneiron::sync::transport::WindowPadForm::Sealed
+            {
+                oneiron::sync::transport::WindowPadReceipt {
+                    binding: envelope.binding(),
+                    readiness: oneiron::sync::transport::WindowPadReadiness::NotReady,
+                }
+            } else {
+                super::window_pads::admit(server, &key, envelope, &doc)
+            };
             if receipt.readiness == oneiron::sync::transport::WindowPadReadiness::NotReady {
                 direct_tx
                     .send(super::window_pads::receipt_frame(
@@ -472,67 +528,130 @@ pub(super) async fn handle_window_sync(
             // carry, which an erase of any scrubs, are those the home's
             // admission read it as inserting on the home window: a delta that
             // builds on the home's own operations inserts rows an import into
-            // an empty document never applies (#9226 review round 2).
-            let carried = inserts.ids().collect::<Vec<_>>();
-            let admitted = match row_admission {
-                Some(admission) => admit_device_residence_update(
-                    server.vault(),
-                    &device,
-                    &key,
-                    update,
-                    &carried,
-                    admission,
-                ),
-                None => admit_device_window_update(server.vault(), &device, &key, update, &carried),
-            };
-            let burst = match admitted.map_err(map_update_admission_err)? {
-                DeviceBurstAdmission::Allow(burst) => burst,
-                // The same bytes already settled here (#8386 review): landed,
-                // they are acknowledged with nothing persisted, imported or
-                // relayed again; rejected by the owner at review, they are
-                // refused again.
-                DeviceBurstAdmission::Settled { batch_ref, state } => {
-                    if state != FederationBurstWorkState::Imported {
-                        tracing::info!(
-                            window = %key,
-                            batch_ref = %batch_ref,
-                            ?state,
-                            "an own device sent a batch its owner rejected again"
-                        );
-                        return Err(ProtocolError::InvalidPayload(
-                            "own device batch rejected at review",
-                        ));
-                    }
-                    if residence_seq.is_some() || receipt.binding.sidecar_digest.is_some() {
-                        let frame =
-                            super::window_pads::receipt_frame(window_key, sub_tag, &receipt)?;
-                        direct_tx.send(frame).map_err(|_| {
-                            ProtocolError::Persistence(
-                                "residence acknowledgment channel closed".into(),
-                            )
-                        })?;
-                    }
-                    return Ok(ControlFlow::Continue(()));
-                }
-                DeviceBurstAdmission::Defer { batch_ref }
-                | DeviceBurstAdmission::IsolateAndPropose { batch_ref, .. } => {
+            // an empty document never applies (#9226 review round 2). A
+            // member lane's write skips the burst core: its rows are judged
+            // again in the writer that lands it (MEMBER-SYNC threat F3), and
+            // no drain lands it later without them.
+            let burst = if conn_state.selector_lane.member().is_some() {
+                None
+            } else {
+                // The batch's landing is claimed before the burst core admits
+                // it, and held until the batch ends below; while this socket
+                // holds it, the drain leaves the batch alone (FIX
+                // DEVICE-BURST-ALLOW-DRAIN-OVERLAP). While another landing
+                // holds it (the home's drain, or another socket of the
+                // device), the send is answered by the batch's durable record
+                // at the home, never by the claim alone, since that landing
+                // may yet fail before it retains anything (#9954 review round
+                // 1): by its receipt once it settled, and closed to be sent
+                // again while nothing of it is retained. A retained batch is
+                // answered as held only to a residence socket, whose queued
+                // row a held answer never retires; a sync-all device clears
+                // its queue on the version a held answer names, and that
+                // landing may yet end without landing the batch (the home
+                // stops before it appends, and the retained copy expires
+                // before its replay), so its send is closed to be sent again
+                // too (#9954 review round 2).
+                let promoted = row_admission.is_some();
+                let batch_ref = device_update_batch_ref(&device, &key, update, promoted)
+                    .map_err(map_update_admission_err)?;
+                let claim = server.claim_device_burst_landing(batch_ref.clone());
+                let admitted = if claim.is_none() {
                     tracing::info!(
                         window = %key,
                         batch_ref = %batch_ref,
-                        "an own device's burst is held at its home"
+                        "an own device's burst is landing at its home already"
                     );
-                    return super::window_copy::acknowledge_held(
-                        conn_state,
-                        &key,
-                        window_key,
-                        sub_tag,
-                        residence_seq,
-                        update,
-                        &doc.oplog_vv(),
-                        &receipt,
-                        direct_tx,
-                    );
-                }
+                    match contended_device_update(server.vault(), &device, &key, update, promoted)
+                        .map_err(map_update_admission_err)?
+                    {
+                        Some(DeviceBurstAdmission::Defer { .. }) if residence_seq.is_none() => {
+                            return Err(ProtocolError::LandingInProgress);
+                        }
+                        Some(admitted) => admitted,
+                        None => return Err(ProtocolError::LandingInProgress),
+                    }
+                } else {
+                    let carried = inserts.ids().collect::<Vec<_>>();
+                    match row_admission {
+                        Some(admission) => admit_device_residence_update(
+                            server.vault(),
+                            &device,
+                            &key,
+                            update,
+                            &carried,
+                            admission,
+                        ),
+                        None => admit_device_window_update(
+                            server.vault(),
+                            &device,
+                            &key,
+                            update,
+                            &carried,
+                        ),
+                    }
+                    .map_err(map_update_admission_err)?
+                };
+                let burst = match admitted {
+                    DeviceBurstAdmission::Allow(burst) => burst,
+                    // The same bytes already settled here (#8386 review): landed,
+                    // they are acknowledged with nothing persisted, imported or
+                    // relayed again; rejected by the owner at review, they are
+                    // refused again.
+                    DeviceBurstAdmission::Settled { batch_ref, state } => {
+                        if state != FederationBurstWorkState::Imported {
+                            tracing::info!(
+                                window = %key,
+                                batch_ref = %batch_ref,
+                                ?state,
+                                "an own device sent a batch its owner rejected again"
+                            );
+                            return Err(ProtocolError::InvalidPayload(
+                                "own device batch rejected at review",
+                            ));
+                        }
+                        if residence_seq.is_some() || receipt.binding.sidecar_digest.is_some() {
+                            let frame =
+                                super::window_pads::receipt_frame(window_key, sub_tag, &receipt)?;
+                            direct_tx.send(frame).map_err(|_| {
+                                ProtocolError::Persistence(
+                                    "residence acknowledgment channel closed".into(),
+                                )
+                            })?;
+                        }
+                        return Ok(ControlFlow::Continue(()));
+                    }
+                    DeviceBurstAdmission::Defer { batch_ref }
+                    | DeviceBurstAdmission::IsolateAndPropose { batch_ref, .. } => {
+                        tracing::info!(
+                            window = %key,
+                            batch_ref = %batch_ref,
+                            "an own device's burst is held at its home"
+                        );
+                        return super::window_copy::acknowledge_held(
+                            conn_state,
+                            &key,
+                            window_key,
+                            sub_tag,
+                            residence_seq,
+                            update,
+                            &doc.oplog_vv(),
+                            &receipt,
+                            direct_tx,
+                        );
+                    }
+                };
+                Some((burst, claim))
+            };
+            let recheck = match member_write.as_ref() {
+                Some(write) => DeviceWriteRecheck::Member {
+                    auth: write_auth.ok_or(ProtocolError::RpcNoPrincipal)?,
+                    write,
+                },
+                None => DeviceWriteRecheck::Credential {
+                    auth: write_auth,
+                    promoted: protocol::is_residence_version(conn_state.protocol_version),
+                },
             };
             let landing = land_device_update(
                 server,
@@ -540,19 +659,20 @@ pub(super) async fn handle_window_sync(
                 (&key, &doc),
                 update,
                 inserts,
-                DeviceWriteRecheck::Credential {
-                    auth: write_auth,
-                    promoted: protocol::is_residence_version(conn_state.protocol_version),
-                },
+                recheck,
             )
             .await;
             // The burst core's batch ends as the landing went (L7-41): landed,
             // held on a copy edit's ruled cause, or durable, it is complete;
             // its window's refusal of the device's bytes rejects it; a load or
-            // persist that failed keeps it for the drain.
-            if let Err(error) = DeviceBurstEnd::of(&landing).settle(server.vault(), &burst) {
+            // persist that failed keeps it for the drain, which may take it
+            // once this socket's claim ends here.
+            if let Some((burst, _)) = &burst
+                && let Err(error) = DeviceBurstEnd::of(&landing).settle(server.vault(), burst)
+            {
                 tracing::warn!(%error, "an own device's burst batch did not settle");
             }
+            drop(burst);
             // FIX 10598: a copy edit held on its ruled cause is answered as
             // held; nothing of it persisted, imported or relayed.
             let Some(landed) = landing.map_err(DeviceLandingError::into_protocol)? else {
@@ -644,6 +764,15 @@ pub(super) enum DeviceWriteRecheck<'a> {
     Credential {
         auth: Option<&'a CoreAuth>,
         promoted: bool,
+    },
+    /// A member lane's write (MEMBER-SYNC): its socket's Write credential,
+    /// and the rows its admission judged, which the writer judges again
+    /// under the member's grant, pact and selection, with each world's
+    /// privacy for the socket's machine (threat F3, Astra T2). The burst
+    /// core never holds it, so no drain lands it.
+    Member {
+        auth: &'a CoreAuth,
+        write: &'a super::member_lane::MemberPromotedWrite,
     },
     /// The retained batch the home's drain replays, which no socket sent:
     /// still held, and its device's authority as the burst core held it
@@ -741,7 +870,17 @@ pub(super) async fn land_device_update(
                 DeviceWriteRecheck::Credential {
                     auth,
                     promoted: false,
-                } => server.persist_imported_update(key, &persisted, &inserts, &landings, auth),
+                } => {
+                    server.persist_imported_update(key, &persisted, &inserts, &landings, auth, None)
+                }
+                DeviceWriteRecheck::Member { auth, write } => server.persist_imported_update(
+                    key,
+                    &persisted,
+                    &inserts,
+                    &landings,
+                    Some(auth),
+                    Some(write),
+                ),
                 DeviceWriteRecheck::Retained(work) => server.persist_retained_device_update(
                     key, &persisted, &inserts, &landings, work, doc,
                 ),
@@ -1043,6 +1182,7 @@ pub(super) fn authorize_promoted_window(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: oneiron::authority::PeerMachine,
+    lane: &super::selector_scope::SelectorLane,
     key: &WindowKey,
     selector: &SyncSelector,
     source: &loro::LoroDoc,
@@ -1058,13 +1198,14 @@ pub(super) fn authorize_promoted_window(
         ));
     }
     let proof = auth.verified_slip().ok_or(ProtocolError::RpcNoPrincipal)?;
+    let scope = lane.scope_for(selector).map_err(map_selector_filter_err)?;
     // One admission for the machine this socket proved: the credential, the
     // grant and every carried row's world for that machine (OF-534 G6).
     let admission = oneiron::sync::residence::ResidenceAdmission::load(
         &server.vault,
         proof,
         peer,
-        selector_grant_scope(),
+        scope,
         selector,
     )
     .map_err(map_selector_filter_err)?;
@@ -1072,7 +1213,7 @@ pub(super) fn authorize_promoted_window(
         &server.vault,
         source,
         key,
-        selector_grant_scope(),
+        scope,
         selector,
         admission.withhold(),
         |id| admission.allows_item(id),
@@ -1087,6 +1228,7 @@ pub(super) fn authorize_promoted_window(
 
 pub(super) fn decode_and_authorize_selector_request(
     server: &SyncServer,
+    lane: &super::selector_scope::SelectorLane,
     payload: &[u8],
 ) -> Result<SelectorVvRequest, ProtocolError> {
     let request = decode_selector_vv_request(payload)
@@ -1098,12 +1240,11 @@ pub(super) fn decode_and_authorize_selector_request(
             "selector sync requires empty version vector resync",
         ));
     }
-    authorize_sync_selector(
-        server.vault.as_ref(),
-        selector_grant_scope(),
-        &request.selector,
-    )
-    .map_err(map_selector_filter_err)?;
+    let scope = lane
+        .scope_for(&request.selector)
+        .map_err(map_selector_filter_err)?;
+    authorize_sync_selector(server.vault.as_ref(), scope, &request.selector)
+        .map_err(map_selector_filter_err)?;
     Ok(request)
 }
 

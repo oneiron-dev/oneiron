@@ -14,14 +14,18 @@
 //!
 //! An install that holds no key the fold takes as the owner's proof writes
 //! no act, as nothing could count it: the preset change stands, and the node
-//! reads no new fact.
+//! reads no new fact. The act's proof is signed on the person's confirm: a
+//! preset door asks for it before its write whenever its switch signs a fact
+//! ([`Vault::recovery_preset_proof_ground`]).
 
 use crate::Vault;
 use crate::authority::{
-    ActSurface, AuthorityEntryHash, OwnerAct, OwnerActKind, PolicySetting, PolicySettingAct,
+    ActSurface, AuthorityEntryHash, OwnerAct, OwnerActKind, OwnerProofGround, PolicySetting,
+    PolicySettingAct,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 
 /// The act did not land with the owner key's proof in the switch's write.
 const FACT_NOT_COUNTED: &str = "the kit-only switch's signed record did not count with the owner \
@@ -78,11 +82,46 @@ impl Vault {
             }))
     }
 
+    /// The ground a preset door signs its kit-only fact on, read before the
+    /// door's write: the person's confirm of an important act
+    /// ([`Vault::owner_presence`]), asked only when a switch to `kit_only`
+    /// signs a fact (the fact in force does not already say so, and this
+    /// install holds a key that proves for the owner,
+    /// [`Vault::holds_proving_owner_key`]); `None` otherwise, and the door's
+    /// write then signs none. Main's rule for a setting change: one that
+    /// signs no owner proof is not asked.
+    ///
+    /// # Errors
+    /// The presence check's refusal (a declined prompt; a device PIN whose
+    /// window is closed); the authority log's read errors.
+    pub(crate) fn recovery_preset_proof_ground(
+        &self,
+        kit_only: bool,
+    ) -> Result<Option<OwnerProofGround>> {
+        let signs = {
+            let txn = self.store.env.read_txn()?;
+            let before = self.recovery_box_kit_only_fact_in_txn(&txn)?;
+            !before.is_some_and(|fact| fact.kit_only == kit_only)
+                && self.holds_proving_owner_key(&self.authority_view_readonly_in_txn(&txn)?)
+        };
+        if !signs {
+            return Ok(None);
+        }
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::RECOVERY_PRESET,
+        )?;
+        Ok(Some(OwnerProofGround::witnessed(&witness)))
+    }
+
     /// Signs the kit-only fact `kit_only` for `owner`, decided from
-    /// `surface`, in the preset's write `txn`, when the fact in force does not
-    /// already say so and this install holds a key that proves for the owner
-    /// ([`Vault::owner_proof_signer`]). The act's `prior` is the fact in force,
-    /// off when there is none. The entry hash when it signed one.
+    /// `surface`, in the preset's write `txn`, on `ground`, the person's
+    /// confirm the door asked for, when the fact in force does not already
+    /// say so and this install holds a key that proves for the owner
+    /// ([`Vault::holds_proving_owner_key`]). With no ground (the door read
+    /// before its write that no fact would be signed) it signs none. The
+    /// act's `prior` is the fact in force, off when there is none. The entry
+    /// hash when it signed one.
     ///
     /// # Errors
     /// The act did not land with the owner key's proof (`FACT_NOT_COUNTED`),
@@ -91,6 +130,7 @@ impl Vault {
     pub(crate) fn append_recovery_box_kit_only_fact_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
         owner: EntityId,
         surface: ActSurface,
         kit_only: bool,
@@ -99,24 +139,29 @@ impl Vault {
         if before.is_some_and(|fact| fact.kit_only == kit_only) {
             return Ok(None);
         }
-        let proves = self
-            .owner_proof_signer(&self.authority_view_readonly_in_txn(txn)?)
-            .is_some();
-        if !proves {
+        if !self.holds_proving_owner_key(&self.authority_view_readonly_in_txn(txn)?) {
             tracing::info!(
                 kit_only,
                 "no owner key on this install proves the kit-only switch: no fact was signed"
             );
             return Ok(None);
         }
+        let Some(ground) = ground else {
+            tracing::info!(
+                kit_only,
+                "the preset door asked for no confirm: no kit-only fact was signed"
+            );
+            return Ok(None);
+        };
         let target = kit_only_target()?;
         let seen = self.policy_setting_revision_in_txn(txn, target)?;
         let prior = before.is_some_and(|fact| fact.kit_only);
         let entry = self.append_policy_setting_op_in_txn(
             txn,
+            Some(ground),
             PolicySettingAct {
                 act: OwnerAct::by_owner(owner, OwnerActKind::PolicySetting, target, surface, seen),
-                setting: PolicySetting::RecoveryBoxKitOnly,
+                setting: PolicySetting::RecoveryBoxKitOnly.wire().to_owned(),
                 prior: crate::authority::recovery_box_kit_only_value(prior),
                 value: Some(crate::authority::recovery_box_kit_only_value(kit_only)),
             },

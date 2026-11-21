@@ -382,14 +382,19 @@ impl ScopedRead<'_> {
                 return None;
             }
         };
-        if filter.deny_all {
+        // One authority for every row this read checks: the key's own floor,
+        // then each of its own live Grants alone (FIX-LIST
+        // SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS). A lane neither reads at all
+        // binds no read.
+        let held = self.held_for(None);
+        if self.reads_nothing_held_in(txn, &policy, &filter, &held) {
             return None;
         }
         Some(LoopRead {
             reader: bound,
             policy,
             filter,
-            held: HeldAuthority::default(),
+            held,
             floor: BTreeMap::new(),
             projects: None,
         })
@@ -515,7 +520,7 @@ impl ScopedRead<'_> {
             return Ok(Some(vec![id]));
         }
         let body = decode_claim_body(&record.body, true)?;
-        if !self.weave_claim_edge_admitted_in(txn, &read.policy, &read.filter, &body)? {
+        if !self.weave_claim_edge_admitted_in(txn, &read.policy, &read.filter, &read.held, &body)? {
             return Ok(None);
         }
         Ok(Some(match body.subject {

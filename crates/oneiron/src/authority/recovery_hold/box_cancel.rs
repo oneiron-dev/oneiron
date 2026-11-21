@@ -9,7 +9,9 @@
 //! box's receipt and the owner's notice name who cancelled.
 
 use super::*;
-use crate::world_keys::{RecoveryBoxCanceller, RecoveryBoxHold};
+use crate::world_keys::{
+    OwnerActImportance, RecoveryBoxCanceller, RecoveryBoxHold, owner_presence_reasons,
+};
 
 /// The domain of a box Cancel's proof. No other signature of an owner key
 /// starts with these bytes.
@@ -126,8 +128,10 @@ fn cancel_key_refusal(
 
 impl Vault {
     /// Signs this owner's Cancel of the release pending at the recovery box,
-    /// with this install's owner signing key: the device unlock is the
-    /// confirm sheet. The key must be a live owner key of the acting
+    /// with this install's owner signing key, on the person's confirm: the
+    /// door asks for the person at the device ([`Vault::owner_presence`], an
+    /// important act, as a hold's Cancel is) before it reads or signs
+    /// anything. The key must be a live owner key of the acting
     /// owner's on this install's fold, never the root's authority kind.
     /// `release_receipt` is the recovery-started act's receipt when the
     /// device read it (the box then cancels only that release). The proof
@@ -137,9 +141,10 @@ impl Vault {
     /// # Errors
     /// [`crate::error::RecordError::AuthorityRefused`] for an agent's act
     /// and for an install that holds no live owner key of the actor's (sign-in
-    /// alone); the key's own refusal to sign an owner's proof now (a device
-    /// PIN, a slot that no longer holds its seed); the store's, the clock's
-    /// and the keystore's.
+    /// alone); the presence check's refusal (a declined prompt; a device PIN
+    /// whose window is closed); the key's own refusal to sign an owner's
+    /// proof now (a device PIN, a slot that no longer holds its seed); the
+    /// store's, the clock's and the keystore's.
     pub fn sign_recovery_box_cancel_as(
         &self,
         authority: &ActAuthority,
@@ -149,6 +154,11 @@ impl Vault {
             ActAuthority::Owner(owner, _) => owner,
             ActAuthority::Agent(_) => return Err(authority_refused(CANCEL_OWNER_ONLY)),
         };
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::CANCEL_RECOVERY_HOLD,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let signer = self
             .existing_device_owner_signing_key()?
             .ok_or_else(|| authority_refused(NO_OWNER_KEY_TO_CANCEL))?;
@@ -171,7 +181,8 @@ impl Vault {
             release_receipt,
             signature: Vec::new(),
         };
-        proof.signature = signer.sign_recovery_box_cancel(self, &fold, &proof, &vault_id)?;
+        proof.signature =
+            signer.sign_recovery_box_cancel(self, &fold, &ground, &proof, &vault_id)?;
         Ok(proof)
     }
 

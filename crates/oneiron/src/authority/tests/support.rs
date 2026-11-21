@@ -356,6 +356,7 @@ pub(super) fn single_owner_state(
         conversation_training: Default::default(),
         conversation_training_vault: Default::default(),
         policy_settings: Default::default(),
+        setting_copy_names: Default::default(),
         refused_export_acts: Default::default(),
         agent_carried_acts: Default::default(),
         home_candidacy: Default::default(),
@@ -370,6 +371,7 @@ pub(super) fn single_owner_state(
         passkey_contexts: BTreeMap::new(),
         passkey_vouched_keys: BTreeSet::new(),
         passkey_vouch_confirmations: BTreeSet::new(),
+        host_vouched_passkey_owners: BTreeMap::new(),
     };
     (owner, owner_key, parent, state)
 }

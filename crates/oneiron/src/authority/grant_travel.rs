@@ -109,9 +109,6 @@ pub(super) fn apply_grant_travel(
     (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
-    if !entry.cosigns.is_empty() {
-        return Err(AuthorityFoldIssue::InvalidEntry(hash));
-    }
     let signer = entry.signer_key();
     let AuthorityKey::Ed25519(key) = signer else {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));

@@ -71,6 +71,13 @@ pub struct AuthorityFold {
     /// judges forged (REVIEW-8451 P1).
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(super) passkey_limited_keys: BTreeSet<AuthorityKey>,
+    /// Each passkey a key in the host's custody enrolled, with the owners
+    /// those enrolments named, on the merged history
+    /// (`FoldState::host_vouched_passkey_owners`, row PASSKEY-SELF-BIND).
+    /// Read through [`AuthorityFold::host_vouched_passkey_for`] and
+    /// [`AuthorityFold::host_vouched_passkey_limited`].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) host_vouched_passkey_owners: BTreeMap<AuthorityKey, BTreeSet<EntityId>>,
     /// The handoffs whose fences stand: settled, or in conflict.
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
     /// The revocations (`RevokeDevice`) whose fences closed in a conflict:
@@ -478,6 +485,11 @@ pub(super) struct FoldState {
         skip_serializing_if = "super::owner_choice::OwnerChoiceState::is_empty"
     )]
     pub(super) policy_settings: super::policy_setting_choice::PolicySettingChoiceState,
+    /// What each move's setting copy names, by its rows' targets (stage 7a-4; row
+    /// SETTING-COPY-NAME-IGNORES-COUNT), merged by union, so the fold counts each named act on
+    /// its own row. An image carries it only when some copy folded.
+    #[serde(default, skip_serializing_if = "PersistentMap::is_empty")]
+    pub(super) setting_copy_names: super::policy_setting_choice::SettingCopyNames,
     /// Well-signed export acts without effect, merged by union: their
     /// carrier was not admitted, or their owner not live, at their parents
     /// (FIX 4624).
@@ -537,6 +549,13 @@ pub(super) struct FoldState {
     /// union.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(super) passkey_vouch_confirmations: BTreeSet<AuthorityKey>,
+    /// Each passkey a key in the host's custody enrolled, with every owner
+    /// such a counted fresh enrolment named, merged by union (row
+    /// PASSKEY-SELF-BIND): the owners the passkey may sign its own first
+    /// binding to (`owner_key_enrollment::passkey_self_bind`). An image
+    /// carries it only once a host vouched for a passkey.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) host_vouched_passkey_owners: BTreeMap<AuthorityKey, BTreeSet<EntityId>>,
 }
 
 impl FoldState {
@@ -793,6 +812,15 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
         &right.conversation_training_vault,
     );
     super::owner_choice::merge_owner_choices(&mut merged.policy_settings, &right.policy_settings);
+    for (copy, rows) in &right.setting_copy_names {
+        let merged_rows = merged.setting_copy_names.entry(*copy).or_default();
+        for (target, names) in rows {
+            merged_rows
+                .entry(*target)
+                .or_default()
+                .extend(names.iter().copied());
+        }
+    }
     merged
         .refused_export_acts
         .extend(right.refused_export_acts.iter().copied());
@@ -843,6 +871,13 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .passkey_vouch_confirmations
         .extend(right.passkey_vouch_confirmations.iter().cloned());
+    for (key, owners) in &right.host_vouched_passkey_owners {
+        merged
+            .host_vouched_passkey_owners
+            .entry(key.clone())
+            .or_default()
+            .extend(owners.iter().copied());
+    }
     merged
 }
 

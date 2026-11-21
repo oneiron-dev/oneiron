@@ -129,11 +129,22 @@ DEFAULT_IN_FLIGHT = 4
 # The request body's field that asks for solo admission: true runs the request
 # with nothing else in flight.
 SOLO_FIELD = "oneiron_solo"
+# The draft's KV ring, in pages per in-flight slot, when the launcher names
+# none (`install_draft_ring`). Every layer of the DFlash2 draft slides over
+# 2048 tokens, and a ring covers the window plus 3 pages, so 11 is the least
+# this draft takes. 0 turns the ring off.
+DEFAULT_DRAFT_RING_PAGES = 12
 # The shared KV pool, in tokens, when the launcher names none; never less than
-# one full request (`full_request_pool`).
-# INF 1 (FIX 6974): the largest pool measured at four in flight whose peak
-# leaves 2 GiB of the card's 24564 MiB, at a 22488 MiB peak.
-DEFAULT_CACHE_TOKENS = 40192
+# one full request (`full_request_pool`). Beside the draft KV ring: 85504, 334
+# pages, the VRAM the draft's full-pool copy took given to the target's pool
+# (QWEN-EVAL-1 arm opus-plain A-0005; the referee on mel at 400 W read 233.9
+# against 158.0 packets per hour on the Dreamer's own nightly call, JSON valid
+# as often as stock on both packs, at a 23756 MiB peak against 22528).
+DEFAULT_CACHE_TOKENS = 85504
+# The pool when the draft cache is as large as the pool (the ring off) or
+# there is no draft: INF 1's 40192 (FIX 6974), the largest pool measured at
+# four in flight whose peak left 2 GiB of the card's 24564 MiB.
+DEFAULT_CACHE_TOKENS_WITHOUT_RING = 40192
 # Submitted requests that wait for admission. Past it a request waits in its
 # own handler for a place; it is never refused.
 INGRESS_CAPACITY = 4
@@ -280,6 +291,109 @@ def launch_draft_identity(manifest_path):
     return value if isinstance(value, str) and value else None
 
 
+def install_draft_ring(generator, draft, ring):
+    """Routes every DFlash draft-cache access through a ring of `ring` pages per in-flight slot (`--draft-ring-pages`,
+    DEFAULT_DRAFT_RING_PAGES by default). The DFlash2 draft's layers all slide over 2048 tokens, so a slot's draft KV
+    never needs more than its window plus the pages in flight, and the VRAM a full-pool draft copy takes goes to the
+    target pool (DEFAULT_CACHE_TOKENS; QWEN-EVAL-1 A-0005: a 12-page ring with an 85504-token pool read +32.0 %
+    normalised packets per hour over stock on mel). The slot of each batch row is set around the three Generator paths that touch the draft
+    cache (the draft forward, the post-verify KV update, a Job's prefill hand-off); any other access fails loudly
+    rather than index the small cache with target page numbers. Defragmentation leaves the draft cache alone
+    (exllamav3's EXL3_DEBUG_NO_DRAFT_DEFRAG): its pages are not the target's. No exllamav3 file is edited."""
+    import os
+    import torch
+    from exllamav3.generator import job as job_module
+    os.environ["EXL3_DEBUG_NO_DRAFT_DEFRAG"] = "1"
+    tables = {}
+    state = {"slots": None}
+
+    def slot_of(job):
+        if len(job.sequences) != 1 or job.recurrent_state is None:
+            raise RuntimeError("draft ring: a draft-cache access from a job without one sequence and a recurrent slot")
+        return int(job.recurrent_state.slot)
+
+    def ring_table(bt):
+        slots = state["slots"]
+        if slots is None or bt.shape[0] != len(slots):
+            raise RuntimeError(f"draft ring: {bt.shape[0]} block-table rows against slots {slots}")
+        key = (tuple(slots), int(bt.shape[-1]), bt.dtype, str(bt.device))
+        t = tables.get(key)
+        if t is None:
+            cols = torch.arange(int(bt.shape[-1]), dtype=torch.int64) % ring
+            t = torch.stack([cols + s * ring for s in slots]).to(dtype=bt.dtype)
+            t = t.to(bt.device) if bt.device.type != "cpu" else (t.pin_memory() if bt.is_pinned() else t)
+            tables[key] = t
+        return t
+
+    def remapped(params):
+        if params is None or params.get("block_table") is None:
+            raise RuntimeError("draft ring: a draft-cache access without a block table")
+        if "dev_cache" in params:
+            raise RuntimeError("draft ring: params already hold device copies")
+        out = dict(params)
+        out["block_table"] = ring_table(params["block_table"])
+        return out
+
+    base_forward = draft.forward
+    base_update = draft.update_kv_from_target
+
+    def forward(*args, **kwargs):
+        if "params" in kwargs:
+            params = kwargs["params"]
+            new = remapped(params)
+            kwargs["params"] = new
+            try:
+                return base_forward(*args, **kwargs)
+            finally:
+                # Callers read what forward wrote into params (sample_from_state); keep them on the caller's dict
+                for k, v in new.items():
+                    if k not in ("block_table", "dev_cache"):
+                        params[k] = v
+                params["dev_cache"] = None
+        raise RuntimeError("draft ring: draft forward without params=")
+
+    def update_kv_from_target(target_hidden, cache, params, lengths=None):
+        return base_update(target_hidden, cache, remapped(params), lengths)
+
+    draft.forward = forward
+    draft.update_kv_from_target = update_kv_from_target
+
+    def with_slots(fn, rows):
+        def run(*args, **kwargs):
+            state["slots"] = rows()
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                state["slots"] = None
+        return run
+
+    def batch_rows():
+        return [slot_of(job) for job in generator.active_jobs if job.is_prefill_done()]
+
+    generator.iterate_draftmodel_dflash_gen = with_slots(generator.iterate_draftmodel_dflash_gen, batch_rows)
+    generator.iterate_gen = with_slots(generator.iterate_gen, batch_rows)
+
+    base_prefill = job_module.Job.prefill
+
+    def prefill(self, results):
+        if getattr(self, "generator", None) is not generator:
+            return base_prefill(self, results)
+        state["slots"] = [slot_of(self)]
+        try:
+            return base_prefill(self, results)
+        finally:
+            state["slots"] = None
+
+    job_module.Job.prefill = prefill
+    print(f"DRAFT_RING pages_per_slot={ring} slots={generator.cache.num_slots if hasattr(generator.cache, 'num_slots') else '?'}"
+          f" draft_tokens={draft_cache_tokens(generator)}", flush=True)
+
+
+def draft_cache_tokens(generator):
+    cache = getattr(generator, "draft_cache", None)
+    return None if cache is None else int(cache.max_num_tokens)
+
+
 def load(args):
     if args.context % PAGE:
         raise ValueError(f"--context must be a multiple of the cache page, {PAGE}")
@@ -287,11 +401,23 @@ def load(args):
         raise ValueError("--draft-tokens must be at least 1")
     if not 1 <= args.max_in_flight <= MAX_IN_FLIGHT:
         raise ValueError(f"--max-in-flight must be 1 to {MAX_IN_FLIGHT}")
-    # The shared pool every request in flight draws on: DEFAULT_CACHE_TOKENS
-    # unless the launcher names one, and never less than one full request (the
-    # context plus its draft and close room, page-rounded).
+    # The draft's KV ring, in pages per in-flight slot (`install_draft_ring`):
+    # DEFAULT_DRAFT_RING_PAGES unless the launcher names one. 0 turns it off,
+    # and the draft cache is then as large as the target's pool; a server
+    # without a draft has none.
+    ring = getattr(args, "draft_ring_pages", None)
+    ring = DEFAULT_DRAFT_RING_PAGES if ring is None else int(ring)
+    if ring < 0:
+        raise ValueError("--draft-ring-pages must be 0 (off) or a page count")
+    if not args.draft_dir:
+        ring = 0
+    # The shared pool every request in flight draws on: unless the launcher
+    # names one, DEFAULT_CACHE_TOKENS beside a ring and
+    # DEFAULT_CACHE_TOKENS_WITHOUT_RING without one; never less than one full
+    # request (the context plus its draft and close room, page-rounded).
     floor = full_request_pool(args.context, args.draft_tokens if args.draft_dir else 0)
-    cache_tokens = max(DEFAULT_CACHE_TOKENS, floor) if args.cache_tokens is None else args.cache_tokens
+    pool = DEFAULT_CACHE_TOKENS if ring else DEFAULT_CACHE_TOKENS_WITHOUT_RING
+    cache_tokens = max(pool, floor) if args.cache_tokens is None else args.cache_tokens
     if cache_tokens % PAGE:
         raise ValueError(f"--cache-tokens must be a multiple of the cache page, {PAGE}")
     if cache_tokens < floor:
@@ -325,8 +451,15 @@ def load(args):
     batch = args.max_in_flight
     target_cache = Cache(target, max_num_tokens=cache_tokens, layer_type=CacheLayer_quant,
                          k_bits=8, v_bits=8, max_batch_size=batch, max_history=depth)
+    if ring and draft is not None:
+        window = int(getattr(draft.config, "sliding_window", 0) or 0)
+        types = set(getattr(draft.config, "layer_types", []) or [])
+        if not window or types != {"sliding_attention"} or ring * PAGE < window + 3 * PAGE:
+            raise RuntimeError(f"--draft-ring-pages {ring} needs a draft whose every layer slides over at most "
+                               f"{(ring - 3) * PAGE} tokens (window {window}, layers {sorted(types)})")
     if draft is not None:
-        draft_cache = Cache(draft, max_num_tokens=cache_tokens, layer_type=CacheLayer_quant,
+        draft_cache = Cache(draft, max_num_tokens=(batch * ring * PAGE if ring else cache_tokens),
+                            layer_type=CacheLayer_quant,
                             k_bits=8, v_bits=8, max_batch_size=batch, max_history=depth)
 
     print(f"MODEL_LOAD_START target={args.target_dir} draft={args.draft_dir or 'none'} "
@@ -355,20 +488,31 @@ def load(args):
     if executor.prioritized:
         generator_class = exl3_executor.scheduled_generator(generator_class)
     print(f"SCHEDULING policy={executor.policy} minor={exl3_executor.SCHEDULING_MINOR}", flush=True)
+    if ring and draft is not None:
+        # The Generator asserts equal cache sizes because it shares block tables; the ring gives the draft its own.
+        ring_tokens, draft_cache.max_num_tokens = draft_cache.max_num_tokens, target_cache.max_num_tokens
     generator = generator_class(target, target_cache, tokenizer, max_batch_size=batch,
                                 draft_model=draft, draft_cache=draft_cache,
                                 num_draft_tokens=depth or None,
                                 cpu_cache_size=0, recurrent_cache_size=args.recurrent_cache_gib * 1024**3,
                                 record_draft_stats=True)
+    if ring and draft is not None:
+        draft_cache.max_num_tokens = ring_tokens
+        install_draft_ring(generator, draft, ring)
     # What answers every request from here on, its epoch minted with the
     # Generator: the caches and Generator as built above, and the server's
     # settings (FIX 6567).
+    cache_settings = {"layer": "quant", "k_bits": 8, "v_bits": 8, "page_tokens": PAGE,
+                      "cache_tokens": cache_tokens, "max_batch_size": batch, "max_history": depth,
+                      "draft_cache": draft is not None, "cpu_cache_size": 0,
+                      "recurrent_cache_size": args.recurrent_cache_gib * 1024**3}
+    if ring and draft is not None:
+        # Only a ring names itself, so a server without one keeps the cache
+        # identity it had before the ring existed.
+        cache_settings["draft_ring_pages"] = ring
     identity = cache_usage.BackendIdentity(
         args.target_dir, template_source,
-        cache_settings={"layer": "quant", "k_bits": 8, "v_bits": 8, "page_tokens": PAGE,
-                        "cache_tokens": cache_tokens, "max_batch_size": batch, "max_history": depth,
-                        "draft_cache": draft is not None, "cpu_cache_size": 0,
-                        "recurrent_cache_size": args.recurrent_cache_gib * 1024**3},
+        cache_settings=cache_settings,
         server_settings={"context": args.context, "draft": draft is not None, "draft_tokens": depth,
                          "max_in_flight": batch},
         model_digest=model_digest, launch=launch,
@@ -1850,12 +1994,18 @@ def main():
                    help="each request's context, in tokens; a multiple of 256")
     p.add_argument("--cache-tokens", type=int, default=None,
                    help="the KV pool every request in flight shares, in tokens; a multiple of 256, at least "
-                        f"one full request (default: {DEFAULT_CACHE_TOKENS}, or that floor when it is larger: "
+                        f"one full request (default: {DEFAULT_CACHE_TOKENS} beside the draft KV ring, "
+                        f"{DEFAULT_CACHE_TOKENS_WITHOUT_RING} without one, or that floor when it is larger: "
                         "--context + 1 + the draft depth + 16, rounded up to 256)")
     p.add_argument("--max-in-flight", type=int, default=DEFAULT_IN_FLIGHT,
                    help=f"requests the scheduler runs at once, 1 to {MAX_IN_FLIGHT} (default {DEFAULT_IN_FLIGHT}); "
                         f"a request that sets {SOLO_FIELD} runs alone")
     p.add_argument("--recurrent-cache-gib", type=int, default=4)
+    p.add_argument("--draft-ring-pages", type=int, default=None,
+                   help="give the sliding-window DFlash draft a KV ring of this many pages per in-flight slot "
+                        f"instead of a full-pool copy (default {DEFAULT_DRAFT_RING_PAGES}; 0 turns it off: the draft "
+                        f"cache is then as large as the target's, and the pool defaults to "
+                        f"{DEFAULT_CACHE_TOKENS_WITHOUT_RING})")
     p.add_argument("--default-max-tokens", type=int, default=4096,
                    help="the reply cap when a request names none; a request with a reasoning budget "
                         "gets that budget on top, so its answer keeps this room")

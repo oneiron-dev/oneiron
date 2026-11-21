@@ -30,6 +30,8 @@ pub(crate) mod forward_version;
 mod kit;
 mod kit_piece;
 mod machine;
+mod owner_presence;
+pub(crate) mod owner_presence_reasons;
 mod owner_signing;
 mod owner_work;
 mod pad_custody;
@@ -86,6 +88,7 @@ pub use self::kit::{
 };
 pub use self::machine::{existing_machine_secret, machine_encryption_key, machine_secret};
 pub(crate) use self::machine::{keystore_error, slot_seed};
+pub use self::owner_presence::{OwnerActImportance, OwnerPresenceBasis, OwnerPresenceWitness};
 pub use self::owner_signing::OwnerRootSigner;
 pub(crate) use self::owner_signing::{OwnerSigningSlot, SlotRenewal};
 pub use self::owner_work::{

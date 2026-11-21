@@ -49,7 +49,7 @@ use oneiron::authority::{
     ActAuthority, ActSurface, AuthorityEntryHash, AuthorityKey, AuthorityLogEntry,
     CheckpointRootSigner, DeviceOwnerKeyVouch, HostSlipIssuer, MachineAnswerLanding,
     MachineOwnership, MachineRole, OWNER_KEY_VOUCH_LABEL_MAX, OwnerActKind, OwnerKeyVouchRequest,
-    ROLE_OWNER, authority_entry_hash, decode_authority_log_entry_body,
+    OwnerProofGround, ROLE_OWNER, authority_entry_hash, decode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::RecordError;
@@ -61,6 +61,7 @@ use oneiron::test_doors::owner_key_vouch_between::enrol_vouched_owner_signing_ke
 use oneiron::test_doors::owner_key_vouch_holding_machine::require_holding_machine_beside_anchor_chain;
 use oneiron::test_doors::passkey_vouch_limits::revoke_owner_key_signed_by;
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
+use oneiron::world_keys::OwnerActImportance;
 use oneiron::{EntityId, Error, HostingPrivacyPosture, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::{
     AuthBoundSecretStore, DeviceKeystore, KeystoreAssurance, KeystoreLocality, KeystoreSlot,
@@ -470,6 +471,11 @@ fn a_vouching_key_revoked_after_the_pick_refuses_its_signature_and_enrols_nothin
         "guard: the vouching key is live when the door picks it"
     );
 
+    let witness = owner
+        .vault
+        .owner_presence(OwnerActImportance::Ordinary, "a test signs a proof")
+        .expect("an ordinary witness for the test's proof");
+    let ground = OwnerProofGround::witnessed(&witness);
     let mut after_revoke = None;
     let refusal = enrol_vouched_owner_signing_key_between(
         &owner.vault,
@@ -482,7 +488,7 @@ fn a_vouching_key_revoked_after_the_pick_refuses_its_signature_and_enrols_nothin
                 vouching_key.clone(),
                 |transcript| {
                     signer
-                        .sign_owner_proof(&owner.vault, &picked_on, transcript)
+                        .sign_owner_proof(&owner.vault, &picked_on, &ground, transcript)
                         .expect("the key, live at the revoke's parents, signs its own revoke")
                 },
             )

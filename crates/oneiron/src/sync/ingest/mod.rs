@@ -8,7 +8,9 @@
 
 mod birth_watch;
 mod delivery;
+mod dropped_carriers;
 mod entity;
+mod member_sender;
 mod message_writer;
 mod order;
 mod own_device;
@@ -25,12 +27,17 @@ pub(in crate::sync) use self::delivery::{
     Delivery, delivered_rows, note_delivered_in_txn, payload_rows, with_delivery,
 };
 
+pub(crate) use self::dropped_carriers::forget_dropped_carriers_in_txn;
+pub(in crate::sync) use self::dropped_carriers::{
+    carrier_dropped_in_txn, drops_changed_carrier_in_txn,
+};
 #[cfg(test)]
 pub(in crate::sync) use self::entity::ingest_entity_in_savepoint;
 pub(in crate::sync) use self::entity::{
     EntityStep, IngestCtx, RefusalRetry, Residence, ingest_entity_in_txn, land_source_audience_in,
     waits_for_sibling_row,
 };
+pub(in crate::sync) use self::member_sender::{member_body_refused, with_member_sender};
 pub(in crate::sync) use self::message_writer::{
     MESSAGE_WRITER_MAP, admit_writer_proof_carrier, admit_writer_proof_map, copy_writer_proofs,
     forget_written_rows, forget_written_rows_in_txn, publish_writer_proof,

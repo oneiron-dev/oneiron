@@ -408,8 +408,8 @@ impl Vault {
                     &[origin_facet.as_bytes().as_slice()],
                     at,
                 ) {
-                    crate::provenance::birth::stamp_row_birth_in_txn(
-                        &self.store,
+                    crate::provenance::birth::stamp_birth_with_floor_in_txn(
+                        self,
                         txn,
                         &suggestion,
                         &birth,

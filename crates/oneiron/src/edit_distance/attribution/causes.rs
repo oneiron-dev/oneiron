@@ -10,7 +10,9 @@
 //! row reads back with the displacement named, so a label the re-judgment
 //! dropped stops standing as current. A withdrawal deletes no cause row —
 //! labels a judge once settled are history the fence retires, not an
-//! abstention. A settled cause row deletes a held all-unclear no-revision
+//! abstention. An erase deletes them: the Gate decision a receipt names takes
+//! its cause rows with its content (FIX [GATE-RECEIPT-ATTRIBUTION-ROWS-OUTLIVE-SKELETON]).
+//! A settled cause row deletes a held all-unclear no-revision
 //! row for the same receipt (FIX 11708); a settled no-revision row is
 //! history and stays.
 
@@ -26,6 +28,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::skill_attribution::displacing_revision_in_txn;
+use crate::store::Store;
 use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// Domain of a cause's source id: one id per receipt and judge-revision slot.
@@ -165,6 +168,63 @@ fn retire_held_unclear_no_revision_in_txn(
         }
     }
     Ok(())
+}
+
+/// Deletes every cause row settled for `receipt`, in each judge-revision
+/// slot, and the receipt's entries in the attempt index: the Gate decision
+/// the receipt names lost its content (FIX
+/// [GATE-RECEIPT-ATTRIBUTION-ROWS-OUTLIVE-SKELETON]). An erase is not a
+/// withdrawal: the labels go with the decision they judged. Keys only, so a
+/// row that does not decode goes too.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn forget_amendment_causes_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    receipt: &str,
+) -> Result<()> {
+    let digest = receipt_key(receipt);
+    let causes = AMENDMENT_CAUSE.scan_keys(store, &*wtxn, &digest)?;
+    if causes.is_empty() {
+        return Ok(());
+    }
+    for key in &causes {
+        AMENDMENT_CAUSE.delete(store, wtxn, key)?;
+    }
+    // The index is keyed by the attempt first: the receipt's entries are
+    // found by their second component.
+    for key in AMENDMENT_ATTEMPT.scan_keys(store, &*wtxn, &[])? {
+        if key.1 == digest {
+            AMENDMENT_ATTEMPT.delete(store, wtxn, &key)?;
+        }
+    }
+    Ok(())
+}
+
+/// The cause rows kept for `receipt` and its attempt index entries, counted
+/// by key, for a test that reads what an erase leaves.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn amendment_cause_rows_for_test(
+    vault: &Vault,
+    receipt: &str,
+) -> Result<(usize, usize)> {
+    let rtxn = vault.store.env.read_txn()?;
+    let digest = receipt_key(receipt);
+    let causes = AMENDMENT_CAUSE
+        .scan_keys(&vault.store, &rtxn, &digest)?
+        .len();
+    let attempts = AMENDMENT_ATTEMPT
+        .scan_keys(&vault.store, &rtxn, &[])?
+        .into_iter()
+        .filter(|key| key.1 == digest)
+        .count();
+    Ok((causes, attempts))
 }
 
 /// The cause rows settled on `actor`'s proposals that name `attempt`, the

@@ -219,6 +219,9 @@ impl Vault {
                 return Err(crate::authority::authority_refused(KIT_ONLY_NEEDS_KIT));
             }
         }
+        // The kit-only fact's owner proof is signed on the person's confirm,
+        // asked before the kit is drawn, while the door holds nothing.
+        let ground = self.recovery_preset_proof_ground(true)?;
         let held = self
             .held_vault_key()
             .ok_or_else(|| refused("the vault key is not held on this handle: unlock it first"))?;
@@ -283,6 +286,7 @@ impl Vault {
             // in this write (WAYBACK-BOX-HOLD-FROM-DEVICE-SWITCH = A).
             self.append_recovery_box_kit_only_fact_in_txn(
                 txn,
+                ground.as_ref(),
                 actor,
                 surface,
                 preset.is_nobody_but_me(),

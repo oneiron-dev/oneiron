@@ -16,10 +16,11 @@ use serde::{Deserialize, Serialize};
 
 use super::{CLOCK, CYCLE, POLICY};
 use crate::authority::{
-    ActAuthority, ActBy, ActSurface, GrantedAct, OwnerAct, OwnerActKind, PolicySetting,
-    PolicySettingAct,
+    ActAuthority, ActBy, ActSurface, GrantedAct, OwnerAct, OwnerActKind, OwnerProofGround,
+    PolicySetting, PolicySettingAct,
 };
 use crate::consent::AuthenticatedOwner;
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{EntityId, Error, Result, Vault};
 use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
@@ -269,10 +270,12 @@ impl FreeTimeAuthority<'_> {
 /// (`None` for a clear), in the write `txn` that made it (FIX 5660), after
 /// every write of its own, best effort: a digest or a revision that does not
 /// read is logged and the row stands. A surface the door did not name is this
-/// install's.
+/// install's. An agent's act is signed on its Grant's ground; the owner's on
+/// `ground`.
 fn record_act_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    ground: Option<&OwnerProofGround>,
     actor: &FreeTimeActor,
     agent: EntityId,
     prior: Option<&FreeTimePolicy>,
@@ -302,11 +305,22 @@ fn record_act_in_txn(
         seen,
         answer: None,
     };
+    // An agent's act rests on the Grant the write checked; the owner's
+    // on the presence the door asked.
+    let delegated;
+    let ground = match actor.by {
+        ActBy::Owner => ground,
+        ActBy::Agent { .. } => {
+            delegated = OwnerProofGround::delegated_setting_act();
+            Some(&delegated)
+        }
+    };
     vault.record_policy_setting_op_in_txn(
         txn,
+        ground,
         PolicySettingAct {
             act,
-            setting: PolicySetting::FreeTimePolicy,
+            setting: PolicySetting::FreeTimePolicy.wire().to_owned(),
             prior,
             value,
         },
@@ -351,7 +365,9 @@ impl Vault {
     /// revision `expected_revision` (0 when there is none yet). The owner is
     /// revalidated against this vault in the write; the agent must be an
     /// agent definition. A new policy opens no cycle at a boundary that came
-    /// before it: the next boundary is the first.
+    /// before it: the next boundary is the first. The door does not read the
+    /// value in force before its write, so it asks for every change it
+    /// cannot tell from its arguments to be a narrowing.
     ///
     /// # Errors
     /// An invalid input, a proof that does not hold here, an unknown agent,
@@ -383,6 +399,18 @@ impl Vault {
         input: FreeTimePolicyInput,
     ) -> Result<FreeTimePolicy> {
         input.validate()?;
+        // An agent's act rests on its Grant, checked again in the write; only
+        // the owner's asks.
+        let ground = match authority {
+            FreeTimeAuthority::Owner(_, _) => {
+                let witness = self.owner_presence(
+                    OwnerActImportance::Important,
+                    owner_presence_reasons::FREE_TIME_POLICY,
+                )?;
+                Some(OwnerProofGround::witnessed(&witness))
+            }
+            FreeTimeAuthority::Agent(_) => None,
+        };
         let policy = self.with_write_txn_grouped(|txn| {
             let actor = authority.actor_in_txn(self, txn)?;
             self.read_agent_definition_in_txn(txn, &agent)?;
@@ -418,7 +446,15 @@ impl Vault {
                 set_at,
             )?;
             POLICY.put(&self.store, txn, &agent, &record)?;
-            record_act_in_txn(self, txn, &actor, agent, prior.as_ref(), Some(&policy));
+            record_act_in_txn(
+                self,
+                txn,
+                ground.as_ref(),
+                &actor,
+                agent,
+                prior.as_ref(),
+                Some(&policy),
+            );
             Ok(policy)
         })?;
         // The home's timer arms on the policy's next boundary.
@@ -543,7 +579,9 @@ impl Vault {
     /// opens, and the agent goes back to its nightly dreaming. Calls already
     /// made settle normally. Clearing a policy that is not there, at
     /// revision 0, does nothing. The row that witnesses the clear keeps
-    /// `surface`, where the owner said so (FIX 5721): audit only.
+    /// `surface`, where the owner said so (FIX 5721): audit only. The door
+    /// does not read the value in force before its write, so it asks for
+    /// every change it cannot tell from its arguments to be a narrowing.
     ///
     /// # Errors
     /// A proof that does not hold here, [`Error::ConcurrentWrite`] for a
@@ -570,6 +608,18 @@ impl Vault {
         agent: EntityId,
         expected_revision: u64,
     ) -> Result<()> {
+        // An agent's act rests on its Grant, checked again in the write; only
+        // the owner's asks.
+        let ground = match authority {
+            FreeTimeAuthority::Owner(_, _) => {
+                let witness = self.owner_presence(
+                    OwnerActImportance::Important,
+                    owner_presence_reasons::FREE_TIME_POLICY,
+                )?;
+                Some(OwnerProofGround::witnessed(&witness))
+            }
+            FreeTimeAuthority::Agent(_) => None,
+        };
         let cleared = self.with_write_txn_grouped(|txn| {
             let actor = authority.actor_in_txn(self, txn)?;
             let record = match current_revision_in_txn(self, txn, agent, expected_revision)? {
@@ -588,7 +638,15 @@ impl Vault {
             // The clock goes with the policy: a later policy starts at its
             // own first boundary, and until then the agent dreams nightly.
             CLOCK.delete(&self.store, txn, &agent)?;
-            record_act_in_txn(self, txn, &actor, agent, prior.as_ref(), None);
+            record_act_in_txn(
+                self,
+                txn,
+                ground.as_ref(),
+                &actor,
+                agent,
+                prior.as_ref(),
+                None,
+            );
             Ok(true)
         })?;
         if cleared {

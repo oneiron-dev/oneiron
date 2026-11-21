@@ -604,7 +604,7 @@ pub(super) fn no_device_pin_here() -> Error {
 }
 
 /// The gate's refusal of a typed PIN, as this crate's error.
-fn presence_refused(refusal: PresenceError) -> Error {
+pub(super) fn presence_refused(refusal: PresenceError) -> Error {
     pin_refused(match refusal {
         PresenceError::PinRequired => DevicePinRefusal::Required,
         PresenceError::WrongPin => DevicePinRefusal::Wrong,

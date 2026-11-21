@@ -33,7 +33,10 @@ impl SyncClient {
         // lands here again (FIX 14534): its frames read as nothing, but for
         // the home's version vector, which carries no content and tells the
         // eviction what the home holds of the window. Nothing is answered.
-        if let Some(world) = key.world()
+        // A member lane takes the home's catalogue, never this machine's owner
+        // placement choices (MEMBER-SYNC-CATALOGUE = A).
+        if !self.config.member_lane
+            && let Some(world) = key.world()
             && crate::sync::residence::world_placed_elsewhere(&self.vault, world)
                 .map_err(|error| TransportError::Storage(error.to_string()))?
         {
@@ -141,6 +144,27 @@ impl SyncClient {
                         .window_vv_for_initial_sync(&key)
                         .map_err(|e| TransportError::Storage(e.to_string()))?;
                     self.schedule_world_pad_repair(&key);
+                    return Ok(vec![
+                        transport::encode_window_sync(window_key, window_sub_tags::VV_REQUEST, &vv)
+                            .into_own_frame()?,
+                    ]);
+                }
+                // A member lane asks for a promoted window's vector once the
+                // home granted it on this socket: its reconnect asked for none
+                // (review round 1 of #8364).
+                if sub_tag == window_sub_tags::PROMOTION_GRANTED
+                    && promoted
+                    && self.config.member_lane
+                {
+                    if !self.home_may_request(&key) {
+                        return Ok(Vec::new());
+                    }
+                    let vv = self
+                        .window_vv_for_initial_sync(&key)
+                        .map_err(|e| TransportError::Storage(e.to_string()))?;
+                    if key.world().is_some() {
+                        self.schedule_world_pad_repair(&key);
+                    }
                     return Ok(vec![
                         transport::encode_window_sync(window_key, window_sub_tags::VV_REQUEST, &vv)
                             .into_own_frame()?,
@@ -373,6 +397,15 @@ impl SyncClient {
                     return Ok(Vec::new());
                 }
                 let window = self.ensure_window(window_key)?;
+                // A member lane sends no update the home's vector already
+                // covers: the home judges even an empty one as a write, and
+                // closes the socket of a member whose grant reads only
+                // (review round 2 of #8364). A real edit still goes, under
+                // the home's write gate.
+                if self.config.member_lane && server_vv.includes_vv(&window.doc.oplog_vv()) {
+                    self.note_home_window_vv(window_key, server_vv)?;
+                    return Ok(Vec::new());
+                }
                 let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
                     return Ok(vec![replacement_request(window_key)?]);
                 };
@@ -687,6 +720,19 @@ impl SyncClient {
                 payload,
                 || self.land_window_update(window, &key, payload),
             )?;
+            // ROOM-BODY-REPLICA-SETTINGS: the writer refused a room body this member
+            // update brought (its sender lost the power after admission). The refused
+            // carrier stays in the live document, and a cold replay would land it with
+            // no sender to judge. So the update is refused whole, before anything
+            // persists or sends it on: the document is dropped and the next open reads
+            // the durable state, which holds the room as it was. The retained work stays
+            // pending, and its replay meets admission again.
+            if crate::sync::ingest::member_body_refused(&self.vault) {
+                self.manager.discard_window(&key);
+                return Err(TransportError::InvalidPayload(
+                    "a federation peer cannot change a room setting it holds no power over",
+                ));
+            }
             if let Some(positions) = positions.as_ref()
                 && let Err(error) = positions.finish(&self.vault, &window.doc)
             {

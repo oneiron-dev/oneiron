@@ -258,6 +258,15 @@ fn append_at_in_txn(
     )? {
         return Err(invalid("erased person cannot append to this room"));
     }
+    // L7-05: a work-talk conversation admits its two bound writers only, on
+    // this door as on the witness door, for a TURN and for a MESSAGE of a
+    // TURN alike; a third writer is refused here, before either lands.
+    let _work_talk = crate::workspace_roster::admit_work_talk_witness(
+        vault,
+        txn,
+        input.conversation,
+        input.actor.entity_ref(),
+    )?;
     // FIX 9771: a MESSAGE joins its TURN, never HEAD or the canonical line.
     if input.kind == ENTITY_TYPE_MESSAGE {
         return messages::append_message_in_txn(

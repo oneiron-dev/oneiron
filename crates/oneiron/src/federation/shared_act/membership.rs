@@ -28,6 +28,7 @@ use super::{
 };
 use crate::authority::{
     CapabilitySlip, HostSlipIssuer, MembershipExecutionCause, OwnerHandover, OwnerHandoverCause,
+    OwnerProofGround,
 };
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::check_in::{ActClass, CheckInScope, DoorAct, DoorCheckIn, RolePreset};
@@ -40,6 +41,7 @@ use crate::federation::{
     ScopeAxis, SharedVaultWrite, decode_federation_grant_body, encode_federation_grant_body,
 };
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
 use std::collections::BTreeSet;
@@ -503,11 +505,13 @@ impl Vault {
     /// Owner held (FIX 3294) and, with `slips`, its slips and, when its
     /// Owner standing ends or it leaves, the owner keys and `human` bindings
     /// that name it (OWNER-ENROL); without `slips` such a move is refused
-    /// while any of those is live (REVIEW-7931).
+    /// while any of those is live (REVIEW-7931). A move that ends owner keys
+    /// signs their revocation on `ground`.
     #[allow(clippy::too_many_arguments)]
     fn move_member_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: &OwnerProofGround,
         vault_id: u64,
         member: EntityId,
         from: Role,
@@ -554,7 +558,7 @@ impl Vault {
         // (REVIEW-7931).
         if to.is_none() || (from == Role::Owner && to != Some(Role::Owner)) {
             match slips {
-                Some(issuer) => self.revoke_owner_authority_in_txn(txn, issuer, member)?,
+                Some(issuer) => self.revoke_owner_authority_in_txn(txn, ground, issuer, member)?,
                 None => self.refuse_unrevoked_owner_authority_in_txn(txn, member)?,
             }
         }
@@ -612,11 +616,13 @@ impl Vault {
 
     /// The handover both Owner acts apply, revalidated at execution: `loser`
     /// stops being an Owner and keeps `keeps` (or leaves), `gainer` becomes
-    /// one, and at least one live Owner remains.
+    /// one, and at least one live Owner remains. The loser's owner keys end
+    /// on `ground`.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn hand_over_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: &OwnerProofGround,
         vault_id: u64,
         owners: &BTreeSet<EntityId>,
         loser: EntityId,
@@ -634,6 +640,7 @@ impl Vault {
         }
         let mut moved = self.move_member_in_txn(
             txn,
+            ground,
             vault_id,
             loser,
             Role::Owner,
@@ -653,27 +660,43 @@ impl Vault {
     /// reads its own snapshot, and only once `executor` and the starter
     /// stand as live Owners holding the act's verb and its window has
     /// passed, so a refused caller builds nothing (FIX 3217); the writer
-    /// checks them again.
+    /// checks them again. It answers the act's kind beside the export, `None`
+    /// when the act is unknown, already executed or of no known kind, so the
+    /// execution asks only for an ownership move. An ownership move with no
+    /// export reads its executor's standing here too, as its writer reads it
+    /// first: a person who cannot run the act never raises the confirm.
     pub(super) fn removal_export(
         &self,
         executor: &AuthenticatedOwner,
         act_id: &str,
-    ) -> Result<Option<(EntityId, Vec<ScopedRecord>)>> {
+    ) -> Result<(Option<SharedActKind>, Option<(EntityId, Vec<ScopedRecord>)>)> {
         let (target, mut reads) = {
             let txn = self.store.env.read_txn()?;
             let actor = executor.revalidate_person_in_txn(self, &txn)?;
             let Some(act) = self.pending_authority_act_in_txn(&txn, act_id)? else {
-                return Ok(None);
+                return Ok((None, None));
             };
-            if act.execution.is_some()
-                || SharedActKind::parse(&act.act) != Some(SharedActKind::RemoveOwner)
-            {
-                return Ok(None);
+            if act.execution.is_some() {
+                return Ok((None, None));
+            }
+            let kind = SharedActKind::parse(&act.act);
+            if kind == Some(SharedActKind::TransferOwnership) {
+                super::actor_erase::refuse_an_erased_member_act(&act)?;
+                super::check_vault(self, &txn, act.vault_id)?;
+                let now = self.store.clock.now_recorded_at();
+                self.act_executors_in_txn(&txn, &act, actor, now)?;
+                return Ok((kind, None));
+            }
+            if kind != Some(SharedActKind::RemoveOwner) {
+                return Ok((kind, None));
             }
             super::actor_erase::refuse_an_erased_member_act(&act)?;
             let plan: RemoveOwnerPlan = decode(&act.payload)?;
             if !plan.export_first {
-                return Ok(None);
+                super::check_vault(self, &txn, act.vault_id)?;
+                let now = self.store.clock.now_recorded_at();
+                self.act_executors_in_txn(&txn, &act, actor, now)?;
+                return Ok((Some(SharedActKind::RemoveOwner), None));
             }
             super::check_vault(self, &txn, act.vault_id)?;
             let now = self.store.clock.now_recorded_at();
@@ -694,7 +717,7 @@ impl Vault {
         };
         reads.verbs = ScopeAxis::All;
         let records = self.export_records_in_scope(&Scope::top(), &reads, &Scope::top())?;
-        Ok(Some((target, records)))
+        Ok((Some(SharedActKind::RemoveOwner), Some((target, records))))
     }
 
     /// One no-wait membership change: authorize `actor` (by `power`, or as
@@ -796,10 +819,16 @@ impl Vault {
             None => live_owners(&holders, None),
         };
         let id = self.store.clock.entity_id()?.to_hex();
+        let owner_authored = self.membership_owner_write_in_txn(&txn, actor);
         let (effect, unsigned) = apply(&mut txn, actor_id, now, &id)?;
         let record = match unsigned {
             Some(unsigned) => self.file_membership_execution_in_txn(
-                &mut txn, vault_id, &id, actor_id, now, unsigned,
+                &mut txn,
+                vault_id,
+                &id,
+                (actor_id, owner_authored.as_ref()),
+                now,
+                unsigned,
             )?,
             None => ChangeRecord::Unnamed,
         };
@@ -976,6 +1005,11 @@ impl Vault {
         ask: Option<&str>,
         check_in_ref: Option<EntityId>,
     ) -> Result<SharedActExecutionReceipt> {
+        let witness = self.owner_presence(
+            OwnerActImportance::Ordinary,
+            owner_presence_reasons::CHANGE_SHARED_MEMBER_ROLE,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let own_issuer = self.membership_issuer(slips);
         self.move_shared_member_for_ask(
             admin,
@@ -1005,6 +1039,7 @@ impl Vault {
                     ..
                 } = self.move_member_in_txn(
                     txn,
+                    &ground,
                     vault_id,
                     member,
                     from,
@@ -1070,6 +1105,11 @@ impl Vault {
         ask: Option<&str>,
         check_in_ref: Option<EntityId>,
     ) -> Result<SharedActExecutionReceipt> {
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::REMOVE_SHARED_MEMBER,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let own_issuer = self.membership_issuer(slips);
         self.move_shared_member_for_ask(
             admin,
@@ -1095,8 +1135,9 @@ impl Vault {
                     detach,
                     unsigned_withdrawals,
                     ..
-                } = self
-                    .move_member_in_txn(txn, vault_id, member, from, None, slips, receipt, now)?;
+                } = self.move_member_in_txn(
+                    txn, &ground, vault_id, member, from, None, slips, receipt, now,
+                )?;
                 let effect = Effect {
                     change: SharedVaultChange::MemberRemoved {
                         member: member.to_hex(),
@@ -1155,8 +1196,10 @@ impl Vault {
         let mut grants =
             self.set_member_role_in_txn(&mut txn, vault_id, claimant, Role::Owner, now)?;
         self.restore_embedded_owner_binding_in_txn(&mut txn, Some(issuer), claimant)?;
+        let ground = OwnerProofGround::operator_recovery();
         let mut moved = self.move_member_in_txn(
             &mut txn,
+            &ground,
             vault_id,
             from,
             Role::Owner,
@@ -1227,6 +1270,11 @@ impl Vault {
         vault_id: u64,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecutionReceipt> {
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::LEAVE_SHARED_VAULT,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let own_issuer = self.membership_issuer(slips);
         self.move_shared_member(member, vault_id, None, |txn, actor, now, receipt| {
             let from = self
@@ -1243,7 +1291,9 @@ impl Vault {
                 detach,
                 unsigned_withdrawals,
                 ..
-            } = self.move_member_in_txn(txn, vault_id, actor, from, None, slips, receipt, now)?;
+            } = self.move_member_in_txn(
+                txn, &ground, vault_id, actor, from, None, slips, receipt, now,
+            )?;
             let effect = Effect {
                 change: SharedVaultChange::MemberLeft {
                     member: actor.to_hex(),

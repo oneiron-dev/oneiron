@@ -23,6 +23,7 @@ use super::world_key_support::{next_sequence, unsigned_side_entry};
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{EntityId, TimeRange, Vault};
 
 /// The proof was carried by a transport credential or a host action: the
@@ -149,6 +150,11 @@ impl Vault {
         if request.restored_from.is_none() {
             return Err(authority_refused(NOT_RESTORED));
         }
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::JOIN_RESTORED_INSTALL,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let mut txn = self.store.env.write_txn()?;
         self.instant_in_write_txn(&mut txn)?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
@@ -161,7 +167,7 @@ impl Vault {
             };
         }
         let proof = self
-            .owner_proof_signer(&fold)
+            .owner_proof_signer(&fold, &ground)
             .ok_or_else(|| authority_refused(NO_OWNER_KEY))?;
         // Only holds under a scope this install counts, the roster's and its
         // pinned anchor's: an unpinned anchor's mark refuses nothing here
@@ -237,7 +243,7 @@ impl Vault {
         let stands = crate::identity::read_machine_id_in_txn(self, &txn)?
             .is_some_and(|machine| fold.machine(machine).is_some());
         if !stands {
-            if self.owner_proof_signer(&fold).is_none() {
+            if !self.holds_proving_owner_key(&fold) {
                 return Err(authority_refused(NO_OWNER_KEY));
             }
             super::slip_vault::require_host(&fold, issuer)

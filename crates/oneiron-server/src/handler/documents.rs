@@ -1,7 +1,5 @@
 //! Per-entity selector admission and scope-filtered document delivery on the sync socket.
-use super::{
-    app_tier::require_bound_app_auth, conn_state::ConnState, window_sync::selector_grant_scope,
-};
+use super::{app_tier::require_bound_app_auth, conn_state::ConnState};
 use crate::auth::CoreScope;
 use crate::{protocol::ProtocolError, server::SyncServer};
 use oneiron::EntityId;
@@ -124,6 +122,15 @@ fn handle_document_inner(
             max: server.config.max_update_payload,
         });
     }
+    // A member lane holds no owner document lane (MEMBER-SYNC D4): no
+    // artifact publication, and no owner REQUEST, so no owner NOTE, fork or
+    // upload under one; it subscribes each document by its own selector.
+    if state.selector_lane.member().is_some()
+        && (kind == document_sub_tags::ARTIFACT_PUBLICATION
+            || (kind == document_sub_tags::REQUEST && payload.get(..4) == Some(&[0; 4])))
+    {
+        return Err(ProtocolError::InvalidPayload("not served on a member lane"));
+    }
     if kind == document_sub_tags::ARTIFACT_PUBLICATION {
         return artifact_publication(server, state, entity, payload, direct);
     }
@@ -135,10 +142,12 @@ fn handle_document_inner(
     if state.owner_documents.contains_key(&entity) {
         return owner_document(server, conn_id, state, entity, kind, payload, direct);
     }
-    if kind == document_sub_tags::UPDATE {
-        require_bound_app_auth(server, state)?
-            .require(CoreScope::Write)
-            .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+    if kind == document_sub_tags::UPDATE
+        && !state
+            .selector_lane
+            .admits_write(require_bound_app_auth(server, state)?)
+    {
+        return Err(ProtocolError::RpcNoPrincipal);
     }
     if let Some(request) = state.documents.get(&entity)
         && request.selector.member_ref != principal
@@ -156,6 +165,12 @@ fn handle_document_inner(
             if request.selector.member_ref != principal {
                 return Err(ProtocolError::InvalidPayload("selector principal mismatch"));
             }
+            // A member lane subscribes only under its own grant (MEMBER-SYNC
+            // D3); every later use of this stored selector reads its scope.
+            let scope = state
+                .selector_lane
+                .scope_for(&request.selector)
+                .map_err(super::window_sync::map_selector_filter_err)?;
             if is_note(server, entity)? {
                 require_note_auth(server, state, &request.selector, false)?;
             }
@@ -164,7 +179,7 @@ fn handle_document_inner(
             let frame = crate::server::blocking(|| {
                 server.reassert_manager.export_document_for_peer(
                     entity,
-                    selector_grant_scope(),
+                    scope,
                     &request.selector,
                     &request.remote_vv,
                     peer,
@@ -212,7 +227,7 @@ fn handle_document_inner(
                 .memory(actor, class)
                 .admit_note_operation(
                     entity,
-                    selector_grant_scope(),
+                    state.selector_lane.grant_scope(),
                     &request.selector,
                     |txn| {
                         auth.credential_is_live_in_write_txn(&server.vault, txn)
@@ -275,7 +290,7 @@ fn handle_document_inner(
             let held = match source {
                 Some(_) => document.import_copy_from_peer(
                     payload,
-                    selector_grant_scope(),
+                    state.selector_lane.grant_scope(),
                     &request.selector,
                     peer,
                     |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
@@ -284,7 +299,7 @@ fn handle_document_inner(
                     .import_from_peer(
                         kind,
                         payload,
-                        selector_grant_scope(),
+                        state.selector_lane.grant_scope(),
                         &request.selector,
                         peer,
                         |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
@@ -724,7 +739,7 @@ pub(super) fn document_delivery_retrying(
             let exported = crate::server::blocking(|| {
                 server.reassert_manager.export_document_for_peer(
                     doc.entity,
-                    selector_grant_scope(),
+                    state.selector_lane.grant_scope(),
                     &request.selector,
                     &request.remote_vv,
                     peer,
@@ -904,10 +919,13 @@ fn document_principal(server: &SyncServer, state: &ConnState) -> Result<EntityId
     let auth = require_bound_app_auth(server, state)?;
     // A selector export serves its grant's rows, not the credential's lane,
     // so a credential limited to facets is refused here (owner ruling
-    // FACET-READ), as the raw HTTP doors refuse it.
+    // FACET-READ), as the raw HTTP doors refuse it; a member lane's
+    // whole-grant credential holds those rows (MEMBER-SYNC review F2).
     auth.require(CoreScope::Read)
-        .and_then(|()| auth.require_unnarrowed_facets())
         .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+    if !state.selector_lane.admits_export_facets(auth) {
+        return Err(ProtocolError::RpcNoPrincipal);
+    }
     EntityId::from_hex(
         auth.require_registered_principal()
             .map_err(|_| ProtocolError::RpcNoPrincipal)?,
@@ -1005,9 +1023,8 @@ fn require_note_auth<'a>(
     let auth = super::app_tier::require_bound_app_auth(server, state)?;
     auth.require(crate::auth::CoreScope::Read)
         .map_err(|_| ProtocolError::RpcNoPrincipal)?;
-    if write {
-        auth.require(crate::auth::CoreScope::Write)
-            .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+    if write && !state.selector_lane.admits_write(auth) {
+        return Err(ProtocolError::RpcNoPrincipal);
     }
     let actor = auth
         .require_registered_principal()

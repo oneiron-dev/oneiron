@@ -46,6 +46,11 @@ const UNATTESTED: &[(&str, &str, Unattested)] = &[
     ("GET", "/.well-known/oauth-protected-resource", PublicProof),
     (
         "GET",
+        "/.well-known/oauth-protected-resource/git",
+        PublicProof,
+    ),
+    (
+        "GET",
         "/.well-known/oauth-protected-resource/mcp",
         PublicProof,
     ),

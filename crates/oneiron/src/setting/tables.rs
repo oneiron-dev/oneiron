@@ -31,4 +31,26 @@ crate::side_table::side_tables! {
     /// out again under a feed cursor. Key: ().
     SETTING_CHANGE_NEXT: VaultMeta b"setting:change_next:v1" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// One head row per pack of the default layer: the digest of the defaults the pack door last
+    /// weighed, the keys the vault accepted from the pack, and the loose defaults that wait on a
+    /// holder's yes (DESIGN 1.5 "Packs: a default that changes"). Key: the pack's name.
+    SETTING_PACK_HEAD: VaultMeta b"setting:pack_head:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// One row per setting row the signed acts name, once the projection wrote it from them
+    /// (stage 7a-2, DESIGN 1.6 "The fold and the projection"): the row's key, the act
+    /// revision it was projected from, and how its acts stand. A pass that finds the same
+    /// revision writes nothing. Key: the row's act target (16 bytes).
+    SETTING_PROJECTION: VaultMeta b"setting:projection:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// One row per row beside a setting act that a target's last projection read (stage 7c-1):
+    /// the target. A put of a row named here notes the projection pass whatever its body, so a
+    /// row that does not hold its act's value is read at once. Key: the beside row's id (16
+    /// bytes).
+    SETTING_BESIDE_WATCH: VaultMeta b"setting:beside_watch:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// When the publish pass signed the owner's rows that no act backed as batch acts (stage
+    /// 7a-3, DESIGN 1.6 "a vault with no authority root"), in recorded seconds; absent until it
+    /// ran, so it runs once per vault. Key: ().
+    SETTING_PUBLISHED: VaultMeta b"setting:published:v1" Named
+        [restore: live] [family: unclassified] [tier: canonical];
 }

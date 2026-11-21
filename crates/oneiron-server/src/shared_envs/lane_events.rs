@@ -5,9 +5,10 @@ use std::sync::{Arc, Weak};
 
 use super::{SharedEnvInner, SharedEnvKey, SharedEnvRegistry};
 
-/// One env's 401 upgrades: how many the lane saw, and how many a clean leave
-/// check covers. A clean answer covers only the refusals counted before its
-/// round read them, so one that lands while a check is in flight stays owed.
+/// One env's refused upgrades, 401 and 403 (MEMBER-SELECTOR-SOCKET): how many
+/// the lane saw, and how many a clean leave check covers. A clean answer
+/// covers only the refusals counted before its round read them, so one that
+/// lands while a check is in flight stays owed.
 #[derive(Clone, Copy, Default)]
 pub(super) struct RefusedUpgrades {
     seen: u64,
@@ -83,6 +84,20 @@ pub(super) fn lane_observer(mark: LaneMark) -> impl FnMut(oneiron::sync::SyncEve
             tracing::info!(
                 vault_id = vault_id,
                 "shared env lane's credential refused; its leave check runs next round"
+            );
+            mark.owe_leave_check();
+        }
+        // The home refuses this credential the lane's socket: the lane does
+        // not redial on it (MEMBER-SELECTOR-SOCKET), and only the signed
+        // check decides whether the membership ended. A named reason (a
+        // world-bounded pact, MEMBER-SYNC-WORLD-PACT = C) is logged with it;
+        // the park and the owed leave check stay as they are.
+        oneiron::sync::SyncEvent::UpgradeForbidden { reason } => {
+            tracing::warn!(
+                vault_id = vault_id,
+                ?reason,
+                "shared env lane's socket refused (403); it does not redial on this credential, \
+                 and its leave check runs next round"
             );
             mark.owe_leave_check();
         }

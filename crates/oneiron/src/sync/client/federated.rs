@@ -232,6 +232,7 @@ impl SyncClient {
             role,
             sender,
             delivery.as_ref(),
+            peer.grant(),
         ) {
             Ok(admitted) => admitted,
             Err(error) => {
@@ -650,8 +651,10 @@ impl SyncClient {
         // FIX 3656: each row's carried birth placement lands with its row.
         let born = watch_births(&vault, part.births(), || {
             with_delivery(delivery, || {
-                with_placements(&vault, key, part.placements(), || {
-                    self.import_accepted_window_update(window_key, &window, part.bytes())
+                crate::sync::ingest::with_member_sender(&vault, part.first_party_sender(), || {
+                    with_placements(&vault, key, part.placements(), || {
+                        self.import_accepted_window_update(window_key, &window, part.bytes())
+                    })
                 })
             })
         })?;

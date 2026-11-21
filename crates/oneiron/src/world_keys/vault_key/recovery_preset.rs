@@ -482,6 +482,10 @@ impl Vault {
                 return Err(crate::authority::authority_refused(KIT_ONLY_NEEDS_KIT));
             }
         }
+        // The kit-only fact's owner proof is signed on the person's confirm,
+        // asked before anything is drawn or written, while the door holds
+        // nothing: the prompt can block.
+        let ground = self.recovery_preset_proof_ground(preset.is_nobody_but_me())?;
         let issue = match preset {
             RecoveryPreset::NobodyButMeAnyTwo => return Err(refused(ANY_TWO_NEEDS_KIT)),
             RecoveryPreset::NobodyButMe if current != preset => {
@@ -599,6 +603,7 @@ impl Vault {
             // in this write (WAYBACK-BOX-HOLD-FROM-DEVICE-SWITCH = A).
             self.append_recovery_box_kit_only_fact_in_txn(
                 txn,
+                ground.as_ref(),
                 actor,
                 surface,
                 preset.is_nobody_but_me(),

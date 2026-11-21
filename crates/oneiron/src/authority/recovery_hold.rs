@@ -507,13 +507,20 @@ enum AnswerKey {
 
 impl AnswerKey {
     /// The key's owner proof over an answer's transcript on `vault`, with
-    /// the roster read from `fold`, the fold the entry is signed on: the key
+    /// the roster read from `fold`, the fold the entry is signed on, on
+    /// `ground`, the person's confirm the answer door asked for: the key
     /// refuses where its owner proof refuses (a key off the live roster; a
     /// slot key under a device PIN or out of its slot).
-    fn sign(&self, vault: &Vault, fold: &AuthorityFold, transcript: &[u8]) -> Result<Vec<u8>> {
+    fn sign(
+        &self,
+        vault: &Vault,
+        fold: &AuthorityFold,
+        ground: &OwnerProofGround,
+        transcript: &[u8],
+    ) -> Result<Vec<u8>> {
         match self {
-            Self::Held(signer) => signer.sign_owner_proof(vault, fold, transcript),
-            Self::Slot(signer) => signer.sign_owner_proof(vault, fold, transcript),
+            Self::Held(signer) => signer.sign_owner_proof(vault, fold, ground, transcript),
+            Self::Slot(signer) => signer.sign_owner_proof(vault, fold, ground, transcript),
         }
     }
 }

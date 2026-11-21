@@ -276,3 +276,59 @@ pub(super) fn hold_at_owner_reserve(
         }
     }
 }
+
+/// The reserve's part of [`authority_door`]'s verdict on a row not stored
+/// yet that a vouched key signed: the log with `entry` in it passes the
+/// reserve's start and `entry` is not the owner's work ([`owner_work`]).
+/// Records the hold the reserve's typed check names.
+pub(super) fn held_at_owner_reserve(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    view: &AuthorityDoorView,
+    entry: &AuthorityLogEntry,
+    fold: &DoorFold<'_>,
+) -> crate::error::Result<bool> {
+    let hash = authority_entry_hash(entry)?;
+    let with_entry = view.projection.bytes_with(&hash, &entry.parent_hashes);
+    if with_entry <= owner_reserve_start(store, txn)?
+        || owner_work(store, txn, &view.structure, fold, &hash, entry)?
+    {
+        return Ok(false);
+    }
+    hold_at_owner_reserve(
+        store,
+        &view.projection,
+        OwnerReserveHold {
+            entry: hash,
+            work: false,
+            projected: with_entry,
+        },
+    );
+    Ok(true)
+}
+
+/// Whether the store door holds `entry` on `txn` at the owner's reserve,
+/// for that alone: never a row already stored, one no key that may vouch
+/// signed, a stranger's row past the shared bound or a handoff no slip
+/// issuer signed ([`authority_door`]). The owner's history import keeps
+/// such a row as evidence and lands the rest (FIX
+/// [OWNER-RESERVE-IMPORT-PARTIAL]).
+pub(crate) fn held_at_owner_reserve_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entry: &AuthorityLogEntry,
+    fold: DoorFold<'_>,
+) -> crate::error::Result<bool> {
+    #[cfg(any(test, oneiron_test_support))]
+    if DOOR_OPEN_FOR_TEST.with(std::cell::Cell::get) {
+        return Ok(false);
+    }
+    if authority_row_resident(store, txn, entry)? {
+        return Ok(false);
+    }
+    let view = door_view(store, txn)?;
+    if !view.structure.vouches_for(entry) || verify_entry_signatures(entry).is_err() {
+        return Ok(false);
+    }
+    held_at_owner_reserve(store, txn, &view, entry, &fold)
+}

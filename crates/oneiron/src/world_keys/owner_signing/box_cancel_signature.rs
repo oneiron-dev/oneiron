@@ -11,10 +11,14 @@ impl OwnerRootSigner {
     /// of the release pending at the recovery box. It builds the transcript
     /// itself, so it signs nothing outside that domain. Refused wherever an
     /// owner act's proof is ([`Self::refusal`], the roster read from `fold`).
+    /// The caller hands the ground the proof is signed on, as for every
+    /// owner proof ([`CheckpointRootSigner::sign_owner_proof`]); the signer
+    /// does not read it.
     pub(crate) fn sign_recovery_box_cancel(
         &self,
         vault: &Vault,
         fold: &AuthorityFold,
+        _ground: &OwnerProofGround,
         proof: &RecoveryBoxCancelProof,
         vault_id: &AuthorityVaultId,
     ) -> Result<Vec<u8>> {
