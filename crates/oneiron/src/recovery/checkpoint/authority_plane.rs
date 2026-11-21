@@ -446,13 +446,17 @@ struct LiveRows {
 /// digest could confirm an erased author; kept, so a carrier this vault
 /// wrote still reads as its own, once the restore holds that carrier. So is
 /// the record of which machine wrote a MESSAGE row (FIX 12113): the reverse
-/// scan vouches for a row only while it names the row's exact bytes.
+/// scan vouches for a row only while it names the row's exact bytes. And
+/// each TASK authority fact's written-here mark (pass 28 R5): the task fold
+/// counts a fact this install wrote only while the mark names its exact
+/// bytes.
 fn carried_from_live(database: &str, key: &[u8]) -> bool {
     database == "sync_state"
         && [
             crate::side_table::IDENTITY_TOPOLOGY_PROPOSER_SCOPE.prefix,
             crate::side_table::IDENTITY_TOPOLOGY_AUTHORED_HERE.prefix,
             crate::side_table::SYNC_MESSAGE_WRITER.prefix,
+            crate::side_table::TASK_FACT_WRITTEN_HERE.prefix,
         ]
         .iter()
         .any(|prefix| key.starts_with(prefix))
