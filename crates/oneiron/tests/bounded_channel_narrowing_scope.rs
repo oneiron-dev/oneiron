@@ -21,7 +21,9 @@
 //! The temporal window's reader asks the tier and the stale worlds too
 //! (REVIEW-10311 round 2): claims of the other tier or of a stale world that
 //! fill the widened bound nearer the anchor stop no round of the adaptive
-//! window, so it still grows to the eligible claim behind them.
+//! window, so it still grows to the eligible claim behind them. Nor does a
+//! claim whose stored body does not decode fail that reader: it is out of
+//! the scope, as the claim status gate keeps it out of every other read.
 //!
 //! Run with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron --all-features --test bounded_channel_narrowing_scope` (the
@@ -44,6 +46,7 @@ use oneiron::query_expansion::{
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::RetrievalRunRecord;
 use oneiron::temporal::TemporalAnchorMode;
+use oneiron::test_doors::claim_body_damage::damage_stored_claim_body;
 use oneiron::test_doors::disclosure_word_sources::{
     clamp_admits_with_contact, mark_tier_a, seed_cleared_contact,
 };
@@ -278,14 +281,22 @@ impl Fixture {
 
     /// A temporal run at [`ANCHOR`] in `tier`, with no recency blend.
     fn temporal(&self, tier: Option<bool>) -> Run {
-        self.recorded(in_tier(
-            self.vault
-                .query()
-                .with_temporal_now(NOW)
-                .search_temporal(ANCHOR, ANCHOR, 1)
-                .boost_recency(0.0),
-            tier,
-        ))
+        self.try_temporal(tier).expect("query")
+    }
+
+    /// As [`Self::temporal`], handing back the run's error as its text.
+    fn try_temporal(&self, tier: Option<bool>) -> Result<Run, String> {
+        self.try_recorded_at_limit(
+            in_tier(
+                self.vault
+                    .query()
+                    .with_temporal_now(NOW)
+                    .search_temporal(ANCHOR, ANCHOR, 1)
+                    .boost_recency(0.0),
+                tier,
+            ),
+            10,
+        )
     }
 
     /// An adaptive temporal run in `tier` at [`ANCHOR`], with a 10-day
@@ -320,11 +331,19 @@ impl Fixture {
     }
 
     fn recorded_at_limit(&self, query: PipelineBuilder<'_>, limit: usize) -> Run {
+        self.try_recorded_at_limit(query, limit).expect("query")
+    }
+
+    fn try_recorded_at_limit(
+        &self,
+        query: PipelineBuilder<'_>,
+        limit: usize,
+    ) -> Result<Run, String> {
         let run = query
             .limit(limit)
             .capture_retrieval_trace(true)
             .run_with_telemetry()
-            .expect("query");
+            .map_err(|error| error.to_string())?;
         let run_id = run
             .run_id
             .expect("FIXTURE: a captured run names its record");
@@ -333,11 +352,11 @@ impl Fixture {
             .retrieval_run(run_id)
             .expect("read the run record")
             .expect("FIXTURE: the run record is readable");
-        Run {
+        Ok(Run {
             ids: run.value.into_iter().map(|row| row.id).collect(),
             total_in_scope: record.total_in_scope,
             empty_reason: record.empty_reason,
-        }
+        })
     }
 }
 
@@ -497,6 +516,34 @@ fn a_temporal_window_grows_past_claims_of_a_stale_world() {
         "FAILBEFORE REVIEW-10311 round 2: the temporal window asked no reader for the stale \
          worlds, so the stale world's claims filled its bound in the first round and stopped it \
          there, and the scope's cut dropped them all"
+    );
+}
+
+/// The round-2 fix's own review, P2: a run under every world with a world
+/// stamped stale reads a claim whose stored body does not decode as no
+/// candidate, and the temporal window's reader, which asks the stale worlds,
+/// does not fail the run on it. The claim status gate keeps such a claim out
+/// of every other read before the world filter decodes it.
+#[test]
+fn a_temporal_window_under_a_stale_world_reads_past_an_undecodable_claim() {
+    let fixture = fixture();
+    let live = fixture.claim_at(None, UNDECLARED_PREDICATE, ANCHOR);
+    let damaged = fixture.claim_at(None, UNDECLARED_PREDICATE, ANCHOR);
+    damage_stored_claim_body(&fixture.vault, damaged)
+        .expect("FIXTURE: damage the claim's stored body");
+    assert_eq!(
+        fixture.try_temporal(None),
+        Ok(found(live)),
+        "GUARD: with no world stale, the temporal run serves the live claim and counts the \
+         damaged one as no candidate"
+    );
+    stamp_world_stale(&fixture.vault, foreign_world(OTHER_WORLD))
+        .expect("FIXTURE: stamp another world stale");
+    assert_eq!(
+        fixture.try_temporal(None),
+        Ok(found(live)),
+        "FAILBEFORE: the temporal reader asked the damaged claim's world before any claim \
+         status gate, so the decode error failed the run"
     );
 }
 
