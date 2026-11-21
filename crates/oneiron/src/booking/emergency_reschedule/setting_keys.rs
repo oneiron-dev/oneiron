@@ -97,6 +97,7 @@ crate::setting::setting_keys! {
         "booking.emergency.max_proposals" {
         kind: Kind::new(max_proposals).strictest(max_proposals),
         on_change: Some(refuse_floor_above_count),
+        refusal_peers: Some(emergency_pair_peer),
     };
     /// The fewest live replacement times an emergency reschedule plan may offer (default 2, at
     /// most `booking.emergency.max_proposals`). Higher is tighter: with fewer, the plan refuses,
@@ -107,6 +108,7 @@ crate::setting::setting_keys! {
             .strictest(highest_min_proposals)
             .higher(),
         on_change: Some(refuse_floor_above_count),
+        refusal_peers: Some(emergency_pair_peer),
     };
     /// Seconds past the affected window an emergency reschedule plan searches for replacement
     /// times (default 604,800: seven days; at least a day). No order: it changes which times one
@@ -209,4 +211,26 @@ fn refuse_floor_above_count(
         )));
     }
     Ok(())
+}
+
+/// The row the count's and the floor's hook judges one of them against: the other of the pair,
+/// so the owner's notice of a refused projection of either names both acts, on every machine
+/// (row SETTING-PROJECTED-ROW-REFUSING-HOOKS).
+fn emergency_pair_peer(
+    _vault: &crate::Vault,
+    _txn: &heed::RoTxn<'_>,
+    slot: &oneiron_setting_contract::RowKey,
+    _value: Option<&serde_json::Value>,
+) -> Result<Vec<oneiron_setting_contract::RowKey>> {
+    let other = if slot.name == BOOKING_EMERGENCY_MAX_PROPOSALS.spec.name {
+        BOOKING_EMERGENCY_MIN_PROPOSALS.spec.name
+    } else {
+        BOOKING_EMERGENCY_MAX_PROPOSALS.spec.name
+    };
+    Ok(vec![oneiron_setting_contract::RowKey {
+        name: other.to_owned(),
+        item: None,
+        mode: crate::setting::SettingMode::Value,
+        scope: crate::setting::SettingScope::Vault,
+    }])
 }

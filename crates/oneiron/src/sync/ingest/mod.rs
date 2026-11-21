@@ -12,6 +12,8 @@ mod dropped_carriers;
 mod entity;
 mod member_sender;
 mod message_writer;
+// A refusal notice raised on several machines keeps the marks of each copy.
+mod notification_marks;
 mod order;
 mod own_device;
 mod peer_import;
