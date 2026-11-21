@@ -27,7 +27,8 @@
 //! instead to every live person whose lane opens it, a member who knows who
 //! they meant, and each such owner gets a stub naming no ask, row or word
 //! (`route`). A member's own answer settles the mention when it names one of
-//! the candidates they read.
+//! the candidates they read; their "someone new" is a proposal of ids alone
+//! to the owners, applied when one accepts it (`proposal`).
 //!
 //! An agent that must act on a person now (send, pay, invite, share) asks
 //! first through `self.identity.settle` ([`Memory::identity_act_now`]): a
@@ -56,6 +57,7 @@ mod hints;
 mod host;
 mod index;
 mod presentation;
+mod proposal;
 mod recheck;
 mod route;
 pub(crate) mod setting_keys;
@@ -74,6 +76,7 @@ pub(super) use index::{
     INVERSE_BY_SOURCE, inverse_ids, sync_inverse_membership, sync_inverse_sets,
 };
 use presentation::{card, options_in_txn, view_in_txn};
+pub use proposal::IDENTITY_SOMEONE_NEW_PROPOSAL_PRODUCER;
 pub(super) use recheck::run;
 use recheck::{ask_for_mention_in_txn, context_terms, measure_ask};
 pub use route::IDENTITY_MEMBER_QUESTION_PRODUCER;
@@ -431,7 +434,9 @@ impl Memory<'_> {
     /// answers who the people in their conversations are; a member answers
     /// an ask raised from their own source, which some owner cannot read, by
     /// naming a candidate they read (OWNER-NOTICE-MEMBER-ASK-ROUTE Q1 = A),
-    /// and only under their own lane. The topology
+    /// and only under their own lane. A member's "someone new" is a proposal
+    /// to the owners; an owner's "someone new" on an ask his lane does not
+    /// open accepts it (`proposal`). The topology
     /// decision is his, bound to the ask, only when the request bound his own
     /// proof (`owner_authorship`); otherwise it is an engine seal under
     /// [`EngineCause::OwnerAnswerUnproven`]. The actor or its class alone
@@ -526,35 +531,58 @@ impl Memory<'_> {
                     &["Answer from your own session."],
                 ));
             }
-            let seen = admission::open_ask_in_txn(self.vault(), &lane, txn, &key, false)?
-                .ok_or_else(|| MemoryError::not_found("no such open identity ask"))?;
-            if !by_owner
-                && route::route_in_txn(self.vault(), txn, &seen.stored)?
-                    .closed_owners
-                    .is_empty()
-            {
-                return Err(MemoryError::new(
-                    MEMORY_CODE_FORBIDDEN,
-                    "every owner reads this identity ask: it is the owner's to answer",
-                    &["Answer from the owner's own session."],
-                ));
-            }
-            let answer = parse_choice(&seen.ask, &input.choice).ok_or_else(|| {
-                MemoryError::bad_request("choice is one of the ask's options or someone_new")
-            })?;
+            // An ask the caller's lane does not open is no such open ask,
+            // save one an owner accepts a member's someone-new proposal on:
+            // his own decision on the ids it carries, with no word of the
+            // ask (`proposal`).
+            let opened = admission::open_ask_in_txn(self.vault(), &lane, txn, &key, false)?;
+            let (held, answer, opened) = match opened {
+                Some(seen) => {
+                    if !by_owner
+                        && route::route_in_txn(self.vault(), txn, &seen.stored)?
+                            .closed_owners
+                            .is_empty()
+                    {
+                        return Err(MemoryError::new(
+                            MEMORY_CODE_FORBIDDEN,
+                            "every owner reads this identity ask: it is the owner's to answer",
+                            &["Answer from the owner's own session."],
+                        ));
+                    }
+                    let answer = parse_choice(&seen.ask, &input.choice).ok_or_else(|| {
+                        MemoryError::bad_request(
+                            "choice is one of the ask's options or someone_new",
+                        )
+                    })?;
+                    (seen.stored, answer, true)
+                }
+                None => {
+                    let accepted = if by_owner {
+                        proposal::accepted_in_txn(self.vault(), txn, &key, &input.choice)?
+                    } else {
+                        None
+                    };
+                    let held = accepted
+                        .ok_or_else(|| MemoryError::not_found("no such open identity ask"))?;
+                    (held, Answer::SomeoneNew, false)
+                }
+            };
             // A member's "is" settles only rows their lane reads: the
             // mention, every span naming its own provisional person, and the
             // candidate it names (admission). "Someone new" asserts the new
             // person distinct from every candidate, the ones they cannot read
-            // included: that decision is the owner's.
+            // included: that decision is the owner's, so it goes to the
+            // owners as a proposal and settles nothing.
             if !by_owner && matches!(answer, Answer::SomeoneNew) {
-                return Err(MemoryError::new(
-                    MEMORY_CODE_FORBIDDEN,
-                    "a member's someone-new answer is the owner's decision",
-                    &["Choose the person you meant, or leave the ask for the owner."],
-                ));
+                let source = [held.turn, held.message];
+                proposal::propose_in_txn(self.vault(), txn, &key, held, now)?;
+                self.produced_from(source);
+                return Ok(IdentitySettled {
+                    ask: key_hex(&key),
+                    entity: String::new(),
+                    proposed: true,
+                });
             }
-            let held = seen.stored;
             let entity = settle_ask_in_txn(
                 self.vault(),
                 txn,
@@ -567,14 +595,20 @@ impl Memory<'_> {
             if let Some(owner) = owner {
                 evidence::prove_owner_in_txn(self.vault(), txn, owner, &held, owner_evidence)?;
             }
+            // An accepted proposal's answer comes from no row of the ask the
+            // owner reads, only the entity it names.
             self.produced_from(
-                std::iter::once(held.turn)
-                    .chain([held.message, entity])
+                opened
+                    .then_some([held.turn, held.message])
+                    .into_iter()
+                    .flatten()
+                    .chain([entity])
                     .chain(owner_evidence.iter().copied()),
             );
             Ok(IdentitySettled {
                 ask: key_hex(&key),
                 entity: entity.to_hex(),
+                proposed: false,
             })
         })
     }

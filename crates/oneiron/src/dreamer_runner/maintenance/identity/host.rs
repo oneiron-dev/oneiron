@@ -403,6 +403,7 @@ impl Vault {
             Ok(IdentitySettled {
                 ask: key_hex(&key),
                 entity: entity.to_hex(),
+                proposed: false,
             })
         })
     }

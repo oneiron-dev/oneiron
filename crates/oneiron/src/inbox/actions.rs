@@ -10,6 +10,9 @@ use super::notification::NotificationKind;
 use crate::agent_dispatch::{AGENT_RUN_EFFECT_ANSWER_VERB, AGENT_RUN_EFFECT_NOTIFICATION_PRODUCER};
 use crate::authority::OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER;
 use crate::claim::{WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER, WeaveDigestSettingChangeStatus};
+use crate::dreamer_runner::maintenance::identity::{
+    IDENTITY_ANSWER_VERB, IDENTITY_SOMEONE_NEW_PROPOSAL_PRODUCER, SOMEONE_NEW,
+};
 use crate::entity_id::EntityId;
 use crate::federation::NOTIFICATION_PRODUCER_ERASE_PROPOSAL;
 use crate::llm::model_pack::{MODEL_PACK_CHANGE_NOTIFICATION_PRODUCER, MODEL_PACK_REVERT_VERB};
@@ -73,7 +76,9 @@ impl Memory<'_> {
     /// change is reverted (FIX 5369). An applied stock switch offers the
     /// owner's undo while its binding still holds (FIX 4663). A GPU job's
     /// stop at its maximum offers its one-click resume while the stop stands
-    /// (CROSS-ARCH-0023 C2 05). Any other row,
+    /// (CROSS-ARCH-0023 C2 05). A member's someone-new proposal on an
+    /// identity ask offers the owner's acceptance while it stands
+    /// (OWNER-NOTICE-MEMBER-ASK-ROUTE Q1 = A). Any other row,
     /// and a target that no longer reads or has settled, offers none.
     fn notification_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let producer = row.source.producer.as_str();
@@ -112,6 +117,9 @@ impl Memory<'_> {
             NotificationKind::Ask if producer == crate::gpu_job::GPU_JOB_STOPPED_PRODUCER => {
                 self.gpu_job_resume_actions(row)
             }
+            NotificationKind::Ask if producer == IDENTITY_SOMEONE_NEW_PROPOSAL_PRODUCER => {
+                self.identity_proposal_actions(row)
+            }
             NotificationKind::VoiceRecognitionWithdrawalLoggedForSubject
                 if producer == crate::voice_identity::VOICE_RECOGNITION_NOTIFICATION_PRODUCER =>
             {
@@ -119,6 +127,28 @@ impl Memory<'_> {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// The producer names the identity ask in `source.result` and the ids the
+    /// decision is about in `subject_refs`; the notice is a member's
+    /// someone-new proposal on it. Shown while that proposal stands on those
+    /// ids: one tap accepts it through [`IDENTITY_ANSWER_VERB`], which judges
+    /// the ask and the caller again.
+    fn identity_proposal_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
+        let Some(ask) = row.source.result.as_deref() else {
+            return Vec::new();
+        };
+        let Ok(Some(refs)) = self.vault().identity_someone_new_proposal_refs(ask) else {
+            return Vec::new();
+        };
+        let refs: Vec<String> = refs.iter().map(EntityId::to_hex).collect();
+        if refs != row.subject_refs {
+            return Vec::new();
+        }
+        vec![NotificationAction::new(
+            IDENTITY_ANSWER_VERB,
+            serde_json::json!({ "ask": ask, "choice": SOMEONE_NEW }),
+        )]
     }
 
     /// The producer names the GPU job in `source.result`; the notice is the
