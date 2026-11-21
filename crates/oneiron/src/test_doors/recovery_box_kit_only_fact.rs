@@ -57,7 +57,8 @@ pub fn append_unproven_recovery_box_kit_only_fact(
 ) -> Result<AuthorityEntryHash> {
     vault.with_write_txn(|txn| {
         let actor = owner.revalidate_in_txn(vault, txn)?;
-        if vault.holds_proving_owner_key(&vault.authority_view_readonly_in_txn(txn)?) {
+        let fold = vault.authority_view_readonly_in_txn(txn)?;
+        if vault.holds_proving_owner_key(&fold) {
             return Err(crate::authority::authority_refused(HOLDS_AN_OWNER_KEY));
         }
         let target = PolicySetting::RecoveryBoxKitOnly

@@ -101,8 +101,11 @@ impl Vault {
         let signs = {
             let txn = self.store.env.read_txn()?;
             let before = self.recovery_box_kit_only_fact_in_txn(&txn)?;
-            !before.is_some_and(|fact| fact.kit_only == kit_only)
-                && self.holds_proving_owner_key(&self.authority_view_readonly_in_txn(&txn)?)
+            if before.is_some_and(|fact| fact.kit_only == kit_only) {
+                return Ok(None);
+            }
+            let fold = self.authority_view_readonly_in_txn(&txn)?;
+            self.holds_proving_owner_key(&fold)
         };
         if !signs {
             return Ok(None);
@@ -139,7 +142,8 @@ impl Vault {
         if before.is_some_and(|fact| fact.kit_only == kit_only) {
             return Ok(None);
         }
-        if !self.holds_proving_owner_key(&self.authority_view_readonly_in_txn(txn)?) {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        if !self.holds_proving_owner_key(&fold) {
             tracing::info!(
                 kit_only,
                 "no owner key on this install proves the kit-only switch: no fact was signed"
