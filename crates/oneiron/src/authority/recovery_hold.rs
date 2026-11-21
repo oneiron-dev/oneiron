@@ -346,14 +346,33 @@ impl Vault {
             .collect())
     }
 
+    /// Whether `owner` may still land a recovery hold of theirs: a live
+    /// person who is a live owner of this vault. The landing voids a due
+    /// hold of anyone else, and [`Self::live_hold_for_successor_in_txn`]
+    /// counts no such hold as live.
+    ///
+    /// # Errors
+    /// The store's.
+    fn recovery_hold_owner_is_live_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &EntityId,
+    ) -> Result<bool> {
+        Ok(crate::consent::person_is_live_in_txn(self, txn, owner)?
+            && crate::policy_model::is_live_vault_owner_in_txn(self, txn, owner)?)
+    }
+
     /// This install's live hold for `successor`, Waiting or Due, of
     /// `owner`, the owner who acts: the attempt id, its landing second, and
     /// whether the seed slot keeps that hold's own R. A successor key is
     /// held for one owner at a time: while another owner's hold for it is
     /// live, the call is refused and that hold keeps its seed (row
-    /// RECOVERY-HOLD-BOX-PATH-WRITES-BEFORE-CHECKS). The landing signs only
-    /// with a hold's own R, so a hold whose slot keeps another seed never
-    /// lands from here. A hold whose R the kept seed is comes first; else,
+    /// RECOVERY-HOLD-BOX-PATH-WRITES-BEFORE-CHECKS). A hold whose owner is
+    /// no live owner of this vault now is not live here, as the landing
+    /// voids it (`recovery_hold_owner_is_live_in_txn`; REVIEW-10327 round 2
+    /// P1 2), so it never stands in a live owner's way. The landing signs
+    /// only with a hold's own R, so a hold whose slot keeps another seed
+    /// never lands from here. A hold whose R the kept seed is comes first; else,
     /// while the slot keeps another seed, one that `root` (the caller's R)
     /// signed, whose seed a racing attempt replaced before the door held
     /// the recovery-hold lock: the door puts R's seed back and answers it.
@@ -375,17 +394,18 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let wanted = AuthorityKey::Ed25519(*successor);
-        let live: Vec<RecoveryHoldView> = self
-            .recovery_holds_in_txn(txn)?
-            .into_iter()
-            .filter(|view| {
-                view.successor_key == wanted
-                    && matches!(
-                        view.state,
-                        RecoveryHoldState::Waiting | RecoveryHoldState::Due
-                    )
-            })
-            .collect();
+        let mut live: Vec<RecoveryHoldView> = Vec::new();
+        for view in self.recovery_holds_in_txn(txn)? {
+            if view.successor_key == wanted
+                && matches!(
+                    view.state,
+                    RecoveryHoldState::Waiting | RecoveryHoldState::Due
+                )
+                && self.recovery_hold_owner_is_live_in_txn(txn, &view.owner)?
+            {
+                live.push(view);
+            }
+        }
         if live.is_empty() {
             return Ok(None);
         }

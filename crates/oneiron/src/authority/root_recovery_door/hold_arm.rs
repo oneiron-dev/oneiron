@@ -31,7 +31,8 @@ impl Vault {
     /// request that passed settles the successor key and commits its
     /// pending slot record there; R's released seed goes to this install's
     /// keystore slot for that successor before the hold's transaction, and
-    /// leaves it again when that transaction fails, with its record. A
+    /// leaves it again when that transaction fails, with its record, while
+    /// this install's owner signing slot takes back the seed it held. A
     /// second call while this install's hold for the same successor waits
     /// answers the same held attempt, and writes no second hold, when that
     /// hold is the acting owner's: another owner's live hold for the
@@ -142,7 +143,7 @@ impl Vault {
         // seed enters only a slot whose record is committed. No landing run
         // reaps the record or the seed before the hold names them: it waits
         // for the recovery-hold lock.
-        let successor_key = {
+        let (successor_key, renewal) = {
             let mut pending = self.store.env.write_txn()?;
             let judged = self.judge_hold_in_txn(
                 &mut pending,
@@ -168,25 +169,37 @@ impl Vault {
                 }
                 return Err(error);
             }
-            successor_key
+            (successor_key, renewal)
         };
+        // Until the hold commits, the door keeps the seed the renewal
+        // replaced (REVIEW-10327 round 2 P1 1): no row names the fresh key
+        // before the hold does, so a failed seed put or hold write puts it
+        // back, still under the slot lock, and this install's slot is as it
+        // was.
         let slot = self.recovery_hold_slot(&vault_id, machine, &successor_key);
         let mut created = Vec::new();
-        if self.put_recovery_hold_seed(&slot, &seed, &expected)? {
-            created.push(slot);
-        }
-        let outcome = self.hold_write_with_root_key(
-            (owner, signer),
-            &successor,
-            install.as_ref(),
-            lost,
-            (end, machine),
-            successor_key,
-        );
+        let outcome = self
+            .put_recovery_hold_seed(&slot, &seed, &expected)
+            .and_then(|made| {
+                if made {
+                    created.push(slot);
+                }
+                self.hold_write_with_root_key(
+                    (owner, signer),
+                    &successor,
+                    install.as_ref(),
+                    lost,
+                    (end, machine),
+                    successor_key,
+                )
+            });
         let (answer, held) = match outcome {
             Ok(written) => written,
             Err(error) => {
                 self.forget_created_hold_slots(&created);
+                if let Some((slot, renewal)) = renewal {
+                    slot.put_back(renewal);
+                }
                 return Err(error);
             }
         };
@@ -229,8 +242,9 @@ impl Vault {
     /// transaction the caller commits or drops: the preset is not kit-only,
     /// R is live, the owner's proof revalidates, every lost key is one the
     /// root's key may revoke, the successor's enrolment input is built (this
-    /// install's fresh key in memory only, never in its slot), and the
-    /// landing's own write, run in a savepoint that is aborted, passes: a
+    /// install's fresh key in memory only, never in its slot), the hold row
+    /// has the shape the log takes, and the landing's own write, run in a
+    /// savepoint that is aborted, passes: a
     /// hold whose revocations or enrolment the fold refuses now (the holding
     /// machine, the carrier, R as predecessor, the binding) is refused with
     /// the landing's refusal before its wait (row
@@ -281,6 +295,10 @@ impl Vault {
             lost: lost.into_iter().collect(),
             lands_at: end.lands_at(now),
         };
+        // The hold row's own shape (a landing second of 0, say) is judged
+        // here too, before the first write renews anything (REVIEW-10327
+        // round 2 P1 1): the landing's rehearsal never reads `lands_at`.
+        body.validate()?;
         let mut rehearsal = self.store.env.nested_write_txn(txn)?;
         let rehearsed = self.write_recovery_hold_landing_in_txn(
             &mut rehearsal,
