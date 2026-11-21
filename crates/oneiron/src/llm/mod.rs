@@ -85,7 +85,7 @@ pub(crate) use step::{
     call_as_step_checked_with_unsaved_usage, consume_step_wait_in_txn, deindex_dreamer_step_claim,
     erase_detached_step_actor_in_txn, forget_step_memo, forget_step_memo_in_txn,
     index_dreamer_step_claim_for_put, open_step_wait_in_txn, register_detached_step_in_txn,
-    retire_peer_wait_binding_for_trap_in_txn, signal_step_wait_in_txn,
+    retire_peer_wait_binding_for_trap_in_txn, signal_step_wait_in_txn, step_wait_reads_in_txn,
     trap_consume_precheck_in_txn, verified_step_consolidation_eligible_in_txn,
     verified_step_effector_eligible_in_txn, wake_trap_in_txn,
 };

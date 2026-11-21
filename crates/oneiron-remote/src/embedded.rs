@@ -586,7 +586,9 @@ impl EmbeddedClient {
     /// install holds no owner key. A word that approves an act asks for the
     /// person at this device before the key signs
     /// ([`oneiron::Vault::owner_presence`]), so that call can wait on the
-    /// device's prompt; a word that denies asks nobody.
+    /// device's prompt or require the device PIN's open window; a word that
+    /// denies asks nobody. An approving word can return a presence or PIN
+    /// refusal. A word the read refuses does not reach the key.
     pub(crate) fn as_owner_device(&self) -> Result<Self, MemoryError> {
         self.ensure_dispatch_pid()?;
         if self.actor_class != EdgeActorClass::Human || self.room_turn.is_some() {

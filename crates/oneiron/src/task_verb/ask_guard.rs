@@ -24,6 +24,7 @@
 use std::collections::BTreeSet;
 
 use super::ask_record::{self, AskGroup};
+use super::ask_settlement;
 use super::ask_types::{
     TaskAskDecision, TaskAskOptionId, TaskAskSettlementReason, TaskAskSource, TaskAskWord,
 };
@@ -123,6 +124,8 @@ struct AskApproval {
     /// The one line the device's prompt shows for an approving word
     /// ([`owner_presence_reasons`]).
     reason: &'static str,
+    /// Whether a word given after the ask has its result can still act.
+    acts_past_the_cut: bool,
     /// The kind's own read of whether the approved act still stands
     /// ([`approved_act_stands_in`]); `None` for a kind whose writer refuses
     /// an admitted approving word on no fact a read holds.
@@ -151,6 +154,7 @@ const ASK_KINDS: [AskKind; 7] = [
         approval: Some(AskApproval {
             approves: super::attendee_answer::approves,
             reason: owner_presence_reasons::ANSWER_ATTENDEE_ASK,
+            acts_past_the_cut: false,
             stands: Some(super::attendee_answer::approved_act_stands_in),
         }),
         reasons: AskKindReasons {
@@ -165,6 +169,7 @@ const ASK_KINDS: [AskKind; 7] = [
         approval: Some(AskApproval {
             approves: super::training_offer_ask::approves,
             reason: owner_presence_reasons::ANSWER_TRAINING_OFFER_ASK,
+            acts_past_the_cut: false,
             stands: Some(super::training_offer_ask::approved_act_stands_in),
         }),
         reasons: AskKindReasons {
@@ -179,6 +184,7 @@ const ASK_KINDS: [AskKind; 7] = [
         approval: Some(AskApproval {
             approves: super::training_swap_ask::approves,
             reason: owner_presence_reasons::ANSWER_TRAINING_SWAP_ASK,
+            acts_past_the_cut: false,
             stands: None,
         }),
         reasons: AskKindReasons {
@@ -203,6 +209,7 @@ const ASK_KINDS: [AskKind; 7] = [
         approval: Some(AskApproval {
             approves: crate::office_body::live_edit_option_grants,
             reason: owner_presence_reasons::ANSWER_LIVE_EDIT_ASK,
+            acts_past_the_cut: false,
             stands: None,
         }),
         reasons: AskKindReasons {
@@ -217,6 +224,7 @@ const ASK_KINDS: [AskKind; 7] = [
         approval: Some(AskApproval {
             approves: super::comm_widen::approves,
             reason: owner_presence_reasons::ANSWER_COMM_WIDEN_ASK,
+            acts_past_the_cut: false,
             stands: None,
         }),
         reasons: AskKindReasons {
@@ -231,6 +239,7 @@ const ASK_KINDS: [AskKind; 7] = [
         approval: Some(AskApproval {
             approves: super::code_consent_word::approves,
             reason: owner_presence_reasons::ANSWER_CODE_CONSENT_ASK,
+            acts_past_the_cut: true,
             stands: None,
         }),
         reasons: AskKindReasons {
@@ -329,45 +338,54 @@ pub(super) fn admit_word_in(
     Ok(())
 }
 
+enum ApprovalRoute {
+    Unrouted,
+    Routed(Option<AskApproval>),
+}
+
 /// The approval of the kind that routes the ask `id`, where a person's
 /// `word` on it is one of that kind's approving options; `None` for a word
 /// that approves no act. A word the kind does not offer is refused, as
-/// [`admit_word_in`] refuses it.
+/// [`admit_word_in`] refuses it. `Unrouted` means no registered kind takes
+/// the ask.
 fn approval_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     group: &AskGroup,
     word: &TaskAskWord,
-) -> Result<Option<AskApproval>> {
+) -> Result<ApprovalRoute> {
     for kind in &ASK_KINDS {
         let Some(asked) = (kind.offered_in)(vault, txn, id, group, word)? else {
             continue;
         };
-        let Some(approval) = kind.approval else {
-            continue;
-        };
-        if !matches!(asked, AskedParty::Agent(_))
-            && word.option.as_ref().is_some_and(approval.approves)
+        let approval = kind.approval.filter(|approval| {
+            !matches!(asked, AskedParty::Agent(_))
+                && word.option.as_ref().is_some_and(approval.approves)
+        });
+        if let Some(approval) = approval
+            && !approval.acts_past_the_cut
+            && ask_settlement::read_result(vault, txn, id)?.is_some()
         {
-            return Ok(Some(approval));
+            return Ok(ApprovalRoute::Routed(None));
         }
+        return Ok(ApprovalRoute::Routed(approval));
     }
-    Ok(None)
+    Ok(ApprovalRoute::Unrouted)
 }
 
 /// The line a device's prompt shows for the act a person's `word` on the
 /// ask `id` approves (row OWNER-CONFIRM-SHEET): an approving option of an
-/// ask of a kind in [`ASK_KINDS`] that asks a person. `None` for a word
-/// that approves no act: an option that denies or abstains, a contribution
-/// pair's judgment, a word on an ask that asks an agent, and a word on an
-/// ask of any other kind, whose answer evaluates no effect authority. A word
+/// ask of a kind in [`ASK_KINDS`] that asks a person, or `proceed` on a
+/// durable verb hook's open ask. `None` for a word that approves no act:
+/// an option that denies or abstains, a contribution pair's judgment, a word
+/// on an ask that asks an agent, or a word with no approving route. A word
 /// the kind does not offer is refused, as [`admit_word_in`] refuses it.
 ///
 /// The answer door reads this before it asks for the person at the device
 /// and again in its write (`super::ask_word_presence`). The kind of an ask
-/// is its intent key's, and an option's meaning is its kind's, so the
-/// answer for one word on one ask does not change while the ask offers it.
+/// is its intent key's, and an option's meaning is its kind's. Once the
+/// ask has its result, only a kind that can act past the cut still approves.
 ///
 /// # Errors
 ///
@@ -379,14 +397,31 @@ pub(super) fn approved_act_in(
     group: &AskGroup,
     word: &TaskAskWord,
 ) -> Result<Option<&'static str>> {
-    Ok(approval_in(vault, txn, id, group, word)?.map(|approval| approval.reason))
+    match approval_in(vault, txn, id, group, word)? {
+        ApprovalRoute::Routed(approval) => Ok(approval.map(|approval| approval.reason)),
+        ApprovalRoute::Unrouted => {
+            if crate::runtime_hooks::verb_ask_word_releases_in(
+                vault,
+                txn,
+                id,
+                &group.requested.intent_key,
+                word.option.as_ref(),
+            )? && ask_settlement::read_result(vault, txn, id)?.is_none()
+            {
+                Ok(Some(owner_presence_reasons::ANSWER_VERB_HOOK_ASK))
+            } else {
+                Ok(None)
+            }
+        }
+    }
 }
 
 /// Refuses an approving `word` on the ask `id` whose act the store refuses
 /// now: the checks the kind's own writer makes on the word's cut before its
-/// first write, made here from a read (an attendee ask's named contact
-/// still lives; a training offer's model switch still binds). A word that
-/// approves no act, and a kind whose writer has no such check, pass.
+/// first write, made here from a read of the `selected` word (an attendee
+/// ask's named contact still lives; a training offer's model switch still
+/// binds). A submitted or selected word that approves no act, and a kind
+/// whose writer has no such check, pass.
 ///
 /// The answer door runs it on its read, after the word's admission and
 /// before the device asks for the person (`super::ask_word_presence`), so
@@ -404,11 +439,15 @@ pub(super) fn approved_act_stands_in(
     id: EntityId,
     group: &AskGroup,
     word: &TaskAskWord,
+    selected: &TaskAskWord,
 ) -> Result<()> {
-    match approval_in(vault, txn, id, group, word)?.and_then(|approval| approval.stands) {
-        Some(stands) => stands(vault, txn, id, group, word),
-        None => Ok(()),
+    if let ApprovalRoute::Routed(Some(approval)) = approval_in(vault, txn, id, group, word)?
+        && selected.option.as_ref().is_some_and(approval.approves)
+        && let Some(stands) = approval.stands
+    {
+        stands(vault, txn, id, group, selected)?;
     }
+    Ok(())
 }
 
 /// Whether settlement may cut the ask `id` for `reason` with `decision`

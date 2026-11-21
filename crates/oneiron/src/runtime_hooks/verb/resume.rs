@@ -81,6 +81,19 @@ impl VerbResume {
     }
 }
 
+/// The invocation and binding a verb hook ask's intent key names
+/// (`hook.verb/<invocation>/<binding>`); `None` for any other key. The
+/// settlement hook and the word's read share it, so both parse one way.
+pub(super) fn verb_hook_ids(intent_key: &str) -> Option<(InvocationId, EntityId)> {
+    let (invocation, binding) = intent_key
+        .strip_prefix(super::ask::VERB_HOOK_INTENT)?
+        .split_once('/')?;
+    Some((
+        InvocationId::parse_hex(invocation)?,
+        EntityId::from_hex(binding).ok()?,
+    ))
+}
+
 /// The settlement hook: in the settling write, marks the call stopped on
 /// ask `group` ready when `result` said proceed and the call has a resume
 /// target. Any ask but a verb hook's passes at once. It runs nothing.
@@ -91,19 +104,7 @@ pub(crate) fn verb_ask_settled_in_txn(
     result: &TaskAskResult,
     now: u64,
 ) -> Result<()> {
-    let Some((invocation, binding)) = result
-        .settlement
-        .requested
-        .intent_key
-        .strip_prefix(super::ask::VERB_HOOK_INTENT)
-        .and_then(|rest| rest.split_once('/'))
-    else {
-        return Ok(());
-    };
-    let (Some(invocation), Ok(binding)) = (
-        InvocationId::parse_hex(invocation),
-        EntityId::from_hex(binding),
-    ) else {
+    let Some((invocation, binding)) = verb_hook_ids(&result.settlement.requested.intent_key) else {
         return Ok(());
     };
     ask::settled_in_txn(vault, txn, invocation.0, binding, group, result, now)

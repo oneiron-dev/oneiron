@@ -8,36 +8,42 @@
 //! word is as important as the act it approves
 //! (`ask_guard::approved_act_in`): an approving option of an ask that asks a
 //! person is important, and the device asks for the person. Every other word
-//! is ordinary and asks nobody: a denial, a judgment, a word on an ask of no
-//! asked-party kind. The key still signs an ordinary word, because an ask
+//! is ordinary and asks nobody: a denial, a judgment, a word with no approving
+//! route. The key still signs an ordinary word, because an ask
 //! that asks one party admits a denial, too, only under that party's proof.
 //!
-//! The door reads before it asks. One read transaction runs every check the
-//! word's admission makes (`ask_record::check_word`), with the person
-//! authenticated as the proof's mint authenticates them and no key in it
-//! ([`crate::Vault::owner_device_answerer`]), so a word the admission refuses
+//! The door reads before it asks. The answerer's own reads run first
+//! ([`crate::Vault::owner_device_answerer`]), authenticating the person as the
+//! proof's mint authenticates them, with no key in the proof. Then one read
+//! transaction runs every check the word's admission makes
+//! (`ask_record::check_word`), so a word the admission refuses
 //! raises no prompt. For an approving word the same read makes the checks
 //! the approved act's own writer makes on the cut before its first write
 //! (`ask_guard::approved_act_stands_in`: an attendee ask's named contact
 //! still lives, a training offer's model switch still binds), so nobody is
 //! asked to approve an act the settlement then refuses; it refuses such a
 //! word also where the word would not have cut the ask, which the write
-//! would have recorded. The read never asks whether an owner key proves now: a
-//! key that rests under a device PIN proves only inside the window the ask's
-//! PIN step opens, so the mint answers that after the ask. The write admits
-//! the word under the signed proof, derives the importance again and refuses
-//! a rise ([`WordProof::refuse_risen_importance_in`]).
+//! would have recorded. The read checks the latest human word on an approving
+//! repeat, including its answer unit on a bound ask, and checks silent member
+//! TASKs and pending waiter traps before asking. A `proceed` word releasing a
+//! durable verb hook asks for the person; after an ask has its result, only a
+//! code consent word can still ask. The read never asks whether an owner key
+//! proves now: a key that rests under a device PIN proves only inside the
+//! window the ask's PIN step opens, so the mint answers that after the ask.
+//! The write admits the word under the signed proof, derives the importance
+//! again and refuses a rise ([`WordProof::refuse_risen_importance_in`]).
 //!
-//! The door holds no transaction, no device PIN step and no lock while the
-//! prompt is up; the word keeps its task-work turn, one of the line's bound.
+//! The door holds no transaction, no device PIN step and no lock of the vault
+//! while the prompt is up; the word keeps its task-work turn, one of the line's
+//! bound. The presence gate serializes its own prompts.
 //!
 //! A proof a host bound, generated code, a room turn and every surface that
 //! is no owner device sign nothing here, so they ask nobody.
 
 use std::borrow::Cow;
 
-use super::ask_record::{self, AskGroup};
-use super::{TaskAskHandle, TaskAskWord};
+use super::ask_record::{self, AskGroup, WordStanding};
+use super::{TaskAskDecide, TaskAskHandle, TaskAskWord, ask_guard, ask_settlement};
 use crate::authority::OwnerProofGround;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Error;
@@ -97,7 +103,7 @@ fn word_presence_in(
     word: &TaskAskWord,
 ) -> crate::Result<(OwnerActImportance, &'static str)> {
     Ok(
-        match super::ask_guard::approved_act_in(vault, txn, id, group, word)? {
+        match ask_guard::approved_act_in(vault, txn, id, group, word)? {
             Some(reason) => (OwnerActImportance::Important, reason),
             None => (OwnerActImportance::Ordinary, ""),
         },
@@ -167,11 +173,10 @@ impl Memory<'_> {
 
     /// The read an owner-device word gets before anyone is asked: the
     /// person's own checks, the actor's, the ask's, and the word's whole
-    /// admission, in the order the write meets them; for an approving word
-    /// the refusals its act's own writer would give on the cut from the
-    /// store as it stands (`ask_guard::approved_act_stands_in`); then the
-    /// word's importance with its prompt line. Nothing is recorded or
-    /// signed.
+    /// admission, in the order the write meets them; then the word's
+    /// importance with its prompt line. For an approving word it also reads
+    /// the act, any selected repeat's bound answer unit, the silent member
+    /// TASKs, and pending waiter traps. Nothing is recorded or signed.
     fn owner_device_word_read(
         &self,
         handle: &TaskAskHandle,
@@ -185,7 +190,7 @@ impl Memory<'_> {
         let group = self
             .ask_group_named_in(&txn, handle.group_ref)?
             .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
-        ask_record::check_word(
+        let standing = ask_record::check_word(
             self.vault(),
             &txn,
             handle.group_ref,
@@ -195,22 +200,40 @@ impl Memory<'_> {
             Some(&answerer),
             self.vault().store.clock.now_recorded_at(),
         )?;
-        // The approved act's own writer refuses on its cut what the store
-        // already refuses; the read gives that before anyone is asked.
-        super::ask_guard::approved_act_stands_in(
-            self.vault(),
-            &txn,
-            handle.group_ref,
-            &group,
-            word,
-        )?;
-        Ok(word_presence_in(
-            self.vault(),
-            &txn,
-            handle.group_ref,
-            &group,
-            word,
-        )?)
+        let vault = self.vault();
+        let id = handle.group_ref;
+        let actor = self.actor();
+        let (importance, reason) = word_presence_in(vault, &txn, id, &group, word)?;
+        if importance == OwnerActImportance::Important {
+            let selected = ask_settlement::word_a_cut_selects_in(
+                vault, &txn, id, &group, actor, word, standing,
+            )?;
+            ask_guard::approved_act_stands_in(vault, &txn, id, &group, word, &selected)?;
+            if matches!(standing, WordStanding::GivenBefore)
+                && group.effective.what.outcome_binding.is_some()
+            {
+                // A First decision binds the selected word's unit; a quorum
+                // decision binds the question unit. A collection binds neither.
+                let unit = match &group.effective.decide {
+                    Some(TaskAskDecide::First) => Some(selected.result_ref),
+                    Some(TaskAskDecide::All { .. } | TaskAskDecide::AtLeast { .. }) => {
+                        Some(group.effective.what.reference.entity_ref())
+                    }
+                    None => None,
+                };
+                if let Some(unit) = unit {
+                    crate::llm::decision::questions::validate_task_answer_unit(
+                        vault,
+                        &txn,
+                        ask_record::entity(&group.owner)?,
+                        actor,
+                        unit,
+                    )?;
+                }
+            }
+            ask_settlement::cut_reads_in(vault, &txn, id, &group, actor)?;
+        }
+        Ok((importance, reason))
     }
 
     /// The proof this install's owner key signs for one word on the ground

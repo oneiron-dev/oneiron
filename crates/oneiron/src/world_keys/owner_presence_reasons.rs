@@ -12,6 +12,7 @@ pub(crate) const ANSWER_COMM_WIDEN_ASK: &str = "let an agent message more recipi
 pub(crate) const ANSWER_LIVE_EDIT_ASK: &str = "let someone edit a document as you";
 pub(crate) const ANSWER_TRAINING_OFFER_ASK: &str = "approve an offered AI model change";
 pub(crate) const ANSWER_TRAINING_SWAP_ASK: &str = "switch to a newly trained AI model";
+pub(crate) const ANSWER_VERB_HOOK_ASK: &str = "let an action that waits for your approval go ahead";
 pub(crate) const BOARD_LAYOUT: &str = "change the board layout";
 pub(crate) const CANCEL_RECOVERY_HOLD: &str = "cancel a waiting recovery of this vault";
 pub(crate) const CHANGE_SHARED_MEMBER_ROLE: &str = "change a member's role in the shared vault";
