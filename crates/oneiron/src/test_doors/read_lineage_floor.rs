@@ -176,6 +176,47 @@ pub fn mark_waiting_on(vault: &Vault, row: EntityId, source: EntityId) -> Result
     Ok(())
 }
 
+/// Lands `id` as a peer's TURN whose phone mark names no thread, written
+/// straight into the store as a sync landed it before floors were: no floor
+/// raised and no landing noted. Its own source is the seal, so it reads to
+/// no one (#9289 review 2 P2-5; #10265 Opus review 3 P2-1).
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn land_peer_turn_marked_with_no_thread(vault: &Vault, id: EntityId) -> Result<()> {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![
+            (rmpv::Value::from("role"), rmpv::Value::from("user")),
+            (
+                rmpv::Value::from("text"),
+                rmpv::Value::from("a peer's turn"),
+            ),
+            (
+                rmpv::Value::from(crate::voice_call::PHONE_THREAD_KEY),
+                rmpv::Value::from("names no thread"),
+            ),
+        ]),
+    )
+    .map_err(|_| crate::error::Error::InvalidConfig("encode the peer's TURN".into()))?;
+    let at = vault.now_recorded_at();
+    let record = crate::test_fixtures::entity_record(
+        crate::registry::ENTITY_TYPE_TURN,
+        crate::temporal::TimeRange { start: at, end: at },
+        at,
+        0,
+        &body,
+    );
+    vault.with_write_txn(|txn| {
+        vault.store.entities.put(txn, id.as_bytes(), &record)?;
+        let type_key = crate::store::Store::encode_type_key(crate::registry::ENTITY_TYPE_TURN, &id);
+        vault.store.type_index.put(txn, &type_key, &[])?;
+        Ok(())
+    })
+}
+
 /// Lands the binding of `row` here as a replicated binding does once its
 /// policy resolves (`bind_replicated_in_txn`): the rows waiting on `row`
 /// take its floor if it is bound and whole now (#9289 Opus review 3 P1-B).
