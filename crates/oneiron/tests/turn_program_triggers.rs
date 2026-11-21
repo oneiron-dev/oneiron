@@ -8,7 +8,9 @@
 use std::sync::Arc;
 
 use oneiron::claim::ScopedReadActorKey;
-use oneiron::dreamer_runner::{ArmTurnProgram, ProgramTrigger, TurnProgramDrain};
+use oneiron::dreamer_runner::{
+    ArmTurnProgram, DreamerHomeNodeCandidate, DreamerRunnerStore, ProgramTrigger, TurnProgramDrain,
+};
 use oneiron::dreamer_wake::WakeIdleState;
 use oneiron::feeds::{
     FeedAckRequest, FeedRead, FeedReadRequest, FeedSelector, FeedSource, FeedStart,
@@ -151,6 +153,22 @@ fn drain(vault: &Vault, now: u64) -> TurnProgramDrain {
     vault.wake_turn_programs(now).expect("drain")
 }
 
+/// A node id that is not this install's (an install mints its own at random).
+const OTHER_MACHINE: u64 = 0x7fff_ffff_ffff_fff1;
+
+/// Elects [`OTHER_MACHINE`] as the vault's MACRO home at `now`, so this machine is one that
+/// releases no watcher tick: the machine an owner armed a program on while another is the home.
+fn elect_another_machine_as_home(vault: &Vault, now: u64) {
+    let home = DreamerRunnerStore::new(vault)
+        .elect_home_node(
+            &[DreamerHomeNodeCandidate::always_on_local(OTHER_MACHINE)],
+            now,
+        )
+        .expect("elect")
+        .expect("a home");
+    assert_eq!(home.node_id, OTHER_MACHINE, "{home:?}");
+}
+
 fn put_person(vault: &Vault) {
     vault
         .put_entity(
@@ -229,6 +247,88 @@ fn an_occurrence_is_judged_again_at_admission() {
     assert_eq!(release_timers_at(&vault, &clock, T0 + 1_000_000), 0);
 }
 
+/// FIX TURNPROGRAM-NON-TURN-ARMING-STAYS-ON-ITS-MACHINE (ruled B): a timer program runs where it
+/// was armed. Its arming is carried to no other machine, so the machine that holds it releases
+/// its due times and admits their wakes, also while another machine is the elected home.
+#[test]
+fn a_timer_program_wakes_on_the_machine_that_armed_it_while_another_is_the_home() {
+    let (_dir, vault, clock) = open_on_clock(T0 - 60);
+    elect_another_machine_as_home(&vault, T0 - 60);
+    let fixture = Fixture::new(&vault);
+    fixture.arm(
+        &vault,
+        ProgramTrigger::Timer {
+            first_at: T0,
+            every_secs: 3_600,
+        },
+    );
+
+    assert_eq!(release_timers_at(&vault, &clock, T0 - 1), 0);
+    assert_eq!(
+        release_timers_at(&vault, &clock, T0),
+        1,
+        "the arming machine releases the due time"
+    );
+    let first = drain(&vault, T0);
+    assert_eq!(
+        (first.admitted, first.refused, first.held),
+        (1, 0, 0),
+        "{first:?}"
+    );
+    assert_eq!(
+        release_timers_at(&vault, &clock, T0 + 3_600),
+        1,
+        "and the next due time after it"
+    );
+    let next = drain(&vault, T0 + 3_600);
+    assert_eq!(
+        (next.admitted, next.refused, next.held),
+        (1, 0, 0),
+        "{next:?}"
+    );
+}
+
+/// Review #10113: a repeating timer whose next due time no `u64` holds wakes at its due time and
+/// then no more. Its release does not fail: an actor's timers are one job and one write, so a
+/// failed release would take back the wakes of the actor's other due timers and retry without
+/// end.
+#[test]
+fn a_timer_whose_next_due_time_overflows_wakes_once_and_spares_the_actors_other_timers() {
+    let (_dir, vault, clock) = open_on_clock(T0 - 60);
+    let fixture = Fixture::new(&vault);
+    fixture.arm(
+        &vault,
+        ProgramTrigger::Timer {
+            first_at: T0,
+            every_secs: u64::MAX,
+        },
+    );
+    fixture.arm(
+        &vault,
+        ProgramTrigger::Timer {
+            first_at: T0,
+            every_secs: 0,
+        },
+    );
+
+    assert_eq!(
+        release_timers_at(&vault, &clock, T0),
+        1,
+        "the actor's one timer run ends done"
+    );
+    let woken = drain(&vault, T0);
+    assert_eq!(
+        (woken.admitted, woken.refused, woken.held),
+        (2, 0, 0),
+        "both timers woke: {woken:?}"
+    );
+    assert_eq!(
+        release_timers_at(&vault, &clock, T0 + 1_000_000),
+        0,
+        "neither timer is due again"
+    );
+}
+
 /// A feed program wakes once per set of entries its lane is shown past its subscription's
 /// cursor, not while the cursor stands past every one; once its subscription is gone, a wake it
 /// still owes is refused.
@@ -304,6 +404,55 @@ fn a_feed_program_wakes_once_per_head() {
     );
     let refused = drain(&vault, T0);
     assert_eq!((refused.admitted, refused.refused), (0, 1), "{refused:?}");
+}
+
+/// FIX TURNPROGRAM-NON-TURN-ARMING-STAYS-ON-ITS-MACHINE (ruled B): a feed program runs where it
+/// was armed, as a timer program does. The machine that holds its arming records the wake a
+/// change its lane is shown owes it, and admits it, also while another machine is the elected
+/// home.
+#[test]
+fn a_feed_program_wakes_on_the_machine_that_armed_it_while_another_is_the_home() {
+    let (_dir, vault) = open();
+    elect_another_machine_as_home(&vault, T0);
+    let fixture = Fixture::new(&vault);
+    let lane = vault.scoped_read(fixture.reader_key());
+    let subscription = vault
+        .feed_subscribe(
+            &lane,
+            &FeedSubscribeRequest {
+                selector: FeedSelector {
+                    sources: vec![FeedSource::Changes],
+                    kinds: Vec::new(),
+                    entity_types: Vec::new(),
+                    predicates: Vec::new(),
+                },
+                start: FeedStart::Head,
+            },
+        )
+        .expect("subscribe")
+        .subscription;
+    fixture.arm(&vault, ProgramTrigger::Feed { subscription });
+    // Whatever arming wrote is settled first, so each count below is this test's own.
+    vault.release_feed_program_wakes(T0).expect("release");
+    drain(&vault, T0);
+
+    put_person(&vault);
+    assert_eq!(
+        vault.release_feed_program_wakes(T0).expect("release"),
+        1,
+        "the arming machine records the wake"
+    );
+    assert_eq!(
+        vault.release_feed_program_wakes(T0).expect("release"),
+        0,
+        "a head that has not moved wakes it once"
+    );
+    let woken = drain(&vault, T0);
+    assert_eq!(
+        (woken.admitted, woken.refused, woken.held),
+        (1, 0, 0),
+        "{woken:?}"
+    );
 }
 
 /// Lead call K: a feed program's wake is judged as its own read would be, at delivery, so a

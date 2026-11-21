@@ -59,6 +59,16 @@
 //! counting makes the doubt). The setting projection reads each head by it.
 //! An act with no proof where one is needed waits, in no frontier: a
 //! proposal, with no effect.
+//!
+//! One setting is the fold's own to read: the recovery box's kit-only switch
+//! ([`PolicySetting::RecoveryBoxKitOnly`], WAYBACK-BOX-HOLD-FROM-DEVICE-SWITCH
+//! = A), which the owner's device signs in its preset write for the managed
+//! node that holds the box. No install keeps a row of it. It speaks for the
+//! owner's way back, so its act counts only with an owner key's proof,
+//! whoever carries it. The register keys an act by its target alone and a
+//! free-time policy act names any target, so an act of another setting that
+//! names the kit-only target is valid and without effect there. The switch
+//! is a one-row act: a batch names catalogue keys alone.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -110,7 +120,8 @@ pub(crate) struct FoldedPolicySettings {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) name_counts: BTreeMap<EntityId, NameCounts>,
     /// Well-signed acts without effect: their carrier was not admitted, or
-    /// their owner not live, at their parents.
+    /// their owner not live, at their parents; and each act of another
+    /// setting that named the kit-only setting's target.
     pub(crate) refused: BTreeSet<AuthorityEntryHash>,
     /// Each target's acts that wait for the owner's proof and still ask (row
     /// CARRIER-OWNER-PROOF; the Setting's stage 7b-3): proposals, in no
@@ -168,8 +179,15 @@ pub(super) fn apply_policy_setting(
     let acts = set
         .row_acts()
         .map_err(|_| AuthorityFoldIssue::InvalidEntry(hash))?;
+    // The kit-only frontier is judged by its target, whatever setting an act
+    // on it names: the register keys an act by its target alone. Only the
+    // first row can be the switch: a batch's further rows are catalogue keys.
+    let names_kit_only =
+        PolicySetting::parse(&set.setting) == Some(PolicySetting::RecoveryBoxKitOnly);
     let mut landings = Vec::with_capacity(acts.len());
-    for (act, value) in &acts {
+    for (row, (act, value)) in acts.iter().enumerate() {
+        let on_kit_only = is_recovery_box_kit_only_target(act.target);
+        let kit_only = on_kit_only && row == 0 && names_kit_only;
         let op = OwnerChoiceOp {
             act,
             machine: set.machine,
@@ -178,7 +196,7 @@ pub(super) fn apply_policy_setting(
             needs_proof_off_the_line,
             persons_own_narrowing: false,
         };
-        landings.push(owner_choice_landing(
+        let landing = owner_choice_landing(
             state,
             &state.policy_settings,
             entry,
@@ -186,7 +204,25 @@ pub(super) fn apply_policy_setting(
             hash,
             counting,
             restriction_only,
-        )?);
+        )?;
+        // Another setting's act on the kit-only target lands nothing there.
+        // The switch counts only with an owner key's proof, whoever carries
+        // it, the owner's own machine included: with none it waits for one.
+        let unproven_kit_only = kit_only
+            && matches!(landing, OwnerChoiceLanding::Recorded { .. })
+            && super::owner_proof::owner_proof_key(state, entry, hash)?.is_none();
+        landings.push(match landing {
+            OwnerChoiceLanding::Recorded { hash, .. }
+            | OwnerChoiceLanding::Waiting { hash, .. }
+                if on_kit_only && !kit_only =>
+            {
+                OwnerChoiceLanding::Refused(hash)
+            }
+            OwnerChoiceLanding::Recorded { target, hash, .. } if unproven_kit_only => {
+                OwnerChoiceLanding::Waiting { target, hash }
+            }
+            landing => landing,
+        });
     }
     // A waiting act is no agent's act in force: the owner's confirm is his
     // own act (row CARRIER-OWNER-PROOF). The proof and the carrier are the
@@ -212,7 +248,9 @@ pub(super) fn apply_policy_setting(
 /// source's heads ([`birth_names_source_heads`]). Every row is judged against
 /// the state before the entry, and only then do they all land.
 /// `needs_proof_off_the_line` is the owner key's line's mark on the entry
-/// ([`super::owner_key_line`]), which marks no setting copy yet (FIX
+/// ([`super::owner_key_line`]): a copy outside a proving owner-key
+/// enrolment's line that a carrier other than the owner's machine put there
+/// unproven waits, as on parents that hold the key (FIX
 /// SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
 pub(super) fn apply_setting_copy(
     state: &mut FoldState,
@@ -349,8 +387,9 @@ fn birth_names_source_heads(state: &FoldState, row: &SettingCopyRow) -> Result<b
 /// act on its own target ([`SettingPackHead::target`]): his liveness and his proof are tested as
 /// for every setting act, and one that waits for his proof is in no frontier.
 /// `needs_proof_off_the_line` is the owner key's line's mark on the entry
-/// ([`super::owner_key_line`]), which marks no pack head yet, his yes included, as no setting
-/// copy (FIX SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
+/// ([`super::owner_key_line`]): a head outside a proving owner-key enrolment's line, his yes
+/// included, that a carrier other than the owner's machine put there unproven waits, as a
+/// setting copy does (FIX SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
 pub(super) fn apply_setting_pack_head(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -384,6 +423,14 @@ pub(super) fn apply_setting_pack_head(
     )?;
     state.policy_settings.land(landing);
     Ok(())
+}
+
+/// Whether `target` is the recovery box kit-only setting's reserved target.
+fn is_recovery_box_kit_only_target(target: EntityId) -> bool {
+    matches!(
+        PolicySetting::RecoveryBoxKitOnly.reserved_target(),
+        Ok(Some(reserved)) if reserved == target
+    )
 }
 
 /// The fold's view of every setting's acts, under this install's pin and
@@ -425,6 +472,44 @@ pub(crate) struct PolicySettingAct {
 }
 
 impl Vault {
+    /// Signs, appends and folds `act` as a `PolicySettingSet` in `txn`, the
+    /// write that made the choice, and fails that write when it cannot: for a
+    /// setting the fold reads with no row of its own, where the signed act is
+    /// the setting itself. The entry hash once the fold in `txn` counted it
+    /// as a valid entry; whether it landed or waits for an owner key's proof
+    /// is the caller's to read. It signs on `ground`, or with no owner proof
+    /// where that is `None`.
+    ///
+    /// # Errors
+    /// No live machine profile of this install to carry the act, more heads
+    /// than one entry may name, a fold that did not count it, and storage
+    /// errors.
+    pub(crate) fn append_policy_setting_op_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
+        act: PolicySettingAct,
+    ) -> Result<AuthorityEntryHash> {
+        let PolicySettingAct {
+            act,
+            setting,
+            prior,
+            value,
+        } = act;
+        self.append_carried_act_in_txn(txn, ground, |machine| {
+            AuthorityOp::PolicySettingSet(PolicySettingSet {
+                act,
+                machine,
+                setting,
+                prior,
+                value,
+                slot: None,
+                inline: None,
+                more: Vec::new(),
+            })
+        })
+    }
+
     /// `target`'s setting revision in `txn`: the `seen` an act on it names.
     pub(crate) fn policy_setting_revision_in_txn(
         &self,
@@ -439,10 +524,12 @@ impl Vault {
 
     /// Records `act` as a signed `PolicySettingSet` in the write `txn` that
     /// changed the setting, best effort ([`super::carried_act`]): the
-    /// setting and the door's own record stand whatever this meets.
+    /// setting and the door's own record stand whatever this meets. It signs
+    /// on `ground`, or with no owner proof where that is `None`.
     pub(crate) fn record_policy_setting_op_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
         act: PolicySettingAct,
     ) -> Option<AuthorityEntryHash> {
         let PolicySettingAct {
@@ -451,7 +538,7 @@ impl Vault {
             prior,
             value,
         } = act;
-        self.record_carried_act_in_txn(txn, "policy setting", |machine| {
+        self.record_carried_act_in_txn(txn, "policy setting", ground, |machine| {
             AuthorityOp::PolicySettingSet(PolicySettingSet {
                 act,
                 machine,
@@ -472,7 +559,8 @@ impl Vault {
     /// effort: the act is the write, so whatever stops it (no live machine
     /// profile to carry it, a fold that does not count it, a storage fault)
     /// fails the change, and the savepoint it ran in is rolled back with it.
-    /// The entry's hash.
+    /// The entry's hash. It signs on `ground`, or with no owner proof
+    /// where that is `None`.
     ///
     /// # Errors
     ///
@@ -481,6 +569,7 @@ impl Vault {
     pub(crate) fn append_setting_slot_act_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
         act: SettingSlotAct,
     ) -> Result<AuthorityEntryHash> {
         let SettingSlotAct {
@@ -500,7 +589,7 @@ impl Vault {
                 .collect::<Result<Vec<_>>>()?
         };
         let carried_by = setting_act_of((owner, surface), rows)?;
-        self.append_carried_act_in_savepoint(txn, |machine| {
+        self.append_carried_act_in_savepoint(txn, ground, |machine| {
             AuthorityOp::PolicySettingSet(carried_by(machine))
         })
     }
@@ -534,7 +623,8 @@ impl Vault {
     /// copies, and the `seen` of its own target, read in `txn`. Not best
     /// effort here: whatever stops it fails the call, and its savepoint is
     /// rolled back; the carry keeps its rows on this install whatever this
-    /// meets. The entry's hash.
+    /// meets. The entry's hash. A copy is signed by the mover's install
+    /// key alone: it takes no ground.
     ///
     /// # Errors
     ///
@@ -557,7 +647,7 @@ impl Vault {
                 })
                 .collect::<Result<Vec<_>>>()?
         };
-        self.append_carried_act_in_savepoint(txn, |machine| {
+        self.append_carried_act_in_savepoint(txn, None, |machine| {
             AuthorityOp::SettingCopy(SettingCopy { machine, rows })
         })
     }
@@ -565,7 +655,8 @@ impl Vault {
     /// Appends `pack`'s head as one signed `SettingPackHead` in the pack door's write `txn`
     /// (stage 7c-3a): its version, the digest of its table, the keys held at their earlier
     /// accepted value, and the `seen` of the pack's target, read in `txn`. Not best effort here:
-    /// whatever stops it fails the call, and its savepoint is rolled back. The entry's hash.
+    /// whatever stops it fails the call, and its savepoint is rolled back. The entry's hash. A
+    /// head is the engine's statement, signed by this install's key alone: it takes no ground.
     ///
     /// # Errors
     ///
@@ -578,14 +669,15 @@ impl Vault {
         digest: [u8; 32],
         held: Vec<String>,
     ) -> Result<AuthorityEntryHash> {
-        self.append_pack_head_in_txn(txn, (pack, version, digest, held), None)
+        self.append_pack_head_in_txn(txn, None, (pack, version, digest, held), None)
     }
 
     /// Appends the owner `owner`'s yes to `pack`'s held defaults `accepted`, from `surface`, as
     /// one signed `SettingPackHead` with his act, in the yes's write `txn` (stage 7c-3c): the
     /// version and the digest of the table it names, the keys still held, and the `seen` of the
     /// yes's target ([`setting_pack_accept_target`]), read in `txn`. Not best effort: whatever
-    /// stops it fails the call, and its savepoint is rolled back. The entry's hash.
+    /// stops it fails the call, and its savepoint is rolled back. The entry's hash. The yes is
+    /// the owner's act: it signs on `ground`.
     ///
     /// # Errors
     ///
@@ -593,17 +685,20 @@ impl Vault {
     pub(crate) fn append_setting_pack_accept_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: &OwnerProofGround,
         head: (&str, &str, [u8; 32], Vec<String>),
         (owner, surface): (EntityId, ActSurface),
         accepted: Vec<String>,
     ) -> Result<AuthorityEntryHash> {
-        self.append_pack_head_in_txn(txn, head, Some((owner, surface, accepted)))
+        self.append_pack_head_in_txn(txn, Some(ground), head, Some((owner, surface, accepted)))
     }
 
-    /// [`Self::append_setting_pack_head_in_txn`], and with `accept` the owner's yes.
+    /// [`Self::append_setting_pack_head_in_txn`], and with `accept` the owner's yes, which
+    /// signs on `ground`.
     fn append_pack_head_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
         (pack, version, digest, held): (&str, &str, [u8; 32], Vec<String>),
         accept: Option<(EntityId, ActSurface, Vec<String>)>,
     ) -> Result<AuthorityEntryHash> {
@@ -619,7 +714,7 @@ impl Vault {
             act: OwnerAct::by_owner(owner, OwnerActKind::PolicySetting, target, surface, seen),
             accepted,
         });
-        self.append_carried_act_in_savepoint(txn, |machine| {
+        self.append_carried_act_in_savepoint(txn, ground, |machine| {
             AuthorityOp::SettingPackHead(SettingPackHead {
                 machine,
                 pack: pack.to_owned(),

@@ -19,7 +19,7 @@
 //! (Engine ruling 16:10, 12 Nov).
 
 use super::claim::{encode_event_body, read_booking_facts};
-use super::door::attempt_failure_reason;
+use super::door::{attempt_failure_reason, takes_booking_write_in_txn};
 use super::emergency::emergency_current_revision_in;
 use super::occurrence::inclusive_occurrence;
 use super::passport::supersede_outbound_passport;
@@ -74,9 +74,11 @@ pub(crate) enum FeedMoveOutcome {
     /// The booking moved to the feed's slot under this revision.
     Moved(CalendarRevision),
     /// A pending emergency delivery fences the booking's current revision,
-    /// so the passport cannot take the next SEQUENCE. Nothing is written:
-    /// the feed keeps this item's update owed and reads it again on its next
-    /// poll, and every other item of the pass lands.
+    /// so the passport cannot take the next SEQUENCE, or this node does not
+    /// take booking writes (a home move froze its booking rows, or its
+    /// election names another node home). Nothing is written: the feed keeps
+    /// this item's update owed and reads it again on its next poll, and every
+    /// other item of the pass lands.
     HeldBack,
 }
 
@@ -137,6 +139,13 @@ pub(crate) fn move_booking_by_feed(
         };
         if slot == booking.slot {
             return Ok(FeedMoveOutcome::Unchanged);
+        }
+        // A node that does not take booking writes writes no revision (review round 2 of
+        // #10060): after a freeze the new home holds the booking, and a move back drops a
+        // receipt written here meanwhile. The item waits as an emergency fence's does, and
+        // lands here if the move is cancelled. Read in this writer, as the lifecycle's fence.
+        if !takes_booking_write_in_txn(vault, &*wtxn)? {
+            return Ok(FeedMoveOutcome::HeldBack);
         }
         // The one refusal the ruling holds back per item: every other item
         // of the feed still lands, and this one is read again. The fence is

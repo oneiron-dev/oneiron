@@ -47,6 +47,9 @@ pub(crate) enum Reply {
     },
     /// Never answer until [`FakeLlm::release`] is called; then answer `text`.
     Hold { text: String },
+    /// Never answer until [`FakeLlm::release`] is called; then answer as
+    /// the reply it holds does: a refusal held until the test has acted.
+    HoldThen(Box<Reply>),
     /// Answer with text computed from the request (to echo ids it carries).
     Computed(Compute),
     /// Answer with this exact event-stream body, one event per chunk: an
@@ -270,6 +273,12 @@ async fn answer(
             released.await;
             Reply::text(text)
         }
+        Some(Reply::HoldThen(then)) => {
+            let released = shared.released.notified();
+            shared.holding.notify_one();
+            released.await;
+            *then
+        }
         Some(reply) => reply,
         None => Reply::Status(500),
     };
@@ -322,7 +331,7 @@ async fn answer(
             events.truncate(events.len() - ending);
             return stalled(Arc::clone(&shared), events);
         }
-        Reply::Hold { .. } => unreachable!("resolved above"),
+        Reply::Hold { .. } | Reply::HoldThen(_) => unreachable!("resolved above"),
     };
     match (anthropic, stream) {
         (false, false) => {

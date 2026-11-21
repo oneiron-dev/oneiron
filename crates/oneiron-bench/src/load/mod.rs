@@ -226,7 +226,9 @@ fn start_with_hub_cap(plan: &Plan, vault: &Vault, cap: u32) -> Result<Running, S
         .call_json("vault.settings.set", &input.to_string())
         .map_err(|e| format!("the owner sets the hub cap {cap}: {e}"))?;
     if !outcome.contains("\"status\":\"applied\"") {
-        return Err(format!("the owner's hub cap {cap} did not apply: {outcome}"));
+        return Err(format!(
+            "the owner's hub cap {cap} did not apply: {outcome}"
+        ));
     }
     say(&format!("hub cap {cap} set by the owner: {outcome}"));
     Ok(server)

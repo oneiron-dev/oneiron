@@ -148,6 +148,12 @@ crate::side_table::side_tables! {
     /// ":part:" index for a clip's bytes.
     MODEL_MEDIA_JOB: SyncState b"models:media-job:v1:" Named
         [restore: live] [family: dispatch Response] [tier: canonical];
+    /// The owner key changes this managed install already reported to its
+    /// supervisor (Engine ruling 21 Nov 06:00): the reported entry hashes, 32
+    /// bytes each, ascending. Install-local, never synced: every replica would
+    /// mail else. Key: ().
+    OWNER_KEY_CHANGE_REPORTED: SyncState b"managed:owner_key_change_reported:v1" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Entity waiting for an embedding. Key: hex32.
     PENDING_EMBEDDING_MARKER: SyncState b"pe:" Raw
         [restore: not_imaged] [family: not_imaged] [tier: derived];
@@ -299,6 +305,10 @@ crate::side_table::side_tables! {
     /// 7932), written in the transaction that settled the handoff and never rewritten. Key:
     /// hash32 (the ReRoot's entry hash).
     AUTHORITY_LEAVE_NOTICE_DELEGATION_BY_HANDOFF: VaultMeta b"authority:leave-notice-delegation-by-handoff:v1:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// A recovery hold's seed slot this install may hold: written and committed before R's seed
+    /// enters the slot, removed when the slot is deleted. Public key only. Key: successor key.
+    AUTHORITY_RECOVERY_HOLD_SLOT_PENDING: VaultMeta b"authority:recovery-hold-slot-pending:v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
     /// The last commit a write that changes no content stamped (FIX 6730): its transaction id,
     /// the last content commit's and its class, so a host's telemetry and a backup's own writes

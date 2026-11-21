@@ -19,10 +19,13 @@ pub mod connector_issuer_watch;
 pub mod connector_sends;
 #[cfg(unix)]
 pub mod continue_command;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub mod credential_file_network_fs;
 pub mod device_burst_drain;
 pub mod device_home_dial;
 #[cfg(feature = "mesh")]
 pub mod device_sync_dial_gate;
+pub mod dreamer_sourced_route;
 #[cfg(feature = "mesh")]
 pub mod embedded_peer_fixture;
 #[cfg(feature = "mesh")]
@@ -62,6 +65,8 @@ pub mod one_click_wire_counter;
 pub mod openapi_document;
 pub mod owner_backup;
 pub mod owner_check;
+#[cfg(unix)]
+pub mod owner_key_change_report;
 pub mod parked_step_resume;
 pub mod pre_idle_reuse;
 pub mod question_heads;

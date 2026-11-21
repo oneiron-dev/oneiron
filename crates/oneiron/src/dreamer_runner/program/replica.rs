@@ -315,7 +315,8 @@ pub(crate) fn admit_arming_row(map_key: &str, bytes: &[u8]) -> Result<()> {
             || LiftedKeys::names_a_handle(&arming.definition.args)
             || !arming.trigger.is_turn()
             || arming.sealed.is_some()
-            || arming.next_due.is_some())
+            || arming.next_due.is_some()
+            || arming.paused_at.is_some())
     {
         return Err(refused("an arming that does not ride"));
     }

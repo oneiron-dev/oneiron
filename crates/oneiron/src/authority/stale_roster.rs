@@ -107,7 +107,7 @@ pub(super) fn revokes_roster_key(op: &AuthorityOp) -> bool {
 /// clearance, or a machine standing short of a removal that names no owner
 /// act. An owner answer rests on its carrier's act, never on a roster key,
 /// so no roster revocation expires it (C3).
-fn is_window_approval(op: &AuthorityOp) -> bool {
+pub(super) fn is_window_approval(op: &AuthorityOp) -> bool {
     match op {
         AuthorityOp::BindActor { .. } | AuthorityOp::RebindActor { .. } => true,
         AuthorityOp::FederationConfirm(action) => action.kind != AuthorityConfirmKind::Revoke,

@@ -215,6 +215,16 @@ pub fn image_revoke_fact_rows(
     image.revoke_fact_rows_for_test()
 }
 
+/// The federation confirm ids and nonces `image`'s safety index holds.
+pub fn image_confirm_keys(
+    image: &crate::authority::AuthorityCheckpointV2,
+) -> (
+    std::collections::BTreeSet<[u8; 32]>,
+    std::collections::BTreeSet<[u8; 16]>,
+) {
+    image.confirm_keys_for_test()
+}
+
 /// An install-family join of `world`'s side leaves for `carrier`: a side row
 /// of that world, which no main-log row may name as a parent. Signed by a key
 /// that is no install key of `carrier`'s, it folds rejected (its signer is

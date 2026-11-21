@@ -1118,7 +1118,7 @@ impl Vault {
         )?;
         let fold = self.authority_fold()?;
         let proof = self
-            .owner_proof_signer(&fold)
+            .owner_proof_signer(&fold, &super::OwnerProofGround::test_door())
             .ok_or_else(invalid_authority)?;
         let Some(op) = Self::host_bind_op_for_test(&fold, issuer, person, ACTOR_CLASS_HUMAN) else {
             return Ok(());

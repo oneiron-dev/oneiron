@@ -53,22 +53,23 @@ use std::sync::{Arc, PoisonError};
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
 
-use super::DevicePin;
 use super::device_pin::{
     SlotSeedBar, device_pin_is_set, no_device_pin_here, pin_refused, slot_seed_bar,
 };
+use super::{DevicePin, OwnerActImportance, owner_presence_reasons};
 use crate::authority::{
     ACTOR_CLASS_HUMAN, ActAuthority, AuthorityEntryHash, AuthorityFold, AuthorityKey,
     AuthorityLogEntry, AuthorityOp, AuthorityVaultId, CheckpointRootSigner, DeviceOwnerKeyVouch,
     EnrolledOwnerKey, HostSlipIssuer, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
-    OwnerKeyVouchRequest, RecoveryRootId, authority_refused, authority_transcript,
-    checkpoint_statement_domain, invalid_authority, label_is_valid, label_not_valid,
-    root_appointment_challenge,
+    OwnerKeyVouchRequest, OwnerProofGround, RecoveryRootId, authority_refused,
+    authority_transcript, checkpoint_statement_domain, invalid_authority, label_is_valid,
+    label_not_valid, root_appointment_challenge,
 };
 use crate::entity_id::EntityId;
 use crate::error::{DevicePinRefusal, Error, RecordError, Result};
 use crate::vault::Vault;
 
+mod box_cancel_signature;
 mod slot;
 
 pub(crate) use self::slot::{OwnerSigningSlot, SlotRenewal};
@@ -284,6 +285,7 @@ impl CheckpointRootSigner for OwnerRootSigner {
         &self,
         vault: &Vault,
         fold: &AuthorityFold,
+        _ground: &OwnerProofGround,
         transcript: &[u8],
     ) -> Result<Vec<u8>> {
         match self.refusal(vault, Some(fold)) {
@@ -393,7 +395,17 @@ impl Vault {
     /// installed a device PIN, an enrollment is one step with a PIN's set,
     /// change and forget, and with every other enrollment under that PIN.
     ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), after the owner check and
+    /// the keystore read, before it readies this install's signing keys and
+    /// before taking the PIN step. Readying those keys writes
+    /// ([`Vault::prepare_install_signing`]), so a refused confirm leaves this
+    /// install's machine as it was.
+    /// After the check, the door reads the slot under the PIN step if present
+    /// and answers an already live key's receipt without writing an enrollment.
+    ///
     /// # Errors
+    /// A refused confirm answers [`RecordError::OwnerPresenceRequired`].
     /// `KeystoreUnavailable` while the host installed no keystore; the
     /// enrollment's own refusals. On a device with a PIN set,
     /// [`crate::error::SecretError::DevicePin`]: `Required` outside a window,
@@ -408,6 +420,12 @@ impl Vault {
         // The caller is checked first, before this install readies anything.
         self.owner_key_act_owner(authority)?;
         let keystore = self.device_keystore()?;
+        // Asked before this install's signing keys are readied: readying
+        // them writes (REVIEW-10128 P1 1).
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::ENROL_THIS_DEVICE_OWNER_SIGNING_KEY,
+        )?;
         let machine = self.prepare_install_signing()?;
         let slot = self.owner_signing_slot(machine);
         let pin = self.device_pin();
@@ -415,7 +433,7 @@ impl Vault {
         if device_pin_is_set(keystore.as_ref()).map_err(super::keystore_error)? {
             return match (pin.as_ref(), step) {
                 (Some(pin), Some(step)) => self.enrol_pin_bound_owner_signing_key(
-                    &step, pin, authority, issuer, machine, slot,
+                    &step, pin, authority, issuer, machine, slot, &witness,
                 ),
                 _ => Err(no_device_pin_here()),
             };
@@ -433,7 +451,9 @@ impl Vault {
                         public_key: signer.public_key(),
                         proof: signer.sign_possession(&challenge),
                     };
-                    let receipt = self.enrol_owner_signing_key_as_host(authority, input, issuer)?;
+                    let receipt = self.enrol_owner_signing_key_as_host_witnessed(
+                        authority, &witness, input, issuer,
+                    )?;
                     (signer, receipt)
                 }
             };
