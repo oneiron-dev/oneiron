@@ -38,7 +38,7 @@ const OAUTH_AUTHORIZATION_ANSWER_VERB: &str = "vault.oauth.authorization.answer"
 /// previews through [`OWNER_CONFIRM_PREVIEW_VERB`], whose `confirm` this
 /// verb's call then passes back.
 const RECORD_ERASE_CONFIRM_VERB: &str = "vault.records.erase_confirm";
-/// The owner's set of one setting row: a refused projection's fix.
+/// The owner's set of the setting rows of a refused projection, as one act: its fix.
 const SETTING_SET_VERB: &str = "vault.settings.set";
 
 /// One tap a notification offers: the registered verb it calls and that
@@ -430,28 +430,25 @@ impl Memory<'_> {
     /// owner's own. Its revert is offered while the change is the vault's
     /// last and the pack before it is installed at its bytes and served.
     /// The producer names every setting act a refused projection is about in `source.event`
-    /// (row SETTING-PROJECTED-ROW-REFUSING-HOOKS). For each row such an act heads that this
-    /// install still refuses: one owner's set of that row to the value it holds here, which the
-    /// owner may edit before he taps; its act replaces the refused one on every machine. A
-    /// refusal that no longer stands here offers none.
+    /// (row SETTING-PROJECTED-ROW-REFUSING-HOOKS). One tap: the owner's set, as one act, of each
+    /// row such an act heads that this install still refuses and of each row the key's hook
+    /// judges it against, each to the value it holds here, which the owner may edit before he
+    /// taps; the act replaces the refused one on every machine. A refusal that no longer stands
+    /// here offers none.
     fn setting_refusal_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let vault = self.vault();
-        let taps = vault
+        let tap = vault
             .store
             .env
             .read_txn()
             .map_err(crate::error::Error::from)
             .and_then(|txn| {
-                crate::setting::setting_refusal_taps_in_txn(vault, &txn, &row.source.event)
+                crate::setting::setting_refusal_tap_in_txn(vault, &txn, &row.source.event)
             });
-        taps.map_or_else(
-            |_| Vec::new(),
-            |taps| {
-                taps.into_iter()
-                    .map(|args| NotificationAction::new(SETTING_SET_VERB, args))
-                    .collect()
-            },
-        )
+        match tap {
+            Ok(Some(args)) => vec![NotificationAction::new(SETTING_SET_VERB, args)],
+            Ok(None) | Err(_) => Vec::new(),
+        }
     }
 
     fn model_pack_revert_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {

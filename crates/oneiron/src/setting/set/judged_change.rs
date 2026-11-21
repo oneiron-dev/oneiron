@@ -128,15 +128,18 @@ pub(super) fn judge_change_in_txn(
     });
     let prior_weight = prior_row.as_ref().and_then(|row| row.weight_runs);
     let prior_value = prior_row.map(|row| row.value);
-    // The owner's equal value of a row whose acts this install's hook refused signs its act all
-    // the same (row SETTING-PROJECTED-ROW-REFUSING-HOOKS): the act replaces the refused one on
-    // every machine, the one step the refusal's notice offers (`project/refusal.rs`).
-    let replaces_refused = matches!(caller, SettingCaller::Owner(_))
+    // The owner's equal value of a travelling row signs its act all the same where this
+    // install's hook refused the row's acts, or where the row is one of the owner's change of
+    // several rows as one act (row SETTING-PROJECTED-ROW-REFUSING-HOOKS): the act replaces the
+    // refused one on every machine, the one step the refusal's notice offers, and heads every row
+    // that step names, so a machine that refused the peer's act takes the peer's value from it
+    // too (`project/refusal.rs`; REVIEW-10306 round 2).
+    let signs_equal_value = matches!(caller, SettingCaller::Owner(_))
         && travels(change.spec)
-        && slot_refused_here_in_txn(vault, txn, &change.key)?;
+        && (change.act_of_several_rows || slot_refused_here_in_txn(vault, txn, &change.key)?);
     let unchanged = readable
         && !setter_changes
-        && !replaces_refused
+        && !signs_equal_value
         && prior_value.as_ref() == change.value
         && prior_weight == change.weight_runs;
     // An install born of a restore that has not joined changes no setting the vault's machines
@@ -233,6 +236,7 @@ pub(super) fn owner_change_importance(
         key: &key,
         value: value.as_ref(),
         weight_runs: checked_weight(spec, request)?,
+        act_of_several_rows: false,
     };
     let judged = judge_change_in_txn(vault, &txn, &change, SettingCaller::Owner(owner), request)?;
     if !judged.unchanged {

@@ -1,6 +1,8 @@
 //! The Setting primitive's verbs (DESIGN 15-setting-primitive, stage 0.1): `vault.settings.get`,
 //! `vault.settings.list` and `vault.settings.set`, one each for every catalogue key; and, from
-//! stage 6.0, `vault.settings.accept_defaults`, the owner's yes to a pack's waiting defaults.
+//! stage 6.0, `vault.settings.accept_defaults`, the owner's yes to a pack's waiting defaults. The
+//! owner's `vault.settings.set` may name further rows: one change of several rows, signed as one
+//! act ([`Vault::set_settings`]).
 //!
 //! The caller is the vault owner, on the owner's own proof, or an agent on its verified
 //! binding. Reads follow each key's `read_by`; a change goes through [`Vault::set_setting`],
@@ -65,7 +67,8 @@ pub struct SettingCatalogue {
     pub keys: Vec<SettingCatalogueEntry>,
 }
 
-/// `vault.settings.set` input: one row's change.
+/// `vault.settings.set` input: one row's change, and for the owner any further rows of the same
+/// change.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SettingSetRequest {
@@ -97,6 +100,41 @@ pub struct SettingSetRequest {
     pub check_in_ref: Option<String>,
     /// A learned key's seed: its weight in runs, finite and above zero. Only a value row of a
     /// learned key carries one, and it must.
+    #[serde(default)]
+    pub weight_runs: Option<f64>,
+    /// The owner's further rows of the same change, each named once, with this row's reason: the
+    /// rows are written together before any key's hook runs, the rows that travel sign one act,
+    /// and the change is all or none (the one-step fix of a refused projection's notice). Only
+    /// the owner's change names any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub further: Vec<SettingSetRow>,
+}
+
+/// One further row of the owner's `vault.settings.set` ([`SettingSetRequest::further`]), named
+/// as the request names its first.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SettingSetRow {
+    /// The key's dotted name.
+    pub key: String,
+    /// For a family key, the item.
+    #[serde(default)]
+    pub item: Option<String>,
+    /// Where the row applies.
+    pub scope: SettingScope,
+    /// Whether the row is the owner's pin; a value row when absent.
+    #[serde(default)]
+    pub pin: bool,
+    /// Whether the row is the one a move carried onto a project: only a clear. Never with `pin`.
+    #[serde(default)]
+    pub carried: bool,
+    /// The new value; absent or null clears the row.
+    #[serde(default)]
+    pub value: Option<serde_json::Value>,
+    /// The row's revision the caller read; the change is refused when the row has moved.
+    #[serde(default)]
+    pub expected_revision: Option<u64>,
+    /// A learned key's seed: its weight in runs, finite and above zero.
     #[serde(default)]
     pub weight_runs: Option<f64>,
 }
@@ -248,12 +286,14 @@ pub fn setting_list_with_request_owner(
 
 /// `vault.settings.set`: one row's change through [`Vault::set_setting`]: `applied`, or
 /// `pending` with the check-in it waits on. The owner's applied change is signed on the main log
-/// from the handle's act surface (stage 7a-1).
+/// from the handle's act surface (stage 7a-1). The owner's change that names further rows is one
+/// change of them all ([`Vault::set_settings`]), and answers its first row's outcome.
 ///
 /// # Errors
 ///
-/// BAD_REQUEST for a `check_in_ref` that is not 32 hex, and as [`Vault::set_setting`];
-/// FORBIDDEN for a caller that is neither the owner nor an agent; storage errors.
+/// BAD_REQUEST for a `check_in_ref` that is not 32 hex, further rows named by a caller other than
+/// the owner, and as [`Vault::set_setting`] (or [`Vault::set_settings`]); FORBIDDEN for a caller
+/// that is neither the owner nor an agent; storage errors.
 pub fn setting_set_embedded(
     memory: &Memory<'_>,
     input: SettingSetRequest,
@@ -271,8 +311,9 @@ pub fn setting_set_embedded(
 pub fn setting_set_with_request_owner(
     memory: &Memory<'_>,
     request_owner: impl FnOnce() -> Option<AuthenticatedOwner>,
-    input: SettingSetRequest,
+    mut input: SettingSetRequest,
 ) -> MemoryResult<SetSettingOutcome> {
+    let further = std::mem::take(&mut input.further);
     let request = set_request(input)?;
     let vault: &Vault = memory.vault();
     if let Some(owner) = owner_of(memory, SET, request_owner) {
@@ -282,7 +323,41 @@ pub fn setting_set_with_request_owner(
             surface: Some(memory.owner_surface()),
             ..request
         };
-        return Ok(vault.set_setting(SettingCaller::Owner(&owner), request)?);
+        if further.is_empty() {
+            return Ok(vault.set_setting(SettingCaller::Owner(&owner), request)?);
+        }
+        let (why, surface) = (request.why.clone(), request.surface);
+        let mut requests = Vec::with_capacity(1 + further.len());
+        requests.push(request);
+        for row in further {
+            requests.push(SetSetting {
+                key: row.key,
+                item: row.item,
+                scope: row.scope,
+                mode: mode_of(row.pin, row.carried)?,
+                value: row.value.filter(|value| !value.is_null()),
+                expected_revision: row.expected_revision,
+                why: why.clone(),
+                check_in_ref: None,
+                weight_runs: row.weight_runs,
+                surface,
+            });
+        }
+        return vault
+            .set_settings(&owner, requests)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                MemoryError::from(crate::Error::InvariantViolation(
+                    "a setting change answers each row",
+                ))
+            });
+    }
+    if !further.is_empty() {
+        return Err(bad_request(
+            "only the owner's change names further rows: an agent changes one row at a time"
+                .to_owned(),
+        ));
     }
     let agent = agent_of(memory, SET)?;
     Ok(vault.set_setting(SettingCaller::Agent(agent), request)?)
@@ -335,21 +410,11 @@ fn set_request(input: SettingSetRequest) -> MemoryResult<SetSetting> {
         .map(EntityId::from_hex)
         .transpose()
         .map_err(|_| bad_request("check_in_ref is a check-in's 32 hex id".to_owned()))?;
-    let mode = match (input.pin, input.carried) {
-        (true, true) => {
-            return Err(bad_request(
-                "a row is a pin or a carried row, not both".to_owned(),
-            ));
-        }
-        (true, false) => SettingMode::Pin,
-        (false, true) => SettingMode::Carried,
-        (false, false) => SettingMode::Value,
-    };
     Ok(SetSetting {
         key: input.key,
         item: input.item,
         scope: input.scope,
-        mode,
+        mode: mode_of(input.pin, input.carried)?,
         value: input.value.filter(|value| !value.is_null()),
         expected_revision: input.expected_revision,
         why: input.why,
@@ -357,4 +422,16 @@ fn set_request(input: SettingSetRequest) -> MemoryResult<SetSetting> {
         weight_runs: input.weight_runs,
         surface: None,
     })
+}
+
+/// The row's mode from a request's `pin` and `carried`.
+fn mode_of(pin: bool, carried: bool) -> MemoryResult<SettingMode> {
+    match (pin, carried) {
+        (true, true) => Err(bad_request(
+            "a row is a pin or a carried row, not both".to_owned(),
+        )),
+        (true, false) => Ok(SettingMode::Pin),
+        (false, true) => Ok(SettingMode::Carried),
+        (false, false) => Ok(SettingMode::Value),
+    }
 }
