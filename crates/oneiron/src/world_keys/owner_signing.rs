@@ -72,7 +72,7 @@ use crate::vault::Vault;
 mod box_cancel_signature;
 mod slot;
 
-pub(crate) use self::slot::{OwnerSigningSlot, SlotRenewal};
+pub(crate) use self::slot::{FreshOwnerKey, OwnerSigningSlot, SlotRenewal};
 
 /// The context the signing key is derived under from its seed.
 const OWNER_SIGNING_CONTEXT: &str = "oneiron/owner-signing-key/v1";

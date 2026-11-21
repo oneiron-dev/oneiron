@@ -179,13 +179,7 @@ impl Vault {
                         .roster
                         .get(&root_key)
                         .is_some_and(|device| !device.revoked);
-                    let owner_live =
-                        crate::consent::person_is_live_in_txn(self, &txn, &hold.owner)?
-                            && crate::policy_model::is_live_vault_owner_in_txn(
-                                self,
-                                &txn,
-                                &hold.owner,
-                            )?;
+                    let owner_live = self.recovery_hold_owner_is_live_in_txn(&txn, &hold.owner)?;
                     if !root_live || !owner_live {
                         // As in the terminal arms above.
                         if retry_owns {
