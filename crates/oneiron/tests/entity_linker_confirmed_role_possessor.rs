@@ -21,7 +21,6 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_runner::maintenance::identity::{
@@ -49,13 +48,6 @@ const THIRD_TURN: &str = "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a";
 const SAID: &str = "my manager called.";
 const ROLE_PHRASE: &str = "my manager";
 const ROLE_EDGE: &str = "relationship.manager";
-
-fn now_seconds() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock after the epoch")
-        .as_secs()
-}
 
 /// A device config whose tagger saves its tags, mapping the `PERSON` label.
 fn tagging_config() -> VaultConfig {
@@ -112,7 +104,7 @@ fn says_my_manager(vault: &Vault, author: EntityId, turn: &str) -> (EntityId, Me
         turn_ref: Some(turn.to_owned()),
         thread_audience: None,
         project: None,
-        occurred_at: now_seconds(),
+        occurred_at: vault.now_recorded_at(),
         messages: vec![WitnessMessage {
             id: None,
             author: WitnessAuthor::User,
@@ -302,7 +294,7 @@ fn a_confirmed_role_person_is_not_another_speakers_manager() {
 
     let (xaviers_again, again) = says_my_manager(&vault, xavier, THIRD_TURN);
     minted(&vault, &again, "Xavier's repeat");
-    let asks = run_identity_recheck(&vault, now_seconds()).expect("recheck");
+    let asks = run_identity_recheck(&vault, vault.now_recorded_at()).expect("recheck");
     assert!(
         asks.iter()
             .any(|ask| ask.turn == xaviers_again && ask.candidates.contains(&manager)),
