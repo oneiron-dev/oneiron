@@ -1,7 +1,8 @@
 //! A turn program's reads (DOOR-141 PR3a, PR3b): what a landed turn's wakes
 //! admitted, where one program's run stands, one settled step's exact
-//! result and the resume checkpoint its restarter reads, each over the
-//! caller's own credential read lane. The program's
+//! result, the resume checkpoint its restarter reads and the programs a
+//! vault copy holds paused, each over the caller's own credential read
+//! lane. The program's
 //! waking actor or the verified owner reads its rows; every record a field
 //! derives from reads on the caller's lane or is withheld. None executes,
 //! admits, resumes or leases anything. Beside them, the owner's release of
@@ -16,6 +17,10 @@ use oneiron::dreamer_runner::{
     ReleaseParkedAttemptRequest, ReleaseTurnProgramHoldRequest, SettledProgramStepRequest,
     SettledProgramStepView, TurnProgramAdmissionRequest, TurnProgramAdmissionView,
     program_checkpoint, program_run, settled_program_step, turn_program_admission,
+};
+// FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY: the paused programs of a vault copy.
+use oneiron::dreamer_runner::{
+    PausedTurnProgramsRequest, PausedTurnProgramsView, paused_turn_programs,
 };
 use oneiron::memory::MemoryError;
 use oneiron::runtime_hooks::InvocationId;
@@ -39,6 +44,23 @@ pub(crate) async fn vault_turn_programs_admission(
         caller,
         "vault.turn_programs.admission",
         move |_, _, memory| turn_program_admission(&memory, &input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_turn_programs_paused(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    input: PausedTurnProgramsRequest,
+) -> Listed<PausedTurnProgramsView> {
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.turn_programs.paused",
+        move |_, _, memory| paused_turn_programs(&memory, &input),
     )
     .await
 }
