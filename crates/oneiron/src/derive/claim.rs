@@ -153,59 +153,60 @@ pub(super) fn stage_candidate_in_txn(
     } = *claim;
     for approval in [ClaimApprovalStatus::Auto, ClaimApprovalStatus::Proposed] {
         let mut envelope = envelope(context, local, approval, source)?;
-        let mut savepoint = vault.store.env.nested_write_txn(txn)?;
-        vault.sign_retained_machine_claim_in_txn(&savepoint, &id, candidate, &mut envelope)?;
-        let staged = vault
-            .batch_in()
-            .claim_candidate(
-                &id,
-                candidate.clone(),
-                &envelope,
-                TimeRange {
-                    start: context.now,
-                    end: context.now,
-                },
-                context.now,
-            )
-            .apply_recording_gate_decisions_in_lane(&mut savepoint, lane);
-        if approval == ClaimApprovalStatus::Auto
-            && matches!(
-                &staged,
-                Err(Error::Gate(GateError::GateWriteRejected {
-                    outcome: "pending",
-                    ..
-                }))
-            )
-        {
-            savepoint.abort();
-            continue;
+        let mut refused = None;
+        // Hand queued work to this write's owner (FIX DERIVE-COMMIT-ITEM-SAVEPOINTS-DROP-POSTCOMMIT-WORK).
+        let landed = crate::batch::savepoint_in_txn(vault, txn, |savepoint| {
+            vault.sign_retained_machine_claim_in_txn(savepoint, &id, candidate, &mut envelope)?;
+            let staged = vault
+                .batch_in()
+                .claim_candidate(
+                    &id,
+                    candidate.clone(),
+                    &envelope,
+                    TimeRange {
+                        start: context.now,
+                        end: context.now,
+                    },
+                    context.now,
+                )
+                .apply_recording_gate_decisions_in_lane(savepoint, lane);
+            if approval == ClaimApprovalStatus::Auto
+                && matches!(
+                    &staged,
+                    Err(Error::Gate(GateError::GateWriteRejected {
+                        outcome: "pending",
+                        ..
+                    }))
+                )
+            {
+                return Ok(None);
+            }
+            let staged = match staged {
+                Ok(()) if beside_stated => {
+                    open_stated_conflicts_in_txn(vault, savepoint, &id, &envelope, context.now)
+                }
+                staged => staged,
+            };
+            match staged {
+                Ok(()) => Ok(Some(())),
+                Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
+                    refused = Some(reason_codes);
+                    Ok(None)
+                }
+                Err(error) => Err(error),
+            }
+        })?;
+        if landed.is_some() {
+            return Ok(ItemOutcome::Landed {
+                rows: vec![id],
+                approval: Some(approval),
+                receipt: None,
+            });
         }
-        let staged = match staged {
-            Ok(()) if beside_stated => {
-                open_stated_conflicts_in_txn(vault, &mut savepoint, &id, &envelope, context.now)
-            }
-            staged => staged,
-        };
-        match staged {
-            Ok(()) => {
-                savepoint.commit()?;
-                return Ok(ItemOutcome::Landed {
-                    rows: vec![id],
-                    approval: Some(approval),
-                    receipt: None,
-                });
-            }
-            Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
-                savepoint.abort();
-                let reasons: Vec<String> =
-                    reason_codes.iter().map(|code| (*code).to_owned()).collect();
-                let receipt = refusal_receipt_in_txn(vault, txn, context, Some(id), &reasons)?;
-                return Ok(ItemOutcome::Refused { reasons, receipt });
-            }
-            Err(error) => {
-                savepoint.abort();
-                return Err(error);
-            }
+        if let Some(reason_codes) = refused {
+            let reasons: Vec<String> = reason_codes.iter().map(|code| (*code).to_owned()).collect();
+            let receipt = refusal_receipt_in_txn(vault, txn, context, Some(id), &reasons)?;
+            return Ok(ItemOutcome::Refused { reasons, receipt });
         }
     }
     Err(Error::InvariantViolation(

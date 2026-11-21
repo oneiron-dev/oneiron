@@ -368,6 +368,10 @@ pub struct Vault {
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:
         std::sync::Mutex<Option<crate::store::retrieval_deadline::SlowRetrievalStage>>,
+    /// What the integration tests' doors arm and read on this vault, never
+    /// process-global. In memory only.
+    #[cfg(oneiron_test_support)]
+    pub(crate) test_door_state: crate::test_doors::vault_state::VaultTestDoorState,
 }
 
 /// A vault's detached writes run before it closes (FIX 12023): those queued

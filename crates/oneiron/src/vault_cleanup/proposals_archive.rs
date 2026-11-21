@@ -394,6 +394,9 @@ impl Vault {
         }
         crate::dreamer_consolidation::strength::restored_in_txn(self, wtxn, entity)?;
         person_provenance::clear_mint_evidence_in_txn(self, wtxn, entity)?;
+        // READ-LINEAGE L1: the restored row reads under its sources as they
+        // stand now (#10117 Opus review P1-1).
+        crate::source_audience::raise_floors_in_txn(self, wtxn, [*entity])?;
         Ok(())
     }
 }

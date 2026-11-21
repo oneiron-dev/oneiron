@@ -146,6 +146,28 @@ pub enum MachineRole {
 }
 
 impl MachineRole {
+    /// Compares the new role with the role every standing head agrees on.
+    /// `standing` is `None` when no head stands, the heads disagree, or a head is conflicted.
+    /// Removal narrows because it is terminal and nothing is allowed after it.
+    /// Leaving the machine unanswered narrows because it reaches only as an unprofiled install does.
+    /// Marking the machine as the owner's again narrows because nothing becomes the owner's.
+    /// Marking it as the owner's from anything else widens because it becomes the owner's.
+    /// Any other role from the owner's role narrows because the machine ceases to be the owner's.
+    /// Repeating any other standing role narrows because nothing changes.
+    /// Everything else widens because the comparator cannot call it a narrowing.
+    #[must_use]
+    pub fn direction_from(self, standing: Option<Self>) -> Direction {
+        const YOURS: MachineRole = MachineRole::Owned(MachineOwnership::Yours);
+
+        match (self, standing) {
+            (Self::Removed | Self::Unanswered, _) | (YOURS, Some(YOURS)) => Direction::Narrows,
+            (YOURS, _) => Direction::Widens,
+            (_, Some(YOURS)) => Direction::Narrows,
+            (role, Some(previous)) if role == previous => Direction::Narrows,
+            _ => Direction::Widens,
+        }
+    }
+
     /// The name the wire spells it by.
     #[must_use]
     pub fn wire(self) -> &'static str {

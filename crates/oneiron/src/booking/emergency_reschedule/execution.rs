@@ -11,8 +11,8 @@ use super::*;
 #[derive(Debug, Clone, PartialEq)]
 pub struct EmergencyExecution {
     pub item: EmergencyItem,
-    /// Each delivered effect that may reach the booker twice, answered once
-    /// (`super::uncertain_send`).
+    /// Each delivered effect that may reach the booker twice, answered by every run over the
+    /// checkpoint (`super::uncertain_send`).
     pub repeat_notices: Vec<EmergencyRepeatNotice>,
 }
 
@@ -41,15 +41,41 @@ pub fn execute_emergency_plan(
     input: &crate::booking::BookingLifecycleConsumerInput,
     sink: &mut impl crate::outbound::OutboundExecutionSink,
 ) -> Result<EmergencyExecution, BookingError> {
+    let item = deliver_emergency_effects(vault, request, plan, calendars, input, sink)?;
+    let repeat_notices = super::uncertain_send::repeat_notices(vault, &item)?;
+    // A picked checkpoint sends nothing of its old revision. Its run still answers each repeat a
+    // run delivered, since once the booker picked no other run would (review round 1 of
+    // #10166), and again on each later run (round 2); with none it refuses, as before.
+    if item.picked.is_some() && repeat_notices.is_empty() {
+        return Err(refused(
+            "a picked emergency item cannot send its old revision",
+        ));
+    }
+    Ok(EmergencyExecution {
+        item,
+        repeat_notices,
+    })
+}
+
+/// The owner's run up to its answer ([`execute_emergency_plan`]): commits the checkpoint and
+/// delivers each effect it still owes, each delivery committed on the checkpoint before the
+/// next. The checkpoint as it then stands. A picked checkpoint owes neither: the booker's
+/// actions are released only once both deliveries complete.
+pub(crate) fn deliver_emergency_effects(
+    vault: &Vault,
+    request: &EmergencyRescheduleRequest,
+    plan: &EmergencyPlan,
+    calendars: &[(EntityId, Vec<crate::calendar::query::CalendarSel>)],
+    input: &crate::booking::BookingLifecycleConsumerInput,
+    sink: &mut impl crate::outbound::OutboundExecutionSink,
+) -> Result<EmergencyItem, BookingError> {
     verify_logged_owner_instruction(vault, request)?;
     if plan.request != *request {
         return Err(refused("plan belongs to another owner instruction"));
     }
     let mut item = crate::booking::lifecycle::commit_emergency_item(vault, plan, calendars, input)?;
     if item.picked.is_some() {
-        return Err(refused(
-            "a picked emergency item cannot send its old revision",
-        ));
+        return Ok(item);
     }
     if !item.calendar_delivered {
         // Recheck the pinned bytes. The outbound writer admits and publishes
@@ -90,11 +116,7 @@ pub fn execute_emergency_plan(
         )?;
         mark_delivered(vault, &mut item, false)?;
     }
-    let repeat_notices = super::uncertain_send::answer_delivered(vault, &item)?;
-    Ok(EmergencyExecution {
-        item,
-        repeat_notices,
-    })
+    Ok(item)
 }
 
 pub(super) enum EmergencyEffect {

@@ -699,6 +699,8 @@ impl Vault {
             origin_git_transport: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             slow_retrieval_stage: Default::default(),
+            #[cfg(oneiron_test_support)]
+            test_door_state: Default::default(),
         };
         // A sealed vault (maximum tier) admits the wrap its seal was unlocked with,
         // holds its data key and mirrors its wraps before any caller holds it.
