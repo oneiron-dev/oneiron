@@ -522,6 +522,16 @@ impl Vault {
     /// receipts. A key retirement `source` has committed, its key not yet
     /// destroyed, counts as done. Refuses a checkpoint whose key custody is
     /// not `source`'s.
+    ///
+    /// The copy's turn programs that a timer, a feed or an idle stretch
+    /// wakes start paused: its source holds the same armings and keeps
+    /// releasing them, and nothing dedupes an occurrence between the two
+    /// (FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY). So do
+    /// those of every copy made beside a live vault:
+    /// [`Vault::restore_checkpoint_keeping_authority`]'s and
+    /// [`Vault::activate_archived`]'s. A restore that takes its source's
+    /// place ([`Vault::restore_checkpoint`],
+    /// [`Vault::restore_checkpoint_replacing`]) pauses none.
     pub fn restore_checkpoint_beside(
         path: &Path,
         key: &CheckpointKey,
