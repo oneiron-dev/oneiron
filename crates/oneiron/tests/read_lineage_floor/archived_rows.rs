@@ -5,9 +5,10 @@
 //! seals it, and the sweep leaves it waiting. Its restore raises it. Before
 //! the fix each of these let the restored row read open to a stranger.
 //!
-//! #10222 review P1-1 (Opus and Spark): an archived SOURCE still reads gone.
-//! The backfill never raises an archived row, so its floor may not be
-//! whole: a row written from it waits on it until its restore raises both.
+//! Fable design pass 31: an archive is no erase on either side. An
+//! archived row keeps its open set as a waiter, and as a source it reads as
+//! its own facts say: the migration judges an archived row like any held
+//! row, so a row written from it takes its floor (cases 32 to 34).
 
 use oneiron::EntityId;
 use oneiron::test_doors::cleanup_archive::archive_as_cleanup;
@@ -135,39 +136,26 @@ fn an_archived_fact_keeps_waiting_through_a_pass_and_settles_when_its_source_lan
     assert_reads_as_its_landed_source(&mailbox, fact, policy, "once its source landed");
 }
 
-/// `fact` waits on the archived `source`: no stranger reads it, and its
-/// floor is not known whole (`when` names the moment).
-fn assert_waits_on_its_archived_source(mailbox: &Mailbox, fact: EntityId, when: &str) {
-    assert!(
-        !reads(&mailbox.vault, fact, &[mailbox.stranger]).expect("the stranger's read"),
-        "LEAK: a stranger reads a fact learnt from an archived source {when}",
-    );
-    assert!(
-        floor_waits(&mailbox.vault, fact).expect("the floor's state"),
-        "a fact learnt from an archived source no longer waits on it {when}",
-    );
-}
-
 /// An archived SOURCE from before floors (#10222 Opus review P1-1, scenario
-/// 1): `source` was learnt from the mailbox's row and `fact` from `source`,
-/// both before floors, and the cleanup archived `source`. The backfill
-/// never raises an archived row, so `source` holds no floor: `fact` waits
-/// on it through two housekeeping passes. The owner's restore raises
-/// `source`, and `fact` with it: `fact` then holds the mailbox's policy and
-/// reads to the mailbox's reader. Before the fix the archived source read
-/// held, the first pass settled `fact` with `source`'s empty floor, and a
-/// stranger read it.
+/// 1; Fable design pass 31, case 32): `source` was learnt from the
+/// mailbox's row and `fact` from `source`, both before floors, and the
+/// cleanup archived `source`. An archive is no erase: the migration judges
+/// the archived `source` from its own inputs like any held row, so `fact`
+/// holds the mailbox's policy after the first housekeeping pass, reads to
+/// the mailbox's reader and to no stranger, before and after the owner's
+/// restore. Before #10222 the archived source read held with an empty floor,
+/// and a stranger read `fact`.
 #[test]
-fn a_fact_from_an_archived_source_held_before_floors_waits_until_its_restore() {
+fn a_fact_from_an_archived_source_held_before_floors_reads_under_its_sources_policy() {
     let mailbox = owners_mailbox();
     let source = claim_born_before_floors(&mailbox, &[mailbox.row], "fact.archived_source");
     let fact = claim_born_before_floors(&mailbox, &[source], "fact.held_from_archived");
     archive(&mailbox, source);
     forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault written before floors");
     housekeeping_pass(&mailbox);
-    assert_waits_on_its_archived_source(&mailbox, fact, "after the backfill");
+    assert_reads_as_its_landed_source(&mailbox, fact, mailbox.policy, "after the migration");
     housekeeping_pass(&mailbox);
-    assert_waits_on_its_archived_source(&mailbox, fact, "after a later pass");
+    assert_reads_as_its_landed_source(&mailbox, fact, mailbox.policy, "after a later pass");
     restore(&mailbox, source);
     assert_reads_as_its_landed_source(
         &mailbox,
@@ -177,16 +165,17 @@ fn a_fact_from_an_archived_source_held_before_floors_waits_until_its_restore() {
     );
 }
 
-/// An archived SOURCE the backfill had not raised yet (#10222 Spark review
-/// P1): in a vault that held no policy yet, `source` was learnt from `late`,
-/// a row not here, and `fact` from `source`, and no floor was written. Then
-/// `late` lands, bound to a member's mailbox, and the cleanup archives
-/// `source`. The backfill raises `fact` but not the archived `source`, so
-/// `fact` waits on it; the owner's restore raises both, and `fact` holds
-/// `late`'s policy. Before the fix `fact` settled with `source`'s empty
+/// An archived SOURCE no floor was written for (#10222 Spark review P1;
+/// Fable design pass 31, case 32): in a vault that held no policy yet,
+/// `source` was learnt from `late`, a row not here, and `fact` from
+/// `source`, and no row could have a floor. Then `late` lands, bound to a
+/// member's mailbox, and the cleanup archives `source`. The migration judges
+/// the archived `source` from `late`, and `fact` from `source`: `fact` holds
+/// `late`'s policy, reads to the mailbox's reader and to no stranger, before
+/// and after the restore. Before #10222 `fact` settled with `source`'s empty
 /// floor at the first pass, and a stranger read it.
 #[test]
-fn a_fact_from_a_source_archived_before_the_backfill_raised_it_waits_until_its_restore() {
+fn a_fact_from_a_source_archived_before_its_judgement_reads_under_its_sources_policy() {
     let dir = tempfile::tempdir().expect("FIXTURE: a temporary vault dir");
     let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device())
         .expect("FIXTURE: open the vault");
@@ -209,9 +198,9 @@ fn a_fact_from_a_source_archived_before_the_backfill_raised_it_waits_until_its_r
         .expect("late lands, bound to a member's mailbox");
     archive(&mailbox, source);
     housekeeping_pass(&mailbox);
-    assert_waits_on_its_archived_source(&mailbox, fact, "after the backfill");
+    assert_reads_as_its_landed_source(&mailbox, fact, mailbox.policy, "after the migration");
     housekeeping_pass(&mailbox);
-    assert_waits_on_its_archived_source(&mailbox, fact, "after a later pass");
+    assert_reads_as_its_landed_source(&mailbox, fact, mailbox.policy, "after a later pass");
     restore(&mailbox, source);
     assert_reads_as_its_landed_source(
         &mailbox,
