@@ -36,9 +36,11 @@ pub(crate) use crate::store::birth_record::{
 };
 
 /// Stamps `row`'s birth in the write that births it
-/// ([`stamp_row_birth_in_txn`]), then raises the row's floor over what its
-/// words came from (READ-LINEAGE L1 hook 1): the door for a write that holds
-/// the vault.
+/// ([`stamp_row_birth_in_txn`]), then judges the links the stamp created
+/// (READ-LINEAGE L1 hook 1; Fable design pass 31): each input's floor joins
+/// the row's, an input not bound and whole yet leaves it waiting, and an
+/// input this vault erased seals it. The door for a write that holds the
+/// vault.
 ///
 /// # Errors
 ///
@@ -49,17 +51,16 @@ pub(crate) fn stamp_birth_with_floor_in_txn(
     row: &crate::EntityId,
     birth: &RowBirth,
 ) -> crate::Result<()> {
+    let before = crate::source_audience::LinksBefore::read_in(vault, txn, [*row])?;
     stamp_row_birth_in_txn(&vault.store, txn, row, birth)?;
-    crate::source_audience::seal_births_from_erased_inputs_in_txn(vault, txn, &[*row])?;
-    crate::source_audience::raise_floors_in_txn(vault, txn, [*row])
+    before.judge_in_txn(vault, txn)
 }
 
-/// Seals the row `row`, which arrived with its birth (sync, an archive), when
-/// the write that stamped that birth here names an input this vault erased,
-/// as a local birth is sealed; then raises its floor, as
-/// [`stamp_birth_with_floor_in_txn`] does. `before` is the row's birth as it
-/// stood before the stamp: a birth already here is not stamped again, and
-/// seals nothing (#9289 Opus review 3 P2-4).
+/// Judges the birth inputs of the row `row`, which arrived with its birth
+/// (sync, an archive), as a local birth's are judged
+/// ([`stamp_birth_with_floor_in_txn`]). `before` is the row's birth as it
+/// stood before the stamp: a birth already here names no new link, and
+/// only a bound input's floor is taken again (#9289 Opus review 3 P2-4).
 ///
 /// # Errors
 ///
@@ -70,14 +71,23 @@ pub(crate) fn raise_landed_birth_floor_in_txn(
     row: &crate::EntityId,
     before: Option<&RowBirth>,
 ) -> crate::Result<()> {
-    if row_birth_in_txn(&vault.store, txn, row)?.as_ref() != before {
-        crate::source_audience::seal_births_from_erased_inputs_in_txn(vault, txn, &[*row])?;
-    }
-    crate::source_audience::raise_floors_in_txn(vault, txn, [*row])
+    let held: std::collections::BTreeSet<crate::EntityId> = before
+        .map(|birth| birth.made_by.inputs.iter().map(|input| input.row).collect())
+        .unwrap_or_default();
+    let fresh: std::collections::BTreeSet<crate::EntityId> =
+        crate::store::birth_record::input_rows_in_txn(&vault.store, txn, row)?
+            .into_iter()
+            .filter(|input| !held.contains(input))
+            .collect();
+    crate::source_audience::judge_rows_in_txn(
+        vault,
+        txn,
+        vec![(*row, crate::source_audience::Fresh::Links(fresh))],
+    )
 }
 
-/// [`stamp_birth_if_absent_in_txn`], then the row's floor, as
-/// [`stamp_birth_with_floor_in_txn`] raises it.
+/// [`stamp_birth_if_absent_in_txn`], then the links it created, judged as
+/// [`stamp_birth_with_floor_in_txn`] judges them.
 ///
 /// # Errors
 ///
@@ -88,12 +98,9 @@ pub(crate) fn stamp_birth_with_floor_if_absent_in_txn(
     row: &crate::EntityId,
     birth: &RowBirth,
 ) -> crate::Result<()> {
-    let born = !ROW_BIRTH.contains(&vault.store, txn, row)?;
+    let before = crate::source_audience::LinksBefore::read_in(vault, txn, [*row])?;
     stamp_birth_if_absent_in_txn(&vault.store, txn, row, birth)?;
-    if born {
-        crate::source_audience::seal_births_from_erased_inputs_in_txn(vault, txn, &[*row])?;
-    }
-    crate::source_audience::raise_floors_in_txn(vault, txn, [*row])
+    before.judge_in_txn(vault, txn)
 }
 
 /// Erasing `actor` (FIX 6074): every birth that names it as its process

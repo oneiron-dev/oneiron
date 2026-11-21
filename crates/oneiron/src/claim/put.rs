@@ -336,6 +336,9 @@ impl Vault {
             learned_at,
             allow_reserved_predicate,
         )?;
+        // READ-LINEAGE L1 (Fable design pass 31): the claim's links, judged
+        // in the write that puts it.
+        let floor_links = crate::source_audience::LinksBefore::read_in(self, wtxn, [*id])?;
         apply_ops(
             &self.store,
             &self.config,
@@ -346,7 +349,8 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
-        )
+        )?;
+        floor_links.judge_in_txn(self, wtxn)
     }
 
     fn claim_put_ops_in_txn(

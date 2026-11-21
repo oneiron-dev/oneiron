@@ -23,21 +23,19 @@
 //! was written from (the source-audience walk's lineage, the source
 //! dependency index, the birth's inputs of every role, a carried summary)
 //! adds its floor. A CLAIM's supports attest it: one free attestation frees,
-//! otherwise every attestation's floor binds. A row whose birth names an
-//! input this vault erased is born under [`sealed_source`]
-//! ([`seal_births_from_erased_inputs_in_txn`]), which admits no one, the
-//! vault owner included (READ-LINEAGE-L3 = A); doctor counts such rows
-//! ([`super::facts_hidden_source_unknown_in`]), and the owner's re-derive
-//! writes their facts again from the sources that resolve now
-//! ([`crate::Vault::rederive_sealed_rows`]). Only proof of erasure seals
-//! (#9289 review 2 P1-1): a row it was written from that has not landed here
-//! yet, or lineage that does not resolve yet, leaves its floor pending, and
-//! the write that lands what it waits on raises it again
-//! ([`super::floor_state`]).
+//! otherwise every attestation's floor binds. Each link is judged once, in
+//! the write that creates it here ([`super::source_state`]): a bound input's
+//! floor joins the row's; an input not bound and whole yet leaves the row
+//! waiting on it; a birth input, a dependency source or a named word source
+//! this vault erased seals the row under [`sealed_source`], which admits no
+//! one, the vault owner included (READ-LINEAGE-L3 = A). Doctor counts sealed
+//! rows ([`super::facts_hidden_source_unknown_in`]), and the owner's
+//! re-derive writes their facts again from the sources that resolve now
+//! ([`crate::Vault::rederive_sealed_rows`]).
 
 use std::collections::BTreeSet;
 
-use heed::{RoTxn, RwTxn};
+use heed::RoTxn;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
@@ -99,13 +97,41 @@ pub(crate) fn floor_source_in(
     txn: &RoTxn<'_>,
     source: &EntityId,
 ) -> Result<FloorSource> {
-    if super::POLICIES.contains(&vault.store, txn, source)? {
+    floor_source_of_in(&vault.store, txn, source)
+}
+
+/// Whether `floor` names a source that reads to no one here
+/// ([`FloorSource::Unknown`]): a floor that does reads sealed.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn names_unknown_source_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    floor: &BTreeSet<EntityId>,
+) -> Result<bool> {
+    for source in floor {
+        if floor_source_of_in(store, txn, source)? == FloorSource::Unknown {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// [`floor_source_in`] for a read that holds only the store.
+fn floor_source_of_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    source: &EntityId,
+) -> Result<FloorSource> {
+    if super::POLICIES.contains(store, txn, source)? {
         return Ok(FloorSource::Policy);
     }
     if *source == sealed_source() {
         return Ok(FloorSource::Unknown);
     }
-    let Some(raw) = vault.get_raw_in(txn, source)? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, source)? else {
         return Ok(FloorSource::Unknown);
     };
     let thread = EntityMetadataHeader::parse(&raw).is_some_and(|header| {
@@ -136,7 +162,7 @@ pub(super) enum OwnSource {
     /// A row a source landed whose binding is not here: its landing binds it
     /// later in this very write, or its carried binding waits for its
     /// policy. It names no source yet; its own read waits for its binding,
-    /// and a row written from it waits too ([`super::floor_state`]).
+    /// and a row written from it waits too ([`super::source_state`]).
     Unbound,
 }
 
@@ -147,7 +173,18 @@ pub(super) fn own_source_in(
     row: &EntityId,
     raw: &[u8],
 ) -> Result<OwnSource> {
-    if let Some(policy) = super::binding_in(vault, txn, row)? {
+    own_source_of_in(&vault.store, txn, row, raw)
+}
+
+/// [`own_source_in`] for a write that holds only the store (a purge's
+/// deindex, a blob release).
+pub(super) fn own_source_of_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    row: &EntityId,
+    raw: &[u8],
+) -> Result<OwnSource> {
+    if let Some(policy) = super::RECORDS.get(store, txn, row)? {
         return Ok(OwnSource::Source(policy));
     }
     if super::obligation::row_obligation(raw).is_present() {
@@ -183,24 +220,21 @@ pub(crate) fn floor_in(
     row: &EntityId,
     raw: &[u8],
 ) -> Result<BTreeSet<EntityId>> {
-    let mut floor = super::DERIVED
-        .get(&vault.store, txn, row)?
-        .unwrap_or_default();
-    if let OwnSource::Source(own) = own_source_in(vault, txn, row, raw)? {
+    floor_of_in(&vault.store, txn, row, raw)
+}
+
+/// [`floor_in`] for a write that holds only the store.
+pub(super) fn floor_of_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    row: &EntityId,
+    raw: &[u8],
+) -> Result<BTreeSet<EntityId>> {
+    let mut floor = super::DERIVED.get(store, txn, row)?.unwrap_or_default();
+    if let OwnSource::Source(own) = own_source_of_in(store, txn, row, raw)? {
         floor.insert(own);
     }
     Ok(floor)
-}
-
-/// [`floor_in`] over the row `row` as `txn` holds it. A row gone from this
-/// vault carries no words; what its stored floor still names stands.
-fn stored_floor_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<BTreeSet<EntityId>> {
-    match vault.get_raw_in(txn, row)? {
-        Some(raw) => floor_in(vault, txn, row, &raw),
-        None => Ok(super::DERIVED
-            .get(&vault.store, txn, row)?
-            .unwrap_or_default()),
-    }
 }
 
 /// What the words of one row came from, one level.
@@ -287,155 +321,9 @@ pub(crate) fn floors_possible_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<bool>
     Ok(super::any_policy_in(vault, txn)? || super::any_landed_in(vault, txn)?)
 }
 
-/// Raises the floor of `row` over what its words came from, one level
-/// (`sources`), in the write that gives it words or a source. Whether it
-/// grew. A row it was written from that is not held here adds the floor it
-/// left, if any; whether the row waits for it is [`super::floor_state`]'s.
-pub(super) fn raise_floor_in_txn(
-    vault: &Vault,
-    txn: &mut RwTxn<'_>,
-    row: &EntityId,
-    sources: &RowSources,
-) -> Result<bool> {
-    let Some(raw) = vault.get_raw_in(txn, row)? else {
-        return Ok(false);
-    };
-    let mut add = BTreeSet::new();
-    for source in &sources.written_from {
-        if source != row {
-            add.extend(stored_floor_in(vault, txn, source)?);
-        }
-    }
-    let mut attested = BTreeSet::new();
-    let mut freed = false;
-    for support in &sources.attested_by {
-        if support == row {
-            continue;
-        }
-        let floor = stored_floor_in(vault, txn, support)?;
-        if floor.is_empty() {
-            freed = true;
-            break;
-        }
-        attested.extend(floor);
-    }
-    if !freed {
-        add.extend(attested);
-    }
-    match own_source_in(vault, txn, row, &raw)? {
-        // A held row born under no source (a peer's phone mark that names
-        // no thread) reads to no one, so its stored floor says so too: the
-        // phone read and doctor read the stored floor (#9289 review 2 P2-5).
-        // An archived row is held, so it keeps the seal through its raise
-        // while archived and its restore (#10265 Opus review 3 P2-1). An
-        // erased row's shell is no fact; what is written from it inherits
-        // the seal from its own source.
-        OwnSource::Source(own) if own == sealed_source() => {
-            if !crate::ports::removed_in_txn(&vault.store, &**txn, row)? {
-                add.insert(own);
-            }
-        }
-        OwnSource::Source(own) => {
-            add.remove(&own);
-        }
-        OwnSource::None | OwnSource::Unbound => {}
-    }
-    if add.is_empty() {
-        return Ok(false);
-    }
-    super::add_derived_policies_in_txn(vault, txn, row, &add)
-}
-
-/// Raises the floor of each of `rows` in `txn`, the write that gave them
-/// words or a source (READ-LINEAGE L1: a born row, a row that gained a
-/// `PartOf`, `DerivedFrom` or `Supports` source, a row whose dependencies
-/// were registered, a row that landed here). It repeats until no floor
-/// grows, so a row this write gave a floor passes it on to a row the same
-/// write wrote from it; it settles whether each floor is whole, and raises
-/// again the rows that waited on a row it settled ([`super::floor_state`]).
-/// A vault where no row can have a floor reads nothing
-/// ([`floors_possible_in`]).
-///
-/// # Errors
-///
-/// Storage failures.
-pub(crate) fn raise_floors_in_txn(
-    vault: &Vault,
-    txn: &mut RwTxn<'_>,
-    rows: impl IntoIterator<Item = EntityId>,
-) -> Result<()> {
-    let rows: BTreeSet<EntityId> = rows.into_iter().collect();
-    if rows.is_empty() || !floors_possible_in(vault, txn)? {
-        return Ok(());
-    }
-    super::floor_state::raise_and_settle_in_txn(vault, txn, rows)
-}
-
-/// Seals each row of `born`, in the write that stamps its birth, when that
-/// birth names an input this vault erased: its deletion shell or record
-/// stands (#9289 review r1 P1). An erase takes the input's own source with
-/// its body (a phone row's stamp) and its stored floor with its row
-/// (`erase_derived_policies_in_txn`), so nothing here says any more whose
-/// words the input held: a prompt that read caller A's kept TURN, erased
-/// before the CLAIM it wrote landed, left that CLAIM no source to inherit.
-/// The row is born under [`sealed_source`] (C5, READ-LINEAGE-L3 = A). Only
-/// the birth's own write seals: a row born while its inputs stood already
-/// holds their floor, and a later erase takes no source off it. A vault
-/// where no row can have a floor seals nothing ([`floors_possible_in`]).
-///
-/// # Errors
-///
-/// Storage failures.
-pub(crate) fn seal_births_from_erased_inputs_in_txn(
-    vault: &Vault,
-    txn: &mut RwTxn<'_>,
-    born: &[EntityId],
-) -> Result<()> {
-    if born.is_empty() || !floors_possible_in(vault, txn)? {
-        return Ok(());
-    }
-    let sealed = BTreeSet::from([sealed_source()]);
-    for row in born {
-        for input in crate::store::birth_record::input_rows_in_txn(&vault.store, txn, row)? {
-            if input != *row
-                && crate::ports::TombstoneStoreRead::port_deletion_state(
-                    &vault.store,
-                    &**txn,
-                    &input,
-                )?
-                .deleted
-            {
-                super::add_derived_policies_in_txn(vault, txn, row, &sealed)?;
-                break;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// The threads on the stored floor of `row` that a read must hold, or
-/// `None` when an id on it names no source, so the row reads to no one
-/// (READ-LINEAGE-L3 = A). Its policies are the source-audience walk's to
-/// judge ([`super::readable_with_read_in`]).
-///
-/// # Errors
-///
-/// Storage failures.
-pub(crate) fn floor_threads_in(
-    vault: &Vault,
-    txn: &RoTxn<'_>,
-    row: &EntityId,
-) -> Result<Option<Vec<EntityId>>> {
-    let Some(floor) = super::DERIVED.get(&vault.store, txn, row)? else {
-        return Ok(Some(Vec::new()));
-    };
-    let mut threads = Vec::new();
-    for source in floor {
-        match floor_source_in(vault, txn, &source)? {
-            FloorSource::Policy => {}
-            FloorSource::Thread => threads.push(source),
-            FloorSource::Unknown => return Ok(None),
-        }
-    }
-    Ok(Some(threads))
+/// [`floors_possible_in`] for a write that holds only the store.
+pub(super) fn floors_possible_of_in(store: &crate::store::Store, txn: &RoTxn<'_>) -> Result<bool> {
+    Ok(super::POLICIES.iter_from(store, txn, &[])?.next().is_some()
+        || super::DERIVED.iter_from(store, txn, &[])?.next().is_some()
+        || super::LANDED.get(store, txn, &())?.unwrap_or(false))
 }

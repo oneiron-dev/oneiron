@@ -677,6 +677,13 @@ fn apply_admitted(
     let rewired =
         crate::dreamer_consolidation::redirty::RewiredTurnEdges::before(vault, wtxn, &batch.ops)?;
     let claims = crate::vault_cleanup::candidate_claim_subjects(&batch.ops);
+    // READ-LINEAGE L1 (Fable design pass 31): the links each row the batch
+    // gives words or a source held before it, judged after the apply.
+    let floor_links = crate::source_audience::LinksBefore::read_in(
+        vault,
+        wtxn,
+        super::apply::floor_rows_of(&batch.ops),
+    )?;
     apply_ops_with_origin(
         &vault.store,
         &vault.config,
@@ -687,6 +694,7 @@ fn apply_admitted(
         batch.gate_mode,
         batch.origin,
     )?;
+    floor_links.judge_in_txn(vault, wtxn)?;
     // A claim about a PERSON the cleanup archived restores her in this write
     // (FIX PUT-CLAIM-LANDS-ON-ARCHIVED-PERSON).
     vault.restore_subjects_of_landed_claims_in_txn(wtxn, &claims)?;

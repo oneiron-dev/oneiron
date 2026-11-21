@@ -533,6 +533,7 @@ impl Vault {
             return Ok(());
         };
         let occurrence = ResultOccurrence::of(None, output)?.id();
+        let before = crate::source_audience::LinksBefore::read_in(self, wtxn, [occurrence])?;
         let mut born_withdrawn = false;
         for row in rows {
             let state =
@@ -543,7 +544,7 @@ impl Vault {
                 crate::ports::record_derived_edge_in_txn(&self.store, wtxn, &occurrence, row)?;
             }
         }
-        crate::source_audience::raise_floors_in_txn(self, wtxn, [occurrence])?;
+        before.judge_in_txn(self, wtxn)?;
         if born_withdrawn {
             crate::ports::RetrievalIndex::port_retrieval_mark_stale(self, wtxn, &occurrence)?;
         }

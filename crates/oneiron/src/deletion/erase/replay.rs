@@ -138,6 +138,20 @@ impl Vault {
     )> {
         let decoded = decode_tombstone_value(raw_value);
         self.replayed_tombstone_protection_in_txn(wtxn, id, &decoded)?;
+        // The rows waiting on the row take its floor before the replay's first
+        // marker (Fable design pass 31, section 2). A row never held, or one
+        // erased here already, hands over nothing: a row waiting on it reads
+        // sealed once the replay's marker stands.
+        crate::source_audience::before_erase_in_txn(
+            self,
+            wtxn,
+            id,
+            if decoded.is_hard() {
+                crate::source_audience::DeleteLevel::Hard
+            } else {
+                crate::source_audience::DeleteLevel::Soft
+            },
+        )?;
         // A held world keeps its pads on either reason, before any work here
         // (OF-470).
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
@@ -243,13 +257,8 @@ impl Vault {
                 )?,
                 _ => Vec::new(),
             };
-            // The scrub of a held row recorded its soft delete and sealed the
-            // floors waiting on it. For an id with no row here, the first
-            // application seals them, as the erase of a held row does
-            // (#10108 review P1-1).
-            if !IDENTITY_SOFT_DELETE_MARKER.contains(&self.store, &*wtxn, &HexId(*id))? {
-                crate::source_audience::seal_floors_awaiting_in_txn(&self.store, wtxn, id)?;
-            }
+            // A row waiting on an id with no row here reads sealed once this
+            // marker stands: nothing is written onto it (Fable design pass 31).
             IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
             // A peer deleted a world: its delete time bounds how long a pin
             // change here still rewraps the world's keys.
@@ -321,10 +330,8 @@ impl Vault {
             // manipulation. The guarded write keeps every-boot replay a
             // read-only no-op once the marker exists.
             if !HARD_DELETE_MARKER.contains(&self.store, &*wtxn, &marker_key)? {
-                // A floor that waits for the row to land is sealed at the
-                // tombstone's first application, as the erase of a held row
-                // seals it (#10108 review P1-1).
-                crate::source_audience::seal_floors_awaiting_in_txn(&self.store, wtxn, id)?;
+                // A row waiting for the row to land reads sealed once this
+                // marker stands (Fable design pass 31).
                 HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value.to_vec())?;
             }
             // No canonical row here names it, but a residence copy may: its
