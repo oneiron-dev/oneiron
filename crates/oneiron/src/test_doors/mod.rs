@@ -390,6 +390,7 @@ pub mod turn_words;
 pub mod typed_reply_handle;
 pub mod uncertain_send_questions;
 pub mod untangle_regressions;
+pub(crate) mod vault_state;
 pub mod verb_hook_ask;
 pub mod voice_generation_epoch;
 pub mod wake_d1_park_release;
