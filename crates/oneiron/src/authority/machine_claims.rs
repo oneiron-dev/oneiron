@@ -178,6 +178,14 @@ impl<'s> ClaimIndex<'s> {
             head.admitter_unsettled = roster_unsettled;
             head
         });
+        // The key the roster's chain removed the machine under, judged by the
+        // key's poison alone: crossing removals conflict at the head in what
+        // each names beside the key, which leaves the key in no doubt.
+        let roster_removed_key = roster
+            .map(|chain| &chain.head)
+            .filter(|head| head.removed)
+            .map(|head| head.profile.machine_key)
+            .filter(|key| !self.poisoned(id, key, ClaimScope::Roster));
         let roster_trusted =
             roster
                 .and_then(|chain| self.accepted_roster(chain))
@@ -219,6 +227,7 @@ impl<'s> ClaimIndex<'s> {
             anchored,
             shared,
             roster_removals_saw: roster.map(removals_saw).unwrap_or_default(),
+            roster_removed_key,
         }
     }
 }

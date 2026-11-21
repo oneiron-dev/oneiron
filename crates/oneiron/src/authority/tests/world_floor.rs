@@ -49,14 +49,14 @@ fn judged(replica: &Vault, world: EntityId) -> (EffectiveRead, bool) {
     (read, readable)
 }
 
-fn next_seq(fold: &AuthorityFold, key: &SigningKey) -> u64 {
+pub(super) fn next_seq(fold: &AuthorityFold, key: &SigningKey) -> u64 {
     fold.append_sequences
         .get(&authority_key_from_ed(key))
         .map_or(1, |seq| seq + 1)
 }
 
 /// A carrier signs the answer; the owner's root cosigns as proof, not as carrier.
-fn answer_on(
+pub(super) fn answer_on(
     host: &Host,
     (carrier, key): (EntityId, &SigningKey),
     seq: u64,

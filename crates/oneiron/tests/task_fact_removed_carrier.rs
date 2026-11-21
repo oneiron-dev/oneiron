@@ -14,12 +14,24 @@
 //!   machine signed before its removal reach the host only after it. The remover never saw
 //!   them, so they do not count, the narrow loss the ruling accepts, and the host counts them.
 //!   Red on the base (both cancels count). Green on the head.
+//! - `a_cancel_whose_link_arrives_after_the_removal_counts`: the machine's cancel reaches the
+//!   host before its removal, its link only after. The remover held the signed cancel, which
+//!   the machine made before the removal, so it counts once its link arrives (blind review
+//!   round 1 of #10107, REVIEW-10107, pushed back: naming only facts the fold counted would
+//!   unmake it). Green on #10107's head ad3d8792658a and on the fix.
+//! - `a_late_cancel_the_owners_restore_lands_counts_and_is_not_named`: a cancel the removed
+//!   machine signs after its removal reaches the host, which counts it as not counted; the
+//!   owner then restores the host's own archive, which counts the cancel as his own act
+//!   (OWNER-RESTORE-TASK-FACT-COUNT = A), so the answer no longer names it (blind review round
+//!   1 P1, REVIEW-10107). Red on ad3d8792658a (the answer still names the cancel). Green on the
+//!   fix.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test task_fact_removed_carrier`.
 #![cfg(oneiron_test_support)]
 #![cfg(feature = "sync")]
 
+use std::io::Cursor;
 use std::sync::Arc;
 
 use oneiron::authority::{
@@ -182,6 +194,13 @@ impl Machine {
     /// This machine's fact row `fact` as sync brings it to the host: the row through the
     /// own-device replay door, then its link to `task`.
     fn deliver(&self, host: &Host, fact: EntityId, task: EntityId) {
+        self.deliver_row(host, fact);
+        self.deliver_link(host, fact, task);
+    }
+
+    /// This machine's fact row `fact` alone, through the own-device replay door: sync can
+    /// commit a fact's row before its link, in separate writes.
+    fn deliver_row(&self, host: &Host, fact: EntityId) {
         let raw = self
             .vault
             .get_raw(&fact)
@@ -204,6 +223,10 @@ impl Machine {
             ImportTier::OwnDevice,
         )
         .expect("the own-device replay door lands the row");
+    }
+
+    /// The `ScopedTo` link of this machine's fact row `fact` to `task`, as sync brings it.
+    fn deliver_link(&self, host: &Host, fact: EntityId, task: EntityId) {
         host.vault
             .batch()
             .edge(&fact, EdgeKind::ScopedTo, &task, SCOPED_TO_WEIGHT)
@@ -307,4 +330,64 @@ fn cancels_the_removal_never_saw_do_not_count_and_the_host_counts_them() {
         2,
         Some("2 facts from this machine arrived after its removal and were not counted"),
     );
+}
+
+#[test]
+fn a_cancel_whose_link_arrives_after_the_removal_counts() {
+    let host = host();
+    let task = owner_task(&host.vault, host.owner, "linked after the removal");
+    let machine = enrolled_machine(&host);
+    let cancel = machine.cancel(&host, task);
+    machine.deliver_row(&host, cancel);
+    assert!(
+        !cancelled(&host.vault, task),
+        "FIXTURE: the fold reads a fact through its link, which has not arrived"
+    );
+
+    remove(&host, &machine);
+    machine.deliver_link(&host, cancel, task);
+    assert!(
+        cancelled(&host.vault, task),
+        "a cancel the machine made before its removal counts once its link arrives: the remover held it"
+    );
+    assert_host_counts(&host, &machine, 0, None);
+}
+
+#[test]
+fn a_late_cancel_the_owners_restore_lands_counts_and_is_not_named() {
+    let host = host();
+    let task = owner_task(
+        &host.vault,
+        host.owner,
+        "cancelled after the removal, then restored",
+    );
+    let machine = enrolled_machine(&host);
+    remove(&host, &machine);
+    let late = machine.cancel(&host, task);
+    machine.deliver(&host, late, task);
+    assert!(
+        !cancelled(&host.vault, task),
+        "FIXTURE: a cancel the removed machine signs after its removal does not count"
+    );
+    assert_host_counts(
+        &host,
+        &machine,
+        1,
+        Some("1 fact from this machine arrived after its removal and was not counted"),
+    );
+
+    let archive = host
+        .vault
+        .export_whole_vault(true)
+        .expect("the owner's archive of the host")
+        .bytes()
+        .to_vec();
+    host.vault
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner_proof(&host))
+        .expect("FIXTURE: the owner restores the host's own archive over the rows it holds");
+    assert!(
+        cancelled(&host.vault, task),
+        "FIXTURE: the owner's restore counts the cancel it lands, as his own act"
+    );
+    assert_host_counts(&host, &machine, 0, None);
 }

@@ -506,6 +506,16 @@ impl Vault {
     /// consent roots enter as gesture evidence only: they never join the local
     /// roster, hold local quorum, or change this vault's id.
     pub fn authority_fold(&self) -> Result<AuthorityFold> {
+        let rtxn = self.authority_fold_snapshot()?;
+        self.authority_view_readonly_in_txn(&rtxn)
+            .map(|view| (*view).clone())
+    }
+
+    /// The read snapshot [`Self::authority_fold`] folds, opened once the
+    /// authority backfills ran and a committed writer advanced the monotonic
+    /// local observation, so a reader that reads more beside the fold reads
+    /// it in the same snapshot.
+    pub(crate) fn authority_fold_snapshot(&self) -> Result<heed::RoTxn<'_>> {
         self.backfill_authority_first_seen_sidecars()?;
         self.backfill_authority_store_order()?;
         // Update the monotonic local observation in a committed writer before
@@ -514,9 +524,7 @@ impl Vault {
             advance_authority_clock_in_txn(&self.store, wtxn, self.store.clock.now_recorded_at())
                 .map(drop)
         })?;
-        let rtxn = self.store.env.read_txn()?;
-        self.authority_view_readonly_in_txn(&rtxn)
-            .map(|view| (*view).clone())
+        self.store.env.read_txn().map_err(Error::from)
     }
 
     /// Whether the authority fold holds `key` in the provider's custody
