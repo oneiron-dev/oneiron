@@ -107,30 +107,33 @@ pub fn settlement_approval(revision: &[u8; 32], replacement: &str) -> [u8; 32] {
     sync::selector::secret_projection::approval_token_for_test(revision, replacement)
 }
 
+/// The nine components a settlement revision binds, in the order the hash
+/// takes them.
+pub struct SettlementRevisionParts<'a> {
+    pub source: &'a EntityId,
+    pub incarnation: &'a str,
+    pub text: &'a str,
+    pub source_vv: &'a VersionVector,
+    pub stamp: &'a [u8; 32],
+    pub blob: &'a [u8; 32],
+    pub lineage_vv: &'a VersionVector,
+    pub submitted: &'a str,
+    pub cause: RepoProjectionHoldCause,
+}
+
 /// The opaque settlement revision sent to the owner and compared on replacement.
 #[must_use]
-#[allow(clippy::too_many_arguments)]
-pub fn settlement_revision(
-    source: &EntityId,
-    incarnation: &str,
-    text: &str,
-    source_vv: &VersionVector,
-    stamp: &[u8; 32],
-    blob: &[u8; 32],
-    lineage_vv: &VersionVector,
-    submitted: &str,
-    cause: RepoProjectionHoldCause,
-) -> [u8; 32] {
+pub fn settlement_revision(parts: &SettlementRevisionParts<'_>) -> [u8; 32] {
     sync::selector::secret_projection::revision_hash_for_test(
-        source,
-        incarnation,
-        text,
-        source_vv,
-        stamp,
-        blob,
-        lineage_vv,
-        submitted,
-        cause,
+        parts.source,
+        parts.incarnation,
+        parts.text,
+        parts.source_vv,
+        parts.stamp,
+        parts.blob,
+        parts.lineage_vv,
+        parts.submitted,
+        parts.cause,
     )
 }
 
