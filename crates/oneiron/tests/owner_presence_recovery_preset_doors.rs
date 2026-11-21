@@ -2,7 +2,7 @@
 //! and after every refusal they give with nothing held.
 #![cfg(oneiron_test_support)]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,8 +19,8 @@ use oneiron::test_doors::recovery_box_kit_only_fact::append_recovery_box_kit_onl
 use oneiron::test_doors::recovery_preset_between::set_recovery_preset_any_two_with_kit_between;
 use oneiron::test_support::bind_host_owner;
 use oneiron::world_keys::{
-    DevicePin, NoRecoveryBox, RecoveryAuthoritySigner, RecoveryBoxHold, RecoveryBoxKitOnlyFact,
-    RecoveryPreset, RecoveryPresetChange,
+    DevicePin, NoRecoveryBox, RecoveryAuthoritySigner, RecoveryBoxCanceller, RecoveryBoxHold,
+    RecoveryBoxKitOnlyFact, RecoveryBoxRelease, RecoveryPreset, RecoveryPresetChange,
 };
 use oneiron::{Error, Vault, VaultConfig};
 use oneiron_keystore::{
@@ -219,6 +219,48 @@ impl RecoveryBoxHold for RecordingBoxHold {
     fn hold_kit_only(&self, kit_only: bool) -> oneiron::Result<()> {
         self.0.borrow_mut().push(kit_only);
         Ok(())
+    }
+
+    fn report_recovery_wait(&self, _wait: std::time::Duration) -> oneiron::Result<()> {
+        Ok(())
+    }
+
+    fn cancel_pending_box_release(
+        &self,
+        _cancelled_by: &RecoveryBoxCanceller,
+        _release: Option<RecoveryBoxRelease>,
+    ) -> oneiron::Result<bool> {
+        Ok(false)
+    }
+}
+
+/// A box hold whose first hold makes the switch back to `Standard`: another writer that
+/// commits after a sheet door's read and before its write.
+struct SwitchingBackHold<'a> {
+    fixture: &'a Fixture,
+    switched_back: Cell<bool>,
+}
+
+impl RecoveryBoxHold for SwitchingBackHold<'_> {
+    fn hold_kit_only(&self, kit_only: bool) -> oneiron::Result<()> {
+        if kit_only && !self.switched_back.replace(true) {
+            self.fixture
+                .switch(RecoveryPreset::Standard, &NoRecoveryBox)
+                .expect("the concurrent switch back");
+        }
+        Ok(())
+    }
+
+    fn report_recovery_wait(&self, _wait: std::time::Duration) -> oneiron::Result<()> {
+        Ok(())
+    }
+
+    fn cancel_pending_box_release(
+        &self,
+        _cancelled_by: &RecoveryBoxCanceller,
+        _release: Option<RecoveryBoxRelease>,
+    ) -> oneiron::Result<bool> {
+        Ok(false)
     }
 }
 
@@ -560,9 +602,9 @@ fn an_owner_proof_of_another_vault_never_raises_the_prompt() {
     before.assert_unchanged(&served, &hold);
 }
 
-/// A switch the sheet door refuses of its own is refused before the ask.
+/// "Any 2 pieces" asked of a sheet door is refused before the ask.
 #[test]
-fn a_switch_the_sheet_door_refuses_raises_no_prompt() {
+fn any_two_pieces_asked_of_a_sheet_door_raises_no_prompt() {
     let fixture = Fixture::new(false);
     let presence = scripted_gate(&fixture.vault, []);
     let before = SwitchState::read(&fixture);
@@ -573,6 +615,95 @@ fn a_switch_the_sheet_door_refuses_raises_no_prompt() {
     assert!(refusal.to_string().contains("issues the kit"), "{refusal}");
     assert_eq!(presence.prompts(), 0, "the door showed no prompt");
     before.assert_unchanged(&fixture, &hold);
+}
+
+/// A kit request the draw refuses from the request alone is refused before the ask.
+#[test]
+fn an_any_two_request_the_draw_refuses_raises_no_prompt() {
+    let fixture = Fixture::new(true);
+    let presence = scripted_gate(&fixture.vault, []);
+    let before = SwitchState::read(&fixture);
+    let hold = RecordingBoxHold::default();
+    let mut issue = kit_issue(fixture.vault.vault_key_vault_id());
+    issue.homes[2] = PieceHome::Passkey;
+    let refusal = fixture
+        .vault
+        .set_recovery_preset_any_two_with_kit_as(
+            &fixture.authority(),
+            &issue,
+            None,
+            &fixture.kit_refs(),
+            None,
+            |_| Ok(()),
+            &hold,
+        )
+        .expect_err("a passkey home with no passkey");
+    assert!(
+        refusal
+            .to_string()
+            .contains("needs the passkey's PRF output"),
+        "{refusal}"
+    );
+    assert_eq!(presence.prompts(), 0, "the door showed no prompt");
+    before.assert_unchanged(&fixture, &hold);
+}
+
+/// The preset in force set again is no switch: no PIN step and no prompt, even where no
+/// kit-only fact stands.
+#[test]
+fn the_preset_in_force_set_again_asks_nothing() {
+    let fixture = Fixture::new(false);
+    let pin = fixture.set_pin();
+    let presence = scripted_gate(&fixture.vault, []);
+    pin.end_window();
+    assert!(fixture.fact().is_none(), "no switch has signed a fact");
+    let before = SwitchState::read(&fixture);
+    let hold = RecordingBoxHold::default();
+    let same = fixture
+        .switch(RecoveryPreset::Standard, &hold)
+        .expect("the preset in force stands");
+    assert_eq!(same.previous, RecoveryPreset::Standard);
+    assert_eq!(same.preset, RecoveryPreset::Standard);
+    assert_eq!(presence.prompts(), 0, "the door showed no prompt");
+    assert_eq!(SwitchState::read(&fixture), before);
+    assert_eq!(
+        *hold.0.borrow(),
+        [false],
+        "only the release that follows a commit to Standard"
+    );
+}
+
+/// A kit door set to the preset in force draws no sheet. When a switch back to `Standard`
+/// commits before its write, the write answers that it raced, before it looks at the kit.
+#[test]
+fn a_sheet_entry_that_raced_a_switch_back_answers_raced() {
+    let fixture = Fixture::new(true);
+    let presence = scripted_gate(&fixture.vault, [Ok(()), Ok(())]);
+    fixture
+        .switch_with_kit(&NoRecoveryBox)
+        .expect("the first rotation");
+    fixture.assert_live_generation(1);
+    fixture
+        .vault
+        .presence_gate()
+        .expect("the installed gate")
+        .end_window();
+    let hold = SwitchingBackHold {
+        fixture: &fixture,
+        switched_back: Cell::new(false),
+    };
+    let refusal = fixture
+        .switch_with_kit(&hold)
+        .expect_err("the entry raced the switch back");
+    assert!(
+        refusal
+            .to_string()
+            .contains("changed while the sheet was drawn"),
+        "{refusal}"
+    );
+    assert_eq!(presence.prompts(), 2, "only the switch back prompted again");
+    assert_eq!(fixture.preset(), RecoveryPreset::Standard);
+    fixture.assert_live_generation(1);
 }
 
 /// A kit-only fact that already agrees does not exempt an otherwise required rotation from prompting.

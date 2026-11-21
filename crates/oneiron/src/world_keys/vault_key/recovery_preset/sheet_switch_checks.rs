@@ -1,6 +1,6 @@
 //! What a sheet door's switch checks around its ask: the refusals the door
-//! gives of its own, made before the ask with nothing held, and this
-//! install's device wrap, read after it.
+//! gives of its own, made before the ask with nothing held, the ground it
+//! asks for, and this install's device wrap, read after it.
 
 use super::*;
 
@@ -30,6 +30,29 @@ impl Vault {
             }
             RecoveryPreset::NobodyButMe | RecoveryPreset::Standard => Ok(false),
         }
+    }
+
+    /// The ground a sheet door's switch from `current` to `preset` is asked
+    /// on ([`Vault::recovery_preset_proof_ground`]). The preset in force is
+    /// no switch: the write returns before its rotation and its fact, so the
+    /// door asks nothing, and a write that finds another preset after all
+    /// meets the write's own refusals. A kit door rotates when it enters
+    /// kit-only from `Standard` with a kit that held the live generation on
+    /// the door's read (`rotation`).
+    pub(super) fn sheet_switch_ground(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        preset: RecoveryPreset,
+        current: RecoveryPreset,
+        rotation: Option<&PreparedRotation>,
+    ) -> Result<Option<crate::authority::OwnerProofGround>> {
+        if current == preset {
+            return Ok(None);
+        }
+        let rotates = current == RecoveryPreset::Standard
+            && preset.is_nobody_but_me()
+            && rotation.is_some_and(|prepared| prepared.live_pre.is_some());
+        self.recovery_preset_proof_ground(owner, preset.is_nobody_but_me(), rotates)
     }
 
     /// The id of this install's device wrap when this install's keystore

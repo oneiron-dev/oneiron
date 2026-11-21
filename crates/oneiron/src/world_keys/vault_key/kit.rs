@@ -131,6 +131,31 @@ impl DrawnVaultKeyKit {
     }
 }
 
+/// A kit request's `Passkey` home and its passkey, checked from the request
+/// alone: one such home with its passkey, or neither, and a passkey's
+/// credential name. The draw's first refusals; a door that asks before it
+/// draws gives them before it asks.
+pub(super) fn check_kit_passkey(
+    issue: &KitIssue<'_>,
+    passkey: Option<KitPasskey<'_>>,
+) -> Result<()> {
+    let passkey_homes = issue
+        .homes
+        .iter()
+        .filter(|home| **home == PieceHome::Passkey)
+        .count();
+    match (passkey_homes, passkey) {
+        (0, None) | (1, Some(_)) => {}
+        (0, Some(_)) => return Err(refused("the kit has no passkey home for this passkey")),
+        (1, None) => return Err(refused("a passkey home needs the passkey's PRF output")),
+        _ => return Err(refused("a kit holds at most one passkey piece")),
+    }
+    if let Some(passkey) = passkey {
+        check_name(passkey.credential)?;
+    }
+    Ok(())
+}
+
 /// The vault data key the data-key kit's pieces in `unlock` rebuild for the
 /// vault `vault_id`, checked against the commitment `carried` names. The id
 /// the owner names the kit by must be `vault_id`: another vault's is refused
@@ -512,20 +537,7 @@ impl Vault {
         issue: &KitIssue<'_>,
         passkey: Option<KitPasskey<'_>>,
     ) -> Result<DrawnVaultKeyKit> {
-        let passkey_homes = issue
-            .homes
-            .iter()
-            .filter(|home| **home == PieceHome::Passkey)
-            .count();
-        match (passkey_homes, passkey) {
-            (0, None) | (1, Some(_)) => {}
-            (0, Some(_)) => return Err(refused("the kit has no passkey home for this passkey")),
-            (1, None) => return Err(refused("a passkey home needs the passkey's PRF output")),
-            _ => return Err(refused("a kit holds at most one passkey piece")),
-        }
-        if let Some(passkey) = passkey {
-            check_name(passkey.credential)?;
-        }
+        check_kit_passkey(issue, passkey)?;
         let vault_id = self.vault_key_vault_id();
         let commitment = key.commitment(&vault_id);
         let store = self.this_machine_piece_store(&issue.homes)?;

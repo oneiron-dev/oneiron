@@ -1,6 +1,7 @@
 //! The switch to Nobody but me with the kit present: the kit's doors, and the
 //! rotation of the root's authority key R in the switch's write (pass 27 kit-only).
 
+use super::super::kit::check_kit_passkey;
 use super::kit_only_fact::asked_ground;
 use super::*;
 use crate::authority::OwnerProofGround;
@@ -18,8 +19,9 @@ impl Vault {
     /// preset and the switch back change no roster. No seed is handed out.
     ///
     /// The door asks for an important act when its read says the switch would
-    /// change the kit-only fact or rotate the recovery authority key. An
-    /// unasked fact change or rotation is a write conflict.
+    /// change the kit-only fact or rotate the recovery authority key; the
+    /// preset in force asks nothing. An unasked fact change or rotation is a
+    /// write conflict.
     pub fn set_recovery_preset_with_kit_as(
         &self,
         authority: &crate::authority::ActAuthority,
@@ -56,8 +58,9 @@ impl Vault {
     /// [`Vault::set_recovery_preset_answered_as`] needs it.
     ///
     /// The door asks for an important act when its read says the switch would
-    /// change the kit-only fact or rotate the recovery authority key. An
-    /// unasked fact change or rotation is a write conflict.
+    /// change the kit-only fact or rotate the recovery authority key; the
+    /// preset in force asks nothing. An unasked fact change or rotation is a
+    /// write conflict.
     pub fn set_recovery_preset_answered_with_kit_as(
         &self,
         authority: &crate::authority::ActAuthority,
@@ -281,13 +284,15 @@ impl Vault {
             }
         }
         // The door's own refusals come before the ask: the person is not
-        // asked about a switch this handle cannot make. The held key is
+        // asked about a switch this handle cannot make, or about a kit
+        // request the draw refuses from the request alone. The held key is
         // taken after the ask.
         if self.held_vault_key().is_none() {
             return Err(refused(
                 "the vault key is not held on this handle: unlock it first",
             ));
         }
+        check_kit_passkey(issue, passkey)?;
         let rotates = current == RecoveryPreset::Standard
             && rotation
                 .as_ref()

@@ -36,12 +36,13 @@ const FACT_NOT_COUNTED: &str = "the kit-only switch's signed record did not coun
 /// The switch's write found a rotation or a fact change that its door's read
 /// did not, so the person at this device was not asked about it.
 const SWITCH_CHANGED_SINCE_ASKED: &str = "this switch would change more than it did when the \
-                                          person at this device was asked; nothing was written";
+                                          person at this device was asked; the preset and the \
+                                          recovery authority key stand as they were";
 
 /// The ground a switch's write rotates the recovery authority key or changes
 /// the kit-only fact on: the important confirm its door asked for. A door
 /// that asked for none read neither change, so the write found one that came
-/// after the read: a conflict, and nothing is written.
+/// after the read: a conflict, and the write that found it stores nothing.
 pub(super) fn asked_ground(ground: Option<&OwnerProofGround>) -> Result<&OwnerProofGround> {
     let ground = ground.ok_or(Error::ConcurrentWrite(SWITCH_CHANGED_SINCE_ASKED))?;
     ground.refuse_risen_importance(OwnerActImportance::Important)?;
@@ -106,8 +107,8 @@ impl Vault {
     /// authority key; `None` otherwise. The read does not look for a proving
     /// key: a key under a device PIN proves only once the PIN step has opened
     /// its window. An install on which no key proves is asked and signs no fact.
-    /// The read revalidates `owner` first, so a proof that no longer holds
-    /// raises no prompt; the door's write revalidates it again.
+    /// The read revalidates `owner` first, so a proof that does not hold on
+    /// the read raises no prompt; the door's write revalidates it again.
     ///
     /// # Errors
     /// An owner proof that no longer holds; the presence check's refusal (a

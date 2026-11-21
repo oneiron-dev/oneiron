@@ -393,7 +393,8 @@ impl Vault {
     /// [`Self::set_recovery_preset_any_two_as`].
     ///
     /// The door asks for an important act when its read says the switch would
-    /// change the kit-only fact. An unasked fact change is a write conflict.
+    /// change the kit-only fact; the preset in force asks nothing. An unasked
+    /// fact change is a write conflict.
     pub fn set_recovery_preset_as(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -425,7 +426,8 @@ impl Vault {
     /// issues a new sheet (review of #7766, round 2).
     ///
     /// The door asks for an important act when its read says the switch would
-    /// change the kit-only fact. An unasked fact change is a write conflict.
+    /// change the kit-only fact; the preset in force asks nothing. An unasked
+    /// fact change is a write conflict.
     pub fn set_recovery_preset_answered_as(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -473,28 +475,25 @@ impl Vault {
         // The door's own refusals come before the ask: the person is not
         // asked about a switch this door or this handle cannot make.
         let draws = self.sheet_switch_draws(preset, current)?;
-        let rotates = current == RecoveryPreset::Standard
-            && preset.is_nobody_but_me()
-            && rotation
-                .as_ref()
-                .is_some_and(|prepared| prepared.live_pre.is_some());
         // The fact and rotation share one confirm before anything is drawn or
-        // written, while the door holds nothing: the prompt can block. An
-        // answered door readies signing and reads the device wrap after it.
-        let ground =
-            self.recovery_preset_proof_ground(owner, preset.is_nobody_but_me(), rotates)?;
+        // written, while the door holds nothing: the prompt can block. The
+        // preset in force is no switch and asks nothing.
+        let ground = self.sheet_switch_ground(owner, preset, current, rotation.as_ref())?;
+        // After the ask: the held key first, then the device wrap, whose read
+        // readies signing, then the draw.
+        let held = draws
+            .then(|| {
+                self.held_vault_key()
+                    .ok_or_else(|| refused("unlock the vault key first"))
+            })
+            .transpose()?;
         let device_wrap = match handover {
             SheetHandover::Kept => None,
             SheetHandover::Answer => Some(self.device_wrap_held_here()?),
         };
-        let issue = if draws {
-            // The held key is taken after the ask.
-            let held = self
-                .held_vault_key()
-                .ok_or_else(|| refused("unlock the vault key first"))?;
-            Some(self.draw_recovery_sheet(&held, keep_sheet)?)
-        } else {
-            None
+        let issue = match &held {
+            Some(key) => Some(self.draw_recovery_sheet(key, keep_sheet)?),
+            None => None,
         };
         // Target kit-only writes the box-hold-pending marker in its own write
         // before it holds the box, after the no-write checks pass; the switch's
@@ -549,6 +548,13 @@ impl Vault {
             if state.recovery == preset {
                 return Ok((change, None));
             }
+            // An entry whose read drew no sheet raced another switch: said
+            // before the write looks at the kit or rotates the key.
+            let entry = if preset == RecoveryPreset::NobodyButMe {
+                Some(issue.as_ref().ok_or_else(|| refused(PRESET_RACED))?)
+            } else {
+                None
+            };
             // Rotation happens iff Standard goes to kit-only and a generation
             // is live. Kit-only to kit-only and the switch back change no
             // roster.
@@ -560,10 +566,7 @@ impl Vault {
                     ground.as_ref(),
                 )?;
             }
-            if preset == RecoveryPreset::NobodyButMe {
-                let Some((_, commitment, envelope)) = &issue else {
-                    return Err(refused(PRESET_RACED));
-                };
+            if let Some((_, commitment, envelope)) = entry {
                 if state.commitment != *commitment {
                     return Err(refused("this handle holds another vault key"));
                 }
