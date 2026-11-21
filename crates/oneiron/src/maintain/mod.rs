@@ -1,6 +1,7 @@
 mod attempt_lease;
 mod builder;
 mod hnsw_rebuild;
+pub(crate) mod setting_keys;
 mod text_ops;
 
 pub use self::builder::{MaintenanceBuilder, MaintenanceReport};
@@ -9,8 +10,6 @@ pub(crate) use self::hnsw_rebuild::validate_rebuild_vector;
 // The outcome a maintenance run reports per selected corrupt CLAIM (FIX 7800).
 pub use crate::deletion::CorruptClaimRepair;
 
-// FIX [LIBTEST-QUARANTINE-MAINTAIN-TESTS]: the lib test target's type check fails here (5 errors: E0639 x4, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

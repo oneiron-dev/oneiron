@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use oneiron_setting_contract::{FitCell, FoundFit, RowKey};
 
 use super::read::{StoredRow, table_of};
-use super::{EncodedValue, ScopeKind, SetSetting, Setting, SettingMode, SettingScope, SettingSpec};
+use super::{EncodedValue, SetSetting, Setting, SettingMode, SettingScope, SettingSpec};
 use crate::error::{Error, Result};
 use crate::side_table::SideTableDbs;
 
@@ -27,13 +27,8 @@ impl LearnedRange {
     }
 }
 
-/// The scope kinds a learned key may sit at: the places a fit's cell is keyed by.
-pub const LEARNED_SCOPES: [ScopeKind; 4] = [
-    ScopeKind::Goal,
-    ScopeKind::Project,
-    ScopeKind::TaskType,
-    ScopeKind::Vault,
-];
+/// The scope kinds a learned key may sit at (declared beside the contract's `ScopeKind`).
+pub use oneiron_setting_contract::LEARNED_SCOPES;
 
 /// A learned key's fit as a read shows it, beside the value in force: the narrowest fit on the
 /// read's chain, also when a pin decides (ARCH-0003 `#learning-settings`: "A pin fixes the value

@@ -12,11 +12,19 @@ fn layer_write_persists_and_rereads_world_layer() -> Result<()> {
     let (dir, vault) = open_test_vault();
     let world = EntityId::from_bytes([0x62; 16])?;
     let world_layer = WorldLayer::new(Some(world), Some("studio".to_owned()))?;
+    let mut profile = vault.customization_settings()?;
+    profile.world = world_layer.clone();
 
-    let update =
-        vault.set_customization_layer(CustomizationLayerValue::World(world_layer.clone()))?;
+    // The profile is the catalogue key `client.customization`, one value for all four layers.
+    vault.set_setting(
+        crate::setting::SettingCaller::Engine(crate::setting::EngineSetting::own()),
+        crate::setting::SetSetting::vault_value(
+            "client.customization",
+            serde_json::to_value(&profile).expect("the profile as JSON"),
+        ),
+    )?;
 
-    assert_eq!(update.settings.world, world_layer);
+    assert_eq!(vault.customization_settings()?.world, world_layer);
     drop(vault);
     let reopened = Vault::open(dir.path(), VaultConfig::default())?;
     assert_eq!(reopened.customization_settings()?.world, world_layer);

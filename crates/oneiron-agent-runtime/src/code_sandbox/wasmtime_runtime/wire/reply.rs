@@ -10,9 +10,12 @@ use crate::engine_executor::{
     JsCodeModeHost, RESULT_REPLY_INLINE_BYTES, SelfDispatchResponse, StepCancellation,
 };
 
-/// The guest's reply to `answered`, the call `host` answered last: its body
-/// fit to one message ([`fit_reply`]), with its budget envelope and a verb
-/// hook's view in the body's place ([`SelfDispatchResponse::guest_json`]).
+/// The guest's reply to `answered`, the call `host` answered last: the body
+/// the caller is shown ([`SelfDispatchResponse::shown_body`], a verb hook's
+/// view in the result's place) fit to one message ([`fit_reply`]), with its
+/// budget envelope ([`SelfDispatchResponse::with_budget`]). A large view is
+/// stored and its card stands for it; the real result stays with the run's
+/// record, which the host keeps unbound (see `dispatch.rs`).
 /// A park is carried as `park` says, by the call that was answered.
 /// Once it is made and fits `message_bytes`, the bound the typed bridge
 /// holds every host reply to before the guest reads it, `host` hears that
@@ -26,8 +29,12 @@ pub(super) fn guest_reply(
     park: super::ParkReply,
     message_bytes: usize,
 ) -> Result<String> {
-    let body = fit_reply(host, cancel, super::reply_body(&answered.outcome, park)?)?;
-    let reply = answered.guest_json(body).to_string();
+    let body = fit_reply(
+        host,
+        cancel,
+        answered.shown_body(super::reply_body(&answered.outcome, park)?),
+    )?;
+    let reply = answered.with_budget(body).to_string();
     if reply.len() <= message_bytes {
         host.guest_reply_delivered();
     }

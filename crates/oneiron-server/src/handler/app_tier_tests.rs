@@ -63,12 +63,12 @@ async fn app_version_and_bind_gates_precede_payload_decoding() {
     for tag in [protocol::TAG_RPC, protocol::TAG_SUB] {
         let mut legacy = state(protocol::APP_TIER_PROTOCOL_VERSION_VERSION - 1);
         assert!(matches!(
-            handle_app_message(&server, &mut legacy, tag, b"not-json", &tx),
+            handle_app_message(&server, &mut legacy, tag, b"not-json", &tx).await,
             Err(ProtocolError::RpcVersionMismatch)
         ));
         let mut current = state(protocol::APP_TIER_PROTOCOL_VERSION_VERSION);
         assert!(matches!(
-            handle_app_message(&server, &mut current, tag, b"not-json", &tx),
+            handle_app_message(&server, &mut current, tag, b"not-json", &tx).await,
             Err(ProtocolError::RpcNoPrincipal)
         ));
     }
@@ -93,6 +93,7 @@ async fn bind_is_once_only_and_does_not_change_sync_mode() {
         &bind(&server, &token()),
         &tx,
     )
+    .await
     .unwrap();
     assert_eq!(
         state.bound_auth.as_ref().unwrap().principal_ref(),
@@ -113,7 +114,8 @@ async fn bind_is_once_only_and_does_not_change_sync_mode() {
             protocol::TAG_RPC,
             &bind(&server, &token()),
             &tx
-        ),
+        )
+        .await,
         Err(ProtocolError::RpcNoPrincipal)
     ));
     let window = server.wire_telemetry.snapshot().unwrap().unwrap();
@@ -163,7 +165,8 @@ async fn every_invalid_bind_fails_closed() {
                     protocol::TAG_RPC,
                     &bind(&server, invalid),
                     &tx
-                ),
+                )
+                .await,
                 Err(ProtocolError::RpcNoPrincipal)
             ),
             "{invalid}"
@@ -179,7 +182,8 @@ async fn every_invalid_bind_fails_closed() {
             protocol::TAG_RPC,
             &bind(&server, &token()),
             &tx
-        ),
+        )
+        .await,
         Err(ProtocolError::RpcNoPrincipal)
     ));
     let missing_token = crate::livequery::test_wire::request(
@@ -193,7 +197,8 @@ async fn every_invalid_bind_fails_closed() {
             protocol::TAG_RPC,
             &missing_token[1..],
             &tx
-        ),
+        )
+        .await,
         Err(ProtocolError::RpcNoPrincipal)
     ));
     let window = server.wire_telemetry.snapshot().unwrap().unwrap();
@@ -219,6 +224,7 @@ async fn bound_revocation_stops_app_requests_but_does_not_rebind_sync() {
         &bind(&server, &token()),
         &tx,
     )
+    .await
     .unwrap();
     crate::test_credentials::revoke(&server, &token());
     let read = crate::livequery::test_wire::request(
@@ -227,7 +233,7 @@ async fn bound_revocation_stops_app_requests_but_does_not_rebind_sync() {
     );
     let read = &read[1..];
     assert!(matches!(
-        handle_app_message(&server, &mut state, protocol::TAG_RPC, read, &tx),
+        handle_app_message(&server, &mut state, protocol::TAG_RPC, read, &tx).await,
         Err(ProtocolError::RpcNoPrincipal)
     ));
     assert_eq!(state.window_sync_mode, WindowSyncMode::Unbound);
@@ -245,6 +251,7 @@ async fn missing_actor_class_is_forbidden_and_not_a_human_fallback() {
         &bind(&server, &token()),
         &tx,
     )
+    .await
     .unwrap();
     rx.try_recv().unwrap();
     let read = crate::livequery::test_wire::request(
@@ -252,7 +259,9 @@ async fn missing_actor_class_is_forbidden_and_not_a_human_fallback() {
         json!({"requestId":8,"method":"vault.hydrate","params":{"refs":[]}}),
     );
     let read = &read[1..];
-    handle_app_message(&server, &mut state, protocol::TAG_RPC, read, &tx).unwrap();
+    handle_app_message(&server, &mut state, protocol::TAG_RPC, read, &tx)
+        .await
+        .unwrap();
     let reply = rx.try_recv().unwrap();
     let value: serde_json::Value = crate::livequery::test_wire::reply(&[reply]);
     assert_eq!(value["error"]["code"], "FORBIDDEN");
@@ -274,6 +283,7 @@ async fn verified_class_reaches_production_rpc_and_scope_refusal_stays_typed() {
             &bind(&server, &slip),
             &tx,
         )
+        .await
         .unwrap();
         assert_eq!(
             state.bound_auth.as_ref().unwrap().actor_class(),
@@ -285,7 +295,9 @@ async fn verified_class_reaches_production_rpc_and_scope_refusal_stays_typed() {
             json!({"requestId":8,"method":"vault.hydrate","params":{"refs":[]}}),
         );
         let read = &read[1..];
-        handle_app_message(&server, &mut state, protocol::TAG_RPC, read, &tx).unwrap();
+        handle_app_message(&server, &mut state, protocol::TAG_RPC, read, &tx)
+            .await
+            .unwrap();
         let frame = rx.try_recv().unwrap();
         let reply: serde_json::Value = crate::livequery::test_wire::reply(&[frame]);
         assert_eq!(reply["requestId"], 8);

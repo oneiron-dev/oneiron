@@ -1,6 +1,8 @@
 //! Which facade row call keeps its verb hooks' records and ask pauses for
 //! its live session only (FIX 4283; Engine ruling 10-19). The hooks run on
-//! every call; a call that keeps no record keeps their receipts, saved runs
+//! every call but a transport-only row's, whose carried request crosses its
+//! own verb's hooks (FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER); a call that
+//! keeps no record keeps their receipts, saved runs
 //! and the call a hook's ask paused in the in-memory keep, under its live
 //! session's key, never in the vault. The engine's boundary decides
 //! ([`verb_hook_boundary::hook_session`]) from the row and the

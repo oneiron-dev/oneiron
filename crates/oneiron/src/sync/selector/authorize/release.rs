@@ -17,6 +17,13 @@
 //!    changed, the whole row stays home. A signed body is never rewritten,
 //!    and a bearer token is content, never a proof slot;
 //! 4. every other row takes the typed rule as built.
+//!
+//! A TASK authority fact stays home whatever it holds: another vault's
+//! admission refuses a peer's fact until a fact carries its carrier's
+//! signature (pass 28 R5), so the TASK it is about crosses without it rather
+//! than failing the whole frame there (FIX TASK-FACT-FROM-FEDERATION-PEER).
+//! An ask record shares the fact's role byte under its own subkind and takes
+//! arm (3) or the typed rule as before.
 
 use std::io::Cursor;
 
@@ -74,6 +81,7 @@ pub(super) fn released_for_other_vault(
             .then_some(true),
         ENTITY_TYPE_AUTHORITY_LOG => authority_entry_verdict(body),
         ENTITY_TYPE_CLAIM => signed_claim_verdict(prefix, body),
+        ENTITY_TYPE_TASK if crate::task_authority::is_task_authority_fact_body(body) => Some(false),
         ENTITY_TYPE_TASK => ask_companion_verdict(vault, rtxn, *id, &header, prefix, body),
         ENTITY_TYPE_MESSAGE => signed_message_verdict(prefix, body),
         _ => None,

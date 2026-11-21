@@ -79,5 +79,5 @@
     "hooks/fact-order/body.js": "hooks-fact-body-js",
     "hooks/fact-order/intent.md": "hooks-fact-intent-md"
   },
-  "packName": "fact"
+  "packName": "fact.hooks"
 }

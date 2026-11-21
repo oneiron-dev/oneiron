@@ -15,10 +15,7 @@ pub(super) fn start_estimate(vault: &Vault, capture: &StepCapture<'_>) -> Result
         return Ok(0);
     }
     let rtxn = vault.store.env.read_txn()?;
-    let row = REPLAY_RECORDS
-        .get_borrowed(&vault.store, &rtxn, &capture.run)?
-        .as_deref()
-        .map_or(0, <[u8]>::len);
+    let row = replay_rows::stored_len(&vault.store, &rtxn, &capture.run)?.unwrap_or(0);
     Ok(row.saturating_mul(2).saturating_add(capture.task.len()))
 }
 

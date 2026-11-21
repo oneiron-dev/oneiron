@@ -9,9 +9,11 @@
 //! [`request_wake`] to ENQUEUE and [`DreamerWakeDriver::run_wake_pass`] to
 //! RUN the pass — two separate host calls. Idle = nothing runs.
 mod arc_backstop;
+pub(crate) mod archive_restore;
 mod deadline;
 mod driver;
 pub(crate) mod follower;
+mod frame_outline;
 mod grain;
 mod legibility;
 mod night_step;
@@ -27,6 +29,7 @@ mod recipe_wake;
 pub(crate) mod recipes;
 mod refusal_dial;
 mod scheduling;
+pub(crate) mod setting_keys;
 mod settlement;
 pub(crate) mod sieve;
 pub(crate) mod statement_material;
@@ -35,10 +38,14 @@ mod types;
 
 pub(crate) use self::arc_backstop::arc_policy_in_txn;
 pub use self::deadline::*;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::driver::executor_error_park_for_test;
 pub use self::driver::*;
 pub(crate) use self::driver::{
-    check_host_wake_rewrite, executor_error_ends_pass, llm_waits_on_owner_act, waits_on_owner_act,
+    check_host_wake_rewrite, executor_error_ends_pass, fatal_refuses_window, llm_refuses_window,
+    llm_waits_on_owner_act, refuses_attempt_input, step_refuses_window, waits_on_owner_act,
 };
+pub(crate) use self::frame_outline::build_boxed_future;
 pub use self::grain::*;
 pub use self::legibility::*;
 pub use self::night_step::NightStepRequestId;
@@ -112,6 +119,23 @@ pub(crate) fn erase_in_txn(
     }
     // The follower's frames and keyframes of these words go too (FIX 7510).
     follower::erase_in_txn(write, txn, &turns)
+}
+
+/// Owes each TURN whose words `id` is (itself for a TURN, each TURN a
+/// MESSAGE is part of) a fresh read, as an erase owes a neighbour's: the
+/// owner's re-derive of a sealed CLAIM (READ-LINEAGE L1-B), so the next wake
+/// learns again what its evidence still says. How many TURNs it owed.
+pub(crate) fn owe_turn_reads_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &crate::EntityId,
+) -> crate::Result<usize> {
+    let turns = text_turns_in_txn(store, txn, id)?;
+    for turn in &turns {
+        sieve::owe_read_in_txn(store, txn, turn)?;
+        crate::dreamer_consolidation::redirty::redirty_read_turn_in_txn(store, txn, turn)?;
+    }
+    Ok(turns.len())
 }
 
 /// The window demotion hook (OF-534), in the remover's transaction before
@@ -242,3 +266,10 @@ pub(crate) use tests::block_on_ready;
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::follower::dreamer_follower_result_accepts_masked;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::program::response_digest_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::recipe_wake::read_phase_trigger_key_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::scheduling::turn_projection_key_for_test;

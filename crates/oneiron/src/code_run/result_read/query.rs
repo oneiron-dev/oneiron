@@ -584,6 +584,7 @@ fn page_value(
     let page_bounds = ReadBounds {
         reply_bytes: bounds.reply_bytes.saturating_sub(REPLY_FIELD_BYTES),
         watch: bounds.watch,
+        search_max_context: bounds.search_max_context,
     };
     match super::slice::slice(&window, &range_ref, json!({"bytes": [0]}), &page_bounds)? {
         Reply::Output(mut page) => {
@@ -609,6 +610,7 @@ fn page_selection(
     let page_bounds = ReadBounds {
         reply_bytes: bounds.reply_bytes.saturating_sub(REPLY_FIELD_BYTES),
         watch: bounds.watch,
+        search_max_context: bounds.search_max_context,
     };
     let Reply::Output(mut page) =
         super::slice::slice(&body, reference, json!({"bytes": [within]}), &page_bounds)?

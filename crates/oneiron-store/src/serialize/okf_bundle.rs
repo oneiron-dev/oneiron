@@ -56,18 +56,21 @@ pub fn concept(row: &Value) -> Result<Concept> {
         || format!("type_{entity_type:03}"),
         |entry| entry.kind.to_ascii_lowercase(),
     );
-    let body = row.get("body").map(plain_body).unwrap_or(Value::Null);
+    let body = row.get("body").map_or(Value::Null, plain_body);
     let short = id.get(..8).unwrap_or(&id);
-    let title = first_text(&body, TITLE_KEYS)
-        .map(|title| one_line(&title, 120))
-        .unwrap_or_else(|| format!("{} {short}", kind_title(&kind)));
+    let title = first_text(&body, TITLE_KEYS).map_or_else(
+        || format!("{} {short}", kind_title(&kind)),
+        |title| one_line(&title, 120),
+    );
     let description = first_text(&body, TEXT_KEYS)
         .or_else(|| match &body {
             Value::String(text) => Some(text.clone()),
             _ => None,
         })
-        .map(|text| one_line(&text, DESCRIPTION_CHARS))
-        .unwrap_or_else(|| format!("An Oneiron {kind} record."));
+        .map_or_else(
+            || format!("An Oneiron {kind} record."),
+            |text| one_line(&text, DESCRIPTION_CHARS),
+        );
     let learned_at = row.get("learned_at").and_then(Value::as_u64).unwrap_or(0);
     Ok(Concept {
         path: format!("{kind}/{id}.md"),
@@ -179,10 +182,10 @@ pub fn frontmatter(
 /// and a nulled body is null.
 pub fn plain_body(body: &Value) -> Value {
     match body.get("codec").and_then(Value::as_str) {
-        Some("message_pack") => body.get("value").map(plain).unwrap_or(Value::Null),
+        Some("message_pack") => body.get("value").map_or(Value::Null, plain),
         Some("utf8") => body.get("value").cloned().unwrap_or(Value::Null),
         Some("nulled") | None => Value::Null,
-        Some(_) => body.get("value").map(as_okf_shows).unwrap_or(Value::Null),
+        Some(_) => body.get("value").map_or(Value::Null, as_okf_shows),
     }
 }
 

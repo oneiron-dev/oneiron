@@ -22,6 +22,14 @@ pub use oneiron_records::consent::bundle_projection::{
     GateConsentBundle, GateConsentBundleAction, GateConsentBundleMember, GateConsentBundleReceipt,
 };
 
+/// An agent's review and settlement of a run's bundle, under the owner's
+/// `gate.consent_bundle.delegate_resolution` row (restriction census C29).
+pub use crate::gate::{
+    GateConsentBundleMemberView, GateConsentBundleResolution, GateConsentBundleResolveRequest,
+    GateConsentBundleReview, GateConsentBundleReviewRequest, resolve_gate_consent_bundle_as_agent,
+    review_gate_consent_bundle_as_agent,
+};
+
 /// `"{agent label} · {id8}"`, with the engine fallback for an unlabelled run.
 pub(crate) fn gate_consent_bundle_name(agent_label: Option<&str>, bundle_id: &[u8; 32]) -> String {
     let id8: String = bytes_to_hex_lower(bundle_id)

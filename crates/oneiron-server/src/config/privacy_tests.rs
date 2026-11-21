@@ -13,7 +13,7 @@ fn resolve_privacy_layers(
     if let Some(key_ref) = key_refs[0] {
         file.push_str(&format!("hosted_kms_key_ref = \"{key_ref}\"\n"));
     }
-    std::fs::write(&config_path, file)?;
+    crate::owner_only_file::write_owner_only_file(&config_path, file)?;
 
     let mut pairs = Vec::new();
     if let Some(posture) = postures[1] {
@@ -93,9 +93,7 @@ fn privacy_reference_uses_its_highest_precedence_source() {
                 resolve_privacy_layers([Some(Hosted), None, Some(Hosted)], key_refs).unwrap_err();
             // e8ac4951713 (#2955): the blank check names the custody, not the posture.
             assert!(
-                error
-                    .to_string()
-                    .contains("KMS key custody requires a non-empty key reference")
+                format!("{error:#}").contains("KMS key custody requires a non-empty key reference")
             );
             assert!(!format!("{error:?}").contains(file_ref));
             assert!(!format!("{error:?}").contains(env_ref));
@@ -124,7 +122,7 @@ fn relay_privacy_rejects_same_source_and_higher_source_key_references() {
                     "a blind relay holds no data key"
                 };
                 assert!(
-                    error.to_string().contains(expected),
+                    format!("{error:#}").contains(expected),
                     "posture source {posture_source}, reference source {key_ref_source}: {error}"
                 );
                 assert!(!format!("{error:?}").contains("kms://example/stray-ref"));

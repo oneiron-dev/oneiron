@@ -319,10 +319,21 @@ fn the_history_purge_receipts_read_for_a_live_audit_read_holder_without_purged_t
             text: live.to_owned(),
         },
     )?;
+    // One Owner: the purge erases at once, so it takes the shared confirm
+    // of a preview first (#7861, L8-49).
+    let shown = call(
+        &as_owner,
+        "vault.owner_confirm.preview",
+        json!({ "verb": "vault.notes.history_purge", "input": { "note_ref": note_ref } }),
+    );
+    let confirm = shown["confirm"]
+        .as_str()
+        .expect("the preview names its confirm")
+        .to_owned();
     let outcome = call(
         &as_owner,
         "vault.notes.history_purge",
-        json!({ "note_ref": note_ref }),
+        json!({ "note_ref": note_ref, "confirm": confirm }),
     );
     assert_eq!(
         outcome["state"],

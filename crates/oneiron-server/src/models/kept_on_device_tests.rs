@@ -43,6 +43,21 @@ fn holds(rows: &[RunReceipt]) -> Vec<String> {
         .collect()
 }
 
+/// The wait a held call names: its resting offer's back-time comes from
+/// wall-clock health backoff (the call retries until its deadline, OF-305 /
+/// FIX 8213), so no run pins it; the reset is the vault's own now plus that
+/// wait, the same `unanswered` kept branch as
+/// `a_call_that_names_no_world_stays_on_the_device_while_any_world_does`.
+fn kept_wait(held: &oneiron::LlmError) -> u64 {
+    match held {
+        oneiron::LlmError::Retryable(oneiron::RetryableLlmError::KeptOnDevice {
+            retry_after: Some(wait),
+            ..
+        }) => *wait,
+        other => panic!("a held call names its wait: {other:?}"),
+    }
+}
+
 /// Done means (Engine ruling): in a vault with a private world, a call that
 /// names no world never reaches a cloud rung after its offer on the device
 /// fails. It retries that offer until its deadline (OF-305, FIX 8213), else
@@ -144,19 +159,33 @@ async fn a_call_about_a_world_this_vault_does_not_hold_stays_on_the_device() {
         .ladder
         .generate(&test_run(), about(seat, deleted), None)
         .await;
-    assert_eq!(error.expect_err("held"), kept_here(None));
+    let held = error.expect_err("held");
+    let wait = kept_wait(&held);
+    assert_eq!(
+        held,
+        kept_here(Some((wait, vault.now_recorded_at() + wait)))
+    );
     let unknown = about(seat, EntityId::now());
     let error = seat
         .ladder
         .generate(&test_run(), unknown.clone(), None)
         .await;
-    assert_eq!(error.expect_err("held"), kept_here(None));
+    let held = error.expect_err("held");
+    let wait = kept_wait(&held);
+    assert_eq!(
+        held,
+        kept_here(Some((wait, vault.now_recorded_at() + wait)))
+    );
     let mut events = seat
         .ladder
         .stream(&test_run(), unknown, None)
         .expect("a stream");
     let error = events.next().await.expect("an event").expect_err("held");
-    assert_eq!(error, kept_here(None));
+    let wait = kept_wait(&error);
+    assert_eq!(
+        error,
+        kept_here(Some((wait, vault.now_recorded_at() + wait)))
+    );
     assert!(second.seen().is_empty(), "an unknown world stayed here");
 
     let portable = about(seat, portable_world(&vault));
@@ -225,14 +254,23 @@ async fn a_world_made_private_while_its_fallback_is_admitted_never_goes_out() {
     let run = run_into(sink.clone());
 
     let error = seat.ladder.generate(&run, about(seat, one), None).await;
-    assert_eq!(error.expect_err("held"), kept_here(None));
+    let held = error.expect_err("held");
+    let wait = kept_wait(&held);
+    assert_eq!(
+        held,
+        kept_here(Some((wait, vault.now_recorded_at() + wait)))
+    );
     *sink.next.lock().unwrap() = Some(two);
     let mut events = seat
         .ladder
         .stream(&run, about(seat, two), None)
         .expect("a stream");
     let error = events.next().await.expect("an event").expect_err("held");
-    assert_eq!(error, kept_here(None));
+    let wait = kept_wait(&error);
+    assert_eq!(
+        error,
+        kept_here(Some((wait, vault.now_recorded_at() + wait)))
+    );
     assert!(second.seen().is_empty(), "the worlds' text stayed here");
     assert_eq!(holds(&sink.rows.rows()).len(), 2);
 }
@@ -367,7 +405,12 @@ async fn a_declared_run_call_naming_a_portable_world_stays_while_a_world_does() 
     let error = run
         .generate(seat.model.as_str(), about(seat, portable))
         .await;
-    assert_eq!(error.expect_err("held"), kept_here(None));
+    let held = error.expect_err("held");
+    let wait = kept_wait(&held);
+    assert_eq!(
+        held,
+        kept_here(Some((wait, vault.now_recorded_at() + wait)))
+    );
     assert!(second.seen().is_empty(), "the text stayed here");
 }
 

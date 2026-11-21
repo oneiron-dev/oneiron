@@ -262,6 +262,33 @@ impl QuestionHeadRung {
     }
 }
 
+/// Doors for `tests/question_head_host.rs` (FIX 23586). Compiled only under
+/// `--cfg oneiron_test_support`; never API.
+#[cfg(oneiron_test_support)]
+impl QuestionHeadRung {
+    /// The typed question and version of each head the slot holds loaded.
+    pub(crate) fn loaded_questions(&self) -> Vec<(EntityId, u32)> {
+        self.heads
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .keys()
+            .copied()
+            .collect()
+    }
+
+    /// Moves the slot's last prune back by `by`, as if that much time had
+    /// passed since it.
+    pub(crate) fn backdate_prune(&self, by: Duration) {
+        let mut pruned_at = self
+            .pruned_at
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(earlier) = pruned_at.checked_sub(by) {
+            *pruned_at = earlier;
+        }
+    }
+}
+
 /// `checkpoint`'s load set from custody, each file's hash rechecked as its
 /// bytes are read.
 pub(super) fn checkpoint_upload(
