@@ -35,17 +35,16 @@ use serde::{Deserialize, Serialize};
 
 use super::storage::{booking_writer, engine_failure, read_txn, refused};
 use super::token::{
-    OpaqueCheckoutLeaseToken, SessionKey, digest_with, hex_lower, lease_digest, mint_raw_token,
-    session_digest,
+    OpaqueCheckoutLeaseToken, SessionKey, digest_with, lease_digest, mint_raw_token, session_digest,
 };
 use super::types::{MAX_CHECKOUT_HOLD_TTL_SECS, SoftHoldRow};
 use super::{CHECKOUT_LEASE, CheckoutLeaseRow, digest_serde, entity_ref_serde};
-use crate::attempt_queue::EnqueueAttempt;
 use crate::booking::{BookingError, DepositTerms, EventTypeKey};
 use crate::side_table::{self, SideTable, VersionedNamed};
 use crate::{EntityId, Vault};
 
 mod held;
+mod home_fence;
 mod refund;
 mod settle;
 
@@ -54,11 +53,17 @@ pub(super) use self::held::{
     EmergencyReturn, HeldDeposit, HeldDepositKind, emergency_return_in_txn, held_deposit_in_txn,
     unattributed_cancel_sequence_in_txn,
 };
+pub use self::home_fence::check_deposit_checkout_admitted;
+use self::home_fence::{
+    CHECKOUT_MOVING, SettleStanding, admits_deposits_here, awaits_carried_deposits, put_deposit,
+    settle_standing_in_txn,
+};
 pub(super) use self::refund::{
     cap_refund_on_visitor_reschedule_in_writer, refund_on_host_cancel_in_writer,
     refund_on_visitor_cancel_in_writer,
 };
 pub(crate) use self::refund::{refund_booking_deposit_as_owner, refund_deposit_on_host_cancel};
+use self::settle::enqueue_settle;
 pub use self::settle::{
     BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND, BookingDepositSettlementDrain, DepositProviderFailure,
     DepositSettleMove, DepositSettleRequest, DepositSettleStep, DepositSettlementPort,
@@ -308,6 +313,9 @@ pub fn begin_deposit_checkout(
     let key = deposit_key(&start.payment_id);
     let session_hash = session_digest(&start.session_key);
     booking_writer(vault, |wtxn| {
+        if !admits_deposits_here(vault, &*wtxn)? {
+            return Err(refused(CHECKOUT_MOVING));
+        }
         let config = crate::booking::config::load_event_type_config_in_txn(
             vault,
             &*wtxn,
@@ -383,56 +391,6 @@ pub fn begin_deposit_checkout(
     })
 }
 
-fn put_deposit(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    key: &[u8; 32],
-    row: &DepositRow,
-) -> Result<(), BookingError> {
-    DEPOSIT
-        .put(&vault.store, wtxn, key, row)
-        .map_err(|error| engine_failure("meta write", error))
-}
-
-/// The payload of one [`BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND`] row: the
-/// deposit whose next move is owed. The move itself is read from committed
-/// state when the row runs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DepositSettlePayload {
-    /// The deposit's key, lowercase hex.
-    deposit_key: String,
-}
-
-fn enqueue_settle(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    key: &[u8; 32],
-    cause: &str,
-    now_utc: u64,
-) -> Result<(), BookingError> {
-    let hex = hex_lower(key);
-    let payload = serde_json::to_vec(&DepositSettlePayload {
-        deposit_key: hex.clone(),
-    })
-    .map_err(|_| refused("booking deposit settle payload did not encode"))?;
-    crate::ports::JobQueue::port_job_enqueue(
-        vault,
-        wtxn,
-        EnqueueAttempt {
-            kind: BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND.to_owned(),
-            payload,
-            dedupe_key: Some(format!(
-                "{BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND}:{hex}:{cause}"
-            )),
-            run_id: None,
-            now: now_utc,
-        },
-    )
-    .map_err(|error| engine_failure("booking deposit settle enqueue", error))?;
-    Ok(())
-}
-
 // -------------------------------------------------------------------------
 // Provider events
 // -------------------------------------------------------------------------
@@ -472,6 +430,13 @@ pub enum DepositProviderEventOutcome {
     /// The authorized amount or currency is not the deposit's terms; the
     /// deposit stays unauthorized, and its window's end voids it.
     TermsMismatch,
+    /// Not applied now, and nothing changed: it froze its booking rows for a
+    /// home move its target has not acknowledged, or it awaits the move that
+    /// carries its deposits here. The provider must deliver it again.
+    Deferred,
+    /// Not this node's to apply: it froze its booking rows for a move its
+    /// target acknowledged. The new home asks the provider before a confirm.
+    MovedAway,
 }
 
 /// Applies one verified provider event to its deposit, once.
@@ -480,6 +445,12 @@ pub enum DepositProviderEventOutcome {
 /// currency. A refusal keeps the deposit, and the hold that waits on it,
 /// open for a retry on the same payment. A cancellation closes any deposit
 /// not yet captured.
+///
+/// During a home move it writes nothing (FIX [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]):
+/// [`DepositProviderEventOutcome::Deferred`] on the old home until its move is
+/// acknowledged, and on the new home for a payment it does not know before the
+/// move lands, never acknowledged as no deposit's; then
+/// [`DepositProviderEventOutcome::MovedAway`] on the old home.
 ///
 /// # Errors
 ///
@@ -496,6 +467,11 @@ pub fn record_deposit_provider_event(
     let key = deposit_key(&event.payment_id);
     let event_key = provider_event_key(&event.event_id);
     booking_writer(vault, |wtxn| {
+        match settle_standing_in_txn(vault, &*wtxn)? {
+            SettleStanding::Settles => {}
+            SettleStanding::MoveUnacknowledged => return Ok(DepositProviderEventOutcome::Deferred),
+            SettleStanding::MovedAway => return Ok(DepositProviderEventOutcome::MovedAway),
+        }
         if DEPOSIT_PROVIDER_EVENT
             .get(&vault.store, &*wtxn, &event_key)
             .map_err(|error| engine_failure("meta read", error))?
@@ -507,7 +483,11 @@ pub fn record_deposit_provider_event(
             .get(&vault.store, &*wtxn, &key)
             .map_err(|error| engine_failure("meta read", error))?
         else {
-            return Ok(DepositProviderEventOutcome::UnknownPayment);
+            return Ok(if awaits_carried_deposits(vault, &*wtxn)? {
+                DepositProviderEventOutcome::Deferred
+            } else {
+                DepositProviderEventOutcome::UnknownPayment
+            });
         };
         DEPOSIT_PROVIDER_EVENT
             .put(

@@ -1,7 +1,7 @@
 //! The public verb door and the home-node consumer turn: enqueue, checkout
 //! lease, and one claimed attempt run to a receipt.
 
-use super::storage::{booking_writer, decode_row, encode_row, engine_failure};
+use super::storage::{booking_writer, decode_row, encode_row, engine_failure, read_txn, refused};
 use super::token::{
     OpaqueCheckoutLeaseToken, SessionKey, lease_digest, mint_raw_token, read_hold_row,
     session_digest, token_page_ref,
@@ -140,6 +140,7 @@ pub fn issue_checkout_lease(
         deposit_key: None,
     };
     booking_writer(vault, |wtxn| {
+        refuse_booking_rows_not_held_in_txn(vault, &*wtxn)?;
         CHECKOUT_LEASE
             .put(&vault.store, wtxn, &lease_digest(&lease), &row)
             .map_err(|error| engine_failure("meta write", error))
@@ -178,7 +179,11 @@ pub struct BookingLifecycleConsumerInput {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum BookingLifecycleTurn {
-    /// No home node is elected, so no node may write bookings.
+    /// No home node is elected, so no node may write bookings. Also this
+    /// node's answer while it does not hold the booking rows: a home move
+    /// froze them here and no move has carried them back, so they are
+    /// history, or its election names it the target of a move that has not
+    /// carried them here yet.
     NoHomeNode,
     /// Another node holds the designation.
     NotHomeNode { home_node_id: u64 },
@@ -347,8 +352,99 @@ fn home_node_refusal(
                 home_node_id: designation.node_id,
             })
         }
-        Some(_) => None,
+        Some(_) => (!holds_booking_rows(vault)?).then_some(BookingLifecycleTurn::NoHomeNode),
     })
+}
+
+/// FIX [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE] (BK-HOME-MOVE-CARRIES-BOOKINGS = A,
+/// lead 21 Nov 06:2x): whether this node holds the vault's booking rows. It does not once it
+/// froze them for a home move and adopted none since: its election can name it home again
+/// before the move that carries them back lands, and until then its rows are the old home's
+/// history, so a transition on them would write what the lineage already moved past. Nor
+/// while its election names it the target of a move from another node that has not landed
+/// here (review round 2 of #10058, `sync::home_handoff::awaits_incoming_move_in_txn`): the
+/// rows are still on the old home, so a hold or confirm here would be solved against none of
+/// them, and a row opened here under a key the move carries would make its adoption conflict.
+fn holds_booking_rows(vault: &Vault) -> Result<bool, BookingError> {
+    holds_booking_rows_in_txn(vault, &read_txn(vault)?)
+}
+
+/// [`holds_booking_rows`] in a caller's transaction.
+#[cfg(feature = "sync")]
+pub(super) fn holds_booking_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<bool, BookingError> {
+    let froze = crate::sync::home_handoff::froze_home_state_in_txn(vault, txn)
+        .map_err(|error| engine_failure("home move state read", error))?;
+    Ok(!froze
+        && !crate::sync::home_handoff::awaits_incoming_move_in_txn(vault, txn)
+            .map_err(|error| engine_failure("home move state read", error))?)
+}
+
+/// Without the home handoff no move ever freezes or carries booking rows.
+#[cfg(not(feature = "sync"))]
+pub(super) fn holds_booking_rows_in_txn(
+    _vault: &Vault,
+    _txn: &heed::RoTxn<'_>,
+) -> Result<bool, BookingError> {
+    Ok(true)
+}
+
+/// The booking writers' own fence, asked first in the writer that mutates: a node that does
+/// not hold the booking rows ([`holds_booking_rows`]) writes none of them. The door's read
+/// before the claim is not enough, since a freeze can commit between that read and the
+/// writer; LMDB's one writer orders the two, so the freeze either committed before this writer
+/// opened, and this refuses, or it waits for this writer, and its export carries what this one
+/// wrote.
+pub(super) fn refuse_booking_rows_not_held_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(), BookingError> {
+    if !holds_booking_rows_in_txn(vault, txn)? {
+        return Err(refused(
+            "this node does not hold the booking rows: a home move carries them to the new home",
+        ));
+    }
+    Ok(())
+}
+
+/// [`refuse_booking_rows_not_held_in_txn`], and also a refusal once this node's own election
+/// names another node home (review round 2 of #10058): the door read the designation before it
+/// claimed the attempt, and an election that moves the home between that read and this writer
+/// leaves a window before the freeze in which the new home solves the same slot on its own
+/// rows. The lifecycle mutations ask this in their writer
+/// ([`booking_writer_with_publication`](super::public_authority::booking_writer_with_publication)).
+pub(super) fn refuse_off_home_booking_write_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(), BookingError> {
+    refuse_booking_rows_not_held_in_txn(vault, txn)?;
+    if elected_home_elsewhere_in_txn(vault, txn)? {
+        return Err(refused(
+            "this node's election names another node home: the booking write runs there",
+        ));
+    }
+    Ok(())
+}
+
+/// Whether this node's own election names another node home, read in a writer.
+#[cfg(feature = "sync")]
+fn elected_home_elsewhere_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<bool, BookingError> {
+    crate::sync::home_handoff::elected_home_elsewhere_in_txn(vault, txn)
+        .map_err(|error| engine_failure("home node designation read", error))
+}
+
+/// Without sync no election moves the home.
+#[cfg(not(feature = "sync"))]
+fn elected_home_elsewhere_in_txn(
+    _vault: &Vault,
+    _txn: &heed::RoTxn<'_>,
+) -> Result<bool, BookingError> {
+    Ok(false)
 }
 
 /// Runs one claimed attempt to a receipt and finalizes its row.
