@@ -11,6 +11,10 @@
 //! human's close is not held to the Dreamer's floors (GATE-13 isolation of a
 //! mirroring-prone predicate refused the owner's retract on both doors).
 //!
+//! Review 10097 round 2: the owner's retract of a claim still in the tray is
+//! receipted as the owner, not as the proposal's author, and the owner's
+//! close of a Dreamer claim is no action of the run that derived it.
+//!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test claim_retract_as_owner_closer`.
@@ -259,6 +263,25 @@ fn lifecycle(fixture: &Fixture, claim: EntityId) -> ClaimLifecycleStatus {
         .lifecycle
 }
 
+/// Retracts `claim` through the owner's retract door and checks it is
+/// retracted: the Gate decisions about it that the close recorded.
+fn decisions_of_the_owners_retract(fixture: &Fixture, claim: EntityId) -> Vec<GateDecisionRecord> {
+    let before: Vec<_> = decisions_about(fixture, claim)
+        .into_iter()
+        .map(|record| record.decision_id)
+        .collect();
+    retract_through_the_owners_door(fixture, claim);
+    assert_eq!(
+        lifecycle(fixture, claim),
+        ClaimLifecycleStatus::Retracted,
+        "the owner's retract door retracts the claim"
+    );
+    decisions_about(fixture, claim)
+        .into_iter()
+        .filter(|record| !before.contains(&record.decision_id))
+        .collect()
+}
+
 /// The owner retracts, through the owner's retract door, a Dreamer claim of
 /// imported words that the owner approved: the claim is retracted.
 #[test]
@@ -332,21 +355,8 @@ fn the_owners_retract_door_receipts_the_close_of_a_claim_put_with_no_envelope_as
         .vault
         .ensure_embedded_owner_actor()
         .expect("FIXTURE: the owner");
-    let before: Vec<_> = decisions_about(&fixture, claim)
-        .into_iter()
-        .map(|record| record.decision_id)
-        .collect();
 
-    retract_through_the_owners_door(&fixture, claim);
-    assert_eq!(
-        lifecycle(&fixture, claim),
-        ClaimLifecycleStatus::Retracted,
-        "the owner's retract door retracts the claim"
-    );
-    let close: Vec<_> = decisions_about(&fixture, claim)
-        .into_iter()
-        .filter(|record| !before.contains(&record.decision_id))
-        .collect();
+    let close = decisions_of_the_owners_retract(&fixture, claim);
     assert!(!close.is_empty(), "the close records its Gate decision");
     let owner_ref = owner_id.to_hex();
     for record in &close {
@@ -354,6 +364,73 @@ fn the_owners_retract_door_receipts_the_close_of_a_claim_put_with_no_envelope_as
             (record.actor_class.as_str(), record.actor_ref.as_deref()),
             ("human", Some(owner_ref.as_str())),
             "the close is judged and receipted as the owner: {record:?}"
+        );
+    }
+}
+
+/// The owner retracts, through the owner's retract door, the Dreamer's claim
+/// on a mirroring-prone predicate while it still waits in the tray: the tray
+/// row's terminal receipt names the owner, a human, as its actor, and still
+/// answers the held decision's binding (review 10097 round 2 P1).
+#[test]
+fn the_owners_retract_of_a_claim_in_the_tray_is_receipted_as_the_owner() {
+    let fixture = fixture();
+    let claim = landed_claim(
+        &fixture,
+        MIRRORING_PRONE_PREDICATE,
+        "late-night jazz records",
+    );
+    let held = fixture
+        .vault
+        .pending_gate_consents(4096)
+        .expect("read the tray")
+        .into_iter()
+        .find(|row| row.claim_id == *claim.as_bytes())
+        .expect("FIXTURE: the mirroring-prone claim waits in the tray");
+    let owner_id = fixture
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the owner");
+
+    let close = decisions_of_the_owners_retract(&fixture, claim);
+    let terminal: Vec<_> = close
+        .iter()
+        .filter(|record| record.outcome == "retracted")
+        .collect();
+    let [terminal] = terminal.as_slice() else {
+        panic!("the tray row's close records one terminal receipt: {close:?}");
+    };
+    let owner_ref = owner_id.to_hex();
+    assert_eq!(
+        (terminal.actor_class.as_str(), terminal.actor_ref.as_deref()),
+        ("human", Some(owner_ref.as_str())),
+        "the tray row's close is receipted as the owner: {terminal:?}"
+    );
+    assert_eq!(
+        terminal.diff_handle, held.diff_handle,
+        "the close answers the held decision's binding"
+    );
+}
+
+/// The owner retracts, through the owner's retract door, the Dreamer's claim
+/// the owner approved: the close is no action of the Dreamer run that
+/// derived the claim, so its Gate decision links no run and no attempt
+/// (review 10097 round 2 P1).
+#[test]
+fn the_owners_retract_of_an_approved_dreamer_claim_links_no_dreamer_run() {
+    let fixture = fixture();
+    let claim = approved_mirroring_prone_claim(&fixture);
+
+    let close = decisions_of_the_owners_retract(&fixture, claim);
+    assert!(!close.is_empty(), "the close records its Gate decision");
+    for record in &close {
+        assert!(
+            record
+                .context
+                .links
+                .iter()
+                .all(|link| link.run.is_none() && link.attempt.is_none()),
+            "the owner's close links no run or attempt of the Dreamer: {record:?}"
         );
     }
 }
