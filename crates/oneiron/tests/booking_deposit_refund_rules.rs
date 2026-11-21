@@ -77,7 +77,8 @@ use oneiron::calendar::query::CalendarRangeDto;
 use oneiron::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
 use oneiron::memory::{
     ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest, ClaimSettlementVerdict,
-    EmergencyInstructionInput, MEMORY_CODE_FORBIDDEN, Memory, MemoryError,
+    EmergencyInstructionInput, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
+    MEMORY_CODE_INVALID_STATE, Memory, MemoryError,
 };
 use oneiron::outbound::{
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
@@ -4217,6 +4218,398 @@ fn a_short_hand_refund_before_the_hosts_ask_runs_keeps_the_stuck_refund_on_the_c
     assert_eq!(
         fixture.state_of("pi_short_before_retry"),
         DepositState::RefundDue {
+            amount_minor: 4_000
+        }
+    );
+}
+
+// FIX [BK-DEPOSIT-FAILED-REFUND-MARK-PAID] (BK-DEPOSIT-FAILED-REFUND-MARK-PAID
+// = B, the lead, Engine 21 Nov 10:55; BK-DEPOSIT-MARK-PAID-STRIPE-HOLDS-REFUND
+// = A and BK-DEPOSIT-MARK-PAID-CARD-WORDING = A, Engine 21 Nov 12:13): a host
+// selected at confirmation marks a refund owed to the visitor refunded
+// outside Stripe. The mark goes through its verb by name; the provider below
+// reads the settle request's find flag.
+
+const DEPOSIT_MARK_REFUNDED_OUTSIDE_VERB: &str = "vault.booking.deposit.mark_refunded_outside";
+
+/// `caller` marks the refund `booked`'s deposit owes refunded outside
+/// Stripe, for `amount_minor`.
+fn mark_refunded_outside(
+    caller: &Memory<'_>,
+    booked: &ConfirmReceipt,
+    amount_minor: u64,
+) -> Result<serde_json::Value, MemoryError> {
+    oneiron::verbs::invoke(
+        caller,
+        DEPOSIT_MARK_REFUNDED_OUTSIDE_VERB,
+        serde_json::json!({
+            "event_ref": booked.calendar.event_ref.to_hex(),
+            "amount_minor": amount_minor,
+        }),
+    )
+}
+
+/// A provider for refunds a host marked refunded outside Stripe. A find
+/// (`find_only`) makes nothing and answers `found`: what Stripe refunded
+/// under the keys asked, 0 for none, and pending while it is `None`. A
+/// refund it is asked to make is held pending while `hold_new_refunds` is
+/// set, and else answered as [`EndingRefundProvider`] answers it. It keeps
+/// each refund asked: its key, and whether it was a find.
+#[derive(Default)]
+struct MarkedRefundProvider {
+    hold_new_refunds: bool,
+    found: Option<u64>,
+    asked: Vec<(String, bool)>,
+    ending: EndingRefundProvider,
+}
+
+impl DepositSettlementPort for MarkedRefundProvider {
+    fn settle(
+        &mut self,
+        request: &DepositSettleRequest<'_>,
+    ) -> Result<u64, DepositProviderFailure> {
+        if matches!(request.movement, DepositSettleMove::Refund { .. }) {
+            self.asked
+                .push((request.idempotency_key.to_owned(), request.find_only));
+            let pending = || DepositProviderFailure::Pending("Stripe holds the refund".to_owned());
+            if request.find_only {
+                return self.found.ok_or_else(pending);
+            }
+            if self.hold_new_refunds {
+                return Err(pending());
+            }
+        }
+        self.ending.settle(request)
+    }
+}
+
+/// The provider ends an emergency cancel's whole refund unpaid, and the host,
+/// who paid the visitor back outside Stripe, marks it so. The mark takes only
+/// the amount owed now, and records the host's word, dated: the stuck line
+/// and its INBOX row go, Return deposit asks nothing more, and the card says
+/// the refund was made outside Stripe, as marked on that day. The settle row
+/// queued before the mark ends without asking; the mark's own row asks Stripe
+/// only to find a refund under the deposit's key, makes none, and finds
+/// none, so the deposit settles refunded, for the amount marked. A second
+/// mark records nothing.
+#[test]
+fn the_host_marks_a_refund_the_provider_ended_unpaid_refunded_outside_stripe() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let booked = captured_booking(&fixture, "pi_marked_outside", 9);
+    emergency_cancel_then_repick(&fixture, &booked, 9, NOW + 90, NOW + 120);
+    let owed = DepositState::RefundDue {
+        amount_minor: 4_000,
+    };
+    assert_eq!(
+        fixture.state_of("pi_marked_outside"),
+        owed,
+        "guard: the emergency cancel owes the whole deposit back"
+    );
+    let mut provider = MarkedRefundProvider {
+        ending: EndingRefundProvider {
+            end_new_refunds: true,
+            ..EndingRefundProvider::default()
+        },
+        ..MarkedRefundProvider::default()
+    };
+    drain_settle_rows(&fixture, &mut provider, NOW + 180);
+    assert_eq!(
+        provider.ending.ended.len(),
+        1,
+        "guard: the provider ended the refund"
+    );
+    let key = provider.ending.ended[0].clone();
+    let event_hex = booked.calendar.event_ref.to_hex();
+    let row = format!("{HELD_DEPOSIT_ROW}{event_hex}");
+    assert_eq!(
+        held_deposit_rows(&fixture, fixture.host, NOW + 240),
+        vec![row],
+        "guard: the stuck refund lists on the INBOX"
+    );
+
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    fixture.set_clock(NOW + 300);
+    let other_amount =
+        mark_refunded_outside(&host, &booked, 3_999).expect_err("another amount is refused");
+    assert_eq!(
+        other_amount.code, MEMORY_CODE_BAD_REQUEST,
+        "{other_amount:?}"
+    );
+    let marked = mark_refunded_outside(&host, &booked, 4_000).expect("the host marks the refund");
+    assert_eq!(
+        marked,
+        serde_json::json!({
+            "event_ref": event_hex,
+            "amount_minor": 4_000,
+            "currency": "usd",
+            "marked_at": NOW + 300,
+            "recorded": true,
+        })
+    );
+    assert_eq!(
+        fixture.state_of("pi_marked_outside"),
+        owed,
+        "the mark settles nothing by itself"
+    );
+
+    let card_row = format!("booking:{event_hex}");
+    let marked_line = serde_json::json!({
+        "amount_minor": 4_000,
+        "currency": "usd",
+        "marked_at": NOW + 300,
+        "stripe_refunded": false,
+        "line": "Refunded outside Stripe, as marked on 2026-03-02: 40.00 USD to the visitor.",
+    });
+    fixture.set_clock(NOW + 360);
+    let card = open_booking_row(&host, &card_row);
+    assert!(card.get("deposit").is_none(), "the stuck line goes: {card}");
+    assert_eq!(card["refund_marked_outside"], marked_line, "{card}");
+    assert_eq!(card["emergency_return"]["returned"], "refunded", "{card}");
+    assert!(
+        held_deposit_rows(&fixture, fixture.host, NOW + 360).is_empty(),
+        "so does its INBOX row"
+    );
+    let returned = refund_deposit(&host, &booked).expect("Return deposit answers");
+    assert_eq!(
+        returned["queued"], false,
+        "Return deposit asks nothing more: {returned}"
+    );
+    let second = mark_refunded_outside(&host, &booked, 4_000).expect("a second mark answers");
+    assert_eq!(second["recorded"], false, "{second}");
+    assert_eq!(second["marked_at"], NOW + 300, "{second}");
+
+    provider.found = Some(0);
+    drain_settle_rows(&fixture, &mut provider, NOW + 3_800);
+    assert_eq!(
+        provider.asked,
+        vec![(key.clone(), false), (key, true)],
+        "one find under the deposit's key, and no refund asked to be made"
+    );
+    assert_eq!(
+        provider.ending.keyed.refunded_minor(),
+        0,
+        "nothing is refunded at Stripe"
+    );
+    assert_eq!(
+        fixture.state_of("pi_marked_outside"),
+        DepositState::Refunded {
+            amount_minor: 4_000
+        }
+    );
+    fixture.set_clock(NOW + 3_900);
+    let card = open_booking_row(&host, &card_row);
+    assert!(card.get("deposit").is_none(), "{card}");
+    assert_eq!(card["refund_marked_outside"], marked_line, "{card}");
+    assert_eq!(card["emergency_return"]["returned"], "refunded", "{card}");
+    drain_settle_rows(&fixture, &mut provider, NOW + 7_500);
+    assert_eq!(provider.asked.len(), 2, "no row asks again");
+}
+
+/// The host's Return deposit of a started booking is pending at Stripe when
+/// the host, who paid the visitor back outside Stripe, marks it so. While
+/// Stripe holds the refund the card shows the mark, the mark's row asks
+/// Stripe hourly only to find it, and the row queued before the mark ends
+/// without asking. Stripe then pays that refund: the deposit settles as
+/// Stripe's refund, and the card says Stripe refunded it as well, so the
+/// visitor may be paid twice.
+#[test]
+fn a_marked_refund_stripe_pays_after_all_says_the_visitor_may_be_paid_twice() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let booked = captured_booking(&fixture, "pi_marked_paid_twice", 9);
+    let start = slot_at(9).start;
+    fixture.set_clock(start + 60);
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    refund_deposit(&host, &booked).expect("the host returns the deposit");
+    let mut provider = MarkedRefundProvider {
+        hold_new_refunds: true,
+        ..MarkedRefundProvider::default()
+    };
+    drain_settle_rows(&fixture, &mut provider, start + 120);
+    assert_eq!(provider.asked.len(), 1, "guard: one refund asked");
+    let key = provider.asked[0].0.clone();
+    let owed = DepositState::RefundDue {
+        amount_minor: 4_000,
+    };
+    assert_eq!(fixture.state_of("pi_marked_paid_twice"), owed);
+
+    fixture.set_clock(start + 180);
+    let marked = mark_refunded_outside(&host, &booked, 4_000).expect("the host marks the refund");
+    assert_eq!(marked["recorded"], true, "{marked}");
+    drain_settle_rows(&fixture, &mut provider, start + 240);
+    drain_settle_rows(&fixture, &mut provider, start + 3_900);
+    assert_eq!(
+        provider.asked,
+        vec![
+            (key.clone(), false),
+            (key.clone(), true),
+            (key.clone(), true)
+        ],
+        "the mark's row finds hourly; the row queued before the mark ends"
+    );
+    assert_eq!(fixture.state_of("pi_marked_paid_twice"), owed);
+    let card_row = format!("booking:{}", booked.calendar.event_ref.to_hex());
+    fixture.set_clock(start + 3_960);
+    let card = open_booking_row(&host, &card_row);
+    assert_eq!(
+        card["refund_marked_outside"]["line"],
+        "Refunded outside Stripe, as marked on 2026-03-02: 40.00 USD to the visitor.",
+        "while Stripe holds the refund, the card shows the mark: {card}"
+    );
+
+    provider.found = Some(4_000);
+    drain_settle_rows(&fixture, &mut provider, start + 7_600);
+    assert_eq!(provider.asked.len(), 4, "{:?}", provider.asked);
+    assert!(provider.asked.iter().all(|(asked, _)| *asked == key));
+    assert_eq!(
+        fixture.state_of("pi_marked_paid_twice"),
+        DepositState::Refunded {
+            amount_minor: 4_000
+        }
+    );
+    fixture.set_clock(start + 7_700);
+    let card = open_booking_row(&host, &card_row);
+    assert_eq!(
+        card["refund_marked_outside"],
+        serde_json::json!({
+            "amount_minor": 4_000,
+            "currency": "usd",
+            "marked_at": start + 180,
+            "stripe_refunded": true,
+            "line": "Marked refunded outside Stripe on 2026-03-02, and Stripe refunded it as well: \
+                     40.00 USD to the visitor, who may be paid twice.",
+        }),
+        "{card}"
+    );
+    assert!(card.get("deposit").is_none(), "{card}");
+}
+
+/// Only a host selected at confirmation marks a refund refunded outside
+/// Stripe, and only a refund owed: an agent's mark is refused, and so is the
+/// vault owner's on a booking another person hosts; a deposit still held,
+/// and one whose refund Stripe has made, owe no refund to mark. No refused
+/// mark moves anything.
+#[test]
+fn only_a_selected_host_marks_a_refund_owed_refunded_outside_stripe() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let captured = captured_booking(&fixture, "pi_mark_refusals", 9);
+    let start = slot_at(9).start;
+    fixture.set_clock(start + 60);
+    let agent = fixture
+        .vault
+        .memory(test_id(AGENT_SEED), EdgeActorClass::Agent);
+    assert!(
+        mark_refunded_outside(&agent, &captured, 4_000).is_err(),
+        "an agent marks nothing"
+    );
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    let held = mark_refunded_outside(&host, &captured, 4_000)
+        .expect_err("a captured deposit owes no refund");
+    assert_eq!(held.code, MEMORY_CODE_INVALID_STATE, "{held:?}");
+    assert_eq!(
+        fixture.state_of("pi_mark_refusals"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        }
+    );
+    refund_deposit(&host, &captured).expect("the host returns the deposit");
+    let mut provider = RecordingProvider::default();
+    drain_settle_rows(&fixture, &mut provider, start + 120);
+    assert_eq!(
+        fixture.state_of("pi_mark_refusals"),
+        DepositState::Refunded {
+            amount_minor: 4_000
+        },
+        "guard: Stripe refunded it"
+    );
+    let settled = mark_refunded_outside(&host, &captured, 4_000)
+        .expect_err("a refund Stripe made is not marked");
+    assert_eq!(settled.code, MEMORY_CODE_INVALID_STATE, "{settled:?}");
+
+    let other_clock = ManualClock::new(NOW);
+    let other = Fixture::open_owned(&other_clock, Some(test_id(OTHER_HOST_SEED)));
+    let hosted = captured_booking(&other, "pi_mark_other_host", 11);
+    cancel(&other, &hosted, NOW + 120);
+    let owed = DepositState::RefundDue {
+        amount_minor: 4_000,
+    };
+    assert_eq!(
+        other.state_of("pi_mark_other_host"),
+        owed,
+        "guard: the visitor's cancel owes the deposit back"
+    );
+    let owner = other
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let refusal = mark_refunded_outside(
+        &other.vault.memory(owner, EdgeActorClass::Human),
+        &hosted,
+        4_000,
+    )
+    .expect_err("the vault's owner was not a selected host");
+    assert_eq!(refusal.code, MEMORY_CODE_FORBIDDEN, "{refusal:?}");
+    assert_eq!(other.state_of("pi_mark_other_host"), owed);
+}
+
+/// A late cancel owes half the capture back, the provider ends that refund
+/// unpaid, and the host marks it refunded outside Stripe; it settles so. The
+/// half the terms kept stays held, and the host's Return deposit of it is a
+/// refund Stripe is asked to make, under the balance's own key: the mark
+/// covers only the refund it was made for.
+#[test]
+fn the_balance_after_a_refund_marked_refunded_outside_is_refunded_at_stripe() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned_with_terms(&clock, late_refund_terms(50));
+    let booked = captured_booking(&fixture, "pi_mark_balance", 9);
+    cancel(&fixture, &booked, NOW + 120);
+    let mut provider = MarkedRefundProvider {
+        ending: EndingRefundProvider {
+            end_new_refunds: true,
+            ..EndingRefundProvider::default()
+        },
+        ..MarkedRefundProvider::default()
+    };
+    drain_settle_rows(&fixture, &mut provider, NOW + 180);
+    assert_eq!(
+        provider.ending.ended.len(),
+        1,
+        "guard: the provider ended the refund"
+    );
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    fixture.set_clock(NOW + 240);
+    mark_refunded_outside(&host, &booked, 2_000).expect("the host marks the half owed");
+    provider.found = Some(0);
+    drain_settle_rows(&fixture, &mut provider, NOW + 300);
+    assert_eq!(
+        fixture.state_of("pi_mark_balance"),
+        DepositState::Refunded {
+            amount_minor: 2_000
+        }
+    );
+    let card_row = format!("booking:{}", booked.calendar.event_ref.to_hex());
+    fixture.set_clock(NOW + 360);
+    let card = open_booking_row(&host, &card_row);
+    assert_eq!(card["deposit"]["held"], "balance_after_refund", "{card}");
+    assert_eq!(
+        card["refund_marked_outside"]["line"],
+        "Refunded outside Stripe, as marked on 2026-03-02: 20.00 USD to the visitor.",
+        "{card}"
+    );
+
+    provider.ending.end_new_refunds = false;
+    let balance = refund_deposit(&host, &booked).expect("the host returns the balance");
+    assert_eq!(balance["queued"], true, "{balance}");
+    drain_settle_rows(&fixture, &mut provider, NOW + 420);
+    let (balance_key, find) = provider.asked.last().expect("the balance asked").clone();
+    assert!(!find, "the balance is a refund Stripe makes: {balance_key}");
+    assert!(balance_key.contains("-after-2000-"), "{balance_key}");
+    assert_eq!(provider.ending.keyed.refunded_minor(), 2_000);
+    assert_eq!(
+        fixture.state_of("pi_mark_balance"),
+        DepositState::Refunded {
             amount_minor: 4_000
         }
     );

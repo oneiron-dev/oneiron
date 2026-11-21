@@ -108,6 +108,7 @@ pub use self::feed_move::{
 };
 pub(crate) use self::feed_move::{FeedMoveOutcome, is_booking_event, move_booking_by_feed};
 pub use self::hold_source::VaultActiveHoldSource;
+pub use self::owner_card::BookingOwnerCardRefundMarkedOutside;
 pub use self::owner_card::{
     BOOKING_HELD_DEPOSIT_ITEM_PREFIX, BOOKING_OWNER_CARD_ITEM_PREFIX, BookingDepositHeld,
     BookingDepositHeldReason, BookingDepositReturned, BookingOwnerCard, BookingOwnerCardDeposit,
@@ -138,6 +139,7 @@ pub(crate) use self::confirmation_state::{
     bind_booking_invite_identity_in, booking_invite_identity, booking_invite_identity_in_txn,
     erase_booking_receipt_carriers_in_txn,
 };
+pub(crate) use self::deposit::mark_booking_deposit_refunded_outside;
 pub(super) use self::emergency::{
     admit_emergency_pick, commit_emergency_item, emergency_current_revision_in,
     pick_emergency_item, read_emergency_pick,
