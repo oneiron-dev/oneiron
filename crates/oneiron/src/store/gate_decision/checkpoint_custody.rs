@@ -373,6 +373,39 @@ fn names(_: &Path, (): &()) -> Result<bool> {
     Ok(true)
 }
 
+/// The seal a restore's swap puts on its replacement until the swap is
+/// over: put under the replacement's writer, so a write on it that began
+/// before has committed and one that begins after refuses, and lifted when
+/// dropped unless the handle was sealed already.
+#[cfg(unix)]
+struct ReplacementSeal<'a> {
+    replacement: &'a Store,
+    sealed_before: bool,
+}
+
+#[cfg(unix)]
+impl<'a> ReplacementSeal<'a> {
+    fn put(replacement: &'a Store) -> Result<Self> {
+        let writer = replacement.env.past_seal_write_txn()?;
+        let sealed_before = replacement.env.is_sealed();
+        replacement.env.seal();
+        drop(writer);
+        Ok(Self {
+            replacement,
+            sealed_before,
+        })
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ReplacementSeal<'_> {
+    fn drop(&mut self) {
+        if !self.sealed_before {
+            self.replacement.env.unseal();
+        }
+    }
+}
+
 impl Store {
     /// Whether this handle's own directory still sits at its vault's path
     /// (FIX 12772; REVIEW-5620): a restore's swap exchanges the two
@@ -734,6 +767,9 @@ impl Store {
     ///
     /// `fence` reads this vault under the writer, before the mark: a refusal
     /// there changes nothing, and no write lands between it and the seal.
+    /// The replacement is sealed from before the fence until this returns,
+    /// so no write lands on it between what the fence reads of it and the
+    /// exchange either.
     #[cfg(unix)]
     pub(crate) fn swap_out(
         &self,
@@ -762,6 +798,11 @@ impl Store {
                 "a vault directory no longer sits at its path".into(),
             ));
         }
+        // The replacement's rows stand still from the fence to the end of
+        // the exchange, so a fence that compares them with this vault's
+        // reads what the exchange publishes (REVIEW-10247 round 2). A handle
+        // opened on it elsewhere opens it archived, live only at this path.
+        let _replacement_sealed = ReplacementSeal::put(replacement)?;
         let mut wtxn = self.env.write_txn()?;
         fence(&wtxn)?;
         ARCHIVED.put(self, &mut wtxn, &(), &mark)?;

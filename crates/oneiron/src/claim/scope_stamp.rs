@@ -14,8 +14,6 @@ use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, Sens
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use rmpv::Value;
 use std::collections::BTreeSet;
-// FIX [LIBTEST-QUARANTINE-CLAIM-SCOPE-STAMP-TESTS]: the lib test target's type check fails here (8 errors: E0061 x6, E0308 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -167,6 +165,33 @@ impl crate::Vault {
         })
     }
 
+    /// Checks that `actor` is the bound owner and that `facet` is a stored FACET.
+    pub(crate) fn validate_default_facet_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: WriteActor,
+        facet: EntityId,
+    ) -> Result<()> {
+        if actor.actor_class() != EdgeActorClass::Human
+            || crate::memory::verify_owner_actor_binding_in_txn(self, txn, actor.entity_ref())
+                .is_err()
+        {
+            return Err(Error::Claim(
+                crate::error::ClaimError::ActorLacksClaimAuthority {
+                    reason: "only the vault owner sets the default facet",
+                },
+            ));
+        }
+        let found = self.get_entity_type_in_txn(txn, &facet)?;
+        if found != Some(ENTITY_TYPE_FACET) {
+            return Err(Error::Registry(crate::error::RegistryError::InvalidFacet {
+                facet,
+                found,
+            }));
+        }
+        Ok(())
+    }
+
     /// [`Self::set_default_facet`] in `wtxn`: as the owner `actor`, puts
     /// `claim` making the stored FACET `facet` the vault default, at
     /// `occurred` and `learned_at`, and supersedes the default it replaces.
@@ -181,23 +206,7 @@ impl crate::Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        if actor.actor_class() != EdgeActorClass::Human
-            || crate::memory::verify_owner_actor_binding_in_txn(self, wtxn, actor.entity_ref())
-                .is_err()
-        {
-            return Err(Error::Claim(
-                crate::error::ClaimError::ActorLacksClaimAuthority {
-                    reason: "only the vault owner sets the default facet",
-                },
-            ));
-        }
-        let found = self.get_entity_type_in_txn(wtxn, &facet)?;
-        if found != Some(ENTITY_TYPE_FACET) {
-            return Err(Error::Registry(crate::error::RegistryError::InvalidFacet {
-                facet,
-                found,
-            }));
-        }
+        self.validate_default_facet_in_txn(wtxn, actor, facet)?;
         let owner = crate::vault::embedded_owner_actor_id()?;
         let previous = crate::ports::ClaimStore::port_claim_get_active(
             self,

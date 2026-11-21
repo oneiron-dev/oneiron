@@ -1,6 +1,6 @@
 //! The host's isolated inspection of an e-sign original PDF's pages: a port
-//! the engine calls before the writer of a field save or a sign act (FIX
-//! 9609), so no PDF is parsed inside the writer.
+//! the engine calls before the writer of a draft, a field save or a sign
+//! act (FIX 9609), so no PDF is parsed inside the writer.
 use super::render::PageGeometry;
 use super::sealer::EsignSealerError;
 use crate::Vault;

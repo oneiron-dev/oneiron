@@ -4,10 +4,10 @@
 //! (FIX 9784). A legal hold choice places its customer hold there, on this
 //! pact's recipient copies the ask covers only (FIX 2927), and links it to
 //! the answer and the ask (FIX 2924). A delete choice names each record once
-//! (FIX 2925), is refused there before anything is deleted when a legal hold
-//! keeps any of its records, and saves its operation with the answer (FIX
-//! 2926). Its deletes then run one by one through the owner's own delete
-//! rail, outside that writer, each one's observed state saved as it goes.
+//! (FIX 2925), checks cooperative restrictions before anything is deleted,
+//! and saves its operation with the answer (FIX 2926). Its deletes then run
+//! one by one through the owner's own delete rail, outside that writer,
+//! each one's observed state saved as it goes.
 
 use std::collections::BTreeSet;
 
@@ -21,11 +21,12 @@ use crate::consent::AuthenticatedOwner;
 use crate::deletion::SafeDeleteReason;
 use crate::deletion::{LegalHold, LegalHoldKind, LegalHoldTarget};
 use crate::edge::EdgeActorClass;
+use crate::memory::{DeleteReceipt, MemoryResult};
 use crate::store::legal_hold::{self as hold_store, HoldActor};
 use crate::{EntityId, Error, Result, Vault};
 
 /// A filed ask's key: its pact, then its nonce.
-type AskKey = ([u8; 32], [u8; 16]);
+pub(super) type AskKey = ([u8; 32], [u8; 16]);
 
 impl Vault {
     /// Records the owner's choice on a filed ask, in one writer that
@@ -37,11 +38,11 @@ impl Vault {
     /// hold is linked to the answer and the ask, and an earlier choice's hold
     /// stays linked and standing (FIX 2924). A delete choice names each
     /// record once, in the order first named; an empty one deletes nothing
-    /// and is recorded (FIX 2925). A legal hold on any of its records, on a
-    /// pad's world or on a redirect shell its erase takes refuses the whole
-    /// choice in that writer, before anything is deleted, naming the held
-    /// records; otherwise the choice and its operation are saved before the
-    /// first delete runs (FIX 2926). The same delete choice again resumes the
+    /// and is recorded (FIX 2925). A cooperative restriction on any of its
+    /// records, on a pad's world or on a redirect shell its erase takes
+    /// refuses the whole choice in that writer, before anything is deleted.
+    /// Otherwise the choice and its operation are saved before the first
+    /// delete runs (FIX 2926). The same delete choice again resumes the
     /// records still pending. Retain-under-basis records only this ask's
     /// copies still present here, with the owner's basis and retention-class
     /// codes; non-copies and missing records are left out. Its existing B2
@@ -182,27 +183,44 @@ impl Vault {
 
     /// Runs a delete choice's saved operation, outside the answer's writer
     /// (FIX 2926): each record still pending goes through the owner's own
-    /// delete rail, `owner`'s proof re-proved in its writes (FIX 9784), and
-    /// its observed state is saved to the operation while it is still the
-    /// answer's. One a run a crash cut short already removed reads removed
-    /// by its hard-delete marker. A failed delete leaves its record pending
-    /// and the rest go on, so the answer returned says what is removed and
-    /// what is not; nothing removed is put back. A newer choice stops the run
-    /// before its next record.
+    /// delete rail, `owner`'s proof re-proved in its writes (FIX 9784), as
+    /// [`Self::run_courtesy_delete_with`] says.
     fn run_courtesy_delete(
         &self,
         owner: &AuthenticatedOwner,
         key: &AskKey,
         operation_id: EntityId,
     ) -> Result<IncomingCooperativeDeletion> {
-        let (actor, pending) = {
+        let actor = {
             let txn = self.store.env.read_txn()?;
-            let actor = owner.revalidate_in_txn(self, &txn)?;
-            let pending = running_operation_in(self, &txn, key, operation_id)?
-                .map_or_else(Vec::new, |operation| operation.pending());
-            (actor, pending)
+            owner.revalidate_in_txn(self, &txn)?
         };
         let memory = self.memory(actor, EdgeActorClass::Human);
+        let hard = SafeDeleteReason::UserHardDelete;
+        self.run_courtesy_delete_with(key, operation_id, |record| {
+            memory.safe_delete_as_owner(owner, &record.to_hex(), hard.delete_reason())
+        })
+    }
+
+    /// Runs a delete choice's saved operation, outside the answer's writer
+    /// (FIX 2926): each record still pending goes through `delete`, and its
+    /// observed state is saved to the operation while it is still the
+    /// answer's. One a run a crash cut short already removed reads removed
+    /// by its hard-delete marker. A failed delete leaves its record pending
+    /// and the rest go on, so the answer returned says what is removed and
+    /// what is not; nothing removed is put back. A newer choice stops the run
+    /// before its next record.
+    pub(super) fn run_courtesy_delete_with(
+        &self,
+        key: &AskKey,
+        operation_id: EntityId,
+        delete: impl Fn(EntityId) -> MemoryResult<DeleteReceipt>,
+    ) -> Result<IncomingCooperativeDeletion> {
+        let pending = {
+            let txn = self.store.env.read_txn()?;
+            running_operation_in(self, &txn, key, operation_id)?
+                .map_or_else(Vec::new, |operation| operation.pending())
+        };
         for record in pending {
             let removed = {
                 let txn = self.store.env.read_txn()?;
@@ -214,8 +232,7 @@ impl Vault {
             let state = if removed {
                 CooperativeDeleteRecordState::Removed
             } else {
-                let hard = SafeDeleteReason::UserHardDelete;
-                match memory.safe_delete_as_owner(owner, &record.to_hex(), hard.delete_reason()) {
+                match delete(record) {
                     Ok(receipt) if receipt.existed => CooperativeDeleteRecordState::Removed,
                     Ok(_) => CooperativeDeleteRecordState::Missing,
                     Err(error) => {
@@ -237,7 +254,11 @@ impl Vault {
     }
 
     /// Saves what became of `record` to operation `operation_id`, while it
-    /// is still the answer's.
+    /// is still the answer's. A record a delete found gone reads removed
+    /// when its hard-delete marker is here: a concurrent run's delete erased
+    /// it, and that run may stop before it settles (review round 2 of
+    /// #9902). A hard delete that found nothing local writes the marker too,
+    /// as the run's first check already reads any marked record removed.
     fn settle_courtesy_record(
         &self,
         key: &AskKey,
@@ -246,6 +267,13 @@ impl Vault {
         state: CooperativeDeleteRecordState,
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
+            let state = if state == CooperativeDeleteRecordState::Missing
+                && self.local_hard_delete_marker_exists_in_txn(txn, &record)?
+            {
+                CooperativeDeleteRecordState::Removed
+            } else {
+                state
+            };
             let Some(mut filed) = INCOMING.get(&self.store, txn, key)? else {
                 return Ok(());
             };
@@ -270,7 +298,7 @@ impl Vault {
 }
 
 /// The delete operation `operation_id` while it is still the answer's.
-fn running_operation_in(
+pub(super) fn running_operation_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     key: &AskKey,
@@ -456,10 +484,9 @@ fn check_hold_records(answer: &CooperativeDeletionAnswer) -> Result<()> {
 }
 
 /// Every record of a delete choice, in the answer's writer, before any is
-/// deleted (FIX 2926): a legal hold on it, on its world when it is a pad, or
-/// on a redirect shell its hard erase takes with it refuses the whole
-/// choice. The refusal is the hold's own, naming the held records; each is
-/// logged once the writer ends. Each delete's own writers check again.
+/// deleted (FIX 2926): a cooperative restriction on it, on its world when
+/// it is a pad, or on a redirect shell its hard erase takes refuses the
+/// whole choice. Each delete's own writers check again.
 fn preflight_delete_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

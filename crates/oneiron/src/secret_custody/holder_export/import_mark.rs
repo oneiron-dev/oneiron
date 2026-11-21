@@ -15,6 +15,14 @@
 //! no install key loaded, or one that fails to sign or fold, leaves the
 //! intent owed and the import standing.
 //!
+//! The import's writer lends the mark the owner's own write, revalidated
+//! there ([`crate::consent::OwnerAuthoredWrite`]): the mark it signs, and the
+//! install join before it, then carry the owner key's proof this install
+//! holds ([`Vault::owner_act_proof_signer`], row
+//! OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS), which buys the mark room
+//! past another install's owner reserve and nothing in any fold. A mark a
+//! later pass carries has no such write, and is carried unproven.
+//!
 //! The next pass on which this install can sign carries it, with no other
 //! step from the owner: the moment its install key loads, and the owner work
 //! pickup after an authority catch-up and on the served tick. Each intent is
@@ -31,8 +39,9 @@ use crate::Vault;
 use crate::authority::{
     ActSurface, AuthorityEntryHash, AuthorityKey, AuthorityOp, EXPORT_ACT_TARGET_NAME,
     ExportSupplementImported, FrontierSigner, MAX_PARENTS, OwnerAct, OwnerActKind, OwnerWorkBody,
-    OwnerWorkOutcome, invalid_authority, next_sequence, sign_side_entry,
+    OwnerWorkOutcome, invalid_authority, next_sequence, sign_side_entry_with_owner_proof,
 };
+use crate::consent::OwnerAuthoredWrite;
 use crate::error::{Error, Result, SecretError};
 use crate::policy_setting_doors::owner_act_target;
 use crate::store::pending_import_mark::{PENDING_IMPORT_MARK, PendingImportMark};
@@ -67,7 +76,9 @@ impl Vault {
     /// `request` imported, in the import's writer `txn`, for `actor`, the
     /// owner the import revalidated in it, from `surface`: files the mark
     /// as owed, keeping an intent already filed, then signs it in a
-    /// savepoint of `txn` when this install can carry it now. Returns
+    /// savepoint of `txn` when this install can carry it now, with the owner
+    /// key's proof when `owner_authored` is the owner's own write of it
+    /// ([`Self::carry_import_mark_in_txn`]). Returns
     /// whether this writer signed a mark the fold counts. A fault past the
     /// intent's write is logged by kind and leaves the intent owed, the
     /// import standing and the request's rows riding on until a pass signs
@@ -81,6 +92,7 @@ impl Vault {
         actor: EntityId,
         surface: ActSurface,
         request: AuthorityEntryHash,
+        owner_authored: Option<&OwnerAuthoredWrite>,
     ) -> Result<bool> {
         if !PENDING_IMPORT_MARK.contains(&self.store, txn, &request)? {
             let pending = PendingImportMark {
@@ -96,7 +108,8 @@ impl Vault {
             .nested_write_txn(txn)
             .map_err(Error::from)
             .and_then(|mut savepoint| {
-                let carried = self.carry_import_mark_in_txn(&mut savepoint, request)?;
+                let carried =
+                    self.carry_import_mark_in_txn(&mut savepoint, request, owner_authored)?;
                 savepoint.commit().map_err(Error::from)?;
                 Ok(carried)
             });
@@ -131,7 +144,8 @@ impl Vault {
         };
         let mut signed = 0;
         for request in owed {
-            match self.with_write_txn(|txn| self.carry_import_mark_in_txn(txn, request)) {
+            // A later pass is no owner's write: the mark goes unproven.
+            match self.with_write_txn(|txn| self.carry_import_mark_in_txn(txn, request, None)) {
                 Ok(MarkCarry::Signed) => signed += 1,
                 Ok(MarkCarry::Settled | MarkCarry::Owed) => {}
                 Err(error) => {
@@ -188,10 +202,15 @@ impl Vault {
     /// Carries the mark owed under `request` in `txn`, judged again here:
     /// signed and dropped once the fold counts it, dropped unsigned when
     /// nothing is owed any more, kept while this install cannot sign it.
+    /// `owner_authored` is the import's own write when the import's writer
+    /// carries it: it proves the mark only for the owner whose intent is
+    /// filed, so an intent an earlier import filed for another owner is
+    /// carried unproven.
     fn carry_import_mark_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         request: AuthorityEntryHash,
+        owner_authored: Option<&OwnerAuthoredWrite>,
     ) -> Result<MarkCarry> {
         let Some(pending) = PENDING_IMPORT_MARK.get(&self.store, txn, &request)? else {
             return Ok(MarkCarry::Settled);
@@ -206,7 +225,15 @@ impl Vault {
                 MarkCarry::Settled
             }
             MarkJudgment::Sign => {
-                if self.sign_import_mark_in_txn(txn, pending.owner, pending.surface, request)? {
+                let owner_authored = owner_authored.filter(|write| write.actor() == pending.owner);
+                let signed = self.sign_import_mark_in_txn(
+                    txn,
+                    pending.owner,
+                    pending.surface,
+                    request,
+                    owner_authored,
+                )?;
+                if signed {
                     MarkCarry::Signed
                 } else {
                     MarkCarry::Owed
@@ -273,14 +300,17 @@ impl Vault {
     /// returns whether the fold counts it there: `false`, with nothing
     /// written, while this install has no live machine profile or no
     /// install key loaded. Its parents are the main-log heads alone, which
-    /// carry the request (FIX 4987). The fold is the judge: a mark it does
-    /// not take refuses `txn`.
+    /// carry the request (FIX 4987). The mark and its join carry the owner
+    /// key's proof this install holds when `owner_authored` is given
+    /// ([`Self::owner_act_proof_signer`]), picked once, before the join. The
+    /// fold is the judge: a mark it does not take refuses `txn`.
     fn sign_import_mark_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         actor: EntityId,
         surface: ActSurface,
         request: AuthorityEntryHash,
+        owner_authored: Option<&OwnerAuthoredWrite>,
     ) -> Result<bool> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         if fold.export_supplement_imported(&request) {
@@ -306,7 +336,8 @@ impl Vault {
             ExportSupplementImported::seen_for(request),
         );
         // FIX 7908: join a frontier wider than one entry names, else today's path.
-        let joiner = FrontierSigner::Install(machine, &signing);
+        let proof = self.owner_act_proof_signer(&fold, owner_authored);
+        let joiner = FrontierSigner::install(machine, &signing, proof.as_ref());
         let fold = self
             .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
@@ -321,13 +352,14 @@ impl Vault {
         };
         let seq = next_sequence(&fold, &AuthorityKey::Ed25519(public_key))?;
         let now = self.instant_in_txn(txn)?.secs();
-        let entry = sign_side_entry(
+        let entry = sign_side_entry_with_owner_proof(
             &fold,
             &signing,
             seq,
             parents,
             AuthorityOp::ExportSupplementImported(mark),
             now,
+            proof.as_ref(),
         )?;
         let at = TimeRange {
             start: now,

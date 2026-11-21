@@ -195,6 +195,7 @@ pub(super) fn ask_for_mention_in_txn(
         escalated_at: None,
         surfaced_turn: None,
         kept_separate_at: None,
+        someone_new_proposed_at: None,
     }))
 }
 

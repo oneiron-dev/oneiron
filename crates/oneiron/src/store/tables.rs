@@ -109,6 +109,15 @@ crate::side_table::side_tables! {
     /// over. Dropped wherever the machine id is. Key: ().
     IDENTITY_MACHINE_PK: SyncState b"m:machine_pk" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// The 32-byte id of the checkpoint image this install was restored from (row
+    /// RESTORED-COPIES-ENROL-EACH-OTHER), written by every restore that drops the image's
+    /// machine identity on an owner-rooted vault, and by an archived vault's activation (a
+    /// fresh id): each enrolment request the install signs names it, and the fold holds its
+    /// act-free enrolment until a joined machine joins it. It belongs to the machine identity:
+    /// an image's own row is dropped with that identity, a restore that keeps the identity
+    /// keeps it, and a re-mint of the machine id on this install keeps it. Key: ().
+    IDENTITY_RESTORED_FROM: SyncState b"m:restored_from" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Crash-safe monotonic counter allocating the next u:w: sequence number for one window. Key:
     /// yyyy-mm.
     SYNC_M_U_SEQ_W: SyncState b"m:u_seq:w:" Raw
@@ -139,6 +148,12 @@ crate::side_table::side_tables! {
     /// ":part:" index for a clip's bytes.
     MODEL_MEDIA_JOB: SyncState b"models:media-job:v1:" Named
         [restore: live] [family: dispatch Response] [tier: canonical];
+    /// The owner key changes this managed install already reported to its
+    /// supervisor (Engine ruling 21 Nov 06:00): the reported entry hashes, 32
+    /// bytes each, ascending. Install-local, never synced: every replica would
+    /// mail else. Key: ().
+    OWNER_KEY_CHANGE_REPORTED: SyncState b"managed:owner_key_change_reported:v1" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Entity waiting for an embedding. Key: hex32.
     PENDING_EMBEDDING_MARKER: SyncState b"pe:" Raw
         [restore: not_imaged] [family: not_imaged] [tier: derived];
@@ -290,6 +305,10 @@ crate::side_table::side_tables! {
     /// 7932), written in the transaction that settled the handoff and never rewritten. Key:
     /// hash32 (the ReRoot's entry hash).
     AUTHORITY_LEAVE_NOTICE_DELEGATION_BY_HANDOFF: VaultMeta b"authority:leave-notice-delegation-by-handoff:v1:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// A recovery hold's seed slot this install may hold: written and committed before R's seed
+    /// enters the slot, removed when the slot is deleted. Public key only. Key: successor key.
+    AUTHORITY_RECOVERY_HOLD_SLOT_PENDING: VaultMeta b"authority:recovery-hold-slot-pending:v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
     /// The last commit a write that changes no content stamped (FIX 6730): its transaction id,
     /// the last content commit's and its class, so a host's telemetry and a backup's own writes
@@ -558,12 +577,6 @@ crate::side_table::side_tables! {
     /// rate). Key: u8 (OversightKind tag: 0/1/2).
     HEALER_OVERSIGHT_RECEIPT: VaultMeta b"healer:oversight:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
-    /// A retirement deadline a door started (a secret lease's expiry, a voice print's retention
-    /// deadline, a critical confirm's window), kept for a vault that is not running to know when to
-    /// wake. Key: the sweep's tag byte, the deadline (u64 BE), then an id16 per note, so a sweep's
-    /// earliest deadline is its first row and two notes of one deadline are two rows. Value: empty.
-    HOUSEKEEPING_WAKE: VaultMeta b"housekeeping:wake:v1:" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Empty-marker index from a normalized identity hint (name/alias/handle) hashed per entity-kind
     /// to the entity id it names, for lookup-before-mint resolution. Key: u8 + hash32 + id16.
     INGEST_IDENTITY_HINT: VaultMeta b"identity-hint:v1:" Raw
@@ -844,6 +857,27 @@ crate::side_table::side_tables! {
         // Restore class: Learned retrieval state, content as the active blend weights it goes with
         // (FIX 22408).
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Owner pins over the read-shape picks (`store::ReadShapePins`), one per model. Key: ().
+    READ_SHAPE_PINS: VaultMeta b"retr_read_shape_pins:v1:" Named
+        // Restore class: The owner's pins go with the learned posterior they override, as
+        // RETRIEVAL_POLICY_PINS do.
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// Account-local read-shape posterior (`store::ReadShapePosterior`), one arm per model and
+    /// shape, rebuilt by the Coach at sleep beside RETRIEVAL_POLICY_POSTERIOR. Key: ().
+    READ_SHAPE_POSTERIOR: VaultMeta b"retr_read_shape_posterior:v1:" Named
+        // Restore class: Learned retrieval state, content as RETRIEVAL_POLICY_POSTERIOR.
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// The read-shape pick one attempt's run woke under (`store::ReadShapeStamp`), written
+    /// once. Key: id16 (attempt).
+    READ_SHAPE_STAMP: VaultMeta b"retr_read_shape_stamp:v1:" Named
+        // Restore class: An attempt's own stamp, content as DREAMER_RESIDENT_ATTEMPT.
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// What reader children settled into one spend scope, in model units (census L9-37): a run
+    /// under the scope leaves them out of its own read-shape units, as each reader's units are
+    /// its spawning try's. Key: the spend scope id.
+    READ_SHAPE_SCOPE_READER_UNITS: VaultMeta b"retr_read_shape_scope_readers:v1:" Named
+        // Restore class: The read-shape stamps' own tally, content as READ_SHAPE_STAMP.
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Retrieval run telemetry record. Key: id16.
     ///
     /// Codec fixed to `Raw` (T47 store slice), for the same reason as
@@ -922,8 +956,10 @@ crate::side_table::side_tables! {
     SECRET_FOUND_KEY_DUE: VaultMeta b"secret_found_key_due:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
     /// A custody handle's owner-set display label and its Gate receipt. The custody name stays the
-    /// identity; this label changes presentation only and holds no value. Key: id16 (custody record id).
-    SECRET_HANDLE_LABEL: VaultMeta b"secret_handle:label:v1:" Named Custody
+    /// identity; this label changes presentation only. Admitted by the side-row wall, as the
+    /// purpose is: every agent's handle card shows it (SECRET-HANDLE-LABEL-UNWALLED). Key: id16
+    /// (custody record id).
+    SECRET_HANDLE_LABEL: VaultMeta b"secret_handle:label:v1:" Named Authored [accepts: crate::store::secret_handle_labels::accepts_masked]
         [restore: live] [family: unclassified] [tier: canonical];
     /// Owner-authored purpose, admitted by the side-row wall. Key: custody id16.
     SECRET_HANDLE_PURPOSE: VaultMeta b"secret_handle:purpose:v1:" Named Authored [accepts: crate::store::secret_handle_purpose::accepts_masked]
@@ -1134,6 +1170,12 @@ crate::side_table::side_tables! {
     /// Random 32-byte identity of this store, minted at its first open and compared by every
     /// same-vault check; node-local and never synced, so a replica holds its own. Key: ().
     VAULT_IDENTITY_LOCAL: VaultMeta b"vault_identity:local:v1" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// Whether the recovery box's kit-only hold may not match the recovery preset: set before a
+    /// switch into 'Nobody but me' asks the box to hold, and by a switch out of it; cleared once
+    /// the box answered. A managed boot resends the hold that matches the preset when it is set.
+    /// Key: ().
+    VAULT_KEY_BOX_HOLD_PENDING: VaultMeta b"vault_key:box_hold_pending:v1" Named
         [restore: live] [family: unclassified] [tier: canonical];
     /// The BLAKE3 fingerprint of the recipient public key each escrow label was sealed to, kept
     /// after the label retires, so a later add of the same key under another label warns (FIX

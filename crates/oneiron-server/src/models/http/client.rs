@@ -4,6 +4,37 @@ use futures_util::{StreamExt, TryStreamExt};
 
 use super::*;
 
+/// `provider`'s own `headers` and, for a `key_env` key, that key in `style`,
+/// marked sensitive: what every request to the provider carries. A
+/// configured `key_env` that is unset or empty is a refusal.
+pub(super) fn provider_headers(
+    provider: &ProviderConfig,
+    style: KeyStyle,
+) -> anyhow::Result<reqwest::header::HeaderMap> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    for (name, value) in &provider.headers {
+        headers.insert(
+            reqwest::header::HeaderName::from_bytes(name.as_bytes())?,
+            reqwest::header::HeaderValue::from_str(value)?,
+        );
+    }
+    if let Some(env) = &provider.key_env {
+        let key = std::env::var(env)
+            .ok()
+            .filter(|key| !key.trim().is_empty())
+            .ok_or_else(|| anyhow::anyhow!("{env} is not set"))?;
+        let (name, value) = match style {
+            KeyStyle::Bearer => (reqwest::header::AUTHORIZATION, format!("Bearer {key}")),
+            KeyStyle::ApiKeyHeader => (reqwest::header::HeaderName::from_static("x-api-key"), key),
+            KeyStyle::Named(name) => (reqwest::header::HeaderName::from_static(name), key),
+        };
+        let mut value = reqwest::header::HeaderValue::from_str(&value)?;
+        value.set_sensitive(true);
+        headers.insert(name, value);
+    }
+    Ok(headers)
+}
+
 impl ProviderHttp {
     /// Builds the client. A configured `key_env` that is unset or empty is a
     /// refusal here, so a seat never runs half-authenticated.
@@ -51,29 +82,7 @@ impl ProviderHttp {
         style: KeyStyle,
         direct: bool,
     ) -> anyhow::Result<Self> {
-        let mut headers = reqwest::header::HeaderMap::new();
-        for (name, value) in &provider.headers {
-            headers.insert(
-                reqwest::header::HeaderName::from_bytes(name.as_bytes())?,
-                reqwest::header::HeaderValue::from_str(value)?,
-            );
-        }
-        if let Some(env) = &provider.key_env {
-            let key = std::env::var(env)
-                .ok()
-                .filter(|key| !key.trim().is_empty())
-                .ok_or_else(|| anyhow::anyhow!("{env} is not set"))?;
-            let (name, value) = match style {
-                KeyStyle::Bearer => (reqwest::header::AUTHORIZATION, format!("Bearer {key}")),
-                KeyStyle::ApiKeyHeader => {
-                    (reqwest::header::HeaderName::from_static("x-api-key"), key)
-                }
-                KeyStyle::Named(name) => (reqwest::header::HeaderName::from_static(name), key),
-            };
-            let mut value = reqwest::header::HeaderValue::from_str(&value)?;
-            value.set_sensitive(true);
-            headers.insert(name, value);
-        }
+        let headers = provider_headers(provider, style)?;
         // One request per call (`SingleSend`): a redirect is answered, never
         // followed, and nothing the upstream may have read is sent twice; a
         // request that never reached it goes once more on `fresh`, a client
@@ -192,11 +201,13 @@ impl ProviderHttp {
             Some((Arc::clone(compressor), compressor.encode(path, &plain)?))
         });
         let Some((compressor, encoded)) = encoded else {
+            log_sent_body(&plain);
             return never_sent::send(&self.fresh, request().body(plain));
         };
         let (request, resend) = (request(), request());
         let fresh = self.fresh.clone();
         Box::pin(async move {
+            log_sent_body(&encoded);
             let request = request
                 .header(reqwest::header::CONTENT_ENCODING, compressor.token())
                 .body(encoded);
@@ -206,6 +217,7 @@ impl ProviderHttp {
             }
             let refused = response.status();
             drop(response);
+            log_sent_body(&plain);
             let response = never_sent::send(&fresh, resend.body(plain)).await?;
             if response.status() != refused {
                 compressor.on.store(false, Ordering::Relaxed);
@@ -233,11 +245,13 @@ impl ProviderHttp {
             Some((Arc::clone(compressor), compressor.encode(path, &plain)?))
         });
         let Some((compressor, encoded)) = encoded else {
+            log_sent_body(&plain);
             return never_sent::send_released(&self.fresh, request().body(plain), release, lease);
         };
         let (request, resend) = (request(), request());
         let fresh = self.fresh.clone();
         Box::pin(async move {
+            log_sent_body(&encoded);
             let request = request
                 .header(reqwest::header::CONTENT_ENCODING, compressor.token())
                 .body(encoded);
@@ -248,6 +262,7 @@ impl ProviderHttp {
             }
             let refused = response.status();
             drop(response);
+            log_sent_body(&plain);
             let response =
                 never_sent::send_released(&fresh, resend.body(plain), release, lease).await?;
             if response.status() != refused {
@@ -605,4 +620,19 @@ impl ProviderHttp {
         });
         Box::pin(opening.try_flatten())
     }
+}
+
+/// Logs one physical send's body (FIX DREAMER-CALL-ATTEMPT-ID): 16 hex of its
+/// plain BLAKE3 and its length, never its bytes. Debug under
+/// `oneiron::model::send`; a durable step's send prints inside its
+/// `model_step` span (attempt and step), so a recording proxy's body digest
+/// of the same bytes names the attempt and step that sent the call. Nothing
+/// is hashed while the level is off.
+fn log_sent_body(body: &[u8]) {
+    tracing::debug!(
+        target: "oneiron::model::send",
+        body = %&oneiron_contracts::fingerprint::ContentHash::of(body).to_hex()[..16],
+        bytes = body.len(),
+        "model request sent"
+    );
 }

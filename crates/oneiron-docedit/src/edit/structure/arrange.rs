@@ -185,9 +185,9 @@ pub(super) fn copy_to_slide(
             .attr("id")
             .and_then(|id| id.parse::<u32>().ok())
             .ok_or(EditRefusal::Missing("shape id"))?;
-        if !ids.contains_key(&old) {
+        if let std::collections::btree_map::Entry::Vacant(vacant) = ids.entry(old) {
             high = high.checked_add(1).ok_or(EditRefusal::IdSpaceExhausted)?;
-            ids.insert(old, high);
+            vacant.insert(high);
             effects.push(Effect::ShapeCopied {
                 from: old,
                 id: high,

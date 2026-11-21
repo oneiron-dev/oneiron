@@ -12,12 +12,14 @@
 //!   checked the same.
 //! - B-LT and above: the DSS the archival suffix adds (the catalog's `/DSS`,
 //!   written after the bound revision; read with lopdf) holds every
-//!   non-anchor certificate of the signer's path (valid at the signature
-//!   timestamp's genTime) and of each authority's path (valid at its
-//!   token's), and for each certificate on those paths a CRL or OCSP
-//!   response its issuer (or a responder it delegated to, whose KeyUsage
-//!   lets it sign) signed, fresh at the material's time, that does not list
-//!   it; an OCSP response may be produced up to the organ's 300 s after
+//!   non-anchor certificate of the signer's path (valid at the earliest
+//!   time a token the host proved says the signature existed: its signature
+//!   timestamp's genTime, or a document timestamp's over the bound
+//!   revision) and of each authority's path (valid at its token's), and for
+//!   each certificate on those paths a CRL or OCSP response its issuer (or a
+//!   responder it delegated to, whose KeyUsage lets it sign, valid at the
+//!   material's time) signed, fresh at the material's time, that does not
+//!   list it; an OCSP response may be produced up to the organ's 300 s after
 //!   that time. A CRL or OCSP response without nextUpdate proves nothing.
 //!   Any other certificate it holds (the organ keeps the chain of an
 //!   authority whose archival token it replaced) must be on a path of its
@@ -51,18 +53,22 @@ use der::referenced::OwnedToRef;
 use der::{Decode, Encode, Reader, SliceReader};
 use oneiron::blob_artifact::esign::{EsignSealerError, SealProfile};
 use oneiron_organ_protocol::seal::{SealRevisionClassification, SealSignatureKind};
+use pkix_chain::pkix_path::names_match;
 use pkix_chain::pkix_path_builder::{self, CertPool};
 use pkix_chain::pkix_revocation::{self, RevocationChecker};
 use pkix_chain::{
-    CrlChecker, DefaultVerifier, NoAiaFetcher, NoRevocation, OcspChecker, SignatureVerifier,
-    TrustAnchor, ValidationPolicy,
+    CrlChecker, DefaultVerifier, NoAiaFetcher, NoRevocation, SignatureVerifier, TrustAnchor,
+    ValidationPolicy,
 };
-use sha2::{Digest, Sha256};
+use sha1::Sha1;
+use sha2::{Digest, Sha256, Sha384, Sha512};
 use x509_cert::Certificate;
-use x509_cert::ext::pkix::KeyUsage;
-use x509_cert::serial_number::SerialNumber;
-use x509_cert::spki::AlgorithmIdentifierOwned;
-use x509_ocsp::{BasicOcspResponse, OcspResponse};
+use x509_cert::ext::pkix::{ExtendedKeyUsage, KeyUsage};
+use x509_cert::spki::{AlgorithmIdentifierOwned, SubjectPublicKeyInfoRef};
+use x509_ocsp::{
+    BasicOcspResponse, CertId, CertStatus, OcspGeneralizedTime, OcspResponse, OcspResponseStatus,
+    ResponderId,
+};
 
 use super::binding::{AdmittedRevision, unhex};
 use crate::resource_memory::{FloorLease, FloorRefusal, MachineFloor};
@@ -76,6 +82,16 @@ const ID_SIGNING_CERT_V2: ObjectIdentifier =
 const ID_SIGNATURE_TIME_STAMP_TOKEN: ObjectIdentifier =
     ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.2.14");
 const ID_SHA256: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1");
+/// The other hashes an OCSP CertID may name (RFC 6960 §4.1.1; the ones pkix
+/// reads).
+const ID_SHA1: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.14.3.2.26");
+const ID_SHA384: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.2");
+const ID_SHA512: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.3");
+/// id-pkix-ocsp-basic, and id-kp-OCSPSigning on an extendedKeyUsage
+/// (RFC 6960 §4.2.1, §4.2.2.2).
+const ID_PKIX_OCSP_BASIC: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.48.1.1");
+const ID_CE_EXT_KEY_USAGE: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.37");
+const ID_KP_OCSP_SIGNING: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.9");
 const ID_RSA_ENCRYPTION: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
 const ID_SHA256_WITH_RSA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.11");
 const ID_CE_KEY_USAGE: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.15");
@@ -197,9 +213,19 @@ pub(super) fn prove_evidence(
         }
         None => now,
     };
-    // The signer's path, valid when its signature timestamp says it signed,
-    // and each authority's, valid at its token's genTime (the organ's rule);
-    // their revocation, fresh at the material's time.
+    // The signer's path, valid at the earliest time a proven token says the
+    // signature existed: its signature timestamp's genTime, or a document
+    // timestamp's whose hole starts after the bound revision, which its
+    // first range then covers (the organ's signer_validation_time). Each
+    // authority's path, valid at its token's genTime; their revocation,
+    // fresh at the material's time.
+    let signed_at = documents
+        .iter()
+        .filter(|document| {
+            u64::try_from(document.start).is_ok_and(|start| start >= witness.byte_end)
+        })
+        .map(|document| document.proof.gen_time)
+        .fold(signature_timestamp.gen_time, u64::min);
     let mut paths = Vec::new();
     if !witness
         .signer_chain
@@ -214,9 +240,9 @@ pub(super) fn prove_evidence(
             .map_err(|_| unproven(VALIDATION_DATA))?;
         let path = signer
             .first()
-            .and_then(|leaf| built_path(leaf, &signer, &anchors, signature_timestamp.gen_time))
+            .and_then(|leaf| built_path(leaf, &signer, &anchors, signed_at))
             .ok_or_else(|| unproven(VALIDATION_DATA))?;
-        paths.push((path, signature_timestamp.gen_time));
+        paths.push((path, signed_at));
     }
     for proof in std::iter::once(&signature_timestamp).chain(documents.iter().map(|d| &d.proof)) {
         paths.push((proof.path.clone(), proof.gen_time));
@@ -999,24 +1025,23 @@ impl RevocationChecker for DssRevocation {
     }
 }
 
-/// One DSS OCSP response as the organ weighs it: produced at most
+/// One DSS OCSP response, weighed by the host itself with the organ's two
+/// clocks kept apart (its `ocsp_basic_valid`): produced at most
 /// [`OCSP_SKEW_SECS`] after the material's time (a responder's clock may
-/// run that far ahead), with a status for the certificate fresh at the
-/// material's time itself. pkix checks the rest (signature, responder,
-/// CertID, status, and a nextUpdate no earlier than producedAt) at the
-/// later of that time and producedAt.
+/// run that far ahead), and, for the certificate asked about, a status
+/// fresh at the material's time itself, signed by the certificate's issuer
+/// or by a responder the issuer delegated to that is valid at that time.
+/// pkix's own checker weighs both the status and the delegate at
+/// producedAt, with no time apart from it.
 ///
-/// Its own `certs` (which its signature does not cover) are the
-/// response's, then the DSS certificates, then the anchors: pkix looks for
-/// a delegated responder only there, the organ also in the DSS and the
-/// anchors (its `OcspContext`), so in this order the host finds the one
-/// the organ found. Any whose KeyUsage forbids signing is left out (the
-/// organ's rule); pkix still requires the one it picks to carry
-/// id-kp-OCSPSigning and to be signed by the certificate's issuer.
+/// A delegated responder is looked for among the response's own `certs`
+/// (which its signature does not cover), then the DSS certificates, then
+/// the anchors (the organ's `OcspContext`), leaving out any whose KeyUsage
+/// forbids signing (the organ's rule): the first the responder ID names is
+/// the one, as in pkix.
 struct MaterialOcsp {
-    checker: OcspChecker<DefaultVerifier>,
-    /// Each status's serial, thisUpdate and nextUpdate, in order.
-    windows: Vec<(SerialNumber, u64, Option<u64>)>,
+    basic: BasicOcspResponse,
+    responders: Vec<Certificate>,
     at: u64,
 }
 
@@ -1024,58 +1049,208 @@ impl MaterialOcsp {
     /// `None` for an unsuccessful response, one the host cannot read, or
     /// one produced too late: it vouches for nothing.
     fn new(der: &[u8], responders: &[Certificate], at: u64) -> Option<Self> {
-        let mut response = OcspResponse::from_der(der).ok()?;
-        let bytes = response.response_bytes.as_mut()?;
-        let mut basic = BasicOcspResponse::from_der(bytes.response.as_bytes()).ok()?;
-        let data = &basic.tbs_response_data;
-        let produced = data.produced_at.0.to_unix_duration().as_secs();
-        if produced > at.saturating_add(OCSP_SKEW_SECS) {
+        let response = OcspResponse::from_der(der).ok()?;
+        if response.response_status != OcspResponseStatus::Successful {
             return None;
         }
-        let windows = data
-            .responses
+        let bytes = response.response_bytes?;
+        if bytes.response_type != ID_PKIX_OCSP_BASIC {
+            return None;
+        }
+        let basic = BasicOcspResponse::from_der(bytes.response.as_bytes()).ok()?;
+        if seconds(&basic.tbs_response_data.produced_at) > at.saturating_add(OCSP_SKEW_SECS) {
+            return None;
+        }
+        let responders = basic
+            .certs
             .iter()
-            .map(|single| {
-                (
-                    single.cert_id.serial_number.clone(),
-                    single.this_update.0.to_unix_duration().as_secs(),
-                    single
-                        .next_update
-                        .as_ref()
-                        .map(|next| next.0.to_unix_duration().as_secs()),
-                )
-            })
+            .flatten()
+            .chain(responders)
+            .filter(|candidate| may_sign(candidate))
+            .cloned()
             .collect();
-        let own = basic.certs.take().unwrap_or_default();
-        basic.certs = Some(
-            own.into_iter()
-                .chain(responders.iter().cloned())
-                .filter(may_sign)
-                .collect(),
-        );
-        bytes.response = OctetString::new(basic.to_der().ok()?).ok()?;
         Some(Self {
-            checker: OcspChecker::new(response.to_der().ok()?, at.max(produced), DefaultVerifier)
-                .ok()?,
-            windows,
+            basic,
+            responders,
             at,
         })
     }
 
+    /// Whether the response says `cert`, which `issuer` issued, is not
+    /// revoked: signed with [`Self::signing_key`], its first status for the
+    /// certificate's serial (the one pkix weighs) names `issuer` in its
+    /// CertID, is fresh at the material's time and says good.
     fn check(&self, cert: &Certificate, issuer: &Certificate) -> pkix_revocation::Result<()> {
-        // The status pkix weighs: the first for the certificate's serial.
-        let fresh = self
-            .windows
-            .iter()
-            .find(|(serial, ..)| *serial == cert.tbs_certificate.serial_number)
-            .is_some_and(|(_, this_update, next_update)| {
-                *this_update <= self.at && next_update.is_some_and(|next| self.at <= next)
-            });
-        if !fresh {
-            return Err(pkix_revocation::Error::OcspExpired);
+        use pkix_revocation::Error;
+        if !names_match(
+            &issuer.tbs_certificate.subject,
+            &cert.tbs_certificate.issuer,
+        ) {
+            return Err(Error::OcspIssuerCertMismatch);
         }
-        self.checker.check_revocation(cert, issuer)
+        let data = &self.basic.tbs_response_data;
+        let key = self.signing_key(issuer)?;
+        let message = data.to_der().map_err(|_| Error::OcspMalformed)?;
+        DefaultVerifier
+            .verify_signature(
+                self.basic.signature_algorithm.owned_to_ref(),
+                key,
+                &message,
+                self.basic.signature.raw_bytes(),
+            )
+            .map_err(|_| Error::OcspSignatureInvalid)?;
+        let serial = &cert.tbs_certificate.serial_number;
+        let single = data
+            .responses
+            .iter()
+            .find(|single| single.cert_id.serial_number == *serial)
+            .ok_or(Error::OcspStatusUnknown)?;
+        if !names_issuer(&single.cert_id, issuer) {
+            return Err(Error::OcspCertIdMismatch);
+        }
+        let fresh = seconds(&single.this_update) <= self.at
+            && single
+                .next_update
+                .as_ref()
+                .is_some_and(|next| self.at <= seconds(next));
+        if !fresh {
+            return Err(Error::OcspExpired);
+        }
+        match &single.cert_status {
+            CertStatus::Good(_) => Ok(()),
+            CertStatus::Revoked(info) => Err(Error::Revoked {
+                serial: serial.clone(),
+                reason_code: info.revocation_reason,
+            }),
+            CertStatus::Unknown(_) => Err(Error::OcspStatusUnknown),
+        }
     }
+
+    /// The key the response must be signed with to speak for `issuer`'s
+    /// certificates: the issuer's own when the responder ID names it, else
+    /// that of the first candidate the ID names, which must be a responder
+    /// `issuer` delegated to (RFC 6960 §4.2.2.2: `issuer` issued it, with
+    /// id-kp-OCSPSigning) and valid at the material's time.
+    fn signing_key<'a>(
+        &'a self,
+        issuer: &'a Certificate,
+    ) -> pkix_revocation::Result<SubjectPublicKeyInfoRef<'a>> {
+        use pkix_revocation::Error;
+        let id = &self.basic.tbs_response_data.responder_id;
+        if responder_named(id, issuer) {
+            return Ok(issuer
+                .tbs_certificate
+                .subject_public_key_info
+                .owned_to_ref());
+        }
+        let delegate = self
+            .responders
+            .iter()
+            .find(|candidate| responder_named(id, candidate))
+            .ok_or(Error::OcspResponderIdMismatch)?;
+        if !names_match(
+            &delegate.tbs_certificate.issuer,
+            &issuer.tbs_certificate.subject,
+        ) {
+            return Err(Error::OcspResponderCertNotIssuedByCa);
+        }
+        if !signs_ocsp(delegate)? {
+            return Err(Error::OcspResponderEkuMissing);
+        }
+        let validity = &delegate.tbs_certificate.validity;
+        if self.at < validity.not_before.to_unix_duration().as_secs()
+            || validity.not_after.to_unix_duration().as_secs() < self.at
+        {
+            return Err(Error::OcspResponderCertExpired);
+        }
+        let tbs = delegate
+            .tbs_certificate
+            .to_der()
+            .map_err(|_| Error::OcspMalformed)?;
+        DefaultVerifier
+            .verify_signature(
+                delegate.signature_algorithm.owned_to_ref(),
+                issuer
+                    .tbs_certificate
+                    .subject_public_key_info
+                    .owned_to_ref(),
+                &tbs,
+                delegate.signature.raw_bytes(),
+            )
+            .map_err(|_| Error::OcspResponderCertSigInvalid)?;
+        Ok(delegate
+            .tbs_certificate
+            .subject_public_key_info
+            .owned_to_ref())
+    }
+}
+
+/// An OCSP time in seconds since the epoch.
+fn seconds(time: &OcspGeneralizedTime) -> u64 {
+    time.0.to_unix_duration().as_secs()
+}
+
+/// Whether the responder ID names `cert` (RFC 6960 §4.2.2.3): by its
+/// subject, or by SHA-1 of its key.
+fn responder_named(id: &ResponderId, cert: &Certificate) -> bool {
+    match id {
+        ResponderId::ByName(name) => names_match(name, &cert.tbs_certificate.subject),
+        ResponderId::ByKey(hash) => {
+            let key = cert
+                .tbs_certificate
+                .subject_public_key_info
+                .subject_public_key
+                .raw_bytes();
+            Sha1::digest(key).as_slice() == hash.as_bytes()
+        }
+    }
+}
+
+/// Whether `cert_id` names `issuer` (RFC 6960 §4.1.1): its subject and its
+/// key, hashed with the CertID's algorithm (SHA-1 or SHA-2, as pkix reads).
+fn names_issuer(cert_id: &CertId, issuer: &Certificate) -> bool {
+    fn hashed<D: Digest>(name: &[u8], key: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        (D::digest(name).to_vec(), D::digest(key).to_vec())
+    }
+    let Ok(name) = issuer.tbs_certificate.subject.to_der() else {
+        return false;
+    };
+    let key = issuer
+        .tbs_certificate
+        .subject_public_key_info
+        .subject_public_key
+        .raw_bytes();
+    let oid = cert_id.hash_algorithm.oid;
+    let (name_hash, key_hash) = if oid == ID_SHA1 {
+        hashed::<Sha1>(&name, key)
+    } else if oid == ID_SHA256 {
+        hashed::<Sha256>(&name, key)
+    } else if oid == ID_SHA384 {
+        hashed::<Sha384>(&name, key)
+    } else if oid == ID_SHA512 {
+        hashed::<Sha512>(&name, key)
+    } else {
+        return false;
+    };
+    cert_id.issuer_name_hash.as_bytes() == name_hash.as_slice()
+        && cert_id.issuer_key_hash.as_bytes() == key_hash.as_slice()
+}
+
+/// Whether `cert`'s first ExtendedKeyUsage holds id-kp-OCSPSigning; one
+/// that does not decode refuses the response, as in pkix.
+fn signs_ocsp(cert: &Certificate) -> pkix_revocation::Result<bool> {
+    let Some(usage) = cert
+        .tbs_certificate
+        .extensions
+        .iter()
+        .flatten()
+        .find(|extension| extension.extn_id == ID_CE_EXT_KEY_USAGE)
+    else {
+        return Ok(false);
+    };
+    ExtendedKeyUsage::from_der(usage.extn_value.as_bytes())
+        .map(|usage| usage.0.contains(&ID_KP_OCSP_SIGNING))
+        .map_err(|_| pkix_revocation::Error::OcspResponderEkuMalformed)
 }
 
 /// Whether `cert`'s KeyUsage lets its key sign: absent, or present once,

@@ -22,6 +22,7 @@ use crate::{
     WriteProvenance,
 };
 use fit::{eligible_sources, fit_neighbors, same_fitted_neighbors, source_in_txn};
+use oneiron_contracts::fingerprint::ContentHash;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
@@ -344,19 +345,21 @@ pub(super) fn asker_reader_in_txn(
     // A relationship's rows answer the asker only on its own membership or
     // live grant, as on every other read lane, unless the asker is the
     // vault's live owner; the vault's own rows stay its to read.
-    Ok(party_read_key_in_txn(vault, txn, principal)?.exempt_while_owner(principal))
+    Ok(party_read_key_in_txn(&vault.store, txn, principal)?.exempt_while_owner(principal))
 }
 
 /// The read key of one party to a question: its id, with the actor class of
 /// its live entity row (a PERSON reads as human, an AGENT_DEF as agent, a
 /// MACHINE as system), so a read row that names that class admits it as it
-/// does on every other read lane. Any other row names no class.
+/// does on every other read lane. Any other row names no class. It reads
+/// only `store`, so a judgment that holds no vault (an outcome label's
+/// fact, a silence window) keys its principal the same way.
 pub(super) fn party_read_key_in_txn(
-    vault: &Vault,
+    store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     party: EntityId,
 ) -> Result<ScopedReadActorKey> {
-    let class = match crate::vault::live_entity_row_in_txn(&vault.store, txn, &party)? {
+    let class = match crate::vault::live_entity_row_in_txn(store, txn, &party)? {
         crate::vault::LiveEntityRow::Live { entity_type, .. } => match entity_type {
             crate::registry::ENTITY_TYPE_PERSON => Some("human"),
             crate::registry::ENTITY_TYPE_AGENT_DEF => Some("agent"),
@@ -542,7 +545,7 @@ fn answer_unit(
         None,
     )?;
     if context.sources.iter().zip(current.value.iter()).any(|(old, new)| {
-        !matches!(new, Some((kind, _, body)) if *kind == old.entity_type && *blake3::hash(body).as_bytes() == old.hash)
+        !matches!(new, Some((kind, _, body)) if *kind == old.entity_type && *ContentHash::of(body).as_bytes() == old.hash)
     }) {
         return Ok(UnitOutcome::Abstain);
     }
@@ -764,7 +767,7 @@ pub(crate) fn trial_unit_context_in_txn(
         // The funnel supplies the live revision's logical bytes (FIX 5396):
         // an older revision's manifest bytes miss the recorded hash and the
         // trial refuses the frontier (FIX 5398).
-        if *blake3::hash(&body).as_bytes() != pin.body_hash
+        if *ContentHash::of(&body).as_bytes() != pin.body_hash
             || !source_eligible(vault, txn, &pin.id, header.entity_type)?
         {
             return Err(Error::ConcurrentWrite(
@@ -809,7 +812,7 @@ pub(super) fn source(
     entity_type: u8,
     stored: Vec<u8>,
 ) -> Result<GraphContextSource> {
-    let hash = *blake3::hash(&stored).as_bytes();
+    let hash = *ContentHash::of(&stored).as_bytes();
     let body = if reads_stored {
         stored
     } else {
@@ -963,7 +966,7 @@ pub(super) fn unit_audio(
             name: format!("audio_{}", audio.len()),
             evidence: EvidenceVersion {
                 id: source.id,
-                body_hash: *blake3::hash(&bytes).as_bytes(),
+                body_hash: *ContentHash::of(&bytes).as_bytes(),
             },
             media_type,
             bytes,

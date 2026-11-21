@@ -84,7 +84,7 @@ pub(in crate::deletion) fn held_scrubs_owed_in_txn(
     if super::super::erase::held_ask_forward_intents_owed_in_txn(vault, txn, &sources)? {
         return Ok(true);
     }
-    if !crate::store::legal_hold::any_cooperative_restriction_in_txn(&vault.store, txn)? {
+    if !crate::store::legal_hold::any_record_use_limit_in_txn(&vault.store, txn)? {
         return Ok(false);
     }
     if crate::provenance::birth::births_made_by_in_txn(&vault.store, txn, &ids)? {

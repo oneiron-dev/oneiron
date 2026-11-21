@@ -23,10 +23,12 @@
 pub(crate) mod archive;
 pub(crate) mod events;
 mod notice;
+mod person_content;
 mod use_limit;
 
+pub(crate) use person_content::person_content_subjects;
 pub(crate) use use_limit::{
-    CooperativeRestriction, CooperativeRestrictionKey, any_cooperative_restriction_in_txn,
+    CooperativeRestriction, CooperativeRestrictionKey, any_record_use_limit_in_txn,
     cooperative_restriction_active_in_txn, held_in_txn, partition_held_in_txn,
     records_under_cooperative_restriction_in_txn, rows_keep_record, use_limit_in_txn,
 };

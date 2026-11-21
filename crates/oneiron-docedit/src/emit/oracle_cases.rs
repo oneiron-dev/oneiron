@@ -1,6 +1,6 @@
 //! The `deck-create-v1` oracle case set: six new decks the emitter writes, the run that pins them, and the rows PowerPoint owes each one (ARCH-0077 slides lane).
 //!
-//! Creation status: "Text, tables and charts return FitUnverified. Nothing certifies fit." The oracle runs once per case set to create golden outputs; CI uses the stored ones, so no always-on machine is required. This module is the engine half of that pass: evidence tooling run by the `deck-create-cases` binary and read back by the receipt pin test. It replays [`emit`](super::emit) once per case and pins what came out; it never changes what `emit` returns.
+//! Creation status: "Text, tables and charts return FitUnverified. Nothing certifies fit." The oracle runs once per case set to create golden outputs; CI uses the stored ones, so no always-on machine is required. This module is the engine half of that pass: evidence tooling run by the `deck-create-cases` binary and read back by the receipt pin test. It replays [`emit`] once per case and pins what came out; it never changes what `emit` returns.
 
 use super::{
     Candidate, Content, Destination, EmitInputs, FitEvidence, FitTrace, Names, StoredAsset, emit,

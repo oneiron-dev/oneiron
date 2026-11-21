@@ -6,7 +6,7 @@ use super::super::install_fold::fold_pinned_with_machine_standing;
 use super::machine_identity::request_for;
 use super::owner_anchor::{YOURS, pin, profile, publish, signed};
 use super::support::{ed_key, genesis_entry};
-use super::world_chain_reads::{edit, read_under, seeing};
+use super::world_chain_reads::{edit, fold_under, hash, read_under, seeing};
 use super::*;
 use crate::HostingPrivacyPosture::SelfHostLocal;
 use crate::world_keys::RecoveryRoot;
@@ -38,12 +38,10 @@ fn self_host(seed: u8) -> SelfHost {
     }
 }
 
-/// 7c, a blocker that never admitted (Sol R1p-F1, Wonder R1p-F1): on a
-/// self-host vault A is the owner's at E's parents under the pinned anchor
-/// alone. A widens W offline (E); the owner then removes A with the
-/// owner-held roster key. With a removal that does not list E, E is
-/// restriction-only on installs pinned to the anchor; with one that lists
-/// E, it keeps full strength.
+/// 7c, an anchor-only carrier stays invalid with either roster removal (Fable design
+/// pass 29: an anchor's chain names no carrier key): A has no roster profile at its
+/// edits' parents, so `held` and `widened` are invalid pinned and unpinned, and W reads
+/// the default `Everywhere` whether the removal lists the widening or not.
 #[test]
 fn a_roster_removal_that_never_admitted_still_judges_the_race() {
     for lists_the_widening in [false, true] {
@@ -90,18 +88,24 @@ fn a_roster_removal_that_never_admitted_still_judges_the_race() {
             vault.genesis.clone(),
             vault.published.clone(),
             mark,
-            held,
-            widened,
+            held.clone(),
+            widened.clone(),
             removal,
         ];
-        assert_eq!(
-            read_under(&entries, SelfHostLocal, Some(owner), world),
-            if lists_the_widening {
-                EffectiveRead::MyMachines
-            } else {
-                EffectiveRead::OneMachine(a)
+        for root in [Some(owner), None] {
+            let fold = fold_under(&entries, SelfHostLocal, root);
+            for row in [&held, &widened] {
+                assert!(
+                    !fold.valid_entries.contains(&hash(row)),
+                    "{lists_the_widening}"
+                );
             }
-        );
+            assert_eq!(
+                fold.world_privacy(world).read,
+                EffectiveRead::Everywhere,
+                "{lists_the_widening}"
+            );
+        }
     }
 }
 
