@@ -5857,7 +5857,7 @@
      "purpose": "The owner's list of owner key changes (the owner's ruling AUTH-5, pass 27 section 4.4): every enrolment…",
      "surface": {
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -48064,7 +48064,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/housekeeping/jobs.rs",
-     "purpose": "The engine's 20 sweeps as jobs of the one runner (DESIGN 15-setting-primitive, stage 5a)",
+     "purpose": "The engine's 21 sweeps as jobs of the one runner (DESIGN 15-setting-primitive, stage 5a)",
      "surface": {
       "crate-vis": 9
      }
@@ -48106,7 +48106,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/housekeeping/setting_keys.rs",
-     "purpose": "The cadences of the engine's 20 sweeps (DESIGN 15-setting-primitive, stage 5a): one catalogue key each…",
+     "purpose": "The cadences of the engine's 21 sweeps (DESIGN 15-setting-primitive, stage 5a): one catalogue key each…",
      "surface": {}
     },
     {
@@ -68834,7 +68834,7 @@
      "path": "src/provenance/birth.rs",
      "purpose": "Rule A at row birth: one immutable `made_by` envelope per born row, written beside the row in the…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 2,
       "re-export": 1
      }
@@ -81704,13 +81704,33 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/source_audience/floor.rs",
+     "purpose": "A row's floor (READ-LINEAGE step L1; Fable design pass 30, section 4): the sources its words came from…",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/source_audience/floor_state.rs",
+     "purpose": "Whether a row's floor is whole yet (READ-LINEAGE L1; #9289 review 2 P1-1 and P1-2), what it waits on, and…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/source_audience/mod.rs",
      "purpose": "Source audience: the rows imported from a source read only to that source's people (owner MAIL-SHARE = A…",
      "surface": {
-      "crate-vis": 41,
+      "crate-vis": 45,
       "re-export": 1
      }
     },
@@ -81759,7 +81779,7 @@
      "path": "src/source_audience/walk.rs",
      "purpose": "The source-audience conjunct every audience read meets: a row reads to its viewers only while each of them…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -82259,7 +82279,7 @@
      "path": "src/store/birth_record/mod.rs",
      "purpose": "Immutable row birth records and their trigger index",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 1
      }
     },
@@ -97218,7 +97238,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 365,
+      "mod": 366,
       "re-export": 3
      }
     },
@@ -97723,6 +97743,16 @@
      "purpose": "Doors for `tests/actor_read_exposure.rs` (census L8-65): the record rows a reader's read exposure keeps",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/read_lineage_floor.rs",
+     "purpose": "Test doors for READ-LINEAGE L1: a row's floor, and the policies the source-audience walk meets on a read of…",
+     "surface": {
+      "fn": 5
      }
     },
     {
@@ -98386,7 +98416,7 @@
      "path": "src/test_doors/source_audience_binding.rs",
      "purpose": "Test doors for a restored source-audience binding whose live policy is absent",
      "surface": {
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -111730,7 +111760,7 @@
      "kind": "test",
      "notable": [],
      "path": "tests/housekeeping_sweep_jobs.rs",
-     "purpose": "DESIGN 15-setting-primitive, stage 5a-2: the engine's 20 sweeps are jobs of the one runner, and their…",
+     "purpose": "DESIGN 15-setting-primitive, stage 5a-2: the engine's 21 sweeps are jobs of the one runner, and their…",
      "surface": {}
     },
     {
@@ -114651,6 +114681,14 @@
      "notable": [],
      "path": "tests/reaction_reactor_name_admission.rs",
      "purpose": "A reaction line names a reactor only where the reader’s read admits that reactor’s PERSON row (FIX…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/read_lineage_floor.rs",
+     "purpose": "READ-LINEAGE step L1 (Fable design pass 30, section 4; FIX [VOICE-PHONE-DERIVED-ROW-GENERIC-READ], mail…",
      "surface": {}
     },
     {
@@ -119493,8 +119531,8 @@
      "purpose": "Primitive A (slice 6.4, SLICE6-MAP row A): reads any agent makes behind its own grant, with the version of…"
     },
     "source_audience": {
-     "files": 9,
-     "impl_vault": false,
+     "files": 11,
+     "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Source audience: the rows imported from a source read only to that source's people (owner MAIL-SHARE = A…"
@@ -119591,7 +119629,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 376,
+     "files": 377,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -119775,8 +119813,8 @@
    },
    "over_bar": 311,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8367,
-   "test_files": 2153
+   "source_files": 8370,
+   "test_files": 2154
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -128701,7 +128739,6 @@
      "kind": "src",
      "notable": [
       "ErasedHoldTarget",
-      "OwnerKeyMoveStep",
       "OwnerPresenceRefusal",
       "RecordError",
       "RoomLiveSpeakersHold"
@@ -128709,11 +128746,26 @@
      "path": "src/error/record.rs",
      "purpose": "Record-domain errors: body validation and identity-collision refusals for the stored record families —…",
      "surface": {
-      "const": 19,
+      "const": 5,
       "crate-vis": 2,
-      "enum": 4,
-      "fn": 5,
+      "enum": 3,
+      "fn": 2,
+      "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnerKeyMoveStep"
+     ],
+     "path": "src/error/record/owner_key_move.rs",
+     "purpose": "The reason codes, words and next steps of an owner-key refusal of a membership move…",
+     "surface": {
+      "const": 14,
+      "enum": 1,
+      "fn": 3
      }
     },
     {
@@ -129472,7 +129524,7 @@
      "purpose": "`EntityId` + world-id newtypes + id parsing/hex"
     },
     "error": {
-     "files": 15,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -129642,7 +129694,7 @@
    },
    "over_bar": 3,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
-   "source_files": 72,
+   "source_files": 73,
    "test_files": 11
   },
   "oneiron-crypto": {
@@ -140438,6 +140490,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/organ_start_fd3_reuse.rs",
+     "purpose": "An organ starts whole while another thread frees and reuses fd 3, the number the organ's socket takes in the…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -140619,7 +140679,7 @@
    "over_bar": 3,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
    "source_files": 55,
-   "test_files": 9
+   "test_files": 10
   },
   "oneiron-organ-protocol": {
    "files": [
@@ -173051,7 +173111,7 @@
      "purpose": "Managed wake ledger: entries, revision, and supervisor pushes",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 11,
       "struct": 3
      }
@@ -173100,8 +173160,8 @@
      "purpose": "Managed serve mode: the vault engine as a supervised child process",
      "surface": {
       "crate-vis": 9,
-      "mod": 5,
-      "re-export": 10
+      "mod": 6,
+      "re-export": 11
      }
     },
     {
@@ -173118,6 +173178,21 @@
       "enum": 1,
       "fn": 13,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HypnosOwnerKeyChange"
+     ],
+     "path": "src/managed/owner_key_change_report.rs",
+     "purpose": "One owner key change of this hosted vault, reported to its supervisor (Engine ruling 21 Nov 06:00: every…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 6,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -173510,6 +173585,16 @@
      "notable": [],
      "path": "src/managed/state_serve/coordinator/ledger_report.rs",
      "purpose": "Wake-ledger changes reported while the managed vault is serving",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/state_serve/coordinator/owner_key_change_report.rs",
+     "purpose": "Owner key changes reported while the managed vault is serving",
      "surface": {
       "crate-vis": 1
      }
@@ -179657,7 +179742,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 79
+      "mod": 80
      }
     },
     {
@@ -179728,6 +179813,16 @@
      "purpose": "Door for `tests/owner_check_host_fault.rs` (MEMBER-SELECTOR-SOCKET): the status the owner door answers an…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/owner_key_change_report.rs",
+     "purpose": "Doors for `tests/owner_key_change_report.rs`: the owner key change reporter managed boot installs, on a…",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -182653,6 +182748,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/owner_key_change_report.rs",
+     "purpose": "The hosted vault's owner key change report (Engine ruling 21 Nov 06:00): one sweep sends every listed change…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -184263,7 +184366,7 @@
      "purpose": "The host's Mail & Calendar source sync (FIX 12559): every pass, as the vault's local owner, one bounded…"
     },
     "managed": {
-     "files": 115,
+     "files": 117,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -184424,7 +184527,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 82,
+     "files": 83,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -184496,8 +184599,8 @@
    },
    "over_bar": 68,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2082,
-   "test_files": 544
+   "source_files": 2085,
+   "test_files": 545
   },
   "oneiron-setting-contract": {
    "files": [
@@ -188685,7 +188788,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Deadline",
@@ -194988,7 +195091,7 @@
     "housekeeping_schedule": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Housekeeping sweep identifiers, cadence policy, and pass budget values"
     },
@@ -197721,7 +197824,22 @@
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
       "mod": 23,
-      "re-export": 14
+      "re-export": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnerKeyChangeReport",
+      "OwnerKeyChangeReportAck"
+     ],
+     "path": "src/lib/owner_key_change.rs",
+     "purpose": "One owner key change on a hosted vault, reported to its supervisor (Engine ruling 21 Nov 06:00: every owner…",
+     "surface": {
+      "const": 3,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -198240,6 +198358,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/owner_key_change_wire.rs",
+     "purpose": "One owner key change's wire on the supervisor socket (Engine ruling 21 Nov 06:00): the request's exact line…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/recovery_box_hold_wire.rs",
      "purpose": "The kit-only hold's wire on the supervisor socket (Fable pass 27 R7; Engine RULING WAYBACK-BOX-HOLD-RELAY =…",
      "surface": {}
@@ -198263,7 +198389,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 64,
+     "files": 65,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -198272,8 +198398,8 @@
    },
    "over_bar": 1,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 63,
-   "test_files": 6
+   "source_files": 64,
+   "test_files": 7
   },
   "oneiron-verb-wire": {
    "files": [

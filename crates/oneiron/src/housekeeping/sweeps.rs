@@ -195,6 +195,16 @@ pub(super) fn run(
                 }
             }));
         }
+        HousekeepingSweep::SourceFloorBackfill => {
+            let (raised, cursor) =
+                crate::source_audience::backfill_floors(vault, cursor, || deadline.passed())?;
+            return Ok(Run {
+                work: SweepWork::SourceFloorBackfill { raised },
+                complete: cursor.is_none(),
+                cursor,
+                covered_until: None,
+            });
+        }
         HousekeepingSweep::EsignReminders
         | HousekeepingSweep::ConsultSettlement
         | HousekeepingSweep::PolicyHoldPrune

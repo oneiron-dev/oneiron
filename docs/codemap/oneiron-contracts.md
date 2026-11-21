@@ -38,7 +38,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/error/maintenance.rs` | src | s | 2 enum · 1 crate-vis | CompactionPacketError, MaintenanceError | Maintenance-domain errors: the compaction handoff refusal with its per-axis taxonomy, and the vault-cleanup… |
 | `src/error/mod.rs` | src | L | 2 enum · 7 fn · 1 type · 1 const · 15 re-export | Error, ErrorKind | — |
 | `src/error/off_record.rs` | src | s | 1 enum · 1 crate-vis | OffRecordError | Off-record-domain errors: the kill switch, off-record session lifecycle, the overlay and its leases, and the… |
-| `src/error/record.rs` | src | m | 1 struct · 4 enum · 5 fn · 19 const · 2 crate-vis | ErasedHoldTarget, OwnerKeyMoveStep, OwnerPresenceRefusal, RecordError, RoomLiveSpeakersHold | Record-domain errors: body validation and identity-collision refusals for the stored record families —… |
+| `src/error/record.rs` | src | m | 1 struct · 3 enum · 2 fn · 5 const · 1 re-export · 2 crate-vis | ErasedHoldTarget, OwnerPresenceRefusal, RecordError, RoomLiveSpeakersHold | Record-domain errors: body validation and identity-collision refusals for the stored record families —… |
+| `src/error/record/owner_key_move.rs` | src | s | 1 enum · 3 fn · 14 const | OwnerKeyMoveStep | The reason codes, words and next steps of an owner-key refusal of a membership move… |
 | `src/error/registry.rs` | src | s | 1 enum · 1 crate-vis | RegistryError | Registry-domain errors: structural-kind registration, entity-type and edge-kind refusals raised by the… |
 | `src/error/relay.rs` | src | s | 1 enum · 1 crate-vis | RelayError | Relay-domain errors: relay attestation refusals, vault-receipt trust, and the hosted policy manifest and… |
 | `src/error/secret.rs` | src | m | 3 enum · 1 crate-vis | DevicePinRefusal, KitRecord, SecretError | Secret-domain errors: secret custody, binding and tier refusals, and the secret-lease doors with their… |

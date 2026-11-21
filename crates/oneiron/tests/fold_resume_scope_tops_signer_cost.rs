@@ -180,6 +180,7 @@ fn side_signers_above_one_spine_resume_within_budget() {
     let log = signers_beside_one_spine(SIGNERS, SPINE);
     let base = entries(&log.base);
     let tails: Vec<_> = log.tails.iter().map(entries).collect();
+    // testkit-lint: allow(wall-clock) the elapsed time is the budget under test
     let started = Instant::now();
     let answers = scope_tops_tails_taken(&base, &tails);
     let elapsed = started.elapsed();
