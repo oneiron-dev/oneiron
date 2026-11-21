@@ -373,10 +373,14 @@ impl Once {
 /// FIX 4881), a frontier join (it moves no state, FIX 7908, but an anchor's
 /// side join's own place among its anchor's rows, FIX 11868), a residence
 /// directive (it adds only its own id and machine, which only a result past
-/// it reads) or a machine's residence result (it moves only its signer's
-/// sequence, FIX 5412). A resumed fold takes only these, and each still folds
-/// through its own transition. A fold past an adopted checkpoint takes these
-/// and the serial kinds its own admission adds (`adopted_fold`'s module doc).
+/// it reads), a machine's residence result (it moves only its signer's
+/// sequence, FIX 5412), or a recovery hold or an answer to one (each moves
+/// only its signer's sequence, and its judge reads only its parents' roster
+/// and recovery root keys; the hold view reads the rows, row
+/// RECOVERY-HOLD-ROWS-PAST-ADOPTED-IMAGE). A resumed fold takes only these,
+/// and each still folds through its own transition. A fold past an adopted
+/// checkpoint takes these and the serial kinds its own admission adds
+/// (`adopted_fold`'s module doc).
 pub(in crate::authority) fn admits_past(
     merged: &FoldState,
     entry: &AuthorityLogEntry,
@@ -428,7 +432,9 @@ pub(in crate::authority) fn admits_past(
         | AuthorityOp::WorldKeyWraps(_)
         | AuthorityOp::FrontierJoin(_)
         | AuthorityOp::ResidenceDirective(_)
-        | AuthorityOp::ResidenceResult(_) => true,
+        | AuthorityOp::ResidenceResult(_)
+        | AuthorityOp::RecoveryHold(_)
+        | AuthorityOp::RecoveryHoldAnswer(_) => true,
         AuthorityOp::FederationConfirm(action) => {
             confirms.0.insert(action.confirm_id) && confirms.1.insert(action.nonce)
         }
