@@ -7,7 +7,12 @@
 //! - the other machine refuses the other side of the same pair, and finds the same notice;
 //! - the owner's tap, an equal value of the row this install holds, signs an act that replaces
 //!   the refused one, the row settles, and the notice offers no tap any more;
-//! - a key whose hook reads no other row names the refused act alone, with the hook's reason.
+//! - a key whose hook reads no other row names the refused act alone, with the hook's reason;
+//! - the tap is one owner act over the refused row and the rows its key's hook meets it with, each
+//!   prefilled with the value this install holds and editable (PR 2 of the row);
+//! - the owner's change of several rows puts every row before any key's hook runs, signs one act,
+//!   and is all or none;
+//! - another machine's act of several rows lands here whichever row the pass reads first.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_refusal_notice`.
 
@@ -25,8 +30,8 @@ use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::setting::{
     EnrolledMachine, SettingFrontier, SlotName, enroll_machine_with_key,
-    forget_projected_setting_rows, land_setting_act_from, set_setting_as_engine, setting_changes,
-    setting_frontier_of, setting_slot_heads,
+    forget_projected_setting_rows, land_setting_act_from, land_setting_batch_from,
+    set_setting_as_engine, setting_changes, setting_frontier_of, setting_slot_heads,
 };
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_authority::authority::{AuthorityEntryHash, authority_log_entity_id_from_hash};
@@ -240,9 +245,16 @@ fn a_peers_act_this_installs_hook_refuses_raises_one_notice_naming_both_acts() {
                 "scope": { "kind": "vault" },
                 "pin": false,
                 "value": 3,
+                "further": [{
+                    "key": FLOOR,
+                    "item": null,
+                    "scope": { "kind": "vault" },
+                    "pin": false,
+                    "value": 3,
+                }],
             },
         }]),
-        "one tap: the count this install holds, which the owner may edit"
+        "one tap: the count this install holds and the floor it meets, which the owner may edit"
     );
 
     // A later pass reads the refused row again, refuses it again, and adds no notice.
@@ -333,4 +345,120 @@ fn a_refused_act_of_a_key_whose_hook_reads_no_other_row_is_named_alone_with_the_
     assert!(!detail.contains("It meets"), "{detail:?}");
     assert_eq!(notice["subject_refs"].as_array().map(Vec::len), Some(1));
     assert_eq!(notice["actions"][0]["args"]["value"], json!(0));
+}
+
+#[test]
+fn the_owners_tap_signs_one_act_over_the_refused_row_and_the_row_it_meets() {
+    let fx = Fixture::rooted();
+    refused_pair(&fx);
+    let tap = fx.the_notice()["actions"][0].clone();
+
+    // The owner edits both values in the notice: the count up to 4, the floor down to 2.
+    let mut args = tap["args"].clone();
+    args["value"] = json!(4);
+    args["further"][0]["value"] = json!(2);
+    invoke(
+        &fx.as_owner(),
+        tap["verb"].as_str().expect("the verb"),
+        args,
+    )
+    .expect("the owner's tap");
+    let act = fx
+        .last_change(COUNT)
+        .signed
+        .expect("the count's change is signed");
+    assert_eq!(
+        fx.last_change(FLOOR).signed,
+        Some(act),
+        "one act signs both rows"
+    );
+    for key in [COUNT, FLOOR] {
+        assert_eq!(
+            setting_slot_heads(&fx.vault, vault_row(key)).expect("the row's heads"),
+            vec![act],
+            "the owner's act heads {key}"
+        );
+    }
+
+    fx.vault.project_settings().expect("the pass");
+    assert_eq!(fx.reads(COUNT), json!(4));
+    assert_eq!(fx.reads(FLOOR), json!(2));
+    assert_eq!(
+        fx.the_notice()["actions"],
+        Value::Null,
+        "a refusal that no longer stands offers no tap"
+    );
+}
+
+#[test]
+fn an_owners_change_of_several_rows_puts_every_row_before_any_hook_and_is_all_or_none() {
+    let fx = Fixture::rooted();
+    let pair = |floor: u64, count: u64| {
+        json!({
+            "key": FLOOR,
+            "scope": { "kind": "vault" },
+            "value": floor,
+            "further": [{ "key": COUNT, "scope": { "kind": "vault" }, "value": count }],
+        })
+    };
+
+    // The pair reads a floor of 2 and a count of 3: a floor of 5 alone is above the count.
+    fx.vault
+        .set_setting(
+            SettingCaller::Owner(&fx.owner_proof),
+            SetSetting::vault_value(FLOOR, json!(5)),
+        )
+        .expect_err("a floor above the count is refused");
+    // With a count of 6 in the same change, each hook reads both rows as the change leaves them.
+    let outcome = invoke(&fx.as_owner(), "vault.settings.set", pair(5, 6))
+        .expect("the owner's change of both rows");
+    assert_eq!(outcome["status"], "applied");
+    assert_eq!(outcome["value"], json!(5), "the first row's outcome");
+    assert_eq!(fx.reads(FLOOR), json!(5));
+    assert_eq!(fx.reads(COUNT), json!(6));
+    let act = fx
+        .last_change(FLOOR)
+        .signed
+        .expect("the floor's change is signed");
+    assert_eq!(fx.last_change(COUNT).signed, Some(act), "one act");
+
+    // A change whose rows the hook refuses together writes none of them.
+    invoke(&fx.as_owner(), "vault.settings.set", pair(8, 7))
+        .expect_err("a floor of 8 above a count of 7 is refused");
+    assert_eq!(fx.reads(FLOOR), json!(5));
+    assert_eq!(fx.reads(COUNT), json!(6));
+    assert_eq!(fx.last_change(COUNT).signed, Some(act), "no act was signed");
+    assert!(fx.refusal_notices().is_empty());
+}
+
+#[test]
+fn another_machines_act_of_several_rows_lands_whichever_row_the_pass_reads_first() {
+    let fx = Fixture::rooted();
+    // Up from the defaults (a floor of 2, a count of 3), then down: a pass that reads the floor
+    // first meets the old count in the first act, and one that reads the count first meets the
+    // old floor in the second. Each row lands once the other did.
+    for (floor, count) in [(5, 6), (1, 1)] {
+        let frontier = setting_frontier_of(&fx.vault, &[vault_row(COUNT), vault_row(FLOOR)])
+            .expect("frontier");
+        let counted = land_setting_batch_from(
+            &fx.vault,
+            &fx.desktop,
+            fx.owner,
+            &frontier,
+            &[
+                (vault_row(FLOOR), Some(json!(floor))),
+                (vault_row(COUNT), Some(json!(count))),
+            ],
+            T0,
+        )
+        .expect("the act lands");
+        assert!(counted, "the fold counts the act");
+        assert_eq!(fx.reads(FLOOR), json!(floor), "the floor of {floor}");
+        assert_eq!(fx.reads(COUNT), json!(count), "the count of {count}");
+        assert!(
+            fx.refusal_notices().is_empty(),
+            "no refusal stands: {:#?}",
+            fx.refusal_notices()
+        );
+    }
 }
