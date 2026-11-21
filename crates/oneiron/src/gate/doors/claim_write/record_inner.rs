@@ -110,6 +110,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
     // ceilinged and receipted as that closer (FIX 8655).
     let closing_actor = closer::exact_close_closer(store, &*wtxn, id, body, transition);
     let verified_close = closing_actor.is_some();
+    let writing = closer::writing_actor(closing_actor, envelope);
     let lineage = envelope
         .map(WriteEnvelope::lineage)
         .filter(|_| !verified_close);
@@ -137,7 +138,8 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
     let dreamer_run_id = envelope.and_then(dreamer_run_id_from_write_envelope);
     // The derivation floors (GATE-12, GATE-13, the checker) hold every
     // derivation-class write: a Dreamer run's or a `vault.derive` commit's.
-    let dreamer_candidate = envelope.is_some_and(derivation_class_write) && !operation_effect_body;
+    let derivation_class = closer::derivation_class(envelope, closing_actor);
+    let dreamer_candidate = derivation_class && !operation_effect_body;
     // FIX 3983 (review 6881 P1): a caller's live-run claim put is the other Generated producer the
     // host's auto checker reviews. It is not a Dreamer write, so the GATE-12 pre-commit floor above stays
     // Dreamer-only; only the checker consult below reads this.
@@ -154,8 +156,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
     let hard_denial = precommit_denial.or(reference_denial);
 
     if policy.enforces_write_gate() {
-        let (actor, provenance, agent_definition_ceiling) = if let Some(envelope) = envelope {
-            let actor = closing_actor.unwrap_or_else(|| envelope.actor());
+        let (actor, provenance, agent_definition_ceiling) = if let Some(actor) = writing {
             let agent_definition_ceiling = agent_definition_ceiling_for_actor(store, &*wtxn, actor);
             (
                 GateActor {
@@ -165,7 +166,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
                 },
                 GateProvenanceHandles {
                     actor_entity_ref: Some(actor.entity_ref()),
-                    derive_commit: dreamer_run_id.is_none() && derivation_class_write(envelope),
+                    derive_commit: dreamer_run_id.is_none() && derivation_class,
                     dreamer_run_id,
                     ..GateProvenanceHandles::default()
                 },
@@ -217,7 +218,6 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         // A pre-commit failure REPLACES the policy verdict: the recording,
         // pending and enforcement paths below then run unchanged, and the
         // Deny aborts the caller's batch op before any claim-side write lands.
-        let writing = envelope.map(|envelope| closing_actor.unwrap_or_else(|| envelope.actor()));
         input.foreign_agent_ceiling =
             crate::gate::foreign_agent::resolve_writing(store, &*wtxn, writing)?;
         let mut decision = match hard_denial {
