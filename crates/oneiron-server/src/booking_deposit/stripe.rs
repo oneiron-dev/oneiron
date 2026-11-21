@@ -576,7 +576,7 @@ impl<'v> StripeClient<'v> {
             return Ok(OwedRefund::Keyed(refund));
         }
         if succeeded > 0 || held > 0 {
-            return Ok(match keyed_unpaid.or(earlier_unpaid) {
+            return Ok(match keyed_unpaid {
                 Some(refund) if succeeded.saturating_add(held) < amount_minor => {
                     OwedRefund::EndedUnpaidPartRefundedByHand(refund)
                 }
