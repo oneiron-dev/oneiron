@@ -244,10 +244,16 @@ impl Vault {
         confirmation: LastDeviceKeyConfirmation,
         between: impl FnOnce(),
     ) -> Result<OwnerKeyRemoval> {
-        if let RemovalCheck::LastDeviceKey(remaining) = self.read_removal_checks(|txn| {
+        match self.read_removal_checks(|txn| {
             self.key_removal_checks_in_txn(txn, owner, key, confirmation)
         })? {
-            return Ok(OwnerKeyRemoval::LastDeviceKey(remaining));
+            RemovalCheck::NoProvingKey => {
+                return Err(Error::Record(RecordError::OwnerKeyRequired));
+            }
+            RemovalCheck::LastDeviceKey(remaining) => {
+                return Ok(OwnerKeyRemoval::LastDeviceKey(remaining));
+            }
+            RemovalCheck::Ready(..) => {}
         }
         let witness = self.owner_presence(OwnerActImportance::Important, REMOVE_OWNER_KEY)?;
         let ground = OwnerProofGround::witnessed(&witness);
