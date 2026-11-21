@@ -302,6 +302,19 @@ impl Vault {
         self.swap_embedding_space(new_model, None, false)
     }
 
+    /// Pins `model` as this vault's embedding model, as an open naming it
+    /// does ([`crate::VaultConfig::embedding_model`]), for a host that may
+    /// name it only once its open stands: a host-root open names it after the
+    /// install's profile stands, so a refused open pins nothing (census
+    /// L9-28). The model the vault already holds is kept; another is
+    /// `EmbeddingModelChanged`, and a vault that holds vectors under no model
+    /// is refused, as at open.
+    pub fn pin_embedding_model(&mut self, model: &str) -> Result<()> {
+        crate::store::persist_model_id_if_missing(&self.store, model)?;
+        self.config.embedding_model = Some(model.to_owned());
+        Ok(())
+    }
+
     /// [`Self::begin_embedding_migration`] to a model and the embedding
     /// transform the host now declares, both repinned in the same
     /// transaction. Swaps when either differs from what the vault holds.

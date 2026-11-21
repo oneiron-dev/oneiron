@@ -204,6 +204,34 @@ impl ScopedRead<'_> {
         authority: &HeldAuthority,
         mut holds: impl FnMut(&Scope) -> Result<bool>,
     ) -> bool {
+        self.own_position_readable_by_grant_in(
+            rtxn,
+            policy,
+            filter,
+            entity_type,
+            authority,
+            |grant, _| holds(grant),
+        )
+    }
+
+    /// A for a place of type `entity_type` judged with no live row the
+    /// reader reads behind it, tried only once B refused it: a deleted
+    /// record's shell, or a loop decision's kept read position (Engine
+    /// ANSWER LOOP-KEPT-POSITION-FLOOR-AND-GRANT = A). Whether one of the
+    /// reader's own live Grants alone reads that type under the floor a
+    /// proof of it gives this key, the read's request met on top, and
+    /// `holds` the place under that Grant and that floor. Two Grants never
+    /// combine. As for a row, `filter` is the one B judged the place under,
+    /// and a Grant that cannot be judged admits nothing and is counted.
+    pub(super) fn own_position_readable_by_grant_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        entity_type: u8,
+        authority: &HeldAuthority,
+        mut holds: impl FnMut(&Scope, &ResolvedRetrievalFilter) -> Result<bool>,
+    ) -> bool {
         let Some(reader) = self.grant_reader() else {
             return false;
         };
@@ -224,7 +252,7 @@ impl ScopedRead<'_> {
                         self.under_caller_filter(under.under_credential_of(&self.actor_key));
                     Ok(!under.deny_all
                         && under.read_scope().bands.contains(&entity_type)
-                        && holds(scope)?)
+                        && holds(scope, &under)?)
                 });
             match reads {
                 Ok(true) => return true,

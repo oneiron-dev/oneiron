@@ -522,12 +522,17 @@ fn issue_prepared_upsert(
                         )?,
                         None => StoredCopy::Unread,
                     };
-                    let own = match copy {
-                        StoredCopy::Own(members) => Some(members),
-                        StoredCopy::Foreign | StoredCopy::Older => first_write_members(vault, row)?,
+                    let (own, unattributed) = match copy {
+                        StoredCopy::Own {
+                            members,
+                            marker_proved,
+                        } => (Some(members), !marker_proved),
+                        StoredCopy::Foreign | StoredCopy::Older => {
+                            (first_write_members(vault, row)?, false)
+                        }
                         StoredCopy::Unread => {
                             row.stored_copy_unproven = replay || is_first_write(vault, row)?;
-                            None
+                            (None, false)
                         }
                     };
                     row.state = CalendarWriteOutboxState::ReconcileRequired;
@@ -538,6 +543,7 @@ fn issue_prepared_upsert(
                         transport.provider_key(),
                         row,
                         own.as_deref(),
+                        unattributed,
                         now,
                     )?;
                 }
@@ -840,8 +846,15 @@ fn stored_write_marker(ics: &[u8], uid: &str) -> StoredWriteMarker {
 /// What the resource a write read back after its precondition refusal is.
 enum StoredCopy {
     /// The write's own copy, stored on an earlier call whose answer was
-    /// lost: its members as the provider holds them.
-    Own(Vec<StoredMember>),
+    /// lost: its members as the provider holds them. `marker_proved` is
+    /// false when the copy carries no write marker to prove it (a provider
+    /// or client that drops unknown properties) and reads as the write's
+    /// only because a replay of a cancelled write takes it so: a host's
+    /// cancel at the staged SEQUENCE would read the same.
+    Own {
+        members: Vec<StoredMember>,
+        marker_proved: bool,
+    },
     /// Another writer's version of the resource.
     Foreign,
     /// A version with a member below the staged SEQUENCE, which a provider
@@ -927,13 +940,17 @@ fn stored_copy_of(
             content_hash: parsed.content_hash,
         });
     }
-    let own = match (row.write_marker, stored_write_marker(&stored.ics, &row.uid)) {
-        (Some(staged), StoredWriteMarker::One(marker)) => marker == staged,
-        (Some(_), StoredWriteMarker::Conflicting) => false,
-        _ => unmarked_reads_own,
+    let (own, marker_proved) = match (row.write_marker, stored_write_marker(&stored.ics, &row.uid))
+    {
+        (Some(staged), StoredWriteMarker::One(marker)) => (marker == staged, true),
+        (Some(_), StoredWriteMarker::Conflicting) => (false, true),
+        _ => (unmarked_reads_own, false),
     };
     Ok(if own {
-        StoredCopy::Own(members)
+        StoredCopy::Own {
+            members,
+            marker_proved,
+        }
     } else {
         StoredCopy::Foreign
     })
@@ -1011,6 +1028,11 @@ fn first_write_members(
 /// or a later write of the UID staged) writes nothing: no passport takes a
 /// mark from a copy the row no longer stands for. False when it was stale.
 ///
+/// `unattributed` says the copy proved the write's own with no write marker
+/// ([`StoredCopy::Own`]): each member the write cancelled then records that
+/// on its booking's held deposit, in the same writer, so the owner's line
+/// asks for a refund by hand (BK-ECHO-UNMARKED-SAME-SHAPE-COPY = C).
+///
 /// The caller holds the vault's calendar admission turn, so no pull admits
 /// the copy between this publication and the outbox leaving flight.
 fn write_replay_proof(
@@ -1019,12 +1041,24 @@ fn write_replay_proof(
     provider: &str,
     row: &mut CalendarWriteOutboxRow,
     own: Option<&[StoredMember]>,
+    unattributed: bool,
     now: u64,
 ) -> Result<bool, CalendarConnectorError> {
     let carrier = match vault.try_with_write_txn_grouped(|txn| {
         if let Some(members) = own {
             publish_own_stored_copy_in_txn(vault, txn, operation, provider, row, members, now)
                 .map_err(CarrierWriteError::Failed)?;
+            if unattributed {
+                for member in &row.cancelled_members {
+                    crate::booking::lifecycle::note_unattributed_cancel_in_txn(
+                        vault,
+                        txn,
+                        member,
+                        row.sequence,
+                        now,
+                    )?;
+                }
+            }
         }
         write_outbox_row_in_txn(vault, txn, operation, row, None)?.ok_or(CarrierWriteError::Stale)
     }) {
@@ -1152,18 +1186,30 @@ pub(super) fn prove_unproven_replay(
     // A row owes this proof only after a replay's refusal or a first
     // write's, so an unmarked copy reads as the write's where the replay's
     // own read would have read it so.
-    let own = match stored_copy_of(vault, &row, object, !row.cancelled_members.is_empty())? {
-        StoredCopy::Own(members) => Some(members),
-        StoredCopy::Foreign => first_write_members(vault, &row)?,
-        StoredCopy::Older => match first_write_members(vault, &row)? {
-            Some(members) => Some(members),
-            None => return Ok(()),
-        },
-        StoredCopy::Unread => return Ok(()),
-    };
+    let (own, unattributed) =
+        match stored_copy_of(vault, &row, object, !row.cancelled_members.is_empty())? {
+            StoredCopy::Own {
+                members,
+                marker_proved,
+            } => (Some(members), !marker_proved),
+            StoredCopy::Foreign => (first_write_members(vault, &row)?, false),
+            StoredCopy::Older => match first_write_members(vault, &row)? {
+                Some(members) => (Some(members), false),
+                None => return Ok(()),
+            },
+            StoredCopy::Unread => return Ok(()),
+        };
     row.stored_copy_unproven = false;
     row.updated_at = now;
-    write_replay_proof(vault, operation, provider, &mut row, own.as_deref(), now)?;
+    write_replay_proof(
+        vault,
+        operation,
+        provider,
+        &mut row,
+        own.as_deref(),
+        unattributed,
+        now,
+    )?;
     Ok(())
 }
 

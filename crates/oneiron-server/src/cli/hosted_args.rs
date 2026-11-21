@@ -68,6 +68,16 @@ pub struct HostedLoginArgs {
     /// sign-in, the owner's answer in his inbox included.
     #[arg(long, default_value_t = 600, value_parser = clap::value_parser!(u64).range(1..))]
     pub sign_in_timeout_secs: u64,
+
+    /// Let `oneiron continue --cloud` move sessions to the vault recorded at
+    /// `--origin` in OAuth mode: a second sign-in, `full` at the vault's MCP
+    /// and git door, which the owner allows in his inbox ("continue this
+    /// session in your hosted vault") and which only `continue --cloud`
+    /// reads. It starts the same step-up itself when none stands. Its calls
+    /// still need his Grants, and a push his git_push Grant on the repo.
+    /// The recorded sign-in stays `read`.
+    #[arg(long, conflicts_with_all = ["auth_mode", "credential_file", "owner_upgrade_headers_file"])]
+    pub push: bool,
 }
 
 #[derive(Args, Clone, Debug)]

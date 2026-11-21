@@ -187,6 +187,9 @@ pub struct SyncServer {
     pub(crate) live_voice: crate::voice_host::LiveVoiceSessions,
     pub(crate) asr_sessions: crate::api::AsrSessions,
     pub(crate) meeting_imports: super::meeting_imports::MeetingImports,
+    /// Hook transcript imports staged in parts until their last part (FIX
+    /// HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER).
+    pub(crate) hook_transcript_uploads: super::hook_transcript_uploads::HookTranscriptUploads,
     pub(crate) model_streams: crate::api::ModelStreams,
     /// Whole-vault exports kept for their callers to read (FIX 3676).
     pub(crate) export_transfers: crate::api::ExportTransfers,
@@ -410,7 +413,8 @@ const _: fn(&SyncServer) = |server| {
         removal_deliveries, shared_envs, booking_turn_lines,
         leaf_keys, lens_frames, note_editors, artifact_previews, live_voice, asr_sessions,
         process_readiness,
-        meeting_imports, model_streams, export_transfers, pairing_backoff, mcp_registry,
+        meeting_imports, hook_transcript_uploads, model_streams, export_transfers,
+        pairing_backoff, mcp_registry,
         mcp_code_host, mcp_code_run_continuations, reader_runner, live_runs, secret_destinations,
         seat_helpers, model_budgets, cloud_registration, connector_elicitations, connector_stdio,
         browser_guest,

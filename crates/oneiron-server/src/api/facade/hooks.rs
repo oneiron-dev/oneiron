@@ -252,6 +252,21 @@ pub(super) async fn facade_hooks_pre(
     Ok(pre)
 }
 
+/// What a transport-only row (`host_door_transport_only`, FIX
+/// HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER) meets in place of a pre chain: the
+/// hosted operator's refusal and the row's own door admission, as
+/// [`facade_hooks_pre_admitting`] checks them before any hook. The row
+/// crosses no hook chain: the verb call it carries crosses its own.
+pub(crate) fn facade_transport_admits(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> Result<(), FacadeApiError> {
+    super::host_action::facade_host_action(server, auth)?;
+    host_doors::door_admits(server, auth, verb)?;
+    Ok(())
+}
+
 /// [`facade_hooks_pre`], beside each hook `ai.verdict` decision the chain
 /// answered (FIX 10425), for a row whose answer counts its hooks' decisions
 /// among its own ([`facade_hooks_post_counted`]). A retry's `Completed`

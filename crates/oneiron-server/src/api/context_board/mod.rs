@@ -19,7 +19,7 @@ pub(crate) use reply::generate_reply;
 mod run_self;
 pub(crate) use run_self::{
     BriefHostFacts, brief_pins_family, describe_self_for_run, fallen_brief_rows,
-    run_brief_fallen_rows, run_brief_people, run_brief_state,
+    run_brief_fallen_rows, run_brief_people, run_brief_people_locality, run_brief_state,
 };
 mod layout;
 mod mcp_self;
@@ -1040,6 +1040,8 @@ pub(crate) async fn describe_self_for_auth(
             let agent = oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Agent);
             let host = BriefHostFacts {
                 run_ceiling: None,
+                // No pumped wake picked a read shape for a credential's call.
+                read_shape: None,
                 replay_run: None,
                 // A Core call arrives on no registered MCP connector.
                 credential_ceiling: auth.verified_slip().map(|proof| {

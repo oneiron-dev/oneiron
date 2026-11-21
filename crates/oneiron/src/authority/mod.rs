@@ -466,9 +466,10 @@ pub use owner_delegate::{OwnerOrDelegate, owner_delegate_admits};
 pub use owner_key_changes::{OwnerKeyChange, OwnerKeyChangeKind};
 pub(crate) use owner_key_enrollment_door::ActivationPredecessor;
 pub use owner_key_enrollment_door::{
-    EnrolledOwnerKey, EnrolledOwnerKeyKind, EnrolledOwnerPasskey, OwnerKeyEnrollment,
-    OwnerKeyEnrollmentReceipt, OwnerPasskeyEnrollment, OwnerPasskeyEnrollmentReceipt,
-    PreparedOwnerKeyEnrollment, WaysBack,
+    EnrolledOwnerKey, EnrolledOwnerKeyKind, EnrolledOwnerPasskey, OwnerKeyBindingReceipt,
+    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, OwnerPasskeyBindingReceipt,
+    OwnerPasskeyEnrollment, OwnerPasskeyEnrollmentReceipt, PreparedOwnerKeyBinding,
+    PreparedOwnerKeyEnrollment, PreparedOwnerPasskeyBinding, WaysBack,
 };
 pub use owner_key_move_confirm::{
     OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED, OWNER_KEY_MOVE_NO_HELD_KEY, OWNER_KEY_MOVE_NOT_PLANNED,

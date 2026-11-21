@@ -6,7 +6,10 @@
 //! and `source()` are the leaf's, so every message string is what it was when
 //! these variants sat flat on `Error`.
 
+use serde::{Deserialize, Serialize};
+
 use crate::entity_id::EntityId;
+use crate::register::Register;
 use crate::room_join::RoomJoinHold;
 
 use super::ErrorKind;
@@ -82,6 +85,52 @@ impl std::fmt::Display for ErasedHoldTarget {
 /// The stable reason code of [`RecordError::OwnerKeyRequired`]: an owner
 /// route's refusal state, and a facade or MCP refusal's reason code.
 pub const OWNER_KEY_REQUIRED: &str = "owner_key_required";
+
+/// The stable reason code of [`RecordError::OwnerPresenceRequired`].
+pub const OWNER_PRESENCE_REQUIRED: &str = "owner_presence_required";
+
+/// The prefix of the reason code that names why this device did not confirm the person.
+pub const OWNER_PRESENCE_HERE_REASON_PREFIX: &str = "here:";
+
+/// Why this device did not confirm the person for an owner act.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
+#[serde(rename_all = "snake_case")]
+#[register("owner.presence.refusal")]
+#[non_exhaustive]
+pub enum OwnerPresenceRefusal {
+    /// The person was asked and did not confirm, so the act stops here.
+    Declined,
+    /// The prompt was shown and nobody answered in time.
+    NoAnswer,
+    /// The screen is locked or locked during the prompt, so confirm again here once unlocked.
+    ScreenLocked,
+    /// The device's prompt failed for a platform reason.
+    PromptFailed,
+}
+
+impl OwnerPresenceRefusal {
+    /// The single suggestion a surface gives with this refusal.
+    #[must_use]
+    pub const fn suggestion(self) -> &'static str {
+        match self {
+            Self::Declined => "Stop this action here.",
+            Self::NoAnswer => "Try again when you are ready to answer the prompt.",
+            Self::ScreenLocked => "Unlock this device, then try again here.",
+            Self::PromptFailed => "Try again when this device's unlock prompt is working.",
+        }
+    }
+}
+
+impl std::fmt::Display for OwnerPresenceRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Declined => "Confirmation was declined on this device, so nothing was changed.",
+            Self::NoAnswer => "The prompt on this device went unanswered, so nothing was changed.",
+            Self::ScreenLocked => "The screen was locked, so nothing was changed.",
+            Self::PromptFailed => "This device's prompt failed, so nothing was changed.",
+        })
+    }
+}
 
 /// The prefix of the reason code that names what a client offers next after
 /// an owner-key refusal of a membership move
@@ -394,6 +443,11 @@ pub enum RecordError {
         "This machine is not the owner's and holds no owner key: decide it on an owner device."
     )]
     OwnerKeyRequired,
+    /// An owner act that needs the person at this device was refused before
+    /// anything was written. [`OWNER_PRESENCE_REQUIRED`] is its stable reason
+    /// code on every surface; `here` names the local refusal beside it.
+    #[error("{here}")]
+    OwnerPresenceRequired { here: OwnerPresenceRefusal },
     /// A membership move that would end `member`'s owner keys, refused on an
     /// install that holds no owner key the vault trusts (row
     /// HOSTED-ROOT-REVOKES-OWNER-KEY): a revoke of an owner key counts only
@@ -593,9 +647,9 @@ pub enum RecordError {
     /// The authority fold needs history this vault does not hold (OF-469):
     /// no fold answers until an import closes it. `missing` ascends; on a
     /// vault that adopted a checkpoint image it may name covered rows, which
-    /// a late fork or an op the image cannot fold past needs. Fetching them
-    /// may name further ancestors: ask for the vault's history request again
-    /// after each import.
+    /// a late fork or an op the image cannot fold past needs, and `reason`
+    /// says which. Fetching them may name further ancestors: ask for the
+    /// vault's history request again after each import.
     #[error("authority history incomplete: {} rows required", missing.len())]
     AuthorityHistoryRequired {
         /// The authority vault (its genesis hash) the history belongs to.
@@ -604,6 +658,8 @@ pub enum RecordError {
         checkpoint: Option<[u8; 32]>,
         /// The authority entry hashes the fold needs, ascending.
         missing: Vec<[u8; 32]>,
+        /// Why it needs them; None only where a refusal names none.
+        reason: Option<crate::authority::AuthorityHistoryReason>,
     },
     /// The persisted authority clock floor is present and does not decode
     /// (FIX 10106): the vault no longer knows the least second it has
@@ -695,6 +751,7 @@ impl RecordError {
             Self::OwnerKeyRequired | Self::OwnerKeyMoveRefused { .. } => {
                 ErrorKind::OwnerKeyRequired
             }
+            Self::OwnerPresenceRequired { .. } => ErrorKind::OwnerPresenceRequired,
             Self::WorldRecipientLimit(_) => ErrorKind::WorldRecipientLimit,
             Self::WorldPlacementUnverifiable(_) => ErrorKind::WorldPlacementUnverifiable,
             Self::InvalidAccessGrantBody(_) => ErrorKind::InvalidAccessGrantBody,

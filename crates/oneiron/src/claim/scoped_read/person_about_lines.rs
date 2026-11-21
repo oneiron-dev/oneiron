@@ -7,11 +7,11 @@
 //! An identity agent's own floor reads nothing, so a person its live Grant
 //! reads (FIX 7462) stood on its roster with no line at all. Each live Grant
 //! A may stand on is now one more alternative, judged alone (RULING
-//! GRANT-COMBINE Q1 = A: Grants are never unioned): under one Grant, the line
-//! of the highest band at or below that Grant's band shows only where that
-//! same Grant reads the PERSON and every CLAIM the line was written from, in
-//! one snapshot. No Grant lends its band or a fact to another, and the line
-//! shown is the highest any one alternative shows.
+//! GRANT-COMBINE Q1 = A: Grants are never unioned): under one Grant, a line
+//! at or below that Grant's band shows only where that same Grant reads the
+//! PERSON and every CLAIM the line was written from, in one snapshot. No
+//! Grant lends its band or a fact to another, and the line shown is the
+//! highest any one alternative shows.
 //!
 //! The key's own floor is one such alternative too: its line shows only where
 //! that floor alone reads the PERSON and every fact, in the same snapshot,
@@ -19,6 +19,15 @@
 //! FIX-LIST PEOPLE-ABOUT-OWN-FLOOR-FACTS-UNJUDGED). No Grant lends it a fact,
 //! and where the owner's agent Grants bind the key, one of them alone reads
 //! every row the line stands on.
+//!
+//! Each alternative shows the highest line it reads whole: where the line at
+//! its band stands on a fact it does not read, the next lower line, written
+//! from the facts of the lower bands alone, may still show (FIX-LIST
+//! PEOPLE-ABOUT-GRANT-LOWER-LINE). A line the Dreamer no longer stands
+//! behind (moved or stale facts) ends the walk, as it hides the person's
+//! lines today.
+
+use std::collections::BTreeSet;
 
 use super::ScopedRead;
 use super::access_gate::HeldAuthority;
@@ -29,6 +38,16 @@ use crate::{EntityId, Result};
 
 /// An `about` line and the CLAIM ids it stands on, as the roster sets it.
 type SourcedAbout = Option<(String, Vec<EntityId>)>;
+
+/// Which alternatives may show a person's `about` line to a read.
+#[derive(Clone, Copy)]
+enum AboutAlternatives {
+    /// The key's own floor, or a single live Grant of the reader's: a read
+    /// made for one answer.
+    OwnFloorAndGrants,
+    /// The key's own floor alone: a staged brief.
+    OwnFloor,
+}
 
 impl ScopedRead<'_> {
     /// Runs `run` with the `about` line each person shows this read: the
@@ -47,11 +66,87 @@ impl ScopedRead<'_> {
         &self,
         run: impl FnOnce(&mut dyn FnMut(EntityId) -> Result<SourcedAbout>) -> Result<T>,
     ) -> Result<T> {
+        self.with_about_lines_from(AboutAlternatives::OwnFloorAndGrants, run)
+    }
+
+    /// [`Self::with_about_lines`] with the key's own floor as the one
+    /// alternative, for a staged brief (a run's, an MCP connection's): its
+    /// bytes are sent again until its next boundary, so no Grant, which may
+    /// be revoked before then, lends it a line (review round 2 of #9929).
+    /// The floor's line still shows only where that floor reads the PERSON
+    /// and every fact of the line under this read, at its locality: a brief
+    /// read for a caller off this device shows no line written from a world
+    /// this device keeps (DEC-0005:476, a line follows its strictest input;
+    /// RULING RUN-BRIEF-ROSTER-SHAPE = A).
+    ///
+    /// # Errors
+    /// As [`Self::with_about_lines`].
+    pub(crate) fn with_own_floor_about_lines<T>(
+        &self,
+        run: impl FnOnce(&mut dyn FnMut(EntityId) -> Result<SourcedAbout>) -> Result<T>,
+    ) -> Result<T> {
+        self.with_about_lines_from(AboutAlternatives::OwnFloor, run)
+    }
+
+    /// The rows of `shown`, the rows a staged brief showed, that stand
+    /// behind an own-floor `about` line of a person in `people` that this
+    /// read's own floor no longer reads: the facts of each stored line of the
+    /// person (each band's current line and each line the Dreamer's newest
+    /// landing replaced) whose facts the brief all showed, where that floor
+    /// alone no longer reads the PERSON and every one of those facts under
+    /// this read, at its locality. A brief held past its boundary goes again
+    /// only while each line it may show still reads as a fresh staging judges
+    /// it (`with_own_floor_about_lines`): a fact whose world now reads on
+    /// this install only withholds the line from a brief read off this
+    /// device (BRIEF-PREFIX-STALE-PAST-REVOKE; review round 2 of #10015).
+    ///
+    /// # Errors
+    /// A credential no longer live, or a store or decode failure judging a
+    /// row.
+    pub fn fallen_own_floor_about_facts(
+        &self,
+        people: &BTreeSet<EntityId>,
+        shown: &BTreeSet<EntityId>,
+    ) -> Result<BTreeSet<EntityId>> {
+        let txn = self.vault.person_about_snapshot()?;
+        let (own, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
+        let held = self.held_for(None);
+        let mut fallen = BTreeSet::new();
+        for &person in people {
+            for line in self.vault.person_about_stored_lines_in(&txn, person)? {
+                if line.fact_claim_ids.is_empty()
+                    || !line.fact_claim_ids.iter().all(|fact| shown.contains(fact))
+                {
+                    continue;
+                }
+                if own.deny_all
+                    || !self.own_floor_reads_all_in(&txn, &policy, &held, &own, person, &line)?
+                {
+                    fallen.extend(line.fact_claim_ids.iter().copied());
+                }
+            }
+        }
+        Ok(fallen)
+    }
+
+    /// Runs `run` with the line each person shows this read under the
+    /// alternatives `alternatives` names, every person judged in one
+    /// snapshot under one policy.
+    fn with_about_lines_from<T>(
+        &self,
+        alternatives: AboutAlternatives,
+        run: impl FnOnce(&mut dyn FnMut(EntityId) -> Result<SourcedAbout>) -> Result<T>,
+    ) -> Result<T> {
         let txn = self.vault.person_about_snapshot()?;
         let (own, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let own = (!own.deny_all).then_some(own);
         let held = self.held_for(None);
-        let grants = self.grant_alternatives_in(&txn, &policy, &held);
+        let grants = match alternatives {
+            AboutAlternatives::OwnFloorAndGrants => {
+                self.grant_alternatives_in(&txn, &policy, &held)
+            }
+            AboutAlternatives::OwnFloor => Vec::new(),
+        };
         run(&mut |person| {
             Ok(self
                 .about_line_in(&txn, &policy, &held, own.as_ref(), &grants, person)?
@@ -70,31 +165,63 @@ impl ScopedRead<'_> {
         grants: &[GrantAlternative],
         person: EntityId,
     ) -> Result<Option<ShownAboutLine>> {
-        let mut shown = None;
-        if let Some(filter) = own
-            && let Some(line) =
-                self.vault
-                    .person_about_line_in(txn, person, filter.max_sensitivity_band)?
-            && self.own_floor_reads_all_in(txn, policy, held, filter, person, &line)?
-        {
-            shown = Some(line);
+        let mut shown: Option<ShownAboutLine> = None;
+        if let Some(filter) = own {
+            shown = self.highest_line_read_whole_in(
+                txn,
+                person,
+                filter.max_sensitivity_band,
+                None,
+                |line| self.own_floor_reads_all_in(txn, policy, held, filter, person, line),
+            )?;
         }
         for alternative in grants {
             let band = alternative.filter.max_sensitivity_band;
-            if alternative.filter.deny_all || shown.as_ref().is_some_and(|line| line.band >= band) {
+            let above = shown.as_ref().map(|line| line.band);
+            if alternative.filter.deny_all || above.is_some_and(|above| above >= band) {
                 continue;
             }
-            let Some(line) = self.vault.person_about_line_in(txn, person, band)? else {
-                continue;
-            };
-            if shown.as_ref().is_some_and(|best| best.band >= line.band) {
-                continue;
-            }
-            if self.grant_reads_all_in(txn, policy, held, alternative, person, &line) {
+            if let Some(line) =
+                self.highest_line_read_whole_in(txn, person, band, above, |line| {
+                    Ok(self.grant_reads_all_in(txn, policy, held, alternative, person, line))
+                })?
+            {
                 shown = Some(line);
             }
         }
         Ok(shown)
+    }
+
+    /// The highest line of `person` at or below `ceiling`, and above the
+    /// band `above` when one is named, that `reads_whole` admits, in `txn`.
+    /// Each line it does not admit gives way to the next lower one; a band
+    /// with no line the Dreamer stands behind
+    /// ([`crate::Vault::person_about_line_in`]) ends the walk.
+    ///
+    /// # Errors
+    /// A store or decode failure reading a line, or `reads_whole`'s.
+    fn highest_line_read_whole_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+        ceiling: u8,
+        above: Option<u8>,
+        mut reads_whole: impl FnMut(&ShownAboutLine) -> Result<bool>,
+    ) -> Result<Option<ShownAboutLine>> {
+        let mut ceiling = Some(ceiling);
+        while let Some(band) = ceiling {
+            let Some(line) = self.vault.person_about_line_in(txn, person, band)? else {
+                return Ok(None);
+            };
+            if above.is_some_and(|above| line.band <= above) {
+                return Ok(None);
+            }
+            if reads_whole(&line)? {
+                return Ok(Some(line));
+            }
+            ceiling = line.band.checked_sub(1);
+        }
+        Ok(None)
     }
 
     /// Whether `alternative` alone reads `person` and every fact `line`

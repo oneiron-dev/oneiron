@@ -179,6 +179,7 @@ fn scoped_prefix_expansion_resolves_lexical_hint_target() -> Result<()> {
             recency: None,
             exact_posting_matches_scope: &mut exact_posting_matches_scope,
             private_note_ids: None,
+            hidden_row: None,
         },
     )?;
 
@@ -240,6 +241,7 @@ fn scoped_prefix_expansion_ignores_dead_lexical_hint_exact_posting() -> Result<(
             recency: None,
             exact_posting_matches_scope: &mut exact_posting_matches_scope,
             private_note_ids: None,
+            hidden_row: None,
         },
     )?;
 

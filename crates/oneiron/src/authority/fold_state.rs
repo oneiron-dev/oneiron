@@ -71,6 +71,13 @@ pub struct AuthorityFold {
     /// judges forged (REVIEW-8451 P1).
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(super) passkey_limited_keys: BTreeSet<AuthorityKey>,
+    /// Each passkey a key in the host's custody enrolled, with the owners
+    /// those enrolments named, on the merged history
+    /// (`FoldState::host_vouched_passkey_owners`, row PASSKEY-SELF-BIND).
+    /// Read through [`AuthorityFold::host_vouched_passkey_for`] and
+    /// [`AuthorityFold::host_vouched_passkey_limited`].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) host_vouched_passkey_owners: BTreeMap<AuthorityKey, BTreeSet<EntityId>>,
     /// The handoffs whose fences stand: settled, or in conflict.
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
     /// The revocations (`RevokeDevice`) whose fences closed in a conflict:
@@ -534,6 +541,13 @@ pub(super) struct FoldState {
     /// union.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(super) passkey_vouch_confirmations: BTreeSet<AuthorityKey>,
+    /// Each passkey a key in the host's custody enrolled, with every owner
+    /// such a counted fresh enrolment named, merged by union (row
+    /// PASSKEY-SELF-BIND): the owners the passkey may sign its own first
+    /// binding to (`owner_key_enrollment::passkey_self_bind`). An image
+    /// carries it only once a host vouched for a passkey.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) host_vouched_passkey_owners: BTreeMap<AuthorityKey, BTreeSet<EntityId>>,
 }
 
 impl FoldState {
@@ -846,6 +860,13 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .passkey_vouch_confirmations
         .extend(right.passkey_vouch_confirmations.iter().cloned());
+    for (key, owners) in &right.host_vouched_passkey_owners {
+        merged
+            .host_vouched_passkey_owners
+            .entry(key.clone())
+            .or_default()
+            .extend(owners.iter().copied());
+    }
     merged
 }
 

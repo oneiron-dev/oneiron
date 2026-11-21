@@ -155,6 +155,31 @@ pub(super) fn claim_status_gate_allows_with_row(
     Ok(allowed)
 }
 
+/// Whether a clamped pack's audience could not read `id` whatever its status
+/// ([`crate::disclosure::DisclosureContext::admits_row_ignoring_status`]).
+/// Such a row leaves no trace in the run: it takes no rank, and no check that
+/// records a refusal (the D19 gate's `claims_suppressed`, its empty reason)
+/// judges it in the run's caches. False with no clamp, and for a row with no
+/// parseable envelope, which the filters drop downstream as before.
+pub(super) fn clamp_hides_row(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    clamp: Option<&crate::disclosure::DisclosureContext>,
+    metadata_cache: &mut EntityMetadataCache,
+) -> Result<bool> {
+    let Some(clamp) = clamp else {
+        return Ok(false);
+    };
+    let Some(entity_type) = metadata_cache
+        .get(store, rtxn, id)?
+        .map(|meta| meta.entity_type)
+    else {
+        return Ok(false);
+    };
+    Ok(!clamp.admits_row_ignoring_status(store, rtxn, id, entity_type)?)
+}
+
 pub(super) fn import_claim_gate_decisions_for_scores(
     claim_gate: &mut ClaimStatusGateCache,
     probe_gate: &mut ClaimStatusGateCache,
@@ -574,6 +599,41 @@ fn active_set_admits(
     Ok(record_world(store, rtxn, id, Some(&holds))?.is_some_and(holds))
 }
 
+/// Whether the owner's ALLOWED-SET of an ActiveSet turn, `allowed`, keeps
+/// the stored row `id` from the turn, for the statistics a BM25 scan scores
+/// with (FIX WORLD-SCOPE-BM25-DF-COUNTS-HIDDEN-POSTINGS): its world, placed
+/// as [`active_set_admits`] places it, lies outside `allowed`. A claim whose
+/// body does not decode places at no world and is kept: a statistic fails
+/// no run, and the run's admission judges that claim as before. False for a
+/// row `store` does not hold.
+pub(super) fn allowed_set_withholds_row(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    allowed: &WorldAuthoritySet,
+) -> Result<bool> {
+    let holds = |world: Option<EntityId>| allowed.admits(world);
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
+        return Ok(false);
+    };
+    if raw.entity_type == ENTITY_TYPE_CLAIM {
+        return Ok(
+            !crate::claim::decode_claim_body(&raw.body, true).is_ok_and(|body| holds(body.world))
+        );
+    }
+    Ok(
+        !crate::federation::record_scope::note_world::record_world_where(
+            store,
+            rtxn,
+            *id,
+            raw.entity_type,
+            &raw.body,
+            Some(&holds),
+        )?
+        .is_some_and(holds),
+    )
+}
+
 pub(super) fn apply_filters(
     scores: &mut Vec<ScoredEntity>,
     store: &StoreRead<'_>,
@@ -685,6 +745,18 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     let Some(meta) = meta else {
         return Ok(false);
     };
+    // A clamped pack: a row its audience could not read whatever its status
+    // leaves no trace in the run. A check that records a refusal (entity-type
+    // authority, the D19 gate) asks the clamp's own-row test first, so a
+    // hidden dead claim counts in no `claims_suppressed` and moves no empty
+    // reason; the checks that record nothing run first, as before. The
+    // clamp's test with the decoded claim body still runs after the gate.
+    let clamp_hides = || -> Result<bool> {
+        let Some(clamp) = filters.disclosure else {
+            return Ok(false);
+        };
+        Ok(!clamp.admits_row_ignoring_status(store, rtxn, id, meta.entity_type)?)
+    };
 
     if !super::authority::type_allowed(
         filters.authority_filter,
@@ -692,7 +764,9 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
         store,
         meta.entity_type,
     ) {
-        metadata_cache.read_suppressed.insert(*id);
+        if !clamp_hides()? {
+            metadata_cache.read_suppressed.insert(*id);
+        }
         return Ok(false);
     }
     if let Some(types) = filters.type_filter
@@ -730,6 +804,9 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     }
 
     if !candidate_matches_criticality(store, rtxn, id, meta.entity_type, filters.criticality)? {
+        return Ok(false);
+    }
+    if clamp_hides()? {
         return Ok(false);
     }
     if !claim_status_gate_allows_with_row(

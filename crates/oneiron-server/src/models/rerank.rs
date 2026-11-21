@@ -14,6 +14,10 @@
 //! 11228). A provider whose key is a vault secret sends each batch through
 //! the credential broker instead of its own HTTP client
 //! ([`super::broker_rerank`], L9-12): the same body, scores and settlement.
+//! A provider served by managed llama.cpp workers on their own Unix sockets
+//! (`listen = "unix"`, L9-15) sends each batch on the serving worker's
+//! socket, over a connection checked against its supervised child, and
+//! nowhere else ([`SocketRerank`]).
 use std::collections::BTreeMap;
 
 use oneiron::llm::{BrokerIsolation, SingleRouteBackend};
@@ -127,6 +131,81 @@ pub(super) enum RerankTransport {
     Direct(ProviderHttp),
     /// The credential broker, for a `key_secret` key (L9-12).
     Broker(BrokerRerank),
+    /// The Unix sockets of the managed workers that serve it (L9-15).
+    Socket(SocketRerank),
+}
+
+/// A provider's reranker models served by `listen = "unix"` llama.cpp
+/// workers this process supervises (L9-15): each batch goes on the socket
+/// of the current launch of the worker that serves its wire model, over a
+/// connection checked against that launch's supervised child, and nowhere
+/// else, with the provider's headers and bearer credential. The routes are
+/// captured when the runtime is built; with none (a process that launches
+/// no worker), no batch is sent.
+pub(super) struct SocketRerank {
+    routes: BTreeMap<String, super::worker_host::SocketRoute>,
+    /// What each batch's exchange carries: the provider's headers and key.
+    #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
+    headers: super::http::SocketHeaders,
+    /// The bound on one batch's exchange: the provider's timeout.
+    #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
+    timeout: std::time::Duration,
+}
+
+impl SocketRerank {
+    pub(super) fn new(
+        routes: BTreeMap<String, super::worker_host::SocketRoute>,
+        headers: super::http::SocketHeaders,
+        timeout: std::time::Duration,
+    ) -> Self {
+        Self {
+            routes,
+            headers,
+            timeout,
+        }
+    }
+
+    /// Each served wire model and the id of the worker that serves it.
+    pub(super) fn workers(&self) -> BTreeMap<String, String> {
+        self.routes
+            .iter()
+            .map(|(wire, route)| (wire.clone(), route.worker_id.clone()))
+            .collect()
+    }
+
+    /// One batch's `body` on the socket of the worker serving `wire_model`,
+    /// that worker held across the exchange and before its socket is read:
+    /// a worker its supervisor stopped for idleness starts again for the
+    /// batch, which goes on the new launch's socket. A parked worker's batch
+    /// fails as an unreachable provider's does.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    async fn post_json(&self, wire_model: &str, body: &JsonValue) -> LlmResult<JsonReply> {
+        let route = self
+            .routes
+            .get(wire_model)
+            .ok_or_else(|| transport(HttpFailure::Connection))?;
+        let _lease = route.hold().await.map_err(|unavailable| {
+            tracing::warn!(
+                worker = %route.worker_id,
+                %unavailable,
+                "the socket reranker's worker is parked; the batch goes on as for a provider that is down"
+            );
+            transport(HttpFailure::Connection)
+        })?;
+        let launch = route
+            .socket_launch()
+            .ok_or_else(|| transport(HttpFailure::Connection))?;
+        super::http::post_json_on(&launch, &self.headers, RERANK_PATH, body, self.timeout)
+            .await
+            .map_err(transport)
+    }
+
+    /// No socket here names its peer process, so nothing is sent.
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    async fn post_json(&self, wire_model: &str, body: &JsonValue) -> LlmResult<JsonReply> {
+        let _ = (wire_model, body);
+        Err(transport(HttpFailure::Connection))
+    }
 }
 
 /// One provider's rerank client. It serves the reranker rungs on that
@@ -159,13 +238,15 @@ impl RerankBackend {
                 .await
                 .map_err(transport),
             RerankTransport::Broker(broker) => broker.post_json(wire_model, body, lease).await,
+            RerankTransport::Socket(socket) => socket.post_json(wire_model, body).await,
         }
     }
 }
 
-/// One `.send()` per batch over [`ProviderHttp`], or one broker call per
-/// batch, which the broker sends once: in order, following no redirect and
-/// never resending. A run's gate may wrap this backend.
+/// One `.send()` per batch over [`ProviderHttp`], one exchange per batch on
+/// a worker's socket, or one broker call per batch, which the broker sends
+/// once: in order, following no redirect and never resending. A run's gate
+/// may wrap this backend.
 impl oneiron::llm::SingleSend for RerankBackend {}
 
 impl SingleRouteBackend for RerankBackend {
@@ -174,14 +255,14 @@ impl SingleRouteBackend for RerankBackend {
             return Err(FatalLlmError::InvalidRequest.into());
         }
         match &self.transport {
-            RerankTransport::Direct(_) => Ok(()),
+            RerankTransport::Direct(_) | RerankTransport::Socket(_) => Ok(()),
             RerankTransport::Broker(broker) => broker.ready(),
         }
     }
 
     fn broker_isolation(&self) -> Option<BrokerIsolation> {
         match &self.transport {
-            RerankTransport::Direct(_) => None,
+            RerankTransport::Direct(_) | RerankTransport::Socket(_) => None,
             RerankTransport::Broker(broker) => Some(broker.isolation()),
         }
     }
