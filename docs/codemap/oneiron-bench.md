@@ -84,7 +84,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cua/args.rs` | src | s | 3 crate-vis | — | Explicit CLI flags and a Linux-only execution guard |
 | `src/cua/browser_setup.rs` | src | m | 2 crate-vis | — | Fresh-vault browser setup through the same owner doors as acceptance |
 | `src/cua/check.rs` | src | s | 1 crate-vis | — | One deterministic host-private checker |
-| `src/cua/config.rs` | src | s | 7 crate-vis | — | Deployment supplies exact pins; no marketing-name or backend substitution |
+| `src/cua/config.rs` | src | m | 7 crate-vis | — | Deployment supplies exact pins; no marketing-name or backend substitution |
 | `src/cua/drift.rs` | src | m | 4 crate-vis | — | Serial frozen-library matrix |
 | `src/cua/drift_engine.rs` | src | s | 7 crate-vis | — | Engine/fixture boundary for the S5 protocol |
 | `src/cua/drift_plan.rs` | src | m | 9 crate-vis | — | Frozen S5 selection, arguments, deadlines and published serial order |

@@ -1029,7 +1029,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/booking_deposit/checkout.rs` | src | s | 4 crate-vis | — | A hold of a deposit event type opens its deposit checkout (BK-DEPOSITS; Engine ruling 15 Nov 01:10… |
 | `src/booking_deposit/settle.rs` | src | s | 4 crate-vis | — | A deposit's money moves on the server: the authorization read at confirm, the capture right after it, and… |
 | `src/booking_deposit/stripe.rs` | src | m | 13 crate-vis | — | The Stripe API calls a deposit needs, test mode only |
-| `src/booking_deposit/webhook.rs` | src | s | 6 crate-vis | — | `POST /v1/hooks/stripe/booking-deposit`: Stripe's signed word about a deposit's PaymentIntent |
+| `src/booking_deposit/webhook.rs` | src | m | 6 crate-vis | — | `POST /v1/hooks/stripe/booking-deposit`: Stripe's signed word about a deposit's PaymentIntent |
 | `src/broadcast.rs` | src | s | 10 crate-vis | — | Broadcast group for multi-device fan-out with echo suppression |
 | `src/builtin_host.rs` | src | s | 7 crate-vis | — | The served host's side of the built-in connector packs (OF-519): the connection checks only a served host… |
 | `src/builtin_host/checks.rs` | src | s | 4 crate-vis | — | The served host's connection checks: the engine's provider checks, plus two that need this host's own config |
@@ -2333,6 +2333,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/core_memory_retract_verb_hook.rs` | test | L | — | — | [CORE-MEMORY-VERB-SKIPS-FACADE-HOOKS] (FIX-LIST 25699): a token that is not owner-grade retracts through the… |
 | `tests/customer_gpu_job_maximum.rs` | test | L | — | — | Customer GPU jobs on the host (row L10-31; CROSS-ARCH-0023 lifecycle, C2): the `[gpu_jobs]` section, the… |
 | `tests/decision_bands_restart_doors.rs` | test | s | — | — | The `vault.decisions.bands.*` rows across a server restart, at the public door: arch-0076:275… |
+| `tests/decision_precision_config.rs` | test | s | — | — | `[models.decisions.precision]` seats the precision band on the host's decision ladder… |
 | `tests/decision_read_think_start.rs` | test | s | — | — | L2-33 (FIX 22360; lead ruling THINK-START = C, 13 Nov 2026): a served host's ThinkThreshold row starts at… |
 | `tests/delete_authority_served_door.rs` | test | m | — | — | DEL-2 at the core HTTP delete (ARCH-0043, owner DEL-2 = A; Engine ruling 13 Nov 02:51 = A) |
 | `tests/device_burst_replay.rs` | test | m | — | — | L7-41: an own device's burst its home held lands by the home's own drain once the device's rate is back at… |
