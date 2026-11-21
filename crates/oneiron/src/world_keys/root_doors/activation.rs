@@ -1,6 +1,7 @@
 //! The kit activation door: its checks, which run before the owner's confirm,
-//! and its one write transaction, which publishes the kit's root, moves the
-//! pin, enrols the kit's authority key R and carries what the earlier R keys
+//! this install's own request and secret, which are readied after it, and
+//! its one write transaction, which publishes the kit's root, moves the pin,
+//! enrols the kit's authority key R and carries what the earlier R keys
 //! approved.
 
 use super::*;
@@ -24,20 +25,23 @@ impl Vault {
     /// with the same keys; otherwise nothing is published. On a first issue
     /// `carry` is empty; on a re-issue each carried machine is mine under the
     /// old pin, and this machine is marked whenever it is. The activation's
-    /// own checks ([`Self::activation_prep`]) come before the confirm, so an
-    /// activation they refuse never prompts.
+    /// own checks (`activation_checks`) come before the confirm, so an
+    /// activation they refuse never prompts. This install's signing keys are
+    /// readied after the confirm (`activation_prep`): readying them writes,
+    /// so a declined confirm leaves this install's machine as it was.
     pub fn activate_owner_root(
         &self,
         owner: &AuthenticatedOwner,
         prepared: PreparedRoot,
         carry: &BTreeSet<EntityId>,
     ) -> Result<ActivatedRoot> {
-        let prep = self.activation_prep(owner, &prepared, carry)?;
+        let predecessor = self.activation_checks(owner, &prepared, carry)?;
         let witness = self.owner_presence(
             OwnerActImportance::Important,
             owner_presence_reasons::KIT_ACTIVATION,
         )?;
         let ground = OwnerProofGround::witnessed(&witness);
+        let prep = self.activation_prep(predecessor)?;
         let authority = ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall);
         self.activate_owner_root_with(&authority, (prepared, prep), carry, &ground, |_| Ok(()))
             .map(|(activated, ())| activated)
@@ -47,8 +51,9 @@ impl Vault {
     /// the new root stands: a kit's inventory and its vault-key wrap commit
     /// with the root or not at all. `authority` carries the true act surface
     /// for R's enrolment row. `prep` is what [`Self::activation_prep`]
-    /// answered for `prepared` and `carry`: the door ran it before its
-    /// confirm, so the predecessor loaded before the write txn opens.
+    /// answered: the door ran [`Self::activation_checks`] for `prepared`
+    /// and `carry` before its confirm and readied this install's keys after
+    /// it, so the predecessor loaded before the write txn opens.
     /// `ground` is the ground the activation's owner proofs are signed on.
     pub(crate) fn activate_owner_root_with<T>(
         &self,
@@ -79,15 +84,18 @@ impl Vault {
 
     /// An activation's checks in a read snapshot, then the predecessor of
     /// R's enrolment ([`Vault::load_activation_predecessor`], read only),
-    /// both before this install's machine identity is minted, then its own
-    /// request and secret. A refusal for want of a predecessor therefore
-    /// writes nothing at all (WAYBACK-R4-NO-PREDECESSOR = A).
-    pub(in crate::world_keys) fn activation_prep(
+    /// then the keystore the host installed, read and not written: every
+    /// refusal an activation gives with nothing held, so its door runs this
+    /// before it asks for the person. Nothing here mints this install's
+    /// machine identity or readies its signing keys. A refusal for want of
+    /// a predecessor therefore writes nothing at all
+    /// (WAYBACK-R4-NO-PREDECESSOR = A).
+    pub(in crate::world_keys) fn activation_checks(
         &self,
         owner: &AuthenticatedOwner,
         prepared: &PreparedRoot,
         carry: &BTreeSet<EntityId>,
-    ) -> Result<ActivationPrep> {
+    ) -> Result<ActivationPredecessor> {
         self.precheck_root_door(owner, |txn, fold| {
             let me = crate::identity::read_machine_id_in_txn(self, txn)?;
             carried_marks(fold, prepared, carry, me)?;
@@ -99,6 +107,27 @@ impl Vault {
                 .map(drop)
         })?;
         let predecessor = self.load_activation_predecessor(owner)?;
+        // The keys below are readied in this keystore: a host that installed
+        // none is refused here, before the confirm.
+        self.device_keystore()?;
+        Ok(predecessor)
+    }
+
+    /// This install's own request and secret for an activation whose checks
+    /// ([`Self::activation_checks`]) answered `predecessor`. Readying them
+    /// writes outside the activation's transaction: it mints this install's
+    /// machine identity when it has none, and with a signing slot found
+    /// empty beside a stored device key it forgets the machine, the client
+    /// id and the root pin and mints another
+    /// ([`Vault::prepare_install_signing`]). So a door calls this after the
+    /// owner's confirm, never before it: a declined confirm, or a closed
+    /// device PIN window, leaves those rows as they were. A refusal here
+    /// (a keystore fault, a machine identity that changed meanwhile) comes
+    /// after a confirmed prompt and before the activation's transaction.
+    pub(in crate::world_keys) fn activation_prep(
+        &self,
+        predecessor: ActivationPredecessor,
+    ) -> Result<ActivationPrep> {
         let (secret, request) = self.own_request()?;
         Ok((secret, request, predecessor))
     }
