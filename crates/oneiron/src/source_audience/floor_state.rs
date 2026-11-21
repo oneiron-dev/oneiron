@@ -14,7 +14,16 @@
 //! erases a row a floor waits on seals that floor
 //! ([`seal_rows_awaiting_in_txn`]): what the erased row would have added to
 //! it can no longer be known here, so the floor never settles without it
-//! (#9289 Opus review 3 P1-A, P1-B).
+//! (#9289 Opus review 3 P1-A, P1-B). Every delete door runs it, and so does
+//! the first application of a peer's tombstone of a row this vault never
+//! held; a soft tombstone replayed over a soft scrub already applied here is
+//! no new erase and runs it not (#10108 reviews). Until it runs, a row that
+//! reads erased (its delete published, a peer tombstone accepted but not
+//! applied yet, an archive, a released blob) keeps every row marked as
+//! waiting on it waiting: the seal, not a sweep that comes first, ends the
+//! wait. A row's marks are its wait set as its last raise found it: a raise
+//! takes every mark the row no longer waits on, so an erase of what it once
+//! waited on never seals a row that settled without it.
 //!
 //! A vault that held rows before floors were written holds them with none.
 //! The **backfill** (housekeeping's `SourceFloorBackfill` sweep: at each
@@ -49,17 +58,17 @@ use std::ops::Bound;
 
 use heed::{RoTxn, RwTxn};
 
+use self::marks::{AWAITED, WAITS, mark_wait_in_txn, take_mark_in_txn, take_marks_of_in_txn};
 use super::floor::{OwnSource, RowSources};
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
+mod marks;
+
 /// Each row whose floor waits.
 const PENDING: SideTable<EntityId, (), Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_FLOOR_PENDING);
-/// What each row whose floor waits waits on: the awaited id, then the row.
-const AWAITED: SideTable<(EntityId, EntityId), (), Named> =
-    SideTable::new(&side_table::SOURCE_AUDIENCE_FLOOR_AWAITED);
 /// Each row raised since the backfill began.
 const RAISED: SideTable<EntityId, (), Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_FLOOR_RAISED);
@@ -290,10 +299,13 @@ fn erased_in(store: &crate::store::Store, txn: &RoTxn<'_>, row: &EntityId) -> Re
 /// included, as a row born from an erased input does (READ-LINEAGE-L3 = A;
 /// doctor counts it, and its re-derive heals it). The marks on `erased` are
 /// taken; each such row settles sealed at its next raise, and the rows
-/// waiting on it inherit the seal; `erased` itself waits no more. It reads
-/// the marks, never the lineage the erase tears: it runs at both delete
-/// doors, before the record's body and edges go
-/// ([`super::erase_derived_policies_in_txn`]).
+/// waiting on it inherit the seal; `erased` itself waits no more. A mark of
+/// a row that no longer waits is stale and seals nothing. That includes a
+/// fact that waits for good on an input erased before the backfill raised
+/// it (FLOOR-OLD-FACT-ERASED-INPUT = A): a later erase of that input through
+/// an erase door seals it, as the ruling says. It reads the marks, never the
+/// lineage the erase tears: each delete door runs it before the record's
+/// body and edges go ([`super::seal_floors_awaiting_in_txn`]).
 ///
 /// # Errors
 ///
@@ -304,11 +316,11 @@ pub(super) fn seal_rows_awaiting_in_txn(
     erased: &EntityId,
 ) -> Result<()> {
     PENDING.delete(store, txn, erased)?;
+    take_marks_of_in_txn(store, txn, erased, &BTreeSet::new())?;
     let sealed = super::floor::sealed_source();
-    for key in AWAITED.scan_keys(store, txn, erased.as_bytes())? {
-        AWAITED.delete(store, txn, &key)?;
-        let (_, row) = key;
-        if row == *erased || erased_in(store, txn, &row)? {
+    for (_, row) in AWAITED.scan_keys(store, txn, erased.as_bytes())? {
+        take_mark_in_txn(store, txn, erased, &row)?;
+        if row == *erased || erased_in(store, txn, &row)? || !PENDING.contains(store, txn, &row)? {
             continue;
         }
         let mut floor = super::DERIVED.get(store, txn, &row)?.unwrap_or_default();
@@ -322,12 +334,14 @@ pub(super) fn seal_rows_awaiting_in_txn(
 /// Whether `row`, written from `source`, waits for it: its binding has not
 /// landed, or its own floor waits; or, for a source no read walks
 /// (`unwalked`: a birth input, a dependency source, a named word source), it
-/// has not landed here. An erased source takes its floor with it: a row
-/// that waited on it when it was erased was sealed by that erase
-/// ([`seal_rows_awaiting_in_txn`]); a row the backfill raises for the first
-/// time (`first`), whose floor never held it, waits on it, and for good: it
-/// still waits when raised again. A read walks every other source live, and
-/// one gone from the vault carries no words to it.
+/// has not landed here. A source that reads erased keeps a row marked as
+/// waiting on it waiting, until the erase's seal takes the mark
+/// ([`seal_rows_awaiting_in_txn`]; #10108 Opus review P1-1): a sweep that
+/// comes before the purge must not settle it. A row the backfill raises for
+/// the first time (`first`), whose floor never held an erased unwalked
+/// source, waits on it, and for good: it still waits when raised again.
+/// Otherwise a read walks the source live, and one gone from the vault
+/// carries no words to it.
 fn source_waits_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -339,7 +353,7 @@ fn source_waits_in(
     match presence_in(vault, txn, source)? {
         Presence::Absent => Ok(unwalked),
         Presence::Erased => {
-            Ok(unwalked && (first || AWAITED.contains(&vault.store, txn, &(*source, *row))?))
+            Ok(AWAITED.contains(&vault.store, txn, &(*source, *row))? || (unwalked && first))
         }
         Presence::Held(raw) => Ok(PENDING.contains(&vault.store, txn, source)?
             || super::floor::own_source_in(vault, txn, source, &raw)? == OwnSource::Unbound),
@@ -511,17 +525,31 @@ impl Closure {
             }
         }
         let mut settled = BTreeSet::new();
-        for (row, _, _) in &self.order {
-            match awaited.get(row) {
-                Some(waits) if !waits.is_empty() => {
-                    PENDING.put(&vault.store, txn, row, &())?;
-                    for awaited in waits {
-                        AWAITED.put(&vault.store, txn, &(*awaited, *row), &())?;
-                    }
+        let none = BTreeSet::new();
+        for (row, sources, _) in &self.order {
+            let waits = awaited.get(row).unwrap_or(&none);
+            // A mark of what this row no longer waits on goes, so an erase of
+            // that row never seals this one (#10108 review P1). A mark written
+            // before marks were kept by row is found from the row's sources.
+            take_marks_of_in_txn(&vault.store, txn, row, waits)?;
+            for source in std::iter::once(row)
+                .chain(&sources.unheld)
+                .chain(&sources.written_from)
+                .chain(&sources.attested_by)
+            {
+                if !waits.contains(source)
+                    && AWAITED.contains(&vault.store, txn, &(*source, *row))?
+                {
+                    take_mark_in_txn(&vault.store, txn, source, row)?;
                 }
-                _ => {
-                    PENDING.delete(&vault.store, txn, row)?;
-                    settled.insert(*row);
+            }
+            if waits.is_empty() {
+                PENDING.delete(&vault.store, txn, row)?;
+                settled.insert(*row);
+            } else {
+                PENDING.put(&vault.store, txn, row, &())?;
+                for awaited in waits {
+                    mark_wait_in_txn(&vault.store, txn, awaited, row)?;
                 }
             }
             if backfilling {
@@ -549,9 +577,8 @@ fn take_waiters_in_txn(
         if erased_in(&vault.store, txn, &awaited)? {
             continue;
         }
-        for key in AWAITED.scan_keys(&vault.store, txn, awaited.as_bytes())? {
-            AWAITED.delete(&vault.store, txn, &key)?;
-            let (_, row) = key;
+        for (_, row) in AWAITED.scan_keys(&vault.store, txn, awaited.as_bytes())? {
+            take_mark_in_txn(&vault.store, txn, &awaited, &row)?;
             if erased_in(&vault.store, txn, &row)? {
                 continue;
             }
@@ -692,7 +719,7 @@ fn clear_page_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<(u64, Option<
 /// row id `after`, so a row whose wait resolved in a write that named no row
 /// waiting on it (an epoch's head that landed, an erased source, a
 /// dependency or a birth taken off it) settles. A waiting row gone from
-/// this vault loses its mark.
+/// this vault loses its marks.
 fn settle_page_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -715,6 +742,7 @@ fn settle_page_in_txn(
             live.insert(*row);
         } else {
             PENDING.delete(&vault.store, txn, row)?;
+            take_marks_of_in_txn(&vault.store, txn, row, &BTreeSet::new())?;
         }
     }
     let raised = u64::try_from(live.len()).unwrap_or(u64::MAX);
@@ -738,6 +766,7 @@ fn settle_page_in_txn(
 pub(crate) fn forget_floor_state_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
     PENDING.delete_from(&vault.store, txn, &[])?;
     AWAITED.delete_from(&vault.store, txn, &[])?;
+    WAITS.delete_from(&vault.store, txn, &[])?;
     RAISED.delete_from(&vault.store, txn, &[])?;
     BACKFILL.delete_from(&vault.store, txn, &[])?;
     Ok(())
