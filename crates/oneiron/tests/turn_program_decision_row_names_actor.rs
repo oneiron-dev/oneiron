@@ -11,6 +11,9 @@
 //! the actor. Nothing reads the actor yet: the erase, the import's refusal
 //! and the scrub come with the second change.
 //!
+//! The kept actor goes with its actor's erase, so no row names an erased
+//! actor; the decision itself stays until the second change.
+//!
 //! A row written before the row named its actor names none, and is taken as
 //! it was then: it merges, it is kept, and a machine that holds no wake of it
 //! writes it again without an actor. A machine that still owes the wake such
@@ -502,5 +505,49 @@ fn a_decision_row_that_names_no_actor_takes_the_actor_of_the_wake_it_consumes() 
         row["admitted"]["actor"],
         named(agent),
         "a decision that consumed the wake owed here was written again without that wake's actor: {row}"
+    );
+}
+
+/// An erase of the actor's turn programs on a machine that only imported the
+/// decision drops the actor it kept beside the decision: the machine writes
+/// the decision again with no actor, as a decision whose actor it never
+/// learned. The decision itself stays here.
+#[test]
+fn an_erase_of_the_actor_drops_the_actor_kept_beside_a_decision() {
+    let home = Machine::open("machine-home");
+    let recorder = Machine::open("machine-recorder");
+    let third = Machine::open("machine-third");
+    let Taken {
+        agent,
+        turn,
+        registration,
+        doc_home,
+        ..
+    } = home_takes_the_carried_wake(&[&home, &recorder, &third], &home, &recorder);
+
+    home.housekeeping();
+    assert_eq!(
+        home.decisions(turn, registration),
+        1,
+        "fixture: the home did not decide the wake it took"
+    );
+    let doc_third = third.doc();
+    exchange(&doc_third, &doc_home);
+    third.housekeeping();
+    assert!(
+        doors::decision_kept_here(&third.vault, turn, registration).unwrap(),
+        "fixture: the third machine did not keep the decision the window carried"
+    );
+
+    doors::erase_actor_programs(&third.vault, agent).unwrap();
+    let row = row_written_again(&third, &doc_third, turn, registration)
+        .expect("a machine that keeps a decision wrote no row for it into the window");
+    assert!(
+        row.get("admitted").is_some(),
+        "the row written again is no decision: {row}"
+    );
+    assert!(
+        row["admitted"].get("actor").is_none(),
+        "a machine wrote a decision with the actor it kept, after that actor's erase: {row}"
     );
 }
