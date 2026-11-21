@@ -42,7 +42,7 @@ use self::profile::{CountedBackend, ThingSession};
 use super::dreamer::QuestionTimer;
 use super::scoped_child::{enqueue_scoped_child, reader_parent_for_wake};
 use crate::mcp::McpCodeModeProvider;
-use crate::models::{ModelRuntime, OfferLadder, RunBackend};
+use crate::models::{ModelRuntime, OfferLadder, RunBackend, SourceFence};
 use crate::server::SyncServer;
 use oneiron_base::unix_millis_now;
 
@@ -59,15 +59,20 @@ pub(super) struct ThingRoute {
     pub(super) window: Option<u64>,
 }
 
-/// A thing child's generation: `ladder` on the child's `run`; the rows
-/// lent to it reach no fence.
+/// A thing child's generation: `ladder` on the child's `run`, fenced by the
+/// rows its lent slices were read from (`lent`) in `vault`. A code step's
+/// request may copy any lent transcript, through its console or its port
+/// answers, and its steps name no complete set of rows, so every call is
+/// fenced: once a lent row is withdrawn, the child sends nothing more, its
+/// resends and rate-wait resends included
+/// ([DREAMER-UNSOURCED-ROLE-CALLS-SEND-UNFENCED]).
 fn child_generation_backend(
     ladder: Arc<OfferLadder>,
     run: RunAdmission,
-    _vault: Arc<Vault>,
-    _lent: Vec<EntityId>,
+    vault: Arc<Vault>,
+    lent: Vec<EntityId>,
 ) -> RunBackend {
-    RunBackend::new(ladder, run)
+    RunBackend::new(ladder, run).within_source_fence(SourceFence::new(vault, lent))
 }
 
 /// The host a Dreamer pass lends its thing branches.
@@ -140,6 +145,7 @@ impl ThingChildHost for ServedThingChildHost {
             ports,
             intent_key,
             ask,
+            sources,
         } = launch;
         let vault = ctx.vault;
         let Some(hosts) = provider
@@ -232,7 +238,7 @@ impl ThingChildHost for ServedThingChildHost {
                 Arc::clone(&self.route.ladder),
                 run,
                 Arc::clone(&self.vault),
-                Vec::new(),
+                sources,
             ),
             Arc::clone(&count),
             stop.clone(),
