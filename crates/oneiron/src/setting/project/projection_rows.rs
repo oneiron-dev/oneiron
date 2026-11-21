@@ -551,7 +551,8 @@ pub(in crate::setting) fn standing_in_txn(
 impl Vault {
     /// Projects every setting row whose signed acts moved since it was last projected, in one
     /// write, and runs the `after_commit` of each key whose row changed (stage 7a-2). A vault
-    /// with no authority root, or with no setting act, writes nothing.
+    /// with no authority root, or with no setting act, writes nothing. A row its key's hook
+    /// refuses here stays as it was, and raises the owner's notice of it (`refusal`).
     ///
     /// First, in its own write, the owner's rows no act backs are published as batch acts, once
     /// per vault (stage 7a-3, [`Self::publish_settings`]); a fault there is logged, and the
@@ -644,10 +645,24 @@ impl Vault {
                         savepoint.commit()?;
                         changed.extend(projected.changed);
                     }
-                    Err(Error::InvalidConfig(reason)) => tracing::warn!(
-                        reason = %reason,
-                        "the next pass reads again a setting row its key refused here"
-                    ),
+                    Err(Error::InvalidConfig(reason)) => {
+                        drop(savepoint);
+                        tracing::warn!(
+                            reason = %reason,
+                            "the next pass reads again a setting row its key refused here"
+                        );
+                        // The owner's notice of it (`refusal`), in a savepoint of its own: a
+                        // fault there is logged, and the pass goes on.
+                        let mut notice = self.store.env.nested_write_txn(txn)?;
+                        match raise_refusal_notice_in_txn(self, &mut notice, (*target, &reason), now)
+                        {
+                            Ok(()) => notice.commit()?,
+                            Err(error) => tracing::warn!(
+                                kind = ?error.kind(),
+                                "the owner's notice of a setting row its key refused here was not raised; the next pass tries again"
+                            ),
+                        }
+                    }
                     Err(error) => return Err(error),
                 }
             }

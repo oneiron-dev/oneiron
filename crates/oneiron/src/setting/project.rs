@@ -43,7 +43,8 @@
 //! reads a row again once a value beside an act it read, or one the row's value came from, holds
 //! otherwise. On a key that names no strictest value such a row reads no value of it: the key's
 //! default, `Quarantined`. A pass projects each row in a savepoint of its own: a row a key's hook
-//! refuses on this install stays as it was, logged, and the next pass reads it again.
+//! refuses on this install stays as it was, and the next pass reads it again; the pass raises the
+//! owner's notice of it, which names the acts and offers the fix (`refusal`).
 //!
 //! The read on proofs (stage 7b-3; DESIGN 1.6, "The read of one slot", "Fold states" and
 //! "Receipts"):
@@ -89,6 +90,10 @@ use projection_rows::{
     basis_of, empty_of_in_txn, leave_in_txn, met_with_local, own_carry_bound_in_txn,
     project_pack_target_in_txn, record_projection_in_txn, target_key, write_row_in_txn,
 };
+mod refusal;
+use refusal::raise_refusal_notice_in_txn;
+pub(super) use refusal::slot_refused_here_in_txn;
+pub(crate) use refusal::{SETTING_REFUSAL_NOTIFICATION_PRODUCER, setting_refusal_taps_in_txn};
 
 use serde::{Deserialize, Serialize};
 

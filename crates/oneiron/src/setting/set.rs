@@ -10,7 +10,7 @@ use super::born::is_born_value_slot;
 use super::change::record_change_in_txn;
 use super::learned::{checked_weight, fits_in_txn};
 use super::pack::layer_default_in_txn;
-use super::project::{append_act_in_txn, rooted_in_txn, travels};
+use super::project::{append_act_in_txn, rooted_in_txn, slot_refused_here_in_txn, travels};
 use super::read::{
     Loaded, StoredRow, chain_of, in_force_of, key_line_grant_in_txn, load_in_txn, names_subject,
     table_of,
@@ -481,8 +481,15 @@ fn set_in_txn(
     });
     let prior_weight = prior_row.as_ref().and_then(|row| row.weight_runs);
     let prior_value = prior_row.map(|row| row.value);
+    // The owner's equal value of a row whose acts this install's hook refused signs its act all
+    // the same (row SETTING-PROJECTED-ROW-REFUSING-HOOKS): the act replaces the refused one on
+    // every machine, the one step the refusal's notice offers (`project/refusal.rs`).
+    let replaces_refused = matches!(caller, SettingCaller::Owner(_))
+        && travels(change.spec)
+        && slot_refused_here_in_txn(vault, txn, &change.key)?;
     let unchanged = readable
         && !setter_changes
+        && !replaces_refused
         && prior_value.as_ref() == change.value
         && prior_weight == change.weight_runs;
     let by_owner = matches!(caller, SettingCaller::Owner(_) | SettingCaller::Engine(_));

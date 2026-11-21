@@ -231,6 +231,34 @@ impl Vault {
         })
     }
 
+    /// The name `machine` is shown by, read in `txn` as the list reads it,
+    /// with its id's first eight hex digits after a class word, so two
+    /// machines of one class read apart; `None` for a machine the authority
+    /// fold does not name, or names with no chain. No owner proof: an engine
+    /// notice to the owner names his machines by it.
+    pub(crate) fn machine_shown_name_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        machine: EntityId,
+    ) -> Result<Option<String>> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let Some(folded) = fold.machine(machine) else {
+            return Ok(None);
+        };
+        let this_install = self.serving_machine_in_txn(txn)? == Some(machine);
+        let listing = self.machine_listing_in_txn(
+            txn,
+            machine,
+            folded,
+            this_install,
+            fold.pinned_root.as_ref(),
+        )?;
+        Ok(listing.map(|listing| match listing.name_source {
+            MachineNameSource::Class => format!("{} {}", listing.name, &machine.to_hex()[..8]),
+            _ => listing.name,
+        }))
+    }
+
     /// One machine as the list shows it, read in `txn` on an install with
     /// `pin`: `None` for a folded machine with no chain, which names no class.
     fn machine_listing_in_txn(

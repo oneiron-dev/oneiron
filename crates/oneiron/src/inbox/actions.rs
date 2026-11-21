@@ -35,6 +35,8 @@ const OAUTH_AUTHORIZATION_ANSWER_VERB: &str = "vault.oauth.authorization.answer"
 /// previews through [`OWNER_CONFIRM_PREVIEW_VERB`], whose `confirm` this
 /// verb's call then passes back.
 const RECORD_ERASE_CONFIRM_VERB: &str = "vault.records.erase_confirm";
+/// The owner's set of one setting row: a refused projection's fix.
+const SETTING_SET_VERB: &str = "vault.settings.set";
 
 /// One tap a notification offers: the registered verb it calls and that
 /// verb's own input, so a client renders the button the engine describes.
@@ -73,7 +75,9 @@ impl Memory<'_> {
     /// change is reverted (FIX 5369). An applied stock switch offers the
     /// owner's undo while its binding still holds (FIX 4663). A GPU job's
     /// stop at its maximum offers its one-click resume while the stop stands
-    /// (CROSS-ARCH-0023 C2 05). Any other row,
+    /// (CROSS-ARCH-0023 C2 05). A setting row this install's projection
+    /// refused offers the owner's set of it while the refusal stands (row
+    /// SETTING-PROJECTED-ROW-REFUSING-HOOKS). Any other row,
     /// and a target that no longer reads or has settled, offers none.
     fn notification_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let producer = row.source.producer.as_str();
@@ -111,6 +115,11 @@ impl Memory<'_> {
             }
             NotificationKind::Ask if producer == crate::gpu_job::GPU_JOB_STOPPED_PRODUCER => {
                 self.gpu_job_resume_actions(row)
+            }
+            NotificationKind::Ask
+                if producer == crate::setting::SETTING_REFUSAL_NOTIFICATION_PRODUCER =>
+            {
+                self.setting_refusal_actions(row)
             }
             NotificationKind::VoiceRecognitionWithdrawalLoggedForSubject
                 if producer == crate::voice_identity::VOICE_RECOGNITION_NOTIFICATION_PRODUCER =>
@@ -391,6 +400,31 @@ impl Memory<'_> {
     /// The producer names the change in `source.result`; the notice is an
     /// owner's own. Its revert is offered while the change is the vault's
     /// last and the pack before it is installed at its bytes and served.
+    /// The producer names every setting act a refused projection is about in `source.event`
+    /// (row SETTING-PROJECTED-ROW-REFUSING-HOOKS). For each row such an act heads that this
+    /// install still refuses: one owner's set of that row to the value it holds here, which the
+    /// owner may edit before he taps; its act replaces the refused one on every machine. A
+    /// refusal that no longer stands here offers none.
+    fn setting_refusal_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
+        let vault = self.vault();
+        let taps = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)
+            .and_then(|txn| {
+                crate::setting::setting_refusal_taps_in_txn(vault, &txn, &row.source.event)
+            });
+        taps.map_or_else(
+            |_| Vec::new(),
+            |taps| {
+                taps.into_iter()
+                    .map(|args| NotificationAction::new(SETTING_SET_VERB, args))
+                    .collect()
+            },
+        )
+    }
+
     fn model_pack_revert_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let Some(change_ref) = row.source.result.as_deref() else {
             return Vec::new();
