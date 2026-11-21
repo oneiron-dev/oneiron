@@ -478,19 +478,19 @@ impl PipelineBuilder<'_> {
         // round 2's own review); then the facet, world, corpus and
         // relationship checks, and the made_by slice last. A row any of them
         // refuses stops no round (TEMPORAL-READER-OMITS-STRICT-SCOPE-CHECKS).
-        // Its caches are its own: a row the reader asks about leaves no gate
-        // decision and no `read_suppressed` entry in the run, as at a
-        // narrowed vector walk.
+        // Each row is judged in caches of its own
+        // ([`meets_every_check_but_the_clamp`]): a row the reader asks about
+        // leaves no gate decision and no `read_suppressed` entry in the run,
+        // as at a narrowed vector walk, and the reader keeps no metadata or
+        // claim body of the rows its window passes, only each answer.
         let scope = PipelineFilterConfig {
             candidate_filter: None,
             deadline: None,
             disclosure: None,
             ..filters
         };
-        let scope_caches = RefCell::new((
-            EntityMetadataCache::default(),
-            claim_gate.fresh(filters.authority_filter.include_stale),
-        ));
+        let scope_gate = claim_gate.fresh(filters.authority_filter.include_stale);
+        let scope_answers = RefCell::new(std::collections::HashMap::new());
         let in_scope = |store: &crate::store::StoreRead<'_>,
                         txn: &RoTxn<'_>,
                         id: &crate::EntityId|
@@ -498,13 +498,18 @@ impl PipelineBuilder<'_> {
             if !narrowed {
                 return Ok(true);
             }
-            if let Some(admits) = filters.candidate_filter
+            if let Some(&admitted) = scope_answers.borrow().get(id) {
+                return Ok(admitted);
+            }
+            let admitted = if let Some(admits) = filters.candidate_filter
                 && !admits(store, txn, id)?
             {
-                return Ok(false);
-            }
-            let (metadata, gate) = &mut *scope_caches.borrow_mut();
-            pipeline_candidate_matches_filters_and_gate(store, txn, id, scope, metadata, gate)
+                false
+            } else {
+                meets_every_check_but_the_clamp(store, txn, id, scope, &scope_gate)?
+            };
+            scope_answers.borrow_mut().insert(*id, admitted);
+            Ok(admitted)
         };
         let in_reader = |store: &crate::store::StoreRead<'_>,
                          txn: &RoTxn<'_>,
