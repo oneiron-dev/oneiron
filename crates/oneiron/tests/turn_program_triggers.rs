@@ -288,6 +288,47 @@ fn a_timer_program_wakes_on_the_machine_that_armed_it_while_another_is_the_home(
     );
 }
 
+/// Review #10113: a repeating timer whose next due time no `u64` holds wakes at its due time and
+/// then no more. Its release does not fail: an actor's timers are one job and one write, so a
+/// failed release would take back the wakes of the actor's other due timers and retry without
+/// end.
+#[test]
+fn a_timer_whose_next_due_time_overflows_wakes_once_and_spares_the_actors_other_timers() {
+    let (_dir, vault, clock) = open_on_clock(T0 - 60);
+    let fixture = Fixture::new(&vault);
+    fixture.arm(
+        &vault,
+        ProgramTrigger::Timer {
+            first_at: T0,
+            every_secs: u64::MAX,
+        },
+    );
+    fixture.arm(
+        &vault,
+        ProgramTrigger::Timer {
+            first_at: T0,
+            every_secs: 0,
+        },
+    );
+
+    assert_eq!(
+        release_timers_at(&vault, &clock, T0),
+        1,
+        "the actor's one timer run ends done"
+    );
+    let woken = drain(&vault, T0);
+    assert_eq!(
+        (woken.admitted, woken.refused, woken.held),
+        (2, 0, 0),
+        "both timers woke: {woken:?}"
+    );
+    assert_eq!(
+        release_timers_at(&vault, &clock, T0 + 1_000_000),
+        0,
+        "neither timer is due again"
+    );
+}
+
 /// A feed program wakes once per set of entries its lane is shown past its subscription's
 /// cursor, not while the cursor stands past every one; once its subscription is gone, a wake it
 /// still owes is refused.
