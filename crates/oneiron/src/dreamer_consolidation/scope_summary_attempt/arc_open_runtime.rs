@@ -37,6 +37,7 @@ fn generated_only(decisions: &ConsolidationDecisions) -> bool {
     }
     [
         (DecisionRung::SystemOne, &decisions.ladder.system_one),
+        (DecisionRung::Precision, &decisions.ladder.precision),
         (DecisionRung::Escalation, &decisions.ladder.escalation),
         (DecisionRung::Big, &decisions.ladder.big),
     ]

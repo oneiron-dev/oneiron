@@ -47,22 +47,34 @@ pub struct BookingPageModel {
     pub visitor_tz: String,
 }
 
+/// The host-owned presentation of a public booking page: the parts its owner
+/// published, which [`BookingPageModel::new`] joins with the disclosure
+/// projection.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BookingPagePresentation {
+    pub owner_display: String,
+    pub event_types: Vec<EventTypeCard>,
+    pub constraint_field: ConstraintFieldConfig,
+    pub theme: ThemeTokens,
+    pub landing: BookingLandingContent,
+}
+
 impl BookingPageModel {
     /// The preview shows the first `policy.max_visible_slots` ranked slots:
     /// the page's resolved conversion policy, which owner rows set.
-    // Seven page parts and the policy that sizes the first view; each is an
-    // independent input the host resolved.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        owner_display: String,
-        event_types: Vec<EventTypeCard>,
+        presentation: BookingPagePresentation,
         slots: RungProjection,
-        constraint_field: ConstraintFieldConfig,
-        theme: ThemeTokens,
-        landing: BookingLandingContent,
         visitor_tz: String,
         policy: &BookingConversionPolicy,
     ) -> core::result::Result<Self, BookingPageModelError> {
+        let BookingPagePresentation {
+            owner_display,
+            event_types,
+            constraint_field,
+            theme,
+            landing,
+        } = presentation;
         let preview = match &slots {
             RungProjection::Slots(mask) => booking_slot_preview(mask, policy.max_visible_slots),
             _ => return Err(BookingPageModelError::NonSlotsProjection),
@@ -332,7 +344,7 @@ fn model_field(name: &str, value: &impl Serialize) -> Result<LensNode> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::booking::{RankedSlot, SolveRequest, SolveResult, slot_mask};
+    use crate::booking::{EventTypeKey, RankedSlot, SolveRequest, SolveResult, slot_mask};
     use crate::temporal::TimeRange;
     use serde_json::json;
 
@@ -345,6 +357,7 @@ mod tests {
             },
             constraint: None,
             visitor_tz: "UTC".to_owned(),
+            duration_min: None,
         };
         let mask = slot_mask(
             &request,
@@ -360,21 +373,25 @@ mod tests {
             },
         );
         BookingPageModel::new(
-            "Fixture host".to_owned(),
-            vec![EventTypeCard {
-                key: request.event_type,
-                title: "Introduction".to_owned(),
-                duration_min: 10,
-                description: "Fixture description".to_owned(),
-            }],
+            BookingPagePresentation {
+                owner_display: "Fixture host".to_owned(),
+                event_types: vec![EventTypeCard {
+                    key: request.event_type,
+                    title: "Introduction".to_owned(),
+                    deposit: None,
+                    duration_min: 10,
+                    description: "Fixture description".to_owned(),
+                    allowed_durations_min: Vec::new(),
+                }],
+                constraint_field: ConstraintFieldConfig {
+                    enabled: false,
+                    placeholder: String::new(),
+                },
+                theme: ThemeTokens(json!({"unknown": {"nested": [null, 7, "opaque"]}})),
+                landing: BookingLandingContent::default(),
+            },
             project_at_rung(&[], DisclosureRung::Full, SurfaceClass::Public, Some(&mask))
                 .expect("public clamp"),
-            ConstraintFieldConfig {
-                enabled: false,
-                placeholder: String::new(),
-            },
-            ThemeTokens(json!({"unknown": {"nested": [null, 7, "opaque"]}})),
-            BookingLandingContent::default(),
             "UTC".to_owned(),
             &BookingConversionPolicy::default(),
         )
@@ -409,12 +426,14 @@ mod tests {
             .collect();
         assert!(
             BookingPageModel::new(
-                model.owner_display.clone(),
-                model.event_types.clone(),
+                BookingPagePresentation {
+                    owner_display: model.owner_display.clone(),
+                    event_types: model.event_types.clone(),
+                    constraint_field: model.constraint_field.clone(),
+                    theme: model.theme.clone(),
+                    landing: model.landing.clone(),
+                },
                 RungProjection::Slots(mask.clone()),
-                model.constraint_field.clone(),
-                model.theme.clone(),
-                model.landing.clone(),
                 model.visitor_tz.clone(),
                 &BookingConversionPolicy::default(),
             )

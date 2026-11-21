@@ -15,6 +15,13 @@
 //! provider's own loopback `base_url`. An external row is the operator's
 //! endpoint, and names only what its answers must show.
 //!
+//! A managed llama.cpp row may instead say `listen = "unix"` (L9-15): its
+//! supervisor starts it as a reranker on a Unix socket of this launch's own,
+//! and the reranker reaches it there alone, each connection checked against
+//! the supervised child (I2-LOCAL), so its rerank offer is on this device.
+//! Nothing listens on its provider's `base_url`, so that provider serves the
+//! `reranker` role alone, each of its models from such a row.
+//!
 //! The media workers (FIX 8318) are rows too: a `vox_cpm2` worker serves a
 //! `voxcpm2` provider, an `asr` worker a `local-openai-compat` one (an
 //! external one also an `openai-compat` provider that says it is an own
@@ -27,13 +34,18 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use oneiron::ModelLocality;
 use oneiron::llm::{CacheDigest, CacheIdentity, WorkerKind, WorkerMode};
 use serde::Deserialize;
 
 use super::levels::ModelRef;
 use super::provider::{ProviderConfig, ProviderKind};
-use crate::model_artifacts::catalog::house_artifact;
+
+mod validation;
+
+pub(super) use self::validation::refuse_socket_provider_off_reranker;
+use self::validation::{
+    absolute, artifact, env_name, loopback_listen, media_kind, media_provider, plain,
+};
 
 /// The interpreter an EXL3 worker's environment is built with when the row
 /// names none: the version its lock is resolved for.
@@ -86,6 +98,9 @@ pub(super) struct WorkerFile {
     /// Only an external EXL3 row's answers are checked against it.
     launch_manifest_sha256: Option<String>,
     device: Option<String>,
+    /// Where a managed llama.cpp worker listens (L9-15): its provider's
+    /// loopback `base_url`, the default, or a Unix socket of its own.
+    listen: Option<WorkerListen>,
     #[serde(default)]
     args: Vec<String>,
     #[serde(default)]
@@ -95,6 +110,19 @@ pub(super) struct WorkerFile {
     idle_stop_secs: Option<u64>,
     #[serde(default)]
     expected: ExpectedFile,
+}
+
+/// Where a managed worker listens (`listen`, L9-15).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkerListen {
+    /// Its provider's loopback `base_url`, over TCP.
+    #[default]
+    Tcp,
+    /// A Unix socket under its runtime root, one per launch: a managed
+    /// llama.cpp reranker, reached only through a connection checked
+    /// against the supervised child (I2-LOCAL).
+    Unix,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -161,6 +189,15 @@ impl WorkerConfig {
     pub fn has_native_launch(&self) -> bool {
         self.kind == WorkerKind::Exl3 && self.managed_launch().is_some()
     }
+
+    /// Whether this row's supervisor launches it on a Unix socket of its
+    /// own (`listen = "unix"`, L9-15): a managed llama.cpp reranker, whose
+    /// launch record names that socket.
+    #[must_use]
+    pub fn listens_on_socket(&self) -> bool {
+        self.managed_launch()
+            .is_some_and(|launch| launch.listen == WorkerListen::Unix)
+    }
 }
 
 /// What a managed worker's supervisor installs and runs.
@@ -186,8 +223,13 @@ pub struct ManagedLaunch {
     /// llama.cpp's `llama-server`, verified by its SHA-256 before each launch.
     pub server: Option<NativeServer>,
     /// The loopback host and port the worker listens on: its provider's.
+    /// A `listen = "unix"` row listens on neither; its provider's origin
+    /// still names its offer.
     pub listen_host: String,
     pub listen_port: u16,
+    /// Where the worker listens: TCP at `listen_host:listen_port`, or a
+    /// Unix socket of each launch's own (L9-15).
+    pub listen: WorkerListen,
     /// The environment variable holding a media worker's bearer credential:
     /// its provider's `key_env`. Never the credential itself; `None` for a
     /// chat worker, which is given no key.
@@ -390,6 +432,7 @@ impl WorkerFile {
             ("server", self.server.is_some()),
             ("server_sha256", self.server_sha256.is_some()),
             ("device", self.device.is_some()),
+            ("listen", self.listen.is_some()),
             ("args", !self.args.is_empty()),
             ("env", !self.env.is_empty()),
             ("envelope_mib", self.envelope_mib != EnvelopeFile::default()),
@@ -455,6 +498,19 @@ impl WorkerFile {
                 field("server")
             ),
         };
+        let listen = self.listen.unwrap_or_default();
+        if listen == WorkerListen::Unix {
+            anyhow::ensure!(
+                kind == WorkerKind::LlamaCpp,
+                "{}: only a llama_cpp worker listens on a Unix socket",
+                field("listen")
+            );
+            anyhow::ensure!(
+                cfg!(any(target_os = "linux", target_os = "macos")),
+                "{}: a Unix socket listen needs Linux or macOS, where the socket's peer is checked against the supervised child",
+                field("listen")
+            );
+        }
         let media = media_kind(kind);
         anyhow::ensure!(
             kind == WorkerKind::Exl3 || media || self.env_lock.is_none(),
@@ -528,6 +584,7 @@ impl WorkerFile {
             server,
             listen_host,
             listen_port,
+            listen,
             credential_env,
             policy_file,
             device: self.device.clone(),
@@ -623,143 +680,4 @@ impl WorkerFile {
         };
         Ok((Some(credential), policy_file))
     }
-}
-
-/// Whether `kind` is a media worker's: VoxCPM2 speech or local ASR.
-fn media_kind(kind: WorkerKind) -> bool {
-    matches!(kind, WorkerKind::VoxCpm2 | WorkerKind::Asr)
-}
-
-/// Whether a media worker of `kind` serves `provider`: VoxCPM2 a `voxcpm2`
-/// provider; ASR a `local-openai-compat` one, or, external, an
-/// `openai-compat` one that says it is an own server.
-fn media_provider(
-    field: &str,
-    kind: WorkerKind,
-    mode: WorkerMode,
-    provider: &ProviderConfig,
-) -> anyhow::Result<()> {
-    match kind {
-        WorkerKind::VoxCpm2 => anyhow::ensure!(
-            provider.kind == ProviderKind::Voxcpm2,
-            "{field}: a vox_cpm2 worker serves a voxcpm2 provider"
-        ),
-        _ => anyhow::ensure!(
-            provider.kind == ProviderKind::LocalOpenaiCompat
-                || (mode == WorkerMode::External
-                    && provider.kind == ProviderKind::OpenaiCompat
-                    && provider.locality == ModelLocality::OwnServer),
-            "{field}: an asr worker serves a local-openai-compat provider (an external one also an openai-compat provider with locality = \"own_server\")"
-        ),
-    }
-    Ok(())
-}
-
-impl ExpectedFile {
-    fn resolve(&self, field: &str) -> anyhow::Result<CacheIdentity> {
-        let digest = |name: &str, value: &Option<String>| {
-            value
-                .clone()
-                .map(|hex| {
-                    CacheDigest::new(hex)
-                        .map_err(|error| anyhow::anyhow!("{field}.{name}: {error}"))
-                })
-                .transpose()
-        };
-        Ok(CacheIdentity {
-            model: digest("model", &self.model)?,
-            tokenizer: digest("tokenizer", &self.tokenizer)?,
-            runtime: digest("runtime", &self.runtime)?,
-            template: digest("template", &self.template)?,
-            ..CacheIdentity::default()
-        })
-    }
-}
-
-/// One set of weights from its catalog id or manifest file, and its offline
-/// directory; `None` when the row names neither.
-fn artifact(
-    field: &str,
-    catalog: Option<&str>,
-    manifest: Option<&Path>,
-    offline_dir: Option<&Path>,
-    base: Option<&Path>,
-) -> anyhow::Result<Option<WorkerArtifact>> {
-    let source = match (catalog, manifest) {
-        (Some(id), None) => {
-            anyhow::ensure!(
-                house_artifact(id).is_some(),
-                "{field} = {id:?} is not a house catalog id"
-            );
-            ArtifactSource::Catalog(id.to_owned())
-        }
-        (None, Some(path)) => {
-            ArtifactSource::Manifest(absolute(&format!("{field}_manifest"), path, base)?)
-        }
-        (None, None) => {
-            anyhow::ensure!(
-                offline_dir.is_none(),
-                "{field}_dir needs {field} or {field}_manifest"
-            );
-            return Ok(None);
-        }
-        (Some(_), Some(_)) => {
-            anyhow::bail!("{field} and {field}_manifest name the same weights twice; keep one")
-        }
-    };
-    let offline_dir = offline_dir
-        .map(|dir| absolute(&format!("{field}_dir"), dir, base))
-        .transpose()?;
-    Ok(Some(WorkerArtifact {
-        source,
-        offline_dir,
-    }))
-}
-
-/// `path` against the config file's directory, which must give an absolute
-/// path.
-fn absolute(field: &str, path: &Path, base: Option<&Path>) -> anyhow::Result<PathBuf> {
-    let path = match base {
-        Some(base) if path.is_relative() => base.join(path),
-        _ => path.to_path_buf(),
-    };
-    anyhow::ensure!(
-        path.is_absolute(),
-        "{field} must be an absolute path, or relative to the config file"
-    );
-    Ok(path)
-}
-
-/// The host and port a loopback `http://` base URL names, with its port
-/// written out.
-fn loopback_listen(base_url: &str) -> Option<(String, u16)> {
-    let url = reqwest::Url::parse(base_url).ok()?;
-    if url.scheme() != "http" {
-        return None;
-    }
-    let port = url.port()?;
-    let host = url.host_str()?;
-    if host == "localhost" {
-        return Some(("127.0.0.1".to_owned(), port));
-    }
-    let ip: std::net::IpAddr = host
-        .trim_start_matches('[')
-        .trim_end_matches(']')
-        .parse()
-        .ok()?;
-    ip.is_loopback().then(|| (ip.to_string(), port))
-}
-
-fn plain(name: &str) -> bool {
-    name.bytes().any(|byte| byte != b'.')
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-}
-
-fn env_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
 }

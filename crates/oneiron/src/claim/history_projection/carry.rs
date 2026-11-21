@@ -15,16 +15,19 @@ impl Vault {
         issuer: &crate::authority::HostSlipIssuer,
         challenge: [u8; 32],
     ) -> Result<[u8; 32]> {
-        let mut txn = self.store.env.write_txn()?;
-        let hash = self.carry_machine_history_in_txn(
-            &mut txn,
-            target,
-            issuer,
-            challenge,
-            HandoffKind::Handoff,
-        )?;
-        txn.commit()?;
-        Ok(hash)
+        // Through the vault's write door, a group of its own on the calling
+        // thread as the bare transaction was, so the queued row reaches the
+        // live windows' post-commit mirror.
+        self.with_write_txn(|wtxn| {
+            let hash = self.carry_machine_history_in_txn(
+                wtxn,
+                target,
+                issuer,
+                challenge,
+                HandoffKind::Handoff,
+            )?;
+            Ok(hash)
+        })
     }
 
     pub(crate) fn carry_machine_history_in_txn(
@@ -145,6 +148,10 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             crate::batch::ApplyOpsGateMode::new(false, false),
         )?;
+        // The handoff-control row, for the live windows' mirror (FIX
+        // CLAIM-RAW-TXN-DOORS-DROP-LIVE-WINDOW-ROWS).
+        #[cfg(feature = "sync")]
+        crate::batch::queue_committed_rows(self, txn, std::collections::BTreeSet::from([id]));
         self.store.vault_meta.put(txn, &pin_key(target), &bytes)?;
         Ok(hash)
     }

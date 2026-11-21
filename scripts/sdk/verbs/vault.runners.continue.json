@@ -1,0 +1,17 @@
+{
+  "name": "vault.runners.continue",
+  "description": "Starts the outside session a local CLI pushed to a custody repo this node serves, on this node's own runner seats; a repeat answers the same work. The owner calls it, or an agent whose Grant names this verb.",
+  "input": "crate::dispatch_byoa::ContinueOutsideWorkRequest",
+  "output": "crate::dispatch_byoa::ContinueOutsideWorkView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.runners.continue\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "spawn",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "runner_continuer"
+}

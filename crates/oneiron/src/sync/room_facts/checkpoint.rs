@@ -19,7 +19,8 @@ use crate::workspace_roster::RoomSideRow;
 /// A side row's actors and handles.
 const SIDE_ROW_ACTORS: &str = "a room side row names actors or a platform handle";
 
-/// Where the side row under `key` goes.
+/// Where the side row under `key` goes. A whole row filed under another
+/// row's key is a key mismatch, placed under no one.
 pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
     // FIX 11790: a manifest goes as its joined row goes, under the entity
     // its key names: every key spells that entity second (a part, with the
@@ -36,7 +37,8 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
     }
     let row = match decode(value) {
         Ok(row) if carrier_key(&row, value) == key => row,
-        _ => return Placement::unclassified(None, SyncUnclassified::Undecodable),
+        Ok(_) => return Placement::unclassified(None, SyncUnclassified::KeyMismatch),
+        Err(_) => return Placement::unclassified(None, SyncUnclassified::Undecodable),
     };
     let rides = match &row {
         RoomSideRow::HostPin { room, .. } | RoomSideRow::Handle { room, .. } => Some(*room),

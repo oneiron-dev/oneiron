@@ -448,10 +448,12 @@ impl Memory<'_> {
         ) {
             return answer;
         }
-        // The owner proof the host bound for a direct request. An attendee
-        // ask admits a word, and cuts on it, only under that proof; every
-        // other ask ignores it.
-        let owner = self.answer_owner_proof();
+        // The owner proof the host bound for a direct request, or on an
+        // owner-device surface the one this install's owner key mints for
+        // this word. An attendee ask admits a word, and cuts on it, only
+        // under that proof; every other ask ignores it.
+        let owner = self.word_owner_proof()?;
+        let owner = owner.as_deref();
         let answer = self.with_verified_actor_write_txn(|txn| {
             let group = self
                 .ask_group_named_in(txn, handle.group_ref)?
@@ -562,6 +564,7 @@ impl Memory<'_> {
         {
             return Ok(false);
         }
+        let owner = self.word_owner_proof()?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         self.verify_actor_write_in_txn(&txn)?;
         let group = self
@@ -574,7 +577,7 @@ impl Memory<'_> {
             &group,
             self.write_actor(),
             word,
-            self.answer_owner_proof(),
+            owner.as_deref(),
             self.vault().store.clock.now_recorded_at(),
         )?;
         Ok(true)

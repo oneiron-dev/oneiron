@@ -10,6 +10,7 @@ use crate::secret_custody::{
 };
 use crate::store::{CustodyBinding, CustodyForkRequirement as Requirement, CustodyPlan, Store};
 use crate::vault::Vault;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 #[doc(hidden)]
 use oneiron_records::calendar::connectors::literal::{CODEC, GENERATION, reference};
@@ -44,8 +45,20 @@ struct Envelope {
     values: LiteralValues,
 }
 
+/// The digest of `value`'s literal encoding. A seat's literal scope and an outbox
+/// row's or a remote cursor's digest are sealed in the custody envelope, and opening
+/// it refuses one whose digests differ from the row's now, so each keeps its bytes
+/// (K, PLAN-UC-04 stage 6.1).
 pub(super) fn digest<T: Serialize>(value: &T) -> crate::Result<[u8; 32]> {
-    Ok(*blake3::hash(&encode(value)?).as_bytes())
+    Ok(LegacyDigest::new(purposes::calendar::CONNECTOR_LITERAL)
+        .raw(&encode(value)?)
+        .finish())
+}
+
+/// The digest of `value`'s literal encoding.
+#[cfg(oneiron_test_support)]
+pub(crate) fn literal_digest_for_test<T: Serialize>(value: &T) -> crate::Result<[u8; 32]> {
+    digest(value)
 }
 
 impl LiteralCarrier {

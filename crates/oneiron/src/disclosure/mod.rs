@@ -16,10 +16,12 @@ mod clearance_use;
 mod disclosable_set;
 mod home;
 mod import_audience;
+mod mail_attachments;
 mod model_channel;
 mod retained_copies;
 mod room_party;
 mod scope_codec;
+mod speaker_bind;
 pub mod task_ask_default;
 mod tier_classification;
 mod vault_agent;
@@ -32,7 +34,9 @@ pub use self::attendee_ask::{
 pub(crate) use self::disclosable_set::discloses_raw;
 pub use self::disclosable_set::{DisclosableSet, disclosable_set};
 pub use self::home::{ConversationHome, HomeClearanceRequest, HomeClearanceSet, HomeClearanceView};
+pub(crate) use self::import_audience::decode_import_audience_value;
 pub use self::import_audience::import_audience_rule_ref;
+pub(crate) use self::mail_attachments::{MailAttachmentRows, mail_attachment_denial_in};
 pub use self::model_channel::{
     DisclosureBand, DisclosureCeilingRequest, DisclosureCeilingSet, DisclosureCeilingView,
     DisclosureDataClass,
@@ -44,19 +48,25 @@ pub(crate) use self::model_channel::{
 pub(crate) use self::retained_copies::retained_copy_admits;
 pub use self::room_party::{RoomParty, RoomPartyEntry};
 pub(crate) use self::room_party::{
-    is_vault_owner, live_vault_owner_person_in_txn, room_party_entry_in, room_party_in,
+    deletion_recorded_in_txn, is_vault_owner, live_vault_owner_person_in_txn, room_party_entry_in,
+    room_party_in,
 };
 
 pub use self::scope_codec::{
     DISCLOSURE_SCOPE_BODY_KEYS, DISCLOSURE_SCOPE_SCHEMA_VERSION, DisclosureScope,
     DisclosureScopeStatus, decode_disclosure_scope_body, encode_disclosure_scope_body,
 };
+pub(crate) use self::speaker_bind::call_speaker_bind_in_txn;
+pub use self::speaker_bind::{
+    CallSpeakerBindReceipt, CallSpeakerBindRequest, CallSpeakerUnbindRequest,
+};
 pub use self::tier_classification::{
     DISCLOSURE_CLAIM_PREDICATES, DISCLOSURE_TIER_A_ENTITY_TYPES,
     DISCLOSURE_TIER_A_PREDICATE_PREFIXES, DisclosureMode, DisclosureTier,
     PREDICATE_DISCLOSURE_ATTENDEE_ASK, PREDICATE_DISCLOSURE_ATTENDEE_IDENTITY,
-    PREDICATE_DISCLOSURE_IMPORT_AUDIENCE, PREDICATE_DISCLOSURE_SCOPE, PREDICATE_DISCLOSURE_TIER,
-    PREDICATE_DISCLOSURE_TOPIC, is_disclosure_claim_predicate,
+    PREDICATE_DISCLOSURE_IMPORT_AUDIENCE, PREDICATE_DISCLOSURE_SCOPE,
+    PREDICATE_DISCLOSURE_SPEAKER_BIND, PREDICATE_DISCLOSURE_TIER, PREDICATE_DISCLOSURE_TOPIC,
+    is_disclosure_claim_predicate,
 };
 pub use self::vault_context::{DisclosureAssembly, DisclosureContext, presence_discretion_notice};
 
@@ -67,8 +77,6 @@ use self::vault_context::disclosure_tier_a_marked_in;
 pub(crate) use self::vault_context::{contact_clearance_in_txn, contact_clearances_in_txn};
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-DISCLOSURE-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

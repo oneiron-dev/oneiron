@@ -70,7 +70,7 @@ use oneiron::context_board::TurnWake;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
 use oneiron::dreamer_runner::{
     CompleteDreamerAttempt, DREAMER_RUNNER_ATTEMPT_KIND, DreamerParkCause, ParkDreamerAttempt,
-    outage_park_reason, outage_retry_after,
+    outage_park_reason,
 };
 use oneiron::engine_executor::continuation::{fork_executor_run, run_continuation};
 use oneiron::engine_executor::{
@@ -461,10 +461,12 @@ impl SyncServer {
             pass.faults
                 .insert("signalled run waits".to_owned(), error.to_string());
         }
-        // A host door's retry hint is a due timer on its park. The resumed
-        // run's own next call probes the rested offer and re-parks if it is
-        // still unavailable; recovery and restart resume the same row too.
-        if let Err(error) = resume_due_outage_parks(vault, now) {
+        // A host door's retry hint arms a due row of the engine's outage
+        // resume job on its park: each pass runs those rows, ahead of the
+        // housekeeping tick. The resumed run's own next call probes the rested
+        // offer and re-parks if it is still unavailable; recovery and restart
+        // resume the same row too.
+        if let Err(error) = vault.resume_due_outage_parks() {
             pass.faults
                 .insert("outage parks".to_owned(), error.to_string());
         }
@@ -819,65 +821,6 @@ fn task_text(status: &AgentDispatchStatus, parts: impl Iterator<Item = String>) 
         .join("\n\n")
 }
 
-fn clear_stale_outage_marker(runner: &DreamerRunnerStore<'_>, due_at: u64, attempt: AttemptId) {
-    if let Err(error) = runner.delete_due_outage_marker(due_at, attempt) {
-        tracing::warn!(%error, ?attempt, "a stale outage due marker was not deleted");
-    }
-}
-
-/// Resumes each due host-door outage park. Recovery, restart, and this sweep
-/// all use the same owner-checked idempotent resume door, so only one wins.
-/// With no vault migration, a park written before this index resumes through
-/// recovery or restart, or gains an index row when it re-parks.
-fn resume_due_outage_parks(vault: &Vault, now: u64) -> oneiron::Result<usize> {
-    let runner = DreamerRunnerStore::new(vault);
-    let mut resumed = 0;
-    for (due_at, attempt) in runner.due_outage_attempts(now)? {
-        let (status, park) = match runner.status_with_park(attempt) {
-            Ok(Some((status, park))) => (status, park),
-            Ok(None) => {
-                clear_stale_outage_marker(&runner, due_at, attempt);
-                continue;
-            }
-            Err(error) => {
-                tracing::warn!(%error, ?attempt, "an outage park could not be read");
-                continue;
-            }
-        };
-        if !matches!(status.attempt.state, AttemptState::Leased) {
-            continue;
-        }
-        let Some(park) = park else {
-            clear_stale_outage_marker(&runner, due_at, attempt);
-            continue;
-        };
-        if !oneiron::dreamer_runner::ParkResume::owner_may_resume(
-            oneiron::dreamer_runner::ParkOwnerClass::of(&park.park_owner),
-            oneiron::dreamer_runner::ParkResumer::OutageSweep,
-        ) {
-            continue;
-        }
-        if !park.resumable_by(oneiron::dreamer_runner::ParkResumer::OutageSweep) {
-            clear_stale_outage_marker(&runner, due_at, attempt);
-            continue;
-        }
-        let current_due = outage_retry_after(&park.reason)
-            .map(|retry_after| park.parked_at.saturating_add(retry_after));
-        if current_due != Some(due_at) {
-            clear_stale_outage_marker(&runner, due_at, attempt);
-            continue;
-        }
-        match runner.resume_parked(attempt, LEASE_OWNER, now) {
-            Ok(Some(_)) => resumed += 1,
-            Ok(None) => clear_stale_outage_marker(&runner, due_at, attempt),
-            Err(error) => {
-                tracing::warn!(%error, ?attempt, "a due outage park was not resumed");
-            }
-        }
-    }
-    Ok(resumed)
-}
-
 /// One agent run lease reaper pass (FIX 4747 slice 6), on the housekeeping
 /// tick beside the send reaper: an agent run whose lease expired is taken
 /// here, in the ruled order, when it can run here
@@ -910,6 +853,24 @@ pub(super) fn reap_agent_run_leases(server: &SyncServer) {
         }
         Err(error) => {
             tracing::warn!(kind = ?error.kind(), "agent run reaper failed");
+        }
+    }
+}
+
+/// One handed-over spend reconcile pass (FIX 4889), on the housekeeping tick
+/// before the agent run reaper: each run this machine holds custody of and
+/// that ended elsewhere settles its scope here, and each settled run this
+/// machine ran last for another machine's custody gets its shares stamped
+/// again once they moved (REVIEW-7890)
+/// ([`Vault::reconcile_handed_over_spend`]).
+pub(super) fn reconcile_handed_over_spend(server: &SyncServer) {
+    match server.vault().reconcile_handed_over_spend() {
+        Ok(0) => {}
+        Ok(runs) => {
+            tracing::info!(runs, "spend custody reconcile settled or stamped runs");
+        }
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "spend custody reconcile failed");
         }
     }
 }

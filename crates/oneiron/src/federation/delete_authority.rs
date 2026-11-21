@@ -9,10 +9,12 @@
 //! `delete` class it names (ARCH-0043, owner 9 Nov); an Admin, a Steward or a Member
 //! deletes an item it provably owns (a TASK by its Owner fact, a NOTE by
 //! its author); the records the vault mints itself are no one's own. For a
-//! person delete is a role default, never a Grant it must hold; a Viewer, a
-//! Delegate or a guest has none. An agent deletes only
-//! under ONE live Grant that names the `delete` class and holds the record,
-//! given by a live Owner or by an Admin still holding it. A record that is
+//! member delete is a role default, never a Grant it must hold; a Viewer or a
+//! guest has none. A person who holds a Delegate grant, and an agent, delete
+//! only under ONE live Grant that names the `delete` class and holds the
+//! record, given by a live Owner or by an Admin still holding it (the act
+//! table's Delegate column, "if named: go"; the lead's ruling
+//! DELEGATE-PERSON-DELETE, 21 Nov). Erase stays the Owner's own act. A record that is
 //! authority rather than an item, whose removal widens someone's access or
 //! authority, is the live Owner's alone to delete, whatever role or Grant
 //! another caller holds ([`removal_widens`]). No second
@@ -35,7 +37,10 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, Result};
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
-use crate::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_NOTE, ENTITY_TYPE_TASK};
+use crate::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR, ENTITY_TYPE_COUNTERPARTY_CONTACT,
+    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_NOTE, ENTITY_TYPE_TASK,
+};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::WriteActor;
 
@@ -151,8 +156,9 @@ pub(crate) enum DeleteRefusal {
     /// An Admin role holds no live grant whose resource axes hold this
     /// record, and the caller does not own it.
     OutOfAdminScope,
-    /// The agent holds no one live Grant that names `delete`, holds this
-    /// record and was given by a live Owner or an Admin still holding it.
+    /// The agent, or the person holding a Delegate grant, holds no one live
+    /// Grant that names `delete`, holds this record and was given by a live
+    /// Owner or an Admin still holding it.
     NoDeleteGrant,
     /// The record is authority, not an item: removing it widens someone's
     /// access or authority, so only a live Owner deletes it, whatever role
@@ -196,7 +202,7 @@ impl DeleteRefusal {
                  own it"
                     .to_owned()
             }
-            Self::NoDeleteGrant => "the agent holds no live Grant that names delete and holds \
+            Self::NoDeleteGrant => "the caller holds no live Grant that names delete and holds \
                                     this record"
                 .to_owned(),
             Self::AuthorityRow => "this record restricts access or authority, and removing \
@@ -297,8 +303,10 @@ fn other_arms(
         Ok(admitted) => admitted,
         Err(refusal) => return Ok(Err(refusal)),
     };
-    if removal_widens(&record) {
-        return Ok(Err(DeleteRefusal::AuthorityRow));
+    match record.widens {
+        Ok(false) => {}
+        Ok(true) => return Ok(Err(DeleteRefusal::AuthorityRow)),
+        Err(kind) => return Ok(Err(DeleteRefusal::Unreadable(kind))),
     }
     if !credential_reaches(vault, txn, caller, Some(&record), false)? {
         return Ok(Err(DeleteRefusal::CredentialBounds));
@@ -306,44 +314,163 @@ fn other_arms(
     Ok(Ok(admitted))
 }
 
-/// Whether deleting `record` widens someone's access or authority: the
-/// record restricts it, so it is authority, not an item, and only whoever may
-/// widen it deletes it (the lead's RULING WORLD-ACCESS-GRANT-DELETE = A,
-/// 15 Nov: "deleting a restriction IS a widening"). DEL-2 stands for every
-/// other record. Each kind is told from the record's own kind and body, a
-/// CLAIM by its predicate and, where only some values restrict, one field:
+/// Whether deleting the record `id` of `kind`, stored as `body`, widens
+/// someone's access or authority: the record restricts it, so it is
+/// authority, not an item, and only whoever may widen it deletes it (the
+/// lead's RULING WORLD-ACCESS-GRANT-DELETE = A, 15 Nov: "deleting a
+/// restriction IS a widening"). DEL-2 stands for every other record. Each
+/// kind is told from the record's own kind and body, a CLAIM by its
+/// predicate and, where only some values restrict, its value:
 /// - a world-access grant or default (ARCH-0067 #tiers), open or closed;
 /// - a party's `comm.opt_out` and a `comm.do_not_contact` bar, which hold
 ///   sends to that party;
+/// - a `comm.reachable_via` of `reachable: false`, which skips that channel
+///   to that party;
+/// - a paused, suppressed or exited `campaign.member`, which holds the
+///   campaign's sends to that person. The heads are not folded, so a delete
+///   is refused even while a sibling head would still hold the sends;
+/// - a `disclosure.import_audience` of only me or a project, which moves the
+///   topic's later imports out of the audience their source shared them
+///   with. The value alone tells it, so a row the topic never settled to is
+///   refused too;
 /// - a delivery window (`delivery_window.*`), which holds interrupts;
 /// - an Approved `repo.secret_mark`, which masks the bytes a repo serves;
-/// - a `project.leader_chat` rule of `false`, which narrows leader chat.
+/// - a `project.leader_chat` rule of `false`, which narrows leader chat;
+/// - a claim-class descriptor, any one: a synced row may be stricter than
+///   the compiled one, and no order between two descriptors exists to tell;
+/// - a counterparty contact, and its `counterparty_contact.counterparty`
+///   head, while the contact's own heads hold it opted out or revoked. The
+///   send gate finds a party's contacts by that head, and a delete of the
+///   contact retires all its heads.
 ///
-/// Rows whose restriction needs another codec or row to tell are FIX rows
-/// (`comm.reachable_via` false, a paused, suppressed or exited
-/// `campaign.member`, a narrowing `disclosure.import_audience`, a synced
-/// claim-class descriptor stricter than the compiled one).
-fn removal_widens(record: &TargetRecord) -> bool {
-    if record.kind != crate::registry::ENTITY_TYPE_CLAIM {
-        return false;
+/// The last kind reads the contact's live heads in `txn`, so an error there
+/// is an error here, and the delete is refused as unreadable.
+///
+/// The other doors that take such a record out of its readers' fold below
+/// the owner judge it by the same rule (the Engine's RULING
+/// RESTRICTION-FIX-SCOPE = A, 15 Nov): a put over its id
+/// ([`stored_removal_widens_in`], `batch::put_target_admitted_in`), and a
+/// retract or a stale mark of a claim ([`claim_removal_widens_in`],
+/// `memory::require_live_owner_to_lift_restriction_in_txn`).
+fn removal_widens(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    body: &[u8],
+) -> Result<bool> {
+    match kind {
+        ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR => return Ok(true),
+        ENTITY_TYPE_COUNTERPARTY_CONTACT => return contact_held(vault, txn, id),
+        ENTITY_TYPE_CLAIM => {}
+        _ => return Ok(false),
     }
-    let Ok(body) = crate::claim::decode_claim_body(&record.body, true) else {
-        return false;
+    let Ok(body) = crate::claim::decode_claim_body(body, true) else {
+        return Ok(false);
     };
-    let predicate = body.predicate.as_str();
-    crate::write_envelope::world_access_predicates::is_world_access_tier_predicate(predicate)
-        || predicate == crate::write_envelope::communication::PREDICATE_COMM_OPT_OUT
-        || predicate == crate::write_envelope::cohort_claims::PREDICATE_COMM_DO_NOT_CONTACT
-        || crate::delivery_window::DELIVERY_WINDOW_CLAIM_PREDICATES.contains(&predicate)
-        || (predicate == crate::origin::secret_marks::REPO_SECRET_MARK_PREDICATE
-            && body.approval == crate::claim::ClaimApprovalStatus::Approved)
-        || (predicate == crate::workspace_roster::LEADER_CHAT_RULE_PREDICATE
-            && body.value == rmpv::Value::Boolean(false))
+    claim_removal_widens_in(vault, txn, &body)
 }
 
-/// The record as `txn` holds it: its kind, body, a TASK's Owner fact and
-/// the position the scoped doors select it at. `None` where no row is
+/// [`removal_widens`] of the row `txn` stores at `id`: `false` where none is
 /// stored.
+///
+/// # Errors
+///
+/// A row whose header does not parse, and [`removal_widens`]'s own.
+pub(crate) fn stored_removal_widens_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let Some(raw) = vault.get_raw_in(txn, id)? else {
+        return Ok(false);
+    };
+    let header =
+        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("stored row header"))?;
+    let body = raw
+        .get(ENTITY_METADATA_HEADER_LEN..)
+        .ok_or(Error::CorruptedIndex("stored row header"))?;
+    removal_widens(vault, txn, *id, header.entity_type, body)
+}
+
+/// [`removal_widens`] of a CLAIM stored as `body`: by its predicate and,
+/// where only some values restrict, its value.
+///
+/// # Errors
+///
+/// The contact read of a `counterparty_contact.counterparty` head.
+pub(crate) fn claim_removal_widens_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    body: &crate::claim::ClaimBody,
+) -> Result<bool> {
+    use crate::write_envelope::cohort_claims::{CampaignMemberState, PREDICATE_CAMPAIGN_MEMBER};
+
+    let predicate = body.predicate.as_str();
+    if predicate == crate::counterparty_contact::PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY {
+        return match &body.subject {
+            crate::claim::ClaimSubject::Entity(contact) => contact_held(vault, txn, *contact),
+            _ => Ok(false),
+        };
+    }
+    Ok(
+        crate::write_envelope::world_access_predicates::is_world_access_tier_predicate(predicate)
+            || predicate == crate::write_envelope::communication::PREDICATE_COMM_OPT_OUT
+            || predicate == crate::write_envelope::cohort_claims::PREDICATE_COMM_DO_NOT_CONTACT
+            || (predicate == crate::write_envelope::communication::PREDICATE_COMM_REACHABLE_VIA
+                && matches!(
+                    crate::comm::CommClaim::from_claim_body(body).map(|claim| claim.value),
+                    Ok(crate::comm::CommClaimValue::ReachableVia {
+                        reachable: false,
+                        ..
+                    })
+                ))
+            || (predicate == PREDICATE_CAMPAIGN_MEMBER
+                && matches!(
+                    crate::write_envelope::cohort_claims::decode_campaign_member_value(&body.value)
+                        .map(|member| member.state),
+                    Ok(CampaignMemberState::Paused { .. }
+                        | CampaignMemberState::Suppressed
+                        | CampaignMemberState::Exited)
+                ))
+            || (predicate == crate::disclosure::PREDICATE_DISCLOSURE_IMPORT_AUDIENCE
+                && matches!(
+                    crate::disclosure::decode_import_audience_value(&body.value),
+                    Ok((
+                        _,
+                        crate::ingest::ImportAudience::OnlyMe
+                            | crate::ingest::ImportAudience::Project { .. },
+                        _
+                    ))
+                ))
+            || crate::delivery_window::DELIVERY_WINDOW_CLAIM_PREDICATES.contains(&predicate)
+            || (predicate == crate::origin::secret_marks::REPO_SECRET_MARK_PREDICATE
+                && body.approval == crate::claim::ClaimApprovalStatus::Approved)
+            || (predicate == crate::workspace_roster::LEADER_CHAT_RULE_PREDICATE
+                && body.value == rmpv::Value::Boolean(false)),
+    )
+}
+
+/// Whether the counterparty contact `contact` is held now by its own heads:
+/// opted out or revoked. A contact with no live head holds nothing; a party's
+/// own `comm.opt_out` heads are records of their own ([`removal_widens`]).
+fn contact_held(vault: &Vault, txn: &heed::RoTxn<'_>, contact: EntityId) -> Result<bool> {
+    Ok(
+        crate::counterparty_contact::counterparty_contact_record_from_store_claims_in_txn(
+            &vault.store,
+            txn,
+            &contact,
+        )?
+        .is_some_and(|record| {
+            record.is_opted_out()
+                || record.status == crate::counterparty_contact::CounterpartyContactStatus::Revoked
+        }),
+    )
+}
+
+/// The record as `txn` holds it: its kind, body, a TASK's Owner fact, the
+/// position the scoped doors select it at, and whether its removal widens
+/// someone's access or authority. `None` where no row is stored.
 #[derive(Clone)]
 struct TargetRecord {
     id: EntityId,
@@ -353,6 +480,12 @@ struct TargetRecord {
     task_owner: Option<EntityId>,
     /// `None` where the record proves no position: no grant axis holds it.
     position: Option<Scope>,
+    /// [`removal_widens`] as this read found it, or the kind of the error
+    /// that read met. Kept with the last live read: a delete's own scrub
+    /// retires heads the read looks at (a contact's `counterparty` head), so
+    /// the publish judges what the record restricted while it stood. Only a
+    /// caller below the Owner is refused on it.
+    widens: std::result::Result<bool, ErrorKind>,
 }
 
 impl TargetRecord {
@@ -391,12 +524,15 @@ impl TargetRecord {
         } else {
             None
         };
+        let widens =
+            removal_widens(vault, txn, id, header.entity_type, &body).map_err(|error| error.kind());
         Ok(Some(Self {
             id,
             kind: header.entity_type,
             body,
             task_owner,
             position,
+            widens,
         }))
     }
 }
@@ -404,9 +540,11 @@ impl TargetRecord {
 /// An Admin's in-scope delete, a Steward's in-scope delete under the
 /// `delete` class its grant names, else an Admin's, a Steward's or a
 /// Member's own item, each under one live membership grant over this shared
-/// vault. A personal vault has no membership roles. The refusal names the
-/// role the person holds: none, an Admin role out of scope, or a role that
-/// deletes only its own items.
+/// vault, else a delete under one live Delegate grant the person holds
+/// ([`delegate_grant_deleting`]). A personal vault has no membership roles.
+/// The refusal names the role the person holds: none, an Admin role out of
+/// scope, a role that deletes only its own items, or a Delegate grant that
+/// does not delete this record.
 fn person_arms(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -421,8 +559,14 @@ fn person_arms(
     let mut own_grant = None;
     let mut holds_role = false;
     let mut holds_admin = false;
+    let mut holds_delegate = false;
     for (id, grant) in live_grants_in(vault, txn)? {
         if grant.member_ref != person || grant.scope != scope {
+            continue;
+        }
+        // A Delegate grant is no membership: its own arm judges it below.
+        if grant.role == FederationGrantRole::Delegate {
+            holds_delegate = true;
             continue;
         }
         let Some(MembershipStanding::Member { role, .. }) =
@@ -478,11 +622,21 @@ fn person_arms(
             }
         }
     }
+    if own_grant.is_none()
+        && let Some(position) = record.position.as_ref()
+        && let Some(grant) = delegate_grant_deleting(vault, txn, person, position)?
+    {
+        return Ok(Ok(DeleteAuthority {
+            role: ArchiveDeleteRole::Delegate,
+            grant: Some(grant),
+        }));
+    }
     Ok(match own_grant {
         Some(grant) => Ok(DeleteAuthority {
             role: ArchiveDeleteRole::Member,
             grant: Some(grant),
         }),
+        None if !holds_role && holds_delegate => Err(DeleteRefusal::NoDeleteGrant),
         None if !holds_role => Err(DeleteRefusal::NoStanding),
         None if holds_admin => Err(DeleteRefusal::OutOfAdminScope),
         None => Err(DeleteRefusal::NotOwnerOfItem),
@@ -510,12 +664,8 @@ fn owned_by(
     }
 }
 
-/// The first live Grant that alone names this agent, confers now, lists the
-/// `delete` class in its explicit verb set, holds the record, was given by
-/// a live owner (an owner's agent Grant) or by a person still holding an
-/// Admin grant that holds the record (a Delegate), and on a shared vault
-/// keeps its pact membership. Grants are never unioned. On an owner's agent
-/// Grant, a verb class it names that admits `delete` lists it (FIX 8735).
+/// An agent's delete under [`delegate_grant_deleting`]: a live agent
+/// principal's only.
 fn agent_arm(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -528,6 +678,27 @@ fn agent_arm(
     let Some(position) = record.position.as_ref() else {
         return Ok(None);
     };
+    Ok(
+        delegate_grant_deleting(vault, txn, caller.actor, position)?.map(|grant| DeleteAuthority {
+            role: ArchiveDeleteRole::Agent,
+            grant: Some(grant),
+        }),
+    )
+}
+
+/// The first live Delegate grant that alone names `holder` (an agent, or a
+/// person), confers now, lists the `delete` class in its explicit verb set,
+/// holds `position`, was given by a live owner (an owner's agent Grant) or
+/// by a person still holding an Admin grant that holds the record, and on a
+/// shared vault keeps its pact membership. Grants are never unioned. On an
+/// owner's agent Grant, a verb class it names that admits `delete` lists it
+/// (FIX 8735).
+fn delegate_grant_deleting(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    holder: EntityId,
+    position: &Scope,
+) -> Result<Option<EntityId>> {
     let now = vault.grant_judgement_secs_in_txn(txn)?;
     let owners = crate::policy_model::owners_in_txn(vault, txn)?;
     let shared = vault.shared_vault_creation_in_txn(txn)?.is_some();
@@ -537,12 +708,12 @@ fn agent_arm(
         txn,
         grants
             .iter()
-            .filter(|(_, grant)| grant.member_ref == caller.actor)
+            .filter(|(_, grant)| grant.member_ref == holder)
             .map(|(_, grant)| grant),
     )?;
     for (id, grant) in grants {
         let scope = grant.scope_for_verb(DELETE_VERB, &classes);
-        if grant.member_ref != caller.actor
+        if grant.member_ref != holder
             || grant.role != FederationGrantRole::Delegate
             || !grant.confers_with_classes_at(now, &classes)
             || !names_delete(&scope)
@@ -562,10 +733,7 @@ fn agent_arm(
         if !issuer_stands || (shared && pact_lapsed(vault, txn, id, &grant)?) {
             continue;
         }
-        return Ok(Some(DeleteAuthority {
-            role: ArchiveDeleteRole::Agent,
-            grant: Some(id),
-        }));
+        return Ok(Some(id));
     }
     Ok(None)
 }

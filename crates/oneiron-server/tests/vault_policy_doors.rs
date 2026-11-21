@@ -2,20 +2,25 @@
 //! HTTP `POST /v1/core/facade/<verb>` through the in-process router
 //! (`oneshot`, no TCP ports, no sleeps). The doors are `owner.get`,
 //! `owner.configure`, `owner.row.change`, `outbound.decide`, `relay.decide`
-//! and `preflight`.
+//! and `preflight`, plus the Gate policy doors `vault.gate.policy.propose`,
+//! `.get` and `.put` for the agents-propose half of P2.
 //!
 //! What this file proves, through the doors:
 //! - P1 (owner-row half): a policy row lives in the manifest the owner
 //!   changes, and a row's presence steers decisions (add -> receipt ->
 //!   verdict names the row). The manifest bytes themselves are not
 //!   door-readable here.
-//! - P2, first half: holders change rows at once — a row change lands
-//!   synchronously with a change receipt, never as a proposal. ("Agents
-//!   propose" has no door in this family and stays unproven here.)
+//! - P2: holders change rows at once — a row change lands synchronously
+//!   with a change receipt, never as a proposal. Agents propose — an
+//!   agent's tighter Gate manifest lands untrusted and quarantined, and the
+//!   policy in force (its read frontier) stays as it was until a holder
+//!   puts the same bytes.
 //! - P3: Warn delivers the content byte for byte, Block halts it, and
 //!   RouteToHelp routes it; none of these returns rewritten content.
-//!   Skipped is not Allow, and a plane that is off answers silently with no
-//!   receipt.
+//!   Reword halts and hands back the owner row's constraint, never a
+//!   rewrite; a row that names a human holds the content and queues it for
+//!   that human. Skipped is not Allow, and a plane that is off answers
+//!   silently with no receipt.
 //! - P4: the decision receipt stores the content hash, never the plaintext.
 //! - The refusal table: the owner doors refuse person, agent and
 //!   narrowed-host callers, and every scope, record-scope, hash, row-key,
@@ -25,8 +30,10 @@
 //! Canon (mirror generated/llms-full.txt):
 //! - oneiron-dec-0005-policy-residence.md:8 (mirror :362815):
 //!   "Every policy value is a row in the vault policy manifest,"
-//! - same line: "Holders change rows at once; agents propose." (first half
-//!   proven here; the "agents propose" half has no door here and is unproven)
+//! - same line: "Holders change rows at once; agents propose."
+//! - same page (mirror :362867): "Every other actor, agents included,
+//!   proposes. Its call lands as a proposal in either direction and changes
+//!   nothing until a holder answers."
 //! - oneiron-arch-0047-policy-egress-gate.md:25 (mirror :366791):
 //!   "The verdict arms are Allow, Warn, Block and RouteToHelp."
 //! - oneiron-arch-0047-policy-egress-gate.md:47 (mirror :366813):
@@ -59,6 +66,7 @@ use ed25519_dalek::SigningKey;
 use engine_stack::run_on_engine_stack;
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof};
 use oneiron::federation::{ScopeAxis, ScopeId};
+use oneiron::policy_model::PolicyModelConfig;
 use oneiron::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::verbs::{AgentDefinitionCreateRequest, create_agent_definition_as};
@@ -184,6 +192,12 @@ fn mint_agent_credential(
 }
 
 async fn setup() -> Fixture {
+    setup_with_owner_policy(PolicyModelConfig::default()).await
+}
+
+/// [`setup`] with the host's owner-plane policy config, as `serve` hands
+/// its `[policy]` section to `SyncServer::with_owner_policy_config`.
+async fn setup_with_owner_policy(owner_policy: PolicyModelConfig) -> Fixture {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open vault"));
     vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
@@ -196,7 +210,8 @@ async fn setup() -> Fixture {
                 ..Default::default()
             },
         )
-        .expect("create server"),
+        .expect("create server")
+        .with_owner_policy_config(owner_policy),
     );
     let issuer = vault.load_host_slip_issuer().expect("host slip issuer");
     let owner_slip = vault
@@ -672,6 +687,194 @@ fn owner_configure_needs_the_hash_it_read() {
     });
 }
 
+/// The owner reads the Gate policy envelopes and the read frontier.
+async fn gate_policy_get_as_owner(fixture: &Fixture) -> (StatusCode, Value) {
+    post_as_owner(fixture, "/v1/core/facade/vault.gate.policy.get", json!({})).await
+}
+
+/// The agent proposes a Gate policy manifest under its own authority.
+async fn gate_policy_propose_as_agent(fixture: &Fixture, manifest: Value) -> (StatusCode, Value) {
+    post_as_agent(
+        fixture,
+        "/v1/core/facade/vault.gate.policy.propose",
+        json!({"manifest": manifest}),
+    )
+    .await
+}
+
+/// The owner installs `manifest` as a fresh Gate policy contribution.
+async fn gate_policy_put_as_owner(fixture: &Fixture, manifest: Value) -> (StatusCode, Value) {
+    post_as_owner(
+        fixture,
+        "/v1/core/facade/vault.gate.policy.put",
+        json!({"manifest_ref": null, "expected_body_hash": null, "manifest": manifest}),
+    )
+    .await
+}
+
+/// A tighter Gate pack: every agent's approval ceiling narrowed to
+/// `proposed`. Schema 1.2 and an engine floor of 0.1.0 pass the typed
+/// door's decode.
+fn agent_ceiling_proposed_manifest() -> Value {
+    json!({
+        "schema_version": "1.2",
+        "pack_id": "policy-doors-agent-ceiling",
+        "pack_version": "1",
+        "min_engine_version": "0.1.0",
+        "defaults": {},
+        "rules": [],
+        "actor_ceilings": [{"actor_class": "agent", "ceiling": "proposed"}],
+    })
+}
+
+/// The listed view of `manifest_ref` in a `vault.gate.policy.get` answer.
+fn listed_manifest<'a>(view: &'a Value, manifest_ref: &str) -> &'a Value {
+    view["manifests"]
+        .as_array()
+        .and_then(|listed| {
+            listed
+                .iter()
+                .find(|entry| entry["manifest_ref"].as_str() == Some(manifest_ref))
+        })
+        .unwrap_or_else(|| panic!("{manifest_ref} is listed: {view}"))
+}
+
+/// An agent's tighter policy proposal lands inert: it answers `proposed`,
+/// is stored untrusted and quarantined, and leaves the default manifest and
+/// the read frontier of the policy in force (which every Gate decision
+/// binds) as they were. The owner putting the same bytes lands at once and
+/// moves the frontier, so the unchanged frontier is the proposal's doing,
+/// not a manifest the resolver never reads.
+///
+/// Canon dec-0005 (mirror generated/llms-full.txt:362815): "Holders change
+/// rows at once; agents propose." Same page (mirror :362867): "Every other
+/// actor, agents included, proposes. Its call lands as a proposal in either
+/// direction and changes nothing until a holder answers."
+#[test]
+fn an_agents_policy_proposal_lands_inert_until_a_holder_puts_it() {
+    run_on_engine_stack("policy-agent-propose", || async {
+        let fixture = setup().await;
+        let manifest = agent_ceiling_proposed_manifest();
+        let (status, before) = gate_policy_get_as_owner(&fixture).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "owner reads the Gate policy: {before}"
+        );
+        let frontier = before["read_frontier_hash"]
+            .as_str()
+            .expect("the read frontier")
+            .to_owned();
+        let default_ref = before["default_manifest_ref"]
+            .as_str()
+            .expect("the default manifest ref")
+            .to_owned();
+        let default_hash = listed_manifest(&before, &default_ref)["body_hash"]
+            .as_str()
+            .expect("the default manifest hash")
+            .to_owned();
+
+        let (status, proposed) = gate_policy_propose_as_agent(&fixture, manifest.clone()).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the agent's proposal is taken: {proposed}"
+        );
+        assert_eq!(
+            proposed["manifest"]["trusted"].as_bool(),
+            Some(false),
+            "the proposal is stored untrusted, so it enters no policy value: {proposed}"
+        );
+        assert_eq!(
+            proposed["manifest"]["quarantined"].as_bool(),
+            Some(true),
+            "the proposal is stored quarantined: {proposed}"
+        );
+        assert_eq!(
+            proposed["read_frontier_hash"].as_str(),
+            Some(frontier.as_str()),
+            "the proposal leaves the policy in force as it was: {proposed}"
+        );
+        assert_eq!(
+            proposed["approval"].as_str(),
+            Some("proposed"),
+            "the agent's call answers as a proposal: {proposed}"
+        );
+        assert!(
+            proposed["receipt_ref"]
+                .as_str()
+                .is_some_and(|held| held.starts_with("gate:")),
+            "the proposal is receipted: {proposed}"
+        );
+        let proposal_ref = proposed["manifest"]["manifest_ref"]
+            .as_str()
+            .expect("the proposal's ref")
+            .to_owned();
+
+        let (status, after) = gate_policy_get_as_owner(&fixture).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "owner reads the Gate policy again: {after}"
+        );
+        assert_eq!(
+            after["read_frontier_hash"].as_str(),
+            Some(frontier.as_str()),
+            "the policy in force is unchanged after the proposal: {after}"
+        );
+        assert_eq!(
+            listed_manifest(&after, &default_ref)["body_hash"].as_str(),
+            Some(default_hash.as_str()),
+            "the proposal changed no row of the default manifest: {after}"
+        );
+        let listed = listed_manifest(&after, &proposal_ref);
+        assert_eq!(
+            (listed["trusted"].as_bool(), listed["quarantined"].as_bool()),
+            (Some(false), Some(true)),
+            "the owner sees the proposal as an inert contribution: {after}"
+        );
+
+        let (status, landed) = gate_policy_put_as_owner(&fixture, manifest).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the owner puts the same pack: {landed}"
+        );
+        assert_eq!(
+            landed["approval"].as_str(),
+            Some("auto"),
+            "a holder's put lands at once: {landed}"
+        );
+        assert_eq!(
+            (
+                landed["manifest"]["trusted"].as_bool(),
+                landed["manifest"]["quarantined"].as_bool()
+            ),
+            (Some(true), Some(false)),
+            "the holder's pack is trusted and read: {landed}"
+        );
+        let moved = landed["read_frontier_hash"]
+            .as_str()
+            .expect("the moved frontier")
+            .to_owned();
+        assert_ne!(
+            moved, frontier,
+            "the same bytes from a holder change the policy in force: {landed}"
+        );
+        let (status, after_put) = gate_policy_get_as_owner(&fixture).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "owner reads the Gate policy after the put: {after_put}"
+        );
+        assert_eq!(
+            after_put["read_frontier_hash"].as_str(),
+            Some(moved.as_str()),
+            "the holder's change stays in force: {after_put}"
+        );
+    });
+}
+
 /// Warn delivers the content byte for byte, Block halts it, and RouteToHelp
 /// routes it; each verdict names its row, and none of the three rewrites.
 ///
@@ -820,6 +1023,273 @@ fn warn_delivers_bytes_block_halts_route_to_help_routes() {
             "the help routing names its row: {answer}"
         );
         assert_verdict_row(&answer, "row-help");
+    });
+}
+
+/// The host's overt retry explanation for a `reword` row (`[policy]`
+/// `owner_reword_notice`); the engine ships no wording of its own.
+const REWORD_NOTICE: &str = "Your policy asks for another wording; write a new candidate.";
+
+/// The host's explanation of a human hold (`[policy]` `owner_hold_notice`).
+const HOLD_NOTICE: &str = "This content waits for the reviewer your policy names.";
+
+/// A fixture whose host words the reword and hold notices.
+async fn setup_with_halting_notices() -> Fixture {
+    setup_with_owner_policy(PolicyModelConfig {
+        owner_reword_notice: Some(REWORD_NOTICE.to_owned()),
+        owner_hold_notice: Some(HOLD_NOTICE.to_owned()),
+        ..PolicyModelConfig::default()
+    })
+    .await
+}
+
+/// The owner adds one row and turns the plane on with one Decide pattern
+/// that settles `token` on that row, through the doors.
+async fn decide_row(fixture: &Fixture, row_ref: &str, text: &str, action: &str, token: &str) {
+    let change = json!({"Add": {
+        "row_ref": row_ref,
+        "text": text,
+        "action": action,
+        "scope": "Vault",
+    }});
+    let (status, landed) = owner_row_change(fixture, change).await;
+    assert_eq!(status, StatusCode::OK, "owner adds {row_ref}: {landed}");
+    enable_decide_pattern(fixture, row_ref, token).await;
+}
+
+/// The owner turns the plane on with one Decide pattern for `row_ref`,
+/// against the hash it reads.
+async fn enable_decide_pattern(fixture: &Fixture, row_ref: &str, token: &str) {
+    let (status, view) = owner_get(fixture).await;
+    assert_eq!(status, StatusCode::OK, "owner reads the policy: {view}");
+    let read_hash = view["body_hash"].as_str().expect("body hash").to_owned();
+    let patterns = json!([
+        {"id": format!("pat-{row_ref}"), "pattern": token, "category": row_ref, "role": "decide"},
+    ]);
+    let configuration = json!({"owner_policy_enabled": true, "owner_policy_patterns": patterns});
+    let (status, enabled) = owner_configure(fixture, &read_hash, configuration).await;
+    assert_eq!(status, StatusCode::OK, "owner enables the plane: {enabled}");
+}
+
+/// Names `human` on the owner row `row_ref` of the default policy manifest.
+/// The row-change door has no `human` field, so the owner writes it through
+/// the authenticated install door in-process, as
+/// `crates/oneiron/tests/agent_wake_hold.rs` edits that manifest.
+fn name_a_human_on_owner_row(fixture: &Fixture, row_ref: &str, human: &str) {
+    use rmpv::Value as Msg;
+    let vault = &fixture.vault;
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let proof = vault
+        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+        .expect("owner proof");
+    let id = oneiron_store::policy_record::default_policy_manifest_id()
+        .expect("the default policy manifest id");
+    let body = vault
+        .get(&id)
+        .expect("read the default policy manifest")
+        .expect("the default policy manifest is stored");
+    let Msg::Map(mut fields) =
+        rmpv::decode::read_value(&mut body.as_slice()).expect("a MessagePack manifest")
+    else {
+        panic!("the default policy manifest is a map");
+    };
+    let Some((_, Msg::Array(rows))) = fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("owner_policy_rows"))
+    else {
+        panic!("the default policy manifest holds the owner rows");
+    };
+    let Some(Msg::Map(row)) = rows.iter_mut().find(|row| {
+        matches!(row, Msg::Map(entries) if entries.iter().any(|(key, value)| {
+            key.as_str() == Some("row_ref") && value.as_str() == Some(row_ref)
+        }))
+    }) else {
+        panic!("the owner row {row_ref} is stored");
+    };
+    row.push((Msg::from("human"), Msg::from(human)));
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Msg::Map(fields)).expect("encode the manifest");
+    vault
+        .install_owner_policy_manifest(&proof, id, bytes, vault.now_recorded_at())
+        .expect("the owner names a human on the row");
+}
+
+/// The one system notice of `notice_type` the answer carries.
+fn notice_of_type<'a>(answer: &'a Value, notice_type: &str) -> &'a Value {
+    let notices: Vec<&Value> = answer["system_notices"]
+        .as_array()
+        .map(|notices| {
+            notices
+                .iter()
+                .filter(|notice| notice["notice_type"].as_str() == Some(notice_type))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert_eq!(
+        notices.len(),
+        1,
+        "the answer carries one {notice_type} notice: {answer}"
+    );
+    notices[0]
+}
+
+/// Reword halts the candidate, as Block does, and hands back the owner
+/// row's constraint for a fresh candidate: the answer carries no content,
+/// original or rewritten.
+///
+/// Canon arch-0047 (mirror generated/llms-full.txt:366805): "Reword halts
+/// delivery, as Block does" and "It returns the owner row’s constraint, and
+/// the author writes a fresh candidate in their own voice." and "The engine
+/// returns no rewritten content: the delivered content stays the original
+/// or nothing".
+#[test]
+fn reword_halts_and_returns_the_row_constraint() {
+    run_on_engine_stack("policy-reword", || async {
+        let fixture = setup_with_halting_notices().await;
+        let constraint = "Say it without the project codename.";
+        decide_row(
+            &fixture,
+            "row-reword",
+            constraint,
+            "reword",
+            "ZEBRA-REWORD-44",
+        )
+        .await;
+
+        let candidate = "Please move ZEBRA-REWORD-44 past the gate.";
+        let (status, answer) = decide_as_person(&fixture, candidate).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the reword content is decided: {answer}"
+        );
+        assert_eq!(
+            answer["action"].as_str(),
+            Some("reword"),
+            "the Reword row asks for a new candidate: {answer}"
+        );
+        assert_eq!(
+            answer["outbound_halted"].as_bool(),
+            Some(true),
+            "Reword halts, as Block does: {answer}"
+        );
+        assert!(
+            answer["final_content"].is_null(),
+            "Reword delivers nothing, original or rewritten: {answer}"
+        );
+        assert_eq!(
+            answer["pre_display_block"].as_bool(),
+            Some(true),
+            "Reword pre-displays nothing: {answer}"
+        );
+        assert_eq!(
+            answer["reword"]["row_ref"].as_str(),
+            Some("row-reword"),
+            "the reword names its row: {answer}"
+        );
+        assert_eq!(
+            answer["reword"]["constraint"].as_str(),
+            Some(constraint),
+            "the reword hands back the owner row's constraint: {answer}"
+        );
+        assert!(
+            answer["receipt_ref"]
+                .as_str()
+                .is_some_and(|held| held.starts_with("gate:")),
+            "the reword is receipted: {answer}"
+        );
+        assert_eq!(
+            notice_of_type(&answer, "policy_reword")["body"].as_str(),
+            Some(REWORD_NOTICE),
+            "the system voice gives the host's retry explanation: {answer}"
+        );
+        assert_verdict_row(&answer, "row-reword");
+    });
+}
+
+/// A row that names a human holds the content and queues it for that
+/// human: the answer halts, delivers nothing, names the queued item, and
+/// the system voice explains the hold. The row's own action is `block`;
+/// the named human turns it into a hold.
+///
+/// Canon arch-0047 (mirror generated/llms-full.txt:366797): "Where a row
+/// names a human, the check holds the action. The check queues the held
+/// item for later moderation."
+#[test]
+fn a_row_naming_a_human_holds_and_queues_the_content() {
+    run_on_engine_stack("policy-hold", || async {
+        let fixture = setup_with_halting_notices().await;
+        let change = json!({"Add": {
+            "row_ref": "row-hold",
+            "text": "Hold launch dates for the moderator.",
+            "action": "block",
+            "scope": "Vault",
+        }});
+        let (status, landed) = owner_row_change(&fixture, change).await;
+        assert_eq!(status, StatusCode::OK, "owner adds row-hold: {landed}");
+        name_a_human_on_owner_row(&fixture, "row-hold", "moderator:offline");
+        enable_decide_pattern(&fixture, "row-hold", "ZEBRA-HOLD-55").await;
+
+        let candidate = "Please move ZEBRA-HOLD-55 past the gate.";
+        let (status, answer) = decide_as_person(&fixture, candidate).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the held content is decided: {answer}"
+        );
+        assert_eq!(
+            answer["action"].as_str(),
+            Some("hold"),
+            "a row naming a human holds: {answer}"
+        );
+        assert_eq!(
+            answer["outbound_halted"].as_bool(),
+            Some(true),
+            "Hold halts: {answer}"
+        );
+        assert!(
+            answer["final_content"].is_null(),
+            "Hold delivers nothing: {answer}"
+        );
+        assert_eq!(
+            answer["pre_display_block"].as_bool(),
+            Some(true),
+            "Hold pre-displays nothing: {answer}"
+        );
+        let queue_ref = answer["moderation_ref"]
+            .as_str()
+            .expect("the hold names its queued item")
+            .to_owned();
+        let receipt_ref = answer["receipt_ref"]
+            .as_str()
+            .expect("the hold is receipted")
+            .to_owned();
+        assert!(
+            receipt_ref.starts_with("gate:"),
+            "the hold's receipt is a gate decision: {answer}"
+        );
+        assert_eq!(
+            notice_of_type(&answer, "policy_hold")["body"].as_str(),
+            Some(HOLD_NOTICE),
+            "the system voice explains the hold: {answer}"
+        );
+        assert_verdict_row(&answer, "row-hold");
+
+        let held = fixture.vault.policy_holds(10).expect("read the hold queue");
+        let item = held
+            .iter()
+            .find(|item| item.queue_ref == queue_ref)
+            .unwrap_or_else(|| panic!("the held item is queued: {held:?}"));
+        assert_eq!(item.row_ref, "row-hold", "the item names its row");
+        assert_eq!(
+            item.human, "moderator:offline",
+            "the item waits for the human the row names"
+        );
+        assert_eq!(
+            item.receipt_ref, receipt_ref,
+            "the queued item and the answer name one receipt"
+        );
+        assert!(item.resolution.is_none(), "nobody has ruled on the hold");
     });
 }
 

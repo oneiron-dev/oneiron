@@ -199,6 +199,11 @@ impl PartialServeConfig {
             if !oneiron_vault_contract::valid_vault_name(&value) {
                 anyhow::bail!("artifact_vault_name must be a DNS label of [a-z0-9-]");
             }
+            // Served, it would answer only at `localhost.localhost`: the bare
+            // `localhost` is local `/a/` (FIX LOCALHOST-VAULT-NAME-HELP).
+            if value == oneiron_vault_contract::artifact_origin::LOCAL_ARTIFACT_DOMAIN {
+                anyhow::bail!("artifact_vault_name must not be localhost, which keeps local /a/");
+            }
             resolved.artifact_vault_name = Some(value);
         }
         if let Some(value) = self.trusted_proxies {
@@ -333,6 +338,9 @@ impl PartialServeConfig {
         if let Some(value) = self.line {
             resolved.line = value;
         }
+        if let Some(value) = self.mail {
+            resolved.mail = value;
+        }
         if let Some(value) = self.channel_endpoints {
             resolved.channel_endpoints = value;
         }
@@ -341,6 +349,9 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.linear {
             resolved.linear = Some(value);
+        }
+        if let Some(value) = self.phonetic_embedder {
+            resolved.phonetic_embedder = Some(value);
         }
         if let Some(value) = self.gpu {
             resolved.gpu = Some(value);
@@ -364,6 +375,9 @@ impl PartialServeConfig {
         if let Some(value) = self.connectors {
             resolved.connectors = value;
         }
+        if let Some(value) = self.gpu_jobs {
+            resolved.gpu_jobs = value.resolve()?;
+        }
         // An explicit no stands as firmly as a yes.
         if let Some(value) = self.failure_signal_export {
             resolved.failure_signal_export = Some(value);
@@ -385,6 +399,12 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.device_class {
             resolved.device_class = value;
+        }
+        if let Some(value) = self.machine_reported_name {
+            resolved.machine_reported_name = Some(value);
+        }
+        if let Some(value) = self.machine_reported_model {
+            resolved.machine_reported_model = Some(value);
         }
         if let Some(value) = self.esign_delivery_outbox_dir {
             resolved.esign_delivery_outbox_dir = Some(value);

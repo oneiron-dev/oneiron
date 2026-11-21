@@ -16,19 +16,20 @@ use crate::live::pptx::{
 use crate::live::reshape;
 use std::collections::BTreeMap;
 
+/// A chart payload's plot runs, series plot indices and plot identities.
+type HeldPlots = (
+    Vec<(ChartKind, usize)>,
+    BTreeMap<NodeId, usize>,
+    Vec<Option<NodeId>>,
+);
+
 /// A chart payload's plots as the reader lists them, each by its own
 /// series (FIX 9377, 9278): its series' families in runs, a run ending
 /// where the next series is drawn in another plot of its family
 /// ([`ChartSeries::plot`]), so two adjacent plots of one family stay two;
 /// after an empty first plot when the chart's family is not its first
 /// series'; and the plot each series is drawn in, by its identity.
-fn held_plots(
-    was: &NodePayload,
-) -> (
-    Vec<(ChartKind, usize)>,
-    BTreeMap<NodeId, usize>,
-    Vec<Option<NodeId>>,
-) {
+fn held_plots(was: &NodePayload) -> HeldPlots {
     let NodePayload::Chart { family, series, .. } = was else {
         return (Vec::new(), BTreeMap::new(), Vec::new());
     };

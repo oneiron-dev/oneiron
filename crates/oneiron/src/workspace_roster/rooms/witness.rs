@@ -15,6 +15,8 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::workspace_roster::JoinSubject;
 use std::collections::BTreeMap;
 
+mod private_thread_reply;
+
 /// What the room guard proved for one witness.
 pub(crate) struct RoomWitness {
     /// The reply topology the witness mints into the TURN's first body and
@@ -198,6 +200,11 @@ pub(crate) fn admit_witness(
         // audience above. A room regeneration answers a project room's claim.
         if input.thread_audience.is_some() || regeneration.is_some() {
             return Err(invalid());
+        }
+        // A turn this write mints lands on the trunk: one replying into a
+        // private thread is refused (CHAT-ORDINARY-ROOM-REPLY-TO-TRUNK).
+        if stored_body.is_none() {
+            private_thread_reply::refuse_trunk_reply_into_private_thread_in(vault, txn, input)?;
         }
         // FIX 2027: a quote rides a turn in any room (ARCH-0006a:229), one
         // per message (FIX 2028). Its speaker takes part here, on a seat or a
