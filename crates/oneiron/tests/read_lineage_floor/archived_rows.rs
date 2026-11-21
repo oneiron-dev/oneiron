@@ -8,11 +8,21 @@
 //! #10222 review P1-1 (Opus and Spark): an archived SOURCE still reads gone.
 //! The backfill never raises an archived row, so its floor may not be
 //! whole: a row written from it waits on it until its restore raises both.
+//!
+//! FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS (#10222 Opus review 3): a row written
+//! from an archived row the backfill never raised settled on its empty
+//! floor and read open: by a walked link, by a child restored before its
+//! parent, and by a restore after the floor state was lost. The backfill
+//! raises archived rows too, and runs once more in a vault whose backfill
+//! ended before it did. Review 3 P2-1: a mark on an archived row is
+//! followed, so a row waiting on it settles when its floor does.
 
-use oneiron::EntityId;
 use oneiron::test_doors::cleanup_archive::archive_as_cleanup;
-use oneiron::test_doors::read_lineage_floor::{floor_of, floor_waits};
+use oneiron::test_doors::read_lineage_floor::{
+    end_backfill_without_archived_rows, floor_of, floor_waits,
+};
 use oneiron::test_doors::source_audience_binding::{bound_row_read_by, reads};
+use oneiron::{EdgeKind, EntityId};
 
 use super::erased_sources::{
     assert_no_stranger_or_reader_reads, erase, hidden_source_unknown, housekeeping_pass,
@@ -219,4 +229,185 @@ fn a_fact_from_a_source_archived_before_the_backfill_raised_it_waits_until_its_r
         mailbox.policy,
         "once its source is restored",
     );
+}
+
+/// A vault holding no policy yet, so no row can have a floor: its mailbox
+/// row `row` has not landed, and its policy is a placeholder until it does.
+fn mailbox_with_no_policy_yet(row: EntityId) -> Mailbox {
+    let dir = tempfile::tempdir().expect("FIXTURE: a temporary vault dir");
+    let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device())
+        .expect("FIXTURE: open the vault");
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the embedded owner");
+    Mailbox {
+        _dir: dir,
+        vault,
+        owner,
+        reader: EntityId::now(),
+        stranger: EntityId::now(),
+        row,
+        policy: EntityId::now(),
+    }
+}
+
+/// FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS, a walked link (#10222 Opus review 3,
+/// case a): in a vault that held no policy yet, `source` was learnt from
+/// `late`, a row not here, and `fact` is `DerivedFrom` `source`; no floor
+/// was written. `late` lands, bound to a member's mailbox, and the cleanup
+/// archives `source`. The backfill raises the archived `source`, so `fact`
+/// holds `late`'s policy. Before the fix the backfill skipped `source`, and
+/// `fact` settled with its empty floor: a read walk that reaches
+/// `source`'s bytes finds no policy there, so a stranger read `fact`.
+#[test]
+fn a_fact_derived_from_a_source_archived_before_floors_takes_its_floor_at_the_backfill() {
+    let late = EntityId::now();
+    let mut mailbox = mailbox_with_no_policy_yet(late);
+    let source = claim_born_from(&mailbox, &[late], "learnt from a row on its way");
+    let fact = claim_born_from(&mailbox, &[], "derived from source");
+    mailbox
+        .vault
+        .put_edge(&fact, EdgeKind::DerivedFrom, &source, 1.0)
+        .expect("FIXTURE: fact names its source");
+    mailbox.policy = bound_row_read_by(&mailbox.vault, late, &[mailbox.reader])
+        .expect("late lands, bound to a member's mailbox");
+    archive(&mailbox, source);
+    housekeeping_pass(&mailbox);
+    assert_reads_as_its_landed_source(&mailbox, fact, mailbox.policy, "after the backfill");
+    housekeeping_pass(&mailbox);
+    assert_reads_as_its_landed_source(&mailbox, fact, mailbox.policy, "after a later pass");
+}
+
+/// FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS, a child restored first (#10222 Opus
+/// review 3, case b): `parent` was learnt from the mailbox's row and
+/// `child` from `parent`, both before floors, and the cleanup archived both.
+/// The backfill raises both, so the owner's restore of `child` alone brings
+/// it back holding the mailbox's policy, and `parent`'s later restore keeps
+/// it so. Before the fix the backfill skipped both, and the restore raise
+/// of `child` (no first raise) settled it with the archived `parent`'s
+/// empty floor: a stranger read it.
+#[test]
+fn a_child_restored_before_its_archived_parent_reads_under_the_parents_source() {
+    let mailbox = owners_mailbox();
+    let parent = claim_born_before_floors(&mailbox, &[mailbox.row], "fact.archived_parent");
+    let child = claim_born_before_floors(&mailbox, &[parent], "fact.archived_child");
+    archive(&mailbox, parent);
+    archive(&mailbox, child);
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault written before floors");
+    housekeeping_pass(&mailbox);
+    restore(&mailbox, child);
+    assert_reads_as_its_landed_source(
+        &mailbox,
+        child,
+        mailbox.policy,
+        "once restored before its parent",
+    );
+    housekeeping_pass(&mailbox);
+    restore(&mailbox, parent);
+    assert_reads_as_its_landed_source(
+        &mailbox,
+        child,
+        mailbox.policy,
+        "once its parent is restored too",
+    );
+}
+
+/// FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS, a restore after the floor state was
+/// lost (#10222 Opus review 3, case c): `fact` was learnt from `input`,
+/// both before floors; the cleanup archived `fact`, the owner erased
+/// `input`, and the floor state was lost (a checkpoint restore). The
+/// backfill raises the archived `fact` for the first time over an erased
+/// input, so it waits for good (FLOOR-OLD-FACT-ERASED-INPUT = A): once
+/// restored it reads to no stranger and to no reader, through a later pass,
+/// and the owner, who reads every source here, reads it. Before the fix the
+/// backfill skipped `fact`, and its restore raise settled it unsealed and
+/// open.
+#[test]
+fn a_fact_archived_over_an_erased_input_waits_for_good_after_the_floor_state_was_lost() {
+    let mailbox = owners_mailbox();
+    let input = claim_born_before_floors(&mailbox, &[mailbox.row], "fact.erased_input");
+    let fact = claim_born_before_floors(&mailbox, &[input], "fact.archived_over_erased_input");
+    archive(&mailbox, fact);
+    erase(&mailbox, input);
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: the floor state is lost");
+    housekeeping_pass(&mailbox);
+    restore(&mailbox, fact);
+    assert_no_stranger_or_reader_reads(&mailbox, fact, "once restored");
+    assert!(
+        floor_waits(&mailbox.vault, fact).expect("the floor's state"),
+        "a restored fact whose input was erased before the backfill raised it no longer waits",
+    );
+    housekeeping_pass(&mailbox);
+    assert_no_stranger_or_reader_reads(&mailbox, fact, "after a pass once restored");
+    assert!(
+        reads(&mailbox.vault, fact, &[mailbox.owner]).expect("the owner's read"),
+        "the owner, who reads every source here, does not read a fact that waits for good",
+    );
+}
+
+/// FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS in a vault whose backfill ended
+/// before the backfill raised archived rows (#10222 Opus review 3: run it
+/// once more): `source` was learnt from the mailbox's row and `fact` from
+/// `source`, both before floors, and the cleanup archived `source`; that
+/// backfill settled `fact` with the archived `source`'s empty floor, so a
+/// stranger reads it. The next pass raises every row once more, `source`
+/// with them, and `fact` then holds the mailbox's policy. `kept`, learnt
+/// from `input` while it stood, keeps reading to the mailbox's reader
+/// through that run though `input` was erased since: the run holds no live
+/// row for good.
+#[test]
+fn a_vault_backfilled_before_archived_rows_were_raised_raises_them_in_one_more_run() {
+    let mailbox = owners_mailbox();
+    let input = claim_born_from(&mailbox, &[mailbox.row], "learnt from the mailbox");
+    let kept = claim_born_from(&mailbox, &[input], "learnt from input while it stood");
+    let source =
+        claim_born_before_floors(&mailbox, &[mailbox.row], "fact.archived_source_backfilled");
+    let fact = claim_born_before_floors(&mailbox, &[source], "fact.held_from_archived_backfilled");
+    archive(&mailbox, source);
+    erase(&mailbox, input);
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault written before floors");
+    end_backfill_without_archived_rows(&mailbox.vault)
+        .expect("FIXTURE: the backfill ended before it raised archived rows");
+    assert!(
+        reads(&mailbox.vault, fact, &[mailbox.stranger]).expect("the stranger's read"),
+        "precondition: that backfill left the fact from the archived source open",
+    );
+    housekeeping_pass(&mailbox);
+    assert_reads_as_its_landed_source(&mailbox, fact, mailbox.policy, "after one more run");
+    assert_reads_as_its_landed_source(
+        &mailbox,
+        kept,
+        mailbox.policy,
+        "after one more run, its input erased since it was raised",
+    );
+    housekeeping_pass(&mailbox);
+    assert_reads_as_its_landed_source(&mailbox, fact, mailbox.policy, "after a later pass");
+}
+
+/// #10222 Opus review 3 P2-1: `source` waits on `late`, a row not here yet,
+/// and `fact`, learnt from `source`, waits on `source`; the cleanup
+/// archives `source`. `late` lands, bound to the mailbox: its landing
+/// raises the archived `source`, and `fact` with it, so `fact` reads to the
+/// mailbox's reader at once, while `source` is still archived, and after
+/// its restore. Before the fix the mark of `fact` on the archived `source`
+/// was not followed: `fact` read to no reader until `source`'s restore.
+#[test]
+fn a_fact_waiting_on_an_archived_source_settles_when_that_sources_floor_does() {
+    let mailbox = owners_mailbox();
+    let late = EntityId::now();
+    let source = claim_born_from(&mailbox, &[late], "learnt from a row on its way");
+    let fact = claim_born_from(&mailbox, &[source], "learnt from source");
+    archive(&mailbox, source);
+    let policy = bound_row_read_by(&mailbox.vault, late, &[mailbox.owner, mailbox.reader])
+        .expect("late lands, bound to its mailbox");
+    assert_reads_as_its_landed_source(
+        &mailbox,
+        fact,
+        policy,
+        "once late landed, its source archived",
+    );
+    housekeeping_pass(&mailbox);
+    assert_reads_as_its_landed_source(&mailbox, fact, policy, "after a pass");
+    restore(&mailbox, source);
+    assert_reads_as_its_landed_source(&mailbox, fact, policy, "once its source is restored");
 }

@@ -82,6 +82,20 @@ pub fn forget_floor_state(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
+/// Marks the floor backfill done as a build that ran it before the backfill
+/// raised archived rows left it (FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS): each
+/// row keeps the floor it has.
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn end_backfill_without_archived_rows(vault: &Vault) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    crate::source_audience::end_backfill_without_archived_rows_in_txn(vault, &mut txn)?;
+    txn.commit()?;
+    Ok(())
+}
+
 /// Lands the binding of `row` here as a replicated binding does once its
 /// policy resolves (`bind_replicated_in_txn`): the rows waiting on `row` are
 /// raised again (#9289 Opus review 3 P1-B).

@@ -59,10 +59,12 @@ pub(crate) use floor::{
     FloorSource, SOURCE_READERS, SourceReaders, facts_hidden_source_unknown_in, floor_source_in,
     floor_threads_in, raise_floors_in_txn, seal_births_from_erased_inputs_in_txn,
 };
-#[cfg(any(test, feature = "test-support", oneiron_test_support))]
-pub(crate) use floor_state::forget_floor_state_in_txn;
 pub(crate) use floor_state::{
     backfill_floors, binding_landed_in_txn, floor_waits_in, waiting_floor_readable_in,
+};
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) use floor_state::{
+    end_backfill_without_archived_rows_in_txn, forget_floor_state_in_txn,
 };
 pub(crate) use obligation::{
     SourceAudienceBirth, admit_obligation_in_txn, admit_session_obligation_in_txn,

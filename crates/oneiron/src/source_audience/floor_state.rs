@@ -789,6 +789,17 @@ fn settle_page_in_txn(
     ))
 }
 
+/// Marks, in `txn`, the backfill done as a build that ran it before the
+/// backfill raised archived rows left it (FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS).
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) fn end_backfill_without_archived_rows_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+) -> Result<()> {
+    BACKFILL.put(&vault.store, txn, &(), &true)?;
+    Ok(())
+}
+
 /// Forgets, in `txn`, every floor's state and the backfill's: the vault
 /// reads as one whose rows were written before floors were.
 #[cfg(any(test, feature = "test-support", oneiron_test_support))]
