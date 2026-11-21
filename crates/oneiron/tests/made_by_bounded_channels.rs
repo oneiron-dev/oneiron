@@ -354,10 +354,11 @@ fn a_stated_row_past_the_vector_fetch_is_found() {
 /// A claim with no stamped birth takes its class from its source: the
 /// bounded channel reads the admitted claim body for it, as the post-blend
 /// filter does, so an unborn UserStated claim behind concluded rows is
-/// still found. The claim is learned at `NOW`, the clock of every vector
-/// call, and occurs when the stated row of
-/// [`Fixture::stated_behind_concluded`] does, so the unsliced call ranks it
-/// first as it ranks that row.
+/// still found. The claim occurs when the stated row of
+/// [`Fixture::stated_behind_concluded`] does and is learned at `NOW`, the
+/// clock of every vector call, so it keeps its full recency and access
+/// factor and the unsliced call ranks it first by cosine, as it ranks that
+/// row.
 #[test]
 fn an_unborn_stated_claim_past_the_vector_fetch_is_found() {
     let mut fixture = fixture();
