@@ -437,7 +437,21 @@ impl Memory<'_> {
     /// [`EngineCause::OwnerAnswerUnproven`]. The actor or its class alone
     /// never authenticates an owner.
     pub fn identity_answer(&self, input: &IdentityAnswerRequest) -> MemoryResult<IdentitySettled> {
-        self.identity_answer_guarded(input, self.owner_authorship(), &[])
+        self.identity_answer_guarded(input, self.owner_authorship(), &[], None)
+    }
+
+    /// `self.identity.member_answer`: a member's tap on the choice card of an
+    /// ask raised from their own source (OWNER-NOTICE-MEMBER-ASK-ROUTE
+    /// Q1 = A), on `person`, the proof of their own verified human
+    /// credential, rechecked in the write as a door a live person uses on
+    /// their own behalf. It applies as [`Self::identity_answer`] does for a
+    /// member; an owner answers through `self.identity.answer`.
+    pub fn identity_answer_as_member(
+        &self,
+        person: &AuthenticatedOwner,
+        input: &IdentityAnswerRequest,
+    ) -> MemoryResult<IdentitySettled> {
+        self.identity_answer_guarded(input, None, &[], Some(person))
     }
 
     fn identity_answer_guarded(
@@ -445,6 +459,7 @@ impl Memory<'_> {
         input: &IdentityAnswerRequest,
         owner: Option<&AuthenticatedOwner>,
         owner_evidence: &[EntityId],
+        member: Option<&AuthenticatedOwner>,
     ) -> MemoryResult<IdentitySettled> {
         let key = parse_key(&input.ask)
             .ok_or_else(|| MemoryError::bad_request("ask is 64 hex: an open identity ask"))?;
@@ -477,8 +492,24 @@ impl Memory<'_> {
                     owner_evidence,
                 )?;
             }
+            if let Some(person) = member
+                && person.revalidate_person_in_txn(self.vault(), txn)? != self.actor()
+            {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    "identity answer proof does not name the caller",
+                    &["Answer from your own session."],
+                ));
+            }
             let by_owner =
                 crate::policy_model::owners_in_txn(self.vault(), txn)?.contains(&self.actor());
+            if by_owner && member.is_some() {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    "an owner answers an identity ask through self.identity.answer",
+                    &["Answer from the owner's own session."],
+                ));
+            }
             // A member answers an ask raised from a source some owner does
             // not read, through their own lane (OWNER-NOTICE-MEMBER-ASK-ROUTE
             // Q1 = A, the lead 21 Nov 13:2x): a live person of this vault,

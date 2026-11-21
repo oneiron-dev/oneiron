@@ -21,9 +21,12 @@
 //! Red on main (the first two tests and the last): every ask goes to the
 //! owners whatever their lane reads, so the owner gets an Ask he cannot
 //! open, the member gets nothing, and the member's answer is refused
-//! "only a vault owner answers an identity ask". The other two are guards
-//! that hold on both: a member's "someone new" is the owner's decision, and
-//! an ask every owner reads still goes to the owner alone.
+//! "only a vault owner answers an identity ask". The member answers through
+//! `self.identity.member_answer`'s door, on their own person proof; the red
+//! pin, whose base has no such door, answers through `self.identity.answer`'s
+//! native door on their slip. The other two are guards that hold on both: a
+//! member's "someone new" is the owner's decision, and an ask every owner
+//! reads still goes to the owner alone.
 //!
 //! Each `FIXTURE:` assertion checks the setup, never the fix.
 //!
@@ -47,6 +50,7 @@ use oneiron::memory::{
     WitnessTurn,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::store::GateDecisionId;
 use oneiron::tagging::{HeldTagsOutcome, MentionLink, TaggingMarkerConfig, TaggingMode};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::identity_recheck::{escalate_identity_asks, run_identity_recheck};
@@ -64,8 +68,7 @@ const KNOWN: &str = "Owen Smith";
 /// The mention: no name or alias of [`KNOWN`], so the identity key misses
 /// it, but every part sounds like his (Soundex O500 and S530).
 const MENTION: &str = "Owan Smyth";
-/// The producer of the owner's stub for an ask he cannot open, as the head
-/// names it (the base has none).
+/// The producer of the owner's stub for an ask he cannot open.
 const STUB_PRODUCER: &str = "dreamer.identity.member_question";
 /// The stub's words, the only words the owner's notice carries.
 const STUB_DETAIL: &str = "a member has a pending question about identity";
@@ -188,14 +191,33 @@ impl Fixture {
     }
 
     /// The member's answer `choice` to `ask`, on their own credential.
+    /// The member's answer `choice` to `ask` through
+    /// `self.identity.member_answer`'s door, on their own person proof bound
+    /// to their slip, as the host builds it for a person's own act.
     fn members_answer(&self, ask: &str, choice: &str) -> Result<IdentitySettled, MemoryError> {
+        let person = self
+            .vault
+            .authenticate_owner(
+                self.member,
+                &self.member.to_hex(),
+                true,
+                GateDecisionId::now(),
+            )
+            .and_then(|person| {
+                self.vault
+                    .bind_request_credential(person, self.member_proof.clone())
+            })
+            .expect("FIXTURE: the member's own person proof");
         self.vault
             .memory(self.member, EdgeActorClass::Human)
             .with_read_proof(&self.member_proof)
-            .identity_answer(&IdentityAnswerRequest {
-                ask: ask.to_owned(),
-                choice: choice.to_owned(),
-            })
+            .identity_answer_as_member(
+                &person,
+                &IdentityAnswerRequest {
+                    ask: ask.to_owned(),
+                    choice: choice.to_owned(),
+                },
+            )
     }
 
     /// The one ask key of the member's identity Ask.

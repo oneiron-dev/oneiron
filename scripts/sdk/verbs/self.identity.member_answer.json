@@ -1,0 +1,18 @@
+{
+  "name": "self.identity.member_answer",
+  "description": "A member answers an identity ask raised from their own source by naming a candidate they read; an ask every owner reads, and someone new, stay the owner's.",
+  "input": "crate::dreamer_runner::maintenance::identity::IdentityAnswerRequest",
+  "output": "crate::dreamer_runner::maintenance::identity::IdentitySettled",
+  "call": "memory.identity_answer_as_member(&memory.embedded_owner(\"self.identity.member_answer\")?, &input)?",
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_caller": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "shared_person"
+}

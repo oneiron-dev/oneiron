@@ -1,11 +1,13 @@
 //! PERSON identity setup, look-before-mint and saved-mention provenance.
-//! Every owner-only door binds the caller's own credential-backed Memory.
+//! Every owner-only door binds the caller's own credential-backed Memory, as
+//! a member's identity answer on their own proof does.
 
 use std::sync::Arc;
 
 use oneiron::authority::ActSurface;
 use oneiron::dreamer_runner::maintenance::identity::{
-    IdentityAnswerEvidenceRequest, IdentityMentionView, IdentitySettled, MentionProvenance,
+    IdentityAnswerEvidenceRequest, IdentityAnswerRequest, IdentityMentionView, IdentitySettled,
+    MentionProvenance,
 };
 use oneiron::memory::identity_doors::{
     IdentityLookup, IdentityLookupRequest, PersonCreateRequest, PersonCreated,
@@ -90,6 +92,29 @@ pub(crate) async fn self_identity_answer(
         memory
             .with_owner_surface(surface)
             .identity_answer_with_evidence_as_owner(&owner, &input)
+    })
+    .await
+}
+
+/// A member's answer to an identity ask raised from their own source
+/// (OWNER-NOTICE-MEMBER-ASK-ROUTE Q1 = A), on their own verified human
+/// credential: the engine admits only a live person, no owner, whose own
+/// lane opens an ask some owner's lane does not, and only a candidate they
+/// read.
+pub(crate) async fn self_identity_member_answer(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    input: IdentityAnswerRequest,
+) -> Listed<IdentitySettled> {
+    const VERB: &str = "self.identity.member_answer";
+    let person = match super::shared_act_doors::person(server, auth, VERB) {
+        Ok(person) => person,
+        Err(error) => return refused(error),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        memory.identity_answer_as_member(&person, &input)
     })
     .await
 }
