@@ -33,6 +33,33 @@ pub use peer_acts::{
     sign_setting_beside_act_from, sign_setting_pack_accept_from,
 };
 
+/// Lands here, as a window's sync carries it, another machine's copy of the stored notice `id`
+/// that holds no seen or acknowledged mark: the copy of a notice both machines raised alone
+/// (row SETTING-PROJECTED-ROW-REFUSING-HOOKS, REVIEW-10294 round 2).
+///
+/// # Errors
+///
+/// No notice row at `id`; a copy the ingest does not land; storage errors.
+#[cfg(all(feature = "test-support", feature = "sync"))]
+pub fn land_notification_copy_without_receipts(vault: &Vault, id: EntityId) -> Result<()> {
+    let held = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, &id)?
+    }
+    .ok_or(Error::CorruptedIndex("notice copy door: no notice row"))?;
+    let header_len = crate::batch::ENTITY_METADATA_HEADER_LEN;
+    let (header, body) = held
+        .split_at_checked(header_len)
+        .ok_or(Error::CorruptedIndex("notice copy door: row header"))?;
+    let mut body = crate::inbox::decode_notification_body(body)?;
+    body.seen_by.clear();
+    body.acked_by.clear();
+    let mut blob = header.to_vec();
+    blob.extend_from_slice(&crate::inbox::encode_notification_body(&body)?);
+    let window = crate::sync::types::WindowKey::from_timestamp(body.created_at);
+    crate::sync::ingest_carried_entity_for_test(vault, &window.0, &id, &blob)
+}
+
 /// Plants bytes no row encodes to as `key`'s value row at `scope`: a damaged store.
 ///
 /// # Errors

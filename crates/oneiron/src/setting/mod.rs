@@ -271,6 +271,10 @@ pub struct SettingSpec {
     /// ([`RefusalPeers`]): a refused projection's notice names their acts too. `None`: the
     /// notice names the refused act alone, with the hook's reason.
     pub refusal_peers: Option<RefusalPeers>,
+    /// Whether that notice may offer a tap that leaves a row of the key with no value: `false`
+    /// for a key whose hook refuses such a change of a row a machine holds in service (a
+    /// calendar seat), whose act that machine would keep refusing.
+    pub refusal_offers_clear: bool,
     /// Run after the commit of each write that applied a change to the key (not on an equal
     /// value, not on a change that waits on a check-in).
     pub after_commit: Option<OnCommitted>,
@@ -310,6 +314,7 @@ impl SettingSpec {
         loosening_note: None,
         on_change: None,
         refusal_peers: None,
+        refusal_offers_clear: true,
         after_commit: None,
         write_turn: None,
         born: None,

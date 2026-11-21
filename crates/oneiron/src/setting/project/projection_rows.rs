@@ -452,8 +452,12 @@ pub(super) fn write_row_in_txn(
     }
     // The key's hook reads the row as it stood before the change, an erased value included
     // (a seat or a feed it takes out of service): the history keeps none of it.
-    if let Some(on_change) = spec.on_change {
-        on_change(vault, txn, &SettingChange { prior, ..recorded })?;
+    if let Some(on_change) = spec.on_change
+        && let Err(error) = on_change(vault, txn, &SettingChange { prior, ..recorded })
+    {
+        // The act the refused value came from, for the owner's notice of the refusal (`refusal`).
+        REFUSED_DECIDING_ACT.with(|refused| refused.set(Some(deciding.act)));
+        return Err(error);
     }
     Ok(true)
 }
@@ -657,10 +661,12 @@ impl Vault {
             // A savepoint that commits hands the work its writes queued for after the commit (the
             // live sync mirror, the wakes) to the pass's write (`batch::savepoint_in_txn`).
             let mut round: Vec<EntityId> = moved.iter().map(|(target, _)| *target).collect();
-            let mut refused: Vec<(EntityId, String)> = Vec::new();
+            // Each refused row with its hook's reason and the act the refused value came from.
+            let mut refused: Vec<(EntityId, String, Option<AuthorityEntryHash>)> = Vec::new();
             loop {
                 let mut landed = false;
                 for target in round {
+                    REFUSED_DECIDING_ACT.with(|deciding| deciding.set(None));
                     match crate::batch::savepoint_in_txn(self, txn, |savepoint| {
                         project_target_in_txn(self, savepoint, target, now).map(Some)
                     }) {
@@ -670,16 +676,18 @@ impl Vault {
                                 changed.extend(projected.changed);
                             }
                         }
-                        Err(Error::InvalidConfig(reason)) => refused.push((target, reason)),
+                        Err(Error::InvalidConfig(reason)) => {
+                            refused.push((target, reason, REFUSED_DECIDING_ACT.with(Cell::take)));
+                        }
                         Err(error) => return Err(error),
                     }
                 }
                 if refused.is_empty() || !landed {
                     break;
                 }
-                round = refused.drain(..).map(|(target, _)| target).collect();
+                round = refused.drain(..).map(|(target, _, _)| target).collect();
             }
-            for (target, reason) in &refused {
+            for (target, reason, deciding) in &refused {
                 tracing::warn!(
                     reason = %reason,
                     "the next pass reads again a setting row its key refused here"
@@ -688,7 +696,8 @@ impl Vault {
                 // The owner's notice of it (`refusal`), in a savepoint of its own: a fault there
                 // is logged, and the pass goes on.
                 if let Err(error) = crate::batch::savepoint_in_txn(self, txn, |notice| {
-                    raise_refusal_notice_in_txn(self, notice, (*target, reason), now).map(Some)
+                    let refused = (*target, reason.as_str(), *deciding);
+                    raise_refusal_notice_in_txn(self, notice, refused, now).map(Some)
                 }) {
                     tracing::warn!(
                         kind = ?error.kind(),
@@ -729,6 +738,10 @@ thread_local! {
     /// Set on a thread whose projection pass left rows for later because the thread held their
     /// key's turn ([`Vault::project_settings`]); [`project_deferred_settings`] runs that pass.
     static PROJECTION_DEFERRED: Cell<bool> = const { Cell::new(false) };
+    /// The act the value a key's hook refused in this thread's pass came from
+    /// ([`write_row_in_txn`]), for the owner's notice of the refusal; the pass clears it before
+    /// each row.
+    static REFUSED_DECIDING_ACT: Cell<Option<AuthorityEntryHash>> = const { Cell::new(None) };
 }
 
 /// Runs the projection pass a pass on this thread left for later because the thread held a key's
