@@ -6,11 +6,14 @@
 //!   a "run now" runs none of its rows, the runner's pass runs none, the row stays due as it was
 //!   armed, and it wakes no stopped copy. The first pass after the owner's join runs it.
 //! - The fact-hook runner runs no hook: a fact that lands on the copy waits at the hook's cursor,
-//!   and the first pass after the join runs the hook on it.
+//!   and the first pass after the join runs the hook on it. Its report names the unjoined copy
+//!   with hooks off as with hooks on.
 //! - A vault no restore made runs both as before.
 //!
 //! On the base (#10257's head 93377510b705) the unjoined copy runs its timer row and its hook as
-//! the source does: the tests fail at the "run now runs nothing" and "no hook runs" asserts.
+//! the source does: the tests fail at the "run now runs nothing" and "no hook runs" asserts. On
+//! part 2's first head (e87e437ce7dc) a pass with hooks off reports no unjoined copy: the
+//! hooks-off test fails at its "names the unjoined copy" assert.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test restored_unjoined_runners`.
 
@@ -24,7 +27,9 @@ use oneiron::authority::{HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::housekeeping::HousekeepingBudget;
 use oneiron::registry::ENTITY_TYPE_PERSON;
-use oneiron::runtime_hooks::{FactHookRunner, HookBodyRun, HookBodyRuntime, HookRunContext};
+use oneiron::runtime_hooks::{
+    FactHookRunner, HookBodyRun, HookBodyRuntime, HookPassReport, HookRunContext,
+};
 use oneiron::schedule::{JobOutcome, ScheduleRunReport, Trigger};
 use oneiron::skill_hub::HubFile;
 use oneiron::skill_hub::pack_catalog::PackInstallDisposition;
@@ -317,12 +322,16 @@ fn land_fact(vault: &Vault) {
         .expect("FIXTURE: the fact lands");
 }
 
-/// How many hook runs one fact-hook pass on `vault` made.
-fn hook_runs(vault: &Vault) -> usize {
+/// The report of one fact-hook pass on `vault`.
+fn hook_pass(vault: &Vault) -> HookPassReport {
     FactHookRunner::new()
         .run_pass(vault, &AlwaysNothingRuntime, PASS_ENTRIES)
         .expect("the hook pass answers")
-        .runs
+}
+
+/// How many hook runs one fact-hook pass on `vault` made.
+fn hook_runs(vault: &Vault) -> usize {
+    hook_pass(vault).runs
 }
 
 #[test]
@@ -348,6 +357,30 @@ fn an_unjoined_copy_runs_no_fact_hook_until_its_join() {
         hook_runs(&copy.vault),
         1,
         "the first pass after the join runs the hook on the fact that waited"
+    );
+}
+
+#[test]
+fn a_hook_pass_names_an_unjoined_copy_with_hooks_off() {
+    let host = rooted_host();
+    let backups = oneiron::test_support::restore_tempdir();
+    let copy = restored_copy(&host, backups.path());
+    copy.vault
+        .set_hooks_enabled(&copy.proof, false)
+        .expect("the owner turns hooks off on the copy");
+
+    let report = hook_pass(&copy.vault);
+    assert!(report.disabled, "hooks are off on the copy: {report:?}");
+    assert!(
+        report.unjoined,
+        "the pass names the unjoined copy with hooks off as with hooks on: {report:?}"
+    );
+
+    owner_joins(&host, &copy);
+    let report = hook_pass(&copy.vault);
+    assert!(
+        report.disabled && !report.unjoined,
+        "the joined copy's pass with hooks off names no unjoined copy: {report:?}"
     );
 }
 
