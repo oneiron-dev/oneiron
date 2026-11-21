@@ -819,6 +819,19 @@ impl Vault {
                     .record_hooks
                     .seed_claim_class_descriptors(&vault)?;
                 vault.store.project_writes.seed_root_project(&vault)?;
+                // A vault from before the house voice guide that already
+                // holds a campaign gets its guide here; a new vault gets it
+                // with its first campaign. A failed seed never blocks the
+                // open: unguided campaigns hold their sends, and the next
+                // open tries again.
+                if let Err(error) =
+                    crate::campaign::house_voice_guide::seed_house_voice_guide_at_open(&vault)
+                {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "the house voice guide was not seeded; the next open tries again"
+                    );
+                }
             }
         }
         vault.lfs_chunk_parameters()?;
