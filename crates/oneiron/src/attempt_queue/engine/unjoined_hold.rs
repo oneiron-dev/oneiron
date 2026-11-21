@@ -41,7 +41,7 @@ impl UnjoinedHold {
     /// Whether a row of `kind` waits in `txn`: a held kind on a copy that has not joined.
     ///
     /// # Errors
-    /// [`crate::setting::restored_unjoined_in_txn`]'s errors.
+    /// [`crate::setting::restored::restored_unjoined_in_txn`]'s errors.
     pub(super) fn holds(
         &mut self,
         store: &Store,
@@ -54,7 +54,7 @@ impl UnjoinedHold {
         if let Some(unjoined) = self.unjoined {
             return Ok(unjoined);
         }
-        let unjoined = crate::setting::restored_unjoined_in_txn(store, txn)?;
+        let unjoined = crate::setting::restored::restored_unjoined_in_txn(store, txn)?;
         self.unjoined = Some(unjoined);
         Ok(unjoined)
     }

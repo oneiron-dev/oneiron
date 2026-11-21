@@ -268,7 +268,7 @@ impl Vault {
     /// The refusal of new outward work on an install born of a restore of a
     /// vault a root roots that has not joined it: its restored-from mark
     /// stands, and it has no machine id or the vault's fold holds no machine
-    /// under it (the one test, [`crate::setting::restored_unjoined_in_txn`]).
+    /// under it (the one test, [`crate::setting::restored::restored_unjoined_in_txn`]).
     /// Such a copy starts no work of its own: no agent turn, no scheduled job,
     /// no send (Setting DESIGN pass 15e "Joined"; row
     /// RESTORED-UNJOINED-STARTS-NO-WORK). Read in `txn` through the cached
@@ -284,7 +284,7 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<()> {
-        if crate::setting::restored_unjoined_in_txn(self, txn)? {
+        if crate::setting::restored::restored_unjoined_in_txn(self, txn)? {
             return Err(authority_refused(
                 super::machine_answers::RESTORED_NOT_JOINED,
             ));
