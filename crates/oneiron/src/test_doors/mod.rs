@@ -275,6 +275,7 @@ pub mod owner_key_release;
 pub mod owner_key_vouch_between;
 pub mod owner_key_vouch_holding_machine;
 pub mod owner_person_row_damage;
+pub mod owner_presence_between;
 pub mod pack_encode_work;
 pub mod pad_offer_invalidation;
 pub mod pairing_pending_rows;
