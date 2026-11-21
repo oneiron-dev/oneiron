@@ -884,6 +884,20 @@ impl Seat {
         .expect("the owner kills the seat");
     }
 
+    /// The owner's "Reconnect it": installs this seat's configuration again
+    /// under a new seat ref (`<seat ref>-reconnected`), whose setup reads
+    /// after this seat's. The same configuration writes the same outbox
+    /// scope, so the new seat resumes the old seat's rows.
+    pub(crate) fn reconnect(&self, vault: &Vault) -> Self {
+        Self::install_config(
+            vault,
+            CalendarConnectorSeatConfig {
+                seat_ref: format!("{}-reconnected", self.config.seat_ref),
+                ..self.config.clone()
+            },
+        )
+    }
+
     /// The calendar operation on the installed seat: this re-reads the
     /// installed row and binds the owner to it exactly (smoke :757).
     fn operation(&self, vault: &Vault) -> CalendarConnectorOperation {
