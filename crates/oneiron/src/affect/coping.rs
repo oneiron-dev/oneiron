@@ -108,6 +108,18 @@ impl Vault {
         Ok((delta, baseline, later))
     }
 
+    /// A turn's VAD as the measurement above reads it: the state a coping
+    /// lookup places a turn in. `None` when the turn has no live annotation.
+    pub(crate) fn coping_state_vad_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        turn_id: &EntityId,
+    ) -> Result<Option<super::Vad>> {
+        Ok(self
+            .turn_vad_annotation_in_txn(txn, turn_id)?
+            .map(|annotation| annotation.vad))
+    }
+
     /// Supersedes an active `coping.outcome` claim with an updated aggregate
     /// derived from a later turn-level VAD delta.
     pub fn update_coping_outcome_from_turn_vad_delta(

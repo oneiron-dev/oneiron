@@ -335,10 +335,12 @@ impl Memory<'_> {
             return Ok((None, None));
         }
         // An erased diary author is no agent, so no Grant covers the entry:
-        // it stays held, never admitted through a stand-in author.
+        // it stays held, never admitted through a stand-in author. So does an
+        // imported one until the owner's review of the restored agent names
+        // it the entry's author.
         if core.kind == NoteKind::Diary
             && let Some(diary) = &mut gate
-            && match core.author_ref.id() {
+            && match super::diary_author_in(at.store, txn, core.author_ref)? {
                 Some(author) => {
                     diary.admit(self.vault(), txn, author, note)? != DiaryEntryAdmission::Read
                 }

@@ -765,8 +765,9 @@ fn render_refuses_what_no_edit_takes() {
         "no op exports the source as it is"
     );
     assert_eq!(
-        code(render(render_args(vec![whole()], "jpeg"), &source)),
-        ErrorCode::Unsupported
+        code(render(render_args(vec![whole()], "gif"), &source)),
+        ErrorCode::Unsupported,
+        "a format the organ does not write"
     );
     let annotate = op("annotate", map(vec![]));
     assert_eq!(
@@ -809,6 +810,161 @@ fn render_refuses_what_no_edit_takes() {
         )),
         ErrorCode::Unsupported,
         "a 16-bit PNG, as open refuses it"
+    );
+}
+
+/// The decoded RGBA of an export in `format`, by the codec crate alone.
+fn decode_as(bytes: &[u8], format: image::ImageFormat) -> image::RgbaImage {
+    image::load_from_memory_with_format(bytes, format)
+        .expect("the export decodes")
+        .to_rgba8()
+}
+
+/// FIX 23724 (RULING 09:34 Fri 13 Nov, IO-FORMAT C): `image.render` writes
+/// JPEG and WebP as well as PNG. A JPEG source's render to JPEG answers a
+/// JPEG at the crop's size and names its re-encode as a loss; a render to
+/// WebP is lossless, so it decodes to exactly the pixels the PNG render
+/// holds.
+#[test]
+fn render_exports_jpeg_and_lossless_webp() {
+    let jpeg = [InputBytes::inline(
+        "image/jpeg",
+        fixtures::jpeg_flat(8, 6, [200, 40, 40], None),
+    )];
+    let rendered = match call(
+        &ImageOrgan::default(),
+        RENDER,
+        render_args(vec![op("crop", crop(1, 1, 4, 3))], "jpeg"),
+        None,
+        &jpeg,
+    ) {
+        Ok(answer) => answer,
+        Err(err) => panic!("FAILBEFORE: the organ exports JPEG: {err}"),
+    };
+    let [output] = rendered.outputs.as_slice() else {
+        panic!("a render makes one output");
+    };
+    assert_eq!(
+        (output.name.as_str(), output.media_type.as_str()),
+        ("image.jpg", "image/jpeg")
+    );
+    assert_eq!(field(&rendered.report, "format").as_str(), Some("jpeg"));
+    let image = decode_as(&output.bytes, image::ImageFormat::Jpeg);
+    assert_eq!(image.dimensions(), (4, 3));
+    for pixel in image.pixels() {
+        let [r, g, b, a] = pixel.0;
+        assert_eq!(a, 255);
+        assert!(
+            r.abs_diff(200) <= 8 && g.abs_diff(40) <= 8 && b.abs_diff(40) <= 8,
+            "{:?}",
+            pixel.0
+        );
+    }
+    assert!(
+        rendered
+            .notes
+            .losses
+            .iter()
+            .any(|loss| loss.code == "lossy_encode"),
+        "{:?}",
+        rendered.notes
+    );
+
+    let (w, h) = (12, 10);
+    let source = [InputBytes::inline(
+        "image/png",
+        png(w, h, &pixels(w, h, coded), Extra::default()),
+    )];
+    let ops = || {
+        vec![
+            op("crop", crop(1, 2, 8, 6)),
+            op("resize", resize(4, 3, "bilinear")),
+        ]
+    };
+    let as_png = call(
+        &ImageOrgan::default(),
+        RENDER,
+        render_args(ops(), "png"),
+        None,
+        &source,
+    )
+    .expect("render to png");
+    let as_webp = match call(
+        &ImageOrgan::default(),
+        RENDER,
+        render_args(ops(), "webp"),
+        None,
+        &source,
+    ) {
+        Ok(answer) => answer,
+        Err(err) => panic!("FAILBEFORE: the organ exports WebP: {err}"),
+    };
+    let ([png_file], [webp_file]) = (as_png.outputs.as_slice(), as_webp.outputs.as_slice()) else {
+        panic!("each render makes one output");
+    };
+    assert_eq!(
+        (webp_file.name.as_str(), webp_file.media_type.as_str()),
+        ("image.webp", "image/webp")
+    );
+    assert_eq!(field(&as_webp.report, "format").as_str(), Some("webp"));
+    assert_eq!(
+        decode_as(&webp_file.bytes, image::ImageFormat::WebP),
+        decode_png(&png_file.bytes),
+        "lossless: the PNG render's pixels, alpha and all"
+    );
+    assert!(
+        !as_webp
+            .notes
+            .losses
+            .iter()
+            .any(|loss| loss.code == "lossy_encode"),
+        "{:?}",
+        as_webp.notes
+    );
+}
+
+/// FIX 23724: what a JPEG or WebP cannot hold is refused before any pixel
+/// is made: a JPEG of a source with alpha (a JPEG has none, and the organ
+/// never flattens onto a colour no one named), and a WebP wider than 16384
+/// pixels, which the same canvas can still export as PNG.
+#[test]
+fn jpeg_and_webp_exports_refuse_what_their_format_cannot_hold() {
+    let organ = ImageOrgan::default();
+    let with_alpha = [InputBytes::inline(
+        "image/png",
+        png(4, 4, &pixels(4, 4, coded), Extra::default()),
+    )];
+    let refusal = call(
+        &organ,
+        RENDER,
+        render_args(vec![op("crop", crop(0, 0, 2, 2))], "jpeg"),
+        None,
+        &with_alpha,
+    )
+    .expect_err("a JPEG of a source with alpha");
+    assert_eq!(refusal.code, ErrorCode::Unsupported);
+    assert!(
+        refusal.detail.contains("alpha"),
+        "FAILBEFORE: the refusal says a JPEG has no alpha: {}",
+        refusal.detail
+    );
+
+    let opaque = [InputBytes::inline(
+        "image/png",
+        fixtures::png_rgb(1, 1, [1, 2, 3]),
+    )];
+    let wide = || vec![op("resize", resize(16_385, 1, "nearest"))];
+    let refusal = call(&organ, RENDER, render_args(wide(), "webp"), None, &opaque)
+        .expect_err("a WebP past 16384 pixels a side");
+    assert_eq!(refusal.code, ErrorCode::Unsupported);
+    assert!(refusal.detail.contains("16384"), "{}", refusal.detail);
+    assert!(
+        call(&organ, RENDER, render_args(wide(), "png"), None, &opaque).is_ok(),
+        "the same canvas exports as PNG"
+    );
+    assert!(
+        call(&organ, RENDER, render_args(wide(), "jpeg"), None, &opaque).is_ok(),
+        "and as JPEG"
     );
 }
 

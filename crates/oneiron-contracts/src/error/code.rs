@@ -59,6 +59,13 @@ pub enum CodeError {
     /// (CODE-01 — the fail-closed release path; never a silent no-sandbox run).
     #[error("no microVM backend is available for guest tier `{tier}`")]
     MicroVmBackendUnavailable { tier: &'static str },
+    /// The owner switched the vault's sandboxes to a vendor this host cannot
+    /// serve: no adapter for it, or no key of the owner's for it in custody.
+    /// The run is refused; ours never runs in its place (L8-43-SWITCH = A).
+    #[error(
+        "the vault's sandbox provider is `{vendor}`, and this host cannot serve it: store the owner's {vendor} key in custody, or switch the sandbox provider back to ours"
+    )]
+    SandboxVendorUnavailable { vendor: &'static str },
     /// A microVM backend refused or failed a boundary operation.
     #[error("microVM backend `{backend}` failed: {detail}")]
     MicroVmBackendError {
@@ -278,6 +285,7 @@ impl CodeError {
             Self::RepoMutationFailed(_) => ErrorKind::RepoMutationFailed,
             Self::RepoMutationRecoveryDiverged { .. } => ErrorKind::RepoMutationRecoveryDiverged,
             Self::MicroVmBackendUnavailable { .. } => ErrorKind::MicroVmBackendUnavailable,
+            Self::SandboxVendorUnavailable { .. } => ErrorKind::SandboxVendorUnavailable,
             Self::MicroVmBackendError { .. } | Self::SandboxAbandoned { .. } => {
                 ErrorKind::MicroVmBackendError
             }

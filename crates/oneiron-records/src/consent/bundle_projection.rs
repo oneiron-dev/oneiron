@@ -8,7 +8,7 @@ use serde::Serialize;
 
 /// The two owner actions over one run's consent bundle. Partial member
 /// selection is deliberately not a variant: the bundle resolves as a unit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GateConsentBundleAction {
     Approve,

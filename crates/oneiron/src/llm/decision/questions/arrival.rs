@@ -17,33 +17,21 @@ use crate::store::Store;
 pub(super) use crate::store::decision_question_watches::{RESTS_ON, UNIT_WATCH};
 use crate::{EntityId, Error, Result, Vault};
 
-/// Key of one predicate watcher registration. Not fixed-width: a variable-length predicate,
-/// then a NUL separator, then the watching question's id16. `OutcomeBinding::validate` refuses a
-/// predicate containing `\0`, so the separator is unambiguous.
-struct WatchKey {
-    predicate: String,
+/// Key of one predicate watcher registration: the predicate, NUL, the watching question's id16
+/// (`side_table::key::TextIdKey`, which reads the id from the end of the key).
+/// `OutcomeBinding::validate` refuses a predicate containing `\0`.
+type WatchKey = oneiron_store::side_table::key::TextIdKey;
+
+/// One [`WatchKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn watch_key_pin_for_test(
+    predicate: &str,
     id: EntityId,
-}
-
-impl SideKey for WatchKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.predicate.as_bytes());
-        out.push(0);
-        out.extend_from_slice(self.id.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let split = bytes.len().checked_sub(16)?;
-        let (rest, id_bytes) = bytes.split_at(split);
-        let (&zero, predicate_bytes) = rest.split_last()?;
-        if zero != 0 {
-            return None;
-        }
-        Some(Self {
-            predicate: std::str::from_utf8(predicate_bytes).ok()?.to_owned(),
-            id: EntityId::from_bytes(id_bytes.try_into().ok()?).ok()?,
-        })
-    }
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&WatchKey {
+        text: predicate.to_owned(),
+        id,
+    })
 }
 
 /// Key of one outcome fact a materializing batch could not judge under its
@@ -157,7 +145,15 @@ pub(super) fn watch(
     }
     let predicate = predicate(&binding.source).to_owned();
     let id = record.definition.question.id;
-    QUESTION_WATCH.put(store, txn, &WatchKey { predicate, id }, &id)
+    QUESTION_WATCH.put(
+        store,
+        txn,
+        &WatchKey {
+            text: predicate,
+            id,
+        },
+        &id,
+    )
 }
 
 /// Undoes [`watch`] for `record`, a question whose one version went with its
@@ -173,7 +169,14 @@ pub(super) fn unwatch(
     }
     if let Some(binding) = &record.definition.binding {
         let predicate = predicate(&binding.source).to_owned();
-        QUESTION_WATCH.delete(store, txn, &WatchKey { predicate, id })?;
+        QUESTION_WATCH.delete(
+            store,
+            txn,
+            &WatchKey {
+                text: predicate,
+                id,
+            },
+        )?;
     }
     Ok(())
 }
@@ -279,28 +282,39 @@ fn enqueue_arrivals(
                 .map(|((_, question, root), _)| (question, root)),
         );
         for (question, unit) in roots {
-            let Some(head) = QUESTION_HEAD.get(store, txn, &super::store::HeadKey(question))?
-            else {
-                continue;
-            };
-            let Some(record) = QUESTION_VERSION.get(
-                store,
-                txn,
-                &VersionKey {
-                    id: question,
-                    version: head.version,
-                },
-            )?
-            else {
-                continue;
-            };
-            if !head.paused
-                && record.definition.refresh.on_arrival
-                && record.definition.units.contains(&unit)
-            {
-                PENDING.put(store, txn, &(question, unit), &EntityId::now())?;
-            }
+            queue_arrival_in_txn(store, txn, question, unit)?;
         }
+    }
+    Ok(())
+}
+
+/// Queues an arrival of `unit` for `question` when its head is live, its
+/// version refreshes on arrival and covers `unit`.
+pub(super) fn queue_arrival_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    question: EntityId,
+    unit: EntityId,
+) -> Result<()> {
+    let Some(head) = QUESTION_HEAD.get(store, txn, &super::store::HeadKey(question))? else {
+        return Ok(());
+    };
+    let Some(record) = QUESTION_VERSION.get(
+        store,
+        txn,
+        &VersionKey {
+            id: question,
+            version: head.version,
+        },
+    )?
+    else {
+        return Ok(());
+    };
+    if !head.paused
+        && record.definition.refresh.on_arrival
+        && record.definition.units.contains(&unit)
+    {
+        PENDING.put(store, txn, &(question, unit), &EntityId::now())?;
     }
     Ok(())
 }
@@ -578,7 +592,10 @@ fn judge_fact(
             target,
         } => (source, Some(kind), Some(target)),
     };
-    let actor = ScopedReadActorKey::new(record.principal.to_hex()).expect("canonical principal");
+    // The principal reads with the actor class of its live row, as its ask
+    // was admitted, so a read row that names its class admits it here too
+    // (ARRIVAL-READER-KEY-CLASSLESS).
+    let actor = super::graph_ask::party_read_key_in_txn(store, txn, record.principal)?;
     // FIX 7461: each permission below is the principal's bare read first,
     // then its own live authority.
     let reader = Reader::new(store_home(store), record.principal, actor);
@@ -678,12 +695,17 @@ fn judge_fact(
 /// SAVED-QUESTION-OUTCOME-IGNORES-READ-LANE). The own lane of a principal
 /// that is a live owner of the vault (the owners census `store` reads) reads
 /// them as the question's reader judges them, so it adds nothing here. Every
-/// other lane is rebuilt over the principal's key as refresh rebuilds it
-/// (OF-506): a narrowed one held to its frozen bounds, reading nothing once
-/// its credential is no longer live; the own lane of any other principal (an
-/// agent, a member) under its relationship access gate, which the question's
-/// positive-gate reader never applies (FIX
-/// OUTCOME-READER-SKIPS-RELATIONSHIP-ACCESS-GATE). Its claims are read at
+/// other lane is rebuilt by the question's source reader, as its refresh,
+/// artifact asks and withdrawal wakes rebuild it (OF-506,
+/// `saved_reader::saved_source_key_in_txn`; FIX
+/// ARRIVAL-SAVED-LANE-VERDICT-ADOPTS-SHARED-REBUILD): the principal's key
+/// from its row, read as the class the lane was saved under, with the
+/// owner's exemption only while the principal is the vault's live owner and
+/// the lane's live key held an owner standing. A narrowed lane is held to its
+/// frozen bounds, reading nothing once its credential is no longer live; the
+/// own lane of any other principal (an agent, a member) reads under its
+/// relationship access gate, which the question's positive-gate reader never
+/// applies (FIX OUTCOME-READER-SKIPS-RELATIONSHIP-ACCESS-GATE). Its claims are read at
 /// every status: the derivation keeps its own status checks. Without a vault
 /// handle such a lane reads nothing ([`SavedLaneJudge::Deferred`]), and so
 /// does one whose principal's row is gone. A census that fails to read
@@ -717,17 +739,18 @@ fn saved_lane_verdict_in_txn(
     let SavedLaneJudge::Vault(vault) = lane else {
         return Ok(SavedLaneVerdict::Deferred);
     };
-    let principal = record.principal;
-    let key = match super::refresh::source_actor_key(vault, txn, principal, None) {
-        Ok(key) => key.require_access_grants(Some(principal)),
+    let key = match super::saved_reader::saved_source_key_in_txn(
+        vault,
+        txn,
+        record.principal,
+        &record.read_lane,
+    ) {
+        Ok(key) => key,
         Err(Error::EntityNotFound) => return Ok(SavedLaneVerdict::Refuses),
         Err(error) => return Err(error),
     };
-    let saved = super::reader_authority::question_lane(
-        vault,
-        record.read_lane.narrow_in_txn(vault, txn, key)?,
-    )
-    .with_claim_status(crate::ports::ClaimReadStatus::Recorded);
+    let saved = super::reader_authority::question_lane(vault, key)
+        .with_claim_status(crate::ports::ClaimReadStatus::Recorded);
     let policy = saved.live_policy_manifest_in(txn)?;
     for row in rows {
         if !saved.is_ref_readable_with_policy_in(txn, &policy, row)? {

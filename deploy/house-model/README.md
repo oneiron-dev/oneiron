@@ -240,11 +240,14 @@ options are not in it, so no record's `execution_mode` comes from it.
 thinking reply comes back split, as llama.cpp's `--reasoning-format deepseek`
 splits it: the thought in `reasoning_content`, the answer in `content`.
 `reasoning_budget_tokens` caps the thought: at the cap the server closes it
-and the answer gets the rest of `max_tokens`. A `response_format` schema
+and the answer gets the rest of `max_tokens`. A request that sets a budget
+and no `max_tokens` gets the budget plus `--default-max-tokens` (4,096), so
+the answer keeps that room after a full thought. A `response_format` schema
 constrains the answer only. A prompt that fills the context is refused with
 `400` and `code = "context_length_exceeded"`. By default up to four
 requests run at once; one that sets `"oneiron_solo": true` runs alone (see
-"Solo admission"). A request's `tools` reach the chat template, and a tool
+"Solo admission"), and one that sets `"oneiron_prompt_lookup": false` takes
+no prompt-lookup proposal (see "Speed parts"). A request's `tools` reach the chat template, and a tool
 call the model writes (the template's `<tool_call>` block, JSON or
 `<function=...>` form) comes back as OpenAI `tool_calls`, with
 `finish_reason` `tool_calls`; a replayed tool round's string `arguments` are
@@ -349,22 +352,184 @@ belongs to. The same code runs one request at a time and up to four.
   Prefill and decode times are per-job intervals, which contain other jobs'
   work when several are in flight. They are not exclusive GPU time.
 
-Two knobs, set in `/etc/oneiron-house.env`:
+Three knobs, and the speed parts' switches ("Speed parts"), set in
+`/etc/oneiron-house.env`:
 
 | Variable | Flag | Default | What it sets |
 |---|---|---|---|
 | `ONEIRON_HOUSE_EXL3_IN_FLIGHT` | `--max-in-flight` | 4 | requests in flight at once, 1 to 4 (`MAX_IN_FLIGHT`); the cache's recurrent slots and the generator's batch follow it |
-| `ONEIRON_HOUSE_EXL3_CACHE_TOKENS` | `--cache-tokens` | `DEFAULT_CACHE_TOKENS` (40192), or one full request when that is larger: the context + 1 + the draft depth + 16, rounded up to 256 (33024 at the defaults) | the KV pool all requests in flight share, target and draft alike; a multiple of 256 and at least that floor |
+| `ONEIRON_HOUSE_EXL3_DRAFT_RING_PAGES` | `--draft-ring-pages` | `DEFAULT_DRAFT_RING_PAGES` (12); 0 turns it off | the DFlash2 draft's KV as a ring of this many pages per in-flight slot, in place of a draft cache as large as the pool ("The draft KV ring") |
+| `ONEIRON_HOUSE_EXL3_CACHE_TOKENS` | `--cache-tokens` | `DEFAULT_CACHE_TOKENS` (85504) beside the ring, `DEFAULT_CACHE_TOKENS_WITHOUT_RING` (40192) without one; never under one full request: the context + 1 + the draft depth + 16, rounded up to 256 (33024 at the defaults) | the KV pool all requests in flight share; a multiple of 256 and at least that floor |
 
-The defaults are four in flight (Engine ruling 10-21, INF 1) over the pool
-`DEFAULT_CACHE_TOKENS` names, the one place `exl3_server.py` sets it: 40192,
-the largest of the pools INF 1 measured at four in flight (33024, 37120,
-40192) whose peak leaves 2 GiB of the card's 24564 MiB (22488 MiB; FIX 6974).
+The defaults are four in flight (Engine ruling 10-21, INF 1) over a
+334-page pool, 85504 tokens, with the draft's KV in a 12-page ring per slot.
+`exl3_server.py` sets each in one place (`DEFAULT_DRAFT_RING_PAGES`,
+`DEFAULT_CACHE_TOKENS`, `DEFAULT_CACHE_TOKENS_WITHOUT_RING`). Stock, the
+server before the ring, is `ONEIRON_HOUSE_EXL3_DRAFT_RING_PAGES=0` with the
+pool unset: the draft cache is then as large as the pool, and the pool is
+40192, the largest INF 1 measured at four in flight with 2 GiB of the card's
+24564 MiB spare (FIX 6974).
+
+- **Why.** The server reserves each request's prompt plus its output cap
+  (`pages_for`), so a 157-page pool held about 1.7 requests on average, and
+  one long packet blocked every other long or middle one. QWEN-EVAL-1's
+  referee measured the ring with the 85504 pool (arm opus-plain, attempt
+  A-0005) against stock on mel (RTX 4090 at 400 W, four in flight, three
+  rounds per pack): 460.55 against 346.23 median normalised packets per hour
+  on the held-out pack (x1.33), 540.54 against 405.29 on the search pack
+  (x1.33), and 233.89 against 157.98 on the Dreamer's own nightly call
+  (x1.48), with JSON valid as often as stock on both packs in every round.
+  Table: `mel:/data/qwen-eval-20261120/referee/TABLE.md`; recipe:
+  `mel:/data/qwen-eval-20261120/arms/opus-plain/BEST.md`.
+- **VRAM.** Peak 23756 MiB against stock's 22528 on the search pack (+1228
+  MiB), leaving about 800 MiB of the card. The bar is a worst-case probe on
+  the nightly card (four in flight, the longest packets, the full context,
+  thinking on) that leaves at least 512 MiB.
+- **The nightly case.** The Dreamer's extraction call is thinking on and
+  sets `max_tokens` 12288 (a 4096 thought and 8192 of answer), cut to the
+  context's room, so each request holds its prompt plus at most 12288 + 1 +
+  the depth + 16 close room, page-rounded and never past 129 pages: 53 to 56
+  pages for the search pack's 18 short prompts (1019 to 1833 tokens), 71 to
+  80 for its 4 middle ones (5698 to 8156) and 116 to 129 for its 8 long ones
+  (17213 to 27039). At 85504, four short or middle ones always fit; a long
+  one fits beside three short ones, and two long ones beside one. At 40192,
+  two short ones fit, and a long one runs alone.
+
 The pool never drops below one full-context request with its draft and close
 room (Engine ruling 10-20, FIX 6723; the context alone left a full request
-one page short): 33024 at the default context and depth, so the default pool
-holds one full request and about 7000 tokens beside it. Four in flight over
-that pool admits beside a long call only what fits in the pages it leaves.
+one page short): 33024 at the default context and depth.
+
+### The draft KV ring
+
+On by default (`DEFAULT_DRAFT_RING_PAGES`, 12). Without it the draft cache
+is as large as the target's pool, but every layer of the DFlash2 draft
+slides over 2048 tokens, so a request's draft KV never needs more than its
+window and the pages in flight. `--draft-ring-pages N` gives each in-flight
+slot a ring of N pages (`install_draft_ring`), which needs N * 256 to cover
+the window plus 3 pages: N at least 11 for this draft. The server refuses a
+draft with any other layer type or a larger window; such a draft runs with
+`--draft-ring-pages 0`. The ring frees the VRAM of the draft's full-pool
+copy, and the default pool takes it (85504 beside the ring, 40192 without);
+an explicit `--cache-tokens` is used as given either way. A server without a
+draft has no ring.
+
+The server logs one `DRAFT_RING` line with the ring and the draft cache's
+tokens. A ring changes the cache identity (`draft_ring_pages` in its cache
+settings); without one, the identity is as before the ring existed.
+
+### Speed parts
+
+Four switches (`SPEED_PART_DEFAULTS` in `exl3_server.py`). A part is on by
+default only when its measurement on the Dreamer's nightly call keeps it:
+prompt lookup is on (x1.18 packets/h over the ring and pool, with JSON
+validity and graded quality held); the other three are off.
+`ONEIRON_HOUSE_EXL3_<PART>=1` passes `--<part>`, `0` passes `--no-<part>`,
+and unset keeps the default. They come from QWEN-EVAL-1's
+astra-skill arm (`mel:/data/qwen-eval-20261120/arms/astra-skill/LEDGER.md`),
+ported onto this server without editing exllamav3. Its sampling changes
+(A-0017) are not among them.
+
+| Variable | Flag | What it changes |
+|---|---|---|
+| `ONEIRON_HOUSE_EXL3_FUSE_PROJECTIONS` | `--fuse-projections` | same-input projections stay one fused GEMM at every bitrate (`EXL3_MGEMM_K_THRESHOLD=0`), where by default a low-bitrate pair runs as separate int8 GEMVs (A-0026). The switch owns exllamav3's fusion variables: off, the server clears an inherited `EXL3_MGEMM_K_THRESHOLD` or `EXL3_MGEMM_N_THRESHOLD` (one `FUSION_ENV_REPLACED` line names them), so the identity never misses a fusion |
+| `ONEIRON_HOUSE_EXL3_FP16_PREFILL` | `--fp16-prefill` | a prefill GEMM over a reconstructed FP16 weight with at least 384 rows and an FP16 output accumulates in FP16 (`torch.mm` under `allow_fp16_accumulation`) instead of FP32; decode is unchanged (A-0028) |
+| `ONEIRON_HOUSE_EXL3_PROMPT_LOOKUP` | `--prompt-lookup` | a request whose own sequence repeats an earlier stretch is offered that stretch's continuation in place of the draft's block, per request and match length, only where its own verified lookups have done well (A-0009, A-0012) |
+| `ONEIRON_HOUSE_EXL3_DRAFT_WINDOW_TABLES` | `--draft-window-tables` | the draft forward reads only the pages its 2048-token window can see, so its attention is sized to the window, not the sequence; needs the draft KV ring (A-0016) |
+
+- **Outputs.** Prompt lookup and the window tables keep the target's
+  distribution: every proposed token is verified as a draft's is, and the
+  window tables read exactly the keys the window shows. Like the pool, they
+  change which samples are drawn, not the model. The fused projections and
+  FP16 prefill change the arithmetic, so their answers drift as under any
+  numerics change, and each is kept only with a measured output check.
+- **Identity.** A server with any part on names them in its server settings
+  (`speed_parts`; the default names `prompt_lookup`); with every part off,
+  the identity is as before.
+- **Session snapshots.** The fused projections and FP16 prefill change the KV
+  a prefill writes (`KV_ARITHMETIC_PARTS`). A worker with either on names it
+  in its snapshot compatibility, so a worker imports a snapshot only when
+  the exporting worker had the same of these parts on. A refused import
+  (`snapshot_incompatible`) is a cache miss: the host recomputes the prefix.
+  With both off, the compatibility is as before.
+- **Per request.** A request body that sets top-level
+  `"oneiron_prompt_lookup": false` takes no lookup proposal: the draft
+  proposes every block of its Jobs, as on a server with lookup off. `true`
+  or no field keeps the server's setting (it never turns lookup on where the
+  server has it off); any other value is a `400`. Only a request that turns
+  it off names it in its execution mode (`"prompt_lookup": false`), so every
+  other request's identity is as before. It is for the engine's one retry of
+  a reply that failed its JSON parse: the retry runs without lookup.
+- **Logs.** One `SPEED_PARTS` line at load gives each part's state and the
+  exllamav3 extension the server loaded; the `DRAFT_RING` line gives the
+  window tables' width in pages (0 when off).
+
+### GEMM FP16 accumulators
+
+exllamav3's EXL3 GEMM accumulates its MMA results in FP16 within each
+k-slice and folds them into FP32 once per slice, where FP32 accumulation runs
+at half rate; upstream turns this on for sm_86 (RTX 3090) only, and gives
+its error as about 1 % of output RMS at k=4096. `build-exl3-ext.sh <dir>`
+builds exllamav3 v1.6.0's extension with the same path on for sm_89 (RTX
+4090): one line of `exllamav3_ext/quant/exl3_gemm_inner.cuh` (QWEN-EVAL-1
+arm opus-skill A-0008). It needs a CUDA 12.8 toolkit (`CUDA_HOME`) and a host
+compiler nvcc 12.8 takes (`CUDAHOSTCXX`, gcc 14 or older; exllamav3's
+setup.py passes it to nvcc as `-ccbin`), takes about 13 minutes with 2 nvcc
+jobs, and writes `exllamav3_ext.build.json` beside the module. `<dir>` must
+not exist: a running worker maps the module in a published directory, and
+overwriting that file can kill the worker, so each build writes a new
+directory (under a temporary name beside it, renamed whole when complete)
+and the next restart points `ONEIRON_HOUSE_EXL3_EXT_DIR` at it.
+
+`ONEIRON_HOUSE_EXL3_EXT_DIR=<dir>` resolves `<dir>` before anything imports
+it, puts the resolved directory first on PYTHONPATH and passes it as
+`--exllamav3-ext-dir`. The server refuses to start when that path is not
+resolved or the extension it loaded is not that directory's own file (no
+link on the way), and names the module's SHA-256 in its server settings
+(`exllamav3_ext`) and in its session snapshots' compatibility, so its answers
+and KV are never taken for the installed build's. Unset, the server runs the
+installed extension and identifies as before. It then refuses any other
+module: the installed extension is the file an installed distribution's
+RECORD lists, with the SHA-256 it gives (a binary exllamav3 wheel), or
+exllamav3's own JIT build in torch's extension directory (the PyPI wheel),
+so a rebuilt module, a copy or a hard link reached through PYTHONPATH never
+runs under the installed one's identity. The managed worker runs the
+installed extension.
+
+Measured on the Dreamer's nightly call (GPU run 4, mel's RTX 4090 at 400 W,
+on the ring, pool and prompt lookup; opus-skill's own build of the same
+line): 280.13 against 273.72 packets/h with lookup alone (x1.023), JSON valid
+19 and 20 of 20 against 16 and 17, graded +0.126 [-0.007, +0.275]; on the
+held-out pack with its own body, x1.031, JSON 18 against 19 of 20 (M02_en10's
+json fence is left open), graded -0.035 [-0.107, +0.003]. Worst-case VRAM
+23712 MiB, 852 MiB spare. Rollback: unset `ONEIRON_HOUSE_EXL3_EXT_DIR`.
+
+### exllamav3's own variables
+
+exllamav3 reads many `EXL3_*` environment variables that pick the target's
+kernels or arithmetic, in Python (`EXL3_FUSED_SAMPLER`, `EXL3_BC_ATTN`, ...)
+and in its extension (`EXL3_INT8_GEMV`, `EXL3_GEMV`, `EXL3_GRAPHS`, ...). The
+server takes every `EXL3_*` variable it inherits (from the unit's
+`EnvironmentFile` or the shell) at load, before it sets any of its own, and
+names their digest in its server settings (`exllamav3_env`) and in its
+session snapshots' compatibility, so answers, cached prefixes and KV computed
+under them are never taken for the stock server's. Every inherited one is
+named, not a list of known ones: one that changes nothing costs a cache miss
+or a refused import (`snapshot_incompatible`), never a wrong reuse. The fusion
+pair (`EXL3_MGEMM_K_THRESHOLD`, `EXL3_MGEMM_N_THRESHOLD`) is the exception:
+the `fuse_projections` switch sets or clears it and names itself in
+`speed_parts`. An `EXL3_ENV` line at load names the variables and the digest,
+never their values: an `EnvironmentFile` can hold a secret under the prefix,
+and the server's stdout goes to the service journal. The digest is an
+HMAC-SHA-256 of the names and values as ASCII-escaped JSON, so a value that
+is not UTF-8 is named like any other. It is keyed because it reaches the
+journal, every reply's execution mode and the snapshots' compatibility, where
+a plain hash of a short value (a six-digit pin) is found by hashing every
+candidate. The key is the file `ONEIRON_HOUSE_EXL3_ENV_KEY_FILE`
+(`--exllamav3-env-key-file`) names: at least 32 random bytes, readable by the
+service only, the same file on every worker that exchanges session snapshots.
+Unset, each process draws a key of its own, so a server with `EXL3_*`
+variables set shares no snapshot or cached answer with any other process. With
+none set, the identity and the compatibility are as before.
 
 ### Solo admission
 

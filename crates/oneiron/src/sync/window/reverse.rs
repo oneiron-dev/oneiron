@@ -176,6 +176,18 @@ fn reverse_rematerialize_scan(
                 && !EntityMetadataHeader::parse(&raw)
                     .is_some_and(|header| (start_ts..end_ts).contains(&header.learned_at))
             {
+                // A base row's edge to a world's row rides that world's window
+                // of the TARGET's birth month (`edge_belongs_to_window`),
+                // whatever month the base source was learned in. The full pass
+                // finds it through the target index below; this pass has only
+                // the source the write door queued, so a world window takes
+                // that source's edges here, never its row (FIX
+                // LIVE-MIRROR-CROSS-MONTH-EDGE-SOURCE-DROPPED).
+                if window_key.world().is_some()
+                    && super::types::entity_world(&raw).ok() == Some(None)
+                {
+                    base_edge_sources.push(id);
+                }
                 continue;
             }
             if no_pads && crate::world_keys::pad_body_world(&raw).is_some() {
@@ -359,9 +371,14 @@ fn reverse_rematerialize_scan(
             continue;
         }
 
-        let retained_shell = {
+        // The snapshot opens after the carrier bytes were read, so a shell
+        // read there is read fenced here: its scrub committed the row's
+        // deletion fence with it. A row deleted here (a soft delete between
+        // its scrub and its own publication, which re-proves the delete) is
+        // never mirrored, as egress withdraws its carrier.
+        let (retained_shell, deleted_here) = {
             let txn = vault.store.env.read_txn()?;
-            super::types::retained_world_shell_belongs_to_window(
+            let retained_shell = super::types::retained_world_shell_belongs_to_window(
                 vault,
                 &txn,
                 doc,
@@ -370,7 +387,10 @@ fn reverse_rematerialize_scan(
                 &raw,
                 window_key,
                 false,
-            )?
+            )?;
+            let deleted_here =
+                crate::deletion::row_deletion_marked(&vault.store, &txn, id, Some(raw.as_slice()))?;
+            (retained_shell, deleted_here)
         };
         // Excluded credentials and the local default manifest have no live
         // carrier or incident edge. Scrub history as well as the live map when
@@ -395,7 +415,7 @@ fn reverse_rematerialize_scan(
         // restore the carrier. Ordinary rows retain delete-wins semantics,
         // including non-binary values and case-shifted aliases.
         let protected_tombstone = protected_tombstones.contains(id);
-        if !protected_tombstone && tombstones.contains(id) && !retained_shell {
+        if !protected_tombstone && (tombstones.contains(id) || deleted_here) && !retained_shell {
             continue;
         }
 
@@ -752,10 +772,14 @@ fn reverse_rematerialize_scan(
     // every revision learned since (Astra #1434 F2).
     wrote_any |= super::project_history::carry_project_history(vault, doc)?;
 
-    // FIX 5266: the turn-program armings and disarms of this window's month.
+    // FIX 5266: the turn-program armings and disarms of this window's month,
+    // and the latest row this vault knows for each wake the window carries
+    // or this vault retracted.
     if window_key.world().is_none() {
         wrote_any |=
             crate::sync::turn_programs::mirror_turn_program_armings(vault, doc, window_key)?;
+        wrote_any |=
+            crate::sync::turn_programs::mirror_turn_program_wake_answers(vault, doc, window_key)?;
     }
 
     // Commit all bridge writes with origin tag

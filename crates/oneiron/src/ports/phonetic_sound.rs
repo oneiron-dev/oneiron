@@ -94,9 +94,11 @@ impl SoundScan {
 
     /// The kept matches, nearest first: within the threshold, admitted by
     /// `admission` (every match when `None`), within the keep ratio of the
-    /// nearest admitted distance, at most the cap. Matches are asked nearest
-    /// first, and none past the cut is asked. Equal distances keep id order,
-    /// so a cut is the same on every run.
+    /// nearest admitted distance, at most the cap. An infinite keep ratio
+    /// keeps every admitted match within the threshold, so no match's place
+    /// rests on a nearer one's distance. Matches are asked nearest first, and
+    /// none past the cut is asked. Equal distances keep id order, so a cut is
+    /// the same on every run.
     pub(crate) fn finish(
         self,
         mut admission: Option<&mut SoundMatchAdmission<'_>>,
@@ -114,7 +116,7 @@ impl SoundScan {
             {
                 continue;
             }
-            if bound.is_none() {
+            if bound.is_none() && self.keep_ratio.is_finite() {
                 bound = Some(distance * self.keep_ratio);
             }
             kept.push((id, distance));

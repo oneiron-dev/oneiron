@@ -16,6 +16,56 @@ pub fn mint_scope_summary(vault: &Vault, scope: &ScopeSelector, text: &str) -> R
     crate::scope_summary::mint_scope_summary_for_test(vault, scope, text)
 }
 
+/// Mints a summary as [`mint_scope_summary`] does, then gives it the
+/// document the Dreamer's completion births beside it
+/// (`scope_summary/request.rs`, `birth_summary_in_txn`), so
+/// `vault.summaries.read` serves its text. No model ran, so the derivation
+/// names no request, sources or hashes beyond the text's own; the purpose is
+/// the seeded `session_recap`.
+///
+/// # Errors
+/// The mint's, a missing seeded purpose, or the birth's.
+pub fn mint_born_scope_summary(
+    vault: &Vault,
+    scope: &ScopeSelector,
+    text: &str,
+) -> Result<EntityId> {
+    let id = mint_scope_summary(vault, scope, text)?;
+    let purpose = vault
+        .summary_purposes()?
+        .into_iter()
+        .find(|purpose| purpose.id == "session_recap")
+        .ok_or_else(|| {
+            crate::error::Error::InvalidConfig("no session_recap summary purpose".to_owned())
+        })?;
+    let now = vault.now_recorded_at();
+    let metadata = crate::scope_summary::ScopeSummaryMetadata {
+        purpose,
+        keep: String::new(),
+        derivation: crate::scope_summary::SummaryDerivation {
+            request: Vec::new(),
+            trigger: [0; 16],
+            content_hash: [0; 32],
+            params_hash: [0; 32],
+            instruction: String::new(),
+            model: String::new(),
+            policy_frontier: [0; 32],
+            sources: Vec::new(),
+            previous: None,
+            recorded_at: now,
+            generated_text_hash: *blake3::hash(text.as_bytes()).as_bytes(),
+            generated_keep_hash: *blake3::hash(b"").as_bytes(),
+            source_set: None,
+            line_sources: None,
+        },
+    };
+    let dreamer = vault.dreamer_authority()?;
+    vault.with_write_txn_grouped(|txn| {
+        crate::entity_doc::birth_summary_in_txn(vault, txn, id, dreamer, now, &metadata)
+    })?;
+    Ok(id)
+}
+
 /// Raw-puts `body` at `id` with DAG edges, copying `template`'s TURN times.
 ///
 /// The shared put/edge path a copied landing reply takes: one atomic batch

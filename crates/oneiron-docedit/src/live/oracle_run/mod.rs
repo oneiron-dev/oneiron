@@ -233,6 +233,10 @@ fn provenance(run: &mut Run, source: Option<&str>, repo: &Path) {
 
 /// `git rev-parse HEAD` in `repo`, when git answers with a full commit.
 fn git_head(repo: &Path) -> Option<String> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "evidence tooling run only by the deck-gate binaries, outside the server"
+    )]
     let output = std::process::Command::new("git")
         .arg("-C")
         .arg(repo)

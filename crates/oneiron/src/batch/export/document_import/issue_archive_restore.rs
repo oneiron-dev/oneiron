@@ -11,9 +11,10 @@ use crate::vault::live_entity_row_in_txn;
 use crate::{EntityId, Result, Vault};
 
 /// The report archived ISSUE `id` holds, or `None` when it holds none to
-/// restore. A secret-tainted ISSUE exports its body whole as
-/// [`ExportBody::Nulled`], with or without secrets, and no bytes convert
-/// from it; a body that converts but is no restorable report
+/// restore. A body the archive carries nulled whole ([`ExportBody::Nulled`])
+/// converts to no bytes: since census L6-32 a host taint mark rides only a
+/// BLOB_ARTIFACT, so only an archive written before then nulls an ISSUE this
+/// way. A body that converts but is no restorable report
 /// (`restorable_archived_report`) is the other case. Either stays omitted,
 /// and the rest of the archive restores.
 fn archived_report<R: Read + Seek>(
@@ -61,10 +62,10 @@ pub(super) fn artifact_routes<R: Read + Seek>(
 /// restore only (the permit is the proof), after the same off-record, deletion
 /// and collision checks the generic pass makes. Each restored or unchanged id
 /// leaves the omitted set; returns the (inserted, unchanged) counts. An ISSUE
-/// whose body holds no restorable report (`archived_report`: a tainted body
-/// the export nulled whole, or credential-shaped text an export without
-/// secrets nulled) stays omitted, as every ISSUE was before this restore, and
-/// the rest of the archive restores.
+/// whose body holds no restorable report (`archived_report`: a body an older
+/// archive nulled whole, or credential-shaped text an export without secrets
+/// nulled) stays omitted, as every ISSUE was before this restore, and the rest
+/// of the archive restores.
 pub(super) fn restore_in_txn<R: Read + Seek>(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

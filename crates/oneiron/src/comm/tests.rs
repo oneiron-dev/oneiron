@@ -24,7 +24,9 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
     config.map_size = 16 * 1024 * 1024;
     config.dimensions = 4;
     config.embedding_model = None;
-    crate::test_util::open_test_vault_with(config)
+    let (dir, vault) = crate::test_util::open_test_vault_with(config);
+    vault.prepare_install_signing().expect("install signing");
+    (dir, vault)
 }
 
 fn validate_through_chokepoint(body: &ClaimBody) -> Result<ClaimBody> {
@@ -428,6 +430,8 @@ fn non_person_party_ref_is_skipped_without_wedging_projection() -> CommResult<()
         thread_ref: None,
         occurred_at: 10,
         projected: false,
+        original_head: None,
+        source_position: None,
     };
     vault.try_with_write_txn(|wtxn| {
         put_comm_record_in_txn(&vault, wtxn, bad_event_id, &bad_event)
@@ -514,6 +518,8 @@ fn cross_populated_event_fields_are_rejected_at_decode() -> CommResult<()> {
         thread_ref: Some("thread-x".to_owned()),
         occurred_at: 10,
         projected: false,
+        original_head: None,
+        source_position: None,
     };
     assert!(matches!(
         decode_comm_record(&encode_comm_record(&cross_send)?),
@@ -529,6 +535,8 @@ fn cross_populated_event_fields_are_rejected_at_decode() -> CommResult<()> {
         thread_ref: Some("thread-x".to_owned()),
         occurred_at: 11,
         projected: false,
+        original_head: None,
+        source_position: None,
     };
     assert!(matches!(
         decode_comm_record(&encode_comm_record(&cross_thread)?),
@@ -544,6 +552,8 @@ fn cross_populated_event_fields_are_rejected_at_decode() -> CommResult<()> {
         thread_ref: None,
         occurred_at: 12,
         projected: false,
+        original_head: None,
+        source_position: None,
     };
     assert!(decode_comm_record(&encode_comm_record(&ok_send)?).is_ok());
     Ok(())
@@ -629,6 +639,8 @@ fn two_vaults_project_one_source_event_to_byte_identical_claim_ids() -> CommResu
                 thread_ref: thread.map(str::to_owned),
                 occurred_at: 10,
                 projected: false,
+                original_head: None,
+                source_position: None,
             };
             vault.try_with_write_txn(|wtxn| {
                 put_comm_record_in_txn(&vault, wtxn, event_id, &event)
@@ -680,6 +692,8 @@ fn replaying_an_identical_event_is_a_no_op_without_self_supersession() -> CommRe
         thread_ref: None,
         occurred_at: 10,
         projected: false,
+        original_head: None,
+        source_position: None,
     };
     vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
     run_comm_projector(&vault)?;
@@ -736,6 +750,8 @@ fn derived_id_collision_with_a_foreign_row_fails_closed() -> CommResult<()> {
         thread_ref: None,
         occurred_at: 10,
         projected: false,
+        original_head: None,
+        source_position: None,
     };
     vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
 
@@ -781,6 +797,8 @@ fn derived_id_collision_with_a_different_claim_body_fails_closed() -> CommResult
         thread_ref: None,
         occurred_at: 10,
         projected: false,
+        original_head: None,
+        source_position: None,
     };
     vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
 
@@ -835,6 +853,8 @@ fn derived_id_collision_with_a_rejected_twin_fails_closed() -> CommResult<()> {
         thread_ref: None,
         occurred_at: 10,
         projected: false,
+        original_head: None,
+        source_position: None,
     };
     vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
 
@@ -885,6 +905,8 @@ fn derived_id_with_a_detached_claim_of_edge_fails_closed() -> CommResult<()> {
         thread_ref: None,
         occurred_at: 10,
         projected: false,
+        original_head: None,
+        source_position: None,
     };
     vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
 
@@ -1044,6 +1066,8 @@ fn twin_merge_keeps_claims_on_their_own_subjects_and_reads_through() -> CommResu
             thread_ref: None,
             occurred_at: at,
             projected: false,
+            original_head: None,
+            source_position: None,
         };
         vault.try_with_write_txn(|wtxn| {
             put_comm_record_in_txn(&vault, wtxn, EntityId::now(), &event)
@@ -1117,6 +1141,8 @@ fn entity_not_found_event_leaves_pass_index_unpoisoned() -> CommResult<()> {
         thread_ref: Some("scan-enf-thread".to_owned()),
         occurred_at: 40,
         projected: false,
+        original_head: None,
+        source_position: None,
     };
     vault.try_with_write_txn(|wtxn| {
         put_comm_record_in_txn(&vault, wtxn, missing_event_id, &missing_event)
@@ -1303,6 +1329,7 @@ fn sync_replicated_person_row(vault: &Vault, id: EntityId, party_key: &str) -> C
                 entity_type: ENTITY_TYPE_PERSON,
                 occurred: TimeRange { start: 0, end: 0 },
                 learned_at: crate::unix_seconds_now(),
+                row_version: None,
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
@@ -1339,6 +1366,8 @@ fn peer_projected_later_leave_bounds_retried_earlier_join_after_party_arrival() 
                     thread_ref: Some("sol4-thread".to_owned()),
                     occurred_at,
                     projected: false,
+                    original_head: None,
+                    source_position: None,
                 },
             )
         })?;
@@ -1891,6 +1920,7 @@ fn gate_holds_for_counterparty_opt_out(vault: &Vault, counterparty: &str) -> Com
         has_opted_in: true,
         has_permission: true,
         policy_risk: ExternalEffectPolicyRisk::Normal,
+        send_autonomy: None,
     };
     let (_decision_id, decision, _charge) = vault.with_write_txn(|wtxn| {
         check_external_effect_policy(&vault.store, wtxn, &effect, &policy, false)
@@ -1918,8 +1948,6 @@ fn put_email_identity(vault: &Vault, id: EntityId, address: &str) -> CommResult<
 #[path = "thread_alias_tests.rs"]
 mod thread_alias_tests;
 
-// FIX [LIBTEST-QUARANTINE-COMM-CONSENT-PROJECTION-TESTS]: the lib test target's type check fails here (5 errors: E0063 x5); port it, then drop this gate
-#[cfg(any())]
 #[path = "consent_projection_tests.rs"]
 mod consent_projection_tests;
 
