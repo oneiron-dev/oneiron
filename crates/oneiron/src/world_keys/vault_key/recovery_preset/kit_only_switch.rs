@@ -1,7 +1,10 @@
 //! The switch to Nobody but me with the kit present: the kit's doors, and the
 //! rotation of the root's authority key R in the switch's write (pass 27 kit-only).
 
+use super::super::kit::check_kit_passkey;
+use super::kit_only_fact::asked_ground;
 use super::*;
+use crate::authority::OwnerProofGround;
 
 const KIT_NOT_THIS_VAULTS: &str = "this recovery kit does not hold this vault's live way back; nothing \
                                    was written";
@@ -14,6 +17,11 @@ impl Vault {
     /// preset change; the kit's generation must be the live one, else
     /// `KIT_NOT_THIS_VAULTS`. Kit-only to kit-only, re-entering the same
     /// preset and the switch back change no roster. No seed is handed out.
+    ///
+    /// The door asks for an important act when its read says the switch would
+    /// change the kit-only fact or rotate the recovery authority key; the
+    /// preset in force asks nothing. An unasked fact change or rotation is a
+    /// write conflict.
     pub fn set_recovery_preset_with_kit_as(
         &self,
         authority: &crate::authority::ActAuthority,
@@ -48,6 +56,11 @@ impl Vault {
     /// the sheet's only hand-over, as the owner API's is: entering needs this
     /// install's device wrap to stay, as
     /// [`Vault::set_recovery_preset_answered_as`] needs it.
+    ///
+    /// The door asks for an important act when its read says the switch would
+    /// change the kit-only fact or rotate the recovery authority key; the
+    /// preset in force asks nothing. An unasked fact change or rotation is a
+    /// write conflict.
     pub fn set_recovery_preset_answered_with_kit_as(
         &self,
         authority: &crate::authority::ActAuthority,
@@ -59,7 +72,8 @@ impl Vault {
         if matches!(authority, crate::authority::ActAuthority::Agent(_)) {
             return Err(crate::authority::authority_refused(PRESET_OWNER_ONLY));
         }
-        let device_wrap = self.device_wrap_held_here()?;
+        // The kit and roster are checked before the ask. The writer reads
+        // the device wrap only after the ask can no longer refuse.
         let (rotation, any_live) = self.prepare_kit_rotation(pieces, passphrase)?;
         if self.recovery_preset()? == RecoveryPreset::Standard
             && preset.is_nobody_but_me()
@@ -72,7 +86,7 @@ impl Vault {
             authority,
             preset,
             |_| Ok(()),
-            SheetHandover::Answer { device_wrap },
+            SheetHandover::Answer,
             Some(rotation),
             box_hold,
         )
@@ -116,11 +130,13 @@ impl Vault {
     /// then the rotation step; without it (a kitless door), a live
     /// generation refuses `KIT_ONLY_NEEDS_KIT`. No live generation writes no
     /// roster row. Returns the new live generation, if it rotated.
+    /// A rotation requires the important ground the door asked on.
     pub(super) fn maybe_rotate_recovery_authority_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         authority: &crate::authority::ActAuthority,
         rotation: &Option<PreparedRotation>,
+        ground: Option<&OwnerProofGround>,
     ) -> Result<Option<u32>> {
         let Some(prepared) = rotation else {
             if self.any_live_recovery_authority_in_txn(txn)? {
@@ -138,6 +154,9 @@ impl Vault {
                 if prepared.live_pre.is_some_and(|before| before != live) {
                     return Err(crate::authority::authority_refused(KIT_NOT_THIS_VAULTS));
                 }
+                // Rotating is an identity act even when the kit-only fact
+                // does not move. Refuse it if the door did not ask for it.
+                asked_ground(ground)?;
                 let (next, _, _) = self.rotate_recovery_authority_key_in_txn(
                     txn,
                     authority,
@@ -162,6 +181,10 @@ impl Vault {
     /// generation must be the live one, else `KIT_NOT_THIS_VAULTS`. With the
     /// switch already on, the new kit is issued and no roster changes. No
     /// seed is handed out.
+    ///
+    /// The door asks for an important act when its read says the switch would
+    /// change the kit-only fact or rotate the recovery authority key. An
+    /// unasked fact change or rotation is a write conflict.
     pub fn set_recovery_preset_any_two_with_kit_as(
         &self,
         authority: &crate::authority::ActAuthority,
@@ -171,6 +194,38 @@ impl Vault {
         passphrase: Option<&KitPassphrase>,
         keep_pieces: impl FnOnce(&[KitPiece]) -> Result<()>,
         box_hold: &dyn RecoveryBoxHold,
+    ) -> Result<RecoveryPresetAnyTwoChange> {
+        self.set_recovery_preset_any_two_with_kit_between(
+            authority,
+            issue,
+            passkey,
+            pieces,
+            passphrase,
+            keep_pieces,
+            box_hold,
+            || {},
+        )
+    }
+
+    /// [`Self::set_recovery_preset_any_two_with_kit_as`], with `between` run
+    /// after the door asked and before it draws the kit: the gap in which
+    /// another writer can commit first (the test door
+    /// `test_doors::recovery_preset_between`). It does not run when the
+    /// door's read refuses.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the kit door arguments and the between hook"
+    )]
+    pub(crate) fn set_recovery_preset_any_two_with_kit_between(
+        &self,
+        authority: &crate::authority::ActAuthority,
+        issue: &KitIssue<'_>,
+        passkey: Option<KitPasskey<'_>>,
+        pieces: &[&KitPiece],
+        passphrase: Option<&KitPassphrase>,
+        keep_pieces: impl FnOnce(&[KitPiece]) -> Result<()>,
+        box_hold: &dyn RecoveryBoxHold,
+        between: impl FnOnce(),
     ) -> Result<RecoveryPresetAnyTwoChange> {
         if matches!(authority, crate::authority::ActAuthority::Agent(_)) {
             return Err(crate::authority::authority_refused(PRESET_OWNER_ONLY));
@@ -189,9 +244,14 @@ impl Vault {
             keep_pieces,
             Some(rotation),
             box_hold,
+            between,
         )
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the two kit hand-overs and the between hook"
+    )]
     pub(super) fn set_recovery_preset_any_two_handed_over(
         &self,
         authority: &crate::authority::ActAuthority,
@@ -200,6 +260,7 @@ impl Vault {
         keep_pieces: impl FnOnce(&[KitPiece]) -> Result<()>,
         rotation: Option<PreparedRotation>,
         box_hold: &dyn RecoveryBoxHold,
+        between: impl FnOnce(),
     ) -> Result<RecoveryPresetAnyTwoChange> {
         let (owner, surface) = match authority {
             crate::authority::ActAuthority::Owner(owner, surface) => (owner, *surface),
@@ -210,18 +271,36 @@ impl Vault {
         if !matches!(self.data_key_custody(), VaultDataKeyCustody::OwnerHeldLocal) {
             return Err(refused(PRESET_CUSTODY));
         }
+        // Use the same preset snapshot for the kitless refusal and for
+        // deciding whether a kit switch needs to ask about a rotation.
+        let current = self.recovery_preset()?;
         // Entering from Standard without the kit while a generation is live
         // is refused before anything is drawn or kept. The write checks
         // again. The target is always kit-only here.
-        if rotation.is_none() && self.recovery_preset()? == RecoveryPreset::Standard {
+        if rotation.is_none() && current == RecoveryPreset::Standard {
             let txn = self.store.env.read_txn()?;
             if self.any_live_recovery_authority_in_txn(&txn)? {
                 return Err(crate::authority::authority_refused(KIT_ONLY_NEEDS_KIT));
             }
         }
-        // The kit-only fact's owner proof is signed on the person's confirm,
-        // asked before the kit is drawn, while the door holds nothing.
-        let ground = self.recovery_preset_proof_ground(true)?;
+        // The door's own refusals come before the ask: the person is not
+        // asked about a switch this handle cannot make, or about a kit
+        // request the draw refuses from the request alone. The held key is
+        // taken after the ask.
+        if self.held_vault_key().is_none() {
+            return Err(refused(
+                "the vault key is not held on this handle: unlock it first",
+            ));
+        }
+        check_kit_passkey(issue, passkey)?;
+        let rotates = current == RecoveryPreset::Standard
+            && rotation
+                .as_ref()
+                .is_some_and(|prepared| prepared.live_pre.is_some());
+        // The fact and rotation share one confirm before the kit is drawn,
+        // while the door holds nothing. The write checks again after the ask.
+        let ground = self.recovery_preset_proof_ground(owner, true, rotates)?;
+        between();
         let held = self
             .held_vault_key()
             .ok_or_else(|| refused("the vault key is not held on this handle: unlock it first"))?;
@@ -267,7 +346,12 @@ impl Vault {
             // is live. With the switch already on, the new kit is issued and
             // no roster changes.
             if state.recovery == RecoveryPreset::Standard {
-                self.maybe_rotate_recovery_authority_in_txn(txn, authority, &rotation)?;
+                self.maybe_rotate_recovery_authority_in_txn(
+                    txn,
+                    authority,
+                    &rotation,
+                    ground.as_ref(),
+                )?;
             }
             self.list_vault_key_kit_in_txn(txn, owner, &kit.manifest)?;
             let (removed, retired) =
