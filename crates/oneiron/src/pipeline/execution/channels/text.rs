@@ -656,8 +656,10 @@ impl PipelineBuilder<'_> {
     /// Through the whole scope, a place is a row the scope admits, so a
     /// hidden row takes one, and counts, only when it meets every other
     /// check of the call ([`Self::clamp_withheld_row_counts`], judged in
-    /// caches of its own, as `gate` is): a narrowed scan counts the hidden
-    /// rows in scope, as the unnarrowed one did (REVIEW-10311 round 1).
+    /// caches of its own, as `gate` is). The lane-only read gives every lane
+    /// row a place, so a readable lane row outside the scope takes one there
+    /// and none here: the two reads can count different hidden rows, and a
+    /// narrowed read still counts hidden rows (REVIEW-10311 rounds 1 and 2).
     fn search_text_candidates<F>(
         &self,
         rtxn: &RoTxn<'_>,
@@ -711,15 +713,14 @@ impl PipelineBuilder<'_> {
             // out of the run (REVIEW-9980 round 1), so the clamp asks first:
             // of the row, and of the rows its words came from
             // (PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT).
-            // Read best first, a hidden row among the first `limit` lane rows
-            // it judges held a place the window gave it before, and the pack
-            // counts it as it did then. The read scores with the audience's
-            // document frequencies, so those places are that ranking's: a
-            // hidden row's own words weigh more there than they did without
-            // the clamp. With a port walk pending the read judges every
-            // posting in index order, so there the owner-side count takes
-            // the hidden rows among the first `limit` places it judges, by
-            // that order, not by rank. Each
+            // Read best first, the pack counts a hidden row as withheld while
+            // it falls among the first `limit` places the read judges; which
+            // rows take a place is said at the test below. The read scores
+            // with the audience's document frequencies, so those places
+            // follow that ranking, not the unclamped one: a hidden row's own
+            // words weigh more there than they would without the clamp. With
+            // a port walk pending the read judges every posting in index
+            // order, so there the places follow that order, not rank. Each
             // judged row under a clamp is a deadline checkpoint, as at the
             // scope's admission: a read past many hidden rows stops there.
             let mut clamp_metadata = EntityMetadataCache::default();
