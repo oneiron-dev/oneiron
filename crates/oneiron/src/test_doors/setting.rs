@@ -1076,18 +1076,72 @@ fn land_pack_head_from(
     accept: Option<(EntityId, Vec<String>)>,
     ts: u64,
 ) -> Result<bool> {
+    let act = sign_pack_head_from(
+        vault,
+        (signer, frontier),
+        (pack, version, digest, held),
+        accept,
+        ts,
+    )?;
+    land_signed_pack_act(vault, &act, ts)
+}
+
+/// The owner `owner`'s yes to `pack`'s defaults `accepted` of the table `digest` names, decided
+/// on `signer` and signed by its install key on `frontier` at `ts`, holding `held`, and not
+/// landed ([`land_signed_pack_act`]): a test lands the table's row beside it first, as a peer's
+/// row can arrive before its act (stage 7c-3c review).
+///
+/// # Errors
+///
+/// `InvalidConfig` for a bad digest; storage errors.
+#[cfg(feature = "test-support")]
+pub fn sign_setting_pack_accept_from(
+    vault: &Vault,
+    (signer, frontier): (&EnrolledMachine, &SettingFrontier),
+    (pack, version, digest, held): (&str, &str, &str, &[&str]),
+    (owner, accepted): (EntityId, &[&str]),
+    ts: u64,
+) -> Result<SignedSettingAct> {
+    let accepted = accepted.iter().map(|name| (*name).to_owned()).collect();
+    sign_pack_head_from(
+        vault,
+        (signer, frontier),
+        (pack, version, digest, held),
+        Some((owner, accepted)),
+        ts,
+    )
+}
+
+#[cfg(feature = "test-support")]
+fn sign_pack_head_from(
+    vault: &Vault,
+    (signer, frontier): (&EnrolledMachine, &SettingFrontier),
+    (pack, version, digest, held): (&str, &str, &str, &[&str]),
+    accept: Option<(EntityId, Vec<String>)>,
+    ts: u64,
+) -> Result<SignedSettingAct> {
     let digest = oneiron_hex::decode_any_case::<32>(digest)
         .ok_or_else(|| Error::InvalidConfig("a pack digest must be 64 hex digits".into()))?;
     let held = held.iter().map(|name| (*name).to_owned()).collect();
-    let entry = vault.sign_setting_pack_head_as(
-        (signer.machine, &signer.key),
-        &frontier.0,
-        (pack, version, digest, held),
-        (accept, ts),
-    )?;
-    let hash = oneiron_authority::authority::authority_entry_hash(&entry)?;
-    let at = crate::temporal::TimeRange { start: ts, end: ts };
-    vault.put_authority_log_entries(&[(entry, at, ts)])?;
+    vault
+        .sign_setting_pack_head_as(
+            (signer.machine, &signer.key),
+            &frontier.0,
+            (pack, version, digest, held),
+            (accept, ts),
+        )
+        .map(SignedSettingAct)
+}
+
+/// Lands the pack act `act` (a head or the owner's yes) here at `ts`, as a peer's entry lands
+/// (stage 7c-3c review). Whether the fold here counts the entry (valid, and not held back).
+///
+/// # Errors
+///
+/// The log's refusal of the entry; storage errors.
+#[cfg(feature = "test-support")]
+pub fn land_signed_pack_act(vault: &Vault, act: &SignedSettingAct, ts: u64) -> Result<bool> {
+    let hash = land_signed_setting_act(vault, act, ts)?;
     let fold = vault.authority_fold()?;
     Ok(fold.valid_entries.contains(&hash) && !fold.held_back_entries().contains(&hash))
 }
@@ -1114,31 +1168,78 @@ pub fn pack_table_of(
     Ok((oneiron_hex::encode(&digest), bytes))
 }
 
-/// Puts the row of `pack`'s table whose digest is `digest` (64 hex digits) holding `held`, in a
-/// write of its own, as a peer's row lands: through the batch door, whose commit runs the
-/// setting projection (stage 7c-3c).
+/// Puts the row of `pack`'s table whose digest is `digest` (64 hex digits) beside the act `act`
+/// holding `held`, in a write of its own, as a peer's row lands: through the batch door, whose
+/// commit runs the setting projection (stage 7c-3c; a row per act, stage 7c-3c review). The
+/// row's id.
 ///
 /// # Errors
 ///
 /// `InvalidConfig` for a bad digest; the put's refusal; storage errors.
 #[cfg(feature = "test-support")]
-pub fn land_pack_table(vault: &Vault, (pack, digest): (&str, &str), held: &[u8]) -> Result<()> {
+pub fn land_pack_table(
+    vault: &Vault,
+    (pack, digest): (&str, &str),
+    act: &oneiron_authority::authority::AuthorityEntryHash,
+    held: &[u8],
+) -> Result<EntityId> {
     let digest = oneiron_hex::decode_any_case::<32>(digest)
         .ok_or_else(|| Error::InvalidConfig("a pack digest must be 64 hex digits".into()))?;
-    crate::setting::land_pack_table(vault, (pack, &digest), held)
+    crate::setting::land_pack_table(vault, (pack, &digest, act), held)
 }
 
-/// The bytes the row of `pack`'s table whose digest is `digest` (64 hex digits) holds here;
-/// `None` when no row is here (stage 7c-3c).
+/// Puts the row of `pack`'s table whose digest is `digest` (64 hex digits) beside the act `act`
+/// holding `held`, in a write of its own, as a sync pass stores a peer's row: a replicated put,
+/// which a row erased here refuses (stage 7c-3c review). The row's id.
+///
+/// # Errors
+///
+/// `InvalidConfig` for a bad digest; the put's refusal; storage errors.
+#[cfg(all(feature = "test-support", feature = "sync"))]
+pub fn land_pack_table_from_peer(
+    vault: &Vault,
+    (pack, digest): (&str, &str),
+    act: &oneiron_authority::authority::AuthorityEntryHash,
+    held: &[u8],
+) -> Result<EntityId> {
+    let digest = oneiron_hex::decode_any_case::<32>(digest)
+        .ok_or_else(|| Error::InvalidConfig("a pack digest must be 64 hex digits".into()))?;
+    crate::setting::land_pack_table_from_peer(vault, (pack, &digest, act), held)
+}
+
+/// Puts `pack`'s table whose digest is `digest` (64 hex digits) holding `held` in the one row per
+/// pack and digest that builds before rows per act wrote, in a write of its own, through the
+/// batch door (stage 7c-3c review).
+///
+/// # Errors
+///
+/// `InvalidConfig` for a bad digest; the put's refusal; storage errors.
+#[cfg(feature = "test-support")]
+pub fn land_pack_table_shared_row(
+    vault: &Vault,
+    (pack, digest): (&str, &str),
+    held: &[u8],
+) -> Result<()> {
+    let digest = oneiron_hex::decode_any_case::<32>(digest)
+        .ok_or_else(|| Error::InvalidConfig("a pack digest must be 64 hex digits".into()))?;
+    crate::setting::land_pack_table_shared_row(vault, (pack, &digest), held)
+}
+
+/// The bytes the row of `pack`'s table whose digest is `digest` (64 hex digits) beside the act
+/// `act` holds here; `None` when no row is here (stage 7c-3c).
 ///
 /// # Errors
 ///
 /// `InvalidConfig` for a bad digest; storage errors.
 #[cfg(feature = "test-support")]
-pub fn pack_table_here(vault: &Vault, (pack, digest): (&str, &str)) -> Result<Option<Vec<u8>>> {
+pub fn pack_table_here(
+    vault: &Vault,
+    (pack, digest): (&str, &str),
+    act: &oneiron_authority::authority::AuthorityEntryHash,
+) -> Result<Option<Vec<u8>>> {
     let digest = oneiron_hex::decode_any_case::<32>(digest)
         .ok_or_else(|| Error::InvalidConfig("a pack digest must be 64 hex digits".into()))?;
-    crate::setting::pack_table_bytes(vault, (pack, &digest))
+    crate::setting::pack_table_bytes(vault, (pack, &digest, act))
 }
 
 /// One live head act of a pack, as a test reads it (stage 7c-3a).

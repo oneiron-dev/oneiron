@@ -509,6 +509,18 @@ impl Vault {
             id,
             header.entity_type,
         )?;
+        // The floors waiting on the row are sealed before its lineage goes
+        // (#9289 Opus review 3 P1-A). A soft tombstone replayed over a soft
+        // scrub already applied here is no new erase, and seals nothing: a
+        // fact that waits for good on the row stays readable to the owner
+        // (FLOOR-OLD-FACT-ERASED-INPUT = A; #10108 review P1-3). An erase
+        // seals it, as the ruling says.
+        if erase
+            || !(IDENTITY_SOFT_DELETE_MARKER.contains(&self.store, &*wtxn, &HexId(*id))?
+                && ROW_DELETION_FENCE.contains(&self.store, &*wtxn, &HexId(*id))?)
+        {
+            crate::source_audience::seal_floors_awaiting_in_txn(&self.store, wtxn, id)?;
+        }
         crate::deletion::tear_derived_rows_in_txn(&write, wtxn, id, false)?;
         // Soft-erase truncates the body in place, so unlike the hard-purge path it
         // does not route through `deindex_entity`; drop any content-hash index row

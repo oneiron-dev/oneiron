@@ -7,8 +7,11 @@
 //! ([`emergency_return_in_txn`]), for the card of the booking the visitor
 //! picks again (PR 3).
 
-use super::{DEPOSIT, DEPOSIT_BOOKING, DepositRow, DepositState, UnattributedCancel, booking_key};
-use crate::error::Result;
+use super::{
+    DEPOSIT, DEPOSIT_BOOKING, DepositRow, DepositState, UnattributedCancel, booking_key,
+    put_deposit,
+};
+use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
 
 /// Which part of a deposit is still held.
@@ -176,9 +179,17 @@ pub(in crate::booking::lifecycle) fn unattributed_cancel_sequence_in_txn(
 /// captured) is marked, and only once; an EVENT with no deposit is left
 /// alone.
 ///
+/// The row is written through the deposits' one writer, so the home-move
+/// fence holds here too (review round 2 of #10058, FIX
+/// [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]): a node that froze its
+/// booking rows for a move writes no note on their history. It refuses, the
+/// replay's proof writer drops whole, and the outbox keeps the proof owed, so
+/// a later write or pull of the seat proves it again; it lands here once a
+/// cancelled move gives the rows back.
+///
 /// # Errors
 ///
-/// Storage errors.
+/// Storage errors; a refusal on a node that froze its booking rows.
 pub(crate) fn note_unattributed_cancel_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -205,5 +216,6 @@ pub(crate) fn note_unattributed_cancel_in_txn(
         noted_at: now,
     });
     row.updated_at = now;
-    DEPOSIT.put(&vault.store, wtxn, &link.deposit_key, &row)
+    put_deposit(vault, wtxn, &link.deposit_key, &row)
+        .map_err(|error| Error::InvalidConfig(error.to_string()))
 }

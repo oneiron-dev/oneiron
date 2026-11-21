@@ -11,7 +11,7 @@
 //! carries as bytes is read as the side-row wall reads it, as a body of its
 //! own. Nothing is minted, and each copy is wiped when it drops (FIX 1101).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use rmpv::Value;
@@ -37,7 +37,7 @@ pub(crate) fn custody_records_named(
     value: &Value,
     known: &Arc<KnownValues>,
 ) -> Result<BTreeSet<String>> {
-    let read = records_read(value, known, None, None)?;
+    let read = records_read(value, known, None, None, None)?;
     let mut records = BTreeSet::new();
     records_in(&read.0, &mut records);
     records.retain(|handle| known.holds_handle(handle));
@@ -82,7 +82,9 @@ fn body_records(bytes: &[u8], records: &mut BTreeSet<String>) {
 /// secret a shape rule places as the plan's one stand-in; each handle and
 /// every other byte as written. A value another record holds is read as any
 /// other text is. A body a member carries as bytes is read as a body. With
-/// `longest`, only their values at most that many bytes long are read.
+/// `longest`, only their values at most that many bytes long are read; with
+/// `through`, only the values each record held by the custody slot it names
+/// for it (FIX ERASED-IDENTITY-ROTATION-GENERATION).
 ///
 /// # Errors
 ///
@@ -92,25 +94,29 @@ pub(crate) fn custody_record_form(
     known: &Arc<KnownValues>,
     records: &BTreeSet<String>,
     longest: Option<usize>,
+    through: Option<&BTreeMap<String, u64>>,
 ) -> Result<Value> {
-    let mut read = records_read(value, known, Some(records.clone()), longest)?;
+    let mut read = records_read(value, known, Some(records.clone()), longest, through)?;
     Ok(std::mem::replace(&mut read.0, Value::Nil))
 }
 
 /// `value` as the side-row wall's plan reads a row's value with `known`
 /// (each body a member carries as bytes too), for the values of `records`
-/// alone when given, as far as `longest`. Nothing is minted.
+/// alone when given, as far as `longest` and up to `through`. Nothing is
+/// minted.
 fn records_read(
     value: &Value,
     known: &Arc<KnownValues>,
     records: Option<BTreeSet<String>>,
     longest: Option<usize>,
+    through: Option<&BTreeMap<String, u64>>,
 ) -> Result<PlanTree> {
     let mut read = PlanTree(value.clone());
     let mut plan = Masker {
         mints: true,
         records,
         records_longest: longest,
+        records_through: through.cloned(),
         at: Some((origin("replay", &[])?, "replay".to_owned())),
         known: Some(Arc::clone(known)),
         ..Masker::default()

@@ -34,6 +34,7 @@ impl ScopedRead<'_> {
             .reading(self.store_read())
             .authority_filter(candidates)
             .scoped_note_reader(self.actor_key.clone())
+            .statistics_read(self)
             .filter_candidates(&admitted)
             .run_for_pack()?;
         // The loop's receipts report the key's live Grants on any lane

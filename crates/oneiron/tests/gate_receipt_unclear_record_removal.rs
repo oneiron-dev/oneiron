@@ -21,6 +21,16 @@
 //! the whole sweep. And a side restore that drops the record whose key the
 //! sweep retired takes the row the image carried, where it came back.
 //!
+//! A re-judgment that settles the amendment drops its unclear row and withdraws
+//! the label proposals that quoted its note (FIX 21885). A legal hold on one
+//! such proposal refuses no re-judgment either (FIX
+//! [UNCLEAR-REJUDGE-REFUSED-BY-HELD-LABEL-PROPOSAL]): on main the erase it
+//! asked refused the judge's whole write on every retry, so the outcome's row
+//! could no longer change or go. The held proposal stands as it is. So does
+//! one whose signed history a hold keeps: the erase tears the proposal's
+//! history controls with it, and a held control refused it the same way
+//! (round 1 of the review of #10122).
+//!
 //! The discard is reached through a test door that runs its bundle write on a
 //! set of claims, without a world fixture:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -37,7 +47,7 @@ use oneiron::authority::HostSlipIssuer;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::LegalHoldTarget;
 use oneiron::edit_distance::attribution::{
-    AmendmentEvidence, judge_amendment, record_amendment_evidence,
+    AmendmentCause, AmendmentEvidence, judge_amendment, record_amendment_evidence,
 };
 use oneiron::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
 use oneiron::skill_attribution::{AttributionLane, unclear_attributions};
@@ -219,6 +229,23 @@ fn judge_unsettled(seeded: &Seeded, receipt: &str) {
     judge_amendment(&seeded.vault, receipt)
         .expect("FIXTURE: the judging pass")
         .expect("FIXTURE: the judge settles the amendment");
+}
+
+/// The host settles the amendment under `receipt` as an external change, and
+/// the judge judges it again: the whole amendment `environment`, no unclear
+/// share, so the outcome's unclear row goes.
+fn judge_settled(seeded: &Seeded, receipt: &str) -> oneiron::Result<()> {
+    let evidence = AmendmentEvidence::new(receipt, seeded.machine, SCOPE)
+        .with_cause(AmendmentCause::ExternalChange)
+        .at(NOW);
+    record_amendment_evidence(&seeded.vault, &evidence)
+        .expect("FIXTURE: the host settles the amendment's cause");
+    judge_amendment(&seeded.vault, receipt).map(|judgment| {
+        assert!(
+            judgment.is_some(),
+            "FIXTURE: the judge settles the amendment again"
+        );
+    })
 }
 
 /// Whether the unclear ledger keeps an amendment row under `receipt`.
@@ -472,5 +499,95 @@ fn a_restore_that_drops_a_retired_amended_record_leaves_no_unclear_row() {
     assert!(
         !unclear_kept(&copy, &receipt),
         "the restore that dropped the amended record leaves no unclear row under its receipt"
+    );
+}
+
+#[test]
+fn a_rejudgment_that_settles_the_amendment_withdraws_the_label_proposal() {
+    let seeded = seed_restorable();
+    let (_, receipt) = owner_amended_claim(&seeded);
+    judge_unsettled(&seeded, &receipt);
+    let proposal = label_proposal(&seeded, &receipt);
+
+    judge_settled(&seeded, &receipt).expect("the re-judgment");
+
+    assert!(
+        !unclear_kept(&seeded.vault, &receipt),
+        "the settled re-judgment leaves no unclear row under the receipt"
+    );
+    assert!(
+        !claim_kept(&seeded.vault, proposal),
+        "and withdraws the label proposal that quoted its note while it waited on its owner"
+    );
+}
+
+#[test]
+fn a_legal_hold_on_a_label_proposal_refuses_no_rejudgment() {
+    let seeded = seed_restorable();
+    let (_, receipt) = owner_amended_claim(&seeded);
+    judge_unsettled(&seeded, &receipt);
+    let proposal = label_proposal(&seeded, &receipt);
+    seeded
+        .vault
+        .place_legal_hold(
+            &owner_proof(&seeded),
+            vec![LegalHoldTarget::Record(proposal)],
+            None,
+        )
+        .expect("FIXTURE: the owner holds the label proposal");
+
+    let rejudged = judge_settled(&seeded, &receipt);
+
+    assert!(
+        rejudged.is_ok(),
+        "a hold on a label proposal refuses no re-judgment of the outcome its note quoted: {:?}",
+        rejudged.err()
+    );
+    assert!(
+        !unclear_kept(&seeded.vault, &receipt),
+        "the re-judgment lands and leaves no unclear row under the receipt"
+    );
+    assert!(
+        claim_kept(&seeded.vault, proposal),
+        "the held label proposal stays"
+    );
+}
+
+#[test]
+fn a_legal_hold_on_a_label_proposals_signed_history_refuses_no_rejudgment() {
+    let seeded = seed_restorable();
+    let (_, receipt) = owner_amended_claim(&seeded);
+    judge_unsettled(&seeded, &receipt);
+    let proposal = label_proposal(&seeded, &receipt);
+    let controls = door::machine_history_controls(&seeded.vault, proposal)
+        .expect("FIXTURE: the label proposal's signed history");
+    assert!(
+        !controls.is_empty(),
+        "FIXTURE: the machine birth of the label proposal signed its history"
+    );
+    seeded
+        .vault
+        .place_legal_hold(
+            &owner_proof(&seeded),
+            controls.into_iter().map(LegalHoldTarget::Record).collect(),
+            None,
+        )
+        .expect("FIXTURE: the owner holds the label proposal's signed history, not the proposal");
+
+    let rejudged = judge_settled(&seeded, &receipt);
+
+    assert!(
+        rejudged.is_ok(),
+        "a hold on a label proposal's signed history refuses no re-judgment of the outcome its \
+         note quoted: {:?}",
+        rejudged.err()
+    );
+    assert!(
+        !unclear_kept(&seeded.vault, &receipt),
+        "the re-judgment lands and leaves no unclear row under the receipt"
+    );
+    assert!(
+        claim_kept(&seeded.vault, proposal),
+        "the label proposal whose signed history is held stays"
     );
 }

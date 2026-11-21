@@ -524,3 +524,63 @@ impl AnswerKey {
         }
     }
 }
+
+impl Vault {
+    /// Marks the rows `txn` counted since `before` for the live mirror, as
+    /// the vouch writer does: the caller commits, then announces them with
+    /// [`Self::note_committed_authority_rows`], so other owner devices see
+    /// a hold, an answer or a landing at the next mirror pass.
+    ///
+    /// # Errors
+    /// The log's and the mirror marks'.
+    pub(super) fn mark_authority_rows_counted_since_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        before: &AuthorityFold,
+    ) -> Result<BTreeSet<EntityId>> {
+        let after = self.authority_view_readonly_in_txn(txn)?;
+        let rows = super::root_recovery_door::authority_rows_counted_since(before, &after)?;
+        self.mark_authority_rows_in_txn(txn, &rows)?;
+        Ok(rows)
+    }
+
+    /// The kit's live root key R cancels every live hold R signed, in the
+    /// caller's write transaction, before its rows (W3): a kit recovery lands
+    /// over any hold, so an attacker's hold never lands after the owner's
+    /// kit. Another root's holds are skipped (the kit holds no other root's
+    /// key; such a hold voids when its key is revoked), and with no live R
+    /// from the kit it cancels nothing. The anchor arm of this door needs
+    /// none: with no live root key no hold is live, since a live hold's
+    /// signer R is one.
+    pub(super) fn cancel_live_holds_for_kit_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        seed: &crate::world_keys::RecoveryRootSeed,
+    ) -> Result<()> {
+        let vault_id = self
+            .authority_view_readonly_in_txn(txn)?
+            .vault_id
+            .ok_or_else(invalid_authority)?;
+        let Some((_, r)) = self
+            .recovery_authority_generations_in_txn(txn, seed, &vault_id)?
+            .live
+        else {
+            return Ok(());
+        };
+        let r_key = r.authority_key();
+        let live: Vec<AuthorityEntryHash> = self
+            .recovery_holds_in_txn(txn)?
+            .into_iter()
+            .filter(|view| {
+                view.root_key == r_key
+                    && matches!(
+                        view.state,
+                        RecoveryHoldState::Waiting | RecoveryHoldState::Due
+                    )
+            })
+            .map(|view| view.hold)
+            .collect();
+        self.append_root_key_cancels_in_txn(txn, &r, &live)?;
+        Ok(())
+    }
+}
