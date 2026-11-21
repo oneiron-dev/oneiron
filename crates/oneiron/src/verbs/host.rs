@@ -305,9 +305,10 @@ pub struct AiVerdictRequest {
     pub state: Option<serde_json::Value>,
     /// The highest rung that may answer; `big` when absent. A verdict never
     /// queues an owner ask, so `human` is refused. A Dreamer extraction
-    /// binding's lent read answers at the lent decisions' first rung: there
-    /// a ceiling below that rung is refused, naming both rungs. The host's
-    /// own door starts its dial no higher than the ceiling.
+    /// binding's lent read starts at the lent decisions' first rung and may
+    /// climb as far as the ceiling: there a ceiling below that first rung is
+    /// refused, naming both rungs. The host's own door starts its dial no
+    /// higher than the ceiling.
     #[serde(default)]
     pub ceiling: Option<crate::llm::decision::DecisionRung>,
     /// What a wrong answer would cost: a read that can be redone, or an
