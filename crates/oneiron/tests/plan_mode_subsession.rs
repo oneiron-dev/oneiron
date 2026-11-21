@@ -1122,3 +1122,29 @@ fn a_shared_room_reader_learns_only_the_id_of_the_runs_trace() {
         "the room's other reader learns only the trace's id: its gate never serves them the run's bubble"
     );
 }
+
+#[test]
+fn a_run_that_never_spoke_files_its_result_with_no_trace_ref() {
+    let fixture = fixture();
+    let plan = propose_run_by(&fixture, fixture.agent).expect("the agent proposes its run");
+    let (room, turn) = room_turn(&fixture, &[fixture.owner]);
+    let settled = approve_with(
+        &fixture,
+        plan.plan_ref,
+        &plan.revision,
+        json!({"approving_turn_ref": turn.to_hex()}),
+    )
+    .expect("the approval naming the turn lands");
+    let run = run_of(&settled)
+        .expect("the settlement names its run")
+        .expect("the approval lands the plan's run");
+    let session = sub_session_of(&settled).expect("the approval hangs the run off the turn");
+    let result = settle_run(&fixture, run);
+    let [record] = &filed_result_bodies(&fixture, room, session, result)[..] else {
+        panic!("the owner-only room files the run's result once");
+    };
+    assert!(
+        record.get("trace_ref").is_none(),
+        "a run that never spoke has no conversation of its own, so its filed record links no trace: {record}"
+    );
+}
