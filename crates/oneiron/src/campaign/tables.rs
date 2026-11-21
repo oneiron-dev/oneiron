@@ -43,6 +43,11 @@ crate::side_table::side_tables! {
     /// Campaign-local MACRO home-node election result. Key: ().
     CAMPAIGN_HOME_NODE_MACRO: VaultMeta b"campaign:home_node_macro:v1" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The vault's house voice guide NOTE (ARCH-0059 #copy-review), the guide a campaign's copy
+    /// review checks against when the campaign names none; seeded once, and its presence is the
+    /// seed's marker. Key: ().
+    CAMPAIGN_HOUSE_VOICE_GUIDE: VaultMeta b"campaign:house_voice_guide:v1" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// One `campaign.member` claim, any lifecycle, under the CAMPAIGN its value is scoped to
     /// (ARCH-0044 H202): a prefilter the membership pages re-read. Key: id16(campaign) +
     /// id16(claim).

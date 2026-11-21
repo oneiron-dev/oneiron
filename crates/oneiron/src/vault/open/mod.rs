@@ -816,6 +816,16 @@ impl Vault {
                     .record_hooks
                     .seed_claim_class_descriptors(&vault)?;
                 vault.store.project_writes.seed_root_project(&vault)?;
+                // A campaign's copy review checks against the house voice
+                // guide when it names none. A failed seed never blocks the
+                // open: such campaigns hold their sends, and the next open
+                // tries again.
+                if let Err(error) = vault.ensure_house_voice_guide() {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "the house voice guide was not seeded; the next open tries again"
+                    );
+                }
             }
         }
         vault.lfs_chunk_parameters()?;
