@@ -75,7 +75,7 @@ pub(super) fn checked_accept_in_txn(
     }
     // What the append of the yes's act refuses for before it signs, in the append's order.
     if rooted_in_txn(vault, txn)? {
-        head_defaults_digest(&head)?;
+        let _ = head_defaults_digest(&head);
         if !head.version.is_empty() {
             vault.owner_act_carrier_stands_in_txn(txn)?;
         }
