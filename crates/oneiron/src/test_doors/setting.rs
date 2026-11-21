@@ -27,10 +27,10 @@ pub use peer_acts::{
     land_setting_beside_act_from, land_setting_beside_untagged, land_setting_beside_value,
     land_setting_beside_value_before, land_setting_beside_value_holding, land_setting_copy_from,
     land_setting_pack_accept_from, land_setting_pack_head_from, land_signed_pack_act,
-    land_signed_setting_act, setting_beside_row, setting_beside_value_here, setting_copy_names,
-    setting_frontier, setting_frontier_of, setting_pack_accept_frontier_of,
-    setting_pack_frontier_of, setting_slot_heads, sign_setting_act_ahead,
-    sign_setting_beside_act_from, sign_setting_pack_accept_from,
+    land_signed_setting_act, land_signed_setting_acts, setting_beside_row,
+    setting_beside_value_here, setting_copy_names, setting_frontier, setting_frontier_of,
+    setting_pack_accept_frontier_of, setting_pack_frontier_of, setting_slot_heads,
+    sign_setting_act_ahead, sign_setting_beside_act_from, sign_setting_pack_accept_from,
 };
 
 /// Lands here, as a window's sync carries it, another machine's copy of the stored notice `id`

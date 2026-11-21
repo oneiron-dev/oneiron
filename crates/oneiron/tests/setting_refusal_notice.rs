@@ -47,6 +47,12 @@
 //! - an ordinary change that ends the conflict ends the notice's tap, though the refused act
 //!   stands as it was.
 //!
+//! Review round 1 of PR 3 (REVIEW-10343, P1=2):
+//! - the other machine's later act of the same count, which this install's row holds already, is
+//!   refused here as the act it replaces was, while the pair conflicts: its notice offers the tap;
+//! - two machines' acts on the pair read in one pass land both, and the notice names the pair the
+//!   pass leaves.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_refusal_notice`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -66,8 +72,8 @@ use oneiron::test_doors::setting::land_notification_copy_without_receipts;
 use oneiron::test_doors::setting::{
     EnrolledMachine, SettingFrontier, SlotName, emergency_plan_admission, enroll_machine_with_key,
     forget_projected_setting_rows, forget_setting_projection_records, land_setting_act_from,
-    land_setting_batch_from, set_setting_as_engine, setting_changes, setting_frontier_of,
-    setting_slot_heads,
+    land_setting_batch_from, land_signed_setting_acts, set_setting_as_engine, setting_changes,
+    setting_frontier_of, setting_slot_heads, sign_setting_act_ahead,
 };
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_authority::authority::{AuthorityEntryHash, authority_log_entity_id_from_hash};
@@ -80,6 +86,7 @@ const FLOOR: &str = "test.pair_floor";
 const CAPPED: &str = "test.capped_number";
 const MAX_PROPOSALS: &str = "booking.emergency.max_proposals";
 const MIN_PROPOSALS: &str = "booking.emergency.min_proposals";
+const SEARCH_SPAN: &str = "booking.emergency.search_span_secs";
 const SEAT: &str = "calendar.connector_seat";
 const FEED: &str = "calendar.ics_feed";
 const PRODUCER: &str = "setting.projection";
@@ -1114,7 +1121,8 @@ fn the_booking_pairs_count_lands_here_though_the_hook_refuses_it_and_a_fresh_pla
     let words = words_of(&notice);
     for phrase in [
         "Emergency rescheduling is off: you set min 3 above max 2. Fix it?",
-        "Laptop applied your `booking.emergency.max_proposals` = 2, set on Desktop, though",
+        "Laptop applied your `booking.emergency.max_proposals` = 2, set on Desktop, as every \
+         machine does.",
         "It meets your `booking.emergency.min_proposals` = 3, set on Laptop",
     ] {
         assert!(words.contains(phrase), "{phrase:?} in {words:?}");
@@ -1250,5 +1258,159 @@ fn an_ordinary_change_that_ends_the_booking_pairs_conflict_ends_its_tap() {
         fx.the_notice()["actions"],
         Value::Null,
         "no tap once the rows no longer conflict"
+    );
+}
+
+/// The tap the booking pair's notice offers: both values as they stand here, the refused row's
+/// first.
+fn pair_tap((key, value): (&str, Value), (further_key, further_value): (&str, Value)) -> Value {
+    json!([{
+        "verb": "vault.settings.set",
+        "args": {
+            "key": key,
+            "item": null,
+            "scope": { "kind": "vault" },
+            "pin": false,
+            "value": value,
+            "further": [{
+                "key": further_key,
+                "item": null,
+                "scope": { "kind": "vault" },
+                "pin": false,
+                "value": further_value,
+            }],
+        },
+    }])
+}
+
+#[test]
+fn the_other_machines_later_equal_count_is_refused_here_while_the_pair_conflicts() {
+    let fx = Fixture::rooted();
+    let floor_act = emergency_pair_set_at_once(&fx);
+
+    // The other machine, before the owner's floor reaches it, signs the count of 2 again in one
+    // act with the search span. This install's row holds that count already, so its write runs
+    // no hook.
+    let frontier = setting_frontier_of(
+        &fx.vault,
+        &[vault_row(MAX_PROPOSALS), vault_row(SEARCH_SPAN)],
+    )
+    .expect("frontier");
+    land_setting_batch_from(
+        &fx.vault,
+        &fx.desktop,
+        fx.owner,
+        &frontier,
+        &[
+            (vault_row(MAX_PROPOSALS), Some(json!(2))),
+            (vault_row(SEARCH_SPAN), Some(json!(172_800))),
+        ],
+        T0,
+    )
+    .expect("the act lands");
+    let count_act = the_head(&fx, vault_row(MAX_PROPOSALS));
+    assert_eq!(fx.reads(MAX_PROPOSALS), json!(2));
+    assert_eq!(
+        fx.reads(SEARCH_SPAN),
+        json!(172_800),
+        "the act's other row lands"
+    );
+    assert!(
+        emergency_plan_admission(&fx.vault, 2)
+            .expect("the policy read")
+            .is_err(),
+        "a fresh plan still refuses: the floor is above the count"
+    );
+
+    // The refusal stands for the new act, and its notice offers the tap.
+    let notices = fx.refusal_notices();
+    let notice = notices
+        .iter()
+        .find(|notice| named_refs(notice).contains(&entry_of(count_act)))
+        .unwrap_or_else(|| panic!("a notice names the new count act: {notices:#?}"));
+    let mut named = vec![entry_of(count_act), entry_of(floor_act)];
+    named.sort();
+    assert_eq!(named_refs(notice), named, "the notice names both acts");
+    assert!(
+        words_of(notice)
+            .contains("Emergency rescheduling is off: you set min 3 above max 2. Fix it?"),
+        "{notice:#?}"
+    );
+    assert_eq!(
+        notice["actions"],
+        pair_tap((MAX_PROPOSALS, json!(2)), (MIN_PROPOSALS, json!(3))),
+        "one tap over both values as they stand here"
+    );
+
+    // A later pass reads nothing again.
+    fx.vault.project_settings().expect("the pass");
+    assert_eq!(fx.refusal_notices().len(), notices.len());
+}
+
+#[test]
+fn two_machines_acts_on_the_booking_pair_read_in_one_pass_name_the_pair_it_leaves() {
+    let fx = Fixture::rooted();
+    let tablet = enroll_machine_with_key(&fx.vault, &fx.owner_proof, 9).expect("enrolled");
+    fx.vault
+        .set_machine_owner_name(&fx.owner_proof, tablet.machine(), Some("Tablet"))
+        .expect("the owner names the machine");
+
+    // This install holds the shipped pair, min 2 and max 3. The other machine raises the floor to
+    // 4 and a third lowers the count to 1, neither having seen the other's act, and both acts
+    // arrive in one commit: one pass reads them, and its hook refuses each against the other row
+    // as this install held it.
+    let sign = |machine: &EnrolledMachine, key: &str, value: Value| {
+        let frontier = setting_frontier_of(&fx.vault, &[vault_row(key)]).expect("frontier");
+        sign_setting_act_ahead(
+            &fx.vault,
+            (machine, fx.owner),
+            &frontier,
+            (vault_row(key), Some(value)),
+            (T0, 0),
+        )
+        .expect("the act signs")
+    };
+    let floor = sign(&fx.desktop, MIN_PROPOSALS, json!(4));
+    let count = sign(&tablet, MAX_PROPOSALS, json!(1));
+    land_signed_setting_acts(&fx.vault, &[&floor, &count], T0).expect("both acts land");
+    assert_eq!(fx.reads(MIN_PROPOSALS), json!(4), "the floor lands here");
+    assert_eq!(fx.reads(MAX_PROPOSALS), json!(1), "the count lands here");
+
+    let notice = fx.the_notice();
+    let mut named = vec![
+        entry_of(floor.hash().expect("the floor's hash")),
+        entry_of(count.hash().expect("the count's hash")),
+    ];
+    named.sort();
+    assert_eq!(named_refs(&notice), named, "the notice names both acts");
+    let words = words_of(&notice);
+    for phrase in [
+        "Emergency rescheduling is off: you set min 4 above max 1. Fix it?",
+        "your `booking.emergency.min_proposals` = 4, set on Desktop",
+        "your `booking.emergency.max_proposals` = 1, set on Tablet",
+        ", as every machine does.",
+    ] {
+        assert!(words.contains(phrase), "{phrase:?} in {words:?}");
+    }
+    assert!(
+        !words.contains("must not exceed"),
+        "no reason the hook read against the pair before the pass landed it: {words:?}"
+    );
+    let args = &notice["actions"][0]["args"];
+    let mut offered = vec![
+        (args["key"].clone(), args["value"].clone()),
+        (
+            args["further"][0]["key"].clone(),
+            args["further"][0]["value"].clone(),
+        ),
+    ];
+    offered.sort_by_key(|(key, _)| key.to_string());
+    assert_eq!(
+        offered,
+        vec![
+            (json!(MAX_PROPOSALS), json!(1)),
+            (json!(MIN_PROPOSALS), json!(4)),
+        ],
+        "one tap over both values the pass left here: {notice:#?}"
     );
 }
