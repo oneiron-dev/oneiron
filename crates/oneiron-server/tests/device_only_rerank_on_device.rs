@@ -23,6 +23,12 @@
 //!   device, scored on the ordinary route with the kept claim empty. Red at
 //!   the round-1 head cda7e17a5b30: the pin is refused, the view is taken,
 //!   the call is refused.
+//! - Review round 2: with the world made portable, a model order that
+//!   leaves no rung of a local-GPU model pack's on-device pick, or drops on
+//!   the device a rung the ordinary route takes (a night rung outside its
+//!   hours beside the stub), has its block scored on the ordinary route, as
+//!   on main: the pack's pick takes its own-server rung, the seat its stub
+//!   rung. Red at the round-1 head f1a1172169c8: nothing is sent.
 //!
 //! Each case recalls at high through `POST /v1/core/facade/vault.recall` as
 //! the owner, from this device, in the kept claim's WORLD with base reality,
@@ -52,7 +58,8 @@ use axum::{
 use ed25519_dalek::{Signer, SigningKey};
 use engine_stack::run_on_engine_stack;
 use oneiron::authority::{
-    ActSurface, HostSlipIssuer, ModelOrder, ReadLocation, WorldPrivacy, holder_proof_challenge,
+    ActSurface, HostSlipIssuer, ModelOrder, ReadLocation, SealedCopies, WorldPrivacy,
+    holder_proof_challenge,
 };
 use oneiron::federation::Scope;
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD};
@@ -762,5 +769,203 @@ fn a_kept_world_ordering_no_on_device_rung_sends_its_row_empty() {
         let recalled = recall_kept(&models, Some(dir.path()), order_kept_world).await;
         assert_eq!(recalled.status, StatusCode::OK, "{}", recalled.body);
         assert_kept_row_sent_empty(dir.path());
+    });
+}
+
+/// The world read everywhere, no longer kept on this machine, with a model
+/// order naming `offers` alone: its claim is sent with its words wherever
+/// the reranker runs, and its order picks the call's rungs.
+fn order_world_portable(vault: &Vault, world: EntityId, offers: &[&str]) {
+    let privacy = WorldPrivacy {
+        read: ReadLocation::Everywhere,
+        sealed: SealedCopies::Off,
+        models: ModelOrder::Ordered(offers.iter().map(|offer| (*offer).to_owned()).collect()),
+    };
+    vault
+        .set_world_privacy_as(&owner(vault), ActSurface::ThisInstall, world, privacy, None)
+        .expect("FIXTURE: the owner makes the world portable and orders its models");
+}
+
+/// The socket stub of `dir` was sent both claims with their words in one
+/// call, and the recall ranks the world's claim, which holds every word of
+/// the query, first, in the stub's order.
+fn assert_both_rows_reranked(dir: &Path, recalled: &Recalled) {
+    let posts = stub_rerank_bodies(&dir.join("stub.log"));
+    assert_eq!(
+        posts.len(),
+        1,
+        "one rerank call went on the socket: {posts:?}"
+    );
+    let sent = documents(&posts[0]);
+    assert!(
+        sent.contains(&document(KEPT)) && sent.contains(&document(PORTABLE)),
+        "the portable world's claim and base reality's are sent with their words: {sent:?}"
+    );
+    assert_eq!(
+        recalled.rerank_status(),
+        "applied",
+        "the block is in the reranker's order: {}",
+        recalled.body
+    );
+    let texts = recalled.item_texts();
+    assert_eq!(
+        texts.first().map(String::as_str),
+        Some(KEPT),
+        "the claim holding every word of the query ranks first: {texts:?}"
+    );
+}
+
+/// A local-GPU model pack, the vault's pinned pack, picking [`STUB_MODEL`]
+/// for the reranker, and the world made portable with a model order naming
+/// only the socket rung's ordinary offer ([`STUB_ORDINARY_OFFER`]).
+fn pick_stub_by_pack_and_order_world(vault: &Vault, world: EntityId) {
+    use oneiron::skill_hub::HubFile;
+    use oneiron::skill_hub::pack_catalog::{PackInstallDisposition, PackInstallStatus};
+    let name = "fixture.device-only-rerank";
+    let document = json!({
+        "format": 1,
+        "season": "device-only-rerank",
+        "released_epoch_day": 0,
+        "roles": {
+            "reranker": [{
+                "access": {"kind": "local_gpu"},
+                "model": STUB_MODEL,
+                "when": "The reranker runs on this install's socket worker."
+            }]
+        }
+    });
+    let proof = oneiron::test_doors::steward::owner(vault).expect("FIXTURE: the owner's proof");
+    let installed = vault
+        .put_pack(
+            &proof,
+            vec![
+                HubFile::new(
+                    "PACK.md",
+                    format!(
+                        "---\nname: {name}\ndescription: Local reranker route fixture.\n\
+                         version: 1.0.0\nkind: model\n---\nData-only test model pack.\n"
+                    ),
+                ),
+                HubFile::new("knowledge/model-pack.json", document.to_string()),
+            ],
+        )
+        .expect("FIXTURE: the model pack installs");
+    let PackInstallDisposition::Installed(receipt) = installed else {
+        panic!("FIXTURE: the data-only model pack installs, found {installed:?}");
+    };
+    assert_eq!(
+        receipt.status,
+        PackInstallStatus::Active,
+        "FIXTURE: the owner installs the reranker model pack active"
+    );
+    let person = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    oneiron::verbs::invoke(
+        &vault.memory(person, oneiron::EdgeActorClass::Human),
+        "vault.settings.set",
+        json!({
+            "key": "models.pack_preference",
+            "scope": {"kind": "vault"},
+            "value": {"mode": "pinned_pack", "pack": name},
+        }),
+    )
+    .unwrap_or_else(|error| panic!("FIXTURE: the owner pins the reranker model pack: {error}"));
+    order_world_portable(vault, world, &[STUB_ORDINARY_OFFER]);
+}
+
+/// Review round 2, P1 1: a local-GPU model pack picks the socket rung's
+/// model for the reranker, so the recall host runs on the device, on that
+/// model's on-device view. The portable world's model order names only the
+/// rung's ordinary offer, which that view does not hold, so the block is
+/// built as for a host off the device, and its call takes the pick's
+/// own-server rung, which the order names, as on main. Red at
+/// f1a1172169c8: the ordinary route took the on-device view again, the
+/// order left it no rung, and nothing was sent.
+#[test]
+fn a_local_gpu_pack_pick_takes_its_own_server_rung_when_the_order_names_it_alone() {
+    let _turn = HOST_TURN.lock().unwrap_or_else(PoisonError::into_inner);
+    run_on_engine_stack("device-only-rerank-pack-order", || async {
+        let dir = tempfile::tempdir().expect("models dir");
+        let models = socket_models(dir.path(), ONE_SOCKET_RUNG, "");
+        let recalled =
+            recall_kept(&models, Some(dir.path()), pick_stub_by_pack_and_order_world).await;
+        assert_eq!(recalled.status, StatusCode::OK, "{}", recalled.body);
+        assert_both_rows_reranked(dir.path(), &recalled);
+    });
+}
+
+/// The night socket rung's on-device offer.
+const NIGHT_ON_DEVICE_OFFER: &str = "night-rerank/stub-reranker@v1@on_device";
+
+/// A rung's `hours` in UTC that open an hour from now and close an hour
+/// after that, so a call now comes outside them.
+fn hours_after_now() -> String {
+    const MINUTES_PER_DAY: u64 = 24 * 60;
+    // testkit-lint: allow(wall-clock) a rung's daily hours are judged on the server's clock: set an hour from now
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock is after 1970")
+        .as_secs()
+        / 60
+        % MINUTES_PER_DAY;
+    let clock = |minute: u64| {
+        let minute = minute % MINUTES_PER_DAY;
+        format!("{:02}:{:02}", minute / 60, minute % 60)
+    };
+    format!(
+        r#"{{ start = "{}", end = "{}", utc_offset = "+00:00" }}"#,
+        clock(now + 60),
+        clock(now + 120)
+    )
+}
+
+/// The portable world's model order names the night socket rung's
+/// on-device offer and the stub rung's ordinary offer alone.
+fn order_world_night_on_device_stub_ordinary(vault: &Vault, world: EntityId) {
+    order_world_portable(vault, world, &[NIGHT_ON_DEVICE_OFFER, STUB_ORDINARY_OFFER]);
+}
+
+/// Review round 2, P1 2: the seat's two rungs are socket workers, a night
+/// rung outside its hours and the stub, so its on-device view holds every
+/// rung of the seat and the recall host runs on the device. The portable
+/// world's order names the night rung's on-device offer and the stub's
+/// ordinary one: on the device it leaves the night rung alone, dropping the
+/// stub the ordinary route takes under it, so the block is built as for a
+/// host off the device and its call reaches the stub's ordinary rung, as on
+/// main. Red at f1a1172169c8: the on-device call passed the night rung for
+/// its hours, had no rung left, and nothing was sent.
+#[test]
+fn an_order_dropping_an_ordinary_rung_on_the_device_takes_the_ordinary_route() {
+    let _turn = HOST_TURN.lock().unwrap_or_else(PoisonError::into_inner);
+    run_on_engine_stack("device-only-rerank-dropped-rung", || async {
+        let dir = tempfile::tempdir().expect("models dir");
+        let night = format!(
+            r#"
+[providers.night-rerank]
+kind = "local-openai-compat"
+base_url = "http://127.0.0.1:18435" # testkit-lint: allow(fixed-port) config text: nothing binds or calls a provider its socket rows serve
+revision = "v1"
+{row}"#,
+            row = socket_row(
+                &dir.path().join("night"),
+                "night-socket",
+                "night-rerank:stub-reranker"
+            ),
+        );
+        let models = socket_models(
+            dir.path(),
+            &format!(
+                r#"rungs = [{{ model = "night-rerank:stub-reranker", hours = {} }}, {{ model = "house-rerank:stub-reranker" }}]"#,
+                hours_after_now()
+            ),
+            &night,
+        );
+        let recalled = recall_kept(
+            &models,
+            Some(dir.path()),
+            order_world_night_on_device_stub_ordinary,
+        )
+        .await;
+        assert_eq!(recalled.status, StatusCode::OK, "{}", recalled.body);
+        assert_both_rows_reranked(dir.path(), &recalled);
     });
 }
