@@ -279,7 +279,8 @@ fn owner_return(row: &mut DepositRow) -> OwnerReturn {
 /// that holds the deposit, the vault's booking home: a MACRO home move
 /// carries the deposit to the new home, which queues its settle row (FIX
 /// [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]), and the old home's fence
-/// refuses its deposit writes once it froze them. A capture still due is released and a captured deposit owed back whole, as
+/// refuses its deposit writes once it froze them. A capture still due is
+/// released and a captured deposit owed back whole, as
 /// a host cancel does, with its settle row queued "owner-refund"; the
 /// booking's status and revision stay as they are. After a refund of part of
 /// the capture (a visitor's late cancel) the balance is owed: at once when
