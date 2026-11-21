@@ -3,13 +3,13 @@
 
 use super::{BranchResources, document_version};
 use crate::attempt_queue::AttemptId;
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, PointRead, ReadRow, ScopedRead, decode_claim_body,
-};
+use crate::claim::{ClaimBody, PointRead, ReadRow, ScopedRead, decode_claim_body};
 use crate::dreamer_consolidation::conflict::candidate_facts;
 use crate::dreamer_consolidation::executor::extraction::claim_id_for_identity;
 use crate::dreamer_consolidation::provenance::PromotionCandidate;
-use crate::dreamer_consolidation::reviewed::{names, reviewed_output};
+use crate::dreamer_consolidation::reviewed::{
+    names, reviewed_output, stored_claim_is_reviewed_output,
+};
 use crate::dreamer_consolidation::support::{
     TURN_BODY_FACET_REF_KEY, TURN_BODY_WORLD_REF_KEY, invalid_consolidation,
 };
@@ -404,8 +404,9 @@ pub(super) fn candidate_vector_in_txn(
 
 /// Whether the claim at `claim_id` is one an earlier pass of this attempt
 /// committed into the owner's review, read in the caller's transaction: the
-/// `reviewed_output` check over the bound candidate's own facts. The attempt
-/// owns the id, so a different claim stored there is an error.
+/// `reviewed_output` check over the bound candidate's own facts, decided by
+/// the same `stored_claim_is_reviewed_output`. The attempt owns the id, so a
+/// different claim stored there is an error.
 fn reviewed_output_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -418,13 +419,7 @@ fn reviewed_output_in_txn(
     let Some(stored) = vault.get_claim_in_txn(txn, claim_id)? else {
         return Ok(false);
     };
-    if stored.approval == ClaimApprovalStatus::Auto {
-        return Ok(false);
-    }
-    if !names(&candidate_facts(candidate)?, &stored)? {
-        return Err(invalid_consolidation("candidate identity changed"));
-    }
-    Ok(true)
+    stored_claim_is_reviewed_output(candidate, &stored)
 }
 
 impl crate::Vault {

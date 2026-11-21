@@ -16,6 +16,7 @@ use crate::error::Result;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable, SideTableDbs};
 use crate::store::{ResponseCarriage, ResponseFamily, ResponseRead, ResponseScan};
+use oneiron_contracts::fingerprint::{Fingerprint, purposes};
 use rmpv::Value;
 
 // ---------------------------------------------------------------------------
@@ -453,12 +454,14 @@ pub(super) fn step_state_erased(
 }
 
 /// The step-state key of the mark [`mark_follow_up_pending`] writes for the
-/// step `original`: a hash of its own, never a request's, so no step's own
-/// write or delete touches it.
+/// step `original`: a fingerprint of its own, never a request's content hash,
+/// so no step's own write or delete touches it.
 fn follow_up_mark(original: &[u8; 32]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron dreamer step follow-up pending v1");
-    hasher.update(original);
-    *hasher.finalize().as_bytes()
+    Fingerprint::of_parts(
+        purposes::dreamer::STEP_FOLLOW_UP_PENDING,
+        &[original.as_slice()],
+    )
+    .into_bytes()
 }
 
 /// Marks, in `ctx`'s attempt, that the step `original` was refused and that

@@ -556,6 +556,65 @@ impl<T: SettingValue> Setting<T> {
             .any(|row| row.scope == scope && row.found.mode == mode && row.found.by_owner))
     }
 
+    /// The slot of the row that decides [`Self::read_in_txn`] at the vault with `item`: the pin
+    /// where a pin decides, else the value row or carried row the read takes; a pin read as a
+    /// value row is the pin where no value row is stored at its scope. A row that does not
+    /// decode is the pin where a pin is stored at its scope. With no one row deciding (the
+    /// default, a learned fit, a meet) it is the value row at the vault, which the owner's change
+    /// writes. A refused projection's notice and tap name this row of a key its hook judges a row
+    /// against (row SETTING-PROJECTED-ROW-REFUSING-HOOKS).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_in_txn`].
+    pub(crate) fn deciding_slot_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        item: Option<&str>,
+    ) -> Result<RowKey> {
+        let slot = |mode, scope| RowKey {
+            name: self.spec.name.to_owned(),
+            item: item.map(str::to_owned),
+            mode,
+            scope,
+        };
+        Ok(match self.read_in_txn(vault, txn, &[], item)?.source {
+            SettingSource::Pin(scope) => slot(SettingMode::Pin, scope),
+            // A pin read as a value row decides as one (stage 7b-3), and its row is the pin: with
+            // no value row at its scope, the pin stored there (REVIEW-10343 round 2 P1-2).
+            SettingSource::Row(scope) | SettingSource::Seeded(scope) => {
+                let value = slot(SettingMode::Value, scope.clone());
+                let pin = slot(SettingMode::Pin, scope);
+                let table = table_of(self.spec);
+                if table
+                    .get_bytes(&vault.store, txn, &value.encode())?
+                    .is_none()
+                    && table.get_bytes(&vault.store, txn, &pin.encode())?.is_some()
+                {
+                    pin
+                } else {
+                    value
+                }
+            }
+            SettingSource::Carried(scope) => slot(SettingMode::Carried, scope),
+            SettingSource::Unreadable(scope) => {
+                let pin = slot(SettingMode::Pin, scope.clone());
+                if table_of(self.spec)
+                    .get_bytes(&vault.store, txn, &pin.encode())?
+                    .is_some()
+                {
+                    pin
+                } else {
+                    slot(SettingMode::Value, scope)
+                }
+            }
+            SettingSource::Fit(_) | SettingSource::Met | SettingSource::Default => {
+                slot(SettingMode::Value, SettingScope::Vault)
+            }
+        })
+    }
+
     /// [`Self::read_in_txn`] below the vault: the same walk over the setting tables of `dbs`
     /// (a store, or any other holder of its side databases), for a reader that holds no
     /// [`Vault`].

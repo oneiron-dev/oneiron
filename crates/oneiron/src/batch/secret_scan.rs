@@ -39,7 +39,9 @@ pub(crate) use self::mask::carrier::{
 };
 pub(crate) use self::mask::claim_value_plan::plan_masked_claim_value_in_txn;
 pub(crate) use self::mask::custody_form::{custody_record_form, custody_records_named};
-pub(crate) use self::mask::held_template::{MapOrder, held_row_meets};
+pub(crate) use self::mask::held_template::{
+    MapOrder, held_row_meets, names_known_record, names_single_value_records,
+};
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mask::mark_text_value_in_txn;
 pub(super) use self::mask::mask_batch_ops;
@@ -594,7 +596,13 @@ pub(crate) fn write_tree_hit(bytes: &[u8], digest: Option<&[u8; 32]>) -> Option<
 /// [`scan_write_payload`] for a reader that marks a hit rather than refusing a
 /// write: the reason it would refuse with, the rule's own code.
 pub(crate) fn write_payload_hit(data: &[u8]) -> Option<&'static str> {
-    match scan_payload(data) {
+    write_payload_hit_with_rule(data, FieldRule::AnyShape)
+}
+
+/// [`write_payload_hit`], with the field rule `rule` over the members it
+/// reads.
+pub(crate) fn write_payload_hit_with_rule(data: &[u8], rule: FieldRule) -> Option<&'static str> {
+    match scan_payload_with_rule(data, rule) {
         Ok(_) => None,
         Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
             Some(reason_codes.last().copied().unwrap_or(REASON_DETECTED))

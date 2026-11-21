@@ -27,11 +27,18 @@
 //! summary's ceiling, and the entry on the room beside the turn's reply: a
 //! writer whose replies share its context leaves a piece more room than the
 //! entry (#10050 review, round 2).
+//!
+//! The entry's receipt names how its turn was read: each piece's byte range,
+//! or the head it fell back to. The Dreamer's check reads the piece summaries
+//! back out of the entry the writer was sent, each from its marker to the
+//! next, and judges each against exactly its bytes (FIX-LIST
+//! COMPACTION-CHECK-JUDGES-PER-CHUNK). The markers hold no model words, so
+//! the side-row wall's handles in a summary of the kept entry leave them as
+//! written (#10272 review, round 1).
 
-use std::fmt::Write as _;
 use std::ops::Range;
 
-use super::{Pass, file_pass, run_pass};
+use super::{ConversationTurnPiece, ConversationTurnReading, Pass, file_pass, run_pass};
 use crate::compaction::{
     CompactionBackend, CompactionDriver, CompactionExecution, CompactionGatePolicy,
     CompactionHomeRef, CompactionRequest, CompactionWindowMessage, compaction_home_worn_parts,
@@ -221,6 +228,14 @@ impl PieceInputs {
     }
 }
 
+/// A turn's entry request, with what the piece passes whose summaries it
+/// carries read, and how its turn was read.
+pub(super) struct PiecedEntry {
+    pub(super) request: CompactionRequest,
+    pub(super) inputs: PieceInputs,
+    pub(super) reading: ConversationTurnReading,
+}
+
 /// The turn's entry request for `sealed`, a flight over one turn read in
 /// pieces by `plan`: one pass per piece on `backend`, each judged by
 /// `policy`, then `sealed` re-sealed with the piece summaries as the turn's
@@ -243,7 +258,7 @@ pub(super) fn entry_request(
     plan: &TurnPieces,
     policy: &CompactionGatePolicy,
     job: EntityId,
-) -> Result<(CompactionRequest, PieceInputs)> {
+) -> Result<PiecedEntry> {
     let [message] = sealed.window.as_slice() else {
         return Err(Error::InvariantViolation(
             "a turn read in pieces flies alone",
@@ -282,8 +297,17 @@ pub(super) fn entry_request(
     if entry.is_some() && !worn.stand(vault)? {
         entry = None;
     }
-    let (content, worn) = match entry {
-        Some(entry) => (entry, worn),
+    let (content, inputs, reading) = match entry {
+        Some(entry) => {
+            let pieces = summaries
+                .iter()
+                .map(|(range, _)| ConversationTurnPiece {
+                    start: range.start as u64,
+                    end: range.end as u64,
+                })
+                .collect();
+            (entry, worn, ConversationTurnReading::Pieces { pieces })
+        }
         None => {
             let head = &text[..plan.head_end];
             let head = head_text(
@@ -292,13 +316,67 @@ pub(super) fn entry_request(
                 plan.total_tokens,
                 count_context_pack_tokens(head) as u64,
             );
-            (head, PieceInputs::default())
+            let end = plan.head_end as u64;
+            (
+                head,
+                PieceInputs::default(),
+                ConversationTurnReading::Head { end },
+            )
         }
     };
     // The rows the piece summaries were read from are the entry's sources
     // before it is sent (#10050 review, round 2).
-    let request = driver.reseal_window_texts(vec![content], &worn.rows())?;
-    Ok((request, worn))
+    let request = driver.reseal_window_texts(vec![content], &inputs.rows())?;
+    Ok(PiecedEntry {
+        request,
+        inputs,
+        reading,
+    })
+}
+
+/// The piece summaries `entry`, a turn's entry over a window text of
+/// `total` bytes, carries under `pieces`, in order: each from its piece's
+/// marker to the next marker, the last to the entry's end. A summary's
+/// length is never read, so a handle the side-row wall put in a summary of
+/// the kept entry leaves every boundary as written (#10272 review, round 1).
+/// `None` unless the pieces cover `0..total` in order, `entry` opens with
+/// their header, and each marker stands in `entry` exactly once, in order: a
+/// summary that spells out a marker reads unreadable, never cut elsewhere.
+pub(crate) fn entry_piece_summaries<'a>(
+    entry: &'a str,
+    total: usize,
+    pieces: &[ConversationTurnPiece],
+) -> Option<Vec<&'a str>> {
+    let mut covered = 0;
+    let mut markers = Vec::with_capacity(pieces.len());
+    for piece in pieces {
+        let range = usize::try_from(piece.start).ok()?..usize::try_from(piece.end).ok()?;
+        if range.start != covered || range.end <= range.start {
+            return None;
+        }
+        covered = range.end;
+        markers.push(piece_marker(&range, total));
+    }
+    if covered != total
+        || markers
+            .iter()
+            .any(|marker| entry.matches(marker.as_str()).count() != 1)
+    {
+        return None;
+    }
+    let mut rest = entry.strip_prefix(entry_header(total, pieces.len()).as_str())?;
+    let mut summaries = Vec::with_capacity(markers.len());
+    for (at, marker) in markers.iter().enumerate() {
+        rest = rest.strip_prefix(marker.as_str())?;
+        let end = match markers.get(at + 1) {
+            Some(next) => rest.find(next.as_str())?,
+            None => rest.len(),
+        };
+        let (summary, after) = rest.split_at(end);
+        summaries.push(summary);
+        rest = after;
+    }
+    Some(summaries)
 }
 
 /// `message`'s text cut in order into byte ranges that each fit
@@ -386,19 +464,26 @@ fn piece_text(text: &str, range: &Range<usize>) -> String {
 
 /// The turn's entry: each piece summary under the byte range it covers.
 fn entry_text(total: usize, summaries: &[(Range<usize>, String)]) -> String {
-    let mut entry = format!(
-        "[this turn's text is {total} bytes, read in {} pieces; each summary below covers exactly \
-         the bytes it names]",
-        summaries.len()
-    );
+    let mut entry = entry_header(total, summaries.len());
     for (range, summary) in summaries {
-        let _ = write!(
-            entry,
-            "\n[bytes {}..{} of {total}] {summary}",
-            range.start, range.end
-        );
+        entry.push_str(&piece_marker(range, total));
+        entry.push_str(summary);
     }
     entry
+}
+
+/// The first line of a turn's entry: the length of the turn's text and how
+/// many pieces read it.
+fn entry_header(total: usize, pieces: usize) -> String {
+    format!(
+        "[this turn's text is {total} bytes, read in {pieces} pieces; each summary below covers \
+         exactly the bytes it names]"
+    )
+}
+
+/// The marker a piece summary follows in its turn's entry.
+fn piece_marker(range: &Range<usize>, total: usize) -> String {
+    format!("\n[bytes {}..{} of {total}] ", range.start, range.end)
 }
 
 /// The turn's head through `end`, then the marker naming the cut: the kept

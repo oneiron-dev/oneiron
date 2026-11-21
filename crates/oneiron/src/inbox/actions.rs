@@ -38,6 +38,8 @@ const OAUTH_AUTHORIZATION_ANSWER_VERB: &str = "vault.oauth.authorization.answer"
 /// previews through [`OWNER_CONFIRM_PREVIEW_VERB`], whose `confirm` this
 /// verb's call then passes back.
 const RECORD_ERASE_CONFIRM_VERB: &str = "vault.records.erase_confirm";
+/// The owner's set of the setting rows of a refused projection, as one act: its fix.
+const SETTING_SET_VERB: &str = "vault.settings.set";
 
 /// One tap a notification offers: the registered verb it calls and that
 /// verb's own input, so a client renders the button the engine describes.
@@ -110,6 +112,11 @@ impl Memory<'_> {
                 if producer == MODEL_PACK_CHANGE_NOTIFICATION_PRODUCER =>
             {
                 self.model_pack_revert_actions(row)
+            }
+            NotificationKind::Ask
+                if producer == crate::setting::SETTING_REFUSAL_NOTIFICATION_PRODUCER =>
+            {
+                self.setting_refusal_actions(row)
             }
             NotificationKind::Ask if producer == crate::mail_pack::MAIL_REPLY_ASK_PRODUCER => {
                 self.mail_reply_ask_actions(row)
@@ -422,6 +429,29 @@ impl Memory<'_> {
     /// The producer names the change in `source.result`; the notice is an
     /// owner's own. Its revert is offered while the change is the vault's
     /// last and the pack before it is installed at its bytes and served.
+    /// The producer names every setting act a refused projection is about in `source.event`
+    /// (row SETTING-PROJECTED-ROW-REFUSING-HOOKS). Each tap is the owner's set, as one act, of
+    /// each row such an act heads that this install still refuses and of each row the key's hook
+    /// judges it against: one tap, each to the value it holds here, which the owner may edit
+    /// before he taps, or, for a key that quarantines a refused row, a tap for each row that keeps
+    /// it and clears the others. The act replaces the refused one on every machine. A refusal
+    /// that no longer stands here offers none.
+    fn setting_refusal_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
+        let vault = self.vault();
+        let taps = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)
+            .and_then(|txn| {
+                crate::setting::setting_refusal_taps_in_txn(vault, &txn, &row.source.event)
+            });
+        taps.unwrap_or_default()
+            .into_iter()
+            .map(|args| NotificationAction::new(SETTING_SET_VERB, args))
+            .collect()
+    }
+
     fn model_pack_revert_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let Some(change_ref) = row.source.result.as_deref() else {
             return Vec::new();

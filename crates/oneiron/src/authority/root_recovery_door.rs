@@ -26,18 +26,18 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, PoisonError};
 
-use oneiron_keystore::{KeystoreSlot, SlotKind};
-
 use super::owner_key_enrollment_door::EntrySigner;
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::world_keys::{
-    DevicePin, KitConfirmation, OwnerActImportance, OwnerRootSigner, OwnerSigningSlot,
-    RecoveryAuthoritySigner, RecoveryRootSeed, owner_presence_reasons,
+    DevicePin, FreshOwnerKey, KitConfirmation, OwnerActImportance, OwnerRootSigner,
+    OwnerSigningSlot, RecoveryAuthoritySigner, RecoveryRootSeed, SlotRenewal,
+    owner_presence_reasons,
 };
 use crate::{EntityId, Result, Vault};
 
 mod box_wait;
+mod hold_arm;
 
 use box_wait::HoldEnd;
 
@@ -171,8 +171,9 @@ impl Vault {
     /// seam, so tests cover zero and nonzero waits. A box recovery
     /// (`RootMaterial::Released`) with a nonzero wait holds instead of
     /// vouching: [`RootRecovery::Held`]; a zero wait vouches as today. The
-    /// kit arm never waits. On a box call this install's due holds land
-    /// first, and a landing that enrolled this call's successor answers
+    /// kit arm never waits. A box call is judged before it lands anything;
+    /// then this install's due holds land, and a landing of the acting
+    /// owner's own hold that enrolled this call's successor answers
     /// [`RootRecovery::Vouched`]: the call completes the attempt it held.
     /// After the box's own wait (`RootMaterial::ReleasedAfterBoxWait`) the
     /// hold lands at the box's release second, and one already due lands
@@ -190,16 +191,15 @@ impl Vault {
         lost: &[AuthorityKey],
         wait: std::time::Duration,
     ) -> Result<RootRecovery> {
-        // A kit recovery lands nothing first: it cancels every live hold in
-        // its write, a due one too, so no hold's landing stands in its way.
-        if matches!(
-            material,
-            RootMaterial::Released(_) | RootMaterial::ReleasedAfterBoxWait { .. }
-        ) {
-            let landed = self.land_due_recovery_holds()?;
-            if let Some(done) = self.landing_for_successor(&landed, &successor)? {
-                return Ok(done);
-            }
+        // A box call lands due holds only once its request passed (row
+        // RECOVERY-HOLD-BOX-PATH-WRITES-BEFORE-CHECKS). A kit recovery lands
+        // nothing first: it cancels every live hold in its write, a due one
+        // too, so no hold's landing stands in its way.
+        if let RootMaterial::Released(signer) | RootMaterial::ReleasedAfterBoxWait { signer, .. } =
+            &material
+            && let Some(done) = self.land_due_holds_for_box_call(owner, signer, &successor, lost)?
+        {
+            return Ok(done);
         }
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
@@ -366,10 +366,10 @@ impl Vault {
             RootSuccessor::ThisInstall => None,
         };
         let lost = self.lost_keys_in_txn(&txn, &fold, actor, (&root_key, named.as_ref()), lost)?;
-        let (input, held) = match (successor, install) {
+        let (input, install_successor) = match (successor, &install) {
             (RootSuccessor::Device(input), _) => (input, None),
             (RootSuccessor::ThisInstall, Some((machine, slot))) => {
-                let (input, key) = this_install_successor(&fold, actor, machine, &slot)?;
+                let (input, key) = this_install_successor(&fold, actor, *machine, slot)?;
                 (input, Some(key))
             }
             (RootSuccessor::ThisInstall, None) => return Err(invalid_authority()),
@@ -399,7 +399,22 @@ impl Vault {
         let after = self.authority_view_readonly_in_txn(&txn)?;
         let rows = authority_rows_counted_since(&fold, &after)?;
         self.mark_authority_rows_in_txn(&mut txn, &rows)?;
-        txn.commit()?;
+        // This install's fresh key enters its slot only now, the last step
+        // before the commit, so a refusal above leaves the slot's seed as it
+        // was (row RECOVERY-HOLD-BOX-PATH-WRITES-BEFORE-CHECKS).
+        let (held, renewal) = match (install_successor, &install) {
+            (Some(key), Some((_, slot))) => {
+                let (key, renewal) = key.settle(slot)?;
+                (Some(key), renewal.map(|renewal| (slot, renewal)))
+            }
+            _ => (None, None),
+        };
+        if let Err(error) = txn.commit() {
+            if let Some((slot, renewal)) = renewal {
+                self.put_back_unless_on_roster(slot, renewal);
+            }
+            return Err(error.into());
+        }
         self.note_committed_authority_rows(rows);
         // The successor is held once the slot lock is let go: a hold asks
         // every signer held for its root, and a signer's answer may read the
@@ -412,274 +427,6 @@ impl Vault {
             enrollment,
             revoked,
         })
-    }
-
-    /// The box arm with a wait: the vouch writer's checks (R live in the
-    /// transaction, the owner revalidated, the lost keys filtered, the
-    /// successor input built, the kit-only refusal), the landing's write
-    /// judged now and rolled back, then one `RecoveryHold` entry signed by R
-    /// with `lands_at` on this install's clock, and no enrolment and no
-    /// revocation. The successor key is settled and its pending slot record
-    /// commits first, in its own write; R's released seed goes to this
-    /// install's keystore slot for that successor before the transaction,
-    /// and leaves it again when the transaction fails, with its record.
-    /// A second call while this install's hold for the same successor
-    /// waits answers the same held attempt, and writes no second hold.
-    ///
-    /// The door asks for the person at this device as the vouch arm does
-    /// (an important act, [`Vault::owner_presence`]): after it revalidated
-    /// the owner's proof on a read, before it readies this install's signing
-    /// keys and before the PIN step or slot lock, so a refused confirm writes
-    /// nothing and leaves this install's machine as it was. A second call
-    /// that answers a waiting hold asks again: each call is the person's act.
-    fn hold_with_root_key(
-        &self,
-        (owner, authority): (&AuthenticatedOwner, &ActAuthority),
-        signer: &RecoveryAuthoritySigner,
-        successor: RootSuccessor,
-        lost: &[AuthorityKey],
-        end: HoldEnd,
-    ) -> Result<RootRecovery> {
-        // The key that proved the owner is held, never lost: refused before
-        // anything is readied, as at the vouch arm (REVIEW-9487 P1 1).
-        if owner
-            .proving_owner_key()
-            .is_some_and(|key| lost.contains(key))
-        {
-            return Err(authority_refused(PROVING_KEY_NAMED_LOST));
-        }
-        // The proof, the keystore and the confirm come before anything is
-        // readied, in the vouch arm's order (REVIEW-10128 P1 1 and 2).
-        self.owner_key_act_owner(authority)?;
-        if matches!(successor, RootSuccessor::ThisInstall) {
-            self.device_keystore()?;
-        }
-        let _asked = self.owner_presence(
-            OwnerActImportance::Important,
-            owner_presence_reasons::RECOVER_OWNER_ROOT,
-        )?;
-        // Preparing this install's signing keys writes, so its slot is made
-        // ready before any transaction opens, as at the vouch arm.
-        let machine = self.prepare_install_signing()?;
-        let install = match successor {
-            RootSuccessor::ThisInstall => Some(self.device_owner_signing_slot()?),
-            RootSuccessor::Device(_) => None,
-        };
-        // One attempt at a time, and no landing run beside it: the seed slot
-        // is keyed by the successor alone (row
-        // RECOVERY-HOLD-SEED-SLOT-PER-ATTEMPT). Taken before the PIN's step
-        // and the slot lock; a landing run takes it alone.
-        let _attempt = self
-            .store
-            .recovery_hold_lock
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        // This install's slot is read, renewed and its successor named in
-        // the hold under the owner signing slot lock, after the device PIN's
-        // step, in the order the vouch arm takes them (REVIEW-9487 P1 2, row
-        // OCS-OWNER-PIN): no other door of this process renews the slot
-        // between the pending write that settles the successor and the
-        // hold's commit.
-        let device_pin = self.device_pin();
-        let _step = device_pin.as_deref().map(DevicePin::step);
-        let slot_lock = install.is_some().then(|| {
-            self.store
-                .owner_signing_slot_lock
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-        });
-        let candidate = match (&successor, &install) {
-            (RootSuccessor::Device(input), _) => input.public_key,
-            (RootSuccessor::ThisInstall, Some(slot)) => slot.key()?.public_key(),
-            (RootSuccessor::ThisInstall, None) => return Err(invalid_authority()),
-        };
-        let seed = signer.released_seed();
-        let expected = signer.public_key();
-        let root_key = signer.authority_key();
-        let (vault_id, live) = {
-            let txn = self.store.env.read_txn()?;
-            let fold = self.authority_view_readonly_in_txn(&txn)?;
-            let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-            let live = self.live_hold_for_successor_in_txn(&txn, machine, &candidate, &root_key)?;
-            (vault_id, live)
-        };
-        if let Some((hold, lands_at, seed_here)) = live {
-            // This R's own live hold whose slot another seed took: the
-            // record, then R's seed, as for a new attempt; it lands at its
-            // own second.
-            if !seed_here {
-                let mut pending = self.store.env.write_txn()?;
-                self.put_recovery_hold_slot_pending_in_txn(&mut pending, &candidate)?;
-                pending.commit()?;
-                let slot = self.recovery_hold_slot(&vault_id, machine, &candidate);
-                self.put_recovery_hold_seed(&slot, &seed, &expected)?;
-            }
-            return Ok(RootRecovery::Held { hold, lands_at });
-        }
-        // The pending record first, committed in its own write: a crash
-        // between the keystore put and the hold commit still leaves the
-        // slot on the sweep's list. The same write settles the successor
-        // before any seed moves: when the roster names this install's slot
-        // key revoked, a fresh key takes its place here, once the roster is
-        // read in a write (as in the vouch writer), so a run that read
-        // before another run's recovery committed never drops that run's
-        // live successor, and R's seed enters only a slot whose record is
-        // committed. The writer's refusals that need no successor come
-        // first, so a refused call writes nothing. No landing run reaps the
-        // record or the seed before the hold names them: it waits for the
-        // recovery-hold lock.
-        let successor_key = {
-            let mut pending = self.store.env.write_txn()?;
-            if self.recovery_preset_in_txn(&pending)?.is_nobody_but_me() {
-                return Err(authority_refused(RELEASED_UNDER_KIT_ONLY));
-            }
-            let fold = self.authority_view_readonly_in_txn(&pending)?;
-            if !live_owner_key(&fold, &root_key) {
-                return Err(authority_refused(ROOT_KEY_NOT_LIVE));
-            }
-            let successor_key = match &install {
-                Some(slot) => this_install_successor_key(&fold, slot)?.public_key(),
-                None => candidate,
-            };
-            self.put_recovery_hold_slot_pending_in_txn(&mut pending, &successor_key)?;
-            pending.commit()?;
-            successor_key
-        };
-        let slot = self.recovery_hold_slot(&vault_id, machine, &successor_key);
-        let mut created = Vec::new();
-        if self.put_recovery_hold_seed(&slot, &seed, &expected)? {
-            created.push(slot);
-        }
-        let outcome = self.hold_write_with_root_key(
-            (owner, authority),
-            signer,
-            successor,
-            install,
-            lost,
-            end,
-            machine,
-            successor_key,
-        );
-        let (answer, held) = match outcome {
-            Ok(written) => written,
-            Err(error) => {
-                self.forget_created_hold_slots(&created);
-                return Err(error);
-            }
-        };
-        // The successor is held once the slot lock is let go: a hold asks
-        // every signer held for its root, and a signer's answer may read the
-        // slot (REVIEW-9678 P1).
-        drop(slot_lock);
-        if let Some(key) = held {
-            self.hold_checkpoint_root_signer(Arc::new(key));
-        }
-        Ok(answer)
-    }
-
-    /// Deletes the seed slots a failed hold write made, best-effort, then
-    /// in one write the pending records of the slots it emptied: a record
-    /// goes only after its slot is deleted. A slot whose delete failed
-    /// keeps its record, so the landing run's sweep deletes it later (no
-    /// hold names it); a record whose drop failed names an empty slot,
-    /// which the sweep drops.
-    fn forget_created_hold_slots(&self, created: &[KeystoreSlot]) {
-        let successors: Vec<[u8; 32]> = created
-            .iter()
-            .filter(|slot| self.delete_recovery_hold_seed(slot).is_ok())
-            .filter_map(|slot| match slot.kind {
-                SlotKind::RecoveryHold(successor) => Some(successor),
-                _ => None,
-            })
-            .collect();
-        if !successors.is_empty()
-            && let Ok(mut pending) = self.store.env.write_txn()
-        {
-            for successor in &successors {
-                let _ = self.drop_recovery_hold_slot_pending_in_txn(&mut pending, successor);
-            }
-            let _ = pending.commit();
-        }
-    }
-
-    /// [`Self::hold_with_root_key`]'s writer half: the checks, the landing's
-    /// write rehearsed and aborted, the hold row and the commit, for
-    /// `successor_key`, the successor the pending write settled and whose
-    /// slot holds R's seed. It answers the held attempt and this install's
-    /// successor key, which the caller holds once it let the slot lock go.
-    fn hold_write_with_root_key(
-        &self,
-        (owner, authority): (&AuthenticatedOwner, &ActAuthority),
-        signer: &RecoveryAuthoritySigner,
-        successor: RootSuccessor,
-        install: Option<OwnerSigningSlot>,
-        lost: &[AuthorityKey],
-        end: HoldEnd,
-        machine: EntityId,
-        successor_key: [u8; 32],
-    ) -> Result<(RootRecovery, Option<OwnerRootSigner>)> {
-        let root_key = signer.authority_key();
-        let sign = |transcript: &[u8]| signer.sign_authority_transcript(transcript);
-        let mut txn = self.store.env.write_txn()?;
-        // The checks the vouch writer makes, in its order.
-        if self.recovery_preset_in_txn(&txn)?.is_nobody_but_me() {
-            return Err(authority_refused(RELEASED_UNDER_KIT_ONLY));
-        }
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
-        if !live_owner_key(&fold, &root_key) {
-            return Err(authority_refused(ROOT_KEY_NOT_LIVE));
-        }
-        let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        let named = match &successor {
-            RootSuccessor::Device(input) => Some(AuthorityKey::Ed25519(input.public_key)),
-            RootSuccessor::ThisInstall => None,
-        };
-        let lost = self.lost_keys_in_txn(&txn, &fold, actor, (&root_key, named.as_ref()), lost)?;
-        let (input, held) = match (successor, install) {
-            (RootSuccessor::Device(input), _) => (input, None),
-            (RootSuccessor::ThisInstall, Some(slot)) => {
-                let (input, key) = this_install_successor(&fold, actor, machine, &slot)?;
-                (input, Some(key))
-            }
-            (RootSuccessor::ThisInstall, None) => return Err(invalid_authority()),
-        };
-        // A slot key that moved since the pending write (another door
-        // re-keyed this install) is not the successor R's seed and its
-        // record name: nothing is written, and the next call starts over.
-        if input.public_key != successor_key {
-            return Err(invalid_authority());
-        }
-        let now = self.instant_in_write_txn(&mut txn)?.secs();
-        let lands_at = end.lands_at(now);
-        let body = RecoveryHold {
-            owner: actor,
-            enrolment: RecoveryHoldEnrolment {
-                machine: input.machine,
-                public_key: input.public_key,
-                proof: input.proof,
-            },
-            lost: lost.into_iter().collect(),
-            lands_at,
-        };
-        // The landing's own write, run in a savepoint that is aborted: a
-        // hold whose revocations or enrolment the fold refuses now (the
-        // holding machine, the carrier, R as predecessor, the binding) is
-        // refused with the landing's refusal before its wait, and writes
-        // nothing (row RECOVERY-HOLD-ENROLMENT-PREFLIGHT).
-        let mut rehearsal = self.store.env.nested_write_txn(&mut txn)?;
-        let rehearsed = self.write_recovery_hold_landing_in_txn(
-            &mut rehearsal,
-            &fold,
-            (&body, &root_key),
-            &sign,
-        );
-        rehearsal.abort();
-        rehearsed?;
-        let hold = self.append_recovery_hold_in_txn(&mut txn, &root_key, &sign, body, now)?;
-        let rows = self.mark_authority_rows_counted_since_in_txn(&mut txn, &fold)?;
-        txn.commit()?;
-        self.note_committed_authority_rows(rows);
-        Ok((RootRecovery::Held { hold, lands_at }, held))
     }
 
     /// The keys `lost` names, once each: every one a live owner key that
@@ -699,21 +446,80 @@ impl Vault {
         (root_key, new_key): (&AuthorityKey, Option<&AuthorityKey>),
         lost: &[AuthorityKey],
     ) -> Result<BTreeSet<AuthorityKey>> {
-        let enrolled: BTreeSet<AuthorityKey> = self
-            .live_owner_keys_enrolled_for_in_txn(txn, actor)?
-            .into_iter()
-            .collect();
         let named: BTreeSet<AuthorityKey> = lost.iter().cloned().collect();
-        for key in &named {
-            if key == root_key
-                || Some(key) == new_key
-                || !enrolled.contains(key)
-                || !live_owner_key(fold, key)
-            {
-                return Err(authority_refused(NOT_A_LOST_KEY));
-            }
+        if self.revocable_lost_keys_in_txn(txn, fold, actor, (root_key, new_key), lost)? != named {
+            return Err(authority_refused(NOT_A_LOST_KEY));
         }
         Ok(named)
+    }
+
+    /// The keys of `lost` that the root's key `root_key` may revoke as
+    /// `owner`'s lost keys in `fold`, once each: each a live owner key that
+    /// `owner` enrolled, a device key or a passkey, and never `root_key`
+    /// itself or `new_key`. The door refuses a request that names any other
+    /// key ([`Self::lost_keys_in_txn`]). A hold's landing revokes only these
+    /// keys, read again at the landing (row
+    /// RECOVERY-HOLD-LOST-KEY-RULE-AT-FOLD), so a hold that R signs by hand,
+    /// with R itself or a key outside this rule among its lost keys, never
+    /// lands more than the door would have held.
+    pub(super) fn revocable_lost_keys_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        owner: EntityId,
+        (root_key, new_key): (&AuthorityKey, Option<&AuthorityKey>),
+        lost: &[AuthorityKey],
+    ) -> Result<BTreeSet<AuthorityKey>> {
+        let enrolled: BTreeSet<AuthorityKey> = self
+            .live_owner_keys_enrolled_for_in_txn(txn, owner)?
+            .into_iter()
+            .collect();
+        Ok(lost
+            .iter()
+            .filter(|key| {
+                *key != root_key
+                    && Some(*key) != new_key
+                    && enrolled.contains(*key)
+                    && live_owner_key(fold, key)
+            })
+            .cloned()
+            .collect())
+    }
+}
+
+/// This install's successor key as the root door's writer judges it: the
+/// slot's own key, or a fresh key made in memory whose seed the slot takes
+/// only once the writer judged the request
+/// ([`InstallSuccessor::settle`]; row
+/// RECOVERY-HOLD-BOX-PATH-WRITES-BEFORE-CHECKS).
+enum InstallSuccessor {
+    /// The key in this install's owner signing slot, which no row names.
+    Kept(OwnerRootSigner),
+    /// A fresh key: the roster names the slot's key revoked.
+    Fresh(FreshOwnerKey),
+}
+
+impl InstallSuccessor {
+    /// The key that signs the successor's proof of possession.
+    fn signer(&self) -> &OwnerRootSigner {
+        match self {
+            Self::Kept(key) => key,
+            Self::Fresh(fresh) => fresh.signer(),
+        }
+    }
+
+    /// The key this install holds once the writer judged the request: the
+    /// kept key, or the fresh key read back from `slot` once the slot took
+    /// its seed ([`OwnerSigningSlot::renew`], under the slot lock the door
+    /// holds), with what the slot held before, for the put-back when the
+    /// commit fails.
+    fn settle(self, slot: &OwnerSigningSlot) -> Result<(OwnerRootSigner, Option<SlotRenewal>)> {
+        match self {
+            Self::Kept(key) => Ok((key, None)),
+            Self::Fresh(fresh) => slot
+                .renew(&fresh)
+                .map(|(key, renewal)| (key, Some(renewal))),
+        }
     }
 }
 
@@ -723,43 +529,41 @@ impl Vault {
 /// that key revoked. A key the roster names live needs no recovery. A run
 /// checked before another run's recovery committed is refused here, before
 /// it drops the seed of that run's successor, a live key
-/// ([`OwnerSigningSlot::fresh_key`]). The slot's revoked key signs nothing,
-/// so the slot takes the fresh key's seed at once ([`OwnerSigningSlot::renew`],
-/// under the slot lock the door holds): a later refusal leaves a key no row
-/// names there, which the next run enrols.
+/// ([`OwnerSigningSlot::fresh_key`]). The fresh key is in memory only: the
+/// slot keeps its seed until the writer settles the key.
 fn this_install_successor(
     fold: &AuthorityFold,
     actor: EntityId,
     machine: EntityId,
     slot: &OwnerSigningSlot,
-) -> Result<(OwnerKeyEnrollment, OwnerRootSigner)> {
+) -> Result<(OwnerKeyEnrollment, InstallSuccessor)> {
     let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
     let key = this_install_successor_key(fold, slot)?;
-    let public_key = key.public_key();
+    let public_key = key.signer().public_key();
     let challenge = owner_key_enrollment_challenge(&vault_id, machine, &public_key, actor)?;
     let input = OwnerKeyEnrollment {
         machine,
         public_key,
-        proof: key.sign_possession(&challenge),
+        proof: key.signer().sign_possession(&challenge),
     };
     Ok((input, key))
 }
 
 /// [`this_install_successor`]'s key, judged against `fold`, a write
-/// transaction's fold: the slot's key when no row names it, a fresh one when
-/// the roster names it revoked (the slot takes its seed at once, under the
-/// slot lock the door holds), and a refusal when the roster names it live.
-/// The hold arm settles it in its pending write, so its hold write reads
-/// the renewed slot's key, which no row names, and gets the same key.
+/// transaction's fold: the slot's key when no row names it, a fresh one in
+/// memory when the roster names it revoked, and a refusal when the roster
+/// names it live. The hold arm settles it in its first write, so its hold
+/// write reads the renewed slot's key, which no row names, and gets the
+/// same key.
 fn this_install_successor_key(
     fold: &AuthorityFold,
     slot: &OwnerSigningSlot,
-) -> Result<OwnerRootSigner> {
+) -> Result<InstallSuccessor> {
     let key = slot.key()?;
     match fold.roster.get(&AuthorityKey::Ed25519(key.public_key())) {
         Some(device) if !device.revoked => Err(authority_refused(THIS_INSTALL_KEY_LIVE)),
-        Some(_) => Ok(slot.renew(&slot.fresh_key()?)?.0),
-        None => Ok(key),
+        Some(_) => Ok(InstallSuccessor::Fresh(slot.fresh_key()?)),
+        None => Ok(InstallSuccessor::Kept(key)),
     }
 }
 

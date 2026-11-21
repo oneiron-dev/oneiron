@@ -754,6 +754,15 @@ fn admit(
     // the ones held here, record by record.
     let data =
         super::room_pins::carried_room_pins_in_txn(vault, wtxn, ctx.window_key, &id, blob, data)?;
+    // A refusal notice raised on several machines lands with the marks of both copies.
+    let data = super::notification_marks::carried_notification_marks_in_txn(
+        vault,
+        wtxn,
+        ctx.window_key,
+        &id,
+        blob,
+        data,
+    )?;
     // FIX 3554: a Switch's moved MESSAGE pointer lands with its document's head.
     if crate::entity_doc::moved_pointer_row_in_txn(vault, wtxn, &id, blob)? {
         return Ok(EntityStep::Skip);

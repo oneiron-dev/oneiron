@@ -13,8 +13,8 @@ use super::channels::{
     truncate_widened_channel_results_to_scope,
 };
 use super::filters::{
-    claim_status_gate_allows, clamp_hides_row, clamp_hides_row_or_word_sources,
-    import_claim_gate_decisions_for_scores, made_by_admits,
+    candidate_matches_criticality_and_stale_worlds, claim_status_gate_allows, clamp_hides_row,
+    clamp_hides_row_or_word_sources, import_claim_gate_decisions_for_scores, made_by_admits,
     pipeline_candidate_matches_filters_and_gate,
 };
 use super::temporal_bound::{
@@ -49,7 +49,7 @@ impl PipelineBuilder<'_> {
         }
         let filters = self.bounded_result_filters(filters);
         let narrowed = self.has_codebase_scope_filter()
-            || self.has_strict_text_scope_filter()
+            || self.has_strict_scope_filter(filters)
             || filters.corpus_scope != &CorpusScope::All
             || filters.candidate_filter.is_some()
             || filters.device_local.is_some()
@@ -386,7 +386,7 @@ impl PipelineBuilder<'_> {
     /// the rows it withheld: the call's candidate filter admits it, and it
     /// meets every other check of the call
     /// ([`meets_every_check_but_the_clamp`]).
-    fn clamp_withheld_row_counts(
+    pub(super) fn clamp_withheld_row_counts(
         &self,
         rtxn: &RoTxn<'_>,
         id: &crate::EntityId,
@@ -431,7 +431,7 @@ impl PipelineBuilder<'_> {
             rtxn,
             config.limit,
             self.has_codebase_scope_filter()
-                || self.has_strict_text_scope_filter()
+                || self.has_strict_scope_filter(filters)
                 || filters.corpus_scope != &CorpusScope::All
                 || filters.candidate_filter.is_some()
                 || self.memory_category,
@@ -470,15 +470,21 @@ impl PipelineBuilder<'_> {
             )
         };
         // The call's scope, asked before the clamp, and its slice, after: a
-        // call without the clamp reads through these two alone.
+        // call without the clamp reads through these two alone. The scope
+        // asks the tier and the stale worlds too, so a row either keeps out
+        // stops no round (REVIEW-10311 round 2).
+        let scope_metadata = RefCell::new(EntityMetadataCache::default());
         let in_scope = |store: &crate::store::StoreRead<'_>,
                         txn: &RoTxn<'_>,
                         id: &crate::EntityId|
          -> Result<bool> {
-            match filters.candidate_filter {
-                Some(scope) => scope(store, txn, id),
-                None => Ok(true),
+            if let Some(scope) = filters.candidate_filter
+                && !scope(store, txn, id)?
+            {
+                return Ok(false);
             }
+            let metadata = &mut scope_metadata.borrow_mut();
+            candidate_matches_criticality_and_stale_worlds(store, txn, id, filters, metadata)
         };
         let in_slice = |txn: &RoTxn<'_>, id: &crate::EntityId| -> Result<bool> {
             if !sliced {
@@ -493,7 +499,10 @@ impl PipelineBuilder<'_> {
          -> Result<bool> {
             Ok(in_scope(store, txn, id)? && !hides(store, txn, id)? && in_slice(txn, id)?)
         };
-        let narrowed = filters.candidate_filter.is_some() || sliced;
+        let narrowed = filters.candidate_filter.is_some()
+            || filters.criticality.is_some()
+            || filters.stale_worlds.is_some()
+            || sliced;
         // Widen the collector's window, scan caps and score truncation, not
         // the request sigma settles on.
         if !narrowed && clamp.is_none() {
@@ -511,7 +520,7 @@ impl PipelineBuilder<'_> {
                 rtxn,
                 config.limit,
                 filters,
-                self.has_strict_text_scope_filter(),
+                self.has_strict_scope_filter(filters),
                 (metadata_cache, claim_gate),
             )?;
             return Ok((scores, Vec::new()));
@@ -566,7 +575,7 @@ impl PipelineBuilder<'_> {
                 rtxn,
                 config.limit,
                 filters,
-                self.has_strict_text_scope_filter(),
+                self.has_strict_scope_filter(filters),
                 (metadata_cache, claim_gate),
             )?;
             return Ok((readable, withheld));
@@ -611,7 +620,7 @@ impl PipelineBuilder<'_> {
             rtxn,
             config.limit,
             filters,
-            self.has_strict_text_scope_filter(),
+            self.has_strict_scope_filter(filters),
             (metadata_cache, claim_gate),
         )?;
         Ok((scores, withheld))
@@ -647,7 +656,7 @@ impl PipelineBuilder<'_> {
     /// (vector and HyDE vector, text, temporal, typed media): the call's
     /// `made_by` slice joins the scope, so a row it drops takes no place in
     /// the fetch. A slice counts as a strict scope
-    /// ([`Self::has_strict_text_scope_filter`]), so these channels widen their
+    /// ([`Self::has_strict_scope_filter`]), so these channels widen their
     /// window and cut it to the slice. The run's shared config keeps every
     /// slice for the reads that judge rows other than results. Under a
     /// clamp, these channels' admission also asks the sources of a row's
@@ -734,15 +743,28 @@ impl PipelineBuilder<'_> {
         self.repo_ref_filter.is_some() || self.project_id_filter.is_some()
     }
 
-    pub(super) fn has_strict_text_scope_filter(&self) -> bool {
+    /// Whether the call's scope narrows what a bounded result channel may
+    /// fetch: the vector walk then asks it inside its window, the text scan
+    /// scores only the postings it admits, and the temporal window widens
+    /// and is cut to it. It covers the call's own filters, the manifest's
+    /// criticality tier and the stale federated worlds the run read under
+    /// [`WorldScope::All`] (`filters.stale_worlds`) among them; each caller
+    /// adds the further checks its own channel asks. A row either keeps out
+    /// takes no rank in the first blend and counts as no candidate in scope
+    /// (BOUNDED-CHANNEL-NARROWING-OMITS-CRITICALITY-STALE-DISCLOSURE). A
+    /// pack's disclosure clamp is asked apart, at each fetch and by
+    /// [`Self::retain_rows_the_clamp_admits`].
+    pub(super) fn has_strict_scope_filter(&self, filters: PipelineFilterConfig<'_>) -> bool {
         self.authority_filter.is_some()
             || self.type_filter.is_some()
+            || filters.criticality.is_some()
             || self.since_filter.is_some()
             || self.occurred_range.is_some()
             || self.learned_range.is_some()
             || matches!(self.facet_filter, Some((_, FacetMode::Strict)))
             || matches!(self.relationship_filter, Some((_, RelMode::Filter)))
             || self.world_scope != WorldScope::All
+            || filters.stale_worlds.is_some()
             || self.corpus_scope != CorpusScope::All
             || self.made_by != crate::provenance::made_by::MadeByPredicate::All
     }

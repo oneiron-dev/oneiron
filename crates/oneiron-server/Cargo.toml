@@ -417,6 +417,13 @@ name = "dreamer_route_fences_withdrawn_source_rows"
 path = "tests/dreamer_route_fences_withdrawn_source_rows.rs"
 required-features = ["oneiron/test-support"]
 
+# Its vault holds a `MemoryKeystore` (`oneiron-keystore/test-keystore`, forwarded by
+# `oneiron/test-support`); its thing child route door is `--cfg oneiron_test_support`.
+[[test]]
+name = "thing_child_fences_lent_source_rows"
+path = "tests/thing_child_fences_lent_source_rows.rs"
+required-features = ["oneiron/test-support"]
+
 # The skill library's facade doors serve the owner's root from a `MemoryKeystore` too.
 [[test]]
 name = "vault_skills_doors"
@@ -788,6 +795,17 @@ required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 name = "selector_answer_carries_released_row_delete"
 path = "tests/selector_answer_carries_released_row_delete.rs"
 required-features = ["oneiron/test-hooks"]
+
+# L10-16's hosted-peer link: the route gates and the link acts serve a `MemoryKeystore` root too.
+[[test]]
+name = "owner_link_routes"
+path = "tests/owner_link_routes.rs"
+required-features = ["oneiron/test-support"]
+
+[[test]]
+name = "hosted_peer_link"
+path = "tests/hosted_peer_link.rs"
+required-features = ["oneiron/test-support"]
 
 [lints]
 workspace = true

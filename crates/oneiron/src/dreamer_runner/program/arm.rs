@@ -127,8 +127,10 @@ pub(crate) fn disarm_turn_program_in_txn(
 
 /// An erased actor arms nothing and is owed nothing (FIX 3520): its armings
 /// and the wakes its turns left go in the erase's own writer, and so do the
-/// bodies its programs' steps keep (FIX 5710) and the signed instrument each
-/// of its admissions sealed (FIX 10668). Admission receipts, attempt
+/// bodies its programs' steps keep (FIX 5710), the signed instrument each
+/// of its admissions sealed (FIX 10668) and each decision another machine
+/// made of one of its wakes, where this machine learned whose it is (FIX
+/// TURNPROGRAM-ERASE-KEEPS-DECIDED). Admission receipts, attempt
 /// stamps and each step's evidence stay, as every runner stamp does. An
 /// owner's erase never fails on a row that does not decode (FIX 5736): an
 /// arming under the actor's key, a wake keyed to one of its armings and a
@@ -156,11 +158,13 @@ pub(crate) fn erase_turn_program_actor_in_txn(
     // an owed wake here.
     #[cfg(feature = "sync")]
     super::retraction::erase_actor_in_txn(vault, txn, actor)?;
-    // And the actor kept beside each decision another machine made of one of
-    // its wakes: no row names the actor past its erase. The decision itself
-    // stays (FIX TURNPROGRAM-ERASE-KEEPS-DECIDED).
+    // And each decision another machine made of one of its wakes, with the
+    // actor kept beside it (FIX TURNPROGRAM-ERASE-KEEPS-DECIDED). No row
+    // that names the actor brings one back: its merge refuses it
+    // (`decided`). A decision row that names no actor is kept as before,
+    // under none.
     #[cfg(feature = "sync")]
-    super::index::unindex_actor_decided_in_txn(vault, txn, actor)?;
+    super::index::erase_actor_decisions_in_txn(vault, txn, actor)?;
     scrub_actor_admission_instruments_in_txn(vault, txn, actor)?;
     scrub_actor_step_bodies_in_txn(vault, txn, actor).map(drop)
 }
@@ -297,7 +301,8 @@ fn pin_in_txn(
 /// `args` as the JSON text the secret write-wall admits for `registration`,
 /// read as a body so a credential-valued member is read structurally (FIX
 /// 8718): with the owner's scanning on, each secret goes to custody and
-/// leaves its handle; a hit the wall cannot place refuses the arming, before
+/// leaves its handle; a hit no span places is sealed whole at its smallest
+/// value (`seal_whole`), and one no seal clears refuses the arming, before
 /// anything is pinned. With scanning off the text is the caller's own.
 fn admitted_args_in_txn(
     vault: &Vault,

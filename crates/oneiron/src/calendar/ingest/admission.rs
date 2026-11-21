@@ -1,5 +1,6 @@
 //! Diff-to-claim admission path and its test module.
 
+mod absence_sweep;
 mod connector;
 mod continuation;
 mod host_cancel;
@@ -25,6 +26,7 @@ use crate::calendar::passport::{
 };
 use crate::calendar::safeguard::{CalendarBodyScreener, CalendarInboundBody, screen_then_claim};
 use crate::claim::ClaimLifecycleStatus;
+use crate::code_run::CompareKnown;
 use crate::entity_id::EntityId;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_EVENT;
@@ -190,25 +192,23 @@ impl PollAdmission<'_> {
         only_uids: Option<&std::collections::BTreeSet<&str>>,
         absence_basis: CalendarStatusBasis,
     ) -> Result<(), CalendarError> {
-        let present: std::collections::BTreeSet<_> = feed
-            .events
-            .iter()
-            .map(|event| (event.uid.as_str(), event.properties.recurrence_id_utc))
-            .collect();
-        for event_ref in list_event_ids(self.vault)? {
-            let passports = live_passports_for_event(self.vault, &event_ref)?;
+        let vault = self.vault;
+        let source = absence_sweep::SweepSource::read(vault, self.system, only_uids, feed)?;
+        let base_known = || vault.known_values_now();
+        let known = CompareKnown::new(Some(&base_known));
+        for event_ref in list_event_ids(vault)? {
+            let passports = live_passports_for_event(vault, &event_ref)?;
             let instance = self.exception_start(event_ref)?;
-            if !passports.iter().any(|(_, value)| {
-                value.system == self.system
-                    && only_uids.is_none_or(|uids| uids.contains(value.uid.as_str()))
-            }) {
+            let mut omissions = Vec::with_capacity(passports.len());
+            for (_, value) in &passports {
+                omissions.push(source.omission(&event_ref, instance, value, &known)?);
+            }
+            if omissions.iter().all(Option::is_none) {
                 continue;
             }
             let mut written_tombstone = false;
-            for (_, value) in &passports {
-                let omitted = value.system == self.system
-                    && only_uids.is_none_or(|uids| uids.contains(value.uid.as_str()))
-                    && !present.contains(&(value.uid.as_str(), instance));
+            for ((_, value), omission) in passports.iter().zip(omissions) {
+                let omitted = omission == Some(true);
                 let flips = omitted
                     && value.direction.is_inbound_bearing()
                     && value.presence == CalendarPassportPresence::Live;
@@ -225,8 +225,7 @@ impl PollAdmission<'_> {
                 let dates_cancel = omitted
                     && absence_basis == CalendarStatusBasis::ImportedCancel
                     && value.cancelled_since.is_none()
-                    && (value.direction.is_inbound_bearing()
-                        || names_written_calendar(self.system, value));
+                    && (value.direction.is_inbound_bearing() || names_written_calendar(value));
                 // That tombstone is the host's cancel in their own calendar
                 // unless it is the engine's own cancelled write coming back
                 // ([`cancel_moves_deposit`]): a provider that keeps a
@@ -234,7 +233,7 @@ impl PollAdmission<'_> {
                 // tombstone.
                 written_tombstone |= omitted
                     && absence_basis == CalendarStatusBasis::ImportedCancel
-                    && cancel_moves_deposit(self.system, value);
+                    && cancel_moves_deposit(value);
                 if !flips && !dates_cancel {
                     continue;
                 }

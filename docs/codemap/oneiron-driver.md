@@ -71,7 +71,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/dreamer_psych_profile.rs` | test | m | — | — | MAP-6.9 row 6.9i (untangle 6.9i PR 2): the Dreamer's Psych Mirror job |
 | `tests/dreamer_strength_archive.rs` | test | s | — | — | The production strength facet (untangle 6.9c PR 4, MAP-6.9 row 6.9c): a wake pass through the production… |
 | `tests/extraction_decisions.rs` | test | m | — | — | Bound extraction decision orchestration over lent scripted verdicts |
-| `tests/extraction_decisions/support.rs` | test | m | 25 crate-vis | — | Lent scripted verdict fixtures for bound extraction decision tests |
+| `tests/extraction_decisions/support.rs` | test | m | 24 crate-vis | — | Lent scripted verdict fixtures for bound extraction decision tests |
 | `tests/extraction_decisions_claim_evidence_parity.rs` | test | s | — | — | Native versus crate extraction correction parity for an operand that cites a listed claim (FIX row… |
 | `tests/extraction_decisions_parity.rs` | test | m | — | — | Native versus crate extraction decision parity over real vaults |
 | `tests/extraction_decisions_step_record.rs` | test | m | — | — | A decisions run over a real lent extraction step names its recorded candidates |
@@ -82,3 +82,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/extraction_selection_parity.rs` | test | s | — | — | Native selection parity for extraction grouping and scoring |
 | `tests/extraction_verdict_observed.rs` | test | s | — | — | Checks crate-routed observed preferences against the engine's bound verdict rebuild |
 | `tests/extraction_verdict_observed/support.rs` | test | m | 5 crate-vis | — | Provides the minimal real-vault fixture for observed verdict checks |
+| `tests/restored_unjoined_deadlines.rs` | test | s | — | — | Row [RESTORED-UNJOINED-ROUND2-TESTS] (parent row RESTORED-UNJOINED-STARTS-NO-WORK): the round-2 timer fix… |

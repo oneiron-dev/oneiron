@@ -2,6 +2,7 @@
 //! gated importer a feed poll runs, keeping their own routing.
 
 use super::*;
+use crate::calendar::passport::live_passport_keyed;
 
 /// Connector resources use the same gated importer, but retain their routing.
 pub(in crate::calendar) fn connector_event_ref(
@@ -207,8 +208,7 @@ pub(in crate::calendar) fn defer_connector_delete<'a>(
         else {
             continue;
         };
-        let dated =
-            passport.direction.is_inbound_bearing() || names_written_calendar(system, &passport);
+        let dated = passport.direction.is_inbound_bearing() || names_written_calendar(&passport);
         if !dated
             || passport.cancelled_since.is_some()
             || passport.deferred_cancel_seen_at.is_some()
@@ -231,25 +231,31 @@ pub(in crate::calendar) fn defer_connector_delete<'a>(
 /// inbound-bearing. A sync delta can report such a resource gone on a page
 /// before the one carrying the new href the host moved it to, so the pull
 /// holds the tombstone ([`defer_connector_delete`]) until a full listing,
-/// which lists every member whole, leaves the resource out.
+/// which lists every member whole, leaves the resource out. The passport of
+/// `(system, uid)` is the one the keyed lookup reads, its stored system and
+/// UID as custody reads each where it is pinned
+/// (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP), with the
+/// values custody holds read once for the scan.
 pub(in crate::calendar) fn tombstone_cancels_written_only_event(
     vault: &Vault,
     system: &str,
     uid: &str,
 ) -> Result<bool, CalendarError> {
+    let base_known = || vault.known_values_now();
+    let known = CompareKnown::new(Some(&base_known));
     for event_ref in list_event_ids(vault)? {
         let passports = live_passports_for_event(vault, &event_ref)?;
-        let written = passports.iter().any(|(_, value)| {
-            value.system == system
-                && value.uid == uid
-                && value.cancelled_since.is_none()
-                && cancel_moves_deposit(system, value)
-        });
-        if written
-            && !passports
-                .iter()
-                .any(|(_, value)| value.direction.is_inbound_bearing())
+        if passports
+            .iter()
+            .any(|(_, value)| value.direction.is_inbound_bearing())
         {
+            continue;
+        }
+        let written = live_passport_keyed(vault, &event_ref, passports, system, uid, &known)?
+            .is_some_and(|(_, value)| {
+                value.cancelled_since.is_none() && cancel_moves_deposit(&value)
+            });
+        if written {
             return Ok(true);
         }
     }

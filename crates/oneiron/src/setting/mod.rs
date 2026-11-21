@@ -35,6 +35,7 @@
 //! Stage 0.1 lands the primitive unused: no engine key is in the catalogue yet, and no value in
 //! force moves.
 
+mod act_rows;
 pub(crate) mod archive_restore;
 mod ask;
 mod beside;
@@ -62,6 +63,7 @@ pub use oneiron_setting_contract::{
     SettingScope, SettingSource, SettingStanding, SettingSync, SettingValue,
 };
 
+pub(crate) use self::act_rows::act_rows_of_change_in_txn;
 pub use self::ask::SettingAsk;
 pub(crate) use self::ask::erase_setting_ask_actor_in_txn;
 pub use self::beside::SettingTravel;
@@ -96,8 +98,12 @@ pub(crate) use self::pack::{
 };
 pub use self::page_max::PageMax;
 pub use self::project::SettingsProjected;
+pub(crate) use self::project::head_act_value_in_txn;
+pub(crate) use self::project::{
+    SETTING_REFUSAL_NOTIFICATION_PRODUCER, setting_refusal_taps_in_txn,
+};
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
-pub(crate) use self::project::forget_projected_rows_in_txn;
+pub(crate) use self::project::{forget_projected_rows_in_txn, forget_projection_records_in_txn};
 pub use self::proposal::SettingProposal;
 pub use self::publish::SettingsPublished;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
@@ -207,6 +213,68 @@ pub type LooseningNote =
 /// refusal there leaves the row out and its archived copy retained (`archive_restore`).
 pub type OnChange = fn(&Vault, &mut heed::RwTxn<'_>, &SettingChange) -> Result<()>;
 
+/// The rows a key's hook judges one of its rows against (row SETTING-PROJECTED-ROW-REFUSING-HOOKS):
+/// for the refused row and the value its act sets (its JSON; `None` for a clear), read in the
+/// projection pass's write. The owner's notice of a refused projection names the acts behind
+/// those rows beside the refused one, so every machine that refuses either side finds one notice.
+pub type RefusalPeers = fn(
+    &Vault,
+    &heed::RoTxn<'_>,
+    &oneiron_setting_contract::RowKey,
+    Option<&serde_json::Value>,
+) -> Result<Vec<oneiron_setting_contract::RowKey>>;
+
+/// What a projection pass does with a row of a signed act whose key's hook refuses it on this
+/// install (row SETTING-PROJECTED-ROW-REFUSING-HOOKS). Every way the pass raises the owner's
+/// notice of the refusal.
+#[derive(Clone, Copy)]
+pub enum RefusedProjection {
+    /// The row stays as it was, and the next pass reads it again: for a hook that may refuse on
+    /// this install's own state, which can change.
+    Retry,
+    /// The row takes the act's value all the same, without the hook, as on every machine that
+    /// folds the act (SETTING-PROJECTED-EMERGENCY-PAIR = A), and the key's reader holds the line:
+    /// for a hook that judges its row against other rows and writes nothing. The refusal stands
+    /// while `conflict` says the rows conflict, and a later act whose value the row holds already,
+    /// which runs no hook, is refused here while they do.
+    Land {
+        /// The owner's words of what the key's reader refuses while the rows stand as they do,
+        /// read for the refused row; `None` once they no longer conflict. The notice leads with
+        /// them.
+        conflict: RefusalConflict,
+    },
+    /// The row takes the key's strictest value, standing `Quarantined`, with the hook run on it,
+    /// and no later pass reads it again until a new act on it or on a row the hook judged it
+    /// against ([`RefusalPeers`]) (SETTING-PROJECTED-CALENDAR-SYSTEM-CLAIM = A): for a hook that
+    /// refuses a source another row holds, where at most one may run. The notice's taps pick
+    /// one: each keeps one row at the value its act sets and clears the others, in one act.
+    Quarantine {
+        /// The owner's words of the choice between the rows the notice names, which it leads
+        /// with; `None` where they give none.
+        choice: RefusalChoice,
+    },
+}
+
+/// A row a quarantined refusal's notice names ([`RefusedProjection::Quarantine`]): the refused
+/// row, or a row its key's hook judged it against.
+pub struct RefusalSource<'a> {
+    pub slot: &'a oneiron_setting_contract::RowKey,
+    /// The value the act behind it sets, as JSON, else the value it holds here; `None` for a
+    /// clear and where neither is here.
+    pub value: Option<&'a serde_json::Value>,
+    /// The name of the machine whose install signed that act, else of this machine.
+    pub machine: &'a str,
+}
+
+/// The owner's words of the choice between `sources` ([`RefusedProjection::Quarantine`]).
+pub type RefusalChoice = fn(&[RefusalSource<'_>]) -> Option<String>;
+
+/// The owner's words of a conflict between a row and the rows its key's hook judges it against,
+/// from the rows as they stand in the transaction; `None` where they do not conflict
+/// ([`RefusedProjection::Land`]).
+pub type RefusalConflict =
+    fn(&Vault, &heed::RoTxn<'_>, &oneiron_setting_contract::RowKey) -> Result<Option<String>>;
+
 /// The one hook a key may run once the write that changed it has committed: wake a host that
 /// reads the key (a reader woken inside the write would see the last commit's value).
 pub type OnCommitted = fn(&Vault);
@@ -255,6 +323,12 @@ pub struct SettingSpec {
     /// owner should read a fact about first (the spend cap in force for a payment item).
     pub loosening_note: Option<LooseningNote>,
     pub on_change: Option<OnChange>,
+    /// The rows `on_change` judges a row against, for a hook that reads other rows
+    /// ([`RefusalPeers`]): a refused projection's notice names their acts too. `None`: the
+    /// notice names the refused act alone, with the hook's reason.
+    pub refusal_peers: Option<RefusalPeers>,
+    /// What a projection pass does with a row of a signed act the hook refuses here.
+    pub refused_projection: RefusedProjection,
     /// Run after the commit of each write that applied a change to the key (not on an equal
     /// value, not on a change that waits on a check-in).
     pub after_commit: Option<OnCommitted>,
@@ -293,6 +367,8 @@ impl SettingSpec {
         sync: SettingSync::Vault,
         loosening_note: None,
         on_change: None,
+        refusal_peers: None,
+        refused_projection: RefusedProjection::Retry,
         after_commit: None,
         write_turn: None,
         born: None,

@@ -95,8 +95,8 @@ impl LlmBackend for CountingExtractionStepBackend {
                             "id": "new:P1", "name": "owen", "evidence_turn_refs": ["T1"],
                         }],
                         "candidates": [{
-                            "subject": "new:P1", "predicate": "likes", "value": "tea",
-                            "confidence": 0.9,
+                            "subject": "new:P1", "predicate": "preference.food",
+                            "value": "tea", "confidence": 0.9,
                             "evidence_refs": [{"source": "T1", "quote": "owen likes tea"}],
                         }],
                     })
@@ -169,7 +169,8 @@ impl LlmBackend for RefusingVerdictBackend {
     }
 }
 
-/// Answers one bound step while admitted, then refuses the same binding after the step gate closes.
+/// Answers one bound step while admitted, with its one candidate decoded, then refuses the same
+/// binding after the step gate closes.
 #[test]
 fn extraction_step_loan_rechecks_its_step_gate_each_call() -> ExtractionStepTestResult<()> {
     let directory = tempfile::tempdir()?;
@@ -276,6 +277,31 @@ fn extraction_step_loan_rechecks_its_step_gate_each_call() -> ExtractionStepTest
     assert!(
         response.contains("new:P1") && response.contains("owen likes tea"),
         "the finished step answers its scripted output: {response}"
+    );
+    // The reply's one candidate crosses the loan decoded. A candidate the bound wire skips
+    // leaves the status, the raw response and the charge asserted here unchanged.
+    let decoded = &answer["result"]["json"];
+    assert_eq!(
+        decoded["skipped"],
+        json!([]),
+        "the lent step skips no candidate: {decoded}"
+    );
+    let candidates = decoded["candidates"]
+        .as_array()
+        .ok_or("the finished step answers its decoded candidates")?;
+    assert_eq!(
+        candidates.len(),
+        1,
+        "one candidate crosses the loan: {decoded}"
+    );
+    assert_eq!(candidates[0]["subject"], json!({"declared": 1}));
+    assert_eq!(candidates[0]["predicate"], json!("preference.food"));
+    assert_eq!(
+        candidates[0]["evidence"],
+        json!([{
+            "turn": turns[0]["turn"], "version": turns[0]["version"],
+            "span": {"start": 0, "end": 14},
+        }])
     );
     let step_reference = answer["step_ref"]
         .as_str()
