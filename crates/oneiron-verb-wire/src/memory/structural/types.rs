@@ -28,7 +28,8 @@ pub struct StructuralEdgeSpec {
 /// Structural put carrying text-index fields and edges (B2 migrator group).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StructuralPutInput {
-    /// Caller-supplied deterministic 32-hex id; `None` ⇒ generated.
+    /// Caller-supplied deterministic 32-hex id; `None` ⇒ generated. A `TASK`
+    /// with an id is rejected: the door mints every TASK id.
     pub id: Option<String>,
     /// Registry kind string (`MESSAGE`, `PERSON`, `TASK`, `ASSET`, …).
     /// `CLAIM` is rejected — claims go through `Memory::commit`.

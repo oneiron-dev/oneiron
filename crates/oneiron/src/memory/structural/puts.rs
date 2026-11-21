@@ -12,7 +12,7 @@ use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{
     ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::task_body::TaskRole;
@@ -44,11 +44,12 @@ impl Memory<'_> {
     /// CREATE-ONLY (ONE-1889). This is a migration/create door, not a generic
     /// update verb: every id that already holds a stored entity is refused,
     /// whatever its stored kind and whatever kind is incoming. Fresh mints
-    /// stay fully available — caller-supplied fresh ids and generated ids
-    /// alike — and still commit body, resolved outgoing edges, and text
-    /// fields atomically. Mutating a stored entity is its typed verb's job;
-    /// the prior row is the snapshot of record, so a refusal here destroys
-    /// nothing and mints nothing.
+    /// stay available — caller-supplied fresh ids and generated ids alike,
+    /// except for a TASK, whose id this door always mints (a caller id is
+    /// refused, TASK-ID-SQUAT-BY-STRUCTURAL-PUT) — and still commit body,
+    /// resolved outgoing edges, and text fields atomically. Mutating a
+    /// stored entity is its typed verb's job; the prior row is the snapshot
+    /// of record, so a refusal here destroys nothing and mints nothing.
     pub fn put_structural(&self, input: &StructuralPutInput) -> MemoryResult<EntityRefReceipt> {
         self.put_structural_guarded(input, |_| Ok(()))
     }
