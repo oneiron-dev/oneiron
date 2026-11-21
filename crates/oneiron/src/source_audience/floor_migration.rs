@@ -339,3 +339,61 @@ pub(super) fn forget_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
     BACKFILL.delete_from(&vault.store, txn, &[])?;
     Ok(())
 }
+
+/// Ends, in `txn`, the old backfill's pass as a build before the backfill
+/// raised archived rows (FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS) ends it: it
+/// marks the backfill done and clears the raised marks.
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) fn end_backfill_without_archived_rows_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+) -> Result<()> {
+    BACKFILL.put(&vault.store, txn, &(), &true)?;
+    RAISED.delete_from(&vault.store, txn, &[])?;
+    Ok(())
+}
+
+/// Marks, in `txn`, the old backfill done as the last page of an older
+/// build's pass commits it, before its clearing pages run: the raised marks
+/// stay.
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) fn mark_backfill_done_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
+    BACKFILL.put(&vault.store, txn, &(), &true)
+}
+
+/// Marks `row` raised in `txn`, as a write of an older build marked a row
+/// it raised while its backfill ran.
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) fn mark_raised_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, row: &EntityId) -> Result<()> {
+    RAISED.put(&vault.store, txn, row, &())
+}
+
+/// Leaves `row` waiting on `source` in `txn`, with its marks, as an older
+/// build's backfill left a row learnt from an archived row it read as
+/// erased.
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) fn mark_waiting_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    row: &EntityId,
+    source: &EntityId,
+) -> Result<()> {
+    PENDING.put(&vault.store, txn, row, &())?;
+    AWAITED.put(&vault.store, txn, &(*source, *row), &())?;
+    WAITS.put(&vault.store, txn, &(*row, *source), &())
+}
+
+/// Runs the floor sweep to the end of its run from the cursor an older
+/// build's backfill pass saved after the page that ended at the entity key
+/// of `after` (its first byte 0), as housekeeping does when it holds that
+/// cursor.
+///
+/// # Errors
+///
+/// Storage failures.
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) fn sweep_floors_from_raising_cursor(vault: &Vault, after: &EntityId) -> Result<()> {
+    let mut cursor = vec![0_u8];
+    cursor.extend_from_slice(after.as_bytes());
+    source_state::sweep_floors(vault, Some(&cursor), || false).map(|_| ())
+}

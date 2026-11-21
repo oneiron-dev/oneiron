@@ -60,6 +60,11 @@ use crate::{EntityId, Vault};
 pub(crate) use floor::{
     FloorSource, SOURCE_READERS, SourceReaders, floor_source_in, floor_threads_in,
 };
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) use floor_migration::{
+    end_backfill_without_archived_rows_in_txn, mark_backfill_done_in_txn, mark_raised_in_txn,
+    mark_waiting_in_txn, sweep_floors_from_raising_cursor,
+};
 pub(crate) use obligation::{
     SourceAudienceBirth, admit_obligation_in_txn, admit_session_obligation_in_txn,
     binding_stands_on, body_names_obligation, keeps_row_obligation, mark_birth_in_txn,
