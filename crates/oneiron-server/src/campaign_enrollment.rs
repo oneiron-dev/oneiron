@@ -158,6 +158,12 @@ pub(crate) fn spawn(
 /// the pass with attempts possibly left.
 fn pump(server: &SyncServer) -> oneiron::Result<bool> {
     let vault = server.vault();
+    // A copy restored and not joined runs no campaign enrollment (row
+    // RESTORED-UNJOINED-STARTS-NO-WORK): rows wait, and the first pass after the
+    // join claims them. Writes nothing: no designation elect, no claim, no send.
+    if vault.restored_unjoined()? {
+        return Ok(false);
+    }
     let now = vault.now_recorded_at();
     let Some(node) = campaign_home_node(vault, now)? else {
         return Ok(false);
