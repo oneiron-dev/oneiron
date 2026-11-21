@@ -70,8 +70,11 @@ pub(crate) use crate::store::task_authority_guard::{
 mod binding_generation;
 mod consult_executor;
 mod fact_proof;
+mod removed_carrier;
 mod task_maker;
 pub use binding_generation::{BindingGeneration, BindingId};
+pub(crate) use removed_carrier::carried_fact_acts_in_txn;
+pub use removed_carrier::task_facts_not_counted_text;
 pub use task_maker::{TaskMaker, task_ref_of_maker};
 
 /// Strict body schema for authority facts. Version 2 is version 1 plus the

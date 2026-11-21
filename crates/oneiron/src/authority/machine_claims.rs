@@ -218,8 +218,24 @@ impl<'s> ClaimIndex<'s> {
             roster_trusted,
             anchored,
             shared,
+            roster_removals_saw: roster.map(removals_saw).unwrap_or_default(),
         }
     }
+}
+
+/// The meet of what every `Removed` revision in `chain` saw the machine
+/// carry (their `seen_world_edits`), on every branch the history holds; empty
+/// when the chain holds no removal. A removal whose act lost a race still
+/// takes part: it only narrows what keeps counting.
+fn removals_saw(chain: &MachineChain) -> BTreeSet<AuthorityEntryHash> {
+    chain
+        .revisions
+        .iter()
+        .map(|(_, revision)| revision.profile())
+        .filter(|profile| profile.role == MachineRole::Removed)
+        .map(|profile| profile.seen_world_edits.clone())
+        .reduce(|met, seen| met.intersection(&seen).copied().collect())
+        .unwrap_or_default()
 }
 
 /// Which chain heads this install holds: the chain's admitter, the chain, and
