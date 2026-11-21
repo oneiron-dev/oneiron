@@ -42,6 +42,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+mod accept_checks;
+use accept_checks::{CheckedAccept, checked_accept_in_txn, head_defaults_digest};
 mod door;
 pub(super) use door::project_pack_in_txn;
 mod layer;
@@ -686,6 +688,26 @@ pub(crate) fn head_version_and_digest(
 ) -> Result<Option<(String, String)>> {
     let txn = vault.store.env.read_txn()?;
     Ok(head_in_txn(&vault.store, &txn, pack)?.map(|head| (head.version, head.digest)))
+}
+
+/// Writes `digest` as the defaults digest `pack`'s head row keeps, as a damaged store would hold
+/// it. A test door's write.
+///
+/// # Errors
+///
+/// `InvalidConfig` for a pack with no head; storage errors.
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) fn put_head_digest(vault: &Vault, pack: &str, digest: &str) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    let Some(mut head) = head_in_txn(&vault.store, &txn, pack)? else {
+        return Err(Error::InvalidConfig(format!(
+            "no pack named `{pack}` has defaults in this vault"
+        )));
+    };
+    head.digest = digest.to_owned();
+    HEADS.put(&vault.store, &mut txn, &pack.as_bytes().to_vec(), &head)?;
+    txn.commit()?;
+    Ok(())
 }
 
 /// `pack`'s table `defaults` as the bytes that travel beside its head acts, and its digest

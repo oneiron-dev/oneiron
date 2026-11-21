@@ -618,6 +618,22 @@ impl Vault {
             .map(|carrier| carrier.is_some())
     }
 
+    /// Refuses, as the append of an owner's act does, where this install
+    /// cannot carry one in `txn` ([`Self::can_carry_owner_act_in_txn`]). A
+    /// door whose write appends such an act makes this check on a read before
+    /// it asks for the person at this device, and the append makes it again.
+    ///
+    /// # Errors
+    ///
+    /// The append's typed refusal for an install with no machine identity,
+    /// or with no live profile under its install key; `KeystoreUnavailable`
+    /// for an install whose signing keys are not loaded; storage errors.
+    pub(crate) fn owner_act_carrier_stands_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        self.require_owner_act_carrier_in_txn(txn, &fold)
+            .map(|_| ())
+    }
+
     /// Appends a move's carried rows as one signed `SettingCopy` in the
     /// mover's write `txn` (stage 7a-4): each carried row with the acts it
     /// copies, and the `seen` of its own target, read in `txn`. Not best
