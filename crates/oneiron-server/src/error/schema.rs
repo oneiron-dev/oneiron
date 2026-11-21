@@ -43,6 +43,9 @@ pub fn api_error_schema() -> Value {
             "legal_hold": { "$ref": "#/components/schemas/LegalHoldNoticeSchema" },
             "room_join_hold": { "$ref": "#/components/schemas/RoomJoinHoldSchema" },
             "pending": { "$ref": "#/components/schemas/MemoryPendingSchema" },
+            "task_assignment_conflict": {
+                "$ref": "#/components/schemas/TaskAssignmentConflictSchema"
+            },
         },
     })
 }
@@ -78,6 +81,9 @@ pub fn api_error_envelope_schema() -> Value {
                     "legal_hold": { "$ref": "#/components/schemas/LegalHoldNoticeSchema" },
                     "room_join_hold": { "$ref": "#/components/schemas/RoomJoinHoldSchema" },
                     "pending": { "$ref": "#/components/schemas/MemoryPendingSchema" },
+                    "task_assignment_conflict": {
+                        "$ref": "#/components/schemas/TaskAssignmentConflictSchema"
+                    },
                 },
             },
         },
@@ -93,6 +99,8 @@ pub fn openapi_error_components() -> Value {
         "LegalHoldNoticeSchema": crate::api::legal_hold_schema::legal_hold_notice_schema(),
         "RoomJoinHoldSchema": super::room_join_hold_schema::room_join_hold_schema(),
         "MemoryPendingSchema": super::memory_pending_schema::memory_pending_schema(),
+        "TaskAssignmentConflictSchema":
+            super::task_assignment_conflict_schema::task_assignment_conflict_schema(),
     })
 }
 

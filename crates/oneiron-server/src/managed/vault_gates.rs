@@ -21,7 +21,10 @@ use crate::config::KeystoreInstall;
 /// MACHINE writers, which sign with host-held keys (ONE-1634), and the
 /// host's own node in the roster: never the owner's, never a world key's
 /// recipient. A restart keeps a node the owner answered for since as he
-/// answered (FIX 4648).
+/// answered (FIX 4648). Once the root and the node stand, a start whose
+/// keystore loaded this install's signer adopts the task facts written
+/// before the root (pass 28 R5): the keystore install found no root to adopt
+/// under when this start roots the vault.
 ///
 /// The readiness it returns names each other signing facility the vault
 /// serves without (WILL-PLAN L14 row 17): the supervisor's key directory,
@@ -107,6 +110,9 @@ pub(super) fn provision_host_authority(
                     ManagedFacility::HostNodeProfile,
                     FacilityReason::ProfileFailed,
                 );
+            }
+            if signing {
+                vault.adopt_unsigned_task_facts_logged();
             }
         }
     }

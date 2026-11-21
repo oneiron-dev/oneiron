@@ -38,6 +38,7 @@ pub use self::record::{
     OWNER_KEY_MOVE_SUGGESTION, OWNER_KEY_NEXT_STEP_REASON_PREFIX, OWNER_KEY_REQUIRED,
     OWNER_PRESENCE_HERE_REASON_PREFIX, OWNER_PRESENCE_REQUIRED, OwnerKeyMoveStep,
     OwnerPresenceRefusal, RecordError, RoomLiveSpeakersHold, SEAL_STANDING_RECONCILE_TEXT,
+    TASK_ASSIGNMENT_CONFLICT_SUGGESTION,
 };
 pub use self::registry::RegistryError;
 pub use self::relay::RelayError;
@@ -313,6 +314,9 @@ pub enum ErrorKind {
     AuthorityLogFull,
     /// The authority fold needs history this vault does not hold (OF-469).
     AuthorityHistoryRequired,
+    /// A second, different assignment for one task: another device of this
+    /// vault already assigned it, so this one is refused.
+    TaskAssignmentConflict,
     /// The persisted authority clock floor is damaged (FIX 10106).
     AuthorityClockCorrupt,
     /// The decision seals' standing could not be verified (FIX 5248).

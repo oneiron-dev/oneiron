@@ -79,6 +79,28 @@ pub(in crate::task_verb) fn envelope_actor_class(claim: &ClaimBody) -> Option<Ed
     EdgeActorClass::try_from_u8(u8::try_from(class.as_u64()?).ok()?)
 }
 
+/// The error a settlement answers for a refusal: the typed task assignment conflict when
+/// `error` carries one (TASK-ASSIGNED-FORK = C), else an invalid configuration naming it.
+pub(in crate::task_verb) fn settle_refusal(error: MemoryError) -> Error {
+    if let Some(conflict) = error.task_assignment_conflict.as_deref()
+        && let (Ok(task_ref), Ok(held_assignee), Ok(offered_assignee)) = (
+            EntityId::from_hex(&conflict.task_ref),
+            EntityId::from_hex(&conflict.held_assignee),
+            EntityId::from_hex(&conflict.offered_assignee),
+        )
+    {
+        return Error::Record(crate::error::RecordError::TaskAssignmentConflict {
+            task_ref,
+            held_assignee,
+            offered_assignee,
+        });
+    }
+    Error::InvalidConfig(format!(
+        "task proposal settlement refused: {}",
+        error.message
+    ))
+}
+
 pub(super) fn class_of(byte: u8) -> Result<EdgeActorClass> {
     EdgeActorClass::try_from_u8(byte).ok_or(Error::Record(
         crate::error::RecordError::InvalidTaskBody("tasks.proposal.actor_class"),
@@ -108,10 +130,9 @@ pub(super) fn settle_post(
     ))?;
     let proposer = proposer_of(claim, approver)?;
     let class = class_of(stamp.actor_class)?;
-    let task_ref = EntityId::derive(TASK_SETTLE_ID_DOMAIN, &[claim_id.as_bytes()])?;
-    if vault.get_raw_in(wtxn, &task_ref)?.is_some() {
-        return Ok(());
-    }
+    // The proposer makes the TASK for itself, under the claim's settle
+    // derive.
+    let (maker, owner) = proposal_create::settled_task_identity(claim_id, claim)?;
     // The approved value is what lands: an approver's amendment to the
     // assignee, spec, label, TTL, parent, due time or watch rides through the
     // same keys it was parked under, and the brief through the stamp.
@@ -119,6 +140,19 @@ pub(super) fn settle_post(
         Some(value) => decode_task_assignee(value)?,
         None => TaskAssignee::Dreamer,
     };
+    let task_ref = maker.task_ref(owner)?;
+    if vault.get_raw_in(wtxn, &task_ref)?.is_some() {
+        // A concurrent approval landed the TASK first: this one changes
+        // nothing, unless it offers another assignee than the TASK holds
+        // (blind review P1, REVIEW-9983).
+        return crate::task_authority::refuse_landed_task_reassignment_in_txn(
+            vault,
+            wtxn,
+            task_ref,
+            owner,
+            assignee.entity_ref(),
+        );
+    }
     let label = task_body_optional(entries, "label")?
         .map(|value| {
             value.as_str().map(str::to_owned).ok_or(Error::Record(
@@ -182,7 +216,7 @@ pub(super) fn settle_post(
     memory
         .land_settled_post_in_txn(
             wtxn,
-            task_ref,
+            maker,
             &post,
             &post_provenance(&stamp.intent_key, &stamp.request_digest, Some(claim_id)),
             origin.as_ref(),

@@ -116,6 +116,27 @@ impl From<Error> for MemoryError {
                 )
             };
         }
+        // Another device of this vault already assigned the task: the task and both
+        // assignees travel as a FIELD, not as prose, like `successor_short_id` above.
+        if let Error::Record(crate::error::RecordError::TaskAssignmentConflict {
+            task_ref,
+            held_assignee,
+            offered_assignee,
+        }) = err
+        {
+            return Self {
+                task_assignment_conflict: Some(Box::new(TaskAssignmentConflict {
+                    task_ref: task_ref.to_hex(),
+                    held_assignee: held_assignee.to_hex(),
+                    offered_assignee: offered_assignee.to_hex(),
+                })),
+                ..Self::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    message,
+                    &[crate::error::TASK_ASSIGNMENT_CONFLICT_SUGGESTION],
+                )
+            };
+        }
         // The hold is a valid write parked on the parties it names, not a
         // bad request: INVALID_STATE, filed by the join it names.
         if let Error::Record(crate::error::RecordError::RoomJoinHeld(hold)) = err {

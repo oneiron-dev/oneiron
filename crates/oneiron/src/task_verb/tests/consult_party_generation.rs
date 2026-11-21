@@ -205,6 +205,7 @@ fn replicas_observing_one_binding_record_one_generation() {
                     assigned_generation,
                     answered_heads: None,
                     occurred_at: LADDER_NOW,
+                    maker: None,
                 },
             )
         })
@@ -342,6 +343,7 @@ fn generations_with_no_binding_in_common_admit_nobody_unrooted() {
                     assigned_generation: None,
                     answered_heads: None,
                     occurred_at: LADDER_NOW,
+                    maker: None,
                 },
             )
         })

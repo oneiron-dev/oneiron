@@ -16,7 +16,7 @@ use crate::memory::{Memory, MemoryResult};
 use super::ask_types::{TaskAskHandle, TaskAskStatus};
 use super::consts::{
     TASK_BRIEF_PROPOSAL_PREDICATE, TASK_CREATE_PROPOSAL_PREDICATE, TASK_EXTERNAL_ATTEMPT_KIND,
-    TASK_REALIZE_ATTEMPT_KIND, TASK_SETTLE_ID_DOMAIN,
+    TASK_REALIZE_ATTEMPT_KIND,
 };
 use super::consult_assignee_wait::{CONSULT_ASSIGNEE_FACT_WAIT, waits_for_assignee_fact_in};
 use super::create_validation::task_route_dedupe_key;
@@ -112,7 +112,7 @@ impl Memory<'_> {
                 return Err(not_found());
             }
             let landed = if claim.predicate == TASK_CREATE_PROPOSAL_PREDICATE {
-                let task_ref = EntityId::derive(TASK_SETTLE_ID_DOMAIN, &[proposal_ref.as_bytes()])?;
+                let task_ref = super::proposal_create::settled_task_ref(proposal_ref, &claim)?;
                 task_verb_body_in(self.vault(), &txn, task_ref)?.map(|_| task_ref)
             } else {
                 None

@@ -9,8 +9,8 @@ pub use oneiron_contracts::error::{
     LegalHoldBoundKind, LegalHoldNotice, LegalHoldState, LiveDeckRefusal, MaintenanceError,
     OWNER_KEY_REQUIRED, OWNER_PRESENCE_HERE_REASON_PREFIX, OWNER_PRESENCE_REQUIRED, OffRecordError,
     OwnerKeyMoveStep, OwnerPresenceRefusal, RecordError, RegistryError, RelayError, Result,
-    RoomLiveSpeakersHold, SecretError, SideTableRowProblem, StoreError, SyncError, VaultRootEntry,
-    VaultRootProblem, VerbHookStop,
+    RoomLiveSpeakersHold, SecretError, SideTableRowProblem, StoreError, SyncError,
+    TASK_ASSIGNMENT_CONFLICT_SUGGESTION, VaultRootEntry, VaultRootProblem, VerbHookStop,
 };
 #[cfg(feature = "sync")]
 pub use oneiron_contracts::error::{

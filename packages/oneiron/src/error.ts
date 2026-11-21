@@ -8,7 +8,7 @@
  * the engine's own vocabulary, including codes newer than this package.
  */
 
-import type { LegalHoldNotice, MemoryPending, RoomJoinHold } from "./facade-types.js"
+import type { LegalHoldNotice, MemoryPending, RoomJoinHold, TaskAssignmentConflict } from "./facade-types.js"
 
 /** The serialized shape the native boundary hands back. */
 type NativeErrorPayload = {
@@ -25,6 +25,7 @@ type NativeErrorPayload = {
   legal_hold?: unknown
   room_join_hold?: unknown
   pending?: unknown
+  task_assignment_conflict?: unknown
 }
 
 /** A `WRONG_ROOT` refusal's correction: call `replacement`, never `attempted`. */
@@ -92,6 +93,9 @@ export class OneironError extends Error {
   /** What a pending refusal waits on, typed, when it waits on one. */
   readonly pending?: MemoryPending
 
+  /** The refused second assignment, typed, when another device already assigned the task. */
+  readonly taskAssignmentConflict?: TaskAssignmentConflict
+
   constructor(
     code: string,
     message: string,
@@ -103,6 +107,7 @@ export class OneironError extends Error {
     legalHold?: LegalHoldNotice,
     roomJoinHold?: RoomJoinHold,
     pending?: MemoryPending,
+    taskAssignmentConflict?: TaskAssignmentConflict,
   ) {
     super(message)
     this.name = "OneironError"
@@ -116,6 +121,7 @@ export class OneironError extends Error {
     if (legalHold) this.legalHold = Object.freeze({...legalHold})
     if (roomJoinHold) this.roomJoinHold = Object.freeze({...roomJoinHold})
     if (pending) this.pending = Object.freeze({...pending})
+    if (taskAssignmentConflict) this.taskAssignmentConflict = Object.freeze({...taskAssignmentConflict})
   }
 }
 
@@ -178,6 +184,17 @@ function pendingBlock(value: unknown): MemoryPending | undefined {
     : undefined
 }
 
+/** Narrows the optional conflict to the engine's task-assignment conflict shape. */
+function taskAssignmentConflictNotice(value: unknown): TaskAssignmentConflict | undefined {
+  if (typeof value !== "object" || value === null) return undefined
+  const conflict = value as Record<string, unknown>
+  return typeof conflict.task_ref === "string" &&
+    typeof conflict.held_assignee === "string" &&
+    typeof conflict.offered_assignee === "string"
+    ? (value as TaskAssignmentConflict)
+    : undefined
+}
+
 /**
  * Narrows an unknown value to the native payload shape.
  *
@@ -236,6 +253,7 @@ export function translateNativeError(error: unknown): OneironError {
       legalHoldNotice(parsed.legal_hold),
       roomJoinHoldNotice(parsed.room_join_hold),
       pendingBlock(parsed.pending),
+      taskAssignmentConflictNotice(parsed.task_assignment_conflict),
     )
   }
 

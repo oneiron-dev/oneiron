@@ -475,6 +475,24 @@ pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> 
         return McpGatewayError::new(-32020, "write_verb_target_stale", error.to_string())
             .with_successor_short_id(successor_short_id.clone());
     }
+    // A second, different assignment for one task gets its own stable kind, not the
+    // generic engine_error bucket, and carries the task and both assignees as data.
+    if let oneiron::Error::Record(oneiron::error::RecordError::TaskAssignmentConflict {
+        task_ref,
+        held_assignee,
+        offered_assignee,
+    }) = &error
+    {
+        let mut refusal =
+            McpGatewayError::new(-32020, "task_assignment_conflict", error.to_string());
+        refusal.task_assignment_conflict =
+            Some(Box::new(oneiron::memory::TaskAssignmentConflict {
+                task_ref: task_ref.to_hex(),
+                held_assignee: held_assignee.to_hex(),
+                offered_assignee: offered_assignee.to_hex(),
+            }));
+        return refusal;
+    }
     // FIX 2222: the owner refusal a read key or a host action carries (a
     // self-hosted root that binds no live owner) is the engine's typed
     // refusal, never the generic engine error.
@@ -637,6 +655,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
             "successor_short_id".to_owned(),
             Value::String(successor_short_id),
         );
+    }
+    if let Some(conflict) = error.task_assignment_conflict
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("task_assignment_conflict".to_owned(), json!(*conflict));
     }
     if let Some(effective_scope) = error.effective_scope
         && let Some(object) = data.as_object_mut()

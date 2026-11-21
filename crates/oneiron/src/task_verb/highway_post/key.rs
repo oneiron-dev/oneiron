@@ -20,6 +20,20 @@ pub(super) struct PostKey {
 }
 
 impl PostKey {
+    /// The maker commitment of the TASK `actor` posts under this key: the
+    /// post's own derive of the actor and the key is its nonce, so a retry
+    /// and every device reach one TASK (FIX TASK-ID-COMMITS-TO-MAKER). A
+    /// post's owner is its maker: its id is `task_maker(actor)?.task_ref(actor)`.
+    pub(super) fn task_maker(&self, actor: EntityId) -> Result<TaskMaker> {
+        Ok(TaskMaker {
+            maker_ref: actor,
+            nonce: EntityId::derive(
+                TASK_POST_ID_DOMAIN,
+                &[actor.as_bytes(), self.stored.as_bytes()],
+            )?,
+        })
+    }
+
     /// `key` as `via` posts it. A blank key is refused; a key of any length
     /// is taken, its length observed ([`observe_key_in`]).
     pub(super) fn of(via: &TaskVia, key: &str) -> MemoryResult<Self> {
