@@ -572,6 +572,14 @@ fn settle(
                         step_bindings: step_bindings.clone(),
                     }
                 }
+                // A window refusal ends the try Failed with the step's text,
+                // once (Engine 21 Nov 07:38).
+                Some(SeamStop::WindowRefused { reason }) => DreamerAttemptExecution::Failed {
+                    reason,
+                    completed_units: used,
+                    budget_refusal: None,
+                    step_bindings: step_bindings.clone(),
+                },
                 // A write's reservation met the owner refusal (FIX 11090).
                 _ if matches!(
                     &error,
@@ -632,6 +640,10 @@ enum SeamStop {
         reason: String,
         refusal: crate::store::model_step_submission::StepBudgetRefusal,
     },
+    /// The provider refused the step's call for its context window, with the
+    /// step error's text: no later pass clears the same input, so the try
+    /// ends Failed (Engine 21 Nov 07:38).
+    WindowRefused { reason: String },
 }
 
 /// The program run's model door: each call the engine executor makes is one
@@ -795,6 +807,18 @@ impl ProgramModelSeam<'_> {
                 | DurableStepError::DeadlineHardCut
                 | DurableStepError::SpentFinalizeRefused { .. },
             )) => Err(self.stopped(SeamStop::Deadline)),
+            // A window refusal ends the try Failed, never checkpointed to
+            // resend the same call on resume (Engine 21 Nov 07:38). The
+            // program meets the same error as before.
+            Some(Err(error)) if crate::dreamer_wake::step_refuses_window(&error) => {
+                let reason = error.to_string();
+                if let DurableStepError::Llm(source) = error {
+                    self.note(SeamStop::WindowRefused { reason });
+                    Err(source)
+                } else {
+                    Err(self.stopped(SeamStop::WindowRefused { reason }))
+                }
+            }
             Some(Err(DurableStepError::Llm(error))) => {
                 self.note(SeamStop::Failed);
                 Err(error)

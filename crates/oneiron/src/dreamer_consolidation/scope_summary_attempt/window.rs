@@ -181,17 +181,15 @@ fn tokens(text: &str) -> u64 {
     crate::count_context_pack_tokens(text) as u64
 }
 
-/// A paid shim correction that the provider explicitly found over context.
-/// Other request errors and the first call retain their ordinary retry path.
+/// A paid shim correction the provider refused for its context window, in either
+/// typed shape: the window refusal, or the invalid-request detail naming
+/// `context_length_exceeded`. Other request errors and the first call retain
+/// their ordinary retry path.
 pub(super) fn correction_overflow(error: &crate::model_step_error::DurableStepError) -> bool {
     matches!(
         error,
-        crate::model_step_error::DurableStepError::SpentLlm {
-            source: oneiron_model::llm::LlmError::Fatal(
-                oneiron_model::llm::FatalLlmError::InvalidRequestDetail { code: Some(code), .. }
-            ),
-            ..
-        } if code == "context_length_exceeded"
+        crate::model_step_error::DurableStepError::SpentLlm { source, .. }
+            if crate::dreamer_wake::llm_refuses_window(source)
     )
 }
 

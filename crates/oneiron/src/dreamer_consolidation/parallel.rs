@@ -325,6 +325,7 @@ impl ConsolidationExecutor<'_> {
         // without cancelling or paying again for completed siblings.
         let mut replies = Vec::new();
         let mut refused = None;
+        let mut window_refused = None;
         let mut budget_refused = None;
         let mut seat_refused = None;
         let mut trapped = false;
@@ -351,6 +352,9 @@ impl ConsolidationExecutor<'_> {
                 }
                 SliceFate::BudgetRefused { reason, refusal } => {
                     budget_refused.get_or_insert((reason, refusal));
+                }
+                SliceFate::WindowRefused { reason } => {
+                    window_refused.get_or_insert(reason);
                 }
                 SliceFate::SeatRefused {
                     reason,
@@ -383,6 +387,9 @@ impl ConsolidationExecutor<'_> {
         // A refusal for good ends the try, before a reply a retry may fix.
         if let Some((reason, refusal)) = budget_refused {
             return Ok(PartitionRun::BudgetRefused { reason, refusal });
+        }
+        if let Some(reason) = window_refused {
+            return Ok(PartitionRun::WindowRefused { reason });
         }
         if let Some(reason) = refused {
             return Ok(PartitionRun::Refused { reason });

@@ -374,6 +374,11 @@ impl ConsolidationExecutor<'_> {
                 } else if let Some(usage) = unsaved_usage {
                     charges.record_usage(&usage);
                 }
+                // A window refusal ends the branch, and the try ends Failed
+                // with its text, once (Engine 21 Nov 07:38).
+                if crate::dreamer_wake::step_refuses_window(&error) {
+                    return Ok(PortServed::End(PartitionRun::refused_by(error)));
+                }
                 // A spent model seat refused the slice's step: the branch
                 // ends and the try parks on the seat, as the per-slice path
                 // parks it, never a blind Retry (SEAT-PARK-MODEL-STEP-PATH).
@@ -638,6 +643,7 @@ const fn stop_code(run: &PartitionRun) -> &'static str {
         PartitionRun::Checkpoint => THING_CHILD_CHECKPOINT,
         PartitionRun::Refused { .. }
         | PartitionRun::BudgetRefused { .. }
+        | PartitionRun::WindowRefused { .. }
         | PartitionRun::SeatRefused { .. } => THING_CHILD_REFUSED,
         PartitionRun::Completed { .. } | PartitionRun::Held { .. } => THING_CHILD_PARENT_FAILED,
     }

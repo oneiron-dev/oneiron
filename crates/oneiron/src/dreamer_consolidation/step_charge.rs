@@ -69,7 +69,8 @@ impl StepChargeTally {
 
     /// Ends the try on a failed durable step: `Failed`, typed, with what
     /// the try already spent and its paid steps' receipts, when a spend
-    /// scope refused the step for good; a park on the seat, with the same
+    /// scope refused the step for good or the provider refused it for its
+    /// window (Engine 21 Nov 07:38); a park on the seat, with the same
     /// spend, when a spent model seat refused it (SEAT-PARK-MODEL-STEP-PATH);
     /// any other step error parks for `reason` with that error's cause, as
     /// [`Self::park_for`] does (BUDGET-TRAP-UNTYPED-NO-SENDER).
@@ -375,6 +376,11 @@ pub(super) enum SliceFate {
         reason: String,
         refusal: StepBudgetRefusal,
     },
+    /// The provider refused the slice's step for its context window: the try
+    /// ends `Failed` with `reason`, once (Engine 21 Nov 07:38).
+    WindowRefused {
+        reason: String,
+    },
     /// A spent model seat refused the slice's step: the try parks on the
     /// seat (SEAT-PARK-MODEL-STEP-PATH).
     SeatRefused {
@@ -474,6 +480,9 @@ pub(super) fn tally_slice_outcome(
                 seat,
                 reset_at_s,
             },
+            None if crate::dreamer_wake::step_refuses_window(&error) => SliceFate::WindowRefused {
+                reason: error.to_string(),
+            },
             None => SliceFate::Refused(error.to_string()),
         },
     })
@@ -488,7 +497,8 @@ pub(super) fn tally_slice_outcome(
 /// `Trapped` when any slice trapped, as that step already parked the
 /// attempt under its durable trap and the caller must never extract
 /// past it (FIX 12487 round 2); else `SeatRefused` when a spent model
-/// seat refused a slice and no spend scope refused one for good, so
+/// seat refused a slice and no slice refused one for good (a spend
+/// scope's or the window's refusal, which the finish ends Failed), so
 /// the try waits on that seat instead of a Retry that a later pass
 /// would resume (and ask the seat again) before the seat's available
 /// write (review round 2 of #7340). `None` leaves the caller's own arm.
@@ -498,7 +508,7 @@ pub(super) fn tally_extracted_outcomes(
     charges: &mut StepChargeTally,
 ) -> Result<Option<PartitionRun>> {
     let mut trapped = false;
-    let mut budget_refused = false;
+    let mut terminal_refused = false;
     let mut seat_refused = None;
     for SliceStep {
         outcome,
@@ -508,7 +518,9 @@ pub(super) fn tally_extracted_outcomes(
     {
         match tally_slice_outcome(vault, outcome, unsaved_usage, charges)? {
             SliceFate::Trapped => trapped = true,
-            SliceFate::BudgetRefused { .. } => budget_refused = true,
+            SliceFate::BudgetRefused { .. } | SliceFate::WindowRefused { .. } => {
+                terminal_refused = true;
+            }
             SliceFate::SeatRefused {
                 reason,
                 seat,
@@ -522,7 +534,7 @@ pub(super) fn tally_extracted_outcomes(
     if trapped {
         return Ok(Some(PartitionRun::Trapped));
     }
-    let Some((reason, seat, reset_at_s)) = seat_refused.filter(|_| !budget_refused) else {
+    let Some((reason, seat, reset_at_s)) = seat_refused.filter(|_| !terminal_refused) else {
         return Ok(None);
     };
     Ok(Some(PartitionRun::SeatRefused {

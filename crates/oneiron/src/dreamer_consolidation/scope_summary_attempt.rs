@@ -397,6 +397,13 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                         .compose_pages(attempt, ctx, &plan, &evidence, instruction, window, charges)
                         .await;
                 }
+                if let Some(failed) = crate::dreamer_runner::dreamer_failed_on_refused_step(
+                    &other,
+                    charges.units,
+                    &charges.step_bindings,
+                ) {
+                    return Ok(failed);
+                }
                 ctx.note_spend_before_error(charges.units, &charges.step_bindings);
                 // A spent model seat refused the step: the try parks on that seat
                 // (SEAT-PARK-MODEL-STEP-PATH).

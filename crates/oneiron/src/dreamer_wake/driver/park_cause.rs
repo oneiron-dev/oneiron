@@ -2,6 +2,7 @@
 //! owner act clears keeps its private ExecutorError park and ends the pass,
 //! as before; any other parks as a Retry a later pass resumes after its
 //! retry delay (Engine 10-21).
+//! A window refusal is never a Retry: no later pass clears the same input.
 //!
 //! An ExecutorError park has no wake signal of its own. It waits for the
 //! owner's release, and the park raises the owner's notice
@@ -29,6 +30,7 @@
 
 use crate::dreamer_runner::DreamerParkCause;
 use crate::error::ErrorKind;
+use crate::model_step_error::DurableStepError;
 use oneiron_model::llm::{FatalLlmError, LlmError, RetryableLlmError, SpentKind};
 
 /// Whether an executor error of `kind` waits on an owner act: an authority,
@@ -151,6 +153,33 @@ pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
             | FatalLlmError::JobLost
             | FatalLlmError::LabelRead(_) => false,
         },
+    }
+}
+
+/// Whether a failed model call is a refusal for the provider's context window
+/// (Engine 21 Nov 07:38): the typed window refusal, or the invalid-request
+/// detail naming `context_length_exceeded`. The same input meets it on every
+/// call, so no later pass clears it and a Retry would only meet it again.
+pub(crate) fn llm_refuses_window(error: &LlmError) -> bool {
+    match error {
+        LlmError::Fatal(FatalLlmError::ContextWindowExceeded { .. }) => true,
+        LlmError::Fatal(FatalLlmError::InvalidRequestDetail { code, .. }) => {
+            code.as_deref() == Some("context_length_exceeded")
+        }
+        _ => false,
+    }
+}
+
+/// Whether a failed durable step is a model call the provider refused for its
+/// context window ([`llm_refuses_window`]), in any of the three shapes a model
+/// call fails in. The same input meets it on every call, so the try ends
+/// Failed with its text, once, instead of parking a Retry no later pass clears.
+pub(crate) fn step_refuses_window(error: &DurableStepError) -> bool {
+    match error {
+        DurableStepError::Llm(source)
+        | DurableStepError::ClassifiedLlm { source, .. }
+        | DurableStepError::SpentLlm { source, .. } => llm_refuses_window(source),
+        _ => false,
     }
 }
 

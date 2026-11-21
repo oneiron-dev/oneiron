@@ -139,6 +139,11 @@ pub(super) enum PartitionRun {
         reason: String,
         refusal: crate::store::model_step_submission::StepBudgetRefusal,
     },
+    /// The provider refused a step for its context window: the try ends
+    /// `Failed` with `reason`, once (Engine 21 Nov 07:38).
+    WindowRefused {
+        reason: String,
+    },
     /// A spent model seat refused a step: the try parks on the seat with
     /// `reason`, until the seat's available write (SEAT-PARK-MODEL-STEP-PATH).
     SeatRefused {
@@ -154,8 +159,9 @@ pub(super) enum PartitionRun {
 
 impl PartitionRun {
     /// The run a failed step ends: a spend scope's refusal for good,
-    /// typed; a spent model seat's refusal, parked on the seat; or a
-    /// refusal the attempt asks again after its retry delay.
+    /// typed; a window refusal, ended Failed; a spent model seat's refusal,
+    /// parked on the seat; or a refusal the attempt asks again after its
+    /// retry delay.
     pub(super) fn refused_by(error: DurableStepError) -> Self {
         let reason = error.to_string();
         if let Some((seat, reset_at_s)) =
@@ -166,6 +172,9 @@ impl PartitionRun {
                 seat,
                 reset_at_s,
             };
+        }
+        if crate::dreamer_wake::step_refuses_window(&error) {
+            return Self::WindowRefused { reason };
         }
         match error {
             DurableStepError::BudgetRefused(refusal) => Self::BudgetRefused { reason, refusal },
@@ -353,6 +362,9 @@ impl ConsolidationExecutor<'_> {
             // A spend scope refused the step for good: the try ends Failed,
             // and no open conflict waits for a merge that never runs.
             error @ DurableStepError::BudgetRefused(_) => Err(error),
+            // A window refusal ends the try Failed the same way: no merge
+            // runs for it either (Engine 21 Nov 07:38).
+            error if crate::dreamer_wake::step_refuses_window(&error) => Err(error),
             error => {
                 resources.require_output(resources.scope())?;
                 let mut decisions = Vec::new();
