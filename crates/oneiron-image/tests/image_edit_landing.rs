@@ -1,8 +1,11 @@
 //! An image artifact's edit through the image organ's host adapter
 //! (`oneiron_organ_host::image`, L4-15): the organ runs as its own process
-//! behind the host, over a real vault, and the PNG it exports waits as one
-//! proposal until the owner keeps it. A JPEG artifact's edit lands on a new
-//! PNG artifact born from it (RULING 09:34 Fri 13 Nov, IO-FORMAT B). With no
+//! behind the host, over a real vault, and the file it exports waits as one
+//! proposal until the owner keeps it. An edit exports its source's own
+//! format, so a JPEG or WebP artifact's edit keeps as its next version (FIX
+//! 23724, IO-FORMAT C); an edit that names another format lands on a new
+//! artifact of that format born from the source (RULING 09:34 Fri 13 Nov,
+//! IO-FORMAT B). With no
 //! node to run it, the whole edit is one held call, and a redrive on a host
 //! that runs the organ lands it (RULING 09:53, IO-HOLD C). An edit lands
 //! pinned to the version it read, so one the head moved past keeps as a
@@ -21,8 +24,8 @@ use oneiron::edit_settle::{PendingProposalView, SettleConsent};
 use oneiron::secret_custody::SecretSight;
 use oneiron::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use oneiron_organ_host::image::{
-    ImageEdit, ImageEditRefusal, ImageEdited, ImageOp, ImagePreview, ImagePreviewed, ResizeFilter,
-    edit_image, image_spec, preview_image,
+    ImageEdit, ImageEditRefusal, ImageEdited, ImageFormat, ImageOp, ImagePreview, ImagePreviewed,
+    ResizeFilter, edit_image, image_spec, preview_image,
 };
 use oneiron_organ_host::{
     AskHandlers, CallClass, HostConfig, OrganHost, OrganRouter, Redrive, Submitted,
@@ -100,10 +103,25 @@ impl Fixture {
         ops: Vec<ImageOp>,
         run_ref: &str,
     ) -> Result<ImageEdited, ImageEditRefusal> {
+        self.edit_through_as(router, artifact, version, None, ops, run_ref)
+    }
+
+    /// The edit of `artifact`'s `version` through `router`, exporting
+    /// `format`, the source's own when `None`.
+    fn edit_through_as(
+        &self,
+        router: &OrganRouter,
+        artifact: EntityId,
+        version: Option<u64>,
+        format: Option<ImageFormat>,
+        ops: Vec<ImageOp>,
+        run_ref: &str,
+    ) -> Result<ImageEdited, ImageEditRefusal> {
         let edit = ImageEdit {
             artifact,
             version,
             ops,
+            format,
             run_ref: run_ref.to_owned(),
             trigger: None,
             submitter: None,
@@ -150,6 +168,17 @@ impl Fixture {
         run_ref: &str,
     ) -> Result<ImageEdited, ImageEditRefusal> {
         self.edit_through(&self.router, artifact, None, ops, run_ref)
+    }
+
+    /// The edit of `artifact`'s head through this host, exporting `format`.
+    fn edit_as(
+        &self,
+        artifact: EntityId,
+        format: ImageFormat,
+        ops: Vec<ImageOp>,
+        run_ref: &str,
+    ) -> Result<ImageEdited, ImageEditRefusal> {
+        self.edit_through_as(&self.router, artifact, None, Some(format), ops, run_ref)
     }
 
     /// The owner keeps `proposal_ref`; answers the version it became.
@@ -214,6 +243,26 @@ impl Fixture {
             .expect("read")
             .expect("the kept version");
         fixtures::decode_png(&bytes)
+    }
+
+    /// The kept `version`'s media type and its pixels, decoded as that type.
+    fn image_of(&self, artifact: EntityId, version: u64) -> (String, image::RgbaImage) {
+        let record = self
+            .vault
+            .blob_artifact_version_metadata(&artifact, version)
+            .expect("read")
+            .expect("the kept version");
+        let bytes = self
+            .vault
+            .read_blob_artifact_version(&artifact, version)
+            .expect("read")
+            .expect("the kept version");
+        let format = image::ImageFormat::from_mime_type(&record.export_media_type)
+            .expect("an image media type");
+        let image = image::load_from_memory_with_format(&bytes, format)
+            .expect("the kept version decodes as its media type")
+            .to_rgba8();
+        (record.export_media_type, image)
     }
 
     /// Redrives every held call through this host, which runs the organ:
@@ -365,8 +414,11 @@ fn a_crop_then_a_resize_lands_one_proposal_at_the_resized_size() {
     assert_eq!(f.png_of(artifact, 1).dimensions(), (12, 10));
 }
 
+/// FIX 23724 (IO-FORMAT C): an edit that names no format exports its
+/// source's own, so a JPEG artifact's crop lands on it and keeps as its
+/// version 2, a JPEG.
 #[test]
-fn a_crop_of_a_jpeg_artifact_lands_on_a_new_png_artifact_born_from_it() {
+fn a_crop_of_a_jpeg_artifact_keeps_its_format_and_lands_as_its_version_2() {
     let f = fixture();
     let jpeg = fixtures::jpeg_flat(8, 6, [200, 40, 40], None);
     let source = f.artifact("photo.jpg", "image/jpeg", &jpeg);
@@ -377,6 +429,149 @@ fn a_crop_of_a_jpeg_artifact_lands_on_a_new_png_artifact_born_from_it() {
         h: 3,
     };
     let edited = match f.edit(source, vec![crop], "crop-jpeg") {
+        Ok(edited) => edited,
+        Err(err) => panic!("the crop of a JPEG artifact runs: {err}"),
+    };
+    assert_eq!(
+        (edited.artifact, edited.born),
+        (source, false),
+        "FAILBEFORE: a JPEG artifact's edit lands on it, not on a new PNG"
+    );
+    let proposal = landed(edited);
+    assert_eq!(proposal.base_version, Some(1), "made against the head");
+    assert_eq!(f.head(source), Some(1), "nothing lands before Keep");
+
+    assert_eq!(f.keep(source, "crop-jpeg"), 2);
+    let (media_type, image) = f.image_of(source, 2);
+    assert_eq!(media_type, "image/jpeg");
+    assert_eq!(image.dimensions(), (4, 3));
+    for pixel in image.pixels() {
+        let [r, g, b, a] = pixel.0;
+        assert_eq!(a, 255);
+        assert!(
+            r.abs_diff(200) <= 8 && g.abs_diff(40) <= 8 && b.abs_diff(40) <= 8,
+            "{:?}",
+            pixel.0
+        );
+    }
+    let (media_type, original) = f.image_of(source, 1);
+    assert_eq!(
+        (media_type.as_str(), original.dimensions()),
+        ("image/jpeg", (8, 6)),
+        "version 1 stays as it was"
+    );
+    f.nothing_waits(source);
+}
+
+/// FIX 23724: a WebP artifact's edit lands on it as a lossless WebP, so its
+/// kept version holds exactly the crop's pixels.
+#[test]
+fn a_crop_of_a_webp_artifact_keeps_its_format_and_exactly_its_pixels() {
+    let f = fixture();
+    let (w, h) = (9, 7);
+    let webp = fixtures::webp_lossless(w, h, &fixtures::pixels(w, h, fixtures::coded));
+    let source = f.artifact("photo.webp", "image/webp", &webp);
+    let edited = match f.edit(source, vec![CROP_OF_V1], "crop-webp") {
+        Ok(edited) => edited,
+        Err(err) => panic!("the crop of a WebP artifact runs: {err}"),
+    };
+    assert_eq!(
+        (edited.artifact, edited.born),
+        (source, false),
+        "FAILBEFORE: a WebP artifact's edit lands on it, not on a new PNG"
+    );
+    landed(edited);
+
+    assert_eq!(f.keep(source, "crop-webp"), 2);
+    let (media_type, image) = f.image_of(source, 2);
+    assert_eq!(media_type, "image/webp");
+    assert_eq!(image.dimensions(), (6, 5));
+    for (x, y, pixel) in image.enumerate_pixels() {
+        assert_eq!(pixel.0, fixtures::coded(x + 2, y + 1), "pixel {x},{y}");
+    }
+    f.nothing_waits(source);
+}
+
+/// FIX 23724: an edit may name another format. An opaque PNG named JPEG
+/// lands on a new JPEG artifact born from it (IO-FORMAT B); a PNG with
+/// alpha named JPEG is the organ's `unsupported`, and nothing waits.
+#[test]
+fn a_png_artifact_named_jpeg_lands_on_a_new_jpeg_artifact_unless_it_has_alpha() {
+    let f = fixture();
+    let opaque = f.artifact(
+        "chart.png",
+        "image/png",
+        &fixtures::png_rgb(8, 6, [10, 120, 200]),
+    );
+    let crop = ImageOp::Crop {
+        x: 0,
+        y: 0,
+        w: 4,
+        h: 3,
+    };
+    let edited = match f.edit_as(opaque, ImageFormat::Jpeg, vec![crop], "as-jpeg") {
+        Ok(edited) => edited,
+        Err(err) => panic!("an opaque PNG exports as JPEG: {err}"),
+    };
+    assert!(edited.born, "the JPEG lands on a new artifact");
+    let born = edited.artifact;
+    assert_ne!(born, opaque);
+    let body = f
+        .vault
+        .get_blob_artifact(&born)
+        .expect("read")
+        .expect("the new artifact");
+    assert_eq!(
+        (body.name.as_str(), body.media_type.as_str()),
+        ("chart.jpg", "image/jpeg")
+    );
+    assert_eq!(
+        f.vault
+            .targets(&born, EdgeKind::DerivedFrom, None)
+            .expect("edges"),
+        vec![opaque],
+        "the new artifact is derived from the source"
+    );
+    landed(edited);
+    assert_eq!(f.keep(born, "as-jpeg"), 1);
+    let (media_type, image) = f.image_of(born, 1);
+    assert_eq!(media_type, "image/jpeg");
+    assert_eq!(image.dimensions(), (4, 3));
+    for pixel in image.pixels() {
+        let [r, g, b, _] = pixel.0;
+        assert!(
+            r.abs_diff(10) <= 8 && g.abs_diff(120) <= 8 && b.abs_diff(200) <= 8,
+            "{:?}",
+            pixel.0
+        );
+    }
+    f.nothing_waits(opaque);
+
+    let with_alpha = f.artifact("photo.png", "image/png", &coded_png(9, 7));
+    let refusal = match f.edit_as(with_alpha, ImageFormat::Jpeg, vec![CROP_OF_V1], "alpha") {
+        Ok(edited) => panic!("a JPEG has no alpha channel: {edited:?}"),
+        Err(refusal) => refusal,
+    };
+    assert_eq!(refusal.code(), "unsupported", "{refusal}");
+    assert!(matches!(refusal, ImageEditRefusal::Organ(_)));
+    assert_eq!(f.head(with_alpha), Some(1));
+    f.nothing_waits(with_alpha);
+}
+
+/// IO-FORMAT B, when the edit names PNG: a JPEG artifact's crop lands on a
+/// new PNG artifact born from it.
+#[test]
+fn a_crop_of_a_jpeg_artifact_named_png_lands_on_a_new_png_artifact_born_from_it() {
+    let f = fixture();
+    let jpeg = fixtures::jpeg_flat(8, 6, [200, 40, 40], None);
+    let source = f.artifact("photo.jpg", "image/jpeg", &jpeg);
+    let crop = ImageOp::Crop {
+        x: 1,
+        y: 1,
+        w: 4,
+        h: 3,
+    };
+    let edited = match f.edit_as(source, ImageFormat::Png, vec![crop], "crop-jpeg") {
         Ok(edited) => edited,
         Err(err) => panic!("FAILBEFORE: the crop of a JPEG artifact lands: {err}"),
     };
@@ -549,8 +744,9 @@ fn with_no_node_the_whole_edit_is_held_and_a_redrive_lands_it_as_one_proposal() 
     f.nothing_waits(artifact);
 }
 
+/// A held edit of a JPEG artifact named PNG (IO-FORMAT B).
 #[test]
-fn a_held_jpeg_edit_waits_beside_its_new_png_artifact_and_lands_there() {
+fn a_held_jpeg_edit_named_png_waits_beside_its_new_png_artifact_and_lands_there() {
     let f = fixture();
     let jpeg = fixtures::jpeg_flat(8, 6, [200, 40, 40], None);
     let source = f.artifact("photo.jpg", "image/jpeg", &jpeg);
@@ -561,7 +757,14 @@ fn a_held_jpeg_edit_waits_beside_its_new_png_artifact_and_lands_there() {
         h: 3,
     };
     let nowhere = OrganRouter::new();
-    let edited = match f.edit_through(&nowhere, source, None, vec![crop], "held-jpeg") {
+    let edited = match f.edit_through_as(
+        &nowhere,
+        source,
+        None,
+        Some(ImageFormat::Png),
+        vec![crop],
+        "held-jpeg",
+    ) {
         Ok(edited) => edited,
         Err(err) => panic!("FAILBEFORE: with no node the JPEG's edit is held: {err}"),
     };

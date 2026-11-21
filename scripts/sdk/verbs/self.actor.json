@@ -9,8 +9,9 @@
   "scope": "Read",
   "act_class": "read",
   "admission": {
-    "unrestricted_record_scope": true
+    "lane_record_scope": true
   },
+  "mcp_scope": "filtered",
   "section": false,
   "openapi": true
 }

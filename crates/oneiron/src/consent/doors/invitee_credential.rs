@@ -112,4 +112,23 @@ impl AuthenticatedOwner {
             )))
         }
     }
+
+    /// Refuses an acceptance whose proof carries any slip but the person's
+    /// own independent credential: the acceptance with an inquiry edge,
+    /// whose exact retry and later attach come after the acceptance spent
+    /// the invitation, when that invitation's own slip no longer stands (FIX
+    /// 8745). A proof that carries no slip, one the host authenticated
+    /// itself, is the host's to vouch for and passes.
+    pub(crate) fn require_independent_acceptor(&self) -> Result<()> {
+        if self
+            .carried_slips()
+            .all(|slip| is_independent_person_credential(slip, &self.actor))
+        {
+            Ok(())
+        } else {
+            Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "an invitation is accepted with an inquiry edge on the invitee's own independent credential",
+            )))
+        }
+    }
 }

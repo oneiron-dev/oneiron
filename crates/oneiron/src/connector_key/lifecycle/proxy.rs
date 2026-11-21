@@ -36,6 +36,9 @@ use crate::store::{GateDecisionId, Store};
 #[doc(hidden)]
 pub use oneiron_verb_wire::connector_key::lifecycle::proxy::PROXY_CONNECTOR;
 
+/// The predicate of the exchange the proxy proposes back on each call.
+pub(crate) const PROXY_EXCHANGE_PREDICATE: &str = "integration.exchange";
+
 /// The revision the proxy's key pins: the engine's own proxy, not a
 /// negotiated MCP one.
 const PROXY_PROTOCOL_REVISION: &str = "openai_proxy.v1";
@@ -304,5 +307,26 @@ impl Vault {
         let actor = EntityId::from_hex(&redeemed.slip.claims.holder_ref)?;
         let owner = self.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
         self.admit_proxy_connector(&owner, actor, at).map(Some)
+    }
+}
+
+impl Vault {
+    /// Whether `actor` holds a live proxy registration in `rtxn` whose slate
+    /// leaves both legs of its exchange open: recall not set to never allow,
+    /// and remember neither never allowed nor set to always ask, since the
+    /// proxy cannot ask the owner per call (FIX 4843).
+    pub(crate) fn proxy_exchange_open_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<bool> {
+        Ok(self
+            .live_connector_registration_in_txn(rtxn, PROXY_CONNECTOR, actor)?
+            .is_some_and(|registration| {
+                use SlateDisposition::{AlwaysAsk, NeverAllow};
+                let setting = |tool| registration.slate.tool_setting(tool);
+                setting("vault.recall") != NeverAllow
+                    && !matches!(setting("vault.remember"), NeverAllow | AlwaysAsk)
+            }))
     }
 }

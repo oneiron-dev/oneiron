@@ -129,7 +129,7 @@ impl Vault {
                     .ok_or(invalid("text operation requires an actor"))?;
                 super::forks::authorize(self, txn, authorization, entity, actor)?;
                 // A shared vault's role and record scope (FIX 9846).
-                self.authorize_shared_content_write_in_txn(txn, *entity, &actor)?;
+                super::bound_room::authorize_content_write_in_txn(self, txn, *entity, &actor)?;
             }
             if let Some(refusal) = self.store.use_restricted_in_txn(txn, entity)? {
                 return Err(if edits.is_empty() {
@@ -199,7 +199,12 @@ impl Vault {
             let lineage = super::proposal_lineage::opening_lineage(self, txn, authorization)?;
             // A shared vault's role and record scope, whether the update lands
             // or is retained for review (FIX 9846).
-            self.authorize_shared_content_write_in_txn(txn, request.entity, &request.actor)?;
+            super::bound_room::authorize_content_write_in_txn(
+                self,
+                txn,
+                request.entity,
+                &request.actor,
+            )?;
             if let Some(refusal) = self.store.use_restricted_in_txn(txn, &request.entity)? {
                 return Err(refusal);
             }

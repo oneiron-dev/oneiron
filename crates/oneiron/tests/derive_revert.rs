@@ -104,9 +104,10 @@ fn active(fixture: &Fixture, claim: EntityId) -> bool {
 }
 
 /// Writes an observed claim about the fixture's person through the raw claim
-/// door; its id. The supersede inverse reopens such a claim: its re-put names
-/// no actor, and an observed claim stands at `auto` with no actor's permit.
-/// A generated claim does not (FIX row DERIVE-REVERT-GENERATED-CLAIM).
+/// door; its id. The supersede inverse reopens such a claim in place: its
+/// re-put names no actor, and an observed claim stands at `auto` with no
+/// actor's permit. A generated claim does not reopen: it stands again as a
+/// fresh copy (`derive_revert_replaced_claim.rs`).
 fn observed_claim(fixture: &Fixture, predicate: &str, value: &str) -> EntityId {
     let mut body = ClaimBody::new(
         predicate,
@@ -280,8 +281,9 @@ fn reverting_a_repeated_same_as_leaves_the_edge_the_first_batch_applied() {
 #[test]
 fn reverting_a_batch_whose_items_share_a_row_takes_back_every_item() {
     let fixture = fixture();
-    // Observed claims, which the lifecycle reopens. It reopens no claim the
-    // Dreamer signed and no generated claim (`observed_claim`).
+    // Observed claims, which the lifecycle reopens in place. A claim the
+    // Dreamer signed and a generated claim stand again as fresh copies
+    // (`derive_revert_replaced_claim.rs`).
     let a = observed_claim(&fixture, "preference.snack", "a");
     let b = observed_claim(&fixture, "preference.breakfast", "b");
     let c = observed_claim(&fixture, "preference.dinner", "c");

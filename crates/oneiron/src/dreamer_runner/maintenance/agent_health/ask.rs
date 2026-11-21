@@ -11,6 +11,7 @@
 //! the owner applies a skill edit through `apply.rs`, where the held-out gate
 //! rules on it.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -158,9 +159,6 @@ pub(super) fn ask_coach_in_txn(
             ask: ask.clone(),
         });
     }
-    let mut dedupe = blake3::Hasher::new();
-    dedupe.update(handle.as_bytes());
-    dedupe.update(&at.to_le_bytes());
     let outcome = DreamerRunnerStore::new(vault).enqueue_kind_in_txn(
         txn,
         COACH_HEAL_ATTEMPT_KIND,
@@ -169,10 +167,7 @@ pub(super) fn ask_coach_in_txn(
             input: Value::from(handle.as_str()),
             parent_attempt: None,
         },
-        Some(format!(
-            "{COACH_AGENT_HEALTH_ASK_FACET}:{}",
-            dedupe.finalize().to_hex()
-        )),
+        Some(ask_dedupe_key(&handle, at)),
         None,
         at,
     )?;
@@ -396,4 +391,21 @@ impl Vault {
         })?;
         drafted.map(|_| ())
     }
+}
+
+/// The queued ask's dedupe key: the ask facet, then the hex of the card's
+/// handle and the ask's time (K, PLAN-UC-04 stage 7).
+fn ask_dedupe_key(handle: &str, at: u64) -> String {
+    let mut dedupe = LegacyDigest::new(purposes::dreamer_runner::COACH_ASK_DEDUPE);
+    dedupe.raw(handle.as_bytes());
+    dedupe.raw(&at.to_le_bytes());
+    format!(
+        "{COACH_AGENT_HEALTH_ASK_FACET}:{}",
+        oneiron_hex::encode(&dedupe.finish())
+    )
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn ask_dedupe_key_for_test(handle: &str, at: u64) -> String {
+    ask_dedupe_key(handle, at)
 }

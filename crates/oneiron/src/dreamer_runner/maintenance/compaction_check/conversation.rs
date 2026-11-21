@@ -16,7 +16,9 @@
 //! waits. Before any judgment the six gate checks run again on the kept
 //! request, reply and policy (FIX 5040): a check that fails, or prose other
 //! than the landed summary's, is a `mismatch` that names it, never
-//! `supported`. Only then is the verdict reached as a run's is
+//! `supported`. A judge input past the window the host lends the judge's
+//! model is `unreadable_evidence`, `span_past_judge_room`, and no call goes
+//! out ([`super::judge_room`]). Only then is the verdict reached as a run's is
 //! ([`super::support`]). The span and the material are read again after the
 //! judgment, so drift during the judgment is stale too. A mismatch reaches
 //! the agent's inbox; nothing here rewrites its words or its byline.
@@ -26,7 +28,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     COMPACTION_CHECK_FACET, CompactionCheckModel, CompactionCheckVerdict, NO_DIAGNOSTIC, Settled,
-    ask_judge, emit_finding, judge_call, judge_locality, support,
+    ask_judge, emit_finding, judge_call, judge_locality, judge_room, support,
 };
 use crate::attempt_queue::AttemptId;
 use crate::compaction::{
@@ -41,9 +43,7 @@ use crate::{EntityId, Error, Result, Vault};
 use oneiron_model::llm::{ContentPart, LlmRequest, LlmResponse};
 
 #[doc(hidden)]
-use oneiron_records::dreamer_runner::maintenance::compaction_check::conversation::{
-    CONVERSATION_DECLARATION_KEY, hex32,
-};
+use oneiron_records::dreamer_runner::maintenance::compaction_check::conversation::CONVERSATION_DECLARATION_KEY;
 
 /// Why a check waits: a turn of its span is away from this replica.
 const SPAN_NOT_RESIDENT: &str = "a turn of the checked span is not resident here";
@@ -132,7 +132,7 @@ impl ConversationCheckDeclaration {
     fn pins(&self) -> Option<Vec<(EntityId, [u8; 32])>> {
         self.turns
             .iter()
-            .map(|span| Some((span.turn, hex32(&span.fingerprint)?)))
+            .map(|span| Some((span.turn, span.pinned_fingerprint()?)))
             .collect()
     }
 
@@ -218,12 +218,6 @@ pub(super) async fn run_conversation_check(
     let paid = model.inference.selected_paid();
     let input = judge_input(&declaration, &summary, &evidence);
     let request = judge_request(&model, &input, locality, keyless, paid)?;
-    let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
-        Ok(judging) => judging,
-        Err(parked) => return Ok(parked),
-    };
-    let judged = judgment(&judging.response, &declaration);
-    let diagnostic = judged.as_ref().map(|judged| judged.verdict);
     let cited = declaration.cited(true);
     let ask = support::Ask {
         kind: "conversation",
@@ -234,6 +228,17 @@ pub(super) async fn run_conversation_check(
         keyless,
         paid,
     };
+    if let Some(settled) = judge_room::exceeded(&model, &request, &ask, &declaration.pins_digest())?
+    {
+        record(ctx.vault, attempt_id, &declaration, &settled, now)?;
+        return Ok(judge_room::completed_without_judge());
+    }
+    let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
+        Ok(judging) => judging,
+        Err(parked) => return Ok(parked),
+    };
+    let judged = judgment(&judging.response, &declaration);
+    let diagnostic = judged.as_ref().map(|judged| judged.verdict);
     let verdict = match support::verdict(attempt, ctx, &model, &judging, diagnostic, &ask).await? {
         Ok(verdict) => verdict,
         Err(parked) => return Ok(parked),

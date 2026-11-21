@@ -126,7 +126,11 @@ the pin names that one model, so there is no walk. A ladder whose every rung
 keeps hours is refused, so a call outside them always has a rung, as is
 `hours` on a role's single `model`. The hours say when, not where: the rung's
 provider is the owner's own entry, and `leave_device` applies to it as to any
-rung.
+rung. When the rungs without hours are gone at run time, such as one whose
+provider was unavailable when the server started, a call outside the
+remaining rungs' hours ends with the retryable refusal `outside_hours` (HTTP
+503), whose `retry_after` and `resets_at` say when the first of those hours
+opens; a durable model step parks until then.
 
 The local Dreamer model the examples name is the measured recipe for the
 Dreamer's seat: Qwen3.8-27B as EXL3 4 bpw (`turboderp/Qwen3.8-27B-exl3`) with
@@ -384,6 +388,7 @@ names the field and never its value:
   `kit_bundle_public_urls`, `allow_unauthenticated`, `allowed_origins`,
   `artifact_domains`, `artifact_vault_name`, `trusted_proxies`,
   `lease_vault_id`, `privacy_posture`, `hosted_kms_key_ref`, `device_class`,
+  `machine_reported_name`, `machine_reported_model`,
   every `[models.broker]` key, `[models.voice] socket`, `[keystore] dir` and
   `[linear] response_dir`, which the vault derives itself. A managed vault's
   artifact origin answers on its internal authority alone
@@ -785,8 +790,8 @@ and a vLLM server started with `--middleware body_codec.DecodeContentEncoding`
 (deploy/house-model/README.md, "Compressed requests").
 Each opts in on its own entry with `request_compression = "zstd"`; an entry
 whose server does not decode stays plain. A `voxcpm2` entry takes none (its
-loopback voice socket carries no codec frame) and an entry that sets it is
-refused at config load; an opted-in provider's media JSON bodies compress by
+loopback voice socket carries no codec frame) and an entry that turns it on
+is refused at config load; an opted-in provider's media JSON bodies compress by
 the same rules. A tagger endpoint opts in on its section, `[oneironer]
 request_compression = "zstd"`, for its `/v1/extract` posts, with the same
 plain resend; a `kind = "oneironer"` provider entry takes none.
@@ -1835,9 +1840,10 @@ turn whose messages show none) is found but not reranked yet: it follows
 the reranked rows in its first-stage order. Each
 text is judged by the write door as it would leave, a turn's messages
 joined as the reranker would read them, and one the door refuses is sent
-empty. So is a row a device-only world keeps, at the revision scored: a
-`[models]` reranker is reached over HTTP, never on the device. A row sent
-empty scores last. A block with no text to send makes no call and says
+empty. So is a row a device-only world keeps, at the revision scored,
+unless the reranker runs on this device: a reranker reached over HTTP never
+does, and one whose route is a socket worker's on-device view alone does
+(the next section). A row sent empty scores last. A block with no text to send makes no call and says
 `skipped` with `no_candidates`. Each rung, a fallback's too, goes out only
 while that device-only verdict, run again, keeps none of the rows it sends
 with words. Once it keeps one (its world was flagged while a rung was out),
@@ -1859,10 +1865,66 @@ unreranked, and say `skipped` with `no_reranker`. With one, nothing stands in
 for it: a spent line is refused with `BUDGET_SPENT` (402; MCP kind
 `budget_spent`), and a reranker that refuses, fails or answers out of shape
 with `MODEL_UNAVAILABLE` (503; MCP kind `model_unavailable`). A route whose
-rungs cannot serve (a key variable unset, or a `key_secret` provider: the
-broker has no rerank shape yet) refuses the same way. The request
+rungs cannot serve (a key variable unset) refuses the same way. A
+`key_secret` provider serves the reranker: its `/v1/rerank` calls go through
+the credential broker's rerank shape (`crates/oneiron-server/src/models/broker_rerank.rs`). The request
 never names the model, the endpoint or the lease; the server holds them, for
 MCP, HTTP and WebSocket recall alike.
+
+### A reranker on its own Unix socket
+
+A managed llama.cpp worker row can serve the reranker on a Unix socket of
+its own instead of its provider's loopback port (L9-15):
+
+```toml
+[models.providers.house-rerank]
+kind = "local-openai-compat"
+base_url = "http://127.0.0.1:8081"   # names the offer's origin; nothing listens here
+
+[models.roles.reranker]
+model = "house-rerank:<the reranker's wire id>"
+
+[models.workers.house-rerank]
+model = "house-rerank:<the reranker's wire id>"
+kind = "llama_cpp"
+listen = "unix"
+weights_manifest = "/srv/models/reranker.json"   # or a house catalog id in `weights`
+server = "/opt/llama.cpp/llama-server"
+server_sha256 = "<its SHA-256>"
+```
+
+Its supervisor starts llama-server with `--reranking` and `--host` set to a
+socket of each launch's own, `<runtime root>/sock/<id>-<launch>.sock`, and
+reaches it there alone: its liveness and `/metrics`, its qualification (one
+rerank that names no model, whose reply names the launch's alias, then that
+alias's manifest) and every rerank batch. Each qualification and rerank
+exchange opens a connection that is checked against the launch's supervised
+child first, as the native EXL3 channel is, so on Linux and macOS the
+reranker seat gets an on-device view (I2-LOCAL). Config refuses the row on
+other systems, on any kind but `llama_cpp`, on an external row, and on a
+provider that another role or a media seat names, or whose other reranker
+models no such row serves: nothing listens on that provider's `base_url`.
+Only the process that launches the worker reaches it; another process's
+reranker on that provider sends nothing.
+
+A recall at high, xhigh or max sends such a reranker the words of a row a
+device-only world keeps (L9-15) when the vault's model policy routes the
+reranker on this device alone: a manifest's or local-GPU model pack's
+on-device pin of the socket worker's model, by its own id, or, with neither
+binding the role, the seat's on-device view when it holds exactly the
+seat's rungs, each at its configured position. Each rerank call of that
+recall is then admitted on that on-device route alone, and is refused
+unsent if the route could leave the device by then. A seat with one HTTP
+rung beside its socket rungs is no such route, nor is a view that keeps a
+rung the role's `leave_device = "never"` drops from the seat, so the recall
+still sends that row empty, as it does to any other reranker. When the
+model order of the worlds whose rows a block would send with words leaves
+no rung of the on-device route, or drops a rung the reranker's ordinary
+route takes under that order, that block is built as for any other
+reranker: the device-only row goes empty, and the call takes the
+reranker's ordinary route under that order. There a local-GPU model pack's
+pick whose on-device offer the order leaves takes the model's own-server
+rung when the order names that offer; a manifest's pin stays exact.
 
 ## 9. The decision read
 
@@ -2725,8 +2787,10 @@ written into a one-shot document of that origin which the host answers
 itself, so no page script runs before it, and read back key by key; then
 it loads the URL, scrolls, and reads the page whole. The answer carries
 the switch's `receipt` (verb `switch_engine`), whose `engine_switch` is its
-record (`{from, to, reason, url, carried, not_carried, outcome}`), and the
-new page's `observation`. A carried store names its origin, its item
+record (`{from, to, reason, url, carried, not_carried, outcome}`, and on a
+switched one `source_guest_pressure`: the pids-limit hits the source guest
+showed by the time it went, which no later answer names), and the new
+page's `observation`. A carried store names its origin, its item
 count, its `phase` (`pre_input`, `post_act`, `exit`, `hand_back` or
 `switch_export`) and `after_receipt`, the last receipt the run had landed
 when it was read. `not_carried` lists, by component, origin, cookie

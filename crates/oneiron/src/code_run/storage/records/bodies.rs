@@ -249,14 +249,23 @@ impl Vault {
     /// record: the row lands in base unless base holds it already, the marks
     /// land on the MESSAGE's occurrence, and the hold keeps the rows the
     /// run's answers were served from while the room still holds its record.
-    /// A spilled body's file is in `bodies/` before this runs.
+    /// A spilled body's file is in `bodies/` before this runs. `said` is the
+    /// attachment as the room said it and `attachment` the one the saved
+    /// MESSAGE carries: the same, unless the save carried the body
+    /// ([`Self::carry_saved_message_result_in_txn`], ROOM-CUSTODY-REPLY-BODIES),
+    /// when the producer's marks are read under the room's body and land
+    /// under the carried one, whose row base holds already.
     pub(crate) fn retain_saved_message_result_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         room: &impl side_table::SideTableDbs,
         message: EntityId,
-        attachment: &crate::memory::MessageResultAttachment,
+        (said, attachment): (
+            &crate::memory::MessageResultAttachment,
+            &crate::memory::MessageResultAttachment,
+        ),
     ) -> Result<()> {
+        let said = said.output()?;
         let output = attachment.output()?;
         let stored = match RAW_OUTPUTS.get(&self.store, wtxn, &output.handle)? {
             Some(stored) => stored,
@@ -285,7 +294,7 @@ impl Vault {
             }
         };
         let producer =
-            ResultOccurrence::of(Some(attachment.source.run_id), &output)?.mark_key(&output.handle);
+            ResultOccurrence::of(Some(attachment.source.run_id), &said)?.mark_key(&said.handle);
         let key = ResultOccurrence::of(Some(message), &output)?.mark_key(&output.handle);
         if let Some(refs) = RAW_OUTPUT_TAINTS
             .get(room, wtxn, &producer)?
@@ -306,6 +315,117 @@ impl Vault {
             served_rows,
         });
         crate::provenance::body::publish_body_in_txn(&self.store, wtxn, &held)
+    }
+
+    /// The body of `said`, a result MESSAGE's attachment as the off-record
+    /// session `session_ref` said it, carried into base for the save that
+    /// keeps the MESSAGE (ROOM-CUSTODY-REPLY-BODIES): `carry` moves each room
+    /// handle the room's body holds, its row and file read through `room`,
+    /// the room's composed view. When it moves any, the carried bytes are a
+    /// body of their own in base, written in `wtxn`: in their row, or past
+    /// the inline bound in a file of an instance `staged` reserved before the
+    /// save's transaction opened (KS-2A). A body base holds already under the
+    /// carried digest stays as it is. Returns the attachment the saved
+    /// MESSAGE carries, naming the carried body, and for a new file the pin
+    /// that keeps the collector off it until the save's transaction has
+    /// ended, then lets the save's discard take it if nothing names it (FIX
+    /// 3633); `None` when the body moves no room handle. The attachment's
+    /// preview shows the carried body's head when the room's showed the room
+    /// body's stored head as is (REVIEW-10057 round 2); a preview the room
+    /// withheld, redacted or showed otherwise stays as the save's row carry
+    /// left it, so the save shows nothing the room's preview withheld.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::CorruptedIndex`] when the room holds no row or file of the
+    /// body, [`Error::InvariantViolation`] for a carried body that spills
+    /// with no instance reserved, and storage, custody and filesystem
+    /// errors.
+    pub(crate) fn carry_saved_message_result_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        (room, session_ref): (&impl side_table::SideTableDbs, &str),
+        said: &crate::memory::MessageResultAttachment,
+        staged: Option<&StagedSinks>,
+        carry: impl FnOnce(&mut heed::RwTxn<'_>, &[u8]) -> Result<Option<Vec<u8>>>,
+    ) -> Result<
+        Option<(
+            crate::memory::MessageResultAttachment,
+            Option<crate::result_body::ResultBodyPin>,
+        )>,
+    > {
+        let output = said.output()?;
+        let missing = || Error::CorruptedIndex("off-record result body missing");
+        let bytes = match RAW_OUTPUTS.get(room, wtxn, &output.handle)? {
+            Some(StoredBody::Inline { bytes, .. }) => bytes,
+            Some(StoredBody::File { len, .. }) => {
+                let key = body_key_row_in_txn(room, wtxn, &output.raw_blake3)?;
+                let file = self
+                    .store
+                    .session_body_dir(session_ref, false)?
+                    .ok_or_else(missing)?
+                    .open_reader(&output.raw_blake3, len, key.as_ref())?
+                    .ok_or_else(missing)?;
+                let len = usize::try_from(len)
+                    .map_err(|_| Error::ArithmeticOverflow("carried result body length"))?;
+                file.read_range(0, len)?
+            }
+            None => return Err(missing()),
+        };
+        let Some(carried) = carry(wtxn, &bytes)? else {
+            return Ok(None);
+        };
+        let room_head = CodeRunRawOutput::from_bytes(output.path.as_str(), &bytes)?.preview;
+        let shows_stored_head = said.preview == room_head.text;
+        let digest = *oneiron_contracts::fingerprint::ContentHash::of(&carried).as_bytes();
+        let (base, pin) = if RAW_OUTPUTS
+            .get(&self.store, wtxn, &body_handle(&digest))?
+            .is_some()
+        {
+            (CodeRunRawOutput::from_bytes(output.path, &carried)?, None)
+        } else {
+            let bound = self.code_result_inline_bytes();
+            if staged.is_none() && carried.len() as u64 > bound {
+                return Err(Error::InvariantViolation(
+                    "a carried result body spills with no instance reserved",
+                ));
+            }
+            let sink = BodySink::new(
+                self.store.body_dir()?,
+                bound,
+                staged.map(|staged| staged.mint.clone()),
+            );
+            let finished =
+                self.stage_code_run_output_from(output.path, sink, carried.as_slice())?;
+            RAW_OUTPUTS.put(
+                &self.store,
+                wtxn,
+                &finished.output.handle,
+                &finished.body.holding(false),
+            )?;
+            let pin = match &finished.key {
+                Some(key) => {
+                    crate::store::bind_body_key_in_txn(
+                        &self.store,
+                        wtxn,
+                        &self.store.body_dir()?,
+                        key,
+                    )?;
+                    Some(self.pin_promoted_result_body(*key.digest(), key.row().instance))
+                }
+                None => None,
+            };
+            (finished.output.clone(), pin)
+        };
+        let mut saved = said.clone();
+        if shows_stored_head {
+            saved.preview = base.preview.text;
+            saved.preview_truncated = base.preview.truncated;
+        }
+        saved.handle = base.handle;
+        saved.bytes = base.raw_len;
+        saved.lines = base.lines;
+        Ok(Some((saved, pin)))
     }
 
     /// The whole body of `output` under `rtxn`, checked against its digest;

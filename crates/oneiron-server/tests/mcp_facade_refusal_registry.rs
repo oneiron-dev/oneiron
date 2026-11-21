@@ -11,12 +11,13 @@
 use oneiron_server::test_doors::mcp_refusal_status::mcp_refusal;
 
 /// Each engine code, and the number and kind the gateway answers it with.
-const PINNED: [(&str, i64, &str); 23] = [
+const PINNED: &[(&str, i64, &str)] = &[
     ("NOT_FOUND", -32004, "facade_error"),
     ("FORBIDDEN", -32020, "facade_error"),
     ("OWNER_BINDING_REQUIRED", -32020, "owner_binding_required"),
     ("BUDGET_SPENT", -32020, "budget_spent"),
     ("IDENTITY_UNSETTLED", -32020, "identity_unsettled"),
+    ("OWNER_CONFIRM_REQUIRED", -32020, "owner_confirm_required"),
     (
         "HOST_ACTION_REQUIRES_SUPPORT_GRANT",
         -32020,

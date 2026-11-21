@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::{OWNER_PRESENCE_HERE_REASON_PREFIX, OWNER_PRESENCE_REQUIRED, RecordError};
 
 impl From<Error> for MemoryError {
     fn from(err: Error) -> Self {
@@ -55,6 +56,19 @@ impl From<Error> for MemoryError {
                     MEMORY_CODE_INVALID_STATE,
                     err.to_string(),
                     &[step.suggestion()],
+                )
+            };
+        }
+        if let Error::Record(RecordError::OwnerPresenceRequired { here }) = &err {
+            return Self {
+                reason_codes: vec![
+                    OWNER_PRESENCE_REQUIRED.to_owned(),
+                    format!("{OWNER_PRESENCE_HERE_REASON_PREFIX}{}", here.as_str()),
+                ],
+                ..Self::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    err.to_string(),
+                    &[here.suggestion()],
                 )
             };
         }
@@ -169,6 +183,15 @@ impl From<Error> for MemoryError {
                 message,
                 &["Verify the identifier and retry."],
             ),
+            // The row stands and the reader may read it now; this machine
+            // holds no bytes of the revision the frontier names (L3-39).
+            ErrorKind::HistoryNotHeld => Self::new(
+                MEMORY_CODE_HISTORY_NOT_HELD,
+                message,
+                &[
+                    "Read the row at the live head, or read this frontier where the row's history is held.",
+                ],
+            ),
             // FORBIDDEN like the gate family beside it, but with its OWN
             // remedies: the generic arm points at pending consents and at
             // resubmitting as proposed, and both are exactly what this error
@@ -197,6 +220,28 @@ impl From<Error> for MemoryError {
                 message,
                 &["Start a work companion in this workspace; its policy refuses a brought one."],
             ),
+            // A policy refusal, not a bad request: the manifest is what
+            // has to change.
+            ErrorKind::OneVaultSettingUnreadable => Self::new(
+                MEMORY_CODE_FORBIDDEN,
+                message,
+                &["Repair the vault's policy manifest, then retry onboarding."],
+            ),
+            ErrorKind::WorkTalkStaysWithMember => Self::new(
+                MEMORY_CODE_FORBIDDEN,
+                message,
+                &["Keep this talk in the member's vault while one-vault mode is off."],
+            ),
+            ErrorKind::OneVaultNotTold => Self::new(
+                MEMORY_CODE_FORBIDDEN,
+                message,
+                &["Acknowledge the one-vault notice in person before opening work talk."],
+            ),
+            ErrorKind::NoBroughtCompanion => Self::new(
+                MEMORY_CODE_FORBIDDEN,
+                message,
+                &["Use the existing company-homed conversation with the work companion."],
+            ),
             // FIX 2222: its own code, so a client tells it from a gate's or
             // the owner binding's refusal; the remedy is the customer's.
             ErrorKind::HostActionRequiresSupportGrant => Self::new(
@@ -204,6 +249,20 @@ impl From<Error> for MemoryError {
                 message,
                 &[
                     "Ask the customer for a support grant; the operator's own admin commands (status, backup, restore, repair, move) need none.",
+                ],
+            ),
+            // L9-52 (b): the vault would keep no owner. The request is well
+            // formed; the vault's owners, or its end, are what change. An
+            // added Owner's first owner key enrolment binds them, which is
+            // the second way out (FIX OWNER-DELETE-GUARD-RECOVERY). An Owner
+            // already added only enrols; adding one needs a shared vault, so
+            // an unshared one is shared first.
+            ErrorKind::LastBoundOwnerDelete => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "Erase the vault if ending it is the goal.",
+                    "To keep the vault, bind another owner first: have another Owner enrol an owner signing key of their own, which binds them (to add an Owner, share the vault first if it is not shared yet); then this person can be deleted.",
                 ],
             ),
             // FIX 7463a: a world's read setting keeps a row the call reads,
@@ -440,6 +499,16 @@ impl From<Error> for MemoryError {
                     &["Do what the message names: retry, or re-enter or reissue that credential."],
                 )
             }
+            // The owner's sandbox switch names a vendor this host cannot
+            // serve (L8-43): the vault's setting or custody must change, never
+            // the request's shape.
+            ErrorKind::SandboxVendorUnavailable => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "Store the owner's key for that vendor in custody, or switch vault.settings.sandbox_provider back to ours.",
+                ],
+            ),
             // A foreign guest's proposal spool met the host's disk floor
             // (FIX 7650): the host's storage, never the request's shape.
             ErrorKind::SandboxProposalDiskFloor => Self::new(

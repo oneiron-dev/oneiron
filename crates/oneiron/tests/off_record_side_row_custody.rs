@@ -1,12 +1,13 @@
-//! FIX 2329 (OF-067 B; Engine RULINGS FIX-2329-ROOM-CUSTODY = C and
-//! FIX-2329-CUSTODY-FIRST = A): an off-record room holds no custody of its
-//! own, and no off-record byte enters base, so the side-row wall refuses a
-//! code run's row there that holds a fresh key. The refusal names that case
-//! and its remedy with `gate.secret_scan.off_record_fresh_key`: put the value
-//! in vault custody first, or run on record. A value vault custody holds
-//! takes its handle in the room's row, as in a reply published there (FIX
-//! 6647). A bare store, which also holds no custody door, is no room, and its
-//! refusal names no room remedy.
+//! ROOM-LOCAL-CUSTODY (the lead's ruling of 21 Nov, "fingerprint only on
+//! save"; it replaces FIX 2329's refusal): an off-record room keeps a fresh
+//! key a code run's row there holds in its own custody, in memory only, and
+//! the row holds its room handle; a key no span places, which the wall
+//! seals whole (L7-30), is kept there the same way. Nothing reaches base: no
+//! custody record, no known-value fingerprint. The same value takes the same
+//! handle, and the room's close wipes every value it kept. A value vault custody holds still
+//! takes its vault handle in the room's row, as in a reply published there
+//! (FIX 2329, FIX 6647). A bare store holds no custody door, and still
+//! refuses a fresh key.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test off_record_side_row_custody`.
@@ -17,13 +18,12 @@ use std::sync::Arc;
 use oneiron::error::GateError;
 use oneiron::off_record::OffRecordBackendClass;
 use oneiron::test_doors::off_record_side_row::{
-    put_bare_store_replay_row, put_room_replay_row, put_vault_replay_row, room_replay_row,
+    RoomCustody, base_replay_row, put_bare_store_replay_row, put_room_replay_row,
+    put_vault_replay_row, room_replay_row, vault_custody_record_count, vault_knows_value,
 };
 use oneiron::{EntityId, Error, Vault, VaultConfig};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
-
-const OFF_RECORD_FRESH_KEY: &str = "gate.secret_scan.off_record_fresh_key";
 
 /// A GitHub token, in a shape the side-row wall reads as a secret.
 const KEY: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
@@ -54,40 +54,102 @@ fn reason_codes(written: oneiron::Result<()>) -> TestResult<Vec<&'static str>> {
     }
 }
 
+/// The one handle `row` holds: `[secret …]` up to its bracket.
+fn handle_in(row: &str) -> TestResult<&str> {
+    let start = row.find("[secret ").ok_or("the row holds no handle")?;
+    let len = row[start..].find(']').ok_or("the handle has no bracket")?;
+    Ok(&row[start..=start + len])
+}
+
 #[test]
-fn a_fresh_key_in_a_rooms_side_row_names_the_off_record_remedy() -> TestResult {
+fn a_fresh_key_in_a_rooms_side_row_is_kept_in_the_rooms_own_custody() -> TestResult {
     let (_directory, vault) = vault()?;
     let session = vault
         .off_record_session_vault()
         .enter("sess-side-row-fresh-key", OffRecordBackendClass::Local)?;
+    let room = RoomCustody::of(&session);
 
-    // FIXTURE: the room's route takes a row that holds no secret.
-    put_room_replay_row(&session, EntityId::now(), b"step output: 42\n")?;
-
-    let codes = reason_codes(put_room_replay_row(
-        &session,
-        EntityId::now(),
-        FRESH_KEY_ROW,
-    ))?;
-    assert_eq!(
-        codes.first().copied(),
-        Some("gate.secret_scan.detected"),
-        "{codes:?}"
+    let run = EntityId::now();
+    put_room_replay_row(&session, run, FRESH_KEY_ROW)
+        .map_err(|error| format!("the room refused a fresh key: {error:?}"))?;
+    let stored = room_replay_row(&session, run)?.ok_or("the room keeps the row")?;
+    let stored = String::from_utf8(stored)?;
+    assert!(
+        !stored.contains(KEY),
+        "the room's row holds the handle, never the value: {stored}"
+    );
+    let handle = handle_in(&stored)?;
+    assert!(
+        handle.starts_with("[secret r"),
+        "the value reads as a room handle: {stored}"
     );
     assert_eq!(
-        codes.last().copied(),
-        Some(OFF_RECORD_FRESH_KEY),
-        "the room's refusal names the fresh key and its remedy: {codes:?}"
+        room.secret(handle)?.as_deref(),
+        Some(KEY.as_bytes()),
+        "the room keeps the value under its handle"
+    );
+
+    // The same value written again in the room takes the same handle.
+    let again = EntityId::now();
+    put_room_replay_row(&session, again, FRESH_KEY_ROW)?;
+    let stored_again = room_replay_row(&session, again)?.ok_or("the room keeps the row")?;
+    assert_eq!(handle_in(&String::from_utf8(stored_again)?)?, handle);
+    assert_eq!(room.count()?, 1, "one value, one room secret");
+
+    // Nothing reached base.
+    assert_eq!(
+        vault_custody_record_count(&vault)?,
+        0,
+        "no base custody record"
     );
     assert!(
-        codes.len() >= 3,
-        "the detector's own reason stays between them: {codes:?}"
+        !vault_knows_value(&vault, KEY.as_bytes())?,
+        "base's known-value index learns no fingerprint before a save"
+    );
+    assert!(base_replay_row(&vault, run)?.is_none(), "no base row");
+    Ok(())
+}
+
+#[test]
+fn the_rooms_close_wipes_its_own_custody_and_leaves_nothing() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-side-row-close", OffRecordBackendClass::Local)?;
+    let room = RoomCustody::of(&session);
+    let run = EntityId::now();
+    put_room_replay_row(&session, run, FRESH_KEY_ROW)
+        .map_err(|error| format!("the room refused a fresh key: {error:?}"))?;
+    let stored =
+        String::from_utf8(room_replay_row(&session, run)?.ok_or("the room keeps the row")?)?;
+    let handle = handle_in(&stored)?.to_owned();
+    assert_eq!(room.count()?, 1, "FIXTURE: the room keeps the value");
+
+    session.close()?;
+
+    assert_eq!(room.count()?, 0, "the close wipes the room's custody");
+    assert!(
+        room.secret(&handle)?.is_none(),
+        "the handle names nothing once the room is closed"
+    );
+    assert_eq!(
+        vault_custody_record_count(&vault)?,
+        0,
+        "a closed unsaved room leaves no base custody record"
+    );
+    assert!(
+        !vault_knows_value(&vault, KEY.as_bytes())?,
+        "a closed unsaved room leaves no fingerprint"
+    );
+    assert!(
+        base_replay_row(&vault, run)?.is_none(),
+        "a closed unsaved room leaves no base row"
     );
     Ok(())
 }
 
 #[test]
-fn a_fresh_key_through_a_bare_store_names_no_room_remedy() -> TestResult {
+fn a_fresh_key_through_a_bare_store_is_still_refused() -> TestResult {
     let (_directory, vault) = vault()?;
 
     let codes = reason_codes(put_bare_store_replay_row(
@@ -100,10 +162,7 @@ fn a_fresh_key_through_a_bare_store_names_no_room_remedy() -> TestResult {
         Some("gate.secret_scan.detected"),
         "{codes:?}"
     );
-    assert!(
-        !codes.contains(&OFF_RECORD_FRESH_KEY),
-        "a bare store is no room: {codes:?}"
-    );
+    assert_eq!(vault_custody_record_count(&vault)?, 0);
     Ok(())
 }
 
@@ -122,6 +181,7 @@ fn a_value_in_vault_custody_first_takes_its_handle_in_a_rooms_side_row() -> Test
     let session = vault
         .off_record_session_vault()
         .enter("sess-side-row-custody-first", OffRecordBackendClass::Local)?;
+    let room = RoomCustody::of(&session);
     let run = EntityId::now();
     put_room_replay_row(&session, run, FRESH_KEY_ROW)
         .map_err(|error| format!("a value custody holds is refused in the room: {error:?}"))?;
@@ -132,18 +192,16 @@ fn a_value_in_vault_custody_first_takes_its_handle_in_a_rooms_side_row() -> Test
         "the room's row holds the handle, never the value: {stored}"
     );
     assert!(
-        stored.contains("[secret "),
-        "the value reads as its custody handle: {stored}"
+        stored.contains("[secret sc"),
+        "the value reads as its vault custody handle: {stored}"
     );
+    assert_eq!(room.count()?, 0, "the room keeps no copy of a vault value");
     Ok(())
 }
 
-/// A second GitHub token, which only the fixture puts in vault custody.
-const OTHER_KEY: &str = "ghp_zyxwvutsrqponmlkjihgfedcba9876543210";
-
 /// A replay row's JSON document that holds [`KEY`] under a credential name
 /// as byte values: no span of the door's text rules places it, so the
-/// side-row wall seals the array whole (L7-30) and mints a record for it.
+/// side-row wall seals the array whole (L7-30).
 fn sealed_key_row() -> TestResult<Vec<u8>> {
     let token = format!("TOKEN={KEY}");
     Ok(serde_json::to_vec(&serde_json::json!({
@@ -153,34 +211,47 @@ fn sealed_key_row() -> TestResult<Vec<u8>> {
 }
 
 #[test]
-fn a_sealed_fresh_key_in_a_rooms_side_row_names_the_off_record_remedy() -> TestResult {
+fn a_sealed_fresh_key_in_a_rooms_side_row_is_kept_in_the_rooms_own_custody() -> TestResult {
     let (_directory, vault) = vault()?;
-    // FIXTURE: vault custody holds another value, so the room's base holds
-    // a known-value index and the wall seals in the room's row.
-    put_vault_replay_row(
-        &vault,
-        EntityId::now(),
-        format!("step output: {OTHER_KEY}\n").as_bytes(),
-    )?;
     let session = vault
         .off_record_session_vault()
         .enter("sess-side-row-sealed-key", OffRecordBackendClass::Local)?;
+    let room = RoomCustody::of(&session);
 
-    let codes = reason_codes(put_room_replay_row(
-        &session,
-        EntityId::now(),
-        &sealed_key_row()?,
-    ))?;
+    let run = EntityId::now();
+    put_room_replay_row(&session, run, &sealed_key_row()?)
+        .map_err(|error| format!("the room refused a key it seals: {error:?}"))?;
+    let stored = room_replay_row(&session, run)?.ok_or("the room keeps the row")?;
+    let row: serde_json::Value = serde_json::from_slice(&stored)?;
+    assert_eq!(row["step"], "output", "the rest of the row is kept: {row}");
+    let handle = row["notes"]
+        .as_str()
+        .ok_or_else(|| format!("the sealed array is one handle: {row}"))?;
     assert!(
-        codes
-            .first()
-            .is_some_and(|code| code.starts_with("gate.secret_scan.")),
-        "the scan's own reason comes first: {codes:?}"
+        handle.starts_with('r'),
+        "the sealed value reads as a room handle: {row}"
     );
+    let kept = room
+        .secret(handle)?
+        .ok_or("the room keeps the sealed value under its handle")?;
+    let spelled: Vec<u8> = serde_json::from_slice(&kept)?;
     assert_eq!(
-        codes.last().copied(),
-        Some(OFF_RECORD_FRESH_KEY),
-        "a value the room's row would seal names the remedy too: {codes:?}"
+        spelled,
+        format!("TOKEN={KEY}").into_bytes(),
+        "the room keeps the sealed array whole"
     );
+    assert_eq!(room.count()?, 1, "one sealed value, one room secret");
+
+    // Nothing reached base.
+    assert_eq!(
+        vault_custody_record_count(&vault)?,
+        0,
+        "no base custody record"
+    );
+    assert!(
+        !vault_knows_value(&vault, &kept)?,
+        "base's known-value index learns no fingerprint before a save"
+    );
+    assert!(base_replay_row(&vault, run)?.is_none(), "no base row");
     Ok(())
 }

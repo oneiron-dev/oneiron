@@ -27,6 +27,9 @@ use std::collections::BTreeMap;
 pub enum LibraryRunMode {
     /// Only a rule answers: a step only a model could answer goes up to the
     /// planner (`decider_asked_up`, `strict`) before any model is asked.
+    /// A filed program's strict misses in a row (an unmet postcondition or a
+    /// missing locator) retire it `drift` at the vault owner's
+    /// `browser.library.drift_misses` (3 by default).
     Strict,
     /// The decision ladder answers, a model's rung included.
     Assisted,
@@ -283,7 +286,7 @@ pub(crate) fn run<D: BrowserDriver + ?Sized>(
     let step_count = steps.len();
     let mut batch = driver.batch_with(
         BatchInput {
-            subgoal: Some(program.subgoal.clone()),
+            subgoal: Some(program.subgoal),
             steps,
             base: input.base.clone(),
             until_ms: None,
@@ -372,7 +375,7 @@ pub(crate) fn run<D: BrowserDriver + ?Sized>(
 #[cfg(feature = "driver")]
 /// The checks a library run of `program` with `input`'s arguments reads on
 /// the page its steps left (CUA E8a): the program's postcondition, filled
-/// as [`run`] fills it, a secret slot's handle kept a secret.
+/// as `run` fills it, a secret slot's handle kept a secret.
 ///
 /// # Errors
 ///

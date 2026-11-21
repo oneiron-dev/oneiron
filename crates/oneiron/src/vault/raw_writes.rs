@@ -107,7 +107,7 @@ impl Memory<'_> {
         for put in puts {
             batch = self.raw_put_on(batch, put)?;
         }
-        self.commit_raw_batch(batch, puts)?;
+        self.commit_raw_batch(batch, puts, &[])?;
         crate::gate::record_references::receipt_landed_prose(self, &unlinked_prose);
         Ok(())
     }
@@ -133,7 +133,7 @@ impl Memory<'_> {
         if self.raw_write_in_session(&[staged])? {
             return Ok(());
         }
-        self.commit_raw_batch(self.vault().batch().edge(src, kind, tgt, weight), &[])
+        self.commit_raw_batch(self.vault().batch().edge(src, kind, tgt, weight), &[], &[])
     }
 
     /// Puts an entity's vector as this surface's caller.
@@ -142,10 +142,45 @@ impl Memory<'_> {
     ///
     /// As [`Self::raw_put_entities`], and the vector's own refusal.
     pub fn raw_put_vector(&self, id: &EntityId, vector: &[f32]) -> MemoryResult<()> {
-        if self.raw_write_in_session(&[RawOp::Vector { id: *id, vector }])? {
+        self.raw_put_vector_marked(id, vector, None)
+    }
+
+    /// [`Self::raw_put_vector`] marked with the device and runtime that
+    /// computed the vector (ARCH-0036 device mark), for a host that embeds on
+    /// its own.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::raw_put_vector`].
+    pub fn raw_put_vector_with_provenance(
+        &self,
+        id: &EntityId,
+        vector: &[f32],
+        provenance: crate::embed::EmbeddingProvenance,
+    ) -> MemoryResult<()> {
+        self.raw_put_vector_marked(id, vector, Some(provenance))
+    }
+
+    fn raw_put_vector_marked(
+        &self,
+        id: &EntityId,
+        vector: &[f32],
+        provenance: Option<crate::embed::EmbeddingProvenance>,
+    ) -> MemoryResult<()> {
+        let staged = RawOp::Vector {
+            id: *id,
+            vector,
+            provenance: provenance.as_ref(),
+        };
+        if self.raw_write_in_session(&[staged])? {
             return Ok(());
         }
-        self.commit_raw_batch(self.vault().batch().vector(id, vector), &[])
+        let batch = self.vault().batch();
+        let batch = match provenance {
+            Some(provenance) => batch.vector_with_provenance(id, vector, provenance),
+            None => batch.vector(id, vector),
+        };
+        self.commit_raw_batch(batch, &[], std::slice::from_ref(id))
     }
 
     /// Deletes `id` as this surface's caller through the `vault.delete` row
@@ -176,15 +211,20 @@ impl Memory<'_> {
             .map(|receipt| receipt.existed)
     }
 
-    /// Commits `batch`, which puts `puts`, below owner grade once its writer
-    /// snapshot proves this surface's actor, keeping that proof's typed
-    /// refusal. It is held to this surface's write lane
-    /// ([`Memory::core_write_lane`], FIX 1223, 6068): a read lane in the
-    /// batch's own terminal, a target lane in that same writer snapshot.
+    /// Commits `batch`, which puts `puts` and replaces the vectors of
+    /// `vectors`, below owner grade once its writer snapshot proves this
+    /// surface's actor, keeping that proof's typed refusal. It is held to
+    /// this surface's write lane ([`Memory::core_write_lane`], FIX 1223,
+    /// 6068): its puts under a read lane in the batch's own terminal, under a
+    /// target lane in that same writer snapshot; its vectors under either
+    /// lane in that snapshot, since the terminal judges puts alone (review of
+    /// #10218: a bound caller replaced the vector and device mark of a row
+    /// it does not read).
     fn commit_raw_batch(
         &self,
         batch: BatchBuilder<'_>,
         puts: &[RawEntityPut<'_>],
+        vectors: &[EntityId],
     ) -> MemoryResult<()> {
         let lane = self.core_write_lane()?;
         // An agent's new AGENT_DEF is held to its own slice (ARCH-0053:20).
@@ -203,6 +243,10 @@ impl Memory<'_> {
                 ));
             }
             if matches!(lane, CoreWriteLane::Target(_)) && !lane.admits_puts_in(txn, &ids)? {
+                return Err(Error::EntityNotFound);
+            }
+            // As missing, as a put's: the row's kind, body and scope stay unsaid.
+            if !lane.admits_vectors_in(txn, vectors)? {
                 return Err(Error::EntityNotFound);
             }
             Ok(())

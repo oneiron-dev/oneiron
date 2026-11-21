@@ -13,32 +13,70 @@
 //! - Read: [`Setting::read_in_txn`] for a typed reader; the verbs read through the same walk. One
 //!   walk for every key ([`oneiron_setting_contract::decide`]); every read says which row
 //!   decided it.
-//! - Set: [`Vault::set_setting`], one door whose power is checked live in its write: the owner
-//!   sets every key; an agent whose live owner Grant lists the key's own line
-//!   (`settings.set:<key>`), or a live holder of the key's `engine.controls` class, sets the
-//!   key's value rows inside the owner's; a subject tightens its own row; anyone else's change,
-//!   and an agent's widening, waits on a check-in.
+//! - Set: [`Vault::set_setting`], one door that judges every write as a move (DESIGN 1.5, stage
+//!   6.0): the key's order says which way the move goes, the caller's capacity says what it may
+//!   do, and the authority rule admits it or not, live in the write. The owner makes any move; a
+//!   holder of the key (its own Grant line `settings.set:<key>`, or a live `engine.controls`
+//!   grant for its class) tightens at once and asks the user to loosen, unless the owner gave it
+//!   standing approval for the key or the scope ([`widen_line`]); a row's subject narrows its own
+//!   row; anything else waits on a check-in. Every change row records its direction.
 //! - Change stream: every change is one `SETTING_CHANGE` row, written in the commit that makes it,
 //!   and the feeds' `settings` source.
-//! - Verbs: `vault.settings.get`, `vault.settings.list`, `vault.settings.set`.
+//! - Defaults: the default layer (DESIGN 1.5, stage 6.0): what the vault accepted from each
+//!   pack, as rows at `SettingScope::Pack`, written only by the pack door. The `engine` pack is
+//!   this build's catalogue and runs at open; a tighter default lands, a looser one waits for the
+//!   owner's yes (`vault.settings.accept_defaults`). A read with no deciding row starts there.
+//! - Moves: on a key whose rows meet, a project reads the rows of every parent line
+//!   ([`SettingScope::chain_of_lines`]), and a write that moves a project carries the rows of the
+//!   lines it leaves onto it as one carried row per key (stage 6.0), so no move loosens a read.
+//! - Verbs: `vault.settings.get`, `vault.settings.list`, `vault.settings.set`,
+//!   `vault.settings.accept_defaults`.
 //!
 //! Stage 0.1 lands the primitive unused: no engine key is in the catalogue yet, and no value in
 //! force moves.
 
+pub(crate) mod archive_restore;
+mod ask;
+mod beside;
+mod born;
+mod carry;
 mod catalogue;
 mod change;
 mod learned;
+mod pack;
+mod page_max;
+mod project;
+mod proposal;
+mod publish;
 mod read;
+pub(crate) mod restored;
 mod set;
+mod signed_act;
 pub(crate) mod tables;
 
 use std::marker::PhantomData;
 
 pub use oneiron_setting_contract::{
-    EncodedValue, FitCell, ReadBy, Resolved, Restore, ScopeKind, Setter, SettingMode, SettingScope,
-    SettingSource, SettingSync, SettingValue, higher_is_tighter, lower_is_tighter,
+    AbsentEnd, ChainOrder, ChangeDirection, ChangeStanding, EachOrder, EncodedValue, FitCell,
+    Order, Quorum, ReadBy, Resolved, Restore, ScopeKind, SetOrder, Setter, SettingMode,
+    SettingScope, SettingSource, SettingStanding, SettingSync, SettingValue,
 };
 
+pub use self::ask::SettingAsk;
+pub(crate) use self::ask::erase_setting_ask_actor_in_txn;
+pub use self::beside::SettingTravel;
+#[cfg(all(oneiron_test_support, feature = "test-support", feature = "sync"))]
+pub(crate) use self::beside::land_pack_table_from_peer;
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use self::beside::{
+    beside_row_for, beside_row_json, beside_row_of, land_beside_row, land_pack_table,
+    land_pack_table_shared_row, pack_table_bytes,
+};
+pub(crate) use self::beside::{beside_row_watched_in_txn, notes_projection_pass_in_txn};
+pub(crate) use self::born::write_born_rows_in_txn;
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use self::carry::carry_between_in_txn;
+pub(crate) use self::carry::carry_settings_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use self::catalogue::leave_keeps_row;
 pub use self::catalogue::{catalogue, spec_named};
@@ -47,14 +85,32 @@ pub use self::change::SettingChange;
 pub(crate) use self::change::change_in_txn;
 pub(crate) use self::change::{
     erase_setting_change_actor_in_txn, erase_setting_content_actor_in_txn,
-    erase_setting_entity_in_txn, erase_setting_row_actor_in_txn, settings_after_in_txn,
-    settings_head_in_txn,
+    erase_setting_entity_in_txn, erase_setting_row_actor_in_txn, setting_change_records,
+    settings_after_in_txn, settings_head_in_txn,
 };
 pub use self::learned::{LEARNED_SCOPES, LearnedRange, SettingFitView};
+pub use self::pack::{ENGINE_PACK, ENGINE_PACK_VERSION, PackApplied, ProposedDefaultView};
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use self::pack::{
+    delete_layer_row, head_version_and_digest, layer_row_revision, table_digest_and_bytes,
+};
+pub use self::page_max::PageMax;
+pub use self::project::SettingsProjected;
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use self::project::forget_projected_rows_in_txn;
+pub use self::proposal::SettingProposal;
+pub use self::publish::SettingsPublished;
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use self::publish::settings_published_in_txn;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::read::put_stored_bytes;
-pub use self::read::{SettingCatalogueEntry, SettingRowView, SettingView};
-pub(crate) use self::read::{SettingListFilter, SettingReader, reader_reads_key_in_txn};
+pub use self::read::{Requested, SettingCatalogueEntry, SettingRowView, SettingView};
+pub(crate) use self::read::{
+    SettingListFilter, SettingReadCaller, SettingReader, reader_reads_key_in_txn,
+};
+pub(crate) use self::restored::{
+    drop_install_rows_in_txn, live_install_rows_in, restore_drops_row,
+};
 pub(crate) use self::set::run_after_commit;
 pub use self::set::{EngineSetting, SetSetting, SetSettingOutcome, SettingCaller};
 use crate::Vault;
@@ -75,6 +131,43 @@ pub fn set_line(key: &str) -> String {
 #[must_use]
 pub fn get_line(key: &str) -> String {
     format!("settings.get:{key}")
+}
+
+/// The Grant line of the owner's standing approval for one key (owner principle, 16 Nov 00:44):
+/// the key's holder line with a widening allowance. An agent whose live owner Grant lists it
+/// holds the key at every scope, and its widening lands without asking ([`Setter::Standing`]).
+/// It never pins, and never sets a row under the owner's pin. A Grant lists it as a verb,
+/// matched exactly; revoking the Grant ends it.
+#[must_use]
+pub fn widen_line(key: &str) -> String {
+    format!("settings.widen:{key}")
+}
+
+/// [`widen_line`] at one scope only: the rows of `key` at exactly `scope`. `None` for a pack
+/// scope, which only the pack door writes.
+#[must_use]
+pub fn widen_line_at(key: &str, scope: &SettingScope) -> Option<String> {
+    scope_line_text(scope).map(|scope| format!("settings.widen:{key}@{scope}"))
+}
+
+/// The owner's standing approval for every key at one scope: the rows of each key at exactly
+/// `scope`. `None` for a pack scope.
+#[must_use]
+pub fn widen_scope_line(scope: &SettingScope) -> Option<String> {
+    scope_line_text(scope).map(|scope| format!("settings.widen:*@{scope}"))
+}
+
+/// A scope as a Grant line names it: `vault`, `task_type:<node>`, or `<kind>:<32 hex>` for a
+/// scope that names an entity; `None` for a pack scope.
+fn scope_line_text(scope: &SettingScope) -> Option<String> {
+    match scope {
+        SettingScope::Vault => Some("vault".to_owned()),
+        SettingScope::Pack(_) => None,
+        SettingScope::TaskType(node) => Some(format!("task_type:{node}")),
+        other => other
+            .entity()
+            .map(|id| format!("{}:{}", other.kind().as_str(), id.to_hex())),
+    }
 }
 
 /// Who may set a key without asking.
@@ -98,16 +191,41 @@ pub struct ItemDomain {
     pub admits: fn(&str) -> bool,
 }
 
+/// The line the owner's confirm sheet shows as the reason of a loosening change to the row at a
+/// scope, for one item of a key (`None`: a change that names no item), read in the sheet's own txn
+/// so it states the vault as the owner sees it at that moment (RESTRICTION-WAVE-11-CAP-NOTE Q1 =
+/// A; CAP-SCOPE = B: the row's scope picks what it states). `Ok(None)`: no line for that item.
+pub type LooseningNote =
+    fn(&Vault, &heed::RoTxn<'_>, &SettingScope, Option<&str>) -> Result<Option<String>>;
+
 /// The one hook a key may run in the write that changes it: re-arm a schedule, clear parks that
 /// wait on the key, or refuse the change on state the value's own check cannot see. It runs only
 /// on an applied change, after its rows are put; its `Err` fails the whole write, so neither row
-/// lands and the caller sees that error. A row that arrives by sync or a restore never passes
-/// through it, so a refusal here needs its reader to hold the same line.
+/// lands and the caller sees that error. A row that arrives by sync or a checkpoint restore never
+/// passes through it, so a refusal here needs its reader to hold the same line. The owner's
+/// archive restore passes an absent row through it as a change with no prior, in a savepoint: a
+/// refusal there leaves the row out and its archived copy retained (`archive_restore`).
 pub type OnChange = fn(&Vault, &mut heed::RwTxn<'_>, &SettingChange) -> Result<()>;
 
 /// The one hook a key may run once the write that changed it has committed: wake a host that
 /// reads the key (a reader woken inside the write would see the last commit's value).
 pub type OnCommitted = fn(&Vault);
+
+/// The turn a key's change takes before its write opens, held until the write and its
+/// `after_commit` are done: for a key whose hook must not land while another holder of that turn
+/// runs several writes. [`Vault::set_setting`] takes it, and so does the owner's archive restore
+/// for each key its archive holds a row of, which it can install through the key's hook
+/// (`archive_restore::take_write_turns`). A change made in a caller's own write
+/// (`Vault::set_setting_in_txn`) takes none, since waiting for a turn inside a write could wait on
+/// a holder that waits on the writer. Such a key is set through those two doors alone.
+#[derive(Clone, Copy)]
+pub struct WriteTurn {
+    /// Names the turn. Keys that take one turn name it alike, so a write that can change several
+    /// of them takes it once.
+    pub name: &'static str,
+    /// Waits for, then holds, the turn, until the returned guard drops.
+    pub take: fn(&Vault) -> Result<Box<dyn std::any::Any>>,
+}
 
 /// One catalogue row: everything the engine knows about a key. Data, not code.
 #[derive(Clone, Copy)]
@@ -116,7 +234,7 @@ pub struct SettingSpec {
     pub name: &'static str,
     /// The row's doc comment: what the key chooses.
     pub doc: &'static str,
-    /// The value's type: decode, check, JSON Schema, default, strictest, tighter direction.
+    /// The value's type: decode, check, JSON Schema, default, strictest, order.
     pub kind: &'static dyn ValueKind,
     /// The kinds of scope a row may sit at. The vault is always one.
     pub scopes: &'static [ScopeKind],
@@ -124,15 +242,37 @@ pub struct SettingSpec {
     pub item: Option<ItemDomain>,
     /// Who may set it without asking.
     pub set_by: SetBy,
+    /// How many holders must say yes to a loose move. `All` waits for its count, which lands with
+    /// the Grant of a person's setting class (stage 6d-1): the door refuses a loose move of such a
+    /// key until then.
+    pub quorum: Quorum,
     /// The check-in act class of a change (ARCH-0082 act table).
     pub act: ActClass,
     pub read_by: ReadBy,
     pub restore: Restore,
     pub sync: SettingSync,
+    /// The confirm sheet's reason line for a loosening change, for a key whose loosening the
+    /// owner should read a fact about first (the spend cap in force for a payment item).
+    pub loosening_note: Option<LooseningNote>,
     pub on_change: Option<OnChange>,
     /// Run after the commit of each write that applied a change to the key (not on an equal
     /// value, not on a change that waits on a check-in).
     pub after_commit: Option<OnCommitted>,
+    /// Taken before the write of a change to the key opens ([`WriteTurn`]).
+    pub write_turn: Option<WriteTurn>,
+    /// Each new thing of the key's narrowest scope starts with a row copied from another key
+    /// (stage 7c-2; DESIGN 1.6, `born`): the door that creates the thing writes it, and a thing
+    /// with no row reads the strictest value, never the wider one.
+    pub born: Option<Born>,
+}
+
+/// Where a `born` key's things take their first row from (DESIGN 1.6, "The project-depth
+/// carriers become two keys"): the value in force of the key `from` at the vault when the thing
+/// is created. The row is a copy: of a pack's default it is seeded, of a row someone set explicit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Born {
+    /// The catalogue name of the key the row is copied from.
+    pub from: &'static str,
 }
 
 impl SettingSpec {
@@ -146,12 +286,16 @@ impl SettingSpec {
         scopes: &[ScopeKind::Vault],
         item: None,
         set_by: SetBy::Owner,
+        quorum: Quorum::One,
         act: ActClass::ReversibleWork,
         read_by: ReadBy::Holders,
         restore: Restore::Live,
         sync: SettingSync::Vault,
+        loosening_note: None,
         on_change: None,
         after_commit: None,
+        write_turn: None,
+        born: None,
     };
 
     /// Whether a row may sit at `kind`.
@@ -164,6 +308,13 @@ impl SettingSpec {
     #[must_use]
     pub fn is_learned(&self) -> bool {
         self.kind.learned_range().is_some()
+    }
+
+    /// Whether a read meets the key's rows (DESIGN 1.5 "The read"): its order has a meet and no
+    /// fit learns it. Only such a key has a free safe move; every other key reads one row.
+    #[must_use]
+    pub fn reads_met(&self) -> bool {
+        self.kind.order().has_meet() && !self.is_learned()
     }
 
     /// Whether `item` is one this key admits: none for a key that is no family, one of its
@@ -194,11 +345,42 @@ impl SettingSpec {
     }
 }
 
+impl Vault {
+    /// The confirm sheet's reason line for loosening `key`'s row at `scope` (at `item` of a family
+    /// key), read now: what the key's [`SettingSpec::loosening_note`] states, or `None` for a key
+    /// that states none.
+    ///
+    /// # Errors
+    ///
+    /// An unknown key, a scope or an item the key does not admit; storage errors.
+    pub fn setting_loosening_note(
+        &self,
+        key: &str,
+        scope: &SettingScope,
+        item: Option<&str>,
+    ) -> Result<Option<String>> {
+        let spec = spec_named(key)?;
+        if !spec.admits_scope(scope.kind()) {
+            return Err(Error::InvalidConfig(format!(
+                "`{key}` takes no row at a {} scope",
+                scope.kind().as_str()
+            )));
+        }
+        spec.check_item(item)?;
+        let Some(note) = spec.loosening_note else {
+            return Ok(None);
+        };
+        let txn = self.store.env.read_txn()?;
+        note(self, &txn, scope, item)
+    }
+}
+
 impl std::fmt::Debug for SettingSpec {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("SettingSpec")
             .field("name", &self.name)
+            .field("born", &self.born)
             .finish_non_exhaustive()
     }
 }
@@ -231,11 +413,19 @@ pub trait ValueKind: Sync {
     ///
     /// `InvalidConfig` for a value of another shape, or the check's refusal.
     fn from_json(&self, json: serde_json::Value) -> Result<EncodedValue>;
-    /// Whether the key names which direction is tighter.
-    fn has_direction(&self) -> bool;
-    /// Whether `a` is at least as tight as `b`; `None` without a direction or when either does
-    /// not decode.
-    fn is_tighter(&self, a: &EncodedValue, b: &EncodedValue) -> Option<bool>;
+    /// The key's order: which side of a change is safe.
+    fn order(&self) -> Order;
+    /// Whether the key's value type is closed ([`SettingValue::CLOSED`]): its value travels
+    /// inside the setting's signed act (stage 7a-2).
+    fn travels_inline(&self) -> bool {
+        false
+    }
+    /// The stricter of `a` and `b`, encoded; `None` for an order with no meet, or when either
+    /// does not decode.
+    fn meet(&self, a: &EncodedValue, b: &EncodedValue) -> Option<EncodedValue>;
+    /// Whether `a` is no wider than `b`: by the order's comparator, and by equality where the
+    /// key has none; `None` when either does not decode.
+    fn no_wider(&self, a: &EncodedValue, b: &EncodedValue) -> Option<bool>;
     /// `stored` with every mention of the erased entity `id` taken out, when the key names how
     /// ([`Kind::erase_mentions`]) and `stored` mentions it; `None` otherwise.
     fn erase_mentions_in(&self, stored: &EncodedValue, id: EntityId) -> Option<EncodedValue> {
@@ -250,11 +440,15 @@ pub trait ValueKind: Sync {
 }
 
 /// The typed [`ValueKind`] of a key whose value is a `T`: its default, and optionally its
-/// strictest value, its tighter direction and how an erase takes an entity out of a value.
+/// strictest value, its order and how an erase takes an entity out of a value.
 pub struct Kind<T> {
     default: fn() -> T,
     strictest: Option<fn() -> T>,
-    tighter: Option<fn(&T, &T) -> bool>,
+    order: Order,
+    /// The order's meet; only an order constructor below writes it.
+    meet: Option<fn(&T, &T) -> T>,
+    /// The order's comparator; `None`: equality.
+    no_wider: Option<fn(&T, &T) -> bool>,
     erase_mentions: Option<fn(&T, EntityId) -> Option<T>>,
     learned: Option<LearnedRange>,
 }
@@ -266,7 +460,9 @@ impl<T: SettingValue> Kind<T> {
         Self {
             default,
             strictest: None,
-            tighter: None,
+            order: Order::None,
+            meet: None,
+            no_wider: None,
             erase_mentions: None,
             learned: None,
         }
@@ -281,12 +477,40 @@ impl<T: SettingValue> Kind<T> {
         }
     }
 
-    /// This kind, whose tighter direction is `tighter(a, b)`: `a` is at least as tight as `b`
-    /// ([`lower_is_tighter`], [`higher_is_tighter`]).
+    /// This kind, of a key whose moves guard nothing ([`Order::Neutral`]): no access,
+    /// authority, money or identity moves with its value, so an agent holder's move never asks.
     #[must_use]
-    pub const fn tighter(self, tighter: fn(&T, &T) -> bool) -> Self {
+    pub const fn neutral(self) -> Self {
         Self {
-            tighter: Some(tighter),
+            order: Order::Neutral,
+            ..self
+        }
+    }
+
+    /// This kind, judged by its own comparator ([`Order::Custom`]): `no_wider(a, b)` says `a` is
+    /// no wider than `b`, as the manifest's comparator arm for the table says today. It has no
+    /// meet, so the key has one slot, at the vault, and takes no request.
+    #[must_use]
+    pub const fn custom(self, no_wider: fn(&T, &T) -> bool) -> Self {
+        Self {
+            order: Order::Custom,
+            meet: None,
+            no_wider: Some(no_wider),
+            ..self
+        }
+    }
+
+    /// This kind with `order`, and the meet and comparator that order derives.
+    const fn ordered(
+        self,
+        order: Order,
+        meet: fn(&T, &T) -> T,
+        no_wider: fn(&T, &T) -> bool,
+    ) -> Self {
+        Self {
+            order,
+            meet: Some(meet),
+            no_wider: Some(no_wider),
             ..self
         }
     }
@@ -322,8 +546,124 @@ impl<T: SettingValue> Kind<T> {
         self.strictest.map(|strictest| strictest())
     }
 
-    pub(crate) fn tighter_typed(&self) -> Option<fn(&T, &T) -> bool> {
-        self.tighter
+    /// The order's meet; `None` for an order that has none.
+    pub(crate) fn meet_typed(&self) -> Option<fn(&T, &T) -> T> {
+        self.meet
+    }
+
+    /// The order's comparator, for the cap a learned key's holder row is held inside; `None`
+    /// where the key has none.
+    pub(crate) fn no_wider_typed(&self) -> Option<fn(&T, &T) -> bool> {
+        self.no_wider
+    }
+}
+
+impl<T: SettingValue + PartialOrd> Kind<T> {
+    /// This kind, whose smaller value is the stricter ([`Order::Lower`]): a cap, a lifetime, a
+    /// threshold. On an `Option`, [`Self::lower_or_absent`] names which end the absent value is.
+    #[must_use]
+    pub const fn lower(self) -> Self {
+        self.ordered(
+            Order::Lower,
+            oneiron_setting_contract::lower_meet::<T>,
+            oneiron_setting_contract::lower_no_wider::<T>,
+        )
+    }
+
+    /// This kind, whose larger value is the stricter ([`Order::Higher`]): a wait, a rest, a count
+    /// of agreeing rulings.
+    #[must_use]
+    pub const fn higher(self) -> Self {
+        self.ordered(
+            Order::Higher,
+            oneiron_setting_contract::higher_meet::<T>,
+            oneiron_setting_contract::higher_no_wider::<T>,
+        )
+    }
+}
+
+impl<T: SettingValue + PartialOrd> Kind<Option<T>> {
+    /// This kind, of an optional number whose smaller value is the stricter, with the absent
+    /// value at `end` ("no cap" is the loosest cap).
+    #[must_use]
+    pub const fn lower_or_absent(self, end: AbsentEnd) -> Self {
+        match end {
+            AbsentEnd::Loosest => self.ordered(
+                Order::Lower,
+                oneiron_setting_contract::absent_meet::<T, false, false>,
+                oneiron_setting_contract::absent_no_wider::<T, false, false>,
+            ),
+            AbsentEnd::Strictest => self.ordered(
+                Order::Lower,
+                oneiron_setting_contract::absent_meet::<T, false, true>,
+                oneiron_setting_contract::absent_no_wider::<T, false, true>,
+            ),
+        }
+    }
+
+    /// This kind, of an optional number whose larger value is the stricter, with the absent
+    /// value at `end` ("never prune" is the strictest horizon of a receipt).
+    #[must_use]
+    pub const fn higher_or_absent(self, end: AbsentEnd) -> Self {
+        match end {
+            AbsentEnd::Loosest => self.ordered(
+                Order::Higher,
+                oneiron_setting_contract::absent_meet::<T, true, false>,
+                oneiron_setting_contract::absent_no_wider::<T, true, false>,
+            ),
+            AbsentEnd::Strictest => self.ordered(
+                Order::Higher,
+                oneiron_setting_contract::absent_meet::<T, true, true>,
+                oneiron_setting_contract::absent_no_wider::<T, true, true>,
+            ),
+        }
+    }
+}
+
+impl<T: SettingValue + ChainOrder> Kind<T> {
+    /// This kind, whose stricter value ranks first in its type's list ([`Order::Chain`]).
+    #[must_use]
+    pub const fn chain(self) -> Self {
+        self.ordered(
+            Order::Chain,
+            oneiron_setting_contract::chain_meet::<T>,
+            oneiron_setting_contract::chain_no_wider::<T>,
+        )
+    }
+}
+
+impl<T: SettingValue + SetOrder> Kind<T> {
+    /// This kind, of a permit list ([`Order::Subset`]): a subset is the stricter.
+    #[must_use]
+    pub const fn subset(self) -> Self {
+        self.ordered(
+            Order::Subset,
+            oneiron_setting_contract::subset_meet::<T>,
+            oneiron_setting_contract::subset_no_wider::<T>,
+        )
+    }
+
+    /// This kind, of a protect list ([`Order::Superset`]): a superset is the stricter.
+    #[must_use]
+    pub const fn superset(self) -> Self {
+        self.ordered(
+            Order::Superset,
+            oneiron_setting_contract::superset_meet::<T>,
+            oneiron_setting_contract::superset_no_wider::<T>,
+        )
+    }
+}
+
+impl<T: SettingValue + EachOrder> Kind<T> {
+    /// This kind, of a struct whose every part names its order
+    /// ([`oneiron_setting_contract::each_order!`]): it is no wider when every part is.
+    #[must_use]
+    pub const fn each(self) -> Self {
+        self.ordered(
+            Order::Each,
+            oneiron_setting_contract::each_meet::<T>,
+            oneiron_setting_contract::each_no_wider::<T>,
+        )
     }
 }
 
@@ -385,13 +725,25 @@ impl<T: SettingValue> ValueKind for Kind<T> {
         Ok(encoded)
     }
 
-    fn has_direction(&self) -> bool {
-        self.tighter.is_some()
+    fn order(&self) -> Order {
+        self.order
     }
 
-    fn is_tighter(&self, a: &EncodedValue, b: &EncodedValue) -> Option<bool> {
-        let tighter = self.tighter?;
-        Some(tighter(&Self::decode(a)?, &Self::decode(b)?))
+    fn travels_inline(&self) -> bool {
+        T::CLOSED
+    }
+
+    fn meet(&self, a: &EncodedValue, b: &EncodedValue) -> Option<EncodedValue> {
+        let meet = self.meet?;
+        EncodedValue::encode(&meet(&Self::decode(a)?, &Self::decode(b)?)).ok()
+    }
+
+    fn no_wider(&self, a: &EncodedValue, b: &EncodedValue) -> Option<bool> {
+        let (a, b) = (Self::decode(a)?, Self::decode(b)?);
+        Some(match self.no_wider {
+            Some(no_wider) => no_wider(&a, &b),
+            None => a == b,
+        })
     }
 
     fn learned_range(&self) -> Option<LearnedRange> {
@@ -433,11 +785,15 @@ impl ValueKind for NoKind {
         Err(no_kind())
     }
 
-    fn has_direction(&self) -> bool {
-        false
+    fn order(&self) -> Order {
+        Order::None
     }
 
-    fn is_tighter(&self, _a: &EncodedValue, _b: &EncodedValue) -> Option<bool> {
+    fn meet(&self, _a: &EncodedValue, _b: &EncodedValue) -> Option<EncodedValue> {
+        None
+    }
+
+    fn no_wider(&self, _a: &EncodedValue, _b: &EncodedValue) -> Option<bool> {
         None
     }
 }
