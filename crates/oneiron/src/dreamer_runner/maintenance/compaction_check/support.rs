@@ -52,24 +52,23 @@ pub struct CompactionCheckDecisions<'a> {
 }
 
 /// What a check's steps spent, each terminal step booked once.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(super) struct Spend {
     pub(super) units: u64,
     step_bindings: Vec<StepEffectBinding>,
 }
 
 impl Spend {
-    /// The diagnostic step's spend: nothing when memoized, which the pass
-    /// that asked it paid for.
+    /// The diagnostic step's spend, after what the check's calls before it
+    /// spent: its own is nothing when memoized, which the pass that asked it
+    /// paid for.
     pub(super) fn of(judging: &Judging) -> Self {
-        Self {
-            units: judging.units,
-            step_bindings: if judging.memoized {
-                Vec::new()
-            } else {
-                vec![judging.binding]
-            },
+        let mut spend = judging.earlier.clone();
+        spend.units = spend.units.saturating_add(judging.units);
+        if !judging.memoized {
+            spend.step_bindings.push(judging.binding);
         }
+        spend
     }
 
     /// Hands this spend to the meter before an `Err`, so the driver

@@ -22,6 +22,19 @@
 //! ([`super::support`]). The span and the material are read again after the
 //! judgment, so drift during the judgment is stale too. A mismatch reaches
 //! the agent's inbox; nothing here rewrites its words or its byline.
+//!
+//! A span whose one turn its writer read in pieces is judged per piece
+//! (FIX-LIST COMPACTION-CHECK-JUDGES-PER-CHUNK; Engine answer 21 Nov 07:39):
+//! each piece summary, read back out of the kept entry under the byte range
+//! the receipt names, against exactly those bytes of the turn as the Dreamer
+//! reads it now, and then the landed summary against that entry, the text
+//! its writer was given. A turn whose entry fell back to its head is judged
+//! against that head. Every part is sized against the judge's window before
+//! any call, so `span_past_judge_room` stays only for a part that does not
+//! fit. The first part the judge does not find supported decides the check,
+//! and the finding lists each piece judged with its bytes.
+
+use std::ops::Range;
 
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -33,7 +46,8 @@ use super::{
 use crate::attempt_queue::AttemptId;
 use crate::compaction::{
     CheckMaterialFault, CompactionCheckMaterial, CompactionCheckMaterialRef, CompactionEvidence,
-    CompactionExecution, CompactionStepRef, ConversationTurnSpan, check_material_in,
+    CompactionExecution, CompactionStepRef, ConversationTurnReading, ConversationTurnSpan,
+    check_material_in, entry_piece_summaries,
 };
 use crate::dreamer_consolidation::{ConversationSpanRead, conversation_span_text};
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause, DreamerRunnerStore};
@@ -47,6 +61,10 @@ use oneiron_records::dreamer_runner::maintenance::compaction_check::conversation
 
 /// Why a check waits: a turn of its span is away from this replica.
 const SPAN_NOT_RESIDENT: &str = "a turn of the checked span is not resident here";
+
+/// The reason a check settles with when its receipt names a reading of the
+/// span's turn that the span or the kept entry does not bear out.
+const TURN_READING_UNREADABLE: &str = "turn_reading_unreadable";
 
 /// What one conversation landing asks the Dreamer to check.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,11 +199,48 @@ pub(crate) fn declare_conversation_check_in_txn(
     Ok(())
 }
 
+/// One judgment the check asks: a summary and exactly the text it was
+/// written from.
+struct Part {
+    /// For a piece summary, the bytes of the turn's window text it covers
+    /// and that text's length; `None` for the landed summary.
+    piece: Option<(Range<usize>, usize)>,
+    summary: String,
+    evidence: String,
+}
+
 /// What the deterministic reads found.
 enum Reading {
-    Ready { summary: String, evidence: String },
+    /// The parts the judge reads, the landed summary's last.
+    Ready(Vec<Part>),
     Settled(Settled),
     Deferred,
+}
+
+/// One part's judgment, as the finding records it.
+struct PartJudged {
+    verdict: CompactionCheckVerdict,
+    reason: String,
+    conflicts: Vec<serde_json::Value>,
+    judge: serde_json::Value,
+    diagnostic: Option<CompactionCheckVerdict>,
+    decision: Option<serde_json::Value>,
+}
+
+impl PartJudged {
+    /// The piece's entry in the finding's `pieces`: its bytes and its
+    /// judgment.
+    fn piece(&self, bytes: &Range<usize>) -> serde_json::Value {
+        serde_json::json!({
+            "bytes": [bytes.start, bytes.end],
+            "verdict": self.verdict.as_str(),
+            "reason": self.reason,
+            "conflicts": self.conflicts,
+            "judge": self.judge,
+            "diagnostic_verdict": self.diagnostic.map(CompactionCheckVerdict::as_str),
+            "decision": self.decision,
+        })
+    }
 }
 
 /// Runs one admitted conversation check.
@@ -197,10 +252,10 @@ pub(super) async fn run_conversation_check(
 ) -> Result<DreamerAttemptExecution> {
     let attempt_id = attempt.status.attempt.id;
     let now = ctx.now_ms / 1_000;
-    let (summary, evidence) = match read(ctx.vault, &declaration)? {
-        Reading::Ready { summary, evidence } => (summary, evidence),
+    let parts = match read(ctx.vault, &declaration)? {
+        Reading::Ready(parts) => parts,
         Reading::Settled(settled) => {
-            record(ctx.vault, attempt_id, &declaration, &settled, now)?;
+            record(ctx.vault, attempt_id, &declaration, &settled, &[], now)?;
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
                 step_bindings: Vec::new(),
@@ -216,65 +271,106 @@ pub(super) async fn run_conversation_check(
     let locality = judge_locality(&model)?;
     let keyless = model.inference.selected_keyless();
     let paid = model.inference.selected_paid();
-    let input = judge_input(&declaration, &summary, &evidence);
-    let request = judge_request(&model, &input, locality, keyless, paid)?;
-    if let Some(settled) = judge_room::exceeded(&model, &request, &declaration.pins_digest()) {
-        record(ctx.vault, attempt_id, &declaration, &settled, now)?;
-        return Ok(judge_room::completed_without_judge());
+    // Every part is sized before any call: one past the judge's window
+    // settles the check unjudged, with nothing spent.
+    let mut asks = Vec::with_capacity(parts.len());
+    for part in &parts {
+        let input = judge_input(&declaration, part);
+        let request = judge_request(&model, &input, locality, keyless, paid)?;
+        if let Some(settled) = judge_room::exceeded(&model, &request, &declaration.pins_digest()) {
+            record(ctx.vault, attempt_id, &declaration, &settled, &[], now)?;
+            return Ok(judge_room::completed_without_judge());
+        }
+        asks.push((part, input, request));
     }
-    let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
-        Ok(judging) => judging,
-        Err(parked) => return Ok(parked),
-    };
-    let judged = judgment(&judging.response, &declaration);
-    let diagnostic = judged.as_ref().map(|judged| judged.verdict);
     let cited = declaration.cited(true);
-    let ask = support::Ask {
-        kind: "conversation",
-        subject: declaration.writer,
-        evidence: &cited,
-        state: &input,
-        locality,
-        keyless,
-        paid,
-    };
-    let verdict = match support::verdict(attempt, ctx, &model, &judging, diagnostic, &ask).await? {
-        Ok(verdict) => verdict,
-        Err(parked) => return Ok(parked),
-    };
-    let mut settled = match read(ctx.vault, &declaration).map_err(|error| {
-        verdict.spend.note_before_error(ctx);
-        error
-    })? {
-        Reading::Ready { .. } => {
-            let (reason, conflicts) = judged.map_or_else(
-                || (NO_DIAGNOSTIC.to_owned(), Vec::new()),
-                |judged| (judged.reason, judged.conflicts),
-            );
-            Settled {
-                verdict: verdict.verdict,
-                reason,
-                conflicts,
-                evidence_now: Some(declaration.pins_digest()),
-                words_live: true,
-                judge: None,
-                diagnostic,
-                decision: verdict.decision,
+    let mut spend = support::Spend::default();
+    let mut pieces = Vec::new();
+    let mut decided = None;
+    for (part, input, request) in asks {
+        let asked = ask_judge(attempt, ctx, &model, request, declaration.writer, &spend).await;
+        let judging = match asked.map_err(|error| {
+            spend.note_before_error(ctx);
+            error
+        })? {
+            Ok(judging) => judging,
+            Err(parked) => return Ok(parked),
+        };
+        let judged = judgment(&judging.response, &declaration);
+        let diagnostic = judged.as_ref().map(|judged| judged.verdict);
+        let ask = support::Ask {
+            kind: "conversation",
+            subject: declaration.writer,
+            evidence: &cited,
+            state: &input,
+            locality,
+            keyless,
+            paid,
+        };
+        let verdict =
+            match support::verdict(attempt, ctx, &model, &judging, diagnostic, &ask).await? {
+                Ok(verdict) => verdict,
+                Err(parked) => return Ok(parked),
+            };
+        spend = verdict.spend;
+        let (reason, mut conflicts) = judged.map_or_else(
+            || (NO_DIAGNOSTIC.to_owned(), Vec::new()),
+            |judged| (judged.reason, judged.conflicts),
+        );
+        if let Some((bytes, _)) = &part.piece {
+            for conflict in &mut conflicts {
+                conflict["bytes"] = serde_json::json!([bytes.start, bytes.end]);
             }
         }
+        let judged = PartJudged {
+            verdict: verdict.verdict,
+            reason,
+            conflicts,
+            judge: judging.judge(&model),
+            diagnostic,
+            decision: verdict.decision,
+        };
+        if let Some((bytes, _)) = &part.piece {
+            pieces.push(judged.piece(bytes));
+        }
+        // A part the judge does not find supported decides the check.
+        let decides = judged.verdict != CompactionCheckVerdict::Supported;
+        decided = Some(judged);
+        if decides {
+            break;
+        }
+    }
+    let Some(decided) = decided else {
+        spend.note_before_error(ctx);
+        return Err(Error::InvariantViolation(
+            "a conversation check judges no part",
+        ));
+    };
+    let mut settled = match read(ctx.vault, &declaration).map_err(|error| {
+        spend.note_before_error(ctx);
+        error
+    })? {
+        Reading::Ready(_) => Settled {
+            verdict: decided.verdict,
+            reason: decided.reason,
+            conflicts: decided.conflicts,
+            evidence_now: Some(declaration.pins_digest()),
+            words_live: true,
+            judge: None,
+            diagnostic: decided.diagnostic,
+            decision: decided.decision,
+        },
         Reading::Settled(settled) => settled,
         Reading::Deferred => {
-            return Ok(verdict
-                .spend
-                .park_with_spend(SPAN_NOT_RESIDENT, DreamerParkCause::Signal));
+            return Ok(spend.park_with_spend(SPAN_NOT_RESIDENT, DreamerParkCause::Signal));
         }
     };
-    settled.judge = Some(judging.judge(&model));
-    if let Err(error) = record(ctx.vault, attempt_id, &declaration, &settled, now) {
-        verdict.spend.note_before_error(ctx);
+    settled.judge = Some(decided.judge);
+    if let Err(error) = record(ctx.vault, attempt_id, &declaration, &settled, &pieces, now) {
+        spend.note_before_error(ctx);
         return Err(error);
     }
-    Ok(verdict.spend.completed())
+    Ok(spend.completed())
 }
 
 /// Reads the landing's receipt, the check material, the summary's words
@@ -283,7 +379,7 @@ pub(super) async fn run_conversation_check(
 fn read(vault: &Vault, declaration: &ConversationCheckDeclaration) -> Result<Reading> {
     use CompactionCheckVerdict::{StaleEvidence, UnreadableEvidence};
     let settled = |verdict, reason| Ok(Reading::Settled(Settled::new(verdict, reason)));
-    let (words, material) = {
+    let (words, material, reading) = {
         let txn = vault.store.env.read_txn()?;
         let Some(receipt) =
             crate::compaction::conversation_receipt_in(&vault.store, &txn, &declaration.summary)?
@@ -300,6 +396,7 @@ fn read(vault: &Vault, declaration: &ConversationCheckDeclaration) -> Result<Rea
         {
             return settled(StaleEvidence, "receipt_changed");
         }
+        let reading = evidence.and_then(|evidence| evidence.reading.clone());
         let words = crate::ports::EntityStoreRead::port_entity_record(
             &vault.store,
             &txn,
@@ -313,7 +410,7 @@ fn read(vault: &Vault, declaration: &ConversationCheckDeclaration) -> Result<Rea
             &declaration.summary,
             &declaration.material,
         )?;
-        (words, material)
+        (words, material, reading)
     };
     let Some(words) = words else {
         return settled(StaleEvidence, "summary_withdrawn");
@@ -335,7 +432,13 @@ fn read(vault: &Vault, declaration: &ConversationCheckDeclaration) -> Result<Rea
         return settled(UnreadableEvidence, "evidence_pin_unreadable");
     };
     match conversation_span_text(vault, &pins)? {
-        ConversationSpanRead::Ready(texts) => Ok(gate_again(declaration, &material, words, &texts)),
+        ConversationSpanRead::Ready(texts) => Ok(gate_again(
+            declaration,
+            &material,
+            reading.as_ref(),
+            words,
+            &texts,
+        )),
         ConversationSpanRead::Drifted => {
             let mut stale = Settled::new(StaleEvidence, "evidence_revision_moved");
             stale.words_live = true;
@@ -349,19 +452,28 @@ fn read(vault: &Vault, declaration: &ConversationCheckDeclaration) -> Result<Rea
 /// The six gate checks run again on the kept request, reply and policy,
 /// before any judgment (FIX 5040). A check that fails, or accepted prose
 /// other than the landed summary's words, is a mismatch that names it.
-/// Otherwise the span is ready for the judge.
+/// Otherwise the span is ready for the judge, in the parts `reading` names,
+/// or `unreadable_evidence` when the span or the kept entry does not bear
+/// that reading out.
 fn gate_again(
     declaration: &ConversationCheckDeclaration,
     material: &CompactionCheckMaterial,
+    reading: Option<&ConversationTurnReading>,
     words: String,
     texts: &[String],
 ) -> Reading {
     let reason = match material.rerun_gate() {
         Ok(prose) if prose == words => {
-            return Reading::Ready {
-                summary: words,
-                evidence: render(&declaration.turns, texts),
-            };
+            if let Some(parts) = parts(declaration, material, reading, words, texts) {
+                return Reading::Ready(parts);
+            }
+            let mut unreadable = Settled::new(
+                CompactionCheckVerdict::UnreadableEvidence,
+                TURN_READING_UNREADABLE,
+            );
+            unreadable.evidence_now = Some(declaration.pins_digest());
+            unreadable.words_live = true;
+            return Reading::Settled(unreadable);
         }
         Ok(_) => "gate_summary_differs".to_owned(),
         Err(failure) => format!("gate_failed:{}", failure.check.as_str()),
@@ -370,6 +482,78 @@ fn gate_again(
     mismatch.evidence_now = Some(declaration.pins_digest());
     mismatch.words_live = true;
     Reading::Settled(mismatch)
+}
+
+/// The parts the judge reads, the landed summary's last. With no `reading`,
+/// that summary against the span whole. For the span's one turn read in
+/// pieces, first each piece summary, read back out of the kept entry,
+/// against exactly its bytes of the turn's window text, then the landed
+/// summary against that entry, as its writer read it. For a turn whose
+/// entry fell back to its head, the landed summary against that head.
+/// `None` when the span or the kept entry does not bear `reading` out.
+fn parts(
+    declaration: &ConversationCheckDeclaration,
+    material: &CompactionCheckMaterial,
+    reading: Option<&ConversationTurnReading>,
+    words: String,
+    texts: &[String],
+) -> Option<Vec<Part>> {
+    let Some(reading) = reading else {
+        let evidence = render(&declaration.turns, texts);
+        return Some(vec![Part {
+            piece: None,
+            summary: words,
+            evidence,
+        }]);
+    };
+    let ([span], [text]) = (declaration.turns.as_slice(), texts) else {
+        return None;
+    };
+    // The turn's window text, as its writer's pieces cut it.
+    let window = format!("{}: {text}", span.role);
+    let total = window.len();
+    match reading {
+        ConversationTurnReading::Head { end } => {
+            let end = usize::try_from(*end).ok()?;
+            let head = window.get(..end)?;
+            let evidence =
+                format!("[0] {head}\n[cut: only bytes 0..{end} of this turn's {total} were given]");
+            Some(vec![Part {
+                piece: None,
+                summary: words,
+                evidence,
+            }])
+        }
+        ConversationTurnReading::Pieces { pieces } => {
+            let sealed = material.sealed_request();
+            let [entry] = sealed.window.as_slice() else {
+                return None;
+            };
+            let summaries = entry_piece_summaries(&entry.content, total, pieces)?;
+            let mut parts = Vec::with_capacity(pieces.len() + 1);
+            for (piece, summary) in pieces.iter().zip(summaries) {
+                let bytes = usize::try_from(piece.start).ok()?..usize::try_from(piece.end).ok()?;
+                let evidence = format!(
+                    "[0] [bytes {}..{} of this turn's {total}]\n{}",
+                    bytes.start,
+                    bytes.end,
+                    window.get(bytes.clone())?
+                );
+                parts.push(Part {
+                    piece: Some((bytes, total)),
+                    summary: summary.to_owned(),
+                    evidence,
+                });
+            }
+            let evidence = format!("[0] {}: {}", span.role, entry.content);
+            parts.push(Part {
+                piece: None,
+                summary: words,
+                evidence,
+            });
+            Some(parts)
+        }
+    }
 }
 
 /// The span as the judge reads it: each turn by its place in the span, who
@@ -412,17 +596,21 @@ fn judge_request(
     judge_call(model, schema, input, locality, keyless, paid)
 }
 
-/// What the judge reads: the span's length in turns, the summary and the
-/// span's words, whole.
-fn judge_input(
-    declaration: &ConversationCheckDeclaration,
-    summary: &str,
-    evidence: &str,
-) -> serde_json::Value {
+/// What the judge reads for `part`: the span's length in turns and, for a
+/// piece summary, the bytes of the turn it covers; the summary; and the text
+/// it was written from, whole.
+fn judge_input(declaration: &ConversationCheckDeclaration, part: &Part) -> serde_json::Value {
+    let turns = declaration.turns.len();
+    let span = match &part.piece {
+        None => serde_json::json!({"turns": turns}),
+        Some((bytes, total)) => {
+            serde_json::json!({"turns": turns, "bytes": [bytes.start, bytes.end], "of": total})
+        }
+    };
     serde_json::json!({
-        "span": {"turns": declaration.turns.len()},
-        "summary": summary,
-        "evidence": evidence,
+        "span": span,
+        "summary": part.summary,
+        "evidence": part.evidence,
     })
 }
 
@@ -473,15 +661,17 @@ fn judgment(response: &LlmResponse, declaration: &ConversationCheckDeclaration) 
 }
 
 /// Records one verdict as the Dreamer's finding about the writer, citing
-/// the writer, its filed step and, while its words stand, the summary.
+/// the writer, its filed step and, while its words stand, the summary. A
+/// turn judged per piece lists each piece judged, with its bytes.
 fn record(
     vault: &Vault,
     attempt: AttemptId,
     declaration: &ConversationCheckDeclaration,
     settled: &Settled,
+    pieces: &[serde_json::Value],
     now: u64,
 ) -> Result<EntityId> {
-    let value = serde_json::json!({
+    let mut value = serde_json::json!({
         "verdict": settled.verdict.as_str(),
         "session": declaration.session.to_hex(),
         "conversation": declaration.conversation.to_hex(),
@@ -511,6 +701,9 @@ fn record(
         "diagnostic_verdict": settled.diagnostic.map(CompactionCheckVerdict::as_str),
         "decision": settled.decision,
     });
+    if !pieces.is_empty() {
+        value["pieces"] = serde_json::Value::from(pieces.to_vec());
+    }
     emit_finding(
         vault,
         attempt,
