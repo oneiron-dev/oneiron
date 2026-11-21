@@ -1346,12 +1346,10 @@ impl Vault {
         slips: Option<&HostSlipIssuer>,
         between: impl FnOnce(),
     ) -> Result<SharedActExecutionReceipt> {
-        let importance = {
-            let txn = self.store.env.read_txn()?;
-            self.member_leave_importance_in_txn(&txn, member, vault_id)?
-        };
-        let witness =
-            self.owner_presence(importance, owner_presence_reasons::LEAVE_SHARED_VAULT)?;
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::LEAVE_SHARED_VAULT,
+        )?;
         let ground = OwnerProofGround::witnessed(&witness);
         between();
         let own_issuer = self.membership_issuer(slips);
