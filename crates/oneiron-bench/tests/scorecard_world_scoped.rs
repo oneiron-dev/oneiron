@@ -201,8 +201,8 @@ fn world_scoped_arm_serves_and_grades_readable_records_only() {
     let stdout = String::from_utf8_lossy(&result.stdout);
     assert!(
         result.status.success(),
-        "the world-scoped arm runs (on main the arm and its flags are unknown, exit 2), and a \
-         second-world record served to the agent would fail it: stdout {stdout} stderr {stderr}"
+        "the world-scoped arm runs, and a second-world record served to the agent would fail \
+         it: stdout {stdout} stderr {stderr}"
     );
     let line = summary(&result);
     assert_eq!(line["arm"], "world-scoped");
