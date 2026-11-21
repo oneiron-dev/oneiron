@@ -12,11 +12,13 @@
 //! cosign proves nothing. [`Vault::recovery_box_kit_only_fact`] answers the
 //! act in force, for the node to hold or release the box.
 //!
-//! An install that holds no key the fold takes as the owner's proof writes
-//! no act, as nothing could count it: the preset change stands, and the node
-//! reads no new fact. The act's proof is signed on the person's confirm: a
-//! preset door asks for it before its write whenever its switch signs a fact
-//! ([`Vault::recovery_preset_proof_ground`]).
+//! A preset door asks before its write when the switch would change the fact
+//! or rotate the recovery authority key ([`Vault::recovery_preset_proof_ground`]).
+//! It does not check for a proving key before it asks: a key under a device
+//! PIN proves only once the PIN step has opened its window. The act's proof
+//! is signed on the person's confirm. An install that still holds no key the
+//! fold takes as the owner's proof writes no act, as nothing could count it:
+//! the preset change stands, and the node reads no new fact.
 
 use crate::Vault;
 use crate::authority::{
@@ -24,12 +26,27 @@ use crate::authority::{
     PolicySettingAct,
 };
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 
 /// The act did not land with the owner key's proof in the switch's write.
 const FACT_NOT_COUNTED: &str = "the kit-only switch's signed record did not count with the owner \
                                 key's proof; nothing was written";
+
+/// The switch's write found a rotation or a fact change that its door's read
+/// did not, so the person at this device was not asked about it.
+const SWITCH_CHANGED_SINCE_ASKED: &str = "this switch would change more than it did when the \
+                                          person at this device was asked; nothing was written";
+
+/// The ground a switch's write rotates the recovery authority key or changes
+/// the kit-only fact on: the important confirm its door asked for. A door
+/// that asked for none read neither change, so the write found one that came
+/// after the read: a conflict, and nothing is written.
+pub(super) fn asked_ground(ground: Option<&OwnerProofGround>) -> Result<&OwnerProofGround> {
+    let ground = ground.ok_or(Error::ConcurrentWrite(SWITCH_CHANGED_SINCE_ASKED))?;
+    ground.refuse_risen_importance(OwnerActImportance::Important)?;
+    Ok(ground)
+}
 
 /// The recovery box's kit-only switch as the fold holds it: the owner's act
 /// in force of [`PolicySetting::RecoveryBoxKitOnly`].
@@ -82,32 +99,32 @@ impl Vault {
             }))
     }
 
-    /// The ground a preset door signs its kit-only fact on, read before the
-    /// door's write: the person's confirm of an important act
-    /// ([`Vault::owner_presence`]), asked only when a switch to `kit_only`
-    /// signs a fact (the fact in force does not already say so, and this
-    /// install holds a key that proves for the owner,
-    /// [`Vault::holds_proving_owner_key`]); `None` otherwise, and the door's
-    /// write then signs none. Main's rule for a setting change: one that
-    /// signs no owner proof is not asked.
+    /// The ground a preset door signs its kit-only fact on, checked before
+    /// the door's write: the person's confirm of an important act
+    /// ([`Vault::owner_presence`]), asked when the fact in force does not
+    /// already say `kit_only` or the door reads that it `rotates` the recovery
+    /// authority key; `None` otherwise. The read does not look for a proving
+    /// key: a key under a device PIN proves only once the PIN step has opened
+    /// its window. An install on which no key proves is asked and signs no fact.
+    /// The read revalidates `owner` first, so a proof that no longer holds
+    /// raises no prompt; the door's write revalidates it again.
     ///
     /// # Errors
-    /// The presence check's refusal (a declined prompt; a device PIN whose
-    /// window is closed); the authority log's read errors.
+    /// An owner proof that no longer holds; the presence check's refusal (a
+    /// declined prompt; a device PIN whose window is closed); the authority
+    /// log's read errors.
     pub(crate) fn recovery_preset_proof_ground(
         &self,
+        owner: &crate::consent::AuthenticatedOwner,
         kit_only: bool,
+        rotates: bool,
     ) -> Result<Option<OwnerProofGround>> {
-        let signs = {
+        let before = {
             let txn = self.store.env.read_txn()?;
-            let before = self.recovery_box_kit_only_fact_in_txn(&txn)?;
-            if before.is_some_and(|fact| fact.kit_only == kit_only) {
-                return Ok(None);
-            }
-            let fold = self.authority_view_readonly_in_txn(&txn)?;
-            self.holds_proving_owner_key(&fold)
+            owner.revalidate_in_txn(self, &txn)?;
+            self.recovery_box_kit_only_fact_in_txn(&txn)?
         };
-        if !signs {
+        if !rotates && before.is_some_and(|fact| fact.kit_only == kit_only) {
             return Ok(None);
         }
         let witness = self.owner_presence(
@@ -121,15 +138,15 @@ impl Vault {
     /// `surface`, in the preset's write `txn`, on `ground`, the person's
     /// confirm the door asked for, when the fact in force does not already
     /// say so and this install holds a key that proves for the owner
-    /// ([`Vault::holds_proving_owner_key`]). With no ground (the door read
-    /// before its write that no fact would be signed) it signs none. The
-    /// act's `prior` is the fact in force, off when there is none. The entry
-    /// hash when it signed one.
+    /// ([`Vault::holds_proving_owner_key`]). A change to the fact requires
+    /// an important ground even when no key proves. The act's `prior` is
+    /// the fact in force, off when there is none. The entry hash when it
+    /// signed one.
     ///
     /// # Errors
     /// The act did not land with the owner key's proof (`FACT_NOT_COUNTED`),
     /// the carried act's own errors, and storage errors: the preset's write
-    /// fails whole.
+    /// fails whole. A fact change the door did not ask for is a conflict.
     pub(crate) fn append_recovery_box_kit_only_fact_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -142,6 +159,7 @@ impl Vault {
         if before.is_some_and(|fact| fact.kit_only == kit_only) {
             return Ok(None);
         }
+        let ground = asked_ground(ground)?;
         let fold = self.authority_view_readonly_in_txn(txn)?;
         if !self.holds_proving_owner_key(&fold) {
             tracing::info!(
@@ -150,13 +168,6 @@ impl Vault {
             );
             return Ok(None);
         }
-        let Some(ground) = ground else {
-            tracing::info!(
-                kit_only,
-                "the preset door asked for no confirm: no kit-only fact was signed"
-            );
-            return Ok(None);
-        };
         let target = kit_only_target()?;
         let seen = self.policy_setting_revision_in_txn(txn, target)?;
         let prior = before.is_some_and(|fact| fact.kit_only);
