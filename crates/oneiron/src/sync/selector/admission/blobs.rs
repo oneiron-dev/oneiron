@@ -150,6 +150,12 @@ fn admit_federated_entity_blob_graded(
         header.entity_type,
         &blob[ENTITY_METADATA_HEADER_LEN..],
     )?;
+    // VOICE-PHONE-AGENT-REACH R2 review F1: nor a phone mark, which the
+    // phone keep alone writes.
+    crate::voice_call::refuse_written_phone_mark(
+        header.entity_type,
+        &blob[ENTITY_METADATA_HEADER_LEN..],
+    )?;
     if crate::sync::pack_sync::is_pack_handle(header.entity_type) {
         validate_federated_pack(&vault.store, txn, blob)?;
         return Ok((id, blob.to_vec()));
@@ -211,6 +217,22 @@ fn admit_federated_entity_blob_graded(
         )?;
         refuse_peer_agent_definition_widening(&vault.store, txn, &here, blob)?;
         refuse_peer_task_authority_fact(blob)?;
+        // ROOM-BODY-REPLICA-SETTINGS: a member's room body changes a room
+        // setting only with the power its door asks of the sender, judged
+        // against the row this vault holds; the import's writer judges it
+        // again against the row its put replaces.
+        if let ImportGrading::FirstParty { sender } = grading
+            && header.entity_type == ENTITY_TYPE_CONVERSATION
+            && let Some(refusal) = crate::workspace_roster::peer_room_settings_refusal_in_txn(
+                vault,
+                txn,
+                here,
+                sender,
+                &blob[ENTITY_METADATA_HEADER_LEN..],
+            )?
+        {
+            return Err(refusal);
+        }
         if matches!(grading, ImportGrading::Imported { .. })
             && matches!(
                 header.entity_type,
@@ -239,7 +261,7 @@ fn admit_federated_entity_blob_graded(
         ImportGrading::Imported { scale } => {
             downweight_federated_claim(restamp_federated_claim_source(body), scale)?
         }
-        ImportGrading::FirstParty => body,
+        ImportGrading::FirstParty { .. } => body,
     };
     if let Some(guest) = guest {
         // Its world is the recipient's before the gate judges it, so the copy

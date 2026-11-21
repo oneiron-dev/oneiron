@@ -44,10 +44,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/pdf/work.rs` | src | s | 9 crate-vis | — | Shared types for the ported prepare/inspect PDF pipeline (FIX 7980/8157) |
 | `src/native/pdf/work_burn.rs` | src | s | 9 crate-vis | — | Ported field burn-in and annotation-appearance flattening (FIX 7980/8157) |
 | `src/native/pdf/work_evidence.rs` | src | m | 4 crate-vis | — | Ported certificate/complete-trail PDF appendices (FIX 7980/8157) |
-| `src/native/pdf/work_preflight.rs` | src | L | 2 crate-vis | — | Exact xref framing and lossless object-stream expansion before rewriting (FIX 7980/8157) |
+| `src/native/pdf/work_preflight.rs` | src | m | 2 crate-vis | — | Exact xref framing and lossless object-stream expansion before rewriting (FIX 7980/8157) |
+| `src/native/pdf/work_preflight/document_load.rs` | src | s | 1 crate-vis | — | Strict document load: the admitted parse of the input plus the object load that expands deferred object… |
 | `src/native/pdf/work_prepare.rs` | src | m | 4 crate-vis | — | Ported esign PDF preparation orchestration (FIX 7980/8157) |
 | `src/native/pdf/work_present.rs` | src | s | 6 crate-vis | — | Ported page geometry over the shared renderer (FIX 7980/8157) |
-| `src/native/pdf/work_source.rs` | src | L | 12 crate-vis | — | Ported static page-tree and resource-graph admission and copying (FIX 7980/8157) |
+| `src/native/pdf/work_source.rs` | src | m | 11 crate-vis | — | Ported static page-tree and resource-graph admission and copying (FIX 7980/8157) |
+| `src/native/pdf/work_source/page_tree.rs` | src | s | 2 crate-vis | — | Page-tree traversal and inherited page geometry |
 | `src/native/pdf/work_streams.rs` | src | s | 3 crate-vis | — | — |
 | `src/native/profile/assembly.rs` | src | m | 6 crate-vis | — | B-B/B-T/B-LTA orchestration: backend signing, TSA failover, capacity ladder, DocTimeStamp, degrade warnings |
 | `src/native/profile/dss.rs` | src | s | 3 crate-vis | — | DSS serialization: stream objects, global Certs/OCSPs/CRLs arrays, DSS revision append |
@@ -61,7 +63,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/verify/review_1842_tests.rs` | test | m | — | — | SGN-05 public verifier regressions retained across the ONE-1941 report merge |
 | `src/native/verify/timestamp_evidence.rs` | src | s | 7 crate-vis | — | Total private RFC 3161 outcomes; one projection emits crypto and TSA trust |
 | `src/native/verify/verify_chain_gates.rs` | src | m | 12 crate-vis | — | Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and… |
-| `src/native/verify/verify_dss_core.rs` | src | L | 14 crate-vis | — | DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage… |
+| `src/native/verify/verify_dss_core.rs` | src | m | 13 crate-vis | — | DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage… |
+| `src/native/verify/verify_dss_core/revision_coverage.rs` | src | s | 2 crate-vis | — | DSS-revision coverage measurement: reference-chain collection and the provable end offset of the effective… |
 | `src/native/verify/verify_evidence.rs` | src | s | 7 crate-vis | — | Private, bounded evidence collected before trust, time, and profile decisions |
 | `src/native/verify/verify_report_build.rs` | src | s | 2 crate-vis | — | Project completed evidence into the public per-envelope report once |
 | `src/native/verify/verify_revisions.rs` | src | m | 1 crate-vis | — | Bounded revision snapshots and default-deny classification of post-sign changes |

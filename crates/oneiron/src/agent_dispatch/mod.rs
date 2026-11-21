@@ -109,10 +109,14 @@ pub use self::run_task::{
     AGENT_RUN_TASK_SUBKIND, AgentRunExecutorLease, AgentRunFence, AgentRunOutcome,
 };
 #[cfg(oneiron_test_support)]
-pub(crate) use self::run_task::{proven_agent_run_task_writer_in, put_peer_agent_run_task_in_txn};
+pub(crate) use self::run_task::{
+    proven_agent_run_task_writer_in, put_peer_agent_run_task_in_txn,
+    rewrite_peer_agent_run_task_lease_in_txn, rewrite_peer_agent_run_task_parent_context_in_txn,
+};
 mod run_writer_proof;
 mod scope;
 pub(crate) use scope::project_descends_from_in_txn;
+pub(crate) mod setting_keys;
 mod skill_default;
 pub(crate) use skill_default::{
     bootstrap_skill_in_force_in_txn, bootstrap_skill_root_in_txn,
@@ -186,8 +190,9 @@ pub use self::spend_record::{
 
 pub use self::agent_wait::{AgentWaitChild, AgentWaitSetResult};
 pub(crate) use self::agent_wait::{
-    AgentWaitOpen, AgentWaitPolicy, agent_dispatch_child_wait_accepts_masked, agent_wait_attempt,
-    open_agent_wait, settle_agent_child_waits_in_txn,
+    AgentWaitOpen, AgentWaitPolicy, CHILD_WAIT_UNTIL_JOB, agent_dispatch_child_wait_accepts_masked,
+    agent_wait_attempt, open_agent_wait, rearm_restored_wait_deadlines_in_txn,
+    settle_agent_child_waits_in_txn,
 };
 pub(crate) use self::budget_hold::erase_plan_hold_actor_in_txn;
 pub use self::budget_hold::{

@@ -183,6 +183,7 @@ fn node_profile(
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     }
 }
 
@@ -620,10 +621,12 @@ fn a_custodial_root_alone_does_not_rebind_the_owners_binding_to_an_agent() {
     );
 }
 
-/// Main: after the root revokes the owner's binding, its agent bind of the
+/// Main: after the owner's binding is revoked, the root's agent bind of the
 /// same key counts and replaces the revoked `human` record, so the fold reads
 /// the owner as bound nowhere, live on the carrier's word: the root alone
-/// undoes the owner's removal (REVIEW2 #9137 P2-1).
+/// undoes the owner's removal (REVIEW2 #9137 P2-1). The owner key revokes its
+/// own binding here: the root alone revokes no person's binding either (row
+/// HOSTED-OWNER-BIND-ROOT-REVOKE).
 #[test]
 fn a_custodial_root_alone_does_not_bind_over_the_owners_revoked_binding() {
     let mut vault = OwnerKeyVault::on_a_hosted_vault();
@@ -640,14 +643,14 @@ fn a_custodial_root_alone_does_not_bind_over_the_owners_revoked_binding() {
     );
     let root = vault.root.clone();
     let revoke = vault.append(
-        3,
+        2,
         owners_bind,
         actor_revoke(owner_key.clone(), 1),
-        &root,
+        &key,
         &[],
     );
     let rebind = vault.append(
-        4,
+        3,
         revoke,
         AuthorityOp::BindActor {
             authority_key: owner_key.clone(),
@@ -661,7 +664,7 @@ fn a_custodial_root_alone_does_not_bind_over_the_owners_revoked_binding() {
     let fold = vault.fold();
     assert!(
         fold.valid_entries.contains(&revoke),
-        "a revoke never asks: {revoke:?}"
+        "the owner key's revoke of its own binding counts: {revoke:?}"
     );
     assert!(
         !fold.valid_entries.contains(&rebind),
@@ -757,9 +760,10 @@ fn a_self_host_root_binds_the_owner_alone() {
 }
 
 /// Passes on main too: the gate reads the cloud stamp, a fact in the log,
-/// and not host custody, which takes a host-attested self-host root as the
-/// host's on a hosted fold. A self-hosted vault opened as Hosted keeps the
-/// bind of the transaction that rooted it, and every row after.
+/// never the host-root attestation a self-host root carries too (row
+/// HOSTED-REOPEN-REJUDGES-SELF-HOST-ROOT). A self-hosted vault opened as
+/// Hosted keeps the bind of the transaction that rooted it, and every row
+/// after.
 #[test]
 fn a_self_host_root_bind_counts_when_its_log_is_folded_as_hosted() {
     let mut vault = OwnerKeyVault::self_hosted_folded_as_hosted();
@@ -947,4 +951,265 @@ fn a_custodial_root_alone_binds_an_agent_key_on_a_hosted_vault() {
         "the agent key speaks for its actor: {:?}",
         fold.actor_bindings
     );
+}
+
+/// Row HOSTED-OWNER-BIND-ROOT-REVOKE. Main: the custodial root's revoke of the
+/// binding an owner key made counts, so the owner's only binding ends and
+/// every replica takes the owner as removed (`owner_live_at`).
+#[test]
+fn a_custodial_root_alone_does_not_revoke_an_owner_keys_binding() {
+    let mut vault = OwnerKeyVault::on_a_hosted_vault();
+    let registration = vault.registration();
+    let key = signing(OWNER_KEY_SEED);
+    let owner_key = key_of(&key);
+    let enrolment = vault.enrol(2, registration, &key);
+    let bind = vault.append(
+        1,
+        enrolment,
+        human_bind(owner_key.clone(), owner(), 1),
+        &key,
+        &[],
+    );
+    let root = vault.root.clone();
+    let revoke = vault.append(3, bind, actor_revoke(owner_key.clone(), 1), &root, &[]);
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&bind),
+        "the owner key's own bind counts, so the test cannot pass for the wrong reason: {bind:?}"
+    );
+    assert!(
+        !fold.valid_entries.contains(&revoke),
+        "the custodial root's revoke of a person's binding alone does not count: {revoke:?}"
+    );
+    assert!(
+        binds_active(&fold, &owner_key, owner()),
+        "the owner's binding stays active: {:?}",
+        fold.actor_bindings
+    );
+}
+
+/// Row HOSTED-OWNER-BIND-ROOT-REVOKE, old parents. Main: the root revokes the
+/// key's binding at a high epoch on parents from before the key's enrolment,
+/// where nothing binds it; the revoke's floor lands on every branch the merge
+/// joins, so the owner key's own bind on the other branch ends.
+#[test]
+fn a_custodial_root_revoke_on_old_parents_leaves_an_owner_keys_binding_active() {
+    let mut vault = OwnerKeyVault::on_a_hosted_vault();
+    let registration = vault.registration();
+    let key = signing(OWNER_KEY_SEED);
+    let owner_key = key_of(&key);
+    let root = vault.root.clone();
+    let revoke = vault.append(
+        2,
+        registration,
+        actor_revoke(owner_key.clone(), 7),
+        &root,
+        &[],
+    );
+    let enrolment = vault.enrol(3, registration, &key);
+    let bind = vault.append(
+        1,
+        enrolment,
+        human_bind(owner_key.clone(), owner(), 1),
+        &key,
+        &[],
+    );
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&enrolment) && fold.valid_entries.contains(&bind),
+        "the enrolment and the owner key's own bind count: {enrolment:?} {bind:?}"
+    );
+    assert!(
+        !fold.valid_entries.contains(&revoke),
+        "the custodial root's revoke of a key its parents do not hold alone does not count: \
+         {revoke:?}"
+    );
+    assert!(
+        binds_active(&fold, &owner_key, owner()),
+        "the owner's binding stays active: {:?}",
+        fold.actor_bindings
+    );
+}
+
+/// Row HOSTED-OWNER-BIND-ROOT-REVOKE, the epoch floor. Main: the root revokes
+/// a live owner key no binding names yet, at a high epoch, so the key's own
+/// bind on a sibling branch ends in the merge, and every later bind of the
+/// key below that floor is refused.
+#[test]
+fn a_custodial_root_alone_does_not_floor_an_owner_keys_epoch() {
+    let mut vault = OwnerKeyVault::on_a_hosted_vault();
+    let registration = vault.registration();
+    let key = signing(OWNER_KEY_SEED);
+    let owner_key = key_of(&key);
+    let enrolment = vault.enrol(2, registration, &key);
+    let root = vault.root.clone();
+    let revoke = vault.append(3, enrolment, actor_revoke(owner_key.clone(), 9), &root, &[]);
+    let bind = vault.append(
+        1,
+        enrolment,
+        human_bind(owner_key.clone(), owner(), 1),
+        &key,
+        &[],
+    );
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&bind),
+        "the owner key's own bind counts: {bind:?}"
+    );
+    assert!(
+        !fold.valid_entries.contains(&revoke),
+        "the custodial root's revoke of an owner key alone does not count: {revoke:?}"
+    );
+    assert!(
+        binds_active(&fold, &owner_key, owner()),
+        "the owner's binding stays active: {:?}",
+        fold.actor_bindings
+    );
+}
+
+/// Passes on main too: an owner key ends its own binding.
+#[test]
+fn an_owner_key_revokes_its_own_binding_on_a_hosted_vault() {
+    let mut vault = OwnerKeyVault::on_a_hosted_vault();
+    let registration = vault.registration();
+    let key = signing(OWNER_KEY_SEED);
+    let owner_key = key_of(&key);
+    let enrolment = vault.enrol(2, registration, &key);
+    let bind = vault.append(
+        1,
+        enrolment,
+        human_bind(owner_key.clone(), owner(), 1),
+        &key,
+        &[],
+    );
+    let revoke = vault.append(2, bind, actor_revoke(owner_key.clone(), 1), &key, &[]);
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&revoke),
+        "the owner key's revoke of its own binding counts: {revoke:?}"
+    );
+    assert!(
+        !binds_active(&fold, &owner_key, owner()),
+        "the owner's binding ended: {:?}",
+        fold.actor_bindings
+    );
+}
+
+/// Passes on main too: an owner key's cosign is the owner's proof, as for a
+/// bind.
+#[test]
+fn an_owner_key_cosign_lets_the_custodial_root_revoke_the_owners_binding() {
+    let mut vault = OwnerKeyVault::on_a_hosted_vault();
+    let registration = vault.registration();
+    let key = signing(OWNER_KEY_SEED);
+    let owner_key = key_of(&key);
+    let enrolment = vault.enrol(2, registration, &key);
+    let bind = vault.append(
+        1,
+        enrolment,
+        human_bind(owner_key.clone(), owner(), 1),
+        &key,
+        &[],
+    );
+    let root = vault.root.clone();
+    let revoke = vault.append(3, bind, actor_revoke(owner_key.clone(), 1), &root, &[&key]);
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&revoke),
+        "the root's revoke with the owner key's cosign counts: {revoke:?}"
+    );
+    assert!(
+        !binds_active(&fold, &owner_key, owner()),
+        "the owner's binding ended: {:?}",
+        fold.actor_bindings
+    );
+}
+
+/// Passes on main too: a binding no person holds, a machine's `ROLE_AGENT`
+/// key's, ends on the custodial root's word, as it binds on it.
+#[test]
+fn a_custodial_root_alone_revokes_an_agent_keys_binding_on_a_hosted_vault() {
+    let mut vault = OwnerKeyVault::on_a_hosted_vault();
+    let registration = vault.registration();
+    let agent = signing(OWNER_KEY_SEED);
+    let agent_key = key_of(&agent);
+    let root = vault.root.clone();
+    let enrolment = vault.append(
+        2,
+        registration,
+        AuthorityOp::EnrollDevice {
+            device: DeviceAuthority {
+                key: agent_key.clone(),
+                transport_key_binding: [0; 32],
+                attestation: AuthorityAttestation {
+                    kind: "SoftwareArgon2id".to_owned(),
+                    evidence: Vec::new(),
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_AGENT,
+            },
+        },
+        &root,
+        &[],
+    );
+    let bind = vault.append(
+        3,
+        enrolment,
+        AuthorityOp::BindActor {
+            authority_key: agent_key.clone(),
+            actor_ref: other_person(),
+            actor_class: "agent".to_owned(),
+            epoch: 1,
+        },
+        &root,
+        &[&agent],
+    );
+    let revoke = vault.append(4, bind, actor_revoke(agent_key.clone(), 1), &root, &[]);
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&bind) && fold.valid_entries.contains(&revoke),
+        "the root's agent bind and its revoke count: {bind:?} {revoke:?}"
+    );
+    assert!(
+        fold.actor_bindings
+            .get(&agent_key)
+            .is_some_and(|binding| binding.status != ActorBindingStatus::Active),
+        "the agent key's binding ended: {:?}",
+        fold.actor_bindings
+    );
+}
+
+/// Passes on main too: a self-host root is the owner's own key, so it ends
+/// the owner's binding alone, under the hosted posture too (the gate reads
+/// the cloud stamp, row HOSTED-REOPEN-REJUDGES-SELF-HOST-ROOT).
+#[test]
+fn a_self_host_root_revokes_the_owners_binding_alone() {
+    for mut vault in [
+        OwnerKeyVault::self_hosted(),
+        OwnerKeyVault::self_hosted_folded_as_hosted(),
+    ] {
+        let registration = vault.registration();
+        let root = vault.root.clone();
+        let root_key = key_of(&root);
+        let bind = vault.append(
+            2,
+            registration,
+            human_bind(root_key.clone(), owner(), 1),
+            &root,
+            &[],
+        );
+        let revoke = vault.append(3, bind, actor_revoke(root_key.clone(), 1), &root, &[]);
+        let fold = vault.fold();
+        assert!(
+            fold.valid_entries.contains(&revoke),
+            "the self-host root's revoke of the owner's binding counts (hosted fold: {}): \
+             {revoke:?}",
+            vault.hosted
+        );
+        assert!(
+            !binds_active(&fold, &root_key, owner()),
+            "the owner's binding ended: {:?}",
+            fold.actor_bindings
+        );
+    }
 }

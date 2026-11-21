@@ -31,7 +31,7 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::authority::{FoldedMachine, MachineDeviceClass, MachineRole};
+use crate::authority::{FoldedMachine, MachineDeviceClass, MachineRole, PinnedRoot};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
@@ -170,8 +170,9 @@ pub struct MachineListing {
     pub reported_model: Option<String>,
     /// Whether it is this install's own machine.
     pub this_install: bool,
-    /// Its answer revision, which an answer or a removal presents back as
-    /// `seen`. A name never moves it.
+    /// Its answer revision under this install's pin
+    /// ([`FoldedMachine::answer_revision`]), which an answer or a removal
+    /// presents back as `seen`. A name never moves it.
     pub revision: [u8; 32],
 }
 
@@ -199,9 +200,13 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let mut machines = Vec::with_capacity(fold.machines.len());
         for (machine, folded) in &fold.machines {
-            if let Some(listing) =
-                self.machine_listing_in_txn(&txn, *machine, folded, this == Some(*machine))?
-            {
+            if let Some(listing) = self.machine_listing_in_txn(
+                &txn,
+                *machine,
+                folded,
+                this == Some(*machine),
+                fold.pinned_root.as_ref(),
+            )? {
                 machines.push(listing);
             }
         }
@@ -250,8 +255,9 @@ impl Vault {
         let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
         let serving = self.serving_machine_in_txn(txn)?;
         let this_install = serving == Some(machine);
-        let folded = self
-            .authority_view_readonly_in_txn(txn)?
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let pin = fold.pinned_root;
+        let folded = fold
             .machine(machine)
             .cloned()
             .ok_or(Error::EntityNotFound)?;
@@ -277,7 +283,7 @@ impl Vault {
         };
         put_owner_name_in_txn(self, txn, machine, held.as_ref(), &row)?;
         let listing = self
-            .machine_listing_in_txn(txn, machine, &folded, this_install)?
+            .machine_listing_in_txn(txn, machine, &folded, this_install, pin.as_ref())?
             .ok_or(Error::EntityNotFound)?;
         Ok(MachineOwnerNameSet {
             machine: listing,
@@ -410,14 +416,43 @@ impl Vault {
         })
     }
 
-    /// One machine as the list shows it, read in `txn`: `None` for a folded
-    /// machine with no chain, which names no class.
+    /// The name `machine` is shown by, read in `txn` as the list reads it,
+    /// with its id's first eight hex digits after a class word, so two
+    /// machines of one class read apart; `None` for a machine the authority
+    /// fold does not name, or names with no chain. No owner proof: an engine
+    /// notice to the owner names his machines by it.
+    pub(crate) fn machine_shown_name_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        machine: EntityId,
+    ) -> Result<Option<String>> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let Some(folded) = fold.machine(machine) else {
+            return Ok(None);
+        };
+        let this_install = self.serving_machine_in_txn(txn)? == Some(machine);
+        let listing = self.machine_listing_in_txn(
+            txn,
+            machine,
+            folded,
+            this_install,
+            fold.pinned_root.as_ref(),
+        )?;
+        Ok(listing.map(|listing| match listing.name_source {
+            MachineNameSource::Class => format!("{} {}", listing.name, &machine.to_hex()[..8]),
+            _ => listing.name,
+        }))
+    }
+
+    /// One machine as the list shows it, read in `txn` on an install with
+    /// `pin`: `None` for a folded machine with no chain, which names no class.
     fn machine_listing_in_txn(
         &self,
         txn: &RoTxn<'_>,
         machine: EntityId,
         folded: &FoldedMachine,
         this_install: bool,
+        pin: Option<&PinnedRoot>,
     ) -> Result<Option<MachineListing>> {
         let Some(chain) = folded
             .roster
@@ -439,7 +474,7 @@ impl Vault {
             reported_name: names.reported_name,
             reported_model: names.reported_model,
             this_install,
-            revision: folded.answer_revision(),
+            revision: folded.answer_revision(pin),
         }))
     }
 }

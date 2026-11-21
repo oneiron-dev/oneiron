@@ -131,6 +131,12 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
         AuthorityOp::PolicySettingSet(set) => {
             vec![Grant::InstallKey(set.machine, entry.signer_key().clone())]
         }
+        AuthorityOp::SettingCopy(copy) => {
+            vec![Grant::InstallKey(copy.machine, entry.signer_key().clone())]
+        }
+        AuthorityOp::SettingPackHead(head) => {
+            vec![Grant::InstallKey(head.machine, entry.signer_key().clone())]
+        }
         AuthorityOp::ExportAct(record) => {
             vec![Grant::InstallKey(
                 record.machine,
@@ -261,7 +267,7 @@ fn consent_order(
     entries: &[(AuthorityEntryHash, &AuthorityLogEntry)],
 ) -> Vec<usize> {
     let mut builder = StructureBuilder::under(local);
-    for entry in stored {
+    for &entry in stored {
         builder.push(entry);
     }
     builder.settle();
@@ -281,7 +287,10 @@ pub(crate) fn authority_stage_order(
 
 /// The consent structure of the stored rows and the rows staged so far, and
 /// the hashes of the stored rows.
-type Consent<'r> = (StructureBuilder<'r>, &'r BTreeSet<AuthorityEntryHash>);
+type Consent<'r> = (
+    StructureBuilder<&'r AuthorityLogEntry>,
+    &'r BTreeSet<AuthorityEntryHash>,
+);
 
 fn stage_order<'r>(
     entries: &'r [(AuthorityEntryHash, &'r AuthorityLogEntry)],

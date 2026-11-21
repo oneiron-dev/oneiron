@@ -21,6 +21,14 @@ class ScoredEntity(val id: String, val score: Float)
 class SubtreeEntry(val id: String, val depth: Int)
 
 /**
+ * The device and runtime that computed a vector the host puts ([EmbeddedVault.putVector];
+ * ARCH-0036 device mark), so `oneiron doctor` names them instead of `unknown`. [device] is the
+ * family: `cpu`, `cuda`, `metal`, `remote` or `unknown`. [runtime] is the runtime's name and
+ * version, or the endpoint that answered: 1 to 128 bytes with no control characters.
+ */
+class VectorProvenance(val device: String, val runtime: String)
+
+/**
  * What kind of machine this install is, as its host declares it (FIX 3833): never read off the
  * operating system. A phone holds no sealed copy of the vault. [COMPUTER] is the generic default.
  */
@@ -40,7 +48,11 @@ class EmbeddedVault private constructor() : AutoCloseable {
      * Opens the vault at [path] on its own, with no server, as the [deviceClass] its host
      * declares: a phone's host passes [DeviceClass.PHONE] before this install enrols.
      * [machineReportedName] and [machineReportedModel] are the name and model this install
-     * reports for itself, as the host declares them; display only.
+     * reports for itself, as the host declares them; display only. [embeddingModel] is the id,
+     * `org/name@revision`, of the model that computes this vault's vectors (census L9-28): a
+     * malformed one throws. Without one, every [putVector] throws ("embedding model is required
+     * before writing vectors"). The vault records the first model an open names: a later open
+     * naming another model throws, and so does one naming none once the vault holds vectors.
      */
     @JvmOverloads
     constructor(
@@ -48,9 +60,16 @@ class EmbeddedVault private constructor() : AutoCloseable {
         deviceClass: DeviceClass = DeviceClass.COMPUTER,
         machineReportedName: String? = null,
         machineReportedModel: String? = null,
+        embeddingModel: String? = null,
     ) : this() {
         synchronized(this) {
-            openNative(path, deviceClass == DeviceClass.PHONE, machineReportedName, machineReportedModel)
+            openNative(
+                path,
+                deviceClass == DeviceClass.PHONE,
+                machineReportedName,
+                machineReportedModel,
+                embeddingModel,
+            )
         }
     }
 
@@ -117,11 +136,16 @@ class EmbeddedVault private constructor() : AutoCloseable {
         return edgesNative(target, true)
     }
 
-    /** Stores [id]'s embedding; its length must be the vault's dimensions. */
+    /**
+     * Stores [id]'s embedding; its length must be the vault's dimensions. With [provenance] the
+     * vector carries the device and runtime that computed it (ARCH-0036 device mark); without one
+     * it reads device `unknown`. A mark the engine cannot store throws, and nothing is stored.
+     */
+    @JvmOverloads
     @Synchronized
-    fun putVector(id: String, vector: FloatArray) {
+    fun putVector(id: String, vector: FloatArray, provenance: VectorProvenance? = null) {
         check(!closed) { "vault is closed" }
-        putVectorNative(id, vector)
+        putVectorNative(id, vector, provenance?.device, provenance?.runtime)
     }
 
     /** The [limit] entities nearest [query], however many, best first. */
@@ -205,6 +229,7 @@ class EmbeddedVault private constructor() : AutoCloseable {
         phone: Boolean,
         machineReportedName: String?,
         machineReportedModel: String?,
+        embeddingModel: String?,
     )
     private external fun shareNative(engine: EmbeddedEngine)
     private external fun bindNative(source: EmbeddedVault, actorKey: String?, session: String?)
@@ -213,7 +238,7 @@ class EmbeddedVault private constructor() : AutoCloseable {
     private external fun deleteNative(id: String): Boolean
     private external fun putEdgeNative(src: String, kind: Int, target: String, weight: Float)
     private external fun edgesNative(id: String, inbound: Boolean): Array<VaultEdge>
-    private external fun putVectorNative(id: String, vector: FloatArray)
+    private external fun putVectorNative(id: String, vector: FloatArray, device: String?, runtime: String?)
     private external fun searchVectorNative(query: FloatArray, limit: Int): Array<ScoredEntity>
     private external fun contextPackNative(text: String?, vector: FloatArray?, limit: Int, format: String?): String
     private external fun searchTextNative(query: String, limit: Int): Array<ScoredEntity>

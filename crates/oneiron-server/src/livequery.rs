@@ -423,19 +423,31 @@ fn bound_actor_class(auth: &CoreAuth) -> Result<oneiron::EdgeActorClass, AppErro
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the residence RPC's call state, each part its own borrow"
+)]
 pub(crate) fn residence_rpc(
     server: &crate::server::SyncServer,
     auth: &CoreAuth,
     peer: oneiron::authority::PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     request: RpcRequest,
     index_cache: &mut Option<ResidenceIndexCache>,
     append_stage: &mut Option<oneiron::sync::residence::AuthorityAppendStage>,
     touch_stage: &mut Option<ResidenceTouchStage>,
-) -> Result<RpcReply, ProtocolError> {
+) -> Result<
+    (
+        RpcReply,
+        Option<crate::selector_release::SelectorReleaseBasis>,
+    ),
+    ProtocolError,
+> {
     residence::run(
         server,
         auth,
         peer,
+        lane,
         request,
         index_cache,
         append_stage,

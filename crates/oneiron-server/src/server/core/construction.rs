@@ -218,7 +218,7 @@ impl SyncServer {
         crate::models::install_snapshot_runtime(&vault);
         // A model install on this process reads this vault's owner's
         // licence choice (models.install.allow_noncommercial_licences).
-        crate::model_artifacts::licence::bind_licence_vault(&vault);
+        crate::models::bind_licence_vault(&vault);
         // FIX 14976: this vault's drafter bindings are served on this
         // process's own managed worker, where it launches one for this vault.
         crate::models::install_drafter_serving(&vault);
@@ -359,6 +359,7 @@ impl SyncServer {
             live_voice: Default::default(),
             asr_sessions: Default::default(),
             meeting_imports: Default::default(),
+            hook_transcript_uploads: Default::default(),
             model_streams: Default::default(),
             export_transfers: Default::default(),
             pairing_backoff: Default::default(),
@@ -397,6 +398,7 @@ impl SyncServer {
             broadcast_sessions: Default::default(),
             next_conn_id: AtomicU32::new(1),
             lease_registrar: Mutex::new(()),
+            link_acts: std::sync::Mutex::new(()),
             reassert_manager,
             _reactive_tee: reactive_tee,
             lifecycle_session_id: NEXT_LIFECYCLE_SESSION_ID.fetch_add(1, Ordering::Relaxed),
@@ -414,6 +416,7 @@ impl SyncServer {
             config,
             managed_issuer: None,
             recovery_box_hold: std::sync::OnceLock::new(),
+            owner_key_change_report: std::sync::OnceLock::new(),
             host_root_issuer: issuer,
             policy_doors: Default::default(),
             account_keys: None,
@@ -428,6 +431,7 @@ impl SyncServer {
             cloud_registration,
             connector_elicitations: Arc::default(),
             connector_stdio: Arc::default(),
+            gpu_jobs: Arc::default(),
             browser_guest: None,
             browser_readiness: Default::default(),
             runner_fence: std::sync::OnceLock::new(),

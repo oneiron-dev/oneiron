@@ -17,6 +17,7 @@
 //! the owner's own pairing step ("pair again with a link from the owner").
 
 use crate::error::{Error, RecordError, Result};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{TimeRange, Vault};
 
 use super::checkpoint_policy::{checkpoint_root_policy_of, policy_refused};
@@ -105,6 +106,9 @@ impl Vault {
     /// whose fold carries this install's standing rows and every live choice,
     /// so it supersedes all of them, and lands atomically or not at all.
     ///
+    /// The door does not read the value in force before its write, so it asks for every
+    /// change it cannot tell from its arguments to be a narrowing.
+    ///
     /// # Errors
     /// [`RecordError::AuthorityRefused`] for an agent's act or an install
     /// that cannot carry it; [`RecordError::CheckpointPolicyRevisionStale`]
@@ -122,6 +126,15 @@ impl Vault {
             ActAuthority::Owner(owner, surface) => (owner, *surface),
             ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
         };
+        // The proof is this handle's before the confirm, as the paced turn's
+        // key read it before the writer: a proof of another handle never
+        // prompts. The turn itself is taken after the confirm.
+        owner.actor_for_read(self)?;
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::CHECKPOINT_POLICY,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         // Every root the owner names is kept (FIX 7909): the count is
         // measured, and paced only before the writer opens.
         let _turn = self.admit_authority_work(
@@ -158,11 +171,22 @@ impl Vault {
         let key = crate::identity::read_machine_signing_key_in_txn(self, &txn)?
             .ok_or_else(|| authority_refused(NO_CARRIER))?;
         let public_key = key.verifying_key().to_bytes();
-        if !super::owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+        if !super::owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
             return Err(authority_refused(NO_CARRIER));
         }
         // FIX 7908: join a frontier wider than one entry names, else today's path.
-        let joiner = FrontierSigner::Install(machine, &key);
+        // The owner key this install holds proves the act; its join carries
+        // the proof only for the owner's own write (row
+        // OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, REVIEW-9962 P1).
+        let proof = self.owner_proof_signer(&fold, &ground);
+        let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
+        let joiner =
+            FrontierSigner::install(machine, &key, proof.as_ref().filter(|_| proves_joins));
         let fold = self
             .prepare_authority_frontier_in_txn(&mut txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
@@ -194,7 +218,7 @@ impl Vault {
                 choice,
             }),
             now,
-            self.owner_proof_signer(&fold).as_deref(),
+            proof.as_ref(),
         )?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {

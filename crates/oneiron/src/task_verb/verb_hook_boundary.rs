@@ -4,7 +4,11 @@
 //! MCP and code-mode dispatch, the HTTP routes that run a row themselves,
 //! code mode's browser rows and the native handles that call the engine
 //! directly. Each door wraps the row's own call, never a wrapper around it,
-//! so a hook fires once per logical verb. A hook's stop reaches the caller as
+//! so a hook fires once per logical verb. A transport-only row
+//! (`host_door_transport_only`: `vault.imports.hook_transcript_part`, FIX
+//! HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER) is no logical verb of its own: it
+//! stages a part of another verb's request, crosses no boundary, and the
+//! request it carries crosses its own verb's once. A hook's stop reaches the caller as
 //! a refusal whose `hook` carries the typed stop. A call the generated
 //! `invoke` runs saves how to run it again with its ask, so settlement
 //! resumes it (`Vault::drain_verb_asks`); a retry then answers what it
@@ -29,10 +33,13 @@ mod row_run;
 mod session;
 
 use serde_json::Value;
+use serde_json::value::RawValue;
 use zeroize::Zeroizing;
 
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::runtime_hooks::verb::{SessionHookKey, SessionHooks, VerbArgsCheck, VerbHookStorage};
+use crate::runtime_hooks::verb::{
+    SessionHookKey, SessionHooks, TextView, VerbArgsCheck, VerbHookStorage,
+};
 use crate::runtime_hooks::{
     InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookPre, VerbHookStop,
 };
@@ -449,6 +456,43 @@ pub fn row_post(vault: &Vault, pre: VerbHookPre, result: Value) -> MemoryResult<
         return Ok(revealed_hook_view(view, &masked, &result));
     }
     chain_post(vault, pre, result, session.as_ref())
+}
+
+/// [`row_post`] over a skill answer held as JSON text, never read into a
+/// value (SKILL-ANSWER-DEEP-JSON-STACK-SAFE): the chain judges the answer
+/// unframed, as it judges a value answer, each hook's input carries the
+/// text verbatim, and a Redact narrows the text itself. What the chain
+/// left: the answer as it was, or the view a Redact narrowed. A
+/// session-only call keeps its records as [`row_post`] keeps them, and a
+/// write's storage failure in its post chain leaves the answer as it was.
+///
+/// # Errors
+///
+/// As [`row_post`].
+pub fn row_post_text(
+    vault: &Vault,
+    pre: VerbHookPre,
+    answer: Box<RawValue>,
+) -> MemoryResult<Box<RawValue>> {
+    revoke_lands::notify(vault, &pre);
+    let session = pre.session().cloned().map(HookSession::kept);
+    let verb = pre.call().verb.clone();
+    let committed = (pre.call().domain != VerbDomain::Read).then(|| answer.clone());
+    let view = TextView::of_answer(answer);
+    let posted = match &session {
+        Some(session) => session.with_storage(vault, |storage| {
+            vault.post_verb_hooks_text_in(storage, pre, view)
+        }),
+        None => vault.post_verb_hooks_text(pre, view),
+    };
+    match (posted, committed) {
+        (Ok(view), _) => view.map(TextView::into_text).map_err(stopped),
+        (Err(error), Some(committed)) => {
+            tracing::warn!(%verb, %error, "a committed write's post hooks failed");
+            Ok(committed)
+        }
+        (Err(error), None) => Err(error.into()),
+    }
 }
 
 fn chain_post(

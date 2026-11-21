@@ -10,7 +10,7 @@
 //! * `whole_vault_archive_retains_rows_and_declares_omitted_tables`: the
 //!   source archive holds exactly one retained SNAPSHOT_READ_SETTINGS row and
 //!   one retained CONSENT_STANDING_GRANT row, none for HEALER_OVERSIGHT_RECEIPT,
-//!   and the manifest declares 23 omitted tables, the healer table with
+//!   and the manifest declares 22 omitted tables, the healer table with
 //!   three rows.
 //! * `each_import_door_carries_the_rows_and_only_the_owner_door_installs_the_setting`:
 //!   the owner door installs the snapshot bounds row and the grant row live
@@ -38,9 +38,12 @@
 //! plain claim-free GATE_DECISION_LEDGER row the secret scan keeps (ids and
 //! code strings only), so the source archive holds three retained rows, not
 //! two; the owner import appends its own restore receipt, a live gate row
-//! the destination's next export carries beside the retained copies. The
-//! brief's two targets are asserted exactly, per table and byte for byte,
-//! and the gate rows are accounted separately.
+//! the destination's next export carries beside the retained copies. Every
+//! vault also writes setting rows when it opens (`is_open_setting_row`: the
+//! `engine` pack's default layer and its root's birth row of
+//! `test.born_depth`), and each archive carries its own. The brief's two
+//! targets are asserted exactly, per table and byte for byte, and the gate
+//! and open setting rows are accounted separately.
 //!
 //! On the base this file compiles (it names no new type, field or door) and
 //! every test fails red: no `retained_side_row` family and no
@@ -52,6 +55,7 @@ use std::io::{Cursor, Read as _};
 use oneiron::batch::export::WholeVaultDocument;
 use oneiron::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use oneiron::receipt::{CallOutcome, CallReceiptInput, CallTransport};
+use oneiron::setting::{ENGINE_PACK, SettingMode, SettingScope};
 use oneiron::settings::snapshot_read::SnapshotReadSettings;
 use oneiron::store::GateDecisionId;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
@@ -366,6 +370,38 @@ pub(crate) fn rows_for(
         .collect()
 }
 
+/// Whether a retained tuple of `table` under `key` is a setting row every vault writes when it
+/// opens, so each whole-vault archive carries its own: a row of the `engine` pack's default
+/// layer (the pack door lands the build's defaults at each open), or a birth row of
+/// `test.born_depth` (setting stage 7c-2: one at the root project).
+pub(crate) fn is_open_setting_row(table: &str, key: &[u8]) -> bool {
+    if table != "SETTING" && table != "SETTING_CONTENT" {
+        return false;
+    }
+    // An item-less value row at the engine pack: `name 0x00 0x00 mode scope`.
+    let mut engine_layer = vec![0, 0, SettingMode::Value.tag()];
+    engine_layer.extend_from_slice(&SettingScope::Pack(ENGINE_PACK.to_owned()).key_bytes());
+    key.ends_with(&engine_layer) || key.starts_with(b"test.born_depth\0")
+}
+
+/// `rows` without the setting rows every vault writes when it opens ([`is_open_setting_row`]).
+pub(crate) fn without_open_setting_rows(
+    rows: &[(String, Vec<u8>, Vec<u8>)],
+) -> Vec<(String, Vec<u8>, Vec<u8>)> {
+    rows.iter()
+        .filter(|(name, key, _)| !is_open_setting_row(name, key))
+        .cloned()
+        .collect()
+}
+
+/// How many setting rows that every vault writes when it opens ([`is_open_setting_row`]) the
+/// whole-vault `archive` retains.
+pub(crate) fn open_setting_row_count(archive: &[u8]) -> u64 {
+    let rows = retained_rows(archive);
+    u64::try_from(rows.len() - without_open_setting_rows(&rows).len())
+        .expect("a row count fits in u64")
+}
+
 #[test]
 fn whole_vault_archive_retains_rows_and_declares_omitted_tables() {
     let source = source_with_rows();
@@ -390,8 +426,10 @@ fn whole_vault_archive_retains_rows_and_declares_omitted_tables() {
     // Full count accounting, separately: minting the grant also appends its
     // gate receipt, a plain claim-free GATE_DECISION_LEDGER row the secret
     // scan keeps (ids and code strings only), so the archive holds three
-    // retained rows in all. No export-audit row is in this first export: the
-    // audit row lands after the snapshot it audits.
+    // retained rows beside the setting rows the vault wrote when it opened:
+    // the root project's birth row of `test.born_depth` (setting stage 7c-2)
+    // and the `engine` pack's default layer. No export-audit row is in this
+    // first export: the audit row lands after the snapshot it audits.
     let gate = rows_for(&rows, "GATE_DECISION_LEDGER");
     assert_eq!(
         gate.len(),
@@ -399,16 +437,28 @@ fn whole_vault_archive_retains_rows_and_declares_omitted_tables() {
         "the grant's gate receipt travels as one retained GATE_DECISION_LEDGER row: {rows:?}"
     );
     assert_eq!(
-        rows.len(),
+        rows.iter()
+            .filter(|(name, key, _)| name == "SETTING" && key.starts_with(b"test.born_depth\0"))
+            .count(),
+        1,
+        "the source archive holds the root project's birth row: {rows:?}"
+    );
+    let open_rows = open_setting_row_count(&source.archive);
+    assert!(
+        open_rows > 1,
+        "the source archive holds the engine pack's default layer beside the birth row: {rows:?}"
+    );
+    assert_eq!(
+        without_open_setting_rows(&rows).len(),
         3,
-        "the source archive holds three retained rows in all: {rows:?}"
+        "the source archive holds three retained rows beside its open setting rows: {rows:?}"
     );
     // The manifest declares every omitted table, zero-row tables included.
     let omissions = side_table_omissions(&source.archive);
     assert_eq!(
         omissions.len(),
-        23,
-        "the manifest declares 23 omitted tables: {omissions:?}"
+        22,
+        "the manifest declares 22 omitted tables: {omissions:?}"
     );
     let healer = omissions
         .iter()
@@ -519,9 +569,10 @@ fn each_import_door_carries_the_rows_and_only_the_owner_door_installs_the_settin
             "the {door} destination re-carries the grant tuple byte for byte"
         );
         // Full count accounting: the owner door writes its own restore
-        // receipt, a live gate row its next export carries beside the three
+        // receipt, a live gate row its next export carries beside the
         // retained copies; the other doors write none, so their archive
-        // equals the source's tuple for tuple.
+        // equals the source's tuple for tuple, but for the setting rows each
+        // vault writes when it opens: each archive carries its own.
         let source_gate = rows_for(&source_rows, "GATE_DECISION_LEDGER");
         let dest_gate = rows_for(&dest_rows, "GATE_DECISION_LEDGER");
         if door == "owner" {
@@ -538,7 +589,8 @@ fn each_import_door_carries_the_rows_and_only_the_owner_door_installs_the_settin
             }
         } else {
             assert_eq!(
-                dest_rows, source_rows,
+                without_open_setting_rows(&dest_rows),
+                without_open_setting_rows(&source_rows),
                 "the {door} destination holds exactly the source tuples: {dest_rows:?}"
             );
         }

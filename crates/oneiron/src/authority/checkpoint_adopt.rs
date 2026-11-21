@@ -16,8 +16,10 @@
 //! head, the adopted pin's digest, the authority cache generation), checks
 //! the image against this vault (its storage id, a resident Genesis, its
 //! owner-root pin, an empty unresolved closure, coverage that never shrinks),
-//! then keeps the image as the head, stores the pin and attestations and
-//! advances the generation. It publishes nothing into the process cache.
+//! then keeps the image as the head, stores the pin and attestations, keeps
+//! this install's first sight of each covered row the stale-roster window
+//! reads ([`keep_covered_first_seen_in_txn`]) and advances the generation. It
+//! publishes nothing into the process cache.
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -297,7 +299,7 @@ pub(crate) fn adopted_image_view_in_txn(
 /// Publishes `verified`/`evidence` only when the caller's rows are still
 /// the committed tip: a separate thread opens its own read txn (a second
 /// read txn on a thread holding the caller's write txn fails, as in
-/// `per_authority_generation`), and the publish lands only when committed
+/// `readonly_fold::cache_fold_if_committed`), and the publish lands only when committed
 /// state names the same `ADOPTED` row and image id. A write txn's
 /// uncommitted adoption, and a stale snapshot superseded since, never
 /// publish. Concurrent publishers race on the mutex; every published entry
@@ -403,6 +405,54 @@ pub(crate) fn adopted_checkpoint_id_in_txn(
         .map(|adopted| adopted.pin.checkpoint))
 }
 
+/// Keeps, for each covered row of `image` the stale-roster window reads (an
+/// approval or a roster revocation, carried whole) that holds no first-seen
+/// receipt here, a receipt at this adoption: this install's own first sight
+/// of it, on its own clock, nothing imported, as a device that fetched the
+/// whole history now would record it (FOLDPAST-COVERED-APPROVAL-CLOCK = A,
+/// Engine 16 Nov 00:48). A receipt already kept stands, and a row stored
+/// later keeps this one. A row `held` (stored here) keeps the receipt its
+/// store or the backfill kept, or none. A row `prior`, the image adopted
+/// before, covered was first seen at that adoption: it keeps the receipt
+/// that adoption kept, and gains none at this one. Additive: a vault that
+/// adopted before adoptions kept receipts holds none for its rows, and a
+/// fold past its image that needs one asks for the history
+/// ([`super::stale_roster::stale_roster_clocks_complete`]).
+fn keep_covered_first_seen_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    image: &AuthorityCheckpointV2,
+    prior: Option<&AuthorityCheckpointV2>,
+    held: &BTreeSet<AuthorityEntryHash>,
+) -> Result<()> {
+    let mut unseen = Vec::new();
+    for (hash, row) in &image.rows {
+        let Some(body) = &row.body else {
+            continue;
+        };
+        if held.contains(hash)
+            || prior.is_some_and(|prior| prior.covered.binary_search(hash).is_ok())
+        {
+            continue;
+        }
+        let key = authority_first_seen_sidecar_key(hash);
+        if AUTHORITY_FIRST_SEEN.contains(store, wtxn, &key)? {
+            continue;
+        }
+        if super::stale_roster::window_reads(&decode_authority_log_entry_body(body)?.op) {
+            unseen.push(key);
+        }
+    }
+    if unseen.is_empty() {
+        return Ok(());
+    }
+    let seen = advance_authority_clock_in_txn(store, wtxn, store.clock.now_recorded_at())?;
+    for key in unseen {
+        AUTHORITY_FIRST_SEEN.put(store, wtxn, &key, &seen)?;
+    }
+    Ok(())
+}
+
 impl Vault {
     /// What [`Vault::adopt_authority_checkpoint_in_txn`] compares, read in
     /// `txn`'s snapshot.
@@ -452,7 +502,8 @@ impl Vault {
         if image.unresolved != AuthorityCheckpointUnresolved::default() {
             return Err(adopt_refused("the checkpoint image holds unresolved rows"));
         }
-        if let Some(prior) = adopted_authority_checkpoint_in_txn(store, wtxn)? {
+        let prior = adopted_authority_checkpoint_in_txn(store, wtxn)?;
+        if let Some(prior) = &prior {
             if prior.id() == id {
                 return Ok(id);
             }
@@ -475,7 +526,14 @@ impl Vault {
         super::checkpoint::keep_checkpoint_head_in_txn(store, wtxn, &id, bytes)?;
         // OF-469 cutoffs: the adopted head's accounting, and the covered rows
         // whose later arrival is hydration rather than growth.
-        super::checkpoint::note_adopted_checkpoint_in_txn(store, wtxn, &id, image)?;
+        let held = super::checkpoint::note_adopted_checkpoint_in_txn(store, wtxn, &id, image)?;
+        keep_covered_first_seen_in_txn(
+            store,
+            wtxn,
+            image,
+            prior.as_ref().map(VerifiedAuthorityCheckpoint::image),
+            &held,
+        )?;
         ADOPTED.put(
             store,
             wtxn,
@@ -530,6 +588,34 @@ impl Vault {
         fixed: [u8; 32],
         kit_root: PinnedRoot,
     ) -> Result<[u8; 32]> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let id = self.adopt_recovered_authority_checkpoint_in_txn(
+            &mut wtxn,
+            (pin, bytes, attestations),
+            fixed,
+            kit_root,
+        )?;
+        wtxn.commit()?;
+        self.store.notify_proactivity_changes();
+        Ok(id)
+    }
+
+    /// [`Self::adopt_recovered_authority_checkpoint`] in the caller's write
+    /// transaction, which commits it or not: a sealed kit restore adopts the
+    /// image in its history import's transaction
+    /// ([`Self::import_signed_authority_history_judged`]). The caller owes
+    /// the proactivity wake once it commits.
+    pub(crate) fn adopt_recovered_authority_checkpoint_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        (pin, bytes, attestations): (
+            &AuthorityCheckpointPin,
+            &[u8],
+            &[AuthorityCheckpointAttestation],
+        ),
+        fixed: [u8; 32],
+        kit_root: PinnedRoot,
+    ) -> Result<[u8; 32]> {
         if pin.digest()? != fixed {
             return Err(adopt_refused(
                 "the checkpoint pin is not the one the owner fixed",
@@ -537,20 +623,16 @@ impl Vault {
         }
         let verified = VerifiedAuthorityCheckpoint::verify(pin, bytes, attestations)?;
         let store = &self.store;
-        let mut wtxn = store.env.write_txn()?;
         let RecoveryPin::KitRootFirst = RECOVERY_CHECKPOINT_PIN;
         if verified.image().building_pin == Some(kit_root)
-            && super::pinned_root::read_pinned_root_in_txn(store, &wtxn)?.is_none()
-            && super::machine_identity::resident_genesis_vault_id_in_txn(store, &wtxn)?.is_none()
+            && super::pinned_root::read_pinned_root_in_txn(store, wtxn)?.is_none()
+            && super::machine_identity::resident_genesis_vault_id_in_txn(store, wtxn)?.is_none()
         {
-            super::pinned_root::write_pinned_root_in_txn(store, &mut wtxn, kit_root, None)?;
+            super::pinned_root::write_pinned_root_in_txn(store, wtxn, kit_root, None)?;
         }
         // Read after the pin, which moves the generation.
-        let expected = expectation_in_txn(store, &wtxn)?;
-        let id = self.adopt_authority_checkpoint_in_txn(&mut wtxn, &verified, &expected)?;
-        wtxn.commit()?;
-        self.store.notify_proactivity_changes();
-        Ok(id)
+        let expected = expectation_in_txn(store, wtxn)?;
+        self.adopt_authority_checkpoint_in_txn(wtxn, &verified, &expected)
     }
 
     /// The image this vault adopted, verified again; None when nothing was

@@ -5,7 +5,7 @@ use super::admission::{PollAdmission, VerdictFold, connector_event_ref};
 use crate::calendar::claims::CalendarPassportSource;
 use crate::calendar::connectors::door::seat_of_system_in_txn;
 use crate::calendar::ics::{ParsedIcsFeed, parse_ics_feed};
-use crate::calendar::passport::{admitted_passport_for_in_txn, resolve_admitted_event_by_uid};
+use crate::calendar::passport::{admitted_passport_keyed, resolve_admitted_event_by_uid};
 use crate::calendar::safeguard::CalendarBodyScreener;
 use crate::calendar::{CalendarError, CalendarReadRequest};
 use crate::consent::AuthenticatedOwner;
@@ -100,9 +100,8 @@ pub fn import_ics_as_owner(
 /// takes another system, under which its UIDs still attach to the same EVENTs. A system whose
 /// feed was uninstalled is open to an upload, since no poll of that feed runs again. The check
 /// reads the installed sources once, under the upload's admission turn and before its writes. A
-/// feed's install takes that turn too (`feed_door::ics_feed_write_turn`), so none lands while
-/// the upload runs; a seat's install takes none, so a seat the owner installs on the same system
-/// while the upload runs is not seen.
+/// feed's install and a seat's take that turn too (`ADMISSION_WRITE_TURN`), an owner archive
+/// restore's among them, so none lands while the upload runs.
 fn refuse_installed_source_system(memory: &Memory<'_>, system: &str) -> MemoryResult<()> {
     crate::mail_pack::refuse_calendar_source_system(system)?;
     let vault = memory.vault();
@@ -165,14 +164,14 @@ pub fn move_instance_as_owner(
         let vault = memory.vault();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         owner.revalidate_in_txn(vault, &txn)?;
-        if admitted_passport_for_in_txn(vault, &txn, &master, &input.system, &input.uid)
-            .map_err(calendar_error)?
-            .is_none()
-        {
-            return Err(MemoryError::not_found(
-                "series has no admitted passport for this system",
-            ));
-        }
+    }
+    if admitted_passport_keyed(memory.vault(), &master, &input.system, &input.uid)
+        .map_err(calendar_error)?
+        .is_none()
+    {
+        return Err(MemoryError::not_found(
+            "series has no admitted passport for this system",
+        ));
     }
     feed.events.retain(|event| {
         event.uid == input.uid

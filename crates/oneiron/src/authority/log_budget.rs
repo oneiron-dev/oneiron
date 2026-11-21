@@ -47,22 +47,29 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use super::adopted_evidence::AdoptedEvidence;
-use super::log_structure::{
-    AuthorityStructure, LocalRoots, authority_structure, authority_structure_under,
-    self_signed_root, signed_by,
-};
+use super::log_structure::{AuthorityStructure, authority_structure, self_signed_root, signed_by};
 use super::*;
 use crate::HostingPrivacyPosture;
 use crate::store::Store;
 
+mod door_rows;
+#[cfg(oneiron_test_support)]
+mod door_view_door;
 mod log_check;
 mod owner_reserve;
+mod owner_signed_work;
 mod policy_bounds;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use door_view_door::{
+    door_view_differs_from_rebuild_in_txn, staged_door_views_differ_from_rebuild,
+};
 pub use log_check::AuthorityLogCheck;
 pub(crate) use log_check::authority_signer_label;
-pub(crate) use owner_reserve::OwnerReserveHold;
 use owner_reserve::*;
+pub(crate) use owner_reserve::{OwnerReserveHold, held_at_owner_reserve_in_txn};
+pub(crate) use owner_signed_work::answers_the_owners_signed_work_in_txn;
+use owner_signed_work::{an_owner_key_signs, answered_row};
 use policy_bounds::signer_bound;
 pub(super) use policy_bounds::{fold_memory_floor, memory_floor_fold};
 #[cfg(test)]
@@ -193,7 +200,9 @@ pub(super) fn is_uncounted(entry: &AuthorityLogEntry, issuers: &BTreeSet<Authori
 }
 
 /// What the store doors read of the stored log: its consent structure, and
-/// each signer's stored rows. Built once per authority generation. On a vault
+/// each signer's stored rows. Built once per authority generation, from the
+/// last such view and the rows stored since where it can be
+/// ([`door_rows`]). On a vault
 /// that adopted a checkpoint image (OF-469), the stored log is the image's
 /// covered history and the raw rows past it: each covered row counts once,
 /// from the image's summary and carried body, whether or not its raw bytes
@@ -212,10 +221,12 @@ pub(crate) struct AuthorityDoorView {
     strangers: usize,
     /// An upper bound on the peak a fold of every stored row projects
     /// ([`stored_fold_projection`]), which the owner reserve reads.
-    projection: FoldProjection,
+    projection: DoorProjection,
     /// The adopted image's evidence the view read, for the doors' other
     /// readers in the same generation.
     pub(super) evidence: Option<Arc<AdoptedEvidence>>,
+    /// What the view read, for the next generation's view to extend.
+    kept: door_rows::DoorRows,
 }
 
 impl AuthorityDoorView {
@@ -228,7 +239,7 @@ impl AuthorityDoorView {
 }
 
 /// The per-signer and log-wide counts of a door view.
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 struct Tally {
     rows: BTreeMap<AuthorityKey, usize>,
     counted: usize,
@@ -284,76 +295,33 @@ pub(crate) fn door_view_builds_for_test() -> usize {
     DOOR_VIEW_BUILDS.with(std::cell::Cell::get)
 }
 
+#[cfg(oneiron_test_support)]
+thread_local! {
+    static DOOR_VIEW_ROWS_DECODED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many stored rows this thread's door views decoded.
+#[cfg(oneiron_test_support)]
+pub(crate) fn door_view_rows_decoded_for_test() -> u64 {
+    DOOR_VIEW_ROWS_DECODED.with(std::cell::Cell::get)
+}
+
 pub(super) fn door_view(
     store: &Store,
     txn: &heed::RoTxn<'_>,
 ) -> crate::error::Result<Arc<AuthorityDoorView>> {
-    super::readonly_fold::per_authority_generation(store, txn, &store.authority_door_view, || {
-        #[cfg(test)]
-        DOOR_VIEW_BUILDS.with(|builds| builds.set(builds.get() + 1));
-        let evidence = super::checkpoint_adopt::cached_adopted_evidence_in_txn(store, txn)?;
-        let mut hashes = Vec::new();
-        let mut entries = Vec::new();
-        for (id, body) in authority_log_rows_in_txn(store, txn)? {
-            // A covered row counts once, from the image.
-            if evidence
-                .as_ref()
-                .is_some_and(|evidence| evidence.covers_id(&id))
-            {
-                continue;
-            }
-            let entry = decode_authority_log_entry_body(&body)?;
-            hashes.push(authority_entry_hash(&entry)?);
-            entries.push(entry);
-        }
-        // The structure reads the image's carried rows as the stored rows
-        // they stand for: it admits what the covered history admitted, never
-        // what the folded roster now holds.
-        let carried = evidence
-            .iter()
-            .flat_map(|evidence| evidence.bodies().values());
-        let structure = authority_structure_under(
-            carried.chain(&entries),
-            LocalRoots::read_in_txn(store, txn)?,
-        );
-        let mut tally = Tally::default();
-        for entry in &entries {
-            tally.count(
-                &structure,
-                entry.signer_key(),
-                is_slip_op(&entry.op),
-                Some(entry),
-            );
-        }
-        let mut parents: BTreeMap<_, &[AuthorityEntryHash]> = hashes
-            .iter()
-            .copied()
-            .zip(entries.iter().map(|entry| entry.parent_hashes.as_slice()))
-            .collect();
-        if let Some(evidence) = &evidence {
-            for (hash, row) in evidence.rows() {
-                tally.count(&structure, &row.signer, row.slip_op, evidence.body(hash));
-                parents.insert(*hash, row.parents.as_slice());
-            }
-        }
-        let projection = stored_fold_projection(&parents);
-        Ok(AuthorityDoorView {
-            structure,
-            rows: tally.rows,
-            counted: tally.counted,
-            issuer_handoffs: tally.issuer_handoffs,
-            strangers: tally.strangers,
-            projection,
-            evidence,
-        })
-    })
+    door_rows::door_view(store, txn)
 }
 
 /// Whether `entry`'s signer has standing to store a replicated row: a key
-/// some valid row admitted (live, revoked or retired), a machine's install
-/// key, a valid root's owner anchor, the anchor of the root record it is,
-/// or a key the stored log's structure admits though the fold does not
-/// hold it yet, such as an owner key a pre-handoff rotation named. A key
+/// some valid row admitted (live, revoked or retired), an install key the
+/// roster's chain of a machine names, a valid root's owner anchor, the
+/// anchor of the root record it is, or a key the stored log's structure
+/// admits though the fold does not hold it yet, such as an owner key a
+/// pre-handoff rotation named. An install key only an anchor's chain names
+/// stands through the structure alone, as a stranger's when the anchor is
+/// not this install's own, so its rows count against the stranger bounds
+/// (Fable pass 29: the fold reads no unpinned anchor's chain for it). A key
 /// none of these name signs no valid row, so its rows wait for the
 /// enrollment instead of being stored.
 pub(crate) fn signer_has_standing(
@@ -366,7 +334,7 @@ pub(crate) fn signer_has_standing(
     if fold.roster.contains_key(signer)
         || fold.retired_keys.contains(signer)
         || matches!(signer, AuthorityKey::Ed25519(key)
-            if fold.machines.values().any(|machine| machine.names_key(key))
+            if fold.machines.values().any(|machine| machine.roster_names_key(key))
                 || fold.root_anchors().contains_key(key))
         || self_signed_root(entry).is_some()
     {
@@ -477,20 +445,7 @@ pub(crate) fn authority_door(
     // only the owner's work lands; every other row waits for the owner to
     // raise the floor. The door judges the log with the row in it (Astra
     // owner-reserve F1).
-    let hash = authority_entry_hash(entry)?;
-    let with_entry = view.projection.bytes_with(&hash, &entry.parent_hashes);
-    if with_entry > owner_reserve_start(store, txn)?
-        && !owner_work(store, txn, &view.structure, &fold, &hash, entry)?
-    {
-        hold_at_owner_reserve(
-            store,
-            &view.projection,
-            OwnerReserveHold {
-                entry: hash,
-                work: false,
-                projected: with_entry,
-            },
-        );
+    if held_at_owner_reserve(store, txn, &view, entry, &fold)? {
         return Ok(AuthorityDoor::AtBound);
     }
     // A self-signed root needs nothing but a fresh key, so an anchor this
@@ -587,14 +542,7 @@ fn signs_for_the_owner(
     fold: &AuthorityFold,
     entry: &AuthorityLogEntry,
 ) -> bool {
-    std::iter::once(&entry.signer)
-        .chain(&entry.cosigns)
-        .any(|signature| {
-            let key = &signature.public_key;
-            structure.issuers.contains(key)
-                && !fold.retired_keys.contains(key)
-                && roster_has_live_owner(&fold.roster, key)
-        })
+    an_owner_key_signs(structure, fold, entry)
         || (structure.is_own_anchor(entry.signer_key())
             && !fold.retired_keys.contains(entry.signer_key())
             && !fold
@@ -603,12 +551,16 @@ fn signs_for_the_owner(
                 .is_some_and(|device| device.revoked))
 }
 
-/// Whether the stored row `hash`, a request or a directive this install's
-/// pickup answers, is the owner's work at this door: a slip issuer signed or
+/// Whether the row `hash`, a request or a directive this install's pickup
+/// answers, is the owner's work at this door: a slip issuer signed or
 /// cosigned it, or an anchor this install takes as its own signed it, as
 /// [`signs_for_the_owner`] reads `fold`, or this install carries
-/// it ([`carries_own_will`]). A row no raw body of is stored, such as one an
-/// adopted checkpoint image covers, is not.
+/// it ([`carries_own_will`]). The row is the stored one, else, on a vault
+/// that adopted a checkpoint image, the body the image carries of that
+/// covered row, judged the same way: the pickup takes such a request or
+/// directive from the adopted fold, so its result is the owner's work when
+/// the owner signed what it answers (FIX [OWNER-RESERVE-ADOPTED-OWNER-WORK]).
+/// A row neither stored nor carried whole is not.
 fn asks_the_owners_work(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -617,7 +569,7 @@ fn asks_the_owners_work(
     arriving: &[(AuthorityEntryHash, &AuthorityLogEntry)],
     hash: &AuthorityEntryHash,
 ) -> crate::error::Result<bool> {
-    let Some(asked) = super::retired_signers::stored_authority_row(store, txn, hash)? else {
+    let Some(asked) = answered_row(store, txn, hash)? else {
         return Ok(false);
     };
     if names_an_owner_key(structure, &asked)
@@ -630,7 +582,7 @@ fn asks_the_owners_work(
     carries_own_will(store, txn, &asked)
 }
 
-/// Whether the stored request `request` this install's pickup answers is the
+/// Whether the request `request` this install's pickup answers is the
 /// owner's work at this door ([`asks_the_owners_work`], on this vault's
 /// snapshot fold). The key wraps and
 /// joins a pickup signs under this install's key land at the door as the
@@ -661,7 +613,10 @@ pub(crate) fn past_owner_reserve_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
 ) -> crate::error::Result<bool> {
-    Ok(door_view(store, txn)?.projection.bytes() > owner_reserve_start(store, txn)?)
+    Ok(door_view(store, txn)?
+        .projection
+        .bytes_past(owner_reserve_start(store, txn)?)
+        .is_some())
 }
 
 /// [`past_owner_reserve_in_txn`] after the carried work for `request`
@@ -674,11 +629,10 @@ pub(crate) fn carried_work_past_owner_reserve_in_txn(
     request: &AuthorityEntryHash,
 ) -> crate::error::Result<bool> {
     let view = door_view(store, txn)?;
-    let projected = view.projection.bytes();
-    if projected <= owner_reserve_start(store, txn)? {
+    let Some(projected) = view.projection.bytes_past(owner_reserve_start(store, txn)?) else {
         end_owner_reserve_work_hold(store, request);
         return Ok(false);
-    }
+    };
     hold_at_owner_reserve(
         store,
         &view.projection,
@@ -710,7 +664,8 @@ pub(crate) fn end_owner_reserve_work_hold(store: &Store, request: &AuthorityEntr
 /// record it signed for a change no host issuer signed (FIX 12335), or the
 /// world key wraps and residence results that work writes under this
 /// install's key ([AUTHORITY-LOG-SIGNER-FLOOD]: key delivery after an
-/// admission, a key minted in a world edit, a residence directive's end). Such a row leaves the lifetime signer bound, which still raises
+/// admission, a key minted in a world edit, a residence directive's end), or the
+/// setting copy a move it carried wrote (stage 7a-4). Such a row leaves the lifetime signer bound, which still raises
 /// its typed check, were the count not advisory; strangers, other installs' rows and a replica's retries
 /// keep their treatment. No local or replicated flag is read. An install
 /// whose key is not known yet keeps today's path
@@ -747,6 +702,8 @@ fn carries_own_will(
         | AuthorityOp::AgentGrantAct(_)
         | AuthorityOp::MembershipExecution(_)
         | AuthorityOp::PolicySettingSet(_)
+        | AuthorityOp::SettingCopy(_)
+        | AuthorityOp::SettingPackHead(_)
         | AuthorityOp::ExportAct(_)
         | AuthorityOp::FrontierJoin(_)
         | AuthorityOp::CustodyPermitPiece(_)

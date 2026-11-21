@@ -6,7 +6,7 @@
 
 use std::sync::mpsc;
 
-use super::tests::{CapturingSink, commit_file, git, served_repo, temp_vault};
+use super::tests::{CapturingSink, commit_file, git, owner_principal, served_repo, temp_vault};
 use super::*;
 use crate::error::CodeError;
 use crate::git_wire::try_lock_repository;
@@ -27,7 +27,7 @@ impl ServeSink for GoneSink {
 /// A push of a fresh commit onto a new ref: the objects travel ahead, so the
 /// body is one command and an empty pack, and the hook still runs and still
 /// waits on its verdict.
-fn hook_waiting_push(source: &Path, repo: &Path) -> (ServeRequest, Vec<u8>) {
+fn hook_waiting_push(source: &Path, repo: &Path, owner: EntityId) -> (ServeRequest, Vec<u8>) {
     let tip = commit_file(source, "notes.txt", "plain notes\n");
     git(
         repo,
@@ -55,7 +55,7 @@ fn hook_waiting_push(source: &Path, repo: &Path) -> (ServeRequest, Vec<u8>) {
         content_length: Some(bytes.len() as u64),
         content_encoding: None,
         git_protocol: None,
-        remote_user: Some(EntityId::now().to_hex()),
+        remote_user: Some(owner.to_hex()),
         remote_addr: Some("127.0.0.1".into()),
     };
     (request, bytes)
@@ -101,7 +101,7 @@ fn ends_soon(
 fn a_push_whose_client_is_gone_ends_its_backend_and_frees_the_repository() {
     let (_vault_dir, vault) = temp_vault();
     let (source, repo, _, _) = served_repo(&vault);
-    let (request, bytes) = hook_waiting_push(source.path(), &repo);
+    let (request, bytes) = hook_waiting_push(source.path(), &repo, owner_principal(&vault));
 
     assert!(
         ends_soon(&vault, request, bytes, GoneSink),
@@ -129,7 +129,7 @@ impl ServeSink for PanickingSink {
 fn an_exchange_that_unwinds_ends_its_backend_and_frees_the_repository() {
     let (_vault_dir, vault) = temp_vault();
     let (source, repo, _, _) = served_repo(&vault);
-    let (request, bytes) = hook_waiting_push(source.path(), &repo);
+    let (request, bytes) = hook_waiting_push(source.path(), &repo, owner_principal(&vault));
 
     assert!(ends_soon(&vault, request, bytes, PanickingSink));
     let coordinator = try_lock_repository(&repo_common_dir(&repo).unwrap()).unwrap();
@@ -189,7 +189,7 @@ fn a_push_starts_no_maintenance_to_outlive_its_exchange() {
         content_length: Some(bytes.len() as u64),
         content_encoding: None,
         git_protocol: None,
-        remote_user: Some(EntityId::now().to_hex()),
+        remote_user: Some(owner_principal(&vault).to_hex()),
         remote_addr: Some("127.0.0.1".into()),
     };
     let report = serve(
@@ -259,7 +259,7 @@ fn a_push_killed_mid_pack_leaves_no_quarantine_behind() {
         content_length: Some((prefix.len() + pack.len()) as u64),
         content_encoding: None,
         git_protocol: None,
-        remote_user: Some(EntityId::now().to_hex()),
+        remote_user: Some(owner_principal(&vault).to_hex()),
         remote_addr: Some("127.0.0.1".into()),
     };
     let mut body = StallingBody {
@@ -345,7 +345,7 @@ fn a_push_that_ends_by_itself_leaves_another_quarantine_alone() {
         content_length: Some(bytes.len() as u64),
         content_encoding: None,
         git_protocol: None,
-        remote_user: Some(EntityId::now().to_hex()),
+        remote_user: Some(owner_principal(&vault).to_hex()),
         remote_addr: Some("127.0.0.1".into()),
     };
     let other = repo.join("objects").join("tmp_objdir-incoming-another");
@@ -394,7 +394,7 @@ fn a_backend_that_exits_before_its_body_leaves_another_quarantine_alone() {
         content_length: Some(64),
         content_encoding: None,
         git_protocol: None,
-        remote_user: Some(EntityId::now().to_hex()),
+        remote_user: Some(owner_principal(&vault).to_hex()),
         remote_addr: Some("127.0.0.1".into()),
     };
     let other = repo.join("objects").join("tmp_objdir-incoming-another");

@@ -266,14 +266,15 @@ impl Memory<'_> {
         // A claim that stands at commit is lexically live in the same batch,
         // as a promoted Dreamer claim is (FIX 11914): a light recall finds it
         // at once, with no idle pass or embedder. A held (proposed) claim
-        // stages no text. Its text is the claim's as the embedder projects a
-        // claim (`embed::claim_text`): a string value as it is, any other
-        // value rendered whole.
+        // stages no text. Its text is the claim's index text, the one the
+        // embedder projects (`claim::claim_index_text`): a reaction's glyph
+        // alone, an echo none, a string value as it is, any other value
+        // rendered whole.
         let surfaces = matches!(
             envelope.approval(),
             ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
         );
-        let text = crate::claim::claim_value_index_text(&write.value);
+        let text = crate::claim::claim_index_text(&write.input.predicate, &write.value);
         let mut ops = Vec::new();
         if !signed_replay_no_put {
             ops.push(BatchOp::ClaimCandidate {
@@ -342,11 +343,8 @@ impl Memory<'_> {
             .map_or(learned_at, |header| header.learned_at);
         if let Some(birth) = birth {
             content.update_claim(id, |txn, _lane| {
-                crate::provenance::birth::stamp_birth_if_absent_in_txn(
-                    &self.vault.store,
-                    txn,
-                    &id,
-                    birth,
+                crate::provenance::birth::stamp_birth_with_floor_if_absent_in_txn(
+                    self.vault, txn, &id, birth,
                 )
             })?;
         }

@@ -189,6 +189,7 @@ fn route_one(policy: &DecisionBandPolicy, think: f64) -> Result<TypedDecision> {
         rule: None,
         local: None,
         system_one: None,
+        precision: None,
         escalation: Some(&house),
         big: Some(&big),
         human: &NoPerson,

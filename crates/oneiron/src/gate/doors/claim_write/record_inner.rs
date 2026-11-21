@@ -48,6 +48,24 @@ fn preflight_receipt_matches(
     })
 }
 
+/// Whether the auto checker may read `predicate`, the claim `id`'s, as
+/// written: the door's plan for the claim's text places nothing in it (no
+/// value custody holds, no secret its rules detect, none the owner kept as
+/// text there). The checker's request carries the predicate verbatim, so one
+/// the plan would change is never sent (review 9216 round 2 P1).
+fn predicate_reaches_checker_as_written(
+    store: &Store,
+    wtxn: &heed::RwTxn<'_>,
+    id: EntityId,
+    predicate: &str,
+) -> Result<bool> {
+    let written = rmpv::Value::from(predicate);
+    Ok(
+        crate::batch::secret_scan::plan_masked_claim_value_in_txn(store, wtxn, id, &written)?
+            .is_some_and(|planned| planned == written),
+    )
+}
+
 // The inner executor carries the outer record seam's axis tuple plus the
 // preflight identity exactly once; a parameter struct would only rename the
 // same boundary.
@@ -63,6 +81,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
     recorded_decision: &mut Option<RecordedClaimGateDecision>,
+    owner_amendment: &mut Option<super::OwnerRevisionAmendment>,
     preflight_receipt: Option<PreflightReceipt>,
     operation_effect_body: bool,
     skip_precommit: bool,
@@ -91,6 +110,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
     // ceilinged and receipted as that closer (FIX 8655).
     let closing_actor = closer::exact_close_closer(store, &*wtxn, id, body, transition);
     let verified_close = closing_actor.is_some();
+    let writing = closer::writing_actor(closing_actor, envelope);
     let lineage = envelope
         .map(WriteEnvelope::lineage)
         .filter(|_| !verified_close);
@@ -115,10 +135,11 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
     // authority, pending/source-trust behaviour and decision recording all run
     // unchanged — and every persisted Dreamer claim candidate, on every
     // candidate door, still clears the full evidence floor.
-    let dreamer_run_id = envelope.and_then(dreamer_run_id_from_write_envelope);
     // The derivation floors (GATE-12, GATE-13, the checker) hold every
     // derivation-class write: a Dreamer run's or a `vault.derive` commit's.
-    let dreamer_candidate = envelope.is_some_and(derivation_class_write) && !operation_effect_body;
+    let deriving = closer::deriving_envelope(envelope, closing_actor);
+    let dreamer_run_id = deriving.and_then(dreamer_run_id_from_write_envelope);
+    let dreamer_candidate = deriving.is_some() && !operation_effect_body;
     // FIX 3983 (review 6881 P1): a caller's live-run claim put is the other Generated producer the
     // host's auto checker reviews. It is not a Dreamer write, so the GATE-12 pre-commit floor above stays
     // Dreamer-only; only the checker consult below reads this.
@@ -135,8 +156,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
     let hard_denial = precommit_denial.or(reference_denial);
 
     if policy.enforces_write_gate() {
-        let (actor, provenance, agent_definition_ceiling) = if let Some(envelope) = envelope {
-            let actor = closing_actor.unwrap_or_else(|| envelope.actor());
+        let (actor, provenance, agent_definition_ceiling) = if let Some(actor) = writing {
             let agent_definition_ceiling = agent_definition_ceiling_for_actor(store, &*wtxn, actor);
             (
                 GateActor {
@@ -146,7 +166,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
                 },
                 GateProvenanceHandles {
                     actor_entity_ref: Some(actor.entity_ref()),
-                    derive_commit: dreamer_run_id.is_none() && derivation_class_write(envelope),
+                    derive_commit: dreamer_run_id.is_none() && deriving.is_some(),
                     dreamer_run_id,
                     ..GateProvenanceHandles::default()
                 },
@@ -198,7 +218,6 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         // A pre-commit failure REPLACES the policy verdict: the recording,
         // pending and enforcement paths below then run unchanged, and the
         // Deny aborts the caller's batch op before any claim-side write lands.
-        let writing = envelope.map(|envelope| closing_actor.unwrap_or_else(|| envelope.actor()));
         input.foreign_agent_ceiling =
             crate::gate::foreign_agent::resolve_writing(store, &*wtxn, writing)?;
         let mut decision = match hard_denial {
@@ -247,40 +266,42 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         {
             decision = GateDecision::pending(vec![GateReasonCode::PendingCarryForwardConfidence]);
         }
-        let critical_floor_only = body.approval == ClaimApprovalStatus::Auto
-            && critical_claim_can_land_auto_with_confirm(
-                &input,
-                decision.reason_codes(),
-                &body.predicate,
-            );
-        // Owner-authored writes carry their own confirmation: the vault's
-        // owner, revalidated in this transaction, wrote this claim in person,
-        // so it lands Auto with nothing to confirm. The proof rides the
-        // write's options from the door that authenticated the owner; the
-        // envelope only has to name the same actor. An owner's approval of a
-        // stored proposal has no envelope here: the approval materialization
-        // gates the Put without its author's (`ClaimMaterialization::
-        // gate_envelope`), and the approving door forwards the proof for that
-        // one Approved Put alone (`ops_put`).
-        let owner_write = owner_authored.filter(|write| match envelope {
-            Some(envelope) => {
-                envelope.actor().entity_ref() == write.actor()
-                    && envelope.actor().actor_class() == crate::edge::EdgeActorClass::Human
+        // The policy verdict pends on the criticality floor alone.
+        let criticality_floor_pend_only = critical_claim_can_land_auto_with_confirm(
+            &input,
+            decision.reason_codes(),
+            &body.predicate,
+        );
+        let critical_floor_only =
+            body.approval == ClaimApprovalStatus::Auto && criticality_floor_pend_only;
+        // Owner-authored writes carry their own confirmation: the vault's owner, revalidated in
+        // this transaction, wrote this claim in person, so it lands Auto with nothing to confirm.
+        // The proof rides the write's options from the door that authenticated the owner, and the
+        // writing actor (an exact close's verified closer, else the envelope's) has to be that
+        // owner, as a human. An approval, gated with no envelope
+        // (`ClaimMaterialization::gate_envelope`), gets the proof for its one Approved Put alone
+        // (`ops_put`), as does the owner's supersede door's exact close of an Approved claim.
+        let owner_write = owner_authored.filter(|write| match writing {
+            Some(actor) => {
+                actor.entity_ref() == write.actor()
+                    && actor.actor_class() == crate::edge::EdgeActorClass::Human
             }
             None => body.approval == ClaimApprovalStatus::Approved,
         });
-        // The owner's own approval is the same in-person confirmation: a
-        // human ruling on their own vault lands, whatever the manifest's
-        // criticality class (ARCH-0057 §2; ARCH-0003 §Criticality names this
-        // attestation rule). Without the owner's proof an Approved body keeps
-        // its floor: no writer stamps its own approval past it.
+        // The owner's own approval is the same in-person confirmation: a human ruling on their own
+        // vault lands, whatever the manifest's criticality class (ARCH-0057 §2; ARCH-0003
+        // §Criticality names this attestation rule). Without the owner's proof an Approved body
+        // keeps its floor: no writer stamps its own approval past it.
         let owner_approved = body.approval == ClaimApprovalStatus::Approved
-            && critical_claim_can_land_auto_with_confirm(
+            && owner_proof_lifts_criticality_floor(
                 &input,
                 decision.reason_codes(),
                 &body.predicate,
+                verified_close,
             );
         let owner_authored = (critical_floor_only || owner_approved) && owner_write.is_some();
+        // An exact close answers nothing: its proof lifts the floor above and reaches no row below.
+        let owner_write = owner_write.filter(|_| !verified_close);
         // Only a declared critical class attaches a confirmation. A predicate
         // no policy rule names resolves Critical by fallback, and that
         // default sets the legibility and truncation floors; it does not stop
@@ -324,6 +345,16 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
             (critical_floor_only || approved_close_floor_only || holder_approved_floor_only)
                 && !owner_authored
                 && !declared_critical;
+        // A checker's hold of an Auto request lands that body Proposed in the
+        // transaction its gate judged it in (a live-run claim put, review
+        // 9216 round 2 P1). On a predicate critical only by fallback, the
+        // Proposed body pends on the floor alone, the floor the Auto request
+        // was lifted past above, so that pend does not stop the hold the
+        // preflight recorded from being replayed below; any other pend or a
+        // denial still stands (review 9774 P1).
+        let proposed_fallback_floor_only = body.approval == ClaimApprovalStatus::Proposed
+            && criticality_floor_pend_only
+            && !declared_critical;
         if owner_authored {
             decision = GateDecision::allow()
                 .with_receipt_reasons([GATE_REASON_ALLOW_CRITICAL_OWNER_AUTHORED]);
@@ -391,6 +422,14 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
                 &body.value,
             )?
             .and_then(|planned| auto_check_value_preview(&planned));
+            // The checker reads the predicate as written, so a predicate
+            // that holds a secret (a value custody holds, or one the door's
+            // rules detect) is never sent either: no checker is asked, and
+            // the write is held below as for a value it cannot see whole
+            // (review 9216 round 2 P1).
+            let predicate_as_written =
+                predicate_reaches_checker_as_written(store, &*wtxn, *id, &body.predicate)?;
+            let value_preview = value_preview.filter(|_| predicate_as_written);
             if value_preview.is_none() {
                 checker_receipt_reasons.push(CHECKER_PARTIAL_VIEW_RECEIPT_REASON.to_owned());
             }
@@ -534,7 +573,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
             id,
             body,
             input.provenance.dreamer_run_id.as_deref(),
-            envelope.and_then(dreamer_attempt_id_from_write_envelope),
+            deriving.and_then(dreamer_attempt_id_from_write_envelope),
             pending_prompt,
         );
         // The recording-clock second this write already read.
@@ -543,11 +582,13 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         // replace it below, and an off-record room stages it instead.
         let mut decision_record = store.mint_gate_receipt_in_txn(wtxn, receipt)?;
         // FIX 8752: a batch apply skips the checker its preflight already
-        // asked, so policy alone answers Allow here. A checker hold that
-        // preflight recorded for this same candidate stays the verdict: the
-        // write lands held, and the writer below binds that receipt's pending
-        // row instead of dropping the hold. A fresh Deny or Pending stands.
-        if decision.outcome() == GateOutcome::Allow
+        // asked, so policy alone answers Allow here (or, for a held Auto
+        // request landing Proposed, the fallback floor's pend). A checker
+        // hold that preflight recorded for this same candidate stays the
+        // verdict: the write lands held, and the writer below binds that
+        // receipt's pending row instead of dropping the hold. Any other fresh
+        // Deny or Pending stands.
+        if (decision.outcome() == GateOutcome::Allow || proposed_fallback_floor_only)
             && let Some(receipt) = preflight_receipt
         {
             let preflight = store
@@ -716,6 +757,16 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
                 .is_some_and(|row| pending_row_holds_critical_confirm(&row))
         {
             store.remove_pending_gate_consent_in_txn(wtxn, id, TrayRemoval::Silent)?;
+        }
+        // The owner's own revision of a held MACHINE claim answers its
+        // question (MACHINE-BIRTH-HELD-QUESTION-OWNER-SUCCESSOR = A).
+        if resolve_pending && decision.outcome() == GateOutcome::Allow {
+            let landing = mode.record_decision.then_some(&decision_record);
+            let landing = (landing, preflight_receipt.map(|receipt| receipt.decision));
+            let writer = (envelope, owner_write);
+            *owner_amendment = redeem_held_row_by_owner_revision(
+                store, wtxn, id, body, &binding, writer, landing,
+            )?;
         }
         enforce_claim_gate_decision_with_consent(
             store,

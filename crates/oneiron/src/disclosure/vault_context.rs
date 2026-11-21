@@ -509,7 +509,8 @@ impl DisclosureContext {
     ///
     /// This reads the store alone, so it does not follow a scope summary's
     /// words or a copy of them to their sources: it is the pre-filter of a
-    /// bounded channel that holds no vault. A disclosure decision asks
+    /// read that holds no vault (a run's shared filter config). A disclosure
+    /// decision and a bounded result channel's admission ask
     /// [`Self::admits_in`].
     pub(crate) fn admits(
         &self,
@@ -615,9 +616,26 @@ impl DisclosureContext {
         entity_type: u8,
         claim_body: Option<&ClaimBody>,
     ) -> Result<bool> {
-        if !self.admits_from(store, rtxn, id, entity_type, claim_body)? {
-            return Ok(false);
-        }
+        Ok(self.admits_from(store, rtxn, id, entity_type, claim_body)?
+            && self.word_sources_admitted_in_from(vault, store, rtxn, id, claim_body)?)
+    }
+
+    /// [`Self::admits_in_from`]'s test of the sources of the record's words,
+    /// the record's own row aside: whether the audience may read every row
+    /// its words came from (a summary's covers, a copy's summary). The
+    /// caller judges the row itself. A bounded window that judges its rows
+    /// with their status aside ([`Self::admits_row_ignoring_status`]) asks
+    /// this beside that test, so a row whose words come from a row the
+    /// audience may not read takes no place in it. True when nothing is
+    /// clamped.
+    pub(crate) fn word_sources_admitted_in_from(
+        &self,
+        vault: &Vault,
+        store: &StoreRead<'_>,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        claim_body: Option<&ClaimBody>,
+    ) -> Result<bool> {
         if !self.clamps() {
             return Ok(true);
         }
@@ -635,7 +653,8 @@ impl DisclosureContext {
             raw.extend(encode_claim_body(body)?);
         }
         match crate::scope_summary::word_sources_through_in(vault, store, rtxn, id, &raw)? {
-            // Its own words: its row, and a TURN's messages, passed above.
+            // Its own words: its row, and a TURN's messages, which the
+            // caller's test of the row judges.
             crate::scope_summary::WordSources::Own => return Ok(true),
             crate::scope_summary::WordSources::Unresolved => return Ok(false),
             crate::scope_summary::WordSources::From(_) => {}
@@ -647,7 +666,8 @@ impl DisclosureContext {
             &raw,
             super::disclosable_set::CarriedSummary::Follow,
             |record, record_raw| {
-                // The row itself passed above, judged with its claim body.
+                // The row itself is the caller's to judge, with its claim
+                // body ([`Self::admits_in_from`]).
                 if record == *id {
                     return Ok(true);
                 }
@@ -656,6 +676,25 @@ impl DisclosureContext {
                 self.admits_row(store, rtxn, &record, header.entity_type, None)
             },
         )
+    }
+
+    /// [`Self::admits_from`]'s test of the record's own row with the row's
+    /// status aside: whether the audience could read the record were it
+    /// live (a deleted, stale or unsurfaceable claim is judged as a live
+    /// one), not what it was written from. A run asks it before its claim
+    /// status gate judges a row for a clamped pack, so the gate records no
+    /// suppression of a row the audience may not read whatever its status.
+    pub(crate) fn admits_row_ignoring_status(
+        &self,
+        store: &StoreRead<'_>,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        entity_type: u8,
+    ) -> Result<bool> {
+        if !self.clamps() {
+            return Ok(true);
+        }
+        self.admits_row(store, rtxn, id, entity_type, None)
     }
 
     /// [`Self::admits`] for one record's own row, not what it was written from.

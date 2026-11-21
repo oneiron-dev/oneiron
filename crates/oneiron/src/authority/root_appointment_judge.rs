@@ -36,8 +36,9 @@
 //! Every other appointment is refused, with its descendants, and reports its
 //! verdict ([`AuthorityFoldIssue::AppointmentRefused`]).
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
 
 use super::fold_resume::{FoldCapture, ProofParts};
 
@@ -75,6 +76,11 @@ pub(super) struct Recovered {
     /// The handoffs the proof folds closed inside the counted lines: they keep
     /// that status, and the fold never settles them again (E3).
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    /// The revocations the proof folds closed in a conflict inside the
+    /// counted lines, each with the refusal its proof fold gave it: the fold
+    /// keeps both, as it keeps the closed handoffs, so the owner's key
+    /// changes list still names them (REVIEW-9799 P1).
+    pub(super) crossed_revocations: BTreeMap<AuthorityEntryHash, AuthorityFoldIssue>,
 }
 
 /// A counted appointment's fence: every key a row of its ancestry names as a
@@ -90,7 +96,9 @@ pub(super) struct AppointmentFence {
 
 impl Recovered {
     /// How the row `hash` folds when a counted appointment's line holds it:
-    /// its proof fold's state, or a refusal. None for every other row.
+    /// its proof fold's state, or a refusal: a crossed revocation's own
+    /// refusal there, any other row's `InvalidAncestry`. None for every other
+    /// row.
     pub(super) fn entry_fold(&self, hash: &AuthorityEntryHash) -> Option<EntryFold> {
         if let Some(world) = self.worlds.get(hash) {
             return Some(EntryFold::Ready(world.clone()));
@@ -99,7 +107,12 @@ impl Recovered {
         Some(
             match proof.and_then(|index| self.proofs[index].states.get(hash)) {
                 Some(state) => EntryFold::Ready(state.clone()),
-                None => EntryFold::Invalid(AuthorityFoldIssue::InvalidAncestry(*hash)),
+                None => EntryFold::Invalid(
+                    self.crossed_revocations
+                        .get(hash)
+                        .cloned()
+                        .unwrap_or(AuthorityFoldIssue::InvalidAncestry(*hash)),
+                ),
             },
         )
     }
@@ -159,6 +172,15 @@ impl Recovered {
         for row in &ancestry {
             self.rows
                 .insert(*row, parts.states.contains_key(row).then_some(index));
+            // As `rows`, the row keeps what this proof fold gave it.
+            match parts.crossed_revocations.get(row) {
+                Some(issue) => {
+                    self.crossed_revocations.insert(*row, issue.clone());
+                }
+                None => {
+                    self.crossed_revocations.remove(row);
+                }
+            }
         }
         let mut world = parts.merged.clone();
         super::op_apply::apply_op(&mut world, &entry.op, hash, entry.signer_key());
@@ -342,17 +364,20 @@ pub(super) fn verdict_of_candidate(
     }
 }
 
-/// The verdicts already reached, by appointment hash. A verdict is a function
-/// of the hash alone (the row names its ancestry by content), so one map
-/// serves every fold of the process. It keeps only completed verdicts, never
-/// [`AppointmentVerdict::Pending`] nor the log-order burn of [`judge_anchor`],
-/// and it empties itself at [`MEMO_ROWS`].
-static MEMO: OnceLock<Mutex<BTreeMap<AuthorityEntryHash, AppointmentVerdict>>> = OnceLock::new();
-const MEMO_ROWS: usize = 4096;
-
-fn memo() -> &'static Mutex<BTreeMap<AuthorityEntryHash, AppointmentVerdict>> {
-    MEMO.get_or_init(|| Mutex::new(BTreeMap::new()))
+thread_local! {
+    /// The verdicts this thread already reached, by appointment hash. A
+    /// verdict is a function of the hash alone (the row names its ancestry by
+    /// content), so one map serves every fold the thread runs. It keeps only
+    /// completed verdicts, never [`AppointmentVerdict::Pending`] nor the
+    /// log-order burn of [`judge_anchor`], and it empties itself at
+    /// [`MEMO_ROWS`]. Each thread keeps its own: only root appointments are
+    /// judged, so another thread judges one again at most once, and no fold
+    /// waits on another thread's lock. Each borrow ends before any judging,
+    /// which folds and judges again.
+    static MEMO: RefCell<BTreeMap<AuthorityEntryHash, AppointmentVerdict>> =
+        const { RefCell::new(BTreeMap::new()) };
 }
+const MEMO_ROWS: usize = 4096;
 
 /// The verdict of appointment `hash`, whose ancestry `ancestry` is complete in
 /// `by_hash`.
@@ -361,17 +386,17 @@ fn verdict_of(
     hash: AuthorityEntryHash,
     ancestry: &BTreeSet<AuthorityEntryHash>,
 ) -> AppointmentVerdict {
-    if let Some(verdict) = memo().lock().ok().and_then(|memo| memo.get(&hash).copied()) {
+    if let Some(verdict) = MEMO.with_borrow(|memo| memo.get(&hash).copied()) {
         return verdict;
     }
     let verdict = judge_one(by_hash, &by_hash[&hash], ancestry);
-    if verdict != AppointmentVerdict::Pending
-        && let Ok(mut memo) = memo().lock()
-    {
-        if memo.len() >= MEMO_ROWS {
-            memo.clear();
-        }
-        memo.insert(hash, verdict);
+    if verdict != AppointmentVerdict::Pending {
+        MEMO.with_borrow_mut(|memo| {
+            if memo.len() >= MEMO_ROWS {
+                memo.clear();
+            }
+            memo.insert(hash, verdict);
+        });
     }
     verdict
 }
@@ -452,17 +477,17 @@ fn judge_one(
     AppointmentVerdict::Valid
 }
 
-/// The proof folds of valid appointments, kept for counting, by
-/// [`proof_key`]: an appointment's ancestry is a function of its parents.
-/// Each holds every state of an ancestry, so the map stays small and
-/// empties itself at [`PROOF_MEMO_ENTRIES`].
 type ProofKey = ([u8; 32], [u8; 32], Vec<AuthorityEntryHash>);
-static PROOF_MEMO: OnceLock<Mutex<BTreeMap<ProofKey, Arc<ProofParts>>>> = OnceLock::new();
-const PROOF_MEMO_ENTRIES: usize = 16;
-
-fn proof_memo() -> &'static Mutex<BTreeMap<ProofKey, Arc<ProofParts>>> {
-    PROOF_MEMO.get_or_init(|| Mutex::new(BTreeMap::new()))
+thread_local! {
+    /// The proof folds of valid appointments this thread folded, kept for
+    /// counting, by [`proof_key`]: an appointment's ancestry is a function of
+    /// its parents. Each holds every state of an ancestry, so the map stays
+    /// small and empties itself at [`PROOF_MEMO_ENTRIES`]. Per thread, as
+    /// [`MEMO`] is; each borrow ends before any fold.
+    static PROOF_MEMO: RefCell<BTreeMap<ProofKey, Arc<ProofParts>>> =
+        const { RefCell::new(BTreeMap::new()) };
 }
+const PROOF_MEMO_ENTRIES: usize = 16;
 
 /// The root, the anchor and the sorted parents of an appointment.
 fn proof_key(entry: &AuthorityLogEntry, root: RecoveryRootId, anchor: [u8; 32]) -> ProofKey {
@@ -473,12 +498,12 @@ fn proof_key(entry: &AuthorityLogEntry, root: RecoveryRootId, anchor: [u8; 32]) 
 }
 
 fn remember_proof(key: ProofKey, parts: Arc<ProofParts>) {
-    if let Ok(mut memo) = proof_memo().lock() {
+    PROOF_MEMO.with_borrow_mut(|memo| {
         if memo.len() >= PROOF_MEMO_ENTRIES {
             memo.clear();
         }
         memo.insert(key, parts);
-    }
+    });
 }
 
 /// The proof fold of a valid appointment's complete ancestry `ancestry`, from
@@ -491,11 +516,7 @@ fn proof_parts(
     ancestry: &BTreeSet<AuthorityEntryHash>,
 ) -> Option<Arc<ProofParts>> {
     let key = proof_key(entry, root, anchor);
-    if let Some(parts) = proof_memo()
-        .lock()
-        .ok()
-        .and_then(|memo| memo.get(&key).cloned())
-    {
+    if let Some(parts) = PROOF_MEMO.with_borrow(|memo| memo.get(&key).cloned()) {
         return Some(parts);
     }
     let scoped: Vec<AuthorityLogEntry> =

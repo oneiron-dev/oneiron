@@ -243,12 +243,15 @@ fn put_repo_provenance_claim_with_value(vault: &Vault, value: Value) -> EntityId
     )
     .unwrap();
     let data = encode_claim_body(&body).expect("encode repo provenance claim");
-    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(ENTITY_TYPE_CLAIM);
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&data);
+    // The full 33-byte header (row_version included), as the claim decoder
+    // reads the body from ENTITY_METADATA_HEADER_LEN.
+    let payload = crate::test_util::entity_record(
+        ENTITY_TYPE_CLAIM,
+        TimeRange { start: 1, end: 1 },
+        1,
+        1,
+        &data,
+    );
     let mut wtxn = vault.store.env.write_txn().expect("claim write txn");
     vault
         .store

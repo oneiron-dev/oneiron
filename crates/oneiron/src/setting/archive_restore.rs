@@ -9,30 +9,50 @@
 //! and its revision: an absent row installs, equal bytes are unchanged, a different live row is
 //! kept.
 //!
+//! A row of a `sync: install` key is a choice about the install that set it, and it goes with
+//! that install's machine identity (DESIGN 15 section 1.5). It lands only from this install's
+//! own export, whose provenance signature stands and names this install's machine
+//! ([`OwnerArchiveRestorePermit::lands_install_choices`]); from any other archive it is held
+//! back as an install choice (Engine ANSWER SETTING-ARCHIVE-RESTORE-INSTALL-ROWS = A, 21 Nov
+//! 12:46). Its change history still installs: it is a record, and it sets nothing.
+//!
 //! A key's change hook is its own check on this vault's state and the start of its effect (a
 //! seat ref that is never installed twice, a route the manifest in force admits, a feed's poll
 //! chain). An absent row of such a key installs through the hook, as a change with no prior,
 //! inside a savepoint: a refusal rolls the row back and its envelope stays retained. The effect
-//! starts from now and catches nothing up (ARCHIVE-RESTORE-LIVE = B).
+//! starts from now and catches nothing up (ARCHIVE-RESTORE-LIVE = B). Before its writer opens,
+//! the restore takes the write turn of each key the archive holds a source-live row of
+//! ([`take_write_turns`]), so no hooked row lands inside another holder's run, as no set of that
+//! key does.
 //!
 //! The change history installs at absent sequences, and the counter never goes back: it ends at
 //! the highest of the live counter, the archived counter, every landed change's sequence and
 //! every landed row's revision, so a row's revision still only grows and no sequence is handed
 //! out twice.
+//!
+//! A whole-vault import maps the source root project onto this vault's own root
+//! ([`ProjectRootMap`]), so a row scoped at the source root is checked and lands at this root: the
+//! owner's root rows come back, and a row this root already holds (its own birth row of a born
+//! key) is kept. A row of a pack's default layer ([`SettingScope::Pack`]) never lands: the
+//! accepted defaults are the live vault's, so a restore cannot bring back an older, looser default
+//! (DESIGN 1.5 "Restore"). It is unchanged where the live row holds its bytes and kept otherwise.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use oneiron_setting_contract::RowKey;
 
 use super::change::{CHANGE_NEXT, CHANGES, SettingChange};
 use super::read::{CONTENT_ROWS, ROWS, StoredRow, table_of};
-use super::{OnChange, OnCommitted, SettingMode, SettingSpec, spec_named};
+use super::restored::install_choice;
+use super::{
+    OnChange, OnCommitted, ScopeKind, SettingMode, SettingScope, SettingSpec, WriteTurn, spec_named,
+};
 use crate::Vault;
 use crate::batch::export::archive_side_install::{
     ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
 };
 use crate::batch::export::{
-    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, ProjectRootMap, RetainedSideHeldBackReason,
 };
 use crate::error::{Error, Result, StoreError};
 use crate::side_table::{self, Named, SideTable};
@@ -88,8 +108,9 @@ impl Landed<'_> {
 /// Lands the owner's archived setting envelopes, one outcome per row in input order. Rows of a
 /// key with a change hook land after the others, in key order, and are tried again while any of
 /// them lands, so keys whose hooks read each other (a floor and its count) do not depend on the
-/// archive's order. `wakes` receives the after-commit wake of each key with an installed row;
-/// the caller runs them once the import has committed.
+/// archive's order. `projects` maps a whole-vault archive's source root onto this vault's root.
+/// `wakes` receives the after-commit wake of each key with an installed row; the caller runs them
+/// once the import has committed.
 ///
 /// # Errors
 ///
@@ -98,11 +119,12 @@ pub(crate) fn land_archived_setting_rows_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     permit: &OwnerArchiveRestorePermit,
+    projects: Option<&ProjectRootMap>,
     rows: &[ArchiveRetainedSideRow],
     wakes: &mut Vec<OnCommitted>,
 ) -> Result<Vec<ArchivedSideRowOutcome>> {
     use ArchivedSideRowOutcome::HeldBack;
-    use RetainedSideHeldBackReason::InvalidEncoding;
+    use RetainedSideHeldBackReason::{InstallChoice, InvalidEncoding};
 
     let mut outcomes: Vec<Option<ArchivedSideRowOutcome>> = Vec::new();
     outcomes.resize_with(rows.len(), || None);
@@ -136,13 +158,39 @@ pub(crate) fn land_archived_setting_rows_in_txn(
                 continue;
             }
         };
-        let checked = match check_row_in_txn(vault, txn, &table, row)? {
+        let (key_bytes, key, stored) = match decode_row(&table, row) {
+            Ok(decoded) => decoded,
+            Err(reason) => {
+                outcomes[at] = Some(HeldBack(reason));
+                continue;
+            }
+        };
+        // A pack's default layer row never lands, as the accepted defaults are the live vault's
+        // (DESIGN 1.5 "Restore"): unchanged where this vault's row holds the archive's bytes,
+        // and kept otherwise, an absent row too.
+        if key.scope.kind() == ScopeKind::Pack {
+            let live = table.get_bytes(vault, txn, &key_bytes)?;
+            outcomes[at] = Some(if live.as_ref() == Some(&row.source_value) {
+                ArchivedSideRowOutcome::Unchanged
+            } else {
+                ArchivedSideRowOutcome::KeptLive
+            });
+            continue;
+        }
+        let checked = match check_row_in_txn(vault, txn, &table, projects, key, stored)? {
             Ok(checked) => checked,
             Err(reason) => {
                 outcomes[at] = Some(HeldBack(reason));
                 continue;
             }
         };
+        // A choice about the install that wrote the archive stays with that install unless it is
+        // this one (SETTING-ARCHIVE-RESTORE-INSTALL-ROWS = A), as a restore into an empty place
+        // and an activated archive leave it behind (`super::restored`).
+        if !permit.lands_install_choices() && install_choice(&checked.key_bytes) {
+            outcomes[at] = Some(HeldBack(InstallChoice));
+            continue;
+        }
         // Only an absent row passes its key's hook: a live row is compared, never replaced.
         if let Some(on_change) = checked.spec.on_change
             && table.get_bytes(vault, txn, &checked.key_bytes)?.is_none()
@@ -176,6 +224,46 @@ pub(crate) fn land_archived_setting_rows_in_txn(
             ))
         })
         .collect()
+}
+
+/// The write turn of the key an archived envelope holds a row of, when the owner's restore may
+/// land that row: a source-live value or pin row of a key that names a turn. Read before the
+/// restore's writer opens, so it checks only what can name the key; a row that names a key but
+/// fails a later check takes a turn it never needed, never the other way round.
+pub(crate) fn write_turn_of_archived_row(row: &ArchiveRetainedSideRow) -> Option<WriteTurn> {
+    if !row.source_live {
+        return None;
+    }
+    let key_bytes = match row.source_table.as_str() {
+        name if name == side_table::SETTING.name => decode_archived_row(&ROWS, row).ok()?.0,
+        name if name == side_table::SETTING_CONTENT.name => {
+            decode_archived_row(&CONTENT_ROWS, row).ok()?.0
+        }
+        _ => return None,
+    };
+    spec_named(&RowKey::decode(&key_bytes)?.name)
+        .ok()?
+        .write_turn
+}
+
+/// Takes `turns`, each once and in name order, for the owner's restore to hold from before its
+/// writer opens until the wakes after its commit are done, as [`Vault::set_setting`] holds one
+/// key's. The caller names the turns of the keys its archive holds rows of
+/// ([`write_turn_of_archived_row`]): the restore can install an absent row of such a key through
+/// its hook, and which rows land is known only inside its writer. A restore whose archive holds no
+/// row of a key with a turn takes none, so it waits on no admission and is refused by none
+/// (REVIEW-9493 round 2).
+///
+/// # Errors
+///
+/// A turn's refusal: the calendar admission turn refuses a thread that already holds it.
+pub(crate) fn take_write_turns(
+    vault: &Vault,
+    turns: impl IntoIterator<Item = WriteTurn>,
+) -> Result<Vec<Box<dyn std::any::Any>>> {
+    let turns: BTreeMap<&str, WriteTurn> =
+        turns.into_iter().map(|turn| (turn.name, turn)).collect();
+    turns.values().map(|turn| (turn.take)(vault)).collect()
 }
 
 /// Lands the absent rows of keys with a change hook, in key order, and tries the refused ones
@@ -250,25 +338,37 @@ fn settle_counter_in_txn(
     Ok(())
 }
 
-/// The checks of one archived value or pin row, in the order the set door makes them: the key
-/// bytes name a row key; the key is in the catalogue and its rows live in `table`; the item and
-/// the scope kind are ones it admits; a learned seed carries its weight and no other row does;
-/// the value passes the key's own check, through its JSON form and back; the entity the scope
-/// names is live here.
+/// One archived value or pin row's key bytes, its key and its stored row: the envelope decodes
+/// as a row of `table`, and its key bytes are the encoding of a row key.
+fn decode_row(
+    table: &RowTable,
+    row: &ArchiveRetainedSideRow,
+) -> std::result::Result<(Vec<u8>, RowKey, StoredRow), RetainedSideHeldBackReason> {
+    let (key_bytes, stored) = decode_archived_row(table, row)?;
+    let key = RowKey::decode(&key_bytes)
+        .filter(|key| key.encode() == key_bytes)
+        .ok_or(RetainedSideHeldBackReason::InvalidEncoding)?;
+    Ok((key_bytes, key, stored))
+}
+
+/// The checks of one decoded archived value or pin row ([`decode_row`]), in the order the set
+/// door makes them: the key is in the catalogue and its rows live in `table`; the item and the
+/// scope kind are ones it admits; a learned seed carries its weight and no other row does; the
+/// value passes the key's own check, through its JSON form and back; the entity the scope names
+/// is live here. A row scoped at the source root (`projects`) is checked, and lands, at this
+/// vault's root.
 fn check_row_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     table: &RowTable,
-    row: &ArchiveRetainedSideRow,
+    projects: Option<&ProjectRootMap>,
+    mut key: RowKey,
+    stored: StoredRow,
 ) -> Result<std::result::Result<CheckedRow, RetainedSideHeldBackReason>> {
-    use RetainedSideHeldBackReason::{InvalidEncoding, InvalidValue, MissingLiveEntity};
-    let (key_bytes, stored) = match decode_archived_row(table, row) {
-        Ok(decoded) => decoded,
-        Err(reason) => return Ok(Err(reason)),
-    };
-    let Some(key) = RowKey::decode(&key_bytes).filter(|key| key.encode() == key_bytes) else {
-        return Ok(Err(InvalidEncoding));
-    };
+    use RetainedSideHeldBackReason::{InvalidValue, MissingLiveEntity};
+    if let (Some(projects), SettingScope::Project(project)) = (projects, &mut key.scope) {
+        *project = projects.local_id(*project);
+    }
     let Ok(spec) = spec_named(&key.name) else {
         return Ok(Err(InvalidValue));
     };
@@ -291,6 +391,7 @@ fn check_row_in_txn(
     {
         return Ok(Err(MissingLiveEntity));
     }
+    let key_bytes = key.encode();
     Ok(Ok(CheckedRow {
         spec,
         key,
@@ -356,6 +457,12 @@ fn install_through_hook_in_txn(
         at: now,
         why: None,
         weight_runs: checked.stored.weight_runs,
+        // The owner's archived row comes back as it was: no move the rule judges (DESIGN 1.5).
+        direction: None,
+        surface: None,
+        signed: None,
+        with: Vec::new(),
+        standing: None,
     };
     if (hooked.on_change)(vault, &mut savepoint, &change).is_err() {
         savepoint.abort();

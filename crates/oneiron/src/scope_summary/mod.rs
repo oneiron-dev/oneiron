@@ -37,13 +37,14 @@ pub use derivation::{
     SummarySourceVersion,
 };
 pub(crate) use derivation::{
-    defer_rederive, rederive_changed_in_txn, rederive_deferred, rederive_owed_in_txn,
-    roll_back_summary_in_txn,
+    SummaryGeneration, defer_rederive, rederive_changed_in_txn, rederive_deferred,
+    rederive_owed_in_txn, roll_back_summary_in_txn, summary_generation_in,
 };
 pub use purpose::SummaryPurpose;
 pub use status::{ArcPendingStatus, ScopeSummaryResult, ScopeSummaryStatus, SummaryStale};
 mod word_sources;
 
+pub(crate) use codec::scope_summary_actor;
 pub use codec::{
     ScopeSummaryBody, SummarySourceMessage, SummarySourceNote, decode_scope_summary_body,
     encode_scope_summary_body,

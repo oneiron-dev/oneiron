@@ -10,6 +10,9 @@ use super::notification::NotificationKind;
 use crate::agent_dispatch::{AGENT_RUN_EFFECT_ANSWER_VERB, AGENT_RUN_EFFECT_NOTIFICATION_PRODUCER};
 use crate::authority::OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER;
 use crate::claim::{WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER, WeaveDigestSettingChangeStatus};
+use crate::dreamer_runner::maintenance::identity::{
+    IDENTITY_ANSWER_VERB, IDENTITY_SOMEONE_NEW_PROPOSAL_PRODUCER, SOMEONE_NEW,
+};
 use crate::entity_id::EntityId;
 use crate::federation::NOTIFICATION_PRODUCER_ERASE_PROPOSAL;
 use crate::llm::model_pack::{MODEL_PACK_CHANGE_NOTIFICATION_PRODUCER, MODEL_PACK_REVERT_VERB};
@@ -35,6 +38,8 @@ const OAUTH_AUTHORIZATION_ANSWER_VERB: &str = "vault.oauth.authorization.answer"
 /// previews through [`OWNER_CONFIRM_PREVIEW_VERB`], whose `confirm` this
 /// verb's call then passes back.
 const RECORD_ERASE_CONFIRM_VERB: &str = "vault.records.erase_confirm";
+/// The owner's set of the setting rows of a refused projection, as one act: its fix.
+const SETTING_SET_VERB: &str = "vault.settings.set";
 
 /// One tap a notification offers: the registered verb it calls and that
 /// verb's own input, so a client renders the button the engine describes.
@@ -71,7 +76,11 @@ impl Memory<'_> {
     /// call a moved agent run's replayed step makes that its earlier machine
     /// may have made, is sent again or left (FIX 4747), and a model pack
     /// change is reverted (FIX 5369). An applied stock switch offers the
-    /// owner's undo while its binding still holds (FIX 4663). Any other row,
+    /// owner's undo while its binding still holds (FIX 4663). A GPU job's
+    /// stop at its maximum offers its one-click resume while the stop stands
+    /// (CROSS-ARCH-0023 C2 05). A member's someone-new proposal on an
+    /// identity ask offers the owner's acceptance while it stands
+    /// (OWNER-NOTICE-MEMBER-ASK-ROUTE Q1 = A). Any other row,
     /// and a target that no longer reads or has settled, offers none.
     fn notification_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let producer = row.source.producer.as_str();
@@ -104,11 +113,91 @@ impl Memory<'_> {
             {
                 self.model_pack_revert_actions(row)
             }
+            NotificationKind::Ask
+                if producer == crate::setting::SETTING_REFUSAL_NOTIFICATION_PRODUCER =>
+            {
+                self.setting_refusal_actions(row)
+            }
             NotificationKind::Ask if producer == crate::mail_pack::MAIL_REPLY_ASK_PRODUCER => {
                 self.mail_reply_ask_actions(row)
             }
+            NotificationKind::Ask if producer == crate::gpu_job::GPU_JOB_STOPPED_PRODUCER => {
+                self.gpu_job_resume_actions(row)
+            }
+            NotificationKind::Ask if producer == IDENTITY_SOMEONE_NEW_PROPOSAL_PRODUCER => {
+                self.identity_proposal_actions(row)
+            }
+            NotificationKind::VoiceRecognitionWithdrawalLoggedForSubject
+                if producer == crate::voice_identity::VOICE_RECOGNITION_NOTIFICATION_PRODUCER =>
+            {
+                self.voice_consent_restore_actions(row)
+            }
             _ => Vec::new(),
         }
+    }
+
+    /// The producer names the identity ask in `source.result` and the ids the
+    /// decision is about in `subject_refs`; the notice is a member's
+    /// someone-new proposal on it. Shown while the proposal it was sent for
+    /// stands, made when the notice was and on those ids: one tap accepts it
+    /// through [`IDENTITY_ANSWER_VERB`], naming it by its token, and the verb
+    /// judges the ask, the proposal and the caller again.
+    fn identity_proposal_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
+        let Some(ask) = row.source.result.as_deref() else {
+            return Vec::new();
+        };
+        let Ok(Some(proposal)) = self.vault().identity_someone_new_proposal(ask) else {
+            return Vec::new();
+        };
+        let refs: Vec<String> = proposal.refs.iter().map(EntityId::to_hex).collect();
+        if proposal.proposed_at != row.created_at || refs != row.subject_refs {
+            return Vec::new();
+        }
+        vec![NotificationAction::new(
+            IDENTITY_ANSWER_VERB,
+            serde_json::json!({ "ask": ask, "choice": SOMEONE_NEW, "proposal": proposal.token }),
+        )]
+    }
+
+    /// The producer names the GPU job in `source.result`; the notice is the
+    /// add-funds notice of its stop at the maximum (C2 04). Shown while that
+    /// stop stands: one tap starts one more chunk of the job's first maximum
+    /// from the stop's checkpoint, on the quote the stop priced (C2 05). The
+    /// start checks that quote against the host's offer as it stands then.
+    /// Only the notice of the stop that stands offers it: its event names the
+    /// job's last chunk, and a notice of an earlier stop the job resumed from
+    /// names an earlier one.
+    fn gpu_job_resume_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
+        let Some(job) = row
+            .source
+            .result
+            .as_deref()
+            .and_then(|job| EntityId::from_hex(job).ok())
+        else {
+            return Vec::new();
+        };
+        let Ok(Some(job)) = self.vault().gpu_job(&job) else {
+            return Vec::new();
+        };
+        let stop_event =
+            crate::gpu_job::notice_event_prefix(&job.id, job.chunks.len().saturating_sub(1));
+        let resume_quote = job.resume_quote.as_ref().filter(|_| {
+            job.state == crate::gpu_job::GpuJobState::Stopped
+                && job.stop.is_some()
+                && row.source.event.starts_with(&stop_event)
+        });
+        resume_quote
+            .map(|quote| {
+                NotificationAction::new(
+                    crate::gpu_job::GpuJobVerb::Start.name(),
+                    serde_json::json!({
+                        "quote": crate::gpu_job::GpuJobQuoteTerms::from(quote),
+                        "resume": true,
+                    }),
+                )
+            })
+            .into_iter()
+            .collect()
     }
 
     /// The producer names the request in `source.result`; the ask is the
@@ -340,6 +429,29 @@ impl Memory<'_> {
     /// The producer names the change in `source.result`; the notice is an
     /// owner's own. Its revert is offered while the change is the vault's
     /// last and the pack before it is installed at its bytes and served.
+    /// The producer names every setting act a refused projection is about in `source.event`
+    /// (row SETTING-PROJECTED-ROW-REFUSING-HOOKS). Each tap is the owner's set, as one act, of
+    /// each row such an act heads that this install still refuses and of each row the key's hook
+    /// judges it against: one tap, each to the value it holds here, which the owner may edit
+    /// before he taps, or, for a key that quarantines a refused row, a tap for each row that keeps
+    /// it and clears the others. The act replaces the refused one on every machine. A refusal
+    /// that no longer stands here offers none.
+    fn setting_refusal_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
+        let vault = self.vault();
+        let taps = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)
+            .and_then(|txn| {
+                crate::setting::setting_refusal_taps_in_txn(vault, &txn, &row.source.event)
+            });
+        taps.unwrap_or_default()
+            .into_iter()
+            .map(|args| NotificationAction::new(SETTING_SET_VERB, args))
+            .collect()
+    }
+
     fn model_pack_revert_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let Some(change_ref) = row.source.result.as_deref() else {
             return Vec::new();
@@ -366,7 +478,8 @@ impl Memory<'_> {
     /// preview of the owner's own erase of it, whose `confirm` that erase
     /// then takes. An erased record, and
     /// one that no longer reads, offers none (FIX
-    /// AGENT-ERASE-PROPOSAL-INBOX-TAP).
+    /// AGENT-ERASE-PROPOSAL-INBOX-TAP), and nor does the root project, which
+    /// no delete door takes (FIX ROOT-PROJECT-ERASE-REPUT-REFUSED).
     fn erase_proposal_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let Some(record) = row
             .source
@@ -377,13 +490,23 @@ impl Memory<'_> {
             return Vec::new();
         };
         let vault = self.vault();
-        let live = vault
+        let erasable = vault
             .store
             .env
             .read_txn()
             .map_err(crate::error::Error::from)
-            .and_then(|txn| crate::vault::live_entity_row_in_txn(&vault.store, &txn, &record));
-        if !live.is_ok_and(|entity| entity.is_live()) {
+            .and_then(|txn| {
+                Ok(
+                    crate::vault::live_entity_row_in_txn(&vault.store, &txn, &record)?.is_live()
+                        && crate::workspace_roster::reject_root_project_delete(
+                            &vault.store,
+                            &txn,
+                            &record,
+                        )
+                        .is_ok(),
+                )
+            });
+        if !matches!(erasable, Ok(true)) {
             return Vec::new();
         }
         vec![NotificationAction::new(

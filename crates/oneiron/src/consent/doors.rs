@@ -22,6 +22,7 @@ use super::support::{
 };
 use crate::error::GateError;
 
+mod after_own_scrub;
 mod code_wait_rebind;
 mod decision_slot;
 mod grants;
@@ -34,8 +35,8 @@ mod read;
 mod request_credential;
 
 pub(crate) use grants::{
-    DerivedGrantOrigin, DerivedGrantSetting, record_standing_grant_use_for_store_in_txn,
-    standing_grant_rows_in_txn,
+    DerivedGrantOrigin, DerivedGrantSetting, land_carried_grant_row_in_txn,
+    record_standing_grant_use_for_store_in_txn, standing_grant_rows_in_txn,
 };
 pub(crate) use queue_check::QueuedCheckApproval;
 
@@ -237,7 +238,10 @@ impl AuthenticatedOwner {
     /// belongs to `vault`, its person is live, and a credential it carried is
     /// still live and still an owner's, or a person credential it carried is
     /// still live, all in the acting transaction. Every other door takes
-    /// [`Self::revalidate_in_txn`].
+    /// [`Self::revalidate_in_txn`]. Its twin at the publication of the
+    /// owner's delete of their own PERSON is
+    /// [`Self::revalidate_after_own_scrub_in_txn`]: a check added here goes
+    /// there too.
     pub(crate) fn revalidate_person_in_txn(
         &self,
         vault: &Vault,
@@ -254,14 +258,7 @@ impl AuthenticatedOwner {
             // revoked or a binding withdrawn while the request waited for the
             // writer commits nothing. Off a self-hosted vault the typed
             // refusal stands as it is.
-            action.holds_in(vault, txn).map_err(|error| match error {
-                Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(_)) => {
-                    Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                        "the host action this owner was authenticated from no longer holds",
-                    ))
-                }
-                other => other,
-            })?;
+            action.holds_in(vault, txn).map_err(host_action_lapse)?;
         }
         if let Some(credential) = &self.credential {
             // Rechecked in the caller's transaction: a capability revoked, or
@@ -334,7 +331,10 @@ impl AuthenticatedOwner {
             )));
         }
         self.revalidate_as_vault_owner_in_txn(vault, txn)?;
-        Ok(OwnerAuthoredWrite { actor: self.actor })
+        Ok(OwnerAuthoredWrite {
+            actor: self.actor,
+            bound_to_request_slip: self.request_credential.is_some(),
+        })
     }
 
     /// This proof as an owner-tier answer to a claim's owner-answer
@@ -352,6 +352,19 @@ impl AuthenticatedOwner {
             Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_))) => Ok(None),
             Err(error) => Err(error),
         }
+    }
+
+    /// Whether the owner key's proof this install holds also cosigns the
+    /// install join an act by this proof names first, revalidated in `txn`:
+    /// the owner's own write whose proof came with no request's slip, the
+    /// rule of [`Vault::owner_act_proof_signer`]. An owner choice or a
+    /// machine answer keeps that proof on the act itself, whose judge needs
+    /// it; the join's proof buys nothing but room past another install's
+    /// owner reserve (REVIEW-9962 P1).
+    pub(crate) fn proves_joins_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        Ok(self
+            .owner_answer_in_txn(vault, txn)?
+            .is_some_and(|write| !write.bound_to_request_slip()))
     }
 
     /// Whether the credential this proof was carried under is a support
@@ -399,21 +412,48 @@ impl AuthenticatedOwner {
     }
 }
 
+/// A host action's recheck refusal as the owner door gives it: a lapse (a
+/// root revoked, a binding withdrawn, an owner no longer live) is the
+/// owner's refusal; off a self-hosted vault the typed refusal stands as it is.
+fn host_action_lapse(error: Error) -> Error {
+    match error {
+        Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(_)) => {
+            Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "the host action this owner was authenticated from no longer holds",
+            ))
+        }
+        other => other,
+    }
+}
+
 /// A claim write the vault's authenticated owner made in person, revalidated
 /// in the transaction that writes it.
 ///
 /// Only [`AuthenticatedOwner::owner_authored_write_in_txn`] builds one, and
 /// it is neither `Clone` nor stored: the writing door takes it by value into
-/// that transaction's gate mode, so no later write can inherit it.
+/// that transaction's gate mode, so no later write can inherit it. A door
+/// that carries an authority act lends it by reference to pick the owner
+/// key's proof the act carries
+/// ([`crate::Vault::owner_act_proof_signer`]).
 #[derive(Debug)]
 pub(crate) struct OwnerAuthoredWrite {
     actor: EntityId,
+    /// Whether a request's slip came with the proof (`request_credential`).
+    bound_to_request_slip: bool,
 }
 
 impl OwnerAuthoredWrite {
     /// The owner who authored the write.
     pub(crate) const fn actor(&self) -> EntityId {
         self.actor
+    }
+
+    /// Whether a request's slip came with this write's proof
+    /// ([`Vault::bind_request_credential`]): its cut is read for liveness
+    /// alone, so no owner key's proof vouches for the write past another
+    /// install's reserve ([`Vault::owner_act_proof_signer`], REVIEW-9955 P1).
+    pub(crate) const fn bound_to_request_slip(&self) -> bool {
+        self.bound_to_request_slip
     }
 }
 

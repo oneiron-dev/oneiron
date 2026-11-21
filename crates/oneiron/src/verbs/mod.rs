@@ -66,6 +66,7 @@ pub(crate) mod host;
 mod hub;
 mod identity_topology;
 mod inquiry;
+mod leave;
 mod legal_hold;
 // The build-time closure of the verb table over linked `self.*` operations.
 mod linked_self_surface;
@@ -142,6 +143,7 @@ mod sync_quarantine;
 // ROLE-TRAINING-RUN: the owner's role prepare and the bounded run read.
 mod training_runs;
 mod trusted_contact;
+mod turn_program_resume;
 mod uncertain_send;
 mod verb_table;
 mod voice_bank;
@@ -174,10 +176,11 @@ pub struct TaskAnswerRequest {
 pub use oneiron_verb_wire::verbs::{
     BoardFrameReply, BoardRefreshRequest, BoardSubscriptionReply, BoardSubscriptionRequest,
     BoardWakeReply, BoardWakeRequest, CompanionSharingRequest, EmptyRequest, InboxListRequest,
-    InboxMarkRequest, ProjectCardRequest, ProjectConversationRequest, ProjectGoalDismissRequest,
-    ProjectGoalDismissTarget, ProjectRefRequest, ProjectTradeoffRouteRequest, ReceiptsRequest,
-    RoomClaimRequest, RoomHostRequest, RoomRefRequest, RoomRequest, RoomTurnRequest, TaskRequest,
-    TaskWaveReceipt, TaskWaveRequest, WorkspaceRefRequest,
+    InboxMarkRequest, OneVaultAcknowledgeRequest, ProjectCardRequest, ProjectConversationRequest,
+    ProjectGoalDismissRequest, ProjectGoalDismissTarget, ProjectRefRequest,
+    ProjectTradeoffRouteRequest, ReceiptsRequest, RoomClaimRequest, RoomHostRequest,
+    RoomRefRequest, RoomRequest, RoomTurnRequest, TaskRequest, TaskWaveReceipt, TaskWaveRequest,
+    WorkTalkOpenRequest, WorkspaceRefRequest,
 };
 
 /// `vault.projects.goal.dismiss`'s result: `false` when an identical retry
@@ -427,6 +430,7 @@ pub use self::host::*;
 pub use self::hub::*;
 pub use self::identity_topology::*;
 pub use self::inquiry::*;
+pub use self::leave::*;
 pub use self::legal_hold::*;
 pub use self::live_run::*;
 pub use self::live_voice::*;
@@ -494,6 +498,7 @@ pub use self::sync_outbox::*;
 pub use self::sync_quarantine::*;
 pub use self::training_runs::*;
 pub use self::trusted_contact::*;
+pub use self::turn_program_resume::*;
 pub use self::uncertain_send::*;
 pub use self::voice_bank::*;
 pub use self::voice_recognition::*;

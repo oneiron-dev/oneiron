@@ -75,6 +75,9 @@ pub struct SyncServer {
     /// connects racing the same client id must observe first-binding-wins,
     /// never a read-modify-write interleave.
     pub(crate) lease_registrar: Mutex<()>,
+    /// One owner link act at a time on this server: a hosted peer's link and
+    /// its unlink never interleave ([`crate::linked_peer`]).
+    pub(crate) link_acts: std::sync::Mutex<()>,
     /// Window manager used by server-side safe-point maintenance jobs.
     pub(crate) reassert_manager: Arc<WindowManager>,
     /// Keep the weakly attached Observer B local-read tee alive for this server.
@@ -132,6 +135,12 @@ pub struct SyncServer {
     /// a self-hosted vault, which has no box (Fable pass 27 R7).
     pub(crate) recovery_box_hold:
         std::sync::OnceLock<crate::managed::recovery_box_hold::HypnosRecoveryBoxHold>,
+    /// This hosted vault's reporter of its owner key changes, set only by
+    /// managed boot from its wake ledger's spawn identity; empty on a
+    /// self-hosted vault, which has no supervisor to report to (Engine
+    /// ruling 21 Nov 06:00).
+    pub(crate) owner_key_change_report:
+        std::sync::OnceLock<crate::managed::owner_key_change_report::HypnosOwnerKeyChange>,
     /// The self-host root's issuer, loaded at construction from this install's own issuer seed for
     /// the vault when a host secret is configured (FIX-LIST 3018); `None` with no secret, on a
     /// relay, or where this install holds no seed. Never the managed issuer.
@@ -187,6 +196,9 @@ pub struct SyncServer {
     pub(crate) live_voice: crate::voice_host::LiveVoiceSessions,
     pub(crate) asr_sessions: crate::api::AsrSessions,
     pub(crate) meeting_imports: super::meeting_imports::MeetingImports,
+    /// Hook transcript imports staged in parts until their last part (FIX
+    /// HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER).
+    pub(crate) hook_transcript_uploads: super::hook_transcript_uploads::HookTranscriptUploads,
     pub(crate) model_streams: crate::api::ModelStreams,
     /// Whole-vault exports kept for their callers to read (FIX 3676).
     pub(crate) export_transfers: crate::api::ExportTransfers,
@@ -227,6 +239,10 @@ pub struct SyncServer {
     /// The `mcp_stdio` connector children every connector host this server
     /// builds sends through (row L8-27), stopped with the server.
     pub(crate) connector_stdio: Arc<crate::connector_call_host::stdio::ConnectorStdioRegistry>,
+    /// The GPU backends this server registered and the permits of the GPU
+    /// job chunks it runs (row L10-31), for the `vault.gpu.jobs.*` doors and
+    /// the GPU job worker.
+    pub(crate) gpu_jobs: Arc<crate::gpu_host::GpuJobHost>,
     /// The `[browser]` guest each code run starts for its own browser verbs.
     /// `None` answers every browser call `browser_unbound`.
     pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
@@ -396,24 +412,27 @@ const _: fn(&SyncServer) = |server| {
         vault, invocation_claims, root_doc, ephemeral_store, message_scopes, dreamer_progress,
         standing_block_cache, broadcast_tx, next_conn_id, lease_registrar, reassert_manager,
         broadcast_sessions,
+        link_acts,
         _reactive_tee, lifecycle_session_id, lifecycle_in_flight, housekeeping_passes,
         residence_work_changed, queue_driver_started, config, transfers, memory, renderer_turns,
         runs_device_link, device_link_opened,
         context_reads, renderer_scratch, query_checks, managed_issuer, host_root_issuer,
         recovery_box_hold,
+        owner_key_change_report,
         policy_doors, account_keys, usage_ledger, retrieval_buffer, host_account, wire_telemetry,
         mesh_pressure, retained, presence, booking_calls, booking_deposit_stripe_base,
         removal_deliveries, shared_envs, booking_turn_lines,
         leaf_keys, lens_frames, note_editors, artifact_previews, live_voice, asr_sessions,
         process_readiness,
-        meeting_imports, model_streams, export_transfers, pairing_backoff, mcp_registry,
+        meeting_imports, hook_transcript_uploads, model_streams, export_transfers,
+        pairing_backoff, mcp_registry,
         mcp_code_host, mcp_code_run_continuations, reader_runner, live_runs, secret_destinations,
         seat_helpers, model_budgets, cloud_registration, connector_elicitations, connector_stdio,
         browser_guest,
         browser_readiness, desktop_guest, artifact_backend, desktop_seats, browser_seats,
         web_fetcher, memories_cursors, self_brief_sessions, deep_retrieval, model_slots,
         trained_embedders, model_setup, model_setup_runtime, gpu_pool, llm, embedding_line,
-        decision_read, decision_reads, decisions, hook_runtime, runner_fence,
+        decision_read, decision_reads, decisions, hook_runtime, runner_fence, gpu_jobs,
         #[cfg(feature = "mesh")] mesh_transport,
         builtin_handles,
         #[cfg(unix)] organs,

@@ -465,7 +465,6 @@ impl ConsolidationExecutor<'_> {
             .authorize_model_role(DREAMER_VERDICT_ROLE, request, &call.inference)?
             .into_request();
         super::super::roles::bind_reasoning(step_ctx.vault, call.backend, &mut request)?;
-        let step_hash = request.canonical_hash()?;
         let outcome = call_as_step(step_ctx, call.backend, self.guard, request).await;
         let (response, binding) = match outcome? {
             StepOutcome::Finished {
@@ -609,10 +608,9 @@ fn conflict_sources(
 /// The rows one conflict read sends under (FIX 11526) over plain rows:
 /// every member's extraction rows (a superset of the members a page shows),
 /// the pack's evidence, and the stored `label_rows` that name no member's
-/// own unwritten claim id. `None` when a member's rows are not known. The
-/// bound rebuild sends no sources, so only native calls this; it stays a
-/// shared plain helper so wording-free preparation never needs the member
-/// type.
+/// own unwritten claim id. `None` when a member's rows are not known. Native
+/// and the lent execution both call this; it stays a shared plain helper so
+/// wording-free preparation never needs the member type.
 pub(in crate::dreamer_consolidation) fn conflict_source_rows(
     member_claims: &[EntityId],
     member_sources: &[Option<Vec<EntityId>>],

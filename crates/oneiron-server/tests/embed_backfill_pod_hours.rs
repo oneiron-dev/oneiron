@@ -28,7 +28,7 @@ use oneiron::embed::{
 };
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::setting::{
-    ScopeKind, SetBy, SetSetting, SetSettingOutcome, SettingCaller, spec_named,
+    Order, ScopeKind, SetBy, SetSetting, SetSettingOutcome, SettingCaller, spec_named,
 };
 use oneiron::store::GateDecisionId;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
@@ -443,10 +443,10 @@ fn the_night_box_wait_is_the_owners_key_and_more_waiting_is_tighter() -> TestRes
     let nothing = kind.from_json(json!("nothing"))?;
     let backfill_only = kind.from_json(json!("backfill_only"))?;
     let everything = kind.from_json(json!("everything"))?;
-    assert!(kind.has_direction());
-    assert_eq!(kind.is_tighter(&everything, &backfill_only), Some(true));
-    assert_eq!(kind.is_tighter(&backfill_only, &nothing), Some(true));
-    assert_eq!(kind.is_tighter(&backfill_only, &everything), Some(false));
-    assert_eq!(kind.is_tighter(&nothing, &backfill_only), Some(false));
+    assert_eq!(kind.order(), Order::Custom);
+    assert_eq!(kind.no_wider(&everything, &backfill_only), Some(true));
+    assert_eq!(kind.no_wider(&backfill_only, &nothing), Some(true));
+    assert_eq!(kind.no_wider(&backfill_only, &everything), Some(false));
+    assert_eq!(kind.no_wider(&nothing, &backfill_only), Some(false));
     Ok(())
 }

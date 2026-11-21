@@ -135,6 +135,40 @@ impl RevokeFacts {
             .map(|fact| fact.entry_hash)
             .collect()
     }
+
+    /// Adds each device revocation a whole fold proves in `tail`, an adopted
+    /// image's tail that folded past it with every covered row in each
+    /// revocation's causal past (FIX 11760). One the tail folds to a state in
+    /// `states` folded on a branch whose every row folds, where the whole
+    /// fold's proof ([`verify_signed_branch`]) is its ordinary state: it takes
+    /// its fact on that state's vault and owner-anchor rows, as
+    /// [`derive_revoke_facts`] takes it on the proof's (FIX
+    /// [CONFIRM-COLLISION-SUBTREE-ROLLBACK]). One with no state adds none: on
+    /// a parent with no state either, the adopted fold leaves it to the whole
+    /// history, whose proof crosses rejected permissive rows to it.
+    pub(super) fn add_serial_device_revokes(
+        &mut self,
+        tail: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    ) {
+        for (hash, entry) in tail {
+            let AuthorityOp::RevokeDevice { revoked_key } = &entry.op else {
+                continue;
+            };
+            let Some(state) = states.get(hash) else {
+                continue;
+            };
+            self.by_hash.insert(
+                *hash,
+                VerifiedRestriction {
+                    vault_id: state.vault_id,
+                    entry_hash: *hash,
+                    kind: Restriction::DeviceRevoke(revoked_key.clone()),
+                    routed: state.anchor_entries.to_btree_set(),
+                },
+            );
+        }
+    }
 }
 
 #[doc(hidden)]
@@ -204,7 +238,7 @@ pub(super) fn derive_revoke_facts(
         let Some(state) = proved else {
             continue;
         };
-        let (vault_id, routed) = (state.vault_id, state.anchor_entries.clone());
+        let (vault_id, routed) = (state.vault_id, state.anchor_entries.to_btree_set());
         let kind = match &entry.op {
             AuthorityOp::RevokeActor {
                 authority_key,
@@ -217,38 +251,10 @@ pub(super) fn derive_revoke_facts(
                 Restriction::DeviceRevoke(revoked_key.clone())
             }
             AuthorityOp::MachineProfile(profile) => {
-                let Some((admitter, chain)) = state
-                    .machines
-                    .get(&profile.machine)
-                    .into_iter()
-                    .flatten()
-                    .find(|(_, chain)| chain.head.entry == *hash)
-                else {
+                let Some(removal) = machine_removal(&state, profile.machine, hash) else {
                     continue;
                 };
-                Restriction::MachineRemoval {
-                    machine: profile.machine,
-                    admitter: *admitter,
-                    chain: Box::new(MachineChain {
-                        head: chain.head.clone(),
-                        owner_held: chain.owner_held.clone().filter(|held| held.entry == *hash),
-                        owner_held_removals: chain
-                            .owner_held_removals
-                            .iter()
-                            .filter(|(_, removal)| removal.entry == *hash)
-                            .map(|(signer, removal)| (signer.clone(), removal.clone()))
-                            .collect(),
-                        // The removal's own revision, past its floor here
-                        // still: the proof never erases that mark (Astra
-                        // #1430b).
-                        revisions: chain
-                            .revisions
-                            .iter()
-                            .filter(|(revision, _)| *revision == hash)
-                            .map(|(revision, held)| (*revision, std::sync::Arc::clone(held)))
-                            .collect(),
-                    }),
-                }
+                removal
             }
             _ => continue,
         };
@@ -263,6 +269,43 @@ pub(super) fn derive_revoke_facts(
         );
     }
     facts
+}
+
+/// The removal `hash` of `machine` as a fact, from a state it folded into:
+/// the chain it heads there, carrying only the removal itself.
+fn machine_removal(
+    state: &FoldState,
+    machine: EntityId,
+    hash: &AuthorityEntryHash,
+) -> Option<Restriction> {
+    let (admitter, chain) = state
+        .machines
+        .get(&machine)
+        .into_iter()
+        .flatten()
+        .find(|(_, chain)| chain.head.entry == *hash)?;
+    Some(Restriction::MachineRemoval {
+        machine,
+        admitter: *admitter,
+        chain: Box::new(MachineChain {
+            head: chain.head.clone(),
+            owner_held: chain.owner_held.clone().filter(|held| held.entry == *hash),
+            owner_held_removals: chain
+                .owner_held_removals
+                .iter()
+                .filter(|(_, removal)| removal.entry == *hash)
+                .map(|(signer, removal)| (signer.clone(), removal.clone()))
+                .collect(),
+            // The removal's own revision, past its floor here still: the
+            // proof never erases that mark (Astra #1430b).
+            revisions: chain
+                .revisions
+                .iter()
+                .filter(|(revision, _)| *revision == hash)
+                .map(|(revision, held)| (*revision, std::sync::Arc::clone(held)))
+                .collect(),
+        }),
+    })
 }
 
 impl RevokeFacts {
@@ -308,7 +351,9 @@ impl RevokeFacts {
                 continue;
             };
             let kind = match restriction {
-                Restriction::SlipBurn(_) => Restriction::SlipBurn(state.slips.consumed),
+                Restriction::SlipBurn(_) => {
+                    Restriction::SlipBurn(state.slips.consumed.to_btree_set())
+                }
                 other => other,
             };
             self.by_hash.insert(
@@ -317,7 +362,7 @@ impl RevokeFacts {
                     vault_id: state.vault_id,
                     entry_hash: *hash,
                     kind,
-                    routed: state.anchor_entries,
+                    routed: state.anchor_entries.to_btree_set(),
                 },
             );
         }
@@ -360,11 +405,55 @@ impl RevokeFacts {
                         authority_key: authority_key.clone(),
                         epoch: *epoch,
                     },
-                    routed: state.anchor_entries.clone(),
+                    routed: state.anchor_entries.to_btree_set(),
                 },
             );
         }
         facts
+    }
+
+    /// Adds each machine removal a whole fold proves in `tail`, an adopted
+    /// image's tail that folded past it serially, every row of it with its
+    /// ordinary state in `states` (FIX 11760). The whole fold's proof of a
+    /// removal ([`verify_signed_branch`]) accepts what the ordinary fold
+    /// accepts on its branch, siblings at one sequence included, and no tail
+    /// row sits past a floor here: each removal takes its fact on its
+    /// ordinary state, as [`derive_revoke_facts`] takes it on the proof's.
+    pub(super) fn add_serial_machine_removals(
+        &mut self,
+        tail: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    ) {
+        for (hash, entry) in tail {
+            let AuthorityOp::MachineProfile(profile) = &entry.op else {
+                continue;
+            };
+            if !removes_machine(&entry.op) {
+                continue;
+            }
+            let Some(state) = states.get(hash) else {
+                continue;
+            };
+            let Some(kind) = machine_removal(state, profile.machine, hash) else {
+                continue;
+            };
+            self.by_hash.insert(
+                *hash,
+                VerifiedRestriction {
+                    vault_id: state.vault_id,
+                    entry_hash: *hash,
+                    kind,
+                    routed: state.anchor_entries.to_btree_set(),
+                },
+            );
+        }
+    }
+
+    /// The rows these facts were proved on, for a test that compares two
+    /// images built over the same rows.
+    #[cfg(oneiron_test_support)]
+    pub(super) fn rows_for_test(&self) -> BTreeSet<AuthorityEntryHash> {
+        self.by_hash.keys().copied().collect()
     }
 }
 
@@ -383,32 +472,87 @@ impl RevokeFacts {
             .retain(|hash, fact| !retirements.excludes(hash, entries, ancestors, &fact.routed));
     }
 
+    /// Forgets the machine removal of every carried answer outside a proving
+    /// owner-key enrolment's line that the fold did not count (row
+    /// CARRIER-PROOF-OLD-PARENTS): one it held for the owner's proof, or one
+    /// that does not stand. Its own branch, which lacks the owner's key,
+    /// proves the removal, but the fold judged it where that key reaches, so
+    /// the removal would otherwise end the machine on every branch.
+    pub(super) fn forget_held_off_the_line(
+        &mut self,
+        lines: Option<&super::owner_key_line::OwnerKeyLines>,
+        settled: &BTreeMap<AuthorityEntryHash, FoldState>,
+    ) {
+        let Some(lines) = lines else {
+            return;
+        };
+        self.by_hash.retain(|_, fact| {
+            let Restriction::MachineRemoval { machine, .. } = &fact.kind else {
+                return true;
+            };
+            !lines.needs_proof(&fact.entry_hash)
+                || settled.get(&fact.entry_hash).is_some_and(|state| {
+                    !state
+                        .held_machine_answers
+                        .get(machine)
+                        .is_some_and(|held| held.contains_key(&fact.entry_hash))
+                })
+        });
+    }
+
+    /// Forgets every device revocation whose proven branch holds an
+    /// enrolment of the revoked key that a line refuses (row
+    /// CARRIER-PROOF-OLD-PARENTS; REVIEW2 #8502, 16 Nov). The custodial
+    /// root's agent enrolment of the owner's key on parents before the
+    /// owner's enrolment is an invalid entry, and a revoke of that key above
+    /// it waits with it. The revoke's own branch, proved with no line, holds
+    /// the key as that agent enrolment's, which the root alone may end, so
+    /// the fact would end the owner's key on every branch.
+    pub(super) fn forget_revokes_above_refused_enrolments(
+        &mut self,
+        lines: Option<&super::owner_key_line::OwnerKeyLines>,
+        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        ancestors: &AncestorIndex,
+    ) {
+        let Some(lines) = lines else {
+            return;
+        };
+        self.by_hash.retain(|hash, fact| {
+            let Restriction::DeviceRevoke(key) = &fact.kind else {
+                return true;
+            };
+            !ancestors
+                .get(hash)
+                .is_some_and(|branch| lines.refuses_an_enrolment_of(key, branch, entries))
+        });
+    }
+
     /// Forgets every restriction proved through a handoff that did not take
     /// effect. The heir a refused or pruned ReRoot names was never root, so
     /// it restricts nothing, however its own branch folds; a restriction the
     /// fold dropped counts only when every ReRoot in its ancestry `settled`.
+    /// One marked pass over the index finds the unsettled ReRoots and root
+    /// appointments below each restriction (row [ROSTER-KEY-LOG-FLOOD], PR 3).
     pub(super) fn forget_unsettled(
         &mut self,
         settled: &BTreeMap<AuthorityEntryHash, FoldState>,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
         ancestors: &AncestorIndex,
     ) {
+        let below_unsettled = ancestors.marks(|row| {
+            // A root appointment hands the vault over as a handoff does: one
+            // this install does not count proves nothing beneath it.
+            !settled.contains_key(row)
+                && entries.get(row).is_some_and(|entry| {
+                    matches!(
+                        entry.op,
+                        AuthorityOp::ReRoot { .. } | AuthorityOp::RootAppointment(_)
+                    )
+                })
+        });
         self.by_hash.retain(|hash, _| {
             settled.contains_key(hash)
-                || ancestors.get(hash).is_some_and(|line| {
-                    line.iter_unordered().all(|ancestor| {
-                        settled.contains_key(ancestor)
-                            || !entries.get(ancestor).is_some_and(|row| {
-                                // A root appointment hands the vault over as a
-                                // handoff does: one this install does not count
-                                // proves nothing beneath it.
-                                matches!(
-                                    row.op,
-                                    AuthorityOp::ReRoot { .. } | AuthorityOp::RootAppointment(_)
-                                )
-                            })
-                    })
-                })
+                || (ancestors.get(hash).is_some() && !below_unsettled.in_ancestry(hash))
         });
     }
 }

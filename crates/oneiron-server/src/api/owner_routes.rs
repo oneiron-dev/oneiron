@@ -90,13 +90,16 @@ mod inbox_routes;
 pub(super) mod intent_routes;
 pub(super) mod learning_setting_routes;
 mod legal_hold_routes;
+mod link_routes;
 pub(super) mod machine_routes;
 mod meeting_transcript_routes;
 pub(super) mod model_setting_routes;
 mod oauth_authorization_routes;
 #[cfg(target_os = "linux")]
 pub(super) mod outbox_diverged_routes;
+pub(super) mod owner_key_binding_routes;
 pub(super) mod owner_key_enrollment_routes;
+pub(super) mod owner_passkey_binding_routes;
 pub(super) mod owner_passkey_routes;
 pub(super) mod owner_work_routes;
 pub(super) mod pack_preview_routes;
@@ -104,6 +107,7 @@ pub(super) mod pack_routes;
 pub(super) mod pad_routes;
 pub(super) mod peer_confidence_routes;
 pub(super) mod proactivity_routes;
+pub(super) mod recovery_hold_routes;
 pub(super) mod recovery_kit_routes;
 pub(super) mod recovery_kit_target_routes;
 mod remote_task_input_routes;
@@ -150,6 +154,7 @@ fn owner_tables() -> OwnerTable {
     [
         hub_table::owner_table(),
         account_routes::owner_table(),
+        link_routes::owner_table(),
         authority_clock_routes::owner_table(),
         budget_hold_routes::owner_table(),
         checkpoint_policy_routes::owner_table(),
@@ -233,7 +238,10 @@ fn owner_tables() -> OwnerTable {
         world_privacy_routes::owner_table(),
         world_privacy_work_routes::owner_table(),
         owner_key_enrollment_routes::owner_table(),
+        owner_key_binding_routes::owner_table(),
         owner_passkey_routes::owner_table(),
+        owner_passkey_binding_routes::owner_table(),
+        recovery_hold_routes::owner_table(),
         owner_work_routes::owner_table(),
         root_routes::owner_table(),
         recovery_kit_target_routes::owner_table(),
@@ -301,7 +309,8 @@ fn serve(table: OwnerTable) -> Router<Arc<SyncServer>> {
 }
 
 /// The owner door. Every refusal is the same 403, so a caller learns nothing
-/// about which check failed. The proof it returns carries the verified slip,
+/// about which check failed; a host fault its check meets is a 500
+/// ([`owner_check_failure`]). The proof it returns carries the verified slip,
 /// except a managed vault's owner's, whom its supervisor attested for this
 /// one request (`ManagedOwnerAction`): that proof holds only while the
 /// person is the vault's live recorded owner ([`managed_owner_proof`]); one
@@ -321,7 +330,10 @@ pub(crate) fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<Authenticate
         return server
             .vault()
             .authenticate_host_action_owner(&action, GateDecisionId::now())
-            .map_err(|error| super::error_map::carried_refusal(&error).unwrap_or_else(refused));
+            .map_err(|error| {
+                super::error_map::carried_refusal(&error)
+                    .unwrap_or_else(|| owner_check_failure(&error))
+            });
     }
     if !auth.is_owner_grade() {
         return Err(refused());
@@ -335,13 +347,37 @@ pub(crate) fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<Authenticate
     let owner = server
         .vault()
         .authenticate_owner(actor, principal, true, GateDecisionId::now())
-        .map_err(|_| refused())?;
+        .map_err(|error| owner_check_failure(&error))?;
     // Binding checks the slip is the owner's own full slip, still live, and
     // that the actor owns this vault now.
     server
         .vault()
         .bind_owner_credential(owner, slip.clone())
-        .map_err(|_| refused())
+        .map_err(|error| owner_check_failure(&error))
+}
+
+/// The owner door's answer to an engine `error` its check met: a host fault
+/// (storage, I/O, index damage) is this home's own, a 500 the caller retries,
+/// for no refusal of a credential rides on it; every other error is the
+/// door's one 403. A sync client stops on a 403 to its upgrade and never
+/// redials it (MEMBER-SELECTOR-SOCKET), so a passing store failure must not
+/// read as one. Keep the host-fault list in step with the shared
+/// MEMORY_CODE_INTERNAL arm in crates/oneiron-contracts/src/memory/error/engine.rs.
+pub(crate) fn owner_check_failure(error: &oneiron::Error) -> ApiError {
+    match error.kind() {
+        oneiron::ErrorKind::Storage
+        | oneiron::ErrorKind::Io
+        | oneiron::ErrorKind::CorruptedIndex
+        | oneiron::ErrorKind::SideTableRow
+        | oneiron::ErrorKind::InvariantViolation
+        | oneiron::ErrorKind::MapFull
+        | oneiron::ErrorKind::IndexOverflow
+        | oneiron::ErrorKind::MissingPostingEntry => {
+            tracing::warn!(%error, "owner check could not read the vault");
+            ApiError::internal_server_error("the owner check could not read the vault")
+        }
+        _ => ApiError::forbidden_scope("owner"),
+    }
 }
 
 /// A managed vault's attested owner's proof: the recorded owner `holder`
@@ -351,18 +387,17 @@ pub(crate) fn managed_owner_proof(
     server: &SyncServer,
     holder: oneiron::EntityId,
 ) -> Result<Option<AuthenticatedOwner>, ApiError> {
-    let refused = || ApiError::forbidden_scope("owner");
     let Some(owner) = server
         .vault()
         .authenticate_recorded_owner(holder, &holder.to_hex(), GateDecisionId::now())
-        .map_err(|_| refused())?
+        .map_err(|error| owner_check_failure(&error))?
     else {
         return Ok(None);
     };
     Ok(server
         .vault()
         .is_live_vault_owner(&owner)
-        .map_err(|_| refused())?
+        .map_err(|error| owner_check_failure(&error))?
         .then_some(owner))
 }
 
@@ -567,6 +602,11 @@ pub(super) struct HostStatus {
     /// The browser readiness a managed `Ping` carries, read from the same
     /// value: its section, its binding and its last guest start (FIX 7670).
     browser: oneiron_vault_contract::BrowserReadiness,
+    /// How many timer, feed and idle turn programs this store holds paused because it was made
+    /// a copy served beside its source (FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY):
+    /// the count a served copy shows beside its offer to resume them. `vault.turn_programs.paused`
+    /// lists them. A vault that is no such copy answers 0.
+    paused_turn_programs: u64,
 }
 
 /// The admission of a ROOT ADMIN command here (FIX 2222): status, backups,
@@ -606,6 +646,7 @@ pub(super) async fn host_status(server: Arc<SyncServer>) -> Result<HostStatus, A
             failure_signals: crate::owner::failure_signals::status(&server)?,
             link_bytes: oneiron::sync::transport::process_link_bytes(),
             browser: server.browser_readiness().snapshot(),
+            paused_turn_programs: server.vault().paused_turn_program_count()?,
         })
     })
     .await

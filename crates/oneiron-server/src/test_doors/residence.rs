@@ -1,7 +1,7 @@
-//! Doors for `tests/residence_media_vectors_server_test.rs`: the canonical
-//! live window a residence read selects from, and one
-//! `residence.media_vectors` call as the socket loop runs it, answered as the
-//! wire answers it.
+//! Doors for `tests/residence_media_vectors_server_test.rs` and
+//! `tests/residence_board_seeds_server_test.rs`: the canonical live window a
+//! residence read selects from, and one residence call as the socket loop runs
+//! it, answered as the wire answers it.
 
 use oneiron::authority::PeerMachine;
 use serde_json::Value;
@@ -42,6 +42,45 @@ pub fn media_vectors_reply(
     peer: PeerMachine,
     params: Value,
 ) -> anyhow::Result<Value> {
+    let proof = SlipProof {
+        token,
+        timestamp,
+        nonce,
+        signature,
+    };
+    residence_reply(server, &proof, peer, "residence.media_vectors", params)
+}
+
+/// A holder-bound slip `token` and its proof: `timestamp`, `nonce` and the
+/// hex `signature`.
+#[derive(Debug, Clone, Copy)]
+pub struct SlipProof<'a> {
+    pub token: &'a str,
+    pub timestamp: u64,
+    pub nonce: &'a str,
+    pub signature: &'a str,
+}
+
+/// Runs the residence call `method` with `params` for the machine `peer`,
+/// under the holder-bound slip `slip` proves, and answers the wire reply:
+/// `result` on success, `error` on a refusal, as `requestId` 7.
+///
+/// # Errors
+///
+/// A slip the vault refuses; an RPC the socket loop refuses.
+pub fn residence_reply(
+    server: &SyncServer,
+    slip: &SlipProof<'_>,
+    peer: PeerMachine,
+    method: &str,
+    params: Value,
+) -> anyhow::Result<Value> {
+    let SlipProof {
+        token,
+        timestamp,
+        nonce,
+        signature,
+    } = *slip;
     let proof = crate::auth::BindingProof {
         timestamp,
         nonce: nonce.to_owned(),
@@ -51,11 +90,21 @@ pub fn media_vectors_reply(
         .map_err(|error| anyhow::anyhow!("slip refused: {error:?}"))?;
     let request = crate::livequery::RpcRequest {
         request_id: 7,
-        method: "residence.media_vectors".to_owned(),
+        method: method.to_owned(),
         params,
     };
-    let reply = crate::livequery::residence_rpc(
-        server, &auth, peer, request, &mut None, &mut None, &mut None,
+    // The release basis is the socket loop's recheck before a queued selector
+    // answer leaves; this door answers the reply at once, as the wire would
+    // with the basis still standing.
+    let (reply, _release_basis) = crate::livequery::residence_rpc(
+        server,
+        &auth,
+        peer,
+        &crate::handler::selector_scope::SelectorLane::OwnDevice,
+        request,
+        &mut None,
+        &mut None,
+        &mut None,
     )
     .map_err(|error| anyhow::anyhow!("rpc refused: {error:?}"))?;
     Ok(crate::livequery::test_wire::reply(&reply.queued(0)))

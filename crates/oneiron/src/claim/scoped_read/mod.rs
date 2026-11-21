@@ -22,6 +22,7 @@ use oneiron_retrieval::pipeline::ScoredEntity;
 
 mod claim_admission;
 mod context_pack_filter;
+mod deleted_shells;
 mod diagnostic_reads;
 mod edge_claims;
 mod exposure;
@@ -41,7 +42,9 @@ mod named_reads;
 mod native_raw;
 pub use native_raw::NativeRawRead;
 mod note_visibility;
+mod person_about_lines;
 mod phone_line;
+mod phone_thread;
 mod pinned_reads;
 mod point_reads;
 mod reaction_reactor_redaction;
@@ -77,11 +80,15 @@ pub(crate) use weave_lens::{
 mod weave_report;
 mod weave_serve;
 mod weave_trigger;
+mod withheld_notice;
 pub(crate) use claim_admission::{ClaimReadStatus, ClaimReadStatusExt};
 pub use frozen::FrozenReadLane;
+pub use graph_reads::TimelineRecordProjection;
 pub use named_reads::NamedSlot;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
+#[cfg(oneiron_test_support)]
+pub(crate) use weave_correction::WeaveItemKey;
 pub(crate) use weave_correction::erase_weave_decision_labels_in_txn;
 pub use weave_correction::{WeaveItemCorrection, WeaveItemTarget, WeaveLinkCorrection};
 pub use weave_report::sieve_score::RedactedSieveDecision;
@@ -178,6 +185,23 @@ pub struct ScopedRead<'a> {
     /// resolution, own-Grant and owner alternative, candidate envelope and
     /// receipt of this read meets it with the request its door names.
     read_filter: Option<RetrievalFilter>,
+    /// Set only on a verb answer's lane that reports its live Grants
+    /// (`ScopedRead::with_live_grant_receipts`): each receipt it builds in a
+    /// serving snapshot states the key's own floor and its live Grants', the
+    /// reach that admitted its rows. Off elsewhere, so a consumer that caps
+    /// unjudged content by a receipt's applied band keeps the key's own.
+    receipts_include_live_grants: bool,
+    /// The rule this read applies to a claim whose cited claim the owner
+    /// retracted ([`crate::claim::evidence_support::CitedSupport`]): `History` only on the
+    /// claim history door's lane (`ScopedRead::for_claim_history`), which
+    /// keeps such a claim in the record; `Served` on every other lane.
+    cited_support: crate::claim::evidence_support::CitedSupport,
+    /// Set only on the copy a live owner's withheld-notice read judges
+    /// (`ScopedRead::withheld_notice_in`): every gate of this read but the
+    /// source-audience floor of the row it admits. That copy serves no row;
+    /// it tells whether a notice its sources withhold reads to him on every
+    /// other gate. Off on every other lane.
+    source_floor_waived: bool,
 }
 
 mod owned;
@@ -186,6 +210,7 @@ pub use owned::OwnedScopedRead;
 mod admission;
 mod commitment_reminder_wording;
 mod edge_admission;
+mod egress_use_limit;
 pub(crate) use admission::ScopedDiaryCandidates;
 mod profile_sources;
 pub(crate) use profile_sources::CompanionProfileSourceJudgement;

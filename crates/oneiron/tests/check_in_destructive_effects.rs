@@ -24,6 +24,12 @@
 //!   their check-in; the decision and the spent check-in stay (review round 2
 //!   of #7718: the actor scrub of pending acts and receipts reads the
 //!   decision's requester).
+//! - The erase spends the check-in it applies in the write that erases (FIX
+//!   CHECK-IN-SPEND-BEFORE-RECORD-ERASE): an erase the delete refuses (a
+//!   project with a live child) leaves it unspent, and the same approval
+//!   then erases the record. On #9859's head 43aa035035e1 the erase spends it
+//!   in a writer of its own before the delete, and that case fails at its
+//!   unspent assert.
 //!
 //! On the base (P2.4b) this file does not build: `PendingAuthorityAct` has no
 //! `check_in` field, and `propose_delete_vault_with_check_in` and
@@ -44,17 +50,18 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{
     EraseAskKind, FederationGrantRole as Role, InitialSharedMember, Scope, ScopeAxis,
 };
-use oneiron::memory::{BlobArtifactInput, Memory};
+use oneiron::memory::{BlobArtifactInput, Memory, MemoryResult};
 use oneiron::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::inquiry::erase_actor_in_tables_in_order;
+use oneiron::test_doors::room_facet_set::create_owner_project;
 use oneiron::test_doors::shared_act_family::rows_naming;
 use oneiron::verbs::{
     AgentGrantMintRequest, OwnerConfirmPreviewRequest, RecordEraseConfirmRequest,
     RecordEraseOutcome, confirm_record_erase, mint_agent_grant_as, preview_owner_confirm,
 };
-use oneiron::workspace_roster::{WorkCompanionPolicy, WorkspaceRosterPreset};
+use oneiron::workspace_roster::{ProjectRecord, WorkCompanionPolicy, WorkspaceRosterPreset};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use serde_json::json;
@@ -183,6 +190,16 @@ fn erase(
     record: EntityId,
     check_in_ref: Option<&str>,
 ) -> RecordEraseOutcome {
+    try_erase(memory, owner_proof, record, check_in_ref).expect("the owner confirms the erase")
+}
+
+/// As [`erase`]: the confirm's answer.
+fn try_erase(
+    memory: &Memory<'_>,
+    owner_proof: &AuthenticatedOwner,
+    record: EntityId,
+    check_in_ref: Option<&str>,
+) -> MemoryResult<RecordEraseOutcome> {
     let input = RecordEraseConfirmRequest {
         record,
         confirm: None,
@@ -206,7 +223,16 @@ fn erase(
             ..input
         },
     )
-    .expect("the owner confirms the erase")
+}
+
+/// Whether check-in `id` is spent.
+fn spent(vault: &Vault, id: &str) -> bool {
+    vault
+        .pending_check_in(&EntityId::from_hex(id).expect("a check-in id"))
+        .expect("read the check-in")
+        .expect("stored")
+        .consumed_at
+        .is_some()
 }
 
 /// The decision of an Owner's erase on their own proof, applying
@@ -230,6 +256,7 @@ struct DeputyHouse {
     owner: EntityId,
     owner_proof: AuthenticatedOwner,
     house: EntityId,
+    issuer: oneiron::authority::HostSlipIssuer,
 }
 
 impl DeputyHouse {
@@ -304,7 +331,33 @@ impl DeputyHouse {
             owner,
             owner_proof,
             house,
+            issuer,
         }
+    }
+
+    /// The owner's birth of a new project under `parent`, as a rooted vault
+    /// takes one (the depth birth signed with the host key bound to the
+    /// owner, the first state with the owner's project signer); its id.
+    fn project_under(&self, parent: EntityId) -> EntityId {
+        let root = self.vault.root_project().expect("the root project");
+        let project = EntityId::now();
+        let record =
+            ProjectRecord::new(project, Some(parent), root, self.owner).expect("a project record");
+        let signer = self
+            .vault
+            .owner_project_signer(&self.issuer)
+            .expect("the owner's project signer");
+        create_owner_project(
+            &self.vault,
+            &self.issuer,
+            &self.owner_proof,
+            &signer,
+            self.owner,
+            project,
+            &record,
+        )
+        .expect("the owner's new project");
+        project
     }
 
     /// The house opens a check-in for `verb`'s act over `digest`; its id.
@@ -448,6 +501,47 @@ fn the_owner_applies_a_deputys_approved_erase_on_their_own_proof() {
             .is_some(),
         "the confirm spent the check-in"
     );
+}
+
+/// An erase the delete refuses leaves the approved check-in it applied
+/// unspent, and the same approval then erases the record (FIX
+/// CHECK-IN-SPEND-BEFORE-RECORD-ERASE): the erase spends it in the write
+/// that erases. A project with a live child previews its erase, and its
+/// delete refuses it before any writer.
+#[test]
+fn an_erase_the_delete_refuses_leaves_the_applied_check_in_unspent() {
+    let fx = DeputyHouse::new();
+    let memory = fx.vault.memory(fx.owner, EdgeActorClass::Human);
+    let root = fx.vault.root_project().expect("the root project");
+    let parent = fx.project_under(root);
+    let child = fx.project_under(parent);
+    let digest = record_erase_effect_digest(&parent, false);
+    let asked = fx.open(ERASE, &digest);
+    fx.approve(&asked, &digest);
+
+    let refused = try_erase(&memory, &fx.owner_proof, parent, Some(&asked))
+        .expect_err("the delete refuses a project with a live child");
+    assert!(
+        format!("{refused} {refused:?}").contains("project has live children"),
+        "the delete refuses it for its child: {refused:?}"
+    );
+    assert!(
+        !spent(&fx.vault, &asked),
+        "an erase the delete refuses leaves the approval unspent"
+    );
+
+    erase(&memory, &fx.owner_proof, child, None);
+    let outcome = erase(&memory, &fx.owner_proof, parent, Some(&asked));
+    assert_eq!(
+        outcome.first.reason, "owner_erase",
+        "with its child gone the project is erased: {outcome:?}"
+    );
+    assert_eq!(
+        outcome.check_in,
+        owner_erase(Some(asked.clone()), Some(fx.house.to_hex())),
+        "the erase names the check-in it applied and the house that asked"
+    );
+    assert!(spent(&fx.vault, &asked), "the erase spent the check-in");
 }
 
 #[test]

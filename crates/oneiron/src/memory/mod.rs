@@ -62,7 +62,7 @@ mod claim_stale;
 pub mod clustering;
 pub mod commitment_doors;
 mod conflict_settle;
-pub(crate) use conflict_settle::{conflict_review_held_in, dreamer_conflict_review_held_in};
+pub(crate) use conflict_settle::dreamer_conflict_review_held_in;
 pub mod consolidation;
 pub mod consolidation_frontier;
 pub mod coping_doors;
@@ -224,8 +224,9 @@ pub use claims::{
     ClaimChangeVerdict, ClaimInput, ClaimProposalReview, ClaimProposalReviewRequest,
     ClaimSettleDecision, ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer,
     ClaimSettlementReason, ClaimSettlementRevert, ClaimSettlementVerdict, CommitOutcome,
-    CommitReceipt, DeleteReceipt, DeleteRequestState, MULTI_CARDINALITY_PREDICATES, MemoryReceipt,
-    PendingWrite, RecordRefusal, RefusalReason, SafeDeleteReason, SettleWarning, SettleWarningCode,
+    CommitReceipt, DELETE_RECEIPT_VERSION_RELEASE, DeleteReceipt, DeleteRequestState,
+    MULTI_CARDINALITY_PREDICATES, MemoryReceipt, PendingWrite, RecordRefusal, RefusalReason,
+    SafeDeleteReason, SettleWarning, SettleWarningCode,
 };
 pub use conflict_settle::{
     DreamerCandidateDecisionsRequest, DreamerDecidedCandidateView,
@@ -381,6 +382,7 @@ pub use search_vector::{
 };
 pub(crate) use session_reads::{
     SessionAnswer, SessionRead, SessionReadContext, room_short_ref, scoped_session_text,
+    scoped_session_text_planned,
 };
 pub use shape_card_doors::{
     ShapeGroupResolveRequest, ShapeItemReceipt, ShapeItemReceiptRequest, ShapePlanCardView,
@@ -402,9 +404,10 @@ pub use support::{
 };
 pub(crate) use transcript::TRANSCRIPT_READ_ATTEMPTS;
 pub use transcript::{
-    MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
+    MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptSpeaker, TranscriptTurn,
 };
 pub(crate) use witness::WITNESS_OCCURRENCE_SKEW_SECS;
+pub(crate) use witness::live_canonical_person_in_txn;
 pub use witness::{
     AppendToStreamRequest, BeginMessageStreamRequest, CancelStreamRequest, CommitMessageRequest,
     MessageBirth, MessageCancelKind, MessageCancelReason, MessageCommitOptions,
@@ -441,9 +444,9 @@ pub(crate) use witness::{
 pub(crate) use booking_publication::verify_public_booking_owner_in_txn;
 pub(crate) use credential_key::{actor_is_vault_owner_in_txn, owner_exemption_holds_in_txn};
 pub(crate) use support::{
-    embedded_owner_shortcut_holds_in_txn, facade_provenance, hard_deleted_refusal,
+    OwnerRow, embedded_owner_shortcut_holds_in_txn, facade_provenance, hard_deleted_refusal,
     verify_actor_binding, verify_actor_binding_in_txn, verify_deletion_authority_in_txn,
-    verify_owner_actor_binding_in_txn,
+    verify_owner_actor_binding_in_txn, verify_owner_binding_in_txn,
 };
 pub(crate) use witness::{
     ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, admitted_foreign,
@@ -453,8 +456,8 @@ pub(crate) use witness::{
 #[cfg(feature = "sync")]
 pub(crate) use witness::{ForeignTurn, speak_as_counterparty};
 pub(crate) use witness::{
-    IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, turn_admits_message_bodies,
-    witness_message_body,
+    IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, guard_phone_thread_mark,
+    turn_admits_message_bodies, witness_message_body,
 };
 pub(crate) use witness::{
     SourceAttribution, SourceSpeaker, imported_message_in_txn, source_speaker_in_txn,

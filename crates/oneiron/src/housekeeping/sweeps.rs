@@ -2,7 +2,9 @@
 //!
 //! Bounds: the critical-confirm sweep walks 256 pending rows a page and the
 //! gate-decision sweep removes at most the manifest's rows a pass, both
-//! stopping between pages at the pass deadline. The signing sweeps and the
+//! stopping between pages at the pass deadline; the gate-decision sweep then
+//! reconciles the amendment projections once, a read and a write only when a
+//! row must change. The signing sweeps and the
 //! cache eviction walk their tables a page at a time from a durable cursor and
 //! stop between pages at the deadline; a signing page that fails is retried a
 //! document at a time, so one document that fails cannot hold the others. The
@@ -195,6 +197,16 @@ pub(super) fn run(
                 }
             }));
         }
+        HousekeepingSweep::SourceFloorBackfill => {
+            let (raised, cursor) =
+                crate::source_audience::backfill_floors(vault, cursor, || deadline.passed())?;
+            return Ok(Run {
+                work: SweepWork::SourceFloorBackfill { raised },
+                complete: cursor.is_none(),
+                cursor,
+                covered_until: None,
+            });
+        }
         HousekeepingSweep::EsignReminders
         | HousekeepingSweep::ConsultSettlement
         | HousekeepingSweep::PolicyHoldPrune
@@ -285,7 +297,8 @@ fn gate_decisions(vault: &Vault, deadline: &Deadline) -> Result<Run> {
     // 8565).
     super::sync_work::drain_retained_sync_work(vault);
     // Verb calls a budget window paced end unrun once their deadline passes
-    // (FIX 8753); only the host's settler runs their turns.
+    // (FIX 8753); only the paced line's row runs their turns, where its
+    // host installed its turn runner.
     if let Err(error) = vault.expire_paced_verb_calls(PACED_VERB_EXPIRE_PER_PASS) {
         tracing::warn!(%error, "paced verb calls not expired");
     }
@@ -303,6 +316,12 @@ fn gate_decisions(vault: &Vault, deadline: &Deadline) -> Result<Run> {
                 break;
             }
         }
+    }
+    // What a judgment this pass or another writer dropped still holds up:
+    // its edit-cost rows, its lesson and its reliability share (FIX
+    // [AMENDMENT-TARGET-RETRACT-WAITS-FOR-NEXT-SETTLE]).
+    if let Err(error) = crate::edit_distance::attribution::reconcile_amendment_projections(vault) {
+        tracing::warn!(%error, "amendment projections not reconciled");
     }
     Ok(Run {
         work: SweepWork::GateDecisions { removed },
@@ -550,7 +569,7 @@ fn lapse_envelope(vault: &Vault) -> Result<WriteEnvelope> {
 /// obligation, and the owner's run compacts every window; either first
 /// unloads the windows no caller holds, so the compaction can reach them.
 fn hard_erase(vault: &Vault, owner_asked: bool) -> Result<HardEraseWork> {
-    let windows_unloaded = if owner_asked || super::schedule::erase_obligation_waiting(vault)? {
+    let windows_unloaded = if owner_asked || super::jobs::erase_obligation_waiting(vault)? {
         unload_idle_windows(vault)
     } else {
         0

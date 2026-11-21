@@ -27,6 +27,7 @@ use heed::{RoTxn, RwTxn};
 use crate::error::{Error, Result, SideTableRowProblem, StoreError};
 use crate::overlay_db::{OverlayDb, OverlayStrDb};
 use crate::secret_record::CustodyWrite;
+use crate::session_overlay::SessionOverlay;
 use crate::store::{ManifestDbs, Store};
 
 pub(crate) use codec::{
@@ -50,10 +51,19 @@ pub(crate) trait SideTableDbs {
     }
 
     /// The custody door a mask on write mints through (OF-067): a vault's. A
-    /// bare store, a session view or an open gate holds none, so a hit the
-    /// side-row wall finds in a row written there that needs a new custody
-    /// record refuses the write.
+    /// bare store, a session view or an open gate holds none: a hit the
+    /// side-row wall finds in a row written to a bare store or an open gate
+    /// that needs a new custody record refuses the write, and a room's view
+    /// keeps it in the room's own custody ([`Self::side_room`]).
     fn side_custody(&self) -> Option<CustodyWrite<'_>> {
+        None
+    }
+
+    /// The overlay of the off-record room whose view this is: a fresh secret
+    /// a row written here holds is kept in that room's own custody, in memory
+    /// only, and the row holds its room handle (ROOM-LOCAL-CUSTODY). `None`
+    /// for every other target.
+    fn side_room(&self) -> Option<&SessionOverlay> {
         None
     }
 
@@ -65,11 +75,12 @@ pub(crate) trait SideTableDbs {
         self.side_custody().map(|door| door.store)
     }
 
-    /// Whether this target is an off-record room's view, whose rows stage
-    /// into the room's overlay and evaporate at its close (FIX 2329). The
-    /// side-row wall's refusal of a fresh secret there names the remedy.
-    fn side_off_record(&self) -> bool {
-        false
+    /// The store these side databases are part of, whose authority log a reader below the vault
+    /// folds: a vault's, a bare store, a room's base (stage 7c-4, a setting read on an install
+    /// born of a restore). `None` for a target that holds no store: an open gate, a dry run's
+    /// ledger, a core's canonical accessors.
+    fn side_owning_store(&self) -> Option<&Store> {
+        None
     }
 }
 
@@ -86,15 +97,20 @@ impl<T: ManifestDbs> SideTableDbs for T {
         self.room_base()
     }
 
-    fn side_off_record(&self) -> bool {
-        self.room_base().is_some()
+    fn side_room(&self) -> Option<&SessionOverlay> {
+        self.room_overlay()
+    }
+
+    fn side_owning_store(&self) -> Option<&Store> {
+        self.owning_store()
     }
 }
 
 /// One routed transaction's side databases: the vault's own, or an off-record session's view
 /// composed over them, which stages its writes into the session's overlay. Only the vault's own
-/// holds the custody door, so an off-record view refuses a secret the side-row wall would mint;
-/// a value base custody holds takes its handle there (FIX 2329).
+/// holds the custody door; an off-record view keeps a fresh secret the side-row wall lifts in the
+/// room's own custody (ROOM-LOCAL-CUSTODY), and a value base custody holds takes its base handle
+/// there (FIX 2329).
 #[derive(Clone, Copy)]
 pub(crate) enum RoutedDbs<'v> {
     Base(&'v crate::Vault),
@@ -123,6 +139,13 @@ impl SideTableDbs for RoutedDbs<'_> {
         }
     }
 
+    fn side_room(&self) -> Option<&SessionOverlay> {
+        match self {
+            Self::Base(_) => None,
+            Self::Session(view) => view.side_room(),
+        }
+    }
+
     fn side_decides(&self) -> Option<&Store> {
         match self {
             Self::Base(vault) => vault.side_decides(),
@@ -130,10 +153,10 @@ impl SideTableDbs for RoutedDbs<'_> {
         }
     }
 
-    fn side_off_record(&self) -> bool {
+    fn side_owning_store(&self) -> Option<&Store> {
         match self {
-            Self::Base(_) => false,
-            Self::Session(view) => view.side_off_record(),
+            Self::Base(vault) => vault.side_owning_store(),
+            Self::Session(view) => view.side_owning_store(),
         }
     }
 }
@@ -151,6 +174,10 @@ impl SideTableDbs for crate::Vault {
 
     fn side_custody(&self) -> Option<CustodyWrite<'_>> {
         Some(CustodyWrite::of(self))
+    }
+
+    fn side_owning_store(&self) -> Option<&Store> {
+        Some(&self.store)
     }
 }
 
@@ -617,6 +644,23 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
             *value = self.decode_value(&masked)?;
         }
         Ok(())
+    }
+
+    /// Reads `projection` as the side-row wall will store it, writing
+    /// nothing (FIX FENCE-ERASED-FORM-THROUGH-WALL): the bytes of a row of
+    /// this table with the parts the wall does not read taken out, and
+    /// `decodes` the table's reading of a masked copy with those parts put
+    /// back. `None` when the wall changes nothing.
+    pub(crate) fn admit_projection(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &mut RwTxn<'_>,
+        key: &K,
+        projection: &[u8],
+        decodes: impl Fn(&[u8]) -> bool,
+    ) -> Result<Option<Vec<u8>>> {
+        self.decl
+            .admit(dbs, txn, &self.key_bytes(key), projection, decodes)
     }
 
     /// Deletes one row; `true` when a row was present.

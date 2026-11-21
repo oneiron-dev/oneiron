@@ -4,7 +4,7 @@
 
 use super::archive_retained_side_rows::retained_side_row_withholds_credential;
 use super::{
-    ArchiveRetainedSideRow, ArchiveSideFamily, OwnerArchiveRestorePermit,
+    ArchiveRetainedSideRow, ArchiveSideFamily, OwnerArchiveRestorePermit, ProjectRootMap,
     RetainedSideHeldBackReason, SideRowBytes,
 };
 use crate::error::{Error, Result, StoreError};
@@ -25,6 +25,8 @@ pub(crate) enum ArchivedSideRowOutcome {
 /// Refreshes required by newly installed side rows after the import commits.
 #[derive(Default)]
 pub(crate) struct ArchivedSideRowRefresh {
+    /// Rooms whose ledger this import wrote before the records.
+    pub(crate) prelanded_rooms: std::collections::BTreeSet<crate::EntityId>,
     /// Serving hosts must observe repaired drafter bindings.
     drafter_serving: bool,
     /// Digest timers must re-read installed schedules and settings.
@@ -88,8 +90,6 @@ pub(crate) enum ArchivedSideGroup {
     WebConnector,
     /// Dependent walk bounds.
     Ports,
-    /// Passive housekeeping wake notes.
-    HousekeepingWake,
     /// Protective grant withdrawal markers.
     WithdrawnGrant,
     /// Project history budgets.
@@ -106,6 +106,8 @@ pub(crate) enum ArchivedSideGroup {
     RetrievalPins,
     /// Drafter policy and serving binding repair.
     Drafter,
+    /// Owner read-shape pins, read live at each pick.
+    ReadShapePins,
     /// Owner grant act history.
     AccessGrant,
     /// Owner setting act history.
@@ -116,6 +118,8 @@ pub(crate) enum ArchivedSideGroup {
     AttemptQueue,
     /// Compliance pack decision history.
     CampaignCompliance,
+    /// The house voice guide's seed marker.
+    CampaignHouseVoiceGuide,
     /// Check-in history and its time index.
     CheckIn,
     /// Passive e-sign audit chains.
@@ -140,7 +144,7 @@ pub(crate) enum ArchivedSideGroup {
     Consent,
     /// Voice identity and reference-render consent.
     Voice,
-    /// Room role grants backed by current membership and body roles.
+    /// Room membership ledgers, then role grants backed by membership and body roles.
     ConversationRole,
     /// Connector slates retained as nonportable references.
     ConnectorSlate,
@@ -193,7 +197,6 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         }
         name if name == side_table::WEB_CONNECTOR_SETTING.name => Some(Group::WebConnector),
         name if name == side_table::PORTS_DEPENDENT_WALK_POLICY.name => Some(Group::Ports),
-        name if name == side_table::HOUSEKEEPING_WAKE.name => Some(Group::HousekeepingWake),
         name if name == side_table::AUTHORITY_WITHDRAWN_GRANT.name => Some(Group::WithdrawnGrant),
         name if name == side_table::PROJECT_HISTORY_POLICY.name => Some(Group::ProjectHistory),
         name if name == side_table::MESSAGE_STREAM_POLICY.name
@@ -206,6 +209,7 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::LEARNING_SETTING.name => Some(Group::LearningSetting),
         name if name == side_table::RETRIEVAL_POLICY_PINS.name => Some(Group::RetrievalPins),
         name if name == side_table::DRAFTER_POLICY.name => Some(Group::Drafter),
+        name if name == side_table::READ_SHAPE_PINS.name => Some(Group::ReadShapePins),
         name if name == side_table::ACCESS_GRANT_OWNER_ACT.name => Some(Group::AccessGrant),
         name if name == side_table::POLICY_SETTING_ACT.name => Some(Group::PolicySetting),
         name if name == side_table::OWNER_POLICY_CHANGE_EVENT.name => Some(Group::PolicyModel),
@@ -221,6 +225,9 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::ATTEMPT_HOLD_OVERRIDE_RECEIPT.name => Some(Group::AttemptQueue),
         name if name == side_table::CAMPAIGN_COMPLIANCE_RECEIPT.name => {
             Some(Group::CampaignCompliance)
+        }
+        name if name == side_table::CAMPAIGN_HOUSE_VOICE_GUIDE.name => {
+            Some(Group::CampaignHouseVoiceGuide)
         }
         name if name == side_table::CHECK_IN_RECEIPT.name => Some(Group::CheckIn),
         name if name == side_table::ESIGN_AUDIT.name => Some(Group::Esign),
@@ -247,11 +254,18 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
             Some(Group::Consent)
         }
         name if name == side_table::VOICE_IDENTITY_CONSENT.name
+            || name == side_table::VOICE_IDENTITY_CONSENT_VOID.name
+            || name == side_table::VOICE_IDENTITY_WITHDRAWAL_REQUESTED_AT.name
             || name == side_table::VOICE_REF_RENDER_CONSENT.name =>
         {
             Some(Group::Voice)
         }
-        name if name == side_table::CONVERSATION_ROLE_GRANT.name => Some(Group::ConversationRole),
+        name if name == side_table::CONVERSATION_ROLE_GRANT.name
+            || name == side_table::CONVERSATION_MEMBERSHIP_ROW.name
+            || name == side_table::CONVERSATION_MEMBERSHIP_SEQ.name =>
+        {
+            Some(Group::ConversationRole)
+        }
         name if name == side_table::CONNECTOR_GRANT_SLATE.name => Some(Group::ConnectorSlate),
         name if name == side_table::ORG_ADMIN_POLICY.name => Some(Group::OrgAdmin),
         name if name == side_table::SHARED_ACT_POLICY_CHANGE.name => Some(Group::SharedAct),
@@ -266,11 +280,14 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
 }
 
 /// Lands one staged group in input order, without starting any workflow or refreshing caches.
+/// `projects` maps a whole-vault archive's source root onto this vault's root; the setting rows
+/// read a row scoped at the source root as scoped here.
 pub(crate) fn land_archived_side_group_in_txn(
     group: ArchivedSideGroup,
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,
     permit: &OwnerArchiveRestorePermit,
+    projects: Option<&ProjectRootMap>,
     rows: &[ArchiveRetainedSideRow],
     refresh: &mut ArchivedSideRowRefresh,
 ) -> Result<Vec<ArchivedSideRowOutcome>> {
@@ -280,6 +297,7 @@ pub(crate) fn land_archived_side_group_in_txn(
                 vault,
                 txn,
                 permit,
+                projects,
                 rows,
                 &mut refresh.setting_wakes,
             )
@@ -315,11 +333,6 @@ pub(crate) fn land_archived_side_group_in_txn(
         ArchivedSideGroup::Ports => {
             crate::ports::land_archived_ports_rows_in_txn(vault, txn, permit, rows)
         }
-        ArchivedSideGroup::HousekeepingWake => {
-            crate::store::housekeeping_wake::land_archived_housekeeping_wake_rows_in_txn(
-                vault, txn, permit, rows,
-            )
-        }
         ArchivedSideGroup::WithdrawnGrant => {
             crate::authority::land_archived_withdrawn_grant_rows_in_txn(vault, txn, permit, rows)
         }
@@ -350,6 +363,9 @@ pub(crate) fn land_archived_side_group_in_txn(
         ArchivedSideGroup::Drafter => {
             crate::Vault::land_archived_drafter_rows_in_txn(vault, txn, permit, rows)
         }
+        ArchivedSideGroup::ReadShapePins => {
+            crate::store::Store::land_archived_read_shape_pins_rows_in_txn(vault, txn, permit, rows)
+        }
         ArchivedSideGroup::AccessGrant => {
             crate::Vault::land_archived_access_grant_rows_in_txn(vault, txn, permit, rows)
         }
@@ -364,6 +380,11 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::CampaignCompliance => {
             crate::Vault::land_archived_campaign_compliance_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::CampaignHouseVoiceGuide => {
+            crate::campaign::house_voice_guide::land_archived_house_voice_guide_rows_in_txn(
+                vault, txn, permit, rows,
+            )
         }
         ArchivedSideGroup::CheckIn => {
             crate::Vault::land_archived_check_in_rows_in_txn(vault, txn, permit, rows)
@@ -413,7 +434,7 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::ConversationRole => {
             crate::conversation::archive_restore::land_archived_conversation_role_rows_in_txn(
-                vault, txn, permit, rows,
+                vault, txn, permit, rows, &refresh.prelanded_rooms,
             )
         }
         ArchivedSideGroup::ConnectorSlate => {

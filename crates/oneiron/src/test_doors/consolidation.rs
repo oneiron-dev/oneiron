@@ -236,6 +236,54 @@ fn allow_system_rows(vault: &Vault, writer: EntityId) -> Result<()> {
     crate::test_fixtures::put_policy_manifest_bytes(vault, id, &bytes)
 }
 
+/// Declares `predicate`'s class critical in the installed policy manifest:
+/// one exact rule appended to its `rules`, as a trusted policy that names the
+/// class does. A write on `predicate` then meets the declared criticality
+/// floor, which the fallback lift does not clear (ARCH-0003 §Criticality).
+///
+/// # Errors
+///
+/// The store's, or an installed policy that is not a map with `rules`.
+pub fn declare_predicate_critical(vault: &Vault, predicate: &str) -> Result<()> {
+    let id = crate::gate::default_policy_manifest_id()?;
+    let installed = vault
+        .get(&id)?
+        .ok_or_else(|| Error::InvalidConfig("installed policy".into()))?;
+    let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut installed.as_slice())
+        .map_err(|_| Error::InvalidConfig("installed policy".into()))?
+    else {
+        return Err(Error::InvalidConfig("installed policy is not a map".into()));
+    };
+    let rule = rmpv::Value::Map(vec![
+        (rmpv::Value::from("prefix"), rmpv::Value::from(predicate)),
+        (rmpv::Value::from("exact"), rmpv::Value::Boolean(true)),
+        (
+            rmpv::Value::from("axes"),
+            rmpv::Value::Map(vec![
+                (
+                    rmpv::Value::from("criticality"),
+                    rmpv::Value::from("critical"),
+                ),
+                (
+                    rmpv::Value::from("sensitivity"),
+                    rmpv::Value::from("normal"),
+                ),
+            ]),
+        ),
+    ]);
+    match entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("rules"))
+    {
+        Some((_, rmpv::Value::Array(rules))) => rules.push(rule),
+        _ => return Err(Error::InvalidConfig("installed policy has no rules".into())),
+    }
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
+        .map_err(|_| Error::InvalidConfig("encode policy".into()))?;
+    crate::test_fixtures::put_policy_manifest_bytes(vault, id, &bytes)
+}
+
 /// A fixture vault for one Dreamer pass: engine machines provisioned,
 /// fixture extraction allowed on this server, and the shipped policy plus a
 /// `core:read` grant for `reader`.
@@ -287,6 +335,23 @@ pub fn consolidate_tagged_turn(
     tags: &crate::memory::extraction::EncoderOutput,
     reply: &str,
 ) -> Result<UnboundPass> {
+    consolidate_tagged_turn_in_window(vault, words, tags, reply, None)
+}
+
+/// [`consolidate_tagged_turn`] with the extraction model's input window
+/// lent as `window_tokens` when given, as the host's factory lends it (FIX
+/// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW).
+///
+/// # Errors
+///
+/// As [`consolidate_tagged_turn`].
+pub fn consolidate_tagged_turn_in_window(
+    vault: &Vault,
+    words: &str,
+    tags: &crate::memory::extraction::EncoderOutput,
+    reply: &str,
+    window_tokens: Option<u64>,
+) -> Result<UnboundPass> {
     let speaker = EntityId::now();
     vault.put_entity(&speaker, ENTITY_TYPE_PERSON, occurred(1), 1, b"witness")?;
     let turn = EntityId::now();
@@ -320,7 +385,7 @@ pub fn consolidate_tagged_turn(
             "the held tags were not saved: {outcome:?}"
         )));
     }
-    consolidate_witnessed_turns(vault, turn, &[], reply)
+    consolidate_witnessed_turns_in_window(vault, turn, &[], reply, window_tokens)
 }
 
 /// Witnesses `words` as one visible user MESSAGE carrying `metadata` into a
@@ -342,6 +407,23 @@ pub fn consolidate_unbound_turn(
 ) -> Result<UnboundPass> {
     let (turn, _) = witness_user_turn(vault, EntityId::now(), words, metadata, 10)?;
     consolidate_witnessed_turns(vault, turn, readable_space.as_slice(), reply)
+}
+
+/// [`consolidate_unbound_turn`] with no metadata and no readable space, the
+/// extraction model's input window lent as `window_tokens` when given (FIX
+/// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW).
+///
+/// # Errors
+///
+/// As [`consolidate_unbound_turn`].
+pub fn consolidate_unbound_turn_in_window(
+    vault: &Vault,
+    words: &str,
+    reply: &str,
+    window_tokens: Option<u64>,
+) -> Result<UnboundPass> {
+    let (turn, _) = witness_user_turn(vault, EntityId::now(), words, None, 10)?;
+    consolidate_witnessed_turns_in_window(vault, turn, &[], reply, window_tokens)
 }
 
 /// Witnesses `first_words`, then `second_words`, each spoken by a person of
@@ -484,6 +566,18 @@ fn consolidate_witnessed_turns(
     readable_spaces: &[EntityId],
     reply: &str,
 ) -> Result<UnboundPass> {
+    consolidate_witnessed_turns_in_window(vault, turn, readable_spaces, reply, None)
+}
+
+/// [`consolidate_witnessed_turns`] with the extraction model's input window
+/// lent as `window_tokens` when given.
+fn consolidate_witnessed_turns_in_window(
+    vault: &Vault,
+    turn: EntityId,
+    readable_spaces: &[EntityId],
+    reply: &str,
+    window_tokens: Option<u64>,
+) -> Result<UnboundPass> {
     let actor = vault.dreamer_authority()?;
     for &space in readable_spaces {
         vault.create_access_grant(
@@ -548,7 +642,8 @@ fn consolidate_witnessed_turns(
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     {
         let mut executor = ConsolidationExecutor {
-            roles: Default::default(),
+            roles: crate::dreamer_consolidation::RoleBackends::default()
+                .with_follower_window(window_tokens),
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,

@@ -186,6 +186,18 @@ impl BookingSolver<'_> {
             config.daily_cap = None;
             config.weekly_cap = None;
         }
+        // The length asked (BK-VARIABLE-DURATION): every stage below solves
+        // this event type at it. A length the event type does not offer has
+        // no slot, never a silent fall back to the default.
+        let Some(duration_min) = config.offered_duration_min(req.duration_min) else {
+            return Ok(SolveResult {
+                slots: Vec::new(),
+                flex_used: false,
+                host_bindings: Vec::new(),
+                full_days: Vec::new(),
+            });
+        };
+        config.duration_min = duration_min;
 
         // The bookable extent is settled BEFORE anything is read, because it is
         // what bounds the read. A caller may ask for centuries; the horizon is

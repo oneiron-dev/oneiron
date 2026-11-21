@@ -1,7 +1,7 @@
 //! The named parent-cycle checks (Astra #1434b and the Engine's rulings on
 //! it): Astra's fixture, the second undefined sibling, both settle legs, the
 //! conduit's narrow edges, a positive control, the two causal-future shapes,
-//! the world bound with its owner question and seal exit, a chain still in
+//! the world bound with its narrow answer and seal exit, a chain still in
 //! the cycle, and a long chain's linear cost.
 //! Each shape is a reference graph; the doors must serve the ruled answer
 //! (which the reference also gives) in both orders on two replicas.
@@ -245,37 +245,34 @@ fn a_long_history_under_a_later_child_stays_lit() -> Result<()> {
     Ok(())
 }
 
-/// The world bound (Engine ruling, a policy row): a cycle with more views
-/// than the bound serves no authority in either project, still lists every
-/// held revision, and the owner holds one question naming it until it
-/// serves again: once the bound is raised, or once the owner seals B over
-/// B0, which leaves B1 outside the seal (Sol r14 F1, Astra r14 F3).
+/// FIX 11050: a cycle past its world bound serves the full decision's narrow
+/// answer, lists every held revision and raises no owner question. Raising
+/// the bound and delivering the settle leg, or sealing B over B0, still
+/// settles the cycle (Sol r14 F1, Astra r14 F3).
 #[cfg(feature = "sync")]
 #[test]
-fn a_cycle_past_its_world_bound_serves_nothing_and_asks_the_owner() -> Result<()> {
-    use super::super::fold::reason::CYCLE_BOUND;
+fn a_cycle_past_its_world_bound_serves_the_narrow_answer_without_a_question() -> Result<()> {
+    use super::super::fold::reason;
     let mut graph = astra(vec![rev(1, Some(1), None, KEPT, 1)]);
     graph.bound = 1;
-    let first = [true, true, true, true, false];
-    assert_eq!(model::solve(&graph, &first).dark, vec![true, true]);
     let scaffold = scaffold(&graph)?;
     let (_dir, vault) = scaffold.replica(&[0, 1, 2, 3])?;
-    for id in &scaffold.ids {
+    // FIX 11050: the bound observes worlds; it does not change their meet.
+    let served = [Some(view(KEPT, 0, None)), Some(view(KEPT, 1, None))];
+    for (id, expected) in scaffold.ids.iter().zip(served) {
         let frontier = vault.project_frontier(*id)?.ok_or(Error::EntityNotFound)?;
-        assert_eq!(frontier.effective, None);
-        assert_eq!(
+        assert_eq!(scaffold.view(frontier.effective.as_ref()), expected);
+        assert!(matches!(
             frontier.disposition,
-            ProjectDisposition::Unauthorized {
-                reason: CYCLE_BOUND.into()
-            }
-        );
+            ProjectDisposition::ParentCycle { .. }
+        ));
     }
-    // A0 and B0 stand; B1 and A1 are past the bound.
+    // A0 and B0 stand; B1 and A1 stay undefined in the full decision.
     let listed = [
         ProjectVerdict::Visible,
         ProjectVerdict::Visible,
-        ProjectVerdict::Quarantined(CYCLE_BOUND),
-        ProjectVerdict::Quarantined(CYCLE_BOUND),
+        ProjectVerdict::Quarantined(reason::CYCLE),
+        ProjectVerdict::Quarantined(reason::CYCLE),
     ];
     for (index, verdict) in listed.into_iter().enumerate() {
         let project = scaffold.ids[graph.revs[index].project];
@@ -286,13 +283,9 @@ fn a_cycle_past_its_world_bound_serves_nothing_and_asks_the_owner() -> Result<()
             "{index}: {revisions:?}"
         );
     }
-    let mut members = scaffold.ids.clone();
-    members.sort();
-    let questions = vault.project_cycle_questions()?;
-    assert_eq!(questions.len(), 1);
-    assert_eq!(questions[0].members, members);
+    assert_eq!(vault.project_cycle_questions()?, Vec::new());
     seal_exit(&scaffold)?;
-    // Raised, the bound lets the settle decide, and the question clears.
+    // A raised bound still lets the settle decide, without an owner question.
     set_bound(&vault, 64)?;
     scaffold.deliver(&vault, &[4])?;
     graph.bound = 64;
@@ -309,7 +302,7 @@ fn a_cycle_past_its_world_bound_serves_nothing_and_asks_the_owner() -> Result<()
 }
 
 /// The owner seals B over B0, keeping B0's bounds, with the bound still at
-/// one: B serves the seal, A1 fits under it, and the question clears.
+/// one: B serves the seal, A1 fits under it, and no question is raised.
 fn seal_exit(scaffold: &Scaffold) -> Result<()> {
     use super::authority::FIXTURE_HOST;
     use crate::authority::HostSlipIssuer;

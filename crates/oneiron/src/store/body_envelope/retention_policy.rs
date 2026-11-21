@@ -347,25 +347,61 @@ impl Store {
 
     /// Registers a holder of every body instance this vault's own rows name,
     /// before a swap parks it as an archive (FIX 6022): its rows and files
-    /// keep them until the archive's custodian releases it.
+    /// keep them until the archive's custodian releases it. Returns the
+    /// holder, `None` when it names nothing, so a swap refused before its
+    /// exchange began releases it ([`Self::release_parked_archive_hold`]).
     ///
     /// # Errors
     ///
     /// Storage and custody errors, and a row that does not decode.
-    pub(crate) fn hold_parked_archive_bodies(&self) -> Result<()> {
+    pub(crate) fn hold_parked_archive_bodies(
+        &self,
+    ) -> Result<Option<crate::store::key_custody::ImageHolder>> {
         let named = {
             let txn = self.env.read_txn()?;
             named_in_txn(self, &txn)?
         };
         let named = named.ok_or(crate::Error::CorruptedIndex("body response binding"))?;
         let Some(custody) = self.core.key_custody.local() else {
-            return Ok(());
+            return Ok(None);
         };
-        if !named.is_empty() {
-            custody.hold_image_instances(&named)?;
-            self.core.key_custody.bump_holders_epoch();
+        if named.is_empty() {
+            return Ok(None);
         }
+        let holder = custody.hold_image_instances(&named)?;
+        self.core.key_custody.bump_holders_epoch();
+        Ok(Some(holder))
+    }
+
+    /// Releases `holder`, which [`Self::hold_parked_archive_bodies`]
+    /// registered for a swap refused before its exchange began: that swap
+    /// parked no archive, so the instances only it kept may retire by
+    /// retention again (REVIEW-10247 round 2).
+    ///
+    /// # Errors
+    ///
+    /// Custody faults.
+    pub(crate) fn release_parked_archive_hold(
+        &self,
+        holder: crate::store::key_custody::ImageHolder,
+    ) -> Result<()> {
+        holder.release()?;
+        self.core.key_custody.bump_holders_epoch();
         Ok(())
+    }
+
+    /// How many holder records of kept body instances this vault's local
+    /// custody keeps; `0` without one (test doors).
+    ///
+    /// # Errors
+    ///
+    /// Custody faults, and a record that does not decode.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn image_holder_record_count(&self) -> Result<usize> {
+        match self.core.key_custody.local() {
+            Some(custody) => custody.image_holder_record_count(),
+            None => Ok(0),
+        }
     }
 }
 

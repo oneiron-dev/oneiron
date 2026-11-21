@@ -266,6 +266,22 @@ reaches the other's keys. If the directory cannot be synced after the swap,
 the restore still reports success, with a `durability_warning` that names the previous vault:
 the swap is done, but a crash before the disk flushes may undo it.
 
+A restore where no vault is makes a new machine of the vault, marked with the backup it came
+from. It carries nothing until it joins: a machine of the vault that has joined pairs it. When
+no such machine is left, say so on the restored install:
+
+```sh
+# stop `oneiron serve` first
+oneiron restore --join
+```
+
+The configured host root, your owner key on a self-host vault, files this install's enrolment
+and signs your word that no other machine is left. The output names the machine (`machine`),
+the backup's checkpoint image (`restored_from`), its role (`unanswered` until you answer whose
+machine it is) and the revision. On an install that has joined it changes nothing. It refuses,
+and writes nothing, on an install no restore made, on a vault that is not self-hosted, and
+where this install holds no host root: pair the install from a machine of the vault instead.
+
 A restore refuses, and changes nothing, when:
 
 - the vault is in use (stop `serve`);
@@ -1199,7 +1215,12 @@ merges, nothing is confirmed), leaves the ask open in `/v1/owner/identity/asks` 
 it there. An agent about to send, pay, invite or share on that name is still stopped and shown the
 choice card first. When a saved hint, or the host's decision on an ask, settles a name on its own,
 the settle applies at once (an agent waiting on the name acts on it at once) and lists here as
-`identity_settle` under the mention's `ask` key.
+`identity_settle` under the mention's `ask` key. A name said in a source you cannot read, such as a
+member's own mailbox, is asked of that member instead, and you get a notice that names no one:
+"a member has a pending question about identity". When the member answers that it is someone new,
+nothing changes yet: you get an Ask carrying only the ids it is about (no name, no words), and its
+one tap accepts that proposal, while it stands, as your own answer. If the question changes first
+(an option is erased, or the member answers again), the old tap accepts nothing.
 
 - `GET /v1/owner/dreamer/maintenance/applied` (optionally `?limit=<n>`): every applied write,
   reverted ones too, newest first, with its finding (or, for a name kept separate or settled, its
@@ -2160,7 +2181,17 @@ the same steps at `GET` and `PUT /v1/owner/vault-key/recovery-preset` with
 preset only while its own device wrap stays (add it with `POST /device` first): if the answer is
 lost, that wrap reopens the key, and `standard` then `nobody_but_me` again issues a new sheet. On a
 maximum-tier vault, `mirror_pending: true` says the change stands but the page-seal mirror was not
-rewritten; the next sealed open repairs it.
+rewritten; the next sealed open repairs it. Once a recovery kit is confirmed, entering the preset
+from `standard` also replaces the root's authority key that the recovery box could release, so it
+needs that kit: `--piece` (two piece files, or one and `--secret-file`) on the command, and
+`"kit": {"pieces": [...], "passphrase": ...}` in the body; without it the switch is refused while
+that key is live. `recovery-kit issue-vault-key --any-two-pieces` takes the kit the same way
+(`--piece`, and `--kit-secret-file` with one piece). `box_release_pending: true` says the switch
+back to `standard` stands but the recovery box still holds the vault as kit-only.
+`box_recovery_needs_new_kit: true` says the switch back left the recovery box with no seed of a
+live root authority key (entering the preset replaced the key whose seed it held): signing in with
+the recovery PIN restores no owner control until a new kit is confirmed, which deposits its seed.
+The kit itself still restores the vault, and the switch back changes no key on the roster.
 
 On a new host, the sheet restores the vault:
 

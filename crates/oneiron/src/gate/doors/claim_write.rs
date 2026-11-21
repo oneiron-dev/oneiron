@@ -2,11 +2,14 @@
 
 mod closer;
 mod decision_context;
+mod owner_revision;
 mod record_inner;
 mod reference_hook;
 mod reference_read;
 mod stored_close;
 
+use owner_revision::redeem_held_row_by_owner_revision;
+pub(crate) use owner_revision::{OwnerRevisionAmendment, record_owner_revision_amendment_in_txn};
 use record_inner::check_claim_policy_for_write_with_record_inner;
 pub(crate) use reference_hook::check_claim_policy_for_write_with_record_with_reader_reference_probe;
 pub(crate) use reference_read::unresolved_claim_reference;
@@ -37,7 +40,8 @@ use crate::error::{Error, Result};
 use crate::gate::confirm::{
     GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_ALLOW_CRITICAL_OWNER_AUTHORED,
     GATE_REASON_ALLOW_FALLBACK_CRITICALITY, GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED,
-    critical_claim_can_land_auto_with_confirm, pending_row_holds_critical_confirm,
+    critical_claim_can_land_auto_with_confirm, owner_proof_lifts_criticality_floor,
+    pending_row_holds_critical_confirm,
 };
 use crate::gate::constants::LOCAL_WRITE_ACTOR_CLASS;
 use crate::gate::decision::{GateDecision, GateOutcome, GateReasonCode};
@@ -95,6 +99,7 @@ pub(crate) fn check_claim_policy_for_write(
         policy,
         mode,
         &mut recorded_decision,
+        &mut None,
         None,
         operation_effect_body,
         false,
@@ -107,7 +112,9 @@ pub(crate) fn check_claim_policy_for_write(
 // further than the record seam; bundling the axis tuple would hide the
 // preflight decision binding this lane opened. `pre_mask_diff` is the claim
 // diff of the body that receipt judged, when the mask on write rewrote the
-// candidate after it.
+// candidate after it. `owner_amendment` receives the amended approval the
+// owner's revision of a held MACHINE claim recorded, for the put's body
+// stage to measure.
 #[expect(
     clippy::too_many_arguments,
     reason = "the record seam's arguments plus the preflight receipt and the body it judged"
@@ -121,6 +128,7 @@ pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
     mode: GateWriteMode,
     preflight_decision_id: Option<GateDecisionId>,
     pre_mask_diff: Option<[u8; 32]>,
+    owner_amendment: &mut Option<OwnerRevisionAmendment>,
 ) -> Result<()> {
     let mut recorded_decision = None;
     check_claim_policy_for_write_with_record_inner(
@@ -131,6 +139,7 @@ pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
         policy,
         mode,
         &mut recorded_decision,
+        owner_amendment,
         preflight_decision_id.map(|decision| PreflightReceipt {
             decision,
             pre_mask_diff,
@@ -161,6 +170,7 @@ pub(crate) fn check_claim_policy_for_write_with_record(
         policy,
         mode,
         recorded_decision,
+        &mut None,
         None,
         // Every caller of the record seam writes a persisted candidate.
         false,
@@ -201,6 +211,7 @@ pub(crate) fn check_claim_policy_for_write_with_record_with_reader(
         policy,
         mode,
         recorded_decision,
+        &mut None,
         None,
         false,
         false,
@@ -243,6 +254,7 @@ pub(crate) fn capture_claim_policy_for_write(
             ..mode
         },
         &mut captured,
+        &mut None,
         None,
         // A room stages a persisted candidate.
         false,

@@ -8,9 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::source_version::{SourceVersion, source_version_in_txn};
-use super::strength_observations::{
-    observation_reader_scope_for_actor_in_txn, observed_claim_reads_in_txn,
-};
+use super::strength_observations::{live_steward_reader_scope_in_txn, observed_claim_reads_in_txn};
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadResult};
 use crate::dreamer_consolidation::routing::PredicateKeyRules;
@@ -25,7 +23,9 @@ use crate::dreamer_runner::{
 };
 use crate::federation::Scope;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::request_limits::page_limit_zero_as_one;
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// The cursor prefix naming the last TURN a page served.
 const EXTRACTION_TURNS_CURSOR_PREFIX: &str = "extraction-turns:";
@@ -136,11 +136,7 @@ fn bound_extraction_inputs_page(
         .embedded_owner("vault.consolidation.extraction.inputs.page")
         .ok();
     let bounds = vault.snapshot_read_settings()?;
-    let limit = input
-        .limit
-        .unwrap_or(bounds.page_rows)
-        .min(bounds.page_rows)
-        .max(1);
+    let limit = page_limit_zero_as_one(input.limit, bounds.page_rows, bounds.page_rows).rows;
     let attempt = extraction_attempt_key(&input.attempt)?;
     let after = extraction_turn_cursor_key(input.cursor.as_deref())?;
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
@@ -308,12 +304,9 @@ pub(crate) fn extraction_reader_scope_in_txn(
         owner.revalidate_as_vault_owner_in_txn(vault, txn)?;
         return Ok(None);
     }
-    // The helper answers the whole vault (`Some(None)`) for a base agent with
-    // no standing row, whose manifest rows read the sibling pages. This page
-    // serves a live grant only, so that answer is no reach here.
-    match observation_reader_scope_for_actor_in_txn(vault, txn, memory.actor())? {
-        Some(Some(scope)) => Ok(Some(scope)),
-        Some(None) | None => Err(MemoryError::new(
+    match live_steward_reader_scope_in_txn(vault, txn, memory.actor())? {
+        Some(scope) => Ok(Some(scope)),
+        None => Err(MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "extraction inputs read for the owner under its proof or a live Steward reader",
             &[],
@@ -392,10 +385,25 @@ pub(crate) fn extraction_turn_in_txn(
 pub(crate) fn extraction_policy_pin(policy: &ExtractionPolicy) -> Result<String> {
     let encoded =
         serde_json::to_vec(policy).map_err(|error| Error::InvalidConfig(error.to_string()))?;
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron.dreamer.extraction.policy.v1");
-    hash.update(&encoded);
-    Ok(hash.finalize().to_hex().to_string())
+    Ok(pin_of_encoded_policy(&encoded))
+}
+
+/// Hashes the encoded policy right after the policy tag, with no separator. The tag is a
+/// legacy purpose: the inputs and observations pages already send these bytes, so they
+/// are kept (K, PLAN-UC-04).
+fn pin_of_encoded_policy(encoded: &[u8]) -> String {
+    oneiron_hex::encode(
+        &LegacyDigest::new(purposes::dreamer::EXTRACTION_POLICY)
+            .raw(encoded)
+            .finish(),
+    )
+}
+
+/// [`pin_of_encoded_policy`] for the K door
+/// (`test_doors::fingerprint_keep_extraction_read_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pin_of_encoded_policy_for_test(encoded: &[u8]) -> String {
+    pin_of_encoded_policy(encoded)
 }
 
 /// Decodes the attempt identifier in its one lowercase hexadecimal spelling.

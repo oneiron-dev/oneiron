@@ -26,6 +26,7 @@ use crate::llm::decision::AskTo;
 use crate::model_decision::{DecisionQuestion, DecisionRung, EvidenceVersion};
 use crate::model_step_context::{DurableStepContext, StepEffectBinding};
 use crate::model_step_error::{DurableStepError, DurableStepResult};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_model::llm::{
     CallClass, CallEnvelope, CallPurpose, LlmRequest, LlmUsage, ModelTierRef, ResponseFormat,
     Scope, TierPrecedence,
@@ -153,6 +154,17 @@ pub(in crate::dreamer_consolidation) async fn decide_pack_with_charges(
                 .lock()
                 .map_err(|_| crate::Error::InvariantViolation("extraction charge tally lock"))?;
             settle_spent_prefix(vault, &spent, &decided, &mut charges)?;
+            // A lent read's failed step keeps its paid usage (a reply its refused correction
+            // followed) on its error, and no bound caller accounts that error, as the native
+            // pass does through `refused_with_spend`: it joins the attempt's shared tally here,
+            // once. A charge-record failure above has already counted it and returned.
+            if let Some(usage) = decided
+                .as_ref()
+                .err()
+                .and_then(DurableStepError::spent_usage)
+            {
+                charges.record_usage(usage);
+            }
         }
     }
     decided
@@ -252,6 +264,6 @@ fn verdict_shell(call: &RoleCall<'_>, scope: &Scope) -> Result<LlmRequest> {
 pub(crate) fn evidence_version_for_row(id: EntityId, body: &[u8]) -> EvidenceVersion {
     EvidenceVersion {
         id,
-        body_hash: *blake3::hash(body).as_bytes(),
+        body_hash: *ContentHash::of(body).as_bytes(),
     }
 }

@@ -36,11 +36,12 @@ pub use self::record::{
     OWNER_KEY_MOVE_DEVICE_CONFIRM_TEXT, OWNER_KEY_MOVE_ENROL_STEP, OWNER_KEY_MOVE_ENROL_SUGGESTION,
     OWNER_KEY_MOVE_ENROL_TEXT, OWNER_KEY_MOVE_NEXT_STEP, OWNER_KEY_MOVE_REFUSAL_TEXT,
     OWNER_KEY_MOVE_SUGGESTION, OWNER_KEY_NEXT_STEP_REASON_PREFIX, OWNER_KEY_REQUIRED,
-    OwnerKeyMoveStep, RecordError, RoomLiveSpeakersHold, SEAL_STANDING_RECONCILE_TEXT,
+    OWNER_PRESENCE_HERE_REASON_PREFIX, OWNER_PRESENCE_REQUIRED, OwnerKeyMoveStep,
+    OwnerPresenceRefusal, RecordError, RoomLiveSpeakersHold, SEAL_STANDING_RECONCILE_TEXT,
 };
 pub use self::registry::RegistryError;
 pub use self::relay::RelayError;
-pub use self::secret::{KitRecord, SecretError};
+pub use self::secret::{DevicePinRefusal, KitRecord, SecretError};
 pub use self::store::{SideTableRowProblem, StoreError, VaultRootEntry, VaultRootProblem};
 pub use self::sync::SyncError;
 #[cfg(feature = "sync")]
@@ -93,6 +94,8 @@ pub enum ErrorKind {
     InvalidAuthorityLogBody,
     /// An authority door refused a well-formed request and named its rule.
     AuthorityRefused,
+    /// A delete of the PERSON that holds the vault's last owner binding.
+    LastBoundOwnerDelete,
     /// The checkpoint root policy cannot be fixed or chosen as asked.
     CheckpointPolicyRefused,
     /// The owner's checkpoint policy choice named a stale revision.
@@ -100,6 +103,8 @@ pub enum ErrorKind {
     /// An owner choice door could not prove the act the owner's on this
     /// install.
     OwnerKeyRequired,
+    /// This device did not confirm the person for an owner act.
+    OwnerPresenceRequired,
     /// The owner's world recipient choice keeps rows from this destination.
     WorldRecipientLimit,
     /// A world's placement or a result's producing rows cannot be verified.
@@ -114,6 +119,15 @@ pub enum ErrorKind {
     WorkspaceMailboxAutonomyNotReady,
     /// A `require` workspace refused a brought companion.
     WorkCompanionRequired,
+    /// The vault's `one_vault` row is unreadable; onboarding refuses to say
+    /// which joining line applies.
+    OneVaultSettingUnreadable,
+    /// One-vault mode is off, so work talk stays with the member.
+    WorkTalkStaysWithMember,
+    /// The member has not acknowledged the one-vault notice.
+    OneVaultNotTold,
+    /// Work talk needs a brought companion, not a born work companion.
+    NoBroughtCompanion,
     InvalidCounterpartyContactBody,
     InvalidCommRecordBody,
     InvalidDiagnosticBody,
@@ -341,6 +355,9 @@ pub enum ErrorKind {
     TaintedArtifactStale,
     WorldKeyRefused,
     KeystoreUnavailable,
+    /// A device PIN door refused: the PIN is required, wrong, or not one
+    /// this device takes (row OCS-OWNER-PIN).
+    DevicePinRefused,
     UnverifiedKitRestore,
     KitConfirmationStale,
     MicroVmBackendUnavailable,

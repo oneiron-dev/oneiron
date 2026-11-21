@@ -197,12 +197,19 @@ impl Store {
             federation_stale_sweep_owed: std::sync::atomic::AtomicBool::new(true),
             authority_fold_cache: Mutex::new(None),
             authority_door_view: Mutex::new(None),
+            authority_door_view_staged: Mutex::new(None),
             authority_owner_reserve_hold: Mutex::new(None),
             adopted_image_cache: Mutex::new(None),
             act_causal_points: Mutex::new(None),
             authority_handoff_equivocations: crate::authority::HandoffEquivocations::default(),
             project_forks: crate::workspace_roster::ProjectForks::default(),
             delete_guards: hooks.delete_guards,
+            brief_delete_fences: crate::deletion::BriefDeleteFences::default(),
+            #[cfg(feature = "sync")]
+            tombstone_publications_in_flight:
+                crate::deletion::TombstonePublicationsInFlight::default(),
+            #[cfg(feature = "sync")]
+            predicted_pushes: crate::sync::residence::PredictedPushes::default(),
             scope_stamps: hooks.scope_stamps,
             project_writes: hooks.project_writes,
             record_hooks: hooks.record_hooks,
@@ -265,6 +272,7 @@ impl Store {
             #[cfg(feature = "sync")]
             staged_import_confirm_lock: Mutex::new(()),
             owner_signing_slot_lock: Mutex::new(()),
+            recovery_hold_lock: Mutex::new(()),
             #[cfg(test)]
             test_hooks: crate::store::TestHooks::default(),
         });

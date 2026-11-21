@@ -62,7 +62,9 @@ pub use step::public as model_step;
 #[cfg(oneiron_test_support)]
 pub(crate) use step::step_state_present_for_attempt;
 pub(crate) use step::{
-    bind_step_input_versions, request_hash_step_receipt_in_txn, request_hash_submit_receipt,
+    StepCallInputs, StepInputLabels, StepInputRange, StepRecord, bind_step_call_inputs,
+    bind_step_input_versions, request_hash_step_receipt_in_txn, request_hash_step_record_in_txn,
+    request_hash_submit_receipt, request_hash_submit_receipt_keeping_erased,
 };
 
 pub mod tagger;
@@ -87,10 +89,19 @@ pub(crate) use step::{
     trap_consume_precheck_in_txn, verified_step_consolidation_eligible_in_txn,
     verified_step_effector_eligible_in_txn, wake_trap_in_txn,
 };
+// The parse retry's replay reads a step's saved work alone, its count reads
+// the sends the retry made, and its pending mark outlives a held-back retry
+// (reviews of #10269).
+pub(crate) use step::{
+    call_as_step_checked_counting_sends, follow_up_pending, mark_follow_up_pending,
+    recover_saved_step,
+};
 pub(crate) use step::{
     wake_budget_trap_of_park_in_txn, wake_budget_traps_in_txn, wake_pass_budget_traps,
     wake_resident_share_traps_in_txn,
 };
+// COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES: a filed compaction step's rows.
+pub(crate) use step::{compaction_response_holders_in, is_compaction_step_row};
 // SEAT-PARK-MODEL-STEP-PATH: when a spent seat's refusal says it resets.
 pub(crate) use step::stated_reset_at;
 // KS-2B1: row-held step responses under body custody.
@@ -202,9 +213,9 @@ pub use oneiron_model::llm::{
     LlmCallMetadata, LlmCapability, LlmCatalogCost, LlmCatalogEntry, LlmEndpointFlavor, LlmError,
     LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest,
     LlmResponse, LlmResult, LlmRole, LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec,
-    LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef, OwnedDispatchRelease,
-    PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM, ReasoningEffort,
-    ReasoningPartKind, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
+    LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef, OWN_SERVER_ONLY_PARAM,
+    OwnedDispatchRelease, PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM,
+    ReasoningEffort, ReasoningPartKind, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
     SafeguardModelBindingError, ServedCacheHorizon, SingleRouteBackend, SingleSend, SpentKind,
     TierPrecedence, TransportFault, TransportFaultKind, UnsupportedCapability,
 };

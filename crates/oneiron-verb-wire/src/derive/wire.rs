@@ -95,6 +95,34 @@ pub struct DeriveStrengthSignals {
     pub diversity: f64,
 }
 
+/// A Psych Mirror profile of one key: a PERSON, a facet and a world. It
+/// cites the stored claims it was written from, each named in the request's
+/// `sources`; the engine reads their exact words in the commit and stores
+/// them with the profile. No field carries words of a source.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DerivePsychProfileInput {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The PERSON the profile describes.
+    pub person: EntityId,
+    /// The facet the cited claims were born in; absent for the vault's
+    /// default.
+    #[serde(default)]
+    pub facet: Option<EntityId>,
+    /// The WORLD the cited claims lie in; absent for world-free claims.
+    #[serde(default)]
+    pub world: Option<EntityId>,
+    pub compact: String,
+    pub text: String,
+    pub narrative: String,
+    /// Each tier's confidence, in `[0, 1]`; a number outside it is refused.
+    #[schemars(range(min = 0.0, max = 1.0))]
+    pub confidence: f64,
+    /// The stored claims the profile was written from.
+    pub claims: Vec<EntityId>,
+}
+
 /// A reversible archive of the caller's own weak claim.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -183,6 +211,17 @@ pub struct DeriveLeftItemView {
     pub reason: String,
 }
 
+/// A claim an undone item had replaced that stands again as a fresh copy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DeriveCopiedClaimView {
+    /// The undone item's name inside its batch.
+    pub item: String,
+    /// The replaced claim, which stays closed.
+    pub replaced: EntityId,
+    /// Its fresh copy, written as the replaced claim's original author.
+    pub copy: EntityId,
+}
+
 /// `vault.derive.revert`'s answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeriveRevertView {
@@ -193,4 +232,8 @@ pub struct DeriveRevertView {
     pub left: Vec<DeriveLeftItemView>,
     /// The revert's receipt in the gate decision ledger, hex.
     pub receipt: String,
+    /// Each claim an undone item had replaced that does not reopen and
+    /// stands again as a fresh copy under a new id.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub copied: Vec<DeriveCopiedClaimView>,
 }

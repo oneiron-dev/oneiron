@@ -16,6 +16,22 @@ pub(crate) fn validate_put_in_txn(
 ) -> Result<()> {
     let body = ConversationBody::from_bytes(bytes)?;
     let chat_field = crate::workspace_roster::LEADER_CHAT_FIELD;
+    let work_talk_field = crate::workspace_roster::WORK_TALK_FIELD;
+    // A stored work-talk binding never changes: a put that edits or removes
+    // one is refused here, before the new field is decoded or its
+    // registration checked.
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
+        && raw.len() >= ENTITY_METADATA_HEADER_LEN
+    {
+        let previous = ConversationBody::from_bytes(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        if previous
+            .extra
+            .get(work_talk_field)
+            .is_some_and(|prior| Some(prior) != body.extra.get(work_talk_field))
+        {
+            return Err(state("work talk binding is immutable"));
+        }
+    }
     if let Some(value) = body.extra.get(chat_field) {
         let encoded = rmp_serde::to_vec_named(value).map_err(|_| invalid("leader chat binding"))?;
         let chat: crate::workspace_roster::LeaderChat =
@@ -33,14 +49,32 @@ pub(crate) fn validate_put_in_txn(
         }
         if !replicated
             && !crate::ports::EntityStoreRead::port_entity_present(store, txn, &id)?
-            && store
-                .vault_meta
-                .get(
-                    txn,
-                    &[b"project.leader_chat.v1/".as_slice(), id.as_bytes()].concat(),
-                )?
-                .as_deref()
-                != Some(encoded.as_slice())
+            && !leader_chat_bound_in(store, txn, id, &encoded)?
+        {
+            return Err(denied());
+        }
+    }
+    if let Some(value) = body.extra.get(work_talk_field) {
+        let encoded = rmp_serde::to_vec_named(value).map_err(|_| invalid("work talk binding"))?;
+        let binding: crate::workspace_roster::WorkTalkBinding =
+            rmp_serde::from_slice(&encoded).map_err(|_| invalid("work talk binding"))?;
+        if body.kind != ConversationKind::Direct
+            || body
+                .member_ids
+                .iter()
+                .any(|person| ![binding.member_person, binding.companion_person].contains(person))
+            || binding.member_person == binding.companion_person
+            || binding.member_actor == binding.companion_actor
+            || binding.workspace_ref.is_empty()
+            || binding.workspace_ref.len() > 256
+            || binding.workspace_ref.contains('\0')
+        {
+            return Err(invalid("work talk binding"));
+        }
+        // A changed or removed binding was refused as immutable above; every
+        // other local put naming the field needs its registration to match.
+        if !replicated
+            && !crate::workspace_roster::work_talk_registered_in(store, txn, id, &encoded)?
         {
             return Err(denied());
         }
@@ -126,6 +160,66 @@ pub(crate) fn validate_put_in_txn(
     roster.defer(store);
     Ok(())
 }
+/// Whether this vault's project door bound room `id` as the leader chat
+/// whose binding encodes to `encoded`: only that door makes a new leader chat.
+fn leader_chat_bound_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    encoded: &[u8],
+) -> Result<bool> {
+    Ok(store
+        .vault_meta
+        .get(
+            txn,
+            &[b"project.leader_chat.v1/".as_slice(), id.as_bytes()].concat(),
+        )?
+        .as_deref()
+        == Some(encoded))
+}
+
+/// Whether room `id`'s `body` carries a leader chat binding this vault's project door did not
+/// make: [`validate_put_in_txn`] refuses it on a room this vault does not hold.
+pub(crate) fn leader_chat_binding_unbound_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    body: &ConversationBody,
+) -> Result<bool> {
+    let Some(value) = body.extra.get(crate::workspace_roster::LEADER_CHAT_FIELD) else {
+        return Ok(false);
+    };
+    let encoded = rmp_serde::to_vec_named(value).map_err(|_| invalid("leader chat binding"))?;
+    Ok(!leader_chat_bound_in(store, txn, id, &encoded)?)
+}
+
+/// Whether [`validate_put_in_txn`] would refuse `bytes` as the first local
+/// put of room `id`, which this vault does not hold, when no room door marks
+/// the write (ARCHIVE-IMPORT-ACTORLESS-SEATED-ROOM = B): the body seats
+/// members this vault's membership ledger does not hold (only the membership
+/// door seats one), carries a leader chat binding this vault's project door
+/// did not make, holds shared pins, unpin records or a pin policy other than
+/// the default (only the room pin doors write them), or is closed (only the
+/// room's closed-setting door closes a room). A whole-vault import outside
+/// the owner's restore keeps such a room as archive data.
+pub(crate) fn new_room_needs_a_door_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    bytes: &[u8],
+) -> Result<bool> {
+    let body = ConversationBody::from_bytes(bytes)?;
+    if leader_chat_binding_unbound_in_txn(store, txn, id, &body)? {
+        return Ok(true);
+    }
+    let members = membership::current_members_in(store, txn, id)?;
+    Ok(members != body.member_ids.iter().copied().collect()
+        || !body.pins.is_empty()
+        || !body.unpinned.is_empty()
+        || !body.pin_policy.is_members()
+        || body.closed)
+}
+
 /// A fresh room id has neither a row nor durable/stale deletion history.
 /// Keep this test in the caller's write transaction so it also sees a deletion
 /// staged earlier in that transaction.

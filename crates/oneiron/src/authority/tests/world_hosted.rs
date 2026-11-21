@@ -11,7 +11,7 @@ use super::world_key_doors::{
 };
 use super::world_kit_gate::publish_root;
 use super::world_privacy::{settings, world_row};
-use super::world_reissue::sync;
+use super::world_reissue::{profiled, sync};
 use super::*;
 use crate::store::GateDecisionId;
 use crate::world_keys::{RecoveryRootSeed, machine_secret};
@@ -40,6 +40,11 @@ pub(super) fn hosted_host() -> Host {
     let owner = vault
         .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
         .unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("serving install profile");
     let vault_id = vault.authority_fold().unwrap().vault_id.unwrap();
     Host {
         _dir: dir,
@@ -65,6 +70,7 @@ pub(super) fn anchor_on(host: &Host, seed: &RecoveryRootSeed, request: &MachineE
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     });
     let entry = anchor_signed_entry(&fold, &seed.anchor(), mark, 2).unwrap();
     host.vault
@@ -105,6 +111,18 @@ fn a_hosted_vaults_kit_restores_and_the_hosts_material_opens_nothing() {
     let world = world_row(&host);
     let (root, seed, id, first_machine) = {
         let first = fresh_install_with(&host, hosted());
+        // The host's enrolment joins the restored install, so the install
+        // carries its owner key's enrolment (FIX 2222; REVIEW-9674 P1). The
+        // host holds no owner key, so it files the install unanswered: its
+        // "yours" would wait for an owner key's proof.
+        profiled(&host, &first.vault, MachineRole::Unanswered);
+        first
+            .vault
+            .enrol_device_owner_signing_key(
+                &ActAuthority::Owner(first.owner.clone(), ActSurface::ThisInstall),
+                &host.issuer,
+            )
+            .unwrap();
         let prepared = first.vault.prepare_owner_root(&first.owner).unwrap();
         let root = prepared.seed().public(&host.vault_id).unwrap().id;
         let seed = kit_seed(host.vault_id, prepared.seed());
@@ -216,6 +234,18 @@ fn a_dishonest_host_never_wins_the_root() {
         };
         let early = host_first.then(|| host_moves(&host));
         sync(&host.vault, &owner.vault);
+        // The host's enrolment joins the restored install, so the install
+        // carries its owner key's enrolment (FIX 2222; REVIEW-9674 P1). The
+        // host holds no owner key, so it files the install unanswered: its
+        // "yours" would wait for an owner key's proof.
+        profiled(&host, &owner.vault, MachineRole::Unanswered);
+        owner
+            .vault
+            .enrol_device_owner_signing_key(
+                &ActAuthority::Owner(owner.owner.clone(), ActSurface::ThisInstall),
+                &host.issuer,
+            )
+            .unwrap();
         let prepared = owner.vault.prepare_owner_root(&owner.owner).unwrap();
         let ours = prepared.seed().public(&host.vault_id).unwrap().id;
         let seed = kit_seed(host.vault_id, prepared.seed());

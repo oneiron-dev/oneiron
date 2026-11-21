@@ -22,13 +22,15 @@
 //!   where the row stands.
 //!
 //! The row is the extraction mint's: `Generated`, and while it stays empty
-//! the cleanup's to archive. A batch revert archives it by that same rule.
+//! the cleanup's to archive, once no try of the lineage that minted it is
+//! pending. A batch revert archives it while it stays empty, whatever its
+//! run's state.
 
 use std::collections::BTreeSet;
 
 use super::batch::DerivedPerson;
 use super::commit::{ItemContext, ItemOutcome, allowance_receipt_in_txn, refusal_receipt_in_txn};
-use crate::claim::{ClaimSource, ScopedRead};
+use crate::claim::ScopedRead;
 use crate::dreamer_consolidation::{
     TurnText, has_name_span, normalize_name_span, origin_in_txn, speaker_admissible_in_txn,
 };
@@ -37,7 +39,6 @@ use crate::error::{Error, Result};
 use crate::gate::{DeriveCapability, derive_verdict_in_txn};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::snapshot_read::source_version_in_txn;
-use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 
@@ -136,60 +137,56 @@ pub(super) fn stage_in_txn(
         name,
         crate::tagging::naming_rows_audience_in_txn(vault, txn, &naming_rows)?,
     )?;
-    let mut savepoint = vault.store.env.nested_write_txn(txn)?;
-    // A provisional entity's id is held for its confirmation: the mint's own
-    // put would refuse it as an error, so it is refused here as an item.
-    if crate::tagging::provisional_in_txn(&vault.store, &savepoint, &id)?.is_some() {
-        drop(savepoint);
-        return refuse(vault, txn, context, Some(id), PERSON_ID_TAKEN);
-    }
-    let at = TimeRange {
-        start: context.now,
-        end: context.now,
-    };
-    if !vault.put_extraction_minted_person_in_txn(
-        &mut savepoint,
-        &id,
-        ClaimSource::Generated,
-        at,
-        context.now,
-        &body,
-    )? {
-        drop(savepoint);
-        return refuse(vault, txn, context, Some(id), PERSON_ID_TAKEN);
-    }
-    // Born under the facet of the TURN its name was read in, never the
-    // generic put's own substrate facet.
-    if let Some(facet) =
-        crate::federation::record_scope::birth_facet(&vault.store, &savepoint, anchor)?
-    {
-        crate::federation::record_scope::settle_source_birth(
-            &vault.store,
-            &mut savepoint,
-            id,
-            ENTITY_TYPE_PERSON,
-            facet,
-        )?;
-    }
-    // An actor whose standing grant has a scope is judged again over the
-    // PERSON as born, so its grant reaches where the row now stands.
-    if crate::federation::steward_reach_in(&vault.store, &savepoint, actor.entity_ref())?.is_some()
-    {
-        match derive_verdict_in_txn(
-            &vault.store,
-            &savepoint,
-            actor,
-            DeriveCapability::Derive,
-            Some(id),
-        )? {
-            Ok(judged) => allowance = judged,
-            Err(refusal) => {
-                drop(savepoint);
-                return refuse(vault, txn, context, None, refusal.token());
+    let mut refused = (Some(id), PERSON_ID_TAKEN);
+    // Hand queued work to this write's owner (FIX DERIVE-COMMIT-ITEM-SAVEPOINTS-DROP-POSTCOMMIT-WORK).
+    let Some(allowance) = crate::batch::savepoint_in_txn(vault, txn, |savepoint| {
+        // A provisional entity's id is held for its confirmation: the mint's own
+        // put would refuse it as an error, so it is refused here as an item.
+        if crate::tagging::provisional_in_txn(&vault.store, savepoint, &id)?.is_some() {
+            return Ok(None);
+        }
+        // The mint records the lineage its id is derived from: the cleanup spares
+        // the PERSON while a try of that lineage is pending.
+        if !vault.put_attempt_minted_person_in_txn(savepoint, &id, context.now, &body, origin)? {
+            return Ok(None);
+        }
+        // Born under the facet of the TURN its name was read in, never the
+        // generic put's own substrate facet.
+        if let Some(facet) =
+            crate::federation::record_scope::birth_facet(&vault.store, savepoint, anchor)?
+        {
+            crate::federation::record_scope::settle_source_birth(
+                &vault.store,
+                savepoint,
+                id,
+                ENTITY_TYPE_PERSON,
+                facet,
+            )?;
+        }
+        // An actor whose standing grant has a scope is judged again over the
+        // PERSON as born, so its grant reaches where the row now stands.
+        if crate::federation::steward_reach_in(&vault.store, savepoint, actor.entity_ref())?
+            .is_some()
+        {
+            match derive_verdict_in_txn(
+                &vault.store,
+                savepoint,
+                actor,
+                DeriveCapability::Derive,
+                Some(id),
+            )? {
+                Ok(judged) => allowance = judged,
+                Err(refusal) => {
+                    refused = (None, refusal.token());
+                    return Ok(None);
+                }
             }
         }
-    }
-    savepoint.commit()?;
+        Ok(Some(allowance))
+    })?
+    else {
+        return refuse(vault, txn, context, refused.0, refused.1);
+    };
     let receipt = allowance_receipt_in_txn(
         vault,
         txn,

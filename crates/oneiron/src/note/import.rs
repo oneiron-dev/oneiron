@@ -609,7 +609,7 @@ impl Vault {
             at,
         )
         .ok_or(Error::InvariantViolation("a stated birth names its actor"))?;
-        crate::provenance::birth::stamp_row_birth_in_txn(&self.store, txn, &machine, &birth)?;
+        crate::provenance::birth::stamp_birth_with_floor_in_txn(self, txn, &machine, &birth)?;
         Ok(machine)
     }
 
@@ -638,7 +638,8 @@ impl Vault {
 /// What `batch`'s titles ask before its approval: nothing now. A title the
 /// secret scan would refuse is admitted where the note lands, a handle in
 /// place of each secret it holds, as its body is (OF-067; FIX 1098); a hit
-/// no span places refuses there, in the landing writer.
+/// no span places is sealed whole there, and one no seal clears refuses
+/// there, in the landing writer.
 pub(super) fn scan_titles(
     _store: &Store,
     _txn: &heed::RoTxn<'_>,

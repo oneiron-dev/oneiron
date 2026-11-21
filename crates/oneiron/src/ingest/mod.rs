@@ -118,8 +118,13 @@ use serde_json::Value;
 mod audience;
 mod connector_archive_link;
 mod connector_conversation;
-pub use connector_conversation::ConnectorWitness;
+#[cfg(oneiron_test_support)]
+pub(crate) use connector_conversation::connector_conversation_id;
 pub(crate) use connector_conversation::connector_witness_row_ids;
+pub(crate) use connector_conversation::hold_in_thread_session_in_txn;
+pub use connector_conversation::{
+    ConnectorConversationLog, ConnectorLogLine, ConnectorWitness, connector_reply_message_id,
+};
 mod connector_witness_grant;
 pub use audience::{
     IMPORT_AUDIENCE_ONLY_ME, IMPORT_AUDIENCE_SOURCE, ImportAudience, ImportAudienceCluster,

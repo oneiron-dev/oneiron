@@ -3,6 +3,7 @@
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use oneiron_contracts::fingerprint::ContentHash;
 
 pub use crate::store::note_body::{
     NOTE_BODY_KEYS, NOTE_CORE_KEYS, NoteBody, NoteCore, NoteKind, NoteScope, NoteWriteEnvelope,
@@ -23,7 +24,7 @@ mod archive_import;
 #[cfg(feature = "sync")]
 mod residence_read;
 pub use archive_import::ImportedNoteRead;
-pub(crate) use archive_import::{ArchivedNoteAdmission, archived_note_body};
+pub(crate) use archive_import::{ArchivedNoteAdmission, archived_note_body, diary_author_in};
 #[cfg(feature = "sync")]
 pub(crate) use residence_read::opened_note_view;
 mod archive_read;
@@ -74,7 +75,7 @@ pub use proposals::{
 };
 pub(crate) use proposals::{
     NoteEditLanding, erase_fork_actor_in_txn, erase_proposal_actor_in_txn,
-    erase_receipt_actor_in_txn, recovery_fork_value,
+    erase_receipt_actor_in_txn, landing_receipt_note, recovery_fork_value,
 };
 pub use sync_rows::{ACTOR_ERASE_NOTE_REQUEST_RECEIPT, NoteRequestReceiptErase};
 #[cfg(oneiron_test_support)]
@@ -193,6 +194,24 @@ pub(crate) fn note_explicit_only_in_txn(
     )
 }
 
+/// A digest of NOTE `id`'s overrides in `txn`, `None` when it has none. An
+/// override moves who reads a NOTE (its context) with no new version of its
+/// document, so a judgement of the NOTE's text a reader read stands for a
+/// later act only while this digest is the one it was made under (campaign
+/// copy review).
+pub(crate) fn note_overrides_digest_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<[u8; 32]>> {
+    let Some(overrides) = overrides::note_overrides_in_txn(store, txn, id)? else {
+        return Ok(None);
+    };
+    let encoded = serde_json::to_vec(&overrides)
+        .map_err(|_| crate::Error::InvariantViolation("NOTE overrides encode"))?;
+    Ok(Some(ContentHash::of(&encoded).into_bytes()))
+}
+
 /// A refused private row must not disclose its existence through a receipt.
 /// All NOTE kinds are omitted from denial counts: without admission, a reader
 /// cannot safely distinguish a public NOTE from an owner-only one. Diary-pair
@@ -296,6 +315,8 @@ pub(crate) use fork_downlink::{
 };
 #[cfg(feature = "sync")]
 mod fork_upload;
+#[cfg(all(feature = "sync", oneiron_test_support))]
+pub(crate) use fork_upload::fork_upload_refusal_in_txn;
 #[cfg(feature = "sync")]
 pub use fork_upload::{NoteForkUpload, NoteForkUploadOutcome, NoteForkUploadReceipt};
 #[cfg(feature = "sync")]
@@ -403,6 +424,8 @@ pub(crate) fn note_side_text_in_txn(
 }
 
 mod document_store;
+mod found_key_restore;
+pub(crate) use found_key_restore::restore_found_key_text_in_txn;
 mod saved;
 pub(crate) use document_store::deck_outline_document_in_txn;
 pub(crate) use document_store::resolve_deck_pin_in_txn;
@@ -458,6 +481,8 @@ pub(crate) use replica::{
 };
 #[cfg(all(test, feature = "sync"))]
 mod document_tests;
+#[cfg(all(test, feature = "sync"))]
+mod mask_splice_tests;
 #[cfg(all(test, feature = "sync"))]
 mod sync_tests;
 pub(crate) use document::MAX_NOTE_BYTES;

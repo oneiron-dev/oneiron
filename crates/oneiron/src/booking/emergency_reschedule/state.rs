@@ -27,6 +27,18 @@ pub(super) fn verify_owner_home_in(
             "emergency writes require the lifecycle home node".to_owned(),
         ));
     }
+    // FIX [BK-EMERGENCY-ROWS-NOT-CARRIED-BY-HOME-MOVE]: as the lifecycle door, a node its
+    // election names home is not the rows' home while it does not hold them: it froze them for
+    // a home move and adopted none since, or awaits the move that carries them here. Every
+    // emergency write and every outbound check of an emergency effect asks this, in its own
+    // transaction.
+    if !crate::booking::lifecycle::holds_booking_rows_in_txn(vault, txn)? {
+        return Err(BookingError::InvalidConfig(
+            "emergency writes require the lifecycle home node: this node does not hold the \
+             booking rows during a home move"
+                .to_owned(),
+        ));
+    }
     Ok(())
 }
 
@@ -153,6 +165,149 @@ pub(crate) fn pending_effect_fences_in(
     Ok(false)
 }
 
+/// The current ledger generation of `item`'s effect on `lane` (`EmergencyItem::ledger_generations`):
+/// 0 until a home adopted the checkpoint back over its own earlier send of that effect.
+pub(super) fn ledger_generation(item: &EmergencyItem, lane: &str) -> u32 {
+    item.ledger_generations.get(lane).copied().unwrap_or(0)
+}
+
+/// The local outbound ledger identity of `item`'s effect on `lane` at ledger `generation`: its
+/// idempotency key [`effect_ref`] at generation 0, else that key with the generation appended.
+/// The send's attempt id, and so its ledger row, derives from it (`outbound_dispatch_attempt_id`).
+/// Its provider key does not: every generation's row carries the key the generation-0 row
+/// carries, the hex of the id [`effect_ref`]'s attempt derives
+/// (`OutboundDispatchRequest::idempotency_identity_ref`), so a provider that drops a repeated
+/// key drops a later generation's repeat of any home's send (review round 2 of #10220).
+pub(super) fn effect_generation_ref(
+    item: &EmergencyItem,
+    lane: &str,
+    hash: [u8; 32],
+    generation: u32,
+) -> Result<String, BookingError> {
+    let reference = effect_ref(item, lane, hash)?;
+    Ok(if generation == 0 {
+        reference
+    } else {
+        format!("{reference}:ledger-generation:{generation}")
+    })
+}
+
+/// The local outbound ledger identity `item`'s next send of its effect on `lane` is admitted by:
+/// its current generation's ([`effect_generation_ref`]).
+pub(super) fn effect_ledger_ref(
+    item: &EmergencyItem,
+    lane: &str,
+    hash: [u8; 32],
+) -> Result<String, BookingError> {
+    effect_generation_ref(item, lane, hash, ledger_generation(item, lane))
+}
+
+/// This node's outbound ledger row of `item`'s effect on `lane` at ledger `generation`
+/// ([`effect_generation_ref`]), read in `txn`. A row that does not read as a ledger row is none,
+/// as the move's reads hold (`home_rows::item`): only a store failure is an error.
+pub(super) fn ledger_record_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    item: &EmergencyItem,
+    lane: &str,
+    hash: [u8; 32],
+    generation: u32,
+) -> Result<Option<crate::outbound_intent_ledger::IntentLedgerRecord>, BookingError> {
+    use crate::outbound_intent_ledger::{IntentLedgerError, read_intent_for_attempt_in_txn};
+    let reference = effect_generation_ref(item, lane, hash, generation)?;
+    let attempt =
+        crate::outbound::outbound_dispatch_attempt_id(&reference).map_err(storage_failure)?;
+    match read_intent_for_attempt_in_txn(vault, txn, attempt, 0) {
+        Ok(record) => Ok(record),
+        Err(IntentLedgerError::Engine(error)) => Err(storage_failure(error)),
+        Err(_) => Ok(None),
+    }
+}
+
+/// Whether this node's outbound ledger, read in `txn`, holds `item`'s effect on `lane` delivered
+/// under a ledger generation before its current one: a send this home's earlier generation made,
+/// whose remote task completed after the home took a fresh attempt (review round 1 of #10220).
+/// Such an effect is delivered, and its fresh attempt is never sent: the owner's resume asks
+/// before it admits one ([`earlier_generation_delivered`]), and every outbound check of the
+/// fresh attempt's send asks again in its own transaction, the admission writer's and the last
+/// one before the transport ([`verify_frozen_effect_in`]; review round 2 of #10220).
+fn earlier_generation_delivered_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    item: &EmergencyItem,
+    lane: &str,
+    hash: [u8; 32],
+) -> Result<bool, BookingError> {
+    use crate::outbound_intent_ledger::IntentResolution;
+    for generation in 0..ledger_generation(item, lane) {
+        if ledger_record_in(vault, txn, item, lane, hash, generation)?.is_some_and(|record| {
+            matches!(
+                IntentResolution::from_record(&record),
+                Ok(IntentResolution::Delivered)
+            )
+        }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// [`earlier_generation_delivered_in`] on a snapshot of this node's store.
+pub(super) fn earlier_generation_delivered(
+    vault: &Vault,
+    item: &EmergencyItem,
+    lane: &str,
+    hash: [u8; 32],
+) -> Result<bool, BookingError> {
+    if ledger_generation(item, lane) == 0 {
+        return Ok(false);
+    }
+    let txn = vault.store.custody_snapshot().map_err(storage_failure)?;
+    earlier_generation_delivered_in(vault, &txn, item, lane, hash)
+}
+
+/// Whether the owner's resume on a home that adopted `item`'s checkpoint back takes the
+/// effect's next ledger generation over `record`, the home's own row of the generation it
+/// adopted over (`readopted`), as that row reads now (FIX
+/// [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]). It does where the row's replay never
+/// sends the effect again while any other new home sends it (Engine ANSWER
+/// BK-EMERGENCY-PENDING-ITEM-MOVE = A), and the fresh send repeats no delivery the owner is not
+/// told of:
+/// - the row stopped as a failed delivery: its send was ambiguous at a provider with no key, or
+///   its remote task failed (FIX 7960). A stop the owner, an erase or the gate made stays, as on
+///   a home that never moved, and so does a pending row: its replay sends it again or reads it
+///   back first (FIX 9379);
+/// - a send with a provider-native key, stopped so: every generation reaches the provider under
+///   the effect's first key ([`effect_generation_ref`]), which a provider that drops a repeated
+///   key drops. Deferred, its own remote task settles it first, as on a home that never moved;
+/// - a send with none, stopped so or deferred: where no send of its row can have delivered, or
+///   its row's only possible delivery came before this home adopted the checkpoint
+///   (`!readopted.replayed`). The move that took the checkpoint away marked that send uncertain,
+///   so the run that delivers the effect tells the owner it may repeat (`super::uncertain_send`).
+pub(super) fn readopted_send_takes_fresh_attempt(
+    record: &crate::outbound_intent_ledger::IntentLedgerRecord,
+    readopted: super::planning::ReadoptedSend,
+) -> bool {
+    use crate::outbound_intent_ledger::{
+        IntentEscalationReason, IntentResolution, UnconfirmedDelivery,
+    };
+    let keyed = record.idempotency_supported;
+    match IntentResolution::from_record(record) {
+        Ok(IntentResolution::Stopped { delivery, reason }) => {
+            matches!(
+                reason,
+                IntentEscalationReason::NonIdempotentAmbiguous
+                    | IntentEscalationReason::NonIdempotentPending
+                    | IntentEscalationReason::RemoteTaskFailed
+            ) && (keyed
+                || !readopted.replayed
+                || matches!(delivery, UnconfirmedDelivery::DefiniteNonDelivery))
+        }
+        Ok(IntentResolution::Deferred) => !keyed && !readopted.replayed,
+        Ok(IntentResolution::Pending { .. } | IntentResolution::Delivered) | Err(_) => false,
+    }
+}
+
 pub(super) fn effect_ref(
     item: &EmergencyItem,
     lane: &str,
@@ -165,13 +320,6 @@ pub(super) fn effect_ref(
             &(item_key(&item.plan.request, item.calendar.event_ref)?, hash),
         )?)
     ))
-}
-
-pub(super) fn apology_bytes(item: &EmergencyItem) -> Result<Vec<u8>, BookingError> {
-    serde_json::to_vec(&serde_json::json!({ "reason": item.plan.request.reason,
-        "actions": item.actions.iter().zip(&item.plan.proposals).map(|(token, slot)| serde_json::json!({
-            "action": format!("booking:emergency-pick:{}", token.0), "proposal": slot
-        })).collect::<Vec<_>>() })).map_err(storage_failure)
 }
 
 fn verify_content_head_in(
@@ -239,10 +387,19 @@ pub(crate) fn verify_frozen_effect_in(
         )
     };
     if effect_ref(&item, lane, hash)? != key
-        || crate::outbound::outbound_dispatch_attempt_id(key).map_err(storage_failure)? != attempt
+        || crate::outbound::outbound_dispatch_attempt_id(&effect_ledger_ref(&item, lane, hash)?)
+            .map_err(storage_failure)?
+            != attempt
     {
         return Err(refused(
             "frozen emergency effect conflicts with its checkpoint",
+        ));
+    }
+    // A fresh ledger attempt goes only while no earlier generation's send delivered the effect,
+    // asked here under this transaction (review round 2 of #10220).
+    if earlier_generation_delivered_in(vault, txn, &item, lane, hash)? {
+        return Err(refused(
+            "emergency effect is delivered under an earlier ledger attempt",
         ));
     }
     verify_plan_in(vault, txn, &item.plan)?;
@@ -307,12 +464,20 @@ pub(crate) fn verify_frozen_effect_in(
             }
         }
         "apology" => {
-            let content = format!("blob:{}", blob_id(&apology_bytes(&item)?)?.to_hex());
-            verify_content_head_in(vault, txn, &content)?;
-            if value["content_ref"].as_str() != Some(content.as_str())
-                || value["verb"] != "send"
-                || value["channel"] != "email"
-            {
+            // FIX [BK-EMERGENCY-APOLOGY-BLOB-HOLDS-RAW-PICK-TOKENS]: the owner's copy, whose head
+            // this home wrote, or the raw body a send an earlier build froze, whose blob is
+            // released: the booker's text comes from the checkpoint at send time either way.
+            let content = value["content_ref"].as_str().unwrap_or_default();
+            match super::apology::apology_content_of(&item, content)? {
+                super::apology::ApologyContent::OwnerCopy => {
+                    verify_content_head_in(vault, txn, content)?;
+                }
+                super::apology::ApologyContent::FrozenRawBody => {}
+                super::apology::ApologyContent::Other => {
+                    return Err(refused("frozen apology differs from its checkpoint"));
+                }
+            }
+            if value["verb"] != "send" || value["channel"] != "email" {
                 return Err(refused("frozen apology differs from its checkpoint"));
             }
         }

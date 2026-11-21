@@ -10,18 +10,24 @@
 //! vaults, which hold the writer lease the verb needs.
 //!
 //! * `owner_restore_installs_absent_setting_rows_and_a_repeat_changes_nothing`:
-//!   the owner import installs one vault value, one project pin, one backup
-//!   policy and one project value, and reports four installed SETTING rows; a
-//!   repeat reports four unchanged live rows and installs none; the actorless
-//!   import of the same archive leaves every read at its default and installs
-//!   nothing.
+//!   the owner import installs one vault value, one project pin and one
+//!   project value, and reports three installed SETTING rows; the source's
+//!   backup policy, a choice about the install that exported it, is held back
+//!   as `install_choice` and the destination reads none
+//!   (SETTING-ARCHIVE-RESTORE-INSTALL-ROWS = A); a repeat reports three
+//!   unchanged live rows and installs none; the actorless import of the same
+//!   archive leaves every read at its default and installs nothing.
 //! * `owner_restore_keeps_a_different_live_setting_row`: a destination that
-//!   already holds another value keeps it, and the report counts one
-//!   kept-live row.
+//!   already holds another value keeps it, and the report counts it as kept
+//!   live beside the open setting rows.
 //! * `owner_restore_holds_back_setting_rows_that_fail_their_key_checks`: a row
 //!   at a scope naming an absent entity reports one held-back row with reason
 //!   `missing_live_entity` and reads its default. Part (a), a row under an
 //!   unknown key name, has no test door and is absent here.
+//! * `owner_restore_lands_a_source_root_row_at_this_root`: the owner's row at
+//!   the source root project reads at this vault's root after the restore,
+//!   and no SETTING row is held back (SETTING-ARCHIVE-SOURCE-ROOT-SCOPE-HELD-BACK;
+//!   red before it: the row was held back as `missing_live_entity`).
 //! * `owner_restore_installs_the_setting_change_history_and_never_lowers_its_counter`:
 //!   three source changes install as three SETTING_CHANGE rows; the next
 //!   destination change takes the highest restored sequence plus one, and the
@@ -30,6 +36,24 @@
 //!   count and a floor that agree both install whatever order the archive
 //!   holds them in; a destination whose live count sits below the archived
 //!   floor keeps its count and holds the floor back as `invalid_value`.
+//! * `owner_restore_of_this_installs_own_export_lands_its_install_choice`: an
+//!   install profiled as the owner's own device signs its export; after the
+//!   owner clears his backup policy there, the owner import of that export
+//!   brings the policy back, installs one SETTING row and holds back no row as
+//!   `install_choice`.
+//!
+//! `owner_restore_installs_absent_setting_rows_and_a_repeat_changes_nothing`
+//! is red before SETTING-ARCHIVE-RESTORE-INSTALL-ROWS (the backup policy lands
+//! from another vault's archive, so four rows install and none is held back);
+//! `owner_restore_of_this_installs_own_export_lands_its_install_choice` is green
+//! on both sides of it.
+//!
+//! Open setting rows: every vault writes the `engine` pack's default layer and
+//! its root's birth row of `test.born_depth` when it opens
+//! (`retained_side_rows::is_open_setting_row`), so every archive carries its
+//! own. The owner restore keeps each live: the accepted defaults are the live
+//! vault's (DESIGN 1.5 "Restore"), and this root holds its own birth row. Each
+//! kept-live count therefore adds the archive's open rows.
 //!
 //! Before the lander this file is red: the archive carries no setting rows
 //! and no owner import installs any, so every installed count is absent and
@@ -40,7 +64,9 @@
 mod retained_side_rows;
 
 use std::io::Cursor;
+use std::sync::Arc;
 
+use oneiron::authority::{HostSlipIssuer, MachineOwnership, MachineRole};
 use oneiron::setting::{
     SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope, SettingSource,
 };
@@ -48,8 +74,11 @@ use oneiron::settings::backup::BackupPolicy;
 use oneiron::verbs::{
     SettingGetRequest, SettingListRequest, setting_get_embedded, setting_list_embedded,
 };
-use oneiron::{EdgeActorClass, EntityId, Vault};
-use retained_side_rows::{export_whole, open_later_vault, open_source_vault, owner_proof};
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron_keystore::MemoryKeystore;
+use retained_side_rows::{
+    export_whole, open_later_vault, open_setting_row_count, open_source_vault, owner_proof,
+};
 
 /// A fixed entity id from one repeated byte. The banned bytes (00, 11, 42,
 /// 47, A1..A6, D7, E1, FF) belong to other fixtures.
@@ -79,6 +108,18 @@ fn held_back_for_table(summary: &serde_json::Value, table: &str) -> Option<serde
         .find(|entry| entry.get("source_table").and_then(|name| name.as_str()) == Some(table))?
         .get("held_back")
         .cloned()
+}
+
+/// The rows of `table` a `retained_side_rows` JSON summary holds back for
+/// `reason`: 0 when the table, its list or the reason is absent.
+fn held_back_rows(summary: &serde_json::Value, table: &str, reason: &str) -> u64 {
+    held_back_for_table(summary, table)
+        .and_then(|held_back| held_back.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter(|entry| entry.get("reason").and_then(|name| name.as_str()) == Some(reason))
+        .filter_map(|entry| entry.get("rows").and_then(serde_json::Value::as_u64))
+        .sum()
 }
 
 /// `test.owner_number` in force on `vault` at `known`: its value, which row
@@ -202,6 +243,7 @@ fn owner_restore_installs_absent_setting_rows_and_a_repeat_changes_nothing() {
                 why: None,
                 check_in_ref: None,
                 weight_runs: None,
+                surface: None,
             },
         )
         .expect("the owner pins the project value");
@@ -252,6 +294,7 @@ fn owner_restore_installs_absent_setting_rows_and_a_repeat_changes_nothing() {
                 why: None,
                 check_in_ref: None,
                 weight_runs: None,
+                surface: None,
             },
         )
         .expect("the owner sets the project value");
@@ -332,15 +375,20 @@ fn owner_restore_installs_absent_setting_rows_and_a_repeat_changes_nothing() {
     assert_eq!(
         dest.backup_policy()
             .expect("read the restored backup choice"),
-        Some(policy),
-        "the owner import installs the backup policy"
+        None,
+        "the source's backup policy is a choice about its install: the owner import of its archive leaves the destination's at none"
     );
     let summary =
         serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
     assert_eq!(
         table_count(&summary, "SETTING", "installed_rows"),
-        Some(4),
-        "the owner import reports four installed SETTING rows; an absent field means it installed nothing: {summary}"
+        Some(3),
+        "the owner import reports three installed SETTING rows; an absent field means it installed nothing: {summary}"
+    );
+    assert_eq!(
+        held_back_rows(&summary, "SETTING", "install_choice"),
+        1,
+        "the owner import holds back the source's backup policy as an install choice: {summary}"
     );
 
     let repeat = dest
@@ -350,8 +398,8 @@ fn owner_restore_installs_absent_setting_rows_and_a_repeat_changes_nothing() {
         serde_json::to_value(&repeat.retained_side_rows).expect("the repeat summary serializes");
     assert_eq!(
         table_count(&repeat_summary, "SETTING", "unchanged_live_rows"),
-        Some(4),
-        "the repeat owner import reports four unchanged live SETTING rows; an absent field means it counted no live outcome: {repeat_summary}"
+        Some(3),
+        "the repeat owner import reports three unchanged live SETTING rows; an absent field means it counted no live outcome: {repeat_summary}"
     );
     assert_eq!(
         table_count(&repeat_summary, "SETTING", "installed_rows"),
@@ -472,10 +520,11 @@ fn owner_restore_keeps_a_different_live_setting_row() {
     );
     let summary =
         serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    let open_rows = open_setting_row_count(&archive);
     assert_eq!(
         table_count(&summary, "SETTING", "kept_live_rows"),
-        Some(1),
-        "the owner import reports one kept-live SETTING row; an absent field means it counted no live outcome: {summary}"
+        Some(1 + open_rows),
+        "the owner import reports the different value and {open_rows} open rows as kept-live SETTING rows; an absent field means it counted no live outcome: {summary}"
     );
 }
 
@@ -502,6 +551,7 @@ fn owner_restore_holds_back_setting_rows_that_fail_their_key_checks() {
                 why: None,
                 check_in_ref: None,
                 weight_runs: None,
+                surface: None,
             },
         )
         .expect("the owner sets a project value naming an absent entity");
@@ -538,6 +588,79 @@ fn owner_restore_holds_back_setting_rows_that_fail_their_key_checks() {
         from,
         SettingSource::Default,
         "the held-back read decides from no row"
+    );
+}
+
+/// The owner's row at the source root lands at this vault's root: the import maps the source
+/// root onto this one, so the row's scope is live here (SETTING-ARCHIVE-SOURCE-ROOT-SCOPE-HELD-BACK).
+#[test]
+fn owner_restore_lands_a_source_root_row_at_this_root() {
+    let (_source_dir, source) = open_source_vault();
+    let source_owner = owner_proof(&source);
+    let source_root = source
+        .root_project()
+        .expect("the source names its root project");
+    let outcome = source
+        .set_setting(
+            SettingCaller::Owner(&source_owner),
+            SetSetting {
+                key: "test.owner_number".to_owned(),
+                item: None,
+                scope: SettingScope::Project(source_root),
+                mode: SettingMode::Value,
+                value: Some(serde_json::json!(9)),
+                expected_revision: None,
+                why: None,
+                check_in_ref: None,
+                weight_runs: None,
+                surface: None,
+            },
+        )
+        .expect("the owner sets a value at the source root");
+    assert!(
+        matches!(
+            outcome,
+            SetSettingOutcome::Applied {
+                sequence: Some(_),
+                ..
+            }
+        ),
+        "the root value applies with a sequence: {outcome:?}"
+    );
+    let archive = export_whole(&source);
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let dest_root = dest
+        .root_project()
+        .expect("the destination names its root project");
+    assert_ne!(dest_root, source_root, "each vault is its own root project");
+    let (before, _, _) = owner_number(&dest, &[SettingScope::Project(dest_root)]);
+    assert_eq!(
+        before, 7,
+        "the destination root reads the default before the import"
+    );
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let (value, from, _) = owner_number(&dest, &[SettingScope::Project(dest_root)]);
+    assert_eq!(value, 9, "the owner's root row reads at this vault's root");
+    assert_eq!(
+        from,
+        SettingSource::Row(SettingScope::Project(dest_root)),
+        "the restored read decides from the row at this vault's root"
+    );
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "SETTING", "installed_rows"),
+        Some(1),
+        "the owner import installs the root row; an absent field means it installed nothing: {summary}"
+    );
+    assert_eq!(
+        held_back_for_table(&summary, "SETTING"),
+        None,
+        "the owner import holds back no SETTING row: {summary}"
     );
 }
 
@@ -748,10 +871,11 @@ fn owner_restore_passes_an_absent_row_through_its_keys_change_hook() {
         .expect("the owner import succeeds");
     let second_summary =
         serde_json::to_value(&second_receipt.retained_side_rows).expect("the summary serializes");
+    let open_rows = open_setting_row_count(&archive);
     assert_eq!(
         table_count(&second_summary, "SETTING", "kept_live_rows"),
-        Some(1),
-        "the owner import reports one kept-live SETTING row; an absent field means it counted no live outcome: {second_summary}"
+        Some(1 + open_rows),
+        "the owner import reports the live count and {open_rows} open rows as kept-live SETTING rows; an absent field means it counted no live outcome: {second_summary}"
     );
     assert_eq!(
         held_back_for_table(&second_summary, "SETTING"),
@@ -816,5 +940,97 @@ fn owner_restore_runs_a_change_hook_at_the_restore_time() {
     assert!(
         hook_at > source_set_at,
         "the hook's change is stamped at the restore ({hook_at}), after the archived set time ({source_set_at})"
+    );
+}
+
+/// A personal vault rooted under its host, with a device keystore, and this
+/// install profiled as the owner's own device: its export signs the archive's
+/// manifest with this install's machine key (the fixture of
+/// `tests/it/authority/signed_archive_provenance.rs`).
+fn own_device_vault(directory: &std::path::Path) -> Vault {
+    let vault =
+        Vault::open_owned(directory, VaultConfig::default()).expect("open the own-device vault");
+    vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the embedded owner");
+    let issuer = HostSlipIssuer::from_secret(b"archive restore of this install's choices")
+        .expect("FIXTURE: the host slip issuer");
+    vault.install_device_keystore(Arc::new(MemoryKeystore::default()));
+    vault
+        .ensure_host_root_slip(&issuer)
+        .expect("FIXTURE: the host root slip");
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Owned(MachineOwnership::Yours))
+        .expect("FIXTURE: this install's profile as the owner's own device");
+    vault
+}
+
+/// This install's own export brings back its own choices: the backup policy
+/// the owner cleared after the export lands again from it
+/// (SETTING-ARCHIVE-RESTORE-INSTALL-ROWS = A).
+#[test]
+fn owner_restore_of_this_installs_own_export_lands_its_install_choice() {
+    let directory = tempfile::tempdir().expect("temp dir for the own-device vault");
+    let vault = own_device_vault(directory.path());
+    let owner = owner_proof(&vault);
+    let policy = BackupPolicy {
+        enabled: true,
+        every_hours: 6,
+        keep: 3,
+    };
+    vault
+        .set_setting(
+            SettingCaller::Owner(&owner),
+            SetSetting::vault_value(
+                "backup.policy",
+                serde_json::to_value(&policy).expect("the policy serializes"),
+            ),
+        )
+        .expect("the owner sets the backup policy");
+    let export = vault.export_whole_vault(true).expect("whole-vault export");
+    assert!(
+        export.manifest().provenance.is_some(),
+        "FIXTURE: the export signs its archive's manifest with this install's machine key"
+    );
+    let archive = export.bytes().to_vec();
+    vault
+        .set_setting(
+            SettingCaller::Owner(&owner),
+            SetSetting {
+                value: None,
+                ..SetSetting::vault_value("backup.policy", serde_json::Value::Null)
+            },
+        )
+        .expect("the owner clears the backup policy");
+    assert_eq!(
+        vault
+            .backup_policy()
+            .expect("read the cleared backup choice"),
+        None,
+        "FIXTURE: the clear leaves no backup choice"
+    );
+
+    let receipt = vault
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner)
+        .expect("the owner restores this install's own export");
+
+    assert_eq!(
+        vault
+            .backup_policy()
+            .expect("read the restored backup choice"),
+        Some(policy),
+        "this install's own export brings its backup policy back"
+    );
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "SETTING", "installed_rows"),
+        Some(1),
+        "the owner import installs the one SETTING row the clear removed; an absent field means it installed nothing: {summary}"
+    );
+    assert_eq!(
+        held_back_rows(&summary, "SETTING", "install_choice"),
+        0,
+        "the owner import holds back no row of this install's own export as an install choice: {summary}"
     );
 }

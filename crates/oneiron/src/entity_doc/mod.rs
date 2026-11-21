@@ -7,6 +7,7 @@
 #[cfg(feature = "sync")]
 mod adoption;
 mod artifact;
+mod bound_room;
 #[cfg(feature = "sync")]
 mod carried;
 pub(crate) mod checkpoint;
@@ -38,8 +39,9 @@ mod recovery;
 mod registry;
 mod summary;
 pub(crate) use summary::{
-    birth_summary_in_txn, open_summary_proposal, summary_frontier_in_txn, summary_meta_in_txn,
-    summary_meta_through_in, summary_read_in_txn, summary_text_in_txn,
+    birth_summary_in_txn, open_summary_proposal, summary_frontier_in_txn,
+    summary_generated_text_hash_in, summary_meta_in_txn, summary_meta_through_in,
+    summary_read_in_txn, summary_text_in_txn,
 };
 pub mod review_explainer;
 use oneiron_store::entity_doc::side_keys;

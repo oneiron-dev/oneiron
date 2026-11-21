@@ -6,33 +6,50 @@
 //! key read true for it; an agent never selects a revision its own lineage
 //! proposed, whatever the key says. With the key off the slot stays the
 //! owner's, and the owner's own doors answer as before.
+//!
+//! A child its dispatcher runs at the dispatcher's own ceiling carries no
+//! delegation-parent pin, so only the run it acts from names its
+//! dispatcher: the selection walks the selector's run attempt, and the
+//! proposer's run attempt its proposal keeps (fixes 6a77952d and e7d99021,
+//! FIX W9-LENS-RUN-LINEAGE-REGRESSION-TESTS (1) and (3)).
 //! Run with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test lens_slot_agent_select`.
 #![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use oneiron::agent_dispatch::{
+    AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent,
+};
+use oneiron::attempt_queue::AttemptId;
 use oneiron::authority::{ActSurface, AgentTier, MachineRole};
-use oneiron::claim::base_world_id;
+use oneiron::claim::{ScopedReadActorKey, base_world_id};
+use oneiron::code_run::{
+    AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, HostSelfDispatcher, RunCall,
+    RunSpeechDestination, SelfAgentVerbCall, SelfCall, SelfDispatchOutcome, SelfDispatcher,
+    SelfEffect,
+};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeId};
 use oneiron::lens::{
     CollectionAtom, GeneratedLens, LensActivateRequest, LensAtom, LensAtomId, LensNode,
     LensProposeRequest, LensSlot, LensText,
 };
-use oneiron::memory::{Memory, MemoryError};
+use oneiron::memory::{HostWriteOrigin, Memory, MemoryError};
+use oneiron::runtime_hooks::InvocationId;
 use oneiron::store::{GateDecisionId, GateDecisionRecord};
-use oneiron::task_verb::sdk::invoke;
+use oneiron::task_verb::sdk::{AgentVerb, invoke};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::derive_verbs::define_agent;
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
 use oneiron_store::ports::manual_clock::ManualClock;
 use serde_json::{Value, json};
 
 const KEY: &str = "lens.slot.agent_select";
 const ACTIVATE_AS: &str = "vault.lenses.activate_as";
 const DEACTIVATE_AS: &str = "vault.lenses.deactivate_as";
+const PROPOSE: &str = "vault.lenses.propose";
 const SET: &str = "vault.settings.set";
 /// The first-party weave lens pack and its lens, as the vault seeds them at
 /// open (`WEAVE_LENS_PACK_NAME`, `WEAVE_REPORT_LENS`).
@@ -43,18 +60,20 @@ const WEAVE_LENS: &str = "weave-report";
 const T0: u64 = 1_780_000_000;
 
 struct Fixture {
-    vault: Vault,
+    /// Shared, so a run's verb door can serve calls on it.
+    vault: Arc<Vault>,
     _dir: tempfile::TempDir,
     owner: EntityId,
 }
 
-/// A rooted vault with its install enrolled and its embedded owner.
+/// A rooted vault with its install enrolled and its embedded owner, opened owned: the
+/// writer lease is what lets the owner's handle call `vault.settings.set` by name.
 fn rooted_vault() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let clock = ManualClock::new(T0);
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
-    let vault = Vault::open(dir.path(), config).expect("open vault");
+    let vault = Arc::new(Vault::open_owned(dir.path(), config).expect("owned vault"));
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
     vault.prepare_install_signing().expect("install signing");
     let issuer = vault.bootstrap_host_slip_issuer().expect("host issuer");
@@ -453,4 +472,212 @@ fn a_fork_through_a_deleted_definition_never_selects_its_roots_proposal() {
     let receipt = select_as(&fixture, outsider, &lens_ref, &compiled_hash);
     assert_eq!(receipt["decision"], json!("activated"), "{receipt}");
     assert_eq!(selected(&fixture), Some(lens_ref), "the outsider selects");
+}
+
+/// `agent`'s run, dispatched at the top or under `parent`'s run: its attempt.
+/// Every agent here keeps the Proposed ceiling `define_agent` gives it, so a
+/// child's dispatch narrows nothing: it runs as its own row, unforked, and no
+/// delegation-parent pin names its dispatcher (only an attenuated fork
+/// carries one).
+fn dispatch_run(fixture: &Fixture, agent: EntityId, parent: Option<AttemptId>) -> AttemptId {
+    let AgentDispatchOutcome::Dispatched(status) = AgentDispatcher::new(&fixture.vault)
+        .dispatch(DispatchAgent {
+            target: AgentDispatchTarget::Custom(agent),
+            parent_attempt: parent,
+            dedupe_key: None,
+            run_id: None,
+            now: T0,
+        })
+        .unwrap_or_else(|error| panic!("the run dispatches: {error:?}"))
+    else {
+        panic!("a fresh dispatch enqueues a new run");
+    };
+    assert_eq!(
+        status.input.target,
+        AgentDispatchTarget::Custom(agent),
+        "at its dispatcher's own ceiling the agent runs as its own row, unforked"
+    );
+    status.attempt.id
+}
+
+/// The host's verb door for an agent's run: it serves the run's verb call on
+/// the agent's memory bound to the run's own write origin, as a host's door
+/// does, and answers the verb's receipt or the words of its refusal.
+struct RunVerbDoor {
+    vault: Arc<Vault>,
+    agent: EntityId,
+}
+
+impl AgentVerbDoor for RunVerbDoor {
+    fn call(
+        &self,
+        call: &SelfAgentVerbCall,
+        origin: &HostWriteOrigin,
+        _invocation: InvocationId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        let memory = self
+            .vault
+            .memory(self.agent, EdgeActorClass::Agent)
+            .with_host_origin(origin.clone());
+        let output = match invoke(&memory, call.verb.as_str(), call.input.clone()) {
+            Ok(receipt) => json!({ "receipt": receipt }),
+            Err(refused) => json!({ "refused": refused.message }),
+        };
+        Ok(Ok(AgentVerbAnswer::new(output, None)))
+    }
+
+    fn admit_run_call(
+        &self,
+        _call: RunCall,
+    ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+        Ok(None)
+    }
+
+    fn admit_run_speech(
+        &self,
+        _effect: SelfEffect,
+        _destination: RunSpeechDestination,
+    ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+        Ok(None)
+    }
+}
+
+/// `agent`'s call of `verb` from inside its run `attempt`: the host binds the
+/// attempt to the run's write actor, and [`RunVerbDoor`] serves the call
+/// under that origin. The door's answer.
+fn run_call(
+    fixture: &Fixture,
+    agent: EntityId,
+    attempt: AttemptId,
+    verb: &str,
+    input: Value,
+) -> Value {
+    let door = Arc::new(RunVerbDoor {
+        vault: Arc::clone(&fixture.vault),
+        agent,
+    });
+    let run = HostSelfDispatcher::new(
+        &fixture.vault,
+        WriteActor::new(agent, EdgeActorClass::Agent).with_run_attempt(*attempt.as_bytes()),
+        format!("lens-run-{}", agent.to_hex()),
+    )
+    .unwrap_or_else(|error| panic!("the run's dispatcher binds: {error:?}"))
+    .with_agent_verb_door(door);
+    let outcome = run
+        .dispatch(SelfCall::AgentVerb(SelfAgentVerbCall {
+            verb: AgentVerb::from_name(verb).unwrap_or_else(|| panic!("{verb} is an agent verb")),
+            input,
+        }))
+        .unwrap_or_else(|error| panic!("the run's verb call: {error:?}"));
+    let SelfDispatchOutcome::AgentVerb(answer) = outcome else {
+        panic!("the door answers the run's {verb} call");
+    };
+    answer.output
+}
+
+/// A child its dispatcher ran at the dispatcher's own ceiling: its id names no
+/// dispatcher, its run does. From inside that run the child never selects the
+/// dispatcher's proposal, and still selects an outsider's (DEC-0006; fix
+/// 6a77952d walks the selector's run).
+#[test]
+fn a_child_run_at_its_dispatchers_ceiling_never_selects_the_dispatchers_proposal() {
+    let fixture = rooted_vault();
+    let dispatcher = granted_agent(&fixture, "run-dispatcher", &[]);
+    let (lens_ref, compiled_hash) = propose(&fixture, dispatcher);
+    let outsider = granted_agent(&fixture, "run-outsider", &[]);
+    let (outsider_ref, outsider_hash) = propose(&fixture, outsider);
+    let child = granted_agent(&fixture, "run-child", &[ACTIVATE_AS]);
+    owner_turns_on(&fixture, None);
+    let dispatcher_run = dispatch_run(&fixture, dispatcher, None);
+    let child_run = dispatch_run(&fixture, child, Some(dispatcher_run));
+
+    let answer = run_call(
+        &fixture,
+        child,
+        child_run,
+        ACTIVATE_AS,
+        json!({ "lens_ref": lens_ref, "compiled_hash": compiled_hash }),
+    );
+    let Some(refusal) = answer["refused"].as_str() else {
+        panic!("the child's run selected its dispatcher's proposal: {answer}");
+    };
+    assert!(
+        refusal.contains("lineage"),
+        "its dispatcher's proposal is refused as its own lineage's: {refusal}"
+    );
+    assert_eq!(
+        selected(&fixture),
+        None,
+        "the refused child changed nothing"
+    );
+
+    let answer = run_call(
+        &fixture,
+        child,
+        child_run,
+        ACTIVATE_AS,
+        json!({ "lens_ref": outsider_ref, "compiled_hash": outsider_hash }),
+    );
+    assert_eq!(
+        answer["receipt"]["decision"],
+        json!("activated"),
+        "{answer}"
+    );
+    assert_eq!(
+        selected(&fixture),
+        Some(outsider_ref),
+        "from the same run the child selects an outsider's proposal"
+    );
+}
+
+/// The proposer's side: a child its dispatcher ran at the dispatcher's own
+/// ceiling proposes from inside its run, and its proposal keeps that run. The
+/// dispatcher never selects it, though the child's id names no dispatcher; an
+/// outsider still does (DEC-0006; fix e7d99021 walks the proposer's run).
+#[test]
+fn a_dispatcher_never_selects_a_proposal_its_child_run_made_at_its_ceiling() {
+    let fixture = rooted_vault();
+    let dispatcher = granted_agent(&fixture, "run-dispatcher", &[ACTIVATE_AS]);
+    let child = granted_agent(&fixture, "run-child", &[]);
+    let outsider = granted_agent(&fixture, "run-outsider", &[ACTIVATE_AS]);
+    owner_turns_on(&fixture, None);
+    let dispatcher_run = dispatch_run(&fixture, dispatcher, None);
+    let child_run = dispatch_run(&fixture, child, Some(dispatcher_run));
+    let (content_hash, skill_id) = weave_slot(&fixture);
+    let proposal = serde_json::to_value(LensProposeRequest {
+        slot: LensSlot {
+            pack_name: WEAVE_PACK.to_owned(),
+            skill_id,
+        },
+        pack_content_hash: content_hash,
+        compiled: compiled_tree(),
+        intent_prompt: "word the week's changes for the reader".to_owned(),
+        trigger: None,
+        scope: None,
+    })
+    .expect("the proposal serializes");
+
+    let answer = run_call(&fixture, child, child_run, PROPOSE, proposal);
+    let (Some(lens_ref), Some(compiled_hash)) = (
+        answer["receipt"]["lens_ref"].as_str(),
+        answer["receipt"]["compiled_hash"].as_str(),
+    ) else {
+        panic!("the child's run proposes: {answer}");
+    };
+
+    let refused = assert_select_refused(&fixture, dispatcher, lens_ref, compiled_hash);
+    assert_lineage_refused(&refused);
+    assert_eq!(
+        selected(&fixture),
+        None,
+        "the refused dispatcher changed nothing"
+    );
+
+    let receipt = select_as(&fixture, outsider, lens_ref, compiled_hash);
+    assert_eq!(receipt["decision"], json!("activated"), "{receipt}");
+    assert_eq!(
+        selected(&fixture),
+        Some(lens_ref.to_owned()),
+        "the outsider selects"
+    );
 }

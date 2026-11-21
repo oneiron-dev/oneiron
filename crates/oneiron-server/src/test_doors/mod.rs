@@ -17,17 +17,32 @@ pub mod coach_wake;
 pub mod compaction_pass;
 pub mod connector_issuer_watch;
 pub mod connector_sends;
+#[cfg(unix)]
+pub mod continue_command;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub mod credential_file_network_fs;
+pub mod device_burst_drain;
+pub mod device_home_dial;
+#[cfg(feature = "mesh")]
+pub mod device_sync_dial_gate;
+pub mod dreamer_sourced_route;
+pub mod dreamer_thing_child_route;
 #[cfg(feature = "mesh")]
 pub mod embedded_peer_fixture;
 #[cfg(feature = "mesh")]
 pub mod embedded_peer_path;
 pub mod embedding_line;
 pub mod fingerprint_keep_lens_callback;
+pub mod gpu_backend;
+pub mod hex_input_policy;
+pub mod hex_sign_digit;
 pub mod history_import;
+pub mod hook_transcript_uploads;
 #[cfg(unix)]
 pub mod hosted_import;
 pub mod lens_frames;
 pub mod lfs_install_line;
+pub mod linked_peer;
 pub mod live_fork_rung;
 pub mod live_lease;
 pub mod live_merge_queue_checker_pass;
@@ -41,6 +56,8 @@ pub mod mcp_refusal_status;
 pub mod mcp_run_claim_lane;
 pub mod mcp_surface;
 pub mod media_job_spend;
+pub mod memory_owner_commit;
+pub mod memory_timeline_projection;
 #[cfg(unix)]
 pub mod merge_queue_checker_pressure;
 pub mod model_licence;
@@ -49,6 +66,9 @@ pub mod off_router_wire_counts;
 pub mod one_click_wire_counter;
 pub mod openapi_document;
 pub mod owner_backup;
+pub mod owner_check;
+#[cfg(unix)]
+pub mod owner_key_change_report;
 pub mod parked_step_resume;
 pub mod pre_idle_reuse;
 pub mod question_heads;
@@ -60,14 +80,21 @@ pub mod replay_admission;
 pub mod residence;
 pub mod residence_connection;
 pub mod resident_pump;
+pub mod run_brief_people;
+pub mod run_self_brief_port;
 #[cfg(target_os = "linux")]
 pub mod sandbox_vendor;
 pub mod seal_judge;
+pub mod selector_release;
+pub mod shared_env_lane;
 pub mod signing_session;
 pub mod siwc_seat;
 pub mod solved_runs;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod supervised_rerank;
 pub mod system_one_leg;
 pub mod system_one_rung;
+mod vault_acts;
 pub mod voice_call;
 pub mod web_search_count;
 pub mod wire_health_sweep;

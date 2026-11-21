@@ -78,12 +78,16 @@ pub(crate) use key_transit::{
     receive_keys, retire_held, retired_here, transit_keys,
 };
 pub(crate) use registry::{
-    froze_home_state_in_txn, home_tables, pending_move_in_txn, takes_home_write_in_txn,
+    awaits_incoming_move_in_txn, elected_home_elsewhere_in_txn, froze_home_state_in_txn,
+    frozen_move_acknowledged_in_txn, home_tables, pending_move_in_txn, takes_home_write_in_txn,
 };
 pub(crate) use restore::{HomeManaged, keep_move_through, restore_managed_keys};
 pub(crate) use routes::{feed_fallback_route, feed_routes};
 #[cfg(oneiron_test_support)]
-pub(crate) use section_doors::carry_section_for_doors;
+pub(crate) use section_doors::{
+    acknowledge_home_move_for_doors, carry_section_for_doors, freeze_home_state_for_doors,
+    record_home_adoption_for_doors, registers_section_for_doors,
+};
 pub(crate) use store::{handoff_status_in_txn, incomplete_in_txn, record_incomplete_in_txn};
 pub(crate) use table::{
     ActorContent, HomeTable, HomeTableRegistration, ImageRows, Partitioned, TableAdopt,

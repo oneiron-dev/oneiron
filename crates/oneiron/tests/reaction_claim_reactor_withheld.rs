@@ -6,7 +6,14 @@
 //! confirmed from the words of a relationship R, then reacts 👍 to an open
 //! MESSAGE in a room the outsider (outside R) and a member of R both sit in.
 //! The outsider reads the room MESSAGE and the reaction claim, but not Mirela's
-//! PERSON row; the member of R reads all three.
+//! PERSON row; the member of R reads all three. Both read the room's MESSAGEs on a
+//! grant over the room. The Memory view tests stamp a birth naming Mirela on her
+//! claim, which `Vault::react` does not.
+//!
+//! A reaction's lexical document is its glyph alone, so no reader, not even one who
+//! reads the reactor, finds the reaction by the reactor's name; a search of the glyph
+//! still finds it (FIX REACTION-TEXT-NAMES-REACTOR; Engine ANSWER
+//! REACTION-TEXT-REACTOR-NAME-INDEX = A, 20 Nov 17:12).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test reaction_claim_reactor_withheld`.
@@ -19,16 +26,18 @@ use oneiron::access_grant::AccessGrantStatus;
 use oneiron::access_grant::{AccessGrant, AccessGrantCapability, AccessGrantScope};
 use oneiron::claim::{ClaimBody, ScopedReadActorKey, decode_claim_body};
 use oneiron::conversation::{ConversationBody, ConversationKind, HistoryChoice};
-use oneiron::deletion::{MemoryTimelineRecord, MemoryTimelineRecordState};
 use oneiron::embed::EmbedderLocality;
 use oneiron::memory::extraction::{EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder};
 use oneiron::memory::extraction::{ExtractionWork, NerSpan};
+use oneiron::memory::{Effort, RecallScope};
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::reaction::ReactionInput;
 use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use oneiron::tagging::{MentionLink, TaggingMarkerConfig, TaggingMode, TaggingReconciler};
 use oneiron::temporal::TimeRange;
+use oneiron::test_doors::house_link::stamp_stated_birth;
 use oneiron::test_doors::label_writers::open_member_vault;
+use oneiron::write_envelope::provenance::made_by::{MadeBy, MadeByClass, MadeByProcess};
 use oneiron::{EdgeActorClass, EntityId, ModelId, Vault, VaultConfig, WriteActor};
 use oneiron_authority::federation::scope_codec::read_preset;
 use rmpv::Value;
@@ -241,6 +250,26 @@ fn fixture() -> Fixture {
             .join_member(room, member, acting, at, HistoryChoice::Share)
             .expect("a member joins the room");
     }
+    // The room's MESSAGEs name no relationship, so an access-gated key reads
+    // them only on a grant over the room (FIX 10895); its seat alone opens none.
+    for principal in [outsider, insider] {
+        let grant = AccessGrant {
+            principal_ref: principal,
+            scope: AccessGrantScope::ConversationMessages {
+                conversation_ref: room,
+            },
+            capability: AccessGrantCapability::MessagesRead,
+            status: AccessGrantStatus::Active,
+            created_at: 1,
+            revoked_at: None,
+            expires_at: None,
+            authority_scope: read_preset(),
+            companion_bounds: None,
+        };
+        vault
+            .create_access_grant(&EntityId::now(), &grant)
+            .expect("a member’s grant on the room’s MESSAGEs");
+    }
     let room_message = EntityId::now();
     let open = message(room_message, ROOM_WORDS, None);
     vault
@@ -314,6 +343,14 @@ impl Fixture {
             self.reads(self.insider, &self.reaction),
             "FIXTURE: the member of R reads the reaction claim"
         );
+        assert!(
+            self.reads(self.outsider, &self.room_message),
+            "FIXTURE: the outsider reads the room MESSAGE"
+        );
+        assert!(
+            self.reads(self.insider, &self.room_message),
+            "FIXTURE: the member of R reads the room MESSAGE"
+        );
     }
 
     /// The reaction claim's body bytes `reader` gets from a point read.
@@ -331,18 +368,16 @@ impl Fixture {
 
     /// The reaction claim's body bytes `reader` gets from its timeline parts.
     fn timeline_body(&self, reader: EntityId) -> Vec<u8> {
-        let record = MemoryTimelineRecord {
-            id: self.reaction,
-            state: MemoryTimelineRecordState::Live,
-            entity_type: None,
-            occurred_start: None,
-            occurred_end: None,
-            learned_at: None,
-            body_bytes: None,
-            deletion: None,
-            supersedes: Vec::new(),
-            superseded_by: Vec::new(),
-        };
+        // The door rechecks each record's metadata against the stored row, so
+        // the record comes from the vault's own timeline of the claim.
+        let record = self
+            .vault
+            .memory_timeline(&self.reaction)
+            .expect("the reaction claim’s timeline")
+            .records
+            .into_iter()
+            .find(|record| record.id == self.reaction)
+            .expect("FIXTURE: the timeline holds the reaction claim’s own record");
         let (kind, _, body) = self
             .vault
             .scoped_read(key(reader))
@@ -486,8 +521,7 @@ fn the_reaction_still_counts_for_a_reader_who_may_not_read_the_reactor() {
 /// The pack's scoped filter holds each hydrated claim against the row the lane serves now,
 /// so the served claim must still match the fields hydration projected, where `by` and
 /// the writer stamp already read as null. The search reaches the claim through its
-/// indexed text, the glyph and the reactor's stored name (`reaction/write.rs`
-/// `indexed_text`).
+/// indexed text, the glyph (`reaction/write.rs`, `write_reaction_in_txn`).
 #[test]
 fn the_outsiders_context_pack_keeps_the_reaction_claim() {
     let fixture = fixture();
@@ -495,7 +529,7 @@ fn the_outsiders_context_pack_keeps_the_reaction_claim() {
     let plan = read.context_pack_plan().expect("the outsider’s pack plan");
     let mut pack = plan
         .admit(fixture.vault.context_pack())
-        .search_text("Mirela", 10)
+        .search_text("👍", 10)
         .filter_types(&[ENTITY_TYPE_CLAIM])
         .run()
         .expect("the outsider’s pack");
@@ -520,6 +554,28 @@ fn the_outsiders_context_pack_keeps_the_reaction_claim() {
     );
 }
 
+/// [`fixture`] with a stated birth on the reaction claim naming the reactor as its
+/// writer. `Vault::react` stamps no birth, so the Memory view's `made_by` has nothing to
+/// gate until one is stamped.
+fn fixture_with_birth() -> Fixture {
+    let fixture = fixture();
+    let made_by = MadeBy {
+        inputs: Vec::new(),
+        process: MadeByProcess {
+            actor: fixture.reactor,
+            class: MadeByClass::Stated,
+            identity: "reaction-claim-reactor-withheld-fixture".to_owned(),
+            version: "1".to_owned(),
+            params_hash: "fixture".to_owned(),
+        },
+        at: fixture.vault.now_recorded_at(),
+        trigger: None,
+    };
+    stamp_stated_birth(&fixture.vault, fixture.reaction, made_by)
+        .expect("FIXTURE: the reaction claim’s birth names the reactor");
+    fixture
+}
+
 impl Fixture {
     /// The reaction claim's typed view `reader` gets from its Memory read.
     fn view(&self, reader: EntityId) -> oneiron::EntityView {
@@ -536,7 +592,7 @@ impl Fixture {
 /// body, and not as the writer of its birth.
 #[test]
 fn a_memory_view_of_the_reaction_claim_withholds_a_reactor_the_reader_may_not_read() {
-    let fixture = fixture();
+    let fixture = fixture_with_birth();
     let view = fixture.view(fixture.outsider);
     assert!(
         view.made_by.is_none(),
@@ -552,11 +608,97 @@ fn a_memory_view_of_the_reaction_claim_withholds_a_reactor_the_reader_may_not_re
 /// A member of R reads the reactor, and the same view names them as the writer of its birth.
 #[test]
 fn a_relationship_member_reads_the_reaction_claims_birth_whole() {
-    let fixture = fixture();
+    let fixture = fixture_with_birth();
     let view = fixture.view(fixture.insider);
     assert_eq!(
         view.made_by.map(|made_by| made_by.process.actor),
         Some(fixture.reactor),
         "the member of R reads the birth naming the reactor as its writer"
     );
+}
+
+impl Fixture {
+    /// Whether `reader`'s filtered context pack for the text `query` holds the reaction
+    /// claim.
+    fn pack_finds_reaction(&self, reader: EntityId, query: &str) -> bool {
+        let read = self.vault.scoped_read(key(reader));
+        let plan = read.context_pack_plan().expect("a member’s pack plan");
+        let mut pack = plan
+            .admit(self.vault.context_pack())
+            .search_text(query, 10)
+            .filter_types(&[ENTITY_TYPE_CLAIM])
+            .run()
+            .expect("a member’s pack");
+        read.filter_context_pack(&mut pack)
+            .expect("a member’s pack filter");
+        pack.results.iter().any(|entity| entity.id == self.reaction)
+    }
+
+    /// Whether `reader`'s Medium recall of `query` returns a reaction claim.
+    fn recall_finds_reaction(&self, reader: EntityId, query: &str) -> bool {
+        self.vault
+            .memory(reader, EdgeActorClass::Human)
+            .recall(
+                query,
+                Effort::Medium,
+                &RecallScope::default(),
+                20,
+                None,
+                None,
+            )
+            .expect("a member’s recall")
+            .items
+            .iter()
+            .any(|item| item.predicate.as_deref() == Some("conversation.reaction"))
+    }
+}
+
+/// The outsider, who may not read Mirela's PERSON row, searches her name and finds no
+/// reaction: the name is in no reaction's lexical document. The glyph still finds it.
+#[test]
+fn a_search_of_the_reactors_name_finds_no_reaction_for_a_reader_who_may_not_read_them() {
+    let fixture = fixture();
+    assert!(
+        fixture.pack_finds_reaction(fixture.outsider, "👍"),
+        "FIXTURE: the outsider’s search of the glyph finds the reaction claim"
+    );
+    assert!(
+        !fixture.pack_finds_reaction(fixture.outsider, "Mirela"),
+        "the outsider’s search of the reactor’s name finds no reaction"
+    );
+}
+
+/// The member of R reads Mirela's PERSON row, and still finds no reaction by her name:
+/// no reader searches reactions by reactor name.
+#[test]
+fn a_search_of_the_reactors_name_finds_no_reaction_for_a_reader_who_may_read_them() {
+    let fixture = fixture();
+    assert!(
+        fixture.pack_finds_reaction(fixture.insider, "👍"),
+        "FIXTURE: the member of R’s search of the glyph finds the reaction claim"
+    );
+    assert!(
+        !fixture.pack_finds_reaction(fixture.insider, "Mirela"),
+        "the member of R’s search of the reactor’s name finds no reaction"
+    );
+}
+
+/// A Memory recall of the reactor's name returns no reaction to either member; a recall
+/// of the glyph returns it to both.
+#[test]
+fn a_recall_of_the_reactors_name_returns_no_reaction() {
+    let fixture = fixture();
+    for (reader, who) in [
+        (fixture.outsider, "the outsider"),
+        (fixture.insider, "the member of R"),
+    ] {
+        assert!(
+            fixture.recall_finds_reaction(reader, "👍"),
+            "FIXTURE: {who}’s recall of the glyph returns the reaction claim"
+        );
+        assert!(
+            !fixture.recall_finds_reaction(reader, "Mirela"),
+            "{who}’s recall of the reactor’s name returns no reaction"
+        );
+    }
 }

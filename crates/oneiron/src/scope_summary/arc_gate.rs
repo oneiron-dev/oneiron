@@ -179,6 +179,7 @@ fn evaluate_in_txn(
             current: None,
             observed: [0; 32],
             arc: None,
+            replaced: None,
         },
     };
     let mut state = row.arc.take().unwrap_or_default();
@@ -510,6 +511,7 @@ impl Vault {
                     current: None,
                     observed: [0; 32],
                     arc: None,
+                    replaced: None,
                 },
             };
             let gate = Gate::in_txn(self, txn, now)?;
@@ -546,6 +548,7 @@ impl Vault {
                     current: None,
                     observed: [0; 32],
                     arc: None,
+                    replaced: None,
                 },
             };
             let mut state = row.arc.take().unwrap_or_default();

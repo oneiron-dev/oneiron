@@ -79,13 +79,17 @@ async fn send(server: &Arc<SyncServer>, mut request: Request<Body>) -> (StatusCo
             40_000,
         ))));
     let request = slip_credentials::bind_request(server, request);
-    let response = api_routes(Arc::clone(server))
-        .oneshot(request)
-        .await
-        .expect("route response");
-    let status = response.status();
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    (status, body.to_vec())
+    let server = Arc::clone(server);
+    crate::test_engine_stack::on_engine_stack(async move {
+        let response = api_routes(server)
+            .oneshot(request)
+            .await
+            .expect("route response");
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        (status, body.to_vec())
+    })
+    .await
 }
 
 /// A raw call to the generative seat by its id.

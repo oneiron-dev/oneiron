@@ -110,7 +110,43 @@ fn shared_vault_with(
             1,
         )
         .expect("shared vault");
+    crate::test_util::accept_founding_invitation(&vault, 42, member, role);
     crate::test_util::clear_default_policy_manifest_for_legacy_tests(&vault);
+    // The version CLAIM names the artifact through its writer's read lane.
+    // A replacement manifest must also admit both humans' Auto uploads.
+    let mut ceilings = vec![serde_json::json!({
+        "actor_class": "human", "actor_ref": owner.to_hex(), "ceiling": "auto",
+    })];
+    let mut reads = Vec::new();
+    if matches!(
+        role,
+        FederationGrantRole::Owner
+            | FederationGrantRole::Deputy
+            | FederationGrantRole::Admin
+            | FederationGrantRole::Member
+    ) {
+        ceilings.push(serde_json::json!({
+            "actor_class": "human", "actor_ref": member.to_hex(), "ceiling": "auto",
+        }));
+        reads.push(serde_json::json!({
+            "actor_ref": member.to_hex(),
+            "effector": "core:read",
+            "scope": crate::federation::scope_codec::read_preset(),
+            "receipt_required": false,
+        }));
+    }
+    let policy = serde_json::json!({
+        "schema_version": "1.2", "pack_id": "same-bytes-erase-test", "pack_version": "v1",
+        "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {"criticality": "normal", "sensitivity": "normal"}, "rules": [],
+        "actor_ceilings": ceilings, "scoped_grants": reads,
+    });
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        EntityId::now(),
+        &rmp_serde::to_vec_named(&policy).expect("encode blob fixture policy"),
+    )
+    .expect("blob fixture policy");
     (dir, vault, owner, member)
 }
 
@@ -495,8 +531,17 @@ fn a_holder_whose_version_claim_was_deleted_is_held_and_keeps_its_bytes() {
     let a = artifact(&mine, &[SHARED]);
     let b = artifact(&facade_for(&vault, member), &[SHARED]);
     let claim = vault.blob_artifact_versions(&b).expect("versions")[0].claim_id;
+    // The owner's delete of a live artifact's version claim runs as its version's release
+    // (ASTRA-R2-002); a peer's tombstone takes the claim alone.
+    let mut soft_tombstone = vec![crate::deletion::TombstoneReason::UserDelete.wire_byte()];
+    soft_tombstone.extend_from_slice(&60_u64.to_le_bytes());
+    soft_tombstone.extend_from_slice(&[0xAE; 16]);
     vault
-        .delete_entity(&claim)
+        .with_write_txn_grouped(|txn| {
+            vault
+                .apply_replayed_tombstone_in_txn(txn, &claim, &soft_tombstone)
+                .map(|_| ())
+        })
         .expect("soft-delete the version claim");
     let preview = mine.preview_entity_delete(&a).expect("preview");
     assert_eq!(preview.same_bytes_matches(), vec![b]);

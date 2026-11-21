@@ -232,6 +232,121 @@ impl FoldProjection {
     }
 }
 
+/// The stored log's projected fold peak as the doors judge it, kept across
+/// authority generations with the door view (FIX
+/// [OWNER-RESERVE-PROJECTION-COST]): each stored row's parents and the log's
+/// missing parents, extended row by row, and the exact projection
+/// ([`stored_fold_projection`]) built from them once per view, only where a
+/// door needs it.
+///
+/// A door asks only whether the log, with or without an arriving row, is
+/// past the reserve's start, and rows times the log's worst case
+/// ([`FoldProjection::most`]) bounds its ancestor pairs from above: an open
+/// row is charged that worst case; a closed row's bound is at most the rows
+/// bounded before it (on one parent, its parent's and one; a join's is
+/// capped there; with none, zero); and a cyclic log charges every row the
+/// worst case. The same holds with the arriving row in the log, at its worst
+/// case ([`FoldProjection::bytes_with`]). Where that bound is at or under the
+/// start, the exact peak is too, and the answer needs no projection.
+///
+/// The exact projection is not extended: a join's bound is capped at the rows
+/// bounded before it in a walk in hash order, so a new row whose hash sorts
+/// first can move every later capped join's bound.
+#[derive(Debug, Default)]
+pub(super) struct DoorProjection {
+    /// Each stored row's entry hash, as the fold keys its rows, and its
+    /// parents.
+    parents: im::OrdMap<AuthorityEntryHash, Arc<[AuthorityEntryHash]>>,
+    /// The distinct parents no stored row is.
+    missing: im::OrdSet<AuthorityEntryHash>,
+    exact: std::sync::OnceLock<FoldProjection>,
+}
+
+impl DoorProjection {
+    /// This projection with no exact peak built yet, to extend.
+    pub(super) fn to_extend(&self) -> Self {
+        Self {
+            parents: self.parents.clone(),
+            missing: self.missing.clone(),
+            exact: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Adds the stored row `hash` on `parents`.
+    pub(super) fn insert(&mut self, hash: AuthorityEntryHash, parents: &[AuthorityEntryHash]) {
+        self.parents.insert(hash, parents.into());
+        self.missing.remove(&hash);
+        for parent in parents {
+            if !self.parents.contains_key(parent) {
+                self.missing.insert(*parent);
+            }
+        }
+    }
+
+    /// Whether the row `hash` is stored.
+    pub(super) fn stores(&self, hash: &AuthorityEntryHash) -> bool {
+        self.parents.contains_key(hash)
+    }
+
+    /// The exact projection, built on its first read.
+    pub(super) fn exact(&self) -> &FoldProjection {
+        self.exact.get_or_init(|| {
+            let rows = self
+                .parents
+                .iter()
+                .map(|(hash, parents)| (*hash, &**parents))
+                .collect();
+            stored_fold_projection(&rows)
+        })
+    }
+
+    /// The stored log's projected peak.
+    pub(super) fn bytes(&self) -> u64 {
+        self.exact().bytes()
+    }
+
+    /// The stored log's projected peak where it is past `start`, else None.
+    pub(super) fn bytes_past(&self, start: u64) -> Option<u64> {
+        let rows = self.parents.len();
+        let most = (rows as u64).saturating_add(self.missing.len() as u64);
+        if fold_projected_bytes(rows, (rows as u64).saturating_mul(most)) <= start {
+            return None;
+        }
+        let bytes = self.bytes();
+        (bytes > start).then_some(bytes)
+    }
+
+    /// The projected peak with the row `hash`, on `parents`, stored too
+    /// ([`FoldProjection::bytes_with`]) where it is past `start`, else None.
+    pub(super) fn bytes_with_past(
+        &self,
+        start: u64,
+        hash: &AuthorityEntryHash,
+        parents: &[AuthorityEntryHash],
+    ) -> Option<u64> {
+        if self.stores(hash) {
+            return self.bytes_past(start);
+        }
+        let rows = self.parents.len().saturating_add(1);
+        let fresh = parents
+            .iter()
+            .filter(|parent| {
+                *parent != hash && !self.stores(parent) && !self.missing.contains(*parent)
+            })
+            .collect::<BTreeSet<_>>()
+            .len() as u64;
+        let most = (rows as u64)
+            .saturating_add(self.missing.len() as u64)
+            .saturating_sub(u64::from(self.missing.contains(hash)))
+            .saturating_add(fresh);
+        if fold_projected_bytes(rows, (rows as u64).saturating_mul(most)) <= start {
+            return None;
+        }
+        let bytes = self.exact().bytes_with(hash, parents);
+        (bytes > start).then_some(bytes)
+    }
+}
+
 /// The largest wait at the owner's reserve this handle saw, and the fold
 /// peak the log with it projects (Astra owner-reserve r2 F4). The door judges
 /// the log with the arriving row in it, so a held row leaves the stored log
@@ -256,8 +371,8 @@ impl OwnerReserveHold {
     /// log's: a held row until it is stored, carried work until it lands
     /// ([`carried_work_past_owner_reserve_in_txn`]) or its request leaves
     /// this install's work ([`end_owner_reserve_work_hold`]).
-    pub(super) fn stands(&self, projection: &FoldProjection) -> bool {
-        self.work || !projection.bound.contains_key(&self.entry)
+    pub(super) fn stands(&self, projection: &DoorProjection) -> bool {
+        self.work || !projection.stores(&self.entry)
     }
 }
 
@@ -265,7 +380,7 @@ impl OwnerReserveHold {
 /// `projection` (Astra owner-reserve r3 F2).
 pub(super) fn hold_at_owner_reserve(
     store: &Store,
-    projection: &FoldProjection,
+    projection: &DoorProjection,
     hold: OwnerReserveHold,
 ) {
     if let Ok(mut held) = store.authority_owner_reserve_hold.lock() {
@@ -275,4 +390,64 @@ pub(super) fn hold_at_owner_reserve(
             *held = Some(hold);
         }
     }
+}
+
+/// The reserve's part of [`authority_door`]'s verdict on a row not stored
+/// yet that a vouched key signed: the log with `entry` in it passes the
+/// reserve's start and `entry` is not the owner's work ([`owner_work`]).
+/// Records the hold the reserve's typed check names.
+pub(super) fn held_at_owner_reserve(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    view: &AuthorityDoorView,
+    entry: &AuthorityLogEntry,
+    fold: &DoorFold<'_>,
+) -> crate::error::Result<bool> {
+    let hash = authority_entry_hash(entry)?;
+    let start = owner_reserve_start(store, txn)?;
+    let Some(with_entry) = view
+        .projection
+        .bytes_with_past(start, &hash, &entry.parent_hashes)
+    else {
+        return Ok(false);
+    };
+    if owner_work(store, txn, &view.structure, fold, &hash, entry)? {
+        return Ok(false);
+    }
+    hold_at_owner_reserve(
+        store,
+        &view.projection,
+        OwnerReserveHold {
+            entry: hash,
+            work: false,
+            projected: with_entry,
+        },
+    );
+    Ok(true)
+}
+
+/// Whether the store door holds `entry` on `txn` at the owner's reserve,
+/// for that alone: never a row already stored, one no key that may vouch
+/// signed, a stranger's row past the shared bound or a handoff no slip
+/// issuer signed ([`authority_door`]). The owner's history import keeps
+/// such a row as evidence and lands the rest (FIX
+/// [OWNER-RESERVE-IMPORT-PARTIAL]).
+pub(crate) fn held_at_owner_reserve_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entry: &AuthorityLogEntry,
+    fold: DoorFold<'_>,
+) -> crate::error::Result<bool> {
+    #[cfg(any(test, oneiron_test_support))]
+    if DOOR_OPEN_FOR_TEST.with(std::cell::Cell::get) {
+        return Ok(false);
+    }
+    if authority_row_resident(store, txn, entry)? {
+        return Ok(false);
+    }
+    let view = door_view(store, txn)?;
+    if !view.structure.vouches_for(entry) || verify_entry_signatures(entry).is_err() {
+        return Ok(false);
+    }
+    held_at_owner_reserve(store, txn, &view, entry, &fold)
 }

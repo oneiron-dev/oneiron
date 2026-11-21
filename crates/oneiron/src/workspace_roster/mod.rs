@@ -89,6 +89,7 @@ pub(crate) use codec::roster_required_for_test;
 mod companion_bind;
 mod house_link;
 mod intent;
+mod one_vault;
 mod records;
 mod runner;
 mod scrub;
@@ -96,12 +97,14 @@ mod sharing;
 pub mod spend_scope;
 mod steps;
 mod work_companion;
+mod work_talk;
 
 use codec::*;
 use companion_bind::*;
 use steps::*;
 
 pub(crate) use self::codec::companion_principal_in_txn;
+pub(crate) use self::house_link::house_link_receipt_records;
 pub(crate) use self::house_link::seat_house_owner_by_act_in_txn;
 pub use self::house_link::{DEFAULT_HOUSE_ROLE, parse_house_role};
 pub(crate) use self::house_link::{
@@ -124,6 +127,10 @@ pub use self::records::{
 // The bind-interval read: the room reads' statement byline (FIX row
 // SPEAKER-BYLINE-FOR-ORG) and its test door.
 pub(crate) use self::house_link::house_org_at_in_txn;
+pub(crate) use self::one_vault::{ONE_VAULT_ROW_KEY, OneVaultRead};
+pub use self::one_vault::{
+    ONE_VAULT_ROW_VERSION, OneVaultMode, OneVaultPolicy, OneVaultSetting, OneVaultSource,
+};
 pub(crate) use self::scrub::{
     erase_companion_principal_actor_in_txn, erase_member_actor_in_txn,
     erase_member_intent_actor_in_txn, member_actor_refs_in_txn,
@@ -133,6 +140,10 @@ pub use self::sharing::{
     RoomSharingView,
 };
 pub use self::work_companion::WorkCompanionPolicy;
+pub use self::work_talk::WorkTalkBinding;
+pub(crate) use self::work_talk::{
+    WORK_TALK_FIELD, admit_work_talk_witness, work_talk_binding_in_txn, work_talk_registered_in,
+};
 #[cfg(oneiron_test_support)]
 pub(crate) use self::{
     codec::member_intent_key_pin_for_test, records::roster_member_key_pin_for_test,
@@ -145,6 +156,8 @@ pub(crate) mod project;
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use project::create_project_signed_for_test;
 pub(crate) use project::index_extra_room;
+pub(crate) use project::leader_chat_writers_in;
+pub(crate) use project::reject_project_with_live_children;
 #[cfg(test)]
 pub(crate) use project::set_project_depth_signed_for_test;
 pub use project::{
@@ -192,8 +205,8 @@ pub(crate) use project::{
     leader_chat_allowed, leader_chat_reader_in, leader_chat_record_permitted,
     normalize_project_body, note_project_proof, permit_leader_chat_record, precheck_goal_delete,
     project_mint_gate_refs_in_txn, projects_led_in_txn, reconcile_project_rooms,
-    retire_goal_for_delete, room_facets_in, root_project_in, seed_root_project,
-    seeded_root_home_room, settle_leader_chat_record, speaks_as_in_txn,
+    reject_root_project_delete, retire_goal_for_delete, room_facets_in, root_project_in,
+    seed_root_project, seeded_root_home_room, settle_leader_chat_record, speaks_as_in_txn,
     validate_local_leader_chat_turns, validate_project_body, validate_project_edge_delete,
     validate_project_edge_put, validate_project_graph, validate_project_transition,
     validate_room_body, verify_existing_leader_chat_turn,
@@ -270,6 +283,8 @@ pub(crate) use rooms::{
 
 pub use rooms::RoomClosedSet;
 pub(crate) use rooms::RoomThreadTask;
+#[cfg(feature = "sync")]
+pub(crate) use rooms::peer_room_settings_refusal_in_txn;
 pub(crate) use rooms::room_is_closed_in;
 pub(crate) use rooms::stored_room_pins_in;
 pub use rooms::{
@@ -319,7 +334,9 @@ pub(crate) use rooms::{
 };
 pub(crate) use rooms::{record_native_room_turn_in_txn, record_room_message_in_txn};
 
-pub(crate) use rooms::{Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn};
+pub(crate) use rooms::{
+    Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn, person_standing_in_txn,
+};
 pub use rooms::{JoinCause, ParticipantView, ParticipantsPage, ParticipantsRequest};
 
 pub use crate::gate::RoomThreadFill;

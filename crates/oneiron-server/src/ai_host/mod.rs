@@ -27,6 +27,8 @@ use crate::server::SyncServer;
 
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod code_mode;
+mod code_mode_reach;
+pub(crate) use code_mode_reach::{CodeModeRoute, code_mode_reach};
 mod compaction;
 #[cfg(oneiron_test_support)]
 pub(crate) use compaction::pass_door;
@@ -50,7 +52,11 @@ mod contribution;
 mod drafter;
 mod dreamer;
 pub(crate) use dreamer::DreamerControl;
+#[cfg(oneiron_test_support)]
+pub(crate) use dreamer::sourced_route_door;
 mod dreamer_thing;
+#[cfg(oneiron_test_support)]
+pub(crate) use dreamer_thing::child_route_door;
 mod eval_authoring;
 pub(crate) use eval_authoring::execute as execute_eval_authoring;
 pub(crate) use training_offer::run_now as run_training_offer_pass;

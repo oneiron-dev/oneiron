@@ -256,7 +256,7 @@ pub(super) async fn bind(
             .with_browser_planner(Arc::clone(&browser))
             .with_host_meter(guard)
             .with_reader_window_tokens(
-                super::dreamer::dream_windows(models)
+                super::dreamer::reader_windows(models)
                     .get(&seat.model)
                     .copied()
                     .unwrap_or(0),
@@ -527,7 +527,8 @@ const CODE_MODE_RUN: &str = "code-mode";
 /// a seat-bound call is; when that admission refuses now, the call takes
 /// the role's live route as any other does, so nothing new refuses. The
 /// third value is the role that actually admitted the call (FIX 6359): the
-/// browser role when its admission took the call, else the chat role.
+/// browser role when its admission took the call, else the chat role. Each
+/// path here is one [`super::code_mode_reach()`] judges a run's brief by.
 fn admit_code_mode_call(
     models: &ModelRuntime,
     vault: &Vault,

@@ -7,20 +7,19 @@
 //! for it: a conflict with one unread member is absent whole, counted nowhere
 //! and never named by a cursor. A conflict the owner holds, or one whose
 //! settlement was reverted, is the owner's to answer, so no other reader sees
-//! it. A retained alternative whose staged Keep the owner declined is the
-//! owner's to keep again, so the page leaves it out, as the parked settlement
-//! ask does.
+//! it. A retained alternative whose staged Keep the owner declined, or that
+//! was retracted, is the owner's to keep again, so the page leaves it out, as
+//! the parked settlement ask does.
 
 use serde::{Deserialize, Serialize};
 
-use super::strength_observations::{
-    observation_reader_scope_for_actor_in_txn, observed_claim_reads_in_txn,
-};
+use super::strength_observations::{live_steward_reader_scope_in_txn, observed_claim_reads_in_txn};
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadResult, claim_surfaceable};
 use crate::dreamer_consolidation::{OpenConflict, open_conflicts_in_txn, rmpv_to_json};
 use crate::dreamer_runner::DreamerAttemptBinding;
 use crate::federation::Scope;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::request_limits::page_limit_zero_as_one;
 use crate::{EntityId, Result, Vault};
 
 /// The cursor prefix naming the last conflict a page served, by its marker.
@@ -92,10 +91,10 @@ pub struct ConflictAlternative {
 }
 
 /// Who reads the page: the proven owner, who answers every open conflict,
-/// or a delegate reader within its record scope (`None` is the whole vault).
+/// or a delegate reader within its live Steward grant's record scope.
 pub(crate) enum ConflictReader {
     Owner,
-    Delegate(Option<Scope>),
+    Delegate(Scope),
 }
 
 /// Pages the open conflicts through the caller's live reach and scoped read.
@@ -142,11 +141,7 @@ fn bound_conflicts_page(
         .embedded_owner("vault.consolidation.conflicts.page")
         .ok();
     let bounds = vault.snapshot_read_settings()?;
-    let limit = input
-        .limit
-        .unwrap_or(bounds.page_rows)
-        .min(bounds.page_rows)
-        .max(1);
+    let limit = page_limit_zero_as_one(input.limit, bounds.page_rows, bounds.page_rows).rows;
     let after = conflict_cursor_key(input.cursor.as_deref())?;
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
     let _pins = read.prepare_point_read::<MemoryError>()?;
@@ -206,8 +201,8 @@ fn bound_conflicts_page(
 }
 
 /// The reader the caller is: the owner under its proof, or a non-owner with
-/// a live Steward read (or a base agent whose manifest rows still stand in
-/// place of a grant).
+/// a live Steward read. A base agent with no standing Steward row is refused
+/// as any reader without a grant is ([`live_steward_reader_scope_in_txn`]).
 pub(crate) fn conflict_reader_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
@@ -218,7 +213,7 @@ pub(crate) fn conflict_reader_in_txn(
         owner.revalidate_as_vault_owner_in_txn(vault, txn)?;
         return Ok(ConflictReader::Owner);
     }
-    match observation_reader_scope_for_actor_in_txn(vault, txn, memory.actor())? {
+    match live_steward_reader_scope_in_txn(vault, txn, memory.actor())? {
         Some(scope) => Ok(ConflictReader::Delegate(scope)),
         None => Err(MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
@@ -240,7 +235,7 @@ pub(crate) fn conflict_served_in_txn(
 ) -> Result<bool> {
     let scope = match reader {
         ConflictReader::Owner => None,
-        ConflictReader::Delegate(scope) => scope.as_ref(),
+        ConflictReader::Delegate(scope) => Some(scope),
     };
     for id in std::iter::once(&conflict.marker).chain(&conflict.members) {
         if !observed_claim_reads_in_txn(vault, txn, read, scope, *id)? {

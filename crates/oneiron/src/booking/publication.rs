@@ -58,6 +58,7 @@ impl PublicBookingAvailability {
             visitor_tz: self.visitor_tz.clone(),
             constraint: None,
             session_ref,
+            duration_min: None,
         })
     }
 
@@ -155,6 +156,12 @@ impl BookingPagePublication {
                 return Err(
                     "public booking event cards must have unique keys, titles and durations",
                 );
+            }
+            if let Some(defect) = crate::booking::config::allowed_durations_defect(
+                &event.allowed_durations_min,
+                event.duration_min,
+            ) {
+                return Err(defect);
             }
         }
         if !self
@@ -373,6 +380,11 @@ fn load_public_booking_page_listed_in_txn(
             }
         };
         if u32::from(config.duration_min) != card.duration_min
+            || !config
+                .allowed_durations_min
+                .iter()
+                .map(|minutes| u32::from(*minutes))
+                .eq(card.allowed_durations_min.iter().copied())
             || value.event_config_hashes.get(&card.key.0) != Some(&booking_config_hash(&config)?)
         {
             return Ok(None);
@@ -395,6 +407,8 @@ pub use write_index::{booking_config_hash, resolve_public_booking_token};
 pub(crate) use write_index::{
     guard_publication_put, index_publication_in_txn, publication_setting_in_txn,
 };
+#[cfg(feature = "sync")]
+pub(crate) mod home_rows;
 
 #[cfg(test)]
 mod tests;
