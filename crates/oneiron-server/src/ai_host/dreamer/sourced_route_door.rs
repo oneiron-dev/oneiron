@@ -55,7 +55,7 @@ pub fn lent_dreamer_route(
     );
     let seat = runtime.seat(role)?;
     let model = seat.model.clone();
-    let route = SourcedRunBackend::new(Arc::clone(&seat.ladder), run);
+    let route = SourcedRunBackend::new(Arc::clone(&seat.ladder), run, Arc::clone(vault));
     Some(LentDreamerRoute {
         model,
         route,
