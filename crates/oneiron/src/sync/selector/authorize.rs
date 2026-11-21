@@ -216,8 +216,9 @@ pub(super) fn effective_scope_for_grant(
 pub(crate) enum GuestTombstones {
     /// A guest document or an unbound guest envelope: no tombstone.
     Omitted,
-    /// A Connect delivery under a live pact: the owner's delete of a row
-    /// this vault released to the peer travels and removes its copy.
+    /// A Connect delivery under a live pact, or a selector socket answer to
+    /// another vault's machine: the owner's delete of a row this vault
+    /// released to the peer travels and removes its copy.
     Released,
 }
 
