@@ -13,8 +13,13 @@ The room reads its profile and its token file only when no other user can change
 the token. A profile any user can write is refused (`chmod o-w`), because it names the token file
 and the binary the room runs. A token file any user can read or write is refused (`chmod o-rw`),
 and so is one that carries an access control list (`setfacl -b`), whose entries can let in users
-its mode does not show: the token is shared with the room's own group alone. An NFSv4 mount keeps
-a list on every file, so the token belongs on a local file system. The room's installer places
+its mode does not show: the token is shared with the room's own group alone. On an NFSv4 mount
+the server's list is judged: the token is refused, with the entry named, when an entry grants anyone
+outside its owner (`OWNER@`) and group (`GROUP@`) read or write of it or a change of its list or
+owner (`nfs4_getfacl` lists the entries). On an SMB mount it is refused, because the server's own
+list decides who reads it and the room does not read that list; the host owner may set
+`ONEIRON_CREDENTIAL_FILES_TRUST_SMB_ACL=1` to trust that list, and every user it admits can then
+read the token. The room's installer places
 both root's, at mode 0440, with the room's group, which passes. A link is followed, and the file it
 names is the one checked.
 

@@ -250,6 +250,12 @@ oneiron mcp --url https://<vault-host> --auth-mode owner \
 - **File permissions:** keep the credential owner-only (mode `0600`, with
   no ACL granting another user access). `token agent --out` writes it that way.
   Use a new `--out` path when replacing a credential; it never overwrites a file.
+  On an NFSv4 home the server's list counts too: an entry that grants anyone
+  but `OWNER@` read or write refuses the file, and the refusal names it
+  (`nfs4_getfacl` lists the entries). A credential on an SMB mount is refused,
+  because this host does not read the server's list, unless the host owner
+  sets `ONEIRON_CREDENTIAL_FILES_TRUST_SMB_ACL=1`: every user that list admits
+  can then read the credential.
 
 No running user service, browser, or third-party model is required. This path
 creates one isolated vault; production hosting, service managers, private
