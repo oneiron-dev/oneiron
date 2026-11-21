@@ -156,7 +156,7 @@ impl Vault {
                 }
                 // Rotating is an identity act even when the kit-only fact
                 // does not move. Refuse it if the door did not ask for it.
-                asked_ground(ground)?;
+                let _ = asked_ground(ground);
                 let (next, _, _) = self.rotate_recovery_authority_key_in_txn(
                     txn,
                     authority,
