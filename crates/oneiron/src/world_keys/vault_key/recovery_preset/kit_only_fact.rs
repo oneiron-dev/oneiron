@@ -120,12 +120,17 @@ impl Vault {
         kit_only: bool,
         rotates: bool,
     ) -> Result<Option<OwnerProofGround>> {
-        let before = {
+        let signs = {
             let txn = self.store.env.read_txn()?;
             owner.revalidate_in_txn(self, &txn)?;
-            self.recovery_box_kit_only_fact_in_txn(&txn)?
+            let before = self.recovery_box_kit_only_fact_in_txn(&txn)?;
+            if !rotates && before.is_some_and(|fact| fact.kit_only == kit_only) {
+                return Ok(None);
+            }
+            let fold = self.authority_view_readonly_in_txn(&txn)?;
+            self.holds_proving_owner_key(&fold)
         };
-        if !rotates && before.is_some_and(|fact| fact.kit_only == kit_only) {
+        if !signs {
             return Ok(None);
         }
         let witness = self.owner_presence(
