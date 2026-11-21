@@ -3,9 +3,16 @@
 //! wake, as a landed turn does, carrying the authority its arming sealed; the one drain admits it
 //! and judges that authority again. No loop of its own runs: an actor's timer programs are one
 //! armed job of the schedule's runner, due at the earliest of their due times (DESIGN
-//! 15-setting-primitive, stage 5b-3), run where due watcher ticks are (each fact-hook runner pass
-//! and each housekeeping pass, on the node that releases ticks); feed programs are released beside
-//! them, and idle programs where the host's idle check asks for the idle curator.
+//! 15-setting-primitive, stage 5b-3), run beside the due watcher ticks (each fact-hook runner pass
+//! and each housekeeping pass); feed programs are released beside them, and idle programs where
+//! the host's idle check asks for the idle curator.
+//!
+//! Each of the three is released on the machine that holds its arming, whatever the vault's
+//! elected home is (FIX TURNPROGRAM-NON-TURN-ARMING-STAYS-ON-ITS-MACHINE, ruled B). Such an
+//! arming is carried to no other machine (`replica::arming_rides`) and its wake is admitted
+//! where it was recorded, so one machine alone releases an occurrence; the watcher ticks' rule,
+//! one releasing node for a TASK every device holds, is not theirs. The program then runs only
+//! while that machine runs.
 
 use crate::Vault;
 use crate::dreamer_wake::WakeIdleState;
@@ -27,7 +34,8 @@ const TIMER_RETRY_FIRST_SECS: u64 = 1;
 /// An actor's timer programs: one row about the actor, armed at the earliest due time of its
 /// timer armings, re-armed in the write that arms, moves or disarms one, and disarmed when it has
 /// none left. One run records the wake each of its timers due by then owes and moves each to its
-/// next due time, in one write. Only the node that releases the vault's ticks runs it.
+/// next due time, in one write. Every machine runs its own row, the elected home or not: the row
+/// is about the armings this machine holds, and a timer's arming is carried to no other.
 pub(crate) static PROGRAM_TIMER_JOB: JobSpec = JobSpec {
     code: "dreamer_runner.program_timer",
     when: When::PerArming,
@@ -38,7 +46,7 @@ pub(crate) static PROGRAM_TIMER_JOB: JobSpec = JobSpec {
     wakes_host: true,
     at_open: false,
     once_per_pass: true,
-    runs_here: crate::runtime_hooks::releases_ticks_here,
+    runs_here: |_vault, _txn| Ok(true),
     drive: crate::schedule::Drive::Runner,
     run: run_program_timer,
 };
@@ -340,11 +348,11 @@ impl Vault {
     }
 
     /// Records the wake each feed program owes while its subscription holds an entry its own lane
-    /// shows (untangle slice 6.8c, lead call K), on the node that releases due watcher ticks:
-    /// once per first entry it can see, so a feed that shows it nothing new wakes it once, and a
-    /// change its lane does not show never wakes it. The wake is judged under the authority its
-    /// arming sealed, as the program's own reads are. Answers how many wakes it recorded;
-    /// [`Vault::wake_turn_programs`] admits them.
+    /// shows (untangle slice 6.8c, lead call K), on the machine that holds its arming, the
+    /// elected home or not: once per first entry it can see, so a feed that shows it nothing new
+    /// wakes it once, and a change its lane does not show never wakes it. The wake is judged
+    /// under the authority its arming sealed, as the program's own reads are. Answers how many
+    /// wakes it recorded; [`Vault::wake_turn_programs`] admits them.
     ///
     /// # Errors
     ///
@@ -352,9 +360,6 @@ impl Vault {
     pub fn release_feed_program_wakes(&self, now: u64) -> Result<usize> {
         let armed = {
             let txn = self.store.env.read_txn()?;
-            if !crate::runtime_hooks::releases_ticks_here(self, &txn)? {
-                return Ok(0);
-            }
             let mut armed = Vec::new();
             for (actor, registration) in indexed_in_txn(self, &txn, OccurrenceKind::Feed)? {
                 let Some(arming) = ARM.get(self, &txn, &(actor, registration))? else {

@@ -28,8 +28,9 @@
 //! ([`more_often_is_tighter`]). Stage 5b-4 adds a run of only some jobs' due rows, which a host
 //! loop that serves its own job sooner than the housekeeping tick makes, and which runs nothing
 //! while a housekeeping pass holds the runner. Stage 5b-3 adds a job only some nodes run
-//! ([`JobSpec::runs_here`]): the watcher ticks and the timer turn programs, which only the node
-//! that releases the vault's ticks runs. Stage 5c-2 adds a row armed due by a time at the latest
+//! ([`JobSpec::runs_here`]): the watcher ticks, which only the node that releases the vault's
+//! ticks runs (an actor's timer turn programs are armed on one machine alone, and that machine
+//! runs them). Stage 5c-2 adds a row armed due by a time at the latest
 //! ([`arm_at_latest_in_txn`]): one row for a line of work, due at its earliest item; and a job its
 //! host drives ([`Drive::Host`]): the remote task polls, whose network calls never run under the
 //! runner, and whose due rows the host reads ([`due_at_in_txn`]).
