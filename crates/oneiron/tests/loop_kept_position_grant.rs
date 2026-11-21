@@ -13,6 +13,11 @@
 //! revoked Grant shows nothing, and so does a Grant once a legal use limit
 //! keeps the stored claim for storage alone (a hosted vault, where the
 //! owner's customer hold refuses its privacy erase; review round 2).
+//! The use limit hides the decision from a reader's own floor too: a
+//! paired agent, which reads by the envelope of the owner's Grants that
+//! name it, sees nothing once the claim is kept for storage alone, as the
+//! named-row gate refuses the claim to it (FIX-LIST
+//! LOOP-KEPT-POSITION-USE-LIMIT-FLOOR).
 //!
 //! The decision is the agent's own refused applied-maintenance decision
 //! about a candidate claim that never landed, its one read context the
@@ -25,17 +30,25 @@
 //! section added, as `tests/agent_grant_loop_decisions.rs` does. Every read
 //! is a public verb: the embedded owner's door and the agent's own
 //! `Vault::memory` handle. Worlds and facets are made under the owner's
-//! proof (the cfg door `test_doors::steward::owner`).
+//! proof (the cfg door `test_doors::steward::owner`). The paired agent
+//! pairs on the owner's link and proves its credential, as
+//! `tests/people_about_lower_line.rs` does.
 //!
 //! Red (main): the agent's Admissions serve no such decision under any
-//! Grant.
+//! Grant. Red (#10040's head): the paired agent's own floor still shows the
+//! decision kept at the use-limited claim.
 //! Fleet: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test loop_kept_position_grant`
 
 #![cfg(oneiron_test_support)]
 
+use std::collections::BTreeSet;
+
+use ed25519_dalek::{Signer, SigningKey};
+use oneiron::authority::{PairingPrincipal, VerifiedSlip, pairing_binding_transcript_pinned};
 use oneiron::claim::base_world_id;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::LegalHoldTarget;
+use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::{EraseOptions, EraseReason, Memory};
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM};
 use oneiron::test_doors::loop_kept_position::record_kept_position_receipt;
@@ -49,6 +62,12 @@ const PREDICATE: &str = "project.note";
 
 /// The time each fixture world and facet says it was made.
 const WRITTEN_AT: u64 = 1_700_000_000;
+
+/// The challenge the paired agent signs to prove its credential.
+const REQUEST_CHALLENGE: &[u8] = b"oneiron-request:loop-kept-position-use-limit";
+
+/// The seed of the paired agent's binding key.
+const BINDING_SEED: u8 = 0x5c;
 
 /// The weave report recipe: one Admissions section.
 fn admissions_recipe() -> Value {
@@ -186,6 +205,8 @@ struct Fixture {
     decision: String,
     harbor: EntityId,
     elsewhere: EntityId,
+    /// The agent's verified credential once it pairs; none before.
+    slip: Option<VerifiedSlip>,
     _dir: tempfile::TempDir,
 }
 
@@ -256,6 +277,7 @@ impl Fixture {
             decision: row.decision_id.to_hex(),
             harbor,
             elsewhere,
+            slip: None,
             _dir: dir,
         }
     }
@@ -264,8 +286,70 @@ impl Fixture {
         door::owner(&self.vault).expect("the embedded owner")
     }
 
+    /// The agent's handle, every read bound to its credential once it has
+    /// paired.
     fn reader(&self) -> Memory<'_> {
-        self.vault.memory(self.agent, EdgeActorClass::Agent)
+        let memory = self.vault.memory(self.agent, EdgeActorClass::Agent);
+        match &self.slip {
+            Some(slip) => memory.with_read_proof(slip),
+            None => memory,
+        }
+    }
+
+    /// The agent pairs as class `agent` on a link the owner issues, redeems
+    /// it and proves possession of its credential; from then on it reads by
+    /// its own floor. The pairing Scope narrows verbs only, so the owner's
+    /// Grants set the agent's world ceiling.
+    fn pair_the_agent(&mut self) {
+        let issuer = oneiron_testkit::dreamer::test_host_issuer().expect("the test host's issuer");
+        let proof = owner_proof(&self.vault).expect("the owner's proof");
+        let mut scope = Scope::top();
+        scope.verbs = ScopeAxis::Some(BTreeSet::from([
+            "core:read".to_owned(),
+            "core:write".to_owned(),
+        ]));
+        let holder = self.agent.to_hex();
+        let link = self
+            .vault
+            .issue_owner_pairing_link(
+                &issuer,
+                &proof,
+                scope,
+                3_600,
+                PairingPrincipal {
+                    holder_ref: Some(holder.clone()),
+                    actor_class: Some("agent".to_owned()),
+                    ..PairingPrincipal::default()
+                },
+            )
+            .expect("FIXTURE: the owner issues the agent's pairing link");
+        let signing_key = SigningKey::from_bytes(&[BINDING_SEED; 32]);
+        let binding_key = signing_key.verifying_key().to_bytes();
+        let transcript =
+            pairing_binding_transcript_pinned(&link.code, &binding_key, &holder, link.pin.as_ref())
+                .expect("the agent's pairing transcript");
+        let slip = self
+            .vault
+            .redeem_pairing_link(
+                &issuer,
+                &link.code,
+                &holder,
+                binding_key,
+                &signing_key.sign(&transcript).to_bytes(),
+            )
+            .expect("FIXTURE: the agent redeems its pairing link");
+        let signature = signing_key
+            .sign(
+                &slip
+                    .binding_transcript(REQUEST_CHALLENGE)
+                    .expect("the agent's request transcript"),
+            )
+            .to_bytes();
+        let verified = self
+            .vault
+            .verify_capability_slip(&issuer.public_key(), &slip, REQUEST_CHALLENGE, &signature)
+            .expect("FIXTURE: the paired agent proves possession of its credential");
+        self.slip = Some(verified);
     }
 
     /// The owner mints the agent a read Grant of `scope`; its id.
@@ -480,5 +564,37 @@ fn a_grant_shows_no_decision_kept_at_a_use_limited_claim() {
         "a legal use limit keeps the claim at the kept position for storage alone (the agent \
          reads it on vault.get: {reads_claim}), yet its one Grant still shows the decision kept \
          there: {report:#}"
+    );
+}
+
+/// A paired agent reads by its own floor, the envelope of the owner's
+/// Grants that name it, not by one Grant alone: the legal use limit hides
+/// the decision kept at the claim's position from that floor too, as the
+/// named-row gate refuses the claim to it (FIX-LIST
+/// LOOP-KEPT-POSITION-USE-LIMIT-FLOOR).
+#[test]
+fn a_paired_agents_own_floor_shows_no_decision_kept_at_a_use_limited_claim() {
+    let mut fixture = Fixture::open_hosted();
+    fixture.assert_fixture();
+    fixture.mint(read_scope(
+        some(&[named(base_world_id())]),
+        all(),
+        some(&[json!(ENTITY_TYPE_CLAIM)]),
+    ));
+    fixture.pair_the_agent();
+    let report = fixture.agent_admissions();
+    assert!(
+        decision_item(&report, &fixture.decision).is_some(),
+        "FIXTURE: the paired agent sees its decision before the hold: {report:#}"
+    );
+
+    fixture.keep_the_claim_use_limited();
+    let reads_claim = fixture.agent_reads_the_claim();
+    let report = fixture.agent_admissions();
+    assert!(
+        decision_item(&report, &fixture.decision).is_none(),
+        "a legal use limit keeps the claim at the kept position for storage alone (the paired \
+         agent reads it on vault.get: {reads_claim}), yet its own floor still shows the decision \
+         kept there: {report:#}"
     );
 }

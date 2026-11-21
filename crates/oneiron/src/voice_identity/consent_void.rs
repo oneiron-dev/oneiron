@@ -55,7 +55,7 @@ pub(super) fn consent_void_digest(void: &VoiceConsentVoid) -> [u8; 16] {
 
 /// The digest of one consent event's stored encoding: two events with one id and any other
 /// difference (date, purposes, basis, recorder, state) have different fingerprints.
-fn consent_event_fingerprint(event: &VoiceConsentEventV1) -> Result<[u8; 16]> {
+pub(super) fn consent_event_fingerprint(event: &VoiceConsentEventV1) -> Result<[u8; 16]> {
     Ok(digest16(
         b"voice_identity.consent_void.event",
         &CONSENT.encode_value(event)?,
@@ -134,4 +134,83 @@ pub(super) fn grant_withdrawn_for(
         }
     }
     Ok(false)
+}
+
+/// Whether `withdrawal` voided `grant` when it was recorded: a void row names both events as
+/// they are stored now. A grant it voided is no decision after it, so its subject may still
+/// disown it ([`crate::Vault::voice_withdrawal_open_to_disown_in_txn`]).
+pub(super) fn grant_voided_by(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    grant: &VoiceConsentEventV1,
+    withdrawal: &VoiceConsentEventV1,
+) -> Result<bool> {
+    let grant_fingerprint = consent_event_fingerprint(grant)?;
+    let withdrawal_fingerprint = consent_event_fingerprint(withdrawal)?;
+    Ok(CONSENT_VOID
+        .scan_from(store, rtxn, grant.subject_ref.as_bytes())?
+        .into_iter()
+        .any(|(_, void)| {
+            void.grant_event_id == grant.event_id
+                && void.grant_fingerprint == grant_fingerprint
+                && void.withdrawal_event_id == withdrawal.event_id
+                && void.withdrawal_fingerprint == withdrawal_fingerprint
+        }))
+}
+
+/// The purposes `withdrawal` ended for its subject, by name: each one it covers that a grant in
+/// `events` still granted when it came, a grant dated at or before it (one in its own second loses
+/// to it) or one it voided, and that no other withdrawal dated before it had already ended, by
+/// date or by a void. The voids keep the order of recording, so a withdrawal recorded after this
+/// one with an earlier date ended that consent first, and this one has none of it to restore
+/// (REVIEW-10046 P1); an agent's withdrawal of every purpose ends only those the subject had
+/// granted (REVIEW-10046 P1). Another withdrawal in this one's own second ended nothing first:
+/// the consent log keeps no order within a second (REVIEW-10022 P1).
+pub(super) fn purposes_withdrawal_ended(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    withdrawal: &VoiceConsentEventV1,
+    events: &[VoiceConsentEventV1],
+) -> Result<Vec<VoicePrintPurpose>> {
+    let earlier: Vec<&VoiceConsentEventV1> = events
+        .iter()
+        .filter(|other| {
+            other.state == VoiceConsentState::Withdrawn
+                && other.event_id != withdrawal.event_id
+                && other.occurred_at < withdrawal.occurred_at
+        })
+        .collect();
+    let mut ended = Vec::new();
+    for purpose in &withdrawal.purposes {
+        let mut still_granted = false;
+        for grant in events {
+            if grant.state != VoiceConsentState::Granted || !grant.covers(purpose) {
+                continue;
+            }
+            if grant.occurred_at > withdrawal.occurred_at
+                && !grant_voided_by(store, rtxn, grant, withdrawal)?
+            {
+                continue;
+            }
+            let mut ended_first = false;
+            for before in &earlier {
+                if before.covers(purpose)
+                    && (before.occurred_at >= grant.occurred_at
+                        || grant_voided_by(store, rtxn, grant, before)?)
+                {
+                    ended_first = true;
+                    break;
+                }
+            }
+            if !ended_first {
+                still_granted = true;
+                break;
+            }
+        }
+        if still_granted {
+            ended.push(purpose.clone());
+        }
+    }
+    ended.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    Ok(ended)
 }

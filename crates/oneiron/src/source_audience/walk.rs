@@ -171,6 +171,25 @@ fn profile_sources(body: &[u8]) -> Vec<EntityId> {
     sources
 }
 
+impl Vault {
+    /// What the words of the row `id` (bytes `bytes`) came from, as this
+    /// walk reads them ([`word_sources`]): the rows each of which must read,
+    /// then a CLAIM's supports. The row's floor reads the same rows
+    /// (`floor::row_sources_in`).
+    ///
+    /// # Errors
+    ///
+    /// Storage failures, and bytes with no readable header.
+    pub(crate) fn lineage_word_sources_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        bytes: &[u8],
+    ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
+        word_sources(self, &self.store.read(), txn, id, bytes)
+    }
+}
+
 /// The lane a row would leave this vault on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReplicationScope {
@@ -460,6 +479,7 @@ impl<'a, 't> LineagePass<'a, 't> {
                 every_support,
             },
             policies: BTreeMap::new(),
+            waiting_readable: None,
             rows: self.verdicts.remove(&ask).unwrap_or_default(),
         };
         let readable = judge.row_readable(*id, None);
@@ -507,6 +527,7 @@ pub(crate) fn derived_travel_in(
             every_support: false,
         },
         policies: BTreeMap::new(),
+        waiting_readable: None,
         rows: BTreeMap::new(),
     };
     if judge.row_readable(*id, None)? {
@@ -601,6 +622,7 @@ pub(crate) fn readable_with_read_in(
         txn,
         ask: Ask::Read(viewers),
         policies: BTreeMap::new(),
+        waiting_readable: None,
         rows: BTreeMap::new(),
     };
     judge.row_readable(id, Some(raw))
@@ -642,6 +664,7 @@ pub(crate) fn read_audience_in(
         txn,
         ask: Ask::Read(viewers),
         policies: BTreeMap::new(),
+        waiting_readable: None,
         rows: BTreeMap::new(),
     };
     let mut seen: BTreeSet<EntityId> = roots.iter().copied().collect();
@@ -697,6 +720,9 @@ struct Judge<'a, 's, 't> {
     /// The settled verdicts that hold whatever row asks. A [`LineagePass`]
     /// keeps them across its rows (see [`Judge::row_readable`]).
     rows: BTreeMap<EntityId, bool>,
+    /// Whether the viewers read a row whose floor waits, once asked
+    /// ([`super::waiting_floor_readable_in`]).
+    waiting_readable: Option<bool>,
 }
 
 /// A row the judge has opened: decided at once, or waiting on what its
@@ -912,16 +938,47 @@ impl Judge<'_, '_, '_> {
         {
             return Ok(Opened::Decided(false));
         }
+        // A row whose floor is not known whole here (READ-LINEAGE L1; #9289
+        // review 2 P1-1, P1-2) reads only to an owner who reads every source
+        // this vault holds, whatever its floor would name; and it does not
+        // travel on a restricted lane, which carries no audience (#9289
+        // review 3 P1-3). The owner's full window carries it, and the vault
+        // it lands in raises its floor from what that vault holds.
+        let restricted = matches!(
+            self.ask,
+            Ask::Travel {
+                every_support: true,
+                ..
+            }
+        );
+        if (matches!(self.ask, Ask::Read(_)) || restricted)
+            && super::floor_waits_in(self.vault, self.txn, &id)?
+        {
+            let admitted = match self.ask {
+                Ask::Read(viewers) => self.waiting_floor_readable(viewers)?,
+                Ask::Travel { .. } => false,
+            };
+            if !admitted {
+                return Ok(Opened::Decided(false));
+            }
+        }
         // The policies a full-window carrier brought for a derived row (fix
-        // list row 17207): every one of them reads, whatever the row's own
-        // lineage here says, before anything else; an unknown one reads to
-        // no one. A replication walk ships such a row only with its carried
-        // policies, as its own sets them (`travel_closure_in`).
+        // list row 17207), and the floor its own write raised (READ-LINEAGE
+        // L1): every policy on it reads, whatever the row's own lineage here
+        // says, before anything else; an id that names no source reads to no
+        // one. A replication walk ships such a row only with
+        // its carried policies, as its own sets them (`travel_closure_in`).
         if let Some(policies) = super::derived_policies_in(self.vault, self.txn, &id)? {
             match self.ask {
                 Ask::Read(viewers) => {
                     for policy in policies {
-                        if !self.policy_readable(policy, viewers)? {
+                        // A policy's own people (`SourceReaders`).
+                        let admitted = match super::SOURCE_READERS {
+                            super::SourceReaders::OwnSourceReaders => {
+                                self.policy_readable(policy, viewers)?
+                            }
+                        };
+                        if !admitted {
                             return Ok(Opened::Decided(false));
                         }
                     }
@@ -965,6 +1022,15 @@ impl Judge<'_, '_, '_> {
             every.append(&mut supports);
         }
         Ok(Opened::Waiting(Frame::new(id, every, supports)))
+    }
+
+    fn waiting_floor_readable(&mut self, viewers: &[EntityId]) -> Result<bool> {
+        if let Some(known) = self.waiting_readable {
+            return Ok(known);
+        }
+        let verdict = super::waiting_floor_readable_in(self.vault, self.txn, viewers)?;
+        self.waiting_readable = Some(verdict);
+        Ok(verdict)
     }
 
     fn policy_readable(&mut self, policy: EntityId, viewers: &[EntityId]) -> Result<bool> {

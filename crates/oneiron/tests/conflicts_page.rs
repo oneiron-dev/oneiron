@@ -12,7 +12,7 @@ use oneiron::test_doors::derive::{
     Claim, Derived, Named, commit, narrow_steward_grant_to_project, open_conflict, witness_turn,
 };
 use oneiron::test_doors::steward::{
-    STEWARD_READ_VERB, STEWARD_VERBS, dreamer, owner, stand_steward_grant,
+    STEWARD_READ_VERB, STEWARD_VERBS, dreamer, grant_mark, owner, stand_steward_grant,
 };
 use oneiron::test_doors::untangle_regressions::seed_named_person;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
@@ -398,6 +398,48 @@ fn a_reader_without_a_live_steward_read_is_refused() -> ConflictsPageTestResult<
         panic!("an agent without a live Steward read is refused");
     };
     assert_eq!(error.code, MEMORY_CODE_FORBIDDEN);
+    Ok(())
+}
+
+/// A base agent whose MACHINE is provisioned and that has no standing Steward
+/// row is refused, even with a conflict waiting: its manifest rows never
+/// stand in for the grant on this page. Once its grant stands, the same call
+/// serves the conflict.
+#[test]
+fn a_base_agent_without_a_standing_steward_row_is_refused_until_its_grant_stands()
+-> ConflictsPageTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = open_conflicts_vault(&dir)?;
+    let person = seed_person(&vault, "owen")?;
+    let turn = witness_turn(&vault, "call me owen")?;
+    let actor = dreamer(&vault)?;
+    let (first, second) = commit_conflicting_pair(
+        &vault,
+        actor,
+        person,
+        turn,
+        "run-1",
+        "preference.coffee",
+        ("an oat milk flat white", "a cortado"),
+    )?;
+    let marker = open_conflict(&vault, second, first)?;
+    assert!(
+        grant_mark(&vault, actor)?.is_none(),
+        "no Steward row stands for the Dreamer yet"
+    );
+    let Err(refused) = read_conflicts_page(&vault, actor, EdgeActorClass::System, json!({})) else {
+        panic!("a base agent with no standing Steward row is refused");
+    };
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN);
+    assert!(
+        refused.message.contains("live Steward reader"),
+        "the page's own refusal: {}",
+        refused.message
+    );
+    stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
+    let page = read_conflicts_page(&vault, actor, EdgeActorClass::System, json!({}))?;
+    assert_eq!(page_markers(&page), vec![marker.to_hex()]);
+    assert!(page["next"].is_null());
     Ok(())
 }
 

@@ -62,6 +62,8 @@ pub mod one_click_wire_counter;
 pub mod openapi_document;
 pub mod owner_backup;
 pub mod owner_check;
+#[cfg(unix)]
+pub mod owner_key_change_report;
 pub mod parked_step_resume;
 pub mod pre_idle_reuse;
 pub mod question_heads;
