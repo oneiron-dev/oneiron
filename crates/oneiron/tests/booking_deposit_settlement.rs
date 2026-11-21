@@ -4155,3 +4155,504 @@ fn a_killed_seat_s_later_write_of_a_native_event_is_released_like_any_other() {
         .expect("the released row holds nothing more");
     assert_eq!(after.code, "NOT_FOUND", "{after:?}");
 }
+
+/// The seat's live passport for `uid` on `event`, found by UID alone: its
+/// system may be a custody handle.
+/// The booking's own passport shares the booking UID, so it is skipped.
+fn seat_passport_for_uid(
+    fixture: &Fixture,
+    event: &EntityId,
+    uid: &str,
+) -> oneiron::calendar::CalendarPassportValue {
+    oneiron::calendar::live_passports_for_event(&fixture.vault, event)
+        .expect("the EVENT's passports")
+        .into_iter()
+        .find(|(_, value)| {
+            value.uid == uid && value.system != oneiron::booking::BOOKING_PASSPORT_SYSTEM
+        })
+        .map(|(_, value)| value)
+        .expect("FIXTURE: the EVENT carries the seat's passport for the UID")
+}
+
+/// Asserts that `system`, a passport's stored system, holds the seat system as a custody handle.
+fn assert_passport_system_masked(system: &str) {
+    assert!(
+        system != HOST_SEAT_SYSTEM && system.contains("[secret sc"),
+        "FIXTURE: the stored passport keeps the known system as a custody handle: {system}"
+    );
+}
+
+/// Registers `uid` as a custody value, so a passport filed from now on keeps
+/// it as a custody handle.
+fn mask_uid(fixture: &Fixture, uid: &str, now: u64) {
+    fixture
+        .vault
+        .register_test_secret("masked-uid-canary", uid.as_bytes(), Vec::new(), now)
+        .expect("the UID is a custody value");
+}
+
+/// The single live passport on `event` when its UID is also a custody value: found without naming
+/// the UID as written, since the stored UID is a handle.
+fn sole_passport_when_uid_masked(
+    fixture: &Fixture,
+    event: &EntityId,
+    uid: &str,
+) -> oneiron::calendar::CalendarPassportValue {
+    let passports = oneiron::calendar::live_passports_for_event(&fixture.vault, event)
+        .expect("the EVENT's passports");
+    assert_eq!(
+        passports.len(),
+        1,
+        "FIXTURE: the import files one passport: {passports:?}"
+    );
+    let (_, value) = passports.into_iter().next().expect("the one passport");
+    assert_passport_system_masked(&value.system);
+    assert!(
+        value.uid != uid && value.uid.contains("[secret sc"),
+        "FIXTURE: the stored passport keeps the known UID as a custody handle: {}",
+        value.uid
+    );
+    value
+}
+
+/// The number of EVENTs the vault holds.
+fn event_count(fixture: &Fixture) -> u64 {
+    fixture
+        .vault
+        .count_entities_by_type(oneiron::registry::ENTITY_TYPE_EVENT)
+        .expect("count the EVENTs")
+}
+
+/// CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP: a written passport
+/// whose stored system is a custody handle still moves deposit money.
+#[test]
+fn a_host_cancel_of_a_masked_written_booking_refunds_the_whole_deposit() {
+    // Like `a_host_cancel_refunds_the_whole_deposit`, but the seat system is a custody value before
+    // the seat writes, so each written passport stores it as a handle. The host's cancelled version
+    // must still refund the hosted booking whole.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let mut provider = RecordingProvider::default();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+
+    let hosted = paid_booking(
+        &fixture,
+        SessionKey::derive(b"masked-host-cancel"),
+        "pi_masked_host",
+        9,
+    );
+    let visited = paid_booking(
+        &fixture,
+        SessionKey::derive(b"masked-visitor-first"),
+        "pi_masked_visitor",
+        10,
+    );
+    for booked in [&hosted, &visited] {
+        settle_booking_deposit(
+            &fixture.vault,
+            &booked.calendar.event_ref,
+            &mut provider,
+            NOW + 50,
+        )
+        .expect("capture");
+    }
+    // The visitor cancels the 10:00 booking late: the rule keeps it all.
+    fixture
+        .cancel(&visited.cancel_token, NOW + 51)
+        .expect("cancel");
+    assert_eq!(
+        state_of(&fixture, "pi_masked_visitor"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        }
+    );
+
+    // Both bookings are written to the host's seat after the mask, before their first pull.
+    mask_seat_system(&fixture, NOW + 52);
+    let hosted_wrote = seat.write(&fixture.vault, hosted.calendar.event_ref, NOW + 55);
+    let visited_wrote = seat.write(&fixture.vault, visited.calendar.event_ref, NOW + 55);
+    for booked in [&hosted, &visited] {
+        let passport =
+            seat_passport_for_uid(&fixture, &booked.calendar.event_ref, &booked.calendar.uid);
+        assert_passport_system_masked(&passport.system);
+        assert!(
+            matches!(
+                passport.direction,
+                oneiron::calendar::CalendarPassportDirection::Outbound
+                    | oneiron::calendar::CalendarPassportDirection::TwoWay
+            ),
+            "FIXTURE: the written passport names a calendar the EVENT was written to: {:?}",
+            passport.direction
+        );
+    }
+    let bookings = [
+        (&hosted_wrote, MONDAY + 9 * 3_600),
+        (&visited_wrote, MONDAY + 10 * 3_600),
+    ];
+    pull_seat(&seat, &fixture, &bookings, 0, false, NOW + 60).expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_masked_host"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        }
+    );
+
+    // The host cancels both in their own calendar.
+    pull_seat(&seat, &fixture, &bookings, 1, true, NOW + 120).expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_masked_host"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the host's cancel of the masked written booking refunds the whole deposit, whatever the visitor's rule"
+    );
+    assert_eq!(
+        state_of(&fixture, "pi_masked_visitor"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a booking the visitor cancelled first keeps its own cancel's refund"
+    );
+
+    let pass = drain(&fixture, &mut provider, NOW + 130);
+    assert_eq!(pass.refunded, 1);
+    assert_eq!(
+        state_of(&fixture, "pi_masked_host"),
+        DepositState::Refunded {
+            amount_minor: 4_000
+        }
+    );
+}
+
+/// CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP: the delete of a
+/// booking written only to a seat whose system is masked still concludes the
+/// host cancel.
+#[test]
+fn a_host_delete_of_a_masked_written_only_booking_refunds_the_whole_deposit() {
+    // Like `a_host_delete_of_a_booking_written_only_to_the_seat_refunds_the_whole_deposit`, but the
+    // seat system is a custody value before the write, so the written-only passport stores it as a
+    // handle. The provider tombstone, held until the complete listing leaves it out, must still
+    // conclude the host cancel and refund whole.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    // `written_only_booking`'s steps, with the mask before the seat write.
+    let mut capture_provider = RecordingProvider::default();
+    let booked = paid_booking(
+        &fixture,
+        SessionKey::derive(b"masked-written-only-delete"),
+        "pi_masked_written_only",
+        9,
+    );
+    settle_booking_deposit(
+        &fixture.vault,
+        &booked.calendar.event_ref,
+        &mut capture_provider,
+        NOW + 50,
+    )
+    .expect("capture");
+    mask_seat_system(&fixture, NOW + 52);
+    seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+    assert_eq!(
+        state_of(&fixture, "pi_masked_written_only"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        }
+    );
+    let passport =
+        seat_passport_for_uid(&fixture, &booked.calendar.event_ref, &booked.calendar.uid);
+    assert_passport_system_masked(&passport.system);
+    assert!(
+        matches!(
+            passport.direction,
+            oneiron::calendar::CalendarPassportDirection::Outbound
+                | oneiron::calendar::CalendarPassportDirection::TwoWay
+        ),
+        "FIXTURE: the written-only passport names a calendar the EVENT was written to: {:?}",
+        passport.direction
+    );
+
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::tombstone(&booked.calendar.uid)],
+        NOW + 120,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_masked_written_only"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a sync delta's tombstone waits for a complete listing to show the resource gone"
+    );
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::omitted(&booked.calendar.uid)],
+        NOW + 150,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_masked_written_only"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the host's delete of a masked booking written only to their calendar refunds it whole"
+    );
+    assert_eq!(
+        cancel_statuses(
+            &fixture,
+            &booked.calendar.event_ref,
+            CalendarStatusBasis::ImportedCancel
+        ),
+        1,
+        "the EVENT reads cancelled by the host's calendar"
+    );
+
+    // The provider reports the tombstone again: nothing is written twice.
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::tombstone(&booked.calendar.uid)],
+        NOW + 180,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        cancel_statuses(
+            &fixture,
+            &booked.calendar.event_ref,
+            CalendarStatusBasis::ImportedCancel
+        ),
+        1,
+        "a tombstone sent again writes no second cancellation"
+    );
+    let mut provider = RecordingProvider::default();
+    let pass = drain(&fixture, &mut provider, NOW + 190);
+    assert_eq!(pass.refunded, 1);
+    assert_eq!(
+        state_of(&fixture, "pi_masked_written_only"),
+        DepositState::Refunded {
+            amount_minor: 4_000
+        }
+    );
+}
+
+/// CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP: an inbound passport
+/// whose stored system is masked flips absent when a complete listing leaves
+/// its resource out.
+#[test]
+fn a_masked_inbound_passport_flips_absent_when_a_complete_pull_leaves_it_out() {
+    // The seat reports a fresh UID, which the vault imports as an Inbound
+    // passport of the seat (no write came first), while the seat system is a
+    // custody value; then a complete listing leaves the resource out. The
+    // passport must flip absent and, as the only inbound source, the EVENT
+    // must read cancelled by absence.
+    let fixture = Fixture::open(None);
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    mask_seat_system(&fixture, NOW);
+    let uid = "masked-absence-inbound@host.example.test";
+    let start = MONDAY + 9 * 3_600;
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::foreign(
+            &seat,
+            uid,
+            start,
+            start + 30 * 60,
+            0,
+            false,
+        )],
+        NOW + 10,
+    )
+    .expect("seat pull");
+    let event = oneiron::calendar::resolve_event_by_uid(&fixture.vault, uid)
+        .expect("resolve the UID")
+        .expect("FIXTURE: the UID resolves to its EVENT");
+    let passport = seat_passport_for_uid(&fixture, &event, uid);
+    assert_passport_system_masked(&passport.system);
+    assert!(
+        passport.direction.is_inbound_bearing(),
+        "FIXTURE: the imported passport is inbound-bearing: {:?}",
+        passport.direction
+    );
+    assert_eq!(
+        passport.presence,
+        oneiron::calendar::CalendarPassportPresence::Live,
+        "FIXTURE: the imported passport starts live"
+    );
+    assert!(
+        seat.lists_member(&fixture.vault, uid),
+        "FIXTURE: the seat's collection counts the imported resource"
+    );
+
+    seat.pull(&fixture.vault, &[SeatChange::omitted(uid)], NOW + 20)
+        .expect("seat pull");
+    let after = seat_passport_for_uid(&fixture, &event, uid);
+    assert_eq!(
+        after.presence,
+        oneiron::calendar::CalendarPassportPresence::Absent,
+        "the masked inbound passport flips absent when the complete pull leaves it out"
+    );
+    assert_eq!(
+        cancel_statuses(&fixture, &event, CalendarStatusBasis::ImportedAbsence),
+        1,
+        "the EVENT with no other inbound source reads cancelled by absence"
+    );
+}
+
+/// CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP (control): a
+/// passport whose stored UID is masked never flips while the listing carries
+/// the UID.
+#[test]
+fn a_masked_uid_still_carried_by_a_complete_listing_stays_live() {
+    // Control, which passes with and without the fix: the same masked inbound
+    // import, but the UID is a custody value too, and the next pull still
+    // carries it. The passport must stay live and no cancel status lands:
+    // the sweep reads the stored UID handle as the UID the pull carries.
+    let fixture = Fixture::open(None);
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let uid = "masked-uid-carried@host.example.test";
+    mask_seat_system(&fixture, NOW);
+    mask_uid(&fixture, uid, NOW);
+    let events_before = event_count(&fixture);
+    let start = MONDAY + 9 * 3_600;
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::foreign(
+            &seat,
+            uid,
+            start,
+            start + 30 * 60,
+            0,
+            false,
+        )],
+        NOW + 10,
+    )
+    .expect("seat pull");
+    let event = oneiron::calendar::resolve_event_by_uid(&fixture.vault, uid)
+        .expect("resolve the UID")
+        .expect("FIXTURE: the UID resolves to its EVENT");
+    let passport = sole_passport_when_uid_masked(&fixture, &event, uid);
+    assert!(
+        passport.direction.is_inbound_bearing(),
+        "FIXTURE: the imported passport is inbound-bearing: {:?}",
+        passport.direction
+    );
+    assert_eq!(
+        passport.presence,
+        oneiron::calendar::CalendarPassportPresence::Live,
+        "FIXTURE: the imported passport starts live"
+    );
+    assert_eq!(
+        event_count(&fixture),
+        events_before + 1,
+        "FIXTURE: the import mints one EVENT"
+    );
+
+    // The complete listing still carries the UID: the same live resource again.
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::foreign(
+            &seat,
+            uid,
+            start,
+            start + 30 * 60,
+            0,
+            false,
+        )],
+        NOW + 20,
+    )
+    .expect("seat pull");
+    let after = sole_passport_when_uid_masked(&fixture, &event, uid);
+    assert_eq!(
+        after.presence,
+        oneiron::calendar::CalendarPassportPresence::Live,
+        "a masked UID the complete listing still carries stays live"
+    );
+    assert_eq!(
+        cancel_statuses(&fixture, &event, CalendarStatusBasis::ImportedAbsence),
+        0,
+        "no absence cancellation lands while the UID is carried"
+    );
+    assert_eq!(
+        cancel_statuses(&fixture, &event, CalendarStatusBasis::ImportedCancel),
+        0,
+        "no imported cancellation lands while the UID is carried"
+    );
+    assert_eq!(
+        event_count(&fixture),
+        events_before + 1,
+        "the carried pull imports no second EVENT"
+    );
+}
+
+/// CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP: the CAL-07 outcome
+/// of a held tombstone from a masked seat is dated by its first sighting.
+#[test]
+fn a_masked_tombstone_conclusion_dates_cal_07_by_its_first_sighting() {
+    // As the masked written-only delete above: the tombstone at NOW + 120 is
+    // held until the complete listing at NOW + 150 leaves the resource out.
+    // CAL-07 must date the cancellation by the tombstone's first sighting,
+    // not by the conclusion.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let mut capture_provider = RecordingProvider::default();
+    let booked = paid_booking(
+        &fixture,
+        SessionKey::derive(b"masked-tombstone-observed"),
+        "pi_masked_observed",
+        9,
+    );
+    settle_booking_deposit(
+        &fixture.vault,
+        &booked.calendar.event_ref,
+        &mut capture_provider,
+        NOW + 50,
+    )
+    .expect("capture");
+    mask_seat_system(&fixture, NOW + 52);
+    seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+    assert_eq!(
+        state_of(&fixture, "pi_masked_observed"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        }
+    );
+    let passport =
+        seat_passport_for_uid(&fixture, &booked.calendar.event_ref, &booked.calendar.uid);
+    assert_passport_system_masked(&passport.system);
+
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::tombstone(&booked.calendar.uid)],
+        NOW + 120,
+    )
+    .expect("seat pull");
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::omitted(&booked.calendar.uid)],
+        NOW + 150,
+    )
+    .expect("seat pull");
+    let outcome =
+        oneiron::calendar::outcome::read_event_outcome(&fixture.vault, booked.calendar.event_ref)
+            .expect("read the CAL-07 outcome")
+            .expect("the conclusion records the cancellation's CAL-07 outcome");
+    assert_eq!(
+        outcome.outcome,
+        oneiron::calendar::outcome::EventOutcome::CancelledPreStart
+    );
+    assert_eq!(
+        outcome.recorded_at,
+        NOW + 120,
+        "CAL-07 dates the masked tombstone's cancellation by its first sighting, not the conclusion"
+    );
+    assert_eq!(
+        state_of(&fixture, "pi_masked_observed"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the masked delete refunds whole"
+    );
+}
