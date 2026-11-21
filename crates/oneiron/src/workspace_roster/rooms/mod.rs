@@ -136,7 +136,7 @@ pub(crate) use participation::fact_key_pin_for_test;
 pub(super) use participation::record_bound_task_in_txn;
 pub(in crate::workspace_roster) use participation::stands_in_thread_in;
 pub(crate) use participation::{
-    Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
+    Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn, person_standing_in_txn,
 };
 use participation::{Claimant, agent_off_room_in_txn, require_thread_standing};
 pub(in crate::workspace_roster) use participation::{require_reader, require_thread_reader};

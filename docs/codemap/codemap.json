@@ -28237,7 +28237,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ContextPackBuilder"
@@ -28246,8 +28246,18 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 5,
-      "fn": 75,
+      "fn": 64,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_pack/builder/query/budgets.rs",
+     "purpose": "Budget configuration for the context pack builder: token budgets, model windows, tokenizers and retrieval…",
+     "surface": {
+      "fn": 11
      }
     },
     {
@@ -29354,7 +29364,7 @@
      "path": "src/core_write/batch.rs",
      "purpose": "`vault.batch` (OF-181): an atomic core entity batch, the write `POST /v1/core/batch` makes",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 4
      }
@@ -31167,9 +31177,9 @@
      "path": "src/disclosure/mod.rs",
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "mod": 1,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -31234,6 +31244,22 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CallSpeakerBindReceipt",
+      "CallSpeakerBindRequest",
+      "CallSpeakerUnbindRequest"
+     ],
+     "path": "src/disclosure/speaker_bind.rs",
+     "purpose": "The owner's bind of one call speaker to a PERSON (UNBUILT-02-SPEAKER-BIND)",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -31269,7 +31295,7 @@
      "path": "src/disclosure/tier_classification.rs",
      "purpose": "Mode/tier classification and disclosure-claim structural validation",
      "surface": {
-      "const": 9,
+      "const": 10,
       "crate-vis": 5,
       "enum": 2,
       "fn": 3
@@ -31296,7 +31322,7 @@
      "path": "src/disclosure/vault_context.rs",
      "purpose": "vault_meta scope/tier-A rows, Vault impl, and agent-visible assembly block",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 15,
       "struct": 2
      }
@@ -37060,9 +37086,9 @@
      "path": "src/dreamer_runner/mod.rs",
      "purpose": "Private Dreamer runner store plus atomic admission",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "mod": 6,
-      "re-export": 23
+      "re-export": 24
      }
     },
     {
@@ -37230,8 +37256,8 @@
      "path": "src/dreamer_runner/program/mod.rs",
      "purpose": "Turn-woken programs (DOOR-141, FIX 4382)",
      "surface": {
-      "crate-vis": 14,
-      "re-export": 5
+      "crate-vis": 15,
+      "re-export": 6
      }
     },
     {
@@ -37251,7 +37277,7 @@
      "path": "src/dreamer_runner/program/read.rs",
      "purpose": "A turn program's reads (DOOR-141 PR3a, FIX 4382): what admitting a landed turn's wakes decided and the wakes…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 3,
       "re-export": 4
      }
@@ -37293,6 +37319,7 @@
      "path": "src/dreamer_runner/program/read/paused.rs",
      "purpose": "The armed programs a store holds paused (FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY, lead…",
      "surface": {
+      "crate-vis": 3,
       "fn": 2
      }
     },
@@ -37348,6 +37375,17 @@
      "surface": {
       "crate-vis": 9,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/resume_paused.rs",
+     "purpose": "The owner's resume of programs a store holds paused (FIX…",
+     "surface": {
+      "crate-vis": 6,
+      "re-export": 1
      }
     },
     {
@@ -37421,7 +37459,7 @@
      "path": "src/dreamer_runner/program/trigger.rs",
      "purpose": "Programs a turn does not wake (untangle slice 6.8c, B-3 = A): a due time, the host turning idle, or a change…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 2
      }
     },
@@ -50032,7 +50070,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/ingest/history/review.rs",
@@ -57544,7 +57582,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 46,
+      "crate-vis": 47,
       "mod": 41,
       "re-export": 75
      }
@@ -59683,6 +59721,7 @@
      "notable": [
       "TranscriptMessage",
       "TranscriptPage",
+      "TranscriptSpeaker",
       "TranscriptTurn"
      ],
      "path": "src/memory/transcript.rs",
@@ -59691,7 +59730,7 @@
       "crate-vis": 4,
       "fn": 1,
       "re-export": 1,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -60043,7 +60082,7 @@
      "path": "src/memory/witness/source_attribution.rs",
      "purpose": "Source attribution of imported speech (FIX 15412): the PERSON a trusted importer names as the speaker of an…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -67408,7 +67447,7 @@
      "path": "src/pipeline/filters.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -96615,7 +96654,7 @@
      "path": "src/test_doors/disclosure_word_sources.rs",
      "purpose": "Doors for `tests/disclosure_summary_word_sources.rs` (census L5-13): the general disclosure clamp, as a…",
      "surface": {
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -103064,7 +103103,7 @@
       "crate-vis": 3,
       "fn": 9,
       "mod": 1,
-      "re-export": 150,
+      "re-export": 151,
       "struct": 9
      }
     },
@@ -104059,6 +104098,18 @@
      "surface": {
       "fn": 10,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verbs/turn_program_resume.rs",
+     "purpose": "`vault.turn_programs.resume`: the owner resumes programs a vault copy holds paused (FIX…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 2
      }
     },
     {
@@ -109265,6 +109316,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/bound_raw_vector_lane.rs",
+     "purpose": "A bound caller's raw vector put is held to its write lane (FIX 6068; review of #10218, round 1)",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -110038,6 +110097,14 @@
      "notable": [],
      "path": "tests/clamp_before_claim_gate.rs",
      "purpose": "[D19-GATE-COUNTS-CLAIMS-THE-DISCLOSURE-CLAMP-REFUSES]: in a pack clamped for an audience, a claim the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/clamp_word_sources_bounded_windows.rs",
+     "purpose": "PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT, the bounded fetches' half (FIX-LIST 30970)",
      "surface": {}
     },
     {
@@ -118520,6 +118587,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/turn_program_resume.rs",
+     "purpose": "The owner resumes only the named paused turn programs on a copy beside its source",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/turn_program_retraction_row_cold_window.rs",
      "purpose": "A retraction's rows and a window that is not loaded (FIX TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN)",
      "surface": {}
@@ -119670,7 +119745,7 @@
      "purpose": "Typed Context Board render projections"
     },
     "context_pack": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -119761,7 +119836,7 @@
      "purpose": "The derivation transaction (untangle slice 6.7, primitive C): an agent lands what it derived as ONE batch…"
     },
     "disclosure": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -119817,7 +119892,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 251,
+     "files": 252,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -120937,7 +121012,7 @@
      "purpose": "Core's view of the verb table (untangle slice 5.0a, S5-2 = A, S50A-3 = A): the per-verb behaviour core's…"
     },
     "verbs": {
-     "files": 165,
+     "files": 166,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -121007,10 +121082,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 274,
+   "over_bar": 273,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8455,
-   "test_files": 2187
+   "source_files": 8459,
+   "test_files": 2190
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -121430,9 +121505,17 @@
      "path": "src/reads.rs",
      "purpose": "The Kotlin `EmbeddedVault`'s context pack, text search and graph reads, lowered to the same core reads the C…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 6
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/vector_mark_tests.rs",
+     "purpose": "ARCH-0036 device mark (owner ruling EMBED-DEVICE = A, census L9-28; FIX…",
+     "surface": {}
     }
    ],
    "modules": {
@@ -121456,12 +121539,19 @@
      "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The Kotlin `EmbeddedVault`'s context pack, text search and graph reads, lowered to the same core reads the C…"
+    },
+    "vector_mark_tests": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "—",
+     "layout": "file",
+     "purpose": "ARCH-0036 device mark (owner ruling EMBED-DEVICE = A, census L9-28; FIX…"
     }
    },
    "over_bar": 0,
    "purpose": "Minimal JNI/Kotlin ownership adapter",
    "source_files": 4,
-   "test_files": 0
+   "test_files": 1
   },
   "oneiron-authority": {
    "files": [
@@ -129860,7 +129950,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 111,
+      "const": 113,
       "crate-vis": 1
      }
     },
@@ -159013,7 +159103,7 @@
      "path": "src/ai_host/dreamer.rs",
      "purpose": "The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -159104,6 +159194,19 @@
      "purpose": "The outcome line of an attempt the server's Dreamer executor ended without completing it (FIX 7271): who it…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LentDreamerRoute"
+     ],
+     "path": "src/ai_host/dreamer/sourced_route_door.rs",
+     "purpose": "Door for `tests/dreamer_route_fences_withdrawn_source_rows.rs` ([DREAMER-STEP-RESENDS-ERASED-SOURCE-WORDS])…",
+     "surface": {
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -159439,7 +159542,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "mod": 4,
       "re-export": 1,
       "struct": 2
@@ -162580,7 +162683,7 @@
      "path": "src/api/facade/disclosure_doors.rs",
      "purpose": "Owner registry, home-clearance and reveal-settlement doors, shared by HTTP and MCP",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -163580,7 +163683,7 @@
      "path": "src/api/facade/program_read_doors.rs",
      "purpose": "A turn program's reads (DOOR-141 PR3a, PR3b): what a landed turn's wakes admitted, where one program's run…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -169702,7 +169805,7 @@
      "path": "src/commands/hook/hosted_sign_in.rs",
      "purpose": "`oneiron hosted login --origin <url>` with no credential: this user signs in to the hosted vault through the…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -169915,7 +170018,7 @@
      "path": "src/commands/oauth_sign_in.rs",
      "purpose": "The OAuth sign-in `oneiron hosted login` makes at a hosted vault as a native app (RFC 8252; ruling…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -176111,7 +176214,7 @@
      "path": "src/model_artifacts/licence.rs",
      "purpose": "Which licences let a model download start (the owner's standing grant: any licence that does not hurt us…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -177325,13 +177428,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "RunBackend"
+      "RunBackend",
+      "SourceFence"
      ],
      "path": "src/models/run_backend.rs",
      "purpose": "A ladder as an [`LlmBackend`], for engine code that calls a backend itself (the Dreamer's step layer)",
      "surface": {
-      "fn": 1,
-      "struct": 1
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -177572,7 +177676,7 @@
      "path": "src/models/worker_host.rs",
      "purpose": "This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker…",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 38
      }
     },
     {
@@ -180846,6 +180950,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/dreamer_sourced_route.rs",
+     "purpose": "Door for `tests/dreamer_route_fences_withdrawn_source_rows.rs` ([DREAMER-STEP-RESENDS-ERASED-SOURCE-WORDS])…",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/embedded_peer_fixture.rs",
      "purpose": "An enrolled device vault for the L7-47 mesh peer path tests",
      "surface": {
@@ -181164,7 +181278,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 81
+      "mod": 82
      }
     },
     {
@@ -183019,6 +183133,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/dreamer_route_fences_withdrawn_source_rows.rs",
+     "purpose": "A Dreamer call sends nothing of its input again once a row it was read from is erased (FIX-LIST…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/embed_backfill_pod_hours.rs",
      "purpose": "Backfill waits for the GPU box's hours instead of embedding on the endpoint (NIGHT-BACKFILL-HOLD = C, 15 Nov…",
      "surface": {}
@@ -183322,7 +183444,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/hosted_continue_sign_in.rs",
@@ -184920,6 +185042,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/turn_program_resume_doors.rs",
+     "purpose": "Public facade doors for resuming paused turn programs on a copy beside its source",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -185379,6 +185509,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/voice_speaker_bind.rs",
+     "purpose": "UNBUILT-02-SPEAKER-BIND: the owner names a call's unmatched speaker",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/voxcpm2_our_voice.rs",
      "purpose": "—",
      "surface": {}
@@ -185472,7 +185610,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 148,
+     "files": 149,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -186025,7 +186163,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 84,
+     "files": 85,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -186097,8 +186235,8 @@
    },
    "over_bar": 65,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2095,
-   "test_files": 554
+   "source_files": 2097,
+   "test_files": 557
   },
   "oneiron-setting-contract": {
    "files": [
@@ -203891,7 +204029,7 @@
      "purpose": "—",
      "surface": {
       "mod": 5,
-      "re-export": 51
+      "re-export": 55
      }
     },
     {
@@ -203942,8 +204080,8 @@
      "path": "src/dreamer_runner/program/mod.rs",
      "purpose": "—",
      "surface": {
-      "mod": 4,
-      "re-export": 39
+      "mod": 5,
+      "re-export": 43
      }
     },
     {
@@ -204024,6 +204162,21 @@
      "surface": {
       "enum": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ResumePausedTurnProgramItem",
+      "ResumePausedTurnProgramsPreview",
+      "ResumePausedTurnProgramsRequest",
+      "ResumedTurnPrograms"
+     ],
+     "path": "src/dreamer_runner/program/resume_paused.rs",
+     "purpose": "The wire shapes of the owner's resume of paused turn programs (`vault.turn_programs.resume`, FIX…",
+     "surface": {
+      "struct": 4
      }
     },
     {
@@ -214755,7 +214908,7 @@
      "purpose": "—"
     },
     "dreamer_runner": {
-     "files": 34,
+     "files": 35,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -215254,7 +215407,7 @@
    },
    "over_bar": 0,
    "purpose": "The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response…",
-   "source_files": 978,
+   "source_files": 979,
    "test_files": 6
   },
   "oneiron-vm-outbox": {

@@ -231,6 +231,11 @@ pub(crate) struct AskWork {
     pub(crate) asked: Vec<Asked>,
     pub(crate) pins: Vec<Pin>,
     pub(crate) base_prefix: [u8; 32],
+    /// The rows its parts were read from, sorted: the standing keyframe's
+    /// TURNs, each frame's TURN and chunk sources, and each span's TURN and
+    /// source. Its call sends on them, so a resend asks them first
+    /// ([DREAMER-STEP-RESENDS-ERASED-SOURCE-WORDS]).
+    pub(crate) sources: Vec<EntityId>,
 }
 
 /// What a follower attempt does next.
@@ -549,8 +554,10 @@ fn build(
 ) -> Result<AskWork> {
     let applied = session.state.applied_through;
     let mut prefix = Vec::new();
+    let mut sources = BTreeSet::new();
     if let Some(standing) = standing {
         prefix.push(standing.bytes.clone());
+        sources.extend(standing.turns.iter().copied());
     }
     let mut fresh = Vec::new();
     let mut pins = BTreeSet::new();
@@ -562,9 +569,12 @@ fn build(
         } else {
             continue;
         }
+        sources.insert(held.frame.turn);
+        sources.extend(held.frame.chunks.iter().map(|chunk| chunk.source));
         pins.extend(held.frame.pins.iter().cloned());
     }
     for entry in &asked {
+        sources.extend([entry.asked.span.turn, entry.asked.span.source]);
         pins.extend(entry.asked.pins.iter().cloned());
     }
     let question = question(&asked)?;
@@ -578,6 +588,7 @@ fn build(
         asked,
         pins: pins.into_iter().collect(),
         base_prefix,
+        sources: sources.into_iter().collect(),
     })
 }
 

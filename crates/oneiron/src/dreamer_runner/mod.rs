@@ -119,6 +119,12 @@ pub use self::program::{
 pub use self::program::{
     PausedTurnProgramItem, PausedTurnProgramsRequest, PausedTurnProgramsView, paused_turn_programs,
 };
+// FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY: the owner's resume of paused programs.
+pub use self::program::{
+    ResumePausedTurnProgramItem, ResumePausedTurnProgramsPreview, ResumePausedTurnProgramsRequest,
+    ResumedTurnPrograms,
+};
+pub(crate) use self::program::{resume_chosen_in_txn, resume_paused_in_txn};
 // FIX 5880: the owner's release of a held turn program.
 pub use self::program::{
     PROGRAM_HOLD_RELEASE_VERB, ProgramHoldReleaseAction, ProgramHoldReleaseView,

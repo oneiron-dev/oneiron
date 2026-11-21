@@ -6,7 +6,8 @@ use rmpv::Value;
 use super::predicates::{
     CONTENT_HASH_LEN, MAX_RRULE_BYTES, MAX_TEXT_BYTES, PREDICATE_CALENDAR_ATTENDEE,
     PREDICATE_CALENDAR_MEETING_LINK, PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_PASSPORT,
-    PREDICATE_CALENDAR_PREP_OPT_IN, PREDICATE_CALENDAR_RRULE, PREDICATE_CALENDAR_SERIES_EXCEPTION,
+    PREDICATE_CALENDAR_PREP_OPT_IN, PREDICATE_CALENDAR_REPLAY_CANCEL_EVIDENCE,
+    PREDICATE_CALENDAR_RRULE, PREDICATE_CALENDAR_SERIES_EXCEPTION,
     PREDICATE_CALENDAR_SERIES_MASTER, PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_SUCCESSOR,
     PREDICATE_CALENDAR_TIME_KIND, PREDICATE_CALENDAR_TZ, PREDICATE_CALENDAR_WALL_TIME,
     is_calendar_claim_predicate,
@@ -14,9 +15,9 @@ use super::predicates::{
 use super::values::{
     CalendarAttendeeValue, CalendarBusyTransparency, CalendarOrigin, CalendarPassportDirection,
     CalendarPassportPresence, CalendarPassportSource, CalendarPassportValue,
-    CalendarSeriesExceptionValue, CalendarSeriesMasterValue, CalendarStatus, CalendarStatusBasis,
-    CalendarStatusValue, CalendarSuccessorValue, CalendarTimeKind, CalendarTimeKindValue,
-    CalendarWallTimeValue,
+    CalendarReplayCancelEvidenceValue, CalendarSeriesExceptionValue, CalendarSeriesMasterValue,
+    CalendarStatus, CalendarStatusBasis, CalendarStatusValue, CalendarSuccessorValue,
+    CalendarTimeKind, CalendarTimeKindValue, CalendarWallTimeValue,
 };
 use crate::Vault;
 use crate::calendar::outcome::{
@@ -97,6 +98,10 @@ pub(super) const KEY_RECORDED_AT: &str = "recorded_at";
 
 pub(super) const KEY_OUTCOME: &str = "outcome";
 
+pub(super) const KEY_SEQUENCE: &str = "sequence";
+
+pub(super) const KEY_PROVED_AT: &str = "proved_at";
+
 /// Asserts that a calendar claim's subject is an existing EVENT row.
 ///
 /// The byte-level validator chain cannot reach storage, so this is the
@@ -172,6 +177,9 @@ pub(in crate::calendar) fn validate_calendar_claim_value(
         PREDICATE_CALENDAR_STATUS => decode_status_value(value).map(|_| ()),
         PREDICATE_CALENDAR_EVENT_OUTCOME => decode_event_outcome_value(value).map(|_| ()),
         PREDICATE_CALENDAR_PREP_OPT_IN => decode_prep_opt_in_value(value).map(|_| ()),
+        PREDICATE_CALENDAR_REPLAY_CANCEL_EVIDENCE => {
+            decode_replay_cancel_evidence_value(value).map(|_| ())
+        }
         _ => unreachable!("predicate membership checked above"),
     }
 }
@@ -442,6 +450,32 @@ pub(in crate::calendar) fn encode_event_outcome_value(value: &EventOutcomeClaimV
         (Value::from(KEY_BASIS), Value::from(value.basis.as_str())),
         (Value::from(KEY_RECORDED_AT), Value::from(value.recorded_at)),
     ])
+}
+
+/// Encodes a [`CalendarReplayCancelEvidenceValue`] into the exact wire map
+/// [`decode_replay_cancel_evidence_value`] accepts.
+#[must_use]
+pub(in crate::calendar) fn encode_replay_cancel_evidence_value(
+    value: &CalendarReplayCancelEvidenceValue,
+) -> Value {
+    Value::Map(vec![
+        (Value::from(KEY_SEQUENCE), Value::from(value.sequence)),
+        (Value::from(KEY_PROVED_AT), Value::from(value.proved_at)),
+    ])
+}
+
+/// Decodes a `calendar.replay_cancel_evidence` value: an exact key set, a
+/// `u32` SEQUENCE and a `u64` proof time.
+pub(in crate::calendar) fn decode_replay_cancel_evidence_value(
+    value: &Value,
+) -> Result<CalendarReplayCancelEvidenceValue> {
+    let entries = value_map(value)?;
+    let keys = [KEY_SEQUENCE, KEY_PROVED_AT];
+    validate_keys(entries, &keys, &keys)?;
+    Ok(CalendarReplayCancelEvidenceValue {
+        sequence: required_u32(entries, KEY_SEQUENCE)?,
+        proved_at: required_u64(entries, KEY_PROVED_AT)?,
+    })
 }
 
 /// Decodes a `calendar.event_outcome` value.

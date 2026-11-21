@@ -6,20 +6,33 @@
 //! owner key ([`Vault::sign_recovery_box_cancel_as`]), and the managed node
 //! checks it on its own fold before it asks the box to cancel
 //! ([`Vault::cancel_box_recovery_as`]). Neither side stores anything; the
-//! box's receipt and the owner's notice name who cancelled.
+//! box's receipt and the owner's notice name who cancelled. The Cancel
+//! names the release it stops ([`RecoveryBoxRelease`]) by the
+//! recovery-started act's receipt and, when the device read it, that act's
+//! start, so a receipt the box gave out again never voids a later release.
 
 use super::*;
 use crate::world_keys::{
-    OwnerActImportance, RecoveryBoxCanceller, RecoveryBoxHold, owner_presence_reasons,
+    OwnerActImportance, RecoveryBoxCanceller, RecoveryBoxHold, RecoveryBoxRelease,
+    owner_presence_reasons,
 };
 
 /// The domain of a box Cancel's proof. No other signature of an owner key
 /// starts with these bytes.
 const RECOVERY_BOX_CANCEL_DOMAIN: &[u8] = b"oneiron/recovery-box-cancel/v1";
 
-/// The length of a box Cancel's transcript: the domain, the vault id, the
-/// person, the key, `issued_at`, the receipt's tag and the receipt.
-const CANCEL_TRANSCRIPT_LEN: usize = RECOVERY_BOX_CANCEL_DOMAIN.len() + 32 + 16 + 32 + 8 + 1 + 8;
+/// The longest box Cancel transcript: the domain, the vault id, the person,
+/// the key, `issued_at`, the release's tag, the receipt and the start.
+const CANCEL_TRANSCRIPT_MAX_LEN: usize =
+    RECOVERY_BOX_CANCEL_DOMAIN.len() + 32 + 16 + 32 + 8 + 1 + 8 + 8;
+
+/// The transcript's release tag when the Cancel names no release.
+const RELEASE_TAG_NONE: u8 = 0;
+/// The transcript's release tag for a release named by its receipt alone.
+const RELEASE_TAG_RECEIPT: u8 = 1;
+/// The transcript's release tag for a release named by its receipt and its
+/// start.
+const RELEASE_TAG_RECEIPT_AND_START: u8 = 2;
 
 /// How far a Cancel's `issued_at` may be from the node's clock, either way,
 /// in seconds.
@@ -66,10 +79,10 @@ pub struct RecoveryBoxCancelProof {
     pub key: [u8; 32],
     /// When the device signed, in unix seconds on its clock.
     pub issued_at: u64,
-    /// The recovery-started act's receipt this Cancel stops, when the
-    /// device read it: the box then cancels only that release, so a replay
-    /// never stops a later recovery.
-    pub release_receipt: Option<u64>,
+    /// The pending release this Cancel stops, when the device read its
+    /// recovery-started act: the box then cancels only that release, so a
+    /// replay never stops a later recovery.
+    pub release: Option<RecoveryBoxRelease>,
     /// The key's Ed25519 signature over [`Self::transcript`].
     pub signature: Vec<u8>,
 }
@@ -77,22 +90,41 @@ pub struct RecoveryBoxCancelProof {
 impl RecoveryBoxCancelProof {
     /// The bytes the key signs for the vault `vault_id`: the domain, the
     /// vault id, the person, the key, `issued_at` (big-endian), then the
-    /// receipt as a one-byte tag (0 none, 1 some) and eight big-endian bytes
-    /// (zero when none). Every field has a fixed length.
+    /// release as a one-byte tag and its fields, each eight big-endian bytes:
+    /// tag 0 and eight zero bytes for none, tag 1 and the receipt for a
+    /// receipt alone, tag 2, the receipt and `started_at_ms` for both. The
+    /// tag fixes the length. A Cancel without a start signs the bytes it
+    /// signed before starts were named, so a device that names none still
+    /// verifies.
     #[must_use]
     pub fn transcript(&self, vault_id: &AuthorityVaultId) -> Vec<u8> {
-        let (tag, receipt) = match self.release_receipt {
-            Some(receipt) => (1_u8, receipt),
-            None => (0_u8, 0),
-        };
-        let mut transcript = Vec::with_capacity(CANCEL_TRANSCRIPT_LEN);
+        let mut transcript = Vec::with_capacity(CANCEL_TRANSCRIPT_MAX_LEN);
         transcript.extend_from_slice(RECOVERY_BOX_CANCEL_DOMAIN);
         transcript.extend_from_slice(vault_id);
         transcript.extend_from_slice(self.person.as_bytes());
         transcript.extend_from_slice(&self.key);
         transcript.extend_from_slice(&self.issued_at.to_be_bytes());
-        transcript.push(tag);
-        transcript.extend_from_slice(&receipt.to_be_bytes());
+        match self.release {
+            None => {
+                transcript.push(RELEASE_TAG_NONE);
+                transcript.extend_from_slice(&0_u64.to_be_bytes());
+            }
+            Some(RecoveryBoxRelease {
+                receipt,
+                started_at_ms: None,
+            }) => {
+                transcript.push(RELEASE_TAG_RECEIPT);
+                transcript.extend_from_slice(&receipt.to_be_bytes());
+            }
+            Some(RecoveryBoxRelease {
+                receipt,
+                started_at_ms: Some(started_at_ms),
+            }) => {
+                transcript.push(RELEASE_TAG_RECEIPT_AND_START);
+                transcript.extend_from_slice(&receipt.to_be_bytes());
+                transcript.extend_from_slice(&started_at_ms.to_be_bytes());
+            }
+        }
         transcript
     }
 }
@@ -133,8 +165,9 @@ impl Vault {
     /// important act, as a hold's Cancel is) before it reads or signs
     /// anything. The key must be a live owner key of the acting
     /// owner's on this install's fold, never the root's authority kind.
-    /// `release_receipt` is the recovery-started act's receipt when the
-    /// device read it (the box then cancels only that release). The proof
+    /// `release` is the pending release as the device read its
+    /// recovery-started act: the receipt, and the act's `at` when the device
+    /// has it (the box then cancels only that release). The proof
     /// goes to the managed node, which checks it
     /// ([`Self::cancel_box_recovery_as`]). Nothing is written.
     ///
@@ -148,7 +181,7 @@ impl Vault {
     pub fn sign_recovery_box_cancel_as(
         &self,
         authority: &ActAuthority,
-        release_receipt: Option<u64>,
+        release: Option<RecoveryBoxRelease>,
     ) -> Result<RecoveryBoxCancelProof> {
         let owner = match authority {
             ActAuthority::Owner(owner, _) => owner,
@@ -178,7 +211,7 @@ impl Vault {
             person: actor,
             key,
             issued_at,
-            release_receipt,
+            release,
             signature: Vec::new(),
         };
         proof.signature =
@@ -194,10 +227,11 @@ impl Vault {
     /// = B); its key must be that owner's own live owner key here, never the
     /// root's authority kind; its signature must verify strictly over
     /// [`RecoveryBoxCancelProof::transcript`] for this vault; and its
-    /// `issued_at` must be within five minutes of this node's clock. A
-    /// refused proof never reaches the box. `true` when the box cancelled a
-    /// pending release, `false` when none was pending. Nothing is written
-    /// here.
+    /// `issued_at` must be within five minutes of this node's clock. The box
+    /// is asked to cancel the release the proof names, receipt and start as
+    /// signed. A refused proof never reaches the box. `true` when the box
+    /// cancelled a pending release, `false` when none was pending. Nothing
+    /// is written here.
     ///
     /// # Errors
     /// [`crate::error::RecordError::AuthorityRefused`] for an agent's act and
@@ -242,6 +276,6 @@ impl Vault {
                 key: proof.key,
             }
         };
-        box_hold.cancel_pending_box_release(&cancelled_by, proof.release_receipt)
+        box_hold.cancel_pending_box_release(&cancelled_by, proof.release)
     }
 }
