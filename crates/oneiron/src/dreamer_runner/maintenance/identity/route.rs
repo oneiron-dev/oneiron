@@ -52,6 +52,20 @@ pub(super) fn route_in_txn(
     txn: &heed::RoTxn<'_>,
     ask: &IdentityAsk,
 ) -> Result<AskRoute> {
+    route_reading_in_txn(vault, txn, ask, None)
+}
+
+/// [`route_in_txn`], where a reader whose lane opens `ask` gets its Ask only
+/// when that lane also reads `source` (a turn and its message), when one is
+/// named: the later mention a resurfaced Ask is placed at. An owner who
+/// opens the ask but not that mention gets nothing this time, as a member
+/// who does not; the stubs go as [`route_in_txn`] sends them.
+fn route_reading_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    ask: &IdentityAsk,
+    source: Option<(&EntityId, &EntityId)>,
+) -> Result<AskRoute> {
     let owners = crate::policy_model::owners_in_txn(vault, txn)?;
     let mut readers = Vec::new();
     let mut closed_owners = Vec::new();
@@ -59,10 +73,10 @@ pub(super) fn route_in_txn(
         // The owner's own lane, held to the live-owner census in this
         // snapshot: it reads no row his own request would not.
         let read = vault.scoped_read(ScopedReadActorKey::vault_owner_by_census(*owner));
-        if opens_in_txn(vault, &read, txn, ask)? {
-            readers.push(*owner);
-        } else {
-            closed_owners.push(*owner);
+        match opens_in_txn(vault, &read, txn, ask, source)? {
+            Opens::AskAndSource => readers.push(*owner),
+            Opens::AskOnly => {}
+            Opens::Not => closed_owners.push(*owner),
         }
     }
     if closed_owners.is_empty() {
@@ -72,7 +86,8 @@ pub(super) fn route_in_txn(
         });
     }
     for member in members_in_txn(vault, txn, &owners)? {
-        if opens_in_txn(vault, &member_read(vault, member)?, txn, ask)? {
+        let read = member_read(vault, member)?;
+        if opens_in_txn(vault, &read, txn, ask, source)? == Opens::AskAndSource {
             readers.push(member);
         }
     }
@@ -127,30 +142,56 @@ fn member_read(vault: &Vault, person: EntityId) -> Result<ScopedRead<'_>> {
     Ok(vault.scoped_read(key))
 }
 
+/// What one lane opens of an ask and the mention its Ask is placed at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Opens {
+    /// The ask, and the mention when one is named.
+    AskAndSource,
+    /// The ask, but not the named mention.
+    AskOnly,
+    /// Not the ask.
+    Not,
+}
+
 /// Whether `read` opens `ask` in `txn`, as the doors that list, render and
-/// answer it do.
+/// answer it do, and `source` (a turn and its message) when one is named.
 fn opens_in_txn(
     vault: &Vault,
     read: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
     ask: &IdentityAsk,
-) -> Result<bool> {
+    source: Option<(&EntityId, &EntityId)>,
+) -> Result<Opens> {
     let admit = admission::Admit::in_txn(read, txn)?;
-    Ok(admission::admitted_in_txn(vault, &admit, txn, ask.clone())?.is_some())
+    if admission::admitted_in_txn(vault, &admit, txn, ask.clone())?.is_none() {
+        return Ok(Opens::Not);
+    }
+    let Some((turn, message)) = source else {
+        return Ok(Opens::AskAndSource);
+    };
+    Ok(if admit.reads_source(txn, turn, message)? {
+        Opens::AskAndSource
+    } else {
+        Opens::AskOnly
+    })
 }
 
 /// One inbox Ask per reader [`route_in_txn`] finds, in the conversation of
 /// `turn`, and one stub per owner who cannot open `ask`: a new row per ask
-/// and turn, so a later mention surfaces it again.
+/// and turn, so a later mention surfaces it again. The Ask names `turn` and
+/// its conversation, so when `turn` is a later mention (with `message`)
+/// than the ask's own, it goes only to a reader whose lane reads that
+/// mention too.
 pub(super) fn notify_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     key: &[u8; 32],
     ask: &IdentityAsk,
-    turn: &EntityId,
+    (turn, message): (&EntityId, &EntityId),
     now: u64,
 ) -> Result<()> {
-    let route = route_in_txn(vault, txn, ask)?;
+    let later = (*turn, *message) != (ask.turn, ask.message);
+    let route = route_reading_in_txn(vault, txn, ask, later.then_some((turn, message)))?;
     let conversation = crate::conversation_dag::conversation_of(&vault.store, txn, turn).ok();
     let hex = key_hex(key);
     for reader in route.readers {

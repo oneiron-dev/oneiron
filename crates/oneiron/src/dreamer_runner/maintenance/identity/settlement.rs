@@ -327,5 +327,5 @@ pub(super) fn escalate_in_txn(
     // Always (re-)added, idempotently (FIX 10376): a rewrite stamps only,
     // but a revert re-opens its ask through this door while no row stands.
     index::sync_ask_membership(&vault.store, txn, key, None, Some(&ask))?;
-    super::route::notify_in_txn(vault, txn, key, &ask, &ask.turn, now)
+    super::route::notify_in_txn(vault, txn, key, &ask, (&ask.turn, &ask.message), now)
 }
