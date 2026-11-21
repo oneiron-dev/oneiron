@@ -333,7 +333,7 @@ impl<'v> ScopedRead<'v> {
     /// withdrawn, unplaced or otherwise unreadable sources do not (the owner
     /// shortcut's policy still skips every other gate). `Ok(false)` for a row
     /// with no sources of its own.
-    fn owner_sources_use_limited_in(
+    pub(super) fn owner_sources_use_limited_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,

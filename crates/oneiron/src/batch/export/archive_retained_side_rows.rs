@@ -139,8 +139,8 @@ pub(crate) fn retained_envelope_source_table(value: &[u8]) -> Option<String> {
 
 /// Whether the whole-vault export keeps record `id` out, as its record pass does: the egress door
 /// keeps it out (off the record, use-limited by a customer hold that refused its privacy erase,
-/// or held back here), or it is an epoch summary one of whose transitive sources the door keeps
-/// out, or whose epoch does not resolve (FIX 1496 S5).
+/// or held back here, or its words came from such a row), or it is an epoch summary one of whose
+/// transitive sources the door keeps out, or whose epoch does not resolve (FIX 1496 S5).
 fn export_keeps_record_out(vault: &crate::Vault, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
     if super::export_egress::whole_vault_export_excludes_entity_in_txn(vault, rtxn, id)? {
         return Ok(true);
