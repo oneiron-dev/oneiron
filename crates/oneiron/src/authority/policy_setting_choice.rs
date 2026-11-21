@@ -59,6 +59,16 @@
 //! counting makes the doubt). The setting projection reads each head by it.
 //! An act with no proof where one is needed waits, in no frontier: a
 //! proposal, with no effect.
+//!
+//! One setting is the fold's own to read: the recovery box's kit-only switch
+//! ([`PolicySetting::RecoveryBoxKitOnly`], WAYBACK-BOX-HOLD-FROM-DEVICE-SWITCH
+//! = A), which the owner's device signs in its preset write for the managed
+//! node that holds the box. No install keeps a row of it. It speaks for the
+//! owner's way back, so its act counts only with an owner key's proof,
+//! whoever carries it. The register keys an act by its target alone and a
+//! free-time policy act names any target, so an act of another setting that
+//! names the kit-only target is valid and without effect there. The switch
+//! is a one-row act: a batch names catalogue keys alone.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -110,7 +120,8 @@ pub(crate) struct FoldedPolicySettings {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) name_counts: BTreeMap<EntityId, NameCounts>,
     /// Well-signed acts without effect: their carrier was not admitted, or
-    /// their owner not live, at their parents.
+    /// their owner not live, at their parents; and each act of another
+    /// setting that named the kit-only setting's target.
     pub(crate) refused: BTreeSet<AuthorityEntryHash>,
     /// Each target's acts that wait for the owner's proof and still ask (row
     /// CARRIER-OWNER-PROOF; the Setting's stage 7b-3): proposals, in no
@@ -168,8 +179,15 @@ pub(super) fn apply_policy_setting(
     let acts = set
         .row_acts()
         .map_err(|_| AuthorityFoldIssue::InvalidEntry(hash))?;
+    // The kit-only frontier is judged by its target, whatever setting an act
+    // on it names: the register keys an act by its target alone. Only the
+    // first row can be the switch: a batch's further rows are catalogue keys.
+    let names_kit_only =
+        PolicySetting::parse(&set.setting) == Some(PolicySetting::RecoveryBoxKitOnly);
     let mut landings = Vec::with_capacity(acts.len());
-    for (act, value) in &acts {
+    for (row, (act, value)) in acts.iter().enumerate() {
+        let on_kit_only = is_recovery_box_kit_only_target(act.target);
+        let kit_only = on_kit_only && row == 0 && names_kit_only;
         let op = OwnerChoiceOp {
             act,
             machine: set.machine,
@@ -178,7 +196,7 @@ pub(super) fn apply_policy_setting(
             needs_proof_off_the_line,
             persons_own_narrowing: false,
         };
-        landings.push(owner_choice_landing(
+        let landing = owner_choice_landing(
             state,
             &state.policy_settings,
             entry,
@@ -186,7 +204,25 @@ pub(super) fn apply_policy_setting(
             hash,
             counting,
             restriction_only,
-        )?);
+        )?;
+        // Another setting's act on the kit-only target lands nothing there.
+        // The switch counts only with an owner key's proof, whoever carries
+        // it, the owner's own machine included: with none it waits for one.
+        let unproven_kit_only = kit_only
+            && matches!(landing, OwnerChoiceLanding::Recorded { .. })
+            && super::owner_proof::owner_proof_key(state, entry, hash)?.is_none();
+        landings.push(match landing {
+            OwnerChoiceLanding::Recorded { hash, .. }
+            | OwnerChoiceLanding::Waiting { hash, .. }
+                if on_kit_only && !kit_only =>
+            {
+                OwnerChoiceLanding::Refused(hash)
+            }
+            OwnerChoiceLanding::Recorded { target, hash, .. } if unproven_kit_only => {
+                OwnerChoiceLanding::Waiting { target, hash }
+            }
+            landing => landing,
+        });
     }
     // A waiting act is no agent's act in force: the owner's confirm is his
     // own act (row CARRIER-OWNER-PROOF). The proof and the carrier are the
@@ -389,6 +425,14 @@ pub(super) fn apply_setting_pack_head(
     Ok(())
 }
 
+/// Whether `target` is the recovery box kit-only setting's reserved target.
+fn is_recovery_box_kit_only_target(target: EntityId) -> bool {
+    matches!(
+        PolicySetting::RecoveryBoxKitOnly.reserved_target(),
+        Ok(Some(reserved)) if reserved == target
+    )
+}
+
 /// The fold's view of every setting's acts, under this install's pin and
 /// holds.
 pub(super) fn folded_policy_settings(
@@ -428,6 +472,44 @@ pub(crate) struct PolicySettingAct {
 }
 
 impl Vault {
+    /// Signs, appends and folds `act` as a `PolicySettingSet` in `txn`, the
+    /// write that made the choice, and fails that write when it cannot: for a
+    /// setting the fold reads with no row of its own, where the signed act is
+    /// the setting itself. The entry hash once the fold in `txn` counted it
+    /// as a valid entry; whether it landed or waits for an owner key's proof
+    /// is the caller's to read. It signs on `ground`, or with no owner proof
+    /// where that is `None`.
+    ///
+    /// # Errors
+    /// No live machine profile of this install to carry the act, more heads
+    /// than one entry may name, a fold that did not count it, and storage
+    /// errors.
+    pub(crate) fn append_policy_setting_op_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
+        act: PolicySettingAct,
+    ) -> Result<AuthorityEntryHash> {
+        let PolicySettingAct {
+            act,
+            setting,
+            prior,
+            value,
+        } = act;
+        self.append_carried_act_in_txn(txn, ground, |machine| {
+            AuthorityOp::PolicySettingSet(PolicySettingSet {
+                act,
+                machine,
+                setting,
+                prior,
+                value,
+                slot: None,
+                inline: None,
+                more: Vec::new(),
+            })
+        })
+    }
+
     /// `target`'s setting revision in `txn`: the `seen` an act on it names.
     pub(crate) fn policy_setting_revision_in_txn(
         &self,

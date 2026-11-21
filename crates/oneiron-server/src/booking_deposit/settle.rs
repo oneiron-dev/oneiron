@@ -9,8 +9,9 @@ use oneiron::attempt_queue::{AttemptQueue, CleanupAttemptLeases};
 use oneiron::booking::SessionKey;
 use oneiron::booking::lifecycle::{
     BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND, BookingDepositSettlementDrain, DepositProviderEvent,
-    DepositProviderEventKind, DepositSettleStep, DepositState, booking_deposit_for_session_hold,
-    record_deposit_provider_event, run_booking_deposit_settlement, settle_booking_deposit,
+    DepositProviderEventKind, DepositProviderEventOutcome, DepositSettleStep, DepositState,
+    booking_deposit_for_session_hold, record_deposit_provider_event,
+    run_booking_deposit_settlement, settle_booking_deposit,
 };
 use oneiron::{EntityId, Vault};
 
@@ -46,21 +47,31 @@ const CANCELED: &str = "canceled";
 /// home move leaves on the old home, so the new home can hold as authorized a
 /// deposit whose payment Stripe has since cancelled. A cancelled payment is
 /// recorded as Stripe's cancellation, and the confirm writer refuses it.
+///
+/// Whether the confirm may run: no for an authorized deposit Stripe did not
+/// answer still waits for capture (no answer, or another status), since the
+/// confirm writer would take its stale Authorized row (review round 1 of
+/// #10109); no for any deposit whose payment Stripe says is cancelled unless
+/// this node recorded that, since a home move that defers or moved the write
+/// can land a hold that still reads authorized before the writer runs (review
+/// round 1 of #10125). Any other unauthorized deposit is left to the writer's
+/// own refusal.
 pub(crate) fn sync_hold_authorization(
     vault: &Vault,
     stripe_base: &str,
     session_key: &SessionKey,
     now: u64,
-) {
+) -> bool {
     let Ok(Some(deposit)) = booking_deposit_for_session_hold(vault, session_key, now) else {
-        return;
+        return true;
     };
     let unauthorized = matches!(
         deposit.state,
         DepositState::AwaitingAuthorization | DepositState::AuthorizationFailed
     );
-    if !unauthorized && !matches!(deposit.state, DepositState::Authorized) {
-        return;
+    let authorized = matches!(deposit.state, DepositState::Authorized);
+    if !unauthorized && !authorized {
+        return true;
     }
     let intent = match StripeClient::new(vault, stripe_base)
         .and_then(|client| client.payment_intent(&deposit.payment_id))
@@ -68,14 +79,15 @@ pub(crate) fn sync_hold_authorization(
         Ok(intent) => intent,
         Err(error) => {
             tracing::debug!(%error, "a deposit's authorization was not read from Stripe");
-            return;
+            return !authorized;
         }
     };
     if intent.livemode {
-        return;
+        return !authorized;
     }
     let (event_id, kind) = match intent.status.as_str() {
-        REQUIRES_CAPTURE if unauthorized => (
+        REQUIRES_CAPTURE if authorized => return true,
+        REQUIRES_CAPTURE => (
             format!("sync_{}", intent.id),
             DepositProviderEventKind::Authorized {
                 amount_minor: intent.amount_capturable,
@@ -86,15 +98,28 @@ pub(crate) fn sync_hold_authorization(
             format!("sync_canceled_{}", intent.id),
             DepositProviderEventKind::Canceled,
         ),
-        _ => return,
+        _ => return !authorized,
     };
+    let canceled = matches!(kind, DepositProviderEventKind::Canceled);
     let event = DepositProviderEvent {
         event_id,
         payment_id: intent.id,
         kind,
     };
-    if let Err(error) = record_deposit_provider_event(vault, &event, now) {
+    let recorded = record_deposit_provider_event(vault, &event, now);
+    if let Err(error) = &recorded {
         tracing::warn!(%error, "a deposit's authorization read from Stripe was not recorded");
+    }
+    match recorded {
+        // The row stands as Stripe said, or past it: the writer reads it.
+        Ok(
+            DepositProviderEventOutcome::Applied(_)
+            | DepositProviderEventOutcome::Unchanged(_)
+            | DepositProviderEventOutcome::Replayed,
+        ) => true,
+        _ if canceled => false,
+        Ok(_) => true,
+        Err(_) => !authorized,
     }
 }
 

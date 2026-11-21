@@ -42,6 +42,11 @@ pub(crate) fn settle_run_note_in_txn(
     approve: bool,
 ) -> MemoryResult<Option<(String, RunNoteUndo)>> {
     let vault = memory.vault();
+    // A NOTE kept from use takes no named change (OF-470 C6): refused before
+    // its documents are read.
+    if let Some(refusal) = vault.store.use_restricted_in_txn(txn, &note)? {
+        return Err(refusal.into());
+    }
     let (mut record, _) = run_note_review_in_txn(vault, txn, note, fork)?;
     let actor = memory.write_actor();
     if record.actor.is(actor.entity_ref()) {
@@ -108,6 +113,12 @@ pub(crate) fn revert_run_note_in_txn(
 ) -> MemoryResult<Option<String>> {
     let vault = memory.vault();
     let note = EntityId::from_hex(&undo.note)?;
+    // Its compensation is a named change too: a NOTE kept from use takes none
+    // (OF-470 C6). It answers no compensation, as a later edit does, so the
+    // run's other selected changes are still undone; a failed read fails.
+    if vault.store.use_restricted_in_txn(txn, &note)?.is_some() {
+        return Ok(None);
+    }
     let current = live_doc(vault, txn, note)?;
     if current.version() != undo.after {
         // Composition across the run's own compensations (FIX 9964): undoing

@@ -121,6 +121,23 @@ pub(crate) fn erase_in_txn(
     follower::erase_in_txn(write, txn, &turns)
 }
 
+/// Owes each TURN whose words `id` is (itself for a TURN, each TURN a
+/// MESSAGE is part of) a fresh read, as an erase owes a neighbour's: the
+/// owner's re-derive of a sealed CLAIM (READ-LINEAGE L1-B), so the next wake
+/// learns again what its evidence still says. How many TURNs it owed.
+pub(crate) fn owe_turn_reads_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &crate::EntityId,
+) -> crate::Result<usize> {
+    let turns = text_turns_in_txn(store, txn, id)?;
+    for turn in &turns {
+        sieve::owe_read_in_txn(store, txn, turn)?;
+        crate::dreamer_consolidation::redirty::redirty_read_turn_in_txn(store, txn, turn)?;
+    }
+    Ok(turns.len())
+}
+
 /// The window demotion hook (OF-534), in the remover's transaction before
 /// any row or edge of `gone` goes. Each TURN it removes leaves the sieve's
 /// working state and the projection, unerased: its audits and history stay,
