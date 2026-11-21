@@ -398,6 +398,13 @@ impl Vault {
     /// with its record.
     /// A second call while this install's hold for the same successor
     /// waits answers the same held attempt, and writes no second hold.
+    ///
+    /// The door asks for the person at this device as the vouch arm does
+    /// (an important act, [`Vault::owner_presence`]): after it revalidated
+    /// the owner's proof on a read, before it readies this install's signing
+    /// keys and before the PIN step or slot lock, so a refused confirm writes
+    /// nothing and leaves this install's machine as it was. A second call
+    /// that answers a waiting hold asks again: each call is the person's act.
     fn hold_with_root_key(
         &self,
         (owner, authority): (&AuthenticatedOwner, &ActAuthority),
@@ -414,6 +421,16 @@ impl Vault {
         {
             return Err(authority_refused(PROVING_KEY_NAMED_LOST));
         }
+        // The proof, the keystore and the confirm come before anything is
+        // readied, in the vouch arm's order (REVIEW-10128 P1 1 and 2).
+        self.owner_key_act_owner(authority)?;
+        if matches!(successor, RootSuccessor::ThisInstall) {
+            self.device_keystore()?;
+        }
+        let _asked = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::RECOVER_OWNER_ROOT,
+        )?;
         // Preparing this install's signing keys writes, so its slot is made
         // ready before any transaction opens, as at the vouch arm.
         let machine = self.prepare_install_signing()?;
