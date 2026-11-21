@@ -128,11 +128,11 @@ impl Vault {
         // ready after it: readying this install's signing keys writes
         // (REVIEW-10128 P1 1).
         self.device_keystore()?;
+        let slot = self.device_owner_signing_slot()?;
         let _asked = self.owner_presence(
             OwnerActImportance::Important,
             owner_presence_reasons::RECOVER_OWNER_ROOT,
         )?;
-        let slot = self.device_owner_signing_slot()?;
         // One step with a first PIN's set, entered before the writer and
         // held to its commit (row OCS-OWNER-PIN): no PIN of this process is
         // set between the successor's making and the commit. So the

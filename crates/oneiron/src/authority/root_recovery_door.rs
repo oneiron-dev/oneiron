@@ -225,9 +225,6 @@ impl Vault {
         {
             return Err(authority_refused(PROVING_KEY_NAMED_LOST));
         }
-        // The proof is this vault's live owner before the door asks; the
-        // writer revalidates it in its transaction (REVIEW-10128 P1 2).
-        self.owner_key_act_owner(authority)?;
         // The keystore is read before the door asks, and this install's
         // signing keys are readied after it: readying them writes
         // (REVIEW-10128 P1 1).

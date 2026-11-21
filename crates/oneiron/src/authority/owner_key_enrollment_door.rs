@@ -1024,7 +1024,7 @@ impl Vault {
         let (public_key, device) = passkey_enrollment_device(input)?;
         self.owner_key_act_owner(authority)?;
         let witness = self.owner_presence(
-            OwnerActImportance::Important,
+            OwnerActImportance::Ordinary,
             owner_presence_reasons::CONFIRM_OWNER_PASSKEY,
         )?;
         let (entry, machine) = self.write_owner_key_enroll_as(

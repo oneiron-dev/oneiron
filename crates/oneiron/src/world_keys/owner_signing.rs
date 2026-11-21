@@ -421,13 +421,13 @@ impl Vault {
         let keystore = self.device_keystore()?;
         // Asked before this install's signing keys are readied: readying
         // them writes (REVIEW-10128 P1 1).
+        let machine = self.prepare_install_signing()?;
+        let slot = self.owner_signing_slot(machine);
+        let pin = self.device_pin();
         let witness = self.owner_presence(
             OwnerActImportance::Important,
             owner_presence_reasons::ENROL_THIS_DEVICE_OWNER_SIGNING_KEY,
         )?;
-        let machine = self.prepare_install_signing()?;
-        let slot = self.owner_signing_slot(machine);
-        let pin = self.device_pin();
         let step = pin.as_deref().map(DevicePin::step);
         if device_pin_is_set(keystore.as_ref()).map_err(super::keystore_error)? {
             return match (pin.as_ref(), step) {
