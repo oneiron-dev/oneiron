@@ -1,9 +1,10 @@
 //! ROOM-LOCAL-CUSTODY (the lead's ruling of 21 Nov, "fingerprint only on
 //! save"; it replaces FIX 2329's refusal): an off-record room keeps a fresh
 //! key a code run's row there holds in its own custody, in memory only, and
-//! the row holds its room handle. Nothing reaches base: no custody record,
-//! no known-value fingerprint. The same value takes the same handle, and the
-//! room's close wipes every value it kept. A value vault custody holds still
+//! the row holds its room handle; a key no span places, which the wall
+//! seals whole (L7-30), is kept there the same way. Nothing reaches base: no
+//! custody record, no known-value fingerprint. The same value takes the same
+//! handle, and the room's close wipes every value it kept. A value vault custody holds still
 //! takes its vault handle in the room's row, as in a reply published there
 //! (FIX 2329, FIX 6647). A bare store holds no custody door, and still
 //! refuses a fresh key.
@@ -198,12 +199,9 @@ fn a_value_in_vault_custody_first_takes_its_handle_in_a_rooms_side_row() -> Test
     Ok(())
 }
 
-/// A second GitHub token, which only the fixture puts in vault custody.
-const OTHER_KEY: &str = "ghp_zyxwvutsrqponmlkjihgfedcba9876543210";
-
 /// A replay row's JSON document that holds [`KEY`] under a credential name
 /// as byte values: no span of the door's text rules places it, so the
-/// side-row wall seals the array whole (L7-30) and mints a record for it.
+/// side-row wall seals the array whole (L7-30).
 fn sealed_key_row() -> TestResult<Vec<u8>> {
     let token = format!("TOKEN={KEY}");
     Ok(serde_json::to_vec(&serde_json::json!({
@@ -213,34 +211,47 @@ fn sealed_key_row() -> TestResult<Vec<u8>> {
 }
 
 #[test]
-fn a_sealed_fresh_key_in_a_rooms_side_row_names_the_off_record_remedy() -> TestResult {
+fn a_sealed_fresh_key_in_a_rooms_side_row_is_kept_in_the_rooms_own_custody() -> TestResult {
     let (_directory, vault) = vault()?;
-    // FIXTURE: vault custody holds another value, so the room's base holds
-    // a known-value index and the wall seals in the room's row.
-    put_vault_replay_row(
-        &vault,
-        EntityId::now(),
-        format!("step output: {OTHER_KEY}\n").as_bytes(),
-    )?;
     let session = vault
         .off_record_session_vault()
         .enter("sess-side-row-sealed-key", OffRecordBackendClass::Local)?;
+    let room = RoomCustody::of(&session);
 
-    let codes = reason_codes(put_room_replay_row(
-        &session,
-        EntityId::now(),
-        &sealed_key_row()?,
-    ))?;
+    let run = EntityId::now();
+    put_room_replay_row(&session, run, &sealed_key_row()?)
+        .map_err(|error| format!("the room refused a key it seals: {error:?}"))?;
+    let stored = room_replay_row(&session, run)?.ok_or("the room keeps the row")?;
+    let row: serde_json::Value = serde_json::from_slice(&stored)?;
+    assert_eq!(row["step"], "output", "the rest of the row is kept: {row}");
+    let handle = row["notes"]
+        .as_str()
+        .ok_or_else(|| format!("the sealed array is one handle: {row}"))?;
     assert!(
-        codes
-            .first()
-            .is_some_and(|code| code.starts_with("gate.secret_scan.")),
-        "the scan's own reason comes first: {codes:?}"
+        handle.starts_with('r'),
+        "the sealed value reads as a room handle: {row}"
     );
+    let kept = room
+        .secret(handle)?
+        .ok_or("the room keeps the sealed value under its handle")?;
+    let spelled: Vec<u8> = serde_json::from_slice(&kept)?;
     assert_eq!(
-        codes.last().copied(),
-        Some(OFF_RECORD_FRESH_KEY),
-        "a value the room's row would seal names the remedy too: {codes:?}"
+        spelled,
+        format!("TOKEN={KEY}").into_bytes(),
+        "the room keeps the sealed array whole"
     );
+    assert_eq!(room.count()?, 1, "one sealed value, one room secret");
+
+    // Nothing reached base.
+    assert_eq!(
+        vault_custody_record_count(&vault)?,
+        0,
+        "no base custody record"
+    );
+    assert!(
+        !vault_knows_value(&vault, &kept)?,
+        "base's known-value index learns no fingerprint before a save"
+    );
+    assert!(base_replay_row(&vault, run)?.is_none(), "no base row");
     Ok(())
 }
