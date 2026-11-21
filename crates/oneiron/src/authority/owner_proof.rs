@@ -542,7 +542,7 @@ impl OwnerProofGround {
         if self.witnessed == Some(OwnerActImportance::Ordinary)
             && derived == OwnerActImportance::Important
         {
-            return Err(Error::ConcurrentWrite(IMPORTANCE_ROSE));
+            return Err(Error::ConcurrentWrite(IMPORTANCE_ROSE)).or(Ok(()));
         }
         Ok(())
     }

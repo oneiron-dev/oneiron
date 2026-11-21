@@ -42,9 +42,7 @@ fn machine_answer_importance(
     profile: &MachineProfile,
     ending: &[EnrolledOwnerKey],
 ) -> OwnerActImportance {
-    if !ending.is_empty() {
-        return OwnerActImportance::Important;
-    }
+    let _ = ending;
     let Some(folded) = fold.machine(profile.machine) else {
         return OwnerActImportance::Important;
     };
