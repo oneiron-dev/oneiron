@@ -474,6 +474,21 @@ impl Vault {
         Ok(())
     }
 
+    /// Files `end` as owed to row `intent`'s session, as an erase of that
+    /// row keeps one (`test_doors::schedule::owe_remote_task_session_end`).
+    ///
+    /// # Errors
+    /// Storage faults.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn owe_remote_task_session_end_for_test(
+        &self,
+        intent: &[u8; 32],
+        end: &RemoteTaskSessionEnd,
+    ) -> IntentLedgerResult<()> {
+        self.with_write_txn_grouped(|txn| SESSION_ENDS.put(&self.store, txn, intent, end))?;
+        Ok(())
+    }
+
     /// Records a poll that found row `intent`'s task still running, as
     /// `status`: its next poll waits the longer of the provider's hint
     /// (`poll_after_ms`) and a backoff that starts at the host's pass and

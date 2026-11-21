@@ -602,6 +602,30 @@ pub fn defer_pollable_remote_task(
     record.id
 }
 
+/// Files an MCP session end as owed to row `intent`, as the erase of a polled task's payload
+/// keeps one (FIX 16028): the served host's next pass sends its DELETE.
+///
+/// # Panics
+///
+/// When it cannot be written.
+pub fn owe_remote_task_session_end(vault: &Vault, intent: [u8; 32]) {
+    use crate::outbound_intent_ledger::{RemoteTaskCredential, RemoteTaskSessionEnd};
+    vault
+        .owe_remote_task_session_end_for_test(
+            &intent,
+            &RemoteTaskSessionEnd {
+                server: "tasks".to_owned(),
+                tool: "run".to_owned(),
+                endpoint: "https://tasks.example.com/mcp".to_owned(),
+                key_ref: None,
+                protocol: "2025-11-25".to_owned(),
+                session: "session-restored".to_owned(),
+                credential: RemoteTaskCredential::Route,
+            },
+        )
+        .expect("owe the session end");
+}
+
 /// The intent ids of the Deferred sends whose tasks are due a poll now, as the served host reads
 /// them, at most 32.
 ///
