@@ -26,7 +26,8 @@
 use oneiron::test_doors::cleanup_archive::archive_as_cleanup;
 use oneiron::test_doors::read_lineage_floor::{
     backfill_first_page, backfill_from_an_older_pass_cursor, end_backfill_without_archived_rows,
-    floor_of, floor_waits, mark_backfill_done, mark_raised, mark_waiting_on,
+    floor_of, floor_waits, land_peer_turn_marked_with_no_thread, mark_backfill_done, mark_raised,
+    mark_waiting_on,
 };
 use oneiron::test_doors::source_audience_binding::{bound_row_read_by, reads};
 use oneiron::{EdgeKind, EntityId};
@@ -629,4 +630,44 @@ fn a_run_again_raises_rows_an_older_pass_left_marked_raised() {
     housekeeping_pass(&mailbox);
     assert_reads_as_its_landed_source(&mailbox, linked, mailbox.policy, "after the run again");
     assert_reads_as_its_landed_source(&mailbox, fact, mailbox.policy, "after the run again");
+}
+
+/// #10265 Opus review 3 P2-1: `turn` is a peer's TURN whose phone mark
+/// names no thread, landed before floors, so it reads to no one; the
+/// cleanup archived it. The backfill raises the archived `turn` and stores
+/// its seal, and so does the owner's restore, which raises it while its
+/// archive marker stands: doctor counts it hidden, and the mailbox's
+/// reader does not read it. Before the fix each raise read the archived
+/// row as an erased shell and left the seal out of its stored floor:
+/// doctor missed it, and the phone read, which reads the stored floor,
+/// admitted it.
+#[test]
+fn an_archived_turn_whose_phone_mark_names_no_thread_keeps_its_seal_through_its_restore() {
+    let mailbox = owners_mailbox();
+    let turn = EntityId::now();
+    land_peer_turn_marked_with_no_thread(&mailbox.vault, turn)
+        .expect("FIXTURE: a peer's TURN, landed before floors");
+    archive(&mailbox, turn);
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault written before floors");
+    assert_eq!(
+        hidden_source_unknown(&mailbox),
+        0,
+        "precondition: no stored floor holds the seal yet",
+    );
+    housekeeping_pass(&mailbox);
+    assert_eq!(
+        hidden_source_unknown(&mailbox),
+        1,
+        "the backfill's raise of the archived TURN left its seal out of its stored floor",
+    );
+    restore(&mailbox, turn);
+    assert_eq!(
+        hidden_source_unknown(&mailbox),
+        1,
+        "the restored TURN's stored floor lost its seal",
+    );
+    assert!(
+        !reads(&mailbox.vault, turn, &[mailbox.reader]).expect("the reader's read"),
+        "LEAK: the mailbox's reader reads a TURN whose phone mark names no thread",
+    );
 }
