@@ -20,6 +20,7 @@
 //! `MaintenanceInverse::revert_in_txn` calling the kind's own inverse.
 use super::{action_mode, curator, digest, identity, invalid, stewardship};
 use crate::attempt_queue::AttemptId;
+use crate::authority::OwnerProofGround;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -117,13 +118,14 @@ impl MaintenanceInverse {
 
     /// Undoes the effect, in the revert's transaction, as `owner`, whose
     /// proof a kind that writes through an owner's door rechecks. Each kind
-    /// leaves alone what a later write changed and lists it in `out`.
+    /// leaves alone what a later write changed and lists it in `out`. A
+    /// proactivity policy's rows sign on `ground`, the door's.
     fn revert_in_txn(
         &self,
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
         owner: WriteActor,
-        proof: &AuthenticatedOwner,
+        (proof, ground): (&AuthenticatedOwner, Option<&OwnerProofGround>),
         now: u64,
         out: &mut MaintenanceRevert,
     ) -> Result<()> {
@@ -131,7 +133,7 @@ impl MaintenanceInverse {
             Self::Finding | Self::RepresentationPlan => Ok(()),
             Self::Curator(inverse) => curator::revert_in_txn(vault, txn, inverse, owner, now, out),
             Self::ProactivityPolicy(inverse) => {
-                digest::revert_policy_in_txn(vault, txn, inverse, out)
+                digest::revert_policy_in_txn(vault, txn, (proof, ground), inverse, out)
             }
             Self::ReachOut => stewardship::revert_reach_out_in_txn(vault, txn, owner, now, out),
             Self::IdentityProvisional(inverse) => {
@@ -219,8 +221,9 @@ pub struct AppliedMaintenance {
     pub reverted: Option<MaintenanceRevert>,
 }
 
-/// The BLAKE3 of a claim's body as it stands; `None` when it is gone.
-pub(super) fn claim_revision_in_txn(
+/// The BLAKE3 of a claim's body as it stands; `None` when it is gone. A
+/// curator finding's `source_hash` is its hex.
+pub(crate) fn claim_revision_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
@@ -570,12 +573,33 @@ impl Vault {
     /// retracted as the owner's, and the owner's receipt names it. The row
     /// keeps the revert, so a second revert returns the first one's result
     /// and the Dreamer never applies the same finding again.
+    ///
+    /// The revert of a proactivity policy request puts the digest's rows
+    /// back as the owner's change. Those rows travel (stage 7c-1), so in a
+    /// rooted vault their acts can carry an owner key's proof: for that
+    /// kind the door asks for the person at this device before its write
+    /// ([`Vault::owner_presence`]) and refuses with that check's refusal.
+    /// Every other kind signs no owner proof here and is not asked.
     pub fn revert_dreamer_maintenance(
         &self,
         owner: &AuthenticatedOwner,
         target: MaintenanceTarget,
         now: u64,
     ) -> Result<MaintenanceRevert> {
+        // The confirm is for an owner proof, so it stands before the write
+        // opens, while the door holds nothing: the prompt can block.
+        let ground = if self
+            .standing_inverse_is_proactivity_policy(target)
+            .unwrap_or(false)
+        {
+            let witness = self.owner_presence(
+                crate::world_keys::OwnerActImportance::Important,
+                crate::world_keys::owner_presence_reasons::PROACTIVITY_POLICY,
+            )?;
+            Some(OwnerProofGround::witnessed(&witness))
+        } else {
+            None
+        };
         let reverted = self.with_write_txn_grouped(|txn| {
             let actor = super::validate_owner_in_txn(self, &*txn, owner)?;
             let mut row = APPLIED
@@ -596,8 +620,14 @@ impl Vault {
                 receipt_ref: String::new(),
                 parent: None,
             };
-            row.inverse
-                .revert_in_txn(self, txn, owner_actor, owner, now, &mut out)?;
+            row.inverse.revert_in_txn(
+                self,
+                txn,
+                owner_actor,
+                (owner, ground.as_ref()),
+                now,
+                &mut out,
+            )?;
             if let Some(finding) = target.finding()
                 && !row.inverse.keeps_finding()
                 && self
@@ -625,5 +655,18 @@ impl Vault {
         })?;
         self.store.notify_proactivity_changes();
         Ok(reverted)
+    }
+
+    /// Whether the applied write `target` names stands unreverted with a
+    /// proactivity policy's inverse, read before the revert's write so its
+    /// door knows to ask. The door reads a failure here as "no": the write
+    /// then answers with its own reason, and a policy's rows it met after
+    /// all would sign no owner proof.
+    fn standing_inverse_is_proactivity_policy(&self, target: MaintenanceTarget) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        Ok(APPLIED.get(&self.store, &txn, &target)?.is_some_and(|row| {
+            row.reverted.is_none()
+                && matches!(row.inverse, MaintenanceInverse::ProactivityPolicy(_))
+        }))
     }
 }

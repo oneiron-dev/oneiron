@@ -1,0 +1,14 @@
+{
+  "name": "vault.consolidation.psych_profile.sources.page",
+  "description": "The owner under proof or a reader with a live Steward grant naming read reads one profile key's ranked active surfaced claims about a person below the restricted band, each version, predicate, band and source; no words.",
+  "input": "crate::snapshot_read::PsychProfileSourcesPageRequest",
+  "output": "crate::claim::ScopedReadResult<crate::snapshot_read::PsychProfileSourcesPage>",
+  "call": "crate::snapshot_read::psych_profile_sources_page(memory, &input)?",
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered"
+}

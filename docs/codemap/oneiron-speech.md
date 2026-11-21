@@ -23,6 +23,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/tts/irodori_moss.rs` | src | L | 9 struct · 7 enum · 1 trait · 7 fn · 2 const | AudioDelivery, AudioEncoding, NormalizedPcm, Provider, ProviderAudio, ProviderConfig, ProviderFailure, ProviderMetadata +8 | Experimental Irodori/MOSS-local submission and PCM normalization only |
 | `src/tts/irodori_moss/submissions.rs` | src | s | 7 crate-vis | — | One incremental Text's unsent rest (FIX 10213) |
 | `src/tts/openai_compat.rs` | src | s | 1 struct · 1 fn | OpenAiTtsBackend | The OpenAI-compatible speech wire (`/v1/audio/speech`) |
-| `src/tts/voxcpm2.rs` | src | s | 2 struct · 1 enum · 7 fn | RenderReply, Transcript, TranscriptPlacement | The VoxCPM2 worker's render wire (`deploy/voxcpm2`, OF-410), as the server's own-server speech rung speaks it |
+| `src/tts/voxcpm2.rs` | src | s | 6 fn · 1 const | — | The VoxCPM2 worker's voice-socket codec (`deploy/voxcpm2`, OF-410), as the server's own-server speech rung… |
+| `tests/hosted_speech_wire.rs` | test | s | — | — | The hosted TTS request wire (Cartesia, ElevenLabs): the path, body, version and voice rules… |
 | `tests/openai_compat_family.rs` | test | s | — | — | L9-25 PR 4 (ARCH-0036 `#adapters`, MED-1 = A): the OpenAI-compatible media backend splits by family over one… |
 | `tests/server_codecs.rs` | test | m | — | — | The server speech rungs' codecs on oneiron-speech's public paths (L9-25 PR 3b): the VoxCPM2 render framing… |

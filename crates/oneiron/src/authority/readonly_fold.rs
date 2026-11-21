@@ -9,9 +9,12 @@ use crate::{
     error::{Error, RecordError, Result},
 };
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::ControlFlow;
 use std::sync::{Arc, Mutex, PoisonError};
 
 mod adopted;
+#[cfg(oneiron_test_support)]
+pub(crate) mod adopted_door;
 mod arriving;
 mod held_rows;
 mod row_receipts;
@@ -167,6 +170,13 @@ impl AuthorityView {
     /// `scope_commitment_mismatch`.
     pub(crate) fn scope_commitment_mismatches(&self) -> &BTreeSet<[u8; 32]> {
         &self.scope_commitment_mismatches
+    }
+
+    /// Whether `other` holds the same decision image as this view: one
+    /// shared fold, or an equal one (SELECTOR-RELEASE-POINT = B). The held
+    /// pacts are part of the fold, so they need no second compare.
+    pub(crate) fn same_image(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.fold, &other.fold) || self.fold == other.fold
     }
 }
 
@@ -702,6 +712,7 @@ pub(super) fn history_required(request: &AuthorityHistoryRequest) -> Error {
         vault_id: request.vault_id,
         checkpoint: request.checkpoint,
         missing: request.missing.iter().copied().collect(),
+        reason: request.reason,
     })
 }
 
@@ -722,10 +733,12 @@ pub(super) fn history_required_request(error: &Error) -> Option<AuthorityHistory
             vault_id,
             checkpoint,
             missing,
+            reason,
         }) => Some(AuthorityHistoryRequest {
             vault_id: *vault_id,
             checkpoint: *checkpoint,
             missing: missing.iter().copied().collect(),
+            reason: *reason,
         }),
         _ => None,
     }
@@ -843,6 +856,7 @@ fn fold_stored_tail_in_txn(
                 .or_else(|| tail.iter().find_map(|(_, entry)| entry.vault_id)),
             checkpoint: checkpoint.map(|(head, _)| head).or(checkpoint_head),
             missing: named,
+            reason: Some(oneiron_contracts::authority::AuthorityHistoryReason::UnheldRows),
         }));
     }
     // Read once: all entries in this fold share one snapshot clock and marker.
@@ -1048,6 +1062,24 @@ pub(super) fn authority_log_rows_in_txn(
         .into_iter()
         .map(|id| Ok((id, authority_log_body_in_txn(store, txn, &id)?)))
         .collect()
+}
+
+/// Hands the signed body of each AUTHORITY_LOG row to `visit`, in id order
+/// and one row read at a time, until `visit` answers `Break`; `None` when it
+/// saw every row. For a reader that looks for one row:
+/// [`authority_log_rows_in_txn`] holds every body before its caller sees the
+/// first.
+pub(super) fn find_in_authority_log_rows_in_txn<T>(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    mut visit: impl FnMut(&[u8]) -> Result<ControlFlow<T>>,
+) -> Result<Option<T>> {
+    for id in authority_log_ids_in_txn(store, txn)? {
+        if let ControlFlow::Break(found) = visit(&authority_log_body_in_txn(store, txn, &id)?)? {
+            return Ok(Some(found));
+        }
+    }
+    Ok(None)
 }
 
 /// The store ids of the AUTHORITY_LOG rows, in id order, read from the type

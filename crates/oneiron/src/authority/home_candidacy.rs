@@ -19,7 +19,9 @@
 //! has not answered never stand as candidates through a declaration
 //! (Engine 10-19, ruling 2).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+
+use oneiron_persistent_collections::{PersistentMap, PersistentSet};
 
 use crate::error::{Error, Result};
 use crate::store::Store;
@@ -70,8 +72,8 @@ impl DeclaredHomeCandidacy {
 /// declaration of it replaced, and every one a later one replaced.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct HomeCandidacyState {
-    live: BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, DeclaredHomeCandidacy>>,
-    replaced: BTreeSet<AuthorityEntryHash>,
+    live: PersistentMap<EntityId, PersistentMap<AuthorityEntryHash, DeclaredHomeCandidacy>>,
+    replaced: PersistentSet<AuthorityEntryHash>,
 }
 
 /// The `HomeCandidacy` transition, after the shape, signature, retired,
@@ -128,16 +130,21 @@ pub(super) fn apply_home_candidacy(
 pub(super) fn merge_home_candidacies(merged: &mut HomeCandidacyState, right: &HomeCandidacyState) {
     merged.replaced.extend(right.replaced.iter().copied());
     for (machine, declarations) in &right.live {
-        let live = merged.live.entry(*machine).or_default();
-        for (hash, declaration) in declarations {
-            live.entry(*hash).or_insert_with(|| declaration.clone());
-        }
+        merged.live.modify_or_default(*machine, |live| {
+            for (hash, declaration) in declarations {
+                live.entry(*hash).or_insert_with(|| declaration.clone());
+            }
+        });
     }
+    // A machine whose declarations stay as they were is not written.
     let HomeCandidacyState { live, replaced } = merged;
-    live.retain(|_, declarations| {
-        declarations.retain(|hash, _| !replaced.contains(hash));
-        !declarations.is_empty()
-    });
+    let machines: Vec<EntityId> = live.keys().copied().collect();
+    for machine in &machines {
+        live.modify(machine, |declarations| {
+            declarations.retain(|hash, _| !replaced.contains(hash));
+        });
+    }
+    live.retain(|_, declarations| !declarations.is_empty());
 }
 
 /// Each machine's newest declaration: the one no later declaration of it
@@ -172,6 +179,11 @@ pub(crate) struct JudgedHomeCandidacy {
     /// It stands as one of the owner's machines under this install's pin,
     /// under that same key: what makes it a candidate.
     pub(crate) owner_machine: bool,
+    /// Its machine holds a full copy here ([`AuthorityFold::holds_full_copy`]):
+    /// the election ranks it only while it does, once any declaration it
+    /// ranks holds one (CROSS-ARCH-0024 `#my-network` item 04: "Only a full
+    /// copy can become home").
+    pub(crate) full_copy: bool,
 }
 
 impl AuthorityFold {
@@ -202,6 +214,7 @@ impl AuthorityFold {
             cloud: declared.cloud,
             stands,
             owner_machine,
+            full_copy: self.holds_full_copy(machine),
         })
     }
 }

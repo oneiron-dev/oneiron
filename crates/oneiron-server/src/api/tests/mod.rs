@@ -2,6 +2,7 @@ use super::*;
 
 mod agent_definition_doors;
 mod ai_chat;
+mod ai_chat_self_compaction;
 mod depth_quality;
 mod memory_reason_repairs;
 use axum::body::{Body, to_bytes};
@@ -28,10 +29,13 @@ mod asset_forms;
 mod billing_usage;
 mod board_host_events;
 mod board_stream_publisher;
+mod chat_retrieval_turn;
+mod chat_witness_ask_resume;
 mod companion;
 mod context_board_history;
 mod context_board_standing;
 mod context_pack_disclosure;
+mod context_pack_phonetic_vector;
 mod context_pack_v4;
 mod contract_snapshots;
 mod conversation_dag;
@@ -42,6 +46,7 @@ mod credential_reads;
 mod device_local_reads;
 mod facet_read;
 mod feedback_inbox;
+mod mcp_body_budget;
 mod mcp_booking_publication;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod mcp_code_admission;
@@ -64,6 +69,7 @@ mod retrieval_bounds;
 mod retrieval_bounds_rows;
 mod retrieval_depth_quality;
 mod retrieval_shaping;
+mod room_structure_doors;
 mod run_gate;
 mod run_tree;
 mod search_deadline;
@@ -73,6 +79,7 @@ mod support_mcp_credentials;
 use support_mcp_credentials::*;
 mod surface_events;
 mod surface_routes;
+mod turn_action_retrieval_turn;
 mod vad_and_error_mapping;
 use support_contract::*;
 use support_mcp::*;
@@ -214,16 +221,19 @@ pub(super) async fn route_bytes(
 ) -> (StatusCode, HeaderMap, Bytes) {
     let request = bind_mcp_request(&server, request);
     let request = slip_credentials::bind_request(&server, request);
-    let response = api_routes(server)
-        .oneshot(request)
-        .await
-        .expect("route response");
-    let status = response.status();
-    let headers = response.headers().clone();
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("response body");
-    (status, headers, body)
+    crate::test_engine_stack::on_engine_stack(async move {
+        let response = api_routes(server)
+            .oneshot(request)
+            .await
+            .expect("route response");
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        (status, headers, body)
+    })
+    .await
 }
 
 pub(super) fn assert_default_policy_manifest_fixture(vault: &oneiron::Vault) {
@@ -468,16 +478,19 @@ pub(super) async fn route_json(
 ) -> (StatusCode, Value) {
     let request = bind_mcp_request(&server, request);
     let request = slip_credentials::bind_request(&server, request);
-    let response = api_routes(server)
-        .oneshot(request)
-        .await
-        .expect("route response");
-    let status = response.status();
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("JSON response body");
-    let body: Value = serde_json::from_slice(&body).expect("JSON response");
-    (status, body)
+    crate::test_engine_stack::on_engine_stack(async move {
+        let response = api_routes(server)
+            .oneshot(request)
+            .await
+            .expect("route response");
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("JSON response body");
+        let body: Value = serde_json::from_slice(&body).expect("JSON response");
+        (status, body)
+    })
+    .await
 }
 
 /// Authenticated-test server: the host secret is configured (so the vault is
@@ -758,6 +771,7 @@ pub(super) fn witness_vad_message_fixture(
             occurred_at,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .expect("witness fixture turn");
 }
@@ -912,6 +926,12 @@ fn seed_claim_in_world(
 /// Seeds an agent-bound, active email identity the surface-event routes can
 /// address, and returns the address plus its agent ref.
 pub(super) fn seed_surface_identity(server: &SyncServer, counter: u128, address: &str) -> String {
+    // OF-519: a seeded vault refuses an "email" submit until the oneiron.email
+    // built-in pack is installed Active with a checked setup; these tests cover
+    // the routes, not the pack, so the fixture drops the seed marker (same door
+    // as tests/vault_trusted_contacts_doors.rs).
+    oneiron::test_doors::builtin_pack_seed::remove_builtin_pack_seed_marker(&server.vault)
+        .expect("remove the built-in pack seed marker");
     let identity_ref = seeded_test_entity_id(counter);
     let agent_ref = seeded_test_entity_id(counter + 1);
     let identity = oneiron::channel_identity::ChannelIdentity::requested(

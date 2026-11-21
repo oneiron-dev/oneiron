@@ -15,10 +15,15 @@
 //!
 //! The machine writes `held` once a home session's first round completes
 //! while its lane runs sync all, and withdraws it in the transaction of a
-//! switch to sync opened; "no mark" already means "not held", so a first
-//! `held = false` writes nothing.
+//! switch to sync opened and at each residence refresh that resolves sync
+//! opened, a lost home election included; "no mark" already means "not
+//! held", so a first `held = false` writes nothing. A write outside a switch
+//! lands only while the stored residence mode, read in its own transaction,
+//! agrees with it.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+
+use oneiron_persistent_collections::{PersistentMap, PersistentSet};
 
 use crate::error::{Error, Result};
 use crate::{EntityId, TimeRange, Vault};
@@ -48,8 +53,8 @@ pub(crate) struct DeclaredFullCopyMark {
 /// it replaced, and every one a later one replaced.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct FullCopyMarkState {
-    live: BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, DeclaredFullCopyMark>>,
-    replaced: BTreeSet<AuthorityEntryHash>,
+    live: PersistentMap<EntityId, PersistentMap<AuthorityEntryHash, DeclaredFullCopyMark>>,
+    replaced: PersistentSet<AuthorityEntryHash>,
 }
 
 impl FullCopyMarkState {
@@ -109,16 +114,21 @@ pub(super) fn apply_full_copy_mark(
 pub(super) fn merge_full_copy_marks(merged: &mut FullCopyMarkState, right: &FullCopyMarkState) {
     merged.replaced.extend(right.replaced.iter().copied());
     for (machine, marks) in &right.live {
-        let live = merged.live.entry(*machine).or_default();
-        for (hash, mark) in marks {
-            live.entry(*hash).or_insert_with(|| mark.clone());
-        }
+        merged.live.modify_or_default(*machine, |live| {
+            for (hash, mark) in marks {
+                live.entry(*hash).or_insert_with(|| mark.clone());
+            }
+        });
     }
+    // A machine whose marks stay as they were is not written.
     let FullCopyMarkState { live, replaced } = merged;
-    live.retain(|_, marks| {
-        marks.retain(|hash, _| !replaced.contains(hash));
-        !marks.is_empty()
-    });
+    let machines: Vec<EntityId> = live.keys().copied().collect();
+    for machine in &machines {
+        live.modify(machine, |marks| {
+            marks.retain(|hash, _| !replaced.contains(hash));
+        });
+    }
+    live.retain(|_, marks| !marks.is_empty());
 }
 
 /// Each machine's newest mark: the one no later mark of it replaced; of
@@ -235,11 +245,12 @@ impl Vault {
     }
 
     /// Writes this install's own full-copy mark saying `held` in `txn`
-    /// (L7-47): the writer the first full round under sync all and the lane
-    /// switch to sync opened share. No id, no key, or a key the fold does
-    /// not admit here writes nothing (`Ok(None)`): an install that cannot
-    /// sign has never written a mark, and a lane switch must not fail for
-    /// it. The caller loads the install signing first, with
+    /// (L7-47): the writer the first full round under sync all, the
+    /// residence refresh and the lane switch to sync opened share. No id, no
+    /// key, or a key the fold does not admit here writes nothing
+    /// (`Ok(None)`): an install that cannot sign has never written a mark,
+    /// and a lane switch must not fail for it. The caller loads the install
+    /// signing first, with
     /// [`Self::load_install_signing_if_minted`], before opening `txn`. It
     /// does not commit.
     ///

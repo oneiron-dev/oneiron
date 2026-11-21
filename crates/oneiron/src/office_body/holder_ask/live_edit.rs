@@ -7,13 +7,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::{Error, GateError, Result};
+use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
 use crate::task_verb::{
     ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOption,
     TaskAskOptionId, TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSource,
-    TaskAskSpec, TaskAskStatus, TaskAskTarget, TaskAskWord,
+    TaskAskSpec, TaskAskStatus, TaskAskTarget, TaskAskWord, ask_intent,
 };
 
 use super::super::consent::{
@@ -253,9 +253,8 @@ fn live_edit_revision(artifact: &EntityId, editor: &EntityId, owners: &[EntityId
 }
 
 /// Whether `intent_key` addresses a live-edit holder ask (FIX 596): the
-/// cheap gate shared word admission checks before calling
-/// [`guard_live_edit_word`]. The prefix admits nothing by itself: a routed
-/// ask is one its group index names.
+/// cheap gate checked before the route index is read. The prefix admits
+/// nothing by itself: a routed ask is one its group index names.
 pub(crate) fn is_live_edit_ask(intent_key: &str) -> bool {
     intent_key
         .strip_prefix(LIVE_EDIT_ASK_INTENT)
@@ -264,12 +263,14 @@ pub(crate) fn is_live_edit_ask(intent_key: &str) -> bool {
 
 /// The intent key the route `route` names, rebuilt from its canonical
 /// fields; the raise writes it, the route index re-parses it.
-fn live_edit_intent_key(route: &LiveEditRoute) -> String {
-    format!(
-        "{LIVE_EDIT_ASK_INTENT}/{}/{}/{}",
-        route.artifact.to_hex(),
-        route.editor.to_hex(),
-        route.revision,
+pub(crate) fn live_edit_intent_key(route: &LiveEditRoute) -> String {
+    ask_intent::join(
+        &format!("{LIVE_EDIT_ASK_INTENT}/"),
+        &[
+            route.artifact.to_hex().as_str(),
+            route.editor.to_hex().as_str(),
+            route.revision.to_string().as_str(),
+        ],
     )
 }
 
@@ -336,40 +337,32 @@ fn ask_invalid() -> Error {
     Error::Record(crate::error::RecordError::InvalidTaskBody("tasks.ask.fact"))
 }
 
-fn owner_not_authenticated(reason: &'static str) -> Error {
-    Error::Gate(GateError::ConsentOwnerNotAuthenticated(reason))
-}
-
-/// Refuses a word on a live-edit ask unless it is the asked owner's own act
-/// on a route that still waits (FIX 596); any other ask passes untouched.
-/// Runs in shared word admission, before the word is recorded, so an
-/// unauthorized word can never occupy First and strand the owner's later
-/// tap. `owns_revision` is the admission node's check, computed by the
-/// caller that holds the ask group.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one admission check over the word, its writer and the owner proof"
-)]
-pub(crate) fn guard_live_edit_word(
+/// The owners a live-edit ask asks (FIX 596): those its route names; `None`
+/// for every other ask. Settlement cuts the ask on a first word only under
+/// one of their live proofs (`task_verb::ask_guard`).
+pub(crate) fn live_edit_asked_owners_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
     id: EntityId,
     intent_key: &str,
-    source: TaskAskSource,
-    actor: EntityId,
+) -> Result<Option<Vec<EntityId>>> {
+    Ok(live_edit_routed_in(vault, txn, id, intent_key)?.map(|route| route.owners))
+}
+
+/// [`live_edit_asked_owners_in`], once `word` names one option the ask
+/// offered while its route still waits (FIX 596); any other word is
+/// refused. Shared word admission then asks the asked owner's own proof of
+/// it, before the word is recorded (`task_verb::ask_guard`).
+pub(crate) fn live_edit_offered_owners_in(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    id: EntityId,
+    intent_key: &str,
     word: &TaskAskWord,
-    owner: Option<&crate::consent::AuthenticatedOwner>,
-    owns_revision: bool,
-) -> Result<()> {
+) -> Result<Option<Vec<EntityId>>> {
     let Some(route) = live_edit_routed_in(vault, txn, id, intent_key)? else {
-        return Ok(());
+        return Ok(None);
     };
-    // The owner's own tap, never a word given for them or a soft confirm.
-    if word.companion_for.is_some() || word.inform_for.is_some() || word.confirmation.is_some() {
-        return Err(ask_invalid());
-    }
-    // A definitive answer names one option the ask offered, while the route
-    // still waits.
     if word
         .option
         .as_ref()
@@ -379,66 +372,7 @@ pub(crate) fn guard_live_edit_word(
     {
         return Err(ask_invalid());
     }
-    // Only the admission node settles the ask, so a word anywhere else
-    // could never settle under the proof that admitted it.
-    if !owns_revision {
-        return Err(owner_not_authenticated(
-            "a live-edit answer is given on the node that admitted the ask",
-        ));
-    }
-    let Some(owner) = owner else {
-        return Err(owner_not_authenticated(
-            "a live-edit answer needs the owner's own authenticated word",
-        ));
-    };
-    let proven = owner.revalidate_in_txn(vault, txn)?;
-    if source != TaskAskSource::Human || proven != actor || !route.owners.contains(&proven) {
-        return Err(owner_not_authenticated(
-            "a live-edit answer is the asked owner's own word",
-        ));
-    }
-    if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &proven)? {
-        return Err(owner_not_authenticated(
-            "a live-edit answer is a live vault owner's word",
-        ));
-    }
-    Ok(())
-}
-
-/// Whether settlement may cut the ask `id` for `reason` with `decision`
-/// under `owner` (FIX 596). A live-edit ask's first word settles its route
-/// only under the live proof of the asked owner who gave it — for either
-/// option, so a REJECT still cuts while minting nothing; without that
-/// proof the ask stays open, and only its deadline or staleness closes it,
-/// on the hold default.
-pub(crate) fn may_cut_live_edit(
-    vault: &Vault,
-    txn: &RoTxn<'_>,
-    id: EntityId,
-    intent_key: &str,
-    reason: TaskAskSettlementReason,
-    decision: &TaskAskDecision,
-    owner: Option<&crate::consent::AuthenticatedOwner>,
-) -> Result<bool> {
-    if matches!(
-        reason,
-        TaskAskSettlementReason::Deadline | TaskAskSettlementReason::Stale
-    ) {
-        return Ok(true);
-    }
-    let Some(route) = live_edit_routed_in(vault, txn, id, intent_key)? else {
-        return Ok(true);
-    };
-    let TaskAskDecision::First(answer) = decision else {
-        return Ok(true);
-    };
-    match owner {
-        Some(owner) => {
-            let proven = owner.revalidate_in_txn(vault, txn)?;
-            Ok(proven == answer.actor_ref && route.owners.contains(&proven))
-        }
-        None => Ok(false),
-    }
+    Ok(Some(route.owners))
 }
 
 /// Whether a settled ACCEPT still covers its editor (FIX 596): the route
@@ -568,4 +502,32 @@ pub(crate) fn resolve_live_edit_holder_ask_in_txn(
     }
     mint_live_edit_grant_in_txn(vault, txn, owner, &route.artifact, &route.editor)?;
     Ok(())
+}
+
+/// Puts a live-edit route for the checkpoint-pins door: `group`'s ask of
+/// `owners` whether `editor` may edit `artifact` at `revision`, the owners
+/// sorted as the admission sorts them.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_live_edit_route_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    group: &EntityId,
+    artifact: &EntityId,
+    editor: &EntityId,
+    owners: &[EntityId],
+    revision: u64,
+) -> crate::error::Result<()> {
+    let mut owners = owners.to_vec();
+    owners.sort();
+    LIVE_EDIT_GROUPS.put(
+        store,
+        txn,
+        group,
+        &LiveEditRoute {
+            artifact: *artifact,
+            editor: *editor,
+            owners,
+            revision,
+        },
+    )
 }

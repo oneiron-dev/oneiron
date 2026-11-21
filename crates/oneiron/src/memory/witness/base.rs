@@ -79,7 +79,11 @@ impl Memory<'_> {
     pub fn witness(&self, turn: &WitnessTurn) -> MemoryResult<WitnessReceipt> {
         self.run_witness(
             turn,
-            WitnessTarget::Base { route: None },
+            WitnessTarget::Base {
+                route: None,
+                mint_conversation_body: None,
+                phone_birth: None,
+            },
             WitnessDoor::Guest,
             || {},
             |_| Ok(()),
@@ -157,6 +161,8 @@ impl Memory<'_> {
             turn,
             WitnessTarget::Base {
                 route: session_route,
+                mint_conversation_body: None,
+                phone_birth: None,
             },
             WitnessDoor::Guest,
             before_txn,
@@ -177,6 +183,8 @@ impl Memory<'_> {
             turn,
             WitnessTarget::Base {
                 route: session_route,
+                mint_conversation_body: None,
+                phone_birth: None,
             },
             WitnessDoor::HostExecutor,
             || {},
@@ -205,6 +213,40 @@ impl Memory<'_> {
             turn,
             WitnessTarget::Base {
                 route: session_route,
+                mint_conversation_body: None,
+                phone_birth: None,
+            },
+            WitnessDoor::Guest,
+            before_txn,
+            prepare,
+            |txn, _| effect(txn),
+        )
+    }
+
+    /// [`Self::witness_with_route_prepare_and_txn_effect`] for the phone keep
+    /// under its proof `birth`: a base landing mints the conversation, when
+    /// it mints one, with the line agent's mark alone; an existing
+    /// conversation's body is never rewritten by the landing. The same path
+    /// stamps the TURN it mints and every MESSAGE it puts with the thread
+    /// (VOICE-PHONE-AGENT-REACH R1 fix), and puts the thread's rows through
+    /// the phone keep's door (R2 review F1).
+    pub(crate) fn witness_with_minted_conversation_body_and_txn_effect(
+        &self,
+        turn: &WitnessTurn,
+        birth: crate::voice_call::PhoneThreadBirth,
+        callback: crate::store::Callback,
+        before_txn: impl FnOnce(),
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<Option<RoomRegenerationPermit>>,
+        effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<WitnessReceipt> {
+        let minted_conversation_body = crate::voice_call::phone_thread_mark_body(birth.agent())?;
+        self.run_witness_as(
+            callback,
+            turn,
+            WitnessTarget::Base {
+                route: None,
+                mint_conversation_body: Some(minted_conversation_body),
+                phone_birth: Some(birth),
             },
             WitnessDoor::Guest,
             before_txn,
@@ -263,7 +305,11 @@ impl Memory<'_> {
     ) -> MemoryResult<WitnessReceipt> {
         self.run_witness(
             turn,
-            WitnessTarget::Base { route: None },
+            WitnessTarget::Base {
+                route: None,
+                mint_conversation_body: None,
+                phone_birth: None,
+            },
             WitnessDoor::Guest,
             || {},
             prepare,
@@ -456,6 +502,15 @@ impl Memory<'_> {
                 plan.conversation_id,
             )?;
         }
+        // L7-05: a work-talk conversation admits its two bound writers only;
+        // a third writer is refused here. The binding needs no settle step:
+        // work-talk turns are ordinary company content.
+        let _work_talk = crate::workspace_roster::admit_work_talk_witness(
+            self.vault,
+            wtxn,
+            plan.conversation_id,
+            self.actor,
+        )?;
         Ok(BaseGuards::Clear {
             mint_conversation: current_conversation.is_none(),
             person_author,
@@ -498,11 +553,17 @@ impl Memory<'_> {
                 crate::source_audience::mark_birth_in_txn(self.vault, wtxn, birth, &id)?;
             }
         }
-        let mut batch = self.vault.batch_in();
+        // A TURN an import births is born under its stamp's facet, when it
+        // names one; the vault default otherwise.
+        let mut batch = self
+            .vault
+            .batch_in()
+            .mask(plan.imported.as_ref().and_then(|stamp| stamp.facet));
         if mint_conversation {
             batch = put_container(
                 batch,
                 birth,
+                plan.phone_birth.as_ref(),
                 &plan.conversation_id,
                 ENTITY_TYPE_CONVERSATION,
                 (plan.occurred, plan.learned_at),
@@ -518,6 +579,7 @@ impl Memory<'_> {
                 batch = put_container(
                     batch,
                     birth,
+                    plan.phone_birth.as_ref(),
                     &plan.turn_id,
                     ENTITY_TYPE_TURN,
                     (plan.occurred, plan.learned_at),
@@ -544,6 +606,7 @@ impl Memory<'_> {
                     batch = put_container(
                         batch,
                         birth,
+                        plan.phone_birth.as_ref(),
                         &plan.turn_id,
                         ENTITY_TYPE_TURN,
                         (record.occurred, redirtied_at),
@@ -769,13 +832,19 @@ fn resolve_entity_ref_in_txn(
 fn put_container<'b>(
     batch: crate::batch::BatchBuilder<'b>,
     birth: Option<&crate::source_audience::SourceAudienceBirth>,
+    phone: Option<&crate::voice_call::PhoneThreadBirth>,
     id: &EntityId,
     entity_type: u8,
     (occurred, learned_at): (crate::temporal::TimeRange, u64),
     body: &[u8],
 ) -> crate::batch::BatchBuilder<'b> {
-    match birth {
-        Some(birth) => batch.put_source_bound(id, entity_type, occurred, learned_at, body, birth),
-        None => batch.put(id, entity_type, occurred, learned_at, body),
+    match (birth, phone) {
+        (Some(birth), _) => {
+            batch.put_source_bound(id, entity_type, occurred, learned_at, body, birth)
+        }
+        (None, Some(phone)) => {
+            batch.put_phone_bound(id, entity_type, occurred, learned_at, body, phone)
+        }
+        (None, None) => batch.put(id, entity_type, occurred, learned_at, body),
     }
 }

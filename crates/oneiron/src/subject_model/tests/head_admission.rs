@@ -123,11 +123,11 @@ fn scoped_subject_history_is_not_a_supersession_target() -> Result<()> {
     })
 }
 
-// FIX [LIBTEST-QUARANTINE-SUBJECT-MODEL-TESTS-HEAD-ADMISSION-ITEMS]: the lib test target's type check fails here (1 errors: E0308 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn relational_subject_history_is_not_a_supersession_target() -> Result<()> {
-    assert_excluded_history_survives(|body| body.rel = Some(entity(0x88)))
+    assert_excluded_history_survives(|body| {
+        body.rel = Some(crate::claim::RelationshipSet::from([entity(0x88)]));
+    })
 }
 
 #[test]
@@ -159,8 +159,9 @@ fn another_subjects_indexed_head_is_neither_read_nor_superseded() -> Result<()> 
                 set_person_substrate(&vault, first, PersonSubstrate::Meat, writer(), 100)?,
             )
         } else {
-            let actor = seed(&vault, entity(0x8B), ENTITY_TYPE_AGENT_DEF);
-            let other_actor = seed(&vault, entity(0x8C), ENTITY_TYPE_AGENT_DEF);
+            let actor = seed_unanchored_agent_definition(&vault, entity(0x8B), "subject_model");
+            let other_actor =
+                seed_unanchored_agent_definition(&vault, entity(0x8C), "subject_model");
             (
                 other_actor,
                 anchor_actor_subject(&vault, actor, first, writer(), 100)?,

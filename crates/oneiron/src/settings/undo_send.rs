@@ -22,13 +22,20 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::authority::ActSurface;
+use crate::authority::{ActSurface, OwnerProofGround};
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryResult};
 use crate::outbound::{UndoSendFirstAgentSend, outbound_capability_manifest};
 use crate::policy_setting_doors::{PolicySetting, record_policy_setting_act_in_txn};
 use crate::side_table::{self, Named, SideTable};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{EntityId, Vault};
 
 /// The connector whose sends never take a window: a legal send (prepare and
@@ -178,7 +185,9 @@ impl Vault {
     /// owner is revalidated in the writer. A change records the owner's act,
     /// with the setting it replaces, in the same commit when `surface` names
     /// where the owner said so; a setting equal to the one in force writes
-    /// and records nothing. Answers the setting as it now reads.
+    /// and records nothing. Answers the setting as it now reads. The door
+    /// does not read the value in force before its write, so it asks for
+    /// every change it cannot tell from its arguments to be a narrowing.
     ///
     /// # Errors
     ///
@@ -191,6 +200,17 @@ impl Vault {
         setting: &UndoSendSetting,
     ) -> Result<UndoSendSetting> {
         let setting = setting.normalized()?;
+        // No surface names no act, so none is asked for; with one the act
+        // the write may record is asked before it.
+        let ground = if surface.is_some() {
+            let witness = self.owner_presence(
+                OwnerActImportance::Important,
+                owner_presence_reasons::UNDO_SEND,
+            )?;
+            Some(OwnerProofGround::witnessed(&witness))
+        } else {
+            None
+        };
         self.with_write_txn_grouped(|txn| {
             let actor: EntityId = owner.revalidate_in_txn(self, txn)?;
             let prior = undo_send_setting_in_txn(self, txn)?;
@@ -207,7 +227,7 @@ impl Vault {
                 )?;
                 // The signed record goes last, best effort (FIX 4624).
                 if let Some(act) = signed {
-                    self.record_policy_setting_op_in_txn(txn, act);
+                    self.record_policy_setting_op_in_txn(txn, ground.as_ref(), act);
                 }
             }
             Ok(setting)
@@ -242,4 +262,34 @@ pub fn set_undo_send_embedded(
         Some(ActSurface::ThisInstall),
         &input,
     )?)
+}
+
+/// Lands one archived undo-send envelope: [`UndoSendSetting::normalized`] must accept the value
+/// unchanged, then an absent-key install of the exact source bytes.
+pub(super) fn land_archived_undo_send_row_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&UNDO_SEND, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    // The writer stores `normalized` output, so a value it re-spells or
+    // reorders is not a faithful stored row and stays retained.
+    let normalized = match value.normalized() {
+        Ok(normalized) => normalized,
+        Err(_) => {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidValue,
+            ));
+        }
+    };
+    if normalized != value {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&UNDO_SEND, vault, txn, permit, &key, row)
 }

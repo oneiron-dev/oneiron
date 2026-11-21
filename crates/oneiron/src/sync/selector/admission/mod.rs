@@ -1,4 +1,6 @@
-//! Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone rejection.
+//! Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and
+//! tombstone admission: a live peer's record tombstones under its delivering pact, every other
+//! tombstone refused.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -22,12 +24,20 @@ use crate::error::RecordError;
 use crate::error::SyncError;
 
 mod blobs;
+#[cfg(feature = "sync")]
+mod peer_tombstones;
 mod revalidate;
 mod routing;
 mod state;
 
 use self::blobs::copy_admitted_entities;
+#[cfg(feature = "sync")]
+pub(crate) use self::blobs::is_peer_task_authority_fact_refusal;
 pub(crate) use self::blobs::{FEDERATION_IMPORT_SOURCE, admit_federated_entity_blob};
+#[cfg(feature = "sync")]
+pub(in crate::sync) use self::peer_tombstones::is_membership_or_topology_kind;
+#[cfg(feature = "sync")]
+use self::peer_tombstones::{DeliveringPact, TombstoneAdmission, admitted_peer_tombstones};
 #[cfg(feature = "test-hooks")]
 pub use self::revalidate::put_selector_test_federation_grant;
 pub(in crate::sync) use self::revalidate::{
@@ -51,8 +61,9 @@ enum ImportGrading {
     Imported { scale: f32 },
     /// A verified member's write in this shared vault, first-party to it
     /// (ARCH-0043): a claim keeps its source and confidence, and a transcript
-    /// takes no import stamp.
-    FirstParty,
+    /// takes no import stamp. A room body is judged as `sender`'s
+    /// (ROOM-BODY-REPLICA-SETTINGS).
+    FirstParty { sender: EntityId },
 }
 
 /// Produces locally admitted window update bytes for a member/guest federation
@@ -91,6 +102,7 @@ pub fn admit_federated_window_update(
             scale: super::DEFAULT_FEDERATED_CONFIDENCE_SCALE,
         },
         source_vault,
+        TombstoneAdmission::RefuseUpdate,
     )?;
     Ok(admitted
         .parts()
@@ -113,12 +125,20 @@ pub(in crate::sync) fn admit_peer_window_update(
     role: FederationAdmissionRole,
     peer: EntityId,
 ) -> Result<AdmittedUpdate> {
-    admit_guest_window_update(vault, key, update, role, peer, None)
+    admit_guest_window_update(
+        vault,
+        key,
+        update,
+        role,
+        peer,
+        None,
+        TombstoneAdmission::RefuseUpdate,
+    )
 }
 
 /// [`admit_peer_window_update`] for a guest whose pact names `guest`, its
 /// source vault: each of its CLAIMs lands in its foreign WORLD copy
-/// ([`Routes`], FIX 3497).
+/// ([`Routes`], FIX 3497). Its tombstones are admitted as `tombstones` says.
 #[cfg(feature = "sync")]
 fn admit_guest_window_update(
     vault: &Vault,
@@ -127,6 +147,7 @@ fn admit_guest_window_update(
     role: FederationAdmissionRole,
     peer: EntityId,
     guest: Option<&[u8; 32]>,
+    tombstones: TombstoneAdmission<'_>,
 ) -> Result<AdmittedUpdate> {
     let lane = crate::federation::facet_read::HeldLane::Peer(peer).key();
     // The owner's scale for this peer, read once for the whole update.
@@ -139,6 +160,7 @@ fn admit_guest_window_update(
         Some(lane),
         ImportGrading::Imported { scale },
         guest,
+        tombstones,
     )
 }
 
@@ -152,6 +174,13 @@ fn admit_guest_window_update(
 /// names derives (FIX 3497). A guest's update with no unambiguous active pact
 /// (`delivery` is `None`) has no such source and is refused, never landed as
 /// this vault's own.
+///
+/// Under a delivering pact, member or guest, a record tombstone the update
+/// carries for a row that pact delivered here under the peer's `grant`
+/// removes this vault's copy (CROSS-VAULT-DELETE-NEVER-ADMITTED = A,
+/// [`admitted_peer_tombstones`]); every other tombstone is dropped. With no
+/// pact, the delivery ledger names no sender for any row: every tombstone is
+/// dropped.
 #[cfg(feature = "sync")]
 pub(in crate::sync) fn admit_peer_window_update_as(
     vault: &Vault,
@@ -160,7 +189,9 @@ pub(in crate::sync) fn admit_peer_window_update_as(
     role: FederationAdmissionRole,
     (peer, standing): (EntityId, MembershipStanding),
     delivery: Option<&PactDelivery>,
+    grant: EntityId,
 ) -> Result<AdmittedUpdate> {
+    let pact = delivery.map(|delivery| DeliveringPact { grant, delivery });
     let first_party = role == FederationAdmissionRole::Member
         && matches!(standing, MembershipStanding::Member { .. });
     if !first_party {
@@ -174,6 +205,7 @@ pub(in crate::sync) fn admit_peer_window_update_as(
             role,
             peer,
             Some(&delivery.source_vault),
+            TombstoneAdmission::LivePeer(pact),
         );
     }
     let lane = crate::federation::facet_read::HeldLane::Peer(peer).key();
@@ -183,8 +215,9 @@ pub(in crate::sync) fn admit_peer_window_update_as(
         update,
         role,
         Some(lane),
-        ImportGrading::FirstParty,
+        ImportGrading::FirstParty { sender: peer },
         None,
+        TombstoneAdmission::LivePeer(pact),
     )
 }
 
@@ -211,6 +244,7 @@ pub(crate) fn admit_staged_window_update(
             scale: super::DEFAULT_FEDERATED_CONFIDENCE_SCALE,
         },
         source_vault,
+        TombstoneAdmission::RefuseUpdate,
     )
 }
 
@@ -226,7 +260,13 @@ fn staged_lane(receipt_id: &[u8; 32]) -> String {
 /// it carries for a TASK or SUMMARY is validated and remapped there too, and
 /// each part holds its rows' placements beside its bytes (FIX 3656). Without
 /// one, no placement is read: a member's rows land as they always did.
+///
+/// Its tombstones are admitted as `tombstones` says: on the live peer lane,
+/// each one the delivering pact proves lands in the part whose window holds
+/// its row, a new part when none does, and every other is dropped; anywhere
+/// else, one refuses the whole update.
 #[cfg(feature = "sync")]
+#[expect(clippy::too_many_arguments)]
 fn admit_window_update(
     vault: &Vault,
     key: &WindowKey,
@@ -235,6 +275,7 @@ fn admit_window_update(
     lane: Option<String>,
     grading: ImportGrading,
     guest: Option<&[u8; 32]>,
+    tombstones: TombstoneAdmission<'_>,
 ) -> Result<AdmittedUpdate> {
     let remote = create_window_doc("federation-remote", key);
     remote.import(update).map_err(|source| {
@@ -248,22 +289,42 @@ fn admit_window_update(
     let policy = vault
         .with_write_txn_grouped(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))?;
 
-    reject_federated_tombstones(&remote)?;
+    if matches!(tombstones, TombstoneAdmission::RefuseUpdate) {
+        reject_federated_tombstones(&remote)?;
+    }
     // Engine A: a federated copy brings no source audience assertion; the
     // map rides the owner's full-window lane alone (L02 3, 6 Nov 06:24).
     crate::sync::source_audiences::refuse_foreign_map(&remote)?;
     // The withheld CLAIMs and the contained cross-world edges (FIX 3660).
     let mut terminal = crate::sync::quarantine::TerminalRejectionBatch::new(key.as_str());
-    let routes = match guest {
+    let mut routes = match guest {
         Some(source) => Routes::plan(vault, key, &remote, source, &mut terminal)?,
         None => Routes::unrouted(key),
     };
+    // Each admitted tombstone, by the part it lands in (CROSS-VAULT-DELETE-
+    // NEVER-ADMITTED = A). A part only tombstones land in carries no row.
+    let mut deletes = BTreeMap::<usize, Vec<(EntityId, Vec<u8>)>>::new();
+    if let TombstoneAdmission::LivePeer(Some(pact)) = tombstones {
+        for admitted in admitted_peer_tombstones(vault, &remote, pact, &routes.keys)? {
+            deletes
+                .entry(routes.part(admitted.home))
+                .or_default()
+                .push((admitted.id, admitted.value));
+        }
+    }
     // Every part's rows and edges are copied before any birth is: a ref to a
     // row another part carries is not one admission dropped.
     let mut copied = Vec::with_capacity(routes.keys.len());
     for (part, part_key) in routes.keys.iter().enumerate() {
         let admitted = create_admission_doc(part_key, update, role, guest)?;
         copy_admitted_entities(vault, &policy, &remote, &admitted, grading, &routes, part)?;
+        for (id, value) in deletes.remove(&part).unwrap_or_default() {
+            crate::sync::loro_support::map_insert_bytes(
+                &admitted.get_map("tombstones"),
+                &id.to_hex(),
+                &value,
+            )?;
+        }
         // A body reference rides beside the exact carrier admission kept, so
         // the body follows it by reference (FIX 12118).
         crate::sync::asset_body::references::copy_refs_within(&remote, &admitted)?;
@@ -353,7 +414,10 @@ fn admit_window_update(
         // bytes: the part's import lands each beside its row (FIX 3656).
         let placements = routes.admitted_placements(&admitted);
         admitted.commit_with(CommitOptions::new().origin(role.origin()));
-        let rows = admitted.get_map("entities").len() + admitted.get_map("edges").len();
+        // An admitted tombstone is a write the burst review counts as a row.
+        let rows = admitted.get_map("entities").len()
+            + admitted.get_map("edges").len()
+            + admitted.get_map("tombstones").len();
         let bytes = admitted
             .export(ExportMode::all_updates())
             .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportAllUpdates, e))?;
@@ -365,9 +429,14 @@ fn admit_window_update(
             births,
             peer_rows,
             delivered,
+            tombstones: crate::sync::ingest::delivered_tombstones(&admitted.get_map("tombstones")),
             born_with,
             placements,
             lane: lane.clone(),
+            first_party_sender: match grading {
+                ImportGrading::FirstParty { sender } => Some(sender),
+                ImportGrading::Imported { .. } => None,
+            },
             routed: Vec::new(),
         });
     }
@@ -499,6 +568,9 @@ fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]
     // Fix list row 16256: a restricted lane carries no source-audience key,
     // whatever its value; a peer's body naming it is refused as it came.
     crate::source_audience::refuse_written_obligation(entity_type, body)?;
+    // VOICE-PHONE-AGENT-REACH R2 review F1: nor a phone mark, which the
+    // phone keep alone writes.
+    crate::voice_call::refuse_written_phone_mark(entity_type, body)?;
     if entity_type != crate::registry::ENTITY_TYPE_AGENT_DEF {
         crate::agent_def::validate_put_at_seeded_id(id, entity_type, None)?;
     }
@@ -559,8 +631,6 @@ fn reject_federated_tombstones(source: &LoroDoc) -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-SYNC-SELECTOR-ADMISSION-RETIRED-FACET-TESTS]: the lib test target's type check fails here (1 errors: E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(all(test, feature = "sync"))]
 mod retired_facet_tests {
     use super::*;
@@ -572,7 +642,7 @@ mod retired_facet_tests {
         let legacy = crate::companion::tests::support::retired_persona_facet_body(person);
         assert!(matches!(
             validate_admitted_replicated_body(&id, crate::registry::ENTITY_TYPE_FACET, &legacy),
-            Err(Error::Record(RecordError::InvalidCompanionRecordBody(_)))
+            Err(Error::InvalidClaimBody(_))
         ));
         let scenario = rmp_serde::to_vec_named(&serde_json::json!({
             "kind": "scenario", "person_ref": person.to_hex()

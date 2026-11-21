@@ -394,8 +394,6 @@ pub fn encode_edge_value_for_crdt(
 
 pub use crate::store::replica_edge_key::format_edge_key;
 
-// FIX [LIBTEST-QUARANTINE-SYNC-BRIDGE-COMPANION-IDENTITY-TESTS]: the lib test target's type check fails here (10 errors: E0061 x8, E0063 x1, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 #[path = "companion_identity_tests.rs"]
 mod tests;

@@ -14,7 +14,6 @@
 
 use super::{Row, decode_row, entity_of, snapshot_parts};
 use crate::store::checkpoint_payload::rows::OwnerRef;
-use crate::sync::carrier_parts::is_part_key;
 use crate::sync::checkpoint_payload::{Holder, KeyClass, Placement, SyncUnclassified};
 
 /// A live receipt's actors.
@@ -24,11 +23,8 @@ const RECEIPT_ACTORS: &str = "a typed body receipt names its actor and its proce
 const FORK_ACTORS: &str =
     "a typed body fork names its opener and its settler, and its owner's record names its own";
 
-/// Where the row under `key` goes.
+/// Where the row under `key` goes (a part's, the map's row places).
 pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
-    if is_part_key(key) {
-        return Placement::Part;
-    }
     match decode_row(key, value) {
         Ok(Row::Receipt(record)) => {
             let owner = OwnerRef::entity(&record.entity);
@@ -60,11 +56,9 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
 }
 
 /// What a typed body row map key spells: its body's id and its commit peer
-/// or its fork's id, or a part's digest.
+/// or its fork's id (a part's digest, the map's row reads).
 pub(in crate::sync) fn key_class(key: &str) -> KeyClass {
-    if is_part_key(key) {
-        KeyClass::Digest
-    } else if entity_of(key).is_some() {
+    if entity_of(key).is_some() {
         KeyClass::Opaque
     } else {
         KeyClass::Payload

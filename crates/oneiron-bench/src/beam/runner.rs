@@ -52,8 +52,15 @@ pub(super) const BEAM_HELP: &str = "usage: oneiron-bench beam <subcommand>\n\
                            rung-fixture attach and locality-transition conformance\n\
                            tiers <graduation.json> no-regression scale ladder\n\
                            fixture-protocol <fixture.json> known-span retrieval evaluation\n\
+                           code-bench-pack <plan.json>   CODE-BENCH: write each ready cell's\n\
+                                    world, prompt and tools; list what each other cell lacks\n\
+                           code-bench <attempts.json>   CODE-BENCH: sealed tests, diff size and\n\
+                                    transcript metrics per attempt, paired by task per arm\n\
                            edit-path-pack <dir>   materialize five edit-task sandboxes\n\
                            edit-path <attempts.json>   score tests and contracts per arm\n\
+                           action-bench <plan.json>   in-house action bench: memory and extraction\n\
+                                    arms over frozen synthetic histories, held-out follow-ups,\n\
+                                    deterministic scorer\n\
                            run <manifest>\n\
                                     run a BEAM manifest; fixture datasets load dataset.path JSON\n\
                                     relative to the manifest; emit declared packs.jsonl outputs\n\

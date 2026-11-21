@@ -26,6 +26,7 @@ mod attenuation;
 mod brief;
 pub mod budget_doors;
 mod budget_hold;
+mod budget_trap_ask;
 mod caller_origin;
 pub use caller_origin::CallerOrigin;
 mod codec;
@@ -41,6 +42,8 @@ pub(crate) use self::comm_widen::{
     comm_widen_children_in, comm_widen_in, comm_widen_recipient_in_txn, effective_comm_in_txn,
     erase_comm_widen_actor_in_txn, put_comm_widen_in,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) mod comm_widen_test_door;
 mod context;
 mod continuation;
 pub use self::continuation::{ConcernPromptInjectOutcome, ConcernPromptInjectRequest};
@@ -78,6 +81,7 @@ mod research_root;
 pub(crate) use self::research_root::ResearchRootRequest;
 mod resident;
 mod room_join;
+mod run_budget_ask;
 mod run_effects;
 pub use self::run_effects::AgentRunEffectAnswerOutcome;
 pub(crate) use self::run_effects::{
@@ -89,7 +93,9 @@ pub(crate) use self::run_effects::{
 mod run_handover;
 pub use self::run_handover::AgentRunLeaseReap;
 mod run_lineage;
-pub(crate) use run_lineage::delegation_lineage_parent_in_txn;
+pub(crate) use run_lineage::{
+    LineageStart, delegation_lineage_parent_in_txn, settling_lineage_in_txn,
+};
 mod run_objectives;
 mod run_placement;
 mod run_task;
@@ -102,11 +108,21 @@ pub(crate) use self::run_task::{
 pub use self::run_task::{
     AGENT_RUN_TASK_SUBKIND, AgentRunExecutorLease, AgentRunFence, AgentRunOutcome,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::run_task::{
+    proven_agent_run_task_writer_in, put_peer_agent_run_task_in_txn,
+    rewrite_peer_agent_run_task_lease_in_txn, rewrite_peer_agent_run_task_parent_context_in_txn,
+};
+mod run_writer_proof;
 mod scope;
 pub(crate) use scope::project_descends_from_in_txn;
 mod skill_default;
-pub(crate) use skill_default::workflow_default;
+pub(crate) use skill_default::{
+    bootstrap_skill_in_force_in_txn, bootstrap_skill_root_in_txn,
+    bootstrap_skill_root_sourced_in_txn, workflow_default,
+};
 mod spend_calibration;
+mod spend_custody;
 #[cfg(feature = "sync")]
 pub(crate) mod spend_handoff;
 mod spend_lease;
@@ -123,7 +139,14 @@ mod workflow;
 mod workflow_host;
 mod workflow_pump;
 mod workflow_record;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::workflow_record::dedupe_key_hash_for_test as workflow_dedupe_key_hash_for_test;
 pub(crate) use workflow::tool_wait::checkpoint as workflow_tool_checkpoint;
+#[cfg(oneiron_test_support)]
+pub(crate) use workflow::tool_wait::{
+    CheckpointRow, test_checkpoint_body_owner, test_checkpoint_key, test_checkpoint_row_bound,
+    test_checkpoint_row_unbound,
+};
 pub use workflow::tool_wait::{
     WorkflowToolAnswer, WorkflowToolCheckpointWriter, WorkflowToolContinuation, WorkflowToolCursor,
     WorkflowToolProgress, WorkflowToolTranscript, WorkflowToolWait,
@@ -166,18 +189,26 @@ pub use self::spend_record::{
 
 pub use self::agent_wait::{AgentWaitChild, AgentWaitSetResult};
 pub(crate) use self::agent_wait::{
-    AgentWaitOpen, AgentWaitPolicy, agent_dispatch_child_wait_accepts_masked, agent_wait_attempt,
-    open_agent_wait, settle_agent_child_waits_in_txn,
+    AgentWaitOpen, AgentWaitPolicy, CHILD_WAIT_UNTIL_JOB, agent_dispatch_child_wait_accepts_masked,
+    agent_wait_attempt, open_agent_wait, rearm_restored_wait_deadlines_in_txn,
+    settle_agent_child_waits_in_txn,
 };
 pub(crate) use self::budget_hold::erase_plan_hold_actor_in_txn;
 pub use self::budget_hold::{
     BudgetHoldLease, BudgetHoldNotice, BudgetHoldState, HeldAttempt, PartialResultHold,
 };
+pub use self::budget_trap_ask::{BudgetTrapLimit, BudgetTrapQuestion, budget_trap_questions};
+pub(crate) use self::budget_trap_ask::{
+    apply_budget_trap_answer_in_txn, is_budget_trap_ask, queue_budget_trap_ask_in_txn,
+    withdraw_budget_trap_ask_in_txn,
+};
 pub use self::codec::{
     agent_dispatch_actor, agent_dispatch_payload_agent_id, agent_dispatch_run_actor,
     decode_agent_dispatch_input, encode_agent_dispatch_input,
 };
-pub(crate) use self::codec::{attempt_task_type_ref, attempt_team_stamp, record_dispatch_input};
+pub(crate) use self::codec::{
+    attempt_task_type_ref, attempt_team_stamp, record_dispatch_input, record_spawn_parent_in_txn,
+};
 pub use self::dispatch::AgentDispatcher;
 pub(crate) use self::dispatch::AgentSpawnAdmission;
 pub use self::leader_planner::VaultLeaderTeamPlanner;
@@ -189,6 +220,12 @@ pub use self::planner::{
     resolve_care, top_shapes,
 };
 pub use self::planner_live::{LivePlanRequest, PlannerSeat, PlannerSkills};
+pub use self::run_budget_ask::{
+    FundsPrice, LocalRouteChoice, RUN_BUDGET_DEFAULT_OVERDRAFT_UNITS, RunBudgetChoice,
+    RunBudgetForecast, RunBudgetQuestion, RunFunds, RunFundsEntry, RunLocalRoute, RunOverdraft,
+    run_budget_questions,
+};
+pub(crate) use self::run_budget_ask::{apply_run_budget_answer_in_txn, is_run_budget_ask};
 pub use self::task_type_tree::{
     SourcedTypeTree, TASK_TYPE_TREE_FILE, load_team_type_tree, load_team_type_tree_at,
     load_vault_type_tree_sourced, store_team_type_tree, team_shape_skill_in_force,
@@ -212,8 +249,6 @@ pub use self::types::{
 
 #[cfg(test)]
 mod kill_spawn_tests;
-// FIX [LIBTEST-QUARANTINE-AGENT-DISPATCH-TESTS]: the lib test target's type check fails here (7 errors: E0061 x3, E0308 x3, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -256,8 +291,6 @@ pub use resident::{
     ResidentWakeMode, resident_attempt_reviews_diary, resident_attempt_wakes_for_room,
 };
 
-// FIX [LIBTEST-QUARANTINE-AGENT-DISPATCH-RESIDENT-TESTS]: the lib test target's type check fails here (6 errors: E0063 x6); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod resident_tests;
 pub(crate) mod tables;

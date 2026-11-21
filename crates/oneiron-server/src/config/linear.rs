@@ -159,7 +159,7 @@ impl LinearConfig {
                 webhook.is_none(),
                 "a direct Linear mirror maps its webhook in {LINEAR_CONFIG_ENV}, not {LINEAR_WEBHOOK_CONFIG_ENV}"
             );
-            let file: DirectFile = serde_json::from_slice(&std::fs::read(path)?)?;
+            let file: DirectFile = read_settings_file(path.as_ref())?;
             settings.team_id = Some(file.team_id);
             settings.status_ids = file.status_ids;
             settings.assignee_ids = file.assignee_ids;
@@ -167,7 +167,7 @@ impl LinearConfig {
             settings.response_dir = Some(file.response_dir);
             settings.graphql_endpoint = file.graphql_endpoint;
         } else if let Some(path) = webhook {
-            let file: WebhookFile = serde_json::from_slice(&std::fs::read(path)?)?;
+            let file: WebhookFile = read_settings_file(path.as_ref())?;
             settings.team_id = Some(file.team_id);
             settings.status_ids = file.status_ids;
             settings.assignee_ids = file.assignee_ids;
@@ -342,6 +342,17 @@ impl LinearConfig {
 /// A host-configured Linear URL, the bridge base or the direct GraphQL
 /// endpoint: HTTPS, or HTTP on a loopback host only, with no embedded
 /// credentials, query or fragment.
+/// The JSON settings file at `path`, which an `ONEIRON_LINEAR_*` variable
+/// names, as `T`. It says which team, states and people the mirror files
+/// under, so it is read only once no other user can write it, and a file
+/// that does not parse names itself and the place, never the parser's
+/// message, which can quote a value (FIX CONFIG-SIDE-FILES-MODE-UNCHECKED,
+/// CONFIG-SIDE-FILE-PARSE-ERRORS-PRINT-PARSER-MESSAGE).
+fn read_settings_file<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
+    let text = crate::config::merge::read_referenced_file(path)?;
+    Ok(crate::config::diagnostics::parse_json(path, &text)?)
+}
+
 fn check_host_url(url: &reqwest::Url, what: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
         url.scheme() == "https"

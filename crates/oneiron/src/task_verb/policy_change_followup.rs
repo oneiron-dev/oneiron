@@ -1,5 +1,6 @@
 //! Atomic, idempotent human TASK notification for one landed policy change.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +17,10 @@ use super::create_validation::{task_body_in_txn, validate_task_create_in};
 use super::rate_limit::{record_task_create, task_actor_ceiling};
 use super::verb_kind::{TaskAssignee, TaskKind};
 
-const INDEX_PREFIX: &[u8] = b"task.policy_change_followup.v1:";
+/// The index key's first bytes, which its digest also starts with.
+const INDEX_PREFIX: &[u8] = purposes::task::POLICY_CHANGE_FOLLOWUP_INDEX_KEY
+    .tag()
+    .as_bytes();
 
 #[derive(Serialize, Deserialize)]
 struct FollowupIndex {
@@ -26,13 +30,24 @@ struct FollowupIndex {
     receipt_id: String,
 }
 
+/// The follow-up's idempotency index key: the prefix, then the digest of the
+/// receipt and the recipient. Stored in vault_meta, so it keeps its bytes (K,
+/// PLAN-UC-04 stage 5).
 fn index_key(receipt_id: &str, recipient: EntityId) -> Vec<u8> {
-    let mut hash = blake3::Hasher::new();
-    hash.update(INDEX_PREFIX);
-    hash.update(&(receipt_id.len() as u64).to_be_bytes());
-    hash.update(receipt_id.as_bytes());
-    hash.update(recipient.as_bytes());
-    [INDEX_PREFIX, hash.finalize().as_bytes()].concat()
+    let digest = LegacyDigest::new(purposes::task::POLICY_CHANGE_FOLLOWUP_INDEX_KEY)
+        .len_u64_be(receipt_id.len())
+        .raw(receipt_id.as_bytes())
+        .raw(recipient.as_bytes())
+        .finish();
+    [INDEX_PREFIX, &digest].concat()
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn policy_change_followup_index_key_for_test(
+    receipt_id: &str,
+    recipient: EntityId,
+) -> Vec<u8> {
+    index_key(receipt_id, recipient)
 }
 
 fn task_error(error: MemoryError) -> Error {

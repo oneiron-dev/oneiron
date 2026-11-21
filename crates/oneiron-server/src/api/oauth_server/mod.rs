@@ -7,11 +7,19 @@
 //! write the reply.
 //!
 //! The vault's public identity is `oauth_resource_indicator`: its origin is the issuer, and
-//! `{origin}/mcp` the protected resource. With none configured, or one that is no https origin,
-//! every route here answers 404, as the client metadata documents do. Codes, tokens and the
+//! `{origin}/mcp` and `{origin}/git` its two protected resources ([`ProtectedResource`]): a
+//! stock connector and `oneiron hosted login` sign in for `/mcp` alone, at the tier asked, and
+//! the continue step-up of `oneiron continue --cloud` (and `hosted login --push`) for both at
+//! `full`, so only its tokens push through the git door (lead rulings
+//! CONTINUE-PUSH-NON-SLIP-SELECTION = B, Sat 21 Nov 04:3x, CONTINUE-PUSH-GIT-TIER = C, 05:4x,
+//! and CONTINUE-STEP-UP-MCP-WRITE = A, 06:1x). The hand-over sign-in of `hosted login
+//! --hand-over` asks `full` at `/mcp` alone and names its purpose ([`SignInPurpose`];
+//! HOOK-HOSTED-HAND-OVER-OAUTH-READ-TIER = B, 07:0x). With none configured, or one that is no
+//! https origin, every route here answers 404, as the client metadata documents do. Codes, tokens and the
 //! page's poll secret ride only in a body, a header or the client's own redirect, never in this
-//! vault's paths, logs or stored rows. The `/mcp` door that accepts the tokens, and its 401
-//! with `WWW-Authenticate`, are `mcp_gateway::oauth_call`'s (slice C).
+//! vault's paths, logs or stored rows. The binding door's swap that accepts the tokens at
+//! `/mcp` and at `/git/{repo}/...`, and their 401 with `WWW-Authenticate`, are
+//! `mcp_gateway::oauth_call`'s (slice C).
 //!
 //! Registration and authorize are the two doors a stranger can make write: one stores a client,
 //! the other records a request, sends the owner an ask, and may fetch and store a client's
@@ -40,19 +48,30 @@ use oneiron::authority::{
 use crate::api::FloodCap;
 use crate::server::SyncServer;
 
-/// The protected resource's path under the origin: the MCP endpoint.
-const MCP_RESOURCE_PATH: &str = "/mcp";
-/// RFC 9728's metadata path.
+/// RFC 9728's metadata path, which answers the `/mcp` resource's document.
 const PROTECTED_RESOURCE_METADATA_PATH: &str = "/.well-known/oauth-protected-resource";
 /// RFC 9728 §3.1's resource-specific metadata path for `/mcp`, which answers the same document.
-const PROTECTED_RESOURCE_MCP_METADATA_PATH: &str = "/.well-known/oauth-protected-resource/mcp";
+pub(crate) const PROTECTED_RESOURCE_MCP_METADATA_PATH: &str =
+    "/.well-known/oauth-protected-resource/mcp";
+/// RFC 9728 §3.1's resource-specific metadata path for `/git`.
+pub(crate) const PROTECTED_RESOURCE_GIT_METADATA_PATH: &str =
+    "/.well-known/oauth-protected-resource/git";
 /// RFC 8414's metadata path for an issuer with no path.
 const AUTHORIZATION_SERVER_METADATA_PATH: &str = "/.well-known/oauth-authorization-server";
-const AUTHORIZE_PATH: &str = "/oauth/authorize";
-const AUTHORIZE_STATUS_PATH: &str = "/oauth/authorize/status";
-const TOKEN_PATH: &str = "/oauth/token";
-const REGISTER_PATH: &str = "/oauth/register";
-const REVOKE_PATH: &str = "/oauth/revoke";
+pub(crate) const AUTHORIZE_PATH: &str = "/oauth/authorize";
+/// The authorize page's poll, which `hosted login --unattended` polls as the page's script does.
+pub(crate) const AUTHORIZE_STATUS_PATH: &str = "/oauth/authorize/status";
+/// The header the page's poll sends its token in; `authorize.js` names the same one.
+pub(crate) const PAGE_TOKEN_HEADER: &str = "x-oneiron-oauth-page";
+/// The name of the authorize page's `<meta>` that carries the poll's token; `authorize.js`
+/// reads the same one.
+pub(crate) const PAGE_TOKEN_META: &str = "oauth-page-token";
+pub(crate) const TOKEN_PATH: &str = "/oauth/token";
+pub(crate) const REGISTER_PATH: &str = "/oauth/register";
+pub(crate) const REVOKE_PATH: &str = "/oauth/revoke";
+/// The authorize request's parameter that names what a sign-in asks to do
+/// ([`SignInPurpose`]).
+pub(crate) const PURPOSE_PARAMETER: &str = "purpose";
 
 /// The OAuth routes, mounted beside `/oauth/client/*`. The metadata documents are public and
 /// cacheable; every other reply is private (`no-store`, `no-referrer`, `nosniff`). The router
@@ -76,6 +95,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route(
             PROTECTED_RESOURCE_MCP_METADATA_PATH,
             get(metadata::protected_resource),
+        )
+        .route(
+            PROTECTED_RESOURCE_GIT_METADATA_PATH,
+            get(metadata::git_protected_resource),
         )
         .route(
             AUTHORIZATION_SERVER_METADATA_PATH,
@@ -133,6 +156,97 @@ impl OAuthFloodCaps {
     }
 }
 
+/// One of this vault's two protected resources (RFC 8707, RFC 9728), `{origin}` and its path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProtectedResource {
+    /// `/mcp` and `/mcp/tool-first`, the MCP endpoints: one resource, so one sign-in reaches
+    /// either.
+    Mcp,
+    /// `/git/{repo}/...`, the smart-HTTP and LFS door a push goes through.
+    Git,
+}
+
+impl ProtectedResource {
+    /// Every protected resource, in the order a sign-in names them.
+    const ALL: [Self; 2] = [Self::Mcp, Self::Git];
+
+    /// Its path under the origin.
+    const fn path(self) -> &'static str {
+        match self {
+            Self::Mcp => "/mcp",
+            Self::Git => "/git",
+        }
+    }
+
+    /// Its own metadata document's path (RFC 9728 §3.1).
+    const fn metadata_path(self) -> &'static str {
+        match self {
+            Self::Mcp => PROTECTED_RESOURCE_MCP_METADATA_PATH,
+            Self::Git => PROTECTED_RESOURCE_GIT_METADATA_PATH,
+        }
+    }
+
+    /// What a sign-in that names it asks to do, as the owner's ask and the consent page say it
+    /// (CONTINUE-STEP-UP-MCP-WRITE = A): `None` for `/mcp`, whose tier says it. The one client
+    /// that names `/git` is `oneiron continue --cloud`'s step-up.
+    const fn purpose(self) -> Option<&'static str> {
+        match self {
+            Self::Mcp => None,
+            Self::Git => Some(GIT_SIGN_IN_PURPOSE),
+        }
+    }
+}
+
+/// What a sign-in naming `/git` asks to do, in the owner's ask (CONTINUE-STEP-UP-MCP-WRITE = A,
+/// its wording as ruled).
+const GIT_SIGN_IN_PURPOSE: &str =
+    "continue this session in your hosted vault: land its log, push its code and start it there";
+
+/// What a sign-in asks to do, named by the authorize request's [`PURPOSE_PARAMETER`]. The vault
+/// says it in its own words, so the owner's ask never shows a client's text; a request that
+/// names no purpose, or one its resources do not say, shows its tier alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SignInPurpose {
+    /// The hand-over sign-in of `oneiron hosted login --hand-over`, which the hooks' hand-over
+    /// alone reads: `full` at `/mcp` alone (HOOK-HOSTED-HAND-OVER-OAUTH-READ-TIER = B, lead
+    /// 07:0x Sat 21 Nov).
+    SessionHandOver,
+}
+
+impl SignInPurpose {
+    /// Its name, as the request's [`PURPOSE_PARAMETER`] gives it.
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::SessionHandOver => "session_hand_over",
+        }
+    }
+
+    /// The purpose `name` names; `None` for any other.
+    fn named(name: &str) -> Option<Self> {
+        [Self::SessionHandOver]
+            .into_iter()
+            .find(|purpose| purpose.name() == name)
+    }
+
+    /// What it asks to do, as the owner's ask and the consent page say it (its wording as
+    /// ruled).
+    const fn says(self) -> &'static str {
+        match self {
+            Self::SessionHandOver => {
+                "land this machine's coding sessions in your hosted vault as each ends"
+            }
+        }
+    }
+
+    /// Whether a sign-in for it may name `resource`: the hand-over writes at `/mcp` and never
+    /// pushes.
+    fn admits(self, resource: ProtectedResource) -> bool {
+        match self {
+            Self::SessionHandOver => resource == ProtectedResource::Mcp,
+        }
+    }
+}
+
 /// This vault's public OAuth identity, from `oauth_resource_indicator`.
 pub(super) struct OAuthIdentity {
     origin: String,
@@ -150,9 +264,17 @@ impl OAuthIdentity {
         &self.origin
     }
 
-    /// The protected resource: `{origin}/mcp` (RFC 8707, RFC 9728).
-    fn resource(&self) -> String {
-        format!("{}{MCP_RESOURCE_PATH}", self.origin)
+    /// The protected resource `resource`'s identifier, `{origin}/mcp` or `{origin}/git` (RFC
+    /// 8707, RFC 9728).
+    fn resource(&self, resource: ProtectedResource) -> String {
+        format!("{}{}", self.origin, resource.path())
+    }
+
+    /// The protected resource `identifier` names exactly, if it names one of this vault's.
+    fn named_resource(&self, identifier: &str) -> Option<ProtectedResource> {
+        ProtectedResource::ALL
+            .into_iter()
+            .find(|resource| self.resource(*resource) == identifier)
     }
 
     /// One endpoint's absolute URL.
@@ -161,17 +283,22 @@ impl OAuthIdentity {
     }
 }
 
-/// The protected resource this vault's `/mcp` is, `{origin}/mcp`, which every access token is
-/// minted for and resolved on (FIX 4902 slice C). `None` with no OAuth identity configured.
-pub(in crate::api) fn mcp_resource(server: &SyncServer) -> Option<String> {
-    OAuthIdentity::of(server).map(|identity| identity.resource())
+/// The identifier of `resource`, `{origin}/mcp` or `{origin}/git`, that an access token is
+/// resolved on at its door (FIX 4902 slice C). `None` with no OAuth identity configured.
+pub(in crate::api) fn resource_identifier(
+    server: &SyncServer,
+    resource: ProtectedResource,
+) -> Option<String> {
+    OAuthIdentity::of(server).map(|identity| identity.resource(resource))
 }
 
-/// The `/mcp` resource's own metadata document (RFC 9728 §3.1), as a 401 from `/mcp` names it
-/// in `WWW-Authenticate` (RFC 9728 §5.1, FIX 4902 slice C). `None` with no OAuth identity.
-pub(in crate::api) fn mcp_resource_metadata_url(server: &SyncServer) -> Option<String> {
-    OAuthIdentity::of(server)
-        .map(|identity| identity.endpoint(PROTECTED_RESOURCE_MCP_METADATA_PATH))
+/// `resource`'s own metadata document (RFC 9728 §3.1), as a 401 from its door names it in
+/// `WWW-Authenticate` (RFC 9728 §5.1, FIX 4902 slice C). `None` with no OAuth identity.
+pub(in crate::api) fn resource_metadata_url(
+    server: &SyncServer,
+    resource: ProtectedResource,
+) -> Option<String> {
+    OAuthIdentity::of(server).map(|identity| identity.endpoint(resource.metadata_path()))
 }
 
 /// The OAuth origin `configured` names (CALLS, FIX 4902: an engine call): an https URL with a

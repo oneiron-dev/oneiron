@@ -442,8 +442,7 @@ pub(super) fn resolve_target(source: &str, target: &str) -> PatchResult<String> 
     } else {
         source
             .rsplit_once('/')
-            .map(|(dir, _)| dir.split('/').collect())
-            .unwrap_or_default()
+            .map_or_default(|(dir, _)| dir.split('/').collect())
     };
     for segment in target.trim_start_matches('/').split('/') {
         match segment {

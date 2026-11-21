@@ -1,6 +1,6 @@
 //! Signed-history migration and independently authorized per-vault re-root doors.
 use super::*;
-use crate::batch::{BatchOp, apply_ops};
+use crate::batch::{BatchOp, apply_ops_beside_authority_rows};
 use crate::error::{Error, RecordError, Result};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::{EntityId, TimeRange, Vault};
@@ -9,9 +9,49 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::adopted_evidence::AdoptedEvidence;
 
+mod owner_import;
+
+use owner_import::ImportStaging;
+
 mod page;
 
 pub(super) use page::{DecodedRow, PageVerdict, decode_page, page_root};
+
+mod re_root_staging;
+
+mod retired_standing;
+
+use retired_standing::{
+    flags_retired_standing, refuse_retired_standing, retired_standing, retired_standing_refusal,
+};
+
+/// The puts of an import's `rows` at `now`, in their order, each with the
+/// ReRoot it carries ([`super::recovery::arriving_re_root`]).
+fn import_rows<'a>(
+    rows: impl Iterator<Item = &'a DecodedRow>,
+    resident: &BTreeSet<AuthorityEntryHash>,
+    now: u64,
+) -> Result<Vec<(BatchOp, Option<super::recovery::ArrivingReRoot>)>> {
+    rows.map(|(hash, bytes, entry)| {
+        let re_root = super::recovery::arriving_re_root(entry, *hash, resident.contains(hash));
+        let op = BatchOp::Put {
+            id: authority_log_entity_id_from_hash(hash)?,
+            entity_type: ENTITY_TYPE_AUTHORITY_LOG,
+            occurred: TimeRange {
+                start: now,
+                end: now,
+            },
+            learned_at: now,
+            row_version: None,
+            data: bytes.clone(),
+            allow_maintenance: true,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        };
+        Ok((op, re_root))
+    })
+    .collect()
+}
 
 pub(super) fn history_in_txn(
     vault: &Vault,
@@ -27,87 +67,6 @@ pub(super) fn history_in_txn(
         history.insert(hash, (bytes, entry));
     }
     Ok(history)
-}
-
-/// Refuses the import when an arriving row stands on a key a handoff retired
-/// in `fold` ([`retired_standing`]).
-fn refuse_retired_standing(
-    store: &crate::store::Store,
-    fold: &AuthorityFold,
-    merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
-    evidence: Option<&AdoptedEvidence>,
-    arriving: &[AuthorityEntryHash],
-) -> Result<()> {
-    match retired_standing(store, fold, merged, evidence, arriving)? {
-        Some(_) => Err(retired_standing_refusal()),
-        None => Ok(()),
-    }
-}
-
-/// Whether an arriving row stands on a key a handoff retired in `fold`, as
-/// [`retired_standing`] reads it, recording nothing (FIX 2536). The fold
-/// before staging may lack a handoff's own ancestry, so an import it flags is
-/// judged again on the merged history it stages, and refused, with its
-/// evidence, only when that history still retires the key. An import it does
-/// not flag lands as before.
-fn flags_retired_standing(
-    fold: &AuthorityFold,
-    merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
-    evidence: Option<&AdoptedEvidence>,
-    arriving: &[AuthorityEntryHash],
-) -> Result<bool> {
-    for hash in arriving {
-        let Some((_, entry)) = merged.get(hash) else {
-            continue;
-        };
-        if fold.stands_on_retired_key(hash, entry, &mut |parent| match merged.get(parent) {
-            Some((_, row)) => Ok(Some(row.clone())),
-            None => evidence.map_or(Ok(None), |evidence| evidence.ancestor(parent)),
-        })? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn retired_standing_refusal() -> Error {
-    Error::Record(RecordError::InvalidAuthorityLogBody(
-        "authority history standing on a key a handoff retired",
-    ))
-}
-
-/// The first arriving row that stands on a key a handoff retired in `fold`:
-/// such a key signs nothing new into this history, and nothing new stands on
-/// a row one signed. `merged` holds the resident and arriving rows. On a
-/// vault that adopted a checkpoint image (`evidence`), an ancestor `merged`
-/// lacks is what the image holds of it
-/// ([`super::adopted_evidence::AdoptedEvidence::ancestor`]), its refusal
-/// for history the image does not carry included.
-fn retired_standing(
-    store: &crate::store::Store,
-    fold: &AuthorityFold,
-    merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
-    evidence: Option<&AdoptedEvidence>,
-    arriving: &[AuthorityEntryHash],
-) -> Result<Option<AuthorityEntryHash>> {
-    for hash in arriving {
-        let Some((_, entry)) = merged.get(hash) else {
-            continue;
-        };
-        if super::door_refuses_retired_standing(
-            store,
-            fold,
-            hash,
-            entry,
-            &mut |parent| match merged.get(parent) {
-                Some((_, row)) => Ok(Some(row.clone())),
-                None => evidence.map_or(Ok(None), |evidence| evidence.ancestor(parent)),
-            },
-        )? {
-            return Ok(Some(*hash));
-        }
-    }
-    Ok(None)
 }
 
 /// What an import reads beside the rows it holds on a vault that adopted a
@@ -207,6 +166,7 @@ fn unheld_prefix(
             vault_id: Some(adopted.pin().genesis),
             checkpoint: Some(adopted.id()),
             missing,
+            reason: Some(oneiron_contracts::authority::AuthorityHistoryReason::CoveredPrefixUnheld),
         })
     })
 }
@@ -290,6 +250,30 @@ impl Vault {
     /// of a vault that stored a stranger's row before #1449 imports without
     /// them.
     pub fn import_signed_authority_history(&self, blobs: &[Vec<u8>]) -> Result<Vec<EntityId>> {
+        self.import_signed_authority_history_judged(blobs, |_| Ok(()), |_, _| Ok(()))
+    }
+
+    /// The import with `prelude` first in its write txn and `judge` on the fold it would commit,
+    /// read in that txn.
+    pub(crate) fn import_signed_authority_history_judged(
+        &self,
+        blobs: &[Vec<u8>],
+        prelude: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+        judge: impl FnOnce(&heed::RoTxn<'_>, &AuthorityFold) -> Result<()>,
+    ) -> Result<Vec<EntityId>> {
+        self.import_history_in(blobs, prelude, judge, ImportStaging::Whole)
+    }
+
+    /// The import of `blobs`, its rows staged as `staging` says: the ids of
+    /// the rows it holds now, each row it kept at the owner's reserve left
+    /// out ([`ImportStaging::HoldingAtOwnerReserve`]).
+    fn import_history_in(
+        &self,
+        blobs: &[Vec<u8>],
+        prelude: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+        judge: impl FnOnce(&heed::RoTxn<'_>, &AuthorityFold) -> Result<()>,
+        staging: ImportStaging,
+    ) -> Result<Vec<EntityId>> {
         let mut decoded = Vec::with_capacity(blobs.len());
         for bytes in blobs {
             let entry = decode_authority_log_entry_body(bytes)?;
@@ -297,6 +281,7 @@ impl Vault {
         }
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
+        prelude(&mut txn)?;
         let carried: BTreeMap<_, _> = decoded
             .iter()
             .map(|(hash, _, entry)| (*hash, entry.clone()))
@@ -312,10 +297,17 @@ impl Vault {
                 .entry(*hash)
                 .or_insert_with(|| (bytes.clone(), entry.clone()));
         }
-        let arriving: Vec<AuthorityEntryHash> = decoded
+        let mut arriving: Vec<AuthorityEntryHash> = decoded
             .iter()
             .map(|(hash, _, _)| *hash)
             .filter(|hash| !resident.contains(hash))
+            .collect();
+        // Each row's store door reads the fold beside every row this import
+        // stages, as the fold after staging judges them (owner-reserve delta
+        // review F2).
+        let staged_rows: BTreeMap<AuthorityEntryHash, AuthorityLogEntry> = decoded
+            .iter()
+            .map(|(hash, _, entry)| (*hash, entry.clone()))
             .collect();
         // A vault missing history it must hold has no fold until an import
         // closes the gap (OF-469): its arriving rows are judged against the
@@ -330,7 +322,6 @@ impl Vault {
         history_root(&merged, prefix)?.ok_or_else(invalid_authority)?;
         let now = crate::unix_seconds_now();
         let mut ids = Vec::new();
-        let mut ops = Vec::new();
         // The store door judges each row against the rows already staged
         // (H72), so stage each after its parents, its consent and its
         // signer's lower sequences, whatever order the caller gave.
@@ -340,44 +331,52 @@ impl Vault {
             .map(|(_, (_, entry))| entry)
             .chain(carried_structure(evidence.as_deref(), &resident));
         let own_roots = super::log_structure::LocalRoots::read_in_txn(&self.store, &txn)?;
-        for (hash, bytes, _) in
-            super::import_order::import_order(stored, &resident, own_roots, decoded)
-        {
-            let id = authority_log_entity_id_from_hash(&hash)?;
-            ids.push(id);
-            ops.push(BatchOp::Put {
-                id,
-                entity_type: ENTITY_TYPE_AUTHORITY_LOG,
-                occurred: TimeRange {
-                    start: now,
-                    end: now,
-                },
-                learned_at: now,
-                row_version: None,
-                data: bytes,
-                allow_maintenance: true,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            });
+        let ordered = super::import_order::import_order(stored, &resident, own_roots, decoded);
+        let held = match staging {
+            ImportStaging::Whole => {
+                let rows = import_rows(ordered.iter(), &resident, now)?;
+                self.stage_authority_rows_judging_re_roots_in_txn(&mut txn, rows, &|| {
+                    Ok(staged_rows.clone())
+                })?;
+                BTreeSet::new()
+            }
+            ImportStaging::HoldingAtOwnerReserve => self.stage_holding_at_owner_reserve_in_txn(
+                &mut txn,
+                &ordered,
+                &resident,
+                &staged_rows,
+                now,
+            )?,
+        };
+        // The checks after staging judge the rows that land: a kept row, and
+        // every row standing on it, is not in the history this commit holds.
+        merged.retain(|hash, _| !held.contains(hash));
+        arriving.retain(|hash| !held.contains(hash));
+        for (hash, _, _) in ordered.iter().filter(|(hash, _, _)| !held.contains(hash)) {
+            ids.push(authority_log_entity_id_from_hash(hash)?);
         }
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            &mut txn,
-            ops,
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
         // Read-side fold checks local sidecars as well as the signed chain.
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         if judge_merged {
-            refuse_retired_standing(&self.store, &fold, &merged, evidence.as_deref(), &arriving)?;
+            // The fold and ancestry see an image the prelude adopts (e.g. a
+            // sealed kit restore), but it rolls back with a refused import.
+            // The refusal reads committed evidence, so it names no handoff
+            // only that image covers (REVIEW-9572 round 2).
+            refuse_retired_standing(
+                &self.store,
+                self.privacy_posture(),
+                &fold,
+                &merged,
+                evidence.as_deref(),
+                &arriving,
+            )?;
         }
         if fold.vault_root_is_conflicted() {
             return Err(invalid_authority());
+        }
+        judge(&txn, &fold)?;
+        if staging == ImportStaging::HoldingAtOwnerReserve {
+            owner_import::keep_held_in_txn(&self.store, &mut txn, &ordered, &held, &never_applied)?;
         }
         #[cfg(feature = "sync")]
         self.mark_pending_mirrors_in_txn(&mut txn, &ids.iter().copied().collect())?;
@@ -472,15 +471,16 @@ impl Vault {
         if before.vault_id.is_none() || entry.vault_id != before.vault_id {
             return Err(invalid_authority());
         }
-        // A move covers every main-log head this write starts from (FIX
-        // 11993 R1): a head has no resident child, so only the move or one
-        // of its joins can name it. A row that landed after the move was
-        // signed would otherwise fold invalid beside it; such a move is
-        // signed again over the frontier as it now stands. Applying the
-        // same move again is the one exception.
-        if !before.valid_entries.contains(&hash)
-            && !before.append_heads.iter().all(|head| under.contains(head))
-        {
+        // A move the fold already counts, applied again, is an exact retry:
+        // it meets neither the hosted refusal (as at the admission doors,
+        // REVIEW-9487 round 2) nor the frontier rule. A new move covers every
+        // main-log head this write starts from (FIX 11993 R1), or is signed
+        // again over the frontier as it now stands.
+        let counted = before.valid_entries.contains(&hash);
+        if !counted {
+            super::recovery::refuse_re_root_of_a_serving_host(&before, entry.signer_key())?;
+        }
+        if !counted && !before.append_heads.iter().all(|head| under.contains(head)) {
             return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
                 "re-root does not cover the current frontier; sign it again",
             )));
@@ -515,7 +515,7 @@ impl Vault {
     /// Marks authority `rows` this write stages for the vault's loaded
     /// windows, in the write (FIX 11993, as FIX 11821 does for an import), so
     /// a crash before the announcement still mirrors them.
-    fn mark_authority_rows_in_txn(
+    pub(super) fn mark_authority_rows_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         rows: &BTreeSet<EntityId>,

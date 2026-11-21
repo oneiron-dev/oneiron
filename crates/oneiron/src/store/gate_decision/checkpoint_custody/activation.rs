@@ -130,7 +130,9 @@ impl Store {
     /// body it keeps, once what `source` retired took its rows (FIX 6020).
     /// Only then does the new binding commit, with the archive mark lifted
     /// and this install's machine identity dropped, the replacement keeping
-    /// it. Anything short of that leaves it archived, as it was. The caller
+    /// it, and with each timer, feed and idle turn program it holds paused
+    /// (its replacement holds them too, and releases them). Anything short
+    /// of that leaves it archived, as it was. The caller
     /// reopens the vault, whose handles then shred only its own keys.
     /// Its world key pads go through the same plan (KS-5, FIX 5686 part 2):
     /// a pad `source` retired takes its row out, never back from the row's
@@ -213,6 +215,14 @@ impl Store {
         let committed = self
             .prune_bodies_in_txn(write, &mut wtxn, &prune, source)
             .and_then(|()| self.drop_erased_gate_decisions_in_txn(&mut wtxn, custody.erased()))
+            // And the unclear rows filed under their receipts (FIX
+            // [GATE-RECEIPT-UNCLEAR-ROW-OUTLIVES-RECORD-REMOVAL]).
+            .and_then(|()| {
+                let dropped: Vec<_> = custody.erased().iter().map(|(id, _)| *id).collect();
+                crate::skill_attribution::delete_gate_receipt_unclear_in_txn(
+                    write, &mut wtxn, &dropped,
+                )
+            })
             .and_then(|()| crate::world_keys::drop_pad_rows_in_txn(write, &mut wtxn, &erased_pads))
             .and_then(|()| self.read_back_in_txn(&wtxn))
             .and_then(|()| self.read_back_bodies_in_txn(&wtxn, &prune.kept))
@@ -227,8 +237,24 @@ impl Store {
                 fences.put_in_txn(self, &mut wtxn)
             })
             .and_then(|()| crate::identity::drop_machine_identity_in_txn(self, &mut wtxn))
+            // It joins as a new machine born of a restore (row
+            // RESTORED-COPIES-ENROL-EACH-OTHER): it lands no image, so its
+            // mark is a fresh id, and its replacement must join it.
+            .and_then(|()| {
+                let mut activation = [0_u8; 32];
+                rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut activation);
+                crate::identity::put_restored_from_image_in_txn(self, &mut wtxn, &activation)
+            })
             // The orders standing on its source now, not the ones it had.
             .and_then(|()| replace_host_holds_in_txn(self, &mut wtxn, source.host_holds()))
+            // It is a copy beside its replacement from here on, and both hold the timer, feed
+            // and idle programs it had: its own start paused, before the archive lifts (FIX
+            // TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY).
+            .and_then(|()| {
+                let at = self.clock.now_recorded_at();
+                crate::dreamer_runner::pause_occurrence_armings_in_txn(self, &mut wtxn, at)
+                    .map(drop)
+            })
             // Its source's pad objects, before the archive lifts.
             .and_then(|()| {
                 landing = install_source_pad_objects_in_txn(

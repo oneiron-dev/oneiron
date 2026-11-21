@@ -7,6 +7,7 @@ use super::code::pairing_row_key;
 use super::principal::canonical_id;
 use super::re_pairing::{held_machine_possession, re_paired_standing};
 use super::*;
+use crate::authority::OwnerProofGround;
 use crate::authority::machine_answers::AnswerAct;
 use crate::authority::slip_vault::{random_slip_id, require_host};
 
@@ -311,7 +312,7 @@ impl Vault {
             .map(canonical_id)
             .transpose()?;
         // Recheck in the actual mint transaction: policy may have narrowed
-        // after link issuance while the one-hour link was still outstanding.
+        // after link issuance while the link was still outstanding.
         let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
         let slip_lifetime_secs = pending.slip_lifetime_secs.min(ceiling.initial_owner_secs);
         // A live owner's own device gets their residence grant, named in the
@@ -433,7 +434,11 @@ impl Vault {
     /// unanswered, takes the explicit bootstrap arm instead (C4, a fresh
     /// self-host first install): the host root signs the owner's answer with
     /// no act, as it always has, and the fold judges the root's custody, so a
-    /// hosted root never answers for the owner there. Any other install that
+    /// hosted root never answers for the owner there. Under the Hosted
+    /// posture an owner's answer (`Owned`) never takes that arm
+    /// ([`Vault::host_root_may_sign_role`]), whatever root this install
+    /// holds: the install carries the answer as any profiled one does, and
+    /// with no owner key it lands held. Any other install that
     /// cannot carry refuses, and nothing is written. A machine the roster
     /// already holds, pairing again under its own identity and class with
     /// its machine key's `possession` proof over this redemption's binding
@@ -450,8 +455,18 @@ impl Vault {
         request: &MachineEnrolmentRequest,
         possession: Option<(&[u8; 64], &[u8])>,
     ) -> Result<(MachineAnswerLanding, bool)> {
-        let role = MachineRole::Owned(answer.ownership);
+        let role = answer.role();
         let fold = self.authority_view_readonly_in_txn(txn)?;
+        let carries = self.carrier_in_txn(txn, &fold).is_ok();
+        // An install born of a restore that has not joined pairs nothing
+        // (row RESTORED-COPIES-ENROL-EACH-OTHER; REVIEW-9509 P1): it is not
+        // the fresh first install the bootstrap arm serves, and it carries
+        // nothing, so every arm below refuses for it, and nothing is written.
+        if !carries && crate::identity::read_restored_from_image_in_txn(self, txn)?.is_some() {
+            return Err(authority_refused(
+                crate::authority::machine_answers::RESTORED_NOT_JOINED,
+            ));
+        }
         // A credential-only re-pairing writes no revision, so it needs no
         // carrier, and no arm below enrols the machine again.
         if let Some((proof, transcript)) = possession
@@ -463,23 +478,39 @@ impl Vault {
         // redemption too (FIX 11715): its logged enrolment proof is no fresh
         // evidence, so without it the redemption refuses and writes nothing.
         held_machine_possession(&fold, request, possession)?;
+        // A machine born of a restore joins only through a machine that has
+        // joined (row RESTORED-COPIES-ENROL-EACH-OTHER): when this install
+        // can carry, it carries the owner's act for it, never the root's
+        // bootstrap, which the fold would hold. One no live machine here
+        // carries for is refused, and nothing is written.
+        let restored_and_carried = request.restored_from.is_some() && carries;
         // The never-profiled path first: an unanswered serving install also
         // carries, and it keeps pairing exactly as it did before its profile.
-        if unprofiled_install(&fold, crate::identity::read_machine_id_in_txn(self, txn)?) {
+        // A hosted install's owner answer goes to the carrier instead.
+        if !restored_and_carried
+            && self.host_root_may_sign_role(role)
+            && unprofiled_install(&fold, crate::identity::read_machine_id_in_txn(self, txn)?)
+        {
             return self
                 .enroll_bootstrap_in_txn(txn, issuer, answer.owner, request, role)
                 .map(|machine| (MachineAnswerLanding::Stands(machine), false));
         }
-        if self.carrier_in_txn(txn, &fold).is_ok() {
+        if carries {
             let act = AnswerAct {
                 owner: answer.owner,
                 by: answer.by,
                 surface: answer.surface,
                 kind: answer.kind,
                 seen: None,
+                last_device_key: crate::authority::LastDeviceKeyConfirmation::NotGiven,
+                // The answer the owner gave on making the link, not the
+                // owner's own write here: its join carries no owner key's
+                // proof (REVIEW-9962 P1); the answer keeps the one its judge
+                // needs.
+                proves_joins: false,
             };
             return self
-                .enroll_machine_in_txn(txn, act, request, role)
+                .enroll_machine_in_txn(txn, &OwnerProofGround::pairing_slip(), act, request, role)
                 .map(|landing| (landing, false));
         }
         Err(crate::authority::machine_answers::no_carrier())

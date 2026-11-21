@@ -2,7 +2,8 @@
 
 use super::door::CalendarConnectorOperation;
 use super::outbound::{
-    CalendarRemoteObjectRow, ingest_error, omission_observed, write_remote_object,
+    CalendarRemoteObjectRow, cancelled_members_in_flight, first_write_unsettled, ingest_error,
+    omission_observed, prove_unproven_replay, unsettled_writes_of, write_remote_object,
 };
 use super::remote::{
     CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange,
@@ -15,7 +16,6 @@ use super::seat::{
 
 use crate::attempt_queue::EnqueueAttempt;
 use crate::calendar::CalendarError;
-use crate::calendar::claims::CalendarPassportPresence;
 use crate::calendar::ingest::{
     ConnectorAdmissionSource, ConnectorScreen, admit_calendar_import_claim,
     admit_calendar_import_claim_in_txn,
@@ -24,6 +24,10 @@ use crate::calendar::passport::live_passport_for;
 use crate::calendar::safeguard::{CalendarBodyScreener, CalendarInboundBody, screen_then_claim};
 use crate::entity_id::EntityId;
 use crate::vault::Vault;
+
+mod removal;
+
+use removal::{RemovalEvidence, apply_remote_deletion};
 
 /// Runs one connector sync for `seat`.
 ///
@@ -97,7 +101,33 @@ pub fn run_calendar_connector_sync_with_screener(
         safeguard_enabled,
     };
     let mut counters = SyncCounters::default();
+    // A sync answer that reports a resource gone beside a copy of its UID is
+    // the provider's report of a moved resource (CalDAV: the old href's 404
+    // and the new href's copy in one delta), not a cancellation: the delete
+    // is dropped and the copy is read as any other version, a cancelled one
+    // included (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING). A
+    // copy's UID is the one its ICS carries, which admission reads, never
+    // the transport's report of it: a copy whose sync answer names another
+    // event's UID drops no delete of that event.
+    let tombstones = batch
+        .changes
+        .iter()
+        .any(|change| matches!(change, RemoteCalendarChange::Delete { .. }));
+    let mut live_uids = std::collections::BTreeSet::new();
+    for change in batch.changes.iter().filter(|_| tombstones) {
+        if let RemoteCalendarChange::Upsert(object) = change
+            && let Ok(feed) = super::remote::parse_remote_resource(object)
+            && let Some(event) = feed.events.into_iter().next()
+        {
+            live_uids.insert(event.uid);
+        }
+    }
     for change in &batch.changes {
+        if let RemoteCalendarChange::Delete { uid, .. } = change
+            && live_uids.contains(uid.as_str())
+        {
+            continue;
+        }
         apply_remote_change(
             vault,
             operation,
@@ -114,9 +144,21 @@ pub fn run_calendar_connector_sync_with_screener(
     // every other change of this pull stands, and the next pull lists the
     // calendar whole again, so the omission is read again, never dropped
     // (fix list row 19192). A booking move a pending emergency delivery held
-    // back stays owed the same way (FIX 22385).
+    // back stays owed the same way (FIX 22385), and so does a cancelled
+    // version a cancelled write in flight holds back
+    // (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS), a first write's
+    // copy read before the write settled
+    // (CAL-FIRST-WRITE-COPY-PULLED-UNSETTLED-IMPORTS-DUPLICATE-EVENT), and a
+    // tombstone held for a full listing to settle
+    // (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING).
     let next_cursor = match batch.next_cursor {
-        Some(cursor) if counters.owed_omissions > 0 || counters.owed_booking_moves > 0 => {
+        Some(cursor)
+            if counters.owed_omissions > 0
+                || counters.owed_booking_moves > 0
+                || counters.owed_cancelled_versions > 0
+                || counters.owed_first_write_copies > 0
+                || counters.owed_tombstones > 0 =>
+        {
             transport.cursor_owing_full_listing(&cursor)
         }
         cursor => cursor,
@@ -154,6 +196,17 @@ struct SyncCounters {
     /// Resources whose booking move a pending emergency delivery held back
     /// (FIX 22385).
     owed_booking_moves: u32,
+    /// Resources read cancelled while a cancelled write of the same member
+    /// was in flight (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
+    owed_cancelled_versions: u32,
+    /// Resources read while the first write of their EVENT, under the UID
+    /// it minted, was in flight
+    /// (CAL-FIRST-WRITE-COPY-PULLED-UNSETTLED-IMPORTS-DUPLICATE-EVENT).
+    owed_first_write_copies: u32,
+    /// Tombstones held unread until a full listing's omission of the
+    /// resource settles them
+    /// (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING).
+    owed_tombstones: u32,
 }
 
 /// Applies one pulled change under the echo law, each admission under
@@ -180,6 +233,103 @@ fn apply_remote_change(
                 .first()
                 .ok_or_else(|| ingest_error("remote resource has no event"))?;
             let source = pull_source_record_id(provider, seat, &primary.uid);
+            // A replayed write whose refusal's read proved nothing is proved
+            // by this read first, so its own copy never lands unmarked
+            // (BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY), nor a first
+            // write's as a second EVENT.
+            prove_unproven_replay(vault, operation, provider, object, &primary.uid, now)?;
+            // A first write's copy coming back before the write binds its
+            // UID resolves no EVENT: nothing names the UID the write minted
+            // until its passport lands. The resource stays owed and unread,
+            // so it never imports a second EVENT, on this seat or on any
+            // other seat of the collection, and the next pull after the
+            // write binds the UID reads it on the written EVENT
+            // (CAL-FIRST-WRITE-COPY-PULLED-UNSETTLED-IMPORTS-DUPLICATE-EVENT).
+            if first_write_unsettled(vault, operation, &primary.uid)? {
+                counters.owed_first_write_copies += 1;
+                return Ok(());
+            }
+            // A cancelled version of a member a write of this UID still in
+            // flight (or refused with its stored copy's proof owed) writes
+            // cancelled may be that write coming back before its settlement
+            // or proof marks the member's passport, and would read as a
+            // host cancel that refunds the deposit. The resource stays owed
+            // and unread, as an omission a write in flight holds back does,
+            // and each cancelled member's passport keeps this first sighting,
+            // which dates the cancellation if the write proves not to be the
+            // stored copy (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
+            // A VEVENT is the staged member its UID and staged RECURRENCE-ID
+            // name, whatever exception claims the member holds now. The write
+            // may be in flight on another seat of the calendar, which shares
+            // its passports
+            // (CAL-SECOND-SEAT-CANCELLED-VERSION-MISSES-OTHER-SEAT-WRITE);
+            // such a row, which this seat never settles, holds only a copy
+            // that may be its write's own (its SEQUENCE and write marker).
+            // Only a copy that carries a cancelled VEVENT asks: no other copy
+            // is held back here.
+            let in_flight = if feed.events.iter().any(|parsed| parsed.cancelled) {
+                let lowest_sequence = feed
+                    .events
+                    .iter()
+                    .map(|parsed| parsed.sequence)
+                    .min()
+                    .unwrap_or(primary.sequence);
+                cancelled_members_in_flight(
+                    vault,
+                    operation,
+                    &primary.uid,
+                    &object.ics,
+                    lowest_sequence,
+                )?
+            } else {
+                Vec::new()
+            };
+            if !in_flight.is_empty() {
+                let mut cancelled = Vec::new();
+                for parsed in feed.events.iter().filter(|parsed| parsed.cancelled) {
+                    let staged = in_flight
+                        .iter()
+                        .find(|(_, identity)| {
+                            parsed.uid == primary.uid
+                                && *identity == parsed.properties.recurrence_id_utc
+                        })
+                        .map(|(member, _)| *member);
+                    let member = match staged {
+                        Some(member) => Some(member),
+                        None => crate::calendar::ingest::connector_event_ref(vault, parsed)?,
+                    };
+                    if let Some(member) = member {
+                        cancelled.push((member, parsed));
+                    }
+                }
+                if cancelled
+                    .iter()
+                    .any(|(member, _)| in_flight.iter().any(|(staged, _)| staged == member))
+                {
+                    for (member, parsed) in cancelled {
+                        if let Some((_, passport)) =
+                            live_passport_for(vault, &member, system, &parsed.uid)?
+                        {
+                            crate::calendar::ingest::defer_connector_cancel(
+                                vault,
+                                system,
+                                ConnectorAdmissionSource {
+                                    record: source.as_str(),
+                                    source_version: None,
+                                    screen,
+                                    source: None,
+                                },
+                                member,
+                                &passport,
+                                parsed,
+                                now,
+                            )?;
+                        }
+                    }
+                    counters.owed_cancelled_versions += 1;
+                    return Ok(());
+                }
+            }
             // Archived before any semantic write, once the bytes are known to
             // parse: a later write renders over exactly this copy.
             let archived = super::resource::archive_remote_source(
@@ -216,7 +366,25 @@ fn apply_remote_change(
                     None => None,
                 };
                 match classify_remote_change(current.as_ref(), &normalized) {
-                    EchoDisposition::AcknowledgeEcho => counters.acknowledged += 1,
+                    EchoDisposition::AcknowledgeEcho => {
+                        // A cancellation whose admission stopped before its
+                        // deposit refund or status reads as an echo on the
+                        // next pull of the same bytes: they are asked again
+                        // here. An uncancelled echo withdraws a tombstone's
+                        // date from its passport.
+                        if let (Some(id), Some(passport)) = (event_ref, current.as_ref()) {
+                            crate::calendar::ingest::repeat_connector_echo(
+                                vault,
+                                system,
+                                admission_source,
+                                id,
+                                passport,
+                                parsed,
+                                now,
+                            )?;
+                        }
+                        counters.acknowledged += 1;
+                    }
                     EchoDisposition::ApplyInbound | EchoDisposition::ApplyRemoteUpdate => {
                         if crate::calendar::ingest::admit_connector_event(
                             vault,
@@ -275,6 +443,44 @@ fn apply_remote_change(
                 classify_remote_change(None, change),
                 EchoDisposition::ApplyRemoteDeletion
             );
+            // CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING: the
+            // tombstone stays owed and unread, each passport it would date
+            // keeping this first sighting, until a full listing's omission
+            // of the resource settles it as the tombstone it was
+            // (`apply_remote_deletion`), when:
+            // - a cancelled write of this UID on any seat of the calendar is
+            //   still in flight, or a replay of one read no stored copy: a
+            //   provider that keeps a cancelled event as a deleted one
+            //   reports that write as a tombstone, before its settlement
+            //   marks the member's passport, and it would read as the host's
+            //   cancel;
+            // - or it alone would conclude the host's cancel of an EVENT no
+            //   inbound source carries: a sync delta can report a resource
+            //   the host moved gone, on a page before the one carrying its
+            //   new href.
+            let writes = unsettled_writes_of(vault, operation, uid)?;
+            if writes.cancelled_in_flight
+                || writes.copy_unproven
+                || crate::calendar::ingest::tombstone_cancels_written_only_event(
+                    vault, system, uid,
+                )?
+            {
+                let record = pull_source_record_id(provider, seat, uid);
+                crate::calendar::ingest::defer_connector_delete(
+                    vault,
+                    system,
+                    ConnectorAdmissionSource {
+                        record: &record,
+                        source_version: None,
+                        screen,
+                        source: None,
+                    },
+                    uid,
+                    now,
+                )?;
+                counters.owed_tombstones += 1;
+                return Ok(());
+            }
             apply_remote_deletion(
                 vault,
                 seat,
@@ -293,7 +499,14 @@ fn apply_remote_change(
             // prepared row is published in too, so the row and the outbox
             // are the ones the absence lands against.
             operation.revalidate(vault)?;
-            if !omission_observed(vault, operation, uid, *observation)? {
+            // A cancelled write of the UID another seat of the calendar has
+            // in flight holds the omission back too, since it may be that
+            // write coming back gone
+            // (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING).
+            let writes = unsettled_writes_of(vault, operation, uid)?;
+            if !omission_observed(vault, operation, uid, *observation)?
+                || writes.cancelled_in_flight
+            {
                 counters.owed_omissions += 1;
                 return Ok(());
             }
@@ -302,124 +515,15 @@ fn apply_remote_change(
                 seat,
                 provider,
                 uid,
-                RemovalEvidence::Omission,
+                RemovalEvidence::Omission {
+                    settles_held_cancel: !writes.copy_unproven,
+                },
                 screen,
                 now,
                 counters,
             )
         }
     }
-}
-
-/// What says a remote resource is gone.
-#[derive(Clone, Copy)]
-enum RemovalEvidence {
-    /// The provider's own tombstone: an explicit cancellation.
-    Tombstone,
-    /// A full listing that no longer carries it (fix list row 19192): an
-    /// absence, as an omitted feed item is.
-    Omission,
-}
-
-/// A remote deletion marks exactly one source's passport absent, once.
-///
-/// Multi-source law, verbatim: feed-absence cancellation applies ONLY when every
-/// live inbound passport for the EVENT reports absence; a single-source absence
-/// supersedes only that passport, never the EVENT status. The EVENT is never
-/// deleted, CAL-07's outcome predicate is never written, and no delete is bounced
-/// back to any provider.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a removal's evidence and its pull's screen meet the one passport sweep"
-)]
-fn apply_remote_deletion(
-    vault: &Vault,
-    seat: &CalendarConnectorSeatState,
-    provider: &'static str,
-    uid: &str,
-    evidence: RemovalEvidence,
-    screen: ConnectorScreen<'_>,
-    now: u64,
-    counters: &mut SyncCounters,
-) -> Result<(), CalendarConnectorError> {
-    let mut absent_count = 0;
-    let mut newly_absent = Vec::new();
-    let mut after = None;
-    loop {
-        let ids = vault.entities_by_type_page(
-            crate::registry::ENTITY_TYPE_EVENT,
-            after.as_ref(),
-            4096,
-        )?;
-        if ids.is_empty() {
-            break;
-        }
-        for event in &ids {
-            if crate::calendar::passport::live_passport_for(vault, event, &seat.config.system, uid)?
-                .is_some_and(|(_, value)| {
-                    value.presence == CalendarPassportPresence::Live
-                        && value.direction.is_inbound_bearing()
-                })
-            {
-                absent_count += 1;
-                newly_absent.push((*event, imported_cancellation(vault, *event)?));
-            }
-        }
-        after = ids.last().copied();
-    }
-    let record = pull_source_record_id(provider, seat, uid);
-    let source = ConnectorAdmissionSource {
-        record: &record,
-        source_version: None,
-        screen,
-        source: None,
-    };
-    match evidence {
-        RemovalEvidence::Tombstone => crate::calendar::ingest::delete_connector_resource(
-            vault,
-            &seat.config.system,
-            source,
-            uid,
-            now,
-        )?,
-        RemovalEvidence::Omission => crate::calendar::ingest::sweep_connector_uids(
-            vault,
-            &seat.config.system,
-            source,
-            &std::collections::BTreeSet::from([uid]),
-            now,
-        )?,
-    }
-    counters.source_absences += absent_count;
-    for (event, was_cancelled) in newly_absent {
-        if !was_cancelled && imported_cancellation(vault, event)? {
-            counters.status_cancellations += 1;
-        }
-    }
-    Ok(())
-}
-
-fn imported_cancellation(vault: &Vault, event: EntityId) -> Result<bool, CalendarConnectorError> {
-    use crate::calendar::claims::{
-        CalendarStatus, CalendarStatusBasis, PREDICATE_CALENDAR_STATUS, decode_status_value,
-    };
-    for id in vault.claims_for_subject(&event)? {
-        if let Some(body) = vault.get_claim(&id)?
-            && body.lifecycle == crate::ClaimLifecycleStatus::Active
-            && body.predicate == PREDICATE_CALENDAR_STATUS
-        {
-            let status = decode_status_value(&body.value)?;
-            if status.status == CalendarStatus::Cancelled
-                && matches!(
-                    status.basis,
-                    CalendarStatusBasis::ImportedAbsence | CalendarStatusBasis::ImportedCancel
-                )
-            {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
 }
 
 pub(super) fn admit_screened(
@@ -501,16 +605,17 @@ fn enqueue_next_sync(
 
 /// Refreshes the local view of one remote object after a precondition failure.
 /// Best-effort by design: the mismatch verdict is what the caller must see, and
-/// a reconciliation pull that itself fails must not mask it.
+/// a reconciliation pull that itself fails must not mask it. Returns the last
+/// copy of the object the pull read, if any.
 pub(super) fn reconcile_remote_object(
     vault: &Vault,
     operation: &CalendarConnectorOperation,
     transport: &dyn CalendarRemoteTransport,
     uid: &str,
     now: u64,
-) {
+) -> Option<RemoteCalendarObject> {
     if operation.revalidate(vault).is_err() {
-        return;
+        return None;
     }
     let seat = &operation.registration().seat;
     let Ok(batch) = transport.pull(
@@ -518,8 +623,9 @@ pub(super) fn reconcile_remote_object(
         &seat.config.calendar_ref,
         seat.cursor.as_deref(),
     ) else {
-        return;
+        return None;
     };
+    let mut read = None;
     for change in &batch.changes {
         let RemoteCalendarChange::Upsert(object) = change else {
             continue;
@@ -563,7 +669,9 @@ pub(super) fn reconcile_remote_object(
             },
             None,
         );
+        read = Some(object.clone());
     }
+    read
 }
 
 /// The EVENT's stored occurrence from the parsed times.

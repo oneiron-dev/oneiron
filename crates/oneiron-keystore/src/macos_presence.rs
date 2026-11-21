@@ -10,7 +10,10 @@
 //!   presence gate asks: at each act, and on a timer.
 //! - A process with no session on the device's screen (a system daemon, a
 //!   shell of a user with no session on the screen, a user switched out)
-//!   cannot show the sheet and says so.
+//!   cannot show the sheet and says so. A process with no session can never
+//!   ask, and a confirm there answers `NoPrompt`. A user switched out is off
+//!   the screen for now: that reads as a locked screen, and a confirm asked
+//!   then answers `ScreenLocked`.
 //!
 //! Other Apple platforms have no screen-lock reading here, so they get no
 //! prompt: a window must never outlast a lock.
@@ -129,8 +132,13 @@ impl UserPresence for MacosUserPresence {
     fn confirm(&self, reason: &str) -> Result<(), PresenceError> {
         match screen_session() {
             ScreenSession::Absent => return Err(PresenceError::NoPrompt(NO_SCREEN_SESSION)),
-            ScreenSession::OffScreen => return Err(PresenceError::NoPrompt(SESSION_OFF_SCREEN)),
-            ScreenSession::Locked => return Err(PresenceError::ScreenLocked),
+            // Every reading the lock check takes as locked answers as locked
+            // here too. A session that left the screen after the gate read
+            // it is not a device that cannot ask: a caller lets an act stand
+            // on `NoPrompt`, and no act stands on a screen nobody is at.
+            ScreenSession::Locked | ScreenSession::OffScreen => {
+                return Err(PresenceError::ScreenLocked);
+            }
             ScreenSession::Unlocked => {}
         }
         // The framework raises an exception on an empty reason, which no

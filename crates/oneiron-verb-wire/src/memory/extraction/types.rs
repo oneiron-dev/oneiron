@@ -28,6 +28,20 @@ pub struct CorefLink {
     pub confidence: Option<f32>,
 }
 
+/// A relation the tagger read between two spans of this turn: `head` and
+/// `tail` index the answer's own spans, and `label` is the model's relation
+/// class. The tagger authors no claim: a host's relation table maps the
+/// label to a predicate, and the Dreamer's child authors the claim
+/// (ARCH-0026, JointIE inside the child).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RelationLink {
+    pub head: usize,
+    pub tail: usize,
+    pub label: String,
+    pub confidence: f32,
+}
+
 /// A span whose antecedent is in a context turn: addressed by the turn and
 /// message ids the input sent and half-open UTF-8 byte offsets into that
 /// message's text as sent.

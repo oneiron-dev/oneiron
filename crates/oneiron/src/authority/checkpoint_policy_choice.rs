@@ -17,6 +17,7 @@
 //! the owner's own pairing step ("pair again with a link from the owner").
 
 use crate::error::{Error, RecordError, Result};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{TimeRange, Vault};
 
 use super::checkpoint_policy::{checkpoint_root_policy_of, policy_refused};
@@ -38,8 +39,15 @@ const TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than o
 /// The fold did not count the signed choice here: it never reports success.
 const NOT_COUNTED: &str = "this install's fold does not count the checkpoint policy choice";
 
-const HOSTED_SELECTION_ADVANCED_ONLY: &str =
-    "hosted checkpoint root selection requires the operator's enterprise/advanced capability";
+/// The owner's QUORUM-HOST-ROOT = C: the host key signs a hosted vault's
+/// checkpoints, and dropping it is an enterprise/advanced setting the
+/// operator grants per vault. Neither law, a provider's term nor capacity,
+/// so it names no bound kind, only the rule and where the choice is the
+/// owner's own (DEC-0005 #will-sweep; RULING L9-61-CHECKPOINT = A).
+const HOSTED_SELECTION_ADVANCED_ONLY: &str = "hosted checkpoint root selection requires \
+     the operator's enterprise/advanced capability: on a hosted vault the host key signs its \
+     checkpoints unless the operator grants this vault that setting; a self-hosted or relay \
+     vault's owner chooses its roots";
 
 #[doc(hidden)]
 pub use oneiron_records::authority::checkpoint_policy_choice::CheckpointPolicyView;
@@ -98,6 +106,9 @@ impl Vault {
     /// whose fold carries this install's standing rows and every live choice,
     /// so it supersedes all of them, and lands atomically or not at all.
     ///
+    /// The door does not read the value in force before its write, so it asks for every
+    /// change it cannot tell from its arguments to be a narrowing.
+    ///
     /// # Errors
     /// [`RecordError::AuthorityRefused`] for an agent's act or an install
     /// that cannot carry it; [`RecordError::CheckpointPolicyRevisionStale`]
@@ -115,6 +126,15 @@ impl Vault {
             ActAuthority::Owner(owner, surface) => (owner, *surface),
             ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
         };
+        // The proof is this handle's before the confirm, as the paced turn's
+        // key read it before the writer: a proof of another handle never
+        // prompts. The turn itself is taken after the confirm.
+        owner.actor_for_read(self)?;
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::CHECKPOINT_POLICY,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         // Every root the owner names is kept (FIX 7909): the count is
         // measured, and paced only before the writer opens.
         let _turn = self.admit_authority_work(
@@ -160,7 +180,13 @@ impl Vault {
             return Err(authority_refused(NO_CARRIER));
         }
         // FIX 7908: join a frontier wider than one entry names, else today's path.
-        let joiner = FrontierSigner::Install(machine, &key);
+        // The owner key this install holds proves the act; its join carries
+        // the proof only for the owner's own write (row
+        // OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, REVIEW-9962 P1).
+        let proof = self.owner_proof_signer(&fold, &ground);
+        let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
+        let joiner =
+            FrontierSigner::install(machine, &key, proof.as_ref().filter(|_| proves_joins));
         let fold = self
             .prepare_authority_frontier_in_txn(&mut txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
@@ -192,7 +218,7 @@ impl Vault {
                 choice,
             }),
             now,
-            self.owner_proof_signer(&fold).as_deref(),
+            proof.as_ref(),
         )?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {

@@ -233,6 +233,7 @@ impl Memory<'_> {
                 conversation_ref: room.to_hex(),
                 turn_ref: Some(reserved.turn.to_hex()),
                 thread_audience: None,
+                project: None,
                 messages: vec![WitnessMessage {
                     id: Some(reserved.message.to_hex()),
                     author: if self.actor_class() == EdgeActorClass::Human {

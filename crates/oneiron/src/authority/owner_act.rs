@@ -7,6 +7,8 @@
 
 use std::collections::BTreeMap;
 
+use oneiron_persistent_collections::PersistentMap;
+
 use crate::entity_id::EntityId;
 
 use super::principal_standing::{
@@ -49,18 +51,20 @@ use super::*;
 ///
 /// `pin` only adds a veto: a head the reader believes
 /// ([`FoldedMachine::standing_heads`]) that says removed refuses. A shared
-/// judge, the fold's included, passes `None`, so it reads the roster's head
-/// alone; a door passes its install's pin (`fold.pinned_root`), so it signs
-/// nothing its own install would not count. Admission stays the roster's
+/// judge, the fold's validity included, passes `None`, so it reads the
+/// roster's head alone; a door passes its install's pin (`fold.pinned_root`),
+/// so it signs nothing its own install would not count, and the fold's
+/// install view passes it too, so this install never reads an act at full
+/// strength that its pinned anchor's removal raced. Admission stays the roster's
 /// (Fable design pass 29, 3.2: "a chain is read only by a reader that
 /// believes its admitter"; FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES).
 pub(crate) fn owner_act_signer_admits(
     machine: Option<&FoldedMachine>,
-    roster: &BTreeMap<AuthorityKey, FoldedDevice>,
+    roster: &impl RosterKeyLookup,
     key: &[u8; 32],
     pin: Option<&PinnedRoot>,
 ) -> bool {
-    !roster.contains_key(&AuthorityKey::Ed25519(*key))
+    !roster.contains_roster_key(&AuthorityKey::Ed25519(*key))
         && machine.is_some_and(|folded| {
             folded
                 .roster
@@ -68,6 +72,26 @@ pub(crate) fn owner_act_signer_admits(
                 .is_some_and(|chain| chain.is_live() && chain.profile.machine_key == *key)
                 && folded.standing_heads(pin).iter().all(|head| !head.removed)
         })
+}
+
+/// The one roster read [`owner_act_signer_admits`] makes: whether a roster
+/// holds a device under a key. The fold's roster (a `BTreeMap`) and a fold
+/// state's persistent roster both answer it in place, without a copy.
+pub(crate) trait RosterKeyLookup {
+    /// Whether this roster holds a device under `key`, live or revoked.
+    fn contains_roster_key(&self, key: &AuthorityKey) -> bool;
+}
+
+impl RosterKeyLookup for BTreeMap<AuthorityKey, FoldedDevice> {
+    fn contains_roster_key(&self, key: &AuthorityKey) -> bool {
+        self.contains_key(key)
+    }
+}
+
+impl RosterKeyLookup for PersistentMap<AuthorityKey, FoldedDevice> {
+    fn contains_roster_key(&self, key: &AuthorityKey) -> bool {
+        self.contains_key(key)
+    }
 }
 
 /// Whether `owner` is a live owner at an act's causal point, as the fold
@@ -154,7 +178,7 @@ impl GrantedAct {
 /// and an agent's free-time policy, any set or clear (FIX 5660, CALLS "FIX
 /// 5660 agent free-time act"); each other door takes agents when its lane
 /// writes the Grant line that names its act (contract §4).
-const AGENT_GRANTABLE_ACTS: [OwnerActKind; 4] = [
+const AGENT_GRANTABLE_ACTS: [OwnerActKind; 6] = [
     OwnerActKind::TopologySeal,
     OwnerActKind::WorldPrivacy,
     OwnerActKind::FreeTimePolicy,
@@ -162,6 +186,14 @@ const AGENT_GRANTABLE_ACTS: [OwnerActKind; 4] = [
     // "An agent whose Grant names vault.models.bindings.propose may propose
     // a binding. It is a proposal, and the owner still decides."
     OwnerActKind::ModelBindingPropose,
+    // The Engine's ruling Sat 14 Nov 20:57 (L10-17-WHO = B): "The owner may
+    // start a continue, and so may an outside agent whose grant names
+    // vault.runners.continue. The grant is checked live at each call."
+    OwnerActKind::RunnerContinue,
+    // The Engine's ruling Tue 17 Nov 06:50 (L10-17-PR3-MEMORY = B): "Callers:
+    // the owner, or an agent whose live Grant names the verb (Substrate
+    // behind grants, as every verb)."
+    OwnerActKind::HookTranscriptImport,
 ];
 
 /// The verb a Grant names a world-settings act by. A Grant can only ever name
@@ -177,17 +209,40 @@ pub(crate) const FREE_TIME_POLICY_SET_VERB: &str = "free_time_policy_set";
 /// verb itself, since the proposal is the verb's whole act.
 pub(crate) const MODEL_BINDING_PROPOSE_VERB: &str = "vault.models.bindings.propose";
 
+/// The verb a Grant names an agent's start of a continued outside session
+/// by: the facade verb itself, since the start is the verb's whole act
+/// (Engine ruling Sat 14 Nov 20:57, L10-17-WHO = B).
+pub(crate) const RUNNER_CONTINUE_VERB: &str = "vault.runners.continue";
+
+/// The verb a Grant names an agent's import of a Claude Code session's
+/// transcript by: the facade verb itself, since the import is the verb's
+/// whole act (Engine ruling Tue 17 Nov 06:50, L10-17-PR3-MEMORY = B).
+pub(crate) const HOOK_TRANSCRIPT_IMPORT_VERB: &str = "vault.imports.hook_transcript";
+
 /// The verb an agent's Grant lists to name `act`: the act's wire tag, but for
 /// a world's settings, whose one grantable direction is the tighten, the
-/// free-time policy, whose verb names the set, and a model-binding proposal,
-/// whose verb is the facade verb.
+/// free-time policy, whose verb names the set, a model-binding proposal,
+/// whose verb is the facade verb, and a runner continue and a hook
+/// transcript import, whose verbs are the facade verbs too.
 fn grant_verb(act: OwnerActKind) -> &'static str {
     match act {
         OwnerActKind::WorldPrivacy => WORLD_PRIVACY_TIGHTEN_VERB,
         OwnerActKind::FreeTimePolicy => FREE_TIME_POLICY_SET_VERB,
         OwnerActKind::ModelBindingPropose => MODEL_BINDING_PROPOSE_VERB,
+        OwnerActKind::RunnerContinue => RUNNER_CONTINUE_VERB,
+        OwnerActKind::HookTranscriptImport => HOOK_TRANSCRIPT_IMPORT_VERB,
         other => other.as_str(),
     }
+}
+
+/// The verbs an agent's Grant lists to name the acts it may carry, one per
+/// act in [`AGENT_GRANTABLE_ACTS`]. The Grant mint refuses a Grant that lists
+/// one of them without `read` (Engine ANSWER
+/// AGENT-GRANTABLE-ACT-GRANT-NEEDS-READ-VERB = A, 20 Nov 20:32):
+/// [`scope_names_act`] asks the Grant to confer, which needs `read`, so such a
+/// Grant would look live and never carry its act.
+pub(crate) fn agent_grantable_act_verbs() -> impl Iterator<Item = &'static str> {
+    AGENT_GRANTABLE_ACTS.into_iter().map(grant_verb)
 }
 
 /// Whether a scope of `kind` with `expires_at` and `member` names `act`
@@ -444,7 +499,7 @@ impl crate::Vault {
         grant: EntityId,
         act: OwnerActKind,
     ) -> crate::error::Result<GrantedAct> {
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         self.live_grant_names_act_in_txn(txn, grant, agent, act, now)?;
         Ok(GrantedAct { agent, grant, act })
     }
@@ -460,7 +515,7 @@ impl crate::Vault {
         granted: &GrantedAct,
         act: OwnerActKind,
     ) -> crate::error::Result<EntityId> {
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         if granted.act != act {
             return Err(authority_refused(GRANT_NAMES_NO_ACT));
         }
@@ -513,7 +568,7 @@ impl crate::Vault {
         agent: EntityId,
         world: EntityId,
     ) -> crate::error::Result<std::result::Result<EntityId, NoStanding>> {
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let mut lapsed = false;
         for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
             &self.store,
@@ -545,7 +600,7 @@ impl crate::Vault {
         world: EntityId,
     ) -> crate::error::Result<EntityId> {
         let owner = self.granted_act_owner_in_txn(txn, granted, OwnerActKind::WorldPrivacy)?;
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         if !self.grant_names_world_act_in_txn(txn, granted.grant, granted.agent, world, now)? {
             return Err(authority_refused(GRANT_NAMES_NO_ACT));
         }
@@ -594,7 +649,7 @@ impl crate::Vault {
         agent: EntityId,
         act: OwnerActKind,
     ) -> crate::error::Result<EntityId> {
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let mut lapsed = false;
         for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
             &self.store,
@@ -648,7 +703,7 @@ impl crate::Vault {
         coach: EntityId,
         owner: EntityId,
     ) -> crate::error::Result<std::result::Result<EntityId, NoStanding>> {
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let owners = crate::policy_model::owners_in_txn(self, txn)?;
         let sole_owner = owners.len() == 1 && owners.first() == Some(&owner);
         let mut lapsed = false;

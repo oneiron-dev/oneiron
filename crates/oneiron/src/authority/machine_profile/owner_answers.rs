@@ -20,6 +20,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use oneiron_persistent_collections::PersistentMap;
+
 use crate::entity_id::EntityId;
 
 use super::apply::{refused_revision, roster_chain};
@@ -120,6 +122,14 @@ impl MachineRevision {
 /// or a forged entry; there is never a second. An answer that lands and is
 /// the owner's (proven, or carried by one of the owner's machines) ends the
 /// ask of every held answer about the machine that its parent state held.
+/// `needs_proof_off_the_line`: the answer lies outside a proving owner-key
+/// enrolment's line ([`super::super::owner_key_line`]), so a carrier that is
+/// not the owner's needs the proof whatever the parents hold.
+/// `proof_parents`: the parents as they were before a restored target's held
+/// chains were laid under `state` (row RESTORED-COPIES-ENROL-EACH-OTHER);
+/// whether the answer needs the proof is judged on them, so a held chain
+/// never makes its target read as already the owner's (REVIEW-9509 round 2
+/// P1). `None`: `state` is the parents'.
 pub(in crate::authority) fn apply_owner_answer(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -127,6 +137,7 @@ pub(in crate::authority) fn apply_owner_answer(
     hash: AuthorityEntryHash,
     (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    (needs_proof_off_the_line, proof_parents): (bool, Option<&FoldState>),
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let (Some(carrier), Some(act)) = (profile.carrier, profile.act) else {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
@@ -186,14 +197,24 @@ pub(in crate::authority) fn apply_owner_answer(
         })),
         say_so: Some(say_so),
     };
-    if proof.is_none()
-        && super::super::owner_proof::machine_answer_needs_proof(
+    // Outside a proving owner-key enrolment's line (row
+    // CARRIER-PROOF-OLD-PARENTS), a carrier that is not the owner's needs the
+    // proof as if the parents held that key.
+    let needs_proof = || match proof_parents {
+        Some(parents) => super::super::owner_proof::machine_answer_needs_proof(
+            parents,
+            profile,
+            carrier_is_mine,
+            Standing::new(parents, pin, counted).trusted_key(profile.machine, roster),
+        ),
+        None => super::super::owner_proof::machine_answer_needs_proof(
             state,
             profile,
             carrier_is_mine,
             target_key,
-        )
-    {
+        ),
+    };
+    if proof.is_none() && ((needs_proof_off_the_line && !carrier_is_mine) || needs_proof()) {
         super::super::owner_proof::hold_answer(state, hash, folded);
         return Ok(());
     }
@@ -331,7 +352,10 @@ pub(in crate::authority) fn effective_chains<'a>(
 /// (FIX 4610: two concurrent marks of one anchor as two answers do).
 pub(in crate::authority) fn say_so_contested(
     head: &MachineRevision,
-    revisions: &BTreeMap<AuthorityEntryHash, Arc<crate::authority::machine_standing::Revision>>,
+    revisions: &PersistentMap<
+        AuthorityEntryHash,
+        Arc<crate::authority::machine_standing::Revision>,
+    >,
 ) -> bool {
     if head.say_so.is_none() {
         return false;

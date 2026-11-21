@@ -1,5 +1,7 @@
 //! Versioned cohort records, lifecycle values and owner-bound request shapes.
 
+use oneiron_contracts::register::Register;
+
 use crate::entity_id::EntityId;
 use crate::write_envelope::cohort_claims::snooze_policy::SnoozePolicyData;
 
@@ -91,7 +93,12 @@ impl CopyReviewMode {
 /// A genuine 1:1 mail carries a plain opt-out line in its body and no bulk
 /// header, because the header marks mail as bulk. A bulk send carries
 /// List-Unsubscribe, and the compliance gate blocks a bulk send without it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+///
+/// A Register (`campaign.send_mode`): `as_str` is the token a stored
+/// definition and a frozen send envelope carry, and `Register::named` reads
+/// one back. It has no serde derive, so the register line states the spelling.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Register)]
+#[register("campaign.send_mode", rename_all = "snake_case")]
 pub enum CampaignSendMode {
     /// Each send is a genuine 1:1 mail: the plain opt-out line, no bulk
     /// header. A campaign stored before send modes existed reads as this.
@@ -102,23 +109,10 @@ pub enum CampaignSendMode {
 }
 
 impl CampaignSendMode {
-    /// Wire token for this mode.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::OneToOne => "one_to_one",
-            Self::Bulk => "bulk",
-        }
-    }
-
     /// Parses a wire token, rejecting anything outside the closed set.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "one_to_one" => Some(Self::OneToOne),
-            "bulk" => Some(Self::Bulk),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 

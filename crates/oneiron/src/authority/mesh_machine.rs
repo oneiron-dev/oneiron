@@ -434,6 +434,7 @@ mod tests {
     ) {
         let dir = tempfile::tempdir().unwrap();
         let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let host = HostSlipIssuer::from_secret(b"mesh grant host root").unwrap();
         vault.ensure_host_root_slip(&host).unwrap();
         let machine = EntityId::now();

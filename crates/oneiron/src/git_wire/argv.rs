@@ -243,6 +243,15 @@ impl FrozenGitArgv {
         Self::frozen(GitWireOperation::StatusPorcelain, tail)
     }
 
+    /// Every local ref in a checkout's own store, including stashes,
+    /// branches, notes and tags that collection would otherwise erase.
+    pub(super) fn checkout_store_refs() -> Self {
+        Self::frozen(
+            GitWireOperation::ReadRefs,
+            os_args(&["for-each-ref", "--format=%(objectname) %(refname)", "refs/"]),
+        )
+    }
+
     /// `notes --ref <ref> show <commit>`.
     pub(super) fn notes_show(notes_ref: &GitRefName, commit: &GitOid) -> Self {
         let tail = os_args(&[

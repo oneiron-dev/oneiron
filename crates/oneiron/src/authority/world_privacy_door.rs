@@ -35,23 +35,36 @@ pub enum EditOrigin {
 /// writer: the PERSON whose will it is (a holder of the world's settings
 /// right, or for an agent's act the vault owner its Grant carries), who
 /// decided (the holder himself, or an agent within its Grant), where (audit
-/// only), and the request a holder's yes answers (FIX 4480).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct WorldEditAuthor {
+/// only), the request a holder's yes answers (FIX 4480), and the vault
+/// owner's own write when the holder is the vault owner in person, by an
+/// undelegated proof revalidated in the writer
+/// ([`crate::consent::AuthenticatedOwner::owner_answer_in_txn`]): the edit
+/// and its join then carry the owner key's proof this install holds
+/// ([`Vault::owner_act_proof_signer`]). A delegated holder and an agent's
+/// Grant write none, so their edits are carried unproven.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WorldEditAuthor<'w> {
     pub(crate) owner: EntityId,
     pub(crate) by: ActBy,
     pub(crate) surface: ActSurface,
     pub(crate) answer: Option<EntityId>,
+    pub(crate) owner_authored: Option<&'w crate::consent::OwnerAuthoredWrite>,
 }
 
-impl WorldEditAuthor {
-    /// A holder's own say-so, answering nothing.
-    pub(crate) const fn holder(owner: EntityId, surface: ActSurface) -> Self {
+impl<'w> WorldEditAuthor<'w> {
+    /// A holder's own say-so, answering nothing; `owner_authored` when the
+    /// holder is the vault owner writing in person.
+    pub(crate) const fn holder(
+        owner: EntityId,
+        surface: ActSurface,
+        owner_authored: Option<&'w crate::consent::OwnerAuthoredWrite>,
+    ) -> Self {
         Self {
             owner,
             by: ActBy::Owner,
             surface,
             answer: None,
+            owner_authored,
         }
     }
 }
@@ -115,11 +128,12 @@ impl Vault {
     /// `seen` is the settings revision the deciding surface showed: it must be
     /// the world's current one, else the edit is a conflict, never a silent
     /// overwrite; `None` takes the current revision (a caller that showed
-    /// none).
+    /// none). The vault owner's own edit and its join carry the owner key's
+    /// proof this install holds (`author.owner_authored`).
     pub(crate) fn append_world_privacy_edit_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        author: WorldEditAuthor,
+        author: WorldEditAuthor<'_>,
         world: EntityId,
         settings: WorldPrivacy,
         seen: Option<PolicyRevision>,
@@ -192,8 +206,9 @@ impl Vault {
         // names a key record, which rides the world's recipient-filtered side
         // branch. A fenced main-log row beneath it is crossed on refold
         // (`refold_world_edits`), as for a grant travel choice.
+        let proof = self.owner_act_proof_signer(&fold, author.owner_authored);
         // FIX 7908: join a frontier wider than one entry names, else today's path.
-        let joiner = FrontierSigner::Install(machine, &key);
+        let joiner = FrontierSigner::install(machine, &key, proof.as_ref());
         let fold = self
             .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
@@ -213,7 +228,7 @@ impl Vault {
             seen: current.0,
             answer: author.answer,
         };
-        let entry = sign_side_entry(
+        let entry = sign_side_entry_with_owner_proof(
             &fold,
             &key,
             seq,
@@ -225,6 +240,7 @@ impl Vault {
                 settings,
             }),
             now,
+            proof.as_ref(),
         )?;
         let entry_hash = authority_entry_hash(&entry)?;
         let previous = fold.world_privacy(world);

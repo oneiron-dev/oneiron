@@ -34,6 +34,7 @@ use crate::error::{ClaimError, Error, Result};
 use crate::federation::SharedVaultWrite;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{TimeRange, Vault, WriteActor};
 
 use super::machine_standing::InstallCounted;
@@ -169,6 +170,7 @@ pub(super) fn apply_conversation_training_vault(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let choice = VaultTrainingChoice {
         on: set.on,
@@ -179,6 +181,7 @@ pub(super) fn apply_conversation_training_vault(
         machine: set.machine,
         choice: Some(&choice),
         context: CONVERSATION_TRAINING_VAULT_REVISION_CONTEXT,
+        needs_proof_off_the_line,
         persons_own_narrowing: false,
     };
     let landing = owner_choice_landing(
@@ -285,6 +288,9 @@ impl Vault {
     /// all. Turning it off stops new sharing; it withdraws nothing already
     /// shared.
     ///
+    /// The door does not read the value in force before its write, so it asks for every
+    /// change it cannot tell from its arguments to be a narrowing.
+    ///
     /// # Errors
     /// A refusal when the proof is no longer a live person of this vault, or
     /// is no admin of it; [`Error::ConcurrentWrite`] when `seen` is not the
@@ -300,9 +306,18 @@ impl Vault {
         allow_opt_out: bool,
         seen: Option<PolicyRevision>,
     ) -> Result<ConversationLearningView> {
+        let importance = if on {
+            OwnerActImportance::Important
+        } else {
+            OwnerActImportance::Ordinary
+        };
+        let witness =
+            self.owner_presence(importance, owner_presence_reasons::CONVERSATION_LEARNING)?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let mut txn = self.store.env.write_txn()?;
         let (_, view, _) = self.set_conversation_learning_in_txn(
             &mut txn,
+            &ground,
             owner,
             surface,
             on,
@@ -330,6 +345,7 @@ impl Vault {
     pub(crate) fn set_conversation_learning_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: &OwnerProofGround,
         owner: &AuthenticatedOwner,
         surface: ActSurface,
         on: bool,
@@ -390,7 +406,7 @@ impl Vault {
                 allow_opt_out,
             }),
             now,
-            self.owner_proof_signer(&fold).as_deref(),
+            self.owner_proof_signer(&fold, ground).as_ref(),
         )?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
@@ -410,6 +426,21 @@ impl Vault {
             return Err(authority_refused(NOT_COUNTED));
         }
         let view = self.setting_view_in_txn(txn, &after)?;
+        // In a shared vault the choice is an admin act: every live Owner,
+        // Admin and Deputy hears of it (UNBUILT06-SHAPE Q3 = A).
+        if let Some(creation) = self.shared_vault_creation_in_txn(txn)? {
+            let recorded = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            self.record_admin_act_in_txn(
+                txn,
+                creation.vault_id,
+                person,
+                crate::federation::SharedVaultChange::ConversationLearningChanged {
+                    on,
+                    allow_opt_out,
+                },
+                recorded,
+            )?;
+        }
         Ok((entry_hash, view, now))
     }
 

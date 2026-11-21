@@ -46,6 +46,10 @@ pub(super) fn apply_delete_arm(
     // A FEDERATION_GRANT row torn here is withdrawn: marked, and its hard
     // erasure staged for sync, since a batch delete stages none (FIX 11779).
     crate::authority::withdraw_grant_row_in_txn(store, wtxn, id)?;
+    // A PERSON or MACHINE row torn here is hard-deleted, marked as a hard
+    // delete marks it, so a slip it holds stops standing (RULING
+    // DELETED-SLIP-BATCH-DELETE = A).
+    crate::deletion::mark_torn_actor_row_in_txn(store, wtxn, &id)?;
     // Capture before tear (R2-F4): a PROJECT row's signed chain
     // is kept as revisions before the row goes.
     let captured = crate::workspace_roster::capture_before_tear(store, wtxn, id)?;

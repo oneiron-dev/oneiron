@@ -78,6 +78,30 @@ pub(crate) fn machine_history_shape_matches(
     machine_history_claim(kind, target, birth, signed).is_ok_and(|expected| record == &expected)
 }
 
+/// The signed initial body a machine birth control `record` embeds, as
+/// stored; `None` for any other CLAIM. The control names the target, never
+/// the birth's subject, and a same-id successor may move the target to
+/// another subject. So a reader that judges a CLAIM by its subject and by
+/// what its words came from judges a birth control by this body as well
+/// (FIX MACHINE-HISTORY-SOURCE-LINEAGE-SUBJECT-MOVE).
+///
+/// # Errors
+///
+/// A birth control whose value is no signed birth.
+pub(crate) fn machine_birth_initial_body(record: &ClaimBody) -> Option<Result<Vec<u8>>> {
+    if record.predicate != MACHINE_BIRTH_PREDICATE {
+        return None;
+    }
+    let Value::Binary(bytes) = &record.value else {
+        return Some(Err(invalid_history()));
+    };
+    Some(
+        super::SignedClaimBirth::decode(bytes)
+            .map(|birth| birth.initial_body)
+            .map_err(|_| invalid_history()),
+    )
+}
+
 pub(crate) fn machine_history_scope_bytes(body: &ClaimBody) -> Result<Vec<u8>> {
     let value = Value::Array(vec![
         body.world
@@ -554,6 +578,25 @@ pub(crate) fn machine_history_indexed(
         .is_some())
 }
 
+/// The signed history controls [`retire_machine_history_for_delete`] retires
+/// with `target`: every control the target index names while the
+/// authenticated pin is present. `None` when no pin is present, so an erase
+/// retires nothing.
+pub(crate) fn machine_history_ids_retired_by_delete(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    target: EntityId,
+) -> Result<Option<Vec<EntityId>>> {
+    if store
+        .vault_meta
+        .get(txn, &super::history_projection::pin_key(target))?
+        .is_none()
+    {
+        return Ok(None);
+    }
+    machine_history_ids_for_target(store, txn, target).map(Some)
+}
+
 /// A local erasure of a MACHINE claim takes its signed history with it, as
 /// the controls embed the born content: this drops the pin, the target index
 /// and a host move's carry record, and returns the controls, which the caller
@@ -566,12 +609,12 @@ pub(crate) fn retire_machine_history_for_delete(
     // A carry names the history the move carried; no later birth at this id
     // inherits it.
     super::history_projection::CARRY.delete(store, txn, &target)?;
-    let pin = super::history_projection::pin_key(target);
-    if store.vault_meta.get(txn, &pin)?.is_none() {
+    let Some(controls) = machine_history_ids_retired_by_delete(store, txn, target)? else {
         return Ok(Vec::new());
-    }
-    let controls = machine_history_ids_for_target(store, txn, target)?;
-    store.vault_meta.delete(txn, &pin)?;
+    };
+    store
+        .vault_meta
+        .delete(txn, &super::history_projection::pin_key(target))?;
     for control in &controls {
         let mut key = target_prefix(target);
         key.extend_from_slice(control.as_bytes());

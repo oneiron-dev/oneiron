@@ -82,7 +82,9 @@ pub use pad_custody::PadRestoreNote;
 pub use pad_objects::PadObjectNote;
 pub use pad_reopen::{PadReopenFault, PadReopenReport, PadReopenStage};
 #[cfg(oneiron_test_support)]
-pub(crate) use payload::side_table_registry_gaps;
+pub(crate) use payload::{
+    getter_bytes_for_owner, getter_capture, getter_restore_in_txn, side_table_registry_gaps,
+};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
@@ -520,6 +522,16 @@ impl Vault {
     /// receipts. A key retirement `source` has committed, its key not yet
     /// destroyed, counts as done. Refuses a checkpoint whose key custody is
     /// not `source`'s.
+    ///
+    /// The copy's turn programs that a timer, a feed or an idle stretch
+    /// wakes start paused: its source holds the same armings and keeps
+    /// releasing them, and nothing dedupes an occurrence between the two
+    /// (FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY). So do
+    /// those of every copy made beside a live vault:
+    /// [`Vault::restore_checkpoint_keeping_authority`]'s and
+    /// [`Vault::activate_archived`]'s. A restore that takes its source's
+    /// place ([`Vault::restore_checkpoint`],
+    /// [`Vault::restore_checkpoint_replacing`]) pauses none.
     pub fn restore_checkpoint_beside(
         path: &Path,
         key: &CheckpointKey,
@@ -560,7 +572,7 @@ impl Vault {
         let live = source.capture(&CopyGenerations::of_rows(&image.databases["sync_state"]))?;
         // What the source erased, those after the cut too (FIX 4753).
         let erased = source.erased_ids();
-        image.drop_machine_identity();
+        image.drop_machine_identity_restored(&checkpoint_id)?;
         // The copy holds the source's records, so its host orders hold them too.
         host_holds::carry(&mut image.databases, live.host_holds())?;
         // A pad its forked custody lacks or cannot read comes from the
@@ -861,7 +873,7 @@ impl Vault {
         host_holds::carry_current(&mut image.databases, current)?;
         // Two live vaults never answer as one machine (wp-keys I7).
         if let Custody::Fork(_) = custody {
-            image.drop_machine_identity();
+            image.drop_machine_identity_restored(&checkpoint_id)?;
         }
         let (made, forked, mut vault, mut report) = Self::restore_image(
             image,
@@ -923,7 +935,5 @@ mod test_hooks;
 #[cfg(test)]
 use test_hooks::panic_if_armed;
 
-// FIX [LIBTEST-QUARANTINE-RECOVERY-CHECKPOINT-TESTS]: the lib test target's type check fails here (48 errors: E0061 x41, E0063 x7); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

@@ -126,16 +126,18 @@ pub(crate) fn build_remote_rung(
     hold: Arc<Mutex<RungHold>>,
     receipts: Arc<dyn RunReceiptSink>,
 ) -> oneiron::Result<Option<RemoteRung>> {
-    build_remote_rung_with_broker(primary, hold, receipts, None)
+    build_remote_rung_with_broker(primary, hold, receipts, None, &Arc::default())
 }
 
 /// [`build_remote_rung`], with the vault's credential-broker context a
-/// `key_secret` rung sends through, request by request.
+/// `key_secret` rung sends through, request by request, and `background`,
+/// the line its requests spend on once a vault binds it.
 pub(crate) fn build_remote_rung_with_broker(
     primary: &EmbedderConfig,
     hold: Arc<Mutex<RungHold>>,
     receipts: Arc<dyn RunReceiptSink>,
     broker: Option<&crate::models::BrokerContext>,
+    background: &Arc<super::admitted::BackgroundLine>,
 ) -> oneiron::Result<Option<RemoteRung>> {
     crate::config::remote_embedder::validate_remote(primary)?;
     let Some(config) = &primary.remote else {
@@ -148,11 +150,14 @@ pub(crate) fn build_remote_rung_with_broker(
     let egress = Arc::new(ConfiguredEgress::new(policy)?);
     let embedder = HttpEmbedder::with_broker(&config.endpoint_config(primary), broker)?;
     embedder.hold_as_rung(hold, Arc::clone(&egress));
-    embedder.pay_through(Arc::new(AdmittedRequests::unmetered(
-        config,
-        oneiron::embed::Embedder::locality(&*embedder),
-        receipts,
-    )?));
+    embedder.pay_through(Arc::new(
+        AdmittedRequests::unmetered(
+            config,
+            oneiron::embed::Embedder::locality(&*embedder),
+            receipts,
+        )?
+        .on_background(background),
+    ));
     let mut rung = RemoteRung::new(embedder, egress);
     rung.lease_duration_ms = config.lease_ms;
     // The rung's full `model@place` route id (FIX 11768 seam for L05),

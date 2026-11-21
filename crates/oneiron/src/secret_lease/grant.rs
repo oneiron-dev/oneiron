@@ -14,6 +14,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::store::attempt_id::AttemptId;
 use crate::vault::Vault;
+use oneiron_contracts::lifecycle::Lifecycle;
 use oneiron_contracts::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use serde::{Deserialize, Serialize};
 
@@ -128,7 +129,9 @@ pub(super) fn live_held_grant_in_txn(
     now: u64,
 ) -> Result<SecretLeaseGrant> {
     let mut row = read_held_grant_in_txn(store, wtxn, grant, presenter)?;
-    if row.status == SecretGrantStatus::Active && now >= row.expires_at {
+    if row.status == SecretGrantStatus::Active
+        && oneiron_store::expiry::is_expired(now, row.expires_at)
+    {
         row.status = SecretGrantStatus::Expired;
         write_grant_in_txn(store, wtxn, &row)?;
     }
@@ -177,9 +180,9 @@ pub(super) fn retire_lease_in_txn(
     at: u64,
 ) -> Result<SecretCleanup> {
     if let Some(mut lease) = super::storage::read_secret_lease_in_txn(store, wtxn, lease_id)?
-        && lease.status != SecretLeaseStatus::Revoked
+        && !lease.status.is_terminal()
     {
-        lease.status = SecretLeaseStatus::Revoked;
+        lease.status.transition_to(SecretLeaseStatus::Revoked)?;
         super::storage::write_secret_lease_in_txn(store, wtxn, &lease)?;
     }
     if read_local_registration_in_txn(store, wtxn, lease_id)?.is_none() {

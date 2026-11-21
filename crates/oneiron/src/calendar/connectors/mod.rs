@@ -66,6 +66,8 @@ mod outbound;
 mod remote;
 mod resource;
 mod seat;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::literal::literal_digest_for_test;
 
 // `super::` paths inside the moved bodies still name the calendar level
 // (one body reads provider keys, one reads ICS transparency constants), so
@@ -83,6 +85,7 @@ pub use self::outbound::{
     calendar_remote_uid_for_href_for_operation, write_calendar_event,
 };
 pub(crate) use self::outbound::{plan_archived_calendar_rows, read_back_archived_calendar_rows};
+pub(in crate::calendar) use self::remote::local_uid;
 pub use self::remote::{
     CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange,
     RemoteCalendarObject, RemoteSyncBatch, RemoteWriteReceipt, RemoteWriteRequest,

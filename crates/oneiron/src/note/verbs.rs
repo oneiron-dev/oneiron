@@ -408,8 +408,8 @@ impl Vault {
                     &[origin_facet.as_bytes().as_slice()],
                     at,
                 ) {
-                    crate::provenance::birth::stamp_row_birth_in_txn(
-                        &self.store,
+                    crate::provenance::birth::stamp_birth_with_floor_in_txn(
+                        self,
                         txn,
                         &suggestion,
                         &birth,
@@ -505,7 +505,7 @@ impl Vault {
             };
             let receipt = self
                 .memory(actor.entity_ref(), actor.actor_class())
-                .apply_note_operation_in_lane(txn, note, &operation, None, lane)?;
+                .apply_note_operation_in_lane(txn, note, &operation, None, lane, landing)?;
             return Ok(match receipt.outcome {
                 super::NoteScalarEditOutcome::Applied(_) => {
                     NoteProgramEditOutcome::Edited { head: doc.head }
