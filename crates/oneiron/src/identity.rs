@@ -40,7 +40,7 @@
 use ed25519_dalek::SigningKey;
 
 use crate::error::{Error, Result};
-use crate::side_table;
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::install_identity::{DEVICE_PK, MACHINE_ID, MACHINE_PK};
 use crate::vault::Vault;
 
@@ -129,6 +129,68 @@ pub(crate) fn is_machine_identity_row(key: &[u8]) -> bool {
         || crate::authority::is_dismissed_held_answer_row(key)
 }
 
+/// This machine's residence mode and its world pick (`sync::residence`): choices about the
+/// install that made them, which go with its machine identity (DESIGN 15-setting-primitive 1.6,
+/// "Restore"). Their rows are declared in every build, so a build without `sync` leaves them
+/// behind too.
+const RESIDENCE_CHOICES: [SideTable<(), Vec<u8>, Raw>; 2] = [
+    SideTable::new(&side_table::SYNC_RESIDENCE_DEVICE_MODE),
+    SideTable::new(&side_table::SYNC_RESIDENCE_DEVICE_WORLDS),
+];
+
+/// Whether `key`, a `sync_state` key, is one of this machine's two residence rows (`rs:mode`,
+/// `rs:worlds`; [`RESIDENCE_CHOICES`]). A direct restore leaves an image's behind with its
+/// machine identity.
+pub(crate) fn is_residence_choice_row(key: &[u8]) -> bool {
+    key == side_table::SYNC_RESIDENCE_DEVICE_MODE.prefix
+        || key == side_table::SYNC_RESIDENCE_DEVICE_WORLDS.prefix
+}
+
+/// Refuses to publish `replacement`, a restore made for `store`'s place, when a choice about
+/// this install moved after the replacement carried it from `store`: a `sync: install` setting
+/// row of the table a restore carries from the live vault (`setting::live_install_rows_in`), or
+/// the residence mode or world pick ([`RESIDENCE_CHOICES`]). The replacement becomes this
+/// machine holding the choices as they stood when it was made, and the vault it replaces drops
+/// its own when the owner activates it ([`drop_machine_identity_in_txn`]), so a choice made in
+/// between would be in neither (row SETTING-ACTIVATE-ARCHIVED-INSTALL-ROWS). Read in `txn`,
+/// under `store`'s writer, before the swap.
+///
+/// # Errors
+///
+/// `InvalidConfig` when a choice moved; storage errors.
+pub(crate) fn refuse_moved_install_choices(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    replacement: &crate::store::Store,
+) -> Result<()> {
+    let their_txn = replacement.env.read_txn()?;
+    if install_choices_in(store, txn)? == install_choices_in(replacement, &their_txn)? {
+        Ok(())
+    } else {
+        Err(Error::InvalidConfig(
+            "this install's settings or residence choice changed after the restore was \
+             prepared; prepare it again"
+                .into(),
+        ))
+    }
+}
+
+/// The choices about this install that a restore made for its place carries from it, as
+/// stored: its live `sync: install` setting rows, and its residence mode and world pick.
+fn install_choices_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(Vec<(Vec<u8>, Vec<u8>)>, [Option<Vec<u8>>; 2])> {
+    let [mode, worlds] = RESIDENCE_CHOICES;
+    Ok((
+        crate::setting::live_install_rows_in(store, txn)?,
+        [
+            mode.get_bytes(store, txn, &())?,
+            worlds.get_bytes(store, txn, &())?,
+        ],
+    ))
+}
+
 /// Forgets this install's client id, machine and pin, so the vault joins as a new
 /// one: another live vault keeps the machine it was. The install's
 /// restored-from mark stays: a machine born of a restore that mints a new id
@@ -149,8 +211,9 @@ pub(crate) fn drop_machine_identity_in_txn(
     crate::authority::drop_held_answer_dismissals_in_txn(store, wtxn)?;
     crate::authority::drop_pinned_root_in_txn(store, wtxn)?;
     crate::setting::drop_install_rows_in_txn(store, wtxn)?;
-    #[cfg(feature = "sync")]
-    crate::sync::residence::drop_residence_choices_in_txn(store, wtxn)?;
+    for table in RESIDENCE_CHOICES {
+        table.delete(store, wtxn, &())?;
+    }
     Ok(())
 }
 

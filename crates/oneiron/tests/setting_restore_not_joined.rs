@@ -6,8 +6,9 @@
 //! than the default; a key with no order reads the image's value. The copy changes no `sync:
 //! vault` setting, and a direct restore leaves the image's `sync: install` rows and residence
 //! choice behind, as an activated archive leaves its install's with its replacement and a vault
-//! that forgets its machine (a raw copy on another host) leaves them with it. Once the owner
-//! joins it, every row reads current: nothing was deleted.
+//! that forgets its machine (a raw copy on another host) leaves them with it. A swap refuses a
+//! replacement whose install choices moved on the live vault after it was prepared, so none is
+//! lost between the two. Once the owner joins it, every row reads current: nothing was deleted.
 //!
 //! On main (6ee3f3aafc0) the copy reads the image's rows as the source did, the engine's change
 //! of a vault key commits on it, and the image's `sync: install` row comes back with the copy.
@@ -409,6 +410,104 @@ fn an_activated_archive_leaves_its_install_rows_with_its_replacement() {
             .map(|preference| preference.mode),
         Some(SyncResidenceMode::Opened),
         "the replacement keeps its residence choice"
+    );
+}
+
+/// A restore prepared for a vault's place carries the choices about its install as they stood
+/// then, and the vault it replaces drops its own when the owner activates it. So a choice made on
+/// the live vault after the restore was prepared refuses the swap, and nothing moves: a residence
+/// choice does, and so does a `sync: install` setting. A restore prepared again carries both
+/// (row SETTING-ACTIVATE-ARCHIVED-INSTALL-ROWS). On #10247's head 815a06e5ada the swap goes
+/// through, and the choice is in neither vault.
+#[cfg(unix)]
+#[test]
+fn a_choice_made_after_the_restore_was_prepared_refuses_the_swap() {
+    let root = oneiron::test_support::restore_tempdir();
+    let (home, image) = (root.path().join("vault"), root.path().join("image"));
+    let keys = Arc::new(oneiron_keystore::MemoryKeystore::default());
+    let vault = Vault::open(&home, VaultConfig::device()).expect("FIXTURE: the vault");
+    vault.install_device_keystore(keys.clone());
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the owner");
+    engine_sets(&vault, INSTALL, json!(5));
+    set_device_sync_preference(&vault, SyncResidenceMode::Opened)
+        .expect("FIXTURE: the install's residence choice");
+    vault
+        .ensure_vault_key()
+        .expect("FIXTURE: the vault data key");
+    vault
+        .snapshot_checkpoint(&image, 100)
+        .expect("FIXTURE: the image");
+    let key = vault.checkpoint_key().expect("FIXTURE: its key");
+    let prepare = |staged: &str| {
+        Vault::restore_checkpoint_replacing(
+            &image,
+            &key,
+            &root.path().join(staged),
+            VaultConfig::device(),
+            &vault,
+            200,
+        )
+        .expect("FIXTURE: the replacement")
+        .0
+    };
+    let refuses_swap = |replacement: &Vault, what: &str| {
+        let swapped = std::cell::Cell::new(false);
+        let refused = vault.swap_in_replacement(replacement, |_, _| {
+            swapped.set(true);
+            Ok(())
+        });
+        assert!(
+            matches!(refused, Err(oneiron::Error::InvalidConfig(_))),
+            "{what} refuses the swap: {refused:?}"
+        );
+        assert!(!swapped.get(), "{what}: the swap never ran");
+    };
+
+    let replacement = prepare("staged-1");
+    set_device_sync_preference(&vault, SyncResidenceMode::All)
+        .expect("the owner's residence choice after the restore was prepared");
+    refuses_swap(
+        &replacement,
+        "a residence choice made after the restore was prepared",
+    );
+    drop(replacement);
+    let replacement = prepare("staged-2");
+    engine_sets(&vault, INSTALL, json!(7));
+    refuses_swap(
+        &replacement,
+        "an install setting changed after the restore was prepared",
+    );
+    drop(replacement);
+    assert_eq!(
+        load_device_sync_preference(&vault)
+            .expect("the live vault's residence read")
+            .map(|preference| preference.mode),
+        Some(SyncResidenceMode::All),
+        "nothing moved: the live vault keeps the residence choice"
+    );
+
+    let replacement = prepare("staged-3");
+    replacement.install_device_keystore(keys.clone());
+    vault
+        .swap_in_replacement(&replacement, oneiron::store::exchange_held)
+        .expect("a restore prepared again swaps in");
+    drop((vault, replacement));
+    let replacement =
+        Vault::open(&home, VaultConfig::device()).expect("the replacement in its place");
+    replacement.install_device_keystore(keys);
+    assert_eq!(
+        value_of(&replacement, owner, INSTALL),
+        json!(7),
+        "the restore prepared again carries the install's setting"
+    );
+    assert_eq!(
+        load_device_sync_preference(&replacement)
+            .expect("the replacement's residence read")
+            .map(|preference| preference.mode),
+        Some(SyncResidenceMode::All),
+        "the restore prepared again carries the install's residence choice"
     );
 }
 

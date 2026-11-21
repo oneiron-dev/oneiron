@@ -133,3 +133,25 @@ pub(crate) fn drop_install_rows_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>
     }
     Ok(())
 }
+
+/// The `SETTING` rows of `store` that [`restore_drops_row`] names, as stored: the `sync: install`
+/// choices of the table a restore carries from the live vault (`restore: live`), which a restore
+/// made for its place holds as they stood when it was made
+/// (`identity::refuse_moved_install_choices`). `SETTING_CONTENT` rows travel with the image.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn live_install_rows_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    let mut rows = Vec::new();
+    for row in side_table::SETTING.iter_raw(store, txn)? {
+        let (key, value) = row?;
+        if install_choice(&key) {
+            rows.push((key, value));
+        }
+    }
+    Ok(rows)
+}
