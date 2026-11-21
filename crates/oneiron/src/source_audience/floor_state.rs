@@ -27,7 +27,9 @@
 //! held, as a waiter and as a source: it keeps its wait and its marks, a
 //! landing or a seal reaches it, the backfill raises it, a row written from
 //! it reads its floor, and a mark on it is followed (#10222 Opus review 3);
-//! its restore raises it again.
+//! its restore raises it again, while its archive marker still stands, so a
+//! run again of the backfill counts that raise as the first of a row the
+//! backfill that skipped archived rows never raised (#10265 review P1-2).
 //!
 //! A vault that held rows before floors were written holds them with none.
 //! The **backfill** (housekeeping's `SourceFloorBackfill` sweep: at each
@@ -264,7 +266,6 @@ pub(super) fn raise_and_settle_in_txn(
     rows: BTreeSet<EntityId>,
 ) -> Result<()> {
     let backfill = backfill_in(vault, txn)?;
-    let backfilling = backfill != Backfill::Done;
     let mut queue = rows;
     for _ in 0..SETTLE_ROUNDS {
         // The rows waiting on a row raised here, and those waiting on them,
@@ -274,7 +275,7 @@ pub(super) fn raise_and_settle_in_txn(
         if queue.is_empty() {
             return Ok(());
         }
-        let closure = Closure::gather_in(vault, txn, &queue, backfilling)?;
+        let closure = Closure::gather_in(vault, txn, &queue, backfill)?;
         loop {
             let mut grew = false;
             for (row, sources, _) in &closure.order {
@@ -347,7 +348,9 @@ fn raisable_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool> {
 /// backfill has not raised it yet; in its run again, only an archived row
 /// with no stored floor, which the backfill that skipped archived rows
 /// never raised. A row raised once has no first raise again, so the erase
-/// of an input its floor already holds never holds it for good.
+/// of an input its floor already holds never holds it for good. It is read
+/// before the write stores any floor ([`Closure::gather_in`]): the floor
+/// this raise stores is no floor of an earlier raise (#10265 review P1-1).
 fn first_raise_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -447,20 +450,29 @@ fn unbound_in(vault: &Vault, txn: &RoTxn<'_>, source: &EntityId) -> Result<bool>
 struct Closure {
     order: Vec<(EntityId, RowSources, bool)>,
     members: BTreeSet<EntityId>,
+    /// The rows of `order` no source landed whose raise here is their first
+    /// ([`first_raise_in`]), read before this write stores any floor.
+    firsts: BTreeSet<EntityId>,
 }
 
 impl Closure {
-    /// `roots`, and while the backfill runs (`backfilling`) every row they
-    /// were written from, held here, live or archived, that it has not
-    /// raised yet, and so on down: each before the rows written from it.
+    /// `roots`, and while the backfill runs (`backfill` is not
+    /// [`Backfill::Done`]) every row they were written from, held here, live
+    /// or archived, that it has not raised yet, and so on down: each before
+    /// the rows written from it. Whether each raise is its first is read
+    /// here, before any floor is raised: a floor stored by this write, which
+    /// a run again of the backfill reads, must not hide a first raise
+    /// (#10265 review P1-1).
     fn gather_in(
         vault: &Vault,
         txn: &RoTxn<'_>,
         roots: &BTreeSet<EntityId>,
-        backfilling: bool,
+        backfill: Backfill,
     ) -> Result<Self> {
+        let backfilling = backfill != Backfill::Done;
         let mut order = Vec::new();
         let mut members = BTreeSet::new();
+        let mut firsts = BTreeSet::new();
         let mut seen = BTreeSet::new();
         // A row read already sits above the rows it was written from, so
         // they leave the stack, and join the order, first.
@@ -468,6 +480,9 @@ impl Closure {
             roots.iter().rev().map(|row| (*row, None)).collect();
         while let Some((row, read)) = stack.pop() {
             if let Some((sources, landed)) = read {
+                if !landed && first_raise_in(vault, txn, &row, backfill)? {
+                    firsts.insert(row);
+                }
                 members.insert(row);
                 order.push((row, sources, landed));
                 continue;
@@ -500,7 +515,11 @@ impl Closure {
             stack.push((row, Some((sources, landed))));
             stack.extend(below.into_iter().map(|source| (source, None)));
         }
-        Ok(Self { order, members })
+        Ok(Self {
+            order,
+            members,
+            firsts,
+        })
     }
 
     /// Whether a support outside this write frees the row whose sources are
@@ -523,9 +542,10 @@ impl Closure {
     /// Marks each row whose floor waits, with what it waits on, and clears
     /// the mark of each row whose floor is whole; a row written from a row
     /// of this write whose floor waits waits on it too. A row a source
-    /// landed never waits: its own binding decides its read. While the
-    /// backfill runs (`backfill`), marks every row raised. The rows whose
-    /// floor is whole.
+    /// landed never waits: its own binding decides its read. A row whose
+    /// raise is its first (`firsts`) waits for good on an erased
+    /// unwalked source. While the backfill runs (`backfill`), marks every row
+    /// raised. The rows whose floor is whole.
     fn settle_in_txn(
         &self,
         vault: &Vault,
@@ -538,7 +558,7 @@ impl Closure {
             if *landed {
                 continue;
             }
-            let first = first_raise_in(vault, txn, row, backfill)?;
+            let first = self.firsts.contains(row);
             let mut waits = BTreeSet::new();
             if sources.unresolved {
                 waits.insert(*row);
