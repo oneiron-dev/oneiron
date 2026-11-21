@@ -2,7 +2,9 @@
 //! `SourceFloorBackfill` sweep: it raises the floor of every row a vault held
 //! before floors were written, clears its marks, repairs once the rows an
 //! archive kept out of their floor's raises (#10117 Opus review P1), and in
-//! each run raises the waiting rows again (#9289 review 3 P1-4, P1-6).
+//! each run raises the waiting rows again (#9289 review 3 P1-4, P1-6). While
+//! it runs, a tear carries the torn row's floor onto the rows not raised yet
+//! that read it through an edge (#10139 Opus review P2-5).
 
 use std::collections::BTreeSet;
 use std::ops::Bound;
@@ -11,8 +13,12 @@ use heed::{RoTxn, RwTxn};
 
 use super::marks::take_marks_of_in_txn;
 use super::{BACKFILL, PENDING, RAISED, REPAIR, backfill_done_in, floor_holds_in};
+use crate::batch::EntityMetadataHeader;
 use crate::error::Result;
-use crate::{EntityId, Vault};
+use crate::ports::EntityStoreRead;
+use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::source_audience::floor::OwnSource;
+use crate::{EdgeKind, EntityId, Vault};
 
 /// Entity rows one backfill write reads; each is raised with the not yet
 /// raised rows it was written from.
@@ -42,8 +48,8 @@ const REPAIRING: u8 = 3;
 /// key order, a page per write, each with the not yet raised rows it was
 /// written from, and stops between pages once `stop` says so. Once every row
 /// is raised it marks the backfill done, then clears the raised marks. A
-/// vault whose backfill ended before an archive stopped counting as an erase
-/// for the floor then runs the floor repair once ([`repair_page_in_txn`]).
+/// vault whose backfill an earlier build began or ended then runs the floor
+/// repair once ([`repair_page_in_txn`]), and clears its raised marks again.
 /// Then, and in each later run, it raises every waiting row again, a page
 /// per write (#9289 review 3 P1-4, P1-6). In a vault where no row can have a
 /// floor yet it does nothing, and runs at the next pass again. The rows it
@@ -116,8 +122,10 @@ fn entity_page_in(
 }
 
 /// One backfill write: raises the entity rows after the key `after` that are
-/// held here and not erased. Its last page also marks the floor repair done:
-/// it raised every row, an archived one included.
+/// held here and not erased. A backfill this build began raises every row,
+/// an archived one included, so it needs no floor repair; one an earlier
+/// build began is repaired once it ends, whatever pages that build ran
+/// (`decide_repair_in_txn`; #10139 Opus review P2-6).
 fn raise_page_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -132,6 +140,7 @@ fn raise_page_in_txn(
     if !super::super::floor::floors_possible_in(vault, txn)? {
         return Ok((0, None));
     }
+    super::decide_repair_in_txn(vault, txn)?;
     let (rows, next) = entity_page_in(vault, txn, after)?;
     let mut raised = 0_u64;
     for row in &rows {
@@ -147,13 +156,12 @@ fn raise_page_in_txn(
         return Ok((raised, Some(next)));
     }
     BACKFILL.put(&vault.store, txn, &(), &true)?;
-    REPAIR.put(&vault.store, txn, &(), &true)?;
     Ok((raised, Some(vec![CLEARING])))
 }
 
-/// One backfill write once every row is raised: clears raised marks; once
-/// none is left, the run goes on to the floor repair if it has not run, and
-/// then to raising the waiting rows again.
+/// One backfill write once every row is raised, or once the floor repair
+/// has: clears raised marks; once none is left, the run goes on to the floor
+/// repair if it has not run, and then to raising the waiting rows again.
 fn clear_page_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<(u64, Option<Vec<u8>>)> {
     let keys = RAISED
         .iter_from(&vault.store, txn, &[])?
@@ -173,13 +181,18 @@ fn clear_page_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<(u64, Option<
     Ok((0, Some(vec![next])))
 }
 
-/// One write of the floor repair (#10117 Opus review P1): raises again each
-/// entity row after the key `after` that is held here, not erased, not
-/// waiting, and names lineage no read walks (a birth input or a dependency
-/// source). Until an archive stopped counting as an erase for the floor, an
-/// archived row lost its wait marks, so a row restored since came back with
-/// no floor from what it waited on; raised again, it takes that floor, as a
-/// row raised when its source lands does. The rows it raised.
+/// One write of the floor repair (#10117 Opus review P1), a raising pass:
+/// raises again each entity row after the key `after` that is held here,
+/// not erased, not waiting, not raised by this pass yet, and names lineage
+/// no read walks (a birth input or a dependency source), each with the rows
+/// it was written from that this pass has not raised yet, first (#10139
+/// review round 2 P1-3). Until an archive stopped counting as an erase for
+/// the floor, an archived row lost its wait marks, so a row restored since
+/// came back with no floor from what it waited on; raised again, it takes
+/// that floor, as a row raised when its source lands does. Each row's first
+/// raise in the pass reads an erased source no read walks as the backfill
+/// does: the row waits on it for good (#10139 Opus review P2-6). The rows it
+/// raised.
 fn repair_page_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -188,7 +201,10 @@ fn repair_page_in_txn(
     let (rows, next) = entity_page_in(vault, txn, after)?;
     let mut repair = BTreeSet::new();
     for row in &rows {
-        if PENDING.contains(&vault.store, txn, row)? || !floor_holds_in(vault, txn, row)? {
+        if PENDING.contains(&vault.store, txn, row)?
+            || RAISED.contains(&vault.store, txn, row)?
+            || !floor_holds_in(vault, txn, row)?
+        {
             continue;
         }
         if !crate::store::birth_record::input_rows_in_txn(&vault.store, txn, row)?.is_empty()
@@ -205,7 +221,7 @@ fn repair_page_in_txn(
         return Ok((raised, Some(next)));
     }
     REPAIR.put(&vault.store, txn, &(), &true)?;
-    Ok((raised, Some(vec![SETTLING])))
+    Ok((raised, Some(vec![CLEARING])))
 }
 
 /// One write of a run's last part: raises again the waiting rows after the
@@ -251,4 +267,136 @@ fn settle_page_in_txn(
             _ => None,
         },
     ))
+}
+
+/// While the backfill runs, carries the floor of `erased`, in the write that
+/// tears it, onto each row not raised yet that reads it through an edge the
+/// tear takes: a row `DerivedFrom` it, a MESSAGE of a TURN, the TURN of a
+/// MESSAGE (#10139 Opus review P2-5). That row's raise would no longer meet
+/// `erased`, and would settle without what `erased` added. When the floor of
+/// `erased` is not known whole here ([`whole_floor_in`]), the row takes
+/// [`super::super::floor::sealed_source`] instead, as a row that waits on an
+/// erased row does. Lineage the tear keeps (a birth input, a dependency
+/// source, a source a body names) is the raise's own to read.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(super) fn carry_onto_unraised_readers_in_txn(
+    store: &crate::store::Store,
+    txn: &mut RwTxn<'_>,
+    erased: &EntityId,
+) -> Result<()> {
+    if BACKFILL.get(store, txn, &())?.unwrap_or(false) || !floors_possible_at(store, txn)? {
+        return Ok(());
+    }
+    let Some(raw) = store.port_entity_raw(txn, erased)? else {
+        return Ok(());
+    };
+    let readers = edge_readers_in(store, txn, erased, &raw)?;
+    if readers.is_empty() {
+        return Ok(());
+    }
+    let carried = match whole_floor_in(store, txn, erased, &raw)? {
+        Some(floor) => floor,
+        None => BTreeSet::from([super::super::floor::sealed_source()]),
+    };
+    if carried.is_empty() {
+        return Ok(());
+    }
+    for row in readers {
+        if row == *erased
+            || RAISED.contains(store, txn, &row)?
+            || super::erased_in(store, txn, &row)?
+            || store.port_entity_raw(txn, &row)?.is_none()
+        {
+            continue;
+        }
+        let mut floor = super::super::DERIVED
+            .get(store, txn, &row)?
+            .unwrap_or_default();
+        let before = floor.len();
+        floor.extend(carried.iter().copied());
+        if floor.len() != before {
+            super::super::DERIVED.put(store, txn, &row, &floor)?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether a write here can give a row a floor, as
+/// [`super::super::floor::floors_possible_in`] reads it.
+fn floors_possible_at(store: &crate::store::Store, txn: &RoTxn<'_>) -> Result<bool> {
+    Ok(super::super::POLICIES
+        .iter_from(store, txn, &[])?
+        .next()
+        .is_some()
+        || super::super::DERIVED
+            .iter_from(store, txn, &[])?
+            .next()
+            .is_some()
+        || super::super::LANDED.get(store, txn, &())?.unwrap_or(false))
+}
+
+/// The rows that read `row` (bytes `raw`) through an edge the source-audience
+/// walk follows: each row `DerivedFrom` it, each MESSAGE `PartOf` it when it
+/// is a TURN, and each TURN it is `PartOf` when it is a MESSAGE.
+fn edge_readers_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    row: &EntityId,
+    raw: &[u8],
+) -> Result<Vec<EntityId>> {
+    let mut readers =
+        crate::conversation_dag::counted_edge_ids(store, txn, row, EdgeKind::DerivedFrom, true)?;
+    let (reader_type, incoming) = match EntityMetadataHeader::parse(raw) {
+        Some(header) if header.entity_type == ENTITY_TYPE_TURN => (ENTITY_TYPE_MESSAGE, true),
+        Some(header) if header.entity_type == ENTITY_TYPE_MESSAGE => (ENTITY_TYPE_TURN, false),
+        _ => return Ok(readers),
+    };
+    for reader in
+        crate::conversation_dag::counted_edge_ids(store, txn, row, EdgeKind::PartOf, incoming)?
+    {
+        let reads = store.port_entity_raw(txn, &reader)?.is_some_and(|bytes| {
+            EntityMetadataHeader::parse(&bytes)
+                .is_some_and(|header| header.entity_type == reader_type)
+        });
+        if reads {
+            readers.push(reader);
+        }
+    }
+    Ok(readers)
+}
+
+/// The floor `row` (bytes `raw`) holds, when it is known whole here: it waits
+/// on nothing, its binding is not still to land, and the backfill raised it
+/// or it names no birth input or dependency source a raise would read.
+/// `None` otherwise. A source its body names, or a row it reads through an
+/// edge, of a row the backfill has not raised is not read here.
+fn whole_floor_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    row: &EntityId,
+    raw: &[u8],
+) -> Result<Option<BTreeSet<EntityId>>> {
+    if PENDING.contains(store, txn, row)? {
+        return Ok(None);
+    }
+    if !RAISED.contains(store, txn, row)?
+        && (!crate::store::birth_record::input_rows_in_txn(store, txn, row)?.is_empty()
+            || !crate::ports::dependency_sources_in(store, txn, row)?.is_empty())
+    {
+        return Ok(None);
+    }
+    let mut floor = super::super::DERIVED
+        .get(store, txn, row)?
+        .unwrap_or_default();
+    match super::super::floor::own_source_in(store, txn, row, raw)? {
+        OwnSource::Unbound => return Ok(None),
+        OwnSource::Source(own) => {
+            floor.insert(own);
+        }
+        OwnSource::None => {}
+    }
+    Ok(Some(floor))
 }

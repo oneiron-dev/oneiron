@@ -307,12 +307,14 @@ impl Vault {
             .delete_guards
             .refuse_revision_delete(&self.store, wtxn, id)?;
         // A soft tombstone replayed over a soft scrub already applied here:
-        // the stored row is the scrubbed header under the identity marker.
-        // Read before anything below writes a fence (#10117 Opus review P2-2).
+        // the stored row is what the scrub left of it under the identity
+        // marker, its header alone or an epoch summary's header and keyframe.
+        // Read before anything below writes a fence (#10117 Opus review P2-2;
+        // #10139 review round 2 P1-2).
         let scrubbed = !erase
             && IDENTITY_SOFT_DELETE_MARKER.contains(&self.store, &*wtxn, &HexId(*id))?
             && crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*wtxn, id)?
-                .is_some_and(|raw| raw.len() == ENTITY_METADATA_HEADER_LEN);
+                .is_some_and(|raw| crate::compaction::holds_erased_form(&raw));
         // Its scope outlives the body (see the purge); its tombstone's capture binds it.
         crate::deletion::tombstone_scope::capture_deleted_scope_in_txn(self, wtxn, id, None);
         // A deleted or erased pack source halts the catalog routes bound to

@@ -5,9 +5,12 @@
 //! seals it, and the sweep leaves it waiting. Its restore raises it. Before
 //! the fix each of these let the restored row read open to a stranger. The
 //! floor repair raises again, once, the rows such an archive already left
-//! with no floor from what they waited on.
+//! with no floor from what they waited on: each with the rows it was written
+//! from first, and a row whose source no read walks was erased meanwhile
+//! waits on it for good (#10139 reviews round 2).
 
 use oneiron::EntityId;
+use oneiron::provenance::made_by::MadeByInputRole;
 use oneiron::test_doors::cleanup_archive::archive_as_cleanup;
 use oneiron::test_doors::read_lineage_floor::{
     floor_of, floor_waits, forget_floor_wait_before_repair,
@@ -149,4 +152,83 @@ fn the_floor_repair_raises_a_fact_an_archive_left_without_its_wait() {
         .expect("late lands, bound to its mailbox");
     housekeeping_pass(&mailbox);
     assert_reads_as_its_landed_source(&mailbox, fact, policy, "after the floor repair");
+}
+
+/// More entity rows than one page of the floor repair reads.
+const ROWS_PAST_A_REPAIR_PAGE: usize = 128;
+
+/// An open CLAIM about the owner at the id `id`, under `predicate`, whose
+/// birth names `inputs` as its evidence.
+fn claim_at(mailbox: &Mailbox, id: EntityId, inputs: &[EntityId], predicate: &str) {
+    super::put_claim_made_by(
+        &mailbox.vault,
+        id,
+        &super::claim_body(mailbox, predicate, "learnt from a row"),
+        super::made_by(mailbox, inputs, MadeByInputRole::Input),
+    )
+    .expect("FIXTURE: the CLAIM and its birth");
+}
+
+/// #10139 review round 2 P1-3: `fact` is born from `middle`, and `middle`
+/// from `late`, a row not here yet; both lost their waits to an archive
+/// before the fix, and `late` then landed, bound to the mailbox, raising
+/// neither. `fact` sorts on an earlier page of the floor repair than
+/// `middle`. The repair raises `middle` with `fact`, first, so `fact` takes
+/// `late`'s policy through it. Before the fix the repair raised `fact` from
+/// `middle`'s empty floor, then `middle` on a later page, never `fact`
+/// again, and a stranger read `fact`.
+#[test]
+fn the_floor_repair_raises_a_fact_after_the_fact_it_was_born_from() {
+    let mailbox = owners_mailbox();
+    housekeeping_pass(&mailbox);
+    let fact = EntityId::now();
+    for index in 0..ROWS_PAST_A_REPAIR_PAGE {
+        super::claim_of_predicate_born_with(
+            &mailbox,
+            &[],
+            MadeByInputRole::Input,
+            &format!("fixture.row_between_{index}"),
+            "a row between",
+        );
+    }
+    let middle = EntityId::now();
+    let late = EntityId::now();
+    claim_at(&mailbox, middle, &[late], "fact.middle_from_late");
+    claim_at(&mailbox, fact, &[middle], "fact.from_middle");
+    for row in [fact, middle] {
+        forget_floor_wait_before_repair(&mailbox.vault, row)
+            .expect("FIXTURE: the row as an archive and its restore left it before the fix");
+    }
+    let policy = bound_row_read_by(&mailbox.vault, late, &[mailbox.owner, mailbox.reader])
+        .expect("late lands, bound to its mailbox");
+    housekeeping_pass(&mailbox);
+    assert_reads_as_its_landed_source(&mailbox, fact, policy, "after the floor repair");
+}
+
+/// #10139 Opus review 2 P2-6, Scenario B before the fix: `fact` waits on
+/// `middle`, a row whose own source is not here yet. An archive before the
+/// fix dropped `fact`'s wait and its marks; the owner then erased `middle`,
+/// which sealed nothing, and the restore brought `fact` back. The floor
+/// repair reads `middle`'s erasure as the backfill does: `fact` waits on it
+/// for good, so the owner reads it and no one else does. Before the fix the
+/// repair settled `fact` open, and a stranger read it.
+#[test]
+fn the_floor_repair_keeps_waiting_a_fact_whose_input_was_erased_after_its_wait_was_lost() {
+    let mailbox = owners_mailbox();
+    housekeeping_pass(&mailbox);
+    let middle = claim_born_from(&mailbox, &[EntityId::now()], "learnt from a row on its way");
+    let fact = claim_born_from(&mailbox, &[middle], "learnt from middle");
+    forget_floor_wait_before_repair(&mailbox.vault, fact)
+        .expect("FIXTURE: the fact as an archive and its restore left it before the fix");
+    erase(&mailbox, middle);
+    housekeeping_pass(&mailbox);
+    assert_no_stranger_or_reader_reads(&mailbox, fact, "after the floor repair");
+    assert!(
+        reads(&mailbox.vault, fact, &[mailbox.owner]).expect("the owner's read"),
+        "the owner loses a fact the repair left waiting for good",
+    );
+    assert!(
+        floor_waits(&mailbox.vault, fact).expect("the floor's state"),
+        "the repair settled a fact whose input was erased while its wait was lost",
+    );
 }

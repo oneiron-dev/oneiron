@@ -139,12 +139,12 @@ pub(super) enum OwnSource {
 
 /// The source the row `row` (bytes `raw`) was born in.
 pub(super) fn own_source_in(
-    vault: &Vault,
+    store: &crate::store::Store,
     txn: &RoTxn<'_>,
     row: &EntityId,
     raw: &[u8],
 ) -> Result<OwnSource> {
-    if let Some(policy) = super::binding_in(vault, txn, row)? {
+    if let Some(policy) = super::RECORDS.get(store, txn, row)? {
         return Ok(OwnSource::Source(policy));
     }
     if super::obligation::row_obligation(raw).is_present() {
@@ -183,7 +183,7 @@ pub(crate) fn floor_in(
     let mut floor = super::DERIVED
         .get(&vault.store, txn, row)?
         .unwrap_or_default();
-    if let OwnSource::Source(own) = own_source_in(vault, txn, row, raw)? {
+    if let OwnSource::Source(own) = own_source_in(&vault.store, txn, row, raw)? {
         floor.insert(own);
     }
     Ok(floor)
@@ -319,7 +319,7 @@ pub(super) fn raise_floor_in_txn(
     if !freed {
         add.extend(attested);
     }
-    match own_source_in(vault, txn, row, &raw)? {
+    match own_source_in(&vault.store, txn, row, &raw)? {
         // A live row born under no source (a peer's phone mark that names
         // no thread) reads to no one, so its stored floor says so too: the
         // phone read and doctor read the stored floor (#9289 review 2 P2-5).
@@ -378,11 +378,13 @@ pub(crate) fn raise_floors_in_txn(
 /// The row is born under [`sealed_source`] (C5, READ-LINEAGE-L3 = A). Only
 /// the birth's own write seals: a row born while its sources stood already
 /// holds their floor, and a later erase takes no source off it; a row born
-/// while one had not landed is sealed by its erase
-/// (`seal_floors_awaiting_in_txn`), so the order of the two leaves no
-/// stranger reading it (#10117 Opus review P2-3). A
-/// vault where no row can have a floor seals nothing
-/// ([`floors_possible_in`]).
+/// while one of these sources had not landed is sealed by its erase
+/// (`seal_floors_awaiting_in_txn`), so for these sources the order of the
+/// two leaves no stranger reading it (#10117 Opus review P2-3). A source a
+/// read walks, erased before the row's edge to it landed, is not read here:
+/// the row reads what its carried floor holds (#10139 Opus review P2-7; fix
+/// list row FLOOR-WALKED-UNBOUND-SOURCE-ERASED-BEFORE-EDGE). A vault where
+/// no row can have a floor seals nothing ([`floors_possible_in`]).
 ///
 /// # Errors
 ///

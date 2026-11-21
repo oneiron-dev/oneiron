@@ -227,6 +227,21 @@ pub(crate) fn erased_form(envelope: &[u8]) -> ScrubbedRecord {
         .map_or(ScrubbedRecord::Shell, ScrubbedRecord::WithdrawnEpoch)
 }
 
+/// Whether stored row `envelope` already is what erasure leaves of it
+/// ([`erased_form`]): its header alone, or an epoch summary's header and the
+/// keyframe it keeps (#10139 review round 2 P1-2).
+pub(crate) fn holds_erased_form(envelope: &[u8]) -> bool {
+    let Some(body) = envelope.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) else {
+        return false;
+    };
+    match erased_form(envelope) {
+        ScrubbedRecord::Shell => body.is_empty(),
+        ScrubbedRecord::WithdrawnEpoch(keyframe) => {
+            keyframe.encode().is_ok_and(|kept| kept == body)
+        }
+    }
+}
+
 /// Takes withdrawn epoch summary `id`'s words from its row and from the
 /// carriers beside it on this device: its document, its row revisions, its
 /// short-id rows, the L2 cache and its check material (FIX 5040). The row

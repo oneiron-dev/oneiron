@@ -20,12 +20,17 @@
 //! no new erase and runs it not (#10108 reviews). Until it runs, a row that
 //! reads erased (its delete published, a peer tombstone accepted but not
 //! applied yet) keeps every row marked as waiting on it waiting: the seal,
-//! not a sweep that comes first, ends the wait. An archive and a blob's
-//! release fence erase nothing for the floor (#10117 Opus review P1): they
-//! tear nothing and lift again, so an archived row keeps its wait and its
-//! marks, is raised and sealed as a live one is, and its restore raises it. A row's marks are its wait set as its last raise found it: a raise
-//! takes every mark the row no longer waits on, so an erase of what it once
-//! waited on never seals a row that settled without it.
+//! not a sweep that comes first, ends the wait. An archive erases nothing
+//! for the floor (#10117 Opus review P1): it tears nothing and its restore
+//! lifts it, so an archived row keeps its wait and its marks, is raised and
+//! sealed as a live one is, and its restore raises it. Nor does a blob's
+//! release, whose fence lifts when the same bytes come back: a released row
+//! reads as gone but able to return ([`Presence::Released`]), and the
+//! release's own tear keeps waiting only what names it through a link the
+//! tear keeps (#10139 reviews). A row's marks are its wait set as its last
+//! raise found it: a raise takes every mark the row no longer waits on, so
+//! an erase of what it once waited on never seals a row that settled
+//! without it.
 //!
 //! A vault that held rows before floors were written holds them with none.
 //! The **backfill** (housekeeping's `SourceFloorBackfill` sweep: at each
@@ -214,8 +219,8 @@ pub(crate) fn binding_landed_in_txn(
 /// Raises the floor of each of `rows` in `txn`, and settles whether each is
 /// whole; then raises again the rows waiting on each row it settled, and so
 /// on, so a row that lands here clears what waited on it in its own write.
-/// While the backfill runs, the not yet raised rows each row was written
-/// from are raised with it, first.
+/// While a raising pass runs ([`raising_pass_in`]), the not yet raised rows
+/// each row was written from are raised with it, first.
 ///
 /// # Errors
 ///
@@ -225,7 +230,8 @@ pub(super) fn raise_and_settle_in_txn(
     txn: &mut RwTxn<'_>,
     rows: BTreeSet<EntityId>,
 ) -> Result<()> {
-    let backfilling = !backfill_done_in(vault, txn)?;
+    decide_repair_in_txn(vault, txn)?;
+    let backfilling = raising_pass_in(vault, txn)?;
     let mut queue = rows;
     for _ in 0..SETTLE_ROUNDS {
         // The rows waiting on a row raised here, and those waiting on them,
@@ -257,12 +263,38 @@ pub(super) fn raise_and_settle_in_txn(
     Ok(())
 }
 
+/// Whether a raising pass runs, which raises each row once, with the not
+/// yet raised rows it was written from first: the backfill, or the floor
+/// repair after it ([`backfill::backfill_floors`]; #10139 review round 2
+/// P1-3).
+fn raising_pass_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<bool> {
+    Ok(!backfill_done_in(vault, txn)? || !REPAIR.get(&vault.store, txn, &())?.unwrap_or(false))
+}
+
+/// Marks, in `txn`, the floor repair as not needed when this build raises
+/// every row from the first: no backfill has ended, no row is raised, and no
+/// repair is decided, so no earlier build raised a row here that the repair
+/// would heal (#10139 Opus review P2-6). A vault whose backfill an earlier
+/// build began or ended runs the repair once its backfill ends.
+fn decide_repair_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
+    if REPAIR.get(&vault.store, txn, &())?.is_none()
+        && !backfill_done_in(vault, txn)?
+        && RAISED.iter_from(&vault.store, txn, &[])?.next().is_none()
+    {
+        REPAIR.put(&vault.store, txn, &(), &true)?;
+    }
+    Ok(())
+}
+
 /// What a write meets of a row a floor was written from.
 enum Presence {
     /// Held here: its bytes.
     Held(Vec<u8>),
     /// Erased here: its deletion shell or record stands.
     Erased,
+    /// Gone from here under a blob's release fence alone: its bytes may come
+    /// back, and the fence lifts then.
+    Released,
     /// Not held here, and not erased: it has not landed yet.
     Absent,
 }
@@ -273,6 +305,9 @@ fn presence_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<Presenc
     }
     Ok(match vault.get_raw_in(txn, row)? {
         Some(raw) => Presence::Held(raw),
+        None if crate::blob_artifact::release_fenced_only(&vault.store, txn, row)? => {
+            Presence::Released
+        }
         None => Presence::Absent,
     })
 }
@@ -302,24 +337,31 @@ fn floor_holds_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool
     Ok(vault.get_raw_in(txn, row)?.is_some() && !erased_in(&vault.store, txn, row)?)
 }
 
-/// Whether the delete of `row` stands fenced here but has not torn it yet:
-/// its `df:` fence stands, no `dt:` marker, and its body is not scrubbed (a
-/// published delete before its purge, or a peer tombstone that failed to
-/// apply and waits for its retry). The purge or the scrub that ends it seals
-/// what waits on `row`.
-fn delete_unpurged_in(
-    store: &crate::store::Store,
-    txn: &RoTxn<'_>,
-    row: &EntityId,
-) -> Result<bool> {
+/// Whether the delete of `source` stands fenced here but has not torn it
+/// yet, while its own floor is not known whole: its `df:` fence stands, no
+/// `dt:` marker, its body is not what erasure leaves of it (a published
+/// delete before its purge, or a peer tombstone that failed to apply and
+/// waits for its retry), and its floor waits or its binding has not landed,
+/// as for a held source a row waits on. The purge or the scrub that ends it
+/// seals what waits on `source`. A source whose floor is whole gives it to
+/// the row, and a scrubbed epoch summary is no unpurged delete (#10139 Opus
+/// review P2-4).
+fn unpurged_source_waits_in(vault: &Vault, txn: &RoTxn<'_>, source: &EntityId) -> Result<bool> {
     use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
-    Ok(
-        store.port_deletion_marked(txn, DeletionMarker::RowFence, row)?
-            && !store.port_deletion_marked(txn, DeletionMarker::HardDelete, row)?
-            && store
-                .port_entity_raw(txn, row)?
-                .is_some_and(|raw| raw.len() > crate::batch::ENTITY_METADATA_HEADER_LEN),
-    )
+    let store = &vault.store;
+    if !store.port_deletion_marked(txn, DeletionMarker::RowFence, source)?
+        || store.port_deletion_marked(txn, DeletionMarker::HardDelete, source)?
+    {
+        return Ok(false);
+    }
+    let Some(raw) = store.port_entity_raw(txn, source)? else {
+        return Ok(false);
+    };
+    if crate::compaction::holds_erased_form(&raw) {
+        return Ok(false);
+    }
+    Ok(floor_waits_in(vault, txn, source)?
+        || super::floor::own_source_in(store, txn, source, &raw)? == OwnSource::Unbound)
 }
 
 /// Seals, in the write that erases `erased`, the floor of each row that
@@ -335,11 +377,20 @@ fn delete_unpurged_in(
 /// it (FLOOR-OLD-FACT-ERASED-INPUT = A): a later erase of that input through
 /// an erase door seals it, as the ruling says. It reads the marks, never the
 /// lineage the erase tears: each delete door runs it before the record's
-/// body and edges go ([`super::seal_floors_awaiting_in_txn`]). A blob's
-/// release, which fences an ASSET and tears it through the same deindex
-/// door, is no erase ([`erased_in`]): it seals nothing and takes no mark,
-/// so what waits on the ASSET keeps waiting until its bytes come back
-/// (#10139 review P1).
+/// body and edges go ([`super::seal_floors_awaiting_in_txn`]). While the
+/// backfill runs, the rows not raised yet that read `erased` through an edge
+/// the tear takes take its floor first
+/// ([`backfill::carry_onto_unraised_readers_in_txn`]).
+///
+/// A blob's release fences an ASSET and tears it through the same deindex
+/// door while its body still stands; the fence lifts when the same bytes
+/// come back. A row that names the ASSET through a link the tear keeps (a
+/// birth input, a dependency source) keeps waiting on it, and its mark
+/// stays (#10139 review P1). The release seals every other row that waits
+/// on it: that row's link goes with the tear, so no return of the bytes
+/// raises it again (#10139 Opus review P1-1). Any later erase of the
+/// released id, a peer's tombstone included, seals as any erase does
+/// (#10139 review round 2 P1-1).
 ///
 /// # Errors
 ///
@@ -349,13 +400,19 @@ pub(super) fn seal_rows_awaiting_in_txn(
     txn: &mut RwTxn<'_>,
     erased: &EntityId,
 ) -> Result<()> {
-    if crate::blob_artifact::release_fenced_only(store, txn, erased)? {
-        return Ok(());
-    }
+    // The release's own tear: the one write in which a release fence alone
+    // stands over a held body (a fenced carrier is refused, and the
+    // readmission of the same bytes lifts the fence).
+    let releasing = crate::blob_artifact::release_fenced_only(store, txn, erased)?
+        && crate::ports::EntityStoreRead::port_entity_raw(store, txn, erased)?.is_some();
+    backfill::carry_onto_unraised_readers_in_txn(store, txn, erased)?;
     PENDING.delete(store, txn, erased)?;
     take_marks_of_in_txn(store, txn, erased, &BTreeSet::new())?;
     let sealed = super::floor::sealed_source();
     for (_, row) in AWAITED.scan_keys(store, txn, erased.as_bytes())? {
+        if releasing && link_kept_in(store, txn, erased, &row)? {
+            continue;
+        }
         take_mark_in_txn(store, txn, erased, &row)?;
         if row == *erased || erased_in(store, txn, &row)? || !PENDING.contains(store, txn, &row)? {
             continue;
@@ -366,6 +423,20 @@ pub(super) fn seal_rows_awaiting_in_txn(
         }
     }
     Ok(())
+}
+
+/// Whether `row` names `source` through lineage a tear of `source` keeps: a
+/// birth input or a dependency source, both kept with `row`.
+fn link_kept_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    source: &EntityId,
+    row: &EntityId,
+) -> Result<bool> {
+    Ok(
+        crate::store::birth_record::input_rows_in_txn(store, txn, row)?.contains(source)
+            || crate::ports::dependency_sources_in(store, txn, row)?.contains(source),
+    )
 }
 
 /// Whether `row`, written from `source`, waits for it: its binding has not
@@ -380,8 +451,13 @@ pub(super) fn seal_rows_awaiting_in_txn(
 /// also waits on a source whose delete stands fenced but not purged
 /// ([`delete_unpurged_in`]), so a floor state lost inside that window (a
 /// checkpoint restore) is marked again and the purge seals it (#10117 Opus
-/// review P2-4); a later raise of a row that settled holding that source's
-/// floor does not wait on it. Otherwise a read walks the source live, and
+/// review P2-4), unless that source's floor is whole
+/// ([`unpurged_source_waits_in`]); a later raise of a row that settled
+/// holding that source's floor does not wait on it. A released source (its
+/// bytes may come back) keeps a row marked as waiting on it waiting, and a
+/// row the backfill raises for the first time waits on it when no read
+/// walks it; a row that settled holding its floor does not wait on it again
+/// (#10139 Opus review P2-2). Otherwise a read walks the source live, and
 /// one gone from the vault carries no words to it.
 fn source_waits_in(
     vault: &Vault,
@@ -394,9 +470,12 @@ fn source_waits_in(
     match presence_in(vault, txn, source)? {
         Presence::Absent => Ok(unwalked),
         Presence::Erased => Ok(AWAITED.contains(&vault.store, txn, &(*source, *row))?
-            || (first && (unwalked || delete_unpurged_in(&vault.store, txn, source)?))),
+            || (first && (unwalked || unpurged_source_waits_in(vault, txn, source)?))),
+        Presence::Released => {
+            Ok(AWAITED.contains(&vault.store, txn, &(*source, *row))? || (first && unwalked))
+        }
         Presence::Held(raw) => Ok(PENDING.contains(&vault.store, txn, source)?
-            || super::floor::own_source_in(vault, txn, source, &raw)? == OwnSource::Unbound),
+            || super::floor::own_source_in(&vault.store, txn, source, &raw)? == OwnSource::Unbound),
     }
 }
 
@@ -404,7 +483,9 @@ fn source_waits_in(
 /// whose binding has not landed: a row written from it waits for it.
 fn unbound_in(vault: &Vault, txn: &RoTxn<'_>, source: &EntityId) -> Result<bool> {
     Ok(match vault.get_raw_in(txn, source)? {
-        Some(raw) => super::floor::own_source_in(vault, txn, source, &raw)? == OwnSource::Unbound,
+        Some(raw) => {
+            super::floor::own_source_in(&vault.store, txn, source, &raw)? == OwnSource::Unbound
+        }
         None => false,
     })
 }
@@ -417,9 +498,9 @@ struct Closure {
 }
 
 impl Closure {
-    /// `roots`, and while the backfill runs (`backfilling`) every row they
-    /// were written from, held and live here, that it has not raised yet,
-    /// and so on down: each before the rows written from it.
+    /// `roots`, and while a raising pass runs (`backfilling`) every row they
+    /// were written from, held here and not erased, that it has not raised
+    /// yet, and so on down: each before the rows written from it.
     fn gather_in(
         vault: &Vault,
         txn: &RoTxn<'_>,
@@ -479,7 +560,8 @@ impl Closure {
                 continue;
             }
             if let Presence::Held(raw) = presence_in(vault, txn, support)?
-                && super::floor::own_source_in(vault, txn, support, &raw)? != OwnSource::Unbound
+                && super::floor::own_source_in(&vault.store, txn, support, &raw)?
+                    != OwnSource::Unbound
                 && super::floor::floor_in(vault, txn, support, &raw)?.is_empty()
             {
                 return Ok(true);
@@ -491,8 +573,9 @@ impl Closure {
     /// Marks each row whose floor waits, with what it waits on, and clears
     /// the mark of each row whose floor is whole; a row written from a row
     /// of this write whose floor waits waits on it too. A row a source
-    /// landed never waits: its own binding decides its read. While the
-    /// backfill runs, marks every row raised. The rows whose floor is whole.
+    /// landed never waits: its own binding decides its read. While a
+    /// raising pass runs, marks every row raised. The rows whose floor is
+    /// whole.
     fn settle_in_txn(
         &self,
         vault: &Vault,
