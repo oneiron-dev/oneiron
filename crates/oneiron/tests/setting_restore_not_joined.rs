@@ -4,8 +4,9 @@
 //! default the vault accepted and nothing more: a loosening waits and a tightening holds, a pin's
 //! included; a `custom` key reads the image's value only when its comparator says it is no wider
 //! than the default; a key with no order reads the image's value. The copy changes no `sync:
-//! vault` setting, and a direct restore leaves the image's `sync: install` rows behind. Once the
-//! owner joins it, every row reads current: nothing was deleted.
+//! vault` setting, and a direct restore leaves the image's `sync: install` rows behind, as an
+//! activated archive leaves its install's with its replacement. Once the owner joins it, every row
+//! reads current: nothing was deleted.
 //!
 //! On main (6ee3f3aafc0) the copy reads the image's rows as the source did, the engine's change
 //! of a vault key commits on it, and the image's `sync: install` row comes back with the copy.
@@ -315,6 +316,81 @@ fn a_direct_restore_leaves_the_images_install_rows_behind() {
         value_of(&copy.vault, copy.owner, INSTALL),
         json!(0),
         "the new machine starts at the default: the host's choice about itself stayed behind"
+    );
+}
+
+/// The vault a restore replaced, once the owner activates it beside its replacement
+/// (`Vault::activate_archived`), joins as a new machine: the install's choice about itself stays
+/// with the replacement, which is the machine the vault was, as a direct restore leaves the
+/// image's behind (row SETTING-ACTIVATE-ARCHIVED-INSTALL-ROWS). On #10155's head (ab7ec09adcf)
+/// the activated vault reads the install's choice.
+#[cfg(unix)]
+#[test]
+fn an_activated_archive_leaves_its_install_rows_with_its_replacement() {
+    let root = oneiron::test_support::restore_tempdir();
+    let (home, image, staged) = (
+        root.path().join("vault"),
+        root.path().join("image"),
+        root.path().join("staged"),
+    );
+    let keys = Arc::new(oneiron_keystore::MemoryKeystore::default());
+    let vault = Vault::open(&home, VaultConfig::device()).expect("FIXTURE: the vault");
+    vault.install_device_keystore(keys.clone());
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the owner");
+    engine_sets(&vault, INSTALL, json!(5));
+    assert_eq!(
+        value_of(&vault, owner, INSTALL),
+        json!(5),
+        "FIXTURE: the vault reads its install's choice"
+    );
+    vault
+        .ensure_vault_key()
+        .expect("FIXTURE: the vault data key");
+    vault
+        .snapshot_checkpoint(&image, 100)
+        .expect("FIXTURE: the image");
+    let key = vault.checkpoint_key().expect("FIXTURE: its key");
+    let (replacement, _) = Vault::restore_checkpoint_replacing(
+        &image,
+        &key,
+        &staged,
+        VaultConfig::device(),
+        &vault,
+        200,
+    )
+    .expect("FIXTURE: the replacement");
+    replacement.install_device_keystore(keys.clone());
+    // As `oneiron restore` exchanges the two directories.
+    vault
+        .swap_in_replacement(&replacement, oneiron::store::exchange_held)
+        .expect("FIXTURE: the swap");
+    drop((vault, replacement));
+    let replacement =
+        Vault::open(&home, VaultConfig::device()).expect("FIXTURE: the replacement in its place");
+    replacement.install_device_keystore(keys.clone());
+    Vault::activate_archived(
+        &staged,
+        VaultConfig::device(),
+        &replacement
+            .side_restore_source()
+            .expect("FIXTURE: the replacement as the source"),
+    )
+    .expect("the owner activates the archive");
+    let side = Vault::open(&staged, VaultConfig::device()).expect("the activated vault opens");
+    side.install_device_keystore(keys);
+
+    assert_eq!(
+        value_of(&side, owner, INSTALL),
+        json!(0),
+        "the activated vault joins as a new machine and starts at the default: the install's \
+         choice about itself stayed with the replacement"
+    );
+    assert_eq!(
+        value_of(&replacement, owner, INSTALL),
+        json!(5),
+        "the replacement is the machine the vault was, and keeps its choice"
     );
 }
 
