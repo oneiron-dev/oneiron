@@ -45,6 +45,7 @@ use crate::{EntityId, Vault};
 
 mod held;
 mod home_fence;
+mod mark_refunded_outside;
 mod refund;
 mod refund_ended_unpaid;
 mod settle;
@@ -60,6 +61,8 @@ use self::home_fence::{
     CHECKOUT_MOVING, SettleStanding, admits_deposits_here, awaits_carried_deposits, put_deposit,
     settle_standing_in_txn,
 };
+pub(crate) use self::mark_refunded_outside::mark_booking_deposit_refunded_outside;
+pub(super) use self::mark_refunded_outside::{MarkedRefund, refund_marked_outside_in_txn};
 pub(super) use self::refund::{
     cap_refund_on_visitor_reschedule_in_writer, refund_on_host_cancel_in_writer,
     refund_on_visitor_cancel_in_writer,
@@ -196,6 +199,11 @@ pub(super) struct DepositRow {
     /// the deposit settles.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     refund_ended_unpaid: Option<RefundEndedUnpaid>,
+    /// The owner's word that the refund owed was paid back outside the
+    /// provider (FIX [BK-DEPOSIT-FAILED-REFUND-MARK-PAID]). Unset on every
+    /// other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    refund_marked_outside: Option<mark_refunded_outside::RefundMarkedOutside>,
     updated_at: u64,
 }
 
@@ -380,6 +388,7 @@ pub fn begin_deposit_checkout(
                 emergency_return_sequence: None,
                 refund_retry: 0,
                 refund_ended_unpaid: None,
+                refund_marked_outside: None,
                 updated_at: now_utc,
             },
         };

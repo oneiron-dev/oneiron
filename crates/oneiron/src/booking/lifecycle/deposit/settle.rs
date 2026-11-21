@@ -10,8 +10,11 @@ use super::super::door::attempt_failure_reason;
 use super::super::storage::{booking_writer, engine_failure, read_txn};
 use super::super::token::hex_lower;
 use super::home_fence::{SettleStanding, settle_standing_in_txn};
+use super::mark_refunded_outside::record_marked_refund;
 use super::refund_ended_unpaid::{AskedRefund, note_refund_ended_unpaid};
-use super::settle_row::{SettleRow, enqueue_settle, requeue_reason, settle_payload_key};
+use super::settle_row::{
+    QueuedStamp, SettleRow, enqueue_settle, requeue_reason, settle_payload_key,
+};
 use super::{DEPOSIT, DEPOSIT_BOOKING, DepositState, booking_key, put_deposit};
 use crate::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome};
 use crate::booking::BookingError;
@@ -128,6 +131,12 @@ pub struct DepositSettleRequest<'a> {
     /// refunds made by hand cover a part of what is owed, it still answers
     /// that the refund ended unpaid (review round 2 of #10149).
     pub earlier_retry_keys: &'a [String],
+    /// The owner marked the refund owed refunded outside the provider (FIX
+    /// [BK-DEPOSIT-FAILED-REFUND-MARK-PAID]): the provider makes no refund,
+    /// and answers only what it refunded under these keys or by hand, as
+    /// for a refund, or 0 when it holds none that paid or may still pay.
+    /// False for every other call.
+    pub find_only: bool,
 }
 
 /// Why a provider call failed.
@@ -182,7 +191,9 @@ pub trait DepositSettlementPort {
     /// the amount refunded for a refund, once the provider has finished it;
     /// for a void, 0, or the amount the payment had already captured when a
     /// capture stood before the void (a capture whose reply was lost), which
-    /// the void cannot release and the deposit then owes back.
+    /// the void cannot release and the deposit then owes back. A find
+    /// ([`DepositSettleRequest::find_only`]) makes no refund, and answers 0
+    /// for none.
     ///
     /// # Errors
     ///
@@ -228,6 +239,9 @@ enum SettlePlan {
         /// How many times the owner asked again for this refund after the
         /// provider ended it unpaid; 0 for any other move.
         refund_retry: u32,
+        /// The refund stands marked refunded outside the provider: ask only
+        /// to find it.
+        find_only: bool,
     },
 }
 
@@ -262,15 +276,17 @@ struct SettledMove {
 /// cancelled and gives the rows back strands no owed move here.
 ///
 /// A queued row stamped with a retry count below the deposit's
-/// (`queued_retry`) plans nothing: the owner asked again for a refund the
+/// (`queued`) plans nothing: the owner asked again for a refund the
 /// provider ended unpaid after it was queued, and the row queued with that
 /// ask stands for the refund now, so the older row ends rather than asking
-/// the same refund hourly beside it (review round 2 of #10149). `None`
-/// (a settle run for a booking, not for a queued row) plans what is owed.
+/// the same refund hourly beside it (review round 2 of #10149). So does a
+/// row queued before the owner marked the refund owed refunded outside the
+/// provider: the mark's row only finds that refund. `None` (a settle run for
+/// a booking, not for a queued row) plans what is owed.
 fn plan_settle(
     vault: &Vault,
     key: &[u8; 32],
-    queued_retry: Option<u32>,
+    queued: Option<QueuedStamp>,
     now_utc: u64,
 ) -> Result<SettlePlan, BookingError> {
     booking_writer(vault, |wtxn| {
@@ -289,7 +305,10 @@ fn plan_settle(
         else {
             return Ok(SettlePlan::Nothing);
         };
-        if queued_retry.is_some_and(|queued| queued < row.refund_retry) {
+        let find_only = row.marks_owed_refund();
+        if queued.is_some_and(|queued| {
+            queued.refund_retry < row.refund_retry || (find_only && !queued.marked_outside)
+        }) {
             return Ok(SettlePlan::Nothing);
         }
         let (mut refunded_before, mut refund_retry) = (0, 0);
@@ -320,6 +339,7 @@ fn plan_settle(
             movement,
             refunded_before,
             refund_retry,
+            find_only,
         })
     })
 }
@@ -340,6 +360,10 @@ fn plan_settle(
 /// A capture that captured nothing found the payment cancelled at the provider
 /// (a cancellation whose event this node never applied): the deposit stands
 /// voided.
+///
+/// A refund the owner marked refunded outside the provider records the
+/// provider's refund when the answer names one paid, and else the amount
+/// owed, refunded outside it ([`record_marked_refund`]).
 ///
 /// A refund records only against the refund it was planned for: what was
 /// refunded before it, `refunded_before`, must still be what the deposit
@@ -411,9 +435,10 @@ fn record_settled(
                 }
             }
             (DepositState::VoidDue, DepositSettleMove::Void) => DepositState::Voided,
-            (DepositState::RefundDue { .. }, DepositSettleMove::Refund { .. })
+            (DepositState::RefundDue { amount_minor: owed }, DepositSettleMove::Refund { .. })
                 if row.refunded_minor == refunded_before =>
             {
+                let moved = record_marked_refund(&mut row, moved, owed);
                 let refunded = row.refunded_minor.saturating_add(moved);
                 let balance_owed = std::mem::take(&mut row.balance_owed_after_refund);
                 row.refund_ended_unpaid = None;
@@ -480,17 +505,17 @@ fn settle_idempotency_key(
 }
 
 /// Runs one deposit's due move: decides it, asks the provider with no
-/// writer held, and records the answer. A queued row passes the retry count
-/// it was stamped with (`queued_retry`, [`plan_settle`]).
+/// writer held, and records the answer. A queued row passes what it was
+/// stamped with (`queued`, [`plan_settle`]).
 fn settle_deposit_key<P: DepositSettlementPort>(
     vault: &Vault,
     key: &[u8; 32],
-    queued_retry: Option<u32>,
+    queued: Option<QueuedStamp>,
     port: &mut P,
     now_utc: u64,
 ) -> Result<DepositSettleStep, BookingError> {
-    let (payment_id, movement, refunded_before, refund_retry) =
-        match plan_settle(vault, key, queued_retry, now_utc)? {
+    let (payment_id, movement, refunded_before, refund_retry, find_only) =
+        match plan_settle(vault, key, queued, now_utc)? {
             SettlePlan::Nothing => return Ok(DepositSettleStep::Nothing),
             SettlePlan::Wait { due_at } => return Ok(DepositSettleStep::Wait { due_at }),
             SettlePlan::HomeMoving { due_at } => {
@@ -501,7 +526,14 @@ fn settle_deposit_key<P: DepositSettlementPort>(
                 movement,
                 refunded_before,
                 refund_retry,
-            } => (payment_id, movement, refunded_before, refund_retry),
+                find_only,
+            } => (
+                payment_id,
+                movement,
+                refunded_before,
+                refund_retry,
+                find_only,
+            ),
         };
     let key_hex = hex_lower(key);
     let digest = &key_hex[..32];
@@ -514,6 +546,7 @@ fn settle_deposit_key<P: DepositSettlementPort>(
         movement,
         idempotency_key: &idempotency_key,
         earlier_retry_keys: &earlier_retry_keys,
+        find_only,
     }) {
         Ok(moved) => Ok(
             match record_settled(
@@ -579,7 +612,8 @@ pub struct BookingDepositSettlementDrain {
     pub waiting: u32,
     /// Rows that owed nothing any more, and rows queued before the owner
     /// asked again for a refund the provider ended unpaid: the row queued
-    /// with that ask stands for it.
+    /// with that ask stands for it, as the mark's row stands for a refund
+    /// the owner marked refunded outside the provider.
     pub settled_nothing: u32,
     /// Rows whose provider call, or whose store write, failed and runs again
     /// promptly.
@@ -641,7 +675,7 @@ pub fn run_booking_deposit_settlement<P: DepositSettlementPort>(
             lease_owner,
             now_utc,
         };
-        let (key, queued_retry) = match settle_payload_key(&record) {
+        let (key, queued) = match settle_payload_key(&record) {
             Ok(queued) => queued,
             Err(error) => {
                 tracing::warn!(%error, "booking deposit settle row names no deposit");
@@ -651,7 +685,7 @@ pub fn run_booking_deposit_settlement<P: DepositSettlementPort>(
             }
         };
         let prompt = record.attempt_count < DEPOSIT_SETTLE_PROMPT_ATTEMPTS;
-        match settle_deposit_key(vault, &key, Some(queued_retry), port, now_utc) {
+        match settle_deposit_key(vault, &key, Some(queued), port, now_utc) {
             Ok(DepositSettleStep::Nothing) => {
                 settle.complete()?;
                 drain.settled_nothing += 1;

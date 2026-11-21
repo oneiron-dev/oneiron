@@ -94,7 +94,8 @@ pub use self::deposit::{
     record_deposit_provider_event, run_booking_deposit_settlement, settle_booking_deposit,
 };
 pub(crate) use self::deposit::{
-    note_unattributed_cancel_in_txn, refund_booking_deposit_as_owner, refund_deposit_on_host_cancel,
+    mark_booking_deposit_refunded_outside, note_unattributed_cancel_in_txn,
+    refund_booking_deposit_as_owner, refund_deposit_on_host_cancel,
 };
 pub use self::door::{
     BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest,
@@ -111,7 +112,7 @@ pub use self::hold_source::VaultActiveHoldSource;
 pub use self::owner_card::{
     BOOKING_HELD_DEPOSIT_ITEM_PREFIX, BOOKING_OWNER_CARD_ITEM_PREFIX, BookingDepositHeld,
     BookingDepositHeldReason, BookingDepositReturned, BookingOwnerCard, BookingOwnerCardDeposit,
-    BookingOwnerCardEmergencyReturn, BookingOwnerCardOffer,
+    BookingOwnerCardEmergencyReturn, BookingOwnerCardOffer, BookingOwnerCardRefundMarkedOutside,
 };
 pub(crate) use self::owner_card::{
     booking_inbox_row_version_in_txn, booking_owner_card_inbox_items, booking_owner_card_of_item,
