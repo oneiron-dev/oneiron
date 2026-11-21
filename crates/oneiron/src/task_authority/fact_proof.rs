@@ -243,7 +243,7 @@ impl FactProof {
 
 /// The act a removal of `machine` names, beside the world edits it saw, when it saw the fact
 /// row `fact_ref` of `vault` whose canonical body without its carrier is `unsigned`: the
-/// BLAKE3 digest of the row's carrier transcript. It binds what the carrier's signature binds
+/// [`ContentHash`] of the row's carrier transcript. It binds what the carrier's signature binds
 /// (the vault, the row, the machine and the body), and the transcript's tag keeps it apart
 /// from every authority entry hash a removal names.
 fn carried_fact_act(
@@ -254,7 +254,7 @@ fn carried_fact_act(
 ) -> AuthorityEntryHash {
     let transcript =
         carrier_transcript(TASK_FACT_CARRIER_DOMAIN, vault, fact_ref, machine, unsigned);
-    *blake3::hash(&transcript).as_bytes()
+    ContentHash::of(&transcript).into_bytes()
 }
 
 /// How `fold` stands `carrier`, whose signature over the fact whose carried act is `act`
