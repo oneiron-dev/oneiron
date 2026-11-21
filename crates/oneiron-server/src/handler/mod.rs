@@ -11,6 +11,7 @@ mod app_tier;
 mod asset_bodies;
 mod conn_state;
 mod connection;
+mod device_burst_replay;
 mod document_copy;
 mod documents;
 mod ephemeral;
@@ -22,6 +23,7 @@ mod lag_resync_tests;
 mod leaf_keys;
 mod lfs_chunks;
 mod mcp_socket;
+pub(crate) mod member_lane;
 pub(crate) mod mesh;
 #[cfg(test)]
 mod note_socket_tests;
@@ -42,8 +44,13 @@ pub(crate) mod window_row_tests;
 mod window_sync;
 
 pub(crate) use self::connection::ws_routes;
+pub(crate) use self::device_burst_replay::{DeviceBurstEnd, land_retained_device_update};
 pub(crate) use self::leaf_keys::LeafKeyRelay;
 pub(crate) use self::mcp_socket::{MCP_RPC_METHOD, MCP_SUBPROTOCOL};
+// The peer check every inbound sync socket meets, for the macOS app's test
+// door (L7-47).
+#[cfg(all(oneiron_test_support, feature = "mesh"))]
+pub(crate) use self::peer_serve::serves_as_peer;
 pub(crate) use self::selector_scope::selector_grant_scope;
 
 #[cfg(test)]

@@ -14,7 +14,9 @@ use crate::dreamer_runner::DreamerRunnerStore;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::{Result, Vault};
 
-const MAX_PAGE: u32 = 1000;
+/// The most rows one sieve page carries while the owner has set no `dreamer_wake.sieve.max_page`
+/// row: that key's default. A request naming no limit, or a larger one, reads the value in force.
+pub(super) const MAX_PAGE: u32 = 1000;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::dreamer_wake::sieve_doors::{
@@ -30,8 +32,18 @@ pub struct SievePolicySetRequest {
     pub policy: SievePolicy,
 }
 
-fn page_limit(limit: Option<u32>) -> usize {
-    usize::try_from(limit.unwrap_or(MAX_PAGE).min(MAX_PAGE)).unwrap_or(usize::MAX)
+/// The rows one page reads: the request's limit, capped by `dreamer_wake.sieve.max_page` in
+/// force; a request naming no limit reads the cap. A stored 0 reads as 1; a limit of 0 still
+/// reads none.
+fn page_limit(vault: &Vault, limit: Option<u32>) -> Result<usize> {
+    let max_page = {
+        let txn = vault.store.env.read_txn()?;
+        super::setting_keys::SIEVE_MAX_PAGE
+            .read_in_txn(vault, &txn, &[], None)?
+            .value
+            .max(1)
+    };
+    Ok(usize::try_from(limit.unwrap_or(max_page).min(max_page)).unwrap_or(usize::MAX))
 }
 
 fn span_view(span: &SieveSpan) -> SieveSpanView {
@@ -74,7 +86,7 @@ pub fn sieve_queue_as_owner(
     input: &SievePageRequest,
 ) -> Result<SieveQueuePage> {
     owner.revalidate(vault)?;
-    let queue = vault.sieve_queue(page_limit(input.limit))?;
+    let queue = vault.sieve_queue(page_limit(vault, input.limit)?)?;
     Ok(SieveQueuePage {
         spans: queue.spans.iter().map(span_view).collect(),
         skipped_unreadable: queue.skipped.unreadable as u64,
@@ -88,7 +100,7 @@ pub fn sieve_retained_as_owner(
     input: &SievePageRequest,
 ) -> Result<SieveRetainedPage> {
     owner.revalidate(vault)?;
-    let spans = vault.sieve_retained(page_limit(input.limit))?;
+    let spans = vault.sieve_retained(page_limit(vault, input.limit)?)?;
     Ok(SieveRetainedPage {
         spans: spans.iter().map(span_view).collect(),
     })
@@ -100,7 +112,7 @@ pub fn sieve_receipts_as_owner(
     input: &SievePageRequest,
 ) -> Result<SieveReceiptsPage> {
     owner.revalidate(vault)?;
-    let receipts = vault.sieve_consumed(page_limit(input.limit))?;
+    let receipts = vault.sieve_consumed(page_limit(vault, input.limit)?)?;
     Ok(SieveReceiptsPage {
         receipts: receipts
             .iter()

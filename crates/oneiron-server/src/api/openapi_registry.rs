@@ -2,6 +2,7 @@
 
 use super::__path_core_reject_widen;
 use super::__path_restore_quarantined_booking;
+use super::ContextBoardMemoriesCut;
 use super::run_tree::{CoreAttemptPlacement, CoreRunTreeDeletion};
 use super::{
     __path_annotate_turn_vad, __path_append_core_record, __path_booking_agent_instructions,
@@ -50,16 +51,17 @@ use super::{
     CoreContextPackItemAccounting, CoreContextPackRequest, CoreContextPackResponse,
     CoreContextPackScoreComponent, CoreContextPackScoreEvidence, CoreContextPackState,
     CoreContextPackStateKind, CoreContextPackStateReason, CoreContextPackStats,
-    CoreCreateEntityRequest, CoreCreateTurnRequest, CoreEntityWriteResponse,
-    CoreHydrateDeletionMetadata, CoreHydrateDeletionReason, CoreHydrateDeletionSource,
-    CoreHydrateRequest, CoreHydrateResponse, CoreHydrateStatus, CoreListQuery, CoreMemoryChange,
-    CoreMemoryOperationKind, CoreMemoryTimelineRecord, CoreMemoryTimelineRecordState,
-    CoreMemoryTimelineResponse, CoreMemoryVerbDeleteOutcome, CoreMemoryVerbDeleteReason,
-    CoreMemoryVerbRequest, CoreMemoryVerbResponse, CoreMemoryWatchHealth, CoreMemoryWatchResponse,
-    CoreProposeRequest, CoreProposeResponse, CoreQueryRequest, CoreReactionSignal,
-    CoreRunTreeEvent, CoreRunTreeEventKind, CoreRunTreeFailure, CoreRunTreeInterventionEffect,
-    CoreRunTreeInterventionKind, CoreRunTreeInterventionRequest, CoreRunTreeInterventionResponse,
-    CoreRunTreeNode, CoreRunTreeQuery, CoreRunTreeRepair, CoreRunTreeResponse, CoreRunTreeStatus,
+    CoreContextPackWorkingSet, CoreCreateEntityRequest, CoreCreateTurnRequest,
+    CoreEntityWriteResponse, CoreHydrateDeletionMetadata, CoreHydrateDeletionReason,
+    CoreHydrateDeletionSource, CoreHydrateRequest, CoreHydrateResponse, CoreHydrateStatus,
+    CoreListQuery, CoreMemoryChange, CoreMemoryOperationKind, CoreMemoryTimelineRecord,
+    CoreMemoryTimelineRecordState, CoreMemoryTimelineResponse, CoreMemoryVerbDeleteOutcome,
+    CoreMemoryVerbDeleteReason, CoreMemoryVerbRequest, CoreMemoryVerbResponse,
+    CoreMemoryWatchHealth, CoreMemoryWatchResponse, CoreProposeRequest, CoreProposeResponse,
+    CoreQueryRequest, CoreReactionSignal, CoreRunTreeEvent, CoreRunTreeEventKind,
+    CoreRunTreeFailure, CoreRunTreeInterventionEffect, CoreRunTreeInterventionKind,
+    CoreRunTreeInterventionRequest, CoreRunTreeInterventionResponse, CoreRunTreeNode,
+    CoreRunTreeQuery, CoreRunTreeRepair, CoreRunTreeResponse, CoreRunTreeStatus,
     CoreRunTreeTimestamps, CoreShortIdHydrateError, CoreShortIdHydrateErrorKind,
     CoreShortIdHydrateOutcome, CoreStepBudgetRefusal, CoreTextField, DagActor, DagActorClass,
     DagAppendRequest, DagAppendResponse, DagCoversResponse, DagHeadRequest, DagHeadResponse,
@@ -370,6 +372,7 @@ use utoipa::OpenApi;
         ContextBoardCompanionAssembly,
         ContextBoardMemories,
         ContextBoardMemoriesBudget,
+        ContextBoardMemoriesCut,
         ContextBoardMemoryRow,
         ContextBoardRoomPin,
         ContextBoardMemorySlot,
@@ -397,6 +400,7 @@ use utoipa::OpenApi;
         CoreContextEntity,
         CoreContextEdge,
         CoreContextPackStats,
+        CoreContextPackWorkingSet,
         CoreContextPackItemAccounting,
         CoreContextPackState,
         CoreContextPackStateKind,

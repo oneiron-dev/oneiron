@@ -46,10 +46,14 @@ impl RecordingJsHost<'_, '_> {
             return None;
         }
         let at = self.next_seq;
+        // A value base custody holds took its handle in a recorded row, and
+        // meets it there (FIX REPLAY-COMPARE-KNOWN-MATCHER).
+        let gated_write = self.gated_write;
+        let base_known = || gated_write.base_known_values();
         let taken = {
             let replay = self.deadline_replay.as_mut()?;
             let results = &self.results;
-            replay.take(at, call, results)
+            replay.take(at, call, results, &base_known)
         };
         let recorded = match taken {
             PreflightTake::Live => return None,

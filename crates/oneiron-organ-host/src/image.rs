@@ -1,29 +1,32 @@
 //! The image organ's host adapter (ARCH-0078 `#image-built`, L4-15): an
-//! edit of an image artifact, crops and resizes, whose PNG lands as one
+//! edit of an image artifact, crops and resizes, whose file lands as one
 //! proposal waiting for Keep.
 //!
 //! It speaks protocol values only and never links the organ crate (the
 //! of060 F4 fence, `tests/organ_fence.rs`). One edit is one `image.render`
 //! call: the organ opens the version, applies each op in order and exports
-//! PNG (RULING 09:53 Fri 13 Nov, IO-HOLD C). It is submitted as one job
-//! ([`OrganRouter::submit`]) and runs where a node can, this host first,
-//! then the owner's other nodes: its file lands beside the artifact through
-//! [`crate::propose_organ_outputs`]. When no node can run it now, the whole
-//! edit waits beside the artifact with the reason until a redrive
+//! the edit's format (RULING 09:53 Fri 13 Nov, IO-HOLD C). It is submitted
+//! as one job ([`OrganRouter::submit`]) and runs where a node can, this host
+//! first, then the owner's other nodes: its file lands beside the artifact
+//! through [`crate::propose_organ_outputs`]. When no node can run it now,
+//! the whole edit waits beside the artifact with the reason until a redrive
 //! ([`OrganRouter::redrive_waiting`]) runs it and lands its file the same
 //! way.
 //!
-//! The organ exports PNG only. A PNG artifact's edit is its next version
-//! once kept. A JPEG or WebP artifact's edit lands on a new `image/png`
-//! artifact born from the source version (RULING 09:34 Fri 13 Nov,
-//! IO-FORMAT B): the new artifact's `DerivedFrom` edge names the source
-//! artifact, its proposal's made_by names the source version it read, and
-//! it carries the source's secret taint refs. The source stays as it was.
-//! The new artifact is made only once the edit has run or waits, so a
-//! refused edit leaves nothing behind; a held edit waits beside it. No body
-//! is stored: the organ's render report carries the schema-1 body it
-//! rendered, and the proposal keeps that report (IO-BODY A). The next edit
-//! opens the kept PNG.
+//! The organ exports PNG, JPEG (quality 90) and lossless WebP (FIX 23724,
+//! RULING 09:34 Fri 13 Nov, IO-FORMAT C). An edit exports its source's own
+//! format unless it names another ([`ImageEdit::format`]), so a PNG, JPEG
+//! or WebP artifact's edit is its next version once kept. An edit that
+//! names another format lands on a new artifact of that format born from
+//! the source version (IO-FORMAT B): the new artifact's `DerivedFrom` edge
+//! names the source artifact, its proposal's made_by names the source
+//! version it read, and it carries the source's secret taint refs. The
+//! source stays as it was. The new artifact is made only once the edit has
+//! run or waits, so a refused edit leaves nothing behind; a held edit waits
+//! beside it. No body is stored: the organ's render report carries the
+//! schema-1 body it rendered, and the proposal keeps that report (IO-BODY
+//! A). The next edit opens the kept version, so each kept JPEG edit is
+//! encoded again.
 //!
 //! A preview ([`preview_image`], L4-16) is one `image.preview` call: the
 //! version with its ops applied, scaled to fit a side bound, answered as PNG
@@ -57,7 +60,7 @@ pub const VERB_CROP: &str = "image.crop";
 pub const VERB_RESIZE: &str = "image.resize";
 pub const VERB_ANNOTATE: &str = "image.annotate";
 pub const VERB_EXPORT: &str = "image.export";
-/// Open, the ops and the PNG export in one call: what an edit submits.
+/// Open, the ops and the export in one call: what an edit submits.
 pub const VERB_RENDER: &str = "image.render";
 /// A render scaled to fit a side bound, landing nothing: what a preview asks.
 pub const VERB_PREVIEW: &str = "image.preview";
@@ -152,6 +155,59 @@ impl ImageOp {
     }
 }
 
+/// The format an edit exports: one the organ opens and writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageFormat {
+    Png,
+    /// Baseline JPEG at quality 90; the organ refuses it for a source with
+    /// alpha.
+    Jpeg,
+    /// Lossless WebP, at most 16384 pixels a side.
+    Webp,
+}
+
+impl ImageFormat {
+    /// The format of a `media_type` artifact; `None` for one the organ does
+    /// not open.
+    #[must_use]
+    pub fn of_media_type(media_type: &str) -> Option<Self> {
+        match media_type {
+            PNG => Some(Self::Png),
+            JPEG => Some(Self::Jpeg),
+            WEBP => Some(Self::Webp),
+            _ => None,
+        }
+    }
+
+    /// The media type of its files.
+    #[must_use]
+    pub const fn media_type(self) -> &'static str {
+        match self {
+            Self::Png => PNG,
+            Self::Jpeg => JPEG,
+            Self::Webp => WEBP,
+        }
+    }
+
+    /// The word `image.render` names it by.
+    const fn word(self) -> &'static str {
+        match self {
+            Self::Png => "png",
+            Self::Jpeg => "jpeg",
+            Self::Webp => "webp",
+        }
+    }
+
+    /// Its file-name endings, the one a renamed file takes first.
+    const fn endings(self) -> &'static [&'static str] {
+        match self {
+            Self::Png => &[".png"],
+            Self::Jpeg => &[".jpg", ".jpeg"],
+            Self::Webp => &[".webp"],
+        }
+    }
+}
+
 /// One edit of an image artifact.
 #[derive(Debug, Clone)]
 pub struct ImageEdit {
@@ -161,6 +217,10 @@ pub struct ImageEdit {
     /// 1 to the vault's `organ_host.image.max_ops` ops (default 256), applied
     /// in order.
     pub ops: Vec<ImageOp>,
+    /// The format the edit exports: the source's own when `None`, so the
+    /// file lands as the source's next version. Another format lands on a
+    /// new artifact of that format, born from the source (IO-FORMAT B).
+    pub format: Option<ImageFormat>,
     /// The proposal's ref.
     pub run_ref: String,
     /// The task, ask, run or skill the edit answers.
@@ -181,10 +241,10 @@ pub struct ImageEdit {
 /// What became of an edit.
 #[derive(Debug)]
 pub struct ImageEdited {
-    /// The artifact the PNG lands on: the source itself, or a new
-    /// `image/png` artifact born from it.
+    /// The artifact the file lands on: the source itself, or a new artifact
+    /// of the edit's format born from it.
     pub artifact: EntityId,
-    /// Whether `artifact` is new, born from a JPEG or WebP source.
+    /// Whether `artifact` is new, born from a source of another format.
     pub born: bool,
     /// The proposal waiting for Keep, or the whole edit held for a node.
     pub submitted: Submitted,
@@ -267,10 +327,10 @@ const fn organ_code(code: ErrorCode) -> &'static str {
 
 impl ImageEdit {
     /// The edit as one `image.render` call over `source`: each op in order,
-    /// then the PNG export. `max_ops` is the vault owner's count
+    /// then the `format` export. `max_ops` is the vault owner's count
     /// (`organ_host.image.max_ops`), which the organ applies in place of
     /// its own default.
-    fn render_call(&self, source: OrganInput, max_ops: usize) -> OrganCall {
+    fn render_call(&self, source: OrganInput, max_ops: usize, format: ImageFormat) -> OrganCall {
         let ops = self.ops.iter().copied().map(ImageOp::render_arg).collect();
         OrganCall {
             organ: IMAGE_ORGAN.to_owned(),
@@ -278,7 +338,7 @@ impl ImageEdit {
             schema: IMAGE_BODY_SCHEMA,
             args: Value::Map(vec![
                 ("ops".into(), Value::Array(ops)),
-                ("format".into(), "png".into()),
+                ("format".into(), format.word().into()),
                 ("max_ops".into(), max_ops.into()),
             ]),
             body: None,
@@ -293,15 +353,31 @@ impl ImageEdit {
     }
 }
 
-/// `name` for a PNG: a `.jpg`, `.jpeg` or `.webp` ending becomes `.png`.
-fn png_name(name: &str) -> String {
+/// `name` for a `format` file: the ending of another image format (`.png`,
+/// `.jpg`, `.jpeg`, `.webp`, in any case) becomes `format`'s own; a name with
+/// its own ending or none stays as it is.
+fn export_name(name: &str, format: ImageFormat) -> String {
     let lower = name.to_ascii_lowercase();
-    [".jpeg", ".jpg", ".webp"]
+    if format
+        .endings()
         .iter()
-        .find(|ending| lower.ends_with(*ending))
+        .any(|ending| lower.ends_with(ending))
+    {
+        return name.to_owned();
+    }
+    [ImageFormat::Png, ImageFormat::Jpeg, ImageFormat::Webp]
+        .iter()
+        .flat_map(|other| other.endings())
+        .find(|ending| lower.ends_with(**ending))
         .map_or_else(
             || name.to_owned(),
-            |ending| format!("{}.png", &name[..name.len() - ending.len()]),
+            |ending| {
+                format!(
+                    "{}{}",
+                    &name[..name.len() - ending.len()],
+                    format.endings()[0]
+                )
+            },
         )
 }
 
@@ -338,10 +414,11 @@ fn image_source(
 }
 
 /// Runs `edit` through `router`: submits one `image.render` of the version,
-/// its ops and the PNG export, as one job made by `actor`. Its file waits
-/// for Keep beside the artifact, or beside a new PNG artifact born from a
-/// JPEG or WebP source; or, with no node able to run it now, the whole edit
-/// is held there with the reason until a redrive runs it.
+/// its ops and the export in the edit's format, the source's own unless it
+/// names another, as one job made by `actor`. Its file waits for Keep
+/// beside the artifact, or, for another format, beside a new artifact of
+/// that format born from the source; or, with no node able to run it now,
+/// the whole edit is held there with the reason until a redrive runs it.
 ///
 /// # Errors
 /// [`ImageEditRefusal`]: no ops or too many; an artifact or version this
@@ -368,21 +445,27 @@ pub fn edit_image(
         });
     }
     let (source, input) = image_source(vault, edit.artifact, edit.version)?;
+    let own = ImageFormat::of_media_type(&source.media_type).ok_or_else(|| {
+        ImageEditRefusal::NotAnImage {
+            media_type: source.media_type.clone(),
+        }
+    })?;
+    let format = edit.format.unwrap_or(own);
     let job = JobCall {
         run_ref: edit.run_ref.clone(),
-        call: edit.render_call(input, max),
+        call: edit.render_call(input, max, format),
         lent: Vec::new(),
         trigger: edit.trigger.clone(),
         submitter: edit.submitter,
     };
-    let born = source.media_type != PNG;
+    let born = format != own;
     let target = || -> Result<EntityId, HostError> {
         if !born {
             return Ok(edit.artifact);
         }
         let artifact = vault.new_entity_id()?;
         let now = vault.now_recorded_at();
-        let body = BlobArtifactBody::new(png_name(&source.name), PNG)
+        let body = BlobArtifactBody::new(export_name(&source.name, format), format.media_type())
             .with_secret_taint_refs(source.secret_taint_refs.clone());
         vault
             .batch()

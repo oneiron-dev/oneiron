@@ -2049,11 +2049,16 @@ fn remote_rung_routes_each_entity_and_falls_back_with_truthful_locality() {
             vault.embedding_locality(&unknown).unwrap(),
             Some(EmbedderLocality::OnDevice)
         );
-        // The one remote batch was a paid call, settled at its reservation.
+        // The one remote batch was settled at its reservation. A keyless
+        // owner-server rung is free work (FIX 9482, FIX 14889: Payer::Local,
+        // own server, no key) and reserves nothing; a third-party rung's
+        // batch is paid.
+        let paid = locality == Locality::ThirdParty;
         let sent = remote.requests().len();
         let answered = remote_batches(&receipts);
         assert!(
-            matches!(answered.as_slice(), [(reserved, settled)] if reserved == settled && *reserved > 0)
+            matches!(answered.as_slice(), [(reserved, settled)] if reserved == settled && (*reserved > 0) == paid),
+            "{locality:?}: {answered:?}"
         );
         remote.set_behaviour(MockBehaviour::ServerError);
         assert_eq!(

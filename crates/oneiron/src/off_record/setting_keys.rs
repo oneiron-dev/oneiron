@@ -1,7 +1,7 @@
 //! Off-record sessions' owner Setting keys (DESIGN 15-setting-primitive): rows the setting
 //! catalogue reads from this file.
 
-use crate::setting::{Kind, lower_is_tighter};
+use crate::setting::Kind;
 
 /// Off: a stretch entered alone goes on record on the owner's proof alone.
 fn flip_alone_by_owner_alone() -> bool {
@@ -20,6 +20,6 @@ crate::setting::setting_keys! {
     pub(crate) OFF_RECORD_FLIP_ALONE_BY_HOLDER: bool = "off_record.flip_alone.by_holder" {
         kind: Kind::new(flip_alone_by_owner_alone)
             .strictest(flip_alone_by_owner_alone)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
     };
 }

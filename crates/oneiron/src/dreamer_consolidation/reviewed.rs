@@ -11,6 +11,7 @@ use super::support::invalid_consolidation;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
 use crate::ports::{DependencyIndex, SourceSpan};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::write_envelope::ClaimCandidate;
 use crate::{EntityId, Result, Vault};
 
 /// Whether `body` is the claim `facts` name: the same subject, predicate,
@@ -42,10 +43,23 @@ pub(crate) fn reviewed_output(vault: &Vault, candidate: &PromotionCandidate) -> 
     let Some(stored) = vault.get_claim(&candidate.claim_id)? else {
         return Ok(false);
     };
+    stored_claim_is_reviewed_output(&candidate.candidate, &stored)
+}
+
+/// The reviewed-output decision over `stored`, the claim a caller found at
+/// the output id an attempt derived for `candidate`: a claim that landed at
+/// `auto` is in no review, and any other is this attempt's reviewed output.
+/// The attempt owns the id, so a different claim stored there is an error.
+/// [`reviewed_output`] and the bound signals read (`resources/signals.rs`)
+/// each look the claim up on their own snapshot and decide here.
+pub(super) fn stored_claim_is_reviewed_output(
+    candidate: &ClaimCandidate,
+    stored: &ClaimBody,
+) -> Result<bool> {
     if stored.approval == ClaimApprovalStatus::Auto {
         return Ok(false);
     }
-    if !names(&candidate_facts(&candidate.candidate)?, &stored)? {
+    if !names(&candidate_facts(candidate)?, stored)? {
         return Err(invalid_consolidation("candidate identity changed"));
     }
     Ok(true)

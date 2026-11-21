@@ -3,6 +3,7 @@
 //! State, admission, and shutdown definitions remain in the parent module.
 
 mod ledger_report;
+mod owner_key_change_report;
 mod teardown;
 
 use teardown::StartingHandles;
@@ -135,7 +136,7 @@ async fn serve_with_handles(
     // process attests the owner on each route: a request with no credential
     // is anonymous. The Linear mirror checks this declaration, not a secret.
     server_config.ingress = crate::config::IngressAuth::Supervisor;
-    server_config.hosted_private_origins = managed.hosted_private_origins.clone();
+    managed.carry_hosted_egress(&mut server_config);
     // The host root signs with this vault's own independent issuer seed,
     // kept in this install's keystore slot under the supervisor's key
     // directory (FIX-LIST 3018): never the delivered DEK, which escrow
@@ -184,6 +185,11 @@ async fn serve_with_handles(
     // Rehearsal scratch a stopped process left in `<data>.rehearsals` goes
     // before any worker starts or ready is said (FIX 5677).
     owner_host.sweep_rehearsals(&vault);
+    // The owner key change report's baseline, before any worker starts or
+    // anything serves: every owner key entry the vault holds now is history,
+    // never mailed, and every change landed after it is reported (Engine
+    // ruling 21 Nov 06:00).
+    crate::managed::owner_key_change_report::baseline_cursor(&vault);
     // The one credential-broker context, built from the opened vault: the
     // `[models]` providers, the System One seat, the embedder and the GPU
     // pods read their `key_secret` keys at its custody door, call by call.
@@ -354,6 +360,9 @@ async fn serve_with_handles(
     // The recovery box's kit-only hold rides the ledger's socket and spawn
     // identity; the recovery preset switch is its only caller.
     sync_server.configure_recovery_box_hold(ledger.recovery_box_hold())?;
+    // The owner key change report rides the same socket and identity; the
+    // reporter task beside the ledger report is its only caller.
+    sync_server.configure_owner_key_change_report(ledger.owner_key_change_report())?;
     // The native preview socket has only exact held-lease origins. No flag
     // means no registration caller or listener, preserving standalone hosts.
     let previews = managed
@@ -417,7 +426,8 @@ async fn serve_with_handles(
     );
     // Fact hooks (ARCH-0080) and the settled verb-ask drain on their runner,
     // unless `--no-hooks`: each pass admitted like a served write. The sandbox
-    // loads before ready, as plain serve loads it, so no verb waits on it.
+    // loads before ready, so no verb waits on it; plain serve builds it off
+    // its gated startup instead (FIX 25667).
     let (hooks_stop, hooks_stopped) = watch::channel(false);
     #[cfg(feature = "code-sandbox-wasmtime")]
     let fact_hooks = if config.hooks {
@@ -550,6 +560,10 @@ async fn serve_with_handles(
         training_changes,
         shutdown.triggered(),
     ));
+    handles.owner_key_change_report = Some(owner_key_change_report::spawn(
+        Arc::clone(&sync_server),
+        shutdown.triggered(),
+    ));
 
     // Housekeeping passes are admitted like a served write: a vault frozen
     // for reap sweeps nothing, and a pass in flight keeps it from reading
@@ -565,6 +579,13 @@ async fn serve_with_handles(
     handles.connector_sends = Some(sync_server.spawn_connector_send_worker(admitted()));
     // Checked built-in channels, under the same admission (OF-519).
     handles.builtin_host = Some(crate::builtin_host::spawn(&sync_server, admitted()));
+    // Booking deposits' due captures, voids and refunds go to Stripe, under
+    // the same admission (BK-DEPOSITS; Sol money review M3): the booking
+    // routes a managed vault serves take deposits, so it settles them too.
+    handles.deposit_settlement = Some(crate::booking_deposit::settle::spawn_deposit_settlement(
+        Arc::clone(&sync_server),
+        admitted(),
+    ));
     // Hosted imports staged in the vault's data folder, under the same
     // admission (ARCH-0027 #hosted-import): a restart takes each job up
     // where it stopped.
@@ -801,6 +822,7 @@ async fn serve_with_handles(
         ),
         &app,
         config.limits.connections(),
+        crate::handler::mesh::MeshRouteSet::Full,
     )
     .await?;
     // A vault that is a device of another home dials it, on that mesh when

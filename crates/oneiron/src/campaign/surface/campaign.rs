@@ -40,6 +40,9 @@ pub use crate::memory::campaign_records::UpdateCampaignRequest;
 /// CRM records that behave differently at their write boundary would be two
 /// contracts to keep straight.
 ///
+/// The vault's first campaign also seeds the vault's house voice guide
+/// ([`Vault::ensure_house_voice_guide`]), after the campaign is stored.
+///
 /// # Errors
 ///
 /// [`Error::InvalidConfig`] when the definition fails validation or the CAMPAIGN
@@ -77,6 +80,16 @@ pub fn create_campaign(
         validate_voice_guide_in_txn(vault, wtxn, &record.definition)?;
         store_campaign_in_txn(vault, wtxn, &record, kind)
     })?;
+    // The vault's first campaign seeds its house voice guide, which copy
+    // review checks a campaign's copy against when it names no guide. A
+    // failed seed leaves the campaign stored: its unguided sends hold, and
+    // the next create or seeded open tries again.
+    if let Err(error) = vault.ensure_house_voice_guide() {
+        tracing::warn!(
+            kind = ?error.kind(),
+            "the house voice guide was not seeded with this campaign; the next create or open tries again"
+        );
+    }
     Ok(record)
 }
 

@@ -10,6 +10,7 @@ use crate::error::{Error, Result};
 use crate::setting::SettingValue;
 
 pub mod agent_world_access;
+pub(crate) mod archive_restore;
 pub mod backup;
 pub(crate) mod board_layout;
 pub mod default_facet;
@@ -21,6 +22,7 @@ pub use oneiron_store::settings::model_versioning;
 mod models;
 pub mod non_base_world_claim_fraction;
 pub(crate) mod room_threads;
+pub mod sandbox_provider;
 pub(crate) mod setting_keys;
 pub mod snapshot_read;
 pub mod undo_send;

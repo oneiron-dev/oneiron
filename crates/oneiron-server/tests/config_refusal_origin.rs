@@ -182,7 +182,10 @@ fn an_embedder_space_refused_from_the_config_file_names_the_file_and_the_line() 
         )),
         "{error}"
     );
-    assert!(error.contains("but embedder.repo and embedder.revision name"), "{error}");
+    assert!(
+        error.contains("but embedder.repo and embedder.revision name"),
+        "{error}"
+    );
 }
 
 /// A new file `name` in `dir` that holds `text`, mode 0600.

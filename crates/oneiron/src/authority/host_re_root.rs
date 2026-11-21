@@ -23,9 +23,11 @@ use crate::claim::history_projection::{
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::store::recovery_kit::RestoredKitSecret;
-use crate::world_keys::RecoveryAuthoritySigner;
+use crate::world_keys::{RecoveryAuthoritySigner, RecoveryRootSeed};
 use crate::{EntityId, Vault};
 use rand_core::{OsRng, RngCore};
+use std::collections::BTreeSet;
+use std::ops::ControlFlow;
 
 /// What a host re-root changed, for the owner's report.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,9 +80,14 @@ enum RootMoveSigner<'a> {
 impl<'a> RootMoveProof<'a> {
     /// The signer this proof stands for, when it is a live owner key of the
     /// vault's one settled root in `before`; the kit's key is derived for
-    /// `vault_id`, the fold's own.
+    /// `vault_id`, the fold's own, at the kit's live generation in `txn`, so
+    /// the same kit moves the root with generation 1 after a kit-only
+    /// rotation. With none live, the highest enrolled (revoked) generation or
+    /// generation 0 meets the refusal below, as at the kit's ReRoot door
+    /// ([`Vault::recover_owner_authority_from_kit`]).
     fn signer(
         self,
+        (vault, txn): (&Vault, &heed::RoTxn<'_>),
         before: &AuthorityFold,
         vault_id: &AuthorityVaultId,
     ) -> Result<RootMoveSigner<'a>> {
@@ -90,7 +97,13 @@ impl<'a> RootMoveProof<'a> {
                 Ok(RootMoveSigner::Root(current))
             }
             Self::Kit(secret) => {
-                let kit = RecoveryAuthoritySigner::from_restored_kit(secret, vault_id)?;
+                let seed = RecoveryRootSeed::from_restored_kit(secret)?;
+                let found = vault.recovery_authority_generations_in_txn(txn, &seed, vault_id)?;
+                let kit = match (found.live, found.enrolled) {
+                    (Some((_, live)), _) => live,
+                    (None, Some((_, enrolled))) => enrolled,
+                    (None, None) => RecoveryAuthoritySigner::from_seed(&seed, vault_id, 0)?,
+                };
                 // `vault_id` is the fold's own, so its root is not conflicted.
                 if !roster_has_live_owner(&before.roster, &kit.authority_key()) {
                     return Err(authority_refused(RECOVERY_KIT_NOT_ENROLLED));
@@ -184,7 +197,7 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let before = self.authority_fold_readonly_in_txn(&txn)?;
         let vault_id = before.vault_id.ok_or_else(invalid_authority)?;
-        let signer = proof.signer(&before, &vault_id)?;
+        let signer = proof.signer((self, &txn), &before, &vault_id)?;
         if before.roster.contains_key(&next.public_key()) {
             return Err(invalid_authority());
         }
@@ -324,15 +337,65 @@ impl Vault {
     ///
     /// Storage and fold faults.
     pub fn genesis_fragile_now(&self) -> Result<bool> {
-        let moved = {
-            let txn = self.store.env.read_txn()?;
-            let fold = self.authority_view_readonly_in_txn(&txn)?;
-            if fold.genesis_fragile {
-                return Ok(true);
-            }
-            !fold.retired_keys.is_empty()
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        if fold.genesis_fragile {
+            return Ok(true);
+        }
+        if fold.retired_keys.is_empty() {
+            return Ok(false);
+        }
+        let (enrolled, _) = self.live_owner_key_enrolment_in_txn(&txn, &fold)?;
+        Ok(!enrolled)
+    }
+
+    /// Whether this vault keeps a valid enrolment of an owner key that is
+    /// live on `fold`'s roster, and how many stored rows the search read. It
+    /// answers what `enrolled_owner_keys().iter().any(|key| key.live)` does
+    /// ([`Vault::enrolled_owner_keys`]) for a caller that needs no list of
+    /// the keys: it reads the stored log one row at a time, in id order,
+    /// stops at the first such enrolment, and hashes only a row that enrols
+    /// a live key. With none stored it reads the enrolments an adopted
+    /// checkpoint image carries. A vault with no live enrolment has every
+    /// stored row read once, as a moved vault that shows the fragile-genesis
+    /// flag does at each start (FIX GENESIS-FRAGILE-START-SCANS-AUTHORITY-LOG).
+    ///
+    /// # Errors
+    ///
+    /// Storage faults, and a stored row that does not decode among the rows
+    /// read; a row after the first live enrolment is not read.
+    pub(crate) fn live_owner_key_enrolment_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+    ) -> Result<(bool, usize)> {
+        let mut rows_read = 0_usize;
+        let stored =
+            super::readonly_fold::find_in_authority_log_rows_in_txn(&self.store, txn, |body| {
+                rows_read += 1;
+                let entry = decode_authority_log_entry_body(body)?;
+                let live = enrols_live_key(fold, &entry)
+                    && fold.valid_entries.contains(&authority_entry_hash(&entry)?);
+                Ok(if live {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                })
+            })?;
+        if stored.is_some() {
+            return Ok((true, rows_read));
+        }
+        // A carried row this vault also stores was read above, so every
+        // carried row is asked, with no set of the stored hashes to build.
+        let carried = match adopted_evidence_in_txn(&self.store, txn)? {
+            Some(evidence) => evidence
+                .carried_past(&BTreeSet::new())
+                .any(|(hash, entry)| {
+                    fold.valid_entries.contains(hash) && enrols_live_key(fold, entry)
+                }),
+            None => false,
         };
-        Ok(moved && !self.enrolled_owner_keys()?.iter().any(|key| key.live))
+        Ok((carried, rows_read))
     }
 
     /// Whether the claim a pinned history projects is readable now.
@@ -469,4 +532,40 @@ fn pinned_machine_history_targets(store: &Store, txn: &heed::RoTxn<'_>) -> Resul
         targets.push(EntityId::from_bytes(bytes)?);
     }
     Ok(targets)
+}
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// [`Self::live_owner_key_enrolment_in_txn`] on the fold now, with the
+    /// hash of every stored authority log row in the order that search reads
+    /// them. For the integration tests' door
+    /// (`test_doors::owner_key_enrolment_read`).
+    pub(crate) fn live_owner_key_enrolment_read_for_test(
+        &self,
+    ) -> Result<(bool, usize, Vec<AuthorityEntryHash>)> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let (enrolled, rows_read) = self.live_owner_key_enrolment_in_txn(&txn, &fold)?;
+        let mut stored = Vec::new();
+        for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, &txn)? {
+            let entry = decode_authority_log_entry_body(&body)?;
+            stored.push(authority_entry_hash(&entry)?);
+        }
+        Ok((enrolled, rows_read, stored))
+    }
+}
+
+/// Whether `entry` enrols an owner key that is live on `fold`'s roster: the
+/// `live` of an [`EnrolledOwnerKey`] for this one entry. Two enrolments of
+/// one key name one roster row, so the answer needs no list of the others;
+/// whether the fold counts the entry is the caller's to ask.
+fn enrols_live_key(fold: &AuthorityFold, entry: &AuthorityLogEntry) -> bool {
+    let AuthorityOp::OwnerKeyEnroll(enroll) = &entry.op else {
+        return false;
+    };
+    enroll.public_key().is_some()
+        && fold
+            .roster
+            .get(&enroll.device.key)
+            .is_some_and(|device| !device.revoked)
 }

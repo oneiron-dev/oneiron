@@ -14,6 +14,7 @@ use super::resume_preflight::{
     request_digest,
 };
 use super::*;
+use crate::code_run::BaseKnownRead;
 
 mod recorded_answers;
 
@@ -214,6 +215,7 @@ fn runs_callable(effect: SelfEffect) -> bool {
         | SelfEffect::Context
         | SelfEffect::Speak
         | SelfEffect::Think
+        | SelfEffect::ThinkAloud
         | SelfEffect::Express
         | SelfEffect::ReportBlocked
         | SelfEffect::AgentsPut
@@ -308,7 +310,13 @@ impl DeadlineReplay {
     /// when it lines up, a live run when it is a pure change past dropped rows, or the
     /// guest-visible typed failure. An integrity fault holds the replay as it always has; a
     /// tail holding an effect step turns it dry instead.
-    fn take(&mut self, at: u64, call: &SelfCall, results: &[CodeRunRawOutput]) -> PreflightTake {
+    fn take(
+        &mut self,
+        at: u64,
+        call: &SelfCall,
+        results: &[CodeRunRawOutput],
+        base_known: BaseKnownRead<'_>,
+    ) -> PreflightTake {
         if let Some(held) = self.held {
             return PreflightTake::Held(PreflightHeld::Integrity(held));
         }
@@ -332,7 +340,7 @@ impl DeadlineReplay {
                 }
             }
             (Some(guest), Some(seq)) if seq == guest && guest == at => {
-                self.take_aligned(at, call, results)
+                self.take_aligned(at, call, results, base_known)
             }
             (Some(guest), Some(seq)) if seq == guest => self.end_walk(results),
             _ => PreflightTake::Held(PreflightHeld::Integrity(self.hold(ROWS_MISSING))),
@@ -346,6 +354,7 @@ impl DeadlineReplay {
         at: u64,
         call: &SelfCall,
         results: &[CodeRunRawOutput],
+        base_known: BaseKnownRead<'_>,
     ) -> PreflightTake {
         let Some(row) = self.rows.front() else {
             return PreflightTake::Held(PreflightHeld::Integrity(self.hold(ROWS_MISSING)));
@@ -354,7 +363,7 @@ impl DeadlineReplay {
             return PreflightTake::Held(PreflightHeld::Integrity(self.hold(HOOK_VIEW)));
         }
         let same_effect = row.effect == call.effect();
-        let replayed = row.strict_replay_answer(at, call.clone());
+        let replayed = row.strict_replay_answer(at, call.clone(), Some(base_known));
         match replayed {
             Ok(outcome) => {
                 let Some((row, nested)) = self.pop_front_call() else {

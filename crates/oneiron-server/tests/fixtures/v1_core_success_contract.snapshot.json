@@ -651,7 +651,7 @@
     "name": "create_core_conversation_turn",
     "request": {
       "auth": {
-        "scope": "core:write",
+        "scope": "core:read,core:write",
         "type": "bearer"
       },
       "body": {

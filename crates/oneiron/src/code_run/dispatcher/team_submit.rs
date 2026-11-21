@@ -14,8 +14,8 @@
 
 use std::cell::Cell;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
-use sha2::{Digest, Sha256};
 
 use super::HostSelfDispatcher;
 use crate::attempt_queue::AttemptId;
@@ -36,10 +36,6 @@ use crate::{
     ClaimApprovalStatus, ClaimBody, ClaimCandidate, ClaimLifecycleStatus, ClaimSource,
     ClaimSubject, EntityId, TimeRange,
 };
-
-/// Domain of a review claim's id: one id per (leader, team, output), so a
-/// repeat submit finds its first review rather than writing a second.
-const TEAM_SUBMIT_REVIEW_ID_DOMAIN: &[u8] = b"oneiron:self-team-submit-review:v1";
 
 /// Longest team ref a team receipt is kept under; a longer one names no team.
 const MAX_TEAM_REF_BYTES: usize = 256;
@@ -267,24 +263,22 @@ fn review_value(team: &str, output_revision: &str, leader: AttemptId) -> Value {
 }
 
 /// The review claim's id: a domain-separated, length-prefixed digest of the
-/// leader, the team and the output. A digest that lands on a reserved
-/// sentinel is re-salted rather than truncated into one.
+/// leader, the team and the output, one id per (leader, team, output), so a
+/// repeat submit finds its first review rather than writing a second
+/// (`purposes::code_run::TEAM_SUBMIT_REVIEW`). A digest that lands on a
+/// reserved sentinel is re-salted rather than truncated into one.
 fn review_claim_id(leader: AttemptId, team: &str, output_revision: &str) -> Result<EntityId> {
     for salt in 0..=u8::MAX {
-        let mut hasher = Sha256::new();
-        hasher.update(TEAM_SUBMIT_REVIEW_ID_DOMAIN);
-        hasher.update([salt]);
+        let mut hasher = LegacyDigest::new(purposes::code_run::TEAM_SUBMIT_REVIEW);
+        hasher.raw(&[salt]);
         for part in [
             leader.as_bytes().as_slice(),
             team.as_bytes(),
             output_revision.as_bytes(),
         ] {
-            let len = u64::try_from(part.len())
-                .map_err(|_| Error::ArithmeticOverflow("team submit review id material"))?;
-            hasher.update(len.to_le_bytes());
-            hasher.update(part);
+            hasher.len_u64_le(part.len()).raw(part);
         }
-        let digest = hasher.finalize();
+        let digest = hasher.finish();
         let mut bytes = [0_u8; 16];
         bytes.copy_from_slice(&digest[..16]);
         if let Ok(id) = EntityId::from_bytes(bytes) {
@@ -294,4 +288,15 @@ fn review_claim_id(leader: AttemptId, team: &str, output_revision: &str) -> Resu
     Err(Error::InvariantViolation(
         "team submit review id derivation failed",
     ))
+}
+
+/// [`review_claim_id`] for the K door
+/// (`test_doors::fingerprint_keep_code_run_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn review_claim_id_for_test(
+    leader: AttemptId,
+    team: &str,
+    output_revision: &str,
+) -> Result<EntityId> {
+    review_claim_id(leader, team, output_revision)
 }
