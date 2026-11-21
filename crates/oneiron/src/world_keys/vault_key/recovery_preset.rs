@@ -478,6 +478,10 @@ impl Vault {
         // The fact and rotation share one confirm before anything is drawn or
         // written, while the door holds nothing: the prompt can block. The
         // preset in force is no switch and asks nothing.
+        let device_wrap = match handover {
+            SheetHandover::Kept => None,
+            SheetHandover::Answer => Some(self.device_wrap_held_here()?),
+        };
         let ground = self.sheet_switch_ground(owner, preset, current, rotation.as_ref())?;
         // After the ask: the held key first, then the device wrap, whose read
         // readies signing, then the draw.
@@ -487,10 +491,6 @@ impl Vault {
                     .ok_or_else(|| refused("unlock the vault key first"))
             })
             .transpose()?;
-        let device_wrap = match handover {
-            SheetHandover::Kept => None,
-            SheetHandover::Answer => Some(self.device_wrap_held_here()?),
-        };
         let issue = match &held {
             Some(key) => Some(self.draw_recovery_sheet(key, keep_sheet)?),
             None => None,
