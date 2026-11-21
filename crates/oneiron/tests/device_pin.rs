@@ -29,8 +29,8 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use oneiron::authority::{
     ASK_WORD_PROOF_DOMAIN, AUTHORITY_TRANSCRIPT_DOMAIN, ActAuthority, ActSurface,
     AuthorityAttestation, AuthorityKey, AuthorityTier, CheckpointRootSigner, DeviceAuthority,
-    HeldAnswerListing, HostSlipIssuer, MachineOwnership, MachineRole, OwnerProofGround, ROLE_ADMIN,
-    ROLE_CLOUD, ROLE_OWNER,
+    DeviceOwnerKeyVouch, HeldAnswerListing, HostSlipIssuer, MachineOwnership, MachineRole,
+    OwnerProofGround, ROLE_ADMIN, ROLE_CLOUD, ROLE_OWNER,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::{DevicePinRefusal, RecordError, SecretError};
@@ -1112,24 +1112,44 @@ fn a_host_that_takes_no_pin_never_makes_the_key_beside_a_set_pin() {
     );
 }
 
-/// The new device's request for a vouch is made with the key in the slot
-/// (the request from under the PIN is row
-/// OWNER-KEY-VOUCH-REQUEST-ON-PIN-DEVICE). So a device with a PIN set asks
-/// for none and makes no seed in the clear, and a device that forgot its PIN
-/// is told to set a new one first.
+/// The new device's request for a vouch on a device with a PIN set is made
+/// with the key under the PIN (row OWNER-KEY-VOUCH-REQUEST-ON-PIN-DEVICE).
+/// Inside the window the request comes back, its key rests under the PIN, no
+/// seed is made in the clear, the key signs nothing before the roster lists
+/// it, and the request asked again names the same key. Outside the window the
+/// door asks for the PIN. A device that forgot its PIN is told to set a new
+/// one first. Red at main 8418b839a4ad: inside the window the request is
+/// refused as the slot's.
 #[test]
-fn a_vouch_request_is_refused_on_a_device_with_a_pin_set_or_forgotten() {
+fn a_vouch_request_under_a_set_pin_needs_the_window_and_one_after_a_forgotten_pin_a_new_pin() {
     let device = PinDevice::hardware_counted();
     device
         .vault
         .set_device_pin_as(&device.owner(), PIN, false)
         .expect("the owner sets the PIN");
-    assert!(
+    let ask = || {
         device
             .vault
             .device_owner_key_vouch_request(&device.owner(), "Laptop")
-            .is_err(),
-        "with a PIN set the key rests under the PIN, and the slot's request is refused"
+    };
+    let request = match ask().expect("inside the window the device asks for a vouch") {
+        DeviceOwnerKeyVouch::Request(request) => request,
+        DeviceOwnerKeyVouch::Enrolled(receipt) => {
+            panic!("the device's key is not enrolled yet: {receipt:?}")
+        }
+    };
+    assert_eq!(
+        request.machine,
+        device.install(),
+        "the request names this install"
+    );
+    assert_eq!(
+        device.rest(),
+        OwnerKeyRest::DevicePin {
+            public_key: request.public_key,
+            tier: DevicePinTier::HardwareCounted,
+        },
+        "the request's key rests under the PIN"
     );
     assert!(
         device
@@ -1139,20 +1159,34 @@ fn a_vouch_request_is_refused_on_a_device_with_a_pin_set_or_forgotten() {
             .is_none(),
         "no seed was made in the clear"
     );
+    assert!(
+        device.listed_signer(request.public_key).is_none(),
+        "the key signs nothing before the roster lists it"
+    );
+    match ask().expect("asked again inside the window") {
+        DeviceOwnerKeyVouch::Request(again) => assert_eq!(
+            again.public_key, request.public_key,
+            "asked again, the request names the key under the PIN"
+        ),
+        DeviceOwnerKeyVouch::Enrolled(receipt) => {
+            panic!("the device's key is not enrolled yet: {receipt:?}")
+        }
+    }
+
+    device.pin.end_window();
+    assert_eq!(
+        pin_refusal(ask()),
+        DevicePinRefusal::Required,
+        "outside the window the key under the PIN asks for nothing"
+    );
 
     device
         .vault
         .forget_device_pin_as(&device.owner())
         .expect("the owner forgets this device's PIN");
-    assert!(
-        matches!(
-            pin_refusal(
-                device
-                    .vault
-                    .device_owner_key_vouch_request(&device.owner(), "Laptop")
-            ),
-            DevicePinRefusal::NotSet
-        ),
+    assert_eq!(
+        pin_refusal(ask()),
+        DevicePinRefusal::NotSet,
         "a device that forgot its PIN asks for a vouch only after a new PIN"
     );
     assert!(
