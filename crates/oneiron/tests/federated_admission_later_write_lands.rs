@@ -7,8 +7,9 @@
 //! earlier admission wrote at a higher op index (more rows before it in its
 //! update) lost outright, and at equal counts the peer id decided. The window
 //! diff was then empty and B kept the earlier image.
-//! After: the import re-authors each admitted part above every op the window
-//! already holds, so the later admitted write is the window's last write.
+//! After: once a part imports, each key it lost to an earlier admission is
+//! written again above every op the window holds, so the later admitted write
+//! is the window's last write.
 //!
 //! - `a_peers_hard_delete_after_a_wider_soft_delete_removes_the_shell`: red on
 //!   main (the soft delete rode an update with one more row, so its tombstone
