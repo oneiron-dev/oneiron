@@ -10249,6 +10249,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/ppr_narrowed_hub_fanout_cap.rs` | test | s | — | — | The narrowed PPR walk spreads no mass along a hub group (row [PPR-NARROWED-WALK-CACHE]; Engine ANSWER… |
 | `tests/predicted_residence_home.rs` | test | L | — | — | The home computes one machine's prediction (census L7-46 + L10-14; ARCH-0023b #predicted-residence) |
 | `tests/preference_pair_moot_memory_door.rs` | test | m | — | — | A preference conflict opened by `Memory::claim_upsert` is no longer open once the owner restates the answer… |
+| `tests/prefilter_message_round_receipt_readers.rs` | test | m | — | — | Who reads the prefilter receipts of a MESSAGE-screened round |
+| `tests/prefilter_screen_expired_message_grant.rs` | test | m | — | — | An expired MESSAGE grant lends the prefilter screen no words |
 | `tests/prefilter_screens_witnessed_turns.rs` | test | m | — | — | The Dreamer's prefilter screen scores a chat TURN on its MESSAGE words |
 | `tests/primitive_a_evidence_spans.rs` | test | m | — | — | Primitive A, slice 6.4a (SLICE6-MAP row A): `vault.evidence.spans` serves the exact bytes of a TURN's text… |
 | `tests/primitive_a_policy_preflight.rs` | test | s | — | — | Primitive A, slice 6.4e (SLICE6-MAP row A; ENGINE CALL S64-5): `vault.policy.preflight` with the act `read`… |

@@ -116161,6 +116161,22 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/prefilter_message_round_receipt_readers.rs",
+     "purpose": "Who reads the prefilter receipts of a MESSAGE-screened round",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/prefilter_screen_expired_message_grant.rs",
+     "purpose": "An expired MESSAGE grant lends the prefilter screen no words",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/prefilter_screens_witnessed_turns.rs",
      "purpose": "The Dreamer's prefilter screen scores a chat TURN on its MESSAGE words",
      "surface": {}
@@ -121705,7 +121721,7 @@
    "over_bar": 272,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8494,
-   "test_files": 2219
+   "test_files": 2221
   },
   "oneiron-agent-runtime": {
    "files": [
