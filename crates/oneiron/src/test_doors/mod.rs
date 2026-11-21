@@ -15,6 +15,7 @@ pub mod agent_definition_scans;
 pub mod agent_health;
 pub mod agent_pair_grant_orphan;
 pub mod agent_run_handover;
+pub mod agent_run_speech;
 pub mod approval_target_round_trip;
 pub mod archive_import;
 pub mod archive_producers;
