@@ -281,7 +281,9 @@ pub(crate) fn add_derived_policies_in_txn(
 }
 
 /// Drops the derived row `row`'s carried policies with the row: the
-/// entity erase's (fix list row 17207).
+/// entity erase's (fix list row 17207). First it seals the floor of each
+/// row that waits on `row` (`floor_state::seal_rows_awaiting_in_txn`; #9289
+/// Opus review 3 P1-A).
 ///
 /// # Errors
 ///
@@ -291,6 +293,7 @@ pub(crate) fn erase_derived_policies_in_txn(
     txn: &mut heed::RwTxn<'_>,
     row: &EntityId,
 ) -> Result<()> {
+    floor_state::seal_rows_awaiting_in_txn(store, txn, row)?;
     DERIVED.delete(store, txn, row).map(drop)
 }
 

@@ -10,7 +10,11 @@
 //! with what it waits on, and the write that lands that row or binding
 //! raises it again, so it reads as its sources say once they are here.
 //! Absence never seals a row; only proof of erasure does
-//! ([`super::seal_births_from_erased_inputs_in_txn`]).
+//! ([`super::seal_births_from_erased_inputs_in_txn`]). The write that
+//! erases a row a floor waits on seals that floor
+//! ([`seal_rows_awaiting_in_txn`]): what the erased row would have added to
+//! it can no longer be known here, so the floor never settles without it
+//! (#9289 Opus review 3 P1-A, P1-B).
 //!
 //! A vault that held rows before floors were written holds them with none.
 //! The **backfill** (housekeeping's `SourceFloorBackfill` sweep: at each
@@ -22,7 +26,10 @@
 //! no read walks), a word source not held here, or lineage that does not
 //! resolve yet; and a write raises the not yet raised rows its row was
 //! written from first, so a fact born from an old fact holds that fact's
-//! floor at once.
+//! floor at once. A row whose birth input was erased before the backfill
+//! raised it waits for good (FLOOR-OLD-FACT-ERASED-INPUT = A, the lead 21
+//! Nov 08:3x): no write that raises it again, follows what waits, or lands
+//! a binding frees it.
 //!
 //! What a row waits on can resolve in a write that names no row waiting on
 //! it: an epoch's head lands, a source is erased, a dependency or a birth
@@ -190,6 +197,11 @@ pub(crate) fn binding_landed_in_txn(
     txn: &mut RwTxn<'_>,
     row: &EntityId,
 ) -> Result<()> {
+    // An erased row lands nothing: what waits on it waits for good
+    // (#9289 Opus review 3 P1-B).
+    if erased_in(&vault.store, txn, row)? {
+        return Ok(());
+    }
     let awaited = AWAITED
         .iter_from(&vault.store, txn, row.as_bytes())?
         .next()
@@ -257,7 +269,7 @@ enum Presence {
 }
 
 fn presence_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<Presence> {
-    if crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, row)?.deleted {
+    if erased_in(&vault.store, txn, row)? {
         return Ok(Presence::Erased);
     }
     Ok(match vault.get_raw_in(txn, row)? {
@@ -266,14 +278,56 @@ fn presence_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<Presenc
     })
 }
 
+/// Whether `row` is erased here: its deletion shell or record stands.
+fn erased_in(store: &crate::store::Store, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool> {
+    Ok(crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, row)?.deleted)
+}
+
+/// Seals, in the write that erases `erased`, the floor of each row that
+/// waits on it (#9289 Opus review 3 P1-A, P1-B): what `erased` would have
+/// added to that floor can no longer be known here, so the row reads under
+/// [`super::floor::sealed_source`], which admits no one, the vault owner
+/// included, as a row born from an erased input does (READ-LINEAGE-L3 = A;
+/// doctor counts it, and its re-derive heals it). The marks on `erased` are
+/// taken; each such row settles sealed at its next raise, and the rows
+/// waiting on it inherit the seal; `erased` itself waits no more. It reads
+/// the marks, never the lineage the erase tears: it runs at both delete
+/// doors, before the record's body and edges go
+/// ([`super::erase_derived_policies_in_txn`]).
+///
+/// # Errors
+///
+/// Storage failures.
+pub(super) fn seal_rows_awaiting_in_txn(
+    store: &crate::store::Store,
+    txn: &mut RwTxn<'_>,
+    erased: &EntityId,
+) -> Result<()> {
+    PENDING.delete(store, txn, erased)?;
+    let sealed = super::floor::sealed_source();
+    for key in AWAITED.scan_keys(store, txn, erased.as_bytes())? {
+        AWAITED.delete(store, txn, &key)?;
+        let (_, row) = key;
+        if row == *erased || erased_in(store, txn, &row)? {
+            continue;
+        }
+        let mut floor = super::DERIVED.get(store, txn, &row)?.unwrap_or_default();
+        if floor.insert(sealed) {
+            super::DERIVED.put(store, txn, &row, &floor)?;
+        }
+    }
+    Ok(())
+}
+
 /// Whether `row`, written from `source`, waits for it: its binding has not
 /// landed, or its own floor waits; or, for a source no read walks
 /// (`unwalked`: a birth input, a dependency source, a named word source), it
-/// has not landed here. An erased source takes its floor with it, so only a
-/// row the backfill raises for the first time (`first`), whose floor never
-/// held it, waits on it, and for good: it still waits when raised again. A
-/// read walks every other source live, and one gone from the vault carries
-/// no words to it.
+/// has not landed here. An erased source takes its floor with it: a row
+/// that waited on it when it was erased was sealed by that erase
+/// ([`seal_rows_awaiting_in_txn`]); a row the backfill raises for the first
+/// time (`first`), whose floor never held it, waits on it, and for good: it
+/// still waits when raised again. A read walks every other source live, and
+/// one gone from the vault carries no words to it.
 fn source_waits_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -332,6 +386,12 @@ impl Closure {
                 continue;
             }
             if !seen.insert(row) {
+                continue;
+            }
+            // An erased row's shell carries no words and takes no floor; a
+            // row written from it reads its erasure as a source
+            // (`source_waits_in`; #9289 Opus review 3 P1-B).
+            if erased_in(&vault.store, txn, &row)? {
                 continue;
             }
             let Some(raw) = vault.get_raw_in(txn, &row)? else {
@@ -474,7 +534,9 @@ impl Closure {
 
 /// The rows waiting on each of `settled`, and those waiting on them, and so
 /// on: each mark followed is taken, and a row still waiting once raised
-/// again marks what it waits on afresh.
+/// again marks what it waits on afresh. An erased row lands nothing, so the
+/// marks on it stay (a row waits on it for good), and a mark that leads to
+/// an erased row is dropped, never followed (#9289 Opus review 3 P1-B).
 fn take_waiters_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -484,9 +546,15 @@ fn take_waiters_in_txn(
     let mut seen = settled.clone();
     let mut frontier: Vec<EntityId> = settled.iter().copied().collect();
     while let Some(awaited) = frontier.pop() {
+        if erased_in(&vault.store, txn, &awaited)? {
+            continue;
+        }
         for key in AWAITED.scan_keys(&vault.store, txn, awaited.as_bytes())? {
             AWAITED.delete(&vault.store, txn, &key)?;
             let (_, row) = key;
+            if erased_in(&vault.store, txn, &row)? {
+                continue;
+            }
             if seen.insert(row) {
                 waiters.insert(row);
                 frontier.push(row);
