@@ -283,6 +283,7 @@ pub(super) fn leave_in_txn(
             pin_read_as_value: false,
             beside: Vec::new(),
             unknown_key: None,
+            peers: Vec::new(),
         },
         Inert::UnknownKey(key) => {
             pending_as_last_in_txn(vault, txn, (target, basis), Vec::new(), Some(key))?
@@ -340,6 +341,7 @@ fn pending_as_last_in_txn(
         pin_read_as_value: last.is_some_and(|last| last.pin_read_as_value),
         beside,
         unknown_key,
+        peers: Vec::new(),
     })
 }
 

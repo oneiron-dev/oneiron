@@ -5,9 +5,12 @@
 //!
 //! A pass that projects a row its key's hook refuses here leaves the row as it was, and the next
 //! pass reads it again ([`Vault::project_settings`]), unless the key lands it all the same
-//! ([`RefusedProjection::Land`], the booking pair: SETTING-PROJECTED-EMERGENCY-PAIR = A). Then the
-//! row takes the act's value without the hook ([`land_refused_row_in_txn`]), as on every machine
-//! that folds the act, and the key's reader holds the line. In the same write it raises one
+//! ([`RefusedProjection::Land`], the booking pair: SETTING-PROJECTED-EMERGENCY-PAIR = A), or
+//! quarantines it ([`RefusedProjection::Quarantine`], the calendar pair:
+//! SETTING-PROJECTED-CALENDAR-SYSTEM-CLAIM = A, `quarantine`). A landed row takes the act's value
+//! without the hook ([`land_refused_row_in_txn`]), as on every machine that folds the act, and the
+//! key's reader holds the line; a quarantined row keeps the row this install holds, else reads
+//! the key's strictest value, until its acts or those of a row its hook met it with move. In the same write the pass raises one
 //! NOTIFICATION per owner of the vault, kind `Ask`, producer
 //! [`SETTING_REFUSAL_NOTIFICATION_PRODUCER`]. It names the acts that head the row and the act the
 //! refused value came from: one of them, or, where the heads differ and the row takes the value
@@ -35,22 +38,22 @@
 //! ([`land_refused_rows_in_txn`]): the words read the rows as it leaves them, and a landed row
 //! whose rows no longer conflict then raises none.
 //!
-//! Its tap is read when the row is read ([`setting_refusal_tap_in_txn`]): one `vault.settings.set`
+//! Its tap is read when the row is read ([`setting_refusal_taps_in_txn`]): one `vault.settings.set`
 //! of every row this install still refuses an act of and of every row its key's hook judges such
 //! a row against, each to the value it holds here, which the owner may edit. The owner's change
 //! of them is ONE act ([`Vault::set_settings`]), whose rows are all written before any hook runs.
 //! It signs a refused row even where this install's row already holds the value
 //! ([`slot_refused_here_in_txn`]), so the act replaces the refused one on every machine, and each
-//! machine's pass projects every row of it, whichever it reads first. A key whose hook refuses a
-//! change to no value of a row a machine holds in service (`refusal_offers_clear`, a calendar
-//! seat) leaves out a row that holds no value here: the machine that holds the row would refuse
-//! its act.
+//! machine's pass projects every row of it, whichever it reads first. A quarantined row's notice
+//! leads with the key's words of the choice, and offers the owner a pick: a tap for each of those
+//! rows that keeps it at the value its act sets and clears the others, one act each; a lone row
+//! offers the tap any key's does.
 
 use super::*;
 
 use oneiron_authority::authority::{AuthorityOp, authority_log_entity_id_from_hash};
 
-use super::super::RefusedProjection;
+use super::super::{RefusalChoice, RefusalSource, RefusedProjection};
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 
 /// The producer of the owner's notice of a refused projection (module doc).
@@ -92,8 +95,9 @@ pub(super) fn equal_row_refusal_in_txn(
 
 /// Lands, in the pass's write `txn` at `now`, each row of `refused` (its target, its hook's
 /// reason, the act the refused value came from) whose key lands such a row all the same
-/// ([`land_refused_row_in_txn`]), every one before the pass raises any notice, so two rows each
-/// refused against the other's last value both land, and each notice reads the pair the pass
+/// ([`land_refused_row_in_txn`]), and quarantines each whose key quarantines it
+/// ([`quarantine_refused_row_in_txn`]), every one before the pass raises any notice, so two rows
+/// each refused against the other's last value both land, and each notice reads the pair the pass
 /// leaves (REVIEW-10343 P1-2). Adds the keys whose rows changed to `changed`, and logs each row
 /// left for the next pass. Whether each row landed, in `refused`'s order.
 ///
@@ -110,14 +114,18 @@ pub(super) fn land_refused_rows_in_txn(
     let mut landings = Vec::with_capacity(refused.len());
     for (target, reason, _) in refused {
         let landed = land_refused_row_in_txn(vault, txn, *target, now)?;
-        if landed.is_none() {
+        let quarantined = match landed {
+            Some(_) => None,
+            None => quarantine_refused_row_in_txn(vault, txn, *target, now)?,
+        };
+        if landed.is_none() && quarantined.is_none() {
             tracing::warn!(
                 reason = %reason,
                 "the next pass reads again a setting row its key refused here"
             );
         }
         landings.push(landed.is_some());
-        changed.extend(landed.into_iter().flatten());
+        changed.extend(landed.into_iter().chain(quarantined).flatten());
     }
     Ok(landings)
 }
@@ -172,12 +180,12 @@ fn land_refused_row_in_txn(
 }
 
 /// A setting act a notice names.
-struct NamedAct {
+pub(super) struct NamedAct {
     act: AuthorityEntryHash,
-    slot: RowKey,
+    pub(super) slot: RowKey,
     /// The value it sets, as JSON; `None` for a clear, and for a value beside the act that is not
     /// here.
-    value: Option<serde_json::Value>,
+    pub(super) value: Option<serde_json::Value>,
     clears: bool,
     /// The machine whose install signed it.
     machine: EntityId,
@@ -234,12 +242,16 @@ pub(super) fn raise_refusal_notice_in_txn(
     };
     let conflict = match spec.refused_projection {
         RefusedProjection::Land { conflict } => conflict(vault, txn, &refused.slot)?,
-        RefusedProjection::Retry => None,
+        RefusedProjection::Retry | RefusedProjection::Quarantine { .. } => None,
     };
     // A landed row stands refused only while its rows conflict ([`refused_slot_in_txn`]).
     if landed && conflict.is_none() {
         return Ok(());
     }
+    let picks = matches!(
+        spec.refused_projection,
+        RefusedProjection::Quarantine { .. }
+    );
     let mut targets = vec![target];
     let mut peers = Vec::new();
     if let Some(peers_of) = spec.refusal_peers {
@@ -283,12 +295,19 @@ pub(super) fn raise_refusal_notice_in_txn(
         .map(authority_log_entity_id_from_hash)
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let result = authority_log_entity_id_from_hash(&refused.act)?.to_hex();
+    let lead = match spec.refused_projection {
+        RefusedProjection::Quarantine { choice } => {
+            choice_words_in_txn(vault, txn, choice, refused, &peers)?
+        }
+        RefusedProjection::Retry | RefusedProjection::Land { .. } => conflict,
+    };
     let detail = refusal_words_in_txn(
         vault,
         txn,
         (&heads, kept.as_ref()),
         &peers,
-        (reason, landed, conflict.as_deref()),
+        lead.as_deref(),
+        (reason, landed, picks),
     )?;
     for owner in crate::policy_model::owners_in_txn(vault, txn)? {
         vault.record_notification_in_txn(
@@ -331,7 +350,7 @@ pub(super) fn record_refusal_in_txn(
 }
 
 /// The basis of `fold`'s acts as a pass reads them ([`basis_of`]).
-fn fold_basis(fold: &SettingSlotFold) -> [u8; 32] {
+pub(super) fn fold_basis(fold: &SettingSlotFold) -> [u8; 32] {
     let in_force = fold.in_force.as_ref().map(|head| head.act);
     basis_of(
         fold.revision,
@@ -342,7 +361,7 @@ fn fold_basis(fold: &SettingSlotFold) -> [u8; 32] {
 }
 
 /// The setting acts among `fold`'s live heads, in the fold's order ([`named_act_in_txn`]).
-fn named_acts_in_txn(
+pub(super) fn named_acts_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     fold: &SettingSlotFold,
@@ -403,22 +422,66 @@ fn value_here_in_txn(
     Ok(value.and_then(|value| spec.kind.to_json(&value)))
 }
 
-/// The owner's words of a refusal: the key's words of the conflict its reader refuses, where it
-/// gives them (`conflict`), which machine did not apply which act, with the hook's reason, or
-/// applied it all the same (`landed`) (the heads of the row, or the act whose value differing
-/// `heads` keep, `kept`), the acts it meets, and the fix. A landed row's words give no reason:
-/// the hook read the rows before the pass landed them, and `conflict` reads them as it left them.
+/// The key's words of the choice between the refused act's row and the rows `peers` it meets
+/// ([`RefusedProjection::Quarantine`]): each row by the value its act sets and the machine that
+/// signed that act, or, for a row no act heads, by the value it holds here and this machine.
+fn choice_words_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    choice: RefusalChoice,
+    refused: &NamedAct,
+    peers: &[Peer],
+) -> Result<Option<String>> {
+    let here = here_label_in_txn(vault, txn)?;
+    let mut named = vec![(
+        &refused.slot,
+        refused.value.as_ref(),
+        machine_label_in_txn(vault, txn, refused.machine)?,
+    )];
+    for peer in peers {
+        if peer.acts.is_empty() {
+            named.push((&peer.slot, peer.here.as_ref(), here.clone()));
+        }
+        for act in &peer.acts {
+            let machine = machine_label_in_txn(vault, txn, act.machine)?;
+            named.push((&act.slot, act.value.as_ref(), machine));
+        }
+    }
+    let sources: Vec<RefusalSource<'_>> = named
+        .iter()
+        .map(|(slot, value, machine)| RefusalSource {
+            slot: *slot,
+            value: *value,
+            machine: machine.as_str(),
+        })
+        .collect();
+    Ok(choice(&sources))
+}
+
+/// The name this machine is shown by, else "This machine".
+fn here_label_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<String> {
+    match vault.serving_machine_in_txn(txn)? {
+        Some(machine) => machine_label_in_txn(vault, txn, machine),
+        None => Ok("This machine".to_owned()),
+    }
+}
+
+/// The owner's words of a refusal: the key's words of the conflict its reader refuses or of the
+/// choice it offers, where it gives them (`lead`), which machine did not apply which act, with
+/// the hook's reason, or applied it all the same (`landed`) (the heads of the row, or the act
+/// whose value differing `heads` keep, `kept`), the acts it meets, and the fix: the value to
+/// keep, or, for a quarantined row (`picks`), the row to keep. A landed row's words give no
+/// reason: the hook read the rows before the pass landed them, and `lead` reads them as it left
+/// them.
 fn refusal_words_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     (heads, kept): (&[NamedAct], Option<&NamedAct>),
     peers: &[Peer],
-    (reason, landed, conflict): (&str, bool, Option<&str>),
+    lead: Option<&str>,
+    (reason, landed, picks): (&str, bool, bool),
 ) -> Result<String> {
-    let here = match vault.serving_machine_in_txn(txn)? {
-        Some(machine) => machine_label_in_txn(vault, txn, machine)?,
-        None => "This machine".to_owned(),
-    };
+    let here = here_label_in_txn(vault, txn)?;
     let named = heads
         .iter()
         .map(|named| act_words_in_txn(vault, txn, named))
@@ -432,9 +495,7 @@ fn refusal_words_in_txn(
         None => named,
     };
     let reason = reason.trim_end_matches('.');
-    let mut words = conflict
-        .map(|words| format!("{words} "))
-        .unwrap_or_default();
+    let mut words = lead.map(|words| format!("{words} ")).unwrap_or_default();
     if landed {
         words.push_str(&format!("{here} applied {refused}, as every machine does."));
     } else {
@@ -460,15 +521,10 @@ fn refusal_words_in_txn(
     if !met.is_empty() {
         words.push_str(&format!(" It meets {}.", met.join(" and ")));
     }
-    words.push_str(" Set the value you want to keep, and every machine takes it.");
-    let slot = heads.first().or(kept).map(|named| &named.slot);
-    if let Some(slot) = slot
-        && spec_named(&slot.name).is_ok_and(|spec| !spec.refusal_offers_clear)
-    {
-        words.push_str(&format!(
-            " No tap leaves {} with no value: a machine that holds it in service refuses that.",
-            row_words(slot)
-        ));
+    if picks {
+        words.push_str(" Keep one of them, and every machine clears the others.");
+    } else {
+        words.push_str(" Set the value you want to keep, and every machine takes it.");
     }
     Ok(words)
 }
@@ -514,9 +570,10 @@ fn machine_label_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, machine: EntityId)
 
 /// The row `target`'s acts name where this install's key's hook refuses them: one of its live
 /// heads is a setting act (one of `acts`, where given), this install's pass recorded a refusal of
-/// its acts as they are ([`REFUSALS`]), and no projection is recorded at them. `None` where the
-/// projection stands, where no pass has read the acts as they are (an act that arrived since the
-/// last refusal is not refused here), or where no such act heads the row.
+/// its acts as they are ([`REFUSALS`]), and no projection is recorded at them, or the one
+/// recorded quarantined them (`quarantine`). `None` where another projection stands, where no
+/// pass has read the acts as they are (an act that arrived since the last refusal is not refused
+/// here), or where no such act heads the row.
 fn refused_slot_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -546,9 +603,11 @@ fn refused_slot_in_txn(
     if !stands {
         return Ok(Some(slot));
     }
-    // A row its key landed all the same: the refusal stands while the rows conflict.
+    // A row its key landed all the same: the refusal stands while the rows conflict. A row its
+    // key quarantined: while the projection stands, which a move of a row it met ends.
     match spec_named(&slot.name).map(|spec| spec.refused_projection) {
         Ok(RefusedProjection::Land { conflict }) => Ok(conflict(vault, txn, &slot)?.map(|_| slot)),
+        Ok(RefusedProjection::Quarantine { .. }) => Ok(Some(slot)),
         _ => Ok(None),
     }
 }
@@ -569,26 +628,40 @@ pub(in crate::setting) fn slot_refused_here_in_txn(
     Ok(refused_slot_in_txn(vault, txn, target, None)?.is_some_and(|refused| refused == *slot))
 }
 
-/// The tap the owner's notice of a refused projection offers on this install now, from the acts
-/// its `event` names (module doc): the input of one `vault.settings.set` of each row an act heads
-/// and this install still refuses ([`refused_slot_in_txn`]), then of each row the key's hook
-/// judges such a row against ([`super::super::RefusalPeers`]), each named once, to the value it
-/// holds here, which the owner may edit before he taps. Every row past the first is a further
-/// row of the same change, so the owner's tap is one act. A carried row is left out, since only
-/// a move writes one, and so is a row with no value here on a key that does not offer that
-/// (`refusal_offers_clear`). `None` where no refusal stands here, and for an event of another
-/// shape.
+/// The taps the owner's notice of a refused projection offers on this install now, from the acts
+/// and rows its `event` names (module doc), each the input of one `vault.settings.set`. Its rows:
+/// each row the event names that an act heads and this install still refuses
+/// ([`refused_slot_in_txn`]), then each row the key's
+/// hook judges such a row against ([`super::super::RefusalPeers`]), each named once; a carried
+/// row is left out, since only a move writes one. A key that quarantines a refused row
+/// ([`RefusedProjection::Quarantine`]) offers the pick: for each of those rows with a value, a
+/// tap that keeps it at the value its act sets (else the value it holds here) and clears the
+/// others. A lone row, and any other key, offers one tap of them all, each
+/// to the value it holds here, which the owner may edit before he taps. Every row past a tap's
+/// first is a further row of the same change, so each tap is one act. None where no refusal
+/// stands here, and for an event of another shape.
 ///
 /// # Errors
 ///
 /// Storage errors; the key's peers' read.
-pub(crate) fn setting_refusal_tap_in_txn(
+pub(crate) fn setting_refusal_taps_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     event: &str,
-) -> Result<Option<serde_json::Value>> {
-    let Some((acts, _owner)) = event.split_once(':') else {
-        return Ok(None);
+) -> Result<Vec<serde_json::Value>> {
+    let mut parts = event.split(':');
+    let Some(acts) = parts.next() else {
+        return Ok(Vec::new());
+    };
+    // The rows the notice names (REVIEW-10357 P1-1): a row of the same act that another notice is
+    // about is not this notice's.
+    let named: Option<BTreeSet<EntityId>> = match (parts.next(), parts.next()) {
+        (Some(rows), Some(_owner)) => Some(
+            rows.split('+')
+                .filter_map(|row| EntityId::from_hex(row).ok())
+                .collect(),
+        ),
+        _ => None,
     };
     let acts: BTreeSet<AuthorityEntryHash> = acts
         .split('+')
@@ -617,7 +690,9 @@ pub(crate) fn setting_refusal_tap_in_txn(
                 scope: SettingScope::Vault,
             });
             let target = setting_slot_target(&slot)?;
-            if !targets.insert(target) {
+            if !targets.insert(target)
+                || named.as_ref().is_some_and(|named| !named.contains(&target))
+            {
                 continue;
             }
             let Some(row) = refused_slot_in_txn(vault, txn, target, Some(&acts))? else {
@@ -638,21 +713,67 @@ pub(crate) fn setting_refusal_tap_in_txn(
             refused.push(row);
         }
     }
-    let mut rows = Vec::new();
+    let mut rows: Vec<(RowKey, &'static SettingSpec)> = Vec::new();
     for slot in refused.into_iter().chain(peers) {
         if slot.mode == SettingMode::Carried || rows.iter().any(|(listed, _)| *listed == slot) {
             continue;
         }
-        let Ok(spec) = spec_named(&slot.name) else {
-            continue;
+        if let Ok(spec) = spec_named(&slot.name) {
+            rows.push((slot, spec));
+        }
+    }
+    let picks = rows.len() > 1
+        && rows.first().is_some_and(|(_, spec)| {
+            matches!(
+                spec.refused_projection,
+                RefusedProjection::Quarantine { .. }
+            )
+        });
+    let mut valued = Vec::with_capacity(rows.len());
+    for (slot, spec) in rows {
+        let fold = if picks {
+            vault.setting_slot_fold_in_txn(txn, setting_slot_target(&slot)?)?
+        } else {
+            None
         };
-        let value = value_here_in_txn(vault, txn, spec, &slot)?;
-        if !spec.refusal_offers_clear && value.as_ref().is_none_or(serde_json::Value::is_null) {
+        let act_value = match fold {
+            Some(fold) => named_acts_in_txn(vault, txn, &fold)?
+                .into_iter()
+                .next()
+                .and_then(|named| named.value),
+            None => None,
+        };
+        let value = match act_value {
+            Some(value) => Some(value),
+            None => value_here_in_txn(vault, txn, spec, &slot)?,
+        };
+        valued.push((slot, value.filter(|value| !value.is_null())));
+    }
+    if !picks {
+        return Ok(tap_of(&valued).into_iter().collect());
+    }
+    let mut taps = Vec::new();
+    for (kept, (slot, value)) in valued.iter().enumerate() {
+        if value.is_none() {
             continue;
         }
-        rows.push((slot, value));
+        let cleared = valued
+            .iter()
+            .enumerate()
+            .filter(|(other, _)| *other != kept)
+            .map(|(_, (slot, _))| (slot.clone(), None));
+        let rows: Vec<_> = std::iter::once((slot.clone(), value.clone()))
+            .chain(cleared)
+            .collect();
+        taps.extend(tap_of(&rows));
     }
-    let mut rows = rows.into_iter().map(|(slot, value)| {
+    Ok(taps)
+}
+
+/// The input of one `vault.settings.set` of `rows`, each to its value (`None` clears): the first,
+/// and every other as a further row of the same change. `None` for no row.
+fn tap_of(rows: &[(RowKey, Option<serde_json::Value>)]) -> Option<serde_json::Value> {
+    let mut rows = rows.iter().map(|(slot, value)| {
         serde_json::json!({
             "key": slot.name,
             "item": slot.item,
@@ -661,12 +782,10 @@ pub(crate) fn setting_refusal_tap_in_txn(
             "value": value,
         })
     });
-    let Some(mut tap) = rows.next() else {
-        return Ok(None);
-    };
+    let mut tap = rows.next()?;
     let further: Vec<serde_json::Value> = rows.collect();
     if !further.is_empty() {
         tap["further"] = serde_json::Value::Array(further);
     }
-    Ok(Some(tap))
+    Some(tap)
 }

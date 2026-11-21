@@ -4,10 +4,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use oneiron_setting_contract::RowKey;
+use oneiron_setting_contract::{RowKey, SettingMode, SettingScope};
 
 use super::connectors::door::{
-    CalendarImipTransportConfig, CalendarSeatSetup, is_seat_ref, seat_of_system_in_txn,
+    CalendarImipTransportConfig, CalendarSeatSetup, is_seat_ref, retired_seats_of_system_in_txn,
     seat_setup_changed_in_txn, validate_endpoint,
 };
 use super::ingest::feed_door::{
@@ -16,7 +16,7 @@ use super::ingest::feed_door::{
 use super::ingest::{ADMISSION_WRITE_TURN, IcsFeedPollConfig};
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::setting::{ItemDomain, Kind, SettingValue};
+use crate::setting::{ItemDomain, Kind, RefusalSource, RefusedProjection, SettingValue};
 
 /// The longest custody name an iMIP transport may carry, in bytes.
 const SECRET_REF_MAX_BYTES: usize = 256;
@@ -58,10 +58,59 @@ fn no_feed() -> Option<IcsFeedPollConfig> {
     None
 }
 
-/// The rows a feed's hook judges the feed of the system `slot` names against: the seat that
-/// imports under that system, installed or taken out of service, so the owner's notice of a
-/// refused projection of either names both acts, on every machine, as the seat's notice does
-/// ([`seat_system_peers`]; row SETTING-PROJECTED-ROW-REFUSING-HOOKS).
+/// The seats but `except` that hold `system` here: each installed one, and each this install
+/// holds quarantined (its row reads no seat) whose act's seat imports under it, so the owner's
+/// pick of a source names every seat of the system (REVIEW-10357 P1-2); with `retired`, each taken
+/// out of service that keeps it too.
+fn seats_of_system_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    (system, except): (&str, Option<&str>),
+    retired: bool,
+) -> Result<Vec<String>> {
+    let mut seats = Vec::new();
+    for seat_ref in CONNECTOR_SEAT.items_in_txn(vault, txn)? {
+        if except == Some(seat_ref.as_str()) {
+            continue;
+        }
+        let installed = CONNECTOR_SEAT
+            .read_in_txn(vault, txn, &[], Some(&seat_ref))?
+            .value;
+        let setup = match installed {
+            Some(setup) => Some(setup),
+            None => {
+                let slot = RowKey {
+                    name: CONNECTOR_SEAT.spec.name.to_owned(),
+                    item: Some(seat_ref.clone()),
+                    mode: SettingMode::Value,
+                    scope: SettingScope::Vault,
+                };
+                crate::setting::head_act_value_in_txn(vault, txn, &slot)?
+                    .and_then(|value| {
+                        serde_json::from_value::<Option<CalendarSeatSetup>>(value).ok()
+                    })
+                    .flatten()
+            }
+        };
+        if setup.is_some_and(|setup| setup.config.system == system) {
+            seats.push(seat_ref);
+        }
+    }
+    if retired {
+        for seat_ref in retired_seats_of_system_in_txn(vault, txn, system)? {
+            if except != Some(seat_ref.as_str()) && !seats.contains(&seat_ref) {
+                seats.push(seat_ref);
+            }
+        }
+    }
+    Ok(seats)
+}
+
+/// The rows a feed's hook judges the feed of the system `slot` names against: every seat that
+/// imports under that system, installed, quarantined here or taken out of service
+/// ([`seats_of_system_in_txn`]), so the owner's notice of a refused projection of either names
+/// every act, on every machine, as the seat's notice does ([`seat_system_peers`]; row
+/// SETTING-PROJECTED-ROW-REFUSING-HOOKS).
 fn feed_system_peers(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -71,19 +120,16 @@ fn feed_system_peers(
     let Some(system) = slot.item.as_deref() else {
         return Ok(Vec::new());
     };
-    match seat_of_system_in_txn(vault, txn, system)? {
-        Some(seat_ref) => Ok(vec![CONNECTOR_SEAT.deciding_slot_in_txn(
-            vault,
-            txn,
-            Some(&seat_ref),
-        )?]),
-        None => Ok(Vec::new()),
-    }
+    seats_of_system_in_txn(vault, txn, (system, None), true)?
+        .iter()
+        .map(|seat_ref| CONNECTOR_SEAT.deciding_slot_in_txn(vault, txn, Some(seat_ref)))
+        .collect()
 }
 
 /// The rows a seat's hook judges the seat `value` against: the installed feed of its system and
-/// every other installed seat of its system ([`feed_system_peers`]). A seat whose value is not
-/// here (a clear, or a value beside its act that did not arrive) names none.
+/// every other seat of its system, installed or quarantined here ([`seats_of_system_in_txn`],
+/// [`feed_system_peers`]). A seat whose value is not here (a clear, or a value beside its act
+/// that did not arrive) names none.
 fn seat_system_peers(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -101,18 +147,57 @@ fn seat_system_peers(
     if registration_in_txn(vault, txn, system)?.is_some() {
         peers.push(ICS_FEED.deciding_slot_in_txn(vault, txn, Some(system))?);
     }
-    for installed_ref in CONNECTOR_SEAT.items_in_txn(vault, txn)? {
-        if slot.item.as_deref() == Some(installed_ref.as_str()) {
-            continue;
-        }
-        let installed = CONNECTOR_SEAT
-            .read_in_txn(vault, txn, &[], Some(&installed_ref))?
-            .value;
-        if installed.is_some_and(|installed| installed.config.system == system) {
-            peers.push(CONNECTOR_SEAT.deciding_slot_in_txn(vault, txn, Some(&installed_ref))?);
-        }
+    for seat_ref in seats_of_system_in_txn(vault, txn, (system, slot.item.as_deref()), false)? {
+        peers.push(CONNECTOR_SEAT.deciding_slot_in_txn(vault, txn, Some(&seat_ref))?);
     }
     Ok(peers)
+}
+
+/// The owner's words of the choice between the sources of one calendar system that the notice of
+/// a refused feed or seat names (SETTING-PROJECTED-CALENDAR-SYSTEM-CLAIM = A, in the lead's
+/// words): "Your 'work' calendar has two complete sources (an ICS feed set on Laptop, a CalDAV
+/// seat set on Desktop). Pick one." The feeds first. `None` for fewer than two sources, a
+/// source of another key, and sources of different systems.
+fn calendar_source_choice(sources: &[RefusalSource<'_>]) -> Option<String> {
+    let mut system: Option<String> = None;
+    let mut named = Vec::with_capacity(sources.len());
+    for source in sources {
+        let Some(value) = source.value.filter(|value| !value.is_null()) else {
+            continue;
+        };
+        let (order, what, of) = if source.slot.name == ICS_FEED.spec.name {
+            (0, "an ICS feed", source.slot.item.clone())
+        } else if source.slot.name == CONNECTOR_SEAT.spec.name {
+            let of = value
+                .pointer("/config/system")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            (1, "a CalDAV seat", of)
+        } else {
+            return None;
+        };
+        let of = of?;
+        if *system.get_or_insert_with(|| of.clone()) != of {
+            return None;
+        }
+        named.push((order, format!("{what} set on {}", source.machine)));
+    }
+    let system = system?;
+    let count = match named.len() {
+        0 | 1 => return None,
+        2 => "two".to_owned(),
+        3 => "three".to_owned(),
+        count => count.to_string(),
+    };
+    named.sort_by_key(|(order, _)| *order);
+    let named = named
+        .into_iter()
+        .map(|(_, words)| words)
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "Your '{system}' calendar has {count} complete sources ({named}). Pick one."
+    ))
 }
 
 crate::setting::setting_keys! {
@@ -126,13 +211,15 @@ crate::setting::setting_keys! {
     /// cadence). An installed seat never changes: a new configuration takes a new seat ref. A seat
     /// never takes the system of an installed ICS feed or a pack calendar source, whose complete
     /// polls and listings would cancel its events. A change waits for a running calendar
-    /// admission, a complete upload's among them, so none lands inside one.
+    /// admission, a complete upload's among them, so none lands inside one. A machine whose hook
+    /// refuses a signed seat holds it out of service (quarantined), and the owner picks the
+    /// source the calendar keeps.
     pub(crate) CONNECTOR_SEAT: Option<CalendarSeatSetup> = "calendar.connector_seat" {
         kind: Kind::new(no_seat).strictest(no_seat),
         item: Some(ItemDomain { name: "calendar seat refs", admits: is_seat_ref }),
         on_change: Some(seat_setup_changed_in_txn),
         refusal_peers: Some(seat_system_peers),
-        refusal_offers_clear: false,
+        refused_projection: RefusedProjection::Quarantine { choice: calendar_source_choice },
         write_turn: Some(ADMISSION_WRITE_TURN),
     };
     /// One ICS feed the owner installed, keyed by its system: the custody name of its URL and its
@@ -141,12 +228,15 @@ crate::setting::setting_keys! {
     /// source imports under.
     /// Installing one starts its poll chain. Clearing one uninstalls it: its standing consent
     /// ends, its cursor goes and its pending polls are cancelled; a system it polled under stays
-    /// retired. A change waits for a running poll's admission, so none lands inside one.
+    /// retired. A change waits for a running poll's admission, so none lands inside one. A
+    /// machine whose hook refuses a signed feed holds it uninstalled (quarantined), and the
+    /// owner picks the source the calendar keeps.
     pub(crate) ICS_FEED: Option<IcsFeedPollConfig> = "calendar.ics_feed" {
         kind: Kind::new(no_feed).strictest(no_feed),
         item: Some(ItemDomain { name: "ICS feed systems", admits: is_feed_system }),
         on_change: Some(ics_feed_changed_in_txn),
         refusal_peers: Some(feed_system_peers),
+        refused_projection: RefusedProjection::Quarantine { choice: calendar_source_choice },
         after_commit: Some(ics_feed_committed),
         write_turn: Some(ADMISSION_WRITE_TURN),
     };
