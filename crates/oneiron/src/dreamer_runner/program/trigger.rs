@@ -8,11 +8,14 @@
 //! the host's idle check asks for the idle curator.
 //!
 //! Each of the three is released on the machine that holds its arming, whatever the vault's
-//! elected home is (FIX TURNPROGRAM-NON-TURN-ARMING-STAYS-ON-ITS-MACHINE, ruled B). Such an
-//! arming is carried to no other machine (`replica::arming_rides`) and its wake is admitted
-//! where it was recorded, so one machine alone releases an occurrence; the watcher ticks' rule,
-//! one releasing node for a TASK every device holds, is not theirs. The program then runs only
-//! while that machine runs.
+//! elected home is, and with none elected (FIX TURNPROGRAM-NON-TURN-ARMING-STAYS-ON-ITS-MACHINE,
+//! ruled B). The sync window carries such an arming to no other machine
+//! (`replica::arming_rides`) and its wake is admitted where it was recorded, so among a vault's
+//! linked machines one alone releases an occurrence; the watcher ticks' rule, one releasing node
+//! for a TASK every device holds, is not theirs. The program runs only while that machine runs.
+//! A vault copy restored or activated beside its source holds the source's armings as its own
+//! (their tables restore as the live vault holds them) and releases them itself: nothing
+//! dedupes an occurrence between two such copies.
 
 use crate::Vault;
 use crate::dreamer_wake::WakeIdleState;
@@ -35,7 +38,8 @@ const TIMER_RETRY_FIRST_SECS: u64 = 1;
 /// timer armings, re-armed in the write that arms, moves or disarms one, and disarmed when it has
 /// none left. One run records the wake each of its timers due by then owes and moves each to its
 /// next due time, in one write. Every machine runs its own row, the elected home or not: the row
-/// is about the armings this machine holds, and a timer's arming is carried to no other.
+/// is about the armings this machine holds, and the sync window carries a timer's arming to no
+/// other. It wakes its host, so a stopped machine wakes for the next due time of its own timers.
 pub(crate) static PROGRAM_TIMER_JOB: JobSpec = JobSpec {
     code: "dreamer_runner.program_timer",
     when: When::PerArming,
