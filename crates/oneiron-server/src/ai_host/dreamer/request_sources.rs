@@ -103,7 +103,7 @@ impl ServedRealization {
                 .generate_served_while(run, request, None, &may_send)
                 .await;
             let generated = match fence {
-                Some(fence) => fence.typed_refusal(generated),
+                Some(fence) => fence.failure_as_refusal(generated),
                 None => generated,
             };
             generated.map(|(response, served)| {

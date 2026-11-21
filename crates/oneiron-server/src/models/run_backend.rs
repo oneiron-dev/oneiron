@@ -63,7 +63,7 @@ impl SourceFence {
     /// # Errors
     /// [`Self::refusal`] for a failure after a row was withdrawn, else
     /// `generated`'s own error.
-    pub fn typed_refusal<T>(&self, generated: oneiron::LlmResult<T>) -> oneiron::LlmResult<T> {
+    pub fn failure_as_refusal<T>(&self, generated: oneiron::LlmResult<T>) -> oneiron::LlmResult<T> {
         match generated {
             Err(_) if !self.stands() => Err(Self::refusal()),
             generated => generated,
@@ -135,7 +135,7 @@ impl RunBackend {
             .generate_while(run, request, None, &may_send)
             .await;
         match &self.fence {
-            Some(fence) => fence.typed_refusal(generated),
+            Some(fence) => fence.failure_as_refusal(generated),
             None => generated,
         }
     }
