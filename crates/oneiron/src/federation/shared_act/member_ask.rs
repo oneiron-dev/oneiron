@@ -377,10 +377,7 @@ impl Vault {
     ) -> Result<()> {
         let id = EntityId::from_hex(ask)?;
         let ask = MEMBER_ASK.get(&self.store, txn, &id)?.ok_or_else(invalid)?;
-        if ask.status != MemberAskStatus::Open
-            || ask.vault_id != vault_id
-            || !is_steward(holders, EntityId::from_hex(&ask.steward)?)
-        {
+        if ask.vault_id != vault_id || !is_steward(holders, EntityId::from_hex(&ask.steward)?) {
             return Err(invalid());
         }
         Ok(())
