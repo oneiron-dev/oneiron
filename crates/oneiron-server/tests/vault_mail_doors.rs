@@ -1759,12 +1759,15 @@ fn ask_id(page: &Value, draft: &str, revision: u64, caller: &str) -> String {
 /// A member's own mailbox: the member shares one thread with another person, who drafts a
 /// reply there, and the Ask goes to the member. Its birth names the thread and the message
 /// it answers, so it reads to a reader of both: the member reads it by id, and the vault's
-/// owner, who reads no member's mailbox, reads nothing of it
+/// owner, who reads no member's mailbox, reads none of its body
 /// (RECIPIENT-NOTICE-READ-BY-ANY-READER, owner half; Engine ANSWER 21 Nov 06:28: "the
 /// owner reads a member's notice body exactly when he can read the sources it came from").
-/// Red on main: the Ask is born with no sources, and the owner reads it by id.
+/// He sees that it exists: his `vault.get` by id answers a withheld stub, its id, kind,
+/// recipient and created_at and `body_withheld: true`, with no source, subjects, actions or
+/// origin, and his inbox list stays his own (Engine ANSWER OWNER-NOTICE-EXISTENCE Q1 = A,
+/// 21 Nov 11:25). Red on main: the owner's `vault.get` answers no value.
 #[test]
-fn member_mailbox_reply_ask_reads_to_its_person_not_to_the_owner() {
+fn member_mailbox_reply_ask_reads_to_its_person_and_to_the_owner_as_a_withheld_stub() {
     run_on_engine_stack("mail-ask-owner-floor", || async {
         let fixture = setup().await;
         install_pack(&fixture).await;
@@ -1821,7 +1824,7 @@ fn member_mailbox_reply_ask_reads_to_its_person_not_to_the_owner() {
             &fixture,
             "/v1/core/facade/vault.mail.reply.draft",
             json!({
-                "thread_ref": thread,
+                "thread_ref": thread.clone(),
                 "body": "I can take the Thursday slot.",
                 "request_key": "owner-floor-member",
             }),
@@ -1857,6 +1860,27 @@ fn member_mailbox_reply_ask_reads_to_its_person_not_to_the_owner() {
             Some(ask.as_str()),
             "the member reads their own Ask by id: {body}"
         );
+        let notice = &body["value"]["body"];
+        let created_at = notice["created_at"]
+            .as_u64()
+            .expect("the member's Ask says when it was created");
+        assert!(
+            notice["source"].is_object(),
+            "setup: the member reads the Ask's body: {body}"
+        );
+        let stub = json!({
+            "id": ask.clone(),
+            "kind": notice["kind"].clone(),
+            "recipient": notice["recipient"].clone(),
+            "created_at": created_at,
+            "body_withheld": true,
+        });
+        assert_eq!(
+            notice["recipient"].as_str(),
+            Some(fixture.member.to_hex().as_str()),
+            "setup: the Ask is addressed to the member: {body}"
+        );
+
         let (status, body) = post_as_owner(
             &fixture,
             "/v1/core/facade/vault.get",
@@ -1864,17 +1888,58 @@ fn member_mailbox_reply_ask_reads_to_its_person_not_to_the_owner() {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
+        let view = &body["value"];
+        assert_eq!(
+            view["id_hex"].as_str(),
+            Some(ask.as_str()),
+            "the owner sees that the member's Ask exists: {body}"
+        );
+        assert_eq!(view["kind"], "NOTIFICATION", "{body}");
+        assert_eq!(
+            view["body"], stub,
+            "the owner's stub is the Ask's id, kind, recipient and created_at, its body \
+             withheld: {body}"
+        );
         assert!(
-            body["value"].is_null(),
-            "the owner reads nothing of an Ask born from the member's own mailbox: {body}"
+            view["made_by"].is_null() && view["short_ref"].is_null(),
+            "the stub names no birth and no short ref: {body}"
+        );
+        for at in ["occurred_start", "occurred_end", "learned_at"] {
+            assert_eq!(
+                view[at].as_u64(),
+                Some(created_at),
+                "the stub's {at} is the Ask's created_at, never a mark's time: {body}"
+            );
+        }
+        let served = view.to_string();
+        for words in [
+            draft.as_str(),
+            thread.as_str(),
+            "I can take the Thursday slot.",
+            "Thursday rota",
+            "mail.reply",
+        ] {
+            assert!(
+                !served.contains(words),
+                "the stub carries nothing of the Ask's words or source ({words}): {body}"
+            );
+        }
+        let (status, owner_inbox) =
+            post_as_owner(&fixture, "/v1/core/facade/self.inbox.list", json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{owner_inbox}");
+        assert!(
+            inbox_rows(&owner_inbox)
+                .iter()
+                .all(|row| row["id"].as_str() != Some(ask.as_str())),
+            "the owner's inbox list stays his own: {owner_inbox}"
         );
     });
 }
 
 /// The owner's own mailbox, one thread shared with the member, who drafts there: the Ask
 /// goes to the owner, a reader of the thread, and he reads it by id. The control of
-/// [`member_mailbox_reply_ask_reads_to_its_person_not_to_the_owner`]: a floor over the
-/// Ask's sources keeps it from no reader of them.
+/// [`member_mailbox_reply_ask_reads_to_its_person_and_to_the_owner_as_a_withheld_stub`]:
+/// a floor over the Ask's sources keeps it from no reader of them.
 #[test]
 fn owner_mailbox_reply_ask_reads_to_the_owner_by_id() {
     run_on_engine_stack("mail-ask-owner-reads", || async {
