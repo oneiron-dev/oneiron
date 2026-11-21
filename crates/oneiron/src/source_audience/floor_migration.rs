@@ -265,7 +265,7 @@ fn judge_page_in_txn(
         scanned += 1;
         last = Some(key.to_vec());
         // A sentinel key that is no entity id names no row.
-        if let Some(id) = source_state::id_of(key) {
+        if let Some(id) = source_state::id_of(&key) {
             rows.push(id);
         }
         if scanned == JUDGE_PAGE {

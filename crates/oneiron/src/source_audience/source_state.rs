@@ -363,6 +363,46 @@ fn close_entry_in_txn(
     OPEN_BY.delete(store, txn, &(*input, *row)).map(drop)
 }
 
+/// Whether every one of `viewers` reads a row whose verdict waits
+/// ([`Verdict::Waiting`]): each is a live owner of this vault and reads every
+/// source policy it holds, so no source the floor could name hides the row
+/// from them. A policy that does not resolve here reads to no one, so a
+/// vault holding one reads such a row to no one.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn waiting_floor_readable_in(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    viewers: &[EntityId],
+) -> Result<bool> {
+    if viewers.is_empty() {
+        return Ok(false);
+    }
+    for viewer in viewers {
+        if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, viewer)?
+            && super::embedded_owner_person_in(vault, txn, *viewer)?.is_none()
+        {
+            return Ok(false);
+        }
+    }
+    for entry in super::POLICIES.iter_from(&vault.store, txn, &[])? {
+        let (policy, _) = entry?;
+        let readers = match super::readers_in(vault, txn, &policy)? {
+            None => return Ok(false),
+            Some(None) => continue,
+            Some(Some(readers)) => readers,
+        };
+        for viewer in viewers {
+            if !super::names_reader_in(vault, txn, &readers, *viewer)? {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
+}
+
 /// Each row with an open entry, once.
 ///
 /// # Errors
