@@ -15,7 +15,9 @@ use oneiron::recovery::PassphraseCost;
 use oneiron::setting::{ENGINE_PACK, SettingScope};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
-use oneiron::test_doors::setting::{apply_pack_defaults, plant_undecodable_row};
+use oneiron::test_doors::setting::{
+    apply_pack_defaults, plant_pack_head_digest, plant_undecodable_row,
+};
 use oneiron::world_keys::DevicePin;
 use oneiron::{EdgeActorClass, EntityId, Error, Vault, VaultConfig};
 use oneiron_keystore::{
@@ -38,7 +40,8 @@ const ACCEPT_PACK_DEFAULTS_REASON: &str = "accept new default settings";
 const PIN: &[u8] = b"quiet harbour lantern";
 
 /// A rooted vault with its install enrolled and its embedded owner authenticated, opened owned,
-/// as `tests/setting_packs.rs` opens one. The vault drops before its directory.
+/// as `tests/setting_packs.rs` opens one; or one whose install has no live machine profile, as
+/// `tests/setting_act_write.rs` opens one. The vault drops before its directory.
 struct Fixture {
     vault: Vault,
     keystore: Arc<MemoryKeystore>,
@@ -50,7 +53,17 @@ struct Fixture {
 }
 
 impl Fixture {
+    /// A root, and this install carries the owner's acts.
     fn rooted() -> Self {
+        Self::open(true)
+    }
+
+    /// A root, and no live machine profile of this install to carry an act.
+    fn rooted_without_carrier() -> Self {
+        Self::open(false)
+    }
+
+    fn open(carries: bool) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let clock = ManualClock::new(T0);
         let keystore = Arc::new(MemoryKeystore::new());
@@ -64,9 +77,11 @@ impl Fixture {
         vault
             .provision_engine_machine_identities(&issuer)
             .expect("engine machine identities");
-        vault
-            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
-            .expect("serving install profile");
+        if carries {
+            vault
+                .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+                .expect("serving install profile");
+        }
         let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
         let owner_proof = vault
             .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
@@ -219,6 +234,62 @@ fn a_yes_over_a_row_that_moved_raises_no_prompt() {
     assert!(
         refused_as(&moved, "moved since proposal"),
         "a row that moved is refused as that: {moved:?}"
+    );
+    assert_eq!(presence.prompts(), 0, "the refusal showed no prompt");
+}
+
+/// A yes on an install that cannot carry the owner's act is refused on the read as the append
+/// refuses it, with no prompt. The same yes on an install that carries the act asks.
+#[test]
+fn a_yes_on_an_install_that_cannot_carry_the_act_raises_no_prompt() {
+    let fx = Fixture::rooted_without_carrier();
+    let proposal = fx.propose_cap(20);
+    let presence = scripted_gate(&fx.vault, []);
+    let refused = fx.accept(ENGINE_PACK, &proposal);
+    assert!(
+        matches!(
+            refused,
+            Err(Error::Record(RecordError::AuthorityRefused(reason)))
+                if reason.contains("no live machine profile")
+        ),
+        "an install that cannot carry the act refuses the yes as the append does: {refused:?}"
+    );
+    assert_eq!(presence.prompts(), 0, "the refusal showed no prompt");
+    assert_eq!(
+        fx.waiting(),
+        Some(proposal),
+        "the refused yes leaves the proposal waiting"
+    );
+    assert_eq!(fx.cap(), json!(10), "the refused yes lands nothing");
+    // The control: the same yes on an install that carries the act passes the read, and asks.
+    let carrying = Fixture::rooted();
+    let proposal = carrying.propose_cap(20);
+    let presence = scripted_gate(&carrying.vault, []);
+    let asked = carrying.accept(ENGINE_PACK, &proposal);
+    assert!(
+        matches!(
+            asked,
+            Err(Error::Record(RecordError::OwnerPresenceRequired {
+                here: OwnerPresenceRefusal::Declined
+            }))
+        ),
+        "a yes on an install that carries the act asks: {asked:?}"
+    );
+    assert_eq!(presence.prompts(), 1, "that yes showed one prompt");
+}
+
+/// A yes to a head whose digest a damaged store holds is refused on the read, with no prompt.
+#[test]
+fn a_yes_to_a_head_with_a_damaged_digest_raises_no_prompt() {
+    let fx = Fixture::rooted();
+    let proposal = fx.propose_cap(20);
+    plant_pack_head_digest(&fx.vault, ENGINE_PACK, "not sixty-four hex digits")
+        .expect("a damaged head digest");
+    let presence = scripted_gate(&fx.vault, []);
+    let damaged = fx.accept(ENGINE_PACK, &proposal);
+    assert!(
+        matches!(damaged, Err(Error::CorruptedIndex(_))),
+        "a head digest that does not decode is refused as a damaged store: {damaged:?}"
     );
     assert_eq!(presence.prompts(), 0, "the refusal showed no prompt");
 }

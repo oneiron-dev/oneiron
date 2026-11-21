@@ -345,7 +345,9 @@ impl Vault {
     ///
     /// On a read before the door asks, and again in its write: an owner proof that no longer
     /// holds; `InvalidConfig` for a pack with no head, a proposal that is not the pack's waiting
-    /// one, a row that moved since, or a key this build does not know. Then the presence
+    /// one, a row that moved since, or a key this build does not know; on a rooted vault,
+    /// `CorruptedIndex` for a head whose digest is not 64 hex digits, and the append's typed
+    /// refusal for an install that cannot carry the owner's act. Then the presence
     /// check's refusal ([`Vault::owner_presence`]). In the write: on a rooted vault, the
     /// append's typed refusal, and `OwnerKeyRequired` for a yes that would wait for the owner's
     /// proof; a key's `on_change` refusal; storage errors.
@@ -468,11 +470,7 @@ fn append_yes_in_txn(
     (pack, head): (&str, &PackHead),
     (owner, mut accepted): (EntityId, Vec<String>),
 ) -> Result<Option<AuthorityEntryHash>> {
-    let Some(digest) = oneiron_hex::decode::<32>(&head.digest) else {
-        return Err(Error::CorruptedIndex(
-            "a pack head's digest is not 64 hex digits",
-        ));
-    };
+    let digest = head_defaults_digest(head)?;
     if head.version.is_empty() {
         tracing::warn!(
             pack,

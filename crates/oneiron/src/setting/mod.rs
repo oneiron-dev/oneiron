@@ -94,7 +94,8 @@ pub use self::learned::{LEARNED_SCOPES, LearnedRange, SettingFitView};
 pub use self::pack::{ENGINE_PACK, ENGINE_PACK_VERSION, PackApplied, ProposedDefaultView};
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::pack::{
-    delete_layer_row, head_version_and_digest, layer_row_revision, table_digest_and_bytes,
+    delete_layer_row, head_version_and_digest, layer_row_revision, put_head_digest,
+    table_digest_and_bytes,
 };
 pub use self::page_max::PageMax;
 pub use self::project::SettingsProjected;
