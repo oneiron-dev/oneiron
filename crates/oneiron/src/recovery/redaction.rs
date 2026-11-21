@@ -1,5 +1,7 @@
 //! Cursor-independent redaction of a resolved, hash-bound canonical text span.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{CanonicalSnapshot, canonical::invalid};
 use crate::{EntityId, error::Result};
 
@@ -33,7 +35,7 @@ impl CanonicalSnapshot {
             return Err(invalid("redaction span"));
         }
         let span = doc.text[boundaries[start]..boundaries[end]].to_owned();
-        if *blake3::hash(span.as_bytes()).as_bytes() != quote_blake3 {
+        if *ContentHash::of(span.as_bytes()).as_bytes() != quote_blake3 {
             return Err(invalid("redaction quote hash"));
         }
         doc.text

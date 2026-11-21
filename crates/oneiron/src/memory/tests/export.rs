@@ -5,6 +5,7 @@ use super::*;
 fn owner_vault() -> (tempfile::TempDir, crate::Vault, EntityId) {
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open_owned(dir.path(), VaultConfig::default()).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let owner = vault.ensure_embedded_owner_actor().unwrap();
     (dir, vault, owner)
 }
@@ -188,6 +189,7 @@ fn export_streamed_message_uses_committed_document_not_pointer_or_partial() {
         conversation_ref: EntityId::now().to_hex(),
         turn_ref: Some(EntityId::now().to_hex()),
         thread_audience: None,
+        project: None,
         occurred_at: 10,
         messages: vec![WitnessMessage {
             id: Some(message.to_hex()),
@@ -278,6 +280,7 @@ fn preview_migrated_edited_message_reads_committed_document() {
             conversation_ref: conversation.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             occurred_at: 10,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
@@ -559,7 +562,15 @@ fn a_deleted_owner_does_not_export_the_vault_with_a_live_slip() {
             .export_with_verified_owner(&ExportOptions::default(), &proof, ActSurface::ThisInstall)
             .is_ok()
     );
-    assert!(vault.delete_entity(&actor).unwrap());
+    // The last-owner guard refuses deleting the bound owner (L9-52 b): the
+    // owner is deleted under a stand-in binding and bound again.
+    assert!(crate::test_util::delete_bound_person(
+        &vault,
+        &issuer,
+        actor,
+        "human",
+        crate::deletion::DeleteReason::UserDelete,
+    ));
     assert_eq!(
         memory
             .export_with_verified_owner(&ExportOptions::default(), &proof, ActSurface::ThisInstall)

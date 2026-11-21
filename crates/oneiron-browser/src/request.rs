@@ -52,6 +52,10 @@ impl std::fmt::Display for DestinationRefusal {
 #[cfg(feature = "driver")]
 pub trait BrowserBody: Read + Send {
     fn len(&self) -> u64;
+    /// Whether the complete decoded body has no bytes.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 #[cfg(feature = "driver")]

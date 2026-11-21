@@ -428,6 +428,20 @@ impl Vault {
         if let Some(outcome) = pending.input_outcome(*call_ref) {
             return Ok((outcome, pending.source_rows));
         }
+        // A copy restored and not joined keeps code-owned calls held (row
+        // RESTORED-UNJOINED-STARTS-NO-WORK). Calls and their waits stay as
+        // they are until a resume after the join can drive or settle them.
+        if self.restored_unjoined()? {
+            return Ok((
+                ConnectorCallOutcome::Held {
+                    call_ref: *call_ref,
+                    decision_ref: None,
+                    reasons: vec!["restored_not_joined".to_owned()],
+                    approval_digest: None,
+                },
+                pending.source_rows,
+            ));
+        }
         let Some(wait_id) = pending.code_consent_wait else {
             return self.drive_connector_call(Some(*call_ref), None, pending, host);
         };
@@ -571,11 +585,15 @@ impl Vault {
     /// original caller's instrument no longer stands (its current scope no
     /// longer meets the one it was admitted under, or the slip is gone). A
     /// refusal that names no credential (the host could not check) settles
-    /// nothing: the wait stays settling for the host's next pass.
+    /// nothing: the wait stays settling for the host's next pass. On a copy
+    /// restored and not joined, a refusal settles nothing either (row
+    /// RESTORED-UNJOINED-STARTS-NO-WORK): the call and its wait stay as they
+    /// are for the host's first pass after the join, which checks the
+    /// instrument again.
     ///
     /// # Errors
     ///
-    /// An unknown wait, or storage errors.
+    /// An unknown wait, the restored-copy test's errors, or storage errors.
     pub fn refuse_answered_code_consent_wait(
         &self,
         wait_id: EntityId,
@@ -583,6 +601,9 @@ impl Vault {
         refusal: VerbAskRefusal,
     ) -> Result<CodeConsentWaitView, IntentLedgerError> {
         if refusal.names_credential() {
+            if self.restored_unjoined()? {
+                return Ok(self.code_consent_wait_view(wait_id, false)?);
+            }
             let code = refusal.code().to_ascii_lowercase();
             self.with_write_txn(|txn| {
                 let answered =

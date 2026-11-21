@@ -140,6 +140,9 @@ impl SyncServer {
         client_id: u64,
     ) -> Result<Option<Vec<u8>>, oneiron::Error> {
         let _guard = self.lease_registrar.lock().await;
+        // Under a device link, the root persisted below keeps what the link
+        // persisted (SERVE-DEVICE-PEER-STALE-ROOT).
+        self.merge_link_root();
         let leases = self.root_doc.get_map(ROOT_LEASES_MAP);
         let Some(entry) = self.root_lease_entry_for_vault_client(vault_id, client_id)? else {
             return Ok(None);

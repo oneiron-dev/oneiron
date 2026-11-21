@@ -23,7 +23,7 @@ pub use self::bridge::CodeRunBridgeCall;
 pub use self::checkpoint::CodeRunStepCheckpoint;
 pub use self::cursor::CodeRunReplayCursor;
 pub use self::pending_step::PendingCodeStep;
-pub(super) use self::request_identity::ErasedRequest;
+pub(super) use self::request_identity::{ErasedRequest, erased_identity_field};
 
 pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 3;
 #[doc(hidden)]
@@ -228,8 +228,12 @@ fn cached_rows(
 /// the form the side-row wall admitted the same request in (OF-067), an
 /// erased request by its identity, and a held input by its digests. A call
 /// whose request changed (a pure change or an owner's refire, L8-23) does not.
+/// The compare reads no custody values (FIX REPLAY-COMPARE-KNOWN-MATCHER): a
+/// row only that read would meet keeps the live call, which the side-row wall
+/// admits again at this put.
 fn held_row_stands_for(call: &CodeRunBridgeCall, kept: &CodeRunBridgeCall) -> Result<bool> {
-    if spawn_replay::replay_request_match(call.effect, &kept.request, &call.request)?.is_hit() {
+    if spawn_replay::replay_request_match(call.effect, &kept.request, &call.request, None)?.is_hit()
+    {
         return Ok(true);
     }
     Ok(call.effect == SelfEffect::AgentVerb

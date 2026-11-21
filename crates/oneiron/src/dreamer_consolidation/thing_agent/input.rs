@@ -154,6 +154,18 @@ pub(super) fn lent_scope(request: &Scope, slices: &[&ExtractionSlice]) -> Scope 
     }
 }
 
+/// The rows `slices`' transcripts were read from, each slice's every
+/// source, sorted and deduplicated.
+pub(super) fn lent_sources(slices: &[&ExtractionSlice]) -> Vec<EntityId> {
+    let mut rows: Vec<EntityId> = slices
+        .iter()
+        .flat_map(|slice| slice.sources.iter().copied())
+        .collect();
+    rows.sort_unstable();
+    rows.dedup();
+    rows
+}
+
 /// A non-slice input at its own name.
 fn host_input(name: &str, body: Vec<u8>, rows: Vec<EntityId>) -> HostInput {
     HostInput {

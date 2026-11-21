@@ -109,7 +109,7 @@ impl ResidentLend<'_> {
                 cancel: ctx.device_cancel.clone().unwrap_or_default(),
                 ..Default::default()
             });
-        let backend = SourcedRunBackend::new(ladder, run);
+        let backend = SourcedRunBackend::new(ladder, run, Arc::clone(self.vault));
         // Its durable step meters on a line of its own: one meter on both
         // layers would charge twice.
         let step = self.vault.policy_budget_guard(

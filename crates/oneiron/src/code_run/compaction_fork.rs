@@ -12,13 +12,14 @@
 //! the prefix ends, so a provider that caches by marked blocks can reuse it.
 //! A provider with no rendering for it sends a plain call.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::entity_id::EntityId;
 use crate::llm::SelfCompactionSource;
 use crate::llm::run_admission::OfferBinding;
-use crate::{FatalLlmError, LlmRequest, LlmResult};
+use crate::{FatalLlmError, LlmRequest, LlmResult, Vault};
 
 /// The provider-options namespace a host's own descriptors ride in. No
 /// adapter reads it as its own, so one with no rendering for a descriptor
@@ -149,12 +150,15 @@ pub fn shift_cache_boundaries(request: &mut LlmRequest) {
 
 /// The digest a chat breakpoint keeps for the offer its rung was admitted
 /// under (FIX 4465 D): the hex BLAKE3 of the binding's JSON, a ref to it,
-/// never the credential it names. `None` when the binding does not encode.
+/// never the credential it names (`purposes::code_run::LIVE_FORK_OFFER`).
+/// `None` when the binding does not encode.
 #[must_use]
 pub fn live_fork_offer_digest(offer: &OfferBinding) -> Option<String> {
     let bytes = serde_json::to_vec(offer).ok()?;
     Some(crate::entity_id::bytes_to_hex_lower(
-        blake3::hash(&bytes).as_bytes(),
+        &LegacyDigest::new(purposes::code_run::LIVE_FORK_OFFER)
+            .raw(&bytes)
+            .finish(),
     ))
 }
 
@@ -252,6 +256,64 @@ impl LiveCompactionFork {
     pub fn prefix_sources(&self) -> &[EntityId] {
         &self.prefix_sources
     }
+
+    /// Whether a row the captured request was read from is deleted in
+    /// `vault` now ([`source_rows_withdrawn`]): the fork is then stale, and
+    /// a call of its flight sends nothing of it.
+    #[must_use]
+    pub fn prefix_withdrawn(&self, vault: &Vault) -> bool {
+        source_rows_withdrawn(vault, &self.prefix_sources)
+    }
+}
+
+/// `source_rows_withdrawn` (FIX-LIST ERASE-SERVED-KV-CACHE-OUTLIVES-SOURCE):
+/// whether any of `sources`, the rows a model call's text was read from (a
+/// live fork's prefix, a compaction window, a home), is deleted in `vault`
+/// now, erased or deleted, hard or soft, as [`Vault::is_deleted_shell`]
+/// reads each, or withdrawn: marked stale or waiting on its withdrawal, as
+/// a summary is once a row it covers is erased and its words are scrubbed
+/// (REVIEW-9900 round 2). The text was rendered before that and still holds
+/// the old words, and a provider's prompt cache, keyed by those bytes, would
+/// be warmed with them again by a send: such a call is stale. A row that
+/// cannot be read counts as withdrawn. One read transaction answers for all.
+#[must_use]
+pub fn source_rows_withdrawn(vault: &Vault, sources: &[EntityId]) -> bool {
+    if sources.is_empty() {
+        return false;
+    }
+    let Ok(txn) = vault.store.env.read_txn() else {
+        return true;
+    };
+    sources
+        .iter()
+        .any(|source| source_row_withdrawn_in(vault, &txn, source))
+}
+
+/// The rows of `sources` that [`source_rows_withdrawn`] reads as withdrawn
+/// now, each judged as it judges them, in one read transaction: all of
+/// them when the transaction does not open. A host that keeps a staged
+/// prefix past a boundary names the rows that no longer stand with it
+/// ([BRIEF-PREFIX-STALE-PAST-REVOKE]).
+#[must_use]
+pub fn withdrawn_source_rows(
+    vault: &Vault,
+    sources: &[EntityId],
+) -> std::collections::BTreeSet<EntityId> {
+    let Ok(txn) = vault.store.env.read_txn() else {
+        return sources.iter().copied().collect();
+    };
+    sources
+        .iter()
+        .copied()
+        .filter(|source| source_row_withdrawn_in(vault, &txn, source))
+        .collect()
+}
+
+/// Whether `source` is deleted, erased or withdrawn in `txn`; a row that
+/// cannot be read counts as withdrawn.
+fn source_row_withdrawn_in(vault: &Vault, txn: &heed::RoTxn<'_>, source: &EntityId) -> bool {
+    vault.is_deleted_shell_in_txn(txn, source).unwrap_or(true)
+        || crate::ports::stale_in_txn(&vault.store, txn, source).unwrap_or(true)
 }
 
 /// A live fork its run's driver admitted (FIX 4465 C): the one Frontier-tier

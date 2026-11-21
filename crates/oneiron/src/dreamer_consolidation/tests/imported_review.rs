@@ -151,19 +151,18 @@ fn run(
     )
 }
 
-/// One extracted claim: its predicate, value, topic and the byte range of
-/// the TURN it cites.
-type Extracted<'a> = (&'a str, &'a str, Option<&'a str>, (usize, usize));
+/// One extracted claim: its predicate, value, topic and unique quoted words.
+type Extracted<'a> = (&'a str, &'a str, Option<&'a str>, &'a str);
 
-/// An extraction of `claims` about `subject`, each citing its range of `turn`.
-fn extraction(subject: EntityId, turn: EntityId, claims: &[Extracted<'_>]) -> crate::LlmResponse {
+/// An extraction about the named fixture person, citing the first TURN.
+fn extraction(_subject: EntityId, _turn: EntityId, claims: &[Extracted<'_>]) -> crate::LlmResponse {
     let candidates: Vec<_> = claims
         .iter()
-        .map(|(predicate, value, topic, (start, end))| {
+        .map(|(predicate, value, topic, quote)| {
             serde_json::json!({
-                "subject": subject.to_hex(), "predicate": predicate, "value": value,
+                "subject": "P1", "predicate": predicate, "value": value,
                 "topic_key": topic, "confidence": 0.8,
-                "evidence_refs": [{"source_id": turn.to_hex(), "byte_range": [start, end]}],
+                "evidence_refs": [{"source": "T1", "quote": quote}],
             })
         })
         .collect();
@@ -195,7 +194,13 @@ fn imported_claims_stay_as_the_review_holds_them_when_the_dreamer_meets_them_aga
     super::prior_heads::policy(&vault, vault.dreamer_authority()?.entity_ref(), true)?;
     let (person, owner) = owner(&vault)?;
     let subject = EntityId::now();
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        occurred(1),
+        1,
+        &super::super::support::encode_value(&Value::Map(vec![("name".into(), "Ana".into())]))?,
+    )?;
     let turn = EntityId::derive(
         HISTORY_TURN,
         &[b"claude-code".as_slice(), b"session-ana", b"u1"],
@@ -216,15 +221,15 @@ fn imported_claims_stay_as_the_review_holds_them_when_the_dreamer_meets_them_aga
         Ok(extraction(
             subject,
             turn,
-            &[("profile.name", "Ana", None, (11, 14))],
+            &[("profile.name", "Ana", None, "Ana")],
         )),
         Ok(extraction(
             subject,
             turn,
             &[
-                ("profile.name", "Ana", None, (11, 14)),
-                ("profile.name", "Ana", Some("nickname"), (11, 14)),
-                ("profile.city", "Kyoto", None, (25, 30)),
+                ("profile.name", "Ana", None, "Ana"),
+                ("profile.name", "Ana", Some("nickname"), "Ana"),
+                ("profile.city", "Kyoto", None, "Kyoto"),
             ],
         )),
     ]);

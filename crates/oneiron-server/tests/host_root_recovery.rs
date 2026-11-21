@@ -390,6 +390,7 @@ fn witness_text(owner: &OneironClient) {
             occurred_at: unix_seconds_now(),
             thread_audience: None,
             assertions: Default::default(),
+            project: None,
         })
         .unwrap();
     assert_eq!(recall(owner), Ok(true));

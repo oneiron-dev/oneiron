@@ -18,6 +18,8 @@ use super::super::types::{
     DEFAULT_MAX_NEIGHBORS, DEFAULT_WINDOW_TOKEN_BUDGET, FieldProfile, PackFormat, TokenAllocation,
 };
 
+mod budgets;
+
 #[must_use = "ContextPackBuilder executes no query until a terminal `.run*()` method is called"]
 pub struct ContextPackBuilder<'a> {
     pub(super) pipeline: PipelineBuilder<'a>,
@@ -75,6 +77,12 @@ pub struct ContextPackBuilder<'a> {
     pub(super) destination: crate::settings::ReadDestination,
     /// See [`Self::skip_optional_recall`].
     pub(super) skip_optional_recall: bool,
+    /// The rows the caller carried across a compaction, deduplicated, in
+    /// order ([`Self::working_set`]); empty for an unseeded pack.
+    pub(super) working_set: Vec<EntityId>,
+    /// The epoch summary whose carried rows seed the pack
+    /// ([`Self::rehydrate_from`]); `None` for a pack that names no packet.
+    pub(super) rehydrate_from: Option<EntityId>,
 }
 
 impl<'a> ContextPackBuilder<'a> {
@@ -210,6 +218,8 @@ impl<'a> ContextPackBuilder<'a> {
             l2_summary_reader: None,
             destination: crate::settings::ReadDestination::on_device(),
             skip_optional_recall: false,
+            working_set: Vec::new(),
+            rehydrate_from: None,
         }
     }
 
@@ -657,157 +667,42 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
-    /// Selects the pack tokenizer for every serialization budget gate
-    /// (opt-in reader measurement). The default is the engine-normalized
-    /// `o200k` counter; selection never changes authority, ranking, or row
-    /// order.
-    pub fn pack_tokenizer(mut self, tokenizer: PackTokenizer) -> Self {
-        self.tokenizer = tokenizer;
-        self
-    }
-
-    /// Declares the share of the active model's context window the default
-    /// budget resolves from (ARCH-0004 #budget-unit, `{ contextFraction }`).
-    /// Consulted only when neither an explicit [`Self::token_budget`] nor a
-    /// memory profile set the budget, and only with a known model window
-    /// ([`Self::model_window_tokens`] / [`Self::model_window`]). A fraction
-    /// outside `(0, 1]` disables the derivation; above `1` counts as `1`.
-    pub fn context_fraction(mut self, fraction: f32) -> Self {
-        self.context_fraction = fraction;
-        self
-    }
-
-    /// Names the active model's context window in tokens, for the
-    /// window-relative default (see [`Self::context_fraction`]). `0` means
-    /// unknown, like never calling this.
-    pub fn model_window_tokens(mut self, window_tokens: u64) -> Self {
-        self.model_window_tokens = (window_tokens > 0).then_some(window_tokens);
-        self
-    }
-
-    /// Names the active model and resolves its context window from the
-    /// vault's model registry, for the window-relative default (see
-    /// [`Self::context_fraction`]). Best-effort: a model id that does not
-    /// parse, has no registry row, or whose row does not read leaves the
-    /// window unknown, and the budget falls back exactly as it did before
-    /// this call existed. The catalog window is taken whole; the fraction
-    /// is what leaves room for the prompt and the answer.
-    pub fn model_window(mut self, model: &str) -> Self {
-        self.model_window_tokens = None;
-        let Ok(model) = model.parse::<ModelId>() else {
-            return self;
-        };
-        match self.vault.model_registry_row(&model) {
-            Ok(Some(row)) => {
-                let window = row.catalog.context_window_tokens;
-                self.model_window_tokens = (window > 0).then_some(window);
-            }
-            Ok(None) => {}
-            Err(error) => {
-                tracing::warn!(
-                    %model,
-                    %error,
-                    "a context pack's model row did not read; its window is unknown"
-                );
-            }
-        }
-        self
-    }
-
-    /// Applies an agent's RT-05 memory profile as construction-time defaults
-    /// (ONE-1687): the window budget and, when present, the per-class split.
+    /// Seeds the pack with the rows a host carried across a compaction (the
+    /// working set, CROSS-ARCH-0011 amendment "workingSet"): they lead the
+    /// pack, in this order, before the ranked fill, and the fill does not
+    /// repeat them. Each ref is admitted on its own, through the gates a
+    /// ranked row passes; a ref that fails one is dropped and the rest still
+    /// seed. A superseded CLAIM resolves forward to its live successor. A
+    /// serialized pack spends at most half its token budget on them. An empty
+    /// list leaves the pack as it was.
     ///
-    /// `None` is a NO-OP — today's defaults hold and the assembled pack is
-    /// byte-for-byte what it was before the profile existed. An explicit
-    /// [`Self::token_budget`] always wins over the profile's window budget,
-    /// in either call order, so a per-request override always wins over the
-    /// stored profile; [`Self::token_allocation`] still applies in call
-    /// order.
-    pub fn memory_profile(mut self, profile: Option<&MemoryProfile>) -> Self {
-        let Some(profile) = profile else {
-            return self;
-        };
-        self.profile_token_budget = Some(
-            usize::try_from(profile.window_token_budget).unwrap_or(DEFAULT_WINDOW_TOKEN_BUDGET),
-        );
-        if let Some(split) = profile.budget_split {
-            self.token_allocation = TokenAllocation {
-                claims: split.claims,
-                turns: split.turns,
-                summaries: split.summaries,
-                other: split.other,
-            };
-        }
-        self
-    }
-
-    /// Takes no optional recall, for a reader whose profile picked
-    /// [`OptionalMemory::None`] for this task (ARCH-0004 #reader-budget): the
-    /// terminal returns an empty pack marked
-    /// [`EmptyReason::SkippedByProfile`] before any retrieval or L2 work.
-    /// Pinned rows and mandatory instructions never ride this pack; the host
-    /// adds them as before.
+    /// # Errors
     ///
-    /// [`OptionalMemory::None`]: crate::agent_def::OptionalMemory::None
-    /// [`EmptyReason::SkippedByProfile`]: crate::context_pack::EmptyReason::SkippedByProfile
-    pub fn skip_optional_recall(mut self) -> Self {
-        self.skip_optional_recall = true;
-        self
+    /// [`crate::Error::InvalidConfig`] when the list names more than
+    /// [`super::super::MAX_WORKING_SET_REFS`] distinct refs; a longer list
+    /// is refused, never cut short.
+    pub fn working_set(mut self, refs: &[EntityId]) -> crate::Result<Self> {
+        self.working_set = super::super::working_set::dedupe_working_set(refs)?;
+        Ok(self)
     }
 
-    /// The effective window budget after defaults and profile application.
+    /// Rehydrates the pack from a stored compaction packet (CROSS-ARCH-0002b
+    /// #ep-6-2-3 `packetId`): the epoch SUMMARY a `host.compact` minted. The
+    /// rows it carries are the pack's working set ([`Self::working_set`]),
+    /// in the order the host carried them, ahead of any refs set there.
     ///
-    /// The ONE public read of the assembled budget, resolved at call time
-    /// (ARCH-0004 #budget-unit): an explicit [`Self::token_budget`] wins,
-    /// then a memory profile's window budget, then the declared
-    /// [`Self::context_fraction`] of the active model's known window, and
-    /// only when no window is known the fixed engine fallback — so a pack
-    /// whose call site names no model assembles exactly as it did before
-    /// the window-relative default existed. An explicit budget of `0`
-    /// keeps its "no limit" meaning; a derived budget never resolves
-    /// to `0`.
-    #[must_use]
-    pub fn effective_token_budget(&self) -> usize {
-        if let Some(budget) = self.token_budget {
-            return budget;
-        }
-        if let Some(budget) = self.profile_token_budget {
-            return budget;
-        }
-        if let Some(window) = self.model_window_tokens
-            && self.context_fraction.is_finite()
-            && self.context_fraction > 0.0
-        {
-            let fraction = f64::from(self.context_fraction.min(1.0));
-            #[allow(clippy::cast_precision_loss)]
-            let derived = (window as f64 * fraction) as usize;
-            return derived.max(1);
-        }
-        DEFAULT_WINDOW_TOKEN_BUDGET
-    }
-
-    pub fn token_allocation(mut self, allocation: TokenAllocation) -> Self {
-        self.token_allocation = allocation;
-        self
-    }
-
-    pub fn retrieval_budget(mut self, budget: ContextPackRetrievalBudget) -> Self {
-        let selected_edges = budget.selected_edges;
-        self.selected_edge_budget = selected_edges;
-        self.retrieval_budget = Some(ContextPackRetrievalBudget {
-            selected_edges,
-            ..budget
-        });
-        self
-    }
-
-    pub fn max_field_chars(mut self, max: usize) -> Self {
-        self.max_field_chars = max;
-        self
-    }
-
-    pub fn max_item_tokens(mut self, max: usize) -> Self {
-        self.max_item_tokens = max;
+    /// The summary must be one the pack's reader reads, live, and its
+    /// lineage's newest epoch. Otherwise the packet is stale: it seeds
+    /// nothing, the pack is today's pack, and
+    /// [`super::super::PackWorkingSetStats::stale`] says so. Each carried row
+    /// is admitted on its own, under the pack's reader, as any working-set
+    /// ref is.
+    ///
+    /// The run fails with [`crate::Error::InvalidConfig`] when the carried
+    /// rows and the refs set by [`Self::working_set`] together name more
+    /// than [`super::super::MAX_WORKING_SET_REFS`] distinct refs.
+    pub fn rehydrate_from(mut self, summary: EntityId) -> Self {
+        self.rehydrate_from = Some(summary);
         self
     }
 }

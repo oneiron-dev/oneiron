@@ -73,12 +73,31 @@ impl Vault {
     /// `txn`: the owner's own read (`owner`,
     /// [`Self::turn_doors_owner_in_txn`]) under each private thread alone
     /// (FIX 5652), any other caller under its lane's whole row admission
-    /// (FIX 5938).
+    /// (FIX 5938) and, for a room or one of its turns, the room's own
+    /// admission ([`Self::room_structure_admitted`], L9-52).
     ///
     /// # Errors
     ///
     /// A failed admission read.
     pub fn turn_door_admits_in_txn(
+        &self,
+        read: &ScopedRead<'_>,
+        txn: &RoTxn<'_>,
+        owner: bool,
+        id: &EntityId,
+    ) -> Result<bool> {
+        Ok(self.turn_door_admits_listed_in_txn(read, txn, owner, id)?
+            && (owner || self.room_structure_admitted_in_txn(read, txn, id)?))
+    }
+
+    /// [`Self::turn_door_admits_in_txn`] for a turn a door lists under a
+    /// room it has already admitted in `txn`: the room's admission is not
+    /// judged again for each of its turns.
+    ///
+    /// # Errors
+    ///
+    /// A failed admission read.
+    pub fn turn_door_admits_listed_in_txn(
         &self,
         read: &ScopedRead<'_>,
         txn: &RoTxn<'_>,

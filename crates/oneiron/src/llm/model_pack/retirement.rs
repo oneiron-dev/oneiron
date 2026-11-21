@@ -254,7 +254,9 @@ impl Vault {
     /// 5369), and sends each retirement notice due today once, to every
     /// owner. A pass with nothing due reads one snapshot and writes nothing.
     /// The pin's move is the engine's own change of `models.pack_preference`,
-    /// whose reason names the retirement; the key's hook records it.
+    /// whose reason names the retirement; the key's hook records it. It hands
+    /// no ground: its change appends no act today, and an act it appended
+    /// would carry no owner proof.
     ///
     /// # Errors
     /// Storage errors. The sweep is retried whole on a later pass.
@@ -287,6 +289,7 @@ impl Vault {
                         )?;
                         let outcome = self.set_setting_in_txn(
                             txn,
+                            None,
                             SettingCaller::Engine(EngineSetting::own()),
                             &change,
                         )?;

@@ -1,0 +1,17 @@
+{
+  "name": "vault.booking.deposit.refund",
+  "description": "A host selected at confirmation refunds a booking's held deposit whole once the booking is cancelled or has started: a captured deposit is owed back, a capture still due is released; a retry queues nothing.",
+  "input": "crate::task_verb::sdk::BookingDepositRefundRequest",
+  "output": "crate::task_verb::sdk::BookingDepositRefundReceipt",
+  "call": "crate::task_verb::sdk::refund_booking_deposit(memory, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

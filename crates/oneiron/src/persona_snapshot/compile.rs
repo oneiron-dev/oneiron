@@ -21,13 +21,15 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 
-/// Returns true when the OF-365 disclosure clamp bars this claim from ever
-/// entering a persona snapshot compile: restricted-band (Tier A) claims and
-/// claims whose sensitivity band is ambiguous (fail closed).
-pub(super) fn persona_snapshot_tier_a_clamped(body: &ClaimBody) -> bool {
+/// Returns true when the OF-365 disclosure clamp bars this claim from
+/// entering a persona snapshot compile: a claim whose sensitivity band is
+/// ambiguous always (fail closed), and a restricted-band claim unless
+/// `admit_restricted`, which holds only for a card about a live owner whose
+/// `persona_snapshot.compile.include_restricted_band` is on.
+pub(super) fn persona_snapshot_tier_a_clamped(body: &ClaimBody, admit_restricted: bool) -> bool {
     match claim_sensitivity_band(body) {
         None => true,
-        Some(band) => band >= TIER_A_MIN_SENSITIVITY_BAND,
+        Some(band) => band >= TIER_A_MIN_SENSITIVITY_BAND && !admit_restricted,
     }
 }
 
@@ -307,8 +309,11 @@ impl crate::Vault {
     /// The OF-365 disclosure clamp applies here, at compile: Tier A never
     /// enters the row list, and when `options.audience` names who the card
     /// is FOR, claims outside that actor's scoped-read lane never enter
-    /// either. Third-party relationship rows enter COARSE (name + role);
-    /// third-party claim rows enter default-struck.
+    /// either. A restricted-band claim stays out too, unless the subject is
+    /// a live owner of the vault and the owner's
+    /// `persona_snapshot.compile.include_restricted_band` is on. Third-party
+    /// relationship rows enter COARSE (name + role); third-party claim rows
+    /// enter default-struck, and always under the band clamp.
     pub fn compile_persona_snapshot(
         &self,
         subject_ref: &EntityId,
@@ -341,11 +346,13 @@ impl crate::Vault {
             let rtxn = self.store.env.read_txn()?;
             crate::settings::device_local_worlds_for(self, &rtxn, &options.destination)?
         };
+        let admit_restricted = self.persona_snapshot_admits_restricted_band(subject_ref)?;
         let mut read_receipt = None;
         let subject_claims = self.persona_snapshot_candidate_claims(
             subject_ref,
             audience_read.as_ref(),
             &kept,
+            admit_restricted,
             &mut read_receipt,
         )?;
 
@@ -475,10 +482,12 @@ impl crate::Vault {
         let mut third_party_rows = Vec::new();
         let mut label_claims = Vec::new();
         for (other, (record_role, record_ref)) in &related {
+            // A claim about someone else never takes the owner's opt-out.
             let other_claims = self.persona_snapshot_candidate_claims(
                 other,
                 audience_read.as_ref(),
                 &kept,
+                false,
                 &mut read_receipt,
             )?;
             let other_name = top_claim_text(&other_claims, PERSONA_SNAPSHOT_NAME_PREDICATE)
@@ -662,14 +671,27 @@ impl crate::Vault {
         )? == crate::disclosure::DisclosureTier::TierA)
     }
 
+    /// Whether a compile about `subject_ref` admits its restricted-band
+    /// claims: only when the subject is a live owner of the vault and the
+    /// owner's `persona_snapshot.compile.include_restricted_band` is on.
+    fn persona_snapshot_admits_restricted_band(&self, subject_ref: &EntityId) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        let included = super::setting_keys::PERSONA_SNAPSHOT_INCLUDE_RESTRICTED_BAND
+            .read_in_txn(self, &rtxn, &[], None)?
+            .value;
+        Ok(included && crate::policy_model::is_live_vault_owner_in_txn(self, &rtxn, subject_ref)?)
+    }
+
     /// Admissible claims about `person_ref`, none in a `kept` world; with an
     /// audience, only those the audience may read, the audience read folded
-    /// into `receipt`.
+    /// into `receipt`. Restricted-band claims enter only when
+    /// `admit_restricted`.
     fn persona_snapshot_candidate_claims(
         &self,
         person_ref: &EntityId,
         audience: Option<&ScopedRead<'_>>,
         kept: &BTreeSet<EntityId>,
+        admit_restricted: bool,
         receipt: &mut Option<ScopedReadReceipt>,
     ) -> Result<Vec<CandidateClaim>> {
         // The subject, admissibility, world and Tier-A filters; applied to
@@ -678,7 +700,7 @@ impl crate::Vault {
             body.subject == ClaimSubject::Entity(*person_ref)
                 && admissible_claim(body)
                 && !body.world.is_some_and(|world| kept.contains(&world))
-                && !persona_snapshot_tier_a_clamped(body)
+                && !persona_snapshot_tier_a_clamped(body, admit_restricted)
         };
         let mut candidates = Vec::new();
         for claim_id in self.claims_for_subject(person_ref)? {

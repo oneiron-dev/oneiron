@@ -115,6 +115,20 @@ impl Vault {
         Ok(row)
     }
 
+    /// The door's admission of `agent` to `vault.models.bindings.propose`,
+    /// before any verb hook sees the call: the bound actor's live Grant
+    /// naming the act, in a read snapshot of its own.
+    /// [`Self::propose_model_binding_as_granted_agent`] judges it again.
+    ///
+    /// # Errors
+    ///
+    /// An agent with no live Grant naming the act; a store failure.
+    pub fn admit_model_binding_proposer(&self, agent: EntityId) -> Result<()> {
+        let txn = self.store.env.read_txn()?;
+        self.agent_act_owner_in_txn(&txn, agent, OwnerActKind::ModelBindingPropose)
+            .map(drop)
+    }
+
     /// An agent's binding proposal under its own live Grant naming
     /// `vault.models.bindings.propose`: the bound actor's live Grant naming
     /// the act and the carrying owner are checked in this one write

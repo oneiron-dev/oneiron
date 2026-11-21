@@ -243,6 +243,7 @@ fn speak(
             }],
             occurred_at: T0,
             assertions: Default::default(),
+            project: None,
         })?;
     Ok(())
 }

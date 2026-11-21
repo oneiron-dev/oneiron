@@ -203,6 +203,7 @@ pub(in crate::engine_executor) fn effect_step(effect: SelfEffect, verb: Option<&
         | SelfEffect::TaskDelegate
         | SelfEffect::Speak
         | SelfEffect::Think
+        | SelfEffect::ThinkAloud
         | SelfEffect::Express
         | SelfEffect::ReportBlocked
         | SelfEffect::AgentsPut

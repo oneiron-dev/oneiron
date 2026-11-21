@@ -25,6 +25,7 @@ pub use schema::validate_json_schema;
 mod peer_wait;
 // FIX 4816: a durable step's recovery from its saved work.
 mod recovery;
+mod request_hash_step;
 mod response_bodies;
 // FIX 6225: a step claim holds its oversize response's exact version.
 mod response_pins;
@@ -36,6 +37,7 @@ mod step_claim;
 // FIX 4816: the memo index's keys, admission, lookup and deindex.
 mod step_index;
 mod step_only;
+mod step_result;
 mod step_state;
 // FIX 9929: a public submission's kept copies under body custody.
 mod submission_custody;
@@ -53,9 +55,14 @@ pub(crate) use self::budget_wait::{
     wake_resident_share_traps_in_txn,
 };
 
+pub(crate) use self::compaction_step::{compaction_response_holders_in, is_compaction_step_row};
 pub use self::media_step::{MediaStepOutcome, call_media_as_step};
 
-pub(crate) use self::execute::{ExecutedModelWitness, call_as_step_checked_with_unsaved_usage};
+pub(crate) use self::execute::recover_saved_step;
+pub(crate) use self::execute::{
+    ExecutedModelWitness, call_as_step_checked_counting_sends,
+    call_as_step_checked_with_unsaved_usage,
+};
 pub use self::execute::{call_as_step, call_as_step_checked, call_as_step_with_fallbacks};
 pub(crate) use self::execute::{
     verified_step_consolidation_eligible_in_txn, verified_step_effector_eligible_in_txn,
@@ -63,6 +70,13 @@ pub(crate) use self::execute::{
 pub use self::peer_wait::{
     PeerResultWaitBinding, reconcile_peer_result_signals, register_peer_result_wait,
     send_peer_result_signal,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::request_hash_step::step_state_present_for_attempt;
+pub(crate) use self::request_hash_step::{
+    StepCallInputs, StepInputLabels, StepInputRange, StepRecord, bind_step_call_inputs,
+    bind_step_input_versions, request_hash_step_receipt_in_txn, request_hash_step_record_in_txn,
+    request_hash_submit_receipt, request_hash_submit_receipt_keeping_erased,
 };
 pub(crate) use self::retry::stated_reset_at;
 pub(crate) use self::trap::{
@@ -103,20 +117,18 @@ pub(crate) use self::response_pins::{
     prune_step_response_pins_in_txn, release_step_response_pins_in_txn,
     retire_erased_step_responses_in_rows, step_response_version_pinned_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::step_index::{step_index_claim_key_pin_for_test, step_index_key_pin_for_test};
 pub(crate) use self::step_state::{
-    dreamer_step_state_accepts_masked, erase_step_state_owner_in_txn, owner_gone_in_txn,
-    step_state_carriage, step_state_owners,
+    dreamer_step_state_accepts_masked, erase_step_state_owner_in_txn, follow_up_pending,
+    mark_follow_up_pending, owner_gone_in_txn, step_state_carriage, step_state_owners,
 };
 pub(crate) use self::submission_custody::{
     erase_submissions_in_txn, submission_carriage, submission_owners, submission_owners_in_txn,
 };
 
-// FIX [LIBTEST-QUARANTINE-LLM-STEP-STEP-ONLY-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod step_only_tests;
-// FIX [LIBTEST-QUARANTINE-LLM-STEP-TESTS]: the lib test target's type check fails here (22 errors: E0063 x18, E0061 x1, E0027 x1, E0308 x1, E0277 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
