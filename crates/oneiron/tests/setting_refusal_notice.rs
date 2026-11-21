@@ -53,6 +53,11 @@
 //! - two machines' acts on the pair read in one pass land both, and the notice names the pair the
 //!   pass leaves.
 //!
+//! Review round 2 of PR 3 (REVIEW-10343, P1=2):
+//! - a floor pin read as a value row since the last pass, whose row holds its value, is refused
+//!   against the count under the reading the pass records;
+//! - the booking pair's tap edits the floor pin read as a value row, not an absent value row.
+//!
 //! PR 4 of the row, the calendar pair (SETTING-PROJECTED-CALENDAR-SYSTEM-CLAIM = A: the refusing
 //! machine quarantines the act, reads the strictest value and stops retrying; both machines show
 //! "Your 'work' calendar has two complete sources (...). Pick one"; the pick is one owner act that
@@ -75,7 +80,7 @@
 
 use std::sync::Arc;
 
-use oneiron::authority::{HostSlipIssuer, MachineRole};
+use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::Memory;
 use oneiron::setting::{
@@ -1696,4 +1701,107 @@ fn a_clear_of_a_seat_in_service_signed_elsewhere_takes_it_out_of_service_here() 
         refused.to_string().contains("imports under this system"),
         "{refused}"
     );
+}
+
+impl Fixture {
+    /// The owner removes the other machine on this install.
+    fn removes_desktop(&self) {
+        self.vault
+            .set_machine_role(
+                &self.owner_proof,
+                ActSurface::ThisInstall,
+                self.desktop.machine(),
+                MachineRole::Removed,
+                None,
+            )
+            .expect("the owner removes the machine");
+    }
+
+    /// The other machine's pin of the floor at `floor`, signed before the owner removed it here
+    /// and landed after: no removal saw it, so it counts as a safe move and is read as a value
+    /// row at the vault, which narrows the shipped floor of 2 and releases nothing.
+    fn raced_floor_pin(&self, floor: u64) {
+        let pin = (MIN_PROPOSALS, None, SettingMode::Pin, SettingScope::Vault);
+        let frontier = setting_frontier_of(&self.vault, &[pin]).expect("frontier");
+        self.removes_desktop();
+        land_setting_act_from(
+            &self.vault,
+            &self.desktop,
+            self.owner,
+            &frontier,
+            pin,
+            Some(json!(floor)),
+            T0,
+        )
+        .expect("the act lands");
+    }
+}
+
+#[test]
+fn a_floor_pin_read_as_a_value_row_since_the_last_pass_is_refused_against_the_count() {
+    let fx = Fixture::rooted();
+    fx.raced_floor_pin(1);
+
+    // The pin's projection record is gone, as a row's is once a peer's act arrived and before the
+    // pass read it: every read takes the pin at full strength, a floor of 1, and the engine sets
+    // the count to 1 under it.
+    forget_setting_projection_records(&fx.vault).expect("the records forgotten");
+    set_setting_as_engine(
+        &fx.vault,
+        None,
+        SetSetting::vault_value(MAX_PROPOSALS, json!(1)),
+    )
+    .expect("the count of 1 over a floor of 1");
+
+    // The pass reads the pin again as a value row, the shipped floor of 2 stands above the count
+    // of 1, and its equal row is refused under the reading it records (REVIEW-10343 round 2 P1-1).
+    fx.vault.project_settings().expect("the pass");
+    assert!(
+        emergency_plan_admission(&fx.vault, 1)
+            .expect("the policy read")
+            .is_err(),
+        "the floor stands above the count"
+    );
+    let words = words_of(&fx.the_notice());
+    assert!(
+        words.contains("Emergency rescheduling is off: you set min 2 above max 1. Fix it?"),
+        "{words:?}"
+    );
+}
+
+#[test]
+fn the_booking_pairs_tap_edits_the_floor_pin_read_as_a_value_row() {
+    let fx = Fixture::rooted();
+    fx.raced_floor_pin(3);
+    assert_eq!(
+        fx.reads(MIN_PROPOSALS),
+        json!(3),
+        "the raced pin narrows the floor"
+    );
+
+    // A third machine lowers the count to 2 under it: this install's hook refuses the count, the
+    // pass lands it all the same, and the notice's tap edits the row that decides the floor, the
+    // pin, not an absent value row (REVIEW-10343 round 2 P1-2).
+    let tablet = enroll_machine_with_key(&fx.vault, &fx.owner_proof, 9).expect("enrolled");
+    let frontier = setting_frontier_of(&fx.vault, &[vault_row(MAX_PROPOSALS)]).expect("frontier");
+    land_setting_act_from(
+        &fx.vault,
+        &tablet,
+        fx.owner,
+        &frontier,
+        vault_row(MAX_PROPOSALS),
+        Some(json!(2)),
+        T0,
+    )
+    .expect("the act lands");
+
+    let notice = fx.the_notice();
+    let further = &notice["actions"][0]["args"]["further"][0];
+    assert_eq!(further["key"], json!(MIN_PROPOSALS), "{notice:#?}");
+    assert_eq!(
+        further["pin"],
+        json!(true),
+        "the tap edits the pin: {notice:#?}"
+    );
+    assert_eq!(further["value"], json!(3), "{notice:#?}");
 }
