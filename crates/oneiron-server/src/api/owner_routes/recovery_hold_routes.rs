@@ -221,14 +221,22 @@ async fn prepare(
     let reply = blocking(move || -> OwnerResult<PrepareReply> {
         let hold = parse_revision("hold", &body.hold)?;
         let credential_id = b64url("credential_id", &body.credential_id)?;
+        // A credential id names no key across owners: enrolment takes the
+        // one the browser posts, so another owner's live passkey may carry
+        // the same id. The acting owner's own is the one that signs (as the
+        // binding door picks it); the door revalidates the owner when it
+        // acts.
+        let actor = owner.actor_for_read(server.vault())?;
         let passkey = server
             .vault()
             .enrolled_owner_passkeys()?
             .into_iter()
-            .find(|passkey| passkey.live && passkey.credential_id == credential_id)
+            .find(|passkey| {
+                passkey.live && passkey.owner == actor && passkey.credential_id == credential_id
+            })
             .ok_or_else(|| {
                 OwnerError::Refused(
-                    "no live passkey of this vault has that credential id".to_owned(),
+                    "no live passkey of the acting owner has that credential id".to_owned(),
                 )
             })?;
         let authority = ActAuthority::Owner(owner, surface);
