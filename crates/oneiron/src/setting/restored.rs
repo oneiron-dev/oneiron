@@ -64,7 +64,7 @@ pub(super) fn row_reading_in_txn(
 /// # Errors
 ///
 /// An install row that does not decode (`CorruptedIndex`); the fold's errors; storage errors.
-pub(super) fn restored_unjoined_in_txn(
+pub(crate) fn restored_unjoined_in_txn(
     dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
 ) -> Result<bool> {

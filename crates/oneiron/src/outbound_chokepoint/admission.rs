@@ -319,6 +319,10 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             }
         });
     }
+    // An install born of a restore that has not joined sends nothing, new or
+    // resumed, whoever asks (row RESTORED-UNJOINED-STARTS-NO-WORK): refused
+    // before the writer, so no row is written and no transport is called.
+    vault.refuse_work_while_restored_unjoined()?;
     let mut wtxn = vault.store.env.write_txn()?;
     // The owner the proof names, revalidated under this writer: the Pending
     // row keeps it, and every later send of the row rechecks it (FIX 11591).

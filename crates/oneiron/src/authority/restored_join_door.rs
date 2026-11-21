@@ -252,6 +252,39 @@ impl Vault {
         Ok(())
     }
 
+    /// Whether this install was born of a restore of a vault a root roots and
+    /// has not joined it: its restored-from mark stands, and it has no machine
+    /// id or the vault's fold holds no machine under it (the one test,
+    /// [`crate::setting::restored_unjoined_in_txn`]). Such a copy starts no
+    /// work of its own: no agent turn, no scheduled job, no send (Setting
+    /// DESIGN pass 15e "Joined"; row RESTORED-UNJOINED-STARTS-NO-WORK). One
+    /// read-only snapshot through the cached fold, and an install no restore
+    /// made reads its mark alone. The snapshot after its join commits reads
+    /// it joined, so the work it held starts with no restart.
+    ///
+    /// # Errors
+    /// An install row that does not decode; the fold's errors; storage faults.
+    pub(crate) fn restored_unjoined(&self) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        crate::setting::restored_unjoined_in_txn(self, &txn)
+    }
+
+    /// [`Self::restored_unjoined`] as the refusal of new outward work, read
+    /// before anything is written.
+    ///
+    /// # Errors
+    /// [`crate::error::RecordError::AuthorityRefused`] naming
+    /// [`super::machine_answers::RESTORED_NOT_JOINED`] on such a copy;
+    /// [`Self::restored_unjoined`]'s errors.
+    pub(crate) fn refuse_work_while_restored_unjoined(&self) -> Result<()> {
+        if self.restored_unjoined()? {
+            return Err(authority_refused(
+                super::machine_answers::RESTORED_NOT_JOINED,
+            ));
+        }
+        Ok(())
+    }
+
     /// A kit restore's join of this install when a restore made it (Engine
     /// ANSWER KIT-RESTORE-JOINS-RESTORED-COPY = A): `signer`, the kit's root
     /// authority key R held behind `sign`, a live owner key of the roster,
