@@ -8,7 +8,9 @@
 
 use super::authorship::*;
 use super::{Memory, MemoryResult};
-use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, GateError};
@@ -170,6 +172,7 @@ impl Memory<'_> {
                 || old.scope != next.scope
                 || old.world != next.world
                 || old.rel != next.rel
+                || !same_scope_stamps(&old, &next)
             {
                 return Err(Error::InvalidClaimBody(
                     "conflict proposal must retain the disputed claim's subject and scope",
@@ -402,6 +405,21 @@ impl Memory<'_> {
             {
                 return Err(stale(packet.proposal).into());
             }
+            // The ruling replaces the disputed head for that head's audience,
+            // so its row is born at the head's facet and project, which its
+            // read is judged by, never at the vault default of the moment
+            // (review P1 of #10305). A packet raised before the question
+            // door compared the stamps is refused here.
+            let disputed = self
+                .vault
+                .get_claim_in_txn(txn, &packet.disputed)?
+                .ok_or(Error::EntityNotFound)?;
+            if !same_scope_stamps(&disputed, &ruling) {
+                return Err(Error::InvalidClaimBody(
+                    "conflict proposal must retain the disputed claim's subject and scope",
+                )
+                .into());
+            }
             // This is an explicit human ruling ABOUT the proposal, not a
             // relabeling of the proposal itself. Its separate row keeps both
             // original source stamps intact and records the ruling evidence.
@@ -434,7 +452,8 @@ impl Memory<'_> {
                 ruling.confidence,
             )
             .with_validity(ruling.valid_from, ruling.valid_to)
-            .with_stale(ruling.stale);
+            .with_stale(ruling.stale)
+            .with_scope_stamps(disputed.scope_facet, disputed.scope_project);
             // The ruling row is born at the default ClaimOf weight, never at
             // the proposal's own.
             if let Some(scope) = crate::claim::without_initial_weight(ruling.scope) {
@@ -533,6 +552,12 @@ impl Memory<'_> {
             })
         })
     }
+}
+
+/// Whether `a` and `b` carry the same facet and project stamps, the record
+/// position a read of each is judged by.
+fn same_scope_stamps(a: &ClaimBody, b: &ClaimBody) -> bool {
+    (a.scope_facet, a.scope_project) == (b.scope_facet, b.scope_project)
 }
 
 /// The root owner's in-person proof for one write of a conflict ruling,
