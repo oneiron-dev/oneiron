@@ -281,9 +281,6 @@ fn land_carried_invite_grants_in_txn(
         }
         let own = held.get(&page).map(Vec::as_slice).unwrap_or_default();
         let revoked = row.status == ConsentGrantStatus::Revoked;
-        if !revoked && own.iter().any(|(_, own_revoked)| *own_revoked) {
-            continue;
-        }
         land_carried_grant_row_in_txn(&vault.store, txn, &carried.grant_ref, &row)?;
         if revoked {
             for (grant_ref, own_revoked) in own {
