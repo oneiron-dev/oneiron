@@ -8,6 +8,7 @@ use super::{
     CalendarConnectorKillSwitchState, CalendarConnectorSeatConfig, CalendarConnectorSeatState,
     CalendarSyncOutcome,
 };
+use crate::batch::secret_scan::holds_handle_slot;
 use crate::calendar::ingest::feed_door;
 use crate::calendar::setting_keys::CONNECTOR_SEAT;
 use crate::consent::AuthenticatedOwner;
@@ -158,6 +159,29 @@ fn retire_seat_system_in_txn(
     Ok(())
 }
 
+/// Refuses a seat's or a feed's `system` that holds a custody handle, in its install's hook. The
+/// setting wall stores each span of a value that custody keeps as a secret as its record's
+/// handle, so such a system reaches the hook as a handle; an owner may also type one, bracketed
+/// or as the whole system bare (`sc12`), which a held passport's compare reads as its record's
+/// value too ([`holds_handle_slot`]). The calendar doors compare systems as written, so a seat
+/// or feed under a handle would miss the refusals an upload, a feed or a seat under its system
+/// in clear meets, and their complete sweeps would mark each other's passports absent
+/// (CAL-SEAT-SETUP-ADMITS-MASKED-SYSTEM).
+///
+/// # Errors
+///
+/// `InvalidConfig` for a system that holds a custody handle.
+pub(crate) fn refuse_system_holding_handle(system: &str) -> crate::Result<()> {
+    if holds_handle_slot(system) {
+        return Err(crate::Error::InvalidConfig(
+            "the system holds a custody handle: custody keeps a value in it as a secret, or it \
+             is spelled as a handle; use another system"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 /// The `calendar.connector_seat` hook, in the write that changes a seat's row. It keeps the
 /// rules the configure door had: a value row at a seat ref, naming that ref, installed once.
 /// A configured seat is immutable (a change or a clear is refused; a new configuration takes a
@@ -177,9 +201,9 @@ fn retire_seat_system_in_txn(
 /// # Errors
 ///
 /// `InvalidConfig` for a pin, a row with no seat ref, a value naming another seat ref, a change
-/// to an installed seat, a seat ref used before, the system of an installed ICS feed, a
-/// system with the pack calendar prefix, or the system of an installed seat of another
-/// calendar.
+/// to an installed seat, a seat ref used before, a system that holds a custody handle
+/// ([`refuse_system_holding_handle`]), the system of an installed ICS feed, a system with the
+/// pack calendar prefix, or the system of an installed seat of another calendar.
 pub(crate) fn seat_setup_changed_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -230,6 +254,7 @@ pub(crate) fn seat_setup_changed_in_txn(
                 "this seat_ref named an earlier seat; use a new seat_ref".into(),
             ));
         }
+        refuse_system_holding_handle(&setup.config.system)?;
         crate::mail_pack::refuse_calendar_source_system(&setup.config.system)?;
         if feed_door::registration_in_txn(vault, txn, &setup.config.system)?.is_some() {
             return Err(crate::Error::InvalidConfig(
