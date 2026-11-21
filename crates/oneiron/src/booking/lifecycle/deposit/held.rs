@@ -35,6 +35,23 @@ pub(in crate::booking::lifecycle) enum HeldDepositKind {
     /// (`part_refunded_by_hand`), only a hand refund pays the rest, and the
     /// owner's return asks nothing.
     RefundEndedUnpaid { part_refunded_by_hand: bool },
+    /// A refund is owed, refunds made by hand in the provider's dashboard
+    /// cover a part of it, and the provider holds no refund under the row's
+    /// keys: only a hand refund pays the rest, and the owner's return asks
+    /// nothing (FIX [BK-DEPOSIT-SHORT-HAND-REFUND-NO-OWNER-LINE]).
+    PartRefundedByHand,
+}
+
+impl HeldDepositKind {
+    /// Whether the refund held is owed to the visitor and nothing moves it
+    /// on by itself: the provider ended it unpaid, or refunds made by hand
+    /// cover only a part of it.
+    pub(in crate::booking::lifecycle) const fn refund_stuck(self) -> bool {
+        matches!(
+            self,
+            Self::RefundEndedUnpaid { .. } | Self::PartRefundedByHand
+        )
+    }
 }
 
 /// A booking's deposit as its owner's line reads it.
@@ -49,8 +66,8 @@ pub(in crate::booking::lifecycle) struct HeldDeposit {
     /// ([`note_unattributed_cancel_in_txn`]); `None` while none was.
     pub(in crate::booking::lifecycle) unattributed_cancel_at: Option<u64>,
     /// When a settle row found the refund it holds ended unpaid at the
-    /// provider ([`HeldDepositKind::RefundEndedUnpaid`]); `None` for any
-    /// other kind.
+    /// provider, or covered only in part by hand
+    /// ([`HeldDepositKind::refund_stuck`]); `None` for any other kind.
     pub(in crate::booking::lifecycle) refund_ended_unpaid_at: Option<u64>,
     /// The deposit carries an owner's BK-09 emergency cancel's mark: what it
     /// holds is that cancel's whole return, and a booking that stands live
@@ -64,20 +81,22 @@ pub(in crate::booking::lifecycle) struct HeldDeposit {
 /// capture was recorded holds no balance. A refund owed whose ask the
 /// provider ended unpaid holds that refund, until the owner asks again;
 /// from then until that refund settles or ends unpaid again, the return
-/// moves nothing, so a second Return deposit changes nothing.
+/// moves nothing, so a second Return deposit changes nothing. So does one
+/// that refunds made by hand cover only a part of.
 pub(super) fn held_of(row: &DepositRow) -> Option<(HeldDepositKind, u64)> {
     match row.state {
         DepositState::RefundDue { amount_minor } if row.refund_ended_unpaid.is_some() => row
             .refund_ended_unpaid
             .filter(|ended| ended.retry == row.refund_retry)
             .map(|ended| {
-                let part_refunded_by_hand = ended.part_refunded_by_hand;
-                (
+                let kind = if ended.no_keyed_refund {
+                    HeldDepositKind::PartRefundedByHand
+                } else {
                     HeldDepositKind::RefundEndedUnpaid {
-                        part_refunded_by_hand,
-                    },
-                    amount_minor,
-                )
+                        part_refunded_by_hand: ended.part_refunded_by_hand,
+                    }
+                };
+                (kind, amount_minor)
             }),
         DepositState::CaptureDue { amount_minor } => {
             Some((HeldDepositKind::CaptureDue, amount_minor))
@@ -131,7 +150,7 @@ pub(in crate::booking::lifecycle) fn held_deposit_in_txn(
         unattributed_cancel_at: row.unattributed_cancel.map(|noted| noted.noted_at),
         refund_ended_unpaid_at: row
             .refund_ended_unpaid
-            .filter(|_| matches!(kind, HeldDepositKind::RefundEndedUnpaid { .. }))
+            .filter(|_| kind.refund_stuck())
             .map(|ended| ended.noted_at),
         emergency_cancelled: row.emergency_return_sequence.is_some(),
     }))
@@ -155,6 +174,10 @@ pub(in crate::booking::lifecycle) enum EmergencyReturn {
     /// The refund owed back ended unpaid at the provider, and the owner has
     /// not asked for it again ([`HeldDepositKind::RefundEndedUnpaid`]).
     RefundEndedUnpaid,
+    /// Refunds made by hand in the provider's dashboard cover only a part of
+    /// the refund owed back, and the provider holds none under the row's keys
+    /// ([`HeldDepositKind::PartRefundedByHand`]).
+    PartRefundedByHand,
 }
 
 /// What an owner's BK-09 emergency cancel gave back of the deposit of the
@@ -186,6 +209,7 @@ pub(in crate::booking::lifecycle) fn emergency_return_in_txn(
             Some((HeldDepositKind::RefundEndedUnpaid { .. }, _)) => {
                 EmergencyReturn::RefundEndedUnpaid
             }
+            Some((HeldDepositKind::PartRefundedByHand, _)) => EmergencyReturn::PartRefundedByHand,
             _ => EmergencyReturn::RefundDue,
         }),
         DepositState::Refunded { .. } => Some(EmergencyReturn::Refunded),
@@ -219,8 +243,9 @@ pub(in crate::booking::lifecycle) fn unattributed_cancel_sequence_in_txn(
 
 /// The retry count and the time of the note that a settle row found the
 /// refund the deposit of the booking `event_ref` owes ended unpaid at the
-/// provider, read in `rtxn`; `None` for a booking this node holds no deposit
-/// for, or one with no such note (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]).
+/// provider, or covered only in part by hand, read in `rtxn`; `None` for a
+/// booking this node holds no deposit for, or one with no such note
+/// (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]).
 ///
 /// # Errors
 ///

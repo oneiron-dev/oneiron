@@ -254,7 +254,8 @@ fn owner_return(row: &mut DepositRow) -> OwnerReturn {
         }
         HeldDepositKind::RefundEndedUnpaid {
             part_refunded_by_hand: true,
-        } => OwnerReturn::Nothing,
+        }
+        | HeldDepositKind::PartRefundedByHand => OwnerReturn::Nothing,
         HeldDepositKind::RefundEndedUnpaid {
             part_refunded_by_hand: false,
         } => {

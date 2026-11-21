@@ -167,6 +167,14 @@ pub enum DepositProviderFailure {
         reason: String,
         part_refunded_by_hand: bool,
     },
+    /// Refunds made by hand in the provider's dashboard cover only a part of
+    /// the refund owed, and the provider holds no refund under the row's
+    /// keys: no refund is made here (a refund made by hand is never refunded
+    /// again here), so only a hand refund pays the rest. The deposit notes it
+    /// for the owner's card as it notes [`Self::RefundEndedUnpaid`], and the
+    /// row asks again later, as on [`Self::Permanent`]
+    /// (FIX [BK-DEPOSIT-SHORT-HAND-REFUND-NO-OWNER-LINE]).
+    PartRefundedByHand { reason: String },
 }
 
 impl DepositProviderFailure {
@@ -175,7 +183,8 @@ impl DepositProviderFailure {
             Self::Transient(reason)
             | Self::Pending(reason)
             | Self::Permanent(reason)
-            | Self::RefundEndedUnpaid { reason, .. } => reason,
+            | Self::RefundEndedUnpaid { reason, .. }
+            | Self::PartRefundedByHand { reason } => reason,
         }
     }
 }

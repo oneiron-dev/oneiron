@@ -15,7 +15,10 @@
 //! of what is owed, no refund is made here (a refund made by hand is never
 //! refunded again here): the note says so, the card asks for a hand refund
 //! of the rest, and Return deposit asks Stripe nothing (review round 1 of
-//! #10149).
+//! #10149). So it is where they cover a part and Stripe holds no refund under
+//! the row's keys at all, since the owner refunded by hand before the row
+//! asked: the note says no refund was asked
+//! (FIX [BK-DEPOSIT-SHORT-HAND-REFUND-NO-OWNER-LINE]).
 
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +43,13 @@ pub(super) struct RefundEndedUnpaid {
     /// is owed, as the provider's last answer said: only a hand refund pays
     /// the rest, and the owner's return asks the provider nothing.
     pub(super) part_refunded_by_hand: bool,
+    /// The provider holds no refund under the row's keys: refunds made by
+    /// hand covered a part of what is owed before the row asked, so it asked
+    /// for none, and none ended. Set only with `part_refunded_by_hand`; unset
+    /// on every note of a refund the provider ended
+    /// (FIX [BK-DEPOSIT-SHORT-HAND-REFUND-NO-OWNER-LINE]).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(super) no_keyed_refund: bool,
 }
 
 /// One move a settle row asked the provider for: the move, what was
@@ -58,15 +68,23 @@ pub(super) const fn is_zero(retry: &u32) -> bool {
     *retry == 0
 }
 
+/// Whether a note's flag is unset, so a note that sets none encodes as
+/// before. Serde's `skip_serializing_if` hands the field by reference.
+const fn is_false(flag: &bool) -> bool {
+    !*flag
+}
+
 /// Notes, in its own booking writer, that the provider's `failure` ended
-/// the refund `asked` with nothing paid back; any other failure or move
-/// notes nothing. Only while the deposit still owes exactly that refund,
+/// the refund `asked` with nothing paid back, or that refunds made by hand
+/// cover only a part of it while the provider holds none under the row's
+/// keys; any other failure or move notes nothing. Only while the deposit still owes exactly that refund,
 /// after the same earlier refunds and under the same retry count, so an
 /// answer that a later refund or a retry overtook notes nothing, nor does
 /// one on a refund the owner marked refunded outside the provider. A note
 /// already standing at that retry count stays dated by its first finding, so
 /// the hourly ask writes nothing, unless the answer changes whether refunds
-/// made by hand cover a part of it. A node that froze its booking rows for a
+/// made by hand cover a part of it, or whether a refund under the row's keys
+/// exists. A node that froze its booking rows for a
 /// home move notes nothing: the new home asks the same refund and notes it
 /// there.
 ///
@@ -80,17 +98,17 @@ pub(super) fn note_refund_ended_unpaid(
     failure: &DepositProviderFailure,
     now_utc: u64,
 ) -> Result<(), BookingError> {
-    let (
+    let DepositSettleMove::Refund { amount_minor } = asked.movement else {
+        return Ok(());
+    };
+    let (part_refunded_by_hand, no_keyed_refund) = match failure {
         DepositProviderFailure::RefundEndedUnpaid {
             part_refunded_by_hand,
             ..
-        },
-        DepositSettleMove::Refund { amount_minor },
-    ) = (failure, asked.movement)
-    else {
-        return Ok(());
+        } => (*part_refunded_by_hand, false),
+        DepositProviderFailure::PartRefundedByHand { .. } => (true, true),
+        _ => return Ok(()),
     };
-    let part_refunded_by_hand = *part_refunded_by_hand;
     booking_writer(vault, |wtxn| {
         if settle_standing_in_txn(vault, &*wtxn)? != SettleStanding::Settles {
             return Ok(());
@@ -108,7 +126,9 @@ pub(super) fn note_refund_ended_unpaid(
         let noted_at = match row.refund_ended_unpaid {
             _ if !owes_it => return Ok(()),
             Some(ended) if ended.retry == asked.retry => {
-                if ended.part_refunded_by_hand == part_refunded_by_hand {
+                if ended.part_refunded_by_hand == part_refunded_by_hand
+                    && ended.no_keyed_refund == no_keyed_refund
+                {
                     return Ok(());
                 }
                 ended.noted_at
@@ -119,6 +139,7 @@ pub(super) fn note_refund_ended_unpaid(
             retry: asked.retry,
             noted_at,
             part_refunded_by_hand,
+            no_keyed_refund,
         });
         row.updated_at = now_utc;
         put_deposit(vault, wtxn, key, &row)

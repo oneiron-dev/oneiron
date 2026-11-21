@@ -300,8 +300,8 @@ impl OwedRefund {
     /// deposit's refund once they have paid back at least what is owed, and
     /// the deposit records what was owed. While Stripe still holds a part of
     /// that, the answer is pending. Short of it the row adds nothing: the
-    /// refund stays owed, refused with what is missing, until the owner
-    /// refunds the rest by hand.
+    /// refund stays owed, on the owner's card with what is missing, until the
+    /// owner refunds the rest by hand.
     fn settled_amount(&self, owed: u64) -> Result<u64, DepositProviderFailure> {
         match self {
             Self::Keyed(refund) => refund.settled_amount(),
@@ -325,12 +325,14 @@ impl OwedRefund {
                          {owed} owed is refunded and {held} is pending"
                     )))
                 } else {
-                    Err(DepositProviderFailure::Permanent(format!(
-                        "the payment holds a refund made outside the deposit: {paid_or_held} of \
-                         the {owed} owed is refunded or pending, and the missing {} is not \
-                         refunded here; refund it by hand",
-                        owed.saturating_sub(paid_or_held)
-                    )))
+                    Err(DepositProviderFailure::PartRefundedByHand {
+                        reason: format!(
+                            "the payment holds a refund made outside the deposit: \
+                             {paid_or_held} of the {owed} owed is refunded or pending, and the \
+                             missing {} is not refunded here; refund it by hand",
+                            owed.saturating_sub(paid_or_held)
+                        ),
+                    })
                 }
             }
         }
