@@ -41,6 +41,25 @@ pub fn execute_emergency_plan(
     input: &crate::booking::BookingLifecycleConsumerInput,
     sink: &mut impl crate::outbound::OutboundExecutionSink,
 ) -> Result<EmergencyExecution, BookingError> {
+    let item = deliver_emergency_effects(vault, request, plan, calendars, input, sink)?;
+    let repeat_notices = super::uncertain_send::answer_delivered(vault, &item)?;
+    Ok(EmergencyExecution {
+        item,
+        repeat_notices,
+    })
+}
+
+/// The owner's run up to its answer ([`execute_emergency_plan`]): commits the checkpoint and
+/// delivers each effect it still owes, each delivery committed on the checkpoint before the
+/// next. The checkpoint as it then stands.
+pub(crate) fn deliver_emergency_effects(
+    vault: &Vault,
+    request: &EmergencyRescheduleRequest,
+    plan: &EmergencyPlan,
+    calendars: &[(EntityId, Vec<crate::calendar::query::CalendarSel>)],
+    input: &crate::booking::BookingLifecycleConsumerInput,
+    sink: &mut impl crate::outbound::OutboundExecutionSink,
+) -> Result<EmergencyItem, BookingError> {
     verify_logged_owner_instruction(vault, request)?;
     if plan.request != *request {
         return Err(refused("plan belongs to another owner instruction"));
@@ -90,11 +109,7 @@ pub fn execute_emergency_plan(
         )?;
         mark_delivered(vault, &mut item, false)?;
     }
-    let repeat_notices = super::uncertain_send::answer_delivered(vault, &item)?;
-    Ok(EmergencyExecution {
-        item,
-        repeat_notices,
-    })
+    Ok(item)
 }
 
 pub(super) enum EmergencyEffect {

@@ -6,8 +6,10 @@
 //! carrier runs it, the old home's writer once the new home acknowledged that
 //! move, and a read of whether a node-local booking row holds some bytes. A
 //! machine also holds none of the old home's outbound send ledger (FIX
-//! [BK-EMERGENCY-UNCERTAIN-SEND-NOT-SHOWN-TO-OWNER]), and a read of the note
-//! a held deposit's row carries (FIX [BK-REPLAY-NOTE-NOT-CARRIED-TO-NEW-HOME]).
+//! [BK-EMERGENCY-UNCERTAIN-SEND-NOT-SHOWN-TO-OWNER]), a read of the note a
+//! held deposit's row carries (FIX [BK-REPLAY-NOTE-NOT-CARRIED-TO-NEW-HOME]),
+//! and the owner's emergency run stopped before its answer (review round 1
+//! of #10166).
 
 use crate::side_table::{self, SideTableDbs, SideTableDecl};
 use crate::sync::home_handoff::{
@@ -163,4 +165,27 @@ pub fn booking_rows_hold(vault: &Vault, needle: &[u8]) -> Result<bool> {
 pub fn booking_inbox_row_version(vault: &Vault, item_id: &str) -> Result<Option<String>> {
     let txn = vault.store.env.read_txn()?;
     crate::booking::lifecycle::booking_inbox_row_version_in_txn(vault, &txn, item_id)
+}
+
+/// The owner's emergency run over `plan` on `vault` up to its answer
+/// (`booking::execute_emergency_plan`): each owed effect delivered through
+/// `sink` and committed on the checkpoint, and no repeat answered, as a run
+/// that stopped after its apology's checkpoint write and before its answer
+/// leaves the checkpoint (review round 1 of #10166). The checkpoint as it
+/// then stands.
+///
+/// # Errors
+///
+/// The run's own refusals and delivery failures.
+pub fn deliver_emergency_without_answer(
+    vault: &Vault,
+    request: &crate::booking::EmergencyRescheduleRequest,
+    plan: &crate::booking::EmergencyPlan,
+    calendars: &[(EntityId, Vec<crate::calendar::query::CalendarSel>)],
+    input: &crate::booking::BookingLifecycleConsumerInput,
+    sink: &mut impl crate::outbound::OutboundExecutionSink,
+) -> std::result::Result<crate::booking::EmergencyItem, crate::booking::BookingError> {
+    crate::booking::emergency_reschedule::deliver_emergency_effects(
+        vault, request, plan, calendars, input, sink,
+    )
 }

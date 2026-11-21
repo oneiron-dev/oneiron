@@ -23,7 +23,10 @@
 //! Red on the base d84b3b9eb84c: the old home's replay proof refuses on its
 //! frozen deposit row ("this node froze its booking rows for a home move"),
 //! so the seat's replayed write ends in that error, not in its precondition
-//! refusal, and the new home's row carries no note.
+//! refusal, and the new home's row carries no note. The claim's provenance
+//! ref is red on #10166's head 7cdc5c16ca1e: it is the seat write's passport
+//! ref, which names the seat's calendar ref (a CalDAV seat's collection
+//! href) and the booking's UID, and the claim syncs.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test booking_home_move_replay_note`.
 #![cfg(all(oneiron_test_support, feature = "sync"))]
@@ -278,6 +281,33 @@ fn carry_replay_evidence(from: &Vault, to: &Vault, event: EntityId, now: u64) ->
     carried
 }
 
+/// Asserts that `vault` holds one replay-evidence claim on `event` and that
+/// it names none of `withheld` (the seat's calendar ref, which for a CalDAV
+/// seat is its collection href, and the booking's UID): the claim syncs, and
+/// carries no ICS, href or payment data (BK-REPLAY-NOTE-DELIVERY = A; review
+/// round 1 of #10166).
+fn assert_replay_evidence_withholds(vault: &Vault, event: EntityId, withheld: &[&str]) {
+    let mut recorded = 0;
+    for claim in vault
+        .claims_for_subject(&event)
+        .expect("claims on the EVENT")
+    {
+        let body = vault.get_claim(&claim).expect("read claim").expect("claim");
+        if body.predicate != REPLAY_CANCEL_EVIDENCE {
+            continue;
+        }
+        recorded += 1;
+        let stored = format!("{body:?}");
+        for needle in withheld {
+            assert!(
+                !stored.contains(needle),
+                "the synced replay-evidence claim names {needle:?}: {stored}"
+            );
+        }
+    }
+    assert_eq!(recorded, 1, "the replay recorded one evidence claim");
+}
+
 #[test]
 fn a_replay_on_the_old_home_after_a_move_notes_the_unattributed_cancel_on_the_new_home() {
     let clock = ManualClock::new(NOW);
@@ -332,6 +362,11 @@ fn a_replay_on_the_old_home_after_a_move_notes_the_unattributed_cancel_on_the_ne
         booking_inbox_row_version(&old_home.vault, &row).expect("read the old home's row"),
         None,
         "the old home froze its deposit for the move and notes nothing on it"
+    );
+    assert_replay_evidence_withholds(
+        &old_home.vault,
+        event,
+        &[&format!("{HOST_SEAT_SYSTEM}-calendar"), &live.uid],
     );
 
     assert_eq!(
