@@ -3,18 +3,35 @@
 //! The `can` preview checks admission and key availability without prompting.
 #![cfg(oneiron_test_support)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use oneiron::attempt_queue::AttemptId;
+use oneiron::counterparty_contact::CounterpartyContactRecord;
+use oneiron::disclosure::{AttendeeIdentityChoice, UnknownAttendeeAsk};
+use oneiron::dreamer_runner::{AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerRunnerStore};
 use oneiron::error::{OWNER_PRESENCE_REQUIRED, RecordError};
+use oneiron::llm::manifest::{ModelManifest, TeacherProbeApproval};
+use oneiron::llm::registry::{
+    ModelBackendPin, ModelRegistryRow, ModelWireFormat, PricedModelBackend,
+};
+use oneiron::llm::{LlmCatalogCost, LlmCatalogEntry, ModelId, ModelLocality, ModelTierRef};
 use oneiron::memory::{
     CanAnswer, CanVerbGate, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
     MEMORY_CODE_INVALID_STATE, Memory,
 };
-use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+use oneiron::model_binding::{MODEL_ROLES, ModelBinding, ModelRole, ModelSlot};
+use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
+use oneiron::skill_optimize::offer_doors::{OfferPassRequest, trigger as trigger_offer_pass};
+use oneiron::skill_optimize::{
+    ComputeDestination, EvalSeat, OfferCandidate, OfferCost, OfferEvidence, OfferModelPin,
+    OfferOption, SeatWorkload, SwitchApplication, TrainingOfferDraft, training_offer_switch,
+};
+use oneiron::store::GateDecisionId;
 use oneiron::task_verb::{
     ConsultPayloadRef, TaskAskDefault, TaskAskHandle, TaskAskOption, TaskAskOptionId,
-    TaskAskQuestion, TaskAskSpec, TaskAskStatus, TaskAskTarget, TaskAskWord,
+    TaskAskQuestion, TaskAskSettlementReason, TaskAskSpec, TaskAskStatus, TaskAskTarget,
+    TaskAskWord,
 };
 use oneiron::test_doors::ask_answer_proof::mint_code_consent_ask;
 use oneiron::test_doors::ask_word_presence::tasks_answer_asked_as;
@@ -394,4 +411,406 @@ fn the_preview_of_an_approving_word_raises_no_prompt() {
             "the preview never prompts (enrolled: {enrolled})"
         );
     }
+}
+
+fn create_attendee_contact(vault: &Vault, owner: EntityId, address: &str) -> EntityId {
+    let contact = vault.new_entity_id().expect("The contact has a new id.");
+    let record = CounterpartyContactRecord::public(owner, address, 11)
+        .expect("The public contact record is valid.");
+    vault
+        .create_counterparty_contact(&contact, &record)
+        .expect("The contact is stored as active.");
+    contact
+}
+
+fn raise_attendee_ask(
+    memory: &Memory<'_>,
+    session_key: &str,
+    candidate: EntityId,
+) -> TaskAskHandle {
+    memory
+        .raise_unknown_attendee_ask(&UnknownAttendeeAsk {
+            session_key: session_key.to_owned(),
+            speaker_key: "speaker-1".to_owned(),
+            roster_revision: 1,
+            trigger_turn: None,
+            candidates: vec![candidate],
+            until: 4_102_444_800, // 2100-01-01 UTC; no test clock read.
+        })
+        .expect("The owner raises an ask while its candidate is active.")
+        .handle
+}
+
+fn attendee_word(vault: &Vault, choice: AttendeeIdentityChoice) -> TaskAskWord {
+    let mut word = TaskAskWord::new(put_turn(vault));
+    word.option = Some(
+        choice
+            .option()
+            .expect("The attendee choice is a valid option."),
+    );
+    word
+}
+
+fn assert_ask_waits_without_evidence(memory: &Memory<'_>, handle: TaskAskHandle) {
+    assert!(
+        memory
+            .tasks_ask_evidence(handle)
+            .expect("The owner can read the ask's live evidence.")
+            .is_empty(),
+        "the refused approval records no evidence"
+    );
+    let status = memory
+        .tasks_ask_status(handle)
+        .expect("The owner can read the ask's status.");
+    assert!(
+        matches!(&status, TaskAskStatus::Pending { .. }),
+        "the refused approval leaves the ask pending: {status:?}"
+    );
+}
+
+#[test]
+fn an_approving_attendee_word_for_a_contact_no_longer_live_raises_no_prompt() {
+    let fx = Fixture::open();
+    fx.device
+        .enrol_owner_key()
+        .expect("The owner key is enrolled for signing.");
+    let vault = &fx.device.vault;
+    let asker = vault.memory(fx.device.owner, EdgeActorClass::Human);
+    let contact_a = create_attendee_contact(vault, fx.device.owner, "speaker-a@contacts.example");
+    let contact_b = create_attendee_contact(vault, fx.device.owner, "speaker-b@contacts.example");
+    let ask_a = raise_attendee_ask(&asker, "attendee-session-a", contact_a);
+    let ask_b = raise_attendee_ask(&asker, "attendee-session-b", contact_b);
+    vault
+        .revoke_counterparty_contact(&contact_a, 12)
+        .expect("Contact A is revoked after its ask freezes it as a candidate.");
+
+    let memory = fx.owner_device();
+    let presence = scripted_gate(vault, []);
+    let approve_a = attendee_word(vault, AttendeeIdentityChoice::Contact(contact_a));
+    let refused = memory
+        .tasks_answer(&ask_a, &approve_a)
+        .expect_err("The revoked contact cannot be approved as the speaker.");
+    assert_eq!(
+        refused.message, "invalid claim body: disclosure.attendee_ask value invalid",
+        "the refusal is for the inactive candidate"
+    );
+    assert_eq!(
+        presence.prompts(),
+        0,
+        "the refused approval does not prompt"
+    );
+    assert_ask_waits_without_evidence(&memory, ask_a);
+
+    let unknown = attendee_word(vault, AttendeeIdentityChoice::Unknown);
+    memory
+        .tasks_answer(&ask_a, &unknown)
+        .expect("Unknown is admitted even with a revoked candidate.");
+    assert_eq!(presence.prompts(), 0, "unknown does not prompt");
+
+    let presence = scripted_gate(vault, [Ok(())]);
+    let approve_b = attendee_word(vault, AttendeeIdentityChoice::Contact(contact_b));
+    memory
+        .tasks_answer(&ask_b, &approve_b)
+        .expect("The owner confirms the active contact as the speaker.");
+    assert_eq!(presence.prompts(), 1, "the active contact prompts once");
+    assert_eq!(presence.reasons(), ["confirm who a speaker is"]);
+    let status = memory
+        .tasks_ask_status(ask_b)
+        .expect("The owner can read the confirmed ask's status.");
+    let TaskAskStatus::Settled(result) = &status else {
+        panic!("the active contact's first word must settle the ask: {status:?}");
+    };
+    assert_eq!(result.settlement.reason, TaskAskSettlementReason::FirstWord);
+}
+
+const INCUMBENT_MODEL: &str = "fixture/companion-incumbent@r1";
+const STOCK_MODEL: &str = "fixture/companion-stock@r1";
+const REPLACEMENT_MODEL: &str = "fixture/companion-replacement@r1";
+
+fn fixture_model(id: &str) -> ModelId {
+    ModelId::new(id).expect("The fixture model id has a provider, name and revision.")
+}
+
+fn register_fixture_model(vault: &Vault, id: &str) {
+    let model = fixture_model(id);
+    let price = LlmCatalogCost {
+        input_per_million: "0".into(),
+        output_per_million: "0".into(),
+        cache_read_per_million: None,
+        cache_write_per_million: None,
+        currency: None,
+    };
+    let backend = PricedModelBackend {
+        pin: ModelBackendPin {
+            model: model.clone(),
+            backend: "fixture".to_owned(),
+            serving_revision: "r1".to_owned(),
+            quantization: None,
+            context_window_tokens: 4096,
+        },
+        price: price.clone(),
+    };
+    vault
+        .put_model_registry_row(&ModelRegistryRow {
+            version: 1,
+            wire: ModelWireFormat::Local,
+            catalog: LlmCatalogEntry {
+                model,
+                display_name: id.to_owned(),
+                locality: ModelLocality::OnDevice,
+                context_window_tokens: 4096,
+                max_output_tokens: None,
+                cost: Some(price),
+                capabilities: Vec::new(),
+                metadata: BTreeMap::from([(
+                    "backends".to_owned(),
+                    serde_json::to_value([backend]).expect("The fixture backend serializes."),
+                )]),
+            },
+            scores: BTreeMap::new(),
+            fetched_at: BTreeMap::new(),
+            tokens_per_o200k: None,
+            answer_tokens_per_o200k: None,
+            stale_since: None,
+            source_rows: None,
+        })
+        .expect("The fixture model's serving revision is registered.");
+}
+
+fn companion_manifest(companion: &str) -> ModelManifest {
+    let mut roles = BTreeMap::new();
+    for role in MODEL_ROLES {
+        let (model, slot) = match role {
+            ModelRole::GenerativeReasoner => (fixture_model(companion), ModelSlot::Llm),
+            ModelRole::ExtractionEncoder => (
+                fixture_model("fixture/extraction-encoder@r1"),
+                ModelSlot::Oneironer,
+            ),
+            _ => (
+                fixture_model(&format!("fixture/{role:?}@r1")),
+                ModelSlot::Llm,
+            ),
+        };
+        roles.insert(
+            role,
+            ModelBinding {
+                model,
+                slot,
+                tier: ModelTierRef("fixture".to_owned()),
+                route_models: BTreeMap::new(),
+                disposition: None,
+                reads_audio: false,
+            },
+        );
+    }
+    ModelManifest {
+        version: 2,
+        roles,
+        routes: BTreeMap::from([
+            (ModelSlot::Llm, ModelLocality::OnDevice),
+            (ModelSlot::Embedder, ModelLocality::OnDevice),
+            (ModelSlot::Oneironer, ModelLocality::OnDevice),
+        ]),
+        verdict: None,
+        seat_policy: None,
+    }
+}
+
+fn companion_stock_offer(at: u64) -> TrainingOfferDraft {
+    let pin = |model: &str| OfferModelPin {
+        model: model.to_owned(),
+        revision: "r1".to_owned(),
+        content_hash: None,
+    };
+    let cost = OfferCost {
+        currency: "USD".to_owned(),
+        monthly_before: Some(40.0),
+        monthly_after: Some(25.0),
+        one_off: None,
+        payback_months: None,
+    };
+    TrainingOfferDraft {
+        seat: EvalSeat::Companion,
+        offer_skill: None,
+        incumbent: pin(INCUMBENT_MODEL),
+        candidate: OfferCandidate::Stock {
+            model: pin(STOCK_MODEL),
+            licence: "apache-2.0".to_owned(),
+            source: "fixture-registry".to_owned(),
+        },
+        baseline: OfferOption {
+            label: "today".to_owned(),
+            model: pin(INCUMBENT_MODEL),
+            cost: cost.clone(),
+            score: None,
+            evidence_refs: Vec::new(),
+        },
+        alternatives: Vec::new(),
+        workload: SeatWorkload {
+            from: at - 30 * 86_400,
+            until: at,
+            calls: None,
+            input_tokens: None,
+            output_tokens: None,
+            complete: false,
+            receipt_refs: vec!["fixture-workload:companion".to_owned()],
+        },
+        cost,
+        evidence: OfferEvidence {
+            cohort: None,
+            exposures: Vec::new(),
+            rubric_revision: None,
+            card: None,
+            paired_measurement: None,
+            losses: Vec::new(),
+            risk: None,
+        },
+        destination: ComputeDestination::OnDevice,
+        previous: None,
+        what_changed: None,
+        check_at: at + 7 * 86_400,
+        source_rows: Some(Vec::new()),
+    }
+}
+
+fn raise_companion_stock_offer(fx: &Fixture) -> (EntityId, TaskAskHandle) {
+    let vault = &fx.device.vault;
+    for model in [INCUMBENT_MODEL, STOCK_MODEL, REPLACEMENT_MODEL] {
+        register_fixture_model(vault, model);
+    }
+    let manifest = companion_manifest(INCUMBENT_MODEL);
+    let policy = vault
+        .teacher_probe_policy(None)
+        .expect("The vault has the shipped teacher probe policy.");
+    let approval = TeacherProbeApproval::for_scored_checkpoint(&manifest, &policy, 1_000_000)
+        .expect("The fixture's teacher pin has a passing probe receipt.");
+    vault
+        .set_model_manifest_with_teacher_approval(&manifest, &approval)
+        .expect("The manifest binds the incumbent to the Companion seat.");
+
+    let owner = fx.device.owner;
+    let decision = vault
+        .new_entity_id()
+        .expect("The owner authentication has a fresh decision id.");
+    let proof = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            GateDecisionId::from_bytes(*decision.as_bytes()),
+        )
+        .expect("The owner can authenticate to queue a Coach pass.");
+    let pass = trigger_offer_pass(vault, &proof, OfferPassRequest {})
+        .expect("The owner queues the Coach's training offer pass.");
+    let attempt =
+        AttemptId::from_bytes(pass.attempt.as_bytes()).expect("The pass names the queued attempt.");
+    let runner = DreamerRunnerStore::new(vault);
+    let queued_at = runner
+        .status(attempt)
+        .expect("The queued Coach attempt is readable.")
+        .expect("The trigger recorded a Coach attempt.")
+        .attempt
+        .created_at;
+    let admitted = runner
+        .admit_next_coach_host_job(AdmitDreamerAttempt {
+            lease_owner: "stock-switch-fixture".to_owned(),
+            now: queued_at,
+            budget_id: "stock-switch-fixture".to_owned(),
+            budget_total_units: 1 << 20,
+            reserve_units: 1,
+            started_milestone: None,
+        })
+        .expect("The Coach can take the queued host job.");
+    let DreamerAdmissionOutcome::Admitted(admitted) = admitted else {
+        panic!("the fresh vault's Coach offer job must be admitted: {admitted:?}");
+    };
+    assert_eq!(admitted.status.attempt.id, attempt);
+
+    let prior_tasks = vault
+        .entities_by_type(ENTITY_TYPE_TASK)
+        .expect("The TASK ids before the Coach issues the ask are readable.");
+    let offer = vault
+        .run_coach_training_offer(&admitted, companion_stock_offer(queued_at), queued_at)
+        .expect("The Coach records the stock offer and issues its owner's ask.");
+    let memory = fx.owner_device();
+    // Only the newly issued ask group answers peek; its member TASK is not a handle.
+    let mut asks = vault
+        .entities_by_type(ENTITY_TYPE_TASK)
+        .expect("The TASK ids after the Coach issues the ask are readable.")
+        .into_iter()
+        .filter(|id| !prior_tasks.contains(id))
+        .map(|group_ref| TaskAskHandle { group_ref })
+        .filter(|handle| memory.tasks_ask_peek(*handle).is_ok());
+    let handle = asks
+        .next()
+        .expect("The Coach issued an ask the owner can read.");
+    assert!(
+        asks.next().is_none(),
+        "only one new ask is visible to the owner"
+    );
+    (offer.id, handle)
+}
+
+#[test]
+fn an_approving_switch_word_for_a_seat_that_moved_raises_no_prompt() {
+    let fx = Fixture::open();
+    fx.device
+        .enrol_owner_key()
+        .expect("The owner key is enrolled for signing.");
+    let vault = &fx.device.vault;
+    let (offer, handle) = raise_companion_stock_offer(&fx);
+    vault
+        .set_model_manifest(&companion_manifest(REPLACEMENT_MODEL))
+        .expect("The Companion seat moves to another model after the ask was raised.");
+
+    let memory = fx.owner_device();
+    let presence = scripted_gate(vault, []);
+    let approve = option_word(put_turn(vault), "approve_switch");
+    let refused = memory
+        .tasks_answer(&handle, &approve)
+        .expect_err("The offer's old incumbent is no longer bound to the seat.");
+    assert_eq!(
+        refused.message,
+        "invalid config: the seat moved since the offer was made; answer a newer offer",
+        "the refusal names the moved seat"
+    );
+    assert_eq!(presence.prompts(), 0, "the refused switch does not prompt");
+    assert_ask_waits_without_evidence(&memory, handle);
+    assert!(
+        training_offer_switch(vault, &offer)
+            .expect("The refused offer's switch is readable.")
+            .is_none(),
+        "the refused approval records no switch"
+    );
+
+    let keep = option_word(put_turn(vault), "keep_baseline");
+    memory
+        .tasks_answer(&handle, &keep)
+        .expect("Keeping the baseline is admitted even after the seat moved.");
+    assert_eq!(
+        presence.prompts(),
+        0,
+        "keeping the baseline does not prompt"
+    );
+
+    let control = Fixture::open();
+    control
+        .device
+        .enrol_owner_key()
+        .expect("The control's owner key is enrolled for signing.");
+    let vault = &control.device.vault;
+    let (offer, handle) = raise_companion_stock_offer(&control);
+    let presence = scripted_gate(vault, [Ok(())]);
+    let approve = option_word(put_turn(vault), "approve_switch");
+    control
+        .owner_device()
+        .tasks_answer(&handle, &approve)
+        .expect("The owner confirms the switch from the still-bound incumbent.");
+    assert_eq!(presence.prompts(), 1, "the switch prompts once");
+    assert_eq!(presence.reasons(), ["approve an offered AI model change"]);
+    let switch = training_offer_switch(vault, &offer)
+        .expect("The confirmed offer's switch is readable.")
+        .expect("The confirmed offer recorded a stock switch.");
+    assert_eq!(switch.application, SwitchApplication::Bound);
+    assert_eq!(switch.binding.model, fixture_model(STOCK_MODEL));
 }
