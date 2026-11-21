@@ -501,6 +501,18 @@ pub(super) async fn durable_step(
                         DurableStepError::Llm(LlmError::Fatal(source))
                     }
                 }
+                // A fence's refusal of a correction stays terminal, and keeps
+                // the replies before it, answered and paid, on the error, as
+                // any spent correction does: the attempt's park charges them
+                // (REVIEW-10342 round 2).
+                DurableStepError::Llm(source @ LlmError::Fatal(FatalLlmError::SourceWithdrawn))
+                    if usage_spent(&failed_usage) =>
+                {
+                    DurableStepError::SpentLlm {
+                        source,
+                        usage: Box::new(failed_usage),
+                    }
+                }
                 // Nor does a failure policy route it, or a fence's refusal, to one.
                 terminal @ DurableStepError::Llm(LlmError::Fatal(
                     FatalLlmError::ResponseErased | FatalLlmError::SourceWithdrawn,
