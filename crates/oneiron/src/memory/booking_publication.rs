@@ -102,10 +102,18 @@ impl Memory<'_> {
                 if body.predicate != crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE {
                     return Err(crate::Error::InvalidClaimBody("not a booking publication"));
                 }
-                let old = self
-                    .vault
-                    .pending_claim_supersession_in_txn(txn, &id)?
-                    .ok_or(crate::Error::EntityNotFound)?;
+                let Some(old) = self.vault.pending_claim_supersession_in_txn(txn, &id)? else {
+                    // A proposed revision with no confirmation pending here is one a home
+                    // move carried without it (the carry lands the indexed head alone):
+                    // name the acts that publish the page on this booking home again.
+                    if body.approval == crate::claim::ClaimApprovalStatus::Proposed {
+                        *refusal.borrow_mut() = Some(revision_not_pending(claim_ref));
+                        return Err(crate::Error::InvalidClaimBody(
+                            "booking publication revision has no pending confirmation",
+                        ));
+                    }
+                    return Err(crate::Error::EntityNotFound);
+                };
                 stage_publication_write(self.vault, txn, id)?;
                 stage_publication_write(self.vault, txn, old)?;
                 let result = self.vault.approve_inbox_member_with_edit_in_txn(
@@ -159,6 +167,28 @@ const REASON_NO_BOOKING_HOME: &str = "booking.publication.no_booking_home";
 const REASON_NOT_BOOKING_HOME: &str = "booking.publication.not_booking_home";
 /// Reason code of a booking publication write while a home move carries the booking rows.
 const REASON_BOOKING_HOME_MOVING: &str = "booking.publication.booking_home_moving";
+/// Reason code of a confirm of a staged revision whose confirmation this node does not hold.
+const REASON_REVISION_NOT_PENDING: &str = "booking.publication.revision_not_pending";
+
+/// The owner's typed refusal of a confirm of a staged booking page revision `claim_ref` whose
+/// confirmation this booking home does not hold (review round 1 of #10332): a home move carries
+/// the page's indexed head and not the staged revision's pending confirmation or the
+/// publication it replaces, so the revision cannot be confirmed here. The page is dark, as it was
+/// on the former home while the revision waited; the owner retracts the revision and publishes
+/// the page again here.
+fn revision_not_pending(claim_ref: &str) -> MemoryError {
+    let mut error = MemoryError::new(
+        MEMORY_CODE_INVALID_STATE,
+        "this booking page revision was staged on a former booking home, and its confirmation \
+         stayed there: this device cannot confirm it",
+        &[],
+    );
+    error.suggestions = vec![format!(
+        "Retract the revision {claim_ref}, then publish the booking page again on this device."
+    )];
+    error.reason_codes = vec![REASON_REVISION_NOT_PENDING.to_owned()];
+    error
+}
 
 /// The owner's typed refusal of a booking publication write off the booking home: one reason
 /// code, and the act that lets the write run (B1: with no home, or another home, the owner can
