@@ -333,7 +333,7 @@ pub(in crate::sync) fn stamp_carried_birth_in_txn(
     stamp_birth_or_warn(vault, wtxn, id, &birth)
 }
 
-pub(in crate::sync) fn stamp_birth_or_warn(
+pub(crate) fn stamp_birth_or_warn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
