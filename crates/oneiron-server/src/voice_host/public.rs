@@ -311,6 +311,7 @@ async fn start_public_with(
         brain,
         media,
         live,
+        opening,
     } = match &phone {
         Some(phone) => super::boot::phone_call::prepare_phone_call(
             server,
@@ -368,6 +369,7 @@ async fn start_public_with(
         session_ref: session_ref.clone(),
         live,
         hold: Arc::clone(&hold),
+        opening,
     };
     let stop = shutdown.clone();
     let task = {
