@@ -13,6 +13,9 @@
 //! leaves a fact that waits for good on it waiting, and an erase of that
 //! input seals it; and a row whose delete is published but not purged keeps
 //! what waits on it waiting until the purge seals it.
+//!
+//! #10139 review: a blob's release of a row is no erase, so what waits on
+//! that row keeps waiting.
 
 use oneiron::deletion::TombstoneReason;
 use oneiron::housekeeping::HousekeepingBudget;
@@ -20,7 +23,9 @@ use oneiron::memory::SafeDeleteReason;
 use oneiron::provenance::made_by::MadeByInputRole;
 use oneiron::test_doors::claim_refinement_erase::apply_replayed_tombstone;
 use oneiron::test_doors::coach::fence_row_for_hard_delete;
-use oneiron::test_doors::read_lineage_floor::{binding_lands, floor_waits, forget_floor_state};
+use oneiron::test_doors::read_lineage_floor::{
+    binding_lands, floor_waits, forget_floor_state, release_as_unheld_asset,
+};
 use oneiron::test_doors::source_audience_binding::{bound_row_read_by, reads};
 use oneiron::{EdgeActorClass, EdgeKind, EntityId};
 
@@ -583,5 +588,41 @@ fn a_row_raised_while_its_sources_delete_is_unpurged_is_sealed_by_the_purge() {
     assert!(
         !reads(&mailbox.vault, derived, &[mailbox.owner]).expect("the owner's read"),
         "the owner reads a row the purge of its source sealed",
+    );
+}
+
+/// #10139 review P1: `fact` waits on `middle`, a row whose own source is not
+/// here yet. The blob lifecycle releases `middle` as an ASSET whose last
+/// artifact let go of its bytes: a release fence, then the deindex door
+/// every physical tear runs. A release is no erase (its fence lifts when the
+/// same bytes come back), so `fact` keeps waiting: the owner reads it, no
+/// one else does, before and after a housekeeping pass, and doctor counts
+/// nothing. Before the fix the deindex door sealed `fact` as if `middle` had
+/// been erased, and the owner lost it.
+#[test]
+fn a_row_waiting_on_a_released_asset_keeps_waiting() {
+    let mailbox = owners_mailbox();
+    let middle = claim_born_from(&mailbox, &[EntityId::now()], "learnt from a row on its way");
+    let fact = claim_born_from(&mailbox, &[middle], "learnt from middle");
+    release_as_unheld_asset(&mailbox.vault, middle).expect("the blob lifecycle releases middle");
+    for when in [
+        "once middle was released",
+        "after a pass once middle was released",
+    ] {
+        assert_no_stranger_or_reader_reads(&mailbox, fact, when);
+        assert!(
+            reads(&mailbox.vault, fact, &[mailbox.owner]).expect("the owner's read"),
+            "the owner loses a fact waiting on a released row {when}: the release sealed it",
+        );
+        assert!(
+            floor_waits(&mailbox.vault, fact).expect("the floor's state"),
+            "a fact waiting on a released row no longer waits {when}",
+        );
+        housekeeping_pass(&mailbox);
+    }
+    assert_eq!(
+        hidden_source_unknown(&mailbox),
+        0,
+        "doctor counts a fact waiting on a released row as sealed",
     );
 }

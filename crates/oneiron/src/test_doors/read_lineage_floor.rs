@@ -110,6 +110,22 @@ pub fn binding_lands(vault: &Vault, row: EntityId) -> Result<()> {
     Ok(())
 }
 
+/// Releases `row` as the blob lifecycle releases an ASSET whose last
+/// artifact let go of its bytes (`release_unheld_bytes`): its release fence,
+/// then the deindex door every physical tear runs (#10139 review P1).
+///
+/// # Errors
+///
+/// Storage failures and the deindex door's refusals.
+pub fn release_as_unheld_asset(vault: &Vault, row: EntityId) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    crate::blob_artifact::fence_released_asset(&vault.store, &mut txn, &row)?;
+    let write = crate::secret_custody::CustodyWrite::of(vault);
+    crate::batch::deindex_entity(&write, &mut txn, &row)?;
+    txn.commit()?;
+    Ok(())
+}
+
 /// Lands `made_by` as the stated birth of the live row `id` the way sync
 /// lands a replicated row's birth (`stamp_birth_or_warn`): the birth, then
 /// the row's floor (#9289 Opus review 3 P2-4).

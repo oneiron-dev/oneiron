@@ -281,7 +281,7 @@ fn presence_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<Presenc
 /// a tombstone or a pending local delete stands (`ports::removed_in_txn`).
 /// A cleanup archive is no erase: it tears nothing, and a restore brings the
 /// row back whole (#10117 Opus review P1). Nor is a blob's release fence,
-/// which lifts when the same bytes come back.
+/// which lifts when the same bytes come back, with or without sync.
 pub(super) fn erased_in(
     store: &crate::store::Store,
     txn: &RoTxn<'_>,
@@ -290,7 +290,6 @@ pub(super) fn erased_in(
     if !crate::ports::removed_in_txn(store, txn, row)? {
         return Ok(false);
     }
-    #[cfg(feature = "sync")]
     if crate::blob_artifact::release_fenced_only(store, txn, row)? {
         return Ok(false);
     }
@@ -336,7 +335,11 @@ fn delete_unpurged_in(
 /// it (FLOOR-OLD-FACT-ERASED-INPUT = A): a later erase of that input through
 /// an erase door seals it, as the ruling says. It reads the marks, never the
 /// lineage the erase tears: each delete door runs it before the record's
-/// body and edges go ([`super::seal_floors_awaiting_in_txn`]).
+/// body and edges go ([`super::seal_floors_awaiting_in_txn`]). A blob's
+/// release, which fences an ASSET and tears it through the same deindex
+/// door, is no erase ([`erased_in`]): it seals nothing and takes no mark,
+/// so what waits on the ASSET keeps waiting until its bytes come back
+/// (#10139 review P1).
 ///
 /// # Errors
 ///
@@ -346,6 +349,9 @@ pub(super) fn seal_rows_awaiting_in_txn(
     txn: &mut RwTxn<'_>,
     erased: &EntityId,
 ) -> Result<()> {
+    if crate::blob_artifact::release_fenced_only(store, txn, erased)? {
+        return Ok(());
+    }
     PENDING.delete(store, txn, erased)?;
     take_marks_of_in_txn(store, txn, erased, &BTreeSet::new())?;
     let sealed = super::floor::sealed_source();

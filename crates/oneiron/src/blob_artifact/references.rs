@@ -333,7 +333,7 @@ fn artifact_is_live(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<boo
 /// Fences an ASSET whose last artifact went: replicated ingest refuses its carrier, and the
 /// export door deletes that carrier from the live window without pinning it history-free. A
 /// fence already there stays as it is: an explicit delete's fence never becomes liftable.
-pub(super) fn fence_released_asset(
+pub(crate) fn fence_released_asset(
     store: &Store,
     txn: &mut RwTxn<'_>,
     asset: &EntityId,
