@@ -77,4 +77,16 @@ impl AttemptQueue<'_> {
     ) -> Result<bool> {
         UnjoinedHold::default().holds(self.store, txn, kind)
     }
+
+    /// [`Self::kind_held_while_unjoined_in_txn`] in its own snapshot, for a host that arms a
+    /// deadline on a ready row: a held row's past deadline would start a pass that admits
+    /// nothing, at once and again, so the host arms none for it. The join wakes the
+    /// proactivity watchers, and their next read arms it.
+    ///
+    /// # Errors
+    /// [`crate::setting::restored::restored_unjoined_in_txn`]'s errors.
+    pub fn kind_held_while_unjoined(&self, kind: &str) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        self.kind_held_while_unjoined_in_txn(&txn, kind)
+    }
 }

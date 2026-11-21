@@ -90,6 +90,23 @@ pub(crate) fn restored_unjoined_in_txn(
     )
 }
 
+/// [`restored_unjoined_in_txn`] for a door that only wakes the held work after its write: a fold
+/// that misses history it must hold (`AuthorityHistoryRequired`) reads as possibly not joined, so
+/// an import that may close the gap is never refused here; its own fold checks judge it.
+///
+/// # Errors
+///
+/// [`restored_unjoined_in_txn`]'s other errors.
+pub(crate) fn possibly_restored_unjoined_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+) -> Result<bool> {
+    match restored_unjoined_in_txn(dbs, txn) {
+        Err(error) if crate::authority::is_history_incomplete(&error) => Ok(true),
+        read => read,
+    }
+}
+
 /// Whether a restore that leaves the image's machine identity behind leaves this `SETTING` or
 /// `SETTING_CONTENT` row (`full_key`, with its table's prefix) behind too: a value, pin or carried
 /// row of a `sync: install` key, a choice about the install that set it (DESIGN 1.6, "Restore").
