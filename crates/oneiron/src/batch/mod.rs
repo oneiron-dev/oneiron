@@ -61,6 +61,7 @@ pub(crate) use self::vad_postcommit::queue_committed_rows;
 pub(crate) use self::vad_postcommit::queue_committed_rows_in_txn;
 pub(crate) use self::vad_postcommit::queue_consent_answer;
 pub(crate) use self::vad_postcommit::queue_decision_answer;
+pub(crate) use self::vad_postcommit::queue_dreamer_vad_approvals;
 pub(crate) use self::vad_postcommit::queue_notification_change;
 pub(crate) use self::vad_postcommit::queue_pad_tombstone_window;
 pub(crate) use self::vad_postcommit::queue_proactivity_change;

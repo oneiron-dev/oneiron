@@ -40,8 +40,10 @@ impl Vault {
     /// supersession chain and this one cannot honour the contract.
     ///
     /// Approving a bound pending Dreamer consent also consolidates VAD after
-    /// commit. A consolidation error is returned with Approved retained. Retry
-    /// [`Vault::consolidate_claim_vad`] for that id to finish this postcommit work.
+    /// commit, once, through the vault's write door: on the calling thread
+    /// when no payment worker is attached, where a consolidation error is
+    /// returned with Approved retained (retry [`Vault::consolidate_claim_vad`]
+    /// for that id to finish this postcommit work), or in the payment worker.
     pub fn put_claim(
         &self,
         id: &EntityId,
@@ -49,7 +51,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        let approved = self.with_write_txn(|wtxn| {
+        self.with_write_txn(|wtxn| {
             let pending = self.pending_dreamer_vad_approval_in_txn(&*wtxn, id, body.approval)?;
             self.put_claim_in_txn(wtxn, id, body, occurred, learned_at)?;
             if body.predicate == crate::calendar::claims::PREDICATE_CALENDAR_PASSPORT {
@@ -60,25 +62,19 @@ impl Vault {
                     self.store.clock.now_recorded_at(),
                 )?;
             }
-            let approved =
-                self.resolved_dreamer_vad_approvals_in_txn(&*wtxn, pending.then_some(*id))?;
-            // The approval's commit carries its consolidation debt (FIX 9598).
-            if !approved.is_empty() {
-                let now = self.store.clock.now_recorded_at();
-                crate::store::owe_claim_vad_in_txn(&self.store, wtxn, &approved, now)?;
+            // The door resolves the approval, owes its consolidation debt in
+            // this commit (FIX 9598) and pays it once after the commit, as it
+            // does for a batch's approvals (review 10144 round 1: a second
+            // consolidation here doubled the edge change events).
+            if pending {
+                crate::batch::queue_dreamer_vad_approvals(self, wtxn, vec![*id]);
             }
             crate::batch::queue_proactivity_change(self, wtxn);
             // The put row, for the live mirror (FIX CLAIM-RAW-TXN-DOORS-DROP-LIVE-WINDOW-ROWS).
             #[cfg(feature = "sync")]
             crate::batch::queue_committed_rows(self, wtxn, std::collections::BTreeSet::from([*id]));
-            Ok(approved)
-        })?;
-        // Canonical consolidation opens its own writer only after durable
-        // approval. Errors remain errors, without rolling back Approved.
-        for claim_id in approved {
-            self.consolidate_claim_vad_now(&claim_id, self.store.clock.now_recorded_at())?;
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Transaction-composable [`Vault::put_claim`]. The caller owns commit;
