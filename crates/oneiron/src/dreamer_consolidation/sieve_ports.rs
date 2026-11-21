@@ -469,6 +469,17 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
             .authorize_model_role(DREAMER_EXTRACTION_ROLE, request, &child.call.inference)?
             .into_request();
         super::roles::bind_reasoning(vault, child.call.backend, &mut request)?;
+        if answer_schema {
+            // The nightly check's capture: one row after the request is final, before the
+            // call. Authored relation replies above keep none: they call no model.
+            super::answer_schema::capture::capture_turn_call(
+                vault,
+                child.step.attempt_id,
+                &request,
+                slice.sources,
+                child.step.now_ms / 1_000,
+            )?;
+        }
         requests.push((request.canonical_hash()?, request));
         authored.push(None);
     }

@@ -1,6 +1,21 @@
 //! The answer-schema switch (HOUSE-SCHEMA-SWITCH): the owner's setting
 //! `dreamer.extraction.answer_schema`, the engine's hold while it is paused, and the
 //! content-free events the morning report carries, one per suspension or re-arm.
+//!
+//! The nightly check (HOUSE-SCHEMA-CHECK) lives in the child modules: the capture of TURN
+//! calls ([`capture`]), the over-budget latch ([`overrun`]), the draw ([`draw`]), the shadow
+//! pairs ([`pair`]), the suspension rules ([`rule`]), the receipts ([`receipt`]), the run
+//! ([`check`]), its house calls ([`send`]) and their spend ([`spend`]).
+
+pub(crate) mod capture;
+pub mod check;
+pub(crate) mod draw;
+pub(crate) mod overrun;
+pub(crate) mod pair;
+pub(crate) mod receipt;
+pub(crate) mod rule;
+pub(crate) mod send;
+pub(crate) mod spend;
 
 use std::collections::BTreeMap;
 

@@ -60,7 +60,7 @@ const MAX_TOKENS_PARAM: &str = "max_tokens";
 /// rung is sent none. It is not `response_format`, so a provider set to
 /// `response_format = "none"` (the house deploy) still sends it, and no rung
 /// needs `JsonResponse` for it.
-const ANSWER_SCHEMA_PARAM: &str = "answer_schema";
+pub(in crate::dreamer_consolidation) const ANSWER_SCHEMA_PARAM: &str = "answer_schema";
 
 /// The TURN extraction answer's JSON Schema, the shipped
 /// `extraction_answer_schema.json`, read as [`ExtractionPrompt::shipped`]

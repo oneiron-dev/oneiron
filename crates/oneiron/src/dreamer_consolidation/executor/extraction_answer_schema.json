@@ -12,6 +12,7 @@
           },
           "predicate": {
             "type": "string",
+            "maxLength": 128,
             "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
           },
           "value": {
