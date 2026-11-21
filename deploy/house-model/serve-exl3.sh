@@ -43,10 +43,17 @@ for part in FUSE_PROJECTIONS FP16_PREFILL PROMPT_LOOKUP DRAFT_WINDOW_TABLES; do
 done
 # A rebuilt exllamav3 extension (README, "GEMM FP16 accumulators"): the
 # directory build-exl3-ext.sh wrote; unset, the extension installed with
-# exllamav3. It goes first on PYTHONPATH, and the server checks that the
-# extension it loaded came from it.
+# exllamav3. It is resolved here, before anything imports it, and the
+# resolved directory goes first on PYTHONPATH and to the server, which
+# checks that the extension it loaded came from it and digests that file:
+# a link switched after the launch changes neither.
 : "${ONEIRON_HOUSE_EXL3_EXT_DIR:=}"
 if [ -n "$ONEIRON_HOUSE_EXL3_EXT_DIR" ]; then
+  if ! resolved=$(CDPATH= cd -P -- "$ONEIRON_HOUSE_EXL3_EXT_DIR" 2>/dev/null && pwd -P); then
+    echo "serve-exl3.sh: $ONEIRON_HOUSE_EXL3_EXT_DIR is no directory (build-exl3-ext.sh writes one)" >&2
+    exit 2
+  fi
+  ONEIRON_HOUSE_EXL3_EXT_DIR=$resolved
   if ! compgen -G "$ONEIRON_HOUSE_EXL3_EXT_DIR/exllamav3_ext*.so" >/dev/null; then
     echo "serve-exl3.sh: $ONEIRON_HOUSE_EXL3_EXT_DIR holds no exllamav3_ext module (build-exl3-ext.sh writes one)" >&2
     exit 2

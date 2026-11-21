@@ -86,7 +86,10 @@ admitted Job every round, as before R4. A Job the Generator cannot cancel
 keeps its call's pages, place and reservation charged until it ends.
 """
 import argparse
+import base64
 import collections
+import hashlib
+import importlib.metadata
 import json
 import os
 import queue
@@ -608,27 +611,69 @@ def set_projection_fusion(on):
     return replaced
 
 
-# The record build-exl3-ext.sh writes beside every module it builds: it marks a rebuilt extension.
-REBUILT_EXTENSION_RECORD = "exllamav3_ext.build.json"
+def file_sha256(path):
+    """The SHA-256 of the file at `path`, read in 16 MiB blocks (an extension module is about 230 MiB)."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 24), b""):
+            digest.update(block)
+    return digest
+
+
+def jit_extension_dir():
+    """The directory exllamav3's JIT build of exllamav3_ext loads from (exllamav3/ext.py builds it through
+    torch.utils.cpp_extension.load when no precompiled module is importable, as with the PyPI wheel), or None
+    when torch cannot name it."""
+    try:
+        from torch.utils import cpp_extension
+        return Path(cpp_extension._get_build_directory("exllamav3_ext", False)).resolve()
+    except Exception:
+        return None
+
+
+def installed_extension(loaded):
+    """Whether `loaded`, the file exllamav3_ext came from, is the installed extension: the module an installed
+    distribution's RECORD lists, with the SHA-256 the RECORD gives (a binary exllamav3 wheel), or exllamav3's
+    own JIT build (`jit_extension_dir`). A copy or hard link elsewhere is neither, and an installed file that
+    was overwritten fails its RECORD digest."""
+    path = Path(loaded).resolve()
+    for dist in importlib.metadata.distributions():
+        for entry in dist.files or ():
+            if entry.name != path.name or Path(dist.locate_file(entry)).resolve() != path:
+                continue
+            if entry.hash is None or entry.hash.mode != "sha256":
+                return False
+            recorded = base64.urlsafe_b64encode(file_sha256(path).digest()).rstrip(b"=").decode()
+            return recorded == entry.hash.value
+    return path.parent == jit_extension_dir()
 
 
 def rebuilt_extension_digest(ext_dir):
     """The SHA-256 of the exllamav3_ext this process loaded from `ext_dir` (`--exllamav3-ext-dir`: a rebuilt
-    extension, build-exl3-ext.sh, that the launcher put first on PYTHONPATH), or None with no such directory. A
-    module loaded from anywhere else refuses the launch, so the identity never names a build that does not run.
-    With no directory, a module beside build-exl3-ext.sh's record (a rebuilt one, reached through PYTHONPATH or
-    a link) refuses it too, so a rebuilt extension never runs under the installed one's identity."""
+    extension, build-exl3-ext.sh, that the launcher put first on PYTHONPATH), or None with no such directory.
+
+    `ext_dir` must be a resolved absolute path and the module must have been loaded from it by that literal path,
+    with no link on the way, so the import and the digest read one directory; build-exl3-ext.sh never rewrites a
+    directory it published. A module loaded from anywhere else refuses the launch, so the identity never names a
+    build that does not run. With no directory, a module that is not the installed extension (`installed_extension`)
+    refuses it too, so a rebuilt extension never runs under the installed one's identity."""
     loaded = getattr(exllamav3_ext, "__file__", None)
     if not ext_dir:
-        if loaded and (Path(loaded).resolve().parent / REBUILT_EXTENSION_RECORD).exists():
-            raise RuntimeError(f"exllamav3_ext was loaded from {loaded}, a rebuilt extension (build-exl3-ext.sh "
-                               f"wrote {REBUILT_EXTENSION_RECORD} beside it), with no --exllamav3-ext-dir: name "
-                               "its directory in ONEIRON_HOUSE_EXL3_EXT_DIR, or take it off PYTHONPATH")
+        if loaded and not installed_extension(loaded):
+            raise RuntimeError(f"exllamav3_ext was loaded from {loaded}, which is not the installed extension (no "
+                               "installed distribution's RECORD lists it with that SHA-256, and it is not "
+                               "exllamav3's JIT build); a rebuilt extension runs only with --exllamav3-ext-dir "
+                               "(ONEIRON_HOUSE_EXL3_EXT_DIR)")
         return None
-    if not loaded or Path(loaded).resolve().parent != Path(ext_dir).resolve():
+    directory = Path(ext_dir)
+    if not directory.is_absolute() or Path(os.path.realpath(directory)) != directory:
+        raise RuntimeError(f"--exllamav3-ext-dir {ext_dir}: name the directory by its resolved absolute path "
+                           f"({os.path.realpath(directory)}; serve-exl3.sh resolves it), so the import and the "
+                           "digest read one directory")
+    if not loaded or Path(loaded).parent != directory or Path(os.path.realpath(loaded)) != Path(loaded):
         raise RuntimeError(f"--exllamav3-ext-dir {ext_dir}: exllamav3_ext was loaded from {loaded or 'nowhere'}; "
-                           "put the directory first on PYTHONPATH (serve-exl3.sh does)")
-    return cache_usage.sha256_hex(Path(loaded).read_bytes())
+                           "put the directory itself, not a link to it, first on PYTHONPATH (serve-exl3.sh does)")
+    return file_sha256(loaded).hexdigest()
 
 
 SPEED_PART_HELP = {

@@ -480,16 +480,20 @@ overwriting that file can kill the worker, so each build writes a new
 directory (under a temporary name beside it, renamed whole when complete)
 and the next restart points `ONEIRON_HOUSE_EXL3_EXT_DIR` at it.
 
-`ONEIRON_HOUSE_EXL3_EXT_DIR=<dir>` puts the module first on PYTHONPATH and
-passes `--exllamav3-ext-dir`. The server refuses to start when the
-extension it loaded is not that directory's, and names the module's SHA-256
-in its server settings (`exllamav3_ext`) and in its session snapshots'
-compatibility, so its answers and KV are never taken for the installed
-build's. Unset, the server runs the installed extension and identifies as
-before, and it refuses a module with `exllamav3_ext.build.json` beside it (a
-rebuilt one reached through PYTHONPATH), so a rebuilt extension never runs
-under the installed one's identity. The managed worker runs the installed
-extension.
+`ONEIRON_HOUSE_EXL3_EXT_DIR=<dir>` resolves `<dir>` before anything imports
+it, puts the resolved directory first on PYTHONPATH and passes it as
+`--exllamav3-ext-dir`. The server refuses to start when that path is not
+resolved or the extension it loaded is not that directory's own file (no
+link on the way), and names the module's SHA-256 in its server settings
+(`exllamav3_ext`) and in its session snapshots' compatibility, so its answers
+and KV are never taken for the installed build's. Unset, the server runs the
+installed extension and identifies as before. It then refuses any other
+module: the installed extension is the file an installed distribution's
+RECORD lists, with the SHA-256 it gives (a binary exllamav3 wheel), or
+exllamav3's own JIT build in torch's extension directory (the PyPI wheel),
+so a rebuilt module, a copy or a hard link reached through PYTHONPATH never
+runs under the installed one's identity. The managed worker runs the
+installed extension.
 
 Measured on the Dreamer's nightly call (GPU run 4, mel's RTX 4090 at 400 W,
 on the ring, pool and prompt lookup; opus-skill's own build of the same

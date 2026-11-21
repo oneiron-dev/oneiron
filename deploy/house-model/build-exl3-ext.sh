@@ -17,9 +17,10 @@
 #
 # A published directory is never written again: a running worker maps its
 # module, and overwriting that file can kill the worker (SIGBUS). Each build
-# goes into a new directory, written beside it under a temporary name and
-# renamed to <out dir> whole once complete; point ONEIRON_HOUSE_EXL3_EXT_DIR
-# at it on the next restart.
+# goes into a new directory, written beside it under a temporary name of its
+# own (mktemp) and renamed to <out dir> whole once complete; point
+# ONEIRON_HOUSE_EXL3_EXT_DIR at it on the next restart. On a failure the
+# script removes only what it created.
 #
 # Needs git, a CUDA 12.8 toolkit at CUDA_HOME (the CUDA torch 2.11.0+cu128 is
 # built with) and, where the system compiler is newer than nvcc 12.8 takes, a
@@ -104,10 +105,13 @@ if [ "${#built[@]}" -ne 1 ] || [ ! -f "${built[0]}" ]; then
   exit 1
 fi
 # Written beside <out dir> (one file system, so the rename below is one
-# step) and published whole.
+# step) and published whole. mktemp creates a directory no one else holds
+# and prints its name only once it exists (nothing when it fails), so the
+# EXIT trap removes only this run's own directory; it then gets the mode a
+# plain mkdir would give it.
 mkdir -p "$(dirname "$OUT")"
-stage="$OUT.partial.$$"
-mkdir "$stage"
+stage=$(mktemp -d "$OUT.partial.XXXXXX")
+chmod "$(printf '%o' $((0777 & ~0$(umask))))" "$stage"
 module=$(basename "${built[0]}")
 cp "${built[0]}" "$stage/$module"
 digest=$("$ONEIRON_HOUSE_PYTHON" - "$stage" "$module" "$EXLLAMAV3_COMMIT" "$GEMM_INNER" "$H_ACC_LINE" \
