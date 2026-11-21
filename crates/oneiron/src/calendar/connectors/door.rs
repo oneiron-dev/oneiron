@@ -139,6 +139,32 @@ pub(crate) fn seat_of_system_in_txn(
         .map(|(seat_ref, _)| seat_ref))
 }
 
+/// The system of every seat, installed or taken out of service, as `txn` reads it: each
+/// system whose passports a seat's pulls and writes key ([`seat_of_system_in_txn`]). A seat
+/// taken out of service keeps its system in its record, so a custody handle may stand there in
+/// place of a value custody holds.
+pub(crate) fn seat_systems_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> crate::Result<Vec<String>> {
+    let mut systems = Vec::new();
+    for seat_ref in CONNECTOR_SEAT.items_in_txn(vault, txn)? {
+        if let Some(setup) = CONNECTOR_SEAT
+            .read_in_txn(vault, txn, &[], Some(&seat_ref))?
+            .value
+        {
+            systems.push(setup.config.system);
+        }
+    }
+    systems.extend(
+        STATES
+            .scan(&vault.store, txn)?
+            .into_iter()
+            .filter_map(|(_, record)| record.retired_system),
+    );
+    Ok(systems)
+}
+
 /// Keeps the system of the installed seat at `seat_ref` its own once the setting projection
 /// takes the seat out of service ([`seat_setup_changed_in_txn`]), in its record, which also
 /// keeps the seat ref from being installed again.

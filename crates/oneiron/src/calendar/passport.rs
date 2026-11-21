@@ -25,7 +25,7 @@ use sha2::Sha256;
 use super::CalendarError;
 use super::claims::{
     CalendarPassportPresence, CalendarPassportValue, PREDICATE_CALENDAR_PASSPORT,
-    decode_passport_value,
+    PREDICATE_CALENDAR_SERIES_EXCEPTION, decode_passport_value,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, claim_surfaceable};
 use crate::code_run::CompareKnown;
@@ -34,6 +34,10 @@ use crate::registry::ENTITY_TYPE_EVENT;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::known_value_index::KnownValues;
 use crate::vault::Vault;
+
+mod masked_key;
+
+use masked_key::MaskedKey;
 
 /// The reason code on the tray resolution of a waiting passport revision
 /// that a later revision replaced.
@@ -468,28 +472,27 @@ pub(in crate::calendar) fn revise_passport_in_txn(
             }
             let value = decode_passport_value(&body.value)
                 .map_err(|_| ingest("stored passport claim did not decode"))?;
-            if value.system == system {
-                keyed.push((claim_id, body, value.uid));
-            }
+            keyed.push((claim_id, body, value));
         }
-        // The key as written first; only when no claim carries it so is a
-        // UID custody holds read through its handle, where the UID is
-        // pinned to this EVENT ([`passport_uid_pinned_is`]): a masked
-        // passport the head of the scoped lookup reads is the one revised
-        // (blind review round 2 of #10090).
-        if !keyed.iter().any(|(_, _, held)| held == uid) {
+        // The key as written first; only when no claim carries it so are a
+        // stored system and UID read as custody reads them, each where it is
+        // pinned ([`MaskedKey`]): a masked passport the head of the scoped
+        // lookup reads is the one revised (blind review round 2 of #10090,
+        // CAL-PASSPORT-SYSTEM-UID-LOOKUP-MISSES-MASKED-PASSPORT).
+        let exact = |value: &CalendarPassportValue| value.system == system && value.uid == uid;
+        if keyed.iter().any(|(_, _, value)| exact(value)) {
+            keyed.retain(|(_, _, value)| exact(value));
+        } else if !keyed.is_empty() {
             let base_known = || KnownValues::shared_in_writer(&vault.store, reader);
             let known = CompareKnown::new(Some(&base_known));
-            let pinned = uid_pinned_to_in_txn(vault, reader, event_ref, uid)?;
-            let mut masked = Vec::new();
+            let masked = MaskedKey::read_in_txn(vault, reader, event_ref, system, uid)?;
+            let mut carried = Vec::new();
             for entry in keyed {
-                if passport_uid_pinned_is(&entry.2, uid, pinned, &known)? {
-                    masked.push(entry);
+                if masked.carried_by(&entry.2, &known)? {
+                    carried.push(entry);
                 }
             }
-            keyed = masked;
-        } else {
-            keyed.retain(|(_, _, held)| held == uid);
+            keyed = carried;
         }
         let mut head = None;
         let mut waiting = Vec::new();
@@ -648,8 +651,8 @@ pub(crate) fn live_passports_for_event_in_txn(
 }
 
 /// The live passport claim on `event_ref` for exactly `(system, uid)`: its
-/// UID as written, else as custody reads it where `uid` is pinned to
-/// `event_ref` ([`passport_keyed`]).
+/// system and UID as written, else as custody reads each where it is pinned
+/// ([`passport_keyed`]).
 ///
 /// # Errors
 ///
@@ -671,7 +674,10 @@ pub fn live_passport_for(
         passports,
         system,
         uid,
-        || uid_pinned_to(vault, event_ref, uid),
+        || {
+            let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+            MaskedKey::read_in_txn(vault, &txn, event_ref, system, uid)
+        },
         &known,
     )
 }
@@ -696,35 +702,39 @@ pub(in crate::calendar) fn live_passport_for_in_txn(
         passports,
         system,
         uid,
-        || uid_pinned_to_in_txn(vault, txn, event_ref, uid),
+        || MaskedKey::read_in_txn(vault, txn, event_ref, system, uid),
         &known,
     )
 }
 
 /// The passport of `passports`, one EVENT's live ones, keyed exactly
-/// `(system, uid)`: the one whose UID is `uid` as written, else the first
-/// whose UID is `uid` as custody reads it, when `pinned` answers that `uid`
-/// is pinned to their EVENT ([`passport_uid_pinned_is`]). A passport the
-/// claim door stored with a UID custody holds is the one the feed's UID
-/// names, so the diff reads its SEQUENCE before an older version lands as
-/// new (blind review round 2 of #10090,
+/// `(system, uid)`: the one whose system and UID are `system` and `uid` as
+/// written, else the first that carries the key as custody reads its system
+/// and UID, each where `masked` pins it ([`MaskedKey`]). A passport the claim
+/// door stored with a system name or a UID custody holds is the one the
+/// seat's or the feed's key names, so the diff reads its SEQUENCE before an
+/// older version lands as new, or a second passport of one source lands
+/// beside it (blind review round 2 of #10090,
 /// CAL-PASSPORT-SYSTEM-UID-LOOKUP-MISSES-MASKED-PASSPORT).
-fn passport_keyed(
+fn passport_keyed<'k>(
     mut passports: Vec<(EntityId, CalendarPassportValue)>,
-    system: &str,
-    uid: &str,
-    pinned: impl FnOnce() -> Result<bool, CalendarError>,
+    system: &'k str,
+    uid: &'k str,
+    masked: impl FnOnce() -> Result<MaskedKey<'k>, CalendarError>,
     known: &CompareKnown<'_>,
 ) -> Result<Option<(EntityId, CalendarPassportValue)>, CalendarError> {
-    passports.retain(|(_, value)| value.system == system);
-    if let Some(at) = passports.iter().position(|(_, value)| value.uid == uid) {
+    if let Some(at) = passports
+        .iter()
+        .position(|(_, value)| value.system == system && value.uid == uid)
+    {
         return Ok(Some(passports.swap_remove(at)));
     }
-    if passports.is_empty() || !pinned()? {
+    if passports.is_empty() {
         return Ok(None);
     }
+    let masked = masked()?;
     for (claim_id, value) in passports {
-        if passport_uid_is(&value.uid, uid, known)? {
+        if masked.carried_by(&value, known)? {
             return Ok(Some((claim_id, value)));
         }
     }
@@ -983,11 +993,23 @@ fn ingest(reason: &'static str) -> CalendarError {
 /// does the importer's own pending one, since the import gate files its
 /// exception claims pending review exactly as it files its passports.
 fn is_live_series_exception(vault: &Vault, event: &EntityId) -> Result<bool, CalendarError> {
-    series_exception_with(vault, event, |body| {
-        claim_surfaceable(body)
-            || (body.approval == crate::claim::ClaimApprovalStatus::Proposed
-                && body.source == Some(crate::claim::ClaimSource::Imported))
-    })
+    series_exception_with(vault, event, counts_for_ingest)
+}
+
+/// Whether the ingest diff counts `body` as a surfaceable head or as the
+/// importer's own pending one ([`is_live_series_exception`]).
+fn counts_for_ingest(body: &crate::claim::ClaimBody) -> bool {
+    claim_surfaceable(body)
+        || (body.approval == crate::claim::ClaimApprovalStatus::Proposed
+            && body.source == Some(crate::claim::ClaimSource::Imported))
+}
+
+/// Whether `body`, an exception claim, is a head the ingest diff counts: as
+/// [`series_exception_with`] folds it for [`is_live_series_exception`].
+fn exception_head_counts_for_ingest(body: &crate::claim::ClaimBody) -> bool {
+    body.lifecycle == ClaimLifecycleStatus::Active
+        && body.approval != crate::claim::ClaimApprovalStatus::Rejected
+        && counts_for_ingest(body)
 }
 
 /// Whether an admitted exception head makes `event` a detached instance.
@@ -1006,7 +1028,7 @@ fn series_exception_with(
 ) -> Result<bool, CalendarError> {
     for id in vault.claims_for_subject(event)? {
         if vault.get_claim(&id)?.is_some_and(|body| {
-            body.predicate == super::claims::PREDICATE_CALENDAR_SERIES_EXCEPTION
+            body.predicate == PREDICATE_CALENDAR_SERIES_EXCEPTION
                 && body.lifecycle == ClaimLifecycleStatus::Active
                 && body.approval != crate::claim::ClaimApprovalStatus::Rejected
                 && counts(&body)
