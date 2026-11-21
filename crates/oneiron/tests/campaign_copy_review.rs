@@ -863,8 +863,7 @@ mod judged {
             .house_voice_guide()
             .unwrap()
             .expect("the campaign's create seeded a guide");
-        oneiron::test_doors::campaign_house_voice_guide::forget_house_voice_guide(&leg.vault)
-            .unwrap();
+        oneiron::test_doors::campaign_copy_review::forget_house_voice_guide(&leg.vault).unwrap();
         let judge = CopyJudge {
             follows: true,
             reason: "on_voice",
@@ -919,6 +918,45 @@ mod judged {
         assert!(
             strings(&state, "gate_receipt_reasons").contains(&COPY_REVIEW_MISSING.to_owned()),
             "no review covers its copy: {state}"
+        );
+    }
+
+    /// On a host with no judge seat each send holds for the owner's press,
+    /// a body a judge passed before among them: the review drops the stored
+    /// pass, and the Gate finds no review covering the copy.
+    #[test]
+    fn a_stored_pass_holds_the_send_on_a_host_with_no_judge() {
+        let leg = leg(|_, _| json!({}));
+        let judge = CopyJudge {
+            follows: true,
+            reason: "on_voice",
+        };
+        let first = leg
+            .vault
+            .review_enrollment_copy(&leg.attempt, &decisions(&judge))
+            .unwrap();
+        assert!(
+            matches!(&first, CopyReviewOutcome::Reviewed(verdict) if verdict.passed),
+            "a judge passes the copy on a host that seats one: {first:?}"
+        );
+        let outcome = leg
+            .vault
+            .review_enrollment_copy(&leg.attempt, &unstaffed_decisions())
+            .unwrap();
+        drive_held(&leg.vault, &leg.attempt);
+        let state = held_ask_state(&leg.vault);
+        assert!(
+            strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
+            "the send holds for the owner's press on a host with no judge: {state}"
+        );
+        assert!(
+            strings(&state, "gate_receipt_reasons").contains(&COPY_REVIEW_MISSING.to_owned()),
+            "no review covers its copy: {state}"
+        );
+        assert_eq!(
+            outcome,
+            CopyReviewOutcome::Abstained,
+            "no judge answers on this host"
         );
     }
 
@@ -1116,31 +1154,88 @@ mod judged {
 
     const DIARY_ENTRY: &str = "A private diary entry of an agent, shared with no one.";
 
+    /// An agent's diary entry, which no Grant opens to the vault's owner.
+    fn agents_diary_entry(vault: &Vault, _owner: EntityId) -> EntityId {
+        let agent = EntityId::now();
+        vault
+            .put_entity(
+                &agent,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"agent",
+            )
+            .expect("the agent PERSON");
+        vault
+            .create_note(
+                "diary",
+                DIARY_ENTRY,
+                WriteActor::new(agent, EdgeActorClass::Agent),
+            )
+            .expect("the agent's diary entry")
+    }
+
+    /// A pass stored while the campaign's owner could read its voice guide
+    /// covers no send once the owner cannot (an agent's campaign whose guide
+    /// leaves the agent's read): the review asks no judge and drops the pass,
+    /// and the send holds for copy review. The door stores the pass a judge
+    /// gave against the guide at its live version; the guide is one the
+    /// owner cannot read.
+    #[cfg(oneiron_test_support)]
+    #[test]
+    fn a_stored_pass_holds_the_send_once_its_owner_cannot_read_the_guide() {
+        let (leg, guide) = leg_with_guide(agents_diary_entry);
+        let step = campaign_program_step(&leg.vault, leg.program, leg.step)
+            .unwrap()
+            .expect("the step");
+        oneiron::test_doors::campaign_copy_review::store_passing_copy_review_verdict(
+            &leg.vault,
+            leg.campaign,
+            &step,
+            guide,
+        )
+        .unwrap();
+        let judge = CountingJudge::passing();
+        let outcome = leg
+            .vault
+            .review_enrollment_copy(&leg.attempt, &decisions(&judge))
+            .unwrap();
+        drive_held(&leg.vault, &leg.attempt);
+        let state = held_ask_state(&leg.vault);
+        assert!(
+            strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
+            "a pass on a guide the owner cannot read does not release the send: {state}"
+        );
+        assert!(
+            strings(&state, "gate_receipt_reasons").contains(&COPY_REVIEW_MISSING.to_owned()),
+            "no review covers the copy: {state}"
+        );
+        assert_eq!(
+            outcome,
+            CopyReviewOutcome::GuideUnreadable,
+            "the owner cannot read the guide"
+        );
+        assert_eq!(
+            judge.calls(),
+            0,
+            "no judge is asked about a guide the owner cannot read"
+        );
+        assert_eq!(
+            leg.vault
+                .campaign_copy_review_verdict(leg.campaign, &step)
+                .unwrap(),
+            None,
+            "the stored pass is dropped"
+        );
+    }
+
     /// The judge reads the voice guide only as the campaign's owner reads
     /// it. A campaign names an agent's diary entry, which no Grant opens to
     /// the owner, as its guide: no judge is asked (a provider never sees the
     /// entry), and the send is held for copy review.
     #[test]
     fn a_voice_guide_its_owner_cannot_read_asks_no_judge() {
-        let (leg, guide) = leg_with_guide(|vault, _owner| {
-            let agent = EntityId::now();
-            vault
-                .put_entity(
-                    &agent,
-                    ENTITY_TYPE_PERSON,
-                    TimeRange { start: 1, end: 1 },
-                    1,
-                    b"agent",
-                )
-                .expect("the agent PERSON");
-            vault
-                .create_note(
-                    "diary",
-                    DIARY_ENTRY,
-                    WriteActor::new(agent, EdgeActorClass::Agent),
-                )
-                .expect("the agent's diary entry")
-        });
+        let (leg, guide) = leg_with_guide(agents_diary_entry);
         let owner = leg.vault.ensure_embedded_owner_actor().unwrap();
         // The fixture's premise, on main as well: the entry's text is stored,
         // and the owner's scoped NOTE read does not admit it.

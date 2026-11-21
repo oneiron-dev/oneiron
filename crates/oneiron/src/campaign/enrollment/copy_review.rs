@@ -321,6 +321,37 @@ impl Vault {
     }
 }
 
+/// Test door: stores a passing verdict for the body `step` sends for
+/// `campaign_ref`, judged against the voice guide NOTE `guide` at its live
+/// version, as a judge stores one while the campaign's owner reads the guide.
+#[cfg(oneiron_test_support)]
+pub(crate) fn store_passing_copy_review_verdict(
+    vault: &Vault,
+    campaign_ref: EntityId,
+    step: &CampaignProgramStep,
+    guide: EntityId,
+) -> Result<()> {
+    let outbound = step.outbound.as_ref().ok_or(Error::EntityNotFound)?;
+    let key = (
+        campaign_ref,
+        super::approval::outbound_payload_digest(outbound),
+    );
+    let version = {
+        let txn = vault.store.env.read_txn()?;
+        crate::note::documents::live_version_in_store_txn(&vault.store, &txn, guide)?
+    };
+    let verdict = CopyReviewVerdict {
+        passed: true,
+        probability: Some(0.9),
+        reason: COPY_REVIEW_REASONS[0].to_owned(),
+        voice_guide_ref: guide,
+        voice_guide_version: version,
+        judge: Vec::new(),
+        reviewed_at: vault.store.clock.now_recorded_at(),
+    };
+    vault.with_write_txn_grouped(|wtxn| VERDICTS.put(vault, wtxn, &key, &verdict))
+}
+
 /// The voice guide `guide` as the campaign's `owner` reads it: the scoped
 /// NOTE read, with the NOTE's kind policy, the owner's current grants and the
 /// diary gate a private or diary NOTE needs. `None` when that read does not

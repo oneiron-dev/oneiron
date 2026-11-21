@@ -48,7 +48,7 @@ pub mod builtin_pack_seed;
 pub mod burst_receipt_stored_shape;
 pub mod call_receipt_damage;
 pub mod callable_skill;
-pub mod campaign_house_voice_guide;
+pub mod campaign_copy_review;
 pub mod campaign_member_index;
 pub mod campaign_opt_out_line;
 pub mod candidate_scope;
