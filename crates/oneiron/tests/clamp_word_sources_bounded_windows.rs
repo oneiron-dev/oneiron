@@ -4,14 +4,18 @@
 //! contact could read by its row, but whose words came from a Tier-A row,
 //! took a place in a text or temporal window. Enough of them outranked a
 //! readable claim and cut it out of the window; the preselection before the
-//! cuts (#9911) then dropped them, and the pack served nothing. Each window
-//! now asks the sources of a row's words too, as the preselection and the
-//! pack's sweep do, so the readable claim keeps its place.
+//! cuts (#9911) then dropped them, and the pack served nothing. The phonetic
+//! sound match's cut did the same: its nearest admitted distance sets the
+//! distance it keeps, so a claim with a hidden source at distance 0 kept out
+//! every readable near match. Each window now asks the sources of a row's
+//! words too, as the preselection and the pack's sweep do, so the readable
+//! claim keeps its place.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test clamp_word_sources_bounded_windows`.
 #![cfg(oneiron_test_support)]
 
+use oneiron::batch::generate_phonetic_codes;
 use oneiron::counterparty_contact::CounterpartyFirstTouch;
 use oneiron::federation::Scope;
 use oneiron::interlocutor::{Interlocutor, InterlocutorSet};
@@ -19,7 +23,7 @@ use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use oneiron::temporal::TemporalAnchorMode;
 use oneiron::test_doors::disclosure_word_sources::{
     clamp_admits_with_contact, install_shipped_policy_with_ordinary_predicate, mark_tier_a,
-    seed_cleared_contact,
+    row_admits_with_contact, seed_cleared_contact,
 };
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ContextPackBuilder,
@@ -167,10 +171,17 @@ fn admits(fixture: &Fixture, id: &EntityId) -> bool {
         .expect("FIXTURE: ask the clamp")
 }
 
+/// The clamp's test of `id`'s own row alone, without its words' sources.
+fn row_admits(fixture: &Fixture, id: &EntityId) -> bool {
+    row_admits_with_contact(&fixture.vault, fixture.contact, COUNTERPARTY, id)
+        .expect("FIXTURE: ask the clamp's row test")
+}
+
 /// Writes [`OUTRANKING_CLAIMS`] summary claims of [`OUTRANKING_TEXT`] that
 /// cover the fixture's hidden source, then marks that source Tier A: the
 /// contact could read each claim before the mark, and may not after it, so
-/// only the source of its words hides it.
+/// only the source of its words hides it: the clamp's test of its own row
+/// still passes.
 fn put_claims_with_a_hidden_source(fixture: &Fixture, occurred_at: Option<u64>) -> Vec<EntityId> {
     let claims: Vec<EntityId> = (0..OUTRANKING_CLAIMS)
         .map(|_| put_summary_claim(fixture, OUTRANKING_TEXT, fixture.hidden_source, occurred_at))
@@ -187,6 +198,10 @@ fn put_claims_with_a_hidden_source(fixture: &Fixture, occurred_at: Option<u64>) 
     assert!(
         !admits(fixture, &claims[0]),
         "FIXTURE: the claim carries a Tier-A row's words"
+    );
+    assert!(
+        row_admits(fixture, &claims[0]),
+        "FIXTURE: the clamp admits the claim's own row; only its source hides it"
     );
     claims
 }
@@ -309,5 +324,67 @@ fn a_clamped_temporal_search_serves_a_readable_claim_past_claims_with_a_hidden_s
         "FAILBEFORE PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT: claims whose words \
          come from a Tier-A row take no place in the temporal window, so the readable claim \
          keeps its own"
+    );
+}
+
+/// The sound key the phonetic searches ask for: the first `ipa:` key of a
+/// long name, so one more segment moves a key well inside the match
+/// threshold.
+fn query_sound_key() -> String {
+    generate_phonetic_codes("Bartholomew")
+        .into_iter()
+        .find(|code| code.starts_with("ipa:"))
+        .expect("FIXTURE: the name has a sound key")
+}
+
+fn post_codes(fixture: &Fixture, id: &EntityId, codes: &[&str]) {
+    fixture
+        .vault
+        .batch()
+        .phonetic(id, codes)
+        .commit()
+        .expect("FIXTURE: post the codes");
+}
+
+/// A one-row phonetic search for `key`.
+fn phonetic_pack<'v>(fixture: &'v Fixture, key: &str) -> ContextPackBuilder<'v> {
+    fixture
+        .vault
+        .context_pack()
+        .search_phonetic(&[key])
+        .limit(1)
+}
+
+/// The sound match keeps its admitted matches within the keep ratio of the
+/// nearest admitted distance. Claims with a hidden source that match the
+/// query's sound key exactly set that distance to 0 and cut out a readable
+/// claim whose key is one segment longer.
+#[test]
+fn a_clamped_sound_match_serves_a_readable_claim_past_claims_with_a_hidden_source() {
+    let fixture = fixture();
+    let key = query_sound_key();
+    let near_key = format!("{key}s");
+    let readable = put_summary_claim(&fixture, READABLE_TEXT, fixture.readable_source, None);
+    post_codes(&fixture, &readable, &[&near_key]);
+    assert_eq!(
+        serves(&fixture, phonetic_pack(&fixture, &key), true),
+        [readable],
+        "FIXTURE: the clamped pack's sound match serves the readable claim"
+    );
+    let hidden = put_claims_with_a_hidden_source(&fixture, None);
+    for claim in &hidden {
+        post_codes(&fixture, claim, &[&key]);
+    }
+    let owner = serves(&fixture, phonetic_pack(&fixture, &key), false);
+    assert!(
+        owner.len() == 1 && hidden.contains(&owner[0]),
+        "FIXTURE: a claim with a hidden source matches nearer in the owner's pack"
+    );
+    assert_eq!(
+        serves(&fixture, phonetic_pack(&fixture, &key), true),
+        [readable],
+        "FAILBEFORE PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT: claims whose words \
+         come from a Tier-A row set no distance in the sound match, so the readable claim keeps \
+         its place"
     );
 }
