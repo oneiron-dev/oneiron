@@ -18,6 +18,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::llm::decision::catalogue::WIRE_HEALTH;
 use oneiron::llm::decision::questions::{
     HEALTH_OUTCOME_PREDICATE, HealthAnswer, OutcomeBinding, OutcomeSource,
@@ -198,17 +199,20 @@ pub fn checks(vault: &Vault) -> Result<Vec<HealthCheck>> {
 
 /// Writes an asked or answered check back over its row, and whether it did.
 /// A row gone since the pass read it stays gone: an actor's erase takes its
-/// own-rate checks (FIX 3520), and a pass that read one before must not
-/// write it back.
-fn put_check(vault: &Vault, check: &HealthCheck) -> Result<bool> {
+/// own-rate and spend checks (FIX 3520), and a pass that read one before
+/// must not write it back. A row an erase scrubbed since the pass read it
+/// keeps its scrubbed crossing: the write takes the row's crossing over the
+/// pass's stale one, so the pass never names an erased actor again.
+fn put_check(vault: &Vault, check: &mut HealthCheck) -> Result<bool> {
     let key = format!("{CHECK}{}", check.subject);
-    let body = encode(check)?;
     vault.with_write_txn_grouped(|txn| {
-        let kept = vault.sync_state_get_in_write_txn(txn, &key)?.is_some();
-        if kept {
-            vault.sync_state_put_in_write_txn(txn, &key, &body)?;
-        }
-        Ok(kept)
+        let Some(row) = vault.sync_state_get_in_write_txn(txn, &key)? else {
+            return Ok(false);
+        };
+        check.crossing = decode::<HealthCheck>(&row)?.crossing;
+        let body = encode(check)?;
+        vault.sync_state_put_in_write_txn(txn, &key, &body)?;
+        Ok(true)
     })
 }
 
@@ -423,20 +427,49 @@ pub(crate) fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) 
             "the health check answered bot; the work it covers still runs"
         );
     }
-    if put_check(vault, &check)? || !matches!(check.state, CheckState::Asked { .. }) {
+    let asked_over = check.crossing.clone();
+    if !put_check(vault, &mut check)? {
+        if !matches!(check.state, CheckState::Asked { .. }) {
+            return Ok(());
+        }
+        // An actor's erase took the check while the ladder asked it (FIX
+        // 3520): the ask it queued holds the crossing as the state it was
+        // asked over, so it drops that state and leaves the owner's queue.
+        if let Some(queued) = vault.latest_decision_ask(&question, owner)? {
+            vault.withdraw_decision_ask_dropping_state(queued.seq)?;
+        }
         return Ok(());
     }
-    // An actor's erase took the check while the ladder asked it (FIX 3520):
-    // the ask it queued holds the crossing as the state it was asked over,
-    // so it drops that state and leaves the owner's queue.
-    if let Some(queued) = vault.latest_decision_ask(&question, owner)? {
+    if check.crossing == asked_over || !matches!(check.state, CheckState::Asked { .. }) {
+        return Ok(());
+    }
+    // An actor's erase scrubbed the check's crossing while the ladder asked
+    // it (FIX 3520): the ask it queued holds the stale crossing. One its
+    // holder already answered keeps its answer over no state; one still
+    // open is withdrawn without its state and the check waits to be asked
+    // again over the scrubbed crossing.
+    let queued = vault.latest_decision_ask(&question, owner)?;
+    if queued.as_ref().is_some_and(|ask| ask.answer.is_some()) {
+        if let Some(queued) = &queued {
+            vault.withdraw_decision_ask_dropping_state(queued.seq)?;
+        }
+        return Ok(());
+    }
+    check.state = CheckState::Held;
+    if !put_check(vault, &mut check)? {
+        return Ok(());
+    }
+    if let Some(queued) = queued {
         vault.withdraw_decision_ask_dropping_state(queued.seq)?;
     }
     Ok(())
 }
 
-/// Looks for a role holder's answer to an asked check. The answer is what
-/// happened next: it lands as the decision's outcome.
+/// Looks for a role holder's answer to an asked check and settles the check
+/// on it. The answer is what happened next: the owner's answer door landed it
+/// as the decision's outcome label, in the write that kept the answer and
+/// under his proof (ARCH-0044 C5). This pass holds no owner proof, so it
+/// writes no label.
 fn poll(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<()> {
     let CheckState::Asked { question, unit } = &check.state else {
         return Ok(());
@@ -454,13 +487,6 @@ fn poll(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<
     let DecisionAnswer::Choice(label) = answer.answer else {
         return Ok(());
     };
-    let unit_id = EntityId::from_hex(unit)?;
-    server.vault().record_health_outcome(
-        owner,
-        unit_id,
-        &label,
-        oneiron_vault_contract::now_ts(),
-    )?;
     check.state = CheckState::Answered {
         answer: label,
         probability: None,
@@ -469,7 +495,7 @@ fn poll(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<
         question: question.clone(),
         unit: unit.clone(),
     };
-    put_check(server.vault(), &check).map(drop)
+    put_check(server.vault(), &mut check).map(drop)
 }
 
 /// One pass: fold every new crossing in, ask each held check, and look for
@@ -510,16 +536,19 @@ pub(crate) fn fold_unread(server: &SyncServer) -> Result<()> {
 }
 
 /// The owner records what happened next to a check's crossing `unit`: a bot
-/// or a valid burst. It labels the bound decision.
-pub fn record_outcome(vault: &Vault, unit: EntityId, outcome: &str) -> Result<EntityId> {
+/// or a valid burst. It labels the bound decision, as his own act under the
+/// proof `owner` of the door that admitted him.
+pub fn record_outcome(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    unit: EntityId,
+    outcome: &str,
+) -> Result<EntityId> {
     if outcome != VALID_BURST && outcome != BOT {
         return Err(Error::InvalidConfig(format!(
             "a health outcome is {VALID_BURST} or {BOT}"
         )));
     }
-    let owner = vault
-        .ensure_embedded_owner_actor()
-        .map_err(|error| Error::InvalidConfig(format!("no owner principal: {error}")))?;
     vault.record_health_outcome(owner, unit, outcome, oneiron_vault_contract::now_ts())
 }
 

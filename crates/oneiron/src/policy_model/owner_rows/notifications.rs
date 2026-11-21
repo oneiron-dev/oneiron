@@ -15,6 +15,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::gate::{PolicyRowScope, default_policy_manifest_id};
 use crate::{EntityId, Vault};
+use oneiron_contracts::msgpack::Entries;
 
 const RULE_KEY: &str = crate::gate::POLICY_OWNER_POLICY_NOTIFY_KEY;
 const PREF: &[u8] = b"owner_policy:notification:preference:v1:";
@@ -112,12 +113,7 @@ fn decode<T: serde::de::DeserializeOwned>(raw: &[u8]) -> Result<T> {
     rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("policy notification"))
 }
 fn field<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<&'a Value> {
-    let mut found = entries.iter().filter(|(key, _)| key.as_str() == Some(name));
-    let value = &found.next().ok_or_else(invalid)?.1;
-    if found.next().is_some() {
-        return Err(invalid());
-    }
-    Ok(value)
+    Entries::new(entries).require(name).map_err(|_| invalid())
 }
 fn manifest_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<(EntityId, Vec<u8>, Value)> {
     let id = default_policy_manifest_id()?;

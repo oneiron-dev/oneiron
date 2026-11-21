@@ -5,8 +5,8 @@
 //! None of these reads the `Inventory`: each is text over the module-level row sets, in Python's order.
 
 use super::row_access::{
-    ByName, concat, context_is, flag, get_is, item, json, json_item, repr_list, shown, text,
-    variant_of, variants,
+    ByName, concat, context_is, flag, flag_in, get_is, item, json, json_item, repr_list, shown,
+    text, variant_of, variants,
 };
 use super::wire_inputs::WireInputs;
 use super::{CORE_COUNT_DEFAULTS, CORE_VERB_NAMES, Generator, HEADER, RowId};
@@ -492,13 +492,18 @@ const CATALOG_ROLES: &[(&str, CatalogRole)] = &[
     ("born_in_scope", |_, row| {
         Ok(item(row, "mcp_scope")?.is_str("born"))
     }),
+    // A host door whose HTTP admission is `lane_record_scope`: its facade dispatch refuses a channel caveat before
+    // its hooks (`record_scope_guard`), and the MCP gate refuses one for it alike.
+    ("lane_record_scope_host_door", |_, row| {
+        Ok(flag(row, "host_door") && flag_in(row, "admission", "lane_record_scope")?)
+    }),
     ("writes", |_, row| Ok(item(row, "scope")?.is_str("Write"))),
     // A host door whose own check asks the owner's credential or a person's proof (`host_door_proof`): the dispatch
     // refuses an agent's call before the door runs, so `can({verb})` answers `person` for one.
     ("takes_person_proof", |_, row| {
-        Ok(row
-            .get("host_door_proof")
-            .is_some_and(|proof| proof.is_str("owner") || proof.is_str("shared_person")))
+        Ok(row.get("host_door_proof").is_some_and(|proof| {
+            proof.is_str("owner") || proof.is_str("shared_person") || proof.is_str("mailbox_person")
+        }))
     }),
     ("proposes", |_, row| Ok(flag(row, "proposes"))),
     ("is_task_work", |_, row| Ok(flag(row, "task_work"))),

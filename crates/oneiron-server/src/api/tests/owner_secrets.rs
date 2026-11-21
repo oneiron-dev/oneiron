@@ -8,6 +8,7 @@ use super::*;
 use oneiron::git_wire::{GitOid, GitRefName, GitWire};
 use oneiron::origin::publication::OriginPublicationRequest;
 use oneiron::origin::secret_manifest::SECRET_MANIFEST_PATH;
+use oneiron::secret_custody::SECRET_NAME_MAX_BYTES;
 
 const MANIFEST: &str = r#"schema_version = 1
 
@@ -189,13 +190,14 @@ async fn owner_registers_a_secret_then_rotates_it_and_nobody_else_can() {
     assert_eq!(generation(&server), 1);
 
     // Each refusal is the caller's error, typed.
+    let name_length_error = format!("name must be 1 to {SECRET_NAME_MAX_BYTES} bytes");
     let refusals = [
         (body.clone(), StatusCode::CONFLICT, "secret_name_in_use"),
         (
             // Longer than a name-index key holds (Sol on #1372: a 500 before).
-            json!({ "name": "n".repeat(300), "class": "cross-vault", "rung": 0, "value_base64": first }),
+            json!({ "name": "n".repeat(SECRET_NAME_MAX_BYTES + 1), "class": "cross-vault", "rung": 0, "value_base64": first }),
             StatusCode::BAD_REQUEST,
-            "name must be 1 to 255 bytes",
+            name_length_error.as_str(),
         ),
         (
             json!({ "name": "t", "class": "custody-cloud", "rung": 0, "value_base64": first }),

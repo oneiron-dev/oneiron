@@ -57,6 +57,9 @@ pub(crate) enum Reply {
     },
     /// Never answer until [`FakeLlm::release`] is called; then answer `text`.
     Hold { text: String },
+    /// Never answer until [`FakeLlm::release`] is called; then answer as
+    /// the reply it holds does: a refusal held until the test has acted.
+    HoldThen(Box<Reply>),
     /// Answer with text computed from the request (to echo ids it carries).
     Computed(Compute),
     /// Answer with this exact event-stream body, one event per chunk: an
@@ -69,6 +72,11 @@ pub(crate) enum Reply {
     /// A redirect with this status to `location`, which keeps the method
     /// and body for 307 and 308.
     Redirect { status: u16, location: String },
+    /// Stream these deltas, whatever the request asked for, then keep the
+    /// stream open without ending the reply, as a model that stalls
+    /// mid-reply does. [`FakeLlm::stall_dropped`] resolves once the client
+    /// lets go of it.
+    Stalled { deltas: Vec<String> },
 }
 
 impl Reply {
@@ -98,6 +106,8 @@ struct Shared {
     /// Bytes the last closed `Oversized` body handed its connection.
     sent: AtomicUsize,
     body_closed: Notify,
+    /// A `Stalled` body was dropped: its client let go of it.
+    stall_dropped: Notify,
 }
 
 pub(crate) struct FakeLlm {
@@ -154,6 +164,43 @@ impl FakeLlm {
         self.shared.body_closed.notified().await;
         self.shared.sent.load(Ordering::SeqCst)
     }
+
+    /// Resolves once a `Stalled` body has been dropped: its client let go
+    /// of the stream the model left open. Each drop is waited for once.
+    pub(crate) async fn stall_dropped(&self) {
+        self.shared.stall_dropped.notified().await;
+    }
+}
+
+/// Tells [`FakeLlm::stall_dropped`] when the `Stalled` body that holds it is
+/// dropped.
+struct StallHold(Arc<Shared>);
+
+impl Drop for StallHold {
+    fn drop(&mut self) {
+        self.0.stall_dropped.notify_one();
+    }
+}
+
+/// `events` one chunk each, then an open stream that never ends, until the
+/// client lets go of it.
+fn stalled(shared: Arc<Shared>, events: Vec<(Option<&'static str>, Value)>) -> Response {
+    let chunks: VecDeque<String> = sse_text(events)
+        .split_inclusive("\n\n")
+        .map(str::to_owned)
+        .collect();
+    let start = (StallHold(shared), chunks);
+    let body = futures_util::stream::unfold(start, |(hold, mut chunks)| async move {
+        match chunks.pop_front() {
+            Some(chunk) => Some((Ok::<_, std::io::Error>(chunk), (hold, chunks))),
+            // Every event is out: the reply never ends.
+            None => std::future::pending().await,
+        }
+    });
+    Response::builder()
+        .header("content-type", "text/event-stream")
+        .body(Body::from_stream(body))
+        .unwrap()
 }
 
 /// Counts an `Oversized` body's bytes and reports them when the body is
@@ -236,6 +283,12 @@ async fn answer(
             released.await;
             Reply::text(text)
         }
+        Some(Reply::HoldThen(then)) => {
+            let released = shared.released.notified();
+            shared.holding.notify_one();
+            released.await;
+            *then
+        }
         Some(reply) => reply,
         None => Reply::Status(500),
     };
@@ -287,7 +340,17 @@ async fn answer(
                 .body(Body::empty())
                 .unwrap();
         }
-        Reply::Hold { .. } => unreachable!("resolved above"),
+        Reply::Stalled { deltas } => {
+            // The deltas and the events before them; none that ends the reply.
+            let (mut events, ending) = if anthropic {
+                (anthropic_events(&deltas, "fake-model"), 3)
+            } else {
+                (openai_events(&deltas, "fake-model"), 2)
+            };
+            events.truncate(events.len() - ending);
+            return stalled(Arc::clone(&shared), events);
+        }
+        Reply::Hold { .. } | Reply::HoldThen(_) => unreachable!("resolved above"),
     };
     match (anthropic, stream) {
         (false, false) => {
@@ -421,7 +484,9 @@ fn anthropic_events(
     events
 }
 
-fn sse(events: Vec<(Option<&'static str>, Value)>) -> Response {
+/// `events` as an event-stream body: each its `event:` name, if any, and
+/// its `data:` line.
+fn sse_text(events: Vec<(Option<&'static str>, Value)>) -> String {
     let mut body = String::new();
     for (name, data) in events {
         if let Some(name) = name {
@@ -429,6 +494,11 @@ fn sse(events: Vec<(Option<&'static str>, Value)>) -> Response {
         }
         body.push_str(&format!("data: {data}\n\n"));
     }
+    body
+}
+
+fn sse(events: Vec<(Option<&'static str>, Value)>) -> Response {
+    let mut body = sse_text(events);
     if !body.contains("event: ") {
         body.push_str("data: [DONE]\n\n");
     }

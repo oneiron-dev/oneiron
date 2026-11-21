@@ -20,8 +20,14 @@
 //! still holds. The version vector the projection kept is filed as the
 //! window's floor (`SYNC_BASE_WINDOW_DISCARD`), and a send to a home below
 //! it waits. A shared value stays whole; what the projection cannot place
-//! (a NOTE carrier that does not decode, a root outside the window's maps)
-//! defers the window, never counts as erased.
+//! (a NOTE carrier that does not decode, a root outside the window's maps,
+//! a parted row whose parts join to a row its key does not name, a whole
+//! row filed under a key it does not name) defers the window, never counts
+//! as erased. Bytes that read as no row prove no other row: a parted one
+//! places by its key, and a whole one is kept under no one, as before. A
+//! room turn in parts goes as the same turn stored whole does: once the
+//! capture has met every part, its manifest is decided by its joined row's
+//! holders (FIX SYNC-DISCARD-PARTED-TURN-HOLDERS-NARROW).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -30,12 +36,15 @@ use loro::checkpoint::{Atom, AtomId, Capture, Classify, Field, OwnerId, Payload,
 use loro::{LoroDoc, LoroValue, VersionVector};
 
 use super::super::bridge::parse_edge_key;
-use super::super::carrier_parts::part_key;
+use super::super::carrier_parts::{Parts, assembly_fits, join_parts_from, part_key};
 use super::super::checkpoint_payload::{
-    Holder, KindPlacement, Placement, SyncPayloadOwners, WINDOW_ROOTS, root_entry,
+    Holder, KindPlacement, PartedRows, Placement, SyncPayloadOwners, SyncUnclassified,
+    WINDOW_ROOTS, root_entry,
 };
 use super::super::loro_support::{doc_from_snapshot, import_doc};
 use super::super::note::discard::{NoteAtom, is_note_carrier_map, project_atom, project_current};
+use super::super::room_turns::ROOM_TURNS_MAP;
+use super::super::room_turns::checkpoint::entry_joined;
 use super::super::schema::{ASSET_BODY_REFS_MAP, create_window_doc};
 use super::super::types::WindowKey;
 use super::super::window_rows::{
@@ -50,417 +59,15 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::store::checkpoint_payload::rows::OwnerRef;
 
+mod classifier;
+pub(crate) use classifier::{Projected, project_window_doc};
+
 /// A BASE window the owner's discard touched, by its key: a first byte of
 /// 1 while its persisted document still waits for its projection, 0 once
 /// installed, then the version vector the last projection kept, the floor
 /// below which no send of the window goes. Key: window key.
 const BASE_WINDOW_DISCARD: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_BASE_WINDOW_DISCARD);
-
-/// The holder of a value that stays.
-const KEEP: OwnerId = 0;
-/// The holder of a value a discarded row owns.
-const ERASE: OwnerId = 1;
-/// A part's holder: this plus its key's place in [`DiscardClassifier::parts`].
-const PART: OwnerId = 1 << 32;
-/// A rewritten value's holder: this plus its place in
-/// [`DiscardClassifier::rewrites`].
-const REWRITE: OwnerId = 1 << 40;
-
-/// Every entity kind its own row's: the projection asks only who owns a
-/// value, never where a checkpoint would seal it.
-struct EveryKindOwned;
-
-impl SyncPayloadOwners for EveryKindOwned {
-    fn entity_kind(&self, _: u8) -> KindPlacement {
-        KindPlacement::Owner
-    }
-}
-
-/// Which of a window's values the discarded rows own.
-struct DiscardClassifier<'a> {
-    discarded: &'a BTreeSet<EntityId>,
-    owners: BTreeSet<OwnerRef>,
-    /// Each part key the capture met, by its place.
-    parts: Vec<String>,
-    part_places: BTreeMap<String, usize>,
-    /// Part keys a manifest that goes names, and ones a manifest that stays
-    /// names, across the window's whole history.
-    parts_going: BTreeSet<String>,
-    parts_staying: BTreeSet<String>,
-    rewrites: Vec<Vec<u8>>,
-    /// Why the window cannot be projected, once a value names an owner the
-    /// projection cannot read.
-    unknown: Option<&'static str>,
-}
-
-impl<'a> DiscardClassifier<'a> {
-    fn new(discarded: &'a BTreeSet<EntityId>) -> Self {
-        Self {
-            discarded,
-            owners: discarded.iter().map(OwnerRef::entity).collect(),
-            parts: Vec::new(),
-            part_places: BTreeMap::new(),
-            parts_going: BTreeSet::new(),
-            parts_staying: BTreeSet::new(),
-            rewrites: Vec::new(),
-            unknown: None,
-        }
-    }
-
-    fn names_discarded(&self, key: &str) -> bool {
-        EntityId::from_hex(key).is_ok_and(|id| id.to_hex() == key && self.discarded.contains(&id))
-    }
-
-    /// Whether no holder of a value keeps it: each is a discarded row, or
-    /// holds it only while a discarded row stands.
-    fn gone(&self, holders: &[Holder]) -> bool {
-        !holders.is_empty()
-            && holders.iter().all(|holder| {
-                self.owners.contains(&holder.owner)
-                    || holder
-                        .dependencies
-                        .iter()
-                        .any(|on| self.owners.contains(on))
-            })
-    }
-
-    fn decide(&mut self, root: &str, key: &str, value: &[u8]) -> OwnerId {
-        match root {
-            // A deletion's id-only truth stays (call 3).
-            "tombstones" => KEEP,
-            // A row and every edge it ends are its own, whatever kind
-            // carries them (an ASSET row is no sealing owner's).
-            "entities" | ASSET_BODY_REFS_MAP => erase(self.names_discarded(key)),
-            "edges" => erase(parse_edge_key(key).is_some_and(|(source, _, target)| {
-                self.discarded.contains(&source) || self.discarded.contains(&target)
-            })),
-            map if is_note_carrier_map(map) => self.note_atom(map, key, value),
-            _ => self.placed(root_entry(root, key, value, &EveryKindOwned), key),
-        }
-    }
-
-    /// A NOTE carrier's atom, as its codec projects it.
-    fn note_atom(&mut self, map: &str, key: &str, value: &[u8]) -> OwnerId {
-        match project_atom(map, key, value, self.discarded) {
-            Ok(NoteAtom::Keep) => KEEP,
-            Ok(NoteAtom::Drop) => ERASE,
-            Ok(NoteAtom::Rewrite(bytes)) => {
-                self.rewrites.push(bytes);
-                REWRITE + place_of(self.rewrites.len() - 1)
-            }
-            Err(_) => {
-                self.unknown = Some("a NOTE carrier whose owner does not read");
-                KEEP
-            }
-        }
-    }
-
-    /// Any other family's value, as its codec places it.
-    fn placed(&mut self, placement: Placement, key: &str) -> OwnerId {
-        match placement {
-            Placement::Owned(holders) | Placement::Split { holders, .. } => {
-                erase(self.gone(&holders))
-            }
-            Placement::Manifest { holders, parts, .. } => {
-                let going = self.gone(&holders);
-                let named = parts.parts.iter().map(part_key);
-                if going {
-                    self.parts_going.extend(named);
-                } else {
-                    self.parts_staying.extend(named);
-                }
-                erase(going)
-            }
-            Placement::Part => {
-                let place = match self.part_places.get(key) {
-                    Some(place) => *place,
-                    None => {
-                        self.parts.push(key.to_owned());
-                        self.part_places
-                            .insert(key.to_owned(), self.parts.len() - 1);
-                        self.parts.len() - 1
-                    }
-                };
-                PART + place_of(place)
-            }
-            Placement::Structure { dependencies } => {
-                erase(dependencies.iter().any(|on| self.owners.contains(on)))
-            }
-            Placement::Unclassified { owner, .. } => {
-                erase(owner.is_some_and(|owner| self.owners.contains(&owner)))
-            }
-            Placement::Dispatched(_) => KEEP,
-        }
-    }
-}
-
-/// The holder of a value that goes when `going`, else of one that stays.
-fn erase(going: bool) -> OwnerId {
-    if going { ERASE } else { KEEP }
-}
-
-/// `place` as an owner handle offset: a capture holds far fewer values than
-/// a handle's range.
-fn place_of(place: usize) -> OwnerId {
-    OwnerId::try_from(place).unwrap_or(OwnerId::MAX >> 1)
-}
-
-impl Classify for DiscardClassifier<'_> {
-    /// The skeleton never leaves this process, so every key may stand in it.
-    fn plain_key(&mut self, _: &str, _: &str) -> bool {
-        true
-    }
-
-    fn holders(&mut self, field: Field<'_>) -> Option<Vec<OwnerId>> {
-        let Field::Value {
-            root, key, value, ..
-        } = field
-        else {
-            return Some(vec![KEEP]);
-        };
-        let LoroValue::Binary(bytes) = value else {
-            return Some(vec![KEEP]);
-        };
-        Some(vec![self.decide(root, key, bytes.as_slice())])
-    }
-}
-
-/// What projecting one window's document came to.
-pub(crate) enum Projected {
-    /// The document holds nothing the discarded rows own.
-    Unchanged,
-    /// The projected document's native snapshot bytes, how many values went
-    /// and were rewritten, and how many the rows own stay whole for now: each
-    /// written by an operation the home does not hold.
-    Joined {
-        bytes: Vec<u8>,
-        erased: usize,
-        rewritten: usize,
-        waiting: usize,
-    },
-    /// The document cannot be projected now, and why.
-    Deferred(&'static str),
-}
-
-/// `doc`, a quiescent window document, with every value the rows in
-/// `discarded` own erased at its own operation and every NOTE bundle that
-/// keeps other members redacted. No operation is authored. With `held`, the
-/// operations the home holds, a value written by any other operation stays
-/// whole and counts as waiting (E2 = A): only the home's operations are
-/// rewritten.
-///
-/// # Errors
-///
-/// A NOTE carrier of the current state that does not decode.
-pub(crate) fn project_window_doc(
-    doc: &LoroDoc,
-    discarded: &BTreeSet<EntityId>,
-    held: Option<&VersionVector>,
-) -> Result<Projected> {
-    if discarded.is_empty() {
-        return Ok(Projected::Unchanged);
-    }
-    let mut classifier = DiscardClassifier::new(discarded);
-    let Capture::Classified(parts) = doc.export_root_map_checkpoint(&WINDOW_ROOTS, &mut classifier)
-    else {
-        return Ok(Projected::Deferred(
-            "a window document that is not plain root-map writes of its maps",
-        ));
-    };
-    if let Some(why) = classifier.unknown {
-        return Ok(Projected::Deferred(why));
-    }
-    let unheld = held
-        .map(|held| unheld_atoms(&parts.skeleton, held))
-        .unwrap_or_default();
-    let mut sorted = match classifier.sort(parts.atoms, unheld) {
-        Ok(sorted) => sorted,
-        Err(why) => return Ok(Projected::Deferred(why)),
-    };
-    // The current rows of the NOTE maps beyond what each atom's own
-    // projection took: a retained NOTE's attachments a departed member
-    // alone bound go too, so the window still validates.
-    if let Err(why) = sorted.apply_current(&parts.skeleton, project_current(doc, discarded)?) {
-        return Ok(Projected::Deferred(why));
-    }
-    if sorted.erased.is_empty() && sorted.rewritten == 0 {
-        return Ok(if sorted.waiting == 0 {
-            Projected::Unchanged
-        } else {
-            Projected::Deferred("values the rows own whose operations the home lacks")
-        });
-    }
-    Ok(sorted.join(&parts.skeleton))
-}
-
-/// The atoms `skeleton`'s retained operations write past `held`, and, when
-/// `held` does not hold the shallow root itself, each root winner no retained
-/// operation writes: a local cut is no proof the home holds what is under it.
-fn unheld_atoms(skeleton: &Skeleton, held: &VersionVector) -> BTreeSet<AtomId> {
-    let mut unheld = BTreeSet::new();
-    let mut retained = BTreeSet::new();
-    for change in &skeleton.changes {
-        let from = held.get(&change.peer).copied().unwrap_or(0);
-        for (index, op) in change.ops.iter().enumerate() {
-            let Some(atom) = op.value else {
-                continue;
-            };
-            retained.insert(atom);
-            let counter = i32::try_from(index)
-                .ok()
-                .and_then(|index| change.counter.checked_add(index));
-            if counter.is_none_or(|counter| counter >= from) {
-                unheld.insert(atom);
-            }
-        }
-    }
-    if let Some(shallow) = &skeleton.shallow
-        && !shallow
-            .vv
-            .iter()
-            .all(|(peer, end)| held.get(peer).copied().unwrap_or(0) >= *end)
-    {
-        unheld.extend(
-            shallow
-                .winners
-                .iter()
-                .filter_map(|winner| winner.value)
-                .filter(|atom| !retained.contains(atom)),
-        );
-    }
-    unheld
-}
-
-/// A capture's atoms, sorted: the ones that go, and the ones that stay,
-/// some with rewritten values.
-struct Sorted {
-    erased: BTreeSet<AtomId>,
-    available: BTreeMap<AtomId, Atom>,
-    rewritten: usize,
-    /// Atoms written by operations the home does not hold: they stay whole.
-    unheld: BTreeSet<AtomId>,
-    /// How many of those the projection would have changed.
-    waiting: usize,
-}
-
-impl DiscardClassifier<'_> {
-    /// Sorts the atoms of this classifier's capture by their holders: a part
-    /// goes only when a manifest that goes names it and none that stays does;
-    /// an atom in `unheld` stays as it is.
-    fn sort(
-        &self,
-        atoms: Vec<Atom>,
-        unheld: BTreeSet<AtomId>,
-    ) -> std::result::Result<Sorted, &'static str> {
-        let mut sorted = Sorted {
-            erased: BTreeSet::new(),
-            available: BTreeMap::new(),
-            rewritten: 0,
-            unheld,
-            waiting: 0,
-        };
-        for mut atom in atoms {
-            let holder = match atom.holders.as_slice() {
-                [holder] => *holder,
-                _ => KEEP,
-            };
-            let changes = holder == ERASE
-                || holder >= REWRITE
-                || (holder >= PART && self.part_goes(holder - PART));
-            if changes && sorted.unheld.contains(&atom.id) {
-                sorted.waiting += 1;
-                sorted.available.insert(atom.id, atom);
-            } else if holder == ERASE {
-                sorted.erased.insert(atom.id);
-            } else if holder >= REWRITE {
-                let bytes = usize::try_from(holder - REWRITE)
-                    .ok()
-                    .and_then(|place| self.rewrites.get(place))
-                    .ok_or("a rewritten value the projection lost")?;
-                atom.payload = Payload::Value(LoroValue::Binary(bytes.clone().into()));
-                sorted.rewritten += 1;
-                sorted.available.insert(atom.id, atom);
-            } else if holder >= PART && self.part_goes(holder - PART) {
-                sorted.erased.insert(atom.id);
-            } else {
-                sorted.available.insert(atom.id, atom);
-            }
-        }
-        Ok(sorted)
-    }
-
-    fn part_goes(&self, place: OwnerId) -> bool {
-        usize::try_from(place)
-            .ok()
-            .and_then(|place| self.parts.get(place))
-            .is_some_and(|key| self.parts_going.contains(key) && !self.parts_staying.contains(key))
-    }
-}
-
-impl Sorted {
-    /// Applies `changes`, the current NOTE rows to rewrite or erase, to each
-    /// row's latest winner in `skeleton`.
-    fn apply_current(
-        &mut self,
-        skeleton: &Skeleton,
-        changes: BTreeMap<(&'static str, String), Option<Vec<u8>>>,
-    ) -> std::result::Result<(), &'static str> {
-        for ((map, key), after) in changes {
-            let winner = skeleton.latest.iter().find(|winner| {
-                winner.key == key
-                    && usize::try_from(winner.root)
-                        .ok()
-                        .and_then(|root| skeleton.roots.get(root))
-                        .is_some_and(|root| root == map)
-            });
-            let Some(atom) = winner.and_then(|winner| winner.value) else {
-                if after.is_some() {
-                    return Err("a NOTE row the projection cannot rewrite");
-                }
-                continue;
-            };
-            if self.unheld.contains(&atom) {
-                self.waiting += 1;
-                continue;
-            }
-            match after {
-                Some(bytes) => {
-                    let found = self
-                        .available
-                        .get_mut(&atom)
-                        .ok_or("a NOTE row the projection erased")?;
-                    found.payload = Payload::Value(LoroValue::Binary(bytes.into()));
-                    self.rewritten += 1;
-                }
-                None => {
-                    self.available.remove(&atom);
-                    self.erased.insert(atom);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// The native document `skeleton` holds with these atoms, proved.
-    fn join(self, skeleton: &Skeleton) -> Projected {
-        let available: Vec<Atom> = self.available.into_values().collect();
-        let erased: Vec<AtomId> = self.erased.into_iter().collect();
-        match LoroDoc::join_root_map_checkpoint(skeleton, &available, &erased) {
-            Ok(joined) if joined.report.equivalent => Projected::Joined {
-                bytes: joined.bytes,
-                erased: erased.len(),
-                rewritten: self.rewritten,
-                waiting: self.waiting,
-            },
-            Ok(_) => Projected::Deferred("a projection its join did not prove"),
-            Err(error) => {
-                tracing::warn!(%error, "a window's discard projection did not join");
-                Projected::Deferred("a projection that did not join")
-            }
-        }
-    }
-}
 
 /// What installing one window's projection came to.
 pub(crate) enum DiscardInstall {

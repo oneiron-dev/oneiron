@@ -3,7 +3,7 @@ use super::{GeminiFrame, GeminiProviderStream, classify_status};
 use futures_core::Stream;
 use oneiron::{
     FatalLlmError, FinishReason, LlmInputUsage, LlmOutputUsage, LlmResult, LlmStreamEvent,
-    LlmUsage, llm::StreamAssembly,
+    LlmUsage, llm::StreamAssembly, provider_finish_reason,
 };
 use serde_json::Value;
 use std::{
@@ -191,7 +191,7 @@ impl GeminiAccumulator {
                 "SAFETY" | "RECITATION" | "BLOCKLIST" | "PROHIBITED_CONTENT" => {
                     FinishReason::ContentFiltered
                 }
-                other => FinishReason::Other { name: other.into() },
+                other => provider_finish_reason(other),
             };
             events.extend(
                 self.assembly
@@ -228,13 +228,17 @@ impl GeminiAccumulator {
         self.assembly.abort(usage)
     }
 }
-pub(super) struct GeminiEventStream<'a> {
+/// A `streamGenerateContent` reply's frames as the call's stream events: the
+/// backend's own reader, which a host that sends the request itself (the
+/// credential broker's event call) reads its frames through as well.
+pub struct GeminiEventStream<'a> {
     source: GeminiProviderStream<'a>,
     accumulator: GeminiAccumulator,
     pending: VecDeque<LlmResult<LlmStreamEvent>>,
 }
 impl<'a> GeminiEventStream<'a> {
-    pub(super) fn new(source: GeminiProviderStream<'a>) -> Self {
+    #[must_use]
+    pub fn new(source: GeminiProviderStream<'a>) -> Self {
         Self {
             source,
             accumulator: Default::default(),

@@ -125,7 +125,9 @@ pub struct RepoProposalResolveInput {
 }
 
 /// `self.code.merge_queue.enqueue`: queues the run's own stored proposals
-/// of one work as one batch, under the declaration they were made under.
+/// of one work as one batch, under the declaration they were made under;
+/// more than 63 form consecutive batches, each an entry of the work, and
+/// the answer is the first.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoMergeQueueEnqueueInput {

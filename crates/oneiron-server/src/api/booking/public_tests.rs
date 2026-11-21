@@ -80,9 +80,11 @@ async fn public_booking_render_requires_no_authentication() {
             .status(),
         StatusCode::UNAUTHORIZED
     );
-    let context =
-        public_http_transport_context(ClientAddress(Some("127.0.0.1".parse().expect("peer"))))
-            .expect("context");
+    let context = public_http_transport_context(
+        ClientAddress(Some("127.0.0.1".parse().expect("peer"))),
+        ReadDestination::on_device(),
+    )
+    .expect("context");
     assert_eq!(context.authenticated_actor_ref, None);
     assert_eq!(context.transport, BookingTransport::AnonymousHttp);
     assert_eq!(
@@ -160,6 +162,7 @@ async fn linked_time_preselects_only_a_live_solver_slot() {
         window_end_utc: proposed.end_utc,
         slots: vec![proposed.clone()],
         flex_used: false,
+        full_days: Vec::new(),
     };
     let face = format!("https://book.example.org/schedule/{}", fixture.token);
     let snippet = oneiron::booking::booking_slots_snippet(

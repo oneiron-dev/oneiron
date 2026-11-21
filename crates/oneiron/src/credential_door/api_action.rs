@@ -22,12 +22,17 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::register::Register;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// The protocol an action was read under.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+/// The protocol an action was read under. A table row spells it by its
+/// Register name (`as_str`), the name serde writes.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Register,
+)]
+#[register("api.protocol")]
 pub enum ApiProtocol {
     #[serde(rename = "rest")]
     Rest,
@@ -37,19 +42,6 @@ pub enum ApiProtocol {
     Mcp,
     #[serde(rename = "json_rpc")]
     JsonRpc,
-}
-
-impl ApiProtocol {
-    /// The protocol as a table row spells it.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Rest => "rest",
-            Self::GraphQl => "graphql",
-            Self::Mcp => "mcp",
-            Self::JsonRpc => "json_rpc",
-        }
-    }
 }
 
 /// One action a request carries.

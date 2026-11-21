@@ -53,7 +53,33 @@ const CHANGE_REVERT: RevertSurface = RevertSurface {
     surface: "dreamer_change_revert",
     birth: "dreamer.change_revert",
     marker: None,
+    unsigned_copies: true,
+    edge_subjects: true,
 };
+
+/// A `supersede` item's inverse closes no row of its own, so the same item
+/// can be reverted again: it copies no member about an edge.
+const DERIVE_REVERT: RevertSurface = RevertSurface {
+    surface: "derive_revert",
+    birth: "derive.revert",
+    marker: None,
+    unsigned_copies: true,
+    edge_subjects: false,
+};
+
+/// Stands `old` again after `new` superseded it through a derivation batch's
+/// `supersede` item, which that batch's revert takes back: as a reverted
+/// change stands each claim it superseded ([`restore_member_in_txn`]). A
+/// fresh copy is born of `old` and of `new`. `now` is milliseconds.
+pub(crate) fn restore_replaced_claim_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    new: EntityId,
+    old: EntityId,
+    now: u64,
+) -> Result<MemberRestore> {
+    restore_member_in_txn(vault, txn, new, old, new, &DERIVE_REVERT, now)
+}
 
 /// What a Dreamer change was.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,9 +138,9 @@ pub struct DreamerChanges {
 
 /// What reverting one Dreamer change did: the claims it retracted, the
 /// markers open again for the owner, the members standing again in place,
-/// the Dreamer's fresh copies of its own MACHINE members as (member, copy),
-/// the members a later write closed, the SUMMARY or NOTE archived, and the
-/// summary current again in a reverted one's place.
+/// the fresh copies of the members that do not reopen, each written as its
+/// original author, as (member, copy), the members left closed, the SUMMARY
+/// or NOTE archived, and the summary current again in a reverted one's place.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RevertedDreamerChange {
     pub kind: DreamerChangeKind,
@@ -193,8 +219,8 @@ pub(crate) fn dreamer_changes_in_txn(
                         && author(body) == Some(dreamer)
                 })
                 .map(|body| (claim_kind(&body), body.predicate)),
-            ENTITY_TYPE_SUMMARY => (summary_by(&record.body, dreamer)
-                && stands_in_txn(vault, txn, &entry.id)?)
+            ENTITY_TYPE_SUMMARY => (stands_in_txn(vault, txn, &entry.id)?
+                && summary_by_in_txn(vault, txn, &entry.id, &record.body, dreamer))
             .then_some((DreamerChangeKind::Summary, String::new())),
             ENTITY_TYPE_NOTE => match note_by_in_txn(vault, txn, &entry.id, &record.body, dreamer)?
             {
@@ -269,28 +295,23 @@ pub(crate) fn revert_authored_change_in_txn(
             revert_claim_in_txn(vault, txn, change, &body, dreamer, reverter, now)
         }
         ENTITY_TYPE_SUMMARY => {
-            if !summary_by(&record.body, dreamer) {
-                return Err(invalid_consolidation(
-                    "the Dreamer did not write this summary",
-                ));
-            }
             if !stands_in_txn(vault, txn, &change)? {
                 return Err(invalid_consolidation("the change no longer stands"));
             }
-            let (current, header) =
+            if !summary_by_in_txn(vault, txn, &change, &record.body, dreamer) {
+                return Err(invalid_consolidation(
+                    "this is not a scope summary the Dreamer wrote",
+                ));
+            }
+            let (current, headers) =
                 crate::scope_summary::roll_back_summary_in_txn(vault, txn, change)?;
             archive_in_txn(vault, txn, &change)?;
             let mut reverted = RevertedDreamerChange::of(DreamerChangeKind::Summary);
             reverted.archived = Some(change);
             reverted.current = current;
-            if let Some(header) = header {
-                if vault
-                    .get_claim_in_txn(txn, &header)?
-                    .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active)
-                {
-                    vault.retract_claim_in_txn_as(txn, &header, now / 1_000, Some(reverter))?;
-                    reverted.retracted.push(header);
-                }
+            for header in headers {
+                vault.retract_claim_in_txn_as(txn, &header, now / 1_000, Some(reverter))?;
+                reverted.retracted.push(header);
             }
             Ok(reverted)
         }
@@ -453,10 +474,25 @@ fn claim_kind(body: &ClaimBody) -> DreamerChangeKind {
     }
 }
 
-/// Whether the SUMMARY body `body` is the Dreamer's.
-fn summary_by(body: &[u8], dreamer: EntityId) -> bool {
-    crate::scope_summary::decode_scope_summary_body(body)
-        .is_ok_and(|summary| summary.actor == dreamer.to_hex())
+/// Whether the standing SUMMARY `summary`, stored as `stored`, is a scope
+/// summary the Dreamer wrote. A summary with a document stores a pointer
+/// row, which is no summary body: its body is read through the document, as
+/// every summary read does (FIX DREAMER-REVERT-DECODES-SUMMARY-POINTER-ROW).
+/// Only its producer is read, never its text: an edit may leave the text
+/// blank, and the owner still reverts the summary (review P1 of #9808). A
+/// body that does not resolve, is no scope summary's, or names no producer
+/// is none: an epoch SUMMARY the Dreamer bylined has no scope summary's
+/// projection or document to take back (review round 2 of #9808).
+fn summary_by_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    summary: &EntityId,
+    stored: &[u8],
+    dreamer: EntityId,
+) -> bool {
+    crate::entity_doc::resolve_record_body(&vault.store, txn, summary, stored)
+        .and_then(|body| crate::scope_summary::scope_summary_actor(&body))
+        .is_ok_and(|actor| actor == dreamer)
 }
 
 /// The NOTE's kind when the Dreamer wrote it: its stored core names both

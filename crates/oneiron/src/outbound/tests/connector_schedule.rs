@@ -29,6 +29,7 @@ pub(super) fn delivered_send_idempotency_survives_attempt_completion() -> crate:
         trigger_ref: "session:durable-idempotency".to_owned(),
         job_ref: None,
         occurred_at: Some(90),
+        mention: None,
     };
     let first = vault
         .memory(actor, EdgeActorClass::Agent)
@@ -1446,6 +1447,10 @@ fn earlier_uncertainty_survives_later_definite_non_delivery_and_revocation() -> 
     );
     drop(vault);
     let vault = Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
+    // This reopen restores the seed marker; the built-in pack gate is not under test.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     assert!(
         crate::outbound_intent_ledger::intent_ledger_records(&vault).expect("reopened ledger")[0]
             .delivery_uncertain
@@ -1733,6 +1738,10 @@ fn post_send_crash_then_no_wire_retry_keeps_uncertainty() -> crate::Result<()> {
     );
     drop(vault);
     let vault = Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
+    // This reopen restores the seed marker; the built-in pack gate is not under test.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     let before =
         crate::outbound_intent_ledger::intent_ledger_records(&vault).expect("pending ledger");
     assert_eq!(
@@ -2060,13 +2069,13 @@ fn terminal_outcome_follows_ledger_resolution_on_every_door() -> crate::Result<(
                     assert!(!send_receipt_exists_for_task(&vault, task_ref)?, "{case}");
                     drop(vault);
                     let clock = crate::ports::ManualClock::new(retry_at + 1);
-                    let vault = Vault::open(
-                        tmp.path(),
-                        VaultConfig {
-                            store_clock: clock.bundle(),
-                            ..VaultConfig::default()
-                        },
-                    )?;
+                    let mut vault_config = VaultConfig::default();
+                    vault_config.store_clock = clock.bundle();
+                    let vault = Vault::open(tmp.path(), vault_config)?;
+                    // This reopen restores the seed marker; the built-in pack gate is not under test.
+                    vault.remove_builtin_pack_seed_marker_for_test().expect(
+                        "FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)",
+                    );
                     AttemptQueue::new(&vault).enqueue(EnqueueAttempt {
                         kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
                         payload: connector_send_attempt_payload(task_ref)?,

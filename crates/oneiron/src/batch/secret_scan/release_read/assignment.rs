@@ -14,6 +14,7 @@ use super::super::shapes::{
     normalized_key_byte,
 };
 use super::advance;
+use crate::session_overlay::{ROOM_SECRET_SIGIL, ROOM_SECRET_TAG_DIGITS};
 
 /// The release assignment rule over one segment as it streams.
 #[derive(Default)]
@@ -365,12 +366,17 @@ impl ValueForm {
 // The handle's two forms differ at their first character, so its first
 // character picks the form.
 const _: () = assert!(HANDLE_OPEN.as_bytes()[0] != HANDLE_TAG.as_bytes()[0]);
+// A room's handle is one sigil character, which no vault handle opens with,
+// so its first character picks it, bare or inside the bracket.
+const _: () = assert!(ROOM_SECRET_SIGIL.len() == 1);
+const _: () = assert!(ROOM_SECRET_SIGIL.as_bytes()[0] != HANDLE_TAG.as_bytes()[0]);
 
 /// The custody handle as a value streams, read as `custody_handle` reads
-/// it: past the handle quotes trimmed from both ends, `sc` and digits
-/// whole, or `[secret `, `sc`, digits, `]` and then blanks only. The
-/// handle reading's last trim, of `,` and `;`, takes nothing here: no
-/// segment holds either.
+/// it: past the handle quotes trimmed from both ends, `sc` and digits or a
+/// room's handle whole (`r`, its tag's [`ROOM_SECRET_TAG_DIGITS`] lowercase
+/// hex digits, `.` and digits; REVIEW-10003 round 2), or either inside
+/// `[secret ` and `]` and then blanks only. The handle reading's last trim,
+/// of `,` and `;`, takes nothing here: no segment holds either.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 enum Handle {
     /// The quotes trimmed from the start.
@@ -382,6 +388,11 @@ enum Handle {
     Tag { bracketed: bool, matched: usize },
     /// The digits after the tag; `digit`: one was read.
     Digits { bracketed: bool, digit: bool },
+    /// This many hex digits of a room handle's tag, past its sigil.
+    RoomTag { bracketed: bool, digits: usize },
+    /// The digits of a room handle's ordinal, past its dot; `digit`: one
+    /// was read.
+    RoomOrdinal { bracketed: bool, digit: bool },
     /// After a bracketed handle's `]`: blanks.
     Closed,
     /// The quotes trimmed from the end.
@@ -412,6 +423,33 @@ impl Handle {
                     Self::Open(matched)
                 }
             }
+            Self::Tag {
+                bracketed,
+                matched: 0,
+            } if ROOM_SECRET_SIGIL.starts_with(ch) => Self::RoomTag {
+                bracketed,
+                digits: 0,
+            },
+            Self::RoomTag { bracketed, digits }
+                if digits < ROOM_SECRET_TAG_DIGITS && matches!(ch, '0'..='9' | 'a'..='f') =>
+            {
+                Self::RoomTag {
+                    bracketed,
+                    digits: digits + 1,
+                }
+            }
+            Self::RoomTag { bracketed, digits }
+                if digits == ROOM_SECRET_TAG_DIGITS && ch == '.' =>
+            {
+                Self::RoomOrdinal {
+                    bracketed,
+                    digit: false,
+                }
+            }
+            Self::RoomOrdinal { bracketed, .. } if ch.is_ascii_digit() => Self::RoomOrdinal {
+                bracketed,
+                digit: true,
+            },
             Self::Tag { bracketed, matched } if HANDLE_TAG[matched..].starts_with(ch) => {
                 let matched = matched + ch.len_utf8();
                 if matched == HANDLE_TAG.len() {
@@ -430,9 +468,17 @@ impl Handle {
             Self::Digits {
                 bracketed: true,
                 digit: true,
+            }
+            | Self::RoomOrdinal {
+                bracketed: true,
+                digit: true,
             } if ch == ']' => Self::Closed,
             Self::Closed if ch.is_whitespace() => Self::Closed,
             Self::Digits {
+                bracketed: false,
+                digit: true,
+            }
+            | Self::RoomOrdinal {
                 bracketed: false,
                 digit: true,
             }
@@ -451,6 +497,9 @@ impl Handle {
         matches!(
             self,
             Self::Digits {
+                bracketed: false,
+                digit: true,
+            } | Self::RoomOrdinal {
                 bracketed: false,
                 digit: true,
             } | Self::Closed

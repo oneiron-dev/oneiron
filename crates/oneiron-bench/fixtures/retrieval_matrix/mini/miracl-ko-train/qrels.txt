@@ -1,0 +1,3 @@
+q1 Q0 hangul#0 1
+q1 Q0 hangul#1 0
+q1 Q0 hangul#2 0

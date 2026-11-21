@@ -20,15 +20,23 @@
 //! that a delay can be set. The hold itself, the undo and the list of sends
 //! in a window live in `outbound::undo_send`.
 
+use oneiron_authority::authority::Direction;
 use serde::{Deserialize, Serialize};
 
-use crate::authority::ActSurface;
+use crate::authority::{ActSurface, OwnerProofGround};
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryResult};
 use crate::outbound::{UndoSendFirstAgentSend, outbound_capability_manifest};
 use crate::policy_setting_doors::{PolicySetting, record_policy_setting_act_in_txn};
 use crate::side_table::{self, Named, SideTable};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{EntityId, Vault};
 
 /// The connector whose sends never take a window: a legal send (prepare and
@@ -88,6 +96,25 @@ pub struct UndoSendSettings {
 }
 
 impl UndoSendSetting {
+    /// A lower all-channel length widens because sends on unlisted channels wait less.
+    /// A lower effective length on a channel either normalized setting names
+    /// also widens because a send on that channel waits less.
+    /// Every other change narrows because people keep at least as much time to undo each send.
+    #[must_use]
+    pub(crate) fn direction_from(&self, standing: &Self) -> Direction {
+        if self.all_channels_secs < standing.all_channels_secs
+            || self
+                .channels
+                .iter()
+                .chain(&standing.channels)
+                .any(|lane| self.secs_for(&lane.channel) < standing.secs_for(&lane.channel))
+        {
+            Direction::Widens
+        } else {
+            Direction::Narrows
+        }
+    }
+
     /// The setting as it is stored: each channel in its manifest spelling,
     /// in channel order.
     ///
@@ -152,6 +179,15 @@ pub(crate) fn undo_send_setting_in_txn(
     Ok(UNDO_SEND.get(&vault.store, txn, &())?.unwrap_or_default())
 }
 
+/// What [`Vault::set_undo_send`]'s checks establish before its first write,
+/// on one snapshot: the owner, the setting in force, and the importance the
+/// act asks with.
+struct UndoSendChecks {
+    actor: EntityId,
+    prior: UndoSendSetting,
+    importance: OwnerActImportance,
+}
+
 impl Vault {
     /// The owner's undo-send window and the first agent send through each
     /// channel, under the owner's proof.
@@ -178,22 +214,60 @@ impl Vault {
     /// owner is revalidated in the writer. A change records the owner's act,
     /// with the setting it replaces, in the same commit when `surface` names
     /// where the owner said so; a setting equal to the one in force writes
-    /// and records nothing. Answers the setting as it now reads.
+    /// and records nothing. Answers the setting as it now reads. When `surface`
+    /// names an act, the door checks on a read before it asks. Shortening the
+    /// wait on any channel is important. The write derives importance again and
+    /// answers [`Error::ConcurrentWrite`] when the act became more important
+    /// since the person was asked.
     ///
     /// # Errors
     ///
     /// A setting [`UndoSendSetting::normalized`] refuses, a proof that no
     /// longer holds, and storage errors.
+    /// [`Error::ConcurrentWrite`] if importance rises after the presence check.
     pub fn set_undo_send(
         &self,
         owner: &AuthenticatedOwner,
         surface: Option<ActSurface>,
         setting: &UndoSendSetting,
     ) -> Result<UndoSendSetting> {
+        self.set_undo_send_between(owner, surface, setting, || {})
+    }
+
+    /// [`Self::set_undo_send`], with `between` run after the door asked and
+    /// before its write opens: the gap in which another writer can commit
+    /// first (the test door `test_doors::policy_doors_between`).
+    pub(crate) fn set_undo_send_between(
+        &self,
+        owner: &AuthenticatedOwner,
+        surface: Option<ActSurface>,
+        setting: &UndoSendSetting,
+        between: impl FnOnce(),
+    ) -> Result<UndoSendSetting> {
         let setting = setting.normalized()?;
+        // A surface names an act. The read checks it and drops before the
+        // door asks. With no surface the door goes straight to its write.
+        let ground = if surface.is_some() {
+            let importance = {
+                let txn = self.store.env.read_txn()?;
+                self.undo_send_checks_in_txn(&txn, owner, &setting)?
+                    .importance
+            };
+            let witness = self.owner_presence(importance, owner_presence_reasons::UNDO_SEND)?;
+            Some(OwnerProofGround::witnessed(&witness))
+        } else {
+            None
+        };
+        between();
         self.with_write_txn_grouped(|txn| {
-            let actor: EntityId = owner.revalidate_in_txn(self, txn)?;
-            let prior = undo_send_setting_in_txn(self, txn)?;
+            let UndoSendChecks {
+                actor,
+                prior,
+                importance,
+            } = self.undo_send_checks_in_txn(txn, owner, &setting)?;
+            if let Some(ground) = &ground {
+                ground.refuse_risen_importance(importance)?;
+            }
             if setting != prior {
                 UNDO_SEND.put(&self.store, txn, &(), &setting)?;
                 let signed = record_policy_setting_act_in_txn(
@@ -207,10 +281,30 @@ impl Vault {
                 )?;
                 // The signed record goes last, best effort (FIX 4624).
                 if let Some(act) = signed {
-                    self.record_policy_setting_op_in_txn(txn, act);
+                    self.record_policy_setting_op_in_txn(txn, ground.as_ref(), act);
                 }
             }
             Ok(setting)
+        })
+    }
+
+    /// Every check [`Self::set_undo_send`] makes before its first write, in
+    /// the order the write makes them, with the importance the act asks
+    /// with. It runs on a read before the door asks and again in the write,
+    /// so a refusal raises no prompt. `setting` is in its normalized form.
+    fn undo_send_checks_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+        setting: &UndoSendSetting,
+    ) -> Result<UndoSendChecks> {
+        let actor = owner.revalidate_in_txn(self, txn)?;
+        let prior = undo_send_setting_in_txn(self, txn)?;
+        let importance = OwnerActImportance::of_direction(setting.direction_from(&prior));
+        Ok(UndoSendChecks {
+            actor,
+            prior,
+            importance,
         })
     }
 }
@@ -242,4 +336,34 @@ pub fn set_undo_send_embedded(
         Some(ActSurface::ThisInstall),
         &input,
     )?)
+}
+
+/// Lands one archived undo-send envelope: [`UndoSendSetting::normalized`] must accept the value
+/// unchanged, then an absent-key install of the exact source bytes.
+pub(super) fn land_archived_undo_send_row_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&UNDO_SEND, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    // The writer stores `normalized` output, so a value it re-spells or
+    // reorders is not a faithful stored row and stays retained.
+    let normalized = match value.normalized() {
+        Ok(normalized) => normalized,
+        Err(_) => {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidValue,
+            ));
+        }
+    };
+    if normalized != value {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&UNDO_SEND, vault, txn, permit, &key, row)
 }

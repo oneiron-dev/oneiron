@@ -38,6 +38,7 @@ mod prepare;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use oneiron_vault_contract::conversation_training::TrainingReceiptStatusV2;
 
 use crate::Vault;
@@ -57,9 +58,6 @@ use super::lifecycle::{
 use super::source::{self, TrainingSelection};
 use super::withdraw;
 use super::{ConversationSource, Eligibility, eligible};
-
-/// The key context of an offer's worlds' settings digest.
-const POLICY_REVISION_CONTEXT: &str = "oneiron publisher training world policy revision v1";
 
 /// What one offer pass did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -545,10 +543,27 @@ fn withheld_state(why: &TrainingWithheld) -> SubmissionState {
 
 /// The digest of `worlds`' settings revisions on `fold`.
 fn policy_digest(fold: &AuthorityFold, worlds: &BTreeSet<EntityId>) -> [u8; 32] {
-    let mut digest = blake3::Hasher::new_derive_key(POLICY_REVISION_CONTEXT);
-    for world in worlds {
-        digest.update(world.as_bytes());
-        digest.update(&fold.world_policy_revision(*world).0);
+    revisions_digest(
+        worlds
+            .iter()
+            .map(|world| (*world, fold.world_policy_revision(*world).0)),
+    )
+}
+
+/// The digest of each world and its settings revision, in the order given:
+/// each world's id bytes, then its revision, with no length or count. An
+/// offer's custody row stores it and a release compares it afresh, so it
+/// keeps its bytes (K, PLAN-UC-04 stage 6.2).
+fn revisions_digest(revisions: impl IntoIterator<Item = (EntityId, [u8; 32])>) -> [u8; 32] {
+    let mut digest = LegacyDigest::new(purposes::feedback::TRAINING_POLICY_REVISION);
+    for (world, revision) in revisions {
+        digest.raw(world.as_bytes()).raw(&revision);
     }
-    *digest.finalize().as_bytes()
+    digest.finish()
+}
+
+/// The digest of each world and its settings revision, in the order given.
+#[cfg(oneiron_test_support)]
+pub(crate) fn training_policy_digest_for_test(revisions: &[(EntityId, [u8; 32])]) -> [u8; 32] {
+    revisions_digest(revisions.iter().copied())
 }

@@ -112,6 +112,7 @@ impl PrefixRefresh {
             );
             return None;
         }
+        let erase_generation = kept.erase_generation;
         let kept = &kept.rung;
         // The resend: the kept request's bytes with only the output limit
         // set to 1. The limit is generation-only: the provider reads the
@@ -165,7 +166,7 @@ impl PrefixRefresh {
                 class: WorkClass::Foreground,
                 ..Default::default()
             });
-        let horizon = self.send(&run, request, kept);
+        let horizon = self.send(&run, request, kept, erase_generation);
         if let Some(live) = &live
             && let Err(error) = live.book_rest()
         {
@@ -177,13 +178,17 @@ impl PrefixRefresh {
     /// Sends one refresh of `kept`: admitted on the seat-bound path the
     /// step call took, as exactly its rung's model, and sent on the
     /// captured rung alone while its prefix is still warm. The answer's
-    /// content is dropped; its stamped horizon is the refresh's. Blocking
-    /// on the runtime, up to [`REFRESH_TIMEOUT`].
+    /// content is dropped; its stamped horizon is the refresh's. Each rung,
+    /// retry and wait asks again, right before it sends, that no hard erase
+    /// moved the source erase generation from `erase_generation`, as every
+    /// compaction call asks its source rows (REVIEW-9900). Blocking on the
+    /// runtime, up to [`REFRESH_TIMEOUT`].
     fn send(
         &self,
         run: &RunAdmission,
         request: LlmRequest,
         kept: &AnsweringRung,
+        erase_generation: u64,
     ) -> Option<ServedCacheHorizon> {
         let admitted = match self
             .models
@@ -207,14 +212,23 @@ impl PrefixRefresh {
         // re-bind sets the same model and locality and, on this prompt-less
         // fork ladder, adds no prompt, so the bytes are the kept request's
         // with only `max_tokens` changed.
+        let unerased = || self.vault.source_erase_generation() == erase_generation;
         let sent = self.handle.block_on(tokio::time::timeout(
             REFRESH_TIMEOUT,
-            ladder.generate_exact_while_warm(run, admitted.request, &kept.rung, &kept.request),
+            ladder.generate_exact_while_warm(
+                run,
+                admitted.request,
+                &kept.rung,
+                &kept.request,
+                &unerased,
+            ),
         ));
         match sent {
             Ok(Ok(Some(response))) => response.usage.served_cache_horizon(),
             Ok(Ok(None)) => {
-                tracing::debug!("an idle prefix refresh found its prefix cold; nothing was sent");
+                tracing::debug!(
+                    "an idle prefix refresh found its prefix cold or a row erased; nothing was sent"
+                );
                 None
             }
             Ok(Err(error)) => {

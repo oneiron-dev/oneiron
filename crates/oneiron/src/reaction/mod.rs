@@ -51,7 +51,7 @@ pub use outcomes::{
 };
 pub(crate) use outcomes::{outcome_fact_admissible_in, outcome_question, outcome_sources};
 pub use read::{REACTIONS_FIELD, ReactionHistoryEntry, ReactionPill, reaction_line};
-pub(crate) use read::{grouped_lines_in, person_name_in};
+pub(crate) use read::{grouped_lines_in, person_body_names_in, person_name_in};
 pub use signal::{
     MAX_REACTION_SIGNAL_PAGE, ReactionSignal, ReactionSignalDeadlineExceeded, ReactionSignalPage,
     ReactionSignalPaging, check_reaction_signal_deadline, page_reaction_signals,

@@ -13,6 +13,7 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::get;
+use oneiron::setting::{SetSetting, SettingCaller};
 use oneiron::settings::backup::BackupPolicy;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -102,7 +103,8 @@ async fn read(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 }
 
 /// `PUT /v1/owner/settings/backup` with the whole `{enabled, every_hours,
-/// keep}`: stored at once, read by the schedule's next tick. It prunes
+/// keep}`: set as the owner's key `backup.policy` at once, read by the
+/// schedule's next tick. It prunes
 /// nothing and stops no backup already being written; a smaller `keep`
 /// prunes after the next backup. The body is read after the owner door.
 async fn put(
@@ -117,7 +119,10 @@ async fn put(
     }
     let policy = read_policy(&server, body).await?;
     let setting = blocking(move || -> OwnerResult<BackupSetting> {
-        server.vault().set_backup_policy(&owner, policy)?;
+        server.vault().set_setting(
+            SettingCaller::Owner(&owner),
+            SetSetting::vault_value("backup.policy", serde_json::json!(policy)),
+        )?;
         Ok(BackupSetting::of(&server, Some(policy)))
     })
     .await?;

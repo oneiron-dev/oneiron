@@ -12,6 +12,7 @@ use crate::server::SyncServer;
 pub(crate) mod delivery_outbox;
 mod editor_auth;
 mod editor_budget;
+mod editor_fields;
 pub(crate) mod hold_worker;
 mod ingress;
 pub(crate) mod notice_worker;
@@ -41,6 +42,9 @@ use std::time::Instant;
 /// no `DefaultBodyLimit` reads. A capability-free POST spools under the
 /// same disk and memory floors; `EditorBudget`'s window still admits it
 /// before its body is read (Engine call 2026-11-05 12:04, FIX 141/142).
+/// The shell's second token, of the draft-fields purpose, admits only
+/// `POST /sign/fields` (`editor_fields`), outside the computation budget:
+/// it reads its JSON up to the API's request floor and runs one verb.
 pub(super) fn editor_routes() -> Router<Arc<SyncServer>> {
     let desk = editor_auth::EditorDesk::new();
     Router::new()
@@ -51,6 +55,7 @@ pub(super) fn editor_routes() -> Router<Arc<SyncServer>> {
             editor_budget::admit,
         ))
         .route("/sign/editor", get(presentation::editor))
+        .route("/sign/fields", post(editor_fields::place_fields))
         .layer(DefaultBodyLimit::disable())
         .layer(axum::Extension(desk))
         .layer(axum::middleware::from_fn(private_response))
@@ -621,6 +626,9 @@ mod tests {
             oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device())
                 .expect("open signing fixture vault"),
         );
+        // The dispatch below needs the install's keystore (as `oneiron serve`
+        // installs at open); without it the send refuses KeystoreUnavailable.
+        crate::test_credentials::install_fixture_keystore(&vault, b"");
         let owner = vault
             .ensure_embedded_owner_actor()
             .expect("create embedded owner actor");

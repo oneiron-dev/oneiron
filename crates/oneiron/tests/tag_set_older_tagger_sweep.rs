@@ -109,6 +109,7 @@ fn held_tags(stack: Option<&str>) -> EncoderOutput {
         vad: None,
         context_links: Vec::new(),
         speaker_links: Vec::new(),
+        relations: None,
         stack_sha16: stack.map(str::to_owned),
         mood_parts: Vec::new(),
     }
@@ -122,6 +123,7 @@ fn witness_tagged(vault: &Vault, stack: Option<&str>) -> EntityId {
         conversation_ref: ROOM.into(),
         turn_ref: Some(TURN.to_owned()),
         thread_audience: None,
+        project: None,
         occurred_at: now_seconds(),
         messages: vec![WitnessMessage {
             id: None,

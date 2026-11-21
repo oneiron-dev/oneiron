@@ -25,6 +25,8 @@ mod query;
 mod redacted;
 mod run_body;
 mod search;
+#[cfg(oneiron_test_support)]
+mod search_test_door;
 mod shape;
 mod slice;
 mod unplaced;
@@ -33,6 +35,8 @@ pub(crate) use self::facets::DeliveredRanges;
 pub(crate) use self::outside::{read_result_in, result_cards_in};
 use self::redacted::RedactedBody;
 use self::run_body::{LiveCutoff, RunBody};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::search_test_door::search_text_for_test;
 pub(crate) use self::unplaced::unplaced_answer;
 
 use crate::batch::secret_scan::span_placed_for;
@@ -118,11 +122,14 @@ pub(crate) trait ResultBody {
     }
 }
 
-/// What one read may spend: the bytes of its reply, and the `[limits]`
-/// rows of the vault its body is in.
+/// What one read may spend: the bytes of its reply, the `[limits]` rows of
+/// the vault its body is in, and that vault owner's search context bound.
 struct ReadBounds<'w> {
     reply_bytes: usize,
     watch: &'w LimitWatch,
+    /// Bytes of context a search shows at most on each side of a match
+    /// (`code_run.result_search.max_context`).
+    search_max_context: usize,
 }
 
 impl ReadBounds<'_> {
@@ -223,6 +230,45 @@ impl ResultRead {
     /// blank, so either stays withheld whole.
     fn redacts(&self) -> bool {
         self.state.is_tainted() && self.secret.as_deref().is_none_or(span_placed_for)
+    }
+
+    /// Whether no read of the occurrence shows any of its content: it is
+    /// tainted, and not by a secret its redacted view blanks. A read that
+    /// passes may still find the body withheld once it reads it (the scan
+    /// still finding a secret in the view), as [`Self::preflight`] says.
+    pub(crate) fn withheld_whole(&self) -> bool {
+        self.state.is_tainted() && !self.redacts()
+    }
+
+    /// Up to `len` bytes from `offset` of the body this read shows, for a
+    /// reader that takes bytes rather than a facet's reply (a raw chunk, a
+    /// summary member): the stored bytes of a clean occurrence, else its
+    /// redacted view, each secret span blanked (ARCH-0069
+    /// `#result-bodies`). `None` for an occurrence no view shows: withheld
+    /// whole, or one in which the scan still finds a secret with its spans
+    /// blanked.
+    pub(crate) fn read_shown(
+        &self,
+        storage: &ExecutorStorage<'_>,
+        offset: u64,
+        len: usize,
+    ) -> Result<Option<Vec<u8>>> {
+        if self.withheld_whole() {
+            return Ok(None);
+        }
+        self.with_shown_body(storage, |body, redacted| {
+            if self.state.is_tainted() && !redacted {
+                return Ok(None);
+            }
+            body.read(offset, len).map(Some)
+        })
+    }
+
+    /// Whether any read of the occurrence shows its body: it is clean, or
+    /// its redacted view passes the scan. One withheld whole, or whose view
+    /// still scans as secret, shows no reader any byte of it.
+    pub(crate) fn shows_body(&self, storage: &ExecutorStorage<'_>) -> Result<bool> {
+        Ok(self.read_shown(storage, 0, 0)?.is_some())
     }
 
     /// Runs `read` over the body this read shows in `storage`, and whether

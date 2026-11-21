@@ -366,7 +366,22 @@ async fn relay_info_refs(
         None,
     )
     .await;
-    relay.observed(response)
+    relay.observed(refused_here(response))
+}
+
+/// An import lands only where it was asked to: the relay's Git child never
+/// follows a redirect (`http.followRedirects=false`). A former origin's
+/// redirect to the writer's door (RA7; the only `307` the serving plane
+/// answers) is therefore the refusal it stands for, noted as the import's
+/// refusal, not a push that failed for no reason.
+fn refused_here(response: Response) -> Response {
+    if response.status() != StatusCode::TEMPORARY_REDIRECT {
+        return response;
+    }
+    text_response(
+        StatusCode::FORBIDDEN,
+        "another host writes this repository; an import lands only on the host that writes it",
+    )
 }
 
 /// `POST <relay>/git-receive-pack`: the push, streamed.

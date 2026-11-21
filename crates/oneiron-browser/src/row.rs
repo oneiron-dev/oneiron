@@ -54,6 +54,7 @@ pub struct Row {
     pub secret: Option<RowSecret>,
 }
 
+#[cfg(feature = "driver")]
 /// The protocol-level recipient a `mailto:`/`tel:` link row's href names
 /// (FIX 12395): its scheme in lowercase with its recipient as written,
 /// before any `?query` or `#fragment`. Any other href (none, `http(s)`,
@@ -75,7 +76,7 @@ pub(crate) fn href_recipient(row: &Row) -> Option<String> {
     } else {
         return None;
     };
-    let recipient = rest.split(|c| c == '?' || c == '#').next().unwrap_or("");
+    let recipient = rest.split(['?', '#']).next().unwrap_or("");
     if recipient.is_empty() {
         return None;
     }

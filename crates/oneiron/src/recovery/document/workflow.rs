@@ -3,6 +3,7 @@
 #[cfg(feature = "sync")]
 use crate::recovery::canonical::pack;
 use crate::recovery::canonical::{ByteBudget, CanonicalSnapshot, invalid};
+use crate::side_table::HexId;
 use crate::{
     Vault,
     error::Result,
@@ -55,7 +56,11 @@ pub(super) fn normalize(
 ) -> Result<NoteFork> {
     let fork = if !fork.decided && !fork.rewrite && fork.recovery_merge.is_none() {
         let raw = super::NOTE_PROPOSAL_DOC
-            .get(&vault.store, txn, &super::DocKey(fork.note, fork.fork))?
+            .get(
+                &vault.store,
+                txn,
+                &super::HexPair(HexId(fork.note), HexId(fork.fork)),
+            )?
             .ok_or(invalid("missing proposal document"))?;
         let doc = loro::LoroDoc::from_snapshot(&raw).map_err(|_| invalid("proposal document"))?;
         crate::note::recovery_fork_value(fork, &doc)?

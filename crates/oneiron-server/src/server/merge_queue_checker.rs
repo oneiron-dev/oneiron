@@ -26,6 +26,9 @@ mod executor;
 mod received;
 mod tree;
 
+#[cfg(all(oneiron_test_support, unix))]
+pub(crate) use executor::run_empty_isolated_check;
+
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -55,6 +58,16 @@ impl SyncServer {
     /// tick: it never asks a held check or landing again.
     pub(super) async fn wake_merge_queue_checker(self: &Arc<Self>, admit: &HousekeepingAdmission) {
         self.start_queue_checker_pass(admit, false).await;
+    }
+
+    /// One whole checker pass on the calling thread, as a lifecycle tick
+    /// runs it, with every unit admitted: the integration tests' door
+    /// (`test_doors::live_merge_queue_checker_pass`), since `build_app` starts
+    /// no lifecycle. How many checks settled.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn run_merge_queue_checker_pass(&self) -> oneiron::Result<usize> {
+        let admit: HousekeepingAdmission = Arc::new(|| Some(Box::new(()) as Box<dyn Send>));
+        self.drain_queue_checks(Box::new(()), &admit, true)
     }
 
     async fn start_queue_checker_pass(self: &Arc<Self>, admit: &HousekeepingAdmission, tick: bool) {

@@ -10,13 +10,14 @@
 //! and counts no hidden row (FIX 10170). Saved tags read from text the turn
 //! no longer shows stay readable, said to be stale and pending their retag
 //! (FIX 10169). Nothing here authors a claim: the tagger's saved spans,
-//! coreference, mood and labels stay derived tags.
+//! coreference, relations, mood and labels stay derived tags.
 
 use super::freshness::{
     TaggingFreshness, mood_freshness, mood_part_views, tagging_freshness_in_txn,
 };
 use super::history::TaggingTraceRecord;
 use super::marker::MarkerPayload;
+use super::save::{LaneLink, lane_links_in_txn};
 use super::tags::{
     DerivationEnvelope, MentionHit, MentionLink, MentionReference, TaggedMention, TurnTags,
 };
@@ -25,17 +26,18 @@ use super::{OutputRefusal, TaggingMode};
 use crate::attempt_queue::{AttemptRecord, AttemptState};
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadReceipt, ScopedReadResult};
 use crate::entity_id::bytes_to_hex_lower;
+use crate::gate::PolicyManifestResolution;
 use crate::memory::extraction::SpeakerTarget;
 use crate::memory::{MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult, resolve_entity_ref};
-use crate::{EntityId, Error};
+use crate::{EntityId, Error, Vault};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::tagging::verbs::{
     DerivationEnvelopeView, MentionLinkView, MentionReferenceView, MergeEvidenceView,
-    TaggedMentionView, TaggingFailureView, TaggingHistoryView, TaggingMarkerState,
-    TaggingMarkerView, TaggingMentionHitView, TaggingMentionsRequest, TaggingMentionsView,
-    TaggingOutcomeView, TaggingSpeakerTarget, TaggingStatusView, TaggingTagsView, TaggingTraceView,
-    TaggingTurnRequest, TaggingVadView, TurnTagsView,
+    TaggedMentionView, TaggedRelationView, TaggingFailureView, TaggingHistoryView,
+    TaggingMarkerState, TaggingMarkerView, TaggingMentionHitView, TaggingMentionsRequest,
+    TaggingMentionsView, TaggingOutcomeView, TaggingSpeakerTarget, TaggingStatusView,
+    TaggingTagsView, TaggingTraceView, TaggingTurnRequest, TaggingVadView, TurnTagsView,
 };
 
 fn refusal_str(refusal: OutputRefusal) -> &'static str {
@@ -49,6 +51,7 @@ fn refusal_str(refusal: OutputRefusal) -> &'static str {
         OutputRefusal::UnknownContext => "unknown_context",
         OutputRefusal::SpanOrder => "span_order",
         OutputRefusal::OtherStack => "other_stack",
+        OutputRefusal::BadRelation => "bad_relation",
     }
 }
 
@@ -244,6 +247,17 @@ fn tags_view(tags: &TurnTags, freshness: TaggingFreshness) -> TurnTagsView {
                 confidence: evidence.confidence,
             })
             .collect(),
+        relations: tags.relations.as_ref().map(|relations| {
+            relations
+                .iter()
+                .map(|relation| TaggedRelationView {
+                    head: relation.head,
+                    tail: relation.tail,
+                    label: relation.label.clone(),
+                    confidence: relation.confidence,
+                })
+                .collect()
+        }),
         mood: tags.mood.map(|mood| TaggingVadView {
             valence: mood.valence,
             arousal: mood.arousal,
@@ -283,31 +297,49 @@ struct LaneTags {
     tags: TurnTags,
     /// By stored index: whether the mention shows.
     kept: Vec<bool>,
+    /// By stored index, the kind of each mention the lane's own decision
+    /// matches to no entity it reads ([`LaneLink::Unmatched`]); such a
+    /// mention holds a tag in `tags`.
+    unmatched: std::collections::BTreeMap<usize, u8>,
 }
 
 impl LaneTags {
     fn kept(&self, index: usize) -> bool {
         self.kept.get(index).copied().unwrap_or(false)
     }
+
+    /// The link the lane is served for the mention at `index`; `None` for a
+    /// mention it does not see, and for one it matches to no entity it
+    /// reads.
+    fn link(&self, index: usize) -> Option<&MentionLink> {
+        if !self.kept(index) || self.unmatched.contains_key(&index) {
+            return None;
+        }
+        self.tags.mentions.get(index).map(|mention| &mention.link)
+    }
 }
 
-/// `tags` as the lane whose point read is `reads` sees them: a mention shows
-/// only while the lane reads its MESSAGE, and its link names only the
-/// entities the lane reads (a provisional entity, local to this vault,
-/// shows with its mention). A coreference or merge evidence naming a
-/// mention left out goes with it. The mood, its parts and the surprise are
-/// measured over every MESSAGE of the set, so they show only while the lane
-/// reads them all. Every mention keeps its stored index.
+/// `tags` as `lane` sees them under `policy`: a mention shows only while the
+/// lane reads its MESSAGE, and its link names only the entities the lane
+/// reads (a provisional entity, local to this vault, shows with its
+/// mention). A link that names an entity the lane does not read is decided
+/// again for the lane, over the entities it reads ([`lane_links_in_txn`],
+/// FIX TAG-LINK-DECIDED-OVER-UNREADABLE-PERSONS). A coreference, merge
+/// evidence or relation naming a mention left out goes with it. The mood,
+/// its parts and the surprise are measured over every MESSAGE of the set, so
+/// they show only while the lane reads them all. Every mention keeps its
+/// stored index.
 fn lane_tags(
-    store: &crate::store::Store,
+    vault: &Vault,
     txn: &heed::RoTxn<'_>,
     tags: &TurnTags,
-    mut reads: impl FnMut(&EntityId) -> crate::Result<bool>,
+    lane: &ScopedRead<'_>,
+    policy: &PolicyManifestResolution,
 ) -> crate::Result<LaneTags> {
     let mut shown = tags.clone();
     let mut messages = std::collections::BTreeSet::new();
     for message in &tags.messages {
-        if reads(message)? {
+        if lane.is_entity_readable_with_policy_in(txn, policy, message)? {
             messages.insert(*message);
         }
     }
@@ -316,23 +348,15 @@ fn lane_tags(
         .iter()
         .map(|mention| messages.contains(&mention.message))
         .collect();
-    let mut entities = std::collections::BTreeMap::new();
-    for (mention, keep) in shown.mentions.iter_mut().zip(&kept) {
-        if !keep {
-            continue;
-        }
-        for entity in mention.link.entities().to_vec() {
-            let readable = match entities.get(&entity) {
-                Some(readable) => *readable,
-                None => {
-                    let readable =
-                        super::provisional::exists_in_txn(store, txn, &entity)? || reads(&entity)?;
-                    entities.insert(entity, readable);
-                    readable
-                }
-            };
-            if !readable {
-                mention.link = mention.link.without(&entity);
+    let links = lane_links_in_txn(vault, txn, tags, &kept, lane, policy)?;
+    let mut unmatched = std::collections::BTreeMap::new();
+    for (index, (mention, link)) in shown.mentions.iter_mut().zip(links).enumerate() {
+        match link {
+            None => continue,
+            Some(LaneLink::Link(link)) => mention.link = link,
+            Some(LaneLink::Unmatched { kind }) => {
+                mention.link = MentionLink::Tag;
+                unmatched.insert(index, kind);
             }
         }
         if let Some(antecedent) = mention.antecedent
@@ -345,6 +369,9 @@ fn lane_tags(
     shown
         .merge_evidence
         .retain(|evidence| is_kept(evidence.span) && is_kept(evidence.antecedent));
+    if let Some(relations) = shown.relations.as_mut() {
+        relations.retain(|relation| is_kept(relation.head) && is_kept(relation.tail));
+    }
     if messages.len() != tags.messages.len() {
         shown.mood = None;
         shown.mood_carried = false;
@@ -352,7 +379,66 @@ fn lane_tags(
         shown.surprise = None;
     }
     shown.messages.retain(|message| messages.contains(message));
-    Ok(LaneTags { tags: shown, kept })
+    Ok(LaneTags {
+        tags: shown,
+        kept,
+        unmatched,
+    })
+}
+
+/// The link `lane` is served for `hit`, a saved mention of `entity` whose
+/// TURN and MESSAGE it reads: the stored link while it names only entities
+/// the lane reads (a provisional entity shows with its mention), otherwise
+/// the lane's own decision over the entities it reads, as
+/// `vault.tagging.tags` serves it (FIX
+/// TAG-LINK-DECIDED-OVER-UNREADABLE-PERSONS). `None` when that decision no
+/// longer names `entity`: the hit is then no mention of it to this lane.
+/// `views` keeps each TURN's lane view, read once. The view is read after
+/// the hit, so a re-tag between the two reads can move the set's indices: a
+/// hit whose index names another span in the view is left out too.
+fn lane_hit_link(
+    vault: &Vault,
+    lane: &ScopedRead<'_>,
+    hit: &MentionHit,
+    entity: &EntityId,
+    views: &mut std::collections::BTreeMap<EntityId, Option<LaneTags>>,
+) -> MemoryResult<Option<MentionLink>> {
+    let mut narrowed = hit.mention.link.clone();
+    for linked in hit.mention.link.entities() {
+        if vault.provisional_entity(linked)?.is_none() && !lane.is_entity_readable(linked)? {
+            narrowed = narrowed.without(linked);
+        }
+    }
+    if narrowed == hit.mention.link {
+        return Ok(Some(narrowed));
+    }
+    if let std::collections::btree_map::Entry::Vacant(slot) = views.entry(hit.turn) {
+        let view = lane.with_grant_read_snapshot(|txn| -> MemoryResult<_> {
+            let Some(tags) = super::tags::readable_view_in_txn(&vault.store, txn, &hit.turn)?
+            else {
+                return Ok(None);
+            };
+            let policy = lane.live_policy_manifest_in(txn)?;
+            Ok(Some(lane_tags(vault, txn, &tags, lane, &policy)?))
+        })?;
+        slot.insert(view);
+    }
+    let Some(view) = views.get(&hit.turn).and_then(Option::as_ref) else {
+        return Ok(None);
+    };
+    let span = |mention: &TaggedMention| (mention.message, mention.start, mention.end);
+    let same_span = view
+        .tags
+        .mentions
+        .get(hit.index)
+        .is_some_and(|shown| span(shown) == span(&hit.mention));
+    if !same_span {
+        return Ok(None);
+    }
+    Ok(view
+        .link(hit.index)
+        .filter(|link| link.entities().contains(entity))
+        .cloned())
 }
 
 impl Memory<'_> {
@@ -477,12 +563,15 @@ impl Memory<'_> {
             };
             let freshness = tagging_freshness_in_txn(vault, txn, &turn, &tags)?;
             let policy = lane.live_policy_manifest_in(txn)?;
-            let shown = lane_tags(&vault.store, txn, &tags, |id| {
-                lane.is_entity_readable_with_policy_in(txn, &policy, id)
-            })?;
+            let shown = lane_tags(vault, txn, &tags, &lane, &policy)?;
             self.produced_from(shown.tags.messages.iter().copied());
             let mut view = tags_view(&shown.tags, freshness);
             view.mentions.retain(|mention| shown.kept(mention.index));
+            for mention in &mut view.mentions {
+                if let Some(kind) = shown.unmatched.get(&mention.index) {
+                    mention.link = MentionLinkView::Unmatched { kind: *kind };
+                }
+            }
             Ok(Some(view))
         })?;
         let value = TaggingTagsView {
@@ -540,6 +629,7 @@ impl Memory<'_> {
         let mut mentions = Vec::new();
         let mut current = std::collections::BTreeMap::new();
         let mut turn_tags = std::collections::BTreeMap::new();
+        let mut views = std::collections::BTreeMap::new();
         for mut hit in self.vault().tagged_mentions(&entity)? {
             if mentions.len() == input.limit {
                 break;
@@ -549,13 +639,10 @@ impl Memory<'_> {
             {
                 continue;
             }
-            for linked in hit.mention.link.entities().to_vec() {
-                if self.vault().provisional_entity(&linked)?.is_none()
-                    && !lane.is_entity_readable(&linked)?
-                {
-                    hit.mention.link = hit.mention.link.without(&linked);
-                }
-            }
+            let Some(link) = lane_hit_link(self.vault(), &lane, &hit, &entity, &mut views)? else {
+                continue;
+            };
+            hit.mention.link = link;
             // A coreference names its antecedent mention's place: it shows
             // only while the lane reads that mention's MESSAGE too.
             if let Some(antecedent) = hit.mention.antecedent {

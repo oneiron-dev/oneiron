@@ -33,8 +33,6 @@ mod stop_hold;
 mod thread_membership;
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-COMM-TESTS]: the lib test target's type check fails here (15 errors: E0063 x15); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -578,5 +576,8 @@ use rmpv::Value;
 pub(crate) use thread_membership::active_thread_refs_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use thread_membership::take_thread_member_claim_reads;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use parties::take_comm_party_row_reads;
 
 pub(crate) use projector::record_comm_thread_event_in_txn;

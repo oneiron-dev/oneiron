@@ -59,10 +59,10 @@ impl JsCodeModeHost for Host {
                 prompt: None,
             }),
             SelfCall::AgentVerb(call) => {
-                SelfDispatchOutcome::AgentVerb(crate::code_run::AgentVerbAnswer {
-                    output: serde_json::json!({"verb": call.verb.as_str(), "input": call.input}),
-                    rows: Some(Vec::new()),
-                })
+                SelfDispatchOutcome::AgentVerb(crate::code_run::AgentVerbAnswer::new(
+                    serde_json::json!({"verb": call.verb.as_str(), "input": call.input}),
+                    Some(Vec::new()),
+                ))
             }
             _ => return Err(Error::InvalidConfig("unexpected test call".into())),
         };
@@ -186,7 +186,7 @@ fn quickjs_self_memory_is_the_verb_table() {
     let result = run(&mut runtime, script, &mut host).unwrap();
     assert!(result.done, "{}", result.observation);
     let value: Value = serde_json::from_str(&result.observation).unwrap();
-    let engine_imports: &[(&str, &str)] = include!("../../../wit/generated/imports.rs");
+    let engine_imports: &[(&str, &str)] = include!("../../../../oneiron/wit/generated/imports.rs");
     assert!(
         !engine_imports
             .iter()
@@ -310,11 +310,15 @@ fn quickjs_foreign_exports_proposals_and_cannot_link_first_party() {
     let first_party = boundary.compile(&first_party).unwrap();
     assert!(
         boundary
-            .request(&first_party, SandboxGuestTier::Foreign, ForeignHost)
+            .request(
+                &first_party,
+                SandboxGuestTier::Foreign,
+                ForeignHost::default()
+            )
             .is_err()
     );
     let mut request = boundary
-        .request(&foreign, SandboxGuestTier::Foreign, ForeignHost)
+        .request(&foreign, SandboxGuestTier::Foreign, ForeignHost::default())
         .unwrap();
     let result = request
         .run_step(
@@ -322,17 +326,20 @@ fn quickjs_foreign_exports_proposals_and_cannot_link_first_party() {
                 .to_owned(),
         )
         .unwrap();
-    assert_eq!(result.proposals.len(), 2);
+    // The proposed file and the answer streamed to the host; only the claim
+    // rides in the step result.
+    assert_eq!(result.proposals.len(), 1);
     assert!(matches!(
         result.proposals[0],
-        bindings::ProposalDelta::FileWrite(_)
-    ));
-    assert!(matches!(
-        result.proposals[1],
         bindings::ProposalDelta::ClaimCandidate(_)
     ));
     let value: Value = serde_json::from_str(&result.result_json).unwrap();
-    assert_eq!(value["observation"], "proposals-only");
+    assert_eq!(value["done"], true);
+    assert_eq!(
+        request.host().files,
+        [("/mnt/outputs/report.txt".to_owned(), vec![111, 107])]
+    );
+    assert_eq!(request.host().finish, "proposals-only");
 }
 
 #[test]
@@ -342,7 +349,11 @@ fn quickjs_foreign_delete_and_rename_are_canonical_proposals() {
     let boundary = WasmtimeBoundary::new().expect("boundary");
     let component = boundary.compile(&bytes).expect("pinned component");
     let mut request = boundary
-        .request(&component, SandboxGuestTier::Foreign, ForeignHost)
+        .request(
+            &component,
+            SandboxGuestTier::Foreign,
+            ForeignHost::default(),
+        )
         .expect("foreign request");
     let result = request.run_step("propose.delete('/mnt/workspace/old'); propose.rename('/mnt/workspace/moved', '/mnt/workspace/new'); finish('ok');".into())
         .expect("real JS interpreter");
@@ -361,13 +372,76 @@ fn quickjs_foreign_delete_and_rename_are_canonical_proposals() {
     );
 }
 
-struct ForeignHost;
+/// A foreign request's host. It keeps the streamed answer and each proposed
+/// file the guest opened, filled and closed; one file is open at a time.
+#[derive(Default)]
+struct ForeignHost {
+    finish: String,
+    files: Vec<(String, Vec<u8>)>,
+    open: Option<(String, Vec<u8>)>,
+}
+impl ForeignHost {
+    /// The id the next opened file takes, and the open file answers to.
+    fn next_proposal(&self) -> u64 {
+        self.files.len() as u64 + 1
+    }
+}
 impl crate::code_sandbox::wasmtime_boundary::bindings::GuestImports for ForeignHost {
     fn clock_now_unix_ms(&mut self) -> u64 {
         1_700_000_000_000
     }
     fn random_bytes(&mut self, length: u32) -> std::result::Result<Vec<u8>, String> {
         Ok(vec![7; length as usize])
+    }
+    fn output_text(
+        &mut self,
+        target: String,
+        start: bool,
+        frame: String,
+    ) -> std::result::Result<u64, String> {
+        if target == "finish" {
+            if start {
+                self.finish.clear();
+            }
+            self.finish.push_str(&frame);
+        }
+        Ok(frame.len() as u64)
+    }
+    fn output_bytes(&mut self, _: String, _: Vec<u8>) -> std::result::Result<u64, String> {
+        Err("unlinked capability".into())
+    }
+    fn store_bytes(&mut self, _: bool, _: Vec<u8>) -> std::result::Result<u64, String> {
+        Err("unlinked capability".into())
+    }
+    fn proposal_open(&mut self, path: String) -> std::result::Result<u64, String> {
+        if self.open.is_some() {
+            return Err("a file proposal is already open".into());
+        }
+        self.open = Some((path, Vec::new()));
+        Ok(self.next_proposal())
+    }
+    fn proposal_chunk(
+        &mut self,
+        proposal: u64,
+        frame: Vec<u8>,
+    ) -> std::result::Result<u64, String> {
+        let id = self.next_proposal();
+        let Some((_, bytes)) = self.open.as_mut().filter(|_| proposal == id) else {
+            return Err("no such open file proposal".into());
+        };
+        bytes.extend_from_slice(&frame);
+        Ok(frame.len() as u64)
+    }
+    fn proposal_close(&mut self, proposal: u64) -> std::result::Result<u64, String> {
+        if proposal != self.next_proposal() {
+            return Err("no such open file proposal".into());
+        }
+        let Some(file) = self.open.take() else {
+            return Err("no such open file proposal".into());
+        };
+        let length = file.1.len() as u64;
+        self.files.push(file);
+        Ok(length)
     }
     fn read_file(&mut self, _: String) -> std::result::Result<Vec<u8>, String> {
         Err("unavailable".into())

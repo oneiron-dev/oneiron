@@ -68,6 +68,15 @@ crate::side_table::side_tables! {
     /// concatenated 32-byte digests. Key: id16 (document) + string (recipient id).
     ESIGN_RECIPIENT_CAPABILITY_INDEX: VaultMeta b"esign.recipient_capability.v1/" Raw
         [restore: refuse "e-sign capabilities"] [family: unclassified] [tier: canonical];
+    /// The active e-sign rule pack (ARCH-0064 sections 2 and 8). Key: ().
+    ESIGN_RULES_ACTIVE: VaultMeta b"esign.rules.active.v1" Named
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// E-sign rule pack activation notice. Key: u32be pack version.
+    ESIGN_RULES_NOTICE: VaultMeta b"esign.rules.notice.v1/" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// The e-sign rule proposal awaiting the owner's stamp. Key: ().
+    ESIGN_RULES_PENDING: VaultMeta b"esign.rules.pending.v1" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Successful seal or failed verification result. Key: id16 (attempt).
     ESIGN_SEAL_RESULT: VaultMeta b"esign.seal_result.v1/" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical];

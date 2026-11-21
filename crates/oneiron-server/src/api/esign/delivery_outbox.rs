@@ -216,6 +216,13 @@ impl Outbox {
     /// the leases it holds first; after a failed write it claims no more
     /// until those are written.
     fn tick(&self, vault: &Vault, recover: bool) -> anyhow::Result<bool> {
+        // A copy restored and not joined exports no e-sign delivery (row
+        // RESTORED-UNJOINED-STARTS-NO-WORK): leased rows keep their leases, ready
+        // rows wait, and the first tick after the join publishes them. Writes
+        // nothing: no ack settlement, no reclaim, no envelope.
+        if vault.restored_unjoined()? {
+            return Ok(recover);
+        }
         let Some(_lock) = files::lock(&self.dir)? else {
             return Ok(recover);
         };

@@ -31,14 +31,14 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use super::records::REPLAY_RECORDS;
-use super::replay_bodies::erase_replies;
+use super::replay_bodies::WriterCustody;
 use super::replay_capsule::actor_gone_in_store;
+use super::replay_rows;
 use super::response_owners::{ResponseOwner, mark_response_erased_in_txn, response_owner_in_txn};
 use super::wait_delivery::canonical_store;
 use crate::code_run::CodeRunReplayRecord;
 use crate::session_overlay::{OverlayKeyspace, SessionOverlay, SnapshotMergeRow};
-use crate::side_table::{Erased, RoutedDbs, SideKey};
+use crate::side_table::{Erased, RoutedDbs, SideKey, SideTableDbs};
 use crate::store::executor_wait_delivery::{DELIVERIES, HOLDERS, WaitHolder};
 use crate::{EntityId, Result, Vault};
 
@@ -48,8 +48,9 @@ use crate::{EntityId, Result, Vault};
 /// once its owner row says so, or once the actor that row, `stamped` (the
 /// run and actor this writer stamped it for, which the writer's view does
 /// not show yet) or its live run binding names is gone in the vault. The caller puts
-/// what this returns: the view reads the snapshot before this writer's
-/// own puts, so the record is fenced as supplied, never read back.
+/// what this returns with [`replay_rows::put_fenced`]: the view reads the
+/// snapshot before this writer's own puts, so the record is fenced as
+/// supplied, never read back.
 ///
 /// # Errors
 ///
@@ -79,7 +80,10 @@ pub(super) fn fence_overlay_replay_in_txn<'r>(
         || stamped.map_or(record.run_id, |(run, _)| run),
         |owner| owner.run,
     );
-    erase_replies(record.to_mut())?;
+    // A room decides with its base's custody (FIX 2329): each request keeps
+    // the custody records it names (FIX ERASED-IDENTITY-ONE-STAND-IN), the
+    // room's own among them (REVIEW-10003).
+    WriterCustody::in_room(dbs.side_room()).erase_replies(base, txn, record.to_mut())?;
     mark_response_erased_in_txn(dbs, txn, record.run_id, run)?;
     Ok(record)
 }
@@ -104,12 +108,15 @@ pub(crate) fn erase_gone_actors_in_live_overlays(vault: &Vault, ids: &[EntityId]
     }
 }
 
-/// The keys of the rows `overlay` stages under `prefix`, as one snapshot
-/// reads them; deletions over base are none of them. Under this thread's
-/// installed segment the snapshot is that segment's view.
-fn staged_keys(overlay: &Arc<SessionOverlay>, prefix: &[u8]) -> Result<Vec<Vec<u8>>> {
+/// The keys of the rows `overlay` stages that `include_key` keeps, as one
+/// snapshot reads them; deletions over base are none of them. Under this
+/// thread's installed segment the snapshot is that segment's view.
+fn staged_keys(
+    overlay: &Arc<SessionOverlay>,
+    include_key: impl Fn(&[u8]) -> bool,
+) -> Result<Vec<Vec<u8>>> {
     let snapshot = overlay.snapshot()?;
-    let plan = snapshot.merge_plan(OverlayKeyspace::VaultMeta, |key| key.starts_with(prefix));
+    let plan = snapshot.merge_plan(OverlayKeyspace::VaultMeta, include_key);
     Ok(plan
         .rows
         .into_iter()
@@ -137,7 +144,6 @@ fn erase_in_overlay(vault: &Vault, overlay: &Arc<SessionOverlay>, ids: &[EntityI
     if gone_in(&vault.store.env.read_txn()?).is_empty() {
         return Ok(());
     }
-    let record_prefix = REPLAY_RECORDS.decl().prefix;
     let holder_prefix = HOLDERS.decl().prefix;
     let segment = vault.with_write_txn_grouped(|wtxn| {
         let gone = {
@@ -145,23 +151,24 @@ fn erase_in_overlay(vault: &Vault, overlay: &Arc<SessionOverlay>, ids: &[EntityI
             gone_in(txn)
         };
         let segment = overlay.install_txn_segment()?;
-        let records: Vec<EntityId> = staged_keys(overlay, record_prefix)?
+        let records: Vec<EntityId> = staged_keys(overlay, replay_rows::is_row_key)?
             .iter()
-            .filter_map(|key| key.strip_prefix(record_prefix))
-            .filter_map(<EntityId as SideKey>::decode_key)
+            .filter_map(|key| replay_rows::run_id_of_key(key))
             .collect();
-        let holders: Vec<(EntityId, EntityId, u64)> = staged_keys(overlay, holder_prefix)?
-            .iter()
-            .filter_map(|key| key.strip_prefix(holder_prefix))
-            .filter_map(<(EntityId, EntityId, u64) as SideKey>::decode_key)
-            .collect();
+        let holders: Vec<(EntityId, EntityId, u64)> =
+            staged_keys(overlay, |key| key.starts_with(holder_prefix))?
+                .iter()
+                .filter_map(|key| key.strip_prefix(holder_prefix))
+                .filter_map(<(EntityId, EntityId, u64) as SideKey>::decode_key)
+                .collect();
         if records.is_empty() && holders.is_empty() {
             return Ok(segment);
         }
         let view = vault.store.session_view(overlay.clone())?;
         let dbs = RoutedDbs::Session(&view);
+        let custody = WriterCustody::in_room(Some(overlay.as_ref()));
         for record_id in &records {
-            erase_record_in_txn(&dbs, wtxn, *record_id, &gone)?;
+            erase_record_in_txn(&dbs, wtxn, *record_id, &gone, &custody)?;
         }
         for key in &holders {
             erase_membership_in_txn(&dbs, wtxn, key, &gone)?;
@@ -173,13 +180,17 @@ fn erase_in_overlay(vault: &Vault, overlay: &Arc<SessionOverlay>, ids: &[EntityI
 
 /// `record_id`'s replay record in its erased form and its owner row Erased,
 /// when its owner row or its live run binding names an actor in `gone`.
+/// Each request keeps the custody records it names, read with the room's
+/// base custody and its own through `custody`, as the vault's scrub erases a
+/// record.
 fn erase_record_in_txn(
     dbs: &RoutedDbs<'_>,
     wtxn: &mut heed::RwTxn<'_>,
     record_id: EntityId,
     gone: &BTreeSet<EntityId>,
+    custody: &WriterCustody<'_>,
 ) -> Result<()> {
-    let Some(record) = REPLAY_RECORDS.get_lenient(dbs, wtxn, &record_id)? else {
+    let Some(mut record) = replay_rows::get_lenient(dbs, wtxn, &record_id)? else {
         return Ok(());
     };
     let owner = response_owner_in_txn(dbs, wtxn, &record_id)?;
@@ -196,7 +207,8 @@ fn erase_record_in_txn(
         return Ok(());
     }
     let run = owner.as_ref().map_or(record.run_id, |owner| owner.run);
-    REPLAY_RECORDS.put_erased(dbs, wtxn, &record_id, Erased::of(record)?)?;
+    custody.erase_replies(canonical_store(dbs), wtxn, &mut record)?;
+    replay_rows::put_erased(dbs, wtxn, &record_id, Erased::of(record)?)?;
     mark_response_erased_in_txn(dbs, wtxn, record_id, run)
 }
 
