@@ -1,14 +1,17 @@
-//! FIX [RECIPIENT-NOTICE-READ-BY-ANY-READER], owner half PR 3: an identity
-//! ask raised from a member's own source goes to that member.
+//! FIX [RECIPIENT-NOTICE-READ-BY-ANY-READER], owner half PR 3 and 3b: an
+//! identity ask raised from a member's own source goes to that member, and
+//! their "someone new" goes to the owner as a proposal of ids alone.
 //!
 //! The lead (21 Nov 11:3x, OWNER-NOTICE-EXISTENCE Q2 = C): "Never compose an
 //! owner-addressed notice from words he cannot read. An Ask raised from a
 //! member's own source goes to that member, who knows who they meant. The
 //! owner gets the actionable stub 'a member has a pending question about
 //! <kind>'." The lead (21 Nov 13:2x, OWNER-NOTICE-MEMBER-ASK-ROUTE): Q1 = A,
-//! "Answer::Is applies on the member's answer"; Q2 = A, "when no live
-//! non-owner person can open the ask, the owner gets the stub ... The ask
-//! stays open".
+//! "Answer::Is applies on the member's answer. Answer::SomeoneNew becomes a
+//! decision-only proposal to the owner. It carries the provisional and
+//! candidate ids only, with no name and no excerpt, and it applies when he
+//! accepts"; Q2 = A, "when no live non-owner person can open the ask, the
+//! owner gets the stub ... The ask stays open".
 //!
 //! Each ask quotes a saved mention, and every door reads it through its
 //! caller's lane, so an ask whose turn only a member reads opens for the
@@ -18,16 +21,17 @@
 //! then the turn is bound to a source policy only the member reads, standing
 //! in for a turn landed from the member's own mailbox, and the ask is sent.
 //!
-//! Red on main (every test but the fourth): every ask goes to the owners
+//! Red on main (every test but the guards): every ask goes to the owners
 //! whatever their lane reads, so the owner gets an Ask he cannot open, the
-//! member gets nothing (the third test fails there before its someone-new
-//! answer), and the member's answer is refused "only a vault owner answers
-//! an identity ask". The member answers through `self.identity.answer`'s
-//! member door, on their own person proof; the red pin, whose base has no
-//! such door, answers through the native `Memory::identity_answer` on their
-//! slip. On the head a member's "someone new" is the owner's decision, and
-//! the fourth test is a guard that holds on both: an ask every owner reads
-//! still goes to the owner alone.
+//! member gets nothing, and the member's answer is refused "only a vault
+//! owner answers an identity ask". The member answers through
+//! `self.identity.answer`'s member door, on their own person proof; the red
+//! pin, whose base has no such door, answers through the native
+//! `Memory::identity_answer` on their slip. Red on PR 3's head (the third
+//! and fourth tests): a member's "someone new" is refused there as the
+//! owner's decision. The guards hold on both: the owner's "someone new" on
+//! an ask he cannot read, with no proposal on it, is no answer; and an ask
+//! every owner reads still goes to the owner alone.
 //!
 //! Each `FIXTURE:` assertion checks the setup, never the fix.
 //!
@@ -40,16 +44,14 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use oneiron::authority::VerifiedSlip;
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_runner::maintenance::identity::{
     IDENTITY_NOTIFICATION_PRODUCER, IdentityAnswerRequest, IdentitySettled,
 };
 use oneiron::edge::EdgeActorClass;
-use oneiron::inbox::NotificationRow;
+use oneiron::inbox::{NotificationAction, NotificationKind, NotificationRow};
 use oneiron::memory::extraction::{EncoderOutput, NerSpan};
-use oneiron::memory::{
-    MEMORY_CODE_FORBIDDEN, MemoryError, WitnessAssertions, WitnessAuthor, WitnessMessage,
-    WitnessTurn,
-};
+use oneiron::memory::{MemoryError, WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::tagging::{HeldTagsOutcome, MentionLink, TaggingMarkerConfig, TaggingMode};
@@ -73,6 +75,12 @@ const MENTION: &str = "Owan Smyth";
 const STUB_PRODUCER: &str = "dreamer.identity.member_question";
 /// The stub's words, the only words the owner's notice carries.
 const STUB_DETAIL: &str = "a member has a pending question about identity";
+/// The producer of the owner's notice of a member's someone-new proposal.
+const PROPOSAL_PRODUCER: &str = "dreamer.identity.someone_new_proposal";
+/// The proposal notice's words, the only words it carries.
+const PROPOSAL_DETAIL: &str = "a member answered a pending question about identity: someone new";
+/// The verb the proposal's tap answers through.
+const ANSWER_VERB: &str = "self.identity.answer";
 
 /// The pass's clock, in seconds: the re-check, the send and the answer
 /// compare `now` only with the ask's own stamps.
@@ -98,6 +106,7 @@ struct Fixture {
     _dir: tempfile::TempDir,
     vault: Arc<Vault>,
     owner: EntityId,
+    owner_proof: AuthenticatedOwner,
     member: EntityId,
     member_proof: VerifiedSlip,
 }
@@ -110,7 +119,7 @@ impl Fixture {
             open_member_vault(dir.path(), tagging_config(), &[member.to_hex().as_str()])
                 .expect("fixture vault"),
         );
-        let (owner, _proof) = embedded_owner(&vault).expect("the owner");
+        let (owner, owner_proof) = embedded_owner(&vault).expect("the owner");
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
         vault
             .prepare_install_signing()
@@ -121,6 +130,7 @@ impl Fixture {
             _dir: dir,
             vault,
             owner,
+            owner_proof,
             member,
             member_proof,
         }
@@ -218,6 +228,39 @@ impl Fixture {
                     choice: choice.to_owned(),
                 },
             )
+    }
+
+    /// The owner's notices of a member's someone-new proposal.
+    fn proposals(&self, person: EntityId) -> Vec<NotificationRow> {
+        self.inbox(person)
+            .into_iter()
+            .filter(|row| row.source.producer == PROPOSAL_PRODUCER)
+            .collect()
+    }
+
+    /// The owner's answer `request` through `self.identity.answer` on his
+    /// own owner proof.
+    fn owners_answer(
+        &self,
+        request: &IdentityAnswerRequest,
+    ) -> Result<IdentitySettled, MemoryError> {
+        self.vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .with_owner_authorship(&self.owner_proof)
+            .identity_answer(request)
+    }
+
+    /// The mention's own provisional person, as the save minted it.
+    fn provisional(&self, turn: EntityId) -> EntityId {
+        let saved = self
+            .vault
+            .turn_tags(&turn)
+            .expect("tags read")
+            .expect("the turn keeps its tags");
+        match saved.mentions[0].link {
+            MentionLink::Minted { entity, .. } => entity,
+            ref other => panic!("FIXTURE: the mention names its own minted person: {other:?}"),
+        }
     }
 
     /// The one ask key of the member's identity Ask.
@@ -396,19 +439,165 @@ fn the_members_answer_naming_a_candidate_settles_the_ask_from_their_own_source()
 }
 
 #[test]
-fn a_members_someone_new_answer_is_the_owners_decision() {
+fn a_members_someone_new_answer_goes_to_the_owner_as_a_proposal_of_ids_alone() {
     let fixture = Fixture::open();
-    let (owen, _turn) = fixture.owen_is_asked_about_in_a_source_read_by(&[fixture.member]);
+    let (owen, turn) = fixture.owen_is_asked_about_in_a_source_read_by(&[fixture.member]);
+    let provisional = fixture.provisional(turn);
     let ask = fixture.members_ask();
 
-    let refused = fixture
+    let proposed = fixture
         .members_answer(&ask, "someone_new")
-        .expect_err("a member's someone-new answer does not apply");
+        .expect("a member's someone-new answer is taken as a proposal");
 
-    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{refused:?}");
+    let proposed = serde_json::to_value(&proposed).expect("the answer encodes");
+    assert_eq!(
+        proposed["proposed"],
+        serde_json::json!(true),
+        "the answer says it is a proposal: {proposed}"
+    );
+    assert_eq!(
+        proposed["entity"],
+        serde_json::json!(""),
+        "a proposal names no settled entity: {proposed}"
+    );
+    let saved = fixture
+        .vault
+        .turn_tags(&turn)
+        .expect("tags read")
+        .expect("the turn keeps its tags");
+    assert!(
+        matches!(saved.mentions[0].link, MentionLink::Minted { .. }),
+        "a proposal settles nothing: {:?}",
+        saved.mentions
+    );
+    let proposals = fixture.proposals(fixture.owner);
+    assert_eq!(
+        proposals.len(),
+        1,
+        "the owner gets one proposal: {:?}",
+        fixture.inbox(fixture.owner)
+    );
+    let notice = &proposals[0];
+    assert_eq!(notice.kind, NotificationKind::Ask, "{notice:?}");
+    assert_eq!(
+        notice.source.detail.as_deref(),
+        Some(PROPOSAL_DETAIL),
+        "{notice:?}"
+    );
+    let mut refs = notice.subject_refs.clone();
+    refs.sort();
+    let mut ids = vec![provisional.to_hex(), owen.to_hex()];
+    ids.sort();
+    assert_eq!(
+        refs, ids,
+        "the proposal carries the provisional and candidate ids: {notice:?}"
+    );
+    assert!(
+        notice.origin_conversation.is_none(),
+        "the proposal names no conversation: {notice:?}"
+    );
+    let words = serde_json::to_string(notice).expect("the notice encodes");
+    assert!(
+        !words.contains("Owan") && !words.contains("Smyth") && !words.contains("called"),
+        "the proposal carries no name and no excerpt: {words}"
+    );
+    assert_eq!(
+        notice.actions,
+        vec![NotificationAction {
+            verb: ANSWER_VERB.to_owned(),
+            args: serde_json::json!({ "ask": ask, "choice": "someone_new" }),
+        }],
+        "the proposal offers the owner one tap, his acceptance: {notice:?}"
+    );
+    assert!(
+        fixture.identity_asks(fixture.owner).is_empty()
+            && fixture.proposals(fixture.member).is_empty(),
+        "the owner still gets no Ask naming the turn, and the member no proposal"
+    );
+}
+
+#[test]
+fn the_owners_acceptance_applies_a_members_someone_new_proposal() {
+    let fixture = Fixture::open();
+    let (owen, turn) = fixture.owen_is_asked_about_in_a_source_read_by(&[fixture.member]);
+    let provisional = fixture.provisional(turn);
+    let ask = fixture.members_ask();
     fixture
-        .members_answer(&ask, &format!("is:{}", owen.to_hex()))
-        .expect("the ask stays open after the refused answer");
+        .members_answer(&ask, "someone_new")
+        .expect("a member's someone-new answer is taken as a proposal");
+    let proposals = fixture.proposals(fixture.owner);
+    let [notice] = proposals.as_slice() else {
+        panic!("the owner gets one proposal: {proposals:?}");
+    };
+    let [tap] = notice.actions.as_slice() else {
+        panic!("the proposal offers one tap: {notice:?}");
+    };
+
+    let naming_owen = fixture.owners_answer(&IdentityAnswerRequest {
+        ask: ask.clone(),
+        choice: format!("is:{}", owen.to_hex()),
+    });
+    assert!(
+        naming_owen.is_err(),
+        "a proposal is accepted, never answered otherwise by an owner who cannot read the ask: \
+         {naming_owen:?}"
+    );
+    let request: IdentityAnswerRequest =
+        serde_json::from_value(tap.args.clone()).expect("the tap's args are the verb's input");
+    let settled = fixture
+        .owners_answer(&request)
+        .expect("the owner's acceptance applies");
+
+    assert_eq!(
+        settled.entity,
+        provisional.to_hex(),
+        "someone new confirms the mention's own person"
+    );
+    let saved = fixture
+        .vault
+        .turn_tags(&turn)
+        .expect("tags read")
+        .expect("the turn keeps its tags");
+    assert!(
+        matches!(saved.mentions[0].link, MentionLink::Candidates { .. })
+            && saved.mentions[0].link.entities() == [provisional],
+        "the mention is settled as the new person: {:?}",
+        saved.mentions
+    );
+    let proposals = fixture.proposals(fixture.owner);
+    assert!(
+        proposals.iter().all(|row| row.actions.is_empty()),
+        "an accepted proposal offers no tap: {proposals:?}"
+    );
+    let again = fixture.members_answer(&ask, &format!("is:{}", owen.to_hex()));
+    assert!(again.is_err(), "the answered ask is closed: {again:?}");
+}
+
+#[test]
+fn the_owners_someone_new_on_an_ask_he_cannot_read_with_no_proposal_is_no_answer() {
+    let fixture = Fixture::open();
+    let (_owen, turn) = fixture.owen_is_asked_about_in_a_source_read_by(&[fixture.member]);
+    let ask = fixture.members_ask();
+
+    let refused = fixture.owners_answer(&IdentityAnswerRequest {
+        ask,
+        choice: "someone_new".to_owned(),
+    });
+
+    assert!(
+        refused.is_err(),
+        "with no proposal standing, the ask is no open ask to the owner: {refused:?}"
+    );
+    let saved = fixture
+        .vault
+        .turn_tags(&turn)
+        .expect("tags read")
+        .expect("the turn keeps its tags");
+    assert!(
+        matches!(saved.mentions[0].link, MentionLink::Minted { .. }),
+        "the refused answer settled nothing: {:?}",
+        saved.mentions
+    );
 }
 
 #[test]
