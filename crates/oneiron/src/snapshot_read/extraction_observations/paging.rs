@@ -6,6 +6,7 @@ use super::types::{
     ExtractionObservationsPage, ExtractionObservationsPageRequest, ObservationFacts,
 };
 use crate::memory::{MemoryError, MemoryResult};
+use crate::request_limits::page_limit_zero_as_one;
 use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// One ordered section of the complete observations read.
@@ -120,7 +121,7 @@ pub(super) fn page_observation_facts(
         }
         None => (ObservationSection::Candidates, 0),
     };
-    let limit = input.limit.unwrap_or(row_bound).min(row_bound).max(1);
+    let limit = page_limit_zero_as_one(input.limit, row_bound, row_bound).rows;
     let mut page = ExtractionObservationsPage {
         attempt: input.attempt.clone(),
         now_ms: input.now_ms,
