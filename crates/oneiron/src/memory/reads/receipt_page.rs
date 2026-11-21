@@ -236,6 +236,21 @@ impl Memory<'_> {
         receipts_of_kinds_for(self, limit, kinds)
     }
 
+    /// The family receipts a verb hook chain's receipt tail holds for this
+    /// handle's actor (`runtime_hooks::verb::chain::tail`):
+    /// [`Self::receipts_of_kinds`] less every receipt the vault owner alone
+    /// reads ([`owner_kept_receipts`]), on the owner's own call too, with
+    /// the same refill past them. A hook is not that reader: its grant may
+    /// read as someone else, and the receipt its body writes names no row of
+    /// such a receipt, so no row screen could judge a copy of it.
+    pub(crate) fn hook_tail_receipts(
+        &self,
+        limit: usize,
+        kinds: &[String],
+    ) -> MemoryResult<Vec<MemoryReceipt>> {
+        family_receipts_for(self, limit, kinds, true)
+    }
+
     /// `vault.receipts` a page at a time: [`Self::receipts_of_kinds`]'s
     /// receipts after `after`, up to the full requested `limit` on either ledger.
     ///
@@ -268,6 +283,18 @@ pub(crate) fn receipts_of_kinds_for(
     limit: usize,
     kinds: &[String],
 ) -> MemoryResult<Vec<MemoryReceipt>> {
+    family_receipts_for(reader, limit, kinds, false)
+}
+
+/// [`receipts_of_kinds_for`]. With `hook_tail`, every receipt the vault
+/// owner alone reads leaves before any takes a place, whoever `reader` is
+/// ([`Memory::hook_tail_receipts`]).
+fn family_receipts_for(
+    reader: &impl ReceiptReader,
+    limit: usize,
+    kinds: &[String],
+    hook_tail: bool,
+) -> MemoryResult<Vec<MemoryReceipt>> {
     if kinds.is_empty() {
         return Ok(gate_records_before(reader, None, limit)?
             .into_iter()
@@ -277,13 +304,19 @@ pub(crate) fn receipts_of_kinds_for(
     let vault = reader.receipt_vault();
     let content = reader.receipt_content();
     // A credential cut refills past withheld receipts like the off-device
-    // one (FIX 9955), and so does the owner's: an unbound handle that every
-    // receipt reaches keeps its single fetch.
+    // one (FIX 9955), and so do the owner's and a hook tail's: an unbound
+    // handle that every receipt reaches keeps its single fetch.
     let mut fetch = limit;
     let mut kept = loop {
         let query = family_query(fetch, kinds)?;
-        let receipts = vault.receipts_for_caller(query, reader.receipt_destination(), content)?;
+        let mut receipts =
+            vault.receipts_for_caller(query, reader.receipt_destination(), content)?;
         let exhausted = receipts.len() < fetch;
+        if hook_tail {
+            receipts.retain(|receipt| {
+                !crate::dreamer_prefilter::prefilter_receipt_read_message_rows(receipt)
+            });
+        }
         let filtered = reader_kept_receipts(reader, receipts)?;
         if filtered.len() >= limit || exhausted || fetch >= MAX_RECEIPT_QUERY_SCAN {
             break filtered;
@@ -309,12 +342,14 @@ fn reader_kept_receipts(
 
 /// `receipts` less the ones only the vault owner reads, for any other
 /// reader, bound to a credential or not: a prefilter receipt of a round whose
-/// screen read MESSAGE rows
-/// ([`crate::dreamer_prefilter::prefilter_receipt_read_message_rows`]). Its
-/// score, its axes and its round's counts stand on the words of the round's
-/// other turns and on MESSAGE rows read as the Dreamer, and it names its own
-/// TURN alone, so a reader of that TURN would learn of words it may not
-/// read. The owner is asked for only when such a receipt is on the page.
+/// screen asked for a turn's words from its MESSAGE rows
+/// ([`crate::dreamer_prefilter::prefilter_receipt_read_message_rows`]). A
+/// turn's novelty axis, and so its score and its round's counts, stand on
+/// the words of turns the round scored before it and on MESSAGE rows read
+/// as the Dreamer. A turn's receipt names its own TURN alone and the
+/// rollup names no row, so a reader of that TURN would learn of words it
+/// may not read. The owner is asked for only when such a receipt is among
+/// the ones fetched.
 fn owner_kept_receipts(
     reader: &impl ReceiptReader,
     mut receipts: Vec<ReceiptRecord>,
