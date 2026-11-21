@@ -265,8 +265,10 @@ async fn move_intent(
     }
     let lose_reply = movement == "capture" && std::mem::take(&mut stripe.lose_capture_reply);
     let intent = stripe.intents.get_mut(&id).expect("known intent");
-    if movement == "cancel" && intent.status == "succeeded" {
-        // Stripe cancels no captured payment.
+    if (movement == "cancel" && intent.status == "succeeded")
+        || (movement == "capture" && intent.status == "canceled")
+    {
+        // Stripe cancels no captured payment, and captures no cancelled one.
         return stripe_error(StatusCode::BAD_REQUEST, "payment_intent_unexpected_state");
     }
     intent.status = if movement == "capture" {
@@ -1230,6 +1232,79 @@ async fn a_capture_a_restricted_key_may_not_make_stays_owed_and_lands_once_the_k
         capture_posts() - refused_captures,
         1,
         "the capture was made once"
+    );
+}
+
+/// FIX [BK-DEPOSIT-CAPTURE-OF-CANCELED-INTENT]: a capture still owed when the
+/// payment is cancelled at Stripe (the owner's act in the dashboard, or
+/// Stripe's own when the authorization expires) is refused. The payment's
+/// state says nothing was captured, so the deposit reads voided, as the
+/// `payment_intent.canceled` webhook records it, and Stripe is asked no more.
+#[tokio::test]
+async fn a_capture_of_a_payment_cancelled_at_stripe_voids_the_deposit() {
+    let terms = deposit_terms();
+    let (fixture, stripe) = deposit_fixture(SECRET_KEY).await;
+    let slots = fixture.slots().await;
+    // The key may not capture: the confirm's capture is refused and stays
+    // owed.
+    stripe.lock().expect("fake stripe").refuse_intent_moves = true;
+    let (payment_id, _) = paid_booking(
+        &fixture,
+        &stripe,
+        selected(&slots[0]),
+        "cancelled-at-stripe",
+        &terms,
+    )
+    .await;
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::CaptureDue {
+            amount_minor: terms.amount_minor
+        }
+    );
+
+    // The owner cancels the payment in Stripe's dashboard, and the key may
+    // move payments again.
+    {
+        let mut stripe = stripe.lock().expect("fake stripe");
+        stripe.refuse_intent_moves = false;
+        stripe
+            .intents
+            .get_mut(&payment_id)
+            .expect("known intent")
+            .status = "canceled".to_owned();
+    }
+    let capture_posts = || {
+        stripe
+            .lock()
+            .expect("fake stripe")
+            .calls
+            .iter()
+            .filter(|(call, _, _)| call.ends_with("/capture"))
+            .count()
+    };
+    let asked_before = capture_posts();
+    let now = now_secs().expect("clock");
+    let drain = run_settle_pass(&fixture, now).await;
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::Voided,
+        "the cancelled payment captured nothing: the deposit holds nothing"
+    );
+    assert_eq!(
+        (drain.captured, drain.voided, drain.still_owed, drain.failed),
+        (0, 1, 0, 0),
+        "the settle row recorded the void and ended: {drain:?}"
+    );
+    assert_eq!(capture_posts() - asked_before, 1, "one refused capture");
+
+    let later = run_settle_pass(&fixture, now + 1).await;
+    assert_eq!(later, BookingDepositSettlementDrain::default());
+    assert_eq!(capture_posts() - asked_before, 1, "Stripe is asked no more");
+    assert_eq!(refund_posts(&stripe), 0, "nothing is owed back");
+    assert_eq!(
+        stripe.lock().expect("fake stripe").intents[&payment_id].status,
+        "canceled"
     );
 }
 

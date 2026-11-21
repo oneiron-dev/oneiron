@@ -146,6 +146,24 @@ impl DepositSettlementPort for PendingRefundProvider {
     }
 }
 
+/// A provider whose payment was cancelled in its own dashboard before any
+/// move: it records each call and answers 0 moved, as the server's Stripe
+/// port answers a capture Stripe refuses on a cancelled payment.
+#[derive(Default)]
+struct CancelledPaymentProvider {
+    calls: Vec<DepositSettleMove>,
+}
+
+impl DepositSettlementPort for CancelledPaymentProvider {
+    fn settle(
+        &mut self,
+        request: &DepositSettleRequest<'_>,
+    ) -> Result<u64, DepositProviderFailure> {
+        self.calls.push(request.movement);
+        Ok(0)
+    }
+}
+
 /// Full refund at least two hours ahead, nothing later.
 fn two_hour_terms() -> DepositTerms {
     DepositTerms {
@@ -2011,6 +2029,61 @@ fn a_void_that_finds_the_capture_taken_owes_it_back() {
             }),
         "the provider was asked for the refund: {:?}",
         provider.recorded.calls
+    );
+}
+
+/// FIX [BK-DEPOSIT-CAPTURE-OF-CANCELED-INTENT]: a capture that finds the
+/// payment cancelled at the provider (the owner's act in its dashboard, or
+/// the authorization's expiry) captured nothing. The deposit reads voided, as
+/// the provider's cancellation event records it; its settle row ends, and a
+/// later cancel owes nothing back.
+#[test]
+fn a_capture_that_finds_the_payment_cancelled_voids_the_deposit() {
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    let booked = paid_booking(
+        &fixture,
+        SessionKey::derive(b"cancelled-at-provider"),
+        "pi_cancelled_at_provider",
+        12,
+    );
+    let mut provider = CancelledPaymentProvider::default();
+    let pass = drain(&fixture, &mut provider, NOW + 50);
+    assert_eq!(
+        state_of(&fixture, "pi_cancelled_at_provider"),
+        DepositState::Voided,
+        "the capture captured nothing: the deposit holds nothing"
+    );
+    assert_eq!(
+        (pass.captured, pass.voided, pass.still_owed, pass.failed),
+        (0, 1, 0, 0),
+        "the row recorded the provider's void and ended: {pass:?}"
+    );
+    assert_eq!(
+        provider.calls,
+        [DepositSettleMove::Capture {
+            amount_minor: 4_000
+        }]
+    );
+
+    // 12:00 start, cancelled at 09:01: a full refund of what was captured,
+    // which is nothing, so no move is owed.
+    fixture
+        .cancel(&booked.cancel_token, NOW + 3_660)
+        .expect("cancel");
+    let later = drain(&fixture, &mut provider, NOW + 3_700);
+    assert_eq!(
+        later,
+        BookingDepositSettlementDrain::default(),
+        "no settle row is left to run"
+    );
+    assert_eq!(
+        provider.calls.len(),
+        1,
+        "the provider was asked nothing more"
+    );
+    assert_eq!(
+        state_of(&fixture, "pi_cancelled_at_provider"),
+        DepositState::Voided
     );
 }
 
