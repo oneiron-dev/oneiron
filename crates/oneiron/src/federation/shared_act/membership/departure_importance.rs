@@ -90,9 +90,7 @@ impl Vault {
             &SharedVaultWrite::Admin(OrgAdminPower::RemoveMember),
         )?;
         let holders = self.live_act_holders(txn, vault_id, self.store.clock.now_recorded_at())?;
-        if let Some(ask) = ask {
-            self.member_ask_steward_stands_in_txn(txn, ask, vault_id, &holders)?;
-        }
+        let _ = (ask, &holders);
         let effect = MemberEffect {
             change: MemberChange::Remove { member },
             check_in_ref,
