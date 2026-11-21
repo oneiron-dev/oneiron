@@ -699,6 +699,9 @@ fn owner_grade_door(row: &Dict) -> Result<String, GenerateError> {
 /// under the credential the call presented; a restrictive call's args that do not decode as the door's typed input
 /// give way to the caller's own (`facade_door_input`, FIX 5076).
 fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
+    if flag(row, "host_door_transport_only") {
+        return transport_door(row, method);
+    }
     let name_value = item(row, "name")?;
     let lands = flag(row, "lands_turn");
     let landed = if lands {
@@ -820,18 +823,7 @@ fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
                 Ok(FacadeCallOutput::unlisted({post_hooks}.await.map_err(|error| error.with_hook_notice(hook_notice))?).with_hook_notice(hook_notice))"
         )
     };
-    let scope_guard = if flag(row, "proposes") && admits(row, "credential_record_scope")? {
-        "auth.require_granted(CoreScope::Write).or_else(|_| auth.require_granted(CoreScope::Propose))?;"
-            .to_owned()
-    } else if admits(row, "require_granted_scope")? {
-        // FIX 6867: a lane door judges its records in its engine door.
-        format!(
-            "auth.require_granted(CoreScope::{})?;",
-            item(row, "scope")?.str()
-        )
-    } else {
-        format!("auth.require(CoreScope::{})?;", item(row, "scope")?.str())
-    };
+    let scope_guard = host_door_scope_guard(row)?;
     let record_scope = record_scope_guard(row)?;
     let caller_line = if flag(row, "host_door_caller") {
         " let caller = facade_actor(server, auth)?;"
@@ -851,6 +843,45 @@ fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
                 oneiron::task_verb::sdk::validate_input({name}, &value)?;
                 {pre_hooks}
                 {answer}
+            }}
+"
+    ))
+}
+
+/// A host door's scope check.
+fn host_door_scope_guard(row: &Dict) -> Result<String, GenerateError> {
+    Ok(
+        if flag(row, "proposes") && admits(row, "credential_record_scope")? {
+            "auth.require_granted(CoreScope::Write).or_else(|_| auth.require_granted(CoreScope::Propose))?;"
+                .to_owned()
+        } else if admits(row, "require_granted_scope")? {
+            // FIX 6867: a lane door judges its records in its engine door.
+            format!(
+                "auth.require_granted(CoreScope::{})?;",
+                item(row, "scope")?.str()
+            )
+        } else {
+            format!("auth.require(CoreScope::{})?;", item(row, "scope")?.str())
+        },
+    )
+}
+
+/// A transport-only host door's dispatch (`host_door_transport_only`, FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER): the
+/// row's scope, record scope and input checks, the hosted operator's refusal and the row's own door admission, then
+/// its door, which crosses no hook chain of its own: it stages what it carries and runs it as a call of another
+/// verb, whose hooks judge it, and answers as that call answers.
+fn transport_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
+    let name = json(item(row, "name")?);
+    let scope_guard = host_door_scope_guard(row)?;
+    let record_scope = record_scope_guard(row)?;
+    Ok(format!(
+        "{scope_guard}
+                {record_scope}
+                facade_outside_room_turn(call, {name})?;
+                let value = input?;
+                oneiron::task_verb::sdk::validate_input({name}, &value)?;
+                facade_transport_admits(server, auth, {name})?;
+                super::host_doors::{method}(server, call, facade_input(value)?).await
             }}
 "
     ))

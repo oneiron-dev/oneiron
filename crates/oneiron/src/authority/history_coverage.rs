@@ -25,6 +25,7 @@ use super::checkpoint_adopt::VerifiedAuthorityCheckpoint;
 use super::*;
 use crate::store::Store;
 use crate::{HostingPrivacyPosture, Vault, error::Result};
+use oneiron_contracts::authority::AuthorityHistoryReason;
 
 /// Exactly the authority rows this vault needs and does not hold.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -38,6 +39,9 @@ pub struct AuthorityHistoryRequest {
     /// held row has. Fetching them may name further ancestors: ask again after
     /// each import.
     pub missing: BTreeSet<AuthorityEntryHash>,
+    /// Why a fold or door named them: the first refusal's where requests
+    /// merge. None where the request names nothing a fold refused for.
+    pub reason: Option<AuthorityHistoryReason>,
 }
 
 impl AuthorityHistoryRequest {
@@ -191,6 +195,7 @@ pub(crate) fn authority_history_request_in_txn(
         super::history_admission::pending_history_request_in_txn(store, posture, txn)?
     {
         request.missing.extend(pending.missing);
+        request.reason = request.reason.or(pending.reason);
     }
     Ok(request)
 }
@@ -216,9 +221,13 @@ fn held_history_request_in_txn(
         super::readonly_fold::adopted_history_request_in_txn(store, posture, txn, required)?
     {
         if naming == NamingRows::Every {
-            request
-                .missing
-                .extend(adopted_every_tail_gaps_in_txn(store, txn, required)?);
+            let every = adopted_every_tail_gaps_in_txn(store, txn, required)?;
+            // A row only this naming adds is one a fetch of it closes, as
+            // the held request below names it.
+            request.reason = request
+                .reason
+                .or((!every.is_empty()).then_some(AuthorityHistoryReason::UnheldRows));
+            request.missing.extend(every);
         }
         return Ok(request);
     }
@@ -269,10 +278,12 @@ fn held_history_request_in_txn(
         None => None,
     };
     named.retain(|hash| !held.contains(hash));
+    let reason = (!named.is_empty()).then_some(AuthorityHistoryReason::UnheldRows);
     Ok(AuthorityHistoryRequest {
         vault_id,
         checkpoint,
         missing: named,
+        reason,
     })
 }
 

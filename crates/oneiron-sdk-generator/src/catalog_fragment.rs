@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 use crate::error::GenerateError;
 use crate::facade_types::inventory::{row_field, type_text};
 use crate::facade_types::{Inventory, Ir, compound, substring_not_found, ts_key};
+use crate::generate::common::is_js_reserved;
 use crate::py::json::dumps_str;
 use crate::py::text::{splitlines, strip};
 use crate::py::value::{Dict, Value};
@@ -352,6 +353,10 @@ impl<'r> Fragment<'r> {
             let node = &children[name];
             out.push_str(&Self::doc(node, &indent));
             match node.row() {
+                // A member `new(...)` opens a construct signature, so that verb is a property of its call type.
+                Some(row) if node.children.is_empty() && name == "new" => {
+                    out.push_str(&format!("{indent}{name}: {};\n", self.call(row)?));
+                }
                 Some(row) if node.children.is_empty() => {
                     for (params, result) in self.signatures(row)? {
                         out.push_str(&format!("{indent}{name}{params}: {result};\n"));
@@ -363,6 +368,19 @@ impl<'r> Fragment<'r> {
         Ok(out)
     }
 
+    /// Refuses a name the verb layout binds (a root's `const`, a bare verb's `function`, a `self` member's `const`,
+    /// `function` or `namespace`) when it is a JavaScript reserved word: such a declaration does not parse, and,
+    /// unlike a parameter, it cannot be renamed, since code mode calls the verb by that name.
+    fn refuse_reserved_binding(path: &str, name: &str) -> Result<(), GenerateError> {
+        if is_js_reserved(name) {
+            return Err(GenerateError::value(format!(
+                "{path}: {name} is a JavaScript reserved word, which a code-mode root, \
+                 bare verb or self member cannot be named"
+            )));
+        }
+        Ok(())
+    }
+
     /// The verb layout, root by root in name order.
     fn verbs(&mut self) -> Result<String, GenerateError> {
         let tree = self.tree()?;
@@ -372,6 +390,7 @@ impl<'r> Fragment<'r> {
             if root == "self" {
                 out.push_str("declare namespace self {\n");
                 for name in sorted(&node.children) {
+                    Self::refuse_reserved_binding(&format!("self.{name}"), name)?;
                     let child = &node.children[name];
                     out.push_str(&Self::doc(child, "  "));
                     if SELF_HOST_MEMBERS.contains(&name.as_str()) {
@@ -382,11 +401,13 @@ impl<'r> Fragment<'r> {
                 }
                 out.push_str("}\n");
             } else if let Some(row) = node.row().filter(|_| node.children.is_empty()) {
+                Self::refuse_reserved_binding(root, root)?;
                 out.push_str(&Self::doc(node, ""));
                 for (params, result) in self.signatures(row)? {
                     out.push_str(&format!("declare function {root}{params}: {result};\n"));
                 }
             } else {
+                Self::refuse_reserved_binding(root, root)?;
                 out.push_str(&Self::doc(node, ""));
                 let extends = self.extends(root, node)?;
                 let kind = self.kind(node, 0)?;
@@ -409,6 +430,7 @@ impl<'r> Fragment<'r> {
         if !node.children.is_empty() {
             out.push_str(&format!("  namespace {name} {{\n"));
             for member in sorted(&node.children) {
+                Self::refuse_reserved_binding(&format!("self.{name}.{member}"), member)?;
                 let child = &node.children[member];
                 out.push_str(&Self::doc(child, "    "));
                 out.push_str(&format!("    const {member}: {};\n", self.kind(child, 2)?));
@@ -865,6 +887,61 @@ declare const ünï: {
             assert_eq!(got, expected);
         }
         fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn a_reserved_word_binding_is_refused_and_a_reserved_member_stays() {
+        // FIX-LIST [SDK-TS-RESERVED-WORD-IDENTIFIERS]: a root, a bare verb and a `self` member are declared as
+        // bindings (`declare const`, `declare function`, `const`, `function`, `namespace`), where a reserved word
+        // does not parse; deeper in a path a reserved word is a member name, which TypeScript takes (`new` as a
+        // property, since `new(...)` is a construct signature).
+        let root = tree("reserved");
+        let pins = Value::Dict(Dict::new());
+        let rows_of = |text: &str| {
+            let Value::List(rows) = loads(text).expect("rows") else {
+                panic!("a list of rows");
+            };
+            rows
+        };
+        let refusal = " is a JavaScript reserved word, which a code-mode root, \
+                       bare verb or self member cannot be named";
+        for (name, expected) in [
+            ("delete", "delete: delete"),
+            ("new.zz", "new: new"),
+            ("self.default", "self.default: default"),
+            ("self.let.zz", "self.let: let"),
+            ("self.think.static", "self.think.static: static"),
+        ] {
+            let rows = rows_of(&format!(
+                r#"[{{"name": "{name}", "input": "ZzIn", "output": "String"}}]"#
+            ));
+            let rows: Vec<&Dict> = rows.iter().filter_map(Value::as_dict).collect();
+            let got = catalog_fragment(&root, &rows, "// h\n", &pins, &mut BTreeSet::new())
+                .expect_err("a refusal")
+                .to_string();
+            assert_eq!(got, format!("ValueError: {expected}{refusal}"), "{name}");
+        }
+        let rows = rows_of(
+            r#"[{"name": "zz.delete", "input": "ZzIn", "output": "String"},
+            {"name": "zz.new", "input": "ZzIn", "output": "String"},
+            {"name": "self.zz.export", "input": "ZzIn", "output": "String"}]"#,
+        );
+        let rows: Vec<&Dict> = rows.iter().filter_map(Value::as_dict).collect();
+        let outputs = catalog_fragment(&root, &rows, "// h\n", &pins, &mut BTreeSet::new())
+            .expect("a fragment");
+        fs::remove_dir_all(&root).expect("cleanup");
+        let text = &outputs[0].1;
+        assert!(
+            text.contains("\ndeclare const zz: {\n  delete(input: Sdk."),
+            "{text}"
+        );
+        // `new(...)` in a type literal is a construct signature: `zz.new` is a property of its call type.
+        assert!(text.contains("\n  new: (input: Sdk."), "{text}");
+        assert!(!text.contains("  new("), "{text}");
+        assert!(
+            text.contains("\n  const zz: {\n    export(input: Sdk."),
+            "{text}"
+        );
     }
 
     #[test]

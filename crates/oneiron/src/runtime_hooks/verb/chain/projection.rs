@@ -39,7 +39,8 @@ pub(super) const WITHHELD: &str = "withheld_by_hook_grant";
 /// Code logs a hook transcript import carries (census L10-17, review round 1
 /// of #9770), raw tool results included. A hook whose view is narrower than
 /// its caller's reads each as withheld; every other field of a host verb is
-/// the host's own metadata.
+/// the host's own metadata. A staged part's text reaches no hook: its row is
+/// transport only (FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER).
 const UNNAMED_FREE_TEXT: [(&str, &[&str]); 4] = [
     ("host.compact", &["window", "*", "content"]),
     ("host.turn.generate", &["text"]),
