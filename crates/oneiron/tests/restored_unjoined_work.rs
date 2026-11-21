@@ -299,6 +299,7 @@ fn claimed_id(outcome: &ClaimOutcome) -> Option<AttemptId> {
     match outcome {
         ClaimOutcome::Claimed(record) => Some(record.id),
         ClaimOutcome::Empty => None,
+        other => panic!("an unknown claim outcome: {other:?}"),
     }
 }
 
