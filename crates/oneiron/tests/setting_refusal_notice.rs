@@ -29,6 +29,14 @@
 //! - another machine's copy of the same notice, which holds no marks, keeps the owner's
 //!   acknowledgement here.
 //!
+//! Review round 2 of PR 2 (REVIEW-10306, P1=4):
+//! - the owner's tap as offered signs the row the refused row meets into its act, though this
+//!   install's row holds its value already;
+//! - the booking pair's refusal names the pin that decides the other row, and its tap edits it;
+//! - a feed refused here names the seat of its system, and a seat refused here names the feed of
+//!   its system;
+//! - two rows of one act, each refused against its own row, raise a notice each.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_refusal_notice`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -249,6 +257,29 @@ fn item_row(key: &str, item: &str, value: Value) -> SetSetting {
         item: Some(item.to_owned()),
         ..SetSetting::vault_value(key, value)
     }
+}
+
+/// An ICS feed's configuration for `system`.
+fn feed_config(system: &str) -> Value {
+    json!({
+        "secret_ref": format!("ics-feed:{system}"),
+        "system": system,
+        "cadence_min_seconds": 600,
+        "cadence_max_seconds": 1200,
+    })
+}
+
+/// The row of `key` for the item `item`, as a test names it.
+fn item_slot<'a>(key: &'a str, item: &'a str) -> SlotName<'a> {
+    (key, Some(item), SettingMode::Value, SettingScope::Vault)
+}
+
+/// The one act that heads the row `slot`.
+fn the_head(fx: &Fixture, slot: SlotName<'_>) -> AuthorityEntryHash {
+    let [act] = setting_slot_heads(&fx.vault, slot).expect("the row's heads")[..] else {
+        panic!("one act heads the row");
+    };
+    act
 }
 
 /// The refused pair: the owner sets the count to 3 on this install, the other machine reads it
@@ -812,4 +843,221 @@ fn another_machines_copy_of_the_notice_keeps_the_owners_acknowledgement() {
         "the acknowledgement stays: {after:#?}"
     );
     assert_eq!(after["seen"], true);
+}
+
+#[test]
+fn the_owners_tap_as_offered_signs_the_row_it_meets_into_its_act_too() {
+    let fx = Fixture::rooted();
+    refused_pair(&fx);
+    let tap = fx.the_notice()["actions"][0].clone();
+    assert_eq!(
+        tap["args"]["further"][0]["key"],
+        json!(FLOOR),
+        "the tap names the floor: {tap:#?}"
+    );
+
+    // Both rows here hold the values the tap offers: the refused count, and the floor the owner
+    // set here, whose act the other machine refused. The owner's act heads the floor too, so
+    // that machine takes the floor from it with the count.
+    invoke(
+        &fx.as_owner(),
+        tap["verb"].as_str().expect("the verb"),
+        tap["args"].clone(),
+    )
+    .expect("the owner's tap");
+    let act = fx
+        .last_change(COUNT)
+        .signed
+        .expect("the count's change is signed");
+    assert_eq!(
+        fx.last_change(FLOOR).signed,
+        Some(act),
+        "one act signs both rows"
+    );
+    for key in [COUNT, FLOOR] {
+        assert_eq!(
+            setting_slot_heads(&fx.vault, vault_row(key)).expect("the row's heads"),
+            vec![act],
+            "the owner's act heads {key}"
+        );
+    }
+    fx.vault.project_settings().expect("the pass");
+    assert_eq!(fx.reads(COUNT), json!(3));
+    assert_eq!(fx.reads(FLOOR), json!(3));
+}
+
+#[test]
+fn the_booking_pairs_refusal_names_the_pin_that_decides_the_other_row() {
+    let fx = Fixture::rooted();
+    fx.owner_sets(MAX_PROPOSALS, json!(6));
+    let frontier = setting_frontier_of(&fx.vault, &[vault_row(MIN_PROPOSALS)]).expect("frontier");
+    // The owner pins the count to 3 here while the other machine raises the floor to 5: this
+    // install's hook refuses the floor against the pin, not against the value row under it.
+    fx.vault
+        .set_setting(
+            SettingCaller::Owner(&fx.owner_proof),
+            SetSetting {
+                mode: SettingMode::Pin,
+                ..SetSetting::vault_value(MAX_PROPOSALS, json!(3))
+            },
+        )
+        .expect("the owner pins the count");
+    let pin_act = the_head(
+        &fx,
+        (MAX_PROPOSALS, None, SettingMode::Pin, SettingScope::Vault),
+    );
+    fx.desktop_sets(&frontier, MIN_PROPOSALS, json!(5));
+    let floor_act = the_head(&fx, vault_row(MIN_PROPOSALS));
+
+    let notice = fx.the_notice();
+    let mut named = vec![entry_of(pin_act), entry_of(floor_act)];
+    named.sort();
+    assert_eq!(
+        named_refs(&notice),
+        named,
+        "the notice names the pin that decides the count: {notice:#?}"
+    );
+    let further = &notice["actions"][0]["args"]["further"][0];
+    assert_eq!(
+        (&further["key"], &further["pin"], &further["value"]),
+        (&json!(MAX_PROPOSALS), &json!(true), &json!(3)),
+        "the tap edits the pin the hook reads: {notice:#?}"
+    );
+}
+
+#[test]
+fn a_feed_refused_here_names_the_seat_of_its_system_too() {
+    let fx = Fixture::rooted();
+    fx.vault
+        .set_setting(
+            SettingCaller::Owner(&fx.owner_proof),
+            item_row(FEED, "work-cal", feed_config("work-cal")),
+        )
+        .expect("the owner installs the feed");
+    let feed_act = the_head(&fx, item_slot(FEED, "work-cal"));
+
+    // This install as another machine: it holds the log and no feed row, and a CalDAV seat the
+    // owner installed here on the feed's system. Its hook refuses the feed.
+    forget_projected_setting_rows(&fx.vault).expect("the rows forgotten");
+    fx.vault
+        .set_setting(
+            SettingCaller::Owner(&fx.owner_proof),
+            item_row(SEAT, "work", seat_setup("work", "work-cal")),
+        )
+        .expect("the owner installs the seat");
+    let seat_act = the_head(&fx, item_slot(SEAT, "work"));
+    fx.vault.project_settings().expect("the pass");
+
+    let notice = fx.the_notice();
+    let mut named = vec![entry_of(feed_act), entry_of(seat_act)];
+    named.sort();
+    assert_eq!(
+        named_refs(&notice),
+        named,
+        "the notice names the seat's act too: {notice:#?}"
+    );
+    let words = words_of(&notice);
+    assert!(
+        words.contains("It meets your change of `calendar.connector_seat` for `work`"),
+        "{words:?}"
+    );
+}
+
+#[test]
+fn a_seat_refused_here_names_the_feed_of_its_system_too() {
+    let fx = Fixture::rooted();
+    fx.vault
+        .set_setting(
+            SettingCaller::Owner(&fx.owner_proof),
+            item_row(SEAT, "work", seat_setup("work", "work-cal")),
+        )
+        .expect("the owner installs the seat");
+    let seat_act = the_head(&fx, item_slot(SEAT, "work"));
+
+    // This install as another machine: it holds the log and no seat row, and an ICS feed the
+    // owner installed here on the seat's system. Its hook refuses the seat.
+    forget_projected_setting_rows(&fx.vault).expect("the rows forgotten");
+    fx.vault
+        .set_setting(
+            SettingCaller::Owner(&fx.owner_proof),
+            item_row(FEED, "work-cal", feed_config("work-cal")),
+        )
+        .expect("the owner installs the feed");
+    let feed_act = the_head(&fx, item_slot(FEED, "work-cal"));
+    fx.vault.project_settings().expect("the pass");
+
+    let notice = fx.the_notice();
+    let mut named = vec![entry_of(feed_act), entry_of(seat_act)];
+    named.sort();
+    assert_eq!(
+        named_refs(&notice),
+        named,
+        "the notice names the feed's act too: {notice:#?}"
+    );
+    let words = words_of(&notice);
+    assert!(
+        words.contains("It meets your change of `calendar.ics_feed` for `work-cal`"),
+        "{words:?}"
+    );
+}
+
+#[test]
+fn two_rows_of_one_act_refused_each_against_its_own_row_raise_a_notice_each() {
+    let fx = Fixture::rooted();
+    let rows = |key: &str, first: (&str, Value), second: (&str, Value)| {
+        json!({
+            "key": key,
+            "item": first.0,
+            "scope": { "kind": "vault" },
+            "value": first.1,
+            "further": [{
+                "key": key,
+                "item": second.0,
+                "scope": { "kind": "vault" },
+                "value": second.1,
+            }],
+        })
+    };
+    invoke(
+        &fx.as_owner(),
+        "vault.settings.set",
+        rows(
+            FEED,
+            ("work-cal", feed_config("work-cal")),
+            ("home-cal", feed_config("home-cal")),
+        ),
+    )
+    .expect("the owner installs both feeds as one act");
+
+    // This install as another machine: it holds the log and no feed row, and two CalDAV seats
+    // the owner installed here as one act, one on each feed's system. Its hook refuses each feed
+    // against its own seat: two refusals of the same two acts.
+    forget_projected_setting_rows(&fx.vault).expect("the rows forgotten");
+    invoke(
+        &fx.as_owner(),
+        "vault.settings.set",
+        rows(
+            SEAT,
+            ("work", seat_setup("work", "work-cal")),
+            ("home", seat_setup("home", "home-cal")),
+        ),
+    )
+    .expect("the owner installs both seats as one act");
+    fx.vault.project_settings().expect("the pass");
+
+    let notices = fx.refusal_notices();
+    assert_eq!(
+        notices.len(),
+        2,
+        "a notice for each refused feed: {notices:#?}"
+    );
+    for system in ["work-cal", "home-cal"] {
+        let refused = format!("did not apply your change of `calendar.ics_feed` for `{system}`");
+        assert!(
+            notices
+                .iter()
+                .any(|notice| words_of(notice).contains(&refused)),
+            "{system}: {notices:#?}"
+        );
+    }
 }
