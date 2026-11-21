@@ -236,6 +236,11 @@ impl Store {
                 read_back_credentials_in_txn(self, &wtxn, &mut credentials);
                 fences.put_in_txn(self, &mut wtxn)
             })
+            // With its machine go the choices about the install it was, its
+            // `sync: install` settings and its residence mode and world pick:
+            // they stay with its replacement, as a direct restore leaves an
+            // image's behind (DESIGN 15-setting-primitive 1.6, "Restore"; row
+            // SETTING-ACTIVATE-ARCHIVED-INSTALL-ROWS).
             .and_then(|()| crate::identity::drop_machine_identity_in_txn(self, &mut wtxn))
             // It joins as a new machine born of a restore (row
             // RESTORED-COPIES-ENROL-EACH-OTHER): it lands no image, so its

@@ -393,6 +393,36 @@ impl Store {
         Ok(pins)
     }
 
+    /// Lands archived owner read-shape pins under the import's guard: a row
+    /// that decodes and validates installs only at an absent key, and the
+    /// destination's own pins stay live.
+    pub(crate) fn land_archived_read_shape_pins_rows_in_txn(
+        vault: &crate::Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &crate::batch::export::OwnerArchiveRestorePermit,
+        rows: &[crate::batch::export::ArchiveRetainedSideRow],
+    ) -> Result<Vec<crate::batch::export::archive_side_install::ArchivedSideRowOutcome>> {
+        use crate::batch::export::RetainedSideHeldBackReason;
+        use crate::batch::export::archive_side_install::{
+            ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+        };
+
+        rows.iter()
+            .map(|row| {
+                let (key, pins) = match decode_archived_row(&PINS, row) {
+                    Ok(decoded) => decoded,
+                    Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+                };
+                if pins.validate().is_err() {
+                    return Ok(ArchivedSideRowOutcome::HeldBack(
+                        RetainedSideHeldBackReason::InvalidValue,
+                    ));
+                }
+                install_archived_row(&PINS, vault, txn, permit, &key, row)
+            })
+            .collect()
+    }
+
     /// Picks the shape `model`'s next run reads through, from the owner's
     /// pin, the learned posterior and the exploration share in force.
     pub(crate) fn pick_read_shape<R: Rng + ?Sized>(

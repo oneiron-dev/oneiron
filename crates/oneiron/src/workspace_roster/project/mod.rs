@@ -1042,18 +1042,17 @@ impl Vault {
                 None,
                 signed_at,
             )?;
-            self.batch_in()
-                .put_engine_history(
-                    &id,
-                    self.project_type_byte()?,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &encode(&body)?,
-                )
-                .apply(txn)?;
+            self.land_owner_project_birth_in_txn(
+                txn,
+                id,
+                self.project_type_byte()?,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                &body,
+            )?;
             crate::setting::write_born_rows_in_txn(self, txn, id)?;
             self.require_owner_head_in_txn(txn, id, &body)?;
             Ok(())

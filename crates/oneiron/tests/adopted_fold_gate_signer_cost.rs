@@ -147,6 +147,7 @@ fn signers_beside_one_spine_check_within_budget() {
     let (mut image, _vault, _dir) = rooted_image();
     image.rows = signers_beside_one_spine(SIGNERS, SPINE);
     let rows = image.rows.len();
+    // testkit-lint: allow(wall-clock) the elapsed time is the budget under test
     let started = Instant::now();
     let answer = covered_rows_unfloored(&image);
     let elapsed = started.elapsed();

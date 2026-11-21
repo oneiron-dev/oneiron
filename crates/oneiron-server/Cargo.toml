@@ -751,6 +751,14 @@ name = "rerank_pair_template_price"
 path = "tests/rerank_pair_template_price.rs"
 required-features = ["oneiron/test-support"]
 
+# L9-15 PR 2's device-only rerank cases root their owner on a `MemoryKeystore` and keep a
+# world on this machine (`keep_world_on_this_machine_under_for_test`); the socket stub is
+# recorded through the `supervised_rerank` test door (`--cfg oneiron_test_support`).
+[[test]]
+name = "device_only_rerank_on_device"
+path = "tests/device_only_rerank_on_device.rs"
+required-features = ["oneiron/test-support"]
+
 # L5-02 PR 4's selector fetch seeds its member's federation grant with
 # `put_selector_test_federation_grant` (`oneiron/test-hooks`).
 [[test]]
@@ -772,6 +780,14 @@ required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 name = "selector_release_recheck"
 path = "tests/selector_release_recheck.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
+# CROSS-VAULT-DELETE-SELECTOR-ANSWER-RELEASE: a socket answer carries the owner's delete of a row
+# an earlier answer sent; its grant is seeded with `put_selector_test_federation_grant`
+# (`oneiron/test-hooks`).
+[[test]]
+name = "selector_answer_carries_released_row_delete"
+path = "tests/selector_answer_carries_released_row_delete.rs"
+required-features = ["oneiron/test-hooks"]
 
 [lints]
 workspace = true

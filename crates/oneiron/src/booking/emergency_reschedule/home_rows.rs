@@ -629,3 +629,5 @@ impl HomeTable for EmergencyPlanRows {
 
 mod item;
 pub(crate) use item::EmergencyItemRows;
+#[cfg(oneiron_test_support)]
+pub(crate) use item::effect_ledger_rows_for_doors;

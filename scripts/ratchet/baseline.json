@@ -6,7 +6,7 @@
   "metrics": {
     "giant_files": {
       "description": "Non-test .rs files with >= 800 lines. Non-test = path has no 'tests/' directory component, filename is not 'tests.rs', does not end '_tests.rs' and does not start 'tests_'. vendor/ and target/ excluded.",
-      "count": 369,
+      "count": 366,
       "_attribution": {
         "summary": "Historical 188 -> 2; ONE-1992 T36 -> 1. 106 over-bar production modules split into directory modules across eleven move-only batches, plus three single-function files streamlined semantically under the bar (api/openapi/descriptions.rs, sync/window/forward.rs, pipeline/execution/channels.rs), plus error.rs, which left the list when ONE-2001 decomposed `Error` into twelve per-domain enums under crates/oneiron/src/error/.",
         "verification": "Every split checked move-only by scripts/refactor/tools/split_check.py against its base revision: no item added, removed, duplicated or altered in body. Zero exceptions across all eleven batches. Root surface held at 702 names throughout and the codemap was regenerated at every batch boundary.",
@@ -16,7 +16,8 @@
         },
         "claim_lifecycle_cleared": "claim/lifecycle.rs was the former second reasoned exception at 800 lines; it fell below the bar before ONE-1992 T36. T36 then removed the eight remaining production giants and the recall test giant; lib.rs was brought below the bar by moving root test fixtures to test_util. Three more giants introduced on main by subsequent feature work (task_authority, api/memory, livequery/subscriptions) were split on integration.",
         "error_rs_left_2026_09_11": "error.rs was the third file and is gone from the list. It was capped by one item, the 1436-line `pub enum Error`, and the attribution said clearing it meant decomposing `Error` into per-domain types - a semantic redesign, owner call. That call was made (ONE-2001, DESIGN-error-enum.md option B): the 21 cross-cutting variants stay flat on `Error`, the other 203 moved into twelve `#[error(transparent)]` domain enums, one file each under error/. error/mod.rs is 565 lines and the largest child, error/sync.rs, is 529. Variant names, `#[error(..)]` strings and `ErrorKind` are byte-identical; Debug gains one wrapper level for moved variants.",
-        "correction_2026_09_09": "The earlier claim that four of the remaining files were ordinary splittable modules was itself over-counted by one: pipeline/execution/channels.rs holds a single associated item, not several, so it was never cuttable per item. Single-function files are accepted; semantic streamlining is a separate pass."
+        "correction_2026_09_09": "The earlier claim that four of the remaining files were ordinary splittable modules was itself over-counted by one: pipeline/execution/channels.rs holds a single associated item, not several, so it was never cuttable per item. Single-function files are accepted; semantic streamlining is a separate pass.",
+        "lowered_2026_11_21": "369 -> 366, measured on main 4e1ef78d92 with this file's rule (OPUS-RATCHET-DOWN, row RATCHET-DOWN). Main read 414 at RATCHET-DAILY 09:00; most of the fall is the move-only splits of Engine TASK 10:06 (21 Nov), one PR per file, numbered between #10136 and #10212."
       }
     },
     "allow_attrs": {
@@ -122,10 +123,11 @@
     },
     "test_lint_wall_clock": {
       "description": "Wall-clock reads in Rust test code: `SystemTime::now`, `Instant::now`, `Utc::now`, `Local::now` and `OffsetDateTime::now_utc`, in code only. Same test-code definition, allow form and scanner as test_lint_sleep (rule name wall-clock). Read time from oneiron_testkit::clock::FakeClock.",
-      "count": 509,
+      "count": 507,
       "_attribution": {
         "summary": "Moved from the Rust test lint with test_lint_sleep; see its attribution. Main b0b766831e14 measures 518 against the Rust bar 509.",
-        "expected_direction": "Down only, as test_lint_sleep."
+        "expected_direction": "Down only, as test_lint_sleep.",
+        "lowered_2026_11_21": "509 -> 507, measured with scripts/ratchet/test_lint.py on the head of the change that set it (OPUS-RATCHET-DOWN, row RATCHET-DOWN). Main beff0851b5 measured 513. Against the Rust lint's per-file baseline (crates/oneiron-testkit/lint-baseline.txt at 7eaa6e9761, the source of the bar 509), seven reads in five test files merged after the bar were new and three were gone. That change took out six: four by a tokio timeout in place of a hand deadline (crates/oneiron-server/tests/hosted_continue_sign_in.rs, crates/oneiron-server/tests/voice_phone_epoch.rs), one by the vault's own clock (crates/oneiron/tests/entity_linker_confirmed_role_possessor.rs) and one by an allow on the elapsed time a budget test measures (crates/oneiron/tests/adopted_fold_gate_signer_cost.rs). The seventh, crates/oneiron-server/src/api/tests/ai_chat_check_judge_room.rs, is row TEST-LINT-WALL-CLOCK-JUDGE-ROOM-NOW-SECONDS."
       }
     },
     "test_lint_network": {

@@ -51,6 +51,10 @@ pub enum BookingDepositReturned {
     /// The provider ended the refund of the captured deposit with nothing
     /// paid back, and it is owed still.
     RefundEndedUnpaid,
+    /// Refunds made by hand in the Stripe dashboard cover only a part of the
+    /// refund of the captured deposit, and the rest is owed still
+    /// (FIX [BK-DEPOSIT-SHORT-HAND-REFUND-NO-OWNER-LINE]).
+    PartRefundedByHand,
 }
 
 /// The note on the card of a booking that starts at `start`, whose deposit
@@ -89,6 +93,13 @@ pub(super) fn emergency_return_note(
             format!(
                 "{booking}: no new deposit held; the refund of the deposit from before the \
                  emergency cancel did not go through at Stripe."
+            ),
+        ),
+        EmergencyReturn::PartRefundedByHand => (
+            BookingDepositReturned::PartRefundedByHand,
+            format!(
+                "{booking}: no new deposit held; refunds made by hand in the Stripe dashboard \
+                 cover only part of the refund of the deposit from before the emergency cancel."
             ),
         ),
         EmergencyReturn::Voided => (

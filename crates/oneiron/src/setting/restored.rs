@@ -5,14 +5,16 @@
 //! the image is a bound on the default the vault accepted and nothing more (the read walk's
 //! [`RowReading::Bounds`]), and it changes no `sync: vault` setting (the set door). A direct
 //! restore leaves the image's `sync: install` rows behind with its machine identity
-//! ([`restore_drops_row`]). No row is deleted to hold it back: once the copy joins, every row
-//! reads current.
+//! ([`restore_drops_row`]), and so does an activated archive ([`drop_install_rows_in_txn`]). No
+//! row is deleted to hold it back: once the copy joins, every row reads current.
 
 use oneiron_setting_contract::RowKey;
 
+use super::read::{CONTENT_ROWS, ROWS};
 use super::{SettingScope, SettingSpec, SettingSync, spec_named};
 use crate::error::Result;
 use crate::side_table::{self, SideTableDbs};
+use crate::store::Store;
 
 /// The set door's refusal of a change to a `sync: vault` key on an install born of a restore that
 /// has not joined.
@@ -64,7 +66,7 @@ pub(super) fn row_reading_in_txn(
 /// # Errors
 ///
 /// An install row that does not decode (`CorruptedIndex`); the fold's errors; storage errors.
-pub(super) fn restored_unjoined_in_txn(
+pub(crate) fn restored_unjoined_in_txn(
     dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
 ) -> Result<bool> {
@@ -90,6 +92,23 @@ pub(super) fn restored_unjoined_in_txn(
     )
 }
 
+/// [`restored_unjoined_in_txn`] for a door that only wakes the held work after its write: a fold
+/// that misses history it must hold (`AuthorityHistoryRequired`) reads as possibly not joined, so
+/// an import that may close the gap is never refused here; its own fold checks judge it.
+///
+/// # Errors
+///
+/// [`restored_unjoined_in_txn`]'s other errors.
+pub(crate) fn possibly_restored_unjoined_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+) -> Result<bool> {
+    match restored_unjoined_in_txn(dbs, txn) {
+        Err(error) if crate::authority::is_history_incomplete(&error) => Ok(true),
+        read => read,
+    }
+}
+
 /// Whether a restore that leaves the image's machine identity behind leaves this `SETTING` or
 /// `SETTING_CONTENT` row (`full_key`, with its table's prefix) behind too: a value, pin or carried
 /// row of a `sync: install` key, a choice about the install that set it (DESIGN 1.6, "Restore").
@@ -100,8 +119,56 @@ pub(crate) fn restore_drops_row(full_key: &[u8]) -> bool {
     [&side_table::SETTING, &side_table::SETTING_CONTENT]
         .iter()
         .find_map(|decl| full_key.strip_prefix(decl.prefix))
-        .and_then(RowKey::decode)
+        .is_some_and(install_choice)
+}
+
+/// Whether the `SETTING` or `SETTING_CONTENT` row of `key` (without its table's prefix) is a
+/// choice about the install that set it, as [`restore_drops_row`] reads one.
+pub(super) fn install_choice(key: &[u8]) -> bool {
+    RowKey::decode(key)
         .filter(|key| !matches!(key.scope, SettingScope::Pack(_)))
         .and_then(|key| spec_named(&key.name).ok())
         .is_some_and(|spec| spec.sync == SettingSync::Install)
+}
+
+/// Deletes, in `wtxn`, every `SETTING` and `SETTING_CONTENT` row of `store` that
+/// [`restore_drops_row`] names: a vault that forgets its machine and joins as a new one
+/// (`identity::drop_machine_identity_in_txn`), as an archive the owner activates beside its
+/// replacement does (`Vault::activate_archived`), leaves the choices about the install it was,
+/// as a direct restore leaves an image's behind (row SETTING-ACTIVATE-ARCHIVED-INSTALL-ROWS).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn drop_install_rows_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>) -> Result<()> {
+    for table in [ROWS, CONTENT_ROWS] {
+        for key in table.scan_keys(store, wtxn, &[])? {
+            if install_choice(&key) {
+                table.delete(store, wtxn, &key)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The `SETTING` rows of `store` that [`restore_drops_row`] names, as stored: the `sync: install`
+/// choices of the table a restore carries from the live vault (`restore: live`), which a restore
+/// made for its place holds as they stood when it was made
+/// (`identity::refuse_moved_install_choices`). `SETTING_CONTENT` rows travel with the image.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn live_install_rows_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    let mut rows = Vec::new();
+    for row in side_table::SETTING.iter_raw(store, txn)? {
+        let (key, value) = row?;
+        if install_choice(&key) {
+            rows.push((key, value));
+        }
+    }
+    Ok(rows)
 }

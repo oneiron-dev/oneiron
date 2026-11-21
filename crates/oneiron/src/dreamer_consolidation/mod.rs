@@ -277,7 +277,7 @@ pub(crate) use self::{
     note_text::note_text_fingerprint_for_test,
     scope_summary_attempt::{
         arc_composition_params_hash_for_test, arc_parts_params_hash_for_test,
-        session_pages_params_hash_for_test,
+        correction_overflow_for_test, session_pages_params_hash_for_test,
     },
     turn_text::attribution_hash_for_test,
 };

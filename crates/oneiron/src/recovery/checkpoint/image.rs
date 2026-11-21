@@ -70,10 +70,15 @@ impl CheckpointImage {
     /// place carries its identity (`restore_class`). The rows of a `sync:
     /// install` setting go with it, for the same reason: each is a choice
     /// about the install that set it, so the new machine starts at the
-    /// defaults (stage 7c-4, `setting::restore_drops_row`).
+    /// defaults (stage 7c-4, `setting::restore_drops_row`). So do the
+    /// machine's residence mode and world pick, in every build
+    /// (`identity::is_residence_choice_row`).
     pub(super) fn drop_machine_identity(&mut self) {
         if let Some(rows) = self.databases.get_mut("sync_state") {
-            rows.retain(|(key, _)| !crate::identity::is_machine_identity_row(key));
+            rows.retain(|(key, _)| {
+                !crate::identity::is_machine_identity_row(key)
+                    && !crate::identity::is_residence_choice_row(key)
+            });
         }
         if let Some(rows) = self.databases.get_mut("vault_meta") {
             rows.retain(|(key, _)| !crate::setting::restore_drops_row(key));

@@ -194,40 +194,14 @@ impl Vault {
                         });
                         continue;
                     }
-                    let mut sign_enrolment = |_: &AuthorityFold, transcript: &[u8]| {
+                    let sign = |transcript: &[u8]| {
                         RecoveryAuthoritySigner::sign_transcript_with_seed(&seed, transcript)
                     };
-                    let sign_revoke = |transcript: &[u8]| {
-                        RecoveryAuthoritySigner::sign_transcript_with_seed(&seed, transcript)
-                    };
-                    // The lost keys go first, as at the root door's vouch: the
-                    // enrolment binds a self-hosted owner whose lost key held
-                    // their binding.
-                    let mut revoked = Vec::with_capacity(hold.lost.len());
-                    for key in &hold.lost {
-                        let live = fold.roster.get(key).is_some_and(|device| !device.revoked);
-                        if !live {
-                            continue;
-                        }
-                        let signer = EntrySigner::Key(&root_key, &sign_revoke);
-                        revoked.push(self.append_revoke_device_in_txn(
-                            &mut txn,
-                            signer,
-                            key.clone(),
-                        )?);
-                    }
-                    let enrollment = self.enrol_owner_signing_key_for_actor_in_txn(
+                    let (enrollment, revoked) = self.write_recovery_hold_landing_in_txn(
                         &mut txn,
-                        hold.owner,
-                        ActSurface::ThisInstall,
-                        OwnerKeyEnrollment {
-                            machine: hold.enrolment.machine,
-                            public_key: hold.enrolment.public_key,
-                            proof: hold.enrolment.proof.clone(),
-                        },
-                        EnrolledOwnerKeyKind::Device,
-                        root_key.clone(),
-                        &mut sign_enrolment,
+                        &fold,
+                        (hold, &root_key),
+                        &sign,
                     )?;
                     let rows = self.mark_authority_rows_counted_since_in_txn(&mut txn, &fold)?;
                     txn.commit()?;
@@ -248,5 +222,52 @@ impl Vault {
             drop(txn);
         }
         Ok(landings)
+    }
+
+    /// The landing's write for `hold`, which `root_key` (R) signed, in
+    /// `txn`, whose fold before the write is `fold`: each lost key the hold
+    /// names that `fold`'s roster holds live is revoked, then the held input
+    /// is enrolled for the hold's owner (predecessor R, kind `Device`), all
+    /// signed by `sign`. The lost keys go first, as at the root door's
+    /// vouch: the enrolment binds a self-hosted owner whose lost key held
+    /// their binding. Answers the enrolment and the revocations in the
+    /// order written; the caller marks the rows and commits. The root
+    /// door's hold writer runs it first in a savepoint it aborts, so a hold
+    /// whose landing the fold would refuse is never written (row
+    /// RECOVERY-HOLD-ENROLMENT-PREFLIGHT); the landing judges again here.
+    ///
+    /// # Errors
+    /// The revocations' and the enrolment's refusals
+    /// ([`Vault::enrol_owner_signing_key_as`]); the store's.
+    pub(in crate::authority) fn write_recovery_hold_landing_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fold: &AuthorityFold,
+        (hold, root_key): (&RecoveryHold, &AuthorityKey),
+        sign: &dyn Fn(&[u8]) -> Result<Vec<u8>>,
+    ) -> Result<(OwnerKeyEnrollmentReceipt, Vec<AuthorityEntryHash>)> {
+        let mut revoked = Vec::with_capacity(hold.lost.len());
+        for key in &hold.lost {
+            if !fold.roster.get(key).is_some_and(|device| !device.revoked) {
+                continue;
+            }
+            let signer = EntrySigner::Key(root_key, sign);
+            revoked.push(self.append_revoke_device_in_txn(txn, signer, key.clone())?);
+        }
+        let mut sign_enrolment = |_: &AuthorityFold, transcript: &[u8]| sign(transcript);
+        let enrollment = self.enrol_owner_signing_key_for_actor_in_txn(
+            txn,
+            hold.owner,
+            ActSurface::ThisInstall,
+            OwnerKeyEnrollment {
+                machine: hold.enrolment.machine,
+                public_key: hold.enrolment.public_key,
+                proof: hold.enrolment.proof.clone(),
+            },
+            EnrolledOwnerKeyKind::Device,
+            root_key.clone(),
+            &mut sign_enrolment,
+        )?;
+        Ok((enrollment, revoked))
     }
 }

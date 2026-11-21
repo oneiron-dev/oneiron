@@ -17,8 +17,8 @@ mod gate_anchors;
 mod private_sources;
 pub(crate) use gate_anchors::{gate_claim_anchors_in, gate_claim_anchors_store_in};
 pub(crate) use private_sources::{
-    private_thread_word_turns_in, private_threads_readable_raw_in,
-    private_threads_readable_with_read_in,
+    private_thread_walks_readable_with_read_in, private_thread_word_turns_in,
+    private_threads_readable_raw_in, private_threads_readable_with_read_in,
 };
 
 /// Immutable ledger snapshots of unindexed rooms, keyed by the version read

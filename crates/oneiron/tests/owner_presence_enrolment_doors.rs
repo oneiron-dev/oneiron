@@ -2,7 +2,8 @@
 //! OWNER-CONFIRM-SHEET, PR 4b-2): a declined confirm refuses each door and
 //! writes nothing, an agent and an undecodable input never raise the prompt,
 //! the device door asks once for one enrolment, and each prompt shows its
-//! door's reason line.
+//! door's reason line. Another vault's owner proof raises no prompt there, at
+//! the root recovery, at a recovery hold's answer or at a box Cancel.
 #![cfg(oneiron_test_support)]
 
 use std::cell::Cell;
@@ -16,9 +17,10 @@ use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AuthorityAttestation,
     AuthorityEntryHash, AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry, AuthorityOp,
     AuthoritySignature, AuthorityTier, DeviceAuthority, HostSlipIssuer, MachineRole, OwnerActKind,
-    OwnerKeyEnrollment, OwnerPasskeyEnrollment, ROLE_AGENT, ROLE_OWNER, RootMaterial,
-    RootSuccessor, authority_entry_hash, authority_transcript, decode_authority_log_entry_body,
-    encode_authority_log_entry_body, webauthn_assertion_envelope, webauthn_challenge,
+    OwnerKeyEnrollment, OwnerPasskeyEnrollment, ROLE_AGENT, ROLE_OWNER, RecoveryHoldAnswerKind,
+    RootMaterial, RootSuccessor, authority_entry_hash, authority_transcript,
+    decode_authority_log_entry_body, encode_authority_log_entry_body, webauthn_assertion_envelope,
+    webauthn_challenge,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::{DevicePinRefusal, GateError, OwnerPresenceRefusal, RecordError, SecretError};
@@ -1305,6 +1307,41 @@ fn an_owner_proof_of_another_vault_never_raises_the_prompt_at_the_root_recovery(
     );
     assert_eq!(presence.prompts(), 0, "the door showed no prompt");
     assert_eq!(served.stored_rows(), rows, "the refusal stores no row");
+}
+
+/// An owner proof of another vault never raises the prompt at a recovery
+/// hold's answer or at a recovery box Cancel: the proof is refused first.
+#[test]
+fn an_owner_proof_of_another_vault_never_raises_the_prompt_at_a_hold_answer_or_a_box_cancel() {
+    let served = ServedVault::hosted();
+    let other = ServedVault::hosted();
+    let foreign = other.owner_authority();
+    let presence = scripted_gate(&served.vault, []);
+    let rows = served.stored_rows();
+    let hold: AuthorityEntryHash = [0x5A; 32];
+    for answer in [
+        RecoveryHoldAnswerKind::ItIsMe,
+        RecoveryHoldAnswerKind::Cancel,
+    ] {
+        let refused = served.vault.answer_recovery_hold_as(&foreign, hold, answer);
+        assert!(
+            matches!(
+                refused,
+                Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
+            ),
+            "another vault's owner proof is refused at the {answer:?} answer: {refused:?}"
+        );
+    }
+    let refused = served.vault.sign_recovery_box_cancel_as(&foreign, None);
+    assert!(
+        matches!(
+            refused,
+            Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
+        ),
+        "another vault's owner proof is refused at the box cancel: {refused:?}"
+    );
+    assert_eq!(presence.prompts(), 0, "the doors showed no prompt");
+    assert_eq!(served.stored_rows(), rows, "the refusals store no row");
 }
 
 /// An agent never raises the prompt at an enrolment door.
