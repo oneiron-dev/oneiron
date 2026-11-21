@@ -234,11 +234,11 @@ pub(super) fn owner_change_importance(
         refuse_loose_move_of_all_quorum(spec, judged.moved)?;
         // A travelling act can wait for proof regardless of direction. A PIN-bound key only
         // proves inside a PIN window, so leave the answer to the ask and the write.
-        if travels(spec)
-            && rooted_in_txn(vault, &txn)?
-            && !vault.holds_proving_owner_key(&vault.authority_view_readonly_in_txn(&txn)?)
-        {
-            return Ok(OwnerActImportance::Important);
+        if travels(spec) && rooted_in_txn(vault, &txn)? {
+            let fold = vault.authority_view_readonly_in_txn(&txn)?;
+            if !vault.holds_proving_owner_key(&fold) {
+                return Ok(OwnerActImportance::Important);
+            }
         }
     }
     Ok(OwnerActImportance::of_direction(judged.moved))
