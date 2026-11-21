@@ -33,7 +33,8 @@ pub struct Fixture {
 }
 
 /// A device vault on a manual clock set to the wall clock, with its host root
-/// and embedded owner.
+/// and embedded owner. This process opens it owned: it holds the writer
+/// lease, so the embedded owner's door admits the owner.
 pub fn fixture() -> Result<Fixture, Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
     let start = std::time::SystemTime::now()
@@ -42,7 +43,7 @@ pub fn fixture() -> Result<Fixture, Box<dyn std::error::Error>> {
     let clock = ManualClock::new(start);
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
-    let vault = Vault::open(dir.path(), config)?;
+    let vault = Vault::open_owned(dir.path(), config)?;
     vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
     let issuer = HostSlipIssuer::from_secret(b"oneiron-test-audit-read-power")?;
     vault.ensure_host_root_slip(&issuer)?;
