@@ -220,6 +220,8 @@ impl WorldAccessWrite {
         let allowed_after = self.grant.as_ref().unwrap_or(&prior.allowed_set);
         let retrieval_default_before = if resolves_before && default_row_before {
             &prior.default_subset
+        } else if resolves_before && prior.allowed_set.include_base() {
+            &base
         } else {
             &empty
         };

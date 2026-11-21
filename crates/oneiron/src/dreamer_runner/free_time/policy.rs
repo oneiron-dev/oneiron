@@ -160,17 +160,6 @@ impl FreeTimePolicyInput {
         if self.total_units > standing.total_units {
             return Direction::Widens;
         }
-        let (new_for_human, new_own_time) = match self.pinned_split {
-            Some(split) => (split.for_human_units, split.own_time_units),
-            None => (self.total_units, self.total_units),
-        };
-        let (standing_for_human, standing_own_time) = match standing.pinned_split {
-            Some(split) => (split.for_human_units, split.own_time_units),
-            None => (standing.total_units, standing.total_units),
-        };
-        if new_for_human > standing_for_human || new_own_time > standing_own_time {
-            return Direction::Widens;
-        }
         Direction::Narrows
     }
 }
