@@ -218,6 +218,7 @@ fn timed_answer(
         .iter()
         .map(|(hash, row)| (*hash, tail_entry(image, row)))
         .collect();
+    // testkit-lint: allow(wall-clock) the elapsed time is the budget under test
     let started = Instant::now();
     let answer = tail_floored_rows(image, &log.rejected, &tail);
     let elapsed = started.elapsed();
