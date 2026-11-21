@@ -1,5 +1,5 @@
 //! The door view the store doors read beside one built afresh from every
-//! stored row (FIX [OWNER-RESERVE-PROJECTION-COST],
+//! stored row, and the doors' reserve answers beside the exact peaks (FIX [OWNER-RESERVE-PROJECTION-COST],
 //! [AUTHORITY-DOOR-VIEW-MID-BATCH-REBUILD]), for the test door
 //! `test_doors::authority_door_view`. Compiled only under
 //! `--cfg oneiron_test_support`.
@@ -19,7 +19,7 @@ pub(crate) fn door_view_differs_from_rebuild_in_txn(
     starts: &[u64],
 ) -> crate::error::Result<Option<String>> {
     let kept = door_view(store, txn)?;
-    let rebuilt = rebuilt_door_view(store, txn)?;
+    let rebuilt = super::door_rows::rebuilt_door_view(store, txn)?;
     if let Some(field) = kept.structure.differs_from(&rebuilt.structure) {
         return Ok(Some(format!("structure.{field}")));
     }
@@ -38,14 +38,15 @@ pub(crate) fn door_view_differs_from_rebuild_in_txn(
             counts(&rebuilt)
         )));
     }
-    let (kept_bytes, rebuilt_bytes) = (kept.projection.bytes(), rebuilt.projection.bytes());
-    if kept_bytes != rebuilt_bytes {
+    let (kept_exact, rebuilt_exact) = (kept.projection.exact(), rebuilt.projection.exact());
+    if format!("{kept_exact:?}") != format!("{rebuilt_exact:?}") {
         return Ok(Some(format!(
-            "projection.bytes: kept {kept_bytes}, rebuilt {rebuilt_bytes}"
+            "projection: kept {kept_exact:?}, rebuilt {rebuilt_exact:?}"
         )));
     }
     for start in starts {
-        let (kept_past, rebuilt_past) = (past_start(&kept, *start), past_start(&rebuilt, *start));
+        let kept_past = kept.projection.bytes_past(*start);
+        let rebuilt_past = past(rebuilt_exact.bytes(), *start);
         if kept_past != rebuilt_past {
             return Ok(Some(format!(
                 "projection past {start}: kept {kept_past:?}, rebuilt {rebuilt_past:?}"
@@ -53,16 +54,16 @@ pub(crate) fn door_view_differs_from_rebuild_in_txn(
         }
     }
     for (hash, parents) in probes {
-        let kept_with = kept.projection.bytes_with(hash, parents);
-        let rebuilt_with = rebuilt.projection.bytes_with(hash, parents);
+        let kept_with = kept_exact.bytes_with(hash, parents);
+        let rebuilt_with = rebuilt_exact.bytes_with(hash, parents);
         if kept_with != rebuilt_with {
             return Ok(Some(format!(
                 "projection.bytes_with({hash:?}): kept {kept_with}, rebuilt {rebuilt_with}"
             )));
         }
         for start in starts {
-            let kept_past = past_start_with(&kept, *start, hash, parents);
-            let rebuilt_past = past_start_with(&rebuilt, *start, hash, parents);
+            let kept_past = kept.projection.bytes_with_past(*start, hash, parents);
+            let rebuilt_past = past(rebuilt_with, *start);
             if kept_past != rebuilt_past {
                 return Ok(Some(format!(
                     "projection.bytes_with({hash:?}) past {start}: kept {kept_past:?}, rebuilt \
@@ -74,22 +75,9 @@ pub(crate) fn door_view_differs_from_rebuild_in_txn(
     Ok(None)
 }
 
-/// The stored log's projected peak when it is past `start`, as the pickup's
-/// reserve check reads it.
-fn past_start(view: &AuthorityDoorView, start: u64) -> Option<u64> {
-    let bytes = view.projection.bytes();
-    (bytes > start).then_some(bytes)
-}
-
-/// The projected peak with the row `hash` on `parents` stored too, when it
-/// is past `start`, as the store door's reserve check reads it.
-fn past_start_with(
-    view: &AuthorityDoorView,
-    start: u64,
-    hash: &AuthorityEntryHash,
-    parents: &[AuthorityEntryHash],
-) -> Option<u64> {
-    let bytes = view.projection.bytes_with(hash, parents);
+/// `bytes` where it is past `start`, as the reserve's checks read an exact
+/// projected peak.
+fn past(bytes: u64, start: u64) -> Option<u64> {
     (bytes > start).then_some(bytes)
 }
 

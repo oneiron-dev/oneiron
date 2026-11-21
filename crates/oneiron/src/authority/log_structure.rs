@@ -31,7 +31,7 @@ pub(super) fn admits_device(op: &AuthorityOp) -> Option<&DeviceAuthority> {
 
 /// The log's consent structure, read from its signed rows alone, so the
 /// fold's bounds and the store doors judge a row the same way.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct AuthorityStructure {
     /// The verified genesis rows. A log with more than one, even from one
     /// key, has no admitters: the fold reads each as its own vault root.
@@ -138,7 +138,7 @@ pub(super) fn is_consent_device(device: &DeviceAuthority) -> bool {
 pub(super) fn authority_structure<'a>(
     entries: impl Iterator<Item = &'a AuthorityLogEntry>,
 ) -> AuthorityStructure {
-    let mut builder: StructureBuilder<'a> = StructureBuilder::default();
+    let mut builder: StructureBuilder<&'a AuthorityLogEntry> = StructureBuilder::default();
     for entry in entries {
         builder.push(entry);
     }
@@ -152,7 +152,7 @@ pub(super) fn authority_structure_under<'a>(
     entries: impl IntoIterator<Item = &'a AuthorityLogEntry>,
     local: LocalRoots,
 ) -> AuthorityStructure {
-    let mut builder: StructureBuilder<'a> = StructureBuilder::under(local);
+    let mut builder: StructureBuilder<&'a AuthorityLogEntry> = StructureBuilder::under(local);
     for entry in entries {
         builder.push(entry);
     }
@@ -274,19 +274,20 @@ fn ancestry_held(
 /// [`authority_structure`] grown a row at a time, as an import stages its
 /// rows: the same structure for the same rows, in any order. A row that
 /// waits for a grant is filed under each key that could give it, so a
-/// settle visits only the rows its new grants wake.
-#[derive(Debug, Default)]
-pub(super) struct StructureBuilder<'a> {
+/// settle visits only the rows its new grants wake. `R` holds a row: a
+/// borrow of it, or a shared row a kept door view owns.
+#[derive(Debug, Clone)]
+pub(super) struct StructureBuilder<R> {
     pub(super) structure: AuthorityStructure,
     root_roles: u16,
     /// Admissions and machine revisions pushed since the last settle.
-    fresh: Vec<&'a AuthorityLogEntry>,
+    fresh: Vec<R>,
     /// Owner and admin admissions no admitter has signed yet, under each
     /// key that signed them.
-    admissions: BTreeMap<AuthorityKey, Vec<&'a AuthorityLogEntry>>,
+    admissions: BTreeMap<AuthorityKey, Vec<R>>,
     /// Machine revisions whose primary signer is no slip issuer yet, under
     /// that signer: an owner answer under its carrier's install key.
-    profiles: BTreeMap<AuthorityKey, Vec<&'a AuthorityLogEntry>>,
+    profiles: BTreeMap<AuthorityKey, Vec<R>>,
     /// The install keys [`Self::file_profile`] granted that [`Self::settle`]
     /// has not yet woken the answers they carry with: the fixed point that
     /// makes a carrier-approved key usable downstream in any batch order.
@@ -296,7 +297,7 @@ pub(super) struct StructureBuilder<'a> {
     /// issuer's or an own anchor's revision takes the key as own,
     /// [`Self::settle`] files them again as own, so a removal one of them
     /// carries counts in any row order (REVIEW-9555 P1).
-    stranger_answers: BTreeMap<AuthorityKey, Vec<&'a AuthorityLogEntry>>,
+    stranger_answers: BTreeMap<AuthorityKey, Vec<R>>,
     /// The install keys [`Self::file_profile`] took as own after they stood
     /// as a stranger's, whose answers [`Self::settle`] has not yet filed
     /// again.
@@ -314,7 +315,37 @@ pub(super) enum Grant {
     Anchor(AuthorityKey),
 }
 
-impl<'a> StructureBuilder<'a> {
+impl<R> Default for StructureBuilder<R> {
+    fn default() -> Self {
+        Self {
+            structure: AuthorityStructure::default(),
+            root_roles: 0,
+            fresh: Vec::new(),
+            admissions: BTreeMap::new(),
+            profiles: BTreeMap::new(),
+            woken: Vec::new(),
+            stranger_answers: BTreeMap::new(),
+            promoted: Vec::new(),
+            grown: Vec::new(),
+        }
+    }
+}
+
+/// Whether [`StructureBuilder::push`] files `entry`: a genesis, a root
+/// record, a machine revision, a root appointment or a consent admission.
+/// It leaves the builder as it was for any other row, so the structure of a
+/// log with such rows added is the structure without them.
+pub(super) fn structure_reads(entry: &AuthorityLogEntry) -> bool {
+    match &entry.op {
+        AuthorityOp::Genesis { .. }
+        | AuthorityOp::MachineProfile(_)
+        | AuthorityOp::OwnerRoot(_)
+        | AuthorityOp::RootAppointment(_) => true,
+        op => admits_device(op).is_some_and(is_consent_device),
+    }
+}
+
+impl<R: Clone + std::ops::Deref<Target = AuthorityLogEntry>> StructureBuilder<R> {
     /// A builder that takes `local`'s anchors as this install's own.
     pub(super) fn under(local: LocalRoots) -> Self {
         let mut builder = Self::default();
@@ -324,26 +355,18 @@ impl<'a> StructureBuilder<'a> {
     }
 
     /// Adds `entry` unsettled.
-    pub(super) fn push(&mut self, entry: &'a AuthorityLogEntry) {
-        match &entry.op {
-            AuthorityOp::Genesis { device, .. } => {
-                if device.key == *entry.signer_key()
-                    && is_consent_device(device)
-                    && !self.structure.roots.contains(entry)
-                    && verify_entry_signatures(entry).is_ok()
-                {
-                    self.structure.roots.push(entry.clone());
-                    self.root_roles |= device.roles;
-                }
+    pub(super) fn push(&mut self, entry: R) {
+        if let AuthorityOp::Genesis { device, .. } = &entry.op {
+            if device.key == *entry.signer_key()
+                && is_consent_device(device)
+                && !self.structure.roots.contains(&entry)
+                && verify_entry_signatures(&entry).is_ok()
+            {
+                self.structure.roots.push(AuthorityLogEntry::clone(&entry));
+                self.root_roles |= device.roles;
             }
-            AuthorityOp::MachineProfile(_)
-            | AuthorityOp::OwnerRoot(_)
-            | AuthorityOp::RootAppointment(_) => self.fresh.push(entry),
-            op => {
-                if admits_device(op).is_some_and(is_consent_device) {
-                    self.fresh.push(entry);
-                }
-            }
+        } else if structure_reads(&entry) {
+            self.fresh.push(entry);
         }
     }
 
@@ -376,7 +399,7 @@ impl<'a> StructureBuilder<'a> {
         }
         for entry in std::mem::take(&mut self.fresh) {
             if let AuthorityOp::OwnerRoot(record) = &entry.op {
-                let Some(anchor) = self_signed_root(entry) else {
+                let Some(anchor) = self_signed_root(&entry) else {
                     continue;
                 };
                 if self.structure.local.roots.contains(&record.root)
@@ -399,25 +422,25 @@ impl<'a> StructureBuilder<'a> {
                 if self.structure.is_own_anchor(entry.signer_key())
                     && entry.cosigns.is_empty()
                     && entry.validate_shape().is_ok()
-                    && verify_entry_signatures(entry).is_ok()
+                    && verify_entry_signatures(&entry).is_ok()
                 {
                     self.admit_key(&appointment.successor, &mut admitted, &mut issued);
                 }
-            } else if signed_by(entry, &self.structure.admitters) {
-                self.admit(entry, &mut admitted, &mut issued);
+            } else if signed_by(&entry, &self.structure.admitters) {
+                self.admit(&entry, &mut admitted, &mut issued);
             } else {
                 for signature in std::iter::once(&entry.signer).chain(&entry.cosigns) {
                     self.admissions
                         .entry(signature.public_key.clone())
                         .or_default()
-                        .push(entry);
+                        .push(entry.clone());
                 }
             }
         }
         loop {
             if let Some(key) = admitted.pop() {
                 for entry in self.admissions.remove(&key).unwrap_or_default() {
-                    self.admit(entry, &mut admitted, &mut issued);
+                    self.admit(&entry, &mut admitted, &mut issued);
                 }
                 self.grown.push(Grant::Admitter(key));
             } else if let Some(key) = issued.pop() {
@@ -485,7 +508,7 @@ impl<'a> StructureBuilder<'a> {
     /// revision taken as own files its removal (FIX
     /// [STRANGER-REMOVED-MARK-GLOBAL]). An answer taken as a stranger's is
     /// filed again once its carrier's key is taken as own (REVIEW-9555 P1).
-    fn file_profile(&mut self, entry: &'a AuthorityLogEntry) {
+    fn file_profile(&mut self, entry: R) {
         let AuthorityOp::MachineProfile(profile) = &entry.op else {
             return;
         };
@@ -506,10 +529,13 @@ impl<'a> StructureBuilder<'a> {
             }
         };
         if !own && !stranger {
-            self.profiles.entry(signer.clone()).or_default().push(entry);
+            self.profiles
+                .entry(signer.clone())
+                .or_default()
+                .push(entry.clone());
             return;
         }
-        if verify_entry_signatures(entry).is_err() {
+        if verify_entry_signatures(&entry).is_err() {
             return;
         }
         if own && profile.role == MachineRole::Removed {
@@ -519,7 +545,7 @@ impl<'a> StructureBuilder<'a> {
             self.stranger_answers
                 .entry(signer.clone())
                 .or_default()
-                .push(entry);
+                .push(entry.clone());
         }
         let key = (profile.machine, AuthorityKey::Ed25519(profile.machine_key));
         let vouched = self.structure.vouching_key(&key);
@@ -539,6 +565,11 @@ impl<'a> StructureBuilder<'a> {
 }
 
 impl AuthorityStructure {
+    /// Whether the log holds exactly one verified genesis row.
+    pub(super) fn has_one_root(&self) -> bool {
+        self.roots.len() == 1
+    }
+
     /// Whether a key that may vouch for `entry` signed or cosigned it: an
     /// admitter, or, for a world edit, a world key record, a residence result,
     /// a grant travel choice or an owner work request or result, the install

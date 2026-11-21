@@ -294,6 +294,11 @@ pub struct StoreCore {
     /// What the authority store doors read of one committed generation.
     pub(crate) authority_door_view:
         Mutex<Option<(u64, std::sync::Arc<crate::authority::AuthorityDoorView>)>>,
+    /// What the authority store doors last read of a write's staged rows,
+    /// which a later read of the same write extends while it still holds
+    /// those rows (FIX [AUTHORITY-DOOR-VIEW-MID-BATCH-REBUILD]).
+    pub(crate) authority_door_view_staged:
+        Mutex<Option<std::sync::Arc<crate::authority::AuthorityDoorView>>>,
     /// The row the authority door last held at the owner's reserve, for the
     /// reserve's typed check (Astra owner-reserve r2 F4). Never persisted.
     pub(crate) authority_owner_reserve_hold: Mutex<Option<crate::authority::OwnerReserveHold>>,
