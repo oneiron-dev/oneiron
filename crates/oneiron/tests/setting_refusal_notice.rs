@@ -1728,7 +1728,7 @@ impl Fixture {
     /// row at the vault, which narrows the shipped floor of 2 and releases nothing.
     fn raced_floor_pin(&self, floor: u64) {
         let pin = (MIN_PROPOSALS, None, SettingMode::Pin, SettingScope::Vault);
-        let frontier = setting_frontier_of(&self.vault, &[pin]).expect("frontier");
+        let frontier = setting_frontier_of(&self.vault, &[pin.clone()]).expect("frontier");
         self.removes_desktop();
         land_setting_act_from(
             &self.vault,
