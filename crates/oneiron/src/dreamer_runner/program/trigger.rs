@@ -129,7 +129,7 @@ pub(super) fn index_trigger_in_txn(
     let key = (arming.actor, arming.registration);
     match arming.trigger.occurrence_kind() {
         Some(OccurrenceKind::Timer) => arm_actor_timers_in_txn(
-            &vault.store,
+            vault,
             txn,
             arming.actor,
             Some(arming.registration),
@@ -155,14 +155,10 @@ pub(super) fn unindex_trigger_in_txn(
 ) -> Result<()> {
     let key = (arming.actor, arming.registration);
     match arming.trigger.occurrence_kind() {
-        Some(OccurrenceKind::Timer) => arm_actor_timers_in_txn(
-            &vault.store,
-            txn,
-            arming.actor,
-            Some(arming.registration),
-            None,
-        )
-        .map(drop),
+        Some(OccurrenceKind::Timer) => {
+            arm_actor_timers_in_txn(vault, txn, arming.actor, Some(arming.registration), None)
+                .map(drop)
+        }
         None => Ok(()),
         Some(kind) => TRIGGER
             .delete(vault, txn, &([kind.tag()], key.0, key.1))
@@ -209,14 +205,14 @@ pub(super) fn trigger_rows_for_actor(
 /// armed, moved or disarmed in this write), so the caller may write its arming before or after.
 /// A paused timer is not counted: the row is never due for a timer no run would release.
 fn arm_actor_timers_in_txn(
-    store: &Store,
+    vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     actor: EntityId,
     registration: Option<EntityId>,
     next_due: Option<u64>,
 ) -> Result<Option<u64>> {
     let mut earliest = next_due;
-    for row in ARM.iter_from(store, &*txn, actor.as_bytes())? {
+    for row in ARM.iter_from(vault, &*txn, actor.as_bytes())? {
         let ((_, armed), arming) = row?;
         if Some(armed) == registration
             || arming.paused_at.is_some()
@@ -231,14 +227,14 @@ fn arm_actor_timers_in_txn(
     }
     match earliest {
         Some(at) => crate::schedule::arm_in_txn(
-            store,
+            &vault.store,
             txn,
             &PROGRAM_TIMER_JOB,
             Some(actor),
             Trigger::At { at },
         )?,
         None => {
-            crate::schedule::disarm_in_txn(store, txn, PROGRAM_TIMER_JOB.code, Some(actor))?;
+            crate::schedule::disarm_in_txn(&vault.store, txn, PROGRAM_TIMER_JOB.code, Some(actor))?;
         }
     }
     Ok(earliest)
@@ -444,7 +440,7 @@ impl Vault {
                     TRIGGER.delete(self, txn, &key)?;
                     continue;
                 };
-                // Paused since its scan was read: the scan is dropped, not stored.
+                // The row as this write reads it decides: a paused program stores no scan.
                 if arming.paused_at.is_some() {
                     continue;
                 }
@@ -525,7 +521,7 @@ fn release_actor_timers_in_txn(
         arming.next_due = next_due_after(due_at, every_secs, now);
         ARM.put(vault, txn, &(actor, registration), &arming)?;
     }
-    arm_actor_timers_in_txn(&vault.store, txn, actor, None, None)
+    arm_actor_timers_in_txn(vault, txn, actor, None, None)
 }
 
 /// Pauses every arming of `store` that a turn does not wake (a timer, a feed, an idle stretch),
@@ -533,10 +529,11 @@ fn release_actor_timers_in_txn(
 /// restore beside (`recovery::checkpoint`, its forked custody) and the activation of an archived
 /// vault as a side vault (FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY, lead ruling
 /// 21 Nov). The source keeps releasing its own; the copy holds each arming as it stood, with its
-/// due time and feed scan, and releases nothing for it. Each actor's timer row goes with its
-/// timers: it is armed over the timers left, and none is. An arming paused already keeps the
-/// time it was paused at; a row that does not decode is left as it is, since no release reads
-/// it either. Answers how many it paused.
+/// due time and feed scan, and releases nothing for it. The timer row of each actor it pauses a
+/// timer of goes in the same write: every timer that actor holds is paused now, and the row is
+/// armed over unpaused timers only ([`arm_actor_timers_in_txn`]). An arming paused already
+/// keeps the time it was paused at; a row that does not decode is left as it is and fails
+/// nothing here, since no release reads it either. Answers how many it paused.
 ///
 /// # Errors
 ///
@@ -564,7 +561,7 @@ pub(crate) fn pause_occurrence_armings_in_txn(
         }
     }
     for actor in timer_actors {
-        arm_actor_timers_in_txn(store, txn, actor, None, None)?;
+        crate::schedule::disarm_in_txn(store, txn, PROGRAM_TIMER_JOB.code, Some(actor))?;
     }
     Ok(standing.len())
 }
