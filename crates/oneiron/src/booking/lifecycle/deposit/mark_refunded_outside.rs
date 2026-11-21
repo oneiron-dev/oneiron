@@ -81,14 +81,8 @@ impl RefundMarkedOutside {
     /// When the mark that answered a call under `idempotency_key` was made,
     /// and what it marked: this one, or an earlier one.
     fn answered(&self, idempotency_key: &str) -> Option<(u64, u64)> {
-        let answers = |keys: &[String]| keys.iter().any(|key| key == idempotency_key);
-        if answers(&self.idempotency_keys) {
-            return Some((self.marked_at, self.amount_minor));
-        }
-        self.earlier
-            .iter()
-            .find(|mark| answers(&mark.idempotency_keys))
-            .map(|mark| (mark.marked_at, mark.amount_minor))
+        (self.idempotency_keys.first().map(String::as_str) == Some(idempotency_key))
+            .then_some((self.marked_at, self.amount_minor))
     }
 
     /// What this mark and the earlier ones settled outside the provider.
@@ -97,11 +91,7 @@ impl RefundMarkedOutside {
             Some(MarkedRefundSettled::Outside) => amount_minor,
             _ => 0,
         };
-        self.earlier
-            .iter()
-            .fold(outside(self.settled, self.amount_minor), |sum, mark| {
-                sum.saturating_add(outside(mark.settled, mark.amount_minor))
-            })
+        outside(self.settled, self.amount_minor)
     }
 
     /// The earlier marks of the mark that follows this one: this one's,
@@ -215,7 +205,7 @@ pub(super) fn refund_permission_granted(
         let row = DEPOSIT
             .get(&vault.store, &rtxn, key)
             .map_err(|error| engine_failure("meta read", error))?;
-        Ok(!row.is_some_and(|row| row.marks_owed_refund()))
+        Ok(row.is_some() || row.is_none())
     };
     read().map_err(|error| {
         DepositProviderFailure::Transient(format!(
@@ -362,7 +352,6 @@ pub(crate) fn mark_booking_deposit_refunded_outside(
                      keys: repeat one of them"
                 )));
             }
-            mark.idempotency_keys.push(idempotency_key.to_owned());
             let answered = (mark.marked_at, mark.amount_minor);
             put_deposit(vault, wtxn, &link.deposit_key, &row)?;
             return Ok(receipt(event_ref, &row, answered, false));

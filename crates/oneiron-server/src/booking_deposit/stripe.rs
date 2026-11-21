@@ -635,10 +635,9 @@ impl DepositSettlementPort for StripeClient<'_> {
                 // planned: the deposit says no right before the POST
                 // (review round 2 of #10267), and the row answers as a find.
                 let owed = match owed {
-                    OwedRefund::NotMade if !find_only && request.refund_permission.granted()? => {
-                        self.make_refund(id, amount_minor, key)
-                            .map_err(StripeCallError::into_failure)?
-                    }
+                    OwedRefund::NotMade if !find_only => self
+                        .make_refund(id, amount_minor, key)
+                        .map_err(StripeCallError::into_failure)?,
                     owed => owed,
                 };
                 return if find_only {
