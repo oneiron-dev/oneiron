@@ -179,7 +179,9 @@ pub(in crate::calendar) fn defer_connector_cancel<'a>(
     let mut admission = connector_admission(vault, system, source, now);
     let mut next = passport.clone();
     next.deferred_cancel_seen_at = Some(now);
-    admission.admit_superseding_passport(event_ref, &next, &screen_body(event))
+    admission
+        .admit_superseding_passport(event_ref, &next, &screen_body(event))
+        .map(drop)
 }
 
 /// A provider tombstone of `uid` a pull held back unread, since a cancelled
@@ -302,7 +304,9 @@ fn withdraw_tombstone_report(
     next.deferred_cancel_seen_at = None;
     next.written_cancelled = false;
     next.last_seen_at = admission.now;
-    admission.admit_superseding_passport(event_ref, &next, &screen_body(event))
+    admission
+        .admit_superseding_passport(event_ref, &next, &screen_body(event))
+        .map(drop)
 }
 /// Sweeps one resource's omitted events under the source's screen, as a
 /// complete feed's sweep runs under its poll's.
