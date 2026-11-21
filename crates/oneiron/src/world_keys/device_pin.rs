@@ -63,6 +63,7 @@ use oneiron_keystore::{
 use zeroize::Zeroizing;
 
 pub use self::owner_key::OwnerKeyRest;
+pub(super) use self::owner_key::PinBoundOwnerKey;
 use super::{keystore_error, refused};
 use crate::error::{DevicePinRefusal, Error, Result, SecretError};
 use crate::recovery::PassphraseCost;

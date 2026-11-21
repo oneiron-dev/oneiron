@@ -2,10 +2,11 @@
 //! owner key vouches"; MFA-1 A: "vault authority on a new device comes only
 //! from an old device (QR approval) or the person's own pieces").
 //!
-//! The new device makes its key in its keystore slot and signs the key's
-//! enrollment challenge ([`Vault::device_owner_key_vouch_request`]); its
-//! install key signs the request too, so the machine it names is the one
-//! that made it. That is all it can do alone: the challenge binds the vault,
+//! The new device makes its key, in its keystore slot or under its device
+//! PIN, and signs the key's enrollment challenge
+//! ([`Vault::device_owner_key_vouch_request`]); its install key signs the
+//! request too, so the machine it names is the one that made it. That is all
+//! it can do alone: the challenge binds the vault,
 //! the machine that holds the key, the key and the owner, never the key that
 //! will vouch for it, so the new device writes no authority row and needs no
 //! owner key of its own. It hands
