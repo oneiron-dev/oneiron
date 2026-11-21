@@ -11,7 +11,7 @@ use super::*;
 /// The hold writer's judgment of one request (`judge_hold_in_txn`).
 struct JudgedHold {
     /// The fold the judgment read, before any hold row.
-    fold: AuthorityFold,
+    fold: AuthorityView,
     /// The hold row's body.
     body: RecoveryHold,
     /// The writer's second on this install's clock.
