@@ -20,14 +20,15 @@
 //!   can no longer resume it;
 //! - a send that ended uncertain on the old home (the provider took it as a
 //!   remote task) travels marked, and the owner's resume on the new home that
-//!   sends it again answers, once, "this send ended uncertain on the old home
-//!   and may repeat" (FIX [BK-EMERGENCY-UNCERTAIN-SEND-NOT-SHOWN-TO-OWNER];
-//!   Engine ANSWER BK-EMERGENCY-UNCERTAIN-SEND-RECEIPT = A, 21 Nov 09:14); a
-//!   send that failed definitely there answers nothing;
-//! - a mark the owner was not answered for travels with the next move, even
-//!   once its send was delivered again: a home whose run sent it and then
-//!   stopped on a later effect passes it on, and the next home's run answers
-//!   it (review round 1 of #10125).
+//!   sends it again answers "this send ended uncertain on the old home and
+//!   may repeat" (FIX [BK-EMERGENCY-UNCERTAIN-SEND-NOT-SHOWN-TO-OWNER];
+//!   Engine ANSWER BK-EMERGENCY-UNCERTAIN-SEND-RECEIPT = A, 21 Nov 09:14),
+//!   and so does every later run over the checkpoint (review round 2 of
+//!   #10166); a send that failed definitely there answers nothing;
+//! - a mark travels with the next move, even once its send was delivered
+//!   again: a home whose run sent it and then stopped on a later effect
+//!   passes it on, and the next home's run answers it (review round 1 of
+//!   #10125).
 //!
 //! The emergency fixture is `tests/booking_feed_move_held.rs`'s: an
 //! owner-logged RequestUpdate instruction over a booked slot, planned and
@@ -51,7 +52,13 @@
 //! (no `EmergencyRepeatNotice`, no `repeat_notices`). The mark carried past
 //! a second move is red on #10125's first head 57571ff1ad64: the second home
 //! drops the mark of an invite it delivered, so the third home's run answers
-//! nothing.
+//! nothing. The answer over a picked checkpoint is red on #10166's head
+//! 7cdc5c16ca1e: the owner's run refuses the picked checkpoint before it
+//! answers, so a repeat its delivery left unanswered is never shown. The
+//! answer's replay is red on #10166's head 91d09f814167: the first answer
+//! dropped its mark, so a run that stopped after that writer, before the
+//! owner read its answer, left the next run nothing to answer (review round
+//! 2 of #10166).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test booking_home_move_carries_emergency`.
 #![cfg(all(oneiron_test_support, feature = "sync"))]
@@ -79,8 +86,8 @@ use oneiron::outbound::{
 use oneiron::outbound_intent_ledger::RemoteTaskHandle;
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use oneiron::test_doors::booking_home_move::{
-    acknowledge_booking_home_move, booking_rows_hold, drop_node_local_booking_rows,
-    drop_node_local_outbound_rows, move_booking_home,
+    acknowledge_booking_home_move, booking_rows_hold, deliver_emergency_without_answer,
+    drop_node_local_booking_rows, drop_node_local_outbound_rows, move_booking_home,
 };
 use oneiron::{
     CalendarSel, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject,
@@ -785,9 +792,11 @@ fn the_new_homes_resume_of_a_send_that_ended_uncertain_on_the_old_home_says_it_m
         EMERGENCY_REPEAT_NOTICE,
         "this send ended uncertain on the old home and may repeat"
     );
-    assert!(
-        resume().repeat_notices.is_empty(),
-        "the resume answers each repeat once"
+    assert_eq!(
+        resume().repeat_notices,
+        run.repeat_notices,
+        "every later run answers the repeat again, so an answer that never reached the owner is \
+         given again (#10166's head 91d09f814167 dropped the mark with its first answer)"
     );
 }
 
@@ -846,5 +855,78 @@ fn a_repeat_the_owner_was_not_answered_for_travels_with_the_next_move() {
         "the second home sent the uncertain invite again and never answered the owner, so the \
          third home's run does (#10125's first head: the delivered invite's mark went at the \
          second move)"
+    );
+}
+
+#[test]
+fn a_repeat_delivered_before_the_bookers_pick_is_answered_by_the_owners_next_run() {
+    let seed = Machine::seed();
+    let emergency = emergency(&seed, &mut DeferringSink);
+    assert!(
+        emergency.item.is_err(),
+        "FIXTURE: the provider took the invite as a remote task, so the emergency stays owed"
+    );
+    let (old_home, new_home) = seed.into_old_and_new_home();
+    assert!(
+        move_booking_home(&old_home.vault, &new_home.vault, &[]).expect("move the booking home"),
+        "every section applies"
+    );
+    let delivered = deliver_emergency_without_answer(
+        &new_home.vault,
+        &emergency.request,
+        &emergency.plan,
+        &new_home.calendars(),
+        &new_home.consumer(NOW + 200),
+        &mut DeliveringSink,
+    )
+    .expect(
+        "FIXTURE: the new home sends the invite again and the apology, and stops before it \
+         answers the owner",
+    );
+    assert!(
+        delivered.calendar_delivered && delivered.apology_delivered,
+        "both deliveries are committed on the checkpoint"
+    );
+    new_home
+        .pick(&delivered)
+        .expect("both deliveries released the booker's pick");
+
+    // A failing sink: the owner's run over the picked checkpoint sends nothing.
+    let run = execute_emergency_plan(
+        &new_home.vault,
+        &emergency.request,
+        &emergency.plan,
+        &new_home.calendars(),
+        &new_home.consumer(NOW + 400),
+        &mut FailingSink,
+    )
+    .expect(
+        "the owner's run over the picked checkpoint answers the repeat its delivery left \
+         unanswered (#10166's head 7cdc5c16ca1e refuses it first)",
+    );
+    assert!(run.item.picked().is_some(), "the booker's pick stands");
+    assert_eq!(
+        run.repeat_notices,
+        vec![EmergencyRepeatNotice {
+            effect: "calendar",
+            message: EMERGENCY_REPEAT_NOTICE,
+        }],
+        "the invite the old home sent uncertain may reach the booker twice"
+    );
+    let again = execute_emergency_plan(
+        &new_home.vault,
+        &emergency.request,
+        &emergency.plan,
+        &new_home.calendars(),
+        &new_home.consumer(NOW + 500),
+        &mut FailingSink,
+    )
+    .expect(
+        "the owner's next run over the picked checkpoint answers the repeat again (#10166's head \
+         91d09f814167 refuses it: its first answer dropped the mark)",
+    );
+    assert_eq!(
+        again.repeat_notices, run.repeat_notices,
+        "an answer that never reached the owner is given again"
     );
 }

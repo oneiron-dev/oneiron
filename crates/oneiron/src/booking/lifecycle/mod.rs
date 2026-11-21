@@ -93,9 +93,7 @@ pub use self::deposit::{
     booking_deposit_for_session_hold, check_deposit_checkout_admitted,
     record_deposit_provider_event, run_booking_deposit_settlement, settle_booking_deposit,
 };
-pub(crate) use self::deposit::{
-    note_unattributed_cancel_in_txn, refund_booking_deposit_as_owner, refund_deposit_on_host_cancel,
-};
+pub(crate) use self::deposit::{refund_booking_deposit_as_owner, refund_deposit_on_host_cancel};
 pub use self::door::{
     BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest,
     enqueue_booking_verb, enqueue_booking_verb_with_publication, issue_checkout_lease,
