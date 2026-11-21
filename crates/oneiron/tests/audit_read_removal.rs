@@ -118,7 +118,7 @@ fn fixture_in(posture: HostingPrivacyPosture) -> Result<Fixture, Box<dyn std::er
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
     config.privacy.posture = posture;
-    let vault = Vault::open(dir.path(), config)?;
+    let vault = Vault::open_owned(dir.path(), config)?;
     vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
     let issuer = HostSlipIssuer::from_secret(b"oneiron-test-audit-read-removal")?;
     vault.ensure_host_root_slip(&issuer)?;
